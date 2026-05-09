@@ -38,6 +38,25 @@ type StartupResources = {
 	themes: string[];
 };
 
+type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+type ReasoningModel = {
+	reasoning?: boolean;
+	thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
+};
+
+const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+const FALLBACK_THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
+
+const THINKING_LEVEL_DESCRIPTIONS: Record<ThinkingLevel, string> = {
+	off: "No extra reasoning effort",
+	minimal: "Smallest reasoning budget",
+	low: "Light reasoning budget",
+	medium: "Balanced default reasoning budget",
+	high: "Deeper reasoning budget",
+	xhigh: "Maximum reasoning budget when the model supports it",
+};
+
 function packageRoot(): string {
 	return resolve(dirname(fileURLToPath(import.meta.url)), "..");
 }
@@ -139,6 +158,39 @@ function labelTheme(resource: ResolvedResource): string {
 	return basename(resource.path, extname(resource.path));
 }
 
+function getAvailableThinkingLevels(model: ReasoningModel | undefined): ThinkingLevel[] {
+	if (!model) {
+		return FALLBACK_THINKING_LEVELS;
+	}
+	if (!model.reasoning) {
+		return ["off"];
+	}
+
+	return THINKING_LEVELS.filter((level) => {
+		const mapped = model.thinkingLevelMap?.[level];
+		if (mapped === null) {
+			return false;
+		}
+		if (level === "xhigh") {
+			return mapped !== undefined;
+		}
+		return true;
+	});
+}
+
+function isThinkingLevel(value: string): value is ThinkingLevel {
+	return THINKING_LEVELS.includes(value as ThinkingLevel);
+}
+
+function formatThinkingLevelOption(level: ThinkingLevel, currentLevel: ThinkingLevel): string {
+	const marker = level === currentLevel ? "✓" : " ";
+	return `${marker} ${level} — ${THINKING_LEVEL_DESCRIPTIONS[level]}`;
+}
+
+function parseThinkingLevelOption(option: string): ThinkingLevel | undefined {
+	return THINKING_LEVELS.find((level) => option.includes(` ${level} —`));
+}
+
 async function collectStartupResources(cwd: string): Promise<StartupResources> {
 	const agentDir = getAgentDir();
 	const settingsManager = SettingsManager.create(cwd, agentDir);
@@ -231,6 +283,53 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		description: "Alias for /tlh",
 		handler: async (_args, ctx) => {
 			ctx.ui.notify(`${TLH_PACKAGE_NAME} (${TLH_NAME}) profile is installed and active.`, "info");
+		},
+	});
+
+	pi.registerCommand("effort", {
+		description: "Pick the model reasoning effort / thinking level",
+		getArgumentCompletions: (prefix) => {
+			const normalizedPrefix = prefix.trim().toLowerCase();
+			const completions = THINKING_LEVELS.filter((level) => level.startsWith(normalizedPrefix)).map((level) => ({
+				value: level,
+				label: level,
+				description: THINKING_LEVEL_DESCRIPTIONS[level],
+			}));
+			return completions.length > 0 ? completions : null;
+		},
+		handler: async (args, ctx) => {
+			const currentLevel = pi.getThinkingLevel();
+			const availableLevels = getAvailableThinkingLevels(ctx.model as ReasoningModel | undefined);
+			const requestedLevel = args.trim().toLowerCase();
+
+			if (requestedLevel) {
+				if (!isThinkingLevel(requestedLevel)) {
+					ctx.ui.notify(`Unknown effort "${args.trim()}". Available: ${availableLevels.join(", ")}.`, "error");
+					return;
+				}
+				if (!availableLevels.includes(requestedLevel)) {
+					ctx.ui.notify(`Effort "${requestedLevel}" is not available for the current model. Available: ${availableLevels.join(", ")}.`, "warning");
+					return;
+				}
+				pi.setThinkingLevel(requestedLevel);
+				ctx.ui.notify(`Effort set to ${pi.getThinkingLevel()}.`, "info");
+				return;
+			}
+
+			if (!ctx.hasUI) {
+				ctx.ui.notify(`Available efforts: ${availableLevels.join(", ")}. Current: ${currentLevel}.`, "info");
+				return;
+			}
+
+			const options = availableLevels.map((level) => formatThinkingLevelOption(level, currentLevel));
+			const selected = await ctx.ui.select("Pick reasoning effort", options);
+			const selectedLevel = selected ? parseThinkingLevelOption(selected) : undefined;
+			if (!selectedLevel) {
+				return;
+			}
+
+			pi.setThinkingLevel(selectedLevel);
+			ctx.ui.notify(`Effort set to ${pi.getThinkingLevel()}.`, "info");
 		},
 	});
 
