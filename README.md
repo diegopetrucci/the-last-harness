@@ -1,6 +1,4 @@
-# The Last Harness
-
-The last harness you'll ever need.
+# The last harness you'll ever need.
 
 This repo is a [Pi](https://github.com/earendil-works/pi) package plus a one-line installer. It installs upstream Pi if needed, creates a separate The Last Harness Pi profile, and adds a `tlh` wrapper command.
 
