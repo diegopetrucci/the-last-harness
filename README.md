@@ -10,17 +10,7 @@ Normal `pi` config under `~/.pi/agent` is not modified.
 curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash
 ```
 
-Dry run first:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --dry-run
-```
-
-After install, start The Last Harness with:
-
-```sh
-tlh
-```
+And start it with: `tlh`.
 
 ## What the installer does
 
@@ -81,10 +71,61 @@ Caveat: Pi project settings such as `.pi/settings.json` can still apply when run
 
 ## Included Pi resources
 
-- `extensions/the-last-harness.ts` adds the custom `tlh` startup header, lightweight default guidance, and a `/tlh` status command.
+- `extensions/the-last-harness.ts` adds the custom `tlh` startup header, lightweight default guidance, `/tlh` status, and `/effort` reasoning-effort picker commands.
 - `skills/harness-setup/SKILL.md` documents safe setup/update/uninstall workflows.
 - `prompts/harness-plan.md` provides `/harness-plan` for reviewable implementation planning.
 - `themes/the-last-harness.json` provides the default isolated theme.
+
+## Local testing
+
+Test the extension directly from this checkout without installing it:
+
+```sh
+pi --no-extensions -e ./extensions/the-last-harness.ts
+```
+
+Then run the effort picker in the interactive UI:
+
+```text
+/effort
+```
+
+You can also test direct arguments and validation:
+
+```text
+/effort off
+/effort low
+/effort high
+/effort xhigh
+/effort nope
+```
+
+To test with an isolated temporary Pi profile:
+
+```sh
+tmp="$(mktemp -d)"
+PI_CODING_AGENT_DIR="$tmp/agent" pi --no-extensions -e ./extensions/the-last-harness.ts
+```
+
+To test the package install flow locally:
+
+```sh
+tmp="$(mktemp -d)"
+PI_CODING_AGENT_DIR="$tmp/agent" pi install "file:$PWD"
+PI_CODING_AGENT_DIR="$tmp/agent" pi
+```
+
+Then run:
+
+```text
+/effort
+```
+
+To test installer wrapper behavior, dry-run first with temporary paths:
+
+```sh
+bash install.sh --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -d)"
+```
 
 ## Manual install
 
