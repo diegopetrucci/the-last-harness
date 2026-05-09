@@ -8,13 +8,18 @@ This repository packages **The Last Harness** as an isolated profile for the ups
 
 - `install.sh` — one-line installer and `tlh` wrapper creator.
 - `scripts/merge-settings.mjs` — conservative settings merge helper for the isolated profile.
+- `scripts/tlh-defaults.mjs` — manages persistent opt-outs for bundled default extensions.
 - `config/settings.defaults.json` — installer-owned default Pi settings.
+- `config/default-extensions.json` — bundled default extension package manifest.
 - `config/APPEND_SYSTEM.md` — packaged system-prompt guidance.
 - `extensions/` — Pi extensions exposed by `package.json`.
 - `skills/` — Pi skills exposed by `package.json`.
 - `prompts/` — Pi prompt templates exposed by `package.json`.
 - `themes/` — Pi themes exposed by `package.json`.
 - `README.md` — public install, update, uninstall, and security documentation.
+- `CHANGELOG.md` — release notes for versioned releases.
+- `docs/releasing.md` — tag-based release checklist and process.
+- `.github/workflows/release.yml` — tag-triggered GitHub Release workflow.
 
 ## Safety Requirements
 
@@ -22,8 +27,9 @@ This repository packages **The Last Harness** as an isolated profile for the ups
 - Installer Pi commands must set `PI_CODING_AGENT_DIR` to the isolated profile directory.
 - Default isolated profile path: `~/.the-last-harness/agent`.
 - Default wrapper path: `~/.local/bin/tlh`.
-- The generated `tlh` wrapper should run upstream `pi` with the isolated `PI_CODING_AGENT_DIR`.
-- Keep settings merges conservative: append missing packages, preserve existing isolated user values, and back up existing isolated settings before writes.
+- The generated `tlh` wrapper should run upstream `pi` with the isolated `PI_CODING_AGENT_DIR`, except for installer-owned helper subcommands such as `tlh defaults`.
+- Keep settings merges conservative: append missing packages, respect `tlh.disabledDefaultExtensions`, preserve existing isolated user values, and back up existing isolated settings before writes.
+- Public installs should use GitHub Release installer assets or explicit version tags; do not rely on a `stable` branch.
 - Do not clobber unmanaged files when creating wrappers; require explicit `--force` for overwrites.
 
 ## Development Commands
@@ -33,6 +39,7 @@ Run these before considering changes ready:
 ```sh
 bash -n install.sh
 node --check scripts/merge-settings.mjs
+node --check scripts/tlh-defaults.mjs
 npm pack --dry-run
 ```
 

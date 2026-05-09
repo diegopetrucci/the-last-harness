@@ -19,9 +19,10 @@ Use this workflow when changing this repository's Pi package, one-line installer
    - `skills/`
    - `prompts/`
    - `themes/`
-4. Put installer-owned default settings in `config/settings.defaults.json`.
+4. Put installer-owned default settings in `config/settings.defaults.json` and bundled default extension metadata in `config/default-extensions.json`.
 5. Merge settings conservatively into the isolated settings file only:
    - append missing `packages` entries
+   - respect persistent `tlh.disabledDefaultExtensions` opt-outs
    - preserve existing isolated user values by default
    - require `--force` before overwriting scalar values
    - back up existing isolated settings before writing
@@ -35,6 +36,7 @@ Before release, run:
 ```bash
 bash -n install.sh
 node --check scripts/merge-settings.mjs
+node --check scripts/tlh-defaults.mjs
 node scripts/merge-settings.mjs --dry-run
 npm pack --dry-run
 ```

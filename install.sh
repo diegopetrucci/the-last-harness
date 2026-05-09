@@ -3,10 +3,6 @@ set -euo pipefail
 
 REPO="${TLH_REPO:-diegopetrucci/the-last-harness}"
 REF="${TLH_REF:-main}"
-REF_EXPLICIT=false
-if [[ -n "${TLH_REF:-}" ]]; then
-  REF_EXPLICIT=true
-fi
 
 DRY_RUN=false
 FORCE=false
@@ -44,13 +40,13 @@ Environment overrides:
   TLH_BIN_DIR          Wrapper install dir
   TLH_WRAPPER_NAME     Wrapper command name
   TLH_REPO             GitHub repo, owner/name (default: diegopetrucci/the-last-harness)
-  TLH_REF              Raw-file ref and package ref when set
+  TLH_REF              Raw-file ref and package ref (default: main in source; release assets pin this to their tag)
   TLH_PACKAGE_SOURCE   Package source passed to `pi install`
   TLH_RAW_BASE         Base URL for installer support files
 
 Examples:
-  curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash
-  curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --dry-run
+  curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash
+  curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s -- --dry-run
   bash install.sh --agent-dir ~/.tlh/agent --bin-dir ~/.local/bin
 USAGE
 }
@@ -156,13 +152,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --ref)
       REF="$(need_value "$1" "${2:-}")"
-      REF_EXPLICIT=true
       shift 2
       ;;
     --ref=*)
       REF="${1#--ref=}"
       [[ -n "${REF}" ]] || die "--ref requires a value"
-      REF_EXPLICIT=true
       shift
       ;;
     -h|--help)
@@ -179,6 +173,10 @@ AGENT_DIR="$(expand_path "${AGENT_DIR_INPUT}")"
 BIN_DIR="$(expand_path "${BIN_DIR_INPUT}")"
 SETTINGS_PATH="${AGENT_DIR}/settings.json"
 WRAPPER_MARKER="Managed by The Last Harness installer"
+MERGE_SCRIPT=""
+DEFAULTS_FILE=""
+DEFAULT_EXTENSIONS_FILE=""
+TLH_DEFAULTS_SCRIPT=""
 
 strip_trailing_slashes() {
   local path="$1"
@@ -191,7 +189,18 @@ strip_trailing_slashes() {
 normalize_path_for_compare() {
   local path
   path="$(strip_trailing_slashes "$1")"
-  node -e 'const path = require("node:path"); console.log(path.resolve(process.argv[1]));' "${path}"
+  node -e '
+const fs = require("node:fs");
+const path = require("node:path");
+function realpathForCompare(input) {
+  const resolved = path.resolve(input);
+  if (fs.existsSync(resolved)) return fs.realpathSync.native(resolved);
+  const parent = path.dirname(resolved);
+  if (parent === resolved) return resolved;
+  return path.join(realpathForCompare(parent), path.basename(resolved));
+}
+console.log(realpathForCompare(process.argv[1]));
+' "${path}"
 }
 
 validate_inputs() {
@@ -208,13 +217,11 @@ validate_inputs() {
 }
 
 WRAPPER_PATH="${BIN_DIR}/${WRAPPER_NAME}"
+PACKAGE_SOURCE_IS_DEFAULT=false
 
 if [[ -z "${PACKAGE_SOURCE}" ]]; then
-  if [[ "${REF_EXPLICIT}" == "true" ]]; then
-    PACKAGE_SOURCE="git:github.com/${REPO}@${REF}"
-  else
-    PACKAGE_SOURCE="git:github.com/${REPO}"
-  fi
+  PACKAGE_SOURCE="git:github.com/${REPO}@${REF}"
+  PACKAGE_SOURCE_IS_DEFAULT=true
 fi
 
 RAW_BASE="${TLH_RAW_BASE:-https://raw.githubusercontent.com/${REPO}/${REF}}"
@@ -258,7 +265,7 @@ find_local_repo_dir() {
 
   local dir
   dir="$(cd "$(dirname "${source_path}")" >/dev/null 2>&1 && pwd -P)" || return 1
-  if [[ -f "${dir}/scripts/merge-settings.mjs" && -f "${dir}/config/settings.defaults.json" ]]; then
+  if [[ -f "${dir}/scripts/merge-settings.mjs" && -f "${dir}/scripts/tlh-defaults.mjs" && -f "${dir}/config/settings.defaults.json" && -f "${dir}/config/default-extensions.json" ]]; then
     printf '%s\n' "${dir}"
     return 0
   fi
@@ -269,30 +276,39 @@ prepare_merge_files() {
   local local_dir=""
   if local_dir="$(find_local_repo_dir)"; then
     MERGE_SCRIPT="${local_dir}/scripts/merge-settings.mjs"
+    TLH_DEFAULTS_SCRIPT="${local_dir}/scripts/tlh-defaults.mjs"
     DEFAULTS_FILE="${local_dir}/config/settings.defaults.json"
+    DEFAULT_EXTENSIONS_FILE="${local_dir}/config/default-extensions.json"
     return 0
   fi
 
   require_command curl
   TMP_DIR="$(mktemp -d)"
   MERGE_SCRIPT="${TMP_DIR}/merge-settings.mjs"
+  TLH_DEFAULTS_SCRIPT="${TMP_DIR}/tlh-defaults.mjs"
   DEFAULTS_FILE="${TMP_DIR}/settings.defaults.json"
+  DEFAULT_EXTENSIONS_FILE="${TMP_DIR}/default-extensions.json"
 
   log "Fetching installer support files from ${RAW_BASE}"
   curl -fsSL "${RAW_BASE}/scripts/merge-settings.mjs" -o "${MERGE_SCRIPT}"
+  curl -fsSL "${RAW_BASE}/scripts/tlh-defaults.mjs" -o "${TLH_DEFAULTS_SCRIPT}"
   curl -fsSL "${RAW_BASE}/config/settings.defaults.json" -o "${DEFAULTS_FILE}"
+  curl -fsSL "${RAW_BASE}/config/default-extensions.json" -o "${DEFAULT_EXTENSIONS_FILE}"
 }
 
 prepare_merge_files_for_dry_run() {
   local local_dir=""
   if local_dir="$(find_local_repo_dir)"; then
     MERGE_SCRIPT="${local_dir}/scripts/merge-settings.mjs"
+    TLH_DEFAULTS_SCRIPT="${local_dir}/scripts/tlh-defaults.mjs"
     DEFAULTS_FILE="${local_dir}/config/settings.defaults.json"
+    DEFAULT_EXTENSIONS_FILE="${local_dir}/config/default-extensions.json"
     return 0
   fi
 
   log "Would fetch installer support files from ${RAW_BASE}"
   log "Would merge settings defaults into: ${SETTINGS_PATH}"
+  log "Would install bundled default extension packages after settings merge."
   log "Dry run only; no support files were downloaded."
   return 1
 }
@@ -331,6 +347,46 @@ backup_existing_settings_before_pi_install() {
   log "Backed up existing isolated settings to: ${backup_path}"
 }
 
+refresh_harness_package_checkout() {
+  if [[ "${PACKAGE_SOURCE_IS_DEFAULT}" != "true" ]]; then
+    return 0
+  fi
+
+  local package_root="${AGENT_DIR}/git/github.com/${REPO}"
+  log "Checking out The Last Harness git ref: ${REF}"
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    print_command git -C "${package_root}" fetch --prune --tags origin
+    log "Would prefer tag ${REF}, then origin/${REF}, then ${REF}."
+    print_command git -C "${package_root}" checkout --detach "<resolved-ref>"
+    print_command git -C "${package_root}" reset --hard "<resolved-ref>"
+    print_command git -C "${package_root}" clean -fdx
+    log "Would run npm install --omit=dev --legacy-peer-deps --package-lock=false if package.json is present."
+    return 0
+  fi
+
+  if [[ ! -d "${package_root}/.git" ]]; then
+    warn "expected installed package checkout not found, skipping git refresh: ${package_root}"
+    return 0
+  fi
+
+  git -C "${package_root}" fetch --prune --tags origin
+
+  local target_ref="${REF}"
+  if git -C "${package_root}" rev-parse --verify --quiet "refs/tags/${REF}^{commit}" >/dev/null; then
+    target_ref="refs/tags/${REF}^{commit}"
+  elif git -C "${package_root}" rev-parse --verify --quiet "refs/remotes/origin/${REF}^{commit}" >/dev/null; then
+    target_ref="refs/remotes/origin/${REF}"
+  fi
+
+  git -C "${package_root}" checkout --detach "${target_ref}"
+  git -C "${package_root}" reset --hard "${target_ref}"
+  git -C "${package_root}" clean -fdx
+
+  if [[ -f "${package_root}/package.json" ]]; then
+    (cd "${package_root}" && npm install --omit=dev --legacy-peer-deps --package-lock=false)
+  fi
+}
+
 install_harness_package() {
   log "Using isolated Pi agent dir: ${AGENT_DIR}"
   run mkdir -p "${AGENT_DIR}"
@@ -338,9 +394,14 @@ install_harness_package() {
 
   log "Installing The Last Harness Pi package into isolated profile: ${PACKAGE_SOURCE}"
   run_isolated_pi pi install "${PACKAGE_SOURCE}"
+  refresh_harness_package_checkout
+
+  if [[ "${PACKAGE_SOURCE_IS_DEFAULT}" == "true" ]]; then
+    return 0
+  fi
 
   if [[ "${DRY_RUN}" == "true" ]]; then
-    log "Would refresh package if it is already installed: PI_CODING_AGENT_DIR=${AGENT_DIR} pi update ${PACKAGE_SOURCE}"
+    log "Would refresh custom package source if it is already installed: PI_CODING_AGENT_DIR=${AGENT_DIR} pi update ${PACKAGE_SOURCE}"
     return 0
   fi
 
@@ -369,6 +430,9 @@ merge_settings() {
     "--package-source"
     "${PACKAGE_SOURCE}"
   )
+  if [[ -n "${DEFAULT_EXTENSIONS_FILE}" ]]; then
+    args+=("--default-extensions" "${DEFAULT_EXTENSIONS_FILE}")
+  fi
   if [[ "${DRY_RUN}" == "true" ]]; then
     args+=("--dry-run")
   fi
@@ -381,6 +445,57 @@ merge_settings() {
 
   log "Merging isolated Pi settings defaults: ${SETTINGS_PATH}"
   node "${args[@]}"
+}
+
+install_support_files() {
+  if [[ -z "${TLH_DEFAULTS_SCRIPT}" || -z "${DEFAULT_EXTENSIONS_FILE}" ]]; then
+    return 0
+  fi
+
+  local support_dir="${AGENT_DIR}/tlh"
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    print_command mkdir -p "${support_dir}"
+    print_command cp "${TLH_DEFAULTS_SCRIPT}" "${support_dir}/tlh-defaults.mjs"
+    print_command cp "${DEFAULT_EXTENSIONS_FILE}" "${support_dir}/default-extensions.json"
+    return 0
+  fi
+
+  mkdir -p "${support_dir}"
+  cp "${TLH_DEFAULTS_SCRIPT}" "${support_dir}/tlh-defaults.mjs"
+  cp "${DEFAULT_EXTENSIONS_FILE}" "${support_dir}/default-extensions.json"
+}
+
+install_default_extensions() {
+  if [[ "${NO_SETTINGS}" == "true" ]]; then
+    log "Skipping bundled default extensions (--no-settings)."
+    return 0
+  fi
+  if [[ -z "${TLH_DEFAULTS_SCRIPT}" || -z "${DEFAULT_EXTENSIONS_FILE}" ]]; then
+    if [[ "${DRY_RUN}" == "true" ]]; then
+      log "Would install bundled default extension packages after settings merge."
+    fi
+    return 0
+  fi
+
+  local sources_output
+  if ! sources_output="$(node "${TLH_DEFAULTS_SCRIPT}" --settings "${SETTINGS_PATH}" --defaults "${DEFAULT_EXTENSIONS_FILE}" sources)"; then
+    die "failed to read bundled default extension sources"
+  fi
+  if [[ -z "${sources_output}" ]]; then
+    log "No bundled default extensions are enabled."
+    return 0
+  fi
+
+  local source
+  while IFS= read -r source; do
+    [[ -n "${source}" ]] || continue
+    log "Installing bundled default extension package: ${source}"
+    if ! run_isolated_pi pi update --extension "${source}"; then
+      warn "default extension package update failed; continuing: ${source}"
+    fi
+  done <<EOF_SOURCES
+${sources_output}
+EOF_SOURCES
 }
 
 wrapper_is_managed() {
@@ -418,15 +533,45 @@ write_wrapper() {
 
   mkdir -p "${BIN_DIR}"
   local tmp_path="${WRAPPER_PATH}.tmp.$$"
-  local escaped_agent_dir
+  local escaped_agent_dir escaped_package_root
   escaped_agent_dir="$(printf '%q' "${AGENT_DIR}")"
+  escaped_package_root="$(printf '%q' "${AGENT_DIR}/git/github.com/${REPO}")"
 
   cat >"${tmp_path}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 # ${WRAPPER_MARKER}
 default_agent_dir=${escaped_agent_dir}
+default_tlh_package_root=${escaped_package_root}
 export PI_CODING_AGENT_DIR="\${default_agent_dir}"
+
+if [[ "\${1:-}" == "defaults" ]]; then
+  shift
+  tlh_defaults_script=""
+  tlh_default_extensions=""
+  for candidate in \
+    "\${default_agent_dir}/tlh/tlh-defaults.mjs" \
+    "\${default_tlh_package_root}/scripts/tlh-defaults.mjs"; do
+    if [[ -f "\${candidate}" ]]; then
+      tlh_defaults_script="\${candidate}"
+      break
+    fi
+  done
+  for candidate in \
+    "\${default_agent_dir}/tlh/default-extensions.json" \
+    "\${default_tlh_package_root}/config/default-extensions.json"; do
+    if [[ -f "\${candidate}" ]]; then
+      tlh_default_extensions="\${candidate}"
+      break
+    fi
+  done
+  if [[ -z "\${tlh_defaults_script}" || -z "\${tlh_default_extensions}" ]]; then
+    printf 'error: tlh defaults support files not found; re-run the installer.\n' >&2
+    exit 1
+  fi
+  exec node "\${tlh_defaults_script}" --settings "\${default_agent_dir}/settings.json" --defaults "\${tlh_default_extensions}" "\$@"
+fi
+
 exec pi "\$@"
 EOF
   chmod +x "${tmp_path}"
@@ -448,6 +593,7 @@ print_summary() {
     log "Wrapper: ${WRAPPER_PATH}"
     if path_contains_bin_dir; then
       log "Start with: ${WRAPPER_NAME}"
+      log "Manage bundled default extensions with: ${WRAPPER_NAME} defaults list"
     else
       warn "${BIN_DIR} is not on PATH. Add it with: export PATH=\"${BIN_DIR}:\$PATH\""
       log "Until then, start with: PI_CODING_AGENT_DIR=\"${AGENT_DIR}\" pi"
@@ -477,6 +623,8 @@ main() {
   install_pi_if_needed
   install_harness_package
   merge_settings
+  install_support_files
+  install_default_extensions
   write_wrapper
   print_summary
 }

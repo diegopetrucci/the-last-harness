@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  github-release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verify release tag
+        run: |
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tags must be semver tags like v1.2.3." >&2
+            exit 1
+          fi
+
+          package_version="$(node -p "require('./package.json').version")"
+          expected_tag="v${package_version}"
+          if [[ "${GITHUB_REF_NAME}" != "${expected_tag}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package.json version ${package_version}." >&2
+            exit 1
+          fi
+
+      - name: Run release checks
+        run: |
+          bash -n install.sh
+          node --check scripts/merge-settings.mjs
+          node --check scripts/tlh-defaults.mjs
+          npm pack --dry-run
+
+      - name: Build package tarball
+        run: |
+          npm pack --json > pack-output.json
+          node -e "const fs = require('node:fs'); const [pkg] = JSON.parse(fs.readFileSync('pack-output.json', 'utf8')); console.log(pkg.filename);" > tarball.txt
+
+      - name: Build pinned installer asset
+        run: |
+          mkdir -p dist
+          node <<'NODE'
+          const fs = require('node:fs');
+          const tag = process.env.GITHUB_REF_NAME;
+          const source = fs.readFileSync('install.sh', 'utf8');
+          const oldText = 'REF="${TLH_REF:-main}"';
+          const newText = `REF="\${TLH_REF:-${tag}}"`;
+          if (!source.includes(oldText)) {
+            throw new Error(`Expected installer default ref line not found: ${oldText}`);
+          }
+          fs.writeFileSync('dist/install.sh', source.replace(oldText, newText), 'utf8');
+          NODE
+          chmod +x dist/install.sh
+          bash -n dist/install.sh
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tarball="$(cat tarball.txt)"
+          gh release create "${GITHUB_REF_NAME}" \
+            "${tarball}" \
+            "dist/install.sh#install.sh" \
+            --verify-tag \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes

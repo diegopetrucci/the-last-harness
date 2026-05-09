@@ -1,0 +1,32 @@
+[
+  {
+    "id": "permission-gate",
+    "source": "npm:@diegopetrucci/pi-permission-gate",
+    "description": "Ask for confirmation before sensitive tool calls."
+  },
+  {
+    "id": "oracle",
+    "source": "npm:@diegopetrucci/pi-oracle",
+    "description": "Consult a separate read-only reasoning process for second opinions."
+  },
+  {
+    "id": "notify",
+    "source": "npm:@diegopetrucci/pi-notify",
+    "description": "Send a notification when an agent turn finishes."
+  },
+  {
+    "id": "context-cap",
+    "source": "npm:@diegopetrucci/pi-context-cap",
+    "description": "Keep context usage under a configured cap."
+  },
+  {
+    "id": "compact-bash",
+    "source": "npm:@diegopetrucci/pi-compact-bash",
+    "description": "Render collapsed bash output as a quieter one-line preview."
+  },
+  {
+    "id": "confirm-destructive",
+    "source": "npm:@diegopetrucci/pi-confirm-destructive",
+    "description": "Confirm destructive shell/file operations before they run."
+  }
+]

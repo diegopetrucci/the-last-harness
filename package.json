@@ -30,6 +30,8 @@
     "themes",
     "install.sh",
     "README.md",
+    "CHANGELOG.md",
+    "docs",
     "IMPLEMENTATION_PLAN.md"
   ],
   "pi": {

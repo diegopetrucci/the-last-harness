@@ -7,7 +7,7 @@ Normal `pi` config under `~/.pi/agent` is not modified.
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash
 ```
 
 And start it with: `tlh`.
@@ -31,16 +31,18 @@ And start it with: `tlh`.
 
    ```sh
    PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" \
-     pi install git:github.com/diegopetrucci/the-last-harness
+     pi install git:github.com/diegopetrucci/the-last-harness@<release-tag>
    ```
 
-5. Merges defaults from `config/settings.defaults.json` into:
+5. Merges defaults from `config/settings.defaults.json` and bundled default extensions from `config/default-extensions.json` into:
 
    ```text
    ~/.the-last-harness/agent/settings.json
    ```
 
-6. Creates a wrapper command:
+6. Installs enabled bundled default extension packages with Pi's package manager and registers them only in the isolated profile.
+
+7. Creates a wrapper command:
 
    ```text
    ~/.local/bin/tlh
@@ -48,18 +50,21 @@ And start it with: `tlh`.
 
 The settings merge is intentionally conservative:
 
-- appends this package to isolated `packages` if missing
+- appends this package and enabled bundled default extension packages to isolated `packages` if missing
+- respects persistent opt-outs stored under `tlh.disabledDefaultExtensions`
 - sets `theme` only when no theme is already configured in the isolated profile
 - preserves existing isolated user values by default
 - creates a timestamped backup before modifying an existing isolated settings file
 
 ## Isolation model
 
-`tlh` is a thin wrapper around upstream Pi:
+For normal agent commands, `tlh` is a thin wrapper around upstream Pi:
 
 ```sh
 PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" pi "$@"
 ```
+
+It also intercepts `tlh defaults ...` to manage TLH default-extension opt-outs in the isolated settings file.
 
 So:
 
@@ -75,6 +80,45 @@ Caveat: Pi project settings such as `.pi/settings.json` can still apply when run
 - `skills/harness-setup/SKILL.md` documents safe setup/update/uninstall workflows.
 - `prompts/harness-plan.md` provides `/harness-plan` for reviewable implementation planning.
 - `themes/the-last-harness.json` provides the default isolated theme.
+
+## Bundled default extensions
+
+The installer enables these standalone external Pi packages by default in the isolated `tlh` profile:
+
+- `npm:@diegopetrucci/pi-permission-gate`
+- `npm:@diegopetrucci/pi-oracle`
+- `npm:@diegopetrucci/pi-notify`
+- `npm:@diegopetrucci/pi-context-cap`
+- `npm:@diegopetrucci/pi-compact-bash`
+- `npm:@diegopetrucci/pi-confirm-destructive`
+
+Manage persistent opt-outs after install:
+
+```sh
+tlh defaults list
+tlh defaults disable notify
+tlh defaults enable notify
+```
+
+Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `tlh update`, `pi update --extensions`, and installer reruns.
+
+## Releases
+
+Releases are immutable Git tags. The default installer URL downloads the `install.sh` asset from the latest GitHub Release; that asset is generated with its release tag baked in.
+
+For a pinned install, use that release's installer asset:
+
+```sh
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.1.0/install.sh | bash
+```
+
+For development builds from `main`, pass `--ref main`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --ref main
+```
+
+Release instructions live in [`docs/releasing.md`](docs/releasing.md).
 
 ## Local testing
 
@@ -121,6 +165,19 @@ Then run:
 /effort
 ```
 
+To test the defaults manager without installing:
+
+```sh
+tmp="$(mktemp -d)"
+node scripts/merge-settings.mjs config/settings.defaults.json \
+  --settings "$tmp/settings.json" \
+  --default-extensions config/default-extensions.json
+node scripts/tlh-defaults.mjs \
+  --settings "$tmp/settings.json" \
+  --defaults config/default-extensions.json \
+  disable notify
+```
+
 To test installer wrapper behavior, dry-run first with temporary paths:
 
 ```sh
@@ -133,10 +190,14 @@ bash install.sh --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -
 npm install -g @earendil-works/pi-coding-agent
 mkdir -p "$HOME/.the-last-harness/agent"
 PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" \
-  pi install git:github.com/diegopetrucci/the-last-harness
+  pi install git:github.com/diegopetrucci/the-last-harness@v0.1.0
 node scripts/merge-settings.mjs \
   config/settings.defaults.json \
-  --settings "$HOME/.the-last-harness/agent/settings.json"
+  --settings "$HOME/.the-last-harness/agent/settings.json" \
+  --package-source git:github.com/diegopetrucci/the-last-harness@v0.1.0 \
+  --default-extensions config/default-extensions.json
+PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" \
+  pi update --extensions
 ```
 
 Run without the wrapper:
@@ -162,23 +223,29 @@ PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" pi
 Example custom install:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | \
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | \
   bash -s -- --agent-dir ~/.tlh/agent --bin-dir ~/.local/bin
 ```
 
 Example pinned install:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --ref v0.1.0
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.1.0/install.sh | bash
 ```
 
 ## Update
 
-Re-run the installer, or run:
+Re-run the latest release installer. This refreshes the isolated checkout to the latest release tag and re-merges installer defaults:
+
+```sh
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash
+```
+
+To update bundled default extension packages too:
 
 ```sh
 PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" \
-  pi update git:github.com/diegopetrucci/the-last-harness
+  pi update --extensions
 ```
 
 ## Uninstall
@@ -200,4 +267,4 @@ npm uninstall -g @earendil-works/pi-coding-agent
 
 ## Security note
 
-The one-line installer runs shell commands on your machine, may install a global npm package, creates an isolated Pi profile, and writes a wrapper command. Review `install.sh` before piping it to `bash` if you prefer. This repo does not create, read, or modify API keys or auth files.
+The one-line installer runs shell commands on your machine, may install global npm packages for Pi and bundled default extensions, creates an isolated Pi profile, and writes a wrapper command. Review `install.sh` before piping it to `bash` if you prefer. This repo does not create, read, or modify API keys or auth files.
