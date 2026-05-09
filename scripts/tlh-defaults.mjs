@@ -114,6 +114,16 @@ function readJson(path, { missingValue } = {}) {
 	}
 }
 
+function readStringArrayField(entry, key, label) {
+	if (entry[key] === undefined) return [];
+	if (!Array.isArray(entry[key])) {
+		throw new Error(`Default extension ${label} field '${key}' must be an array`);
+	}
+	return entry[key]
+		.map((value) => (typeof value === "string" ? value.trim() : ""))
+		.filter((value) => value.length > 0);
+}
+
 function readDefaultExtensions(path) {
 	const raw = readJson(path);
 	if (!Array.isArray(raw)) {
@@ -129,13 +139,17 @@ function readDefaultExtensions(path) {
 		const id = typeof entry.id === "string" ? entry.id.trim() : "";
 		const source = typeof entry.source === "string" ? entry.source.trim() : "";
 		const description = typeof entry.description === "string" ? entry.description.trim() : "";
+		const aliases = readStringArrayField(entry, "aliases", id || String(index + 1));
+		const replaces = readStringArrayField(entry, "replaces", id || String(index + 1));
 		if (!id) throw new Error(`Default extension entry ${index + 1} is missing id`);
 		if (!source) throw new Error(`Default extension ${id} is missing source`);
-		if (seenIds.has(id)) throw new Error(`Duplicate default extension id: ${id}`);
+		for (const candidateId of [id, ...aliases]) {
+			if (seenIds.has(candidateId)) throw new Error(`Duplicate default extension id or alias: ${candidateId}`);
+			seenIds.add(candidateId);
+		}
 		if (seenSources.has(packageIdentity(source))) throw new Error(`Duplicate default extension source: ${source}`);
-		seenIds.add(id);
 		seenSources.add(packageIdentity(source));
-		return { id, source, description };
+		return { id, aliases, replaces, source, description };
 	});
 }
 
@@ -197,11 +211,22 @@ function packageIdentity(entry) {
 	return `local:${trimmed}`;
 }
 
-function disabledIdsFromSettings(settings) {
+function rawDisabledIdsFromSettings(settings) {
 	if (!isPlainObject(settings)) return new Set();
 	const values = settings.tlh?.disabledDefaultExtensions;
 	if (!Array.isArray(values)) return new Set();
 	return new Set(values.filter((value) => typeof value === "string" && value.trim()).map((value) => value.trim()));
+}
+
+function disabledIdsFromSettings(settings, defaultExtensions = []) {
+	const ids = rawDisabledIdsFromSettings(settings);
+	for (const extension of defaultExtensions) {
+		if ([extension.id, ...extension.aliases].some((id) => ids.has(id))) {
+			ids.add(extension.id);
+			for (const alias of extension.aliases) ids.delete(alias);
+		}
+	}
+	return ids;
 }
 
 function validateSettings(settings) {
@@ -238,12 +263,17 @@ function setDisabledIds(settings, ids, defaultExtensions) {
 }
 
 function findDefaultExtension(defaultExtensions, id) {
-	return defaultExtensions.find((extension) => extension.id === id);
+	return defaultExtensions.find((extension) => extension.id === id || extension.aliases.includes(id));
 }
 
 function findPackageIndex(settings, source) {
 	const identity = packageIdentity(source);
 	return (settings.packages ?? []).findIndex((entry) => packageIdentity(entry) === identity);
+}
+
+function removePackage(settings, source) {
+	const index = findPackageIndex(settings, source);
+	if (index !== -1) settings.packages.splice(index, 1);
 }
 
 function packageEntryDisablesExtensions(entry) {
@@ -254,21 +284,24 @@ function packageEntryDisablesExtensions(entry) {
 	return patterns.includes("-index.ts") || patterns.includes("!index.ts") || patterns.includes("-*") || patterns.includes("!*");
 }
 
-function isDefaultDisabled(settings, extension) {
-	if (disabledIdsFromSettings(settings).has(extension.id)) return true;
+function isDefaultDisabled(settings, extension, defaultExtensions) {
+	if (disabledIdsFromSettings(settings, defaultExtensions).has(extension.id)) return true;
 	const index = findPackageIndex(settings, extension.source);
 	if (index === -1) return false;
 	return packageEntryDisablesExtensions(settings.packages[index]);
 }
 
 function disablePackage(settings, extension) {
-	const index = findPackageIndex(settings, extension.source);
-	if (index !== -1) {
-		settings.packages.splice(index, 1);
+	for (const source of [extension.source, ...extension.replaces]) {
+		removePackage(settings, source);
 	}
 }
 
 function enablePackage(settings, extension) {
+	for (const oldSource of extension.replaces) {
+		removePackage(settings, oldSource);
+	}
+
 	const index = findPackageIndex(settings, extension.source);
 	if (index === -1) {
 		settings.packages.push(extension.source);
@@ -287,13 +320,16 @@ function enablePackage(settings, extension) {
 	}
 }
 
-function defaultStatus(settings, extension) {
-	const markerDisabled = disabledIdsFromSettings(settings).has(extension.id);
+function defaultStatus(settings, extension, defaultExtensions) {
+	const markerDisabled = disabledIdsFromSettings(settings, defaultExtensions).has(extension.id);
 	const packageIndex = findPackageIndex(settings, extension.source);
 	const entry = packageIndex === -1 ? undefined : settings.packages[packageIndex];
 	if (markerDisabled) return { enabled: false, reason: "disabled" };
 	if (entry && packageEntryDisablesExtensions(entry)) return { enabled: false, reason: "disabled by package filter" };
 	if (entry) return { enabled: true, reason: "enabled" };
+	if (extension.replaces.some((source) => findPackageIndex(settings, source) !== -1)) {
+		return { enabled: true, reason: "enabled with replaced package; installer will switch it" };
+	}
 	return { enabled: true, reason: "enabled by default; package will be added by installer" };
 }
 
@@ -353,7 +389,7 @@ function loadSettings(settingsPath) {
 function commandList(settings, defaultExtensions) {
 	console.log("The Last Harness default extensions:");
 	for (const extension of defaultExtensions) {
-		const status = defaultStatus(settings, extension);
+		const status = defaultStatus(settings, extension, defaultExtensions);
 		const marker = status.enabled ? "enabled " : "disabled";
 		const description = extension.description ? ` — ${extension.description}` : "";
 		console.log(`  ${marker}  ${extension.id} (${extension.source})${description}`);
@@ -367,7 +403,7 @@ function commandList(settings, defaultExtensions) {
 
 function commandSources(settings, defaultExtensions) {
 	for (const extension of defaultExtensions) {
-		if (!isDefaultDisabled(settings, extension)) {
+		if (!isDefaultDisabled(settings, extension, defaultExtensions)) {
 			console.log(extension.source);
 		}
 	}
@@ -375,7 +411,7 @@ function commandSources(settings, defaultExtensions) {
 
 function commandDisable(settings, defaultExtensions, id) {
 	const extension = assertKnownExtension(defaultExtensions, id);
-	const disabledIds = disabledIdsFromSettings(settings);
+	const disabledIds = disabledIdsFromSettings(settings, defaultExtensions);
 	disabledIds.add(extension.id);
 	setDisabledIds(settings, disabledIds, defaultExtensions);
 	disablePackage(settings, extension);
@@ -383,7 +419,7 @@ function commandDisable(settings, defaultExtensions, id) {
 
 function commandEnable(settings, defaultExtensions, id) {
 	const extension = assertKnownExtension(defaultExtensions, id);
-	const disabledIds = disabledIdsFromSettings(settings);
+	const disabledIds = disabledIdsFromSettings(settings, defaultExtensions);
 	disabledIds.delete(extension.id);
 	setDisabledIds(settings, disabledIds, defaultExtensions);
 	enablePackage(settings, extension);

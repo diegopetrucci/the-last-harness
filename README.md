@@ -89,7 +89,7 @@ The installer enables these standalone external Pi packages by default in the is
 - `npm:@diegopetrucci/pi-oracle`
 - `npm:@diegopetrucci/pi-notify`
 - `npm:@diegopetrucci/pi-context-cap`
-- `npm:@diegopetrucci/pi-compact-bash`
+- `npm:@diegopetrucci/pi-quiet-tools`
 - `npm:@diegopetrucci/pi-confirm-destructive`
 
 Manage persistent opt-outs after install:

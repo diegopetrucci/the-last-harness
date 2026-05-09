@@ -4,6 +4,12 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-05-09
+
+### Changed
+
+- Replaced the bundled `pi-compact-bash` default extension with `pi-quiet-tools`.
+
 ## [0.1.0] - 2026-05-09
 
 ### Added

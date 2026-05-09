@@ -189,6 +189,16 @@ function packageIdentity(entry) {
 	return `local:${trimmed}`;
 }
 
+function readStringArrayField(entry, key, label) {
+	if (entry[key] === undefined) return [];
+	if (!Array.isArray(entry[key])) {
+		throw new Error(`Default extension ${label} field '${key}' must be an array`);
+	}
+	return entry[key]
+		.map((value) => (typeof value === "string" ? value.trim() : ""))
+		.filter((value) => value.length > 0);
+}
+
 function readDefaultExtensions(path) {
 	if (!existsSync(path)) return [];
 	const raw = readJson(path);
@@ -204,21 +214,36 @@ function readDefaultExtensions(path) {
 		}
 		const id = typeof entry.id === "string" ? entry.id.trim() : "";
 		const source = typeof entry.source === "string" ? entry.source.trim() : "";
+		const aliases = readStringArrayField(entry, "aliases", id || String(index + 1));
+		const replaces = readStringArrayField(entry, "replaces", id || String(index + 1));
 		if (!id) throw new Error(`Default extension entry ${index + 1} is missing id`);
 		if (!source) throw new Error(`Default extension ${id} is missing source`);
-		if (seenIds.has(id)) throw new Error(`Duplicate default extension id: ${id}`);
+		for (const candidateId of [id, ...aliases]) {
+			if (seenIds.has(candidateId)) throw new Error(`Duplicate default extension id or alias: ${candidateId}`);
+			seenIds.add(candidateId);
+		}
 		if (seenSources.has(packageIdentity(source))) throw new Error(`Duplicate default extension source: ${source}`);
-		seenIds.add(id);
 		seenSources.add(packageIdentity(source));
-		return { id, source };
+		return { id, aliases, replaces, source };
 	});
 }
 
-function disabledDefaultExtensionIds(settings) {
+function rawDisabledDefaultExtensionIds(settings) {
 	if (!isPlainObject(settings)) return new Set();
 	const values = settings.tlh?.disabledDefaultExtensions;
 	if (!Array.isArray(values)) return new Set();
 	return new Set(values.filter((value) => typeof value === "string" && value.trim()).map((value) => value.trim()));
+}
+
+function disabledDefaultExtensionIds(settings, defaultExtensions = []) {
+	const ids = rawDisabledDefaultExtensionIds(settings);
+	for (const extension of defaultExtensions) {
+		if ([extension.id, ...extension.aliases].some((id) => ids.has(id))) {
+			ids.add(extension.id);
+			for (const alias of extension.aliases) ids.delete(alias);
+		}
+	}
+	return ids;
 }
 
 function prepareDefaults(defaults, packageSource, defaultExtensions, disabledIds) {
@@ -243,16 +268,38 @@ function prepareDefaults(defaults, packageSource, defaultExtensions, disabledIds
 	return next;
 }
 
+function removePackageByIdentity(settings, identity) {
+	if (!identity || !Array.isArray(settings.packages)) return undefined;
+	const index = settings.packages.findIndex((entry) => packageIdentity(entry) === identity);
+	if (index === -1) return undefined;
+	const [removed] = settings.packages.splice(index, 1);
+	return packageSourceOf(removed) || identity;
+}
+
+function applyReplacedDefaultExtensions(settings, defaultExtensions, changes) {
+	if (!Array.isArray(settings.packages)) return;
+
+	for (const extension of defaultExtensions) {
+		const newIdentity = packageIdentity(extension.source);
+		for (const oldSource of extension.replaces) {
+			const oldIdentity = packageIdentity(oldSource);
+			if (!oldIdentity || oldIdentity === newIdentity) continue;
+			const removedSource = removePackageByIdentity(settings, oldIdentity);
+			if (removedSource) {
+				changes.push(`remove replaced default extension package: ${removedSource} -> ${extension.source}`);
+			}
+		}
+	}
+}
+
 function applyDisabledDefaultExtensions(settings, defaultExtensions, disabledIds, changes) {
 	if (disabledIds.size === 0 || !Array.isArray(settings.packages)) return;
 
 	for (const extension of defaultExtensions) {
 		if (!disabledIds.has(extension.id)) continue;
-		const identity = packageIdentity(extension.source);
-		const index = settings.packages.findIndex((entry) => packageIdentity(entry) === identity);
-		if (index === -1) continue;
+		const removedSource = removePackageByIdentity(settings, packageIdentity(extension.source));
+		if (!removedSource) continue;
 
-		settings.packages.splice(index, 1);
 		changes.push(`remove disabled default extension package: ${extension.id}`);
 	}
 }
@@ -410,9 +457,10 @@ function main() {
 	const existing = readJson(settingsPath, { missingValue: {} });
 	const rawDefaults = readJson(defaultsPath);
 	const defaultExtensions = readDefaultExtensions(defaultExtensionsPath);
-	const disabledIds = disabledDefaultExtensionIds(existing);
+	const disabledIds = disabledDefaultExtensionIds(existing, defaultExtensions);
 	const defaults = prepareDefaults(rawDefaults, args.packageSource, defaultExtensions, disabledIds);
 	const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
+	applyReplacedDefaultExtensions(next, defaultExtensions, changes);
 	applyDisabledDefaultExtensions(next, defaultExtensions, disabledIds, changes);
 
 	log(args, `Pi settings: ${settingsPath}`);
