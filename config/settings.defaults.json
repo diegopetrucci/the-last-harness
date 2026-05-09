@@ -2,5 +2,6 @@
   "packages": [
     "git:github.com/diegopetrucci/the-last-harness"
   ],
-  "theme": "the-last-harness"
+  "theme": "the-last-harness",
+  "quietStartup": true
 }

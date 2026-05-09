@@ -81,7 +81,7 @@ Caveat: Pi project settings such as `.pi/settings.json` can still apply when run
 
 ## Included Pi resources
 
-- `extensions/the-last-harness.ts` adds lightweight default guidance and a `/harness` status command.
+- `extensions/the-last-harness.ts` adds the custom `tlh` startup header, lightweight default guidance, and a `/tlh` status command.
 - `skills/harness-setup/SKILL.md` documents safe setup/update/uninstall workflows.
 - `prompts/harness-plan.md` provides `/harness-plan` for reviewable implementation planning.
 - `themes/the-last-harness.json` provides the default isolated theme.
