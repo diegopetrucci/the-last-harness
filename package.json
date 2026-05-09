@@ -1,0 +1,52 @@
+{
+  "name": "the-last-harness",
+  "version": "0.1.0",
+  "description": "The Last Harness Pi package",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "coding-agent",
+    "agent"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/diegopetrucci/the-last-harness.git"
+  },
+  "homepage": "https://github.com/diegopetrucci/the-last-harness#readme",
+  "bugs": {
+    "url": "https://github.com/diegopetrucci/the-last-harness/issues"
+  },
+  "engines": {
+    "node": ">=20.6.0"
+  },
+  "files": [
+    "config",
+    "extensions",
+    "prompts",
+    "scripts",
+    "skills",
+    "themes",
+    "install.sh",
+    "README.md",
+    "IMPLEMENTATION_PLAN.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./prompts"
+    ],
+    "themes": [
+      "./themes"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
