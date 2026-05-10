@@ -2,8 +2,16 @@
 
 `tlh` (the last harness) is a highly opinionated — albeit still simple — version of [pi](https://github.com/earendil-works/pi). Think of it, if you wish, as the macOS of harnesses. No bloat, no BS, but a strong direction.
 
-TODOs for this README:
-- [ ] Main features section
+## Features
+
+- **Context discipline.** The context-cap extension helps keep long sessions under control.
+- **Project memory.** Gnosis integration can record project decisions, constraints, rejected alternatives, and lessons in repo-local memory.
+- **Safety rails for agent work.** Bundled permission and destructive-action confirmations add checkpoints before sensitive commands or file changes.
+- **Cleaner sessions.** A custom startup header/footer, quieter tool output, completion notifications, and `/tlh` status keep the UI focused without hiding model-visible results.
+- **Reasoning controls.** Use `/effort` to quickly change model thinking level from the TUI or command line.
+- **Second opinions built in.** The Oracle extension can consult a separate read-only reasoning process for deeper review, debugging, and planning.
+- **Opinionated defaults, conservative updates.** TLH installs a curated theme, prompt guidance, commands, and default extensions while preserving your custom settings and opt-outs across updates.
+- **Isolated Pi profile.** `tlh` runs upstream `pi` with its own profile at `~/.the-last-harness/agent`, leaving your normal `~/.pi/agent` config untouched.
 
 ## Install
 
