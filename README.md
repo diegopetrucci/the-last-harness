@@ -1,64 +1,31 @@
 # The last harness you'll ever need.
 
-This repo is a [Pi](https://github.com/earendil-works/pi) package plus a one-line installer. It installs upstream Pi if needed, creates a separate The Last Harness Pi profile, adds a `tlh` wrapper command, and can optionally enable [Gnosis](https://github.com/skorokithakis/gnosis) project memory support.
+`tlh` (the last harness) is a highly opinionated — albeit still simple — version of [pi](https://github.com/earendil-works/pi). Think of it, if you wish, as the macOS of harnesses. No bloat, no BS, but a strong direction.
 
-Normal `pi` config under `~/.pi/agent` is not modified.
+TODOs for this README:
+- [ ] Main features section
 
 ## Install
+
+Run the one-liner:
 
 ```sh
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash
 ```
 
-And start it with: `tlh`.
+It will ask you whether you want to use [gnosis](https://github.com/skorokithakis/gnosis) for memory-management. Not required, but recommended.
 
-## What the installer does
+Once the installation is finished, start `tlh` by running… you guessed it, `tlh`.
 
-1. Checks for `node`, `npm`, and `git`.
-2. Installs upstream Pi if `pi` is missing:
+Note: if you already have `pi` installed, `tlh` does not replace it — you can keep both, as it uses its own isolated config in `~/.the-last-harness/`.
 
-   ```sh
-   npm install -g @earendil-works/pi-coding-agent
-   ```
+## Updating from a previous version
 
-3. Creates an isolated Pi agent directory:
+You can just run the install script again `curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash`.
 
-   ```text
-   ~/.the-last-harness/agent
-   ```
+The updating process is intentionally conservative, and won't replace your custom extensions, themes, and so on. If you spot anything that was overridden, please open an issue.
 
-4. Installs this repo as a Pi package inside that isolated profile:
-
-   ```sh
-   PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" \
-     pi install git:github.com/diegopetrucci/the-last-harness@<release-tag>
-   ```
-
-5. Merges defaults from `config/settings.defaults.json` and bundled default extensions from `config/default-extensions.json` into:
-
-   ```text
-   ~/.the-last-harness/agent/settings.json
-   ```
-
-6. Installs enabled bundled default extension packages with Pi's package manager and registers them only in the isolated profile.
-
-7. Offers optional Gnosis (`gn`) integration. If accepted, the installer uses an existing valid `gn` or installs a managed binary under the isolated profile.
-
-8. Creates a wrapper command:
-
-   ```text
-   ~/.local/bin/tlh
-   ```
-
-The settings merge is intentionally conservative:
-
-- appends this package and enabled bundled default extension packages to isolated `packages` if missing
-- respects persistent opt-outs stored under `tlh.disabledDefaultExtensions`
-- sets `theme` only when no theme is already configured in the isolated profile
-- preserves existing isolated user values by default
-- creates a timestamped backup before modifying an existing isolated settings file
-
-## Isolation model
+### Isolation model
 
 For normal agent commands, `tlh` is a thin wrapper around upstream Pi:
 
@@ -146,8 +113,6 @@ tlh gnosis disable
 Gnosis project data lives in repo-local `.gnosis` directories.
 
 ## Releases
-
-Releases are immutable Git tags. The default installer URL downloads the `install.sh` asset from the latest GitHub Release; that asset is generated with its release tag baked in.
 
 For a pinned install, use that release's installer asset:
 
