@@ -10,8 +10,12 @@ NO_PI_INSTALL=false
 NO_SETTINGS=false
 NO_WRAPPER=false
 QUIET=false
+GNOSIS_MODE="ask"
+GNOSIS_SUMMARY=""
 TMP_DIR=""
 PACKAGE_SOURCE="${TLH_PACKAGE_SOURCE:-}"
+GNOSIS_REPO="${TLH_GNOSIS_REPO:-skorokithakis/gnosis}"
+GNOSIS_VERSION="${TLH_GNOSIS_VERSION:-latest}"
 AGENT_DIR_INPUT="${TLH_AGENT_DIR:-$HOME/.the-last-harness/agent}"
 BIN_DIR_INPUT="${TLH_BIN_DIR:-$HOME/.local/bin}"
 WRAPPER_NAME="${TLH_WRAPPER_NAME:-tlh}"
@@ -27,13 +31,16 @@ Options:
   --dry-run        Print actions and settings changes without writing
   --force          Allow scalar isolated defaults and installer wrapper overwrite
   --no-pi-install  Fail instead of installing Pi when the `pi` command is missing
-  --no-settings    Install the package but skip isolated settings merge
-  --no-wrapper     Skip creating the tlh wrapper command
-  --agent-dir DIR  Isolated Pi agent dir (default: ~/.the-last-harness/agent)
-  --bin-dir DIR    Wrapper install dir (default: ~/.local/bin)
-  --wrapper-name N Wrapper command name (default: tlh)
-  --ref REF        Install The Last Harness from a branch, tag, or commit
-  -h, --help       Show this help
+  --no-settings     Install the package but skip isolated settings merge
+  --no-wrapper      Skip creating the tlh wrapper command
+  --with-gnosis     Install/enable optional Gnosis (`gn`) integration
+  --without-gnosis  Disable optional Gnosis integration without prompting
+  --no-gnosis       Alias for --without-gnosis
+  --agent-dir DIR   Isolated Pi agent dir (default: ~/.the-last-harness/agent)
+  --bin-dir DIR     Wrapper install dir (default: ~/.local/bin)
+  --wrapper-name N  Wrapper command name (default: tlh)
+  --ref REF         Install The Last Harness from a branch, tag, or commit
+  -h, --help        Show this help
 
 Environment overrides:
   TLH_AGENT_DIR        Isolated Pi agent dir
@@ -43,6 +50,8 @@ Environment overrides:
   TLH_REF              Raw-file ref and package ref (default: main in source; release assets pin this to their tag)
   TLH_PACKAGE_SOURCE   Package source passed to `pi install`
   TLH_RAW_BASE         Base URL for installer support files
+  TLH_GNOSIS_VERSION   Gnosis version to install (default: latest)
+  TLH_GNOSIS_REPO      Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
 
 Examples:
   curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash
@@ -54,6 +63,12 @@ USAGE
 log() {
   if [[ "${QUIET}" != "true" ]]; then
     printf '%s\n' "$*"
+  fi
+}
+
+log_stderr() {
+  if [[ "${QUIET}" != "true" ]]; then
+    printf '%s\n' "$*" >&2
   fi
 }
 
@@ -119,6 +134,14 @@ while [[ $# -gt 0 ]]; do
       NO_WRAPPER=true
       shift
       ;;
+    --with-gnosis)
+      GNOSIS_MODE="with"
+      shift
+      ;;
+    --without-gnosis|--no-gnosis)
+      GNOSIS_MODE="without"
+      shift
+      ;;
     --agent-dir)
       AGENT_DIR_INPUT="$(need_value "$1" "${2:-}")"
       shift 2
@@ -177,6 +200,7 @@ MERGE_SCRIPT=""
 DEFAULTS_FILE=""
 DEFAULT_EXTENSIONS_FILE=""
 TLH_DEFAULTS_SCRIPT=""
+TLH_GNOSIS_SCRIPT=""
 
 strip_trailing_slashes() {
   local path="$1"
@@ -274,9 +298,13 @@ find_local_repo_dir() {
 
 prepare_merge_files() {
   local local_dir=""
+  TLH_GNOSIS_SCRIPT=""
   if local_dir="$(find_local_repo_dir)"; then
     MERGE_SCRIPT="${local_dir}/scripts/merge-settings.mjs"
     TLH_DEFAULTS_SCRIPT="${local_dir}/scripts/tlh-defaults.mjs"
+    if [[ -f "${local_dir}/scripts/tlh-gnosis.mjs" ]]; then
+      TLH_GNOSIS_SCRIPT="${local_dir}/scripts/tlh-gnosis.mjs"
+    fi
     DEFAULTS_FILE="${local_dir}/config/settings.defaults.json"
     DEFAULT_EXTENSIONS_FILE="${local_dir}/config/default-extensions.json"
     return 0
@@ -286,21 +314,30 @@ prepare_merge_files() {
   TMP_DIR="$(mktemp -d)"
   MERGE_SCRIPT="${TMP_DIR}/merge-settings.mjs"
   TLH_DEFAULTS_SCRIPT="${TMP_DIR}/tlh-defaults.mjs"
+  TLH_GNOSIS_SCRIPT="${TMP_DIR}/tlh-gnosis.mjs"
   DEFAULTS_FILE="${TMP_DIR}/settings.defaults.json"
   DEFAULT_EXTENSIONS_FILE="${TMP_DIR}/default-extensions.json"
 
   log "Fetching installer support files from ${RAW_BASE}"
   curl -fsSL "${RAW_BASE}/scripts/merge-settings.mjs" -o "${MERGE_SCRIPT}"
   curl -fsSL "${RAW_BASE}/scripts/tlh-defaults.mjs" -o "${TLH_DEFAULTS_SCRIPT}"
+  if ! curl -fsSL "${RAW_BASE}/scripts/tlh-gnosis.mjs" -o "${TLH_GNOSIS_SCRIPT}"; then
+    warn "optional Gnosis support script not found for ref ${REF}; continuing without tlh gnosis helper"
+    TLH_GNOSIS_SCRIPT=""
+  fi
   curl -fsSL "${RAW_BASE}/config/settings.defaults.json" -o "${DEFAULTS_FILE}"
   curl -fsSL "${RAW_BASE}/config/default-extensions.json" -o "${DEFAULT_EXTENSIONS_FILE}"
 }
 
 prepare_merge_files_for_dry_run() {
   local local_dir=""
+  TLH_GNOSIS_SCRIPT=""
   if local_dir="$(find_local_repo_dir)"; then
     MERGE_SCRIPT="${local_dir}/scripts/merge-settings.mjs"
     TLH_DEFAULTS_SCRIPT="${local_dir}/scripts/tlh-defaults.mjs"
+    if [[ -f "${local_dir}/scripts/tlh-gnosis.mjs" ]]; then
+      TLH_GNOSIS_SCRIPT="${local_dir}/scripts/tlh-gnosis.mjs"
+    fi
     DEFAULTS_FILE="${local_dir}/config/settings.defaults.json"
     DEFAULT_EXTENSIONS_FILE="${local_dir}/config/default-extensions.json"
     return 0
@@ -309,6 +346,7 @@ prepare_merge_files_for_dry_run() {
   log "Would fetch installer support files from ${RAW_BASE}"
   log "Would merge settings defaults into: ${SETTINGS_PATH}"
   log "Would install bundled default extension packages after settings merge."
+  log "Would fetch optional Gnosis integration support files."
   log "Dry run only; no support files were downloaded."
   return 1
 }
@@ -456,12 +494,18 @@ install_support_files() {
   if [[ "${DRY_RUN}" == "true" ]]; then
     print_command mkdir -p "${support_dir}"
     print_command cp "${TLH_DEFAULTS_SCRIPT}" "${support_dir}/tlh-defaults.mjs"
+    if [[ -n "${TLH_GNOSIS_SCRIPT}" ]]; then
+      print_command cp "${TLH_GNOSIS_SCRIPT}" "${support_dir}/tlh-gnosis.mjs"
+    fi
     print_command cp "${DEFAULT_EXTENSIONS_FILE}" "${support_dir}/default-extensions.json"
     return 0
   fi
 
   mkdir -p "${support_dir}"
   cp "${TLH_DEFAULTS_SCRIPT}" "${support_dir}/tlh-defaults.mjs"
+  if [[ -n "${TLH_GNOSIS_SCRIPT}" ]]; then
+    cp "${TLH_GNOSIS_SCRIPT}" "${support_dir}/tlh-gnosis.mjs"
+  fi
   cp "${DEFAULT_EXTENSIONS_FILE}" "${support_dir}/default-extensions.json"
 }
 
@@ -496,6 +540,368 @@ install_default_extensions() {
   done <<EOF_SOURCES
 ${sources_output}
 EOF_SOURCES
+}
+
+validate_gnosis_command() {
+  local candidate="$1"
+  if [[ -n "${TLH_GNOSIS_SCRIPT}" ]]; then
+    node "${TLH_GNOSIS_SCRIPT}" --settings "${SETTINGS_PATH}" --agent-dir "${AGENT_DIR}" --quiet validate "${candidate}" >/dev/null 2>&1
+    return $?
+  fi
+  "${candidate}" help plan >/dev/null 2>&1 && "${candidate}" help review >/dev/null 2>&1
+}
+
+find_valid_gnosis_command() {
+  local candidate=""
+  if [[ -n "${TLH_GNOSIS_SCRIPT}" ]]; then
+    if candidate="$(node "${TLH_GNOSIS_SCRIPT}" --settings "${SETTINGS_PATH}" --agent-dir "${AGENT_DIR}" --quiet validate 2>/dev/null)" && [[ -n "${candidate}" ]]; then
+      if [[ "${candidate}" == "gn" ]] && command_exists gn; then
+        command -v gn
+      else
+        printf '%s\n' "${candidate}"
+      fi
+      return 0
+    fi
+  fi
+
+  candidate="${AGENT_DIR}/bin/gn"
+  if [[ -x "${candidate}" ]] && validate_gnosis_command "${candidate}"; then
+    printf '%s\n' "${candidate}"
+    return 0
+  fi
+
+  if command_exists gn; then
+    candidate="$(command -v gn)"
+    if validate_gnosis_command "${candidate}"; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+gnosis_state() {
+  if [[ -z "${TLH_GNOSIS_SCRIPT}" ]]; then
+    printf 'unset\n'
+    return 0
+  fi
+  node "${TLH_GNOSIS_SCRIPT}" --settings "${SETTINGS_PATH}" --agent-dir "${AGENT_DIR}" state 2>/dev/null || printf 'unset\n'
+}
+
+set_gnosis_enabled() {
+  local install_path="${1:-}"
+  if [[ -z "${TLH_GNOSIS_SCRIPT}" ]]; then
+    warn "Gnosis support script not found; cannot update isolated settings"
+    return 1
+  fi
+
+  local args=(
+    "${TLH_GNOSIS_SCRIPT}"
+    "--settings"
+    "${SETTINGS_PATH}"
+    "--agent-dir"
+    "${AGENT_DIR}"
+  )
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    args+=("--dry-run")
+  fi
+  if [[ "${QUIET}" == "true" ]]; then
+    args+=("--quiet")
+  fi
+  if [[ -n "${install_path}" ]]; then
+    args+=("--install-path" "${install_path}")
+  fi
+  args+=("enable")
+
+  node "${args[@]}"
+}
+
+set_gnosis_disabled() {
+  if [[ -z "${TLH_GNOSIS_SCRIPT}" ]]; then
+    warn "Gnosis support script not found; cannot update isolated settings"
+    return 1
+  fi
+
+  local args=(
+    "${TLH_GNOSIS_SCRIPT}"
+    "--settings"
+    "${SETTINGS_PATH}"
+    "--agent-dir"
+    "${AGENT_DIR}"
+    "disable"
+  )
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    args+=("--dry-run")
+  fi
+  if [[ "${QUIET}" == "true" ]]; then
+    args+=("--quiet")
+  fi
+
+  node "${args[@]}"
+}
+
+prompt_for_gnosis() {
+  if ! { exec 3<>/dev/tty; } 2>/dev/null; then
+    return 2
+  fi
+
+  local answer=""
+  printf '%s' "Optional: tlh works better with Gnosis (\`gn\`), which lets agents remember project decisions, constraints, and lessons. Install and enable it for this isolated tlh profile? [y/N] " >&3
+  if ! IFS= read -r answer <&3; then
+    exec 3>&-
+    return 2
+  fi
+  exec 3>&-
+  case "${answer}" in
+    [Yy]|[Yy][Ee][Ss]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+gnosis_platform() {
+  local os arch
+  case "$(uname -s)" in
+    Darwin) os="darwin" ;;
+    Linux) os="linux" ;;
+    *) return 1 ;;
+  esac
+
+  case "$(uname -m)" in
+    arm64|aarch64) arch="arm64" ;;
+    x86_64|amd64) arch="amd64" ;;
+    *) return 1 ;;
+  esac
+
+  printf '%s %s\n' "${os}" "${arch}"
+}
+
+resolve_gnosis_version() {
+  if [[ -n "${GNOSIS_VERSION}" && "${GNOSIS_VERSION}" != "latest" ]]; then
+    printf '%s\n' "${GNOSIS_VERSION#v}"
+    return 0
+  fi
+
+  local latest_url version
+  latest_url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${GNOSIS_REPO}/releases/latest")" || return 1
+  version="${latest_url##*/}"
+  version="${version#v}"
+  [[ -n "${version}" && "${version}" != "latest" ]] || return 1
+  printf '%s\n' "${version}"
+}
+
+sha256_file() {
+  local path="$1" output
+  if command_exists sha256sum; then
+    output="$(sha256sum "${path}")" || return 1
+    printf '%s\n' "${output%% *}"
+    return 0
+  fi
+  if command_exists shasum; then
+    output="$(shasum -a 256 "${path}")" || return 1
+    printf '%s\n' "${output%% *}"
+    return 0
+  fi
+  return 1
+}
+
+checksum_for_asset() {
+  local checksums_file="$1"
+  local asset_name="$2"
+  local checksum filename rest
+  while read -r checksum filename rest; do
+    [[ -n "${checksum}" && -n "${filename}" ]] || continue
+    filename="${filename#./}"
+    if [[ "${filename}" == "${asset_name}" ]]; then
+      printf '%s\n' "${checksum}"
+      return 0
+    fi
+  done <"${checksums_file}"
+  return 1
+}
+
+verify_gnosis_archive() {
+  local archive="$1"
+  local asset_name="$2"
+  local version="$3"
+  local checksums_url="https://github.com/${GNOSIS_REPO}/releases/download/v${version}/checksums.txt"
+  local checksums_file="${archive}.checksums"
+  local expected actual
+
+  if ! curl -fsSL "${checksums_url}" -o "${checksums_file}"; then
+    warn "failed to download Gnosis checksums: ${checksums_url}"
+    return 1
+  fi
+  if ! expected="$(checksum_for_asset "${checksums_file}" "${asset_name}")"; then
+    warn "Gnosis checksums did not include ${asset_name}"
+    return 1
+  fi
+  if ! actual="$(sha256_file "${archive}")"; then
+    warn "required checksum command not found: sha256sum or shasum"
+    return 1
+  fi
+  if [[ "${actual}" != "${expected}" ]]; then
+    warn "Gnosis checksum verification failed for ${asset_name}"
+    return 1
+  fi
+}
+
+install_managed_gnosis() {
+  local target="${AGENT_DIR}/bin/gn"
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    log_stderr "Would install Gnosis into isolated profile: ${target}"
+    log_stderr "Would download latest compatible release from https://github.com/${GNOSIS_REPO}"
+    printf '%s\n' "${target}"
+    return 0
+  fi
+
+  require_command curl
+  require_command tar
+
+  local platform os arch version asset_name url gn_tmp archive extract_dir extracted temp_target
+  if ! platform="$(gnosis_platform)"; then
+    warn "Gnosis prebuilt binary is not available for this platform; install manually from https://github.com/${GNOSIS_REPO}"
+    return 1
+  fi
+  os="${platform%% *}"
+  arch="${platform##* }"
+
+  if ! version="$(resolve_gnosis_version)"; then
+    warn "could not resolve latest Gnosis release; install manually from https://github.com/${GNOSIS_REPO}"
+    return 1
+  fi
+
+  asset_name="gnosis_${version}_${os}_${arch}.tar.gz"
+  url="https://github.com/${GNOSIS_REPO}/releases/download/v${version}/${asset_name}"
+  gn_tmp="$(mktemp -d)"
+  archive="${gn_tmp}/gnosis.tar.gz"
+  extract_dir="${gn_tmp}/extract"
+  mkdir -p "${extract_dir}"
+
+  log_stderr "Installing Gnosis ${version} into isolated profile: ${target}"
+  if ! curl -fsSL "${url}" -o "${archive}"; then
+    rm -rf "${gn_tmp}"
+    warn "failed to download Gnosis release archive: ${url}"
+    return 1
+  fi
+  if ! verify_gnosis_archive "${archive}" "${asset_name}" "${version}"; then
+    rm -rf "${gn_tmp}"
+    return 1
+  fi
+  if ! tar -xzf "${archive}" -C "${extract_dir}"; then
+    rm -rf "${gn_tmp}"
+    warn "failed to extract Gnosis release archive"
+    return 1
+  fi
+
+  extracted="$(find "${extract_dir}" -type f -name gn | head -n 1 || true)"
+  if [[ -z "${extracted}" ]]; then
+    rm -rf "${gn_tmp}"
+    warn "Gnosis release archive did not contain a gn binary"
+    return 1
+  fi
+
+  mkdir -p "${AGENT_DIR}/bin"
+  temp_target="${target}.tmp.$$"
+  cp "${extracted}" "${temp_target}"
+  chmod 0755 "${temp_target}"
+
+  if ! validate_gnosis_command "${temp_target}"; then
+    rm -f "${temp_target}"
+    rm -rf "${gn_tmp}"
+    warn "downloaded Gnosis binary did not validate"
+    return 1
+  fi
+
+  mv "${temp_target}" "${target}"
+  rm -rf "${gn_tmp}"
+  printf '%s\n' "${target}"
+}
+
+configure_gnosis() {
+  if [[ "${NO_SETTINGS}" == "true" ]]; then
+    log "Skipping optional Gnosis integration (--no-settings)."
+    return 0
+  fi
+  if [[ -z "${TLH_GNOSIS_SCRIPT}" ]]; then
+    if [[ "${GNOSIS_MODE}" != "ask" ]]; then
+      warn "Gnosis integration option was provided, but support files are unavailable for ref ${REF}; skipping"
+    else
+      log "Skipping optional Gnosis integration; support files are unavailable."
+    fi
+    return 0
+  fi
+
+  local current_state requested valid_path managed_path
+  current_state="$(gnosis_state)"
+  requested="${GNOSIS_MODE}"
+
+  if [[ "${requested}" == "without" ]]; then
+    log "Disabling optional Gnosis integration for tlh."
+    set_gnosis_disabled
+    GNOSIS_SUMMARY="Gnosis integration: disabled"
+    return 0
+  fi
+
+  if [[ "${requested}" == "ask" && "${current_state}" != "unset" ]]; then
+    log "Keeping existing Gnosis integration setting: ${current_state}."
+    if [[ "${current_state}" == "enabled" ]]; then
+      if valid_path="$(find_valid_gnosis_command)"; then
+        GNOSIS_SUMMARY="Gnosis integration: enabled (${valid_path})"
+      else
+        GNOSIS_SUMMARY="Gnosis integration: enabled, but no valid gn binary was found"
+        warn "Gnosis integration is enabled, but no valid gn binary was found. Re-run with --with-gnosis to install it."
+      fi
+    else
+      GNOSIS_SUMMARY="Gnosis integration: disabled"
+    fi
+    return 0
+  fi
+
+  if [[ "${requested}" == "ask" ]]; then
+    if [[ "${DRY_RUN}" == "true" ]]; then
+      log "Would ask whether to install and enable optional Gnosis integration."
+      GNOSIS_SUMMARY="Gnosis integration: not configured (dry run)"
+      return 0
+    fi
+    if prompt_for_gnosis; then
+      requested="with"
+    else
+      local prompt_status=$?
+      if [[ "${prompt_status}" -eq 2 ]]; then
+        log "No TTY available for optional Gnosis prompt. Re-run with --with-gnosis to install/enable it."
+        GNOSIS_SUMMARY="Gnosis integration: not configured"
+        return 0
+      fi
+      log "Gnosis integration declined."
+      set_gnosis_disabled
+      GNOSIS_SUMMARY="Gnosis integration: disabled"
+      return 0
+    fi
+  fi
+
+  if [[ "${requested}" != "with" ]]; then
+    return 0
+  fi
+
+  valid_path=""
+  if valid_path="$(find_valid_gnosis_command)"; then
+    log "Found valid Gnosis binary: ${valid_path}"
+    set_gnosis_enabled "${valid_path}"
+    GNOSIS_SUMMARY="Gnosis integration: enabled (${valid_path})"
+    return 0
+  fi
+
+  if managed_path="$(install_managed_gnosis)"; then
+    set_gnosis_enabled "${managed_path}"
+    GNOSIS_SUMMARY="Gnosis integration: enabled (${managed_path})"
+    return 0
+  fi
+
+  warn "Gnosis integration was requested, but Gnosis could not be installed automatically."
+  warn "Leaving Gnosis integration disabled; install Gnosis manually and run: ${WRAPPER_NAME} gnosis enable"
+  set_gnosis_disabled
+  GNOSIS_SUMMARY="Gnosis integration: disabled (gn was not installed)"
 }
 
 wrapper_is_managed() {
@@ -572,7 +978,31 @@ if [[ "\${1:-}" == "defaults" ]]; then
   exec node "\${tlh_defaults_script}" --settings "\${default_agent_dir}/settings.json" --defaults "\${tlh_default_extensions}" "\$@"
 fi
 
-exec pi "\$@"
+if [[ "\${1:-}" == "gnosis" ]]; then
+  shift
+  tlh_gnosis_script=""
+  for candidate in \
+    "\${default_agent_dir}/tlh/tlh-gnosis.mjs" \
+    "\${default_tlh_package_root}/scripts/tlh-gnosis.mjs"; do
+    if [[ -f "\${candidate}" ]]; then
+      tlh_gnosis_script="\${candidate}"
+      break
+    fi
+  done
+  if [[ -z "\${tlh_gnosis_script}" ]]; then
+    printf 'error: tlh gnosis support files not found; re-run the installer.\n' >&2
+    exit 1
+  fi
+  exec node "\${tlh_gnosis_script}" --settings "\${default_agent_dir}/settings.json" --agent-dir "\${default_agent_dir}" "\$@"
+fi
+
+pi_cmd="\$(command -v pi || true)"
+if [[ -z "\${pi_cmd}" ]]; then
+  printf 'error: pi command not found on PATH.\n' >&2
+  exit 1
+fi
+export PATH="\${default_agent_dir}/bin\${PATH:+:\${PATH}}"
+exec "\${pi_cmd}" "\$@"
 EOF
   chmod +x "${tmp_path}"
   mv "${tmp_path}" "${WRAPPER_PATH}"
@@ -589,11 +1019,15 @@ print_summary() {
   log ""
   log "Done. The Last Harness is installed as an isolated Pi profile."
   log "Isolated settings: ${SETTINGS_PATH}"
+  if [[ -n "${GNOSIS_SUMMARY}" ]]; then
+    log "${GNOSIS_SUMMARY}"
+  fi
   if [[ "${NO_WRAPPER}" != "true" ]]; then
     log "Wrapper: ${WRAPPER_PATH}"
     if path_contains_bin_dir; then
       log "Start with: ${WRAPPER_NAME}"
       log "Manage bundled default extensions with: ${WRAPPER_NAME} defaults list"
+      log "Manage optional Gnosis integration with: ${WRAPPER_NAME} gnosis status"
     else
       warn "${BIN_DIR} is not on PATH. Add it with: export PATH=\"${BIN_DIR}:\$PATH\""
       log "Until then, start with: PI_CODING_AGENT_DIR=\"${AGENT_DIR}\" pi"
@@ -625,6 +1059,7 @@ main() {
   merge_settings
   install_support_files
   install_default_extensions
+  configure_gnosis
   write_wrapper
   print_summary
 }

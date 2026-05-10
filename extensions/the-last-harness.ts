@@ -1,5 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { basename, dirname, extname, join, relative, resolve } from "node:path";
+import { basename, delimiter, dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
@@ -33,12 +34,30 @@ The Last Harness (tlh) profile is active. Prefer safe, transparent, and reviewab
 - Document how to undo any persistent change.
 `;
 
+const GNOSIS_PROMPT = [
+	"At the start of any task, run `gn help plan` and follow its instructions.",
+	"After finishing a task, run `gn help review`.",
+].join("\n");
+
+const GNOSIS_VALIDATION_TIMEOUT_MS = 5000;
+
 type StartupResources = {
 	context: string[];
 	skills: string[];
 	prompts: string[];
 	extensions: string[];
 	themes: string[];
+};
+
+type TlhGnosisConfig = {
+	enabled?: boolean;
+	installPath?: string;
+};
+
+type TlhSettings = {
+	tlh?: {
+		gnosis?: TlhGnosisConfig;
+	};
 };
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -79,6 +98,89 @@ function readText(path: string): string | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+function expandHomePath(path: string): string {
+	const home = process.env.HOME || process.env.USERPROFILE;
+	if (home && path === "~") {
+		return home;
+	}
+	if (home && path.startsWith("~/")) {
+		return join(home, path.slice(2));
+	}
+	return path;
+}
+
+function getTlhGnosisConfig(cwd: string): TlhGnosisConfig | undefined {
+	try {
+		const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as TlhSettings;
+		return settings.tlh?.gnosis;
+	} catch {
+		return undefined;
+	}
+}
+
+function configuredGnosisPath(config: TlhGnosisConfig | undefined): string | undefined {
+	const installPath = config?.installPath;
+	if (typeof installPath !== "string" || !installPath.trim()) {
+		return undefined;
+	}
+	return resolve(expandHomePath(installPath.trim()));
+}
+
+function uniqueGnosisCandidates(candidates: Array<string | undefined>): string[] {
+	const seen = new Set<string>();
+	const unique: string[] = [];
+	for (const candidate of candidates) {
+		if (!candidate) continue;
+		const key = candidate === "gn" ? candidate : resolve(candidate);
+		if (seen.has(key)) continue;
+		seen.add(key);
+		unique.push(candidate);
+	}
+	return unique;
+}
+
+function validateGnosisCommand(command: string): boolean {
+	try {
+		for (const args of [["help", "plan"], ["help", "review"]]) {
+			execFileSync(command, args, { stdio: "ignore", timeout: GNOSIS_VALIDATION_TIMEOUT_MS });
+		}
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function prependProcessPath(dir: string): void {
+	const currentPath = process.env.PATH || "";
+	const entries = currentPath.split(delimiter).filter(Boolean);
+	if (entries.includes(dir)) {
+		return;
+	}
+	process.env.PATH = [dir, ...entries].join(delimiter);
+}
+
+function findEnabledGnosisCommand(cwd: string): string | undefined {
+	const config = getTlhGnosisConfig(cwd);
+	if (config?.enabled !== true) {
+		return undefined;
+	}
+
+	const agentDir = getAgentDir();
+	const candidates = uniqueGnosisCandidates([configuredGnosisPath(config), join(agentDir, "bin", "gn"), "gn"]);
+	for (const candidate of candidates) {
+		if (!validateGnosisCommand(candidate)) continue;
+		if (candidate !== "gn") {
+			prependProcessPath(dirname(candidate));
+		}
+		return candidate;
+	}
+	return undefined;
+}
+
+function shouldAppendGnosisPrompt(cwd: string): boolean {
+	return Boolean(findEnabledGnosisCommand(cwd));
 }
 
 function parseFrontmatterValue(content: string | undefined, key: string): string | undefined {
@@ -548,7 +650,11 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		}
 	});
 
-	pi.on("before_agent_start", async (event) => ({
-		systemPrompt: `${event.systemPrompt}\n${HARNESS_PROMPT}`,
-	}));
+	pi.on("before_agent_start", async (event, ctx) => {
+		const prompts = [event.systemPrompt, HARNESS_PROMPT];
+		if (shouldAppendGnosisPrompt(ctx.cwd)) {
+			prompts.push(GNOSIS_PROMPT);
+		}
+		return { systemPrompt: prompts.join("\n") };
+	});
 }

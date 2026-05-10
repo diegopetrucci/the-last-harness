@@ -27,6 +27,7 @@ Update `CHANGELOG.md`, then run:
 bash -n install.sh
 node --check scripts/merge-settings.mjs
 node --check scripts/tlh-defaults.mjs
+node --check scripts/tlh-gnosis.mjs
 npm pack --dry-run
 ```
 
