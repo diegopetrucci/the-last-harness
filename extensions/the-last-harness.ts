@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
 	DefaultPackageManager,
 	SettingsManager,
@@ -9,6 +10,8 @@ import {
 	keyText,
 	loadProjectContextFiles,
 	type ExtensionAPI,
+	type ExtensionContext,
+	type ReadonlyFooterDataProvider,
 	type ResolvedResource,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
@@ -99,6 +102,76 @@ function parseFrontmatterValue(content: string | undefined, key: string): string
 
 function uniqueSorted(values: string[]): string[] {
 	return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+function sanitizeStatusText(text: string): string {
+	return text
+		.replace(/[\r\n\t]/g, " ")
+		.replace(/ +/g, " ")
+		.trim();
+}
+
+function formatTokens(count: number): string {
+	if (count < 1000) {
+		return count.toString();
+	}
+	if (count < 10000) {
+		return `${(count / 1000).toFixed(1)}k`;
+	}
+	if (count < 1000000) {
+		return `${Math.round(count / 1000)}k`;
+	}
+	if (count < 10000000) {
+		return `${(count / 1000000).toFixed(1)}M`;
+	}
+	return `${Math.round(count / 1000000)}M`;
+}
+
+function formatHomePath(path: string): string {
+	const home = process.env.HOME || process.env.USERPROFILE;
+	if (home && (path === home || path.startsWith(`${home}/`))) {
+		return `~${path.slice(home.length)}`;
+	}
+	return path;
+}
+
+function formatCost(cost: number): string {
+	return cost < 0.001 ? "<$0.001" : `$${cost.toFixed(3)}`;
+}
+
+function isAutoCompactionEnabled(cwd: string): boolean {
+	try {
+		return SettingsManager.create(cwd, getAgentDir()).getCompactionEnabled();
+	} catch {
+		return true;
+	}
+}
+
+function getCurrentThinkingLevel(pi: ExtensionAPI): string {
+	try {
+		return pi.getThinkingLevel();
+	} catch {
+		return "off";
+	}
+}
+
+function collectUsageTotals(ctx: ExtensionContext) {
+	const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+	for (const entry of ctx.sessionManager.getEntries()) {
+		if (entry.type !== "message" || entry.message.role !== "assistant") {
+			continue;
+		}
+		const usage = entry.message.usage;
+		if (!usage) {
+			continue;
+		}
+		totals.input += Number(usage.input) || 0;
+		totals.output += Number(usage.output) || 0;
+		totals.cacheRead += Number(usage.cacheRead) || 0;
+		totals.cacheWrite += Number(usage.cacheWrite) || 0;
+		totals.cost += Number(usage.cost?.total) || 0;
+	}
+	return totals;
 }
 
 function formatPathFromCwd(cwd: string, filePath: string): string {
@@ -204,6 +277,128 @@ async function collectStartupResources(cwd: string): Promise<StartupResources> {
 		prompts: uniqueSorted(enabled(resolved.prompts).map(labelPrompt)),
 		extensions: uniqueSorted(enabled(resolved.extensions).map(labelExtension)),
 		themes: uniqueSorted(enabled(resolved.themes).map(labelTheme)),
+	};
+}
+
+function createTlhFooter(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	theme: Theme,
+	footerData?: ReadonlyFooterDataProvider,
+) {
+	return {
+		render(width: number): string[] {
+			const model = ctx.model;
+			const totals = collectUsageTotals(ctx);
+			const contextUsage = ctx.getContextUsage();
+			const contextWindow = contextUsage?.contextWindow ?? model?.contextWindow ?? 0;
+			const contextPercentValue = contextUsage?.percent ?? 0;
+			const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
+
+			let pwd = formatHomePath(ctx.sessionManager.getCwd());
+			const branch = footerData?.getGitBranch?.();
+			if (branch) {
+				pwd = `${pwd} (${branch})`;
+			}
+			const sessionName = ctx.sessionManager.getSessionName();
+			if (sessionName) {
+				pwd = `${pwd} • ${sessionName}`;
+			}
+
+			const statsParts: string[] = [];
+			if (totals.input) {
+				statsParts.push(`↑${formatTokens(totals.input)}`);
+			}
+			if (totals.output) {
+				statsParts.push(`↓${formatTokens(totals.output)}`);
+			}
+			if (totals.cacheRead) {
+				statsParts.push(`R${formatTokens(totals.cacheRead)}`);
+			}
+			if (totals.cacheWrite) {
+				statsParts.push(`W${formatTokens(totals.cacheWrite)}`);
+			}
+
+			const usingSubscription = model ? ctx.modelRegistry.isUsingOAuth(model) : false;
+			if (totals.cost > 0) {
+				statsParts.push(`${formatCost(totals.cost)}${usingSubscription ? " (sub)" : ""}`);
+			}
+
+			const autoIndicator = isAutoCompactionEnabled(ctx.cwd) ? " (auto)" : "";
+			const contextPercentDisplay =
+				contextPercent === "?"
+					? `?/${formatTokens(contextWindow)}${autoIndicator}`
+					: `${contextPercent}%/${formatTokens(contextWindow)}${autoIndicator}`;
+			let contextPercentStr: string;
+			if (contextPercentValue > 90) {
+				contextPercentStr = theme.fg("error", contextPercentDisplay);
+			} else if (contextPercentValue > 70) {
+				contextPercentStr = theme.fg("warning", contextPercentDisplay);
+			} else {
+				contextPercentStr = contextPercentDisplay;
+			}
+			statsParts.push(contextPercentStr);
+
+			let statsLeft = statsParts.join(" ");
+			let statsLeftWidth = visibleWidth(statsLeft);
+			if (statsLeftWidth > width) {
+				statsLeft = truncateToWidth(statsLeft, width, "...");
+				statsLeftWidth = visibleWidth(statsLeft);
+			}
+
+			const modelName = model?.id || "no-model";
+			let rightSideWithoutProvider = modelName;
+			if (model?.reasoning) {
+				const thinkingLevel = getCurrentThinkingLevel(pi);
+				rightSideWithoutProvider =
+					thinkingLevel === "off" ? `${modelName} • thinking off` : `${modelName} • ${thinkingLevel}`;
+			}
+
+			const minPadding = 2;
+			let rightSide = rightSideWithoutProvider;
+			if ((footerData?.getAvailableProviderCount?.() ?? 1) > 1 && model) {
+				rightSide = `(${model.provider}) ${rightSideWithoutProvider}`;
+				if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
+					rightSide = rightSideWithoutProvider;
+				}
+			}
+
+			const rightSideWidth = visibleWidth(rightSide);
+			const totalNeeded = statsLeftWidth + minPadding + rightSideWidth;
+			let statsLine: string;
+			if (totalNeeded <= width) {
+				const padding = " ".repeat(width - statsLeftWidth - rightSideWidth);
+				statsLine = statsLeft + padding + rightSide;
+			} else {
+				const availableForRight = width - statsLeftWidth - minPadding;
+				if (availableForRight > 0) {
+					const truncatedRight = truncateToWidth(rightSide, availableForRight, "");
+					const truncatedRightWidth = visibleWidth(truncatedRight);
+					const padding = " ".repeat(Math.max(0, width - statsLeftWidth - truncatedRightWidth));
+					statsLine = statsLeft + padding + truncatedRight;
+				} else {
+					statsLine = statsLeft;
+				}
+			}
+
+			const dimStatsLeft = theme.fg("dim", statsLeft);
+			const remainder = statsLine.slice(statsLeft.length);
+			const dimRemainder = theme.fg("dim", remainder);
+			const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
+			const lines = [pwdLine, dimStatsLeft + dimRemainder];
+
+			const extensionStatuses = footerData?.getExtensionStatuses?.();
+			if (extensionStatuses && extensionStatuses.size > 0) {
+				const statusLine = Array.from(extensionStatuses.entries())
+					.sort(([a], [b]) => a.localeCompare(b))
+					.map(([, text]) => sanitizeStatusText(text))
+					.join(" ");
+				lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
+			}
+
+			return lines;
+		},
+		invalidate() {},
 	};
 }
 
@@ -345,7 +540,12 @@ export default function theLastHarness(pi: ExtensionAPI) {
 			// Keep startup resilient. The header can still render without resource details.
 		}
 
-		ctx.ui.setHeader((_tui, theme) => createTlhHeader(theme, resources));
+		if (typeof ctx.ui.setFooter === "function") {
+			ctx.ui.setFooter((_tui, theme, footerData) => createTlhFooter(pi, ctx, theme, footerData));
+		}
+		if (typeof ctx.ui.setHeader === "function") {
+			ctx.ui.setHeader((_tui, theme) => createTlhHeader(theme, resources));
+		}
 	});
 
 	pi.on("before_agent_start", async (event) => ({
