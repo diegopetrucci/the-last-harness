@@ -22,6 +22,7 @@
     "node": ">=20.6.0"
   },
   "files": [
+    "agents",
     "config",
     "extensions",
     "prompts",

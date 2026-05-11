@@ -7,10 +7,13 @@ All notable changes to The Last Harness will be documented in this file.
 ### Added
 
 - Bundled TLH-profile-aware forks of `pi-subagents` and `pi-intercom` as default extensions.
+- Added the default `architect` primary-agent prompt and TLH minor subagent prompts for `developer`, `code-reviewer`, `repo-scout`, and `diff-summarizer`.
+- Copy TLH minor subagent prompts into the isolated profile during install and expose them through `subagents.agentDirs`.
 
 ### Changed
 
 - Disable `pi-subagents` built-in agents by default in the isolated TLH profile.
+- The TLH extension now injects only the active primary-agent prompt plus compact allowed-subagent metadata into the main session.
 
 ## [0.6.0] - 2026-05-13
 

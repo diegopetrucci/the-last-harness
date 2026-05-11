@@ -32,7 +32,9 @@ The following slash commands are available in interactive `tlh` sessions:
 
 ### Included Pi resources
 
-- `extensions/the-last-harness.ts` adds the custom `tlh` startup header and footer, lightweight default guidance, conditional Gnosis prompt instructions, `/tlh` status, `/gnosis` toggle/status, `/effort` reasoning-effort picker commands, and the 200k-token `DUMB ZONE` footer warning.
+- `extensions/the-last-harness.ts` adds the custom `tlh` startup header and footer, lightweight default guidance, conditional Gnosis prompt instructions, `/tlh` status, `/gnosis` toggle/status, `/agent` status, `/effort` reasoning-effort picker commands, the 200k-token `DUMB ZONE` footer warning, and the default `architect` primary-agent persona.
+- `agents/primary/architect.md` defines the main-session architect prompt.
+- `agents/subagents/*.md` defines TLH minor agents exposed through the bundled `pi-subagents` fork.
 - `skills/harness-setup/SKILL.md` documents safe setup/update/uninstall workflows.
 - `prompts/harness-plan.md` provides `/harness-plan` for reviewable implementation planning.
 - `themes/the-last-harness.json` provides the default isolated theme.
@@ -54,7 +56,7 @@ The installer enables these standalone external Pi packages by default in the is
 - [`npm:@diegopetrucci/pi-quiet-tools`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/quiet-tools) — compacts collapsed built-in tool output without changing model-visible results.
 - [`npm:@diegopetrucci/pi-confirm-destructive`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/confirm-destructive) — confirms destructive shell and file operations before they run.
 - [`npm:@diegopetrucci/pi-dirty-repo-guard`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/dirty-repo-guard) — prompts before session changes when the current git repo has uncommitted changes.
-- [`git:github.com/diegopetrucci/pi-subagents@tlh-v0.24.2-1`](https://github.com/diegopetrucci/pi-subagents) — delegates work to isolated TLH-profile subagents.
+- [`git:github.com/diegopetrucci/pi-subagents@tlh-v0.24.2-3`](https://github.com/diegopetrucci/pi-subagents) — delegates work to isolated TLH-profile subagents.
 - [`git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-1`](https://github.com/diegopetrucci/pi-intercom) — allows child subagents to escalate questions to the supervising session.
 
 Manage persistent opt-outs after install:

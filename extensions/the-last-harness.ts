@@ -1,6 +1,6 @@
 import { execFile, execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync, type Dirent } from "node:fs";
 import { arch as osArch, homedir, platform as osPlatform, release as osRelease, type as osType } from "node:os";
 import { basename, delimiter, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
@@ -46,6 +46,9 @@ const DUMB_ZONE_LABEL = "DUMB ZONE";
 // tlh keeps autocomplete focused on the command description instead.
 const AUTOCOMPLETE_SOURCE_TAG_PATTERN = /(^|—\s*)\[(?:u|p|t)(?::(?:npm|git):[^\]]+)?\]\s*/g;
 const execFileAsync = promisify(execFile);
+const ACTIVE_PRIMARY_AGENT = "architect";
+const ALLOWED_SUBAGENTS = ["developer", "code-reviewer", "repo-scout", "diff-summarizer"];
+const SAFE_SUBAGENT_ACTIONS = new Set(["list", "get", "status", "doctor"]);
 
 const HARNESS_PROMPT = `
 ## The Last Harness Defaults
@@ -142,6 +145,21 @@ type TlhLatestRelease = {
 	version: string;
 	tagName: string;
 	releaseUrl: string;
+};
+
+type AgentPrompt = {
+	name: string;
+	description: string;
+	model?: string;
+	thinking?: ThinkingLevel;
+	tools: string[];
+	systemPrompt: string;
+	filePath: string;
+};
+
+type SubagentMetadata = {
+	name: string;
+	description: string;
 };
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -920,6 +938,118 @@ function shouldAppendGnosisPrompt(cwd: string): boolean {
 	return Boolean(findEnabledGnosisCommand(cwd));
 }
 
+function readMarkdownFilesRecursive(dir: string): string[] {
+	if (!existsSync(dir)) {
+		return [];
+	}
+
+	let entries: Dirent[];
+	try {
+		entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+	} catch {
+		return [];
+	}
+
+	const files: string[] = [];
+	for (const entry of entries) {
+		const filePath = join(dir, entry.name);
+		if (entry.isDirectory()) {
+			files.push(...readMarkdownFilesRecursive(filePath));
+			continue;
+		}
+		if (!entry.isFile() && !entry.isSymbolicLink()) {
+			continue;
+		}
+		if (entry.name.endsWith(".md")) {
+			files.push(filePath);
+		}
+	}
+	return files;
+}
+
+function parseFrontmatter(content: string): { frontmatter: Record<string, string>; body: string } {
+	if (!content.startsWith("---")) {
+		return { frontmatter: {}, body: content.trim() };
+	}
+	const end = content.indexOf("\n---", 3);
+	if (end === -1) {
+		return { frontmatter: {}, body: content.trim() };
+	}
+
+	const frontmatter: Record<string, string> = {};
+	for (const line of content.slice(3, end).split(/\r?\n/)) {
+		const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+		if (!match) {
+			continue;
+		}
+		frontmatter[match[1]] = match[2].trim().replace(/^['"]|['"]$/g, "");
+	}
+
+	return { frontmatter, body: content.slice(content.indexOf("\n", end + 1) + 1).trim() };
+}
+
+function splitCommaList(value: string | undefined): string[] {
+	return (value ?? "")
+		.split(",")
+		.map((item) => item.trim())
+		.filter(Boolean);
+}
+
+function parseThinkingLevelValue(value: string | undefined): ThinkingLevel | undefined {
+	return value && isThinkingLevel(value) ? value : undefined;
+}
+
+function parseAgentPrompt(filePath: string): AgentPrompt | undefined {
+	const content = readText(filePath);
+	if (!content) {
+		return undefined;
+	}
+	const { frontmatter, body } = parseFrontmatter(content);
+	const name = frontmatter.name?.trim();
+	const description = frontmatter.description?.trim();
+	if (!name || !description) {
+		return undefined;
+	}
+	return {
+		name,
+		description,
+		model: frontmatter.model?.trim() || undefined,
+		thinking: parseThinkingLevelValue(frontmatter.thinking),
+		tools: splitCommaList(frontmatter.tools),
+		systemPrompt: body,
+		filePath,
+	};
+}
+
+function loadPrimaryAgent(): AgentPrompt | undefined {
+	return parseAgentPrompt(join(packageRoot(), "agents", "primary", `${ACTIVE_PRIMARY_AGENT}.md`));
+}
+
+function loadSubagentMetadata(): SubagentMetadata[] {
+	return readMarkdownFilesRecursive(join(packageRoot(), "agents", "subagents"))
+		.map((filePath) => parseAgentPrompt(filePath))
+		.filter((agent): agent is AgentPrompt => Boolean(agent))
+		.map((agent) => ({ name: agent.name, description: agent.description }))
+		.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function formatAllowedSubagents(subagents: SubagentMetadata[]): string {
+	const allowed = new Set(ALLOWED_SUBAGENTS);
+	const lines = subagents
+		.filter((agent) => allowed.has(agent.name))
+		.map((agent) => `- ${agent.name}: ${agent.description}`);
+	if (lines.length === 0) {
+		return "";
+	}
+	return `## TLH Allowed Minor Subagents\n\nYou may delegate only to these minor agents via the subagent tool:\n\n${lines.join("\n")}`;
+}
+
+function buildPrimarySystemPrompt(primary: AgentPrompt | undefined, subagents: SubagentMetadata[]): string {
+	const primaryPrompt = primary?.systemPrompt.trim();
+	const allowedSubagents = formatAllowedSubagents(subagents);
+	return [HARNESS_PROMPT.trim(), primaryPrompt, allowedSubagents].filter(Boolean).join("\n\n");
+}
+
 function parseFrontmatterValue(content: string | undefined, key: string): string | undefined {
 	if (!content?.startsWith("---")) {
 		return undefined;
@@ -1053,6 +1183,89 @@ function collectUsageTotals(ctx: ExtensionContext) {
 		totals.cost += Number(usage.cost?.total) || 0;
 	}
 	return totals;
+}
+
+function parseProviderModel(model: string): { provider: string; id: string } | undefined {
+	const slash = model.indexOf("/");
+	if (slash <= 0 || slash === model.length - 1) {
+		return undefined;
+	}
+	return { provider: model.slice(0, slash), id: model.slice(slash + 1) };
+}
+
+function primaryToolAllowlist(primary: AgentPrompt | undefined): string[] {
+	return primary?.tools.length
+		? primary.tools
+		: ["read", "grep", "find", "ls", "bash", "subagent", "intercom"];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringField(value: unknown): string | undefined {
+	return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function collectSubagentTargets(input: unknown): string[] {
+	if (!isRecord(input)) {
+		return [];
+	}
+
+	const targets: string[] = [];
+	const topLevelAgent = stringField(input.agent);
+	if (topLevelAgent) {
+		targets.push(topLevelAgent);
+	}
+
+	if (Array.isArray(input.tasks)) {
+		for (const task of input.tasks) {
+			if (!isRecord(task)) continue;
+			const agent = stringField(task.agent);
+			if (agent) targets.push(agent);
+		}
+	}
+
+	if (Array.isArray(input.chain)) {
+		for (const step of input.chain) {
+			if (!isRecord(step)) continue;
+			const agent = stringField(step.agent);
+			if (agent) targets.push(agent);
+			if (!Array.isArray(step.parallel)) continue;
+			for (const task of step.parallel) {
+				if (!isRecord(task)) continue;
+				const parallelAgent = stringField(task.agent);
+				if (parallelAgent) targets.push(parallelAgent);
+			}
+		}
+	}
+
+	return [...new Set(targets)];
+}
+
+function validateSubagentToolInput(input: unknown): string | undefined {
+	if (!isRecord(input)) {
+		return "TLH architect subagent calls must use an object input.";
+	}
+
+	const action = stringField(input.action);
+	if (action) {
+		return SAFE_SUBAGENT_ACTIONS.has(action)
+			? undefined
+			: `TLH architect may not use subagent management action '${action}'. Allowed actions: ${Array.from(SAFE_SUBAGENT_ACTIONS).join(", ")}.`;
+	}
+
+	const targets = collectSubagentTargets(input);
+	if (targets.length === 0) {
+		return `TLH architect subagent execution must target one of: ${ALLOWED_SUBAGENTS.join(", ")}.`;
+	}
+
+	const disallowed = targets.filter((agent) => !ALLOWED_SUBAGENTS.includes(agent));
+	if (disallowed.length > 0) {
+		return `TLH architect may delegate only to: ${ALLOWED_SUBAGENTS.join(", ")}. Disallowed target(s): ${disallowed.join(", ")}.`;
+	}
+
+	return undefined;
 }
 
 function formatPathFromCwd(cwd: string, filePath: string): string {
@@ -1310,7 +1523,12 @@ function createTlhFooter(
 	};
 }
 
-function createTlhHeader(theme: Theme, resources: StartupResources, headerUpdate: TlhHeaderUpdate | undefined) {
+function createTlhHeader(
+	theme: Theme,
+	resources: StartupResources,
+	headerUpdate: TlhHeaderUpdate | undefined,
+	primaryName: string,
+) {
 	let expanded = false;
 	const color = {
 		heading: (text: string) => theme.fg("mdHeading", text),
@@ -1337,7 +1555,7 @@ function createTlhHeader(theme: Theme, resources: StartupResources, headerUpdate
 	};
 
 	const renderCollapsed = (width: number) => {
-		const lines = [logo];
+		const lines = [logo, `${color.heading("Active primary agent:")} ${color.accent(primaryName)}`];
 		const contextLines = contextLine(resources.context, width);
 		if (contextLines.length > 0) {
 			lines.push("", ...contextLines);
@@ -1372,17 +1590,81 @@ function createTlhHeader(theme: Theme, resources: StartupResources, headerUpdate
 }
 
 export default function theLastHarness(pi: ExtensionAPI) {
+	const primaryAgent = loadPrimaryAgent();
+	const subagentMetadata = loadSubagentMetadata();
+	const primarySystemPrompt = buildPrimarySystemPrompt(primaryAgent, subagentMetadata);
+	const warned = new Set<string>();
+	let primaryModelAttempted = false;
+
+	function warnOnce(ctx: ExtensionContext, key: string, message: string): void {
+		if (warned.has(key)) {
+			return;
+		}
+		warned.add(key);
+		ctx.ui.notify(message, "warning");
+	}
+
+	function applyPrimaryTools(ctx: ExtensionContext): void {
+		const desiredTools = primaryToolAllowlist(primaryAgent);
+		const allToolNames = new Set(pi.getAllTools().map((tool) => tool.name));
+		const validTools = desiredTools.filter((tool) => allToolNames.has(tool));
+		const missingTools = desiredTools.filter((tool) => !allToolNames.has(tool));
+		if (missingTools.length > 0) {
+			warnOnce(ctx, "missing-primary-tools", `TLH primary agent tools are not available yet: ${missingTools.join(", ")}`);
+		}
+		if (validTools.length > 0) {
+			pi.setActiveTools(validTools);
+		}
+	}
+
+	async function applyPrimaryDefaults(ctx: ExtensionContext): Promise<void> {
+		applyPrimaryTools(ctx);
+
+		if (primaryAgent?.thinking) {
+			pi.setThinkingLevel(primaryAgent.thinking);
+		}
+
+		if (!primaryAgent?.model || primaryModelAttempted) {
+			return;
+		}
+		primaryModelAttempted = true;
+		const parsedModel = parseProviderModel(primaryAgent.model);
+		if (!parsedModel) {
+			warnOnce(ctx, "invalid-primary-model", `TLH primary agent model is invalid: ${primaryAgent.model}`);
+			return;
+		}
+		const model = ctx.modelRegistry.find(parsedModel.provider, parsedModel.id);
+		if (!model) {
+			warnOnce(ctx, "missing-primary-model", `TLH primary agent model not found: ${primaryAgent.model}`);
+			return;
+		}
+		if (ctx.model?.provider === model.provider && ctx.model?.id === model.id) {
+			return;
+		}
+		const success = await pi.setModel(model);
+		if (!success) {
+			warnOnce(ctx, "primary-model-unavailable", `TLH could not switch to primary agent model: ${primaryAgent.model}`);
+		}
+	}
+
 	pi.registerCommand("tlh", {
 		description: "Show tlh package status",
 		handler: async (_args, ctx) => {
-			ctx.ui.notify(`${TLH_PACKAGE_NAME} (${TLH_NAME}) profile is installed and active.`, "info");
+			ctx.ui.notify(`${TLH_PACKAGE_NAME} (${TLH_NAME}) is active. Primary agent: ${ACTIVE_PRIMARY_AGENT}.`, "info");
 		},
 	});
 
 	pi.registerCommand("harness", {
 		description: "Alias for /tlh",
 		handler: async (_args, ctx) => {
-			ctx.ui.notify(`${TLH_PACKAGE_NAME} (${TLH_NAME}) profile is installed and active.`, "info");
+			ctx.ui.notify(`${TLH_PACKAGE_NAME} (${TLH_NAME}) is active. Primary agent: ${ACTIVE_PRIMARY_AGENT}.`, "info");
+		},
+	});
+
+	pi.registerCommand("agent", {
+		description: "Show the active TLH primary agent",
+		handler: async (_args, ctx) => {
+			ctx.ui.notify(`Active TLH primary agent: ${ACTIVE_PRIMARY_AGENT}.`, "info");
 		},
 	});
 
@@ -1491,6 +1773,8 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", async (event, ctx) => {
+		await applyPrimaryDefaults(ctx);
+
 		if (!ctx.hasUI) {
 			return;
 		}
@@ -1522,17 +1806,26 @@ export default function theLastHarness(pi: ExtensionAPI) {
 			ctx.ui.setFooter((_tui, theme, footerData) => createTlhFooter(pi, ctx, theme, footerData));
 		}
 		if (typeof ctx.ui.setHeader === "function") {
-			ctx.ui.setHeader((_tui, theme) => createTlhHeader(theme, resources, headerUpdate));
+			ctx.ui.setHeader((_tui, theme) => createTlhHeader(theme, resources, headerUpdate, ACTIVE_PRIMARY_AGENT));
 		}
 
 		void maybeNotifyAvailableTlhUpdate(ctx).catch(() => undefined);
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		const prompts = [event.systemPrompt, HARNESS_PROMPT];
+		applyPrimaryTools(ctx);
+		const prompts = [event.systemPrompt, primarySystemPrompt];
 		if (shouldAppendGnosisPrompt(ctx.cwd)) {
 			prompts.push(GNOSIS_PROMPT);
 		}
-		return { systemPrompt: prompts.join("\n") };
+		return { systemPrompt: prompts.filter(Boolean).join("\n\n") };
+	});
+
+	pi.on("tool_call", async (event) => {
+		if (event.toolName !== "subagent") {
+			return undefined;
+		}
+		const reason = validateSubagentToolInput(event.input);
+		return reason ? { block: true, reason } : undefined;
 	});
 }

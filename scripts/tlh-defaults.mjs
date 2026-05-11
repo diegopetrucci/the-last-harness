@@ -309,9 +309,12 @@ function enablePackage(settings, extension) {
 	}
 
 	const current = settings.packages[index];
-	if (!isPlainObject(current)) return;
+	if (!isPlainObject(current)) {
+		settings.packages[index] = extension.source;
+		return;
+	}
 
-	const next = clone(current);
+	const next = { ...clone(current), source: extension.source };
 	delete next.extensions;
 	if (Object.keys(next).length === 1 && typeof next.source === "string") {
 		settings.packages[index] = next.source;

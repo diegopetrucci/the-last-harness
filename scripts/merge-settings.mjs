@@ -292,6 +292,27 @@ function applyReplacedDefaultExtensions(settings, defaultExtensions, changes) {
 	}
 }
 
+function applyDefaultExtensionSourceUpdates(settings, defaultExtensions, disabledIds, changes) {
+	if (!Array.isArray(settings.packages)) return;
+
+	for (const extension of defaultExtensions) {
+		if (disabledIds.has(extension.id)) continue;
+		const identity = packageIdentity(extension.source);
+		if (!identity) continue;
+		const index = settings.packages.findIndex((entry) => packageIdentity(entry) === identity);
+		if (index === -1) continue;
+
+		const current = settings.packages[index];
+		const currentSource = packageSourceOf(current);
+		if (!currentSource || currentSource === extension.source) continue;
+
+		settings.packages[index] = isPlainObject(current)
+			? { ...current, source: extension.source }
+			: extension.source;
+		changes.push(`update default extension package source: ${currentSource} -> ${extension.source}`);
+	}
+}
+
 function applyDisabledDefaultExtensions(settings, defaultExtensions, disabledIds, changes) {
 	if (disabledIds.size === 0 || !Array.isArray(settings.packages)) return;
 
@@ -469,6 +490,7 @@ function main() {
 	const disabledIds = disabledDefaultExtensionIds(existing, defaultExtensions);
 	const defaults = prepareDefaults(rawDefaults, args.packageSource, defaultExtensions, disabledIds);
 	const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
+	applyDefaultExtensionSourceUpdates(next, defaultExtensions, disabledIds, changes);
 	applyReplacedDefaultExtensions(next, defaultExtensions, changes);
 	applyDisabledDefaultExtensions(next, defaultExtensions, disabledIds, changes);
 

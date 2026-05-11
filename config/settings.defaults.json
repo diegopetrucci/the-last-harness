@@ -6,6 +6,9 @@
   "editorPaddingX": 1,
   "quietStartup": true,
   "subagents": {
-    "disableBuiltins": true
+    "disableBuiltins": true,
+    "agentDirs": [
+      "tlh/agents/subagents"
+    ]
   }
 }

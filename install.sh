@@ -772,6 +772,22 @@ merge_settings() {
   node "${args[@]}"
 }
 
+find_tlh_subagents_dir() {
+  local local_dir=""
+  if local_dir="$(find_local_repo_dir)" && [[ -d "${local_dir}/agents/subagents" ]]; then
+    printf '%s\n' "${local_dir}/agents/subagents"
+    return 0
+  fi
+
+  local package_root="${AGENT_DIR}/git/github.com/${REPO}"
+  if [[ -d "${package_root}/agents/subagents" ]]; then
+    printf '%s\n' "${package_root}/agents/subagents"
+    return 0
+  fi
+
+  return 1
+}
+
 install_support_files() {
   if ! installable_support_files_are_prepared; then
     ensure_support_files_prepared || return 0
@@ -781,7 +797,11 @@ install_support_files() {
   fi
 
   local support_dir="${AGENT_DIR}/tlh"
+  local support_subagents_dir="${support_dir}/agents/subagents"
+  local subagents_src=""
   local var_name requirement relative_path tmp_name install_name source_path
+  subagents_src="$(find_tlh_subagents_dir || true)"
+
   if [[ "${DRY_RUN}" == "true" ]]; then
     print_command mkdir -p "${support_dir}"
     while IFS='|' read -r var_name requirement relative_path tmp_name install_name; do
@@ -790,6 +810,13 @@ install_support_files() {
       [[ -n "${source_path}" ]] || continue
       print_command cp "${source_path}" "${support_dir}/${install_name}"
     done <<< "$(support_file_manifest)"
+    if [[ -n "${subagents_src}" ]]; then
+      print_command rm -rf "${support_subagents_dir}"
+      print_command mkdir -p "${support_subagents_dir}"
+      print_command cp -R "${subagents_src}/." "${support_subagents_dir}/"
+    else
+      log "Would copy TLH subagent prompts into: ${support_subagents_dir}"
+    fi
     return 0
   fi
 
@@ -800,8 +827,14 @@ install_support_files() {
     [[ -n "${source_path}" ]] || continue
     cp "${source_path}" "${support_dir}/${install_name}"
   done <<< "$(support_file_manifest)"
+  if [[ -n "${subagents_src}" ]]; then
+    rm -rf "${support_subagents_dir}"
+    mkdir -p "${support_subagents_dir}"
+    cp -R "${subagents_src}/." "${support_subagents_dir}/"
+  else
+    warn "TLH subagent prompts not found; re-run installer from a complete checkout or package."
+  fi
 }
-
 write_install_state() {
   local support_dir="${AGENT_DIR}/tlh"
   local state_path="${support_dir}/install-state.json"
