@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-11
+
 ### Added
 
 - Bundled `npm:@diegopetrucci/pi-context-inspector` as a default extension.
@@ -12,7 +14,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
-- The TLH footer no longer shows token counters or the auto-compaction indicator.
+- The TLH footer no longer shows token counters, subscription cost estimates, or the auto-compaction indicator.
+- The default editor horizontal padding is now set to 1.
 - The startup header now shows context files on a single `Context:` line.
 - The startup header now omits the keybinding hint line.
 - The startup header now omits the upstream Pi version and shows the TLH version plus releases link only on the first launch after a TLH version change.
