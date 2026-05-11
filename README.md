@@ -7,7 +7,7 @@
 - **Context discipline.** The context-cap extension helps keep long sessions under control.
 - **Project memory.** Gnosis integration can record project decisions, constraints, rejected alternatives, and lessons in repo-local memory.
 - **Safety rails for agent work.** Bundled permission and destructive-action confirmations add checkpoints before sensitive commands or file changes.
-- **Cleaner sessions.** A custom startup header/footer, quieter tool output, completion notifications, and `/tlh` status keep the UI focused without hiding model-visible results.
+- **Cleaner sessions.** A custom startup header/footer, contextual steering/follow-up key hints, quieter tool output, completion notifications, and `/tlh` status keep the UI focused without hiding model-visible results.
 - **Reasoning controls.** Use `/effort` to quickly change model thinking level from the TUI or command line.
 - **Second opinions built in.** The Oracle extension can consult a separate read-only reasoning process for deeper review, debugging, and planning.
 - **Opinionated defaults, conservative updates.** TLH installs a curated theme, prompt guidance, commands, and default extensions while preserving your custom settings and opt-outs across updates.
@@ -54,6 +54,15 @@ So:
 - if TLH installs Gnosis, the managed `gn` lives at `~/.the-last-harness/agent/bin/gn` and the wrapper prepends that directory to `PATH` only for `tlh`
 
 Caveat: Pi project settings such as `.pi/settings.json` can still apply when running `tlh` inside a project, because that is core Pi behavior. The isolation is for the global Pi profile.
+
+## Message queue hints
+
+While the agent is actively working, typing into the editor reveals footer hints for the two message-queue paths:
+
+- **Enter** steers the current run.
+- **Alt+Enter** queues a follow-up for after the agent finishes.
+
+The displayed keys follow your configured Pi keybindings instead of hardcoded defaults.
 
 ## Included Pi resources
 
@@ -125,7 +134,7 @@ Gnosis project data lives in repo-local `.gnosis` directories.
 For a pinned install, use that release's installer asset:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.1.0/install.sh | bash
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.3.0/install.sh | bash
 ```
 
 For development builds from `main`, pass `--ref main`:
@@ -134,7 +143,7 @@ For development builds from `main`, pass `--ref main`:
 curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --ref main
 ```
 
-Release instructions live in [`docs/releasing.md`](docs/releasing.md).
+Release notes are sourced from the matching `CHANGELOG.md` section. Release instructions live in [`docs/releasing.md`](docs/releasing.md).
 
 ## Local testing
 
@@ -215,11 +224,11 @@ bash install.sh --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -
 npm install -g @earendil-works/pi-coding-agent
 mkdir -p "$HOME/.the-last-harness/agent"
 PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" \
-  pi install git:github.com/diegopetrucci/the-last-harness@v0.1.0
+  pi install git:github.com/diegopetrucci/the-last-harness@v0.3.0
 node scripts/merge-settings.mjs \
   config/settings.defaults.json \
   --settings "$HOME/.the-last-harness/agent/settings.json" \
-  --package-source git:github.com/diegopetrucci/the-last-harness@v0.1.0 \
+  --package-source git:github.com/diegopetrucci/the-last-harness@v0.3.0 \
   --default-extensions config/default-extensions.json
 PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" \
   pi update --extensions
@@ -258,7 +267,7 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/dow
 Example pinned install:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.1.0/install.sh | bash
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.3.0/install.sh | bash
 ```
 
 ## Update
