@@ -48,6 +48,7 @@ jobs:
           node --check scripts/merge-settings.mjs
           node --check scripts/tlh-defaults.mjs
           node --check scripts/tlh-gnosis.mjs
+          node --check scripts/release-notes.mjs
           npm pack --dry-run
 
       - name: Build package tarball
@@ -72,6 +73,9 @@ jobs:
           chmod +x dist/install.sh
           bash -n dist/install.sh
 
+      - name: Build release notes
+        run: node scripts/release-notes.mjs --tag "${GITHUB_REF_NAME}" --output release-notes.md
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -82,4 +86,4 @@ jobs:
             "dist/install.sh#install.sh" \
             --verify-tag \
             --title "${GITHUB_REF_NAME}" \
-            --generate-notes
+            --notes-file release-notes.md

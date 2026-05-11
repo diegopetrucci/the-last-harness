@@ -6,7 +6,7 @@ Releases are GitHub tag based. Pushing a semver tag such as `v0.1.0` runs `.gith
 2. runs the release checks;
 3. builds an npm-style package tarball;
 4. generates a pinned `install.sh` asset with the tag baked in;
-5. creates a GitHub Release with generated notes and release assets.
+5. creates a GitHub Release whose body is the matching `CHANGELOG.md` section, plus release assets.
 
 There is no `stable` branch. A release is the immutable Git tag plus its GitHub Release assets.
 
@@ -21,13 +21,15 @@ npm version "$version" --no-git-tag-version
 git diff -- package.json
 ```
 
-Update `CHANGELOG.md`, then run:
+Update `CHANGELOG.md` with a `## [$version] - YYYY-MM-DD` section, then run:
 
 ```sh
 bash -n install.sh
 node --check scripts/merge-settings.mjs
 node --check scripts/tlh-defaults.mjs
 node --check scripts/tlh-gnosis.mjs
+node --check scripts/release-notes.mjs
+node scripts/release-notes.mjs --tag "v$version" --output /tmp/tlh-release-notes.md
 npm pack --dry-run
 ```
 
@@ -90,7 +92,8 @@ fs.writeFileSync('dist/install.sh', source.replace(oldText, newText), 'utf8');
 NODE
 chmod +x dist/install.sh
 bash -n dist/install.sh
+node scripts/release-notes.mjs --tag "v$version" --output release-notes.md
 npm pack --json > pack-output.json
 tarball="$(node -e "const fs = require('node:fs'); const [pkg] = JSON.parse(fs.readFileSync('pack-output.json', 'utf8')); console.log(pkg.filename);")"
-gh release create "v$version" "$tarball" "dist/install.sh#install.sh" --verify-tag --title "v$version" --generate-notes
+gh release create "v$version" "$tarball" "dist/install.sh#install.sh" --verify-tag --title "v$version" --notes-file release-notes.md
 ```

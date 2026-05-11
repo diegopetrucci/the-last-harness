@@ -4,6 +4,14 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- The TLH footer now shows steering and follow-up queue key hints while the user is typing during active agent work.
+
+### Changed
+
+- GitHub Releases now use the matching `CHANGELOG.md` section as release notes instead of generated commit summaries.
+
 ## [0.2.0] - 2026-05-10
 
 ### Added
