@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- TLH now checks GitHub Releases in the background at startup and warns once when a newer release is available.
+
 ## [0.4.0] - 2026-05-11
 
 ### Added

@@ -18,7 +18,11 @@ import {
 
 const TLH_NAME = "tlh";
 const TLH_PACKAGE_NAME = "The Last Harness";
-const TLH_RELEASES_URL = "https://github.com/diegopetrucci/the-last-harness/releases";
+const TLH_REPO = "diegopetrucci/the-last-harness";
+const TLH_RELEASES_URL = `https://github.com/${TLH_REPO}/releases`;
+const TLH_LATEST_RELEASE_API_URL = `https://api.github.com/repos/${TLH_REPO}/releases/latest`;
+const TLH_UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const TLH_UPDATE_CHECK_TIMEOUT_MS = 3000;
 const DUMB_ZONE_THRESHOLD_TOKENS = 200_000;
 const DUMB_ZONE_LABEL = "DUMB ZONE";
 
@@ -56,19 +60,37 @@ type TlhGnosisConfig = {
 	installPath?: string;
 };
 
+type TlhUpdateCheckConfig = {
+	enabled?: boolean;
+};
+
 type TlhSettings = {
 	tlh?: {
 		gnosis?: TlhGnosisConfig;
+		updateCheck?: TlhUpdateCheckConfig;
 	};
 };
 
 type TlhStartupState = {
 	lastSeenVersion?: string;
+	updateCheck?: {
+		checkedAt?: string;
+		latestVersion?: string;
+		latestTagName?: string;
+		latestReleaseUrl?: string;
+		lastNotifiedVersion?: string;
+	};
 };
 
 type TlhHeaderUpdate = {
 	version: string;
 	releasesUrl: string;
+};
+
+type TlhLatestRelease = {
+	version: string;
+	tagName: string;
+	releaseUrl: string;
 };
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -143,17 +165,21 @@ function readTlhStartupState(): TlhStartupState {
 	}
 }
 
-function writeTlhStartupState(version: string): void {
+function writeTlhStartupState(state: TlhStartupState): void {
 	try {
 		const statePath = tlhStartupStatePath();
 		if (!statePath) {
 			return;
 		}
 		mkdirSync(dirname(statePath), { recursive: true });
-		writeFileSync(statePath, `${JSON.stringify({ lastSeenVersion: version }, null, 2)}\n`, "utf8");
+		writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 	} catch {
-		// Startup state is best-effort; never block the UI header.
+		// Startup state is best-effort; never block launch.
 	}
+}
+
+function updateTlhStartupState(updates: Partial<TlhStartupState>): void {
+	writeTlhStartupState({ ...readTlhStartupState(), ...updates });
 }
 
 function getTlhHeaderUpdate(): TlhHeaderUpdate | undefined {
@@ -166,13 +192,189 @@ function getTlhHeaderUpdate(): TlhHeaderUpdate | undefined {
 	const lastSeenVersion = readTlhStartupState().lastSeenVersion;
 
 	if (lastSeenVersion !== currentVersion) {
-		writeTlhStartupState(currentVersion);
+		updateTlhStartupState({ lastSeenVersion: currentVersion });
 	}
 	if (typeof lastSeenVersion === "string" && lastSeenVersion.length > 0 && lastSeenVersion !== currentVersion) {
 		cachedTlhHeaderUpdate = { version: currentVersion, releasesUrl: TLH_RELEASES_URL };
 	}
 
 	return cachedTlhHeaderUpdate;
+}
+
+function normalizeTlhVersion(version: string): string {
+	return version.trim().replace(/^v/i, "");
+}
+
+type ParsedTlhVersion = {
+	major: number;
+	minor: number;
+	patch: number;
+	prerelease?: string;
+};
+
+function parseTlhVersion(version: string): ParsedTlhVersion | undefined {
+	const match = normalizeTlhVersion(version).match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+.*)?$/);
+	if (!match) {
+		return undefined;
+	}
+	return {
+		major: Number.parseInt(match[1], 10),
+		minor: Number.parseInt(match[2], 10),
+		patch: Number.parseInt(match[3], 10),
+		prerelease: match[4],
+	};
+}
+
+function compareTlhVersions(leftVersion: string, rightVersion: string): number | undefined {
+	const left = parseTlhVersion(leftVersion);
+	const right = parseTlhVersion(rightVersion);
+	if (!left || !right) {
+		return undefined;
+	}
+	if (left.major !== right.major) return left.major - right.major;
+	if (left.minor !== right.minor) return left.minor - right.minor;
+	if (left.patch !== right.patch) return left.patch - right.patch;
+	if (left.prerelease === right.prerelease) return 0;
+	if (!left.prerelease) return 1;
+	if (!right.prerelease) return -1;
+	return left.prerelease.localeCompare(right.prerelease);
+}
+
+function isNewerTlhVersion(candidateVersion: string, currentVersion: string): boolean {
+	const comparison = compareTlhVersions(candidateVersion, currentVersion);
+	return comparison !== undefined && comparison > 0;
+}
+
+function getCachedTlhLatestRelease(state: TlhStartupState): TlhLatestRelease | undefined {
+	const latestVersion = state.updateCheck?.latestVersion;
+	if (typeof latestVersion !== "string" || !latestVersion.trim()) {
+		return undefined;
+	}
+	const version = normalizeTlhVersion(latestVersion);
+	const tagName = state.updateCheck?.latestTagName || `v${version}`;
+	return {
+		version,
+		tagName,
+		releaseUrl: state.updateCheck?.latestReleaseUrl || `${TLH_RELEASES_URL}/tag/${tagName}`,
+	};
+}
+
+function shouldRefreshTlhLatestRelease(state: TlhStartupState): boolean {
+	const checkedAt = state.updateCheck?.checkedAt;
+	const checkedAtMs = typeof checkedAt === "string" ? Date.parse(checkedAt) : Number.NaN;
+	return !Number.isFinite(checkedAtMs) || Date.now() - checkedAtMs >= TLH_UPDATE_CHECK_INTERVAL_MS;
+}
+
+function shouldSkipTlhUpdateCheck(cwd: string): boolean {
+	if (!tlhStartupStatePath() || process.env.PI_OFFLINE || process.env.PI_SKIP_VERSION_CHECK || process.env.TLH_SKIP_UPDATE_CHECK) {
+		return true;
+	}
+	return getTlhUpdateCheckConfig(cwd)?.enabled === false;
+}
+
+async function fetchLatestTlhRelease(currentVersion: string): Promise<TlhLatestRelease | undefined> {
+	const response = await fetch(TLH_LATEST_RELEASE_API_URL, {
+		headers: {
+			Accept: "application/vnd.github+json",
+			"User-Agent": `${TLH_NAME}/${currentVersion}`,
+		},
+		signal: AbortSignal.timeout(TLH_UPDATE_CHECK_TIMEOUT_MS),
+	});
+	if (!response.ok) {
+		return undefined;
+	}
+
+	const data = (await response.json()) as { tag_name?: unknown; html_url?: unknown };
+	if (typeof data.tag_name !== "string" || !data.tag_name.trim()) {
+		return undefined;
+	}
+	const tagName = data.tag_name.trim();
+	const version = normalizeTlhVersion(tagName);
+	const releaseUrl = typeof data.html_url === "string" && data.html_url.trim() ? data.html_url.trim() : `${TLH_RELEASES_URL}/tag/${tagName}`;
+	return { version, tagName, releaseUrl };
+}
+
+function notifyTlhUpdate(ctx: ExtensionContext, currentVersion: string, latestRelease: TlhLatestRelease): void {
+	const currentLabel = `v${normalizeTlhVersion(currentVersion)}`;
+	const latestLabel = latestRelease.tagName.startsWith("v") ? latestRelease.tagName : `v${latestRelease.version}`;
+	ctx.ui.notify(
+		`${TLH_PACKAGE_NAME} update available: ${latestLabel} installed: ${currentLabel}. Release notes: ${latestRelease.releaseUrl}. Update: curl -fsSL https://github.com/${TLH_REPO}/releases/latest/download/install.sh | bash`,
+		"warning",
+	);
+}
+
+function maybeNotifyCachedTlhUpdate(ctx: ExtensionContext, currentVersion: string, state: TlhStartupState): boolean {
+	const latestRelease = getCachedTlhLatestRelease(state);
+	if (!latestRelease || !isNewerTlhVersion(latestRelease.version, currentVersion)) {
+		return false;
+	}
+	if (state.updateCheck?.lastNotifiedVersion === latestRelease.version) {
+		return false;
+	}
+	notifyTlhUpdate(ctx, currentVersion, latestRelease);
+	updateTlhStartupState({
+		updateCheck: {
+			...state.updateCheck,
+			latestVersion: latestRelease.version,
+			latestTagName: latestRelease.tagName,
+			latestReleaseUrl: latestRelease.releaseUrl,
+			lastNotifiedVersion: latestRelease.version,
+		},
+	});
+	return true;
+}
+
+async function maybeNotifyAvailableTlhUpdate(ctx: ExtensionContext): Promise<void> {
+	if (shouldSkipTlhUpdateCheck(ctx.cwd)) {
+		return;
+	}
+
+	const currentVersion = getTlhVersion();
+	let state = readTlhStartupState();
+	if (!shouldRefreshTlhLatestRelease(state)) {
+		maybeNotifyCachedTlhUpdate(ctx, currentVersion, state);
+		return;
+	}
+
+	updateTlhStartupState({
+		updateCheck: {
+			...state.updateCheck,
+			checkedAt: new Date().toISOString(),
+		},
+	});
+
+	let latestRelease: TlhLatestRelease | undefined;
+	try {
+		latestRelease = await fetchLatestTlhRelease(currentVersion);
+	} catch {
+		return;
+	}
+	if (!latestRelease) {
+		return;
+	}
+
+	state = readTlhStartupState();
+	updateTlhStartupState({
+		updateCheck: {
+			...state.updateCheck,
+			latestVersion: latestRelease.version,
+			latestTagName: latestRelease.tagName,
+			latestReleaseUrl: latestRelease.releaseUrl,
+		},
+	});
+
+	state = readTlhStartupState();
+	if (!isNewerTlhVersion(latestRelease.version, currentVersion) || state.updateCheck?.lastNotifiedVersion === latestRelease.version) {
+		return;
+	}
+
+	notifyTlhUpdate(ctx, currentVersion, latestRelease);
+	updateTlhStartupState({
+		updateCheck: {
+			...state.updateCheck,
+			lastNotifiedVersion: latestRelease.version,
+		},
+	});
 }
 
 function expandHomePath(path: string): string {
@@ -190,6 +392,15 @@ function getTlhGnosisConfig(cwd: string): TlhGnosisConfig | undefined {
 	try {
 		const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as TlhSettings;
 		return settings.tlh?.gnosis;
+	} catch {
+		return undefined;
+	}
+}
+
+function getTlhUpdateCheckConfig(cwd: string): TlhUpdateCheckConfig | undefined {
+	try {
+		const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as TlhSettings;
+		return settings.tlh?.updateCheck;
 	} catch {
 		return undefined;
 	}
@@ -708,6 +919,8 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		if (typeof ctx.ui.setHeader === "function") {
 			ctx.ui.setHeader((_tui, theme) => createTlhHeader(theme, resources, headerUpdate));
 		}
+
+		void maybeNotifyAvailableTlhUpdate(ctx).catch(() => undefined);
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
