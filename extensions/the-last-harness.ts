@@ -605,17 +605,24 @@ function createTlhHeader(theme: Theme, resources: StartupResources, headerUpdate
 		return [color.heading(`[${name}]`), color.dim(`  ${items.join(", ")}`)];
 	};
 
-	const renderCollapsed = () => {
+	const contextLine = (items: string[], width: number): string[] => {
+		if (items.length === 0) {
+			return [];
+		}
+		return [truncateToWidth(color.dim(`Context: ${items.join(", ")}`), width, color.dim("..."))];
+	};
+
+	const renderCollapsed = (width: number) => {
 		const lines = [logo];
-		const contextLines = section("Context", resources.context);
+		const contextLines = contextLine(resources.context, width);
 		if (contextLines.length > 0) {
 			lines.push("", ...contextLines);
 		}
 		return lines;
 	};
 
-	const renderExpanded = () => {
-		const lines = renderCollapsed();
+	const renderExpanded = (width: number) => {
+		const lines = renderCollapsed(width);
 		const resourceSections = [
 			section("Skills", resources.skills),
 			section("Prompts", resources.prompts),
@@ -630,8 +637,8 @@ function createTlhHeader(theme: Theme, resources: StartupResources, headerUpdate
 	};
 
 	return {
-		render(_width: number): string[] {
-			return expanded ? renderExpanded() : renderCollapsed();
+		render(width: number): string[] {
+			return expanded ? renderExpanded(width) : renderCollapsed(width);
 		},
 		setExpanded(nextExpanded: boolean) {
 			expanded = nextExpanded;
