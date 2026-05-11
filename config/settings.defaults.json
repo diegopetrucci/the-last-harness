@@ -3,5 +3,6 @@
     "git:github.com/diegopetrucci/the-last-harness"
   ],
   "theme": "the-last-harness",
+  "editorPaddingX": 1,
   "quietStartup": true
 }
