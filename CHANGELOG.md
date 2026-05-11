@@ -7,6 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Added
 
 - TLH now checks GitHub Releases in the background at startup and warns once when a newer release is available.
+- Bundled `npm:@diegopetrucci/pi-openai-fast` as a default extension.
 
 ## [0.4.0] - 2026-05-11
 

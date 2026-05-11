@@ -10,6 +10,11 @@
     "description": "Consult a separate read-only reasoning process for second opinions."
   },
   {
+    "id": "openai-fast",
+    "source": "npm:@diegopetrucci/pi-openai-fast",
+    "description": "Enable optional OpenAI Codex Fast mode commands for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions."
+  },
+  {
     "id": "librarian",
     "source": "npm:@diegopetrucci/pi-librarian",
     "description": "Research GitHub repositories and optionally cache local checkouts."

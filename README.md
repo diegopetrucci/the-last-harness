@@ -15,6 +15,7 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/dow
 - **Safety rails for agent work.** Bundled permission and destructive-action confirmations add checkpoints before sensitive commands or file changes.
 - **Cleaner sessions.** An update-aware startup header, new-release launch warnings, custom footer, contextual steering/follow-up key hints, quieter tool output, completion notifications, and `/tlh` status keep the UI focused without hiding model-visible results.
 - **Reasoning controls.** Use `/effort` to quickly change model thinking level from the TUI or command line.
+- **Fast-mode controls.** The bundled OpenAI Fast extension adds `/fast` commands for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions while defaulting Fast mode off.
 - **Second opinions built in.** The Oracle extension can consult a separate read-only reasoning process for deeper review, debugging, and planning.
 - **Repository research.** The Librarian extension can scout GitHub repositories and optionally cache local checkouts.
 - **Opinionated defaults, conservative updates.** TLH installs a curated theme, prompt guidance, commands, and default extensions while preserving your custom settings and opt-outs across updates.
@@ -26,6 +27,7 @@ The installer enables these standalone external Pi packages by default in the is
 
 - [`npm:@diegopetrucci/pi-permission-gate`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/permission-gate) — asks for confirmation before sensitive tool calls.
 - [`npm:@diegopetrucci/pi-oracle`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/oracle) — consults a separate read-only reasoning process for second opinions.
+- [`npm:@diegopetrucci/pi-openai-fast`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/openai-fast) — adds optional `/fast` commands for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions.
 - [`npm:@diegopetrucci/pi-librarian`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/librarian) — scouts GitHub repositories and optionally caches local checkouts.
 - [`npm:@diegopetrucci/pi-notify`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/notify) — sends a notification when an agent turn finishes.
 - [`npm:@diegopetrucci/pi-context-cap`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/context-cap) — keeps context usage under a configured cap.
