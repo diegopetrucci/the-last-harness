@@ -489,6 +489,15 @@ function createTlhFooter(
 			const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
 			const lines = [pwdLine, dimStatsLeft + dimRemainder];
 
+			const editorText = ctx.ui.getEditorText();
+			if (editorText.length > 0 && !ctx.isIdle()) {
+				const steerKey = keyText("tui.input.submit") || "enter";
+				const queueKey = keyText("app.message.followUp") || "alt+enter";
+				const steeringHint = `${theme.fg("dim", steerKey)}${theme.fg("muted", " steer")}`;
+				const queueHint = `${theme.fg("dim", queueKey)}${theme.fg("muted", " queue follow-up")}`;
+				lines.push(truncateToWidth(`${steeringHint}${theme.fg("muted", " · ")}${queueHint}`, width, theme.fg("dim", "...")));
+			}
+
 			const extensionStatuses = footerData?.getExtensionStatuses?.();
 			if (extensionStatuses && extensionStatuses.size > 0) {
 				const statusLine = Array.from(extensionStatuses.entries())
