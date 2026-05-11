@@ -4,6 +4,14 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Bundled TLH-profile-aware forks of `pi-subagents` and `pi-intercom` as default extensions.
+
+### Changed
+
+- Disable `pi-subagents` built-in agents by default in the isolated TLH profile.
+
 ## [0.6.0] - 2026-05-13
 
 ### Added
