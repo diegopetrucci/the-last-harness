@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Bundled `npm:@diegopetrucci/pi-context-inspector` as a default extension.
+
 ## [0.3.0] - 2026-05-11
 
 ### Added

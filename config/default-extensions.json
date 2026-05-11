@@ -20,6 +20,11 @@
     "description": "Keep context usage under a configured cap."
   },
   {
+    "id": "context-inspector",
+    "source": "npm:@diegopetrucci/pi-context-inspector",
+    "description": "Open a local HTML dashboard explaining where the current session context is going."
+  },
+  {
     "id": "quiet-tools",
     "aliases": ["compact-bash"],
     "replaces": ["npm:@diegopetrucci/pi-compact-bash"],
