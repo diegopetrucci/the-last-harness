@@ -7,6 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Added
 
 - Bundled `npm:@diegopetrucci/pi-context-inspector` as a default extension.
+- Bundled `npm:@diegopetrucci/pi-librarian` as a default extension.
 
 ### Changed
 

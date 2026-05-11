@@ -10,6 +10,11 @@
     "description": "Consult a separate read-only reasoning process for second opinions."
   },
   {
+    "id": "librarian",
+    "source": "npm:@diegopetrucci/pi-librarian",
+    "description": "Research GitHub repositories and optionally cache local checkouts."
+  },
+  {
     "id": "notify",
     "source": "npm:@diegopetrucci/pi-notify",
     "description": "Send a notification when an agent turn finishes."
