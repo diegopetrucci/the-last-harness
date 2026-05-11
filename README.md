@@ -2,6 +2,12 @@
 
 `tlh` (the last harness) is a highly opinionated — albeit still simple — version of [pi](https://github.com/earendil-works/pi). Think of it, if you wish, as the macOS of harnesses. No bloat, no BS, but a strong direction.
 
+Install one-liner:
+
+```sh
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash
+```
+
 ## Features
 
 - **Context discipline.** The context-cap extension helps keep long sessions under control.
@@ -12,6 +18,48 @@
 - **Second opinions built in.** The Oracle extension can consult a separate read-only reasoning process for deeper review, debugging, and planning.
 - **Opinionated defaults, conservative updates.** TLH installs a curated theme, prompt guidance, commands, and default extensions while preserving your custom settings and opt-outs across updates.
 - **Isolated Pi profile.** `tlh` runs upstream `pi` with its own profile at `~/.the-last-harness/agent`, leaving your normal `~/.pi/agent` config untouched.
+
+## Bundled extensions
+
+The installer enables these standalone external Pi packages by default in the isolated `tlh` profile:
+
+- `npm:@diegopetrucci/pi-permission-gate`
+- `npm:@diegopetrucci/pi-oracle`
+- `npm:@diegopetrucci/pi-notify`
+- `npm:@diegopetrucci/pi-context-cap`
+- `npm:@diegopetrucci/pi-quiet-tools`
+- `npm:@diegopetrucci/pi-confirm-destructive`
+
+Manage persistent opt-outs after install:
+
+```sh
+tlh defaults list
+tlh defaults disable notify
+tlh defaults enable notify
+```
+
+Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `tlh update`, `pi update --extensions`, and installer reruns.
+
+## Gnosis integration
+
+[Gnosis](https://github.com/skorokithakis/gnosis) is a small `gn` CLI for recording project decisions, constraints, rejected alternatives, and lessons that are not obvious from code alone. During install, TLH asks whether to install and enable it because `tlh` works better when agents can consult and update that project memory.
+
+If enabled and a valid Gnosis `gn` binary is present, TLH appends these instructions to the system prompt:
+
+```text
+At the start of any task, run `gn help plan` and follow its instructions.
+After finishing a task, run `gn help review`.
+```
+
+Manage the integration after install:
+
+```sh
+tlh gnosis status
+tlh gnosis enable
+tlh gnosis disable
+```
+
+Gnosis project data lives in repo-local `.gnosis` directories.
 
 ## Install
 
@@ -27,13 +75,13 @@ Once the installation is finished, start `tlh` by running… you guessed it, `tl
 
 Note: if you already have `pi` installed, `tlh` does not replace it — you can keep both, as it uses its own isolated config in `~/.the-last-harness/`.
 
-## Updating from a previous version
+### Update
 
 You can just run the install script again `curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash`.
 
 The updating process is intentionally conservative, and won't replace your custom extensions, themes, and so on. If you spot anything that was overridden, please open an issue.
 
-### Isolation model
+## Isolation model
 
 For normal agent commands, `tlh` is a thin wrapper around upstream Pi:
 
@@ -55,79 +103,12 @@ So:
 
 Caveat: Pi project settings such as `.pi/settings.json` can still apply when running `tlh` inside a project, because that is core Pi behavior. The isolation is for the global Pi profile.
 
-## Message queue hints
-
-While the agent is actively working, typing into the editor reveals footer hints for the two message-queue paths:
-
-- **Enter** steers the current run.
-- **Alt+Enter** queues a follow-up for after the agent finishes.
-
-The displayed keys follow your configured Pi keybindings instead of hardcoded defaults.
-
 ## Included Pi resources
 
 - `extensions/the-last-harness.ts` adds the custom `tlh` startup header, lightweight default guidance, optional Gnosis prompt instructions, `/tlh` status, and `/effort` reasoning-effort picker commands.
 - `skills/harness-setup/SKILL.md` documents safe setup/update/uninstall workflows.
 - `prompts/harness-plan.md` provides `/harness-plan` for reviewable implementation planning.
 - `themes/the-last-harness.json` provides the default isolated theme.
-
-## Bundled default extensions
-
-The installer enables these standalone external Pi packages by default in the isolated `tlh` profile:
-
-- `npm:@diegopetrucci/pi-permission-gate`
-- `npm:@diegopetrucci/pi-oracle`
-- `npm:@diegopetrucci/pi-notify`
-- `npm:@diegopetrucci/pi-context-cap`
-- `npm:@diegopetrucci/pi-quiet-tools`
-- `npm:@diegopetrucci/pi-confirm-destructive`
-
-Manage persistent opt-outs after install:
-
-```sh
-tlh defaults list
-tlh defaults disable notify
-tlh defaults enable notify
-```
-
-Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `tlh update`, `pi update --extensions`, and installer reruns.
-
-## Optional Gnosis integration
-
-[Gnosis](https://github.com/skorokithakis/gnosis) is a small `gn` CLI for recording project decisions, constraints, rejected alternatives, and lessons that are not obvious from code alone. During install, TLH asks whether to install and enable it because `tlh` works better when agents can consult and update that project memory.
-
-If enabled and a valid Gnosis `gn` binary is present, TLH appends these instructions to the system prompt:
-
-```text
-At the start of any task, run `gn help plan` and follow its instructions.
-After finishing a task, run `gn help review`.
-```
-
-If Gnosis is disabled or no valid `gn` binary is available, those lines are not appended and `tlh` works normally.
-
-Manage the integration after install:
-
-```sh
-tlh gnosis status
-tlh gnosis enable
-tlh gnosis disable
-```
-
-Force the install-time choice for noninteractive installs:
-
-```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s -- --with-gnosis
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s -- --without-gnosis
-```
-
-If TLH installed the managed binary, remove it with:
-
-```sh
-rm -f ~/.the-last-harness/agent/bin/gn
-tlh gnosis disable
-```
-
-Gnosis project data lives in repo-local `.gnosis` directories.
 
 ## Releases
 
