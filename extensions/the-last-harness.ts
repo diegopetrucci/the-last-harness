@@ -470,8 +470,9 @@ function createTlhFooter(
 
 			const statsParts: string[] = [];
 			const usingSubscription = model ? ctx.modelRegistry.isUsingOAuth(model) : false;
-			if (totals.cost > 0) {
-				statsParts.push(`${formatCost(totals.cost)}${usingSubscription ? " (sub)" : ""}`);
+			// In tlh, subscription users should not see dollar-cost estimates in the footer.
+			if (totals.cost > 0 && !usingSubscription) {
+				statsParts.push(formatCost(totals.cost));
 			}
 
 			const contextPercentDisplay =
