@@ -23,13 +23,13 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/dow
 
 The installer enables these standalone external Pi packages by default in the isolated `tlh` profile:
 
-- `npm:@diegopetrucci/pi-permission-gate`
-- `npm:@diegopetrucci/pi-oracle`
-- `npm:@diegopetrucci/pi-notify`
-- `npm:@diegopetrucci/pi-context-cap`
-- `npm:@diegopetrucci/pi-context-inspector`
-- `npm:@diegopetrucci/pi-quiet-tools`
-- `npm:@diegopetrucci/pi-confirm-destructive`
+- [`npm:@diegopetrucci/pi-permission-gate`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/permission-gate) — asks for confirmation before sensitive tool calls.
+- [`npm:@diegopetrucci/pi-oracle`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/oracle) — consults a separate read-only reasoning process for second opinions.
+- [`npm:@diegopetrucci/pi-notify`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/notify) — sends a notification when an agent turn finishes.
+- [`npm:@diegopetrucci/pi-context-cap`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/context-cap) — keeps context usage under a configured cap.
+- [`npm:@diegopetrucci/pi-context-inspector`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/context-inspector) — opens a local HTML dashboard showing where session context is going.
+- [`npm:@diegopetrucci/pi-quiet-tools`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/quiet-tools) — compacts collapsed built-in tool output without changing model-visible results.
+- [`npm:@diegopetrucci/pi-confirm-destructive`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/confirm-destructive) — confirms destructive shell and file operations before they run.
 
 Manage persistent opt-outs after install:
 
