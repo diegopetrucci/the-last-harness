@@ -19,6 +19,8 @@ import {
 const TLH_NAME = "tlh";
 const TLH_PACKAGE_NAME = "The Last Harness";
 const TLH_RELEASES_URL = "https://github.com/diegopetrucci/the-last-harness/releases";
+const DUMB_ZONE_THRESHOLD_TOKENS = 200_000;
+const DUMB_ZONE_LABEL = "DUMB ZONE";
 
 const HARNESS_PROMPT = `
 ## The Last Harness Defaults
@@ -485,7 +487,11 @@ function createTlhFooter(
 			} else {
 				contextPercentStr = contextPercentDisplay;
 			}
-			statsParts.push(contextPercentStr);
+			let contextStats = contextPercentStr;
+			if ((contextUsage?.tokens ?? 0) > DUMB_ZONE_THRESHOLD_TOKENS) {
+				contextStats += `${theme.fg("dim", " • ")}${theme.fg("error", DUMB_ZONE_LABEL)}`;
+			}
+			statsParts.push(contextStats);
 
 			let statsLeft = statsParts.join(" ");
 			let statsLeftWidth = visibleWidth(statsLeft);

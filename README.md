@@ -108,7 +108,7 @@ Caveat: Pi project settings such as `.pi/settings.json` can still apply when run
 
 ## Included Pi resources
 
-- `extensions/the-last-harness.ts` adds the custom `tlh` startup header, lightweight default guidance, optional Gnosis prompt instructions, `/tlh` status, and `/effort` reasoning-effort picker commands.
+- `extensions/the-last-harness.ts` adds the custom `tlh` startup header and footer, lightweight default guidance, optional Gnosis prompt instructions, `/tlh` status, `/effort` reasoning-effort picker commands, and the 200k-token `DUMB ZONE` footer warning.
 - `skills/harness-setup/SKILL.md` documents safe setup/update/uninstall workflows.
 - `prompts/harness-plan.md` provides `/harness-plan` for reviewable implementation planning.
 - `themes/the-last-harness.json` provides the default isolated theme.

@@ -8,6 +8,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Bundled `npm:@diegopetrucci/pi-context-inspector` as a default extension.
 - Bundled `npm:@diegopetrucci/pi-librarian` as a default extension.
+- Added a `DUMB ZONE` footer warning after context usage when context exceeds 200k tokens.
 
 ### Changed
 
