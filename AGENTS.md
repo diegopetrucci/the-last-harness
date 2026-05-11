@@ -60,6 +60,7 @@ For installer tests, prefer temporary `--agent-dir` and `--bin-dir` values. Do n
 - Node scripts are ESM (`type: module`) and should use `node:` imports.
 - Keep installer output clear and actionable.
 - Keep package resources small, reviewable, and documented in `README.md`.
+- After implementing a feature or notable behavior change, consider whether `README.md` should be updated before calling the work complete.
 - Prefer explicit paths over implicit environment defaults when writing settings.
 
 ## Commit Guidelines
