@@ -8,6 +8,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Bundled `npm:@diegopetrucci/pi-context-inspector` as a default extension.
 
+### Changed
+
+- The startup header now omits the upstream Pi version and shows the TLH version plus releases link only on the first launch after a TLH version change.
+
 ## [0.3.0] - 2026-05-11
 
 ### Added

@@ -1,12 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, delimiter, dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
 	DefaultPackageManager,
 	SettingsManager,
-	VERSION as PI_VERSION,
 	getAgentDir,
 	keyText,
 	loadProjectContextFiles,
@@ -19,6 +18,7 @@ import {
 
 const TLH_NAME = "tlh";
 const TLH_PACKAGE_NAME = "The Last Harness";
+const TLH_RELEASES_URL = "https://github.com/diegopetrucci/the-last-harness/releases";
 
 const HARNESS_PROMPT = `
 ## The Last Harness Defaults
@@ -60,6 +60,15 @@ type TlhSettings = {
 	};
 };
 
+type TlhStartupState = {
+	lastSeenVersion?: string;
+};
+
+type TlhHeaderUpdate = {
+	version: string;
+	releasesUrl: string;
+};
+
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
 type ReasoningModel = {
@@ -78,6 +87,9 @@ const THINKING_LEVEL_DESCRIPTIONS: Record<ThinkingLevel, string> = {
 	high: "Deeper reasoning budget",
 	xhigh: "Maximum reasoning budget when the model supports it",
 };
+
+let checkedTlhHeaderUpdate = false;
+let cachedTlhHeaderUpdate: TlhHeaderUpdate | undefined;
 
 function packageRoot(): string {
 	return resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -98,6 +110,67 @@ function readText(path: string): string | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+function isDefaultPiAgentDir(agentDir: string): boolean {
+	const home = process.env.HOME || process.env.USERPROFILE;
+	return Boolean(home && resolve(agentDir) === resolve(home, ".pi", "agent"));
+}
+
+function tlhStartupStatePath(): string | undefined {
+	// Only persist state when the wrapper has selected an isolated profile.
+	// This avoids mutating normal Pi config.
+	const agentDir = getAgentDir();
+	if (!process.env.PI_CODING_AGENT_DIR || isDefaultPiAgentDir(agentDir)) {
+		return undefined;
+	}
+	return join(agentDir, "tlh", "startup-state.json");
+}
+
+function readTlhStartupState(): TlhStartupState {
+	const statePath = tlhStartupStatePath();
+	const content = statePath ? readText(statePath) : undefined;
+	if (!content) {
+		return {};
+	}
+	try {
+		const parsed = JSON.parse(content) as TlhStartupState;
+		return parsed && typeof parsed === "object" ? parsed : {};
+	} catch {
+		return {};
+	}
+}
+
+function writeTlhStartupState(version: string): void {
+	try {
+		const statePath = tlhStartupStatePath();
+		if (!statePath) {
+			return;
+		}
+		mkdirSync(dirname(statePath), { recursive: true });
+		writeFileSync(statePath, `${JSON.stringify({ lastSeenVersion: version }, null, 2)}\n`, "utf8");
+	} catch {
+		// Startup state is best-effort; never block the UI header.
+	}
+}
+
+function getTlhHeaderUpdate(): TlhHeaderUpdate | undefined {
+	if (checkedTlhHeaderUpdate) {
+		return cachedTlhHeaderUpdate;
+	}
+
+	checkedTlhHeaderUpdate = true;
+	const currentVersion = getTlhVersion();
+	const lastSeenVersion = readTlhStartupState().lastSeenVersion;
+
+	if (lastSeenVersion !== currentVersion) {
+		writeTlhStartupState(currentVersion);
+	}
+	if (typeof lastSeenVersion === "string" && lastSeenVersion.length > 0 && lastSeenVersion !== currentVersion) {
+		cachedTlhHeaderUpdate = { version: currentVersion, releasesUrl: TLH_RELEASES_URL };
+	}
+
+	return cachedTlhHeaderUpdate;
 }
 
 function expandHomePath(path: string): string {
@@ -513,10 +586,8 @@ function createTlhFooter(
 	};
 }
 
-function createTlhHeader(theme: Theme, resources: StartupResources) {
+function createTlhHeader(theme: Theme, resources: StartupResources, headerUpdate: TlhHeaderUpdate | undefined) {
 	let expanded = false;
-	const tlhVersion = getTlhVersion();
-
 	const color = {
 		heading: (text: string) => theme.fg("mdHeading", text),
 		dim: (text: string) => theme.fg("dim", text),
@@ -526,7 +597,9 @@ function createTlhHeader(theme: Theme, resources: StartupResources) {
 
 	const key = (id: string, fallback: string) => keyText(id) || fallback;
 	const hint = (keyName: string, label: string) => `${color.dim(keyName)}${color.muted(` ${label}`)}`;
-	const logo = `${theme.bold(color.accent(TLH_NAME))}${color.dim(` v${tlhVersion}`)}  ${color.muted("pi")}${color.dim(` v${PI_VERSION}`)}`;
+	const logo = headerUpdate
+		? `${theme.bold(color.accent(TLH_NAME))}${color.dim(` v${headerUpdate.version}`)} ${color.accent(headerUpdate.releasesUrl)}`
+		: theme.bold(color.accent(TLH_NAME));
 	const compactInstructions = [
 		hint(key("app.interrupt", "escape"), "interrupt"),
 		hint(`${key("app.clear", "ctrl+c")}/${key("app.exit", "ctrl+d")}`, "clear/exit"),
@@ -651,11 +724,13 @@ export default function theLastHarness(pi: ExtensionAPI) {
 			// Keep startup resilient. The header can still render without resource details.
 		}
 
+		const headerUpdate = getTlhHeaderUpdate();
+
 		if (typeof ctx.ui.setFooter === "function") {
 			ctx.ui.setFooter((_tui, theme, footerData) => createTlhFooter(pi, ctx, theme, footerData));
 		}
 		if (typeof ctx.ui.setHeader === "function") {
-			ctx.ui.setHeader((_tui, theme) => createTlhHeader(theme, resources));
+			ctx.ui.setHeader((_tui, theme) => createTlhHeader(theme, resources, headerUpdate));
 		}
 	});
 
