@@ -314,14 +314,6 @@ function formatCost(cost: number): string {
 	return cost < 0.001 ? "<$0.001" : `$${cost.toFixed(3)}`;
 }
 
-function isAutoCompactionEnabled(cwd: string): boolean {
-	try {
-		return SettingsManager.create(cwd, getAgentDir()).getCompactionEnabled();
-	} catch {
-		return true;
-	}
-}
-
 function getCurrentThinkingLevel(pi: ExtensionAPI): string {
 	try {
 		return pi.getThinkingLevel();
@@ -499,11 +491,8 @@ function createTlhFooter(
 				statsParts.push(`${formatCost(totals.cost)}${usingSubscription ? " (sub)" : ""}`);
 			}
 
-			const autoIndicator = isAutoCompactionEnabled(ctx.cwd) ? " (auto)" : "";
 			const contextPercentDisplay =
-				contextPercent === "?"
-					? `?/${formatTokens(contextWindow)}${autoIndicator}`
-					: `${contextPercent}%/${formatTokens(contextWindow)}${autoIndicator}`;
+				contextPercent === "?" ? `?/${formatTokens(contextWindow)}` : `${contextPercent}%/${formatTokens(contextWindow)}`;
 			let contextPercentStr: string;
 			if (contextPercentValue > 90) {
 				contextPercentStr = theme.fg("error", contextPercentDisplay);
