@@ -323,7 +323,7 @@ function getCurrentThinkingLevel(pi: ExtensionAPI): string {
 }
 
 function collectUsageTotals(ctx: ExtensionContext) {
-	const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+	const totals = { cost: 0 };
 	for (const entry of ctx.sessionManager.getEntries()) {
 		if (entry.type !== "message" || entry.message.role !== "assistant") {
 			continue;
@@ -332,10 +332,6 @@ function collectUsageTotals(ctx: ExtensionContext) {
 		if (!usage) {
 			continue;
 		}
-		totals.input += Number(usage.input) || 0;
-		totals.output += Number(usage.output) || 0;
-		totals.cacheRead += Number(usage.cacheRead) || 0;
-		totals.cacheWrite += Number(usage.cacheWrite) || 0;
 		totals.cost += Number(usage.cost?.total) || 0;
 	}
 	return totals;
@@ -473,19 +469,6 @@ function createTlhFooter(
 			}
 
 			const statsParts: string[] = [];
-			if (totals.input) {
-				statsParts.push(`↑${formatTokens(totals.input)}`);
-			}
-			if (totals.output) {
-				statsParts.push(`↓${formatTokens(totals.output)}`);
-			}
-			if (totals.cacheRead) {
-				statsParts.push(`R${formatTokens(totals.cacheRead)}`);
-			}
-			if (totals.cacheWrite) {
-				statsParts.push(`W${formatTokens(totals.cacheWrite)}`);
-			}
-
 			const usingSubscription = model ? ctx.modelRegistry.isUsingOAuth(model) : false;
 			if (totals.cost > 0) {
 				statsParts.push(`${formatCost(totals.cost)}${usingSubscription ? " (sub)" : ""}`);
