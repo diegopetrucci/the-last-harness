@@ -591,22 +591,12 @@ function createTlhHeader(theme: Theme, resources: StartupResources, headerUpdate
 	const color = {
 		heading: (text: string) => theme.fg("mdHeading", text),
 		dim: (text: string) => theme.fg("dim", text),
-		muted: (text: string) => theme.fg("muted", text),
 		accent: (text: string) => theme.fg("accent", text),
 	};
 
-	const key = (id: string, fallback: string) => keyText(id) || fallback;
-	const hint = (keyName: string, label: string) => `${color.dim(keyName)}${color.muted(` ${label}`)}`;
 	const logo = headerUpdate
 		? `${theme.bold(color.accent(TLH_NAME))}${color.dim(` v${headerUpdate.version}`)} ${color.accent(headerUpdate.releasesUrl)}`
 		: theme.bold(color.accent(TLH_NAME));
-	const compactInstructions = [
-		hint(key("app.interrupt", "escape"), "interrupt"),
-		hint(`${key("app.clear", "ctrl+c")}/${key("app.exit", "ctrl+d")}`, "clear/exit"),
-		hint("/", "commands"),
-		hint("!", "bash"),
-		hint(key("app.tools.expand", "ctrl+o"), "more"),
-	].join(color.muted(" · "));
 
 	const section = (name: string, items: string[]): string[] => {
 		if (items.length === 0) {
@@ -616,7 +606,7 @@ function createTlhHeader(theme: Theme, resources: StartupResources, headerUpdate
 	};
 
 	const renderCollapsed = () => {
-		const lines = [logo, compactInstructions];
+		const lines = [logo];
 		const contextLines = section("Context", resources.context);
 		if (contextLines.length > 0) {
 			lines.push("", ...contextLines);
