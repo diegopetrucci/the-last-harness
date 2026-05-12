@@ -180,7 +180,3 @@ To remove upstream Pi entirely, only if you installed it solely for The Last Har
 ```sh
 npm uninstall -g @earendil-works/pi-coding-agent
 ```
-
-## Security note
-
-The one-line installer and `tlh update` run shell commands on your machine, may install global npm packages for Pi and bundled default extensions, may download an optional Gnosis binary into the isolated TLH profile if you accept, creates an isolated Pi profile, and writes a wrapper command. Review `install.sh` before piping it to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.
