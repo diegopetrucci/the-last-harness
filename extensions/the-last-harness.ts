@@ -82,6 +82,11 @@ type TlhStartupState = {
 	};
 };
 
+type TlhInstallState = {
+	track?: string;
+	ref?: string;
+};
+
 type TlhHeaderUpdate = {
 	version: string;
 	releasesUrl: string;
@@ -159,6 +164,25 @@ function readTlhStartupState(): TlhStartupState {
 	}
 	try {
 		const parsed = JSON.parse(content) as TlhStartupState;
+		return parsed && typeof parsed === "object" ? parsed : {};
+	} catch {
+		return {};
+	}
+}
+
+function tlhInstallStatePath(): string | undefined {
+	const startupStatePath = tlhStartupStatePath();
+	return startupStatePath ? join(dirname(startupStatePath), "install-state.json") : undefined;
+}
+
+function readTlhInstallState(): TlhInstallState {
+	const statePath = tlhInstallStatePath();
+	const content = statePath ? readText(statePath) : undefined;
+	if (!content) {
+		return {};
+	}
+	try {
+		const parsed = JSON.parse(content) as TlhInstallState;
 		return parsed && typeof parsed === "object" ? parsed : {};
 	} catch {
 		return {};
@@ -297,8 +321,10 @@ async function fetchLatestTlhRelease(currentVersion: string): Promise<TlhLatestR
 function notifyTlhUpdate(ctx: ExtensionContext, currentVersion: string, latestRelease: TlhLatestRelease): void {
 	const currentLabel = `v${normalizeTlhVersion(currentVersion)}`;
 	const latestLabel = latestRelease.tagName.startsWith("v") ? latestRelease.tagName : `v${latestRelease.version}`;
+	const installTrack = readTlhInstallState().track;
+	const updateCommand = installTrack === "pinned-tag" ? "tlh update --track latest-release" : "tlh update";
 	ctx.ui.notify(
-		`${TLH_PACKAGE_NAME} update available: ${latestLabel} installed: ${currentLabel}. Release notes: ${latestRelease.releaseUrl}. Update: curl -fsSL https://github.com/${TLH_REPO}/releases/latest/download/install.sh | bash`,
+		`${TLH_PACKAGE_NAME} update available: ${latestLabel} installed: ${currentLabel}. Release notes: ${latestRelease.releaseUrl}. Update: ${updateCommand}`,
 		"warning",
 	);
 }

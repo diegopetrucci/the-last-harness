@@ -28,6 +28,7 @@ bash -n install.sh
 node --check scripts/merge-settings.mjs
 node --check scripts/tlh-defaults.mjs
 node --check scripts/tlh-gnosis.mjs
+node --check scripts/tlh-update.mjs
 node --check scripts/release-notes.mjs
 node scripts/release-notes.mjs --tag "v$version" --output /tmp/tlh-release-notes.md
 npm pack --dry-run
@@ -60,7 +61,7 @@ After the workflow finishes, confirm the GitHub Release exists and includes:
 Latest release asset:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s -- --dry-run
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash -s -- --dry-run
 ```
 
 Pinned release asset:
@@ -72,7 +73,7 @@ curl -fsSL "https://github.com/diegopetrucci/the-last-harness/releases/download/
 Raw tag fallback:
 
 ```sh
-curl -fsSL "https://raw.githubusercontent.com/diegopetrucci/the-last-harness/v$version/install.sh" | bash -s -- --dry-run --ref "v$version"
+curl -fsSL "https://raw.githubusercontent.com/diegopetrucci/the-last-harness/v$version/install.sh" | TLH_UPDATE_TRACK=pinned-tag bash -s -- --dry-run --ref "v$version"
 ```
 
 ## Manual fallback

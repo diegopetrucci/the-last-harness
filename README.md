@@ -5,7 +5,7 @@
 Install one-liner:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash
 ```
 
 ## Features
@@ -71,7 +71,7 @@ Gnosis project data lives in repo-local `.gnosis` directories.
 Run the one-liner:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash
 ```
 
 It will ask you whether you want to use [gnosis](https://github.com/skorokithakis/gnosis) for memory-management. Not required, but recommended.
@@ -82,7 +82,7 @@ Note: if you already have `pi` installed, `tlh` does not replace it — you can 
 
 ### Update
 
-You can just run the install script again `curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash`.
+You can just run `tlh update`. If you are updating from an older install that does not have `tlh update` yet, rerun the install script once with `TLH_UPDATE_TRACK=latest-release` if you want to track latest releases.
 
 The updating process is intentionally conservative, and won't replace your custom extensions, themes, and so on. If you spot anything that was overridden, please open an issue.
 
@@ -96,6 +96,7 @@ PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" pi "$@"
 
 It also intercepts installer-owned helper commands:
 
+- `tlh update ...` reruns the installer update flow for the current update track.
 - `tlh defaults ...` manages TLH default-extension opt-outs in the isolated settings file.
 - `tlh gnosis ...` manages optional Gnosis prompt integration in the isolated settings file.
 
@@ -104,6 +105,7 @@ So:
 - `tlh` uses `~/.the-last-harness/agent/settings.json`
 - normal `pi` uses `~/.pi/agent/settings.json`
 - the installer does not write normal Pi settings or auth files
+- installer-owned update metadata lives at `~/.the-last-harness/agent/tlh/install-state.json`
 - if TLH installs Gnosis, the managed `gn` lives at `~/.the-last-harness/agent/bin/gn` and the wrapper prepends that directory to `PATH` only for `tlh`
 
 Caveat: Pi project settings such as `.pi/settings.json` can still apply when running `tlh` inside a project, because that is core Pi behavior. The isolation is for the global Pi profile.
@@ -126,7 +128,7 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v
 For development builds from `main`, pass `--ref main`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --ref main
+curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --ref main --track ref
 ```
 
 Release notes are sourced from the matching `CHANGELOG.md` section. Release instructions live in [`docs/releasing.md`](docs/releasing.md).
@@ -241,6 +243,7 @@ PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" pi
 --bin-dir DIR     Wrapper install dir, default ~/.local/bin
 --wrapper-name N  Wrapper command name, default tlh
 --ref REF         Install from a branch, tag, or commit
+--track TRACK     Update track: latest-release, pinned-tag, ref, custom
 --quiet          Suppress installer progress output
 --verbose        Show underlying pi, npm, and git output
 ```
@@ -249,7 +252,7 @@ Example custom install:
 
 ```sh
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | \
-  bash -s -- --agent-dir ~/.tlh/agent --bin-dir ~/.local/bin
+  TLH_UPDATE_TRACK=latest-release bash -s -- --agent-dir ~/.tlh/agent --bin-dir ~/.local/bin
 ```
 
 Example pinned install:
@@ -260,11 +263,13 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v
 
 ## Update
 
-Re-run the latest release installer. This refreshes the isolated checkout to the latest release tag and re-merges installer defaults:
+Run the TLH update helper. This refreshes the isolated checkout according to your update track and re-merges installer defaults:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash
+tlh update
 ```
+
+Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. If you are updating from an older install without `tlh update`, rerun the latest-release installer once with `TLH_UPDATE_TRACK=latest-release`.
 
 At launch, TLH checks GitHub Releases in the background at most once per day and warns once when a newer release is available. It never auto-updates. Set `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `TLH_SKIP_UPDATE_CHECK=1`, or `"tlh": { "updateCheck": { "enabled": false } }` in the isolated settings to disable the check.
 
@@ -294,4 +299,4 @@ npm uninstall -g @earendil-works/pi-coding-agent
 
 ## Security note
 
-The one-line installer runs shell commands on your machine, may install global npm packages for Pi and bundled default extensions, may download an optional Gnosis binary into the isolated TLH profile if you accept, creates an isolated Pi profile, and writes a wrapper command. Review `install.sh` before piping it to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.
+The one-line installer and `tlh update` run shell commands on your machine, may install global npm packages for Pi and bundled default extensions, may download an optional Gnosis binary into the isolated TLH profile if you accept, creates an isolated Pi profile, and writes a wrapper command. Review `install.sh` before piping it to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.

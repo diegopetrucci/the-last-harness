@@ -32,7 +32,7 @@
     "README.md",
     "CHANGELOG.md",
     "docs",
-    "IMPLEMENTATION_PLAN.md"
+    "IMPLEMENTATION-PLAN.md"
   ],
   "pi": {
     "extensions": [

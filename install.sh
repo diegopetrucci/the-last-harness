@@ -15,6 +15,7 @@ GNOSIS_MODE="ask"
 GNOSIS_SUMMARY=""
 TMP_DIR=""
 PACKAGE_SOURCE="${TLH_PACKAGE_SOURCE:-}"
+UPDATE_TRACK_INPUT="${TLH_UPDATE_TRACK:-}"
 GNOSIS_REPO="${TLH_GNOSIS_REPO:-skorokithakis/gnosis}"
 GNOSIS_VERSION="${TLH_GNOSIS_VERSION:-latest}"
 AGENT_DIR_INPUT="${TLH_AGENT_DIR:-$HOME/.the-last-harness/agent}"
@@ -41,8 +42,9 @@ Options:
   --bin-dir DIR     Wrapper install dir (default: ~/.local/bin)
   --wrapper-name N  Wrapper command name (default: tlh)
   --ref REF         Install The Last Harness from a branch, tag, or commit
-  --quiet          Suppress installer progress output
-  --verbose        Show underlying pi, npm, and git output
+  --track TRACK     Update track for future tlh update: latest-release, pinned-tag, ref, custom
+  --quiet           Suppress installer progress output
+  --verbose         Show underlying pi, npm, and git output
   -h, --help        Show this help
 
 Environment overrides:
@@ -51,14 +53,15 @@ Environment overrides:
   TLH_WRAPPER_NAME     Wrapper command name
   TLH_REPO             GitHub repo, owner/name (default: diegopetrucci/the-last-harness)
   TLH_REF              Raw-file ref and package ref (default: main in source; release assets pin this to their tag)
+  TLH_UPDATE_TRACK     Update track for future tlh update
   TLH_PACKAGE_SOURCE   Package source passed to `pi install`
   TLH_RAW_BASE         Base URL for installer support files
   TLH_GNOSIS_VERSION   Gnosis version to install (default: latest)
   TLH_GNOSIS_REPO      Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
 
 Examples:
-  curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash
-  curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s -- --dry-run
+  curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash
+  curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash -s -- --dry-run
   bash install.sh --agent-dir ~/.tlh/agent --bin-dir ~/.local/bin
 USAGE
 }
@@ -197,6 +200,15 @@ while [[ $# -gt 0 ]]; do
       [[ -n "${REF}" ]] || die "--ref requires a value"
       shift
       ;;
+    --track)
+      UPDATE_TRACK_INPUT="$(need_value "$1" "${2:-}")"
+      shift 2
+      ;;
+    --track=*)
+      UPDATE_TRACK_INPUT="${1#--track=}"
+      [[ -n "${UPDATE_TRACK_INPUT}" ]] || die "--track requires a value"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -216,6 +228,7 @@ DEFAULTS_FILE=""
 DEFAULT_EXTENSIONS_FILE=""
 TLH_DEFAULTS_SCRIPT=""
 TLH_GNOSIS_SCRIPT=""
+TLH_UPDATE_SCRIPT=""
 
 strip_trailing_slashes() {
   local path="$1"
@@ -246,6 +259,10 @@ validate_inputs() {
   if [[ ! "${WRAPPER_NAME}" =~ ^[A-Za-z0-9._-]+$ ]]; then
     die "--wrapper-name must be a simple command name containing only letters, numbers, dot, underscore, or dash"
   fi
+  case "${UPDATE_TRACK}" in
+    latest-release|pinned-tag|ref|custom) ;;
+    *) die "--track must be one of: latest-release, pinned-tag, ref, custom" ;;
+  esac
 
   local normal_pi_root normalized_agent
   normal_pi_root="$(normalize_path_for_compare "${HOME}/.pi")"
@@ -264,6 +281,16 @@ if [[ -z "${PACKAGE_SOURCE}" ]]; then
 fi
 
 RAW_BASE="${TLH_RAW_BASE:-https://raw.githubusercontent.com/${REPO}/${REF}}"
+
+if [[ -n "${UPDATE_TRACK_INPUT}" ]]; then
+  UPDATE_TRACK="${UPDATE_TRACK_INPUT}"
+elif [[ "${PACKAGE_SOURCE_IS_DEFAULT}" != "true" ]]; then
+  UPDATE_TRACK="custom"
+elif [[ "${REF}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+  UPDATE_TRACK="pinned-tag"
+else
+  UPDATE_TRACK="ref"
+fi
 
 command_exists() {
   command -v "$1" >/dev/null 2>&1
@@ -388,11 +415,15 @@ find_local_repo_dir() {
 prepare_merge_files() {
   local local_dir=""
   TLH_GNOSIS_SCRIPT=""
+  TLH_UPDATE_SCRIPT=""
   if local_dir="$(find_local_repo_dir)"; then
     MERGE_SCRIPT="${local_dir}/scripts/merge-settings.mjs"
     TLH_DEFAULTS_SCRIPT="${local_dir}/scripts/tlh-defaults.mjs"
     if [[ -f "${local_dir}/scripts/tlh-gnosis.mjs" ]]; then
       TLH_GNOSIS_SCRIPT="${local_dir}/scripts/tlh-gnosis.mjs"
+    fi
+    if [[ -f "${local_dir}/scripts/tlh-update.mjs" ]]; then
+      TLH_UPDATE_SCRIPT="${local_dir}/scripts/tlh-update.mjs"
     fi
     DEFAULTS_FILE="${local_dir}/config/settings.defaults.json"
     DEFAULT_EXTENSIONS_FILE="${local_dir}/config/default-extensions.json"
@@ -404,6 +435,7 @@ prepare_merge_files() {
   MERGE_SCRIPT="${TMP_DIR}/merge-settings.mjs"
   TLH_DEFAULTS_SCRIPT="${TMP_DIR}/tlh-defaults.mjs"
   TLH_GNOSIS_SCRIPT="${TMP_DIR}/tlh-gnosis.mjs"
+  TLH_UPDATE_SCRIPT="${TMP_DIR}/tlh-update.mjs"
   DEFAULTS_FILE="${TMP_DIR}/settings.defaults.json"
   DEFAULT_EXTENSIONS_FILE="${TMP_DIR}/default-extensions.json"
 
@@ -414,6 +446,10 @@ prepare_merge_files() {
     warn "optional Gnosis support script not found for ref ${REF}; continuing without tlh gnosis helper"
     TLH_GNOSIS_SCRIPT=""
   fi
+  if ! curl -fsSL "${RAW_BASE}/scripts/tlh-update.mjs" -o "${TLH_UPDATE_SCRIPT}"; then
+    warn "tlh update support script not found for ref ${REF}; the wrapper update helper will be unavailable"
+    TLH_UPDATE_SCRIPT=""
+  fi
   curl -fsSL "${RAW_BASE}/config/settings.defaults.json" -o "${DEFAULTS_FILE}"
   curl -fsSL "${RAW_BASE}/config/default-extensions.json" -o "${DEFAULT_EXTENSIONS_FILE}"
 }
@@ -421,11 +457,15 @@ prepare_merge_files() {
 prepare_merge_files_for_dry_run() {
   local local_dir=""
   TLH_GNOSIS_SCRIPT=""
+  TLH_UPDATE_SCRIPT=""
   if local_dir="$(find_local_repo_dir)"; then
     MERGE_SCRIPT="${local_dir}/scripts/merge-settings.mjs"
     TLH_DEFAULTS_SCRIPT="${local_dir}/scripts/tlh-defaults.mjs"
     if [[ -f "${local_dir}/scripts/tlh-gnosis.mjs" ]]; then
       TLH_GNOSIS_SCRIPT="${local_dir}/scripts/tlh-gnosis.mjs"
+    fi
+    if [[ -f "${local_dir}/scripts/tlh-update.mjs" ]]; then
+      TLH_UPDATE_SCRIPT="${local_dir}/scripts/tlh-update.mjs"
     fi
     DEFAULTS_FILE="${local_dir}/config/settings.defaults.json"
     DEFAULT_EXTENSIONS_FILE="${local_dir}/config/default-extensions.json"
@@ -436,8 +476,21 @@ prepare_merge_files_for_dry_run() {
   log "Would merge settings defaults into: ${SETTINGS_PATH}"
   log "Would install bundled default extension packages after settings merge."
   log "Would fetch optional Gnosis integration support files."
+  log "Would fetch tlh update support files."
   log "Dry run only; no support files were downloaded."
   return 1
+}
+
+ensure_support_files_prepared() {
+  if [[ -n "${MERGE_SCRIPT}" || -n "${TLH_DEFAULTS_SCRIPT}" || -n "${TLH_GNOSIS_SCRIPT}" || -n "${TLH_UPDATE_SCRIPT}" || -n "${DEFAULTS_FILE}" || -n "${DEFAULT_EXTENSIONS_FILE}" ]]; then
+    return 0
+  fi
+
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    prepare_merge_files_for_dry_run
+    return $?
+  fi
+  prepare_merge_files
 }
 
 install_pi_if_needed() {
@@ -534,7 +587,7 @@ install_harness_package() {
   fi
 
   if ! run_isolated_pi pi update "${PACKAGE_SOURCE}"; then
-    warn "package update failed; continuing because install step completed"
+    die "package update failed for custom package source: ${PACKAGE_SOURCE}"
   fi
 }
 
@@ -544,10 +597,8 @@ merge_settings() {
     return 0
   fi
 
-  if [[ "${DRY_RUN}" == "true" ]]; then
-    prepare_merge_files_for_dry_run || return 0
-  else
-    prepare_merge_files
+  if ! ensure_support_files_prepared; then
+    return 0
   fi
 
   local args=(
@@ -579,27 +630,89 @@ merge_settings() {
 }
 
 install_support_files() {
-  if [[ -z "${TLH_DEFAULTS_SCRIPT}" || -z "${DEFAULT_EXTENSIONS_FILE}" ]]; then
+  if [[ -z "${TLH_DEFAULTS_SCRIPT}" && -z "${DEFAULT_EXTENSIONS_FILE}" && -z "${TLH_GNOSIS_SCRIPT}" && -z "${TLH_UPDATE_SCRIPT}" ]]; then
+    ensure_support_files_prepared || return 0
+  fi
+  if [[ -z "${TLH_DEFAULTS_SCRIPT}" && -z "${DEFAULT_EXTENSIONS_FILE}" && -z "${TLH_GNOSIS_SCRIPT}" && -z "${TLH_UPDATE_SCRIPT}" ]]; then
     return 0
   fi
 
   local support_dir="${AGENT_DIR}/tlh"
   if [[ "${DRY_RUN}" == "true" ]]; then
     print_command mkdir -p "${support_dir}"
-    print_command cp "${TLH_DEFAULTS_SCRIPT}" "${support_dir}/tlh-defaults.mjs"
+    if [[ -n "${TLH_DEFAULTS_SCRIPT}" ]]; then
+      print_command cp "${TLH_DEFAULTS_SCRIPT}" "${support_dir}/tlh-defaults.mjs"
+    fi
     if [[ -n "${TLH_GNOSIS_SCRIPT}" ]]; then
       print_command cp "${TLH_GNOSIS_SCRIPT}" "${support_dir}/tlh-gnosis.mjs"
     fi
-    print_command cp "${DEFAULT_EXTENSIONS_FILE}" "${support_dir}/default-extensions.json"
+    if [[ -n "${TLH_UPDATE_SCRIPT}" ]]; then
+      print_command cp "${TLH_UPDATE_SCRIPT}" "${support_dir}/tlh-update.mjs"
+    fi
+    if [[ -n "${DEFAULT_EXTENSIONS_FILE}" ]]; then
+      print_command cp "${DEFAULT_EXTENSIONS_FILE}" "${support_dir}/default-extensions.json"
+    fi
     return 0
   fi
 
   mkdir -p "${support_dir}"
-  cp "${TLH_DEFAULTS_SCRIPT}" "${support_dir}/tlh-defaults.mjs"
+  if [[ -n "${TLH_DEFAULTS_SCRIPT}" ]]; then
+    cp "${TLH_DEFAULTS_SCRIPT}" "${support_dir}/tlh-defaults.mjs"
+  fi
   if [[ -n "${TLH_GNOSIS_SCRIPT}" ]]; then
     cp "${TLH_GNOSIS_SCRIPT}" "${support_dir}/tlh-gnosis.mjs"
   fi
-  cp "${DEFAULT_EXTENSIONS_FILE}" "${support_dir}/default-extensions.json"
+  if [[ -n "${TLH_UPDATE_SCRIPT}" ]]; then
+    cp "${TLH_UPDATE_SCRIPT}" "${support_dir}/tlh-update.mjs"
+  fi
+  if [[ -n "${DEFAULT_EXTENSIONS_FILE}" ]]; then
+    cp "${DEFAULT_EXTENSIONS_FILE}" "${support_dir}/default-extensions.json"
+  fi
+}
+
+write_install_state() {
+  local support_dir="${AGENT_DIR}/tlh"
+  local state_path="${support_dir}/install-state.json"
+
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    log "Would write tlh update metadata: ${state_path}"
+    return 0
+  fi
+
+  mkdir -p "${support_dir}"
+  TLH_INSTALL_STATE_PATH="${state_path}" \
+  TLH_INSTALL_REPO="${REPO}" \
+  TLH_INSTALL_REF="${REF}" \
+  TLH_INSTALL_TRACK="${UPDATE_TRACK}" \
+  TLH_INSTALL_PACKAGE_SOURCE="${PACKAGE_SOURCE}" \
+  TLH_INSTALL_PACKAGE_SOURCE_IS_DEFAULT="${PACKAGE_SOURCE_IS_DEFAULT}" \
+  TLH_INSTALL_RAW_BASE="${RAW_BASE}" \
+  TLH_INSTALL_AGENT_DIR="${AGENT_DIR}" \
+  TLH_INSTALL_BIN_DIR="${BIN_DIR}" \
+  TLH_INSTALL_WRAPPER_NAME="${WRAPPER_NAME}" \
+  node <<'NODE'
+const fs = require('node:fs');
+const path = require('node:path');
+
+const statePath = process.env.TLH_INSTALL_STATE_PATH;
+const state = {
+  schemaVersion: 1,
+  repo: process.env.TLH_INSTALL_REPO,
+  ref: process.env.TLH_INSTALL_REF,
+  track: process.env.TLH_INSTALL_TRACK,
+  packageSource: process.env.TLH_INSTALL_PACKAGE_SOURCE,
+  packageSourceIsDefault: process.env.TLH_INSTALL_PACKAGE_SOURCE_IS_DEFAULT === 'true',
+  rawBase: process.env.TLH_INSTALL_RAW_BASE,
+  agentDir: process.env.TLH_INSTALL_AGENT_DIR,
+  binDir: process.env.TLH_INSTALL_BIN_DIR,
+  wrapperName: process.env.TLH_INSTALL_WRAPPER_NAME,
+  installedAt: new Date().toISOString(),
+};
+const tmpPath = `${statePath}.tmp.${process.pid}`;
+fs.mkdirSync(path.dirname(statePath), { recursive: true });
+fs.writeFileSync(tmpPath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+fs.renameSync(tmpPath, statePath);
+NODE
 }
 
 install_default_extensions() {
@@ -1050,9 +1163,11 @@ write_wrapper() {
 
   mkdir -p "${BIN_DIR}"
   local tmp_path="${WRAPPER_PATH}.tmp.$$"
-  local escaped_agent_dir escaped_package_root
+  local escaped_agent_dir escaped_package_root escaped_bin_dir escaped_wrapper_name
   escaped_agent_dir="$(printf '%q' "${AGENT_DIR}")"
   escaped_package_root="$(printf '%q' "${AGENT_DIR}/git/github.com/${REPO}")"
+  escaped_bin_dir="$(printf '%q' "${BIN_DIR}")"
+  escaped_wrapper_name="$(printf '%q' "${WRAPPER_NAME}")"
 
   cat >"${tmp_path}" <<EOF
 #!/usr/bin/env bash
@@ -1060,7 +1175,27 @@ set -euo pipefail
 # ${WRAPPER_MARKER}
 default_agent_dir=${escaped_agent_dir}
 default_tlh_package_root=${escaped_package_root}
+default_bin_dir=${escaped_bin_dir}
+default_wrapper_name=${escaped_wrapper_name}
 export PI_CODING_AGENT_DIR="\${default_agent_dir}"
+
+if [[ "\${1:-}" == "update" ]]; then
+  shift
+  tlh_update_script=""
+  for candidate in \
+    "\${default_agent_dir}/tlh/tlh-update.mjs" \
+    "\${default_tlh_package_root}/scripts/tlh-update.mjs"; do
+    if [[ -f "\${candidate}" ]]; then
+      tlh_update_script="\${candidate}"
+      break
+    fi
+  done
+  if [[ -z "\${tlh_update_script}" ]]; then
+    printf 'error: tlh update support files not found; re-run the installer.\n' >&2
+    exit 1
+  fi
+  exec node "\${tlh_update_script}" --agent-dir "\${default_agent_dir}" --bin-dir "\${default_bin_dir}" --wrapper-name "\${default_wrapper_name}" "\$@"
+fi
 
 if [[ "\${1:-}" == "defaults" ]]; then
   shift
@@ -1159,6 +1294,7 @@ main() {
     log "Package source: ${PACKAGE_SOURCE}"
   fi
   verbose_log "Repository: ${REPO}"
+  verbose_log "Update track: ${UPDATE_TRACK}"
 
   require_command node
   validate_inputs
@@ -1169,6 +1305,7 @@ main() {
   install_harness_package
   merge_settings
   install_support_files
+  write_install_state
   install_default_extensions
   configure_gnosis
   write_wrapper

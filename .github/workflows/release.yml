@@ -48,6 +48,7 @@ jobs:
           node --check scripts/merge-settings.mjs
           node --check scripts/tlh-defaults.mjs
           node --check scripts/tlh-gnosis.mjs
+          node --check scripts/tlh-update.mjs
           node --check scripts/release-notes.mjs
           npm pack --dry-run
 
