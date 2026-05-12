@@ -82,101 +82,10 @@ tlh gnosis disable
 
 Gnosis project data lives in repo-local `.gnosis` directories.
 
-## Install and update
+## Install, update, and uninstall
 
-Install and update guidance lives in [`docs/install.md`](docs/install.md).
+Install, update, and uninstall guidance lives in [`docs/install.md`](docs/install.md).
 
 ## Local development
 
 Local testing and development commands live in [`docs/local-development.md`](docs/local-development.md).
-
-## Manual install
-
-```sh
-npm install -g @earendil-works/pi-coding-agent
-mkdir -p "$HOME/.the-last-harness/agent"
-PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" \
-  pi install git:github.com/diegopetrucci/the-last-harness@v0.3.0
-node scripts/merge-settings.mjs \
-  config/settings.defaults.json \
-  --settings "$HOME/.the-last-harness/agent/settings.json" \
-  --package-source git:github.com/diegopetrucci/the-last-harness@v0.3.0 \
-  --default-extensions config/default-extensions.json
-PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" \
-  pi update --extensions
-```
-
-Run without the wrapper:
-
-```sh
-PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" pi
-```
-
-## Installer options
-
-```text
---dry-run        Print actions and settings changes without writing
---force          Allow scalar isolated defaults and installer wrapper overwrite
---no-pi-install  Fail instead of installing Pi when the `pi` command is missing
---no-settings     Install the package but skip isolated settings merge
---no-wrapper      Skip creating the tlh wrapper command
---with-gnosis     Install/enable optional Gnosis (`gn`) integration
---without-gnosis  Disable optional Gnosis integration without prompting
---no-gnosis       Alias for --without-gnosis
---agent-dir DIR   Isolated Pi agent dir, default ~/.the-last-harness/agent
---bin-dir DIR     Wrapper install dir, default ~/.local/bin
---wrapper-name N  Wrapper command name, default tlh
---ref REF         Install from a branch, tag, or commit
---track TRACK     Update track: latest-release, pinned-tag, ref, custom
---quiet          Suppress installer progress output
---verbose        Show underlying pi, npm, and git output
-```
-
-Example custom install:
-
-```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | \
-  TLH_UPDATE_TRACK=latest-release bash -s -- --agent-dir ~/.tlh/agent --bin-dir ~/.local/bin
-```
-
-Example pinned install:
-
-```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.3.0/install.sh | bash
-```
-
-## Update
-
-Run the TLH update helper. This refreshes the isolated checkout according to your update track and re-merges installer defaults:
-
-```sh
-tlh update
-```
-
-Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. If you are updating from an older install without `tlh update`, rerun the latest-release installer once with `TLH_UPDATE_TRACK=latest-release`.
-
-At launch, TLH checks GitHub Releases in the background at most once per day and warns once when a newer release is available. It never auto-updates. Set `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `TLH_SKIP_UPDATE_CHECK=1`, or `"tlh": { "updateCheck": { "enabled": false } }` in the isolated settings to disable the check.
-
-To update bundled default extension packages too:
-
-```sh
-PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" \
-  pi update --extensions
-```
-
-## Uninstall
-
-Remove the isolated wrapper and profile:
-
-```sh
-rm -f ~/.local/bin/tlh
-rm -rf ~/.the-last-harness
-```
-
-This does not uninstall upstream Pi, because you may use normal `pi` separately.
-
-To remove upstream Pi entirely, only if you installed it solely for The Last Harness:
-
-```sh
-npm uninstall -g @earendil-works/pi-coding-agent
-```
