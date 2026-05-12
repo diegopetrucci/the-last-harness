@@ -49,6 +49,7 @@ const execFileAsync = promisify(execFile);
 const ACTIVE_PRIMARY_AGENT = "architect";
 const ALLOWED_SUBAGENTS = ["developer", "code-reviewer", "repo-scout", "diff-summarizer"];
 const SAFE_SUBAGENT_ACTIONS = new Set(["list", "get", "status", "doctor"]);
+const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 
 const HARNESS_PROMPT = `
 ## The Last Harness Defaults
@@ -1590,6 +1591,10 @@ function createTlhHeader(
 }
 
 export default function theLastHarness(pi: ExtensionAPI) {
+	if (process.env[SUBAGENT_CHILD_ENV] === "1") {
+		return;
+	}
+
 	const primaryAgent = loadPrimaryAgent();
 	const subagentMetadata = loadSubagentMetadata();
 	const primarySystemPrompt = buildPrimarySystemPrompt(primaryAgent, subagentMetadata);
