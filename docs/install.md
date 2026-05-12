@@ -24,5 +24,3 @@ Note: if you already have `pi` installed, `tlh` does not replace it — you can 
 You can just run `tlh update`.
 
 The updating process is intentionally conservative, and won't replace your custom extensions, themes, and so on. If you spot anything that was overridden, [please open an issue](https://github.com/diegopetrucci/the-last-harness/issues).
-
-Release notes are sourced from the matching [`CHANGELOG.md`](../CHANGELOG.md) section. Release instructions live in [`docs/releasing.md`](releasing.md).
