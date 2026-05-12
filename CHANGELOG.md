@@ -4,12 +4,18 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-12
+
 ### Added
 
 - `tlh update` now reruns the installer update flow while preserving latest-release, pinned-tag, or ref/main update tracks.
 - TLH now checks GitHub Releases in the background at startup and warns once when a newer release is available.
 - Bundled `npm:@diegopetrucci/pi-openai-fast` as a default extension.
 - Bundled `npm:@plannotator/pi-extension` as a default extension.
+
+### Changed
+
+- Expanded install and local-development guidance now lives in focused docs linked from the README.
 
 ## [0.4.0] - 2026-05-11
 
