@@ -48,7 +48,7 @@ const AUTOCOMPLETE_SOURCE_TAG_PATTERN = /(^|—\s*)\[(?:u|p|t)(?::(?:npm|git):[^
 const execFileAsync = promisify(execFile);
 const ACTIVE_PRIMARY_AGENT = "architect";
 const ALLOWED_SUBAGENTS = ["developer", "code-reviewer", "repo-scout", "diff-summarizer"];
-const SAFE_SUBAGENT_ACTIONS = new Set(["list", "status", "doctor"]);
+const SAFE_SUBAGENT_ACTIONS = new Set(["list", "get", "status", "doctor"]);
 const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 
 const HARNESS_PROMPT = `
@@ -1244,7 +1244,7 @@ function collectSubagentTargets(input: unknown): string[] {
 	return [...new Set(targets)];
 }
 
-function forceUserAgentScope(input: Record<string, unknown>, mode: "execution" | "list"): string | undefined {
+function forceUserAgentScope(input: Record<string, unknown>, mode: "execution" | "list" | "get"): string | undefined {
 	const rawScope = input.agentScope;
 	if (rawScope !== undefined) {
 		if (typeof rawScope !== "string") {
@@ -1270,7 +1270,7 @@ function validateSubagentToolInput(input: unknown): string | undefined {
 		if (!SAFE_SUBAGENT_ACTIONS.has(action)) {
 			return `TLH architect may not use subagent management action '${action}'. Allowed actions: ${Array.from(SAFE_SUBAGENT_ACTIONS).join(", ")}.`;
 		}
-		return action === "list" ? forceUserAgentScope(input, "list") : undefined;
+		return action === "list" || action === "get" ? forceUserAgentScope(input, action) : undefined;
 	}
 
 	const scopeReason = forceUserAgentScope(input, "execution");
