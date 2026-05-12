@@ -108,80 +108,9 @@ The updating process is intentionally conservative, and won't replace your custo
 
 Release notes are sourced from the matching `CHANGELOG.md` section. Release instructions live in [`docs/releasing.md`](docs/releasing.md).
 
-## Miscellaneous
+## Local development
 
-### Local testing
-
-Test the extension directly from this checkout without installing it:
-
-```sh
-pi --no-extensions -e ./extensions/the-last-harness.ts
-```
-
-Then run the effort picker in the interactive UI:
-
-```text
-/effort
-```
-
-You can also test direct arguments and validation:
-
-```text
-/effort off
-/effort low
-/effort high
-/effort xhigh
-/effort nope
-```
-
-To test with an isolated temporary Pi profile:
-
-```sh
-tmp="$(mktemp -d)"
-PI_CODING_AGENT_DIR="$tmp/agent" pi --no-extensions -e ./extensions/the-last-harness.ts
-```
-
-To test the package install flow locally:
-
-```sh
-tmp="$(mktemp -d)"
-PI_CODING_AGENT_DIR="$tmp/agent" pi install "file:$PWD"
-PI_CODING_AGENT_DIR="$tmp/agent" pi
-```
-
-Then run:
-
-```text
-/effort
-```
-
-To test the defaults manager without installing:
-
-```sh
-tmp="$(mktemp -d)"
-node scripts/merge-settings.mjs config/settings.defaults.json \
-  --settings "$tmp/settings.json" \
-  --default-extensions config/default-extensions.json
-node scripts/tlh-defaults.mjs \
-  --settings "$tmp/settings.json" \
-  --defaults config/default-extensions.json \
-  disable notify
-```
-
-To test the Gnosis manager without installing:
-
-```sh
-tmp="$(mktemp -d)"
-node scripts/tlh-gnosis.mjs --settings "$tmp/settings.json" status
-node scripts/tlh-gnosis.mjs --settings "$tmp/settings.json" enable
-node scripts/tlh-gnosis.mjs --settings "$tmp/settings.json" disable
-```
-
-To test installer wrapper behavior, dry-run first with temporary paths:
-
-```sh
-bash install.sh --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -d)"
-```
+Local testing and development commands live in [`docs/local-development.md`](docs/local-development.md).
 
 ## Manual install
 
