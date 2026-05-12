@@ -39,6 +39,8 @@ The following slash commands are available in interactive `tlh` sessions:
 - `prompts/harness-plan.md` provides `/harness-plan` for reviewable implementation planning.
 - `themes/the-last-harness.json` provides the default isolated theme.
 
+TLH does not switch your saved model or reasoning-effort defaults on startup. If you explicitly want the primary-agent prompt metadata to apply them, set `tlh.primaryAgent.applyModel` and/or `tlh.primaryAgent.applyThinking` to `true` in the isolated settings file.
+
 ## Bundled extensions
 
 The installer enables these standalone external Pi packages by default in the isolated `tlh` profile:
@@ -67,7 +69,7 @@ tlh defaults disable notify
 tlh defaults enable notify
 ```
 
-Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `tlh update`, `pi update --extensions`, and installer reruns.
+Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `tlh update`, `pi update --extensions`, and installer reruns. Installer settings merges preserve existing same-identity package sources by default; use installer `--force` only when you want bundled default-extension source migrations to rewrite existing entries.
 
 ### Gnosis integration
 

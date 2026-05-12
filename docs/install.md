@@ -20,8 +20,34 @@ Note: if you already have `pi` installed, `tlh` does not replace it — you can 
 
 ## More ways to install
 
-- Pinned, eg `curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.3.0/install.sh | bash -s --`
+- Pinned, eg `curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.5.0/install.sh | bash -s --`
 - Main (unstable): `curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --ref main --track ref`
+
+## Manual install
+
+```sh
+TLH_REF="${TLH_REF:-v0.5.0}"
+npm install -g @earendil-works/pi-coding-agent
+mkdir -p "$HOME/.the-last-harness/agent"
+PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" \
+  pi install "git:github.com/diegopetrucci/the-last-harness@${TLH_REF}"
+node scripts/merge-settings.mjs \
+  config/settings.defaults.json \
+  --settings "$HOME/.the-last-harness/agent/settings.json" \
+  --package-source "git:github.com/diegopetrucci/the-last-harness@${TLH_REF}" \
+  --default-extensions config/default-extensions.json
+rm -rf "$HOME/.the-last-harness/agent/tlh/agents/subagents"
+mkdir -p "$HOME/.the-last-harness/agent/tlh/agents/subagents"
+cp -R agents/subagents/. "$HOME/.the-last-harness/agent/tlh/agents/subagents/"
+PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" \
+  pi update --extensions
+```
+
+Run without the wrapper:
+
+```sh
+PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" pi
+```
 
 ## Installer options
 
@@ -46,7 +72,7 @@ Note: if you already have `pi` installed, `tlh` does not replace it — you can 
 Example pinned install:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.3.0/install.sh | bash -s --
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.5.0/install.sh | bash -s --
 ```
 
 ## Update
@@ -88,3 +114,7 @@ To remove upstream Pi entirely, only if you installed it solely for The Last Har
 ```sh
 npm uninstall -g @earendil-works/pi-coding-agent
 ```
+
+## Security note
+
+The one-line installer and `tlh update` run shell commands on your machine, may install global npm packages for Pi and bundled default extensions, may download an optional Gnosis binary into the isolated TLH profile if you accept, creates an isolated Pi profile, and writes a wrapper command. Review `install.sh` before piping it to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.

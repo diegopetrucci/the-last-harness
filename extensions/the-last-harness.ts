@@ -97,11 +97,17 @@ type TlhTelemetryConfig = {
 	enabled?: boolean;
 };
 
+type TlhPrimaryAgentConfig = {
+	applyModel?: boolean;
+	applyThinking?: boolean;
+};
+
 type TlhSettings = {
 	tlh?: {
 		gnosis?: TlhGnosisConfig;
 		updateCheck?: TlhUpdateCheckConfig;
 		telemetry?: TlhTelemetryConfig;
+		primaryAgent?: TlhPrimaryAgentConfig;
 	};
 };
 
@@ -527,6 +533,15 @@ function getTlhUpdateCheckConfig(cwd: string): TlhUpdateCheckConfig | undefined 
 	try {
 		const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as TlhSettings;
 		return settings.tlh?.updateCheck;
+	} catch {
+		return undefined;
+	}
+}
+
+function getTlhPrimaryAgentConfig(cwd: string): TlhPrimaryAgentConfig | undefined {
+	try {
+		const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as TlhSettings;
+		return settings.tlh?.primaryAgent;
 	} catch {
 		return undefined;
 	}
@@ -1644,13 +1659,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		}
 	}
 
-	async function applyPrimaryDefaults(ctx: ExtensionContext): Promise<void> {
-		applyPrimaryTools(ctx);
-
-		if (primaryAgent?.thinking) {
-			pi.setThinkingLevel(primaryAgent.thinking);
-		}
-
+	async function applyPrimaryModel(ctx: ExtensionContext): Promise<void> {
 		if (!primaryAgent?.model || primaryModelAttempted) {
 			return;
 		}
@@ -1671,6 +1680,18 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		const success = await pi.setModel(model);
 		if (!success) {
 			warnOnce(ctx, "primary-model-unavailable", `TLH could not switch to primary agent model: ${primaryAgent.model}`);
+		}
+	}
+
+	async function applyPrimaryDefaults(ctx: ExtensionContext): Promise<void> {
+		applyPrimaryTools(ctx);
+
+		const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
+		if (primaryConfig?.applyModel === true) {
+			await applyPrimaryModel(ctx);
+		}
+		if (primaryConfig?.applyThinking === true && primaryAgent?.thinking) {
+			pi.setThinkingLevel(primaryAgent.thinking);
 		}
 	}
 

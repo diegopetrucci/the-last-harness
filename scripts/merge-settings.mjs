@@ -276,10 +276,11 @@ function removePackageByIdentity(settings, identity) {
 	return packageSourceOf(removed) || identity;
 }
 
-function applyReplacedDefaultExtensions(settings, defaultExtensions, changes) {
-	if (!Array.isArray(settings.packages)) return;
+function applyReplacedDefaultExtensions(settings, defaultExtensions, disabledIds, changes, { force }) {
+	if (!force || !Array.isArray(settings.packages)) return;
 
 	for (const extension of defaultExtensions) {
+		if (disabledIds.has(extension.id)) continue;
 		const newIdentity = packageIdentity(extension.source);
 		for (const oldSource of extension.replaces) {
 			const oldIdentity = packageIdentity(oldSource);
@@ -292,8 +293,8 @@ function applyReplacedDefaultExtensions(settings, defaultExtensions, changes) {
 	}
 }
 
-function applyDefaultExtensionSourceUpdates(settings, defaultExtensions, disabledIds, changes) {
-	if (!Array.isArray(settings.packages)) return;
+function applyDefaultExtensionSourceUpdates(settings, defaultExtensions, disabledIds, changes, { force }) {
+	if (!force || !Array.isArray(settings.packages)) return;
 
 	for (const extension of defaultExtensions) {
 		if (disabledIds.has(extension.id)) continue;
@@ -490,8 +491,8 @@ function main() {
 	const disabledIds = disabledDefaultExtensionIds(existing, defaultExtensions);
 	const defaults = prepareDefaults(rawDefaults, args.packageSource, defaultExtensions, disabledIds);
 	const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
-	applyDefaultExtensionSourceUpdates(next, defaultExtensions, disabledIds, changes);
-	applyReplacedDefaultExtensions(next, defaultExtensions, changes);
+	applyDefaultExtensionSourceUpdates(next, defaultExtensions, disabledIds, changes, { force: args.force });
+	applyReplacedDefaultExtensions(next, defaultExtensions, disabledIds, changes, { force: args.force });
 	applyDisabledDefaultExtensions(next, defaultExtensions, disabledIds, changes);
 
 	log(args, `Pi settings: ${settingsPath}`);
