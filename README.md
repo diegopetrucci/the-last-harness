@@ -8,7 +8,7 @@ Install one-liner:
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash
 ```
 
-## Features
+## Core features
 
 - **Context discipline.** The context-cap extension helps keep long sessions under control.
 - **Project memory.** Gnosis integration can record project decisions, constraints, rejected alternatives, and lessons in repo-local memory.
@@ -20,6 +20,17 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/dow
 - **Repository research.** The Librarian extension can scout GitHub repositories and optionally cache local checkouts.
 - **Opinionated defaults, conservative updates.** TLH installs a curated theme, prompt guidance, commands, and default extensions while preserving your custom settings and opt-outs across updates.
 - **Isolated Pi profile.** `tlh` runs upstream `pi` with its own profile at `~/.the-last-harness/agent`, leaving your normal `~/.pi/agent` config untouched.
+
+## Custom commands
+
+- [ ] TODO
+
+### Included Pi resources
+
+- `extensions/the-last-harness.ts` adds the custom `tlh` startup header and footer, lightweight default guidance, optional Gnosis prompt instructions, `/tlh` status, `/effort` reasoning-effort picker commands, and the 200k-token `DUMB ZONE` footer warning.
+- `skills/harness-setup/SKILL.md` documents safe setup/update/uninstall workflows.
+- `prompts/harness-plan.md` provides `/harness-plan` for reviewable implementation planning.
+- `themes/the-last-harness.json` provides the default isolated theme.
 
 ## Bundled extensions
 
@@ -45,7 +56,7 @@ tlh defaults enable notify
 
 Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `tlh update`, `pi update --extensions`, and installer reruns.
 
-## Gnosis integration
+### Gnosis integration
 
 [Gnosis](https://github.com/skorokithakis/gnosis) is a small `gn` CLI for recording project decisions, constraints, rejected alternatives, and lessons that are not obvious from code alone. During install, TLH asks whether to install and enable it because `tlh` works better when agents can consult and update that project memory.
 
@@ -80,60 +91,22 @@ Once the installation is finished, start `tlh` by running… you guessed it, `tl
 
 Note: if you already have `pi` installed, `tlh` does not replace it — you can keep both, as it uses its own isolated config in `~/.the-last-harness/`.
 
+### More ways to install
+
+- Pinned, eg `curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.3.0/install.sh | bash`
+- Main (unstable): `curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --ref main --track ref`
+
 ### Update
 
-You can just run `tlh update`. If you are updating from an older install that does not have `tlh update` yet, rerun the install script once with `TLH_UPDATE_TRACK=latest-release` if you want to track latest releases.
+You can just run `tlh update`.
 
-The updating process is intentionally conservative, and won't replace your custom extensions, themes, and so on. If you spot anything that was overridden, please open an issue.
-
-## Isolation model
-
-For normal agent commands, `tlh` is a thin wrapper around upstream Pi:
-
-```sh
-PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" pi "$@"
-```
-
-It also intercepts installer-owned helper commands:
-
-- `tlh update ...` reruns the installer update flow for the current update track.
-- `tlh defaults ...` manages TLH default-extension opt-outs in the isolated settings file.
-- `tlh gnosis ...` manages optional Gnosis prompt integration in the isolated settings file.
-
-So:
-
-- `tlh` uses `~/.the-last-harness/agent/settings.json`
-- normal `pi` uses `~/.pi/agent/settings.json`
-- the installer does not write normal Pi settings or auth files
-- installer-owned update metadata lives at `~/.the-last-harness/agent/tlh/install-state.json`
-- if TLH installs Gnosis, the managed `gn` lives at `~/.the-last-harness/agent/bin/gn` and the wrapper prepends that directory to `PATH` only for `tlh`
-
-Caveat: Pi project settings such as `.pi/settings.json` can still apply when running `tlh` inside a project, because that is core Pi behavior. The isolation is for the global Pi profile.
-
-## Included Pi resources
-
-- `extensions/the-last-harness.ts` adds the custom `tlh` startup header and footer, lightweight default guidance, optional Gnosis prompt instructions, `/tlh` status, `/effort` reasoning-effort picker commands, and the 200k-token `DUMB ZONE` footer warning.
-- `skills/harness-setup/SKILL.md` documents safe setup/update/uninstall workflows.
-- `prompts/harness-plan.md` provides `/harness-plan` for reviewable implementation planning.
-- `themes/the-last-harness.json` provides the default isolated theme.
-
-## Releases
-
-For a pinned install, use that release's installer asset:
-
-```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.3.0/install.sh | bash
-```
-
-For development builds from `main`, pass `--ref main`:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --ref main --track ref
-```
+The updating process is intentionally conservative, and won't replace your custom extensions, themes, and so on. If you spot anything that was overridden, [please open an issue](https://github.com/diegopetrucci/the-last-harness/issues).
 
 Release notes are sourced from the matching `CHANGELOG.md` section. Release instructions live in [`docs/releasing.md`](docs/releasing.md).
 
-## Local testing
+## Miscellaneous
+
+### Local testing
 
 Test the extension directly from this checkout without installing it:
 
