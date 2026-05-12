@@ -42,6 +42,7 @@ The installer enables these standalone external Pi packages by default in the is
 
 - [`npm:@diegopetrucci/pi-permission-gate`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/permission-gate) — asks for confirmation before sensitive tool calls.
 - [`npm:@diegopetrucci/pi-oracle`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/oracle) — consults a separate read-only reasoning process for second opinions.
+- [`npm:@plannotator/pi-extension`](https://github.com/backnotprop/plannotator/tree/main/apps/pi-extension) — adds interactive plan review with annotations.
 - [`npm:@diegopetrucci/pi-openai-fast`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/openai-fast) — adds optional `/fast` commands for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions.
 - [`npm:@diegopetrucci/pi-librarian`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/librarian) — scouts GitHub repositories and optionally caches local checkouts.
 - [`npm:@diegopetrucci/pi-notify`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/notify) — sends a notification when an agent turn finishes.
