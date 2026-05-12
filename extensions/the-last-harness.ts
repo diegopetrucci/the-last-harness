@@ -48,7 +48,7 @@ const AUTOCOMPLETE_SOURCE_TAG_PATTERN = /(^|—\s*)\[(?:u|p|t)(?::(?:npm|git):[^
 const execFileAsync = promisify(execFile);
 const ACTIVE_PRIMARY_AGENT = "architect";
 const ALLOWED_SUBAGENTS = ["developer", "code-reviewer", "repo-scout", "diff-summarizer"];
-const SAFE_SUBAGENT_ACTIONS = new Set(["list", "get", "status", "doctor"]);
+const SAFE_SUBAGENT_ACTIONS = new Set(["list", "status", "doctor"]);
 const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 
 const HARNESS_PROMPT = `
@@ -1244,6 +1244,22 @@ function collectSubagentTargets(input: unknown): string[] {
 	return [...new Set(targets)];
 }
 
+function forceUserAgentScope(input: Record<string, unknown>, mode: "execution" | "list"): string | undefined {
+	const rawScope = input.agentScope;
+	if (rawScope !== undefined) {
+		if (typeof rawScope !== "string") {
+			return `TLH architect subagent ${mode} calls must use agentScope: "user" or omit agentScope.`;
+		}
+		const agentScope = rawScope.trim();
+		if (agentScope && agentScope !== "user") {
+			return `TLH architect subagent ${mode} calls may not use agentScope: "${agentScope}". TLH minor agents must run from the isolated user scope.`;
+		}
+	}
+
+	input.agentScope = "user";
+	return undefined;
+}
+
 function validateSubagentToolInput(input: unknown): string | undefined {
 	if (!isRecord(input)) {
 		return "TLH architect subagent calls must use an object input.";
@@ -1251,9 +1267,15 @@ function validateSubagentToolInput(input: unknown): string | undefined {
 
 	const action = stringField(input.action);
 	if (action) {
-		return SAFE_SUBAGENT_ACTIONS.has(action)
-			? undefined
-			: `TLH architect may not use subagent management action '${action}'. Allowed actions: ${Array.from(SAFE_SUBAGENT_ACTIONS).join(", ")}.`;
+		if (!SAFE_SUBAGENT_ACTIONS.has(action)) {
+			return `TLH architect may not use subagent management action '${action}'. Allowed actions: ${Array.from(SAFE_SUBAGENT_ACTIONS).join(", ")}.`;
+		}
+		return action === "list" ? forceUserAgentScope(input, "list") : undefined;
+	}
+
+	const scopeReason = forceUserAgentScope(input, "execution");
+	if (scopeReason) {
+		return scopeReason;
 	}
 
 	const targets = collectSubagentTargets(input);
