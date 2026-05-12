@@ -10,6 +10,7 @@ NO_PI_INSTALL=false
 NO_SETTINGS=false
 NO_WRAPPER=false
 QUIET=false
+VERBOSE=false
 GNOSIS_MODE="ask"
 GNOSIS_SUMMARY=""
 TMP_DIR=""
@@ -40,6 +41,8 @@ Options:
   --bin-dir DIR     Wrapper install dir (default: ~/.local/bin)
   --wrapper-name N  Wrapper command name (default: tlh)
   --ref REF         Install The Last Harness from a branch, tag, or commit
+  --quiet          Suppress installer progress output
+  --verbose        Show underlying pi, npm, and git output
   -h, --help        Show this help
 
 Environment overrides:
@@ -69,6 +72,12 @@ log() {
 log_stderr() {
   if [[ "${QUIET}" != "true" ]]; then
     printf '%s\n' "$*" >&2
+  fi
+}
+
+verbose_log() {
+  if [[ "${VERBOSE}" == "true" && "${QUIET}" != "true" ]]; then
+    printf '%s\n' "$*"
   fi
 }
 
@@ -171,6 +180,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --quiet)
       QUIET=true
+      VERBOSE=false
+      shift
+      ;;
+    --verbose)
+      VERBOSE=true
+      QUIET=false
       shift
       ;;
     --ref)
@@ -265,19 +280,93 @@ print_command() {
   printf '\n'
 }
 
+print_command_failure() {
+  local status="$1"
+  local log_file="$2"
+  shift 2
+
+  printf 'command failed (exit %s): ' "${status}" >&2
+  printf '%q ' "$@" >&2
+  printf '\n' >&2
+  if [[ -s "${log_file}" ]]; then
+    printf '%s\n' '---- output (last 80 lines) ----' >&2
+    tail -n 80 "${log_file}" >&2 || true
+    printf '%s\n' '---- end output ----' >&2
+  fi
+  printf '%s\n' 'Re-run the installer with --verbose to show full command output.' >&2
+}
+
+run_captured() {
+  local log_file status
+  log_file="$(mktemp)"
+  if env GIT_TERMINAL_PROMPT=0 NPM_CONFIG_AUDIT=false NPM_CONFIG_FUND=false NPM_CONFIG_LOGLEVEL=error "$@" </dev/null >"${log_file}" 2>&1; then
+    rm -f "${log_file}"
+    return 0
+  else
+    status=$?
+  fi
+
+  print_command_failure "${status}" "${log_file}" "$@"
+  rm -f "${log_file}"
+  return "${status}"
+}
+
+run_captured_in_dir() {
+  local dir="$1"
+  shift
+
+  local log_file status
+  log_file="$(mktemp)"
+  if (cd "${dir}" && env GIT_TERMINAL_PROMPT=0 NPM_CONFIG_AUDIT=false NPM_CONFIG_FUND=false NPM_CONFIG_LOGLEVEL=error "$@") </dev/null >"${log_file}" 2>&1; then
+    rm -f "${log_file}"
+    return 0
+  else
+    status=$?
+  fi
+
+  printf 'command failed (exit %s, cwd %s): ' "${status}" "${dir}" >&2
+  printf '%q ' "$@" >&2
+  printf '\n' >&2
+  if [[ -s "${log_file}" ]]; then
+    printf '%s\n' '---- output (last 80 lines) ----' >&2
+    tail -n 80 "${log_file}" >&2 || true
+    printf '%s\n' '---- end output ----' >&2
+  fi
+  printf '%s\n' 'Re-run the installer with --verbose to show full command output.' >&2
+  rm -f "${log_file}"
+  return "${status}"
+}
+
 run() {
   if [[ "${DRY_RUN}" == "true" ]]; then
     print_command "$@"
-  else
+  elif [[ "${VERBOSE}" == "true" ]]; then
     "$@"
+  else
+    run_captured "$@"
+  fi
+}
+
+run_in_dir() {
+  local dir="$1"
+  shift
+
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    print_command bash -c "cd $(printf '%q' "${dir}") && $(printf '%q ' "$@")"
+  elif [[ "${VERBOSE}" == "true" ]]; then
+    (cd "${dir}" && "$@")
+  else
+    run_captured_in_dir "${dir}" "$@"
   fi
 }
 
 run_isolated_pi() {
   if [[ "${DRY_RUN}" == "true" ]]; then
     print_command env "PI_CODING_AGENT_DIR=${AGENT_DIR}" "$@"
-  else
+  elif [[ "${VERBOSE}" == "true" ]]; then
     (cd "${AGENT_DIR}" && PI_CODING_AGENT_DIR="${AGENT_DIR}" "$@")
+  else
+    run_captured_in_dir "${AGENT_DIR}" env "PI_CODING_AGENT_DIR=${AGENT_DIR}" "$@"
   fi
 }
 
@@ -318,7 +407,7 @@ prepare_merge_files() {
   DEFAULTS_FILE="${TMP_DIR}/settings.defaults.json"
   DEFAULT_EXTENSIONS_FILE="${TMP_DIR}/default-extensions.json"
 
-  log "Fetching installer support files from ${RAW_BASE}"
+  verbose_log "Fetching installer support files from ${RAW_BASE}"
   curl -fsSL "${RAW_BASE}/scripts/merge-settings.mjs" -o "${MERGE_SCRIPT}"
   curl -fsSL "${RAW_BASE}/scripts/tlh-defaults.mjs" -o "${TLH_DEFAULTS_SCRIPT}"
   if ! curl -fsSL "${RAW_BASE}/scripts/tlh-gnosis.mjs" -o "${TLH_GNOSIS_SCRIPT}"; then
@@ -353,7 +442,7 @@ prepare_merge_files_for_dry_run() {
 
 install_pi_if_needed() {
   if command_exists pi; then
-    log "Pi is already installed: $(command -v pi)"
+    verbose_log "Pi is already installed: $(command -v pi)"
     return 0
   fi
 
@@ -361,7 +450,7 @@ install_pi_if_needed() {
     die "pi is not installed and --no-pi-install was provided"
   fi
 
-  log "Pi is not installed. Installing @earendil-works/pi-coding-agent globally..."
+  log "Installing Pi runtime..."
   run npm install -g @earendil-works/pi-coding-agent
   hash -r || true
 
@@ -391,7 +480,7 @@ refresh_harness_package_checkout() {
   fi
 
   local package_root="${AGENT_DIR}/git/github.com/${REPO}"
-  log "Checking out The Last Harness git ref: ${REF}"
+  verbose_log "Checking out The Last Harness git ref: ${REF}"
   if [[ "${DRY_RUN}" == "true" ]]; then
     print_command git -C "${package_root}" fetch --prune --tags origin
     log "Would prefer tag ${REF}, then origin/${REF}, then ${REF}."
@@ -407,7 +496,7 @@ refresh_harness_package_checkout() {
     return 0
   fi
 
-  git -C "${package_root}" fetch --prune --tags origin
+  run git -C "${package_root}" fetch --prune --tags origin
 
   local target_ref="${REF}"
   if git -C "${package_root}" rev-parse --verify --quiet "refs/tags/${REF}^{commit}" >/dev/null; then
@@ -416,21 +505,22 @@ refresh_harness_package_checkout() {
     target_ref="refs/remotes/origin/${REF}"
   fi
 
-  git -C "${package_root}" checkout --detach "${target_ref}"
-  git -C "${package_root}" reset --hard "${target_ref}"
-  git -C "${package_root}" clean -fdx
+  run git -C "${package_root}" checkout --detach "${target_ref}"
+  run git -C "${package_root}" reset --hard "${target_ref}"
+  run git -C "${package_root}" clean -fdx
 
   if [[ -f "${package_root}/package.json" ]]; then
-    (cd "${package_root}" && npm install --omit=dev --legacy-peer-deps --package-lock=false)
+    run_in_dir "${package_root}" npm install --omit=dev --legacy-peer-deps --package-lock=false
   fi
 }
 
 install_harness_package() {
-  log "Using isolated Pi agent dir: ${AGENT_DIR}"
+  verbose_log "Using isolated Pi agent dir: ${AGENT_DIR}"
   run mkdir -p "${AGENT_DIR}"
   backup_existing_settings_before_pi_install
 
-  log "Installing The Last Harness Pi package into isolated profile: ${PACKAGE_SOURCE}"
+  log "Installing The Last Harness package..."
+  verbose_log "Package source: ${PACKAGE_SOURCE}"
   run_isolated_pi pi install "${PACKAGE_SOURCE}"
   refresh_harness_package_checkout
 
@@ -479,9 +569,12 @@ merge_settings() {
   fi
   if [[ "${QUIET}" == "true" ]]; then
     args+=("--quiet")
+  elif [[ "${VERBOSE}" != "true" && "${DRY_RUN}" != "true" ]]; then
+    args+=("--quiet")
   fi
 
-  log "Merging isolated Pi settings defaults: ${SETTINGS_PATH}"
+  log "Applying isolated settings..."
+  verbose_log "Settings path: ${SETTINGS_PATH}"
   node "${args[@]}"
 }
 
@@ -530,16 +623,26 @@ install_default_extensions() {
     return 0
   fi
 
-  local source
+  local extension_count failures source
+  extension_count="$(printf '%s\n' "${sources_output}" | grep -cve '^[[:space:]]*$' || true)"
+  failures=0
+  log "Installing bundled default extensions (${extension_count})..."
   while IFS= read -r source; do
     [[ -n "${source}" ]] || continue
-    log "Installing bundled default extension package: ${source}"
+    verbose_log "Installing bundled default extension package: ${source}"
     if ! run_isolated_pi pi update --extension "${source}"; then
       warn "default extension package update failed; continuing: ${source}"
+      failures=$((failures + 1))
     fi
   done <<EOF_SOURCES
 ${sources_output}
 EOF_SOURCES
+
+  if [[ "${failures}" -eq 0 ]]; then
+    verbose_log "Bundled default extensions installed."
+  else
+    warn "${failures} bundled default extension package(s) failed to update"
+  fi
 }
 
 validate_gnosis_command() {
@@ -608,6 +711,8 @@ set_gnosis_enabled() {
   fi
   if [[ "${QUIET}" == "true" ]]; then
     args+=("--quiet")
+  elif [[ "${VERBOSE}" != "true" && "${DRY_RUN}" != "true" ]]; then
+    args+=("--quiet")
   fi
   if [[ -n "${install_path}" ]]; then
     args+=("--install-path" "${install_path}")
@@ -635,6 +740,8 @@ set_gnosis_disabled() {
     args+=("--dry-run")
   fi
   if [[ "${QUIET}" == "true" ]]; then
+    args+=("--quiet")
+  elif [[ "${VERBOSE}" != "true" && "${DRY_RUN}" != "true" ]]; then
     args+=("--quiet")
   fi
 
@@ -837,14 +944,14 @@ configure_gnosis() {
   requested="${GNOSIS_MODE}"
 
   if [[ "${requested}" == "without" ]]; then
-    log "Disabling optional Gnosis integration for tlh."
+    verbose_log "Disabling optional Gnosis integration for tlh."
     set_gnosis_disabled
     GNOSIS_SUMMARY="Gnosis integration: disabled"
     return 0
   fi
 
   if [[ "${requested}" == "ask" && "${current_state}" != "unset" ]]; then
-    log "Keeping existing Gnosis integration setting: ${current_state}."
+    verbose_log "Keeping existing Gnosis integration setting: ${current_state}."
     if [[ "${current_state}" == "enabled" ]]; then
       if valid_path="$(find_valid_gnosis_command)"; then
         GNOSIS_SUMMARY="Gnosis integration: enabled (${valid_path})"
@@ -873,7 +980,7 @@ configure_gnosis() {
         GNOSIS_SUMMARY="Gnosis integration: not configured"
         return 0
       fi
-      log "Gnosis integration declined."
+      verbose_log "Gnosis integration declined."
       set_gnosis_disabled
       GNOSIS_SUMMARY="Gnosis integration: disabled"
       return 0
@@ -886,7 +993,7 @@ configure_gnosis() {
 
   valid_path=""
   if valid_path="$(find_valid_gnosis_command)"; then
-    log "Found valid Gnosis binary: ${valid_path}"
+    verbose_log "Found valid Gnosis binary: ${valid_path}"
     set_gnosis_enabled "${valid_path}"
     GNOSIS_SUMMARY="Gnosis integration: enabled (${valid_path})"
     return 0
@@ -917,7 +1024,11 @@ write_wrapper() {
     return 0
   fi
 
-  log "Installing wrapper command: ${WRAPPER_PATH}"
+  if [[ "${DRY_RUN}" == "true" || "${VERBOSE}" == "true" ]]; then
+    log "Installing wrapper command: ${WRAPPER_PATH}"
+  else
+    log "Creating wrapper command..."
+  fi
 
   if [[ -e "${WRAPPER_PATH}" ]] && ! wrapper_is_managed && [[ "${FORCE}" != "true" ]]; then
     if [[ "${DRY_RUN}" == "true" ]]; then
@@ -1017,37 +1128,37 @@ path_contains_bin_dir() {
 
 print_summary() {
   log ""
-  log "Done. The Last Harness is installed as an isolated Pi profile."
-  log "Isolated settings: ${SETTINGS_PATH}"
-  if [[ -n "${GNOSIS_SUMMARY}" ]]; then
-    log "${GNOSIS_SUMMARY}"
-  fi
+  log "Done. The Last Harness is ready."
   if [[ "${NO_WRAPPER}" != "true" ]]; then
-    log "Wrapper: ${WRAPPER_PATH}"
     if path_contains_bin_dir; then
       log "Start with: ${WRAPPER_NAME}"
-      log "Manage bundled default extensions with: ${WRAPPER_NAME} defaults list"
-      log "Manage optional Gnosis integration with: ${WRAPPER_NAME} gnosis status"
     else
       warn "${BIN_DIR} is not on PATH. Add it with: export PATH=\"${BIN_DIR}:\$PATH\""
-      log "Until then, start with: PI_CODING_AGENT_DIR=\"${AGENT_DIR}\" pi"
+      log "Start with: PI_CODING_AGENT_DIR=\"${AGENT_DIR}\" pi"
     fi
+    log "Wrapper: ${WRAPPER_PATH}"
   else
     log "Start with: PI_CODING_AGENT_DIR=\"${AGENT_DIR}\" pi"
   fi
+  log "Settings: ${SETTINGS_PATH}"
+  if [[ -n "${GNOSIS_SUMMARY}" ]]; then
+    log "${GNOSIS_SUMMARY}"
+  fi
   log "Normal Pi config was not modified: ~/.pi/agent"
   if [[ "${NO_WRAPPER}" != "true" ]]; then
-    log "Uninstall this profile with: rm -f \"${WRAPPER_PATH}\" && rm -rf \"${AGENT_DIR}\""
+    log "Uninstall: rm -f \"${WRAPPER_PATH}\" && rm -rf \"${AGENT_DIR}\""
   else
-    log "Uninstall this profile with: rm -rf \"${AGENT_DIR}\""
+    log "Uninstall: rm -rf \"${AGENT_DIR}\""
   fi
 }
 
 main() {
   log "The Last Harness installer"
-  log "Repository: ${REPO}"
-  log "Package source: ${PACKAGE_SOURCE}"
-  log "Isolated agent dir: ${AGENT_DIR}"
+  log "Isolated profile: ${AGENT_DIR}"
+  if [[ "${PACKAGE_SOURCE_IS_DEFAULT}" != "true" || "${VERBOSE}" == "true" ]]; then
+    log "Package source: ${PACKAGE_SOURCE}"
+  fi
+  verbose_log "Repository: ${REPO}"
 
   require_command node
   validate_inputs

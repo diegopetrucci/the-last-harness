@@ -241,6 +241,8 @@ PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" pi
 --bin-dir DIR     Wrapper install dir, default ~/.local/bin
 --wrapper-name N  Wrapper command name, default tlh
 --ref REF         Install from a branch, tag, or commit
+--quiet          Suppress installer progress output
+--verbose        Show underlying pi, npm, and git output
 ```
 
 Example custom install:
