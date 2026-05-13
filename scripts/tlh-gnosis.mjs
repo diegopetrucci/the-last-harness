@@ -1,11 +1,14 @@
 #!/usr/bin/env node
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 
 const VALIDATION_TIMEOUT_MS = 5000;
+const DOWNLOAD_TIMEOUT_MS = 30_000;
+const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
 
 function usage() {
 	return `Usage: tlh gnosis <command>
@@ -18,11 +21,15 @@ Commands:
   disable              Disable Gnosis prompt integration
   state                Print enabled, disabled, or unset (installer internal)
   validate [path]      Validate a gnosis binary, or print the first valid one
+  install-managed      Install managed gn binary (installer internal)
 
 Options:
   --settings <path>    Settings file to update (default: ~/.the-last-harness/agent/settings.json, or PI_CODING_AGENT_DIR/settings.json)
   --agent-dir <dir>    Isolated Pi agent dir (default: ~/.the-last-harness/agent, or PI_CODING_AGENT_DIR)
   --install-path <p>   Store this gn binary path when enabling
+  --target <path>      Managed gn install target (default: <agent-dir>/bin/gn)
+  --gnosis-repo <r>    Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
+  --gnosis-version <v> Gnosis version to install (default: latest)
   --dry-run            Print intended changes without writing
   --quiet              Only print errors
   -h, --help           Show this help
@@ -34,6 +41,9 @@ function parseArgs(argv) {
 		settingsPath: undefined,
 		agentDir: undefined,
 		installPath: undefined,
+		target: undefined,
+		gnosisRepo: process.env.TLH_GNOSIS_REPO || DEFAULT_GNOSIS_REPO,
+		gnosisVersion: process.env.TLH_GNOSIS_VERSION || "latest",
 		command: undefined,
 		commandArgs: [],
 		dryRun: false,
@@ -77,6 +87,30 @@ function parseArgs(argv) {
 		}
 		if (arg.startsWith("--install-path=")) {
 			args.installPath = arg.slice("--install-path=".length);
+			continue;
+		}
+		if (arg === "--target") {
+			args.target = requiredValue(argv, ++index, arg);
+			continue;
+		}
+		if (arg.startsWith("--target=")) {
+			args.target = arg.slice("--target=".length);
+			continue;
+		}
+		if (arg === "--gnosis-repo") {
+			args.gnosisRepo = requiredValue(argv, ++index, arg);
+			continue;
+		}
+		if (arg.startsWith("--gnosis-repo=")) {
+			args.gnosisRepo = arg.slice("--gnosis-repo=".length);
+			continue;
+		}
+		if (arg === "--gnosis-version") {
+			args.gnosisVersion = requiredValue(argv, ++index, arg);
+			continue;
+		}
+		if (arg.startsWith("--gnosis-version=")) {
+			args.gnosisVersion = arg.slice("--gnosis-version=".length);
 			continue;
 		}
 		if (arg.startsWith("-")) {
@@ -202,6 +236,179 @@ function findValidGnosis(settings, agentDir) {
 	return undefined;
 }
 
+function logStderr(args, message) {
+	if (!args.quiet) console.error(message);
+}
+
+function warnStderr(message) {
+	console.error(`warning: ${message}`);
+}
+
+function gnosisPlatform() {
+	let os;
+	if (process.platform === "darwin") os = "darwin";
+	else if (process.platform === "linux") os = "linux";
+	else return undefined;
+
+	let arch;
+	if (process.arch === "arm64") arch = "arm64";
+	else if (process.arch === "x64") arch = "amd64";
+	else return undefined;
+
+	return { os, arch };
+}
+
+async function fetchWithTimeout(url, options = {}) {
+	const response = await fetch(url, {
+		...options,
+		headers: {
+			"User-Agent": "tlh-gnosis-installer",
+			...(options.headers || {}),
+		},
+		signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+	});
+	if (!response.ok) {
+		throw new Error(`${response.status} ${response.statusText}`);
+	}
+	return response;
+}
+
+async function resolveGnosisVersion(args) {
+	if (args.gnosisVersion && args.gnosisVersion !== "latest") {
+		return args.gnosisVersion.replace(/^v/, "");
+	}
+
+	const response = await fetchWithTimeout(`https://github.com/${args.gnosisRepo}/releases/latest`, { method: "HEAD", redirect: "follow" });
+	const latestUrl = response.url || "";
+	const version = latestUrl.split("/").pop()?.replace(/^v/, "");
+	if (!version || version === "latest") {
+		throw new Error("latest release redirect did not include a version");
+	}
+	return version;
+}
+
+async function downloadToFile(url, path) {
+	const response = await fetchWithTimeout(url);
+	const content = Buffer.from(await response.arrayBuffer());
+	writeFileSync(path, content);
+}
+
+async function fetchText(url) {
+	const response = await fetchWithTimeout(url);
+	return response.text();
+}
+
+function sha256File(path) {
+	const hash = createHash("sha256");
+	hash.update(readFileSync(path));
+	return hash.digest("hex");
+}
+
+function checksumForAsset(checksumsText, assetName) {
+	for (const line of checksumsText.split(/\r?\n/)) {
+		const [checksum, filename] = line.trim().split(/\s+/);
+		if (!checksum || !filename) continue;
+		if (filename.replace(/^\.\//, "") === assetName) return checksum;
+	}
+	return undefined;
+}
+
+async function verifyGnosisArchive(args, archivePath, assetName, version) {
+	const checksumsUrl = `https://github.com/${args.gnosisRepo}/releases/download/v${version}/checksums.txt`;
+	const checksumsText = await fetchText(checksumsUrl);
+	const expected = checksumForAsset(checksumsText, assetName);
+	if (!expected) {
+		throw new Error(`Gnosis checksums did not include ${assetName}`);
+	}
+	const actual = sha256File(archivePath);
+	if (actual !== expected) {
+		throw new Error(`Gnosis checksum verification failed for ${assetName}`);
+	}
+}
+
+function extractTarGzip(archivePath, extractDir) {
+	const result = spawnSync("tar", ["-xzf", archivePath, "-C", extractDir], { stdio: "ignore" });
+	if (result.error) throw result.error;
+	if (result.status !== 0) throw new Error("failed to extract Gnosis release archive");
+}
+
+function findFileNamed(root, name) {
+	for (const entry of readdirSync(root)) {
+		const path = join(root, entry);
+		const stats = statSync(path);
+		if (stats.isDirectory()) {
+			const found = findFileNamed(path, name);
+			if (found) return found;
+		} else if (stats.isFile() && entry === name) {
+			return path;
+		}
+	}
+	return undefined;
+}
+
+async function commandInstallManaged(args, agentDir) {
+	const target = resolve(expandHome(args.target || join(agentDir, "bin", "gn")));
+	const platform = gnosisPlatform();
+	if (!platform) {
+		warnStderr(`Gnosis prebuilt binary is not available for this platform; install manually from https://github.com/${args.gnosisRepo}`);
+		process.exitCode = 1;
+		return;
+	}
+
+	if (args.dryRun) {
+		logStderr(args, `Would install Gnosis into isolated profile: ${target}`);
+		logStderr(args, `Would download latest compatible release from https://github.com/${args.gnosisRepo}`);
+		console.log(target);
+		return;
+	}
+
+	let version;
+	try {
+		version = await resolveGnosisVersion(args);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		warnStderr(`could not resolve latest Gnosis release; install manually from https://github.com/${args.gnosisRepo} (${message})`);
+		process.exitCode = 1;
+		return;
+	}
+
+	const assetName = `gnosis_${version}_${platform.os}_${platform.arch}.tar.gz`;
+	const url = `https://github.com/${args.gnosisRepo}/releases/download/v${version}/${assetName}`;
+	const tempDir = mkdtempSync(join(tmpdir(), "tlh-gnosis-"));
+	const archivePath = join(tempDir, "gnosis.tar.gz");
+	const extractDir = join(tempDir, "extract");
+	let tempTarget;
+	mkdirSync(extractDir, { recursive: true });
+
+	try {
+		logStderr(args, `Installing Gnosis ${version} into isolated profile: ${target}`);
+		await downloadToFile(url, archivePath);
+		await verifyGnosisArchive(args, archivePath, assetName, version);
+		extractTarGzip(archivePath, extractDir);
+
+		const extracted = findFileNamed(extractDir, "gn");
+		if (!extracted) throw new Error("Gnosis release archive did not contain a gn binary");
+
+		mkdirSync(dirname(target), { recursive: true });
+		tempTarget = `${target}.tmp.${process.pid}`;
+		copyFileSync(extracted, tempTarget);
+		chmodSync(tempTarget, 0o755);
+		if (!validateGnosisCommand(tempTarget)) {
+			rmSync(tempTarget, { force: true });
+			throw new Error("downloaded Gnosis binary did not validate");
+		}
+		renameSync(tempTarget, target);
+		console.log(target);
+	} catch (error) {
+		if (tempTarget) rmSync(tempTarget, { force: true });
+		const message = error instanceof Error ? error.message : String(error);
+		warnStderr(message);
+		process.exitCode = 1;
+	} finally {
+		rmSync(tempDir, { recursive: true, force: true });
+	}
+}
+
 function backupPathFor(settingsPath) {
 	const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 	return `${settingsPath}.backup-tlh-gnosis-${stamp}`;
@@ -306,7 +513,7 @@ function commandDisable(args, settingsPath, settings, previousRaw) {
 	if (writeResult === "unchanged") log(args, "No settings changes were needed.");
 }
 
-function main() {
+async function main() {
 	const args = parseArgs(process.argv.slice(2));
 	if (args.help || !args.command) {
 		console.log(usage());
@@ -329,6 +536,10 @@ function main() {
 		commandValidate(settings, agentDir, args.commandArgs);
 		return;
 	}
+	if (args.command === "install-managed") {
+		await commandInstallManaged(args, agentDir);
+		return;
+	}
 	if (args.command === "enable") {
 		commandEnable(args, settingsPath, settings, previousRaw);
 		return;
@@ -341,9 +552,8 @@ function main() {
 	throw new Error(`Unknown command: ${args.command}`);
 }
 
-try {
-	main();
-} catch (error) {
-	console.error(`tlh gnosis: ${error.message}`);
+main().catch((error) => {
+	const message = error instanceof Error ? error.message : String(error);
+	console.error(`tlh gnosis: ${message}`);
 	process.exit(1);
-}
+});

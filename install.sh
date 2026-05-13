@@ -919,163 +919,34 @@ set_gnosis_disabled() {
   node "${args[@]}"
 }
 
-gnosis_platform() {
-  local os arch
-  case "$(uname -s)" in
-    Darwin) os="darwin" ;;
-    Linux) os="linux" ;;
-    *) return 1 ;;
-  esac
-
-  case "$(uname -m)" in
-    arm64|aarch64) arch="arm64" ;;
-    x86_64|amd64) arch="amd64" ;;
-    *) return 1 ;;
-  esac
-
-  printf '%s %s\n' "${os}" "${arch}"
-}
-
-resolve_gnosis_version() {
-  if [[ -n "${GNOSIS_VERSION}" && "${GNOSIS_VERSION}" != "latest" ]]; then
-    printf '%s\n' "${GNOSIS_VERSION#v}"
-    return 0
-  fi
-
-  local latest_url version
-  latest_url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${GNOSIS_REPO}/releases/latest")" || return 1
-  version="${latest_url##*/}"
-  version="${version#v}"
-  [[ -n "${version}" && "${version}" != "latest" ]] || return 1
-  printf '%s\n' "${version}"
-}
-
-sha256_file() {
-  local path="$1" output
-  if command_exists sha256sum; then
-    output="$(sha256sum "${path}")" || return 1
-    printf '%s\n' "${output%% *}"
-    return 0
-  fi
-  if command_exists shasum; then
-    output="$(shasum -a 256 "${path}")" || return 1
-    printf '%s\n' "${output%% *}"
-    return 0
-  fi
-  return 1
-}
-
-checksum_for_asset() {
-  local checksums_file="$1"
-  local asset_name="$2"
-  local checksum filename rest
-  while read -r checksum filename rest; do
-    [[ -n "${checksum}" && -n "${filename}" ]] || continue
-    filename="${filename#./}"
-    if [[ "${filename}" == "${asset_name}" ]]; then
-      printf '%s\n' "${checksum}"
-      return 0
-    fi
-  done <"${checksums_file}"
-  return 1
-}
-
-verify_gnosis_archive() {
-  local archive="$1"
-  local asset_name="$2"
-  local version="$3"
-  local checksums_url="https://github.com/${GNOSIS_REPO}/releases/download/v${version}/checksums.txt"
-  local checksums_file="${archive}.checksums"
-  local expected actual
-
-  if ! curl -fsSL "${checksums_url}" -o "${checksums_file}"; then
-    warn "failed to download Gnosis checksums: ${checksums_url}"
-    return 1
-  fi
-  if ! expected="$(checksum_for_asset "${checksums_file}" "${asset_name}")"; then
-    warn "Gnosis checksums did not include ${asset_name}"
-    return 1
-  fi
-  if ! actual="$(sha256_file "${archive}")"; then
-    warn "required checksum command not found: sha256sum or shasum"
-    return 1
-  fi
-  if [[ "${actual}" != "${expected}" ]]; then
-    warn "Gnosis checksum verification failed for ${asset_name}"
-    return 1
-  fi
-}
-
 install_managed_gnosis() {
-  local target="${AGENT_DIR}/bin/gn"
-  local platform os arch version asset_name url gn_tmp archive extract_dir extracted temp_target
-  if ! platform="$(gnosis_platform)"; then
-    warn "Gnosis prebuilt binary is not available for this platform; install manually from https://github.com/${GNOSIS_REPO}"
+  if [[ -z "${TLH_GNOSIS_SCRIPT}" ]]; then
+    warn "Gnosis support script not found; cannot install managed Gnosis"
     return 1
   fi
-  os="${platform%% *}"
-  arch="${platform##* }"
 
+  local args=(
+    "${TLH_GNOSIS_SCRIPT}"
+    "--settings"
+    "${SETTINGS_PATH}"
+    "--agent-dir"
+    "${AGENT_DIR}"
+    "--target"
+    "${AGENT_DIR}/bin/gn"
+    "--gnosis-repo"
+    "${GNOSIS_REPO}"
+    "--gnosis-version"
+    "${GNOSIS_VERSION}"
+    "install-managed"
+  )
   if [[ "${DRY_RUN}" == "true" ]]; then
-    log_stderr "Would install Gnosis into isolated profile: ${target}"
-    log_stderr "Would download latest compatible release from https://github.com/${GNOSIS_REPO}"
-    printf '%s\n' "${target}"
-    return 0
+    args+=("--dry-run")
+  fi
+  if [[ "${QUIET}" == "true" ]]; then
+    args+=("--quiet")
   fi
 
-  require_command curl
-  require_command tar
-
-  if ! version="$(resolve_gnosis_version)"; then
-    warn "could not resolve latest Gnosis release; install manually from https://github.com/${GNOSIS_REPO}"
-    return 1
-  fi
-
-  asset_name="gnosis_${version}_${os}_${arch}.tar.gz"
-  url="https://github.com/${GNOSIS_REPO}/releases/download/v${version}/${asset_name}"
-  gn_tmp="$(mktemp -d)"
-  archive="${gn_tmp}/gnosis.tar.gz"
-  extract_dir="${gn_tmp}/extract"
-  mkdir -p "${extract_dir}"
-
-  log_stderr "Installing Gnosis ${version} into isolated profile: ${target}"
-  if ! curl -fsSL "${url}" -o "${archive}"; then
-    rm -rf "${gn_tmp}"
-    warn "failed to download Gnosis release archive: ${url}"
-    return 1
-  fi
-  if ! verify_gnosis_archive "${archive}" "${asset_name}" "${version}"; then
-    rm -rf "${gn_tmp}"
-    return 1
-  fi
-  if ! tar -xzf "${archive}" -C "${extract_dir}"; then
-    rm -rf "${gn_tmp}"
-    warn "failed to extract Gnosis release archive"
-    return 1
-  fi
-
-  extracted="$(find "${extract_dir}" -type f -name gn | head -n 1 || true)"
-  if [[ -z "${extracted}" ]]; then
-    rm -rf "${gn_tmp}"
-    warn "Gnosis release archive did not contain a gn binary"
-    return 1
-  fi
-
-  mkdir -p "${AGENT_DIR}/bin"
-  temp_target="${target}.tmp.$$"
-  cp "${extracted}" "${temp_target}"
-  chmod 0755 "${temp_target}"
-
-  if ! validate_gnosis_command "${temp_target}"; then
-    rm -f "${temp_target}"
-    rm -rf "${gn_tmp}"
-    warn "downloaded Gnosis binary did not validate"
-    return 1
-  fi
-
-  mv "${temp_target}" "${target}"
-  rm -rf "${gn_tmp}"
-  printf '%s\n' "${target}"
+  node "${args[@]}"
 }
 
 configure_gnosis() {

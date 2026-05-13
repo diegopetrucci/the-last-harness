@@ -5,7 +5,8 @@
 ## Current status
 
 - Phase 1 is implemented: wrapper rendering lives in `scripts/tlh-wrapper.mjs`, and `install.sh` now calls that helper while retaining a stdin `--dry-run` fallback.
-- Phase 2 is implemented in this branch: install-state metadata writing lives in `scripts/tlh-install-state.mjs`, and `install.sh` now calls that helper while retaining a stdin `--dry-run` fallback.
+- Phase 2 is implemented: install-state metadata writing lives in `scripts/tlh-install-state.mjs`, and `install.sh` now calls that helper while retaining a stdin `--dry-run` fallback.
+- Phase 3a is implemented in this branch: managed Gnosis binary installation lives behind `tlh gnosis install-managed`, and `install.sh` keeps the Gnosis policy state machine for now.
 - Later phases remain planned and should be handled as separate, behavior-preserving changes.
 
 ## Constraints to preserve
@@ -55,7 +56,7 @@ Preserve:
 
 ## Phase 3: Move managed Gnosis install/configure logic
 
-Move the large managed Gnosis binary install and integration configure flow into `scripts/tlh-gnosis.mjs` behind installer-oriented commands.
+Move the large managed Gnosis binary install and integration configure flow into `scripts/tlh-gnosis.mjs` behind installer-oriented commands. This is intentionally split into two slices: first the mechanical binary installer, then the policy-heavy configure state machine.
 
 Preserve:
 
