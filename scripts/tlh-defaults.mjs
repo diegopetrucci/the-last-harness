@@ -271,6 +271,12 @@ function findPackageIndex(settings, source) {
 	return (settings.packages ?? []).findIndex((entry) => packageIdentity(entry) === identity);
 }
 
+function findPackageSource(settings, source) {
+	const index = findPackageIndex(settings, source);
+	if (index === -1) return undefined;
+	return packageSourceOf(settings.packages[index]) || source;
+}
+
 function removePackage(settings, source) {
 	const index = findPackageIndex(settings, source);
 	if (index !== -1) settings.packages.splice(index, 1);
@@ -286,8 +292,8 @@ function packageEntryDisablesExtensions(entry) {
 
 function replacedPackageSource(settings, extension) {
 	for (const oldSource of extension.replaces) {
-		const index = findPackageIndex(settings, oldSource);
-		if (index !== -1) return packageSourceOf(settings.packages[index]) || oldSource;
+		const source = findPackageSource(settings, oldSource);
+		if (source) return source;
 	}
 	return undefined;
 }
@@ -339,8 +345,12 @@ function defaultStatus(settings, extension, defaultExtensions) {
 	const markerDisabled = disabledIdsFromSettings(settings, defaultExtensions).has(extension.id);
 	const packageIndex = findPackageIndex(settings, extension.source);
 	const entry = packageIndex === -1 ? undefined : settings.packages[packageIndex];
+	const configuredSource = entry ? packageSourceOf(entry) : undefined;
 	if (markerDisabled) return { enabled: false, reason: "disabled" };
 	if (entry && packageEntryDisablesExtensions(entry)) return { enabled: false, reason: "disabled by package filter" };
+	if (entry && configuredSource && configuredSource !== extension.source) {
+		return { enabled: true, reason: `enabled with configured package (${configuredSource})` };
+	}
 	if (entry) return { enabled: true, reason: "enabled" };
 	const replacementSource = replacedPackageSource(settings, extension);
 	if (replacementSource) {
@@ -420,7 +430,7 @@ function commandList(settings, defaultExtensions) {
 function commandSources(settings, defaultExtensions) {
 	for (const extension of defaultExtensions) {
 		if (!isDefaultDisabled(settings, extension, defaultExtensions) && !isDefaultSourceDeferred(settings, extension)) {
-			console.log(extension.source);
+			console.log(findPackageSource(settings, extension.source) || extension.source);
 		}
 	}
 }
