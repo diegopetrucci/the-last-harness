@@ -3,7 +3,13 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rename
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import {
+	truncateToWidth,
+	type AutocompleteItem,
+	type AutocompleteProvider,
+	type AutocompleteSuggestions,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import {
 	DefaultPackageManager,
 	SettingsManager,
@@ -26,6 +32,9 @@ const TLH_UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const TLH_UPDATE_CHECK_TIMEOUT_MS = 3000;
 const DUMB_ZONE_THRESHOLD_TOKENS = 200_000;
 const DUMB_ZONE_LABEL = "DUMB ZONE";
+// Pi prefixes package-backed commands with provenance tags like [u:git:github.com/org/repo@ref].
+// tlh keeps autocomplete focused on the command description instead.
+const AUTOCOMPLETE_SOURCE_TAG_PATTERN = /(^|—\s*)\[(?:u|p|t)(?::(?:npm|git):[^\]]+)?\]\s*/g;
 
 const HARNESS_PROMPT = `
 ## The Last Harness Defaults
@@ -625,6 +634,56 @@ function sanitizeStatusText(text: string): string {
 		.trim();
 }
 
+function stripAutocompleteSourceTag(description: string | undefined): string | undefined {
+	if (!description) {
+		return description;
+	}
+	const stripped = description.replace(AUTOCOMPLETE_SOURCE_TAG_PATTERN, "$1").trim();
+	return stripped || undefined;
+}
+
+function stripAutocompleteSourceTags(suggestions: AutocompleteSuggestions | null): AutocompleteSuggestions | null {
+	if (!suggestions) {
+		return suggestions;
+	}
+
+	let changed = false;
+	const items = suggestions.items.map((item) => {
+		const description = stripAutocompleteSourceTag(item.description);
+		if (description === item.description) {
+			return item;
+		}
+		changed = true;
+		if (description) {
+			return { ...item, description };
+		}
+		const next = { ...item };
+		delete next.description;
+		return next;
+	});
+
+	return changed ? { ...suggestions, items } : suggestions;
+}
+
+function createTlhAutocompleteProvider(current: AutocompleteProvider): AutocompleteProvider {
+	return {
+		async getSuggestions(
+			lines: string[],
+			cursorLine: number,
+			cursorCol: number,
+			options: { signal: AbortSignal; force?: boolean },
+		) {
+			return stripAutocompleteSourceTags(await current.getSuggestions(lines, cursorLine, cursorCol, options));
+		},
+		applyCompletion(lines: string[], cursorLine: number, cursorCol: number, item: AutocompleteItem, prefix: string) {
+			return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
+		},
+		shouldTriggerFileCompletion(lines: string[], cursorLine: number, cursorCol: number) {
+			return current.shouldTriggerFileCompletion?.(lines, cursorLine, cursorCol) ?? true;
+		},
+	};
+}
+
 function formatTokens(count: number): string {
 	if (count < 1000) {
 		return count.toString();
@@ -1117,6 +1176,8 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		if (!ctx.hasUI) {
 			return;
 		}
+
+		ctx.ui.addAutocompleteProvider(createTlhAutocompleteProvider);
 
 		let resources: StartupResources = { context: [], skills: [], prompts: [], extensions: [], themes: [] };
 		try {
