@@ -5,13 +5,13 @@
 Install one-liner:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash -s --
 ```
 
 ## Core features
 
 - **Context discipline.** The context-cap extension helps keep long sessions under control.
-- **Project memory.** Gnosis integration can record project decisions, constraints, rejected alternatives, and lessons in repo-local memory.
+- **Project memory by default.** Gnosis integration is enabled by default on supported platforms so agents can record decisions, constraints, rejected alternatives, and lessons in repo-local memory unless you opt out.
 - **Safety rails for agent work.** Bundled permission and destructive-action confirmations add checkpoints before sensitive commands or file changes.
 - **Cleaner sessions.** An update-aware startup header, new-release launch warnings, custom footer, contextual steering/follow-up key hints, quieter tool output, completion notifications, and `/tlh` status keep the UI focused without hiding model-visible results.
 - **Reasoning controls.** Use `/effort` to quickly change model thinking level from the TUI or command line.
@@ -31,7 +31,7 @@ The following slash commands are available in interactive `tlh` sessions:
 
 ### Included Pi resources
 
-- `extensions/the-last-harness.ts` adds the custom `tlh` startup header and footer, lightweight default guidance, optional Gnosis prompt instructions, `/tlh` status, `/effort` reasoning-effort picker commands, and the 200k-token `DUMB ZONE` footer warning.
+- `extensions/the-last-harness.ts` adds the custom `tlh` startup header and footer, lightweight default guidance, conditional Gnosis prompt instructions, `/tlh` status, `/effort` reasoning-effort picker commands, and the 200k-token `DUMB ZONE` footer warning.
 - `skills/harness-setup/SKILL.md` documents safe setup/update/uninstall workflows.
 - `prompts/harness-plan.md` provides `/harness-plan` for reviewable implementation planning.
 - `themes/the-last-harness.json` provides the default isolated theme.
@@ -63,7 +63,15 @@ Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `t
 
 ### Gnosis integration
 
-[Gnosis](https://github.com/skorokithakis/gnosis) is a small `gn` CLI for recording project decisions, constraints, rejected alternatives, and lessons that are not obvious from code alone. During install, TLH asks whether to install and enable it because `tlh` works better when agents can consult and update that project memory.
+[Gnosis](https://github.com/skorokithakis/gnosis) is a small `gn` CLI for recording project decisions, constraints, rejected alternatives, and lessons that are not obvious from code alone. On supported platforms, TLH installs and enables it by default because `tlh` works better when agents can consult and update that project memory.
+
+Opt out during install or update with `--without-gnosis` / `--no-gnosis`, or disable it later with `tlh gnosis disable`. For pipe-to-bash installs, pass installer flags after `bash -s --`:
+
+```sh
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash -s -- --without-gnosis
+```
+
+The opt-out is written to `~/.the-last-harness/agent/settings.json` and survives `tlh update`; use `tlh update --with-gnosis` to install/re-enable it automatically, or install `gn` manually and run `tlh gnosis enable`.
 
 If enabled and a valid Gnosis `gn` binary is present, TLH appends these instructions to the system prompt:
 
@@ -80,7 +88,7 @@ tlh gnosis enable
 tlh gnosis disable
 ```
 
-Gnosis project data lives in repo-local `.gnosis` directories.
+Disabling Gnosis stops TLH from adding the prompt instructions; it does not delete existing repo-local memory or any managed `gn` binary. Gnosis project data lives in repo-local `.gnosis` directories.
 
 ## Install, update, and uninstall
 

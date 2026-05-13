@@ -28,8 +28,8 @@ Options:
   --no-pi-install       Pass --no-pi-install to the installer
   --no-settings         Pass --no-settings to the installer
   --no-wrapper          Pass --no-wrapper to the installer
-  --with-gnosis         Pass --with-gnosis to the installer
-  --without-gnosis      Pass --without-gnosis to the installer
+  --with-gnosis         Force install/re-enable Gnosis through the installer
+  --without-gnosis      Opt out of Gnosis integration through the installer
   --no-gnosis           Alias for --without-gnosis
   --quiet               Suppress installer progress output
   --verbose             Show underlying installer output

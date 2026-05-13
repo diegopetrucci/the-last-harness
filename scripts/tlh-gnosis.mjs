@@ -10,7 +10,7 @@ const VALIDATION_TIMEOUT_MS = 5000;
 function usage() {
 	return `Usage: tlh gnosis <command>
 
-Manage optional Gnosis integration in the isolated tlh profile.
+Manage Gnosis integration in the isolated tlh profile.
 
 Commands:
   status               Show integration status and detected gn binary

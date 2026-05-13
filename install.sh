@@ -11,7 +11,7 @@ NO_SETTINGS=false
 NO_WRAPPER=false
 QUIET=false
 VERBOSE=false
-GNOSIS_MODE="ask"
+GNOSIS_MODE="auto"
 GNOSIS_SUMMARY=""
 TMP_DIR=""
 PACKAGE_SOURCE="${TLH_PACKAGE_SOURCE:-}"
@@ -35,8 +35,8 @@ Options:
   --no-pi-install  Fail instead of installing Pi when the `pi` command is missing
   --no-settings     Install the package but skip isolated settings merge
   --no-wrapper      Skip creating the tlh wrapper command
-  --with-gnosis     Install/enable optional Gnosis (`gn`) integration
-  --without-gnosis  Disable optional Gnosis integration without prompting
+  --with-gnosis     Force install/re-enable Gnosis (`gn`) integration
+  --without-gnosis  Opt out of Gnosis integration and keep it disabled
   --no-gnosis       Alias for --without-gnosis
   --agent-dir DIR   Isolated Pi agent dir (default: ~/.the-last-harness/agent)
   --bin-dir DIR     Wrapper install dir (default: ~/.local/bin)
@@ -60,7 +60,7 @@ Environment overrides:
   TLH_GNOSIS_REPO      Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
 
 Examples:
-  curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash
+  curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash -s --
   curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash -s -- --dry-run
   bash install.sh --agent-dir ~/.tlh/agent --bin-dir ~/.local/bin
 USAGE
@@ -443,7 +443,7 @@ prepare_merge_files() {
   curl -fsSL "${RAW_BASE}/scripts/merge-settings.mjs" -o "${MERGE_SCRIPT}"
   curl -fsSL "${RAW_BASE}/scripts/tlh-defaults.mjs" -o "${TLH_DEFAULTS_SCRIPT}"
   if ! curl -fsSL "${RAW_BASE}/scripts/tlh-gnosis.mjs" -o "${TLH_GNOSIS_SCRIPT}"; then
-    warn "optional Gnosis support script not found for ref ${REF}; continuing without tlh gnosis helper"
+    warn "Gnosis support script not found for ref ${REF}; continuing without tlh gnosis helper"
     TLH_GNOSIS_SCRIPT=""
   fi
   if ! curl -fsSL "${RAW_BASE}/scripts/tlh-update.mjs" -o "${TLH_UPDATE_SCRIPT}"; then
@@ -475,7 +475,7 @@ prepare_merge_files_for_dry_run() {
   log "Would fetch installer support files from ${RAW_BASE}"
   log "Would merge settings defaults into: ${SETTINGS_PATH}"
   log "Would install bundled default extension packages after settings merge."
-  log "Would fetch optional Gnosis integration support files."
+  log "Would fetch Gnosis integration support files."
   log "Would fetch tlh update support files."
   log "Dry run only; no support files were downloaded."
   return 1
@@ -861,24 +861,6 @@ set_gnosis_disabled() {
   node "${args[@]}"
 }
 
-prompt_for_gnosis() {
-  if ! { exec 3<>/dev/tty; } 2>/dev/null; then
-    return 2
-  fi
-
-  local answer=""
-  printf '%s' "Optional: tlh works better with Gnosis (\`gn\`), which lets agents remember project decisions, constraints, and lessons. Install and enable it for this isolated tlh profile? [y/N] " >&3
-  if ! IFS= read -r answer <&3; then
-    exec 3>&-
-    return 2
-  fi
-  exec 3>&-
-  case "${answer}" in
-    [Yy]|[Yy][Ee][Ss]) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 gnosis_platform() {
   local os arch
   case "$(uname -s)" in
@@ -968,6 +950,14 @@ verify_gnosis_archive() {
 
 install_managed_gnosis() {
   local target="${AGENT_DIR}/bin/gn"
+  local platform os arch version asset_name url gn_tmp archive extract_dir extracted temp_target
+  if ! platform="$(gnosis_platform)"; then
+    warn "Gnosis prebuilt binary is not available for this platform; install manually from https://github.com/${GNOSIS_REPO}"
+    return 1
+  fi
+  os="${platform%% *}"
+  arch="${platform##* }"
+
   if [[ "${DRY_RUN}" == "true" ]]; then
     log_stderr "Would install Gnosis into isolated profile: ${target}"
     log_stderr "Would download latest compatible release from https://github.com/${GNOSIS_REPO}"
@@ -977,14 +967,6 @@ install_managed_gnosis() {
 
   require_command curl
   require_command tar
-
-  local platform os arch version asset_name url gn_tmp archive extract_dir extracted temp_target
-  if ! platform="$(gnosis_platform)"; then
-    warn "Gnosis prebuilt binary is not available for this platform; install manually from https://github.com/${GNOSIS_REPO}"
-    return 1
-  fi
-  os="${platform%% *}"
-  arch="${platform##* }"
 
   if ! version="$(resolve_gnosis_version)"; then
     warn "could not resolve latest Gnosis release; install manually from https://github.com/${GNOSIS_REPO}"
@@ -1040,14 +1022,14 @@ install_managed_gnosis() {
 
 configure_gnosis() {
   if [[ "${NO_SETTINGS}" == "true" ]]; then
-    log "Skipping optional Gnosis integration (--no-settings)."
+    log "Skipping Gnosis integration (--no-settings)."
     return 0
   fi
   if [[ -z "${TLH_GNOSIS_SCRIPT}" ]]; then
-    if [[ "${GNOSIS_MODE}" != "ask" ]]; then
+    if [[ "${GNOSIS_MODE}" != "auto" ]]; then
       warn "Gnosis integration option was provided, but support files are unavailable for ref ${REF}; skipping"
     else
-      log "Skipping optional Gnosis integration; support files are unavailable."
+      log "Skipping default Gnosis integration; support files are unavailable."
     fi
     return 0
   fi
@@ -1057,47 +1039,42 @@ configure_gnosis() {
   requested="${GNOSIS_MODE}"
 
   if [[ "${requested}" == "without" ]]; then
-    verbose_log "Disabling optional Gnosis integration for tlh."
+    verbose_log "Disabling Gnosis integration for tlh."
     set_gnosis_disabled
     GNOSIS_SUMMARY="Gnosis integration: disabled"
     return 0
   fi
 
-  if [[ "${requested}" == "ask" && "${current_state}" != "unset" ]]; then
-    verbose_log "Keeping existing Gnosis integration setting: ${current_state}."
+  if [[ "${requested}" == "auto" ]]; then
+    if [[ "${current_state}" == "disabled" ]]; then
+      # Treat enabled=false as a deliberate opt-out. Normal installer reruns and
+      # tlh update must not undo it; only --with-gnosis should re-enable.
+      verbose_log "Keeping existing Gnosis opt-out."
+      GNOSIS_SUMMARY="Gnosis integration: disabled"
+      return 0
+    fi
+
     if [[ "${current_state}" == "enabled" ]]; then
+      verbose_log "Keeping existing Gnosis integration setting: enabled."
       if valid_path="$(find_valid_gnosis_command)"; then
         GNOSIS_SUMMARY="Gnosis integration: enabled (${valid_path})"
-      else
-        GNOSIS_SUMMARY="Gnosis integration: enabled, but no valid gn binary was found"
-        warn "Gnosis integration is enabled, but no valid gn binary was found. Re-run with --with-gnosis to install it."
-      fi
-    else
-      GNOSIS_SUMMARY="Gnosis integration: disabled"
-    fi
-    return 0
-  fi
-
-  if [[ "${requested}" == "ask" ]]; then
-    if [[ "${DRY_RUN}" == "true" ]]; then
-      log "Would ask whether to install and enable optional Gnosis integration."
-      GNOSIS_SUMMARY="Gnosis integration: not configured (dry run)"
-      return 0
-    fi
-    if prompt_for_gnosis; then
-      requested="with"
-    else
-      local prompt_status=$?
-      if [[ "${prompt_status}" -eq 2 ]]; then
-        log "No TTY available for optional Gnosis prompt. Re-run with --with-gnosis to install/enable it."
-        GNOSIS_SUMMARY="Gnosis integration: not configured"
         return 0
       fi
-      verbose_log "Gnosis integration declined."
-      set_gnosis_disabled
-      GNOSIS_SUMMARY="Gnosis integration: disabled"
+
+      warn "Gnosis integration is enabled, but no valid gn binary was found. Attempting to install it."
+      if managed_path="$(install_managed_gnosis)"; then
+        set_gnosis_enabled "${managed_path}"
+        GNOSIS_SUMMARY="Gnosis integration: enabled (${managed_path})"
+        return 0
+      fi
+
+      warn "Gnosis integration remains enabled, but Gnosis could not be installed automatically. Install Gnosis manually and run: ${WRAPPER_NAME} gnosis enable"
+      GNOSIS_SUMMARY="Gnosis integration: enabled, but no valid gn binary was found"
       return 0
     fi
+
+    verbose_log "Installing and enabling Gnosis integration by default."
+    requested="with"
   fi
 
   if [[ "${requested}" != "with" ]]; then
@@ -1118,10 +1095,9 @@ configure_gnosis() {
     return 0
   fi
 
-  warn "Gnosis integration was requested, but Gnosis could not be installed automatically."
-  warn "Leaving Gnosis integration disabled; install Gnosis manually and run: ${WRAPPER_NAME} gnosis enable"
-  set_gnosis_disabled
-  GNOSIS_SUMMARY="Gnosis integration: disabled (gn was not installed)"
+  warn "Gnosis integration could not be installed automatically."
+  warn "Leaving Gnosis integration unchanged; install Gnosis manually and run: ${WRAPPER_NAME} gnosis enable"
+  GNOSIS_SUMMARY="Gnosis integration: not enabled (gn was not installed)"
 }
 
 wrapper_is_managed() {

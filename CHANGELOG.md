@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Gnosis is now installed and enabled by default on supported platforms for profiles without an existing preference; `--without-gnosis` and `tlh gnosis disable` remain persistent opt-outs across `tlh update`.
+
 ## [0.5.0] - 2026-05-12
 
 ### Added

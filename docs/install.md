@@ -5,10 +5,14 @@
 Run the one-liner:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash -s --
 ```
 
-It will ask you whether you want to use [gnosis](https://github.com/skorokithakis/gnosis) for memory-management. Not required, but recommended.
+On supported platforms, it installs and enables [gnosis](https://github.com/skorokithakis/gnosis) for project memory by default. To opt out during a pipe-to-bash install, pass the flag after `bash -s --`:
+
+```sh
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash -s -- --without-gnosis
+```
 
 Once the installation is finished, start `tlh` by running… you guessed it, `tlh`.
 
@@ -16,7 +20,7 @@ Note: if you already have `pi` installed, `tlh` does not replace it — you can 
 
 ## More ways to install
 
-- Pinned, eg `curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.3.0/install.sh | bash`
+- Pinned, eg `curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.3.0/install.sh | bash -s --`
 - Main (unstable): `curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --ref main --track ref`
 
 ## Installer options
@@ -27,8 +31,8 @@ Note: if you already have `pi` installed, `tlh` does not replace it — you can 
 --no-pi-install  Fail instead of installing Pi when the `pi` command is missing
 --no-settings     Install the package but skip isolated settings merge
 --no-wrapper      Skip creating the tlh wrapper command
---with-gnosis     Install/enable optional Gnosis (`gn`) integration
---without-gnosis  Disable optional Gnosis integration without prompting
+--with-gnosis     Force install/re-enable Gnosis (`gn`) integration
+--without-gnosis  Opt out of Gnosis integration and keep it disabled
 --no-gnosis       Alias for --without-gnosis
 --agent-dir DIR   Isolated Pi agent dir, default ~/.the-last-harness/agent
 --bin-dir DIR     Wrapper install dir, default ~/.local/bin
@@ -42,7 +46,7 @@ Note: if you already have `pi` installed, `tlh` does not replace it — you can 
 Example pinned install:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.3.0/install.sh | bash
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.3.0/install.sh | bash -s --
 ```
 
 ## Update
@@ -50,6 +54,8 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v
 You can just run `tlh update`.
 
 This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. If you are updating from an older install without `tlh update`, rerun the latest-release installer once with `TLH_UPDATE_TRACK=latest-release`.
+
+Normal updates preserve your Gnosis setting. If you disabled it with `tlh gnosis disable` or installed with `--without-gnosis`, it stays disabled across `tlh update`; use `tlh update --with-gnosis` to install/re-enable it automatically, or install `gn` manually and run `tlh gnosis enable`.
 
 The updating process is intentionally conservative, and won't replace your custom extensions, themes, and so on. If you spot anything that was overridden, [please open an issue](https://github.com/diegopetrucci/the-last-harness/issues).
 
