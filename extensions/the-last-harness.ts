@@ -502,6 +502,20 @@ function gnosisState(settings: TlhSettings): TlhGnosisState {
 	return "unset";
 }
 
+function currentGnosisState(): TlhGnosisState {
+	try {
+		const settingsPath = join(getAgentDir(), "settings.json");
+		const { settings } = readTlhSettingsForWrite(settingsPath);
+		return gnosisState(settings);
+	} catch {
+		return "unset";
+	}
+}
+
+function formatGnosisToggleDescription(state: TlhGnosisState = currentGnosisState()): string {
+	return `Toggle gnosis ${state === "enabled" ? "off" : "on"}`;
+}
+
 function backupPathFor(settingsPath: string): string {
 	const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 	return `${settingsPath}.backup-tlh-gnosis-${stamp}`;
@@ -648,8 +662,12 @@ function stripAutocompleteSourceTags(suggestions: AutocompleteSuggestions | null
 	}
 
 	let changed = false;
+	const isSlashCommandList = suggestions.prefix.startsWith("/");
 	const items = suggestions.items.map((item) => {
-		const description = stripAutocompleteSourceTag(item.description);
+		let description = stripAutocompleteSourceTag(item.description);
+		if (isSlashCommandList && item.value === "gnosis" && item.label === "gnosis") {
+			description = formatGnosisToggleDescription();
+		}
 		if (description === item.description) {
 			return item;
 		}
@@ -849,9 +867,7 @@ function formatGnosisStatus(settings: TlhSettings, validCommand: string | undefi
 }
 
 function notifyGnosisWriteResult(ctx: ExtensionContext, result: { changed: boolean; backupPath?: string }): void {
-	if (result.backupPath) {
-		ctx.ui.notify(`Backed up previous tlh settings to ${formatHomePath(result.backupPath)}.`, "info");
-	} else if (!result.changed) {
+	if (!result.changed) {
 		ctx.ui.notify("No Gnosis settings changes were needed.", "info");
 	}
 }
@@ -1069,14 +1085,14 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("gnosis", {
-		description: "Toggle Gnosis prompt integration for tlh",
+		description: formatGnosisToggleDescription(),
 		getArgumentCompletions: (prefix) => {
 			const normalizedPrefix = prefix.trim().toLowerCase();
 			const actions = [
 				{ value: "status", label: "status", description: "Show the current Gnosis setting and detected binary" },
-				{ value: "enable", label: "enable", description: "Enable Gnosis prompt integration" },
-				{ value: "disable", label: "disable", description: "Disable Gnosis prompt integration" },
-				{ value: "toggle", label: "toggle", description: "Toggle Gnosis prompt integration" },
+				{ value: "enable", label: "enable", description: "Turn gnosis on" },
+				{ value: "disable", label: "disable", description: "Turn gnosis off" },
+				{ value: "toggle", label: "toggle", description: formatGnosisToggleDescription() },
 			];
 			const completions = actions.filter((action) => action.value.startsWith(normalizedPrefix));
 			return completions.length > 0 ? completions : null;
