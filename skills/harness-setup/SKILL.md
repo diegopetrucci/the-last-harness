@@ -37,6 +37,9 @@ Before release, run:
 bash -n install.sh
 node --check scripts/merge-settings.mjs
 node --check scripts/tlh-defaults.mjs
+node --check scripts/tlh-gnosis.mjs
+node --check scripts/tlh-update.mjs
+node --check scripts/tlh-wrapper.mjs
 node scripts/merge-settings.mjs --dry-run
 npm pack --dry-run
 ```

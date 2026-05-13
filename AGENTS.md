@@ -42,6 +42,8 @@ bash -n install.sh
 node --check scripts/merge-settings.mjs
 node --check scripts/tlh-defaults.mjs
 node --check scripts/tlh-gnosis.mjs
+node --check scripts/tlh-update.mjs
+node --check scripts/tlh-wrapper.mjs
 npm pack --dry-run
 ```
 

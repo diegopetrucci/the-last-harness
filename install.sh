@@ -235,6 +235,8 @@ DEFAULT_EXTENSIONS_FILE=""
 TLH_DEFAULTS_SCRIPT=""
 TLH_GNOSIS_SCRIPT=""
 TLH_UPDATE_SCRIPT=""
+TLH_WRAPPER_SCRIPT=""
+SUPPORT_FILES_DRY_RUN_SKIPPED=false
 
 strip_trailing_slashes() {
   local path="$1"
@@ -422,6 +424,7 @@ prepare_merge_files() {
   local local_dir=""
   TLH_GNOSIS_SCRIPT=""
   TLH_UPDATE_SCRIPT=""
+  TLH_WRAPPER_SCRIPT=""
   if local_dir="$(find_local_repo_dir)"; then
     MERGE_SCRIPT="${local_dir}/scripts/merge-settings.mjs"
     TLH_DEFAULTS_SCRIPT="${local_dir}/scripts/tlh-defaults.mjs"
@@ -430,6 +433,9 @@ prepare_merge_files() {
     fi
     if [[ -f "${local_dir}/scripts/tlh-update.mjs" ]]; then
       TLH_UPDATE_SCRIPT="${local_dir}/scripts/tlh-update.mjs"
+    fi
+    if [[ -f "${local_dir}/scripts/tlh-wrapper.mjs" ]]; then
+      TLH_WRAPPER_SCRIPT="${local_dir}/scripts/tlh-wrapper.mjs"
     fi
     DEFAULTS_FILE="${local_dir}/config/settings.defaults.json"
     DEFAULT_EXTENSIONS_FILE="${local_dir}/config/default-extensions.json"
@@ -442,6 +448,7 @@ prepare_merge_files() {
   TLH_DEFAULTS_SCRIPT="${TMP_DIR}/tlh-defaults.mjs"
   TLH_GNOSIS_SCRIPT="${TMP_DIR}/tlh-gnosis.mjs"
   TLH_UPDATE_SCRIPT="${TMP_DIR}/tlh-update.mjs"
+  TLH_WRAPPER_SCRIPT="${TMP_DIR}/tlh-wrapper.mjs"
   DEFAULTS_FILE="${TMP_DIR}/settings.defaults.json"
   DEFAULT_EXTENSIONS_FILE="${TMP_DIR}/default-extensions.json"
 
@@ -456,6 +463,7 @@ prepare_merge_files() {
     warn "tlh update support script not found for ref ${REF}; the wrapper update helper will be unavailable"
     TLH_UPDATE_SCRIPT=""
   fi
+  curl -fsSL "${RAW_BASE}/scripts/tlh-wrapper.mjs" -o "${TLH_WRAPPER_SCRIPT}"
   curl -fsSL "${RAW_BASE}/config/settings.defaults.json" -o "${DEFAULTS_FILE}"
   curl -fsSL "${RAW_BASE}/config/default-extensions.json" -o "${DEFAULT_EXTENSIONS_FILE}"
 }
@@ -464,6 +472,7 @@ prepare_merge_files_for_dry_run() {
   local local_dir=""
   TLH_GNOSIS_SCRIPT=""
   TLH_UPDATE_SCRIPT=""
+  TLH_WRAPPER_SCRIPT=""
   if local_dir="$(find_local_repo_dir)"; then
     MERGE_SCRIPT="${local_dir}/scripts/merge-settings.mjs"
     TLH_DEFAULTS_SCRIPT="${local_dir}/scripts/tlh-defaults.mjs"
@@ -473,22 +482,31 @@ prepare_merge_files_for_dry_run() {
     if [[ -f "${local_dir}/scripts/tlh-update.mjs" ]]; then
       TLH_UPDATE_SCRIPT="${local_dir}/scripts/tlh-update.mjs"
     fi
+    if [[ -f "${local_dir}/scripts/tlh-wrapper.mjs" ]]; then
+      TLH_WRAPPER_SCRIPT="${local_dir}/scripts/tlh-wrapper.mjs"
+    fi
     DEFAULTS_FILE="${local_dir}/config/settings.defaults.json"
     DEFAULT_EXTENSIONS_FILE="${local_dir}/config/default-extensions.json"
     return 0
   fi
+
+  if [[ "${SUPPORT_FILES_DRY_RUN_SKIPPED}" == "true" ]]; then
+    return 1
+  fi
+  SUPPORT_FILES_DRY_RUN_SKIPPED=true
 
   log "Would fetch installer support files from ${RAW_BASE}"
   log "Would merge settings defaults into: ${SETTINGS_PATH}"
   log "Would install bundled default extension packages after settings merge."
   log "Would fetch Gnosis integration support files."
   log "Would fetch tlh update support files."
+  log "Would fetch tlh wrapper support files."
   log "Dry run only; no support files were downloaded."
   return 1
 }
 
 ensure_support_files_prepared() {
-  if [[ -n "${MERGE_SCRIPT}" || -n "${TLH_DEFAULTS_SCRIPT}" || -n "${TLH_GNOSIS_SCRIPT}" || -n "${TLH_UPDATE_SCRIPT}" || -n "${DEFAULTS_FILE}" || -n "${DEFAULT_EXTENSIONS_FILE}" ]]; then
+  if [[ -n "${MERGE_SCRIPT}" || -n "${TLH_DEFAULTS_SCRIPT}" || -n "${TLH_GNOSIS_SCRIPT}" || -n "${TLH_UPDATE_SCRIPT}" || -n "${TLH_WRAPPER_SCRIPT}" || -n "${DEFAULTS_FILE}" || -n "${DEFAULT_EXTENSIONS_FILE}" ]]; then
     return 0
   fi
 
@@ -636,10 +654,10 @@ merge_settings() {
 }
 
 install_support_files() {
-  if [[ -z "${TLH_DEFAULTS_SCRIPT}" && -z "${DEFAULT_EXTENSIONS_FILE}" && -z "${TLH_GNOSIS_SCRIPT}" && -z "${TLH_UPDATE_SCRIPT}" ]]; then
+  if [[ -z "${TLH_DEFAULTS_SCRIPT}" && -z "${DEFAULT_EXTENSIONS_FILE}" && -z "${TLH_GNOSIS_SCRIPT}" && -z "${TLH_UPDATE_SCRIPT}" && -z "${TLH_WRAPPER_SCRIPT}" ]]; then
     ensure_support_files_prepared || return 0
   fi
-  if [[ -z "${TLH_DEFAULTS_SCRIPT}" && -z "${DEFAULT_EXTENSIONS_FILE}" && -z "${TLH_GNOSIS_SCRIPT}" && -z "${TLH_UPDATE_SCRIPT}" ]]; then
+  if [[ -z "${TLH_DEFAULTS_SCRIPT}" && -z "${DEFAULT_EXTENSIONS_FILE}" && -z "${TLH_GNOSIS_SCRIPT}" && -z "${TLH_UPDATE_SCRIPT}" && -z "${TLH_WRAPPER_SCRIPT}" ]]; then
     return 0
   fi
 
@@ -654,6 +672,9 @@ install_support_files() {
     fi
     if [[ -n "${TLH_UPDATE_SCRIPT}" ]]; then
       print_command cp "${TLH_UPDATE_SCRIPT}" "${support_dir}/tlh-update.mjs"
+    fi
+    if [[ -n "${TLH_WRAPPER_SCRIPT}" ]]; then
+      print_command cp "${TLH_WRAPPER_SCRIPT}" "${support_dir}/tlh-wrapper.mjs"
     fi
     if [[ -n "${DEFAULT_EXTENSIONS_FILE}" ]]; then
       print_command cp "${DEFAULT_EXTENSIONS_FILE}" "${support_dir}/default-extensions.json"
@@ -670,6 +691,9 @@ install_support_files() {
   fi
   if [[ -n "${TLH_UPDATE_SCRIPT}" ]]; then
     cp "${TLH_UPDATE_SCRIPT}" "${support_dir}/tlh-update.mjs"
+  fi
+  if [[ -n "${TLH_WRAPPER_SCRIPT}" ]]; then
+    cp "${TLH_WRAPPER_SCRIPT}" "${support_dir}/tlh-wrapper.mjs"
   fi
   if [[ -n "${DEFAULT_EXTENSIONS_FILE}" ]]; then
     cp "${DEFAULT_EXTENSIONS_FILE}" "${support_dir}/default-extensions.json"
@@ -1113,6 +1137,20 @@ wrapper_is_managed() {
   [[ "${marker_line}" == "# ${WRAPPER_MARKER}" ]]
 }
 
+write_wrapper_dry_run_without_helper() {
+  if [[ -e "${WRAPPER_PATH}" ]] && ! wrapper_is_managed && [[ "${FORCE}" != "true" ]]; then
+    warn "would not overwrite unmanaged existing wrapper: ${WRAPPER_PATH}"
+    return 0
+  fi
+
+  print_command mkdir -p "${BIN_DIR}"
+  if [[ -e "${WRAPPER_PATH}" ]]; then
+    log "Would overwrite wrapper: ${WRAPPER_PATH}"
+  else
+    log "Would create wrapper: ${WRAPPER_PATH}"
+  fi
+}
+
 write_wrapper() {
   if [[ "${NO_WRAPPER}" == "true" ]]; then
     log "Skipping wrapper creation (--no-wrapper)."
@@ -1125,115 +1163,46 @@ write_wrapper() {
     log "Creating wrapper command..."
   fi
 
-  if [[ -e "${WRAPPER_PATH}" ]] && ! wrapper_is_managed && [[ "${FORCE}" != "true" ]]; then
+  if [[ -z "${TLH_WRAPPER_SCRIPT}" || ! -f "${TLH_WRAPPER_SCRIPT}" ]]; then
+    if ! ensure_support_files_prepared; then
+      if [[ "${DRY_RUN}" == "true" ]]; then
+        write_wrapper_dry_run_without_helper
+        return 0
+      fi
+      die "wrapper support files are unavailable for ref ${REF}"
+    fi
+  fi
+
+  if [[ -z "${TLH_WRAPPER_SCRIPT}" || ! -f "${TLH_WRAPPER_SCRIPT}" ]]; then
     if [[ "${DRY_RUN}" == "true" ]]; then
-      warn "would not overwrite unmanaged existing wrapper: ${WRAPPER_PATH}"
+      write_wrapper_dry_run_without_helper
       return 0
     fi
-    die "${WRAPPER_PATH} already exists and is not managed by this installer; use --force or --bin-dir"
+    die "wrapper support script not found for ref ${REF}; re-run the installer from a release that includes scripts/tlh-wrapper.mjs"
   fi
 
+  local args=(
+    "${TLH_WRAPPER_SCRIPT}"
+    "--agent-dir"
+    "${AGENT_DIR}"
+    "--bin-dir"
+    "${BIN_DIR}"
+    "--wrapper-name"
+    "${WRAPPER_NAME}"
+    "--package-root"
+    "${AGENT_DIR}/git/github.com/${REPO}"
+  )
   if [[ "${DRY_RUN}" == "true" ]]; then
-    print_command mkdir -p "${BIN_DIR}"
-    if [[ -e "${WRAPPER_PATH}" ]]; then
-      log "Would overwrite wrapper: ${WRAPPER_PATH}"
-    else
-      log "Would create wrapper: ${WRAPPER_PATH}"
-    fi
-    return 0
+    args+=("--dry-run")
+  fi
+  if [[ "${FORCE}" == "true" ]]; then
+    args+=("--force")
+  fi
+  if [[ "${QUIET}" == "true" ]]; then
+    args+=("--quiet")
   fi
 
-  mkdir -p "${BIN_DIR}"
-  local tmp_path="${WRAPPER_PATH}.tmp.$$"
-  local escaped_agent_dir escaped_package_root escaped_bin_dir escaped_wrapper_name
-  escaped_agent_dir="$(printf '%q' "${AGENT_DIR}")"
-  escaped_package_root="$(printf '%q' "${AGENT_DIR}/git/github.com/${REPO}")"
-  escaped_bin_dir="$(printf '%q' "${BIN_DIR}")"
-  escaped_wrapper_name="$(printf '%q' "${WRAPPER_NAME}")"
-
-  cat >"${tmp_path}" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-# ${WRAPPER_MARKER}
-default_agent_dir=${escaped_agent_dir}
-default_tlh_package_root=${escaped_package_root}
-default_bin_dir=${escaped_bin_dir}
-default_wrapper_name=${escaped_wrapper_name}
-export PI_CODING_AGENT_DIR="\${default_agent_dir}"
-
-if [[ "\${1:-}" == "update" ]]; then
-  shift
-  tlh_update_script=""
-  for candidate in \
-    "\${default_agent_dir}/tlh/tlh-update.mjs" \
-    "\${default_tlh_package_root}/scripts/tlh-update.mjs"; do
-    if [[ -f "\${candidate}" ]]; then
-      tlh_update_script="\${candidate}"
-      break
-    fi
-  done
-  if [[ -z "\${tlh_update_script}" ]]; then
-    printf 'error: tlh update support files not found; re-run the installer.\n' >&2
-    exit 1
-  fi
-  exec node "\${tlh_update_script}" --agent-dir "\${default_agent_dir}" --bin-dir "\${default_bin_dir}" --wrapper-name "\${default_wrapper_name}" "\$@"
-fi
-
-if [[ "\${1:-}" == "defaults" ]]; then
-  shift
-  tlh_defaults_script=""
-  tlh_default_extensions=""
-  for candidate in \
-    "\${default_agent_dir}/tlh/tlh-defaults.mjs" \
-    "\${default_tlh_package_root}/scripts/tlh-defaults.mjs"; do
-    if [[ -f "\${candidate}" ]]; then
-      tlh_defaults_script="\${candidate}"
-      break
-    fi
-  done
-  for candidate in \
-    "\${default_agent_dir}/tlh/default-extensions.json" \
-    "\${default_tlh_package_root}/config/default-extensions.json"; do
-    if [[ -f "\${candidate}" ]]; then
-      tlh_default_extensions="\${candidate}"
-      break
-    fi
-  done
-  if [[ -z "\${tlh_defaults_script}" || -z "\${tlh_default_extensions}" ]]; then
-    printf 'error: tlh defaults support files not found; re-run the installer.\n' >&2
-    exit 1
-  fi
-  exec node "\${tlh_defaults_script}" --settings "\${default_agent_dir}/settings.json" --defaults "\${tlh_default_extensions}" "\$@"
-fi
-
-if [[ "\${1:-}" == "gnosis" ]]; then
-  shift
-  tlh_gnosis_script=""
-  for candidate in \
-    "\${default_agent_dir}/tlh/tlh-gnosis.mjs" \
-    "\${default_tlh_package_root}/scripts/tlh-gnosis.mjs"; do
-    if [[ -f "\${candidate}" ]]; then
-      tlh_gnosis_script="\${candidate}"
-      break
-    fi
-  done
-  if [[ -z "\${tlh_gnosis_script}" ]]; then
-    printf 'error: tlh gnosis support files not found; re-run the installer.\n' >&2
-    exit 1
-  fi
-  exec node "\${tlh_gnosis_script}" --settings "\${default_agent_dir}/settings.json" --agent-dir "\${default_agent_dir}" "\$@"
-fi
-
-pi_cmd="\$(command -v pi || true)"
-if [[ -z "\${pi_cmd}" ]]; then
-  printf 'error: pi command not found on PATH.\n' >&2
-  exit 1
-fi
-export PATH="\${default_agent_dir}/bin\${PATH:+:\${PATH}}"
-exec "\${pi_cmd}" "\$@"
-EOF
-  chmod +x "${tmp_path}"
-  mv "${tmp_path}" "${WRAPPER_PATH}"
+  node "${args[@]}"
 }
 
 path_contains_bin_dir() {
