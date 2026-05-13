@@ -284,6 +284,18 @@ function packageEntryDisablesExtensions(entry) {
 	return patterns.includes("-index.ts") || patterns.includes("!index.ts") || patterns.includes("-*") || patterns.includes("!*");
 }
 
+function replacedPackageSource(settings, extension) {
+	for (const oldSource of extension.replaces) {
+		const index = findPackageIndex(settings, oldSource);
+		if (index !== -1) return packageSourceOf(settings.packages[index]) || oldSource;
+	}
+	return undefined;
+}
+
+function isDefaultSourceDeferred(settings, extension) {
+	return findPackageIndex(settings, extension.source) === -1 && Boolean(replacedPackageSource(settings, extension));
+}
+
 function isDefaultDisabled(settings, extension, defaultExtensions) {
 	if (disabledIdsFromSettings(settings, defaultExtensions).has(extension.id)) return true;
 	const index = findPackageIndex(settings, extension.source);
@@ -330,8 +342,9 @@ function defaultStatus(settings, extension, defaultExtensions) {
 	if (markerDisabled) return { enabled: false, reason: "disabled" };
 	if (entry && packageEntryDisablesExtensions(entry)) return { enabled: false, reason: "disabled by package filter" };
 	if (entry) return { enabled: true, reason: "enabled" };
-	if (extension.replaces.some((source) => findPackageIndex(settings, source) !== -1)) {
-		return { enabled: true, reason: "enabled with replaced package; installer will switch it" };
+	const replacementSource = replacedPackageSource(settings, extension);
+	if (replacementSource) {
+		return { enabled: true, reason: `enabled with replaced package (${replacementSource}); installer --force will switch it` };
 	}
 	return { enabled: true, reason: "enabled by default; package will be added by installer" };
 }
@@ -406,7 +419,7 @@ function commandList(settings, defaultExtensions) {
 
 function commandSources(settings, defaultExtensions) {
 	for (const extension of defaultExtensions) {
-		if (!isDefaultDisabled(settings, extension, defaultExtensions)) {
+		if (!isDefaultDisabled(settings, extension, defaultExtensions) && !isDefaultSourceDeferred(settings, extension)) {
 			console.log(extension.source);
 		}
 	}

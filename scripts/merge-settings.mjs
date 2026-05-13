@@ -246,12 +246,26 @@ function disabledDefaultExtensionIds(settings, defaultExtensions = []) {
 	return ids;
 }
 
-function prepareDefaults(defaults, packageSource, defaultExtensions, disabledIds) {
+function packageIdentityExists(packages, identity) {
+	return Boolean(identity) && packages.some((entry) => packageIdentity(entry) === identity);
+}
+
+function shouldEnsureDefaultExtensionSource(existingPackages, extension, { force }) {
+	if (force) return true;
+	if (packageIdentityExists(existingPackages, packageIdentity(extension.source))) return true;
+	return !extension.replaces.some((oldSource) => packageIdentityExists(existingPackages, packageIdentity(oldSource)));
+}
+
+function prepareDefaults(defaults, packageSource, defaultExtensions, disabledIds, existingSettings, { force }) {
 	const next = clone(defaults);
 	const ensuredSource = packageSource || DEFAULT_PACKAGE_SOURCE;
+	const existingPackages = isPlainObject(existingSettings) && Array.isArray(existingSettings.packages) ? existingSettings.packages : [];
 	const ensuredPackages = [
 		ensuredSource,
-		...defaultExtensions.filter((extension) => !disabledIds.has(extension.id)).map((extension) => extension.source),
+		...defaultExtensions
+			.filter((extension) => !disabledIds.has(extension.id))
+			.filter((extension) => shouldEnsureDefaultExtensionSource(existingPackages, extension, { force }))
+			.map((extension) => extension.source),
 	];
 	const ensuredIdentities = new Set(ensuredPackages.map(packageIdentity).filter(Boolean));
 	const disabledIdentities = new Set(
@@ -489,7 +503,7 @@ function main() {
 	const rawDefaults = readJson(defaultsPath);
 	const defaultExtensions = readDefaultExtensions(defaultExtensionsPath);
 	const disabledIds = disabledDefaultExtensionIds(existing, defaultExtensions);
-	const defaults = prepareDefaults(rawDefaults, args.packageSource, defaultExtensions, disabledIds);
+	const defaults = prepareDefaults(rawDefaults, args.packageSource, defaultExtensions, disabledIds, existing, { force: args.force });
 	const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
 	applyDefaultExtensionSourceUpdates(next, defaultExtensions, disabledIds, changes, { force: args.force });
 	applyReplacedDefaultExtensions(next, defaultExtensions, disabledIds, changes, { force: args.force });

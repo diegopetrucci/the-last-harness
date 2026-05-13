@@ -17,7 +17,7 @@ All notable changes to The Last Harness will be documented in this file.
 - TLH subagent execution plus `list` and `get` detail inspection are forced to the isolated user scope so project agents cannot shadow bundled minor agents.
 - The architect/developer/reviewer prompts now use `tk` when available but fall back to self-contained numbered tasks, so fresh installs do not require an external ticket command.
 - TLH no longer switches the saved model or reasoning effort on startup unless `tlh.primaryAgent.applyModel` or `tlh.primaryAgent.applyThinking` is explicitly enabled.
-- Default-extension source migrations and replaced-package cleanup now require installer `--force`, preserving user-pinned or user-managed package entries by default.
+- Default-extension source migrations, replacement-package appends, and replaced-package cleanup now require installer `--force`, preserving user-pinned or user-managed package entries by default and avoiding duplicate replaced/default extension loads.
 - Manual install docs now copy TLH minor subagent prompts into the isolated profile and use current pinned-release examples.
 
 ## [0.6.0] - 2026-05-13
