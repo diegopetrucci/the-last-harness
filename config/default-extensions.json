@@ -25,6 +25,11 @@
     "description": "Research GitHub repositories and optionally cache local checkouts."
   },
   {
+    "id": "fff",
+    "source": "npm:@ff-labs/pi-fff",
+    "description": "FFF-powered fuzzy file and content search."
+  },
+  {
     "id": "notify",
     "source": "npm:@diegopetrucci/pi-notify",
     "description": "Send a notification when an agent turn finishes."

@@ -46,6 +46,7 @@ The installer enables these standalone external Pi packages by default in the is
 - [`npm:@plannotator/pi-extension`](https://github.com/backnotprop/plannotator/tree/main/apps/pi-extension) — adds interactive plan review with annotations.
 - [`npm:@diegopetrucci/pi-openai-fast`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/openai-fast) — adds optional `/fast` commands for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions.
 - [`npm:@diegopetrucci/pi-librarian`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/librarian) — scouts GitHub repositories and optionally caches local checkouts.
+- [`npm:@ff-labs/pi-fff`](https://github.com/dmtrKovalenko/fff.nvim/tree/main/packages/pi-fff) — adds FFF-powered fuzzy file and content search.
 - [`npm:@diegopetrucci/pi-notify`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/notify) — sends a notification when an agent turn finishes.
 - [`npm:@diegopetrucci/pi-context-cap`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/context-cap) — keeps context usage under a configured cap.
 - [`npm:@diegopetrucci/pi-context-inspector`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/context-inspector) — opens a local HTML dashboard showing where session context is going.
