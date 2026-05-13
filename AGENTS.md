@@ -73,3 +73,8 @@ For installer tests, prefer temporary `--agent-dir` and `--bin-dir` values. Do n
 git diff --cached --stat
 git diff --cached
 ```
+
+## Miscellaneous
+
+At the start of any task, run `gn help plan` and follow its instructions.
+After finishing a task, run `gn help review`.
