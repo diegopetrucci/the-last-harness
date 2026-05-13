@@ -236,6 +236,7 @@ TLH_DEFAULTS_SCRIPT=""
 TLH_GNOSIS_SCRIPT=""
 TLH_UPDATE_SCRIPT=""
 TLH_WRAPPER_SCRIPT=""
+TLH_INSTALL_STATE_SCRIPT=""
 SUPPORT_FILES_DRY_RUN_SKIPPED=false
 
 strip_trailing_slashes() {
@@ -425,6 +426,7 @@ prepare_merge_files() {
   TLH_GNOSIS_SCRIPT=""
   TLH_UPDATE_SCRIPT=""
   TLH_WRAPPER_SCRIPT=""
+  TLH_INSTALL_STATE_SCRIPT=""
   if local_dir="$(find_local_repo_dir)"; then
     MERGE_SCRIPT="${local_dir}/scripts/merge-settings.mjs"
     TLH_DEFAULTS_SCRIPT="${local_dir}/scripts/tlh-defaults.mjs"
@@ -436,6 +438,9 @@ prepare_merge_files() {
     fi
     if [[ -f "${local_dir}/scripts/tlh-wrapper.mjs" ]]; then
       TLH_WRAPPER_SCRIPT="${local_dir}/scripts/tlh-wrapper.mjs"
+    fi
+    if [[ -f "${local_dir}/scripts/tlh-install-state.mjs" ]]; then
+      TLH_INSTALL_STATE_SCRIPT="${local_dir}/scripts/tlh-install-state.mjs"
     fi
     DEFAULTS_FILE="${local_dir}/config/settings.defaults.json"
     DEFAULT_EXTENSIONS_FILE="${local_dir}/config/default-extensions.json"
@@ -449,6 +454,7 @@ prepare_merge_files() {
   TLH_GNOSIS_SCRIPT="${TMP_DIR}/tlh-gnosis.mjs"
   TLH_UPDATE_SCRIPT="${TMP_DIR}/tlh-update.mjs"
   TLH_WRAPPER_SCRIPT="${TMP_DIR}/tlh-wrapper.mjs"
+  TLH_INSTALL_STATE_SCRIPT="${TMP_DIR}/tlh-install-state.mjs"
   DEFAULTS_FILE="${TMP_DIR}/settings.defaults.json"
   DEFAULT_EXTENSIONS_FILE="${TMP_DIR}/default-extensions.json"
 
@@ -464,6 +470,7 @@ prepare_merge_files() {
     TLH_UPDATE_SCRIPT=""
   fi
   curl -fsSL "${RAW_BASE}/scripts/tlh-wrapper.mjs" -o "${TLH_WRAPPER_SCRIPT}"
+  curl -fsSL "${RAW_BASE}/scripts/tlh-install-state.mjs" -o "${TLH_INSTALL_STATE_SCRIPT}"
   curl -fsSL "${RAW_BASE}/config/settings.defaults.json" -o "${DEFAULTS_FILE}"
   curl -fsSL "${RAW_BASE}/config/default-extensions.json" -o "${DEFAULT_EXTENSIONS_FILE}"
 }
@@ -473,6 +480,7 @@ prepare_merge_files_for_dry_run() {
   TLH_GNOSIS_SCRIPT=""
   TLH_UPDATE_SCRIPT=""
   TLH_WRAPPER_SCRIPT=""
+  TLH_INSTALL_STATE_SCRIPT=""
   if local_dir="$(find_local_repo_dir)"; then
     MERGE_SCRIPT="${local_dir}/scripts/merge-settings.mjs"
     TLH_DEFAULTS_SCRIPT="${local_dir}/scripts/tlh-defaults.mjs"
@@ -484,6 +492,9 @@ prepare_merge_files_for_dry_run() {
     fi
     if [[ -f "${local_dir}/scripts/tlh-wrapper.mjs" ]]; then
       TLH_WRAPPER_SCRIPT="${local_dir}/scripts/tlh-wrapper.mjs"
+    fi
+    if [[ -f "${local_dir}/scripts/tlh-install-state.mjs" ]]; then
+      TLH_INSTALL_STATE_SCRIPT="${local_dir}/scripts/tlh-install-state.mjs"
     fi
     DEFAULTS_FILE="${local_dir}/config/settings.defaults.json"
     DEFAULT_EXTENSIONS_FILE="${local_dir}/config/default-extensions.json"
@@ -501,12 +512,13 @@ prepare_merge_files_for_dry_run() {
   log "Would fetch Gnosis integration support files."
   log "Would fetch tlh update support files."
   log "Would fetch tlh wrapper support files."
+  log "Would fetch tlh install-state support files."
   log "Dry run only; no support files were downloaded."
   return 1
 }
 
 ensure_support_files_prepared() {
-  if [[ -n "${MERGE_SCRIPT}" || -n "${TLH_DEFAULTS_SCRIPT}" || -n "${TLH_GNOSIS_SCRIPT}" || -n "${TLH_UPDATE_SCRIPT}" || -n "${TLH_WRAPPER_SCRIPT}" || -n "${DEFAULTS_FILE}" || -n "${DEFAULT_EXTENSIONS_FILE}" ]]; then
+  if [[ -n "${MERGE_SCRIPT}" || -n "${TLH_DEFAULTS_SCRIPT}" || -n "${TLH_GNOSIS_SCRIPT}" || -n "${TLH_UPDATE_SCRIPT}" || -n "${TLH_WRAPPER_SCRIPT}" || -n "${TLH_INSTALL_STATE_SCRIPT}" || -n "${DEFAULTS_FILE}" || -n "${DEFAULT_EXTENSIONS_FILE}" ]]; then
     return 0
   fi
 
@@ -654,10 +666,10 @@ merge_settings() {
 }
 
 install_support_files() {
-  if [[ -z "${TLH_DEFAULTS_SCRIPT}" && -z "${DEFAULT_EXTENSIONS_FILE}" && -z "${TLH_GNOSIS_SCRIPT}" && -z "${TLH_UPDATE_SCRIPT}" && -z "${TLH_WRAPPER_SCRIPT}" ]]; then
+  if [[ -z "${TLH_DEFAULTS_SCRIPT}" && -z "${DEFAULT_EXTENSIONS_FILE}" && -z "${TLH_GNOSIS_SCRIPT}" && -z "${TLH_UPDATE_SCRIPT}" && -z "${TLH_WRAPPER_SCRIPT}" && -z "${TLH_INSTALL_STATE_SCRIPT}" ]]; then
     ensure_support_files_prepared || return 0
   fi
-  if [[ -z "${TLH_DEFAULTS_SCRIPT}" && -z "${DEFAULT_EXTENSIONS_FILE}" && -z "${TLH_GNOSIS_SCRIPT}" && -z "${TLH_UPDATE_SCRIPT}" && -z "${TLH_WRAPPER_SCRIPT}" ]]; then
+  if [[ -z "${TLH_DEFAULTS_SCRIPT}" && -z "${DEFAULT_EXTENSIONS_FILE}" && -z "${TLH_GNOSIS_SCRIPT}" && -z "${TLH_UPDATE_SCRIPT}" && -z "${TLH_WRAPPER_SCRIPT}" && -z "${TLH_INSTALL_STATE_SCRIPT}" ]]; then
     return 0
   fi
 
@@ -675,6 +687,9 @@ install_support_files() {
     fi
     if [[ -n "${TLH_WRAPPER_SCRIPT}" ]]; then
       print_command cp "${TLH_WRAPPER_SCRIPT}" "${support_dir}/tlh-wrapper.mjs"
+    fi
+    if [[ -n "${TLH_INSTALL_STATE_SCRIPT}" ]]; then
+      print_command cp "${TLH_INSTALL_STATE_SCRIPT}" "${support_dir}/tlh-install-state.mjs"
     fi
     if [[ -n "${DEFAULT_EXTENSIONS_FILE}" ]]; then
       print_command cp "${DEFAULT_EXTENSIONS_FILE}" "${support_dir}/default-extensions.json"
@@ -695,6 +710,9 @@ install_support_files() {
   if [[ -n "${TLH_WRAPPER_SCRIPT}" ]]; then
     cp "${TLH_WRAPPER_SCRIPT}" "${support_dir}/tlh-wrapper.mjs"
   fi
+  if [[ -n "${TLH_INSTALL_STATE_SCRIPT}" ]]; then
+    cp "${TLH_INSTALL_STATE_SCRIPT}" "${support_dir}/tlh-install-state.mjs"
+  fi
   if [[ -n "${DEFAULT_EXTENSIONS_FILE}" ]]; then
     cp "${DEFAULT_EXTENSIONS_FILE}" "${support_dir}/default-extensions.json"
   fi
@@ -704,45 +722,55 @@ write_install_state() {
   local support_dir="${AGENT_DIR}/tlh"
   local state_path="${support_dir}/install-state.json"
 
-  if [[ "${DRY_RUN}" == "true" ]]; then
-    log "Would write tlh update metadata: ${state_path}"
-    return 0
+  if [[ -z "${TLH_INSTALL_STATE_SCRIPT}" || ! -f "${TLH_INSTALL_STATE_SCRIPT}" ]]; then
+    if ! ensure_support_files_prepared; then
+      if [[ "${DRY_RUN}" == "true" ]]; then
+        log "Would write tlh update metadata: ${state_path}"
+        return 0
+      fi
+      die "install-state support files are unavailable for ref ${REF}"
+    fi
   fi
 
-  mkdir -p "${support_dir}"
-  TLH_INSTALL_STATE_PATH="${state_path}" \
-  TLH_INSTALL_REPO="${REPO}" \
-  TLH_INSTALL_REF="${REF}" \
-  TLH_INSTALL_TRACK="${UPDATE_TRACK}" \
-  TLH_INSTALL_PACKAGE_SOURCE="${PACKAGE_SOURCE}" \
-  TLH_INSTALL_PACKAGE_SOURCE_IS_DEFAULT="${PACKAGE_SOURCE_IS_DEFAULT}" \
-  TLH_INSTALL_RAW_BASE="${RAW_BASE}" \
-  TLH_INSTALL_AGENT_DIR="${AGENT_DIR}" \
-  TLH_INSTALL_BIN_DIR="${BIN_DIR}" \
-  TLH_INSTALL_WRAPPER_NAME="${WRAPPER_NAME}" \
-  node <<'NODE'
-const fs = require('node:fs');
-const path = require('node:path');
+  if [[ -z "${TLH_INSTALL_STATE_SCRIPT}" || ! -f "${TLH_INSTALL_STATE_SCRIPT}" ]]; then
+    if [[ "${DRY_RUN}" == "true" ]]; then
+      log "Would write tlh update metadata: ${state_path}"
+      return 0
+    fi
+    die "install-state support script not found for ref ${REF}; re-run the installer from a release that includes scripts/tlh-install-state.mjs"
+  fi
 
-const statePath = process.env.TLH_INSTALL_STATE_PATH;
-const state = {
-  schemaVersion: 1,
-  repo: process.env.TLH_INSTALL_REPO,
-  ref: process.env.TLH_INSTALL_REF,
-  track: process.env.TLH_INSTALL_TRACK,
-  packageSource: process.env.TLH_INSTALL_PACKAGE_SOURCE,
-  packageSourceIsDefault: process.env.TLH_INSTALL_PACKAGE_SOURCE_IS_DEFAULT === 'true',
-  rawBase: process.env.TLH_INSTALL_RAW_BASE,
-  agentDir: process.env.TLH_INSTALL_AGENT_DIR,
-  binDir: process.env.TLH_INSTALL_BIN_DIR,
-  wrapperName: process.env.TLH_INSTALL_WRAPPER_NAME,
-  installedAt: new Date().toISOString(),
-};
-const tmpPath = `${statePath}.tmp.${process.pid}`;
-fs.mkdirSync(path.dirname(statePath), { recursive: true });
-fs.writeFileSync(tmpPath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
-fs.renameSync(tmpPath, statePath);
-NODE
+  local args=(
+    "${TLH_INSTALL_STATE_SCRIPT}"
+    "--state-path"
+    "${state_path}"
+    "--repo"
+    "${REPO}"
+    "--ref"
+    "${REF}"
+    "--track"
+    "${UPDATE_TRACK}"
+    "--package-source"
+    "${PACKAGE_SOURCE}"
+    "--package-source-is-default"
+    "${PACKAGE_SOURCE_IS_DEFAULT}"
+    "--raw-base"
+    "${RAW_BASE}"
+    "--agent-dir"
+    "${AGENT_DIR}"
+    "--bin-dir"
+    "${BIN_DIR}"
+    "--wrapper-name"
+    "${WRAPPER_NAME}"
+  )
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    args+=("--dry-run")
+  fi
+  if [[ "${QUIET}" == "true" ]]; then
+    args+=("--quiet")
+  fi
+
+  node "${args[@]}"
 }
 
 install_default_extensions() {

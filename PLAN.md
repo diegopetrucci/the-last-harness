@@ -4,7 +4,8 @@
 
 ## Current status
 
-- Phase 1 is implemented in this branch: wrapper rendering lives in `scripts/tlh-wrapper.mjs`, and `install.sh` now calls that helper while retaining a stdin `--dry-run` fallback.
+- Phase 1 is implemented: wrapper rendering lives in `scripts/tlh-wrapper.mjs`, and `install.sh` now calls that helper while retaining a stdin `--dry-run` fallback.
+- Phase 2 is implemented in this branch: install-state metadata writing lives in `scripts/tlh-install-state.mjs`, and `install.sh` now calls that helper while retaining a stdin `--dry-run` fallback.
 - Later phases remain planned and should be handled as separate, behavior-preserving changes.
 
 ## Constraints to preserve
@@ -82,6 +83,7 @@ node --check scripts/tlh-defaults.mjs
 node --check scripts/tlh-gnosis.mjs
 node --check scripts/tlh-update.mjs
 node --check scripts/tlh-wrapper.mjs
+node --check scripts/tlh-install-state.mjs
 npm pack --dry-run
 ```
 

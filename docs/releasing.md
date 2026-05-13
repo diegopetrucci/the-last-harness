@@ -30,6 +30,7 @@ node --check scripts/tlh-defaults.mjs
 node --check scripts/tlh-gnosis.mjs
 node --check scripts/tlh-update.mjs
 node --check scripts/tlh-wrapper.mjs
+node --check scripts/tlh-install-state.mjs
 node --check scripts/release-notes.mjs
 node scripts/release-notes.mjs --tag "v$version" --output /tmp/tlh-release-notes.md
 npm pack --dry-run

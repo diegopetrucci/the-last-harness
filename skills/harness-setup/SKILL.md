@@ -40,6 +40,7 @@ node --check scripts/tlh-defaults.mjs
 node --check scripts/tlh-gnosis.mjs
 node --check scripts/tlh-update.mjs
 node --check scripts/tlh-wrapper.mjs
+node --check scripts/tlh-install-state.mjs
 node scripts/merge-settings.mjs --dry-run
 npm pack --dry-run
 ```

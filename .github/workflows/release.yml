@@ -50,6 +50,7 @@ jobs:
           node --check scripts/tlh-gnosis.mjs
           node --check scripts/tlh-update.mjs
           node --check scripts/tlh-wrapper.mjs
+          node --check scripts/tlh-install-state.mjs
           node --check scripts/release-notes.mjs
           npm pack --dry-run
 
