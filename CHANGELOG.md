@@ -4,9 +4,13 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Added `/gnosis` to toggle Gnosis prompt integration from an interactive `tlh` session, with `/gnosis status|enable|disable|toggle` for explicit actions.
+
 ### Changed
 
-- Gnosis is now installed and enabled by default on supported platforms for profiles without an existing preference; `--without-gnosis` and `tlh gnosis disable` remain persistent opt-outs across `tlh update`.
+- Gnosis is now installed and enabled by default on supported platforms for profiles without an existing preference; `--without-gnosis`, `tlh gnosis disable`, and `/gnosis` disable remain persistent opt-outs across `tlh update`.
 
 ## [0.5.0] - 2026-05-12
 

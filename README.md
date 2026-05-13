@@ -25,13 +25,14 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/dow
 
 The following slash commands are available in interactive `tlh` sessions:
 
+- `/gnosis [status|enable|disable|toggle]` — toggle or inspect Gnosis prompt integration. With no argument, `/gnosis` toggles it.
 - `/effort [off|minimal|low|medium|high|xhigh]` — pick or set model reasoning effort. Available levels depend on the current model; run `/effort` without an argument for the picker.
 - `/fast on|off|auto|toggle|status` — manage OpenAI Fast mode for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions.
 - `/context [--no-open] [--keep] [--redact] [--full|--current]` — generate a local HTML breakdown of where the session context is going.
 
 ### Included Pi resources
 
-- `extensions/the-last-harness.ts` adds the custom `tlh` startup header and footer, lightweight default guidance, conditional Gnosis prompt instructions, `/tlh` status, `/effort` reasoning-effort picker commands, and the 200k-token `DUMB ZONE` footer warning.
+- `extensions/the-last-harness.ts` adds the custom `tlh` startup header and footer, lightweight default guidance, conditional Gnosis prompt instructions, `/tlh` status, `/gnosis` toggle/status, `/effort` reasoning-effort picker commands, and the 200k-token `DUMB ZONE` footer warning.
 - `skills/harness-setup/SKILL.md` documents safe setup/update/uninstall workflows.
 - `prompts/harness-plan.md` provides `/harness-plan` for reviewable implementation planning.
 - `themes/the-last-harness.json` provides the default isolated theme.
@@ -65,13 +66,13 @@ Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `t
 
 [Gnosis](https://github.com/skorokithakis/gnosis) is a small `gn` CLI for recording project decisions, constraints, rejected alternatives, and lessons that are not obvious from code alone. On supported platforms, TLH installs and enables it by default because `tlh` works better when agents can consult and update that project memory.
 
-Opt out during install or update with `--without-gnosis` / `--no-gnosis`, or disable it later with `tlh gnosis disable`. For pipe-to-bash installs, pass installer flags after `bash -s --`:
+Opt out during install or update with `--without-gnosis` / `--no-gnosis`, or disable it later with `tlh gnosis disable` or `/gnosis` inside an interactive session. For pipe-to-bash installs, pass installer flags after `bash -s --`:
 
 ```sh
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash -s -- --without-gnosis
 ```
 
-The opt-out is written to `~/.the-last-harness/agent/settings.json` and survives `tlh update`; use `tlh update --with-gnosis` to install/re-enable it automatically, or install `gn` manually and run `tlh gnosis enable`.
+The opt-out is written to `~/.the-last-harness/agent/settings.json` and survives `tlh update`; use `tlh update --with-gnosis` to install/re-enable it automatically, or install `gn` manually and run `tlh gnosis enable` or `/gnosis`.
 
 If enabled and a valid Gnosis `gn` binary is present, TLH appends these instructions to the system prompt:
 
@@ -88,7 +89,7 @@ tlh gnosis enable
 tlh gnosis disable
 ```
 
-Disabling Gnosis stops TLH from adding the prompt instructions; it does not delete existing repo-local memory or any managed `gn` binary. Gnosis project data lives in repo-local `.gnosis` directories.
+Inside an interactive `tlh` session, use `/gnosis` to toggle the integration or `/gnosis status` to inspect it. Disabling Gnosis stops TLH from adding the prompt instructions; it does not delete existing repo-local memory or any managed `gn` binary. Gnosis project data lives in repo-local `.gnosis` directories.
 
 ## Install, update, and uninstall
 
