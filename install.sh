@@ -84,6 +84,12 @@ verbose_log() {
   fi
 }
 
+detail_log() {
+  if [[ "${QUIET}" != "true" && ( "${VERBOSE}" == "true" || "${DRY_RUN}" == "true" ) ]]; then
+    printf '%s\n' "$*"
+  fi
+}
+
 warn() {
   printf 'warning: %s\n' "$*" >&2
 }
@@ -524,7 +530,7 @@ backup_existing_settings_before_pi_install() {
   fi
 
   cp -p "${SETTINGS_PATH}" "${backup_path}"
-  log "Backed up existing isolated settings to: ${backup_path}"
+  detail_log "Backed up existing isolated settings to: ${backup_path}"
 }
 
 refresh_harness_package_checkout() {
@@ -1247,25 +1253,25 @@ print_summary() {
       warn "${BIN_DIR} is not on PATH. Add it with: export PATH=\"${BIN_DIR}:\$PATH\""
       log "Start with: PI_CODING_AGENT_DIR=\"${AGENT_DIR}\" pi"
     fi
-    log "Wrapper: ${WRAPPER_PATH}"
+    detail_log "Wrapper: ${WRAPPER_PATH}"
   else
     log "Start with: PI_CODING_AGENT_DIR=\"${AGENT_DIR}\" pi"
   fi
-  log "Settings: ${SETTINGS_PATH}"
+  detail_log "Settings: ${SETTINGS_PATH}"
   if [[ -n "${GNOSIS_SUMMARY}" ]]; then
-    log "${GNOSIS_SUMMARY}"
+    detail_log "${GNOSIS_SUMMARY}"
   fi
-  log "Normal Pi config was not modified: ~/.pi/agent"
+  detail_log "Normal Pi config was not modified: ~/.pi/agent"
   if [[ "${NO_WRAPPER}" != "true" ]]; then
-    log "Uninstall: rm -f \"${WRAPPER_PATH}\" && rm -rf \"${AGENT_DIR}\""
+    detail_log "Uninstall: rm -f \"${WRAPPER_PATH}\" && rm -rf \"${AGENT_DIR}\""
   else
-    log "Uninstall: rm -rf \"${AGENT_DIR}\""
+    detail_log "Uninstall: rm -rf \"${AGENT_DIR}\""
   fi
 }
 
 main() {
   log "The Last Harness installer"
-  log "Isolated profile: ${AGENT_DIR}"
+  detail_log "Isolated profile: ${AGENT_DIR}"
   if [[ "${PACKAGE_SOURCE_IS_DEFAULT}" != "true" || "${VERBOSE}" == "true" ]]; then
     log "Package source: ${PACKAGE_SOURCE}"
   fi
