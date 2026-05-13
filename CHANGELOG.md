@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
+- Bundled `npm:@diegopetrucci/pi-dirty-repo-guard` as a default extension.
 - Bundled `npm:@ff-labs/pi-fff` as a default extension.
 - Added `/gnosis` to toggle Gnosis prompt integration from an interactive `tlh` session, with `/gnosis status|enable|disable|toggle` for explicit actions.
 

@@ -52,6 +52,7 @@ The installer enables these standalone external Pi packages by default in the is
 - [`npm:@diegopetrucci/pi-context-inspector`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/context-inspector) — opens a local HTML dashboard showing where session context is going.
 - [`npm:@diegopetrucci/pi-quiet-tools`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/quiet-tools) — compacts collapsed built-in tool output without changing model-visible results.
 - [`npm:@diegopetrucci/pi-confirm-destructive`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/confirm-destructive) — confirms destructive shell and file operations before they run.
+- [`npm:@diegopetrucci/pi-dirty-repo-guard`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/dirty-repo-guard) — prompts before session changes when the current git repo has uncommitted changes.
 
 Manage persistent opt-outs after install:
 
