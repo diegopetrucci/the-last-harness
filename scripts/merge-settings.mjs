@@ -318,6 +318,11 @@ function mergeSettings(existing, defaults, { force }) {
 	return { next, changes };
 }
 
+function isPersistentTelemetryOptOut(path, currentValue, defaultValue) {
+	// Telemetry opt-outs are user-owned and must survive installer reruns and forced updates.
+	return path.join(".") === "tlh.telemetry.enabled" && currentValue === false && defaultValue === true;
+}
+
 function mergeObject(target, defaults, changes, options) {
 	for (const [key, value] of Object.entries(defaults)) {
 		const path = [...options.path, key];
@@ -341,6 +346,10 @@ function mergeObject(target, defaults, changes, options) {
 
 		if (isPlainObject(value) && isPlainObject(target[key])) {
 			mergeObject(target[key], value, changes, { ...options, path });
+			continue;
+		}
+
+		if (isPersistentTelemetryOptOut(path, target[key], value)) {
 			continue;
 		}
 

@@ -93,6 +93,30 @@ tlh gnosis disable
 
 Inside an interactive `tlh` session, use `/gnosis` to toggle the integration or `/gnosis status` to inspect it. Disabling Gnosis stops TLH from adding the prompt instructions; it does not delete existing repo-local memory or any managed `gn` binary. Gnosis project data lives in repo-local `.gnosis` directories.
 
+### Launch telemetry
+
+Release builds with TelemetryDeck identifiers configured send at most one pseudonymous launch event when an interactive `tlh` process starts. The event contains a hashed random install ID, event type, TLH version, privacy-filtered model value, OS name/version, and OS architecture. It does not include prompts, cwd, command arguments, repo names, hostname, username, file contents, settings contents, full environment variables, extension/package lists, API keys, provider base URLs, auth state, headers, or account identifiers. TelemetryDeck also receives normal network metadata such as source IP address and request time.
+
+Opt out persistently by adding this to `~/.the-last-harness/agent/settings.json`:
+
+```json
+{
+  "tlh": {
+    "telemetry": {
+      "enabled": false
+    }
+  }
+}
+```
+
+That settings opt-out is preserved by `tlh update` and installer reruns. Per-run opt-outs are also available with `PI_OFFLINE=1`, `TLH_SKIP_TELEMETRY=1`, `TLH_TELEMETRY_DISABLED=1`, or `PI_TELEMETRY=0`.
+
+The pseudonymous install ID lives at `~/.the-last-harness/agent/tlh/telemetry-state.json`. Reset it with:
+
+```sh
+rm -f ~/.the-last-harness/agent/tlh/telemetry-state.json
+```
+
 ## Install, update, and uninstall
 
 Install, update, and uninstall guidance lives in [`docs/install.md`](docs/install.md).
