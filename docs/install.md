@@ -35,15 +35,46 @@ npm install -g @earendil-works/pi-coding-agent
 mkdir -p "$TLH_AGENT_DIR"
 PI_CODING_AGENT_DIR="$TLH_AGENT_DIR" pi install "$TLH_PACKAGE_SOURCE"
 
+TLH_SUPPORT_DIR="$TLH_AGENT_DIR/tlh"
+TLH_SUBAGENTS_DIR="$TLH_SUPPORT_DIR/agents/subagents"
+for dir in "$TLH_SUPPORT_DIR" "$TLH_SUPPORT_DIR/agents" "$TLH_SUBAGENTS_DIR"; do
+  if [ -L "$dir" ]; then
+    echo "Refusing symlinked TLH support directory: $dir" >&2
+    exit 1
+  fi
+  if [ -e "$dir" ] && [ ! -d "$dir" ]; then
+    echo "Refusing non-directory TLH support path: $dir" >&2
+    exit 1
+  fi
+  mkdir -p "$dir" || exit 1
+done
+for prompt in developer code-reviewer repo-scout diff-summarizer; do
+  src="$TLH_PACKAGE_DIR/agents/subagents/$prompt.md"
+  dst="$TLH_SUBAGENTS_DIR/$prompt.md"
+  if [ ! -f "$src" ]; then
+    echo "Missing bundled TLH subagent prompt: $src" >&2
+    exit 1
+  fi
+  if [ -L "$dst" ]; then
+    echo "Refusing symlinked TLH subagent prompt: $dst" >&2
+    exit 1
+  fi
+  if [ -e "$dst" ] && [ ! -f "$dst" ]; then
+    echo "Refusing non-file TLH subagent prompt path: $dst" >&2
+    exit 1
+  fi
+  tmp="$(mktemp "$TLH_SUBAGENTS_DIR/.$prompt.md.tmp.XXXXXX")" || exit 1
+  if ! cp "$src" "$tmp" || ! chmod 0644 "$tmp" || ! mv "$tmp" "$dst"; then
+    rm -f "$tmp"
+    exit 1
+  fi
+done
+
 node "$TLH_PACKAGE_DIR/scripts/merge-settings.mjs" \
   "$TLH_PACKAGE_DIR/config/settings.defaults.json" \
   --settings "$TLH_AGENT_DIR/settings.json" \
   --package-source "$TLH_PACKAGE_SOURCE" \
   --default-extensions "$TLH_PACKAGE_DIR/config/default-extensions.json"
-
-rm -rf "$TLH_AGENT_DIR/tlh/agents/subagents"
-mkdir -p "$TLH_AGENT_DIR/tlh/agents/subagents"
-cp -R "$TLH_PACKAGE_DIR/agents/subagents/." "$TLH_AGENT_DIR/tlh/agents/subagents/"
 
 PI_CODING_AGENT_DIR="$TLH_AGENT_DIR" pi update --extensions
 ```

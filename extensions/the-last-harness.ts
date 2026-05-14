@@ -1,6 +1,6 @@
 import { execFile, execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync, type Dirent } from "node:fs";
+import { closeSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync, type Dirent } from "node:fs";
 import { arch as osArch, homedir, platform as osPlatform, release as osRelease, type as osType } from "node:os";
 import { basename, delimiter, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
@@ -48,7 +48,7 @@ const AUTOCOMPLETE_SOURCE_TAG_PATTERN = /(^|—\s*)\[(?:u|p|t)(?::(?:npm|git):[^
 const execFileAsync = promisify(execFile);
 const ACTIVE_PRIMARY_AGENT = "architect";
 const ALLOWED_SUBAGENTS = ["developer", "code-reviewer", "repo-scout", "diff-summarizer"];
-const SAFE_SUBAGENT_ACTIONS = new Set(["list", "get", "status", "interrupt", "resume", "doctor"]);
+const SAFE_SUBAGENT_ACTIONS = new Set(["list", "get", "status", "interrupt", "doctor"]);
 const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 const PRIMARY_AGENT_SESSION_STATE_ENTRY = "tlh-primary-agent-state";
 
@@ -263,6 +263,23 @@ function isFalseyEnvFlag(value: string | undefined): boolean {
 	return normalized === "0" || normalized === "false" || normalized === "no";
 }
 
+function stripTrailingPathSeparators(path: string): string {
+	let stripped = path;
+	while (stripped.length > sep.length && stripped.endsWith(sep)) {
+		stripped = stripped.slice(0, -sep.length);
+	}
+	return stripped;
+}
+
+function pathWithinOrEqual(root: string, child: string): boolean {
+	const normalizedRoot = stripTrailingPathSeparators(root);
+	const normalizedChild = stripTrailingPathSeparators(child);
+	if (normalizedRoot === sep) {
+		return normalizedChild.startsWith(sep);
+	}
+	return normalizedChild === normalizedRoot || normalizedChild.startsWith(`${normalizedRoot}${sep}`);
+}
+
 function isDefaultPiAgentDir(agentDir: string): boolean {
 	const home = process.env.HOME || process.env.USERPROFILE;
 	if (!home) return false;
@@ -273,22 +290,46 @@ function isDefaultPiAgentDir(agentDir: string): boolean {
 	}
 }
 
-function tlhStateDir(): string | undefined {
-	// Only persist state when the wrapper has selected an isolated profile.
-	// This avoids mutating normal Pi config.
+function isNormalPiConfigPath(resolvedPath: string): boolean {
+	const home = process.env.HOME || process.env.USERPROFILE;
+	if (!home) {
+		return false;
+	}
+	const normalPiRoot = realpathForCompare(join(home, ".pi"));
+	return pathWithinOrEqual(normalPiRoot, resolvedPath);
+}
+
+function safeTlhProfileFilePath(relativePath: string): string | undefined {
 	const agentDir = getAgentDir();
 	if (!process.env.PI_CODING_AGENT_DIR || isDefaultPiAgentDir(agentDir)) {
 		return undefined;
 	}
-	return join(agentDir, "tlh");
+
+	const targetPath = join(agentDir, relativePath);
+	try {
+		const resolvedAgentDir = realpathForCompare(agentDir);
+		const resolvedTargetPath = realpathForCompare(targetPath);
+		if (!pathWithinOrEqual(resolvedAgentDir, resolvedTargetPath) || isNormalPiConfigPath(resolvedTargetPath)) {
+			return undefined;
+		}
+		return targetPath;
+	} catch {
+		return undefined;
+	}
+}
+
+function tlhStateDir(): string | undefined {
+	return safeTlhProfileFilePath("tlh");
 }
 
 function tlhStatePath(fileName: string): string | undefined {
-	const stateDir = tlhStateDir();
-	return stateDir ? join(stateDir, fileName) : undefined;
+	return safeTlhProfileFilePath(join("tlh", fileName));
 }
 
 function tlhStartupStatePath(): string | undefined {
+	// Only persist state when the wrapper has selected an isolated profile and
+	// the TLH support path resolves inside that profile. This avoids mutating
+	// normal Pi config through a symlinked `${AGENT_DIR}/tlh` directory.
 	return tlhStatePath("startup-state.json");
 }
 
@@ -311,8 +352,7 @@ function readTlhStartupState(): TlhStartupState {
 }
 
 function tlhInstallStatePath(): string | undefined {
-	const startupStatePath = tlhStartupStatePath();
-	return startupStatePath ? join(dirname(startupStatePath), "install-state.json") : undefined;
+	return safeTlhProfileFilePath(join("tlh", "install-state.json"));
 }
 
 function readTlhInstallState(): TlhInstallState {
@@ -329,14 +369,72 @@ function readTlhInstallState(): TlhInstallState {
 	}
 }
 
+function canUseTlhStartupStateDir(statePath: string): boolean {
+	const stateDir = dirname(statePath);
+	try {
+		const dirStat = lstatSync(stateDir);
+		if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
+			return false;
+		}
+	} catch (error) {
+		if (!isRecord(error) || error.code !== "ENOENT") {
+			return false;
+		}
+	}
+
+	try {
+		mkdirSync(stateDir, { recursive: true });
+		const dirStat = lstatSync(stateDir);
+		if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
+			return false;
+		}
+		return tlhStartupStatePath() === statePath;
+	} catch {
+		return false;
+	}
+}
+
+function canReplaceTlhStartupStateFile(statePath: string): boolean {
+	try {
+		const stateStat = lstatSync(statePath);
+		return !stateStat.isSymbolicLink() && stateStat.isFile();
+	} catch (error) {
+		return isRecord(error) && error.code === "ENOENT";
+	}
+}
+
+function writeTlhStartupStateAtomically(statePath: string, content: string): void {
+	const stateDir = dirname(statePath);
+	const stateBase = basename(statePath);
+	const tempPath = join(stateDir, `.${stateBase}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`);
+	let fd: number | undefined;
+	try {
+		fd = openSync(tempPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0), 0o600);
+		writeFileSync(fd, content, { encoding: "utf8" });
+		closeSync(fd);
+		fd = undefined;
+		renameSync(tempPath, statePath);
+	} finally {
+		if (fd !== undefined) {
+			closeSync(fd);
+		}
+		try {
+			unlinkSync(tempPath);
+		} catch (error) {
+			if (!isRecord(error) || error.code !== "ENOENT") {
+				throw error;
+			}
+		}
+	}
+}
+
 function writeTlhStartupState(state: TlhStartupState): void {
 	try {
 		const statePath = tlhStartupStatePath();
-		if (!statePath) {
+		if (!statePath || !canUseTlhStartupStateDir(statePath) || !canReplaceTlhStartupStateFile(statePath)) {
 			return;
 		}
-		mkdirSync(dirname(statePath), { recursive: true });
-		writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+		writeTlhStartupStateAtomically(statePath, `${JSON.stringify(state, null, 2)}\n`);
 	} catch {
 		// Startup state is best-effort; never block launch.
 	}
@@ -851,16 +949,11 @@ function assertSafeTlhSettingsPath(settingsPath: string): void {
 
 	const agentDir = realpathForCompare(getAgentDir());
 	const resolvedSettingsPath = realpathForCompare(settingsPath);
-	if (resolvedSettingsPath !== agentDir && !resolvedSettingsPath.startsWith(`${agentDir}${sep}`)) {
+	if (!pathWithinOrEqual(agentDir, resolvedSettingsPath)) {
 		throw new Error(`Refusing to write settings outside the isolated TLH profile: ${settingsPath}`);
 	}
 
-	const home = process.env.HOME || process.env.USERPROFILE;
-	if (!home) {
-		return;
-	}
-	const normalPiRoot = realpathForCompare(join(home, ".pi"));
-	if (resolvedSettingsPath === normalPiRoot || resolvedSettingsPath.startsWith(`${normalPiRoot}${sep}`)) {
+	if (isNormalPiConfigPath(resolvedSettingsPath)) {
 		throw new Error(`Refusing to modify normal Pi config from The Last Harness: ${settingsPath}`);
 	}
 }
