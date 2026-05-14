@@ -386,6 +386,8 @@ function findFileNamed(root, name) {
 
 async function installManagedGnosis(args, agentDir) {
 	const target = resolve(expandHome(args.target || join(agentDir, "bin", "gn")));
+	assertNotNormalPiPath(agentDir, "agent dir");
+	assertNotNormalPiPath(target, "managed gn target");
 	const platform = gnosisPlatform();
 	if (!platform) {
 		warnStderr(`Gnosis prebuilt binary is not available for this platform; install manually from https://github.com/${args.gnosisRepo}`);
@@ -468,11 +470,21 @@ function realpathForCompare(path) {
 	return join(realpathForCompare(parent), basename(resolved));
 }
 
-function assertNotNormalPiSettings(settingsPath) {
+function isUnderNormalPiConfig(path) {
 	const normalPiRoot = realpathForCompare(join(homedir(), ".pi"));
-	const resolvedSettingsPath = realpathForCompare(settingsPath);
-	if (resolvedSettingsPath === normalPiRoot || resolvedSettingsPath.startsWith(`${normalPiRoot}${sep}`)) {
+	const resolvedPath = realpathForCompare(path);
+	return resolvedPath === normalPiRoot || resolvedPath.startsWith(`${normalPiRoot}${sep}`);
+}
+
+function assertNotNormalPiSettings(settingsPath) {
+	if (isUnderNormalPiConfig(settingsPath)) {
 		throw new Error(`Refusing to modify normal Pi config from The Last Harness gnosis command: ${settingsPath}`);
+	}
+}
+
+function assertNotNormalPiPath(path, label) {
+	if (isUnderNormalPiConfig(path)) {
+		throw new Error(`Refusing to modify normal Pi config from The Last Harness gnosis command (${label}): ${path}`);
 	}
 }
 

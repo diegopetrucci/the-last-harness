@@ -95,6 +95,10 @@ Added `scripts/check-installer-smoke.sh` to cover:
 
 Future Node bootstrap work should only proceed after these smoke checks are preserved and additional non-dry-run coverage exists for safe sandbox installs.
 
+## Known follow-up from branch review
+
+- `tlh-wrapper.mjs` and `tlh-install-state.mjs` are currently optional in the support-file manifest but required later for real non-dry-run installs. If a remote ref is missing either helper, `install.sh` can mutate the isolated profile/package/settings before failing during metadata or wrapper creation. Future work should either preflight required helper availability before mutation, restore non-dry-run inline fallbacks, or explicitly document that old refs without these helpers are unsupported.
+
 ## Validation checklist
 
 Run before considering installer refactors ready:

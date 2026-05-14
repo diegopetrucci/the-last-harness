@@ -145,6 +145,45 @@ run_normal_pi_guard_smoke() {
   assert_absent "${home_dir}/.pi"
 }
 
+run_gnosis_managed_normal_pi_guard_smoke() {
+  log "Running managed Gnosis normal Pi guard smoke check..."
+  local case_dir="${TMP_ROOT}/gnosis-managed-guard"
+  local home_dir="${case_dir}/home"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  mkdir -p "${home_dir}"
+
+  set +e
+  HOME="${home_dir}" node scripts/tlh-gnosis.mjs --agent-dir "${home_dir}/.pi/agent" --target "${case_dir}/target/gn" --dry-run install-managed >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "managed Gnosis agent-dir guard smoke unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "Refusing to modify normal Pi config from The Last Harness gnosis command (agent dir)"
+  assert_absent "${home_dir}/.pi"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  HOME="${home_dir}" node scripts/tlh-gnosis.mjs --agent-dir "${case_dir}/agent" --target "${home_dir}/.pi/agent/bin/gn" --dry-run install-managed >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "managed Gnosis target guard smoke unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "Refusing to modify normal Pi config from The Last Harness gnosis command (managed gn target)"
+  assert_absent "${home_dir}/.pi"
+}
+
 run_release_pinning_smoke() {
   log "Running release installer pinning smoke check..."
   local case_dir="${TMP_ROOT}/release-pinning"
@@ -175,6 +214,7 @@ run_static_checks
 run_local_dry_run_smoke
 run_stdin_dry_run_smoke
 run_normal_pi_guard_smoke
+run_gnosis_managed_normal_pi_guard_smoke
 run_release_pinning_smoke
 
 log "Installer smoke checks passed."
