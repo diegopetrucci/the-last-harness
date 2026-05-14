@@ -30,6 +30,11 @@
     "description": "FFF-powered fuzzy file and content search."
   },
   {
+    "id": "inline-bash",
+    "source": "npm:@diegopetrucci/pi-inline-bash",
+    "description": "Expand inline bash commands in user prompts."
+  },
+  {
     "id": "notify",
     "source": "npm:@diegopetrucci/pi-notify",
     "description": "Send a notification when an agent turn finishes."
