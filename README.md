@@ -26,13 +26,14 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/dow
 The following slash commands are available in interactive `tlh` sessions:
 
 - `/gnosis [status|enable|disable|toggle]` — toggle or inspect Gnosis prompt integration. With no argument, `/gnosis` toggles it.
+- `/architect [status|on|off|toggle|reset|default on|default off|default reset]` — show or change whether the TLH `architect` primary-agent persona is active for this session or future sessions.
 - `/effort [off|minimal|low|medium|high|xhigh]` — pick or set model reasoning effort. Available levels depend on the current model; run `/effort` without an argument for the picker.
 - `/fast on|off|auto|toggle|status` — manage OpenAI Fast mode for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions.
 - `/context [--no-open] [--keep] [--redact] [--full|--current]` — generate a local HTML breakdown of where the session context is going.
 
 ### Included Pi resources
 
-- `extensions/the-last-harness.ts` adds the custom `tlh` startup header and footer, lightweight default guidance, conditional Gnosis prompt instructions, `/tlh` status, `/gnosis` toggle/status, `/agent` status, `/effort` reasoning-effort picker commands, the 200k-token `DUMB ZONE` footer warning, and the default `architect` primary-agent persona.
+- `extensions/the-last-harness.ts` adds the custom `tlh` startup header and footer, lightweight default guidance, conditional Gnosis prompt instructions, `/tlh`, `/gnosis`, `/agent`, and `/architect` status/control commands, `/effort` reasoning-effort picker commands, the 200k-token `DUMB ZONE` footer warning, and the default `architect` primary-agent persona.
 - `agents/primary/architect.md` defines the main-session architect prompt.
 - `agents/subagents/*.md` defines TLH minor agents exposed through the bundled `pi-subagents` fork.
 - `skills/harness-setup/SKILL.md` documents safe setup/update/uninstall workflows.
@@ -40,6 +41,8 @@ The following slash commands are available in interactive `tlh` sessions:
 - `themes/the-last-harness.json` provides the default isolated theme.
 
 TLH does not switch your saved model or reasoning-effort defaults on startup. If you explicitly want the primary-agent prompt metadata to apply them, set `tlh.primaryAgent.applyModel` and/or `tlh.primaryAgent.applyThinking` to `true` in the isolated settings file.
+
+To opt out of the architect persona, run `/architect off` for the current session or `/architect default off` for future sessions. Turning it off affects future turns only; start a new session for a completely clean non-architect context.
 
 ## Bundled extensions
 
@@ -69,7 +72,7 @@ tlh defaults disable notify
 tlh defaults enable notify
 ```
 
-Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `tlh update`, `pi update --extensions`, and installer reruns. Installer settings merges preserve existing same-identity package sources by default; use installer `--force` only when you want bundled default-extension source migrations to rewrite existing entries.
+Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `tlh update`, `pi update --extensions`, and installer reruns. Installer settings merges preserve existing same-identity package sources by default; use installer `--force` only when you want bundled default-extension source migrations to rewrite existing entries. The isolation-critical subagents/intercom defaults are the exception: unless disabled, old `pi-subagents`/`pi-intercom` replacements are migrated to the bundled TLH forks so architect delegation uses the isolated minor-agent prompts. Installer runs fail if these critical bundled packages cannot be installed or refreshed, instead of leaving architect mode active without delegation/escalation tools.
 
 ### Gnosis integration
 

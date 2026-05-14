@@ -27,20 +27,25 @@ Note: if you already have `pi` installed, `tlh` does not replace it — you can 
 
 ```sh
 TLH_REF="${TLH_REF:-v0.5.0}"
+TLH_AGENT_DIR="${TLH_AGENT_DIR:-$HOME/.the-last-harness/agent}"
+TLH_PACKAGE_SOURCE="git:github.com/diegopetrucci/the-last-harness@${TLH_REF}"
+TLH_PACKAGE_DIR="$TLH_AGENT_DIR/git/github.com/diegopetrucci/the-last-harness"
+
 npm install -g @earendil-works/pi-coding-agent
-mkdir -p "$HOME/.the-last-harness/agent"
-PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" \
-  pi install "git:github.com/diegopetrucci/the-last-harness@${TLH_REF}"
-node scripts/merge-settings.mjs \
-  config/settings.defaults.json \
-  --settings "$HOME/.the-last-harness/agent/settings.json" \
-  --package-source "git:github.com/diegopetrucci/the-last-harness@${TLH_REF}" \
-  --default-extensions config/default-extensions.json
-rm -rf "$HOME/.the-last-harness/agent/tlh/agents/subagents"
-mkdir -p "$HOME/.the-last-harness/agent/tlh/agents/subagents"
-cp -R agents/subagents/. "$HOME/.the-last-harness/agent/tlh/agents/subagents/"
-PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" \
-  pi update --extensions
+mkdir -p "$TLH_AGENT_DIR"
+PI_CODING_AGENT_DIR="$TLH_AGENT_DIR" pi install "$TLH_PACKAGE_SOURCE"
+
+node "$TLH_PACKAGE_DIR/scripts/merge-settings.mjs" \
+  "$TLH_PACKAGE_DIR/config/settings.defaults.json" \
+  --settings "$TLH_AGENT_DIR/settings.json" \
+  --package-source "$TLH_PACKAGE_SOURCE" \
+  --default-extensions "$TLH_PACKAGE_DIR/config/default-extensions.json"
+
+rm -rf "$TLH_AGENT_DIR/tlh/agents/subagents"
+mkdir -p "$TLH_AGENT_DIR/tlh/agents/subagents"
+cp -R "$TLH_PACKAGE_DIR/agents/subagents/." "$TLH_AGENT_DIR/tlh/agents/subagents/"
+
+PI_CODING_AGENT_DIR="$TLH_AGENT_DIR" pi update --extensions
 ```
 
 Run without the wrapper:

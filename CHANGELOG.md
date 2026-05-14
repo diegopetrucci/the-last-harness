@@ -8,17 +8,20 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Bundled TLH-profile-aware forks of `pi-subagents` and `pi-intercom` as default extensions, including git-package intercom bridge detection and scoped `get` detail inspection for the subagent fork.
 - Added the default `architect` primary-agent prompt and TLH minor subagent prompts for `developer`, `code-reviewer`, `repo-scout`, and `diff-summarizer`.
+- Added `/architect` session and persistent controls to enable, disable, toggle, or reset the TLH architect primary-agent persona.
 - Copy TLH minor subagent prompts into the isolated profile during install and expose them through `subagents.agentDirs`.
 
 ### Changed
 
 - Disable `pi-subagents` built-in agents by default in the isolated TLH profile.
 - The TLH extension now injects only the active primary-agent prompt plus compact allowed-subagent metadata into the main session.
-- TLH subagent execution plus `list` and `get` detail inspection are forced to the isolated user scope so project agents cannot shadow bundled minor agents.
+- Gnosis planning/review instructions are now injected only into the main session by the conditional Gnosis prompt, rather than being baked into the architect prompt; child subagents are told to report memory-worthy findings to the parent instead of writing to Gnosis directly.
+- TLH subagent execution plus `list` and `get` detail inspection are forced to the isolated user scope so project agents cannot shadow bundled minor agents, while async/background control actions such as `status`, `interrupt`, and `resume` remain available to the architect.
 - The architect/developer/reviewer prompts now use `tk` when available but fall back to self-contained numbered tasks, so fresh installs do not require an external ticket command.
 - TLH no longer switches the saved model or reasoning effort on startup unless `tlh.primaryAgent.applyModel` or `tlh.primaryAgent.applyThinking` is explicitly enabled.
-- Default-extension source migrations, replacement-package appends, and replaced-package cleanup now require installer `--force`, preserving user-pinned or user-managed package entries by default and avoiding duplicate or mismatched replaced/default extension update loads.
-- Manual install docs now copy TLH minor subagent prompts into the isolated profile and use current pinned-release examples.
+- Default-extension source migrations, replacement-package appends, and replaced-package cleanup now require installer `--force`, preserving user-pinned or user-managed package entries by default and avoiding duplicate or mismatched replaced/default extension update loads; disabling a bundled default now also removes any configured package identities it replaces. Isolation-critical `pi-subagents`/`pi-intercom` replacements are migrated to the bundled TLH forks by default unless disabled.
+- Manual install docs now use the installed TLH package checkout for helper scripts and bundled subagent prompts, and use current pinned-release examples.
+- The installer now copies and verifies bundled subagent prompts before merging settings, fails normal installs instead of enabling undiscoverable TLH subagents when prompts are missing or incomplete, fails installer runs when critical subagents/intercom default-extension installs or refreshes fail, and refuses to write installer-owned support files through symlinked paths inside the isolated profile.
 
 ## [0.6.0] - 2026-05-13
 

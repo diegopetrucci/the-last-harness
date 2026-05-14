@@ -21,6 +21,7 @@ GNOSIS_VERSION="${TLH_GNOSIS_VERSION:-latest}"
 AGENT_DIR_INPUT="${TLH_AGENT_DIR:-$HOME/.the-last-harness/agent}"
 BIN_DIR_INPUT="${TLH_BIN_DIR:-$HOME/.local/bin}"
 WRAPPER_NAME="${TLH_WRAPPER_NAME:-tlh}"
+TLH_SUBAGENT_PROMPTS=(developer.md code-reviewer.md repo-scout.md diff-summarizer.md)
 
 usage() {
   cat <<'USAGE'
@@ -264,6 +265,26 @@ console.log(realpathForCompare(process.argv[1]));
 ' "${path}"
 }
 
+path_within_or_equal() {
+  local root child
+  root="$(strip_trailing_slashes "$1")"
+  child="$(strip_trailing_slashes "$2")"
+  if [[ "${root}" == "/" ]]; then
+    [[ "${child}" == /* ]]
+    return $?
+  fi
+  [[ "${child}" == "${root}" || "${child}" == "${root}/"* ]]
+}
+
+path_is_protected_pi_config() {
+  local normalized_path="$1"
+  local normal_pi_root normal_pi_agent_root
+
+  normal_pi_root="$(normalize_path_for_compare "${HOME}/.pi")" || die "failed to resolve normal Pi config path"
+  normal_pi_agent_root="$(normalize_path_for_compare "${HOME}/.pi/agent")" || die "failed to resolve normal Pi agent config path"
+  path_within_or_equal "${normal_pi_root}" "${normalized_path}" || path_within_or_equal "${normal_pi_agent_root}" "${normalized_path}"
+}
+
 validate_inputs() {
   if [[ ! "${WRAPPER_NAME}" =~ ^[A-Za-z0-9._-]+$ ]]; then
     die "--wrapper-name must be a simple command name containing only letters, numbers, dot, underscore, or dash"
@@ -273,19 +294,130 @@ validate_inputs() {
     *) die "--track must be one of: latest-release, pinned-tag, ref, custom" ;;
   esac
 
-  local normal_pi_root normalized_agent normalized_bin normalized_wrapper
-  normal_pi_root="$(normalize_path_for_compare "${HOME}/.pi")"
-  normalized_agent="$(normalize_path_for_compare "${AGENT_DIR}")"
-  normalized_bin="$(normalize_path_for_compare "${BIN_DIR}")"
-  normalized_wrapper="$(normalize_path_for_compare "${WRAPPER_PATH}")"
-  if [[ "${normalized_agent}" == "${normal_pi_root}" || "${normalized_agent}" == "${normal_pi_root}/"* ]]; then
+  local normalized_agent normalized_bin normalized_wrapper
+  normalized_agent="$(normalize_path_for_compare "${AGENT_DIR}")" || die "failed to resolve The Last Harness agent dir"
+  normalized_bin="$(normalize_path_for_compare "${BIN_DIR}")" || die "failed to resolve The Last Harness wrapper dir"
+  normalized_wrapper="$(normalize_path_for_compare "${WRAPPER_PATH}")" || die "failed to resolve The Last Harness wrapper path"
+  if path_is_protected_pi_config "${normalized_agent}"; then
     die "refusing to place The Last Harness agent dir under normal Pi config root: ${AGENT_DIR}"
   fi
-  if [[ "${normalized_bin}" == "${normal_pi_root}" || "${normalized_bin}" == "${normal_pi_root}/"* ]]; then
+  if path_is_protected_pi_config "${normalized_bin}"; then
     die "refusing to place The Last Harness wrapper dir under normal Pi config root: ${BIN_DIR}"
   fi
-  if [[ "${normalized_wrapper}" == "${normal_pi_root}" || "${normalized_wrapper}" == "${normal_pi_root}/"* ]]; then
+  if path_is_protected_pi_config "${normalized_wrapper}"; then
     die "refusing to place The Last Harness wrapper under normal Pi config root: ${WRAPPER_PATH}"
+  fi
+}
+validate_profile_relative_path() {
+  local relative="$1"
+  local label="${2:-TLH profile path}"
+  local components=()
+  local component
+
+  if [[ -z "${relative}" || "${relative}" == /* || "${relative}" == */ ]]; then
+    die "refusing unsafe ${label}: ${relative}"
+  fi
+
+  IFS='/' read -r -a components <<< "${relative}"
+  for component in "${components[@]}"; do
+    if [[ -z "${component}" || "${component}" == "." || "${component}" == ".." ]]; then
+      die "refusing unsafe ${label}: ${relative}"
+    fi
+  done
+}
+
+assert_profile_path_within_agent() {
+  local path="$1"
+  local label="${2:-TLH profile path}"
+  local normalized_agent normalized_path
+
+  normalized_agent="$(normalize_path_for_compare "${AGENT_DIR}")" || return $?
+  normalized_path="$(normalize_path_for_compare "${path}")" || return $?
+  if ! path_within_or_equal "${normalized_agent}" "${normalized_path}"; then
+    die "refusing to write ${label} outside the isolated TLH profile: ${path}"
+  fi
+
+  if path_is_protected_pi_config "${normalized_path}"; then
+    die "refusing to write ${label} under normal Pi config root: ${path}"
+  fi
+}
+
+ensure_safe_profile_dir() {
+  local relative="$1"
+  local label="${2:-TLH profile directory}"
+  local root cursor component
+  local components=()
+
+  validate_profile_relative_path "${relative}" "${label}"
+  root="$(normalize_path_for_compare "${AGENT_DIR}")" || return $?
+  if [[ -e "${root}" && ! -d "${root}" ]]; then
+    die "refusing to use non-directory TLH profile root for ${label}: ${AGENT_DIR}"
+  fi
+  if [[ ! -d "${root}" ]]; then
+    mkdir -p "${root}" || return $?
+  fi
+  assert_profile_path_within_agent "${root}" "${label}" || return $?
+
+  cursor="${root}"
+  IFS='/' read -r -a components <<< "${relative}"
+  for component in "${components[@]}"; do
+    cursor="${cursor}/${component}"
+    if [[ -L "${cursor}" ]]; then
+      die "refusing to write ${label} through symlinked TLH profile path: ${cursor}"
+    fi
+    if [[ -e "${cursor}" && ! -d "${cursor}" ]]; then
+      die "refusing to use non-directory TLH profile path for ${label}: ${cursor}"
+    fi
+    if [[ ! -e "${cursor}" ]]; then
+      mkdir "${cursor}" || return $?
+    fi
+    assert_profile_path_within_agent "${cursor}" "${label}" || return $?
+  done
+
+  printf '%s\n' "${cursor}"
+}
+
+safe_profile_file_target() {
+  local relative="$1"
+  local label="${2:-TLH profile file}"
+  local parent_relative base parent target
+
+  validate_profile_relative_path "${relative}" "${label}"
+  parent_relative="${relative%/*}"
+  base="${relative##*/}"
+  if [[ "${parent_relative}" == "${relative}" || -z "${base}" ]]; then
+    die "refusing unsafe ${label}: ${relative}"
+  fi
+
+  parent="$(ensure_safe_profile_dir "${parent_relative}" "${label} parent directory")" || return $?
+  target="${parent}/${base}"
+  if [[ -L "${target}" ]]; then
+    die "refusing to replace symlinked ${label}: ${target}"
+  fi
+  if [[ -e "${target}" && ! -f "${target}" ]]; then
+    die "refusing to replace non-file ${label}: ${target}"
+  fi
+  assert_profile_path_within_agent "${target}" "${label}" || return $?
+  printf '%s\n' "${target}"
+}
+
+copy_safe_profile_file() {
+  local source="$1"
+  local relative="$2"
+  local label="${3:-TLH profile file}"
+  local target target_dir target_base temp_target
+
+  target="$(safe_profile_file_target "${relative}" "${label}")" || return $?
+  target_dir="${target%/*}"
+  target_base="${target##*/}"
+  temp_target="$(mktemp "${target_dir}/.${target_base}.tmp.XXXXXX")" || return $?
+  if ! cp "${source}" "${temp_target}"; then
+    rm -f "${temp_target}"
+    return 1
+  fi
+  if ! mv "${temp_target}" "${target}"; then
+    rm -f "${temp_target}"
+    return 1
   fi
 }
 
@@ -788,6 +920,34 @@ find_tlh_subagents_dir() {
   return 1
 }
 
+missing_tlh_subagent_prompts() {
+  local dir="$1"
+  local prompt
+  local missing=()
+
+  for prompt in "${TLH_SUBAGENT_PROMPTS[@]}"; do
+    if [[ ! -f "${dir}/${prompt}" ]]; then
+      missing+=("${prompt}")
+    fi
+  done
+
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    printf '%s' "${missing[*]}"
+  fi
+}
+
+copy_tlh_subagent_prompts() {
+  local source_dir="$1"
+  local prompt
+  local support_subagents_dir
+
+  support_subagents_dir="$(ensure_safe_profile_dir "tlh/agents/subagents" "TLH subagent prompt directory")" || return $?
+  for prompt in "${TLH_SUBAGENT_PROMPTS[@]}"; do
+    copy_safe_profile_file "${source_dir}/${prompt}" "tlh/agents/subagents/${prompt}" "TLH subagent prompt ${prompt}" || return $?
+  done
+  printf '%s\n' "${support_subagents_dir}"
+}
+
 install_support_files() {
   if ! installable_support_files_are_prepared; then
     ensure_support_files_prepared || return 0
@@ -811,30 +971,52 @@ install_support_files() {
       print_command cp "${source_path}" "${support_dir}/${install_name}"
     done <<< "$(support_file_manifest)"
     if [[ -n "${subagents_src}" ]]; then
-      print_command rm -rf "${support_subagents_dir}"
+      local prompt
       print_command mkdir -p "${support_subagents_dir}"
-      print_command cp -R "${subagents_src}/." "${support_subagents_dir}/"
+      for prompt in "${TLH_SUBAGENT_PROMPTS[@]}"; do
+        print_command cp "${subagents_src}/${prompt}" "${support_subagents_dir}/${prompt}"
+      done
+    elif [[ "${NO_SETTINGS}" == "true" ]]; then
+      log "Would skip copying missing TLH subagent prompts (--no-settings)."
     else
-      log "Would copy TLH subagent prompts into: ${support_subagents_dir}"
+      log "Would require TLH subagent prompts before enabling bundled subagents in settings."
     fi
     return 0
   fi
 
-  mkdir -p "${support_dir}"
+  support_dir="$(ensure_safe_profile_dir "tlh" "TLH support directory")" || return $?
   while IFS='|' read -r var_name requirement relative_path tmp_name install_name; do
     [[ -n "${var_name}" && -n "${install_name}" ]] || continue
     source_path="${!var_name}"
     [[ -n "${source_path}" ]] || continue
-    cp "${source_path}" "${support_dir}/${install_name}"
+    copy_safe_profile_file "${source_path}" "tlh/${install_name}" "TLH support file ${install_name}"
   done <<< "$(support_file_manifest)"
   if [[ -n "${subagents_src}" ]]; then
-    rm -rf "${support_subagents_dir}"
-    mkdir -p "${support_subagents_dir}"
-    cp -R "${subagents_src}/." "${support_subagents_dir}/"
+    local missing_prompts=""
+    missing_prompts="$(missing_tlh_subagent_prompts "${subagents_src}")"
+    if [[ -n "${missing_prompts}" ]]; then
+      if [[ "${NO_SETTINGS}" == "true" ]]; then
+        warn "TLH subagent prompts are incomplete (${missing_prompts}); leaving existing copied prompts unchanged."
+        return 0
+      fi
+      die "TLH subagent prompts are incomplete (${missing_prompts}); re-run installer from a complete checkout or package."
+    fi
+
+    support_subagents_dir="$(copy_tlh_subagent_prompts "${subagents_src}")" || return $?
+
+    missing_prompts="$(missing_tlh_subagent_prompts "${support_subagents_dir}")"
+    if [[ -n "${missing_prompts}" ]]; then
+      die "failed to install TLH subagent prompts (${missing_prompts}); re-run installer from a complete checkout or package."
+    fi
   else
-    warn "TLH subagent prompts not found; re-run installer from a complete checkout or package."
+    if [[ "${NO_SETTINGS}" == "true" ]]; then
+      warn "TLH subagent prompts not found; leaving existing copied prompts unchanged."
+    else
+      die "TLH subagent prompts not found; re-run installer from a complete checkout or package."
+    fi
   fi
 }
+
 write_install_state() {
   local support_dir="${AGENT_DIR}/tlh"
   local state_path="${support_dir}/install-state.json"
@@ -890,6 +1072,152 @@ write_install_state() {
   node "${args[@]}"
 }
 
+line_in_output() {
+  local candidate="$1"
+  local output="$2"
+  [[ -n "${output}" ]] && grep -Fxq -- "${candidate}" <<< "${output}"
+}
+
+critical_git_source_spec() {
+  TLH_CRITICAL_SOURCE="$1" TLH_AGENT_DIR="${AGENT_DIR}" node <<'NODE'
+const path = require('node:path');
+
+function splitRef(url) {
+  const hashSeparator = url.lastIndexOf('#');
+  if (hashSeparator >= 0) {
+    const repo = url.slice(0, hashSeparator);
+    const ref = url.slice(hashSeparator + 1);
+    if (repo && ref) return { repo, ref };
+  }
+
+  const scpLikeMatch = url.match(/^git@([^:]+):(.+)$/);
+  if (scpLikeMatch) {
+    const pathWithMaybeRef = scpLikeMatch[2] || '';
+    const refSeparator = pathWithMaybeRef.indexOf('@');
+    if (refSeparator < 0) return { repo: url };
+    const repoPath = pathWithMaybeRef.slice(0, refSeparator);
+    const ref = pathWithMaybeRef.slice(refSeparator + 1);
+    if (!repoPath || !ref) return { repo: url };
+    return { repo: `git@${scpLikeMatch[1] || ''}:${repoPath}`, ref };
+  }
+
+  if (url.includes('://')) {
+    try {
+      const parsed = new URL(url);
+      const pathWithMaybeRef = parsed.pathname.replace(/^\/+/, '');
+      const refSeparator = pathWithMaybeRef.indexOf('@');
+      if (refSeparator < 0) return { repo: url };
+      const repoPath = pathWithMaybeRef.slice(0, refSeparator);
+      const ref = pathWithMaybeRef.slice(refSeparator + 1);
+      if (!repoPath || !ref) return { repo: url };
+      parsed.pathname = `/${repoPath}`;
+      return { repo: parsed.toString().replace(/\/$/, ''), ref };
+    } catch {
+      return { repo: url };
+    }
+  }
+
+  const slashIndex = url.indexOf('/');
+  if (slashIndex < 0) return { repo: url };
+  const host = url.slice(0, slashIndex);
+  const pathWithMaybeRef = url.slice(slashIndex + 1);
+  const refSeparator = pathWithMaybeRef.indexOf('@');
+  if (refSeparator < 0) return { repo: url };
+  const repoPath = pathWithMaybeRef.slice(0, refSeparator);
+  const ref = pathWithMaybeRef.slice(refSeparator + 1);
+  if (!repoPath || !ref) return { repo: url };
+  return { repo: `${host}/${repoPath}`, ref };
+}
+
+function parseGitSource(source) {
+  const trimmed = source.trim();
+  const hasGitPrefix = trimmed.startsWith('git:');
+  const url = hasGitPrefix ? trimmed.slice(4).trim() : trimmed;
+  if (!hasGitPrefix && !/^(https?|ssh|git):\/\//i.test(url) && !url.startsWith('git@')) return undefined;
+
+  const { repo: repoWithoutRef, ref } = splitRef(url);
+  let repo = repoWithoutRef;
+  let host = '';
+  let repoPath = '';
+  const scpLikeMatch = repoWithoutRef.match(/^git@([^:]+):(.+)$/);
+  if (scpLikeMatch) {
+    host = scpLikeMatch[1] || '';
+    repoPath = scpLikeMatch[2] || '';
+  } else if (/^(https?|ssh|git):\/\//i.test(repoWithoutRef)) {
+    try {
+      const parsed = new URL(repoWithoutRef);
+      host = parsed.hostname;
+      repoPath = parsed.pathname.replace(/^\/+/, '');
+    } catch {
+      return undefined;
+    }
+  } else {
+    const slashIndex = repoWithoutRef.indexOf('/');
+    if (slashIndex < 0) return undefined;
+    host = repoWithoutRef.slice(0, slashIndex);
+    repoPath = repoWithoutRef.slice(slashIndex + 1);
+    if (!host.includes('.') && host !== 'localhost') return undefined;
+    repo = `https://${repoWithoutRef}`;
+  }
+
+  const normalizedPath = repoPath.replace(/\.git$/, '').replace(/^\/+/, '');
+  if (!host || !normalizedPath || normalizedPath.split('/').length < 2) return undefined;
+  return { repo, host, path: normalizedPath, ref };
+}
+
+const parsed = parseGitSource(process.env.TLH_CRITICAL_SOURCE || '');
+if (!parsed?.ref) process.exit(0);
+console.log(`${path.join(process.env.TLH_AGENT_DIR || '', 'git', parsed.host, parsed.path)}\t${parsed.repo}\t${parsed.ref}`);
+NODE
+}
+
+ensure_critical_git_source_checkout() {
+  local source="$1"
+  local spec target_dir repo ref target_ref
+
+  spec="$(critical_git_source_spec "${source}")" || return $?
+  [[ -n "${spec}" ]] || return 0
+  IFS=$'\t' read -r target_dir repo ref <<< "${spec}"
+
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    print_command git -C "${target_dir}" remote set-url origin "${repo}"
+    print_command git -C "${target_dir}" fetch --prune --tags origin
+    log "Would prefer tag ${ref}, then origin/${ref}, then ${ref}."
+    print_command git -C "${target_dir}" checkout --detach "<resolved-ref>"
+    print_command git -C "${target_dir}" reset --hard "<resolved-ref>"
+    print_command git -C "${target_dir}" clean -fdx
+    log "Would run npm install --omit=dev --legacy-peer-deps --package-lock=false if package.json is present."
+    return 0
+  fi
+
+  if [[ ! -d "${target_dir}/.git" ]]; then
+    warn "critical git extension checkout is missing or invalid: ${target_dir}"
+    return 1
+  fi
+
+  if git -C "${target_dir}" remote get-url origin >/dev/null 2>&1; then
+    run git -C "${target_dir}" remote set-url origin "${repo}" || return $?
+  else
+    run git -C "${target_dir}" remote add origin "${repo}" || return $?
+  fi
+  run git -C "${target_dir}" fetch --prune --tags origin || return $?
+
+  target_ref="${ref}"
+  if git -C "${target_dir}" rev-parse --verify --quiet "refs/tags/${ref}^{commit}" >/dev/null; then
+    target_ref="refs/tags/${ref}^{commit}"
+  elif git -C "${target_dir}" rev-parse --verify --quiet "refs/remotes/origin/${ref}^{commit}" >/dev/null; then
+    target_ref="refs/remotes/origin/${ref}"
+  fi
+
+  run git -C "${target_dir}" checkout --detach "${target_ref}" || return $?
+  run git -C "${target_dir}" reset --hard "${target_ref}" || return $?
+  run git -C "${target_dir}" clean -fdx || return $?
+  if [[ -f "${target_dir}/package.json" ]]; then
+    run_in_dir "${target_dir}" npm install --omit=dev --legacy-peer-deps --package-lock=false || return $?
+  fi
+  return 0
+}
+
 install_default_extensions() {
   if [[ "${NO_SETTINGS}" == "true" ]]; then
     log "Skipping bundled default extensions (--no-settings)."
@@ -902,9 +1230,12 @@ install_default_extensions() {
     return 0
   fi
 
-  local sources_output
+  local sources_output critical_sources_output
   if ! sources_output="$(node "${TLH_DEFAULTS_SCRIPT}" --settings "${SETTINGS_PATH}" --defaults "${DEFAULT_EXTENSIONS_FILE}" sources)"; then
     die "failed to read bundled default extension sources"
+  fi
+  if ! critical_sources_output="$(node "${TLH_DEFAULTS_SCRIPT}" --settings "${SETTINGS_PATH}" --defaults "${DEFAULT_EXTENSIONS_FILE}" critical-sources)"; then
+    die "failed to read critical bundled default extension sources"
   fi
   if [[ -z "${sources_output}" ]]; then
     log "No bundled default extensions are enabled."
@@ -918,6 +1249,15 @@ install_default_extensions() {
   while IFS= read -r source; do
     [[ -n "${source}" ]] || continue
     verbose_log "Installing bundled default extension package: ${source}"
+    if line_in_output "${source}" "${critical_sources_output}"; then
+      if ! run_isolated_pi pi install "${source}"; then
+        die "critical default extension package install failed: ${source}. Fix the package install and rerun the installer, or disable the matching bundled default before rerunning."
+      fi
+      if ! ensure_critical_git_source_checkout "${source}"; then
+        die "critical default extension package checkout validation failed: ${source}. Fix the package checkout and rerun the installer, or disable the matching bundled default before rerunning."
+      fi
+      continue
+    fi
     if ! run_isolated_pi pi update --extension "${source}"; then
       warn "default extension package update failed; continuing: ${source}"
       failures=$((failures + 1))
@@ -1102,8 +1442,8 @@ main() {
 
   install_pi_if_needed
   install_harness_package
-  merge_settings
   install_support_files
+  merge_settings
   write_install_state
   install_default_extensions
   configure_gnosis

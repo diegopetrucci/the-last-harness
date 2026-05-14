@@ -18,6 +18,7 @@ Commands:
   disable <id>         Disable a bundled default extension persistently
   enable <id>          Re-enable a bundled default extension persistently
   sources              Print enabled default package sources (installer internal)
+  critical-sources     Print enabled critical default package sources (installer internal)
 
 Options:
   --settings <path>    Settings file to update (default: ~/.the-last-harness/agent/settings.json, or PI_CODING_AGENT_DIR/settings.json)
@@ -124,6 +125,14 @@ function readStringArrayField(entry, key, label) {
 		.filter((value) => value.length > 0);
 }
 
+function readBooleanField(entry, key, label) {
+	if (entry[key] === undefined) return false;
+	if (typeof entry[key] !== "boolean") {
+		throw new Error(`Default extension ${label} field '${key}' must be a boolean`);
+	}
+	return entry[key];
+}
+
 function readDefaultExtensions(path) {
 	const raw = readJson(path);
 	if (!Array.isArray(raw)) {
@@ -141,6 +150,8 @@ function readDefaultExtensions(path) {
 		const description = typeof entry.description === "string" ? entry.description.trim() : "";
 		const aliases = readStringArrayField(entry, "aliases", id || String(index + 1));
 		const replaces = readStringArrayField(entry, "replaces", id || String(index + 1));
+		const migrateReplacements = readBooleanField(entry, "migrateReplacements", id || String(index + 1));
+		const critical = readBooleanField(entry, "critical", id || String(index + 1));
 		if (!id) throw new Error(`Default extension entry ${index + 1} is missing id`);
 		if (!source) throw new Error(`Default extension ${id} is missing source`);
 		for (const candidateId of [id, ...aliases]) {
@@ -149,7 +160,7 @@ function readDefaultExtensions(path) {
 		}
 		if (seenSources.has(packageIdentity(source))) throw new Error(`Duplicate default extension source: ${source}`);
 		seenSources.add(packageIdentity(source));
-		return { id, aliases, replaces, source, description };
+		return { id, aliases, replaces, migrateReplacements, critical, source, description };
 	});
 }
 
@@ -278,8 +289,18 @@ function findPackageSource(settings, source) {
 }
 
 function removePackage(settings, source) {
-	const index = findPackageIndex(settings, source);
-	if (index !== -1) settings.packages.splice(index, 1);
+	let index;
+	while ((index = findPackageIndex(settings, source)) !== -1) {
+		settings.packages.splice(index, 1);
+	}
+}
+
+function removeDuplicatePackagesAfterIndex(settings, identity, firstIndex) {
+	for (let index = settings.packages.length - 1; index > firstIndex; index -= 1) {
+		if (packageIdentity(settings.packages[index]) === identity) {
+			settings.packages.splice(index, 1);
+		}
+	}
 }
 
 function packageEntryDisablesExtensions(entry) {
@@ -299,7 +320,9 @@ function replacedPackageSource(settings, extension) {
 }
 
 function isDefaultSourceDeferred(settings, extension) {
-	return findPackageIndex(settings, extension.source) === -1 && Boolean(replacedPackageSource(settings, extension));
+	return extension.migrateReplacements !== true
+		&& findPackageIndex(settings, extension.source) === -1
+		&& Boolean(replacedPackageSource(settings, extension));
 }
 
 function isDefaultDisabled(settings, extension, defaultExtensions) {
@@ -320,19 +343,20 @@ function enablePackage(settings, extension) {
 		removePackage(settings, oldSource);
 	}
 
+	const identity = packageIdentity(extension.source);
 	const index = findPackageIndex(settings, extension.source);
 	if (index === -1) {
 		settings.packages.push(extension.source);
 		return;
 	}
 
+	removeDuplicatePackagesAfterIndex(settings, identity, index);
 	const current = settings.packages[index];
 	if (!isPlainObject(current)) {
-		settings.packages[index] = extension.source;
 		return;
 	}
 
-	const next = { ...clone(current), source: extension.source };
+	const next = { ...clone(current), source: packageSourceOf(current) || extension.source };
 	delete next.extensions;
 	if (Object.keys(next).length === 1 && typeof next.source === "string") {
 		settings.packages[index] = next.source;
@@ -354,7 +378,10 @@ function defaultStatus(settings, extension, defaultExtensions) {
 	if (entry) return { enabled: true, reason: "enabled" };
 	const replacementSource = replacedPackageSource(settings, extension);
 	if (replacementSource) {
-		return { enabled: true, reason: `enabled with replaced package (${replacementSource}); installer --force will switch it` };
+		const action = extension.migrateReplacements === true
+			? "installer will switch it to the bundled TLH source"
+			: "installer --force will switch it";
+		return { enabled: true, reason: `enabled with replaced package (${replacementSource}); ${action}` };
 	}
 	return { enabled: true, reason: "enabled by default; package will be added by installer" };
 }
@@ -427,8 +454,9 @@ function commandList(settings, defaultExtensions) {
 	console.log("Use 'tlh defaults disable <id>' or 'tlh defaults enable <id>'.");
 }
 
-function commandSources(settings, defaultExtensions) {
+function commandSources(settings, defaultExtensions, { criticalOnly = false } = {}) {
 	for (const extension of defaultExtensions) {
+		if (criticalOnly && extension.critical !== true) continue;
 		if (!isDefaultDisabled(settings, extension, defaultExtensions) && !isDefaultSourceDeferred(settings, extension)) {
 			console.log(findPackageSource(settings, extension.source) || extension.source);
 		}
@@ -470,8 +498,8 @@ function main() {
 		commandList(settings, defaultExtensions);
 		return;
 	}
-	if (args.command === "sources") {
-		commandSources(settings, defaultExtensions);
+	if (args.command === "sources" || args.command === "critical-sources") {
+		commandSources(settings, defaultExtensions, { criticalOnly: args.command === "critical-sources" });
 		return;
 	}
 

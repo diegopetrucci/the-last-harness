@@ -199,6 +199,14 @@ function readStringArrayField(entry, key, label) {
 		.filter((value) => value.length > 0);
 }
 
+function readBooleanField(entry, key, label) {
+	if (entry[key] === undefined) return false;
+	if (typeof entry[key] !== "boolean") {
+		throw new Error(`Default extension ${label} field '${key}' must be a boolean`);
+	}
+	return entry[key];
+}
+
 function readDefaultExtensions(path) {
 	if (!existsSync(path)) return [];
 	const raw = readJson(path);
@@ -216,6 +224,8 @@ function readDefaultExtensions(path) {
 		const source = typeof entry.source === "string" ? entry.source.trim() : "";
 		const aliases = readStringArrayField(entry, "aliases", id || String(index + 1));
 		const replaces = readStringArrayField(entry, "replaces", id || String(index + 1));
+		const migrateReplacements = readBooleanField(entry, "migrateReplacements", id || String(index + 1));
+		const critical = readBooleanField(entry, "critical", id || String(index + 1));
 		if (!id) throw new Error(`Default extension entry ${index + 1} is missing id`);
 		if (!source) throw new Error(`Default extension ${id} is missing source`);
 		for (const candidateId of [id, ...aliases]) {
@@ -224,7 +234,7 @@ function readDefaultExtensions(path) {
 		}
 		if (seenSources.has(packageIdentity(source))) throw new Error(`Duplicate default extension source: ${source}`);
 		seenSources.add(packageIdentity(source));
-		return { id, aliases, replaces, source };
+		return { id, aliases, replaces, migrateReplacements, critical, source };
 	});
 }
 
@@ -246,12 +256,20 @@ function disabledDefaultExtensionIds(settings, defaultExtensions = []) {
 	return ids;
 }
 
+function defaultExtensionPackageIdentities(extension) {
+	return [extension.source, ...extension.replaces].map(packageIdentity).filter(Boolean);
+}
+
 function packageIdentityExists(packages, identity) {
 	return Boolean(identity) && packages.some((entry) => packageIdentity(entry) === identity);
 }
 
+function shouldMigrateDefaultExtensionReplacements(extension, { force }) {
+	return force || extension.migrateReplacements === true;
+}
+
 function shouldEnsureDefaultExtensionSource(existingPackages, extension, { force }) {
-	if (force) return true;
+	if (shouldMigrateDefaultExtensionReplacements(extension, { force })) return true;
 	if (packageIdentityExists(existingPackages, packageIdentity(extension.source))) return true;
 	return !extension.replaces.some((oldSource) => packageIdentityExists(existingPackages, packageIdentity(oldSource)));
 }
@@ -269,7 +287,7 @@ function prepareDefaults(defaults, packageSource, defaultExtensions, disabledIds
 	];
 	const ensuredIdentities = new Set(ensuredPackages.map(packageIdentity).filter(Boolean));
 	const disabledIdentities = new Set(
-		defaultExtensions.filter((extension) => disabledIds.has(extension.id)).map((extension) => packageIdentity(extension.source)),
+		defaultExtensions.filter((extension) => disabledIds.has(extension.id)).flatMap(defaultExtensionPackageIdentities),
 	);
 	const packages = Array.isArray(next.packages) ? next.packages : [];
 	next.packages = [
@@ -290,19 +308,54 @@ function removePackageByIdentity(settings, identity) {
 	return packageSourceOf(removed) || identity;
 }
 
+function removeDuplicatePackagesByIdentity(settings, identity) {
+	if (!identity || !Array.isArray(settings.packages)) return [];
+	const removedSources = [];
+	let seen = false;
+	for (let index = 0; index < settings.packages.length;) {
+		if (packageIdentity(settings.packages[index]) !== identity) {
+			index += 1;
+			continue;
+		}
+		if (!seen) {
+			seen = true;
+			index += 1;
+			continue;
+		}
+		const [removed] = settings.packages.splice(index, 1);
+		removedSources.push(packageSourceOf(removed) || identity);
+	}
+	return removedSources;
+}
+
 function applyReplacedDefaultExtensions(settings, defaultExtensions, disabledIds, changes, { force }) {
-	if (!force || !Array.isArray(settings.packages)) return;
+	if (!Array.isArray(settings.packages)) return;
 
 	for (const extension of defaultExtensions) {
+		if (!shouldMigrateDefaultExtensionReplacements(extension, { force })) continue;
 		if (disabledIds.has(extension.id)) continue;
 		const newIdentity = packageIdentity(extension.source);
 		for (const oldSource of extension.replaces) {
 			const oldIdentity = packageIdentity(oldSource);
 			if (!oldIdentity || oldIdentity === newIdentity) continue;
-			const removedSource = removePackageByIdentity(settings, oldIdentity);
-			if (removedSource) {
+			let removedSource;
+			while ((removedSource = removePackageByIdentity(settings, oldIdentity))) {
 				changes.push(`remove replaced default extension package: ${removedSource} -> ${extension.source}`);
 			}
+		}
+	}
+}
+
+function applyDefaultExtensionPackageDedupes(settings, defaultExtensions, disabledIds, changes, { force }) {
+	if (!Array.isArray(settings.packages)) return;
+
+	for (const extension of defaultExtensions) {
+		if (!shouldMigrateDefaultExtensionReplacements(extension, { force })) continue;
+		if (disabledIds.has(extension.id)) continue;
+		const identity = packageIdentity(extension.source);
+		const removedSources = removeDuplicatePackagesByIdentity(settings, identity);
+		for (const removedSource of removedSources) {
+			changes.push(`remove duplicate default extension package: ${removedSource} (same identity as ${extension.source})`);
 		}
 	}
 }
@@ -333,8 +386,14 @@ function applyDisabledDefaultExtensions(settings, defaultExtensions, disabledIds
 
 	for (const extension of defaultExtensions) {
 		if (!disabledIds.has(extension.id)) continue;
-		const removedSource = removePackageByIdentity(settings, packageIdentity(extension.source));
-		if (!removedSource) continue;
+		const removedSources = [];
+		for (const identity of defaultExtensionPackageIdentities(extension)) {
+			let removedSource;
+			while ((removedSource = removePackageByIdentity(settings, identity))) {
+				removedSources.push(removedSource);
+			}
+		}
+		if (removedSources.length === 0) continue;
 
 		changes.push(`remove disabled default extension package: ${extension.id}`);
 	}
@@ -507,6 +566,7 @@ function main() {
 	const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
 	applyDefaultExtensionSourceUpdates(next, defaultExtensions, disabledIds, changes, { force: args.force });
 	applyReplacedDefaultExtensions(next, defaultExtensions, disabledIds, changes, { force: args.force });
+	applyDefaultExtensionPackageDedupes(next, defaultExtensions, disabledIds, changes, { force: args.force });
 	applyDisabledDefaultExtensions(next, defaultExtensions, disabledIds, changes);
 
 	log(args, `Pi settings: ${settingsPath}`);
