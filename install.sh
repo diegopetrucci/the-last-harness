@@ -695,6 +695,14 @@ prepare_support_files_from_remote() {
       warn_missing_optional_support_file "${var_name}" "${relative_path}"
     fi
   done <<< "$(support_file_manifest)"
+  mkdir -p "${TMP_DIR}/agents/subagents"
+  local prompt
+  for prompt in "${TLH_SUBAGENT_PROMPTS[@]}"; do
+    if ! curl -fsSL "${RAW_BASE}/agents/subagents/${prompt}" -o "${TMP_DIR}/agents/subagents/${prompt}"; then
+      warn "TLH subagent prompt not found in raw support files: ${prompt}; will try the installed package checkout."
+      rm -f "${TMP_DIR}/agents/subagents/${prompt}"
+    fi
+  done
 }
 
 prepare_merge_files() {
@@ -706,6 +714,7 @@ prepare_merge_files() {
   fi
 
   prepare_support_files_from_remote
+
 }
 
 prepare_merge_files_for_dry_run() {
@@ -803,15 +812,28 @@ backup_existing_settings_before_pi_install() {
 }
 
 refresh_harness_package_checkout() {
-  if [[ "${PACKAGE_SOURCE_IS_DEFAULT}" != "true" ]]; then
+  local package_root="${AGENT_DIR}/git/github.com/${REPO}"
+  local package_repo=""
+  local package_ref="${REF}"
+  local package_spec parsed_package_root
+  package_spec="$(critical_git_source_spec "${PACKAGE_SOURCE}")" || return $?
+  if [[ -n "${package_spec}" ]]; then
+    IFS=$'\t' read -r parsed_package_root package_repo package_ref <<< "${package_spec}"
+    package_root="${parsed_package_root}"
+  fi
+  if [[ "${PACKAGE_SOURCE_IS_DEFAULT}" == "true" ]]; then
+    package_ref="${package_ref:-${REF}}"
+  elif [[ -z "${package_spec}" || -z "${package_ref}" ]]; then
     return 0
   fi
 
-  local package_root="${AGENT_DIR}/git/github.com/${REPO}"
-  verbose_log "Checking out The Last Harness git ref: ${REF}"
+  verbose_log "Checking out The Last Harness git ref: ${package_ref}"
   if [[ "${DRY_RUN}" == "true" ]]; then
+    if [[ -n "${package_repo}" ]]; then
+      print_command git -C "${package_root}" remote set-url origin "${package_repo}"
+    fi
     print_command git -C "${package_root}" fetch --prune --tags origin
-    log "Would prefer tag ${REF}, then origin/${REF}, then ${REF}."
+    log "Would prefer tag ${package_ref}, then origin/${package_ref}, then ${package_ref}."
     print_command git -C "${package_root}" checkout --detach "<resolved-ref>"
     print_command git -C "${package_root}" reset --hard "<resolved-ref>"
     print_command git -C "${package_root}" clean -fdx
@@ -819,18 +841,24 @@ refresh_harness_package_checkout() {
     return 0
   fi
 
-  if [[ ! -d "${package_root}/.git" ]]; then
-    warn "expected installed package checkout not found, skipping git refresh: ${package_root}"
-    return 0
+  if ! safe_git_checkout_dir_for_mutation "${package_root}" "The Last Harness package checkout"; then
+    die "expected installed package checkout not found or invalid: ${package_root}"
   fi
 
+  if [[ -n "${package_repo}" ]]; then
+    if git -C "${package_root}" remote get-url origin >/dev/null 2>&1; then
+      run git -C "${package_root}" remote set-url origin "${package_repo}"
+    else
+      run git -C "${package_root}" remote add origin "${package_repo}"
+    fi
+  fi
   run git -C "${package_root}" fetch --prune --tags origin
 
-  local target_ref="${REF}"
-  if git -C "${package_root}" rev-parse --verify --quiet "refs/tags/${REF}^{commit}" >/dev/null; then
-    target_ref="refs/tags/${REF}^{commit}"
-  elif git -C "${package_root}" rev-parse --verify --quiet "refs/remotes/origin/${REF}^{commit}" >/dev/null; then
-    target_ref="refs/remotes/origin/${REF}"
+  local target_ref="${package_ref}"
+  if git -C "${package_root}" rev-parse --verify --quiet "refs/tags/${package_ref}^{commit}" >/dev/null; then
+    target_ref="refs/tags/${package_ref}^{commit}"
+  elif git -C "${package_root}" rev-parse --verify --quiet "refs/remotes/origin/${package_ref}^{commit}" >/dev/null; then
+    target_ref="refs/remotes/origin/${package_ref}"
   fi
 
   run git -C "${package_root}" checkout --detach "${target_ref}"
@@ -849,11 +877,24 @@ install_harness_package() {
 
   log "Installing The Last Harness package..."
   verbose_log "Package source: ${PACKAGE_SOURCE}"
-  run_isolated_pi pi install "${PACKAGE_SOURCE}"
+  local install_source
+  install_source="$(git_source_install_source "${PACKAGE_SOURCE}")" || return $?
+  assert_git_source_target_safe "${PACKAGE_SOURCE}" "The Last Harness package checkout"
+  run_isolated_pi pi install "${install_source}"
   refresh_harness_package_checkout
 
   if [[ "${PACKAGE_SOURCE_IS_DEFAULT}" == "true" ]]; then
     return 0
+  fi
+
+  local package_spec package_root package_repo package_ref
+  package_spec="$(critical_git_source_spec "${PACKAGE_SOURCE}")" || return $?
+  if [[ -n "${package_spec}" ]]; then
+    IFS=$'\t' read -r package_root package_repo package_ref <<< "${package_spec}"
+    if [[ -n "${package_ref}" ]]; then
+      verbose_log "Pinned custom git package source was refreshed directly; skipping pi update."
+      return 0
+    fi
   fi
 
   if [[ "${DRY_RUN}" == "true" ]]; then
@@ -904,15 +945,153 @@ merge_settings() {
   node "${args[@]}"
 }
 
+package_source_install_dir() {
+  local spec target_dir repo ref
+  spec="$(critical_git_source_spec "${PACKAGE_SOURCE}")" || return $?
+  if [[ -n "${spec}" ]]; then
+    IFS=$'\t' read -r target_dir repo ref <<< "${spec}"
+    printf '%s\n' "${target_dir}"
+    return 0
+  fi
+
+  TLH_AGENT_DIR="${AGENT_DIR}" TLH_PACKAGE_SOURCE_VALUE="${PACKAGE_SOURCE}" node <<'NODE'
+const path = require('node:path');
+
+function splitRef(url) {
+  const scpLikeMatch = url.match(/^git@([^:]+):(.+)$/);
+  if (scpLikeMatch) {
+    const refSeparator = (scpLikeMatch[2] || '').indexOf('@');
+    if (refSeparator < 0) return { repo: url };
+    const repoPath = (scpLikeMatch[2] || '').slice(0, refSeparator);
+    const ref = (scpLikeMatch[2] || '').slice(refSeparator + 1);
+    if (!repoPath || !ref) return { repo: url };
+    return { repo: `git@${scpLikeMatch[1] || ''}:${repoPath}`, ref };
+  }
+  if (url.includes('://')) {
+    try {
+      const parsed = new URL(url);
+      const pathWithMaybeRef = parsed.pathname.replace(/^\/+/, '');
+      const refSeparator = pathWithMaybeRef.indexOf('@');
+      if (refSeparator < 0) return { repo: url };
+      const repoPath = pathWithMaybeRef.slice(0, refSeparator);
+      const ref = pathWithMaybeRef.slice(refSeparator + 1);
+      if (!repoPath || !ref) return { repo: url };
+      parsed.pathname = `/${repoPath}`;
+      return { repo: parsed.toString().replace(/\/$/, ''), ref };
+    } catch {
+      return { repo: url };
+    }
+  }
+  const slashIndex = url.indexOf('/');
+  if (slashIndex < 0) return { repo: url };
+  const host = url.slice(0, slashIndex);
+  const pathWithMaybeRef = url.slice(slashIndex + 1);
+  const refSeparator = pathWithMaybeRef.indexOf('@');
+  if (refSeparator < 0) return { repo: url };
+  const repoPath = pathWithMaybeRef.slice(0, refSeparator);
+  const ref = pathWithMaybeRef.slice(refSeparator + 1);
+  if (!repoPath || !ref) return { repo: url };
+  return { repo: `${host}/${repoPath}`, ref };
+}
+
+function parseGitSource(source) {
+  const trimmed = source.trim();
+  const hasGitPrefix = trimmed.startsWith('git:');
+  const url = hasGitPrefix ? trimmed.slice(4).trim() : trimmed;
+  if (!hasGitPrefix && !/^(https?|ssh|git):\/\//i.test(url) && !url.startsWith('git@')) return undefined;
+
+  const { repo: repoWithoutRef } = splitRef(url);
+  let host = '';
+  let repoPath = '';
+  const scpLikeMatch = repoWithoutRef.match(/^git@([^:]+):(.+)$/);
+  if (scpLikeMatch) {
+    host = scpLikeMatch[1] || '';
+    repoPath = scpLikeMatch[2] || '';
+  } else if (/^(https?|ssh|git):\/\//i.test(repoWithoutRef)) {
+    try {
+      const parsed = new URL(repoWithoutRef);
+      host = parsed.hostname;
+      repoPath = parsed.pathname.replace(/^\/+/, '');
+    } catch {
+      return undefined;
+    }
+  } else {
+    const slashIndex = repoWithoutRef.indexOf('/');
+    if (slashIndex < 0) return undefined;
+    host = repoWithoutRef.slice(0, slashIndex);
+    repoPath = repoWithoutRef.slice(slashIndex + 1);
+    if (!host.includes('.') && host !== 'localhost') return undefined;
+  }
+
+  const normalizedPath = repoPath.replace(/\.git$/, '').replace(/^\/+/, '');
+  if (!host || !normalizedPath || normalizedPath.split('/').length < 2) return undefined;
+  return { host, path: normalizedPath };
+}
+
+function isLocalSource(source) {
+  const trimmed = source.trim();
+  return !trimmed.startsWith('npm:') && !trimmed.startsWith('git:') && !trimmed.startsWith('github:') && !trimmed.startsWith('http:') && !trimmed.startsWith('https:') && !trimmed.startsWith('ssh:');
+}
+
+function resolveLocalSource(source, agentDir) {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  if (source === '~' && home) return home;
+  if (source.startsWith('~/') && home) return path.join(home, source.slice(2));
+  if (source.startsWith('~') && home) return path.join(home, source.slice(1));
+  return path.resolve(agentDir, source);
+}
+
+const source = process.env.TLH_PACKAGE_SOURCE_VALUE || '';
+const agentDir = process.env.TLH_AGENT_DIR || '';
+const parsed = parseGitSource(source);
+if (parsed) {
+  console.log(path.join(agentDir, 'git', parsed.host, parsed.path));
+} else if (source.trim() && isLocalSource(source)) {
+  console.log(resolveLocalSource(source.trim(), agentDir));
+}
+NODE
+}
+
+tlh_subagent_prompts_complete() {
+  local dir="$1"
+  local missing=""
+  [[ -d "${dir}" ]] || return 1
+  missing="$(missing_tlh_subagent_prompts "${dir}")"
+  [[ -z "${missing}" ]]
+}
+
 find_tlh_subagents_dir() {
   local local_dir=""
-  if local_dir="$(find_local_repo_dir)" && [[ -d "${local_dir}/agents/subagents" ]]; then
+  local package_root=""
+
+  if [[ "${PACKAGE_SOURCE_IS_DEFAULT}" != "true" ]]; then
+    package_root="$(package_source_install_dir || true)"
+    if [[ -n "${package_root}" ]] && tlh_subagent_prompts_complete "${package_root}/agents/subagents"; then
+      printf '%s\n' "${package_root}/agents/subagents"
+      return 0
+    fi
+  fi
+
+  if local_dir="$(find_local_repo_dir)" && tlh_subagent_prompts_complete "${local_dir}/agents/subagents"; then
     printf '%s\n' "${local_dir}/agents/subagents"
     return 0
   fi
 
-  local package_root="${AGENT_DIR}/git/github.com/${REPO}"
-  if [[ -d "${package_root}/agents/subagents" ]]; then
+  if [[ "${PACKAGE_SOURCE_IS_DEFAULT}" == "true" ]]; then
+    package_root="$(package_source_install_dir || true)"
+    if [[ -n "${package_root}" ]] && tlh_subagent_prompts_complete "${package_root}/agents/subagents"; then
+      printf '%s\n' "${package_root}/agents/subagents"
+      return 0
+    fi
+  fi
+
+  if [[ -n "${TMP_DIR}" ]] && tlh_subagent_prompts_complete "${TMP_DIR}/agents/subagents"; then
+    printf '%s\n' "${TMP_DIR}/agents/subagents"
+    return 0
+  fi
+
+  package_root="${AGENT_DIR}/git/github.com/${REPO}"
+  if tlh_subagent_prompts_complete "${package_root}/agents/subagents"; then
     printf '%s\n' "${package_root}/agents/subagents"
     return 0
   fi
@@ -1166,9 +1345,104 @@ function parseGitSource(source) {
 }
 
 const parsed = parseGitSource(process.env.TLH_CRITICAL_SOURCE || '');
-if (!parsed?.ref) process.exit(0);
-console.log(`${path.join(process.env.TLH_AGENT_DIR || '', 'git', parsed.host, parsed.path)}\t${parsed.repo}\t${parsed.ref}`);
+if (!parsed) process.exit(0);
+console.log(`${path.join(process.env.TLH_AGENT_DIR || '', 'git', parsed.host, parsed.path)}\t${parsed.repo}\t${parsed.ref || ''}`);
 NODE
+}
+
+git_source_install_source() {
+  local source="$1"
+  local spec target_dir repo ref
+
+  spec="$(critical_git_source_spec "${source}")" || return $?
+  if [[ -n "${spec}" && "${source}" == *"#"* ]]; then
+    IFS=$'\t' read -r target_dir repo ref <<< "${spec}"
+    if [[ -n "${repo}" && -n "${ref}" ]]; then
+      printf 'git:%s@%s\n' "${repo}" "${ref}"
+      return 0
+    fi
+  fi
+
+  printf '%s\n' "${source}"
+}
+
+assert_git_repository_confined() {
+  local target_dir="$1"
+  local label="${2:-git package checkout}"
+  local top_level git_dir common_git_dir
+  local normalized_target normalized_top
+
+  top_level="$(git -C "${target_dir}" rev-parse --show-toplevel 2>/dev/null)" || die "refusing to use invalid ${label}: ${target_dir}"
+  git_dir="$(git -C "${target_dir}" rev-parse --absolute-git-dir 2>/dev/null)" || die "refusing to use invalid ${label} git metadata: ${target_dir}"
+  common_git_dir="$(git -C "${target_dir}" rev-parse --git-common-dir 2>/dev/null)" || die "refusing to use invalid ${label} common git metadata: ${target_dir}"
+  case "${common_git_dir}" in
+    /*) ;;
+    *) common_git_dir="${target_dir}/${common_git_dir}" ;;
+  esac
+
+  normalized_target="$(normalize_path_for_compare "${target_dir}")" || return $?
+  normalized_top="$(normalize_path_for_compare "${top_level}")" || return $?
+  if [[ "${normalized_top}" != "${normalized_target}" ]]; then
+    die "refusing to use ${label} with worktree outside the package path: ${target_dir}"
+  fi
+
+  assert_profile_path_within_agent "${git_dir}" "${label} git metadata" || return $?
+  assert_profile_path_within_agent "${common_git_dir}" "${label} common git metadata" || return $?
+}
+
+assert_git_source_target_safe() {
+  local source="$1"
+  local label="${2:-git package checkout}"
+  local spec target_dir repo ref
+
+  spec="$(critical_git_source_spec "${source}")" || return $?
+  [[ -n "${spec}" ]] || return 0
+  IFS=$'\t' read -r target_dir repo ref <<< "${spec}"
+
+  assert_profile_path_within_agent "${target_dir}" "${label}" || return $?
+  if [[ -L "${target_dir}" ]]; then
+    die "refusing to use symlinked ${label}: ${target_dir}"
+  fi
+  if [[ -e "${target_dir}" && ! -d "${target_dir}" ]]; then
+    die "refusing to use non-directory ${label}: ${target_dir}"
+  fi
+  if [[ -d "${target_dir}" && ! -e "${target_dir}/.git" ]]; then
+    die "refusing to use existing non-git ${label}: ${target_dir}"
+  fi
+  if [[ -L "${target_dir}/.git" ]]; then
+    die "refusing to use ${label} with symlinked git metadata: ${target_dir}/.git"
+  fi
+  if [[ -e "${target_dir}/.git" && ! -d "${target_dir}/.git" && ! -f "${target_dir}/.git" ]]; then
+    die "refusing to use ${label} with unsupported git metadata: ${target_dir}/.git"
+  fi
+  if [[ -e "${target_dir}/.git" ]]; then
+    assert_profile_path_within_agent "${target_dir}/.git" "${label} git metadata" || return $?
+    assert_git_repository_confined "${target_dir}" "${label}" || return $?
+  fi
+}
+
+safe_git_checkout_dir_for_mutation() {
+  local target_dir="$1"
+  local label="${2:-git package checkout}"
+
+  assert_profile_path_within_agent "${target_dir}" "${label}" || return $?
+  if [[ -L "${target_dir}" ]]; then
+    die "refusing to mutate symlinked ${label}: ${target_dir}"
+  fi
+  if [[ ! -d "${target_dir}" ]]; then
+    return 1
+  fi
+  if [[ -L "${target_dir}/.git" ]]; then
+    die "refusing to mutate ${label} with symlinked git metadata: ${target_dir}/.git"
+  fi
+  if [[ ! -e "${target_dir}/.git" ]]; then
+    return 1
+  fi
+  if [[ ! -d "${target_dir}/.git" && ! -f "${target_dir}/.git" ]]; then
+    return 1
+  fi
+  assert_profile_path_within_agent "${target_dir}/.git" "${label} git metadata" || return $?
+  assert_git_repository_confined "${target_dir}" "${label}" || return $?
 }
 
 ensure_critical_git_source_checkout() {
@@ -1178,6 +1452,8 @@ ensure_critical_git_source_checkout() {
   spec="$(critical_git_source_spec "${source}")" || return $?
   [[ -n "${spec}" ]] || return 0
   IFS=$'\t' read -r target_dir repo ref <<< "${spec}"
+  assert_git_source_target_safe "${source}" "critical git extension checkout" || return $?
+  [[ -n "${ref}" ]] || return 0
 
   if [[ "${DRY_RUN}" == "true" ]]; then
     print_command git -C "${target_dir}" remote set-url origin "${repo}"
@@ -1190,7 +1466,7 @@ ensure_critical_git_source_checkout() {
     return 0
   fi
 
-  if [[ ! -d "${target_dir}/.git" ]]; then
+  if ! safe_git_checkout_dir_for_mutation "${target_dir}" "critical git extension checkout"; then
     warn "critical git extension checkout is missing or invalid: ${target_dir}"
     return 1
   fi
@@ -1250,7 +1526,10 @@ install_default_extensions() {
     [[ -n "${source}" ]] || continue
     verbose_log "Installing bundled default extension package: ${source}"
     if line_in_output "${source}" "${critical_sources_output}"; then
-      if ! run_isolated_pi pi install "${source}"; then
+      local install_source
+      install_source="$(git_source_install_source "${source}")" || return $?
+      assert_git_source_target_safe "${source}" "critical default extension package checkout"
+      if ! run_isolated_pi pi install "${install_source}"; then
         die "critical default extension package install failed: ${source}. Fix the package install and rerun the installer, or disable the matching bundled default before rerunning."
       fi
       if ! ensure_critical_git_source_checkout "${source}"; then

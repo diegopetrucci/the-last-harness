@@ -1555,6 +1555,22 @@ function forceUserAgentScope(input: Record<string, unknown>, mode: "execution" |
 	return undefined;
 }
 
+function forceFreshSubagentContext(input: Record<string, unknown>): string | undefined {
+	const rawContext = input.context;
+	if (rawContext !== undefined) {
+		if (typeof rawContext !== "string") {
+			return `TLH architect subagent execution must use context: "fresh" or omit context.`;
+		}
+		const context = rawContext.trim();
+		if (context && context !== "fresh") {
+			return `TLH architect subagent execution may not use context: "${context}". TLH child sessions must start fresh so parent architect/Gnosis context is not leaked.`;
+		}
+	}
+
+	input.context = "fresh";
+	return undefined;
+}
+
 function validateSubagentToolInput(input: unknown): string | undefined {
 	if (!isRecord(input)) {
 		return "TLH architect subagent calls must use an object input.";
@@ -1571,6 +1587,11 @@ function validateSubagentToolInput(input: unknown): string | undefined {
 	const scopeReason = forceUserAgentScope(input, "execution");
 	if (scopeReason) {
 		return scopeReason;
+	}
+
+	const contextReason = forceFreshSubagentContext(input);
+	if (contextReason) {
+		return contextReason;
 	}
 
 	const targets = collectSubagentTargets(input);
