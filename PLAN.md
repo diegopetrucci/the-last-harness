@@ -6,8 +6,11 @@
 
 - Phase 1 is implemented: wrapper rendering lives in `scripts/tlh-wrapper.mjs`, and `install.sh` now calls that helper while retaining a stdin `--dry-run` fallback.
 - Phase 2 is implemented: install-state metadata writing lives in `scripts/tlh-install-state.mjs`, and `install.sh` now calls that helper while retaining a stdin `--dry-run` fallback.
-- Phase 3a is implemented in this branch: managed Gnosis binary installation lives behind `tlh gnosis install-managed`, and `install.sh` keeps the Gnosis policy state machine for now.
-- Later phases remain planned and should be handled as separate, behavior-preserving changes.
+- Phase 3a is implemented: managed Gnosis binary installation lives behind `tlh gnosis install-managed`.
+- Phase 3b is implemented in this branch: installer-time Gnosis configuration lives behind `tlh gnosis configure-install`, and `install.sh` now delegates the Gnosis policy state machine to that helper.
+- Phase 4 is implemented in this branch: support-file discovery, fetch, dry-run, and copy behavior now shares a centralized manifest in `install.sh`.
+- Phase 5 is implemented in this branch: reliable installer smoke checks now cover pipe-to-bash dry-runs, release asset ref pinning, isolated `PI_CODING_AGENT_DIR` output, and the normal Pi config guard.
+- Decision: keep `install.sh` as the Bash orchestrator for now; defer any Node bootstrap rewrite until the smoke coverage is expanded to cover real non-dry-run installs in a safe sandbox or CI fixture.
 
 ## Constraints to preserve
 
@@ -67,39 +70,39 @@ Preserve:
 - checksum verification before installing downloaded binaries
 - validation of the `gn` binary before storing/enabling it
 
-## Phase 4: Reassess the remaining Bash orchestrator
+## Phase 4: Consolidate support-file plumbing
 
-After the low-risk extractions, reassess whether the remaining installer should stay Bash or become a thin Bash bootstrap that downloads/runs a Node installer entrypoint.
+Before considering a larger bootstrap rewrite, consolidate the repeated support-file discovery, fetch, dry-run, and copy plumbing. That code is now the main repetitive area in `install.sh` after the helper extractions.
 
-Only consider that after pipe-to-bash, release asset pinning, and isolated `PI_CODING_AGENT_DIR` behavior are covered by tests or reliable smoke checks.
+Target a behavior-preserving cleanup that centralizes the support-file manifest:
+
+- required files: `merge-settings.mjs`, `tlh-defaults.mjs`, `settings.defaults.json`, and `default-extensions.json`
+- optional files: `tlh-gnosis.mjs`, `tlh-update.mjs`, `tlh-wrapper.mjs`, and `tlh-install-state.mjs`
+- install destinations under `${AGENT_DIR}/tlh`
+- stdin `--dry-run` messages for files that would be fetched, without downloading them
+
+## Phase 5: Reassess the remaining Bash orchestrator
+
+Implemented as a safety gate rather than a rewrite. The installer remains a Bash orchestrator because the most important remaining behaviors are shell-entrypoint behaviors: pipe-to-bash installs, stdin `--dry-run` without downloads, release asset ref pinning, and isolated environment propagation for upstream Pi commands.
+
+Added `scripts/check-installer-smoke.sh` to cover:
+
+- local dry-runs with temporary `--agent-dir` and `--bin-dir`
+- stdin dry-runs with a failing fake `curl` to ensure no support files are downloaded
+- refusal to use normal Pi config under `~/.pi/agent`
+- release installer asset ref pinning from `main` to a tag
+- static Bash/Node helper checks
+
+Future Node bootstrap work should only proceed after these smoke checks are preserved and additional non-dry-run coverage exists for safe sandbox installs.
 
 ## Validation checklist
 
 Run before considering installer refactors ready:
 
 ```sh
-bash -n install.sh
-node --check scripts/merge-settings.mjs
-node --check scripts/tlh-defaults.mjs
-node --check scripts/tlh-gnosis.mjs
-node --check scripts/tlh-update.mjs
-node --check scripts/tlh-wrapper.mjs
-node --check scripts/tlh-install-state.mjs
+bash scripts/check-installer-smoke.sh
+node scripts/merge-settings.mjs --dry-run
 npm pack --dry-run
 ```
 
-Installer smoke checks should use temporary paths:
-
-```sh
-agent_dir="$(mktemp -d)/agent"
-bin_dir="$(mktemp -d)"
-bash install.sh --dry-run --agent-dir "$agent_dir" --bin-dir "$bin_dir"
-test ! -e "$agent_dir/settings.json"
-test ! -e "$bin_dir/tlh"
-
-agent_dir="$(mktemp -d)/agent"
-bin_dir="$(mktemp -d)"
-bash -s -- --dry-run --agent-dir "$agent_dir" --bin-dir "$bin_dir" < install.sh
-test ! -e "$agent_dir/settings.json"
-test ! -e "$bin_dir/tlh"
-```
+The smoke script uses temporary paths and includes local dry-run, stdin dry-run, normal Pi config guard, release ref pinning, and static helper checks.

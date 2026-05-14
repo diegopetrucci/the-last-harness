@@ -406,6 +406,104 @@ run_isolated_pi() {
   fi
 }
 
+support_file_manifest() {
+  # Fields: variable|required|relative path|temp filename|installed filename.
+  # Leave installed filename empty for installer-only support files.
+  cat <<'EOF_SUPPORT_FILES'
+MERGE_SCRIPT|required|scripts/merge-settings.mjs|merge-settings.mjs|
+TLH_DEFAULTS_SCRIPT|required|scripts/tlh-defaults.mjs|tlh-defaults.mjs|tlh-defaults.mjs
+TLH_GNOSIS_SCRIPT|optional|scripts/tlh-gnosis.mjs|tlh-gnosis.mjs|tlh-gnosis.mjs
+TLH_UPDATE_SCRIPT|optional|scripts/tlh-update.mjs|tlh-update.mjs|tlh-update.mjs
+TLH_WRAPPER_SCRIPT|optional|scripts/tlh-wrapper.mjs|tlh-wrapper.mjs|tlh-wrapper.mjs
+TLH_INSTALL_STATE_SCRIPT|optional|scripts/tlh-install-state.mjs|tlh-install-state.mjs|tlh-install-state.mjs
+DEFAULTS_FILE|required|config/settings.defaults.json|settings.defaults.json|
+DEFAULT_EXTENSIONS_FILE|required|config/default-extensions.json|default-extensions.json|default-extensions.json
+EOF_SUPPORT_FILES
+}
+
+support_file_dry_run_message() {
+  case "$1" in
+    TLH_GNOSIS_SCRIPT)
+      printf '%s\n' "Would fetch Gnosis integration support files."
+      ;;
+    TLH_UPDATE_SCRIPT)
+      printf '%s\n' "Would fetch tlh update support files."
+      ;;
+    TLH_WRAPPER_SCRIPT)
+      printf '%s\n' "Would fetch tlh wrapper support files."
+      ;;
+    TLH_INSTALL_STATE_SCRIPT)
+      printf '%s\n' "Would fetch tlh install-state support files."
+      ;;
+  esac
+}
+
+warn_missing_optional_support_file() {
+  local var_name="$1"
+  local relative_path="$2"
+  case "${var_name}" in
+    TLH_GNOSIS_SCRIPT)
+      warn "Gnosis support script not found for ref ${REF}; continuing without tlh gnosis helper"
+      ;;
+    TLH_UPDATE_SCRIPT)
+      warn "tlh update support script not found for ref ${REF}; the wrapper update helper will be unavailable"
+      ;;
+    TLH_WRAPPER_SCRIPT)
+      warn "tlh wrapper support script not found for ref ${REF}; wrapper creation will be unavailable"
+      ;;
+    TLH_INSTALL_STATE_SCRIPT)
+      warn "tlh install-state support script not found for ref ${REF}; update metadata helper will be unavailable"
+      ;;
+    *)
+      warn "optional installer support file not found for ref ${REF}: ${relative_path}"
+      ;;
+  esac
+}
+
+reset_support_file_paths() {
+  local var_name requirement relative_path tmp_name install_name
+  while IFS='|' read -r var_name requirement relative_path tmp_name install_name; do
+    [[ -n "${var_name}" ]] || continue
+    printf -v "${var_name}" '%s' ""
+  done <<< "$(support_file_manifest)"
+}
+
+support_file_paths_are_prepared() {
+  local var_name requirement relative_path tmp_name install_name current_path
+  while IFS='|' read -r var_name requirement relative_path tmp_name install_name; do
+    [[ -n "${var_name}" ]] || continue
+    current_path="${!var_name}"
+    if [[ -n "${current_path}" ]]; then
+      return 0
+    fi
+  done <<< "$(support_file_manifest)"
+  return 1
+}
+
+installable_support_files_are_prepared() {
+  local var_name requirement relative_path tmp_name install_name current_path
+  while IFS='|' read -r var_name requirement relative_path tmp_name install_name; do
+    [[ -n "${var_name}" && -n "${install_name}" ]] || continue
+    current_path="${!var_name}"
+    if [[ -n "${current_path}" ]]; then
+      return 0
+    fi
+  done <<< "$(support_file_manifest)"
+  return 1
+}
+
+local_repo_has_required_support_files() {
+  local dir="$1"
+  local var_name requirement relative_path tmp_name install_name
+  while IFS='|' read -r var_name requirement relative_path tmp_name install_name; do
+    [[ -n "${var_name}" ]] || continue
+    if [[ "${requirement}" == "required" && ! -f "${dir}/${relative_path}" ]]; then
+      return 1
+    fi
+  done <<< "$(support_file_manifest)"
+  return 0
+}
+
 find_local_repo_dir() {
   local source_path="${BASH_SOURCE[0]:-}"
   if [[ -z "${source_path}" || ! -f "${source_path}" ]]; then
@@ -414,91 +512,68 @@ find_local_repo_dir() {
 
   local dir
   dir="$(cd "$(dirname "${source_path}")" >/dev/null 2>&1 && pwd -P)" || return 1
-  if [[ -f "${dir}/scripts/merge-settings.mjs" && -f "${dir}/scripts/tlh-defaults.mjs" && -f "${dir}/config/settings.defaults.json" && -f "${dir}/config/default-extensions.json" ]]; then
+  if local_repo_has_required_support_files "${dir}"; then
     printf '%s\n' "${dir}"
     return 0
   fi
   return 1
 }
 
-prepare_merge_files() {
-  local local_dir=""
-  TLH_GNOSIS_SCRIPT=""
-  TLH_UPDATE_SCRIPT=""
-  TLH_WRAPPER_SCRIPT=""
-  TLH_INSTALL_STATE_SCRIPT=""
-  if local_dir="$(find_local_repo_dir)"; then
-    MERGE_SCRIPT="${local_dir}/scripts/merge-settings.mjs"
-    TLH_DEFAULTS_SCRIPT="${local_dir}/scripts/tlh-defaults.mjs"
-    if [[ -f "${local_dir}/scripts/tlh-gnosis.mjs" ]]; then
-      TLH_GNOSIS_SCRIPT="${local_dir}/scripts/tlh-gnosis.mjs"
+prepare_support_files_from_local_repo() {
+  local local_dir="$1"
+  local var_name requirement relative_path tmp_name install_name source_path
+  while IFS='|' read -r var_name requirement relative_path tmp_name install_name; do
+    [[ -n "${var_name}" ]] || continue
+    source_path="${local_dir}/${relative_path}"
+    if [[ -f "${source_path}" ]]; then
+      printf -v "${var_name}" '%s' "${source_path}"
+    elif [[ "${requirement}" == "required" ]]; then
+      return 1
+    else
+      printf -v "${var_name}" '%s' ""
     fi
-    if [[ -f "${local_dir}/scripts/tlh-update.mjs" ]]; then
-      TLH_UPDATE_SCRIPT="${local_dir}/scripts/tlh-update.mjs"
-    fi
-    if [[ -f "${local_dir}/scripts/tlh-wrapper.mjs" ]]; then
-      TLH_WRAPPER_SCRIPT="${local_dir}/scripts/tlh-wrapper.mjs"
-    fi
-    if [[ -f "${local_dir}/scripts/tlh-install-state.mjs" ]]; then
-      TLH_INSTALL_STATE_SCRIPT="${local_dir}/scripts/tlh-install-state.mjs"
-    fi
-    DEFAULTS_FILE="${local_dir}/config/settings.defaults.json"
-    DEFAULT_EXTENSIONS_FILE="${local_dir}/config/default-extensions.json"
-    return 0
-  fi
+  done <<< "$(support_file_manifest)"
+}
 
+prepare_support_files_from_remote() {
   require_command curl
   TMP_DIR="$(mktemp -d)"
-  MERGE_SCRIPT="${TMP_DIR}/merge-settings.mjs"
-  TLH_DEFAULTS_SCRIPT="${TMP_DIR}/tlh-defaults.mjs"
-  TLH_GNOSIS_SCRIPT="${TMP_DIR}/tlh-gnosis.mjs"
-  TLH_UPDATE_SCRIPT="${TMP_DIR}/tlh-update.mjs"
-  TLH_WRAPPER_SCRIPT="${TMP_DIR}/tlh-wrapper.mjs"
-  TLH_INSTALL_STATE_SCRIPT="${TMP_DIR}/tlh-install-state.mjs"
-  DEFAULTS_FILE="${TMP_DIR}/settings.defaults.json"
-  DEFAULT_EXTENSIONS_FILE="${TMP_DIR}/default-extensions.json"
 
+  local var_name requirement relative_path tmp_name install_name target_path
   verbose_log "Fetching installer support files from ${RAW_BASE}"
-  curl -fsSL "${RAW_BASE}/scripts/merge-settings.mjs" -o "${MERGE_SCRIPT}"
-  curl -fsSL "${RAW_BASE}/scripts/tlh-defaults.mjs" -o "${TLH_DEFAULTS_SCRIPT}"
-  if ! curl -fsSL "${RAW_BASE}/scripts/tlh-gnosis.mjs" -o "${TLH_GNOSIS_SCRIPT}"; then
-    warn "Gnosis support script not found for ref ${REF}; continuing without tlh gnosis helper"
-    TLH_GNOSIS_SCRIPT=""
+  while IFS='|' read -r var_name requirement relative_path tmp_name install_name; do
+    [[ -n "${var_name}" ]] || continue
+    target_path="${TMP_DIR}/${tmp_name}"
+    printf -v "${var_name}" '%s' "${target_path}"
+    if [[ "${requirement}" == "required" ]]; then
+      if ! curl -fsSL "${RAW_BASE}/${relative_path}" -o "${target_path}"; then
+        die "required installer support file not found for ref ${REF}: ${relative_path}"
+      fi
+    elif ! curl -fsSL "${RAW_BASE}/${relative_path}" -o "${target_path}"; then
+      rm -f "${target_path}"
+      printf -v "${var_name}" '%s' ""
+      warn_missing_optional_support_file "${var_name}" "${relative_path}"
+    fi
+  done <<< "$(support_file_manifest)"
+}
+
+prepare_merge_files() {
+  local local_dir=""
+  reset_support_file_paths
+  if local_dir="$(find_local_repo_dir)"; then
+    prepare_support_files_from_local_repo "${local_dir}"
+    return $?
   fi
-  if ! curl -fsSL "${RAW_BASE}/scripts/tlh-update.mjs" -o "${TLH_UPDATE_SCRIPT}"; then
-    warn "tlh update support script not found for ref ${REF}; the wrapper update helper will be unavailable"
-    TLH_UPDATE_SCRIPT=""
-  fi
-  curl -fsSL "${RAW_BASE}/scripts/tlh-wrapper.mjs" -o "${TLH_WRAPPER_SCRIPT}"
-  curl -fsSL "${RAW_BASE}/scripts/tlh-install-state.mjs" -o "${TLH_INSTALL_STATE_SCRIPT}"
-  curl -fsSL "${RAW_BASE}/config/settings.defaults.json" -o "${DEFAULTS_FILE}"
-  curl -fsSL "${RAW_BASE}/config/default-extensions.json" -o "${DEFAULT_EXTENSIONS_FILE}"
+
+  prepare_support_files_from_remote
 }
 
 prepare_merge_files_for_dry_run() {
   local local_dir=""
-  TLH_GNOSIS_SCRIPT=""
-  TLH_UPDATE_SCRIPT=""
-  TLH_WRAPPER_SCRIPT=""
-  TLH_INSTALL_STATE_SCRIPT=""
+  reset_support_file_paths
   if local_dir="$(find_local_repo_dir)"; then
-    MERGE_SCRIPT="${local_dir}/scripts/merge-settings.mjs"
-    TLH_DEFAULTS_SCRIPT="${local_dir}/scripts/tlh-defaults.mjs"
-    if [[ -f "${local_dir}/scripts/tlh-gnosis.mjs" ]]; then
-      TLH_GNOSIS_SCRIPT="${local_dir}/scripts/tlh-gnosis.mjs"
-    fi
-    if [[ -f "${local_dir}/scripts/tlh-update.mjs" ]]; then
-      TLH_UPDATE_SCRIPT="${local_dir}/scripts/tlh-update.mjs"
-    fi
-    if [[ -f "${local_dir}/scripts/tlh-wrapper.mjs" ]]; then
-      TLH_WRAPPER_SCRIPT="${local_dir}/scripts/tlh-wrapper.mjs"
-    fi
-    if [[ -f "${local_dir}/scripts/tlh-install-state.mjs" ]]; then
-      TLH_INSTALL_STATE_SCRIPT="${local_dir}/scripts/tlh-install-state.mjs"
-    fi
-    DEFAULTS_FILE="${local_dir}/config/settings.defaults.json"
-    DEFAULT_EXTENSIONS_FILE="${local_dir}/config/default-extensions.json"
-    return 0
+    prepare_support_files_from_local_repo "${local_dir}"
+    return $?
   fi
 
   if [[ "${SUPPORT_FILES_DRY_RUN_SKIPPED}" == "true" ]]; then
@@ -509,16 +584,20 @@ prepare_merge_files_for_dry_run() {
   log "Would fetch installer support files from ${RAW_BASE}"
   log "Would merge settings defaults into: ${SETTINGS_PATH}"
   log "Would install bundled default extension packages after settings merge."
-  log "Would fetch Gnosis integration support files."
-  log "Would fetch tlh update support files."
-  log "Would fetch tlh wrapper support files."
-  log "Would fetch tlh install-state support files."
+  local var_name requirement relative_path tmp_name install_name dry_run_message
+  while IFS='|' read -r var_name requirement relative_path tmp_name install_name; do
+    [[ -n "${var_name}" ]] || continue
+    dry_run_message="$(support_file_dry_run_message "${var_name}")"
+    if [[ -n "${dry_run_message}" ]]; then
+      log "${dry_run_message}"
+    fi
+  done <<< "$(support_file_manifest)"
   log "Dry run only; no support files were downloaded."
   return 1
 }
 
 ensure_support_files_prepared() {
-  if [[ -n "${MERGE_SCRIPT}" || -n "${TLH_DEFAULTS_SCRIPT}" || -n "${TLH_GNOSIS_SCRIPT}" || -n "${TLH_UPDATE_SCRIPT}" || -n "${TLH_WRAPPER_SCRIPT}" || -n "${TLH_INSTALL_STATE_SCRIPT}" || -n "${DEFAULTS_FILE}" || -n "${DEFAULT_EXTENSIONS_FILE}" ]]; then
+  if support_file_paths_are_prepared; then
     return 0
   fi
 
@@ -666,56 +745,33 @@ merge_settings() {
 }
 
 install_support_files() {
-  if [[ -z "${TLH_DEFAULTS_SCRIPT}" && -z "${DEFAULT_EXTENSIONS_FILE}" && -z "${TLH_GNOSIS_SCRIPT}" && -z "${TLH_UPDATE_SCRIPT}" && -z "${TLH_WRAPPER_SCRIPT}" && -z "${TLH_INSTALL_STATE_SCRIPT}" ]]; then
+  if ! installable_support_files_are_prepared; then
     ensure_support_files_prepared || return 0
   fi
-  if [[ -z "${TLH_DEFAULTS_SCRIPT}" && -z "${DEFAULT_EXTENSIONS_FILE}" && -z "${TLH_GNOSIS_SCRIPT}" && -z "${TLH_UPDATE_SCRIPT}" && -z "${TLH_WRAPPER_SCRIPT}" && -z "${TLH_INSTALL_STATE_SCRIPT}" ]]; then
+  if ! installable_support_files_are_prepared; then
     return 0
   fi
 
   local support_dir="${AGENT_DIR}/tlh"
+  local var_name requirement relative_path tmp_name install_name source_path
   if [[ "${DRY_RUN}" == "true" ]]; then
     print_command mkdir -p "${support_dir}"
-    if [[ -n "${TLH_DEFAULTS_SCRIPT}" ]]; then
-      print_command cp "${TLH_DEFAULTS_SCRIPT}" "${support_dir}/tlh-defaults.mjs"
-    fi
-    if [[ -n "${TLH_GNOSIS_SCRIPT}" ]]; then
-      print_command cp "${TLH_GNOSIS_SCRIPT}" "${support_dir}/tlh-gnosis.mjs"
-    fi
-    if [[ -n "${TLH_UPDATE_SCRIPT}" ]]; then
-      print_command cp "${TLH_UPDATE_SCRIPT}" "${support_dir}/tlh-update.mjs"
-    fi
-    if [[ -n "${TLH_WRAPPER_SCRIPT}" ]]; then
-      print_command cp "${TLH_WRAPPER_SCRIPT}" "${support_dir}/tlh-wrapper.mjs"
-    fi
-    if [[ -n "${TLH_INSTALL_STATE_SCRIPT}" ]]; then
-      print_command cp "${TLH_INSTALL_STATE_SCRIPT}" "${support_dir}/tlh-install-state.mjs"
-    fi
-    if [[ -n "${DEFAULT_EXTENSIONS_FILE}" ]]; then
-      print_command cp "${DEFAULT_EXTENSIONS_FILE}" "${support_dir}/default-extensions.json"
-    fi
+    while IFS='|' read -r var_name requirement relative_path tmp_name install_name; do
+      [[ -n "${var_name}" && -n "${install_name}" ]] || continue
+      source_path="${!var_name}"
+      [[ -n "${source_path}" ]] || continue
+      print_command cp "${source_path}" "${support_dir}/${install_name}"
+    done <<< "$(support_file_manifest)"
     return 0
   fi
 
   mkdir -p "${support_dir}"
-  if [[ -n "${TLH_DEFAULTS_SCRIPT}" ]]; then
-    cp "${TLH_DEFAULTS_SCRIPT}" "${support_dir}/tlh-defaults.mjs"
-  fi
-  if [[ -n "${TLH_GNOSIS_SCRIPT}" ]]; then
-    cp "${TLH_GNOSIS_SCRIPT}" "${support_dir}/tlh-gnosis.mjs"
-  fi
-  if [[ -n "${TLH_UPDATE_SCRIPT}" ]]; then
-    cp "${TLH_UPDATE_SCRIPT}" "${support_dir}/tlh-update.mjs"
-  fi
-  if [[ -n "${TLH_WRAPPER_SCRIPT}" ]]; then
-    cp "${TLH_WRAPPER_SCRIPT}" "${support_dir}/tlh-wrapper.mjs"
-  fi
-  if [[ -n "${TLH_INSTALL_STATE_SCRIPT}" ]]; then
-    cp "${TLH_INSTALL_STATE_SCRIPT}" "${support_dir}/tlh-install-state.mjs"
-  fi
-  if [[ -n "${DEFAULT_EXTENSIONS_FILE}" ]]; then
-    cp "${DEFAULT_EXTENSIONS_FILE}" "${support_dir}/default-extensions.json"
-  fi
+  while IFS='|' read -r var_name requirement relative_path tmp_name install_name; do
+    [[ -n "${var_name}" && -n "${install_name}" ]] || continue
+    source_path="${!var_name}"
+    [[ -n "${source_path}" ]] || continue
+    cp "${source_path}" "${support_dir}/${install_name}"
+  done <<< "$(support_file_manifest)"
 }
 
 write_install_state() {
@@ -816,139 +872,6 @@ EOF_SOURCES
   fi
 }
 
-validate_gnosis_command() {
-  local candidate="$1"
-  if [[ -n "${TLH_GNOSIS_SCRIPT}" ]]; then
-    node "${TLH_GNOSIS_SCRIPT}" --settings "${SETTINGS_PATH}" --agent-dir "${AGENT_DIR}" --quiet validate "${candidate}" >/dev/null 2>&1
-    return $?
-  fi
-  "${candidate}" help plan >/dev/null 2>&1 && "${candidate}" help review >/dev/null 2>&1
-}
-
-find_valid_gnosis_command() {
-  local candidate=""
-  if [[ -n "${TLH_GNOSIS_SCRIPT}" ]]; then
-    if candidate="$(node "${TLH_GNOSIS_SCRIPT}" --settings "${SETTINGS_PATH}" --agent-dir "${AGENT_DIR}" --quiet validate 2>/dev/null)" && [[ -n "${candidate}" ]]; then
-      if [[ "${candidate}" == "gn" ]] && command_exists gn; then
-        command -v gn
-      else
-        printf '%s\n' "${candidate}"
-      fi
-      return 0
-    fi
-  fi
-
-  candidate="${AGENT_DIR}/bin/gn"
-  if [[ -x "${candidate}" ]] && validate_gnosis_command "${candidate}"; then
-    printf '%s\n' "${candidate}"
-    return 0
-  fi
-
-  if command_exists gn; then
-    candidate="$(command -v gn)"
-    if validate_gnosis_command "${candidate}"; then
-      printf '%s\n' "${candidate}"
-      return 0
-    fi
-  fi
-
-  return 1
-}
-
-gnosis_state() {
-  if [[ -z "${TLH_GNOSIS_SCRIPT}" ]]; then
-    printf 'unset\n'
-    return 0
-  fi
-  node "${TLH_GNOSIS_SCRIPT}" --settings "${SETTINGS_PATH}" --agent-dir "${AGENT_DIR}" state 2>/dev/null || printf 'unset\n'
-}
-
-set_gnosis_enabled() {
-  local install_path="${1:-}"
-  if [[ -z "${TLH_GNOSIS_SCRIPT}" ]]; then
-    warn "Gnosis support script not found; cannot update isolated settings"
-    return 1
-  fi
-
-  local args=(
-    "${TLH_GNOSIS_SCRIPT}"
-    "--settings"
-    "${SETTINGS_PATH}"
-    "--agent-dir"
-    "${AGENT_DIR}"
-  )
-  if [[ "${DRY_RUN}" == "true" ]]; then
-    args+=("--dry-run")
-  fi
-  if [[ "${QUIET}" == "true" ]]; then
-    args+=("--quiet")
-  elif [[ "${VERBOSE}" != "true" && "${DRY_RUN}" != "true" ]]; then
-    args+=("--quiet")
-  fi
-  if [[ -n "${install_path}" ]]; then
-    args+=("--install-path" "${install_path}")
-  fi
-  args+=("enable")
-
-  node "${args[@]}"
-}
-
-set_gnosis_disabled() {
-  if [[ -z "${TLH_GNOSIS_SCRIPT}" ]]; then
-    warn "Gnosis support script not found; cannot update isolated settings"
-    return 1
-  fi
-
-  local args=(
-    "${TLH_GNOSIS_SCRIPT}"
-    "--settings"
-    "${SETTINGS_PATH}"
-    "--agent-dir"
-    "${AGENT_DIR}"
-    "disable"
-  )
-  if [[ "${DRY_RUN}" == "true" ]]; then
-    args+=("--dry-run")
-  fi
-  if [[ "${QUIET}" == "true" ]]; then
-    args+=("--quiet")
-  elif [[ "${VERBOSE}" != "true" && "${DRY_RUN}" != "true" ]]; then
-    args+=("--quiet")
-  fi
-
-  node "${args[@]}"
-}
-
-install_managed_gnosis() {
-  if [[ -z "${TLH_GNOSIS_SCRIPT}" ]]; then
-    warn "Gnosis support script not found; cannot install managed Gnosis"
-    return 1
-  fi
-
-  local args=(
-    "${TLH_GNOSIS_SCRIPT}"
-    "--settings"
-    "${SETTINGS_PATH}"
-    "--agent-dir"
-    "${AGENT_DIR}"
-    "--target"
-    "${AGENT_DIR}/bin/gn"
-    "--gnosis-repo"
-    "${GNOSIS_REPO}"
-    "--gnosis-version"
-    "${GNOSIS_VERSION}"
-    "install-managed"
-  )
-  if [[ "${DRY_RUN}" == "true" ]]; then
-    args+=("--dry-run")
-  fi
-  if [[ "${QUIET}" == "true" ]]; then
-    args+=("--quiet")
-  fi
-
-  node "${args[@]}"
-}
-
 configure_gnosis() {
   if [[ "${NO_SETTINGS}" == "true" ]]; then
     log "Skipping Gnosis integration (--no-settings)."
@@ -963,70 +886,34 @@ configure_gnosis() {
     return 0
   fi
 
-  local current_state requested valid_path managed_path
-  current_state="$(gnosis_state)"
-  requested="${GNOSIS_MODE}"
-
-  if [[ "${requested}" == "without" ]]; then
-    verbose_log "Disabling Gnosis integration for tlh."
-    set_gnosis_disabled
-    GNOSIS_SUMMARY="Gnosis integration: disabled"
-    return 0
+  local args=(
+    "${TLH_GNOSIS_SCRIPT}"
+    "--settings"
+    "${SETTINGS_PATH}"
+    "--agent-dir"
+    "${AGENT_DIR}"
+    "--target"
+    "${AGENT_DIR}/bin/gn"
+    "--gnosis-repo"
+    "${GNOSIS_REPO}"
+    "--gnosis-version"
+    "${GNOSIS_VERSION}"
+    "--mode"
+    "${GNOSIS_MODE}"
+    "--wrapper-name"
+    "${WRAPPER_NAME}"
+    "configure-install"
+  )
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    args+=("--dry-run" "--detail")
+  elif [[ "${VERBOSE}" == "true" ]]; then
+    args+=("--detail")
+  fi
+  if [[ "${QUIET}" == "true" ]]; then
+    args+=("--quiet")
   fi
 
-  if [[ "${requested}" == "auto" ]]; then
-    if [[ "${current_state}" == "disabled" ]]; then
-      # Treat enabled=false as a deliberate opt-out. Normal installer reruns and
-      # tlh update must not undo it; only --with-gnosis should re-enable.
-      verbose_log "Keeping existing Gnosis opt-out."
-      GNOSIS_SUMMARY="Gnosis integration: disabled"
-      return 0
-    fi
-
-    if [[ "${current_state}" == "enabled" ]]; then
-      verbose_log "Keeping existing Gnosis integration setting: enabled."
-      if valid_path="$(find_valid_gnosis_command)"; then
-        GNOSIS_SUMMARY="Gnosis integration: enabled (${valid_path})"
-        return 0
-      fi
-
-      warn "Gnosis integration is enabled, but no valid gn binary was found. Attempting to install it."
-      if managed_path="$(install_managed_gnosis)"; then
-        set_gnosis_enabled "${managed_path}"
-        GNOSIS_SUMMARY="Gnosis integration: enabled (${managed_path})"
-        return 0
-      fi
-
-      warn "Gnosis integration remains enabled, but Gnosis could not be installed automatically. Install Gnosis manually and run: ${WRAPPER_NAME} gnosis enable"
-      GNOSIS_SUMMARY="Gnosis integration: enabled, but no valid gn binary was found"
-      return 0
-    fi
-
-    verbose_log "Installing and enabling Gnosis integration by default."
-    requested="with"
-  fi
-
-  if [[ "${requested}" != "with" ]]; then
-    return 0
-  fi
-
-  valid_path=""
-  if valid_path="$(find_valid_gnosis_command)"; then
-    verbose_log "Found valid Gnosis binary: ${valid_path}"
-    set_gnosis_enabled "${valid_path}"
-    GNOSIS_SUMMARY="Gnosis integration: enabled (${valid_path})"
-    return 0
-  fi
-
-  if managed_path="$(install_managed_gnosis)"; then
-    set_gnosis_enabled "${managed_path}"
-    GNOSIS_SUMMARY="Gnosis integration: enabled (${managed_path})"
-    return 0
-  fi
-
-  warn "Gnosis integration could not be installed automatically."
-  warn "Leaving Gnosis integration unchanged; install Gnosis manually and run: ${WRAPPER_NAME} gnosis enable"
-  GNOSIS_SUMMARY="Gnosis integration: not enabled (gn was not installed)"
+  GNOSIS_SUMMARY="$(node "${args[@]}")"
 }
 
 wrapper_is_managed() {

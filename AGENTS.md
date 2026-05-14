@@ -38,21 +38,18 @@ This repository packages **The Last Harness** as an isolated profile for the ups
 Run these before considering changes ready:
 
 ```sh
-bash -n install.sh
-node --check scripts/merge-settings.mjs
-node --check scripts/tlh-defaults.mjs
-node --check scripts/tlh-gnosis.mjs
-node --check scripts/tlh-update.mjs
-node --check scripts/tlh-wrapper.mjs
-node --check scripts/tlh-install-state.mjs
+bash scripts/check-installer-smoke.sh
+node scripts/merge-settings.mjs --dry-run
 npm pack --dry-run
 ```
 
 Useful targeted checks:
 
 ```sh
-node scripts/merge-settings.mjs --dry-run
+bash -n install.sh
+node --check scripts/tlh-gnosis.mjs
 bash install.sh --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -d)"
+bash -s -- --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -d)" < install.sh
 ```
 
 For installer tests, prefer temporary `--agent-dir` and `--bin-dir` values. Do not run a real install into home directories unless the user explicitly asks.
