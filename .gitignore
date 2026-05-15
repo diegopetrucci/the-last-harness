@@ -3,4 +3,4 @@ npm-debug.log*
 .DS_Store
 .pi/
 *.tmp
-IMPLEMENTATION-PLAN.md
+PLAN.md

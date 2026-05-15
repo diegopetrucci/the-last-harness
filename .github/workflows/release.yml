@@ -44,12 +44,7 @@ jobs:
 
       - name: Run release checks
         run: |
-          bash -n install.sh
-          node --check scripts/merge-settings.mjs
-          node --check scripts/tlh-defaults.mjs
-          node --check scripts/tlh-gnosis.mjs
-          node --check scripts/tlh-update.mjs
-          node --check scripts/release-notes.mjs
+          bash scripts/check-installer-smoke.sh
           npm pack --dry-run
 
       - name: Build package tarball
@@ -73,6 +68,12 @@ jobs:
           NODE
           chmod +x dist/install.sh
           bash -n dist/install.sh
+          expected_ref_line="REF=\"\${TLH_REF:-${GITHUB_REF_NAME}}\""
+          grep -F "${expected_ref_line}" dist/install.sh
+          if grep -F 'REF="${TLH_REF:-main}"' dist/install.sh; then
+            echo "Generated installer still defaults to main instead of ${GITHUB_REF_NAME}." >&2
+            exit 1
+          fi
 
       - name: Build release notes
         run: node scripts/release-notes.mjs --tag "${GITHUB_REF_NAME}" --output release-notes.md
