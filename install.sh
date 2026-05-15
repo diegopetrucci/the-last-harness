@@ -695,14 +695,17 @@ prepare_support_files_from_remote() {
       warn_missing_optional_support_file "${var_name}" "${relative_path}"
     fi
   done <<< "$(support_file_manifest)"
-  mkdir -p "${TMP_DIR}/agents/subagents"
-  local prompt
-  for prompt in "${TLH_SUBAGENT_PROMPTS[@]}"; do
-    if ! curl -fsSL "${RAW_BASE}/agents/subagents/${prompt}" -o "${TMP_DIR}/agents/subagents/${prompt}"; then
-      warn "TLH subagent prompt not found in raw support files: ${prompt}; will try the installed package checkout."
-      rm -f "${TMP_DIR}/agents/subagents/${prompt}"
-    fi
-  done
+
+  if settings_require_tlh_subagent_prompts; then
+    mkdir -p "${TMP_DIR}/agents/subagents"
+    local prompt
+    for prompt in "${TLH_SUBAGENT_PROMPTS[@]}"; do
+      if ! curl -fsSL "${RAW_BASE}/agents/subagents/${prompt}" -o "${TMP_DIR}/agents/subagents/${prompt}"; then
+        warn "TLH subagent prompt not found in raw support files: ${prompt}; will try the installed package checkout."
+        rm -f "${TMP_DIR}/agents/subagents/${prompt}"
+      fi
+    done
+  fi
 }
 
 prepare_merge_files() {
@@ -1060,6 +1063,43 @@ tlh_subagent_prompts_complete() {
   [[ -z "${missing}" ]]
 }
 
+settings_require_tlh_subagent_prompts() {
+  [[ "${NO_SETTINGS}" != "true" ]] || return 1
+  [[ -n "${DEFAULTS_FILE}" && -f "${DEFAULTS_FILE}" ]] || return 1
+  TLH_DEFAULTS_FILE="${DEFAULTS_FILE}" node <<'NODE'
+const fs = require('node:fs');
+
+try {
+  const settings = JSON.parse(fs.readFileSync(process.env.TLH_DEFAULTS_FILE, 'utf8'));
+  const agentDirs = settings?.subagents?.agentDirs;
+  if (Array.isArray(agentDirs) && agentDirs.includes('tlh/agents/subagents')) {
+    process.exit(0);
+  }
+} catch {
+  // Invalid defaults are handled later by the settings merge.
+}
+process.exit(1);
+NODE
+}
+
+default_extensions_require_critical_install() {
+  [[ "${NO_SETTINGS}" != "true" ]] || return 1
+  [[ -n "${DEFAULT_EXTENSIONS_FILE}" && -f "${DEFAULT_EXTENSIONS_FILE}" ]] || return 1
+  TLH_DEFAULT_EXTENSIONS_FILE="${DEFAULT_EXTENSIONS_FILE}" node <<'NODE'
+const fs = require('node:fs');
+
+try {
+  const defaults = JSON.parse(fs.readFileSync(process.env.TLH_DEFAULT_EXTENSIONS_FILE, 'utf8'));
+  if (Array.isArray(defaults) && defaults.some((extension) => extension && extension.critical === true)) {
+    process.exit(0);
+  }
+} catch {
+  // Invalid defaults are handled later by the settings/default-extension commands.
+}
+process.exit(1);
+NODE
+}
+
 find_tlh_subagents_dir() {
   local local_dir=""
   local package_root=""
@@ -1139,7 +1179,11 @@ install_support_files() {
   local support_subagents_dir="${support_dir}/agents/subagents"
   local subagents_src=""
   local var_name requirement relative_path tmp_name install_name source_path
-  subagents_src="$(find_tlh_subagents_dir || true)"
+  local require_subagent_prompts="false"
+  if settings_require_tlh_subagent_prompts; then
+    require_subagent_prompts="true"
+    subagents_src="$(find_tlh_subagents_dir || true)"
+  fi
 
   if [[ "${DRY_RUN}" == "true" ]]; then
     print_command mkdir -p "${support_dir}"
@@ -1149,16 +1193,18 @@ install_support_files() {
       [[ -n "${source_path}" ]] || continue
       print_command cp "${source_path}" "${support_dir}/${install_name}"
     done <<< "$(support_file_manifest)"
-    if [[ -n "${subagents_src}" ]]; then
-      local prompt
-      print_command mkdir -p "${support_subagents_dir}"
-      for prompt in "${TLH_SUBAGENT_PROMPTS[@]}"; do
-        print_command cp "${subagents_src}/${prompt}" "${support_subagents_dir}/${prompt}"
-      done
-    elif [[ "${NO_SETTINGS}" == "true" ]]; then
-      log "Would skip copying missing TLH subagent prompts (--no-settings)."
+    if [[ "${require_subagent_prompts}" == "true" ]]; then
+      if [[ -n "${subagents_src}" ]]; then
+        local prompt
+        print_command mkdir -p "${support_subagents_dir}"
+        for prompt in "${TLH_SUBAGENT_PROMPTS[@]}"; do
+          print_command cp "${subagents_src}/${prompt}" "${support_subagents_dir}/${prompt}"
+        done
+      else
+        log "Would require TLH subagent prompts before enabling bundled subagents in settings."
+      fi
     else
-      log "Would require TLH subagent prompts before enabling bundled subagents in settings."
+      log "Would skip TLH subagent prompts because this ref does not enable bundled subagents in settings."
     fi
     return 0
   fi
@@ -1170,14 +1216,14 @@ install_support_files() {
     [[ -n "${source_path}" ]] || continue
     copy_safe_profile_file "${source_path}" "tlh/${install_name}" "TLH support file ${install_name}"
   done <<< "$(support_file_manifest)"
+  if [[ "${require_subagent_prompts}" != "true" ]]; then
+    return 0
+  fi
+
   if [[ -n "${subagents_src}" ]]; then
     local missing_prompts=""
     missing_prompts="$(missing_tlh_subagent_prompts "${subagents_src}")"
     if [[ -n "${missing_prompts}" ]]; then
-      if [[ "${NO_SETTINGS}" == "true" ]]; then
-        warn "TLH subagent prompts are incomplete (${missing_prompts}); leaving existing copied prompts unchanged."
-        return 0
-      fi
       die "TLH subagent prompts are incomplete (${missing_prompts}); re-run installer from a complete checkout or package."
     fi
 
@@ -1188,11 +1234,7 @@ install_support_files() {
       die "failed to install TLH subagent prompts (${missing_prompts}); re-run installer from a complete checkout or package."
     fi
   else
-    if [[ "${NO_SETTINGS}" == "true" ]]; then
-      warn "TLH subagent prompts not found; leaving existing copied prompts unchanged."
-    else
-      die "TLH subagent prompts not found; re-run installer from a complete checkout or package."
-    fi
+    die "TLH subagent prompts not found; re-run installer from a complete checkout or package."
   fi
 }
 
@@ -1511,7 +1553,11 @@ install_default_extensions() {
     die "failed to read bundled default extension sources"
   fi
   if ! critical_sources_output="$(node "${TLH_DEFAULTS_SCRIPT}" --settings "${SETTINGS_PATH}" --defaults "${DEFAULT_EXTENSIONS_FILE}" critical-sources)"; then
-    die "failed to read critical bundled default extension sources"
+    if default_extensions_require_critical_install; then
+      die "failed to read critical bundled default extension sources"
+    fi
+    warn "installed default-extension helper does not support critical source queries; treating this ref as having no critical defaults."
+    critical_sources_output=""
   fi
   if [[ -z "${sources_output}" ]]; then
     log "No bundled default extensions are enabled."
