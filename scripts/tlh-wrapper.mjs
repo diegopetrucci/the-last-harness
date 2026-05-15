@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
+import { homedir } from "node:os";
 import process from "node:process";
 
 const DEFAULT_MARKER = "Managed by The Last Harness installer";
@@ -133,6 +134,26 @@ function printCommand(commandArgs) {
 
 function wrapperPath(args) {
 	return join(args.binDir, args.wrapperName);
+}
+
+function realpathForCompare(path) {
+	const resolved = resolve(path);
+	if (existsSync(resolved)) return realpathSync(resolved);
+	const parent = dirname(resolved);
+	if (parent === resolved) return resolved;
+	return join(realpathForCompare(parent), basename(resolved));
+}
+
+function isUnderNormalPiConfig(path) {
+	const normalPiRoot = realpathForCompare(join(homedir(), ".pi"));
+	const resolvedPath = realpathForCompare(path);
+	return resolvedPath === normalPiRoot || resolvedPath.startsWith(`${normalPiRoot}${sep}`);
+}
+
+function assertNotNormalPiPath(path, label) {
+	if (isUnderNormalPiConfig(path)) {
+		throw new Error(`refusing to modify normal Pi config from The Last Harness wrapper command (${label}): ${path}`);
+	}
 }
 
 function wrapperIsManaged(path, marker = DEFAULT_MARKER) {
@@ -269,6 +290,9 @@ function main() {
 	validateArgs(args);
 
 	const path = wrapperPath(args);
+	assertNotNormalPiPath(args.agentDir, "agent dir");
+	assertNotNormalPiPath(args.binDir, "wrapper install dir");
+	assertNotNormalPiPath(path, "wrapper path");
 	if (args.dryRun) {
 		dryRun(args, path);
 		return;

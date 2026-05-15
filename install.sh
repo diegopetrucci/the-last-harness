@@ -273,11 +273,19 @@ validate_inputs() {
     *) die "--track must be one of: latest-release, pinned-tag, ref, custom" ;;
   esac
 
-  local normal_pi_root normalized_agent
+  local normal_pi_root normalized_agent normalized_bin normalized_wrapper
   normal_pi_root="$(normalize_path_for_compare "${HOME}/.pi")"
   normalized_agent="$(normalize_path_for_compare "${AGENT_DIR}")"
+  normalized_bin="$(normalize_path_for_compare "${BIN_DIR}")"
+  normalized_wrapper="$(normalize_path_for_compare "${WRAPPER_PATH}")"
   if [[ "${normalized_agent}" == "${normal_pi_root}" || "${normalized_agent}" == "${normal_pi_root}/"* ]]; then
     die "refusing to place The Last Harness agent dir under normal Pi config root: ${AGENT_DIR}"
+  fi
+  if [[ "${normalized_bin}" == "${normal_pi_root}" || "${normalized_bin}" == "${normal_pi_root}/"* ]]; then
+    die "refusing to place The Last Harness wrapper dir under normal Pi config root: ${BIN_DIR}"
+  fi
+  if [[ "${normalized_wrapper}" == "${normal_pi_root}" || "${normalized_wrapper}" == "${normal_pi_root}/"* ]]; then
+    die "refusing to place The Last Harness wrapper under normal Pi config root: ${WRAPPER_PATH}"
   fi
 }
 
@@ -606,6 +614,26 @@ ensure_support_files_prepared() {
     return $?
   fi
   prepare_merge_files
+}
+
+preflight_runtime_support_files() {
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    return 0
+  fi
+
+  ensure_support_files_prepared || die "installer support files are unavailable for ref ${REF}"
+
+  local missing=()
+  if [[ -z "${TLH_INSTALL_STATE_SCRIPT}" || ! -f "${TLH_INSTALL_STATE_SCRIPT}" ]]; then
+    missing+=("scripts/tlh-install-state.mjs")
+  fi
+  if [[ "${NO_WRAPPER}" != "true" && ( -z "${TLH_WRAPPER_SCRIPT}" || ! -f "${TLH_WRAPPER_SCRIPT}" ) ]]; then
+    missing+=("scripts/tlh-wrapper.mjs")
+  fi
+
+  if (( ${#missing[@]} > 0 )); then
+    die "required installer support files not found for ref ${REF}: ${missing[*]}"
+  fi
 }
 
 install_pi_if_needed() {
@@ -1037,6 +1065,7 @@ main() {
   validate_inputs
   require_command npm
   require_command git
+  preflight_runtime_support_files
 
   install_pi_if_needed
   install_harness_package

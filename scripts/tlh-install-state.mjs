@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
+import { homedir } from "node:os";
 import process from "node:process";
 
 function usage() {
@@ -173,6 +174,26 @@ function parseBoolean(value, flag) {
 	throw new Error(`${flag} must be true or false`);
 }
 
+function realpathForCompare(path) {
+	const resolved = resolve(path);
+	if (existsSync(resolved)) return realpathSync(resolved);
+	const parent = dirname(resolved);
+	if (parent === resolved) return resolved;
+	return join(realpathForCompare(parent), basename(resolved));
+}
+
+function isUnderNormalPiConfig(path) {
+	const normalPiRoot = realpathForCompare(join(homedir(), ".pi"));
+	const resolvedPath = realpathForCompare(path);
+	return resolvedPath === normalPiRoot || resolvedPath.startsWith(`${normalPiRoot}${sep}`);
+}
+
+function assertNotNormalPiPath(path, label) {
+	if (isUnderNormalPiConfig(path)) {
+		throw new Error(`refusing to modify normal Pi config from The Last Harness install-state command (${label}): ${path}`);
+	}
+}
+
 function log(args, message) {
 	if (!args.quiet) console.log(message);
 }
@@ -218,6 +239,9 @@ function main() {
 		return;
 	}
 	validateArgs(args);
+	assertNotNormalPiPath(args.statePath, "state path");
+	assertNotNormalPiPath(args.agentDir, "agent dir");
+	assertNotNormalPiPath(args.binDir, "wrapper install dir");
 	writeInstallState(args);
 }
 

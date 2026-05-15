@@ -66,6 +66,58 @@ EOF_FAKE_CURL
   chmod +x "${fakebin}/curl"
 }
 
+make_legacy_support_curl() {
+  local fakebin="$1"
+  mkdir -p "${fakebin}"
+  cat >"${fakebin}/curl" <<'EOF_LEGACY_SUPPORT_CURL'
+#!/usr/bin/env bash
+url=""
+out=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o)
+      out="${2:-}"
+      shift 2
+      ;;
+    -*)
+      shift
+      ;;
+    *)
+      url="$1"
+      shift
+      ;;
+  esac
+done
+if [[ -z "${url}" || -z "${out}" ]]; then
+  printf 'fake legacy curl missing url or output path\n' >&2
+  exit 2
+fi
+case "${url}" in
+  */scripts/tlh-wrapper.mjs|*/scripts/tlh-install-state.mjs)
+    printf 'fake legacy ref missing %s\n' "${url}" >&2
+    exit 22
+    ;;
+esac
+mkdir -p "$(dirname "${out}")"
+printf '{}\n' >"${out}"
+EOF_LEGACY_SUPPORT_CURL
+  chmod +x "${fakebin}/curl"
+}
+
+make_failing_pi() {
+  local fakebin="$1"
+  mkdir -p "${fakebin}"
+  cat >"${fakebin}/pi" <<'EOF_FAKE_PI'
+#!/usr/bin/env bash
+printf 'fake pi was invoked\n' >&2
+if [[ -n "${PI_SENTINEL:-}" ]]; then
+  printf 'fake pi was invoked\n' >"${PI_SENTINEL}"
+fi
+exit 99
+EOF_FAKE_PI
+  chmod +x "${fakebin}/pi"
+}
+
 run_static_checks() {
   log "Running installer static checks..."
   bash -n install.sh
@@ -143,6 +195,21 @@ run_normal_pi_guard_smoke() {
   fi
   assert_contains "${combined_file}" "refusing to place The Last Harness agent dir under normal Pi config root"
   assert_absent "${home_dir}/.pi"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  HOME="${home_dir}" bash install.sh --dry-run --agent-dir "${case_dir}/agent" --bin-dir "${home_dir}/.pi/agent" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "normal Pi wrapper dir guard smoke unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "refusing to place The Last Harness wrapper dir under normal Pi config root"
+  assert_absent "${home_dir}/.pi"
 }
 
 run_gnosis_managed_normal_pi_guard_smoke() {
@@ -184,6 +251,94 @@ run_gnosis_managed_normal_pi_guard_smoke() {
   assert_absent "${home_dir}/.pi"
 }
 
+run_missing_required_helper_preflight_smoke() {
+  log "Running missing required helper preflight smoke check..."
+  local case_dir="${TMP_ROOT}/missing-helper-preflight"
+  local agent_dir="${case_dir}/agent"
+  local bin_dir="${case_dir}/bin"
+  local fakebin="${case_dir}/fakebin"
+  local pi_sentinel="${case_dir}/pi-invoked"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  mkdir -p "${case_dir}"
+  make_legacy_support_curl "${fakebin}"
+  make_failing_pi "${fakebin}"
+
+  set +e
+  PATH="${fakebin}:${PATH}" PI_SENTINEL="${pi_sentinel}" TLH_RAW_BASE="https://example.invalid/legacy-ref" bash -s -- --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis < install.sh >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "missing required helper preflight smoke unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "required installer support files not found for ref"
+  assert_contains "${combined_file}" "scripts/tlh-wrapper.mjs"
+  assert_contains "${combined_file}" "scripts/tlh-install-state.mjs"
+  assert_not_contains "${combined_file}" "fake pi was invoked"
+  assert_absent "${agent_dir}"
+  assert_absent "${bin_dir}"
+  assert_absent "${pi_sentinel}"
+}
+
+run_wrapper_install_state_normal_pi_guard_smoke() {
+  log "Running wrapper/install-state normal Pi guard smoke check..."
+  local case_dir="${TMP_ROOT}/wrapper-state-guard"
+  local home_dir="${case_dir}/home"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  mkdir -p "${home_dir}"
+
+  set +e
+  HOME="${home_dir}" node scripts/tlh-wrapper.mjs --agent-dir "${case_dir}/agent" --bin-dir "${home_dir}/.pi/agent" --wrapper-name tlh --package-root "${case_dir}/package" --dry-run >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "wrapper helper normal Pi bin-dir guard smoke unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "refusing to modify normal Pi config from The Last Harness wrapper command (wrapper install dir)"
+  assert_absent "${home_dir}/.pi"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  HOME="${home_dir}" node scripts/tlh-wrapper.mjs --agent-dir "${case_dir}/agent" --bin-dir "${case_dir}/bin" --wrapper-name "../home/.pi/agent/tlh" --package-root "${case_dir}/package" --dry-run >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "wrapper helper normal Pi wrapper-path guard smoke unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "refusing to modify normal Pi config from The Last Harness wrapper command (wrapper path)"
+  assert_absent "${home_dir}/.pi"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  HOME="${home_dir}" node scripts/tlh-install-state.mjs --state-path "${home_dir}/.pi/agent/tlh/install-state.json" --repo diegopetrucci/the-last-harness --ref main --track ref --package-source git:github.com/diegopetrucci/the-last-harness@main --package-source-is-default true --raw-base https://example.invalid/raw --agent-dir "${case_dir}/agent" --bin-dir "${case_dir}/bin" --wrapper-name tlh --dry-run >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "install-state helper normal Pi state-path guard smoke unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "refusing to modify normal Pi config from The Last Harness install-state command (state path)"
+  assert_absent "${home_dir}/.pi"
+}
+
 run_release_pinning_smoke() {
   log "Running release installer pinning smoke check..."
   local case_dir="${TMP_ROOT}/release-pinning"
@@ -215,6 +370,8 @@ run_local_dry_run_smoke
 run_stdin_dry_run_smoke
 run_normal_pi_guard_smoke
 run_gnosis_managed_normal_pi_guard_smoke
+run_missing_required_helper_preflight_smoke
+run_wrapper_install_state_normal_pi_guard_smoke
 run_release_pinning_smoke
 
 log "Installer smoke checks passed."
