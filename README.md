@@ -47,7 +47,7 @@ The following slash commands are available in interactive `tlh` sessions:
 
 TLH does not switch your saved model or reasoning-effort defaults on startup. If you explicitly want the primary-agent prompt metadata to apply them, set `tlh.primaryAgent.applyModel` and/or `tlh.primaryAgent.applyThinking` to `true` in the isolated settings file.
 
-To opt out of the architect persona, run `/architect off` for the current session or `/architect default off` for future sessions. Turning it off affects future turns only; start a new session for a completely clean non-architect context.
+To opt out of the architect persona, run `/architect off` for the current session or `/architect default off` for future sessions. Turning it off affects future turns only; start a new session for a completely clean non-architect context. The architect-mode subagent validation and guardrail workflow applies only while the architect persona is active; with `/architect off`, the bundled subagent tool remains available as a normal TLH extension.
 
 ## Bundled extensions
 
