@@ -361,9 +361,10 @@ function applyDefaultExtensionPackageDedupes(settings, defaultExtensions, disabl
 }
 
 function applyDefaultExtensionSourceUpdates(settings, defaultExtensions, disabledIds, changes, { force }) {
-	if (!force || !Array.isArray(settings.packages)) return;
+	if (!Array.isArray(settings.packages)) return;
 
 	for (const extension of defaultExtensions) {
+		if (!force && extension.critical !== true) continue;
 		if (disabledIds.has(extension.id)) continue;
 		const identity = packageIdentity(extension.source);
 		if (!identity) continue;

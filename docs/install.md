@@ -20,16 +20,46 @@ Note: if you already have `pi` installed, `tlh` does not replace it — you can 
 
 ## More ways to install
 
-- Pinned, eg `curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.5.0/install.sh | bash -s --`
+- Pinned, eg `curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.6.0/install.sh | bash -s --`
 - Main (unstable): `curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --ref main --track ref`
 
 ## Manual install
 
 ```sh
-TLH_REF="${TLH_REF:-v0.5.0}"
+TLH_REF="${TLH_REF:-v0.6.0}"
 TLH_AGENT_DIR="${TLH_AGENT_DIR:-$HOME/.the-last-harness/agent}"
 TLH_PACKAGE_SOURCE="git:github.com/diegopetrucci/the-last-harness@${TLH_REF}"
 TLH_PACKAGE_DIR="$TLH_AGENT_DIR/git/github.com/diegopetrucci/the-last-harness"
+
+TLH_AGENT_DIR="$TLH_AGENT_DIR" node <<'NODE'
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+function normalizeForCompare(input) {
+  const absolute = path.resolve(input.replace(/^~(?=$|\/)/, os.homedir()));
+  const parts = absolute.split(path.sep).filter(Boolean);
+  let cursor = path.parse(absolute).root;
+  let index = 0;
+  for (; index < parts.length; index += 1) {
+    const candidate = path.join(cursor, parts[index]);
+    if (!fs.existsSync(candidate)) break;
+    cursor = fs.realpathSync.native(candidate);
+  }
+  return path.resolve(cursor, ...parts.slice(index));
+}
+
+function withinOrEqual(root, child) {
+  return child === root || child.startsWith(`${root}${path.sep}`);
+}
+
+const agentDir = normalizeForCompare(process.env.TLH_AGENT_DIR || '');
+const piRoot = normalizeForCompare(path.join(os.homedir(), '.pi'));
+if (withinOrEqual(piRoot, agentDir)) {
+  console.error(`Refusing to place The Last Harness agent dir under normal Pi config root: ${process.env.TLH_AGENT_DIR}`);
+  process.exit(1);
+}
+NODE
 
 npm install -g @earendil-works/pi-coding-agent
 mkdir -p "$TLH_AGENT_DIR"
@@ -76,7 +106,24 @@ node "$TLH_PACKAGE_DIR/scripts/merge-settings.mjs" \
   --package-source "$TLH_PACKAGE_SOURCE" \
   --default-extensions "$TLH_PACKAGE_DIR/config/default-extensions.json"
 
-PI_CODING_AGENT_DIR="$TLH_AGENT_DIR" pi update --extensions
+TLH_DEFAULT_SOURCES="$(node "$TLH_PACKAGE_DIR/scripts/tlh-defaults.mjs" \
+  --settings "$TLH_AGENT_DIR/settings.json" \
+  --defaults "$TLH_PACKAGE_DIR/config/default-extensions.json" \
+  sources)"
+TLH_CRITICAL_SOURCES="$(node "$TLH_PACKAGE_DIR/scripts/tlh-defaults.mjs" \
+  --settings "$TLH_AGENT_DIR/settings.json" \
+  --defaults "$TLH_PACKAGE_DIR/config/default-extensions.json" \
+  critical-sources)"
+
+printf '%s\n' "$TLH_DEFAULT_SOURCES" | while IFS= read -r source; do
+  [ -n "$source" ] || continue
+  if printf '%s\n' "$TLH_CRITICAL_SOURCES" | grep -Fxq -- "$source"; then
+    PI_CODING_AGENT_DIR="$TLH_AGENT_DIR" pi install "$source"
+  else
+    PI_CODING_AGENT_DIR="$TLH_AGENT_DIR" pi update --extension "$source" || \
+      echo "Warning: default extension package update failed; continuing: $source" >&2
+  fi
+done
 ```
 
 Run without the wrapper:
@@ -108,7 +155,7 @@ PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" pi
 Example pinned install:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.5.0/install.sh | bash -s --
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.6.0/install.sh | bash -s --
 ```
 
 ## Update
@@ -127,12 +174,7 @@ Release builds with TelemetryDeck identifiers configured also send at most one p
 
 To opt out persistently, set `"tlh": { "telemetry": { "enabled": false } }` in `~/.the-last-harness/agent/settings.json`. This opt-out is user-owned and survives `tlh update` and installer reruns. Per-run opt-outs are `PI_OFFLINE=1`, `TLH_SKIP_TELEMETRY=1`, `TLH_TELEMETRY_DISABLED=1`, or `PI_TELEMETRY=0`. To reset only the pseudonymous install ID, remove `~/.the-last-harness/agent/tlh/telemetry-state.json`.
 
-To update bundled default extension packages too:
-
-```sh
-PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" \
-  pi update --extensions
-```
+To update bundled default extension packages too, run `tlh update`; it refreshes pinned critical defaults safely before updating other enabled defaults.
 
 ## Uninstall
 

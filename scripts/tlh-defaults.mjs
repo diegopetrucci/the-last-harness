@@ -458,7 +458,7 @@ function commandSources(settings, defaultExtensions, { criticalOnly = false } = 
 	for (const extension of defaultExtensions) {
 		if (criticalOnly && extension.critical !== true) continue;
 		if (!isDefaultDisabled(settings, extension, defaultExtensions) && !isDefaultSourceDeferred(settings, extension)) {
-			console.log(findPackageSource(settings, extension.source) || extension.source);
+			console.log(extension.critical === true ? extension.source : (findPackageSource(settings, extension.source) || extension.source));
 		}
 	}
 }
