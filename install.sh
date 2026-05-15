@@ -421,6 +421,34 @@ copy_safe_profile_file() {
   fi
 }
 
+file_link_count() {
+  local path="$1"
+  node -e 'console.log(require("node:fs").lstatSync(process.argv[1]).nlink)' "${path}"
+}
+
+assert_safe_settings_target() {
+  local settings_dir settings_base link_count
+  settings_dir="${SETTINGS_PATH%/*}"
+  settings_base="${SETTINGS_PATH##*/}"
+
+  assert_profile_path_within_agent "${settings_dir}" "Pi settings directory" || return $?
+  if [[ -L "${SETTINGS_PATH}" ]]; then
+    die "refusing to let Pi write through symlinked isolated settings file: ${SETTINGS_PATH}"
+  fi
+  if [[ -e "${SETTINGS_PATH}" && ! -f "${SETTINGS_PATH}" ]]; then
+    die "refusing to let Pi replace non-file isolated settings path: ${SETTINGS_PATH}"
+  fi
+  assert_profile_path_within_agent "${SETTINGS_PATH}" "Pi settings file" || return $?
+
+  if [[ -f "${SETTINGS_PATH}" ]]; then
+    link_count="$(file_link_count "${SETTINGS_PATH}")" || die "failed to inspect isolated settings link count: ${SETTINGS_PATH}"
+    if [[ "${link_count}" != "1" ]]; then
+      die "refusing to let Pi mutate hard-linked isolated settings file: ${SETTINGS_PATH}"
+    fi
+  fi
+  [[ "${settings_base}" == "settings.json" ]] || die "unexpected Pi settings filename: ${SETTINGS_PATH}"
+}
+
 WRAPPER_PATH="${BIN_DIR}/${WRAPPER_NAME}"
 PACKAGE_SOURCE_IS_DEFAULT=false
 
@@ -540,8 +568,10 @@ run_isolated_pi() {
   if [[ "${DRY_RUN}" == "true" ]]; then
     print_command env "PI_CODING_AGENT_DIR=${AGENT_DIR}" "$@"
   elif [[ "${VERBOSE}" == "true" ]]; then
+    assert_safe_settings_target
     (cd "${AGENT_DIR}" && PI_CODING_AGENT_DIR="${AGENT_DIR}" "$@")
   else
+    assert_safe_settings_target
     run_captured_in_dir "${AGENT_DIR}" env "PI_CODING_AGENT_DIR=${AGENT_DIR}" "$@"
   fi
 }
@@ -800,6 +830,7 @@ install_pi_if_needed() {
 }
 
 backup_existing_settings_before_pi_install() {
+  assert_safe_settings_target
   if [[ ! -f "${SETTINGS_PATH}" ]]; then
     return 0
   fi
@@ -810,6 +841,9 @@ backup_existing_settings_before_pi_install() {
     return 0
   fi
 
+  if [[ -e "${backup_path}" || -L "${backup_path}" ]]; then
+    die "refusing to overwrite existing settings backup: ${backup_path}"
+  fi
   cp -p "${SETTINGS_PATH}" "${backup_path}"
   detail_log "Backed up existing isolated settings to: ${backup_path}"
 }
@@ -1597,6 +1631,7 @@ EOF_SOURCES
     warn "${failures} bundled default extension package(s) failed to update"
   fi
 }
+
 
 configure_gnosis() {
   if [[ "${NO_SETTINGS}" == "true" ]]; then
