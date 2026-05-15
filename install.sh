@@ -64,6 +64,9 @@ Examples:
   curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash -s --
   curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash -s -- --dry-run
   bash install.sh --agent-dir ~/.tlh/agent --bin-dir ~/.local/bin
+
+Test any pushed branch by fetching that branch's installer and matching --ref:
+  curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/subagents/install.sh | bash -s -- --ref subagents --track ref
 USAGE
 }
 

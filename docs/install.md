@@ -20,8 +20,16 @@ Note: if you already have `pi` installed, `tlh` does not replace it — you can 
 
 ## More ways to install
 
-- Pinned, eg `curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.6.0/install.sh | bash -s --`
-- Main (unstable): `curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --ref main --track ref`
+- Pinned:
+
+```sh
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.6.0/install.sh | bash -s --
+```
+- Any remote branch, eg `main`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --ref main --track ref
+```
 
 ## Manual install
 

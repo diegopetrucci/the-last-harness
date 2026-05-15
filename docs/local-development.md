@@ -76,3 +76,38 @@ Dry-run first with temporary paths:
 ```sh
 bash install.sh --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -d)"
 ```
+
+Test the local checkout without pushing it:
+
+```sh
+tmp="$(mktemp -d)"
+bash install.sh \
+  --package-source "file:$PWD" \
+  --track custom \
+  --agent-dir "$tmp/agent" \
+  --bin-dir "$tmp/bin"
+"$tmp/bin/tlh"
+```
+
+You can also test any pushed branch through GitHub. Push the branch, then fetch
+that branch's installer and pass the same branch name as `--ref`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/subagents/install.sh |
+  bash -s -- --ref subagents --track ref
+```
+
+For temporary branch testing without touching your real `tlh` profile or wrapper:
+
+```sh
+tmp="$(mktemp -d)"
+curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/subagents/install.sh |
+  bash -s -- \
+    --ref subagents \
+    --track ref \
+    --agent-dir "$tmp/agent" \
+    --bin-dir "$tmp/bin"
+"$tmp/bin/tlh"
+```
+
+Replace `subagents` in both places with the pushed branch you want to test.
