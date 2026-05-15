@@ -31,8 +31,7 @@
     "install.sh",
     "README.md",
     "CHANGELOG.md",
-    "docs",
-    "IMPLEMENTATION-PLAN.md"
+    "docs"
   ],
   "pi": {
     "extensions": [

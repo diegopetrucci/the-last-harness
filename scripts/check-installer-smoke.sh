@@ -92,8 +92,8 @@ if [[ -z "${url}" || -z "${out}" ]]; then
   printf 'fake legacy curl missing url or output path\n' >&2
   exit 2
 fi
-case "${url}" in
-  */scripts/tlh-wrapper.mjs|*/scripts/tlh-install-state.mjs)
+case "${LEGACY_SUPPORT_MODE:-missing-runtime}:${url}" in
+  missing-runtime:*/scripts/tlh-wrapper.mjs|missing-runtime:*/scripts/tlh-install-state.mjs|missing-wrapper-only:*/scripts/tlh-wrapper.mjs)
     printf 'fake legacy ref missing %s\n' "${url}" >&2
     exit 22
     ;;
@@ -283,6 +283,34 @@ run_missing_required_helper_preflight_smoke() {
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"
   assert_absent "${pi_sentinel}"
+
+  local no_wrapper_case_dir="${TMP_ROOT}/no-wrapper-preflight"
+  local no_wrapper_agent_dir="${no_wrapper_case_dir}/agent"
+  local no_wrapper_bin_dir="${no_wrapper_case_dir}/bin"
+  local no_wrapper_fakebin="${no_wrapper_case_dir}/fakebin"
+  local no_wrapper_pi_sentinel="${no_wrapper_case_dir}/pi-invoked"
+  mkdir -p "${no_wrapper_case_dir}"
+  make_legacy_support_curl "${no_wrapper_fakebin}"
+  make_failing_pi "${no_wrapper_fakebin}"
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+
+  set +e
+  PATH="${no_wrapper_fakebin}:${PATH}" LEGACY_SUPPORT_MODE="missing-wrapper-only" PI_SENTINEL="${no_wrapper_pi_sentinel}" TLH_RAW_BASE="https://example.invalid/no-wrapper-ref" bash -s -- --agent-dir "${no_wrapper_agent_dir}" --bin-dir "${no_wrapper_bin_dir}" --without-gnosis --no-wrapper < install.sh >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "missing wrapper --no-wrapper preflight smoke unexpectedly succeeded"
+  fi
+  assert_not_contains "${combined_file}" "required installer support files not found for ref"
+  assert_contains "${combined_file}" "fake pi was invoked"
+  if [[ ! -f "${no_wrapper_pi_sentinel}" ]]; then
+    cat "${combined_file}" >&2
+    fail "expected fake pi to be invoked after --no-wrapper preflight passed"
+  fi
 }
 
 run_wrapper_install_state_normal_pi_guard_smoke() {
