@@ -81,8 +81,7 @@ Test the local checkout without pushing it:
 
 ```sh
 tmp="$(mktemp -d)"
-bash install.sh \
-  --package-source "file:$PWD" \
+TLH_PACKAGE_SOURCE="file:$PWD" bash install.sh \
   --track custom \
   --agent-dir "$tmp/agent" \
   --bin-dir "$tmp/bin"

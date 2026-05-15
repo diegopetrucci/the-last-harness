@@ -122,12 +122,60 @@ run_static_checks() {
   log "Running installer static checks..."
   bash -n install.sh
   node --check scripts/merge-settings.mjs
+  node --check scripts/merge-keybindings.mjs
   node --check scripts/tlh-defaults.mjs
   node --check scripts/tlh-gnosis.mjs
   node --check scripts/tlh-update.mjs
   node --check scripts/tlh-wrapper.mjs
   node --check scripts/tlh-install-state.mjs
   node --check scripts/release-notes.mjs
+  check_extension_load_syntax
+}
+
+check_extension_load_syntax() {
+  local jiti_path
+  jiti_path="$(node <<'NODE_RESOLVE_JITI'
+const candidates = [
+  () => require.resolve('jiti', { paths: [process.cwd()] }),
+  () => '/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/jiti',
+];
+for (const candidate of candidates) {
+  try {
+    const resolved = candidate();
+    require.resolve(resolved);
+    console.log(resolved);
+    process.exit(0);
+  } catch {}
+}
+process.exit(1);
+NODE_RESOLVE_JITI
+)" || {
+    log "Skipping extension load syntax check; install dev dependency 'jiti' or Pi's bundled jiti to enable it."
+    return 0
+  }
+
+  local mock_root="${TMP_ROOT}/extension-load-mocks"
+  mkdir -p \
+    "${mock_root}/node_modules/@earendil-works/pi-tui" \
+    "${mock_root}/node_modules/@earendil-works/pi-coding-agent"
+  cat >"${mock_root}/node_modules/@earendil-works/pi-tui/index.js" <<'EOF_MOCK_PI_TUI'
+exports.truncateToWidth = (value) => String(value ?? '');
+exports.visibleWidth = (value) => String(value ?? '').length;
+EOF_MOCK_PI_TUI
+  cat >"${mock_root}/node_modules/@earendil-works/pi-coding-agent/index.js" <<'EOF_MOCK_PI_AGENT'
+exports.DefaultPackageManager = class {};
+exports.SettingsManager = class {};
+exports.getAgentDir = () => process.cwd();
+exports.keyText = String;
+exports.loadProjectContextFiles = () => [];
+EOF_MOCK_PI_AGENT
+
+  NODE_PATH="${mock_root}/node_modules" node - "${jiti_path}" <<'NODE_EXTENSION_CHECK'
+require('node:module').Module._initPaths();
+const { createJiti } = require(process.argv[2]);
+const jiti = createJiti(`${process.cwd()}/`);
+jiti('./extensions/the-last-harness.ts');
+NODE_EXTENSION_CHECK
 }
 
 run_local_dry_run_smoke() {

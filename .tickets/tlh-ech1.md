@@ -19,4 +19,3 @@ Current TLH supports architect and disabled only, so cycling is architect <-> di
 ## Acceptance Criteria
 
 The TLH extension registers Shift+Tab to toggle the effective primary agent between architect and disabled; the shortcut updates the same session override state as /architect toggle and reapplies primary tools; notifications clearly state the new primary agent; /agent and the footer reflect the changed state; README documents Shift+Tab and that /effort remains the effort control.
-

@@ -114,6 +114,10 @@ node "$TLH_PACKAGE_DIR/scripts/merge-settings.mjs" \
   --package-source "$TLH_PACKAGE_SOURCE" \
   --default-extensions "$TLH_PACKAGE_DIR/config/default-extensions.json"
 
+node "$TLH_PACKAGE_DIR/scripts/merge-keybindings.mjs" \
+  "$TLH_PACKAGE_DIR/config/keybindings.defaults.json" \
+  --keybindings "$TLH_AGENT_DIR/keybindings.json"
+
 TLH_DEFAULT_SOURCES="$(node "$TLH_PACKAGE_DIR/scripts/tlh-defaults.mjs" \
   --settings "$TLH_AGENT_DIR/settings.json" \
   --defaults "$TLH_PACKAGE_DIR/config/default-extensions.json" \

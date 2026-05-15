@@ -19,4 +19,3 @@ Use a packaged keybindings defaults JSON with app.thinking.cycle set to [] and a
 ## Acceptance Criteria
 
 config/keybindings.defaults.json exists with app.thinking.cycle disabled; merge helper preserves existing keys and only writes isolated-profile keybindings.json; helper supports dry-run/quiet and creates a backup before changing an existing file; node --check passes for the helper.
-

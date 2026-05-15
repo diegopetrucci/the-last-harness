@@ -24,7 +24,9 @@ git diff -- package.json
 Update `CHANGELOG.md` with a `## [$version] - YYYY-MM-DD` section, then run:
 
 ```sh
+npm install --no-package-lock --legacy-peer-deps
 bash scripts/check-installer-smoke.sh
+npm test
 node scripts/release-notes.mjs --tag "v$version" --output /tmp/tlh-release-notes.md
 npm pack --dry-run
 ```

@@ -917,6 +917,7 @@ async function maybeSendTlhLaunchTelemetry(snapshot: TlhTelemetrySnapshot): Prom
 	} catch {
 		// Launch telemetry is best-effort; never block or notify during startup.
 	}
+}
 
 function getTlhPrimaryAgentDefaultEnabled(cwd: string): boolean {
 	return getTlhPrimaryAgentConfig(cwd)?.enabled !== false;
@@ -1118,18 +1119,6 @@ function formatGnosisToggleDescription(state: TlhGnosisState = currentGnosisStat
 function backupPathFor(settingsPath: string): string {
 	const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 	return `${settingsPath}.backup-tlh-gnosis-${stamp}`;
-}
-
-function realpathForCompare(path: string): string {
-	const resolved = resolve(path);
-	if (existsSync(resolved)) {
-		return realpathSync(resolved);
-	}
-	const parent = dirname(resolved);
-	if (parent === resolved) {
-		return resolved;
-	}
-	return join(realpathForCompare(parent), basename(resolved));
 }
 
 function assertNotNormalPiSettings(settingsPath: string): void {

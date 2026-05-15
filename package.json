@@ -53,5 +53,8 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "jiti": "^2.7.0"
   }
 }
