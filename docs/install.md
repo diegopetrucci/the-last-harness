@@ -216,10 +216,10 @@ PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" pi
 ## Installer options
 
 ```text
---dry-run        Print actions and settings changes without writing
+--dry-run        Print actions and settings/keybinding changes without writing
 --force          Allow scalar isolated defaults and installer wrapper overwrite
 --no-pi-install  Fail instead of installing Pi when the `pi` command is missing
---no-settings     Install the package but skip isolated settings merge
+--no-settings     Install the package but skip isolated settings/keybinding merge
 --no-wrapper      Skip creating the tlh wrapper command
 --with-gnosis     Force install/re-enable Gnosis (`gn`) integration
 --without-gnosis  Opt out of Gnosis integration and keep it disabled

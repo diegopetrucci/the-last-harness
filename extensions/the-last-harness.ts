@@ -47,6 +47,7 @@ const DUMB_ZONE_LABEL = "DUMB ZONE";
 const AUTOCOMPLETE_SOURCE_TAG_PATTERN = /(^|—\s*)\[(?:u|p|t)(?::(?:npm|git):[^\]]+)?\]\s*/g;
 const execFileAsync = promisify(execFile);
 const ACTIVE_PRIMARY_AGENT = "architect";
+const PRIMARY_AGENT_CYCLE_SHORTCUT = "shift+tab";
 const ALLOWED_SUBAGENTS = ["developer", "code-reviewer", "repo-scout", "diff-summarizer"];
 const SAFE_SUBAGENT_ACTIONS = new Set(["list", "get", "status", "interrupt", "doctor"]);
 const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
@@ -2114,6 +2115,24 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		await applyPrimaryDefaults(ctx);
 	}
 
+	function cleanNonArchitectSessionHint(enabled: boolean): string {
+		return enabled
+			? ""
+			: " Existing conversation history may still contain architect guidance; start a new session for a completely clean non-architect context.";
+	}
+
+	async function cycleSessionPrimaryAgent(ctx: ExtensionContext): Promise<void> {
+		syncPrimaryAgentState(ctx);
+		const nextOverride = !isArchitectEnabled();
+		const nextPrimaryAgent = primaryAgentLabel(nextOverride);
+		setSessionPrimaryAgentOverride(nextOverride);
+		await applyArchitectModeChange(ctx);
+		ctx.ui.notify(
+			`Shift+Tab switched TLH primary agent to ${nextPrimaryAgent} for this session.${cleanNonArchitectSessionHint(nextOverride)}`,
+			"info",
+		);
+	}
+
 	function architectCommandCompletions(prefix: string) {
 		const options = [
 			{ value: "status", description: "Show architect mode status" },
@@ -2154,6 +2173,13 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		},
 	});
 
+	pi.registerShortcut(PRIMARY_AGENT_CYCLE_SHORTCUT, {
+		description: "Cycle TLH primary agent (architect/disabled)",
+		handler: async (ctx) => {
+			await cycleSessionPrimaryAgent(ctx);
+		},
+	});
+
 	pi.registerCommand("architect", {
 		description: "Show or change TLH architect primary-agent mode",
 		getArgumentCompletions: architectCommandCompletions,
@@ -2188,10 +2214,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 					ctx.ui.notify(`Cleared architect session override. Primary agent: ${currentPrimaryAgentLabel()}.`, "info");
 					return;
 				}
-				const cleanSessionHint = nextOverride
-					? ""
-					: " Existing conversation history may still contain architect guidance; start a new session for a completely clean non-architect context.";
-				ctx.ui.notify(`Architect ${nextOverride ? "enabled" : "disabled"} for this session.${cleanSessionHint}`, "info");
+				ctx.ui.notify(`Architect ${nextOverride ? "enabled" : "disabled"} for this session.${cleanNonArchitectSessionHint(nextOverride)}`, "info");
 				return;
 			}
 

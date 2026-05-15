@@ -31,10 +31,10 @@ Install upstream Pi and The Last Harness as a separate `tlh` command. Normal Pi
 config under ~/.pi/agent is not modified.
 
 Options:
-  --dry-run        Print actions and settings changes without writing
+  --dry-run        Print actions and settings/keybinding changes without writing
   --force          Allow scalar isolated defaults and installer wrapper overwrite
   --no-pi-install  Fail instead of installing Pi when the `pi` command is missing
-  --no-settings     Install the package but skip isolated settings merge
+  --no-settings     Install the package but skip isolated settings/keybinding merge
   --no-wrapper      Skip creating the tlh wrapper command
   --with-gnosis     Force install/re-enable Gnosis (`gn`) integration
   --without-gnosis  Opt out of Gnosis integration and keep it disabled
@@ -232,9 +232,12 @@ done
 AGENT_DIR="$(expand_path "${AGENT_DIR_INPUT}")"
 BIN_DIR="$(expand_path "${BIN_DIR_INPUT}")"
 SETTINGS_PATH="${AGENT_DIR}/settings.json"
+KEYBINDINGS_PATH="${AGENT_DIR}/keybindings.json"
 WRAPPER_MARKER="Managed by The Last Harness installer"
 MERGE_SCRIPT=""
 DEFAULTS_FILE=""
+KEYBINDINGS_MERGE_SCRIPT=""
+KEYBINDINGS_DEFAULTS_FILE=""
 DEFAULT_EXTENSIONS_FILE=""
 TLH_DEFAULTS_SCRIPT=""
 TLH_GNOSIS_SCRIPT=""
@@ -592,6 +595,12 @@ TLH_INSTALL_STATE_SCRIPT|optional|scripts/tlh-install-state.mjs|tlh-install-stat
 DEFAULTS_FILE|required|config/settings.defaults.json|settings.defaults.json|
 DEFAULT_EXTENSIONS_FILE|required|config/default-extensions.json|default-extensions.json|default-extensions.json
 EOF_SUPPORT_FILES
+  if [[ "${NO_SETTINGS}" != "true" ]]; then
+    cat <<'EOF_KEYBINDING_SUPPORT_FILES'
+KEYBINDINGS_MERGE_SCRIPT|required|scripts/merge-keybindings.mjs|merge-keybindings.mjs|
+KEYBINDINGS_DEFAULTS_FILE|required|config/keybindings.defaults.json|keybindings.defaults.json|
+EOF_KEYBINDING_SUPPORT_FILES
+  fi
 }
 
 support_file_dry_run_message() {
@@ -750,7 +759,6 @@ prepare_merge_files() {
   fi
 
   prepare_support_files_from_remote
-
 }
 
 prepare_merge_files_for_dry_run() {
@@ -767,8 +775,14 @@ prepare_merge_files_for_dry_run() {
   SUPPORT_FILES_DRY_RUN_SKIPPED=true
 
   log "Would fetch installer support files from ${RAW_BASE}"
-  log "Would merge settings defaults into: ${SETTINGS_PATH}"
-  log "Would install bundled default extension packages after settings merge."
+  if [[ "${NO_SETTINGS}" == "true" ]]; then
+    log "Would skip settings and keybinding defaults merge (--no-settings)."
+    log "Would skip bundled default extension packages (--no-settings)."
+  else
+    log "Would merge settings defaults into: ${SETTINGS_PATH}"
+    log "Would merge keybinding defaults into: ${KEYBINDINGS_PATH}"
+    log "Would install bundled default extension packages after settings merge."
+  fi
   local var_name requirement relative_path tmp_name install_name dry_run_message
   while IFS='|' read -r var_name requirement relative_path tmp_name install_name; do
     [[ -n "${var_name}" ]] || continue
@@ -949,7 +963,7 @@ install_harness_package() {
 
 merge_settings() {
   if [[ "${NO_SETTINGS}" == "true" ]]; then
-    log "Skipping settings merge (--no-settings)."
+    log "Skipping settings/keybinding merge (--no-settings)."
     return 0
   fi
 
@@ -983,6 +997,29 @@ merge_settings() {
   log "Applying isolated settings..."
   verbose_log "Settings path: ${SETTINGS_PATH}"
   node "${args[@]}"
+
+  if [[ -z "${KEYBINDINGS_MERGE_SCRIPT}" || -z "${KEYBINDINGS_DEFAULTS_FILE}" ]]; then
+    return 0
+  fi
+
+  local keybinding_args=(
+    "${KEYBINDINGS_MERGE_SCRIPT}"
+    "${KEYBINDINGS_DEFAULTS_FILE}"
+    "--keybindings"
+    "${KEYBINDINGS_PATH}"
+  )
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    keybinding_args+=("--dry-run")
+  fi
+  if [[ "${QUIET}" == "true" ]]; then
+    keybinding_args+=("--quiet")
+  elif [[ "${VERBOSE}" != "true" && "${DRY_RUN}" != "true" ]]; then
+    keybinding_args+=("--quiet")
+  fi
+
+  log "Applying isolated keybindings..."
+  verbose_log "Keybindings path: ${KEYBINDINGS_PATH}"
+  node "${keybinding_args[@]}"
 }
 
 package_source_install_dir() {

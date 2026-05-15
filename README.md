@@ -31,9 +31,14 @@ The following slash commands are available in interactive `tlh` sessions:
 - `/fast on|off|auto|toggle|status` — manage OpenAI Fast mode for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions.
 - `/context [--no-open] [--keep] [--redact] [--full|--current]` — generate a local HTML breakdown of where the session context is going.
 
+### Interactive shortcuts
+
+- `Shift+Tab` is TLH's default primary-agent cycling binding: in a default isolated profile, it cycles the current-session primary agent between `architect` and `disabled`. It uses the same session override as `/architect toggle`; `/agent` and the footer show the effective state. Existing isolated keybindings that keep `shift+tab` on the reserved built-in thinking action (`app.thinking.cycle` or legacy `cycleThinkingLevel`) may keep `Shift+Tab` cycling effort instead; `/effort` remains available, and you can edit `keybindings.json` if needed.
+- `/effort` remains the reasoning-effort control. Use `/effort [off|minimal|low|medium|high|xhigh]` to change model thinking level.
+
 ### Included Pi resources
 
-- `extensions/the-last-harness.ts` adds the custom `tlh` startup header and footer, lightweight default guidance, conditional Gnosis prompt instructions, `/tlh`, `/gnosis`, `/agent`, and `/architect` status/control commands, `/effort` reasoning-effort picker commands, the 200k-token `DUMB ZONE` footer warning, and the default `architect` primary-agent persona.
+- `extensions/the-last-harness.ts` adds the custom `tlh` startup header and footer, lightweight default guidance, conditional Gnosis prompt instructions, `/tlh`, `/gnosis`, `/agent`, and `/architect` status/control commands, the default `Shift+Tab` primary-agent shortcut, `/effort` reasoning-effort picker commands, the 200k-token `DUMB ZONE` footer warning, and the default `architect` primary-agent persona.
 - `agents/primary/architect.md` defines the main-session architect prompt.
 - `agents/subagents/*.md` defines TLH minor agents exposed through the bundled `pi-subagents` fork.
 - `skills/harness-setup/SKILL.md` documents safe setup/update/uninstall workflows.
