@@ -115,10 +115,83 @@ TLH_CRITICAL_SOURCES="$(node "$TLH_PACKAGE_DIR/scripts/tlh-defaults.mjs" \
   --defaults "$TLH_PACKAGE_DIR/config/default-extensions.json" \
   critical-sources)"
 
+refresh_critical_git_source() {
+  source="$1"
+  spec="$(TLH_CRITICAL_SOURCE="$source" TLH_AGENT_DIR="$TLH_AGENT_DIR" node <<'NODE'
+const path = require('node:path');
+
+function splitRef(url) {
+  const hashSeparator = url.lastIndexOf('#');
+  if (hashSeparator >= 0) {
+    const repo = url.slice(0, hashSeparator);
+    const ref = url.slice(hashSeparator + 1);
+    if (repo && ref) return { repo, ref };
+  }
+  const slashIndex = url.indexOf('/');
+  if (slashIndex < 0) return { repo: url };
+  const host = url.slice(0, slashIndex);
+  const pathWithMaybeRef = url.slice(slashIndex + 1);
+  const refSeparator = pathWithMaybeRef.indexOf('@');
+  if (refSeparator < 0) return { repo: url };
+  const repoPath = pathWithMaybeRef.slice(0, refSeparator);
+  const ref = pathWithMaybeRef.slice(refSeparator + 1);
+  if (!repoPath || !ref) return { repo: url };
+  return { repo: `${host}/${repoPath}`, ref };
+}
+
+function parseGitSource(source) {
+  const trimmed = source.trim();
+  if (!trimmed.startsWith('git:')) return undefined;
+  const { repo: repoWithoutRef, ref } = splitRef(trimmed.slice(4).trim());
+  const slashIndex = repoWithoutRef.indexOf('/');
+  if (slashIndex < 0) return undefined;
+  const host = repoWithoutRef.slice(0, slashIndex);
+  const repoPath = repoWithoutRef.slice(slashIndex + 1).replace(/\.git$/, '');
+  if (!host || !repoPath || repoPath.split('/').length < 2) return undefined;
+  return { repo: host.includes('.') ? `https://${repoWithoutRef}` : repoWithoutRef, host, path: repoPath, ref };
+}
+
+const parsed = parseGitSource(process.env.TLH_CRITICAL_SOURCE || '');
+if (!parsed?.ref) process.exit(0);
+console.log(`${path.join(process.env.TLH_AGENT_DIR || '', 'git', parsed.host, parsed.path)}\t${parsed.repo}\t${parsed.ref}`);
+NODE
+)"
+  [ -n "$spec" ] || return 0
+  target_dir="$(printf '%s' "$spec" | cut -f1)"
+  repo="$(printf '%s' "$spec" | cut -f2)"
+  ref="$(printf '%s' "$spec" | cut -f3)"
+  agent_real="$(cd "$TLH_AGENT_DIR" && pwd -P)" || return 1
+  target_real="$(cd "$target_dir" && pwd -P)" || return 1
+  case "$target_real/" in "$agent_real/"*) ;; *) echo "Refusing critical checkout outside TLH profile: $target_dir" >&2; return 1 ;; esac
+  if [ -L "$target_dir" ] || [ -L "$target_dir/.git" ]; then
+    echo "Refusing symlinked critical checkout path: $target_dir" >&2
+    return 1
+  fi
+  git -C "$target_dir" remote set-url origin "$repo" 2>/dev/null || git -C "$target_dir" remote add origin "$repo"
+  git -C "$target_dir" fetch --prune --tags origin
+  target_ref="$ref"
+  if git -C "$target_dir" rev-parse --verify --quiet "refs/tags/$ref^{commit}" >/dev/null; then
+    target_ref="refs/tags/$ref^{commit}"
+  elif git -C "$target_dir" rev-parse --verify --quiet "refs/remotes/origin/$ref^{commit}" >/dev/null; then
+    target_ref="refs/remotes/origin/$ref"
+  fi
+  git -C "$target_dir" checkout --detach "$target_ref"
+  git -C "$target_dir" reset --hard "$target_ref"
+  git -C "$target_dir" clean -fdx
+  [ ! -f "$target_dir/package.json" ] || npm --prefix "$target_dir" install --omit=dev --legacy-peer-deps --package-lock=false
+}
+
 printf '%s\n' "$TLH_DEFAULT_SOURCES" | while IFS= read -r source; do
   [ -n "$source" ] || continue
   if printf '%s\n' "$TLH_CRITICAL_SOURCES" | grep -Fxq -- "$source"; then
-    PI_CODING_AGENT_DIR="$TLH_AGENT_DIR" pi install "$source"
+    PI_CODING_AGENT_DIR="$TLH_AGENT_DIR" pi install "$source" || {
+      echo "Critical default extension package install failed: $source" >&2
+      exit 1
+    }
+    refresh_critical_git_source "$source" || {
+      echo "Critical default extension package checkout refresh failed: $source" >&2
+      exit 1
+    }
   else
     PI_CODING_AGENT_DIR="$TLH_AGENT_DIR" pi update --extension "$source" || \
       echo "Warning: default extension package update failed; continuing: $source" >&2
