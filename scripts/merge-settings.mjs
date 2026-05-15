@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, normalize, parse, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
@@ -465,7 +465,7 @@ function mergeObject(target, defaults, changes, options) {
 		}
 
 		if (Array.isArray(value) && Array.isArray(target[key])) {
-			mergeArray(target[key], value, changes, label);
+			mergeArray(target[key], value, changes, { label, path });
 			continue;
 		}
 
@@ -523,10 +523,27 @@ function mergePackages(target, packageDefaults, changes) {
 	}
 }
 
-function mergeArray(targetArray, defaultArray, changes, label) {
-	const seen = new Set(targetArray.map((item) => JSON.stringify(item)));
+function normalizeAgentDirPath(value) {
+	const normalized = normalize(value);
+	const root = parse(normalized).root;
+	let stripped = normalized;
+	while (stripped.length > root.length && stripped.endsWith(sep)) {
+		stripped = stripped.slice(0, -sep.length);
+	}
+	return stripped;
+}
+
+function arrayMergeKey(item, path) {
+	if (path.join(".") === "subagents.agentDirs" && typeof item === "string") {
+		return `path:${normalizeAgentDirPath(item)}`;
+	}
+	return `json:${JSON.stringify(item)}`;
+}
+
+function mergeArray(targetArray, defaultArray, changes, { label, path }) {
+	const seen = new Set(targetArray.map((item) => arrayMergeKey(item, path)));
 	for (const item of defaultArray) {
-		const key = JSON.stringify(item);
+		const key = arrayMergeKey(item, path);
 		if (seen.has(key)) continue;
 		targetArray.push(clone(item));
 		seen.add(key);

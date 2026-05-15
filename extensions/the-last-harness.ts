@@ -24,6 +24,11 @@ import {
 	type ResolvedResource,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
+import {
+	ALLOWED_SUBAGENTS,
+	registerTlhStartupMode,
+	validateSubagentToolInput,
+} from "./the-last-harness-subagent-safety.mjs";
 
 const TLH_NAME = "tlh";
 const TLH_PACKAGE_NAME = "The Last Harness";
@@ -48,9 +53,6 @@ const AUTOCOMPLETE_SOURCE_TAG_PATTERN = /(^|—\s*)\[(?:u|p|t)(?::(?:npm|git):[^
 const execFileAsync = promisify(execFile);
 const ACTIVE_PRIMARY_AGENT = "architect";
 const PRIMARY_AGENT_CYCLE_SHORTCUT = "shift+tab";
-const ALLOWED_SUBAGENTS = ["developer", "code-reviewer", "repo-scout", "diff-summarizer"];
-const SAFE_SUBAGENT_ACTIONS = new Set(["list", "get", "status", "interrupt", "doctor"]);
-const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 const PRIMARY_AGENT_SESSION_STATE_ENTRY = "tlh-primary-agent-state";
 
 const HARNESS_PROMPT = `
@@ -405,12 +407,20 @@ function canReplaceTlhStartupStateFile(statePath: string): boolean {
 }
 
 function writeTlhStartupStateAtomically(statePath: string, content: string): void {
+	const nofollowFlag = constants.O_NOFOLLOW;
+	// Startup state is best-effort. If this platform cannot protect the temp
+	// file's final component from symlinks, fail closed instead of weakening the
+	// atomic replacement by silently dropping O_NOFOLLOW.
+	if (typeof nofollowFlag !== "number" || nofollowFlag === 0) {
+		return;
+	}
+
 	const stateDir = dirname(statePath);
 	const stateBase = basename(statePath);
 	const tempPath = join(stateDir, `.${stateBase}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`);
 	let fd: number | undefined;
 	try {
-		fd = openSync(tempPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0), 0o600);
+		fd = openSync(tempPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | nofollowFlag, 0o600);
 		writeFileSync(fd, content, { encoding: "utf8" });
 		closeSync(fd);
 		fd = undefined;
@@ -1489,114 +1499,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function stringField(value: unknown): string | undefined {
-	return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function collectSubagentTargets(input: unknown): string[] {
-	if (!isRecord(input)) {
-		return [];
-	}
-
-	const targets: string[] = [];
-	const topLevelAgent = stringField(input.agent);
-	if (topLevelAgent) {
-		targets.push(topLevelAgent);
-	}
-
-	if (Array.isArray(input.tasks)) {
-		for (const task of input.tasks) {
-			if (!isRecord(task)) continue;
-			const agent = stringField(task.agent);
-			if (agent) targets.push(agent);
-		}
-	}
-
-	if (Array.isArray(input.chain)) {
-		for (const step of input.chain) {
-			if (!isRecord(step)) continue;
-			const agent = stringField(step.agent);
-			if (agent) targets.push(agent);
-			if (!Array.isArray(step.parallel)) continue;
-			for (const task of step.parallel) {
-				if (!isRecord(task)) continue;
-				const parallelAgent = stringField(task.agent);
-				if (parallelAgent) targets.push(parallelAgent);
-			}
-		}
-	}
-
-	return [...new Set(targets)];
-}
-
-function forceUserAgentScope(input: Record<string, unknown>, mode: "execution" | "list" | "get"): string | undefined {
-	const rawScope = input.agentScope;
-	if (rawScope !== undefined) {
-		if (typeof rawScope !== "string") {
-			return `TLH architect subagent ${mode} calls must use agentScope: "user" or omit agentScope.`;
-		}
-		const agentScope = rawScope.trim();
-		if (agentScope && agentScope !== "user") {
-			return `TLH architect subagent ${mode} calls may not use agentScope: "${agentScope}". TLH minor agents must run from the isolated user scope.`;
-		}
-	}
-
-	input.agentScope = "user";
-	return undefined;
-}
-
-function forceFreshSubagentContext(input: Record<string, unknown>): string | undefined {
-	const rawContext = input.context;
-	if (rawContext !== undefined) {
-		if (typeof rawContext !== "string") {
-			return `TLH architect subagent execution must use context: "fresh" or omit context.`;
-		}
-		const context = rawContext.trim();
-		if (context && context !== "fresh") {
-			return `TLH architect subagent execution may not use context: "${context}". TLH child sessions must start fresh so parent architect/Gnosis context is not leaked.`;
-		}
-	}
-
-	input.context = "fresh";
-	return undefined;
-}
-
-function validateSubagentToolInput(input: unknown): string | undefined {
-	if (!isRecord(input)) {
-		return "TLH architect subagent calls must use an object input.";
-	}
-
-	const action = stringField(input.action);
-	if (action) {
-		if (!SAFE_SUBAGENT_ACTIONS.has(action)) {
-			return `TLH architect may not use subagent management action '${action}'. Allowed actions: ${Array.from(SAFE_SUBAGENT_ACTIONS).join(", ")}.`;
-		}
-		return action === "list" || action === "get" ? forceUserAgentScope(input, action) : undefined;
-	}
-
-	const scopeReason = forceUserAgentScope(input, "execution");
-	if (scopeReason) {
-		return scopeReason;
-	}
-
-	const contextReason = forceFreshSubagentContext(input);
-	if (contextReason) {
-		return contextReason;
-	}
-
-	const targets = collectSubagentTargets(input);
-	if (targets.length === 0) {
-		return `TLH architect subagent execution must target one of: ${ALLOWED_SUBAGENTS.join(", ")}.`;
-	}
-
-	const disallowed = targets.filter((agent) => !ALLOWED_SUBAGENTS.includes(agent));
-	if (disallowed.length > 0) {
-		return `TLH architect may delegate only to: ${ALLOWED_SUBAGENTS.join(", ")}. Disallowed target(s): ${disallowed.join(", ")}.`;
-	}
-
-	return undefined;
-}
-
 type BranchEntryLike = {
 	type: string;
 	customType?: string;
@@ -1957,10 +1859,7 @@ function createTlhHeader(theme: Theme, resources: StartupResources, headerUpdate
 }
 
 export default function theLastHarness(pi: ExtensionAPI) {
-	if (process.env[SUBAGENT_CHILD_ENV] === "1") {
-		pi.on("before_agent_start", async (event) => ({
-			systemPrompt: [event.systemPrompt, buildChildSubagentSystemPrompt()].filter(Boolean).join("\n\n"),
-		}));
+	if (registerTlhStartupMode(pi, { env: process.env, buildChildSubagentSystemPrompt }) === "child") {
 		return;
 	}
 
