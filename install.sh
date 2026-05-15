@@ -21,7 +21,7 @@ GNOSIS_VERSION="${TLH_GNOSIS_VERSION:-latest}"
 AGENT_DIR_INPUT="${TLH_AGENT_DIR:-$HOME/.the-last-harness/agent}"
 BIN_DIR_INPUT="${TLH_BIN_DIR:-$HOME/.local/bin}"
 WRAPPER_NAME="${TLH_WRAPPER_NAME:-tlh}"
-TLH_SUBAGENT_PROMPTS=(developer.md code-reviewer.md repo-scout.md diff-summarizer.md)
+TLH_SUBAGENT_PROMPTS=(developer.md code-reviewer.md repo-scout.md diff-summarizer.md bug-hunter.md bug-catcher.md librarian.md oracle.md)
 
 usage() {
   cat <<'USAGE'

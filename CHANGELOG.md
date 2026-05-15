@@ -8,6 +8,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Bundled TLH-profile-aware forks of `pi-subagents` and `pi-intercom` as default extensions, including git-package intercom bridge detection and scoped `get` detail inspection for the subagent fork.
 - Added the default `architect` primary-agent prompt and TLH minor subagent prompts for `developer`, `code-reviewer`, `repo-scout`, and `diff-summarizer`.
+- Added bundled bug investigation subagents `bug-hunter` and `bug-catcher`, with parent-orchestrated `bug-hunter` then `bug-catcher` second-opinion review.
+- Added bundled read-only `librarian` and `oracle` subagents for parent-orchestrated external GitHub research and high-reasoning second opinions.
 - Added `/architect` session and persistent controls to enable, disable, toggle, or reset the TLH architect primary-agent persona.
 - Copy TLH minor subagent prompts into the isolated profile during install and expose them through `subagents.agentDirs`.
 

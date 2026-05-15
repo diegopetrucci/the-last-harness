@@ -40,7 +40,7 @@ The following slash commands are available in interactive `tlh` sessions:
 
 - `extensions/the-last-harness.ts` adds the custom `tlh` startup header and footer, lightweight default guidance, conditional Gnosis prompt instructions, `/tlh`, `/gnosis`, `/agent`, and `/architect` status/control commands, the default `Shift+Tab` primary-agent shortcut, `/effort` reasoning-effort picker commands, the 200k-token `DUMB ZONE` footer warning, and the default `architect` primary-agent persona.
 - `agents/primary/architect.md` defines the main-session architect prompt.
-- `agents/subagents/*.md` defines TLH minor agents exposed through the bundled `pi-subagents` fork.
+- `agents/subagents/*.md` defines TLH minor-agent prompts; the installer currently exposes `developer`, `code-reviewer`, `repo-scout`, `diff-summarizer`, `bug-hunter`, `bug-catcher`, `librarian`, and `oracle` through the bundled `pi-subagents` fork.
 - `skills/harness-setup/SKILL.md` documents safe setup/update/uninstall workflows.
 - `prompts/harness-plan.md` provides `/harness-plan` for reviewable implementation planning.
 - `themes/the-last-harness.json` provides the default isolated theme.

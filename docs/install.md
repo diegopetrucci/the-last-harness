@@ -86,7 +86,7 @@ for dir in "$TLH_SUPPORT_DIR" "$TLH_SUPPORT_DIR/agents" "$TLH_SUBAGENTS_DIR"; do
   fi
   mkdir -p "$dir" || exit 1
 done
-for prompt in developer code-reviewer repo-scout diff-summarizer; do
+for prompt in developer code-reviewer repo-scout diff-summarizer bug-hunter bug-catcher librarian oracle; do
   src="$TLH_PACKAGE_DIR/agents/subagents/$prompt.md"
   dst="$TLH_SUBAGENTS_DIR/$prompt.md"
   if [ ! -f "$src" ]; then

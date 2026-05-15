@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+	ALLOWED_SUBAGENTS,
 	SUBAGENT_CHILD_ENV,
 	registerTlhStartupMode,
 	validateSubagentToolInput,
@@ -28,6 +29,19 @@ function createPiHarness() {
 	};
 }
 
+test("ALLOWED_SUBAGENTS exposes bundled minor agents", () => {
+	assert.deepEqual(ALLOWED_SUBAGENTS, [
+		"developer",
+		"code-reviewer",
+		"repo-scout",
+		"diff-summarizer",
+		"bug-hunter",
+		"bug-catcher",
+		"librarian",
+		"oracle",
+	]);
+});
+
 test("validateSubagentToolInput allows approved execution and forces fresh user context", () => {
 	const single = { agent: "developer", prompt: "implement the ticket" };
 	assertAllowed(single);
@@ -37,10 +51,14 @@ test("validateSubagentToolInput allows approved execution and forces fresh user 
 	const batched = {
 		tasks: [
 			{ agent: "repo-scout", prompt: "map the repo" },
+			{ agent: "bug-hunter", prompt: "investigate the bug" },
+			{ agent: "librarian", prompt: "research upstream docs" },
 			{ agent: "code-reviewer", prompt: "review the diff", context: "fresh" },
 		],
 		chain: [
 			{ agent: "diff-summarizer", prompt: "summarize" },
+			{ agent: "bug-catcher", prompt: "second-opinion bug investigation", context: "fresh" },
+			{ agent: "oracle", prompt: "provide a second opinion", context: "fresh" },
 			{
 				parallel: [
 					{ agent: "developer", prompt: "fix one issue" },
@@ -72,6 +90,10 @@ test("validateSubagentToolInput blocks unsafe actions and non-user scopes", () =
 	assert.match(validateSubagentToolInput({ action: "resume" }), /may not use subagent management action 'resume'/);
 	assert.match(validateSubagentToolInput({ action: "delete" }), /may not use subagent management action 'delete'/);
 	assert.match(validateSubagentToolInput({ agent: "developer", agentScope: "project" }), /may not use agentScope: "project"/);
+	assert.match(validateSubagentToolInput({ agent: "bug-hunter", agentScope: "project" }), /may not use agentScope: "project"/);
+	assert.match(validateSubagentToolInput({ agent: "librarian", agentScope: "project" }), /may not use agentScope: "project"/);
+	assert.match(validateSubagentToolInput({ agent: "bug-catcher", context: "resume" }), /may not use context: "resume"/);
+	assert.match(validateSubagentToolInput({ agent: "oracle", context: "resume" }), /may not use context: "resume"/);
 	assert.match(validateSubagentToolInput({ action: "list", agentScope: "system" }), /may not use agentScope: "system"/);
 });
 
