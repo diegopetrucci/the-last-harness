@@ -69,7 +69,7 @@ The installer enables these standalone external Pi packages by default in the is
 - [`git:github.com/diegopetrucci/pi-subagents@tlh-v0.24.2-5`](https://github.com/diegopetrucci/pi-subagents) — delegates work to isolated TLH-profile subagents.
 - [`git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-1`](https://github.com/diegopetrucci/pi-intercom) — allows child subagents to escalate questions to the supervising session.
 
-Manage persistent opt-outs after install:
+Manage persistent opt-outs for non-critical defaults after install:
 
 ```sh
 tlh defaults list
@@ -77,7 +77,7 @@ tlh defaults disable notify
 tlh defaults enable notify
 ```
 
-Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `tlh update`, `pi update --extensions`, and installer reruns. Installer settings merges preserve existing same-identity package sources by default; use installer `--force` only when you want bundled default-extension source migrations to rewrite existing entries. The isolation-critical subagents/intercom defaults are the exception: unless disabled, old `pi-subagents`/`pi-intercom` replacements are migrated to the bundled TLH forks so architect delegation uses the isolated minor-agent prompts. Installer runs fail if these critical bundled packages cannot be installed or refreshed, instead of leaving architect mode active without delegation/escalation tools.
+Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `tlh update`, `pi update --extensions`, and installer reruns. Installer settings merges preserve existing same-identity package sources by default; use installer `--force` only when you want bundled default-extension source migrations to rewrite existing entries. The isolation-critical subagents/intercom defaults are protected: `tlh defaults disable` rejects `subagents`, `intercom`, and their legacy aliases; stale manual entries in `tlh.disabledDefaultExtensions` are ignored during source resolution and cleaned during settings merges. Old `pi-subagents`/`pi-intercom` replacements are migrated to the bundled TLH forks so architect delegation uses the isolated minor-agent prompts. Installer runs fail if these critical bundled packages cannot be installed or refreshed; fix the package install/checkout and rerun the installer rather than trying to disable them.
 
 ### Gnosis integration
 

@@ -1650,10 +1650,10 @@ install_default_extensions() {
       install_source="$(git_source_install_source "${source}")" || return $?
       assert_git_source_target_safe "${source}" "critical default extension package checkout"
       if ! run_isolated_pi pi install "${install_source}"; then
-        die "critical default extension package install failed: ${source}. Fix the package install and rerun the installer, or disable the matching bundled default before rerunning."
+        die "critical default extension package install failed: ${source}. Fix the package install and rerun the installer; this isolation-critical default cannot be disabled."
       fi
       if ! ensure_critical_git_source_checkout "${source}"; then
-        die "critical default extension package checkout validation failed: ${source}. Fix the package checkout and rerun the installer, or disable the matching bundled default before rerunning."
+        die "critical default extension package checkout validation failed: ${source}. Fix the package checkout and rerun the installer; this isolation-critical default cannot be disabled."
       fi
       continue
     fi

@@ -15,7 +15,7 @@ Manage The Last Harness default extension bundle in the isolated tlh profile.
 
 Commands:
   list                 Show bundled default extensions and current status
-  disable <id>         Disable a bundled default extension persistently
+  disable <id>         Disable a non-critical bundled default extension persistently
   enable <id>          Re-enable a bundled default extension persistently
   sources              Print enabled default package sources (installer internal)
   critical-sources     Print enabled critical default package sources (installer internal)
@@ -229,9 +229,23 @@ function rawDisabledIdsFromSettings(settings) {
 	return new Set(values.filter((value) => typeof value === "string" && value.trim()).map((value) => value.trim()));
 }
 
+function criticalDefaultExtensionOptOutIds(defaultExtensions) {
+	const ids = new Set();
+	for (const extension of defaultExtensions) {
+		if (extension.critical !== true) continue;
+		ids.add(extension.id);
+		for (const alias of extension.aliases) ids.add(alias);
+	}
+	return ids;
+}
+
 function disabledIdsFromSettings(settings, defaultExtensions = []) {
 	const ids = rawDisabledIdsFromSettings(settings);
+	for (const id of criticalDefaultExtensionOptOutIds(defaultExtensions)) {
+		ids.delete(id);
+	}
 	for (const extension of defaultExtensions) {
+		if (extension.critical === true) continue;
 		if ([extension.id, ...extension.aliases].some((id) => ids.has(id))) {
 			ids.add(extension.id);
 			for (const alias of extension.aliases) ids.delete(alias);
@@ -451,7 +465,7 @@ function commandList(settings, defaultExtensions) {
 		}
 	}
 	console.log("");
-	console.log("Use 'tlh defaults disable <id>' or 'tlh defaults enable <id>'.");
+	console.log("Use 'tlh defaults disable <id>' for non-critical defaults, or 'tlh defaults enable <id>'.");
 }
 
 function commandSources(settings, defaultExtensions, { criticalOnly = false } = {}) {
@@ -465,6 +479,9 @@ function commandSources(settings, defaultExtensions, { criticalOnly = false } = 
 
 function commandDisable(settings, defaultExtensions, id) {
 	const extension = assertKnownExtension(defaultExtensions, id);
+	if (extension.critical === true) {
+		throw new Error(`Critical default extension '${extension.id}' cannot be disabled.`);
+	}
 	const disabledIds = disabledIdsFromSettings(settings, defaultExtensions);
 	disabledIds.add(extension.id);
 	setDisabledIds(settings, disabledIds, defaultExtensions);

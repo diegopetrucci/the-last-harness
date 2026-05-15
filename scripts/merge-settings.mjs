@@ -245,9 +245,23 @@ function rawDisabledDefaultExtensionIds(settings) {
 	return new Set(values.filter((value) => typeof value === "string" && value.trim()).map((value) => value.trim()));
 }
 
+function criticalDefaultExtensionOptOutIds(defaultExtensions) {
+	const ids = new Set();
+	for (const extension of defaultExtensions) {
+		if (extension.critical !== true) continue;
+		ids.add(extension.id);
+		for (const alias of extension.aliases) ids.add(alias);
+	}
+	return ids;
+}
+
 function disabledDefaultExtensionIds(settings, defaultExtensions = []) {
 	const ids = rawDisabledDefaultExtensionIds(settings);
+	for (const id of criticalDefaultExtensionOptOutIds(defaultExtensions)) {
+		ids.delete(id);
+	}
 	for (const extension of defaultExtensions) {
+		if (extension.critical === true) continue;
 		if ([extension.id, ...extension.aliases].some((id) => ids.has(id))) {
 			ids.add(extension.id);
 			for (const alias of extension.aliases) ids.delete(alias);
@@ -398,6 +412,21 @@ function applyDisabledDefaultExtensions(settings, defaultExtensions, disabledIds
 
 		changes.push(`remove disabled default extension package: ${extension.id}`);
 	}
+}
+
+function removeCriticalDisabledDefaultExtensionOptOuts(settings, defaultExtensions, changes) {
+	if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
+	const values = settings.tlh.disabledDefaultExtensions;
+	if (!Array.isArray(values)) return;
+
+	const criticalIds = criticalDefaultExtensionOptOutIds(defaultExtensions);
+	if (criticalIds.size === 0) return;
+
+	const nextValues = values.filter((value) => !(typeof value === "string" && criticalIds.has(value.trim())));
+	if (nextValues.length === values.length) return;
+
+	settings.tlh.disabledDefaultExtensions = nextValues;
+	changes.push("remove invalid critical default extension opt-out");
 }
 
 function mergeSettings(existing, defaults, { force }) {
@@ -569,6 +598,7 @@ function main() {
 	applyReplacedDefaultExtensions(next, defaultExtensions, disabledIds, changes, { force: args.force });
 	applyDefaultExtensionPackageDedupes(next, defaultExtensions, disabledIds, changes, { force: args.force });
 	applyDisabledDefaultExtensions(next, defaultExtensions, disabledIds, changes);
+	removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
 
 	log(args, `Pi settings: ${settingsPath}`);
 	if (changes.length === 0) {
