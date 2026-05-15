@@ -1787,6 +1787,7 @@ function createTlhFooter(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	theme: Theme,
+	getPrimaryName: () => string,
 	footerData?: ReadonlyFooterDataProvider,
 ) {
 	return {
@@ -1877,7 +1878,8 @@ function createTlhFooter(
 			const remainder = statsLine.slice(statsLeft.length);
 			const dimRemainder = theme.fg("dim", remainder);
 			const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
-			const lines = [pwdLine, dimStatsLeft + dimRemainder];
+			const agentLine = truncateToWidth(theme.fg("dim", `agent: ${getPrimaryName()}`), width, theme.fg("dim", "..."));
+			const lines = [pwdLine, dimStatsLeft + dimRemainder, agentLine];
 
 			const editorText = ctx.ui.getEditorText();
 			if (editorText.length > 0 && !ctx.isIdle()) {
@@ -1903,12 +1905,7 @@ function createTlhFooter(
 	};
 }
 
-function createTlhHeader(
-	theme: Theme,
-	resources: StartupResources,
-	headerUpdate: TlhHeaderUpdate | undefined,
-	getPrimaryName: () => string,
-) {
+function createTlhHeader(theme: Theme, resources: StartupResources, headerUpdate: TlhHeaderUpdate | undefined) {
 	let expanded = false;
 	const color = {
 		heading: (text: string) => theme.fg("mdHeading", text),
@@ -1935,7 +1932,7 @@ function createTlhHeader(
 	};
 
 	const renderCollapsed = (width: number) => {
-		const lines = [logo, `${color.heading("Active primary agent:")} ${color.accent(getPrimaryName())}`];
+		const lines = [logo];
 		const contextLines = contextLine(resources.context, width);
 		if (contextLines.length > 0) {
 			lines.push("", ...contextLines);
@@ -2362,10 +2359,12 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		const headerUpdate = getTlhHeaderUpdate();
 
 		if (typeof ctx.ui.setFooter === "function") {
-			ctx.ui.setFooter((_tui, theme, footerData) => createTlhFooter(pi, ctx, theme, footerData));
+			ctx.ui.setFooter((_tui, theme, footerData) =>
+				createTlhFooter(pi, ctx, theme, () => currentPrimaryAgentLabel(), footerData),
+			);
 		}
 		if (typeof ctx.ui.setHeader === "function") {
-			ctx.ui.setHeader((_tui, theme) => createTlhHeader(theme, resources, headerUpdate, () => currentPrimaryAgentLabel()));
+			ctx.ui.setHeader((_tui, theme) => createTlhHeader(theme, resources, headerUpdate));
 		}
 
 		void maybeNotifyAvailableTlhUpdate(ctx).catch(() => undefined);
