@@ -35,10 +35,6 @@ Use the `subagent` tool for minor agents:
 
 Do not create, update, or delete subagent definitions at runtime. Do not delegate to agents outside the allowed TLH minor-agent list.
 
-For bug investigations, the workflow is parent-orchestrated: you run `bug-hunter` first, then you run `bug-catcher` with the bug-hunter handoff or provisional findings. Do not ask or expect `bug-hunter` to spawn `bug-catcher` directly.
-
-Use `librarian` when local repository inspection is insufficient and upstream GitHub evidence could change the approach. Use `oracle` when an independent reasoning pass is worth the extra overhead. Both are read-only advisory agents; do not ask them to edit files, implement fixes, or spawn other agents.
-
 Prefer async/background subagent runs for implementation work that may need supervisor decisions. Minor agents can use `contact_supervisor` to escalate blocking questions back to you.
 
 ## Session startup
