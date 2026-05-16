@@ -387,12 +387,29 @@ function applyDefaultExtensionSourceUpdates(settings, defaultExtensions, disable
 
 		const current = settings.packages[index];
 		const currentSource = packageSourceOf(current);
-		if (!currentSource || currentSource === extension.source) continue;
+		if (!currentSource) continue;
 
-		settings.packages[index] = isPlainObject(current)
-			? { ...current, source: extension.source }
-			: extension.source;
-		changes.push(`update default extension package source: ${currentSource} -> ${extension.source}`);
+		const sourceNeedsUpdate = currentSource !== extension.source;
+		const removesCriticalExtensionFilter = extension.critical === true
+			&& isPlainObject(current)
+			&& Object.hasOwn(current, "extensions");
+		if (!sourceNeedsUpdate && !removesCriticalExtensionFilter) continue;
+
+		if (isPlainObject(current)) {
+			const next = { ...clone(current), source: extension.source };
+			if (removesCriticalExtensionFilter) delete next.extensions;
+			settings.packages[index] = Object.keys(next).length === 1 && typeof next.source === "string"
+				? next.source
+				: next;
+		} else {
+			settings.packages[index] = extension.source;
+		}
+		if (sourceNeedsUpdate) {
+			changes.push(`update default extension package source: ${currentSource} -> ${extension.source}`);
+		}
+		if (removesCriticalExtensionFilter) {
+			changes.push(`remove critical default extension package filter: ${extension.id}`);
+		}
 	}
 }
 

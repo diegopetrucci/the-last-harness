@@ -222,6 +222,18 @@ function packageIdentity(entry) {
 	return `local:${trimmed}`;
 }
 
+function packageEntryDisablesExtensions(entry) {
+	if (!isPlainObject(entry)) return false;
+	if (!Array.isArray(entry.extensions)) return false;
+	if (entry.extensions.length === 0) return true;
+
+	const disablingPatterns = new Set(["-index.ts", "!index.ts", "-*", "!*"]);
+	return entry.extensions
+		.filter((value) => typeof value === "string")
+		.map((value) => value.trim())
+		.some((value) => disablingPatterns.has(value));
+}
+
 function rawDisabledIdsFromSettings(settings) {
 	if (!isPlainObject(settings)) return new Set();
 	const values = settings.tlh?.disabledDefaultExtensions;
@@ -317,14 +329,6 @@ function removeDuplicatePackagesAfterIndex(settings, identity, firstIndex) {
 	}
 }
 
-function packageEntryDisablesExtensions(entry) {
-	if (!isPlainObject(entry)) return false;
-	if (!Array.isArray(entry.extensions)) return false;
-	if (entry.extensions.length === 0) return true;
-	const patterns = entry.extensions.filter((value) => typeof value === "string");
-	return patterns.includes("-index.ts") || patterns.includes("!index.ts") || patterns.includes("-*") || patterns.includes("!*");
-}
-
 function replacedPackageSource(settings, extension) {
 	for (const oldSource of extension.replaces) {
 		const source = findPackageSource(settings, oldSource);
@@ -341,6 +345,7 @@ function isDefaultSourceDeferred(settings, extension) {
 
 function isDefaultDisabled(settings, extension, defaultExtensions) {
 	if (disabledIdsFromSettings(settings, defaultExtensions).has(extension.id)) return true;
+	if (extension.critical === true) return false;
 	const index = findPackageIndex(settings, extension.source);
 	if (index === -1) return false;
 	return packageEntryDisablesExtensions(settings.packages[index]);
@@ -385,7 +390,7 @@ function defaultStatus(settings, extension, defaultExtensions) {
 	const entry = packageIndex === -1 ? undefined : settings.packages[packageIndex];
 	const configuredSource = entry ? packageSourceOf(entry) : undefined;
 	if (markerDisabled) return { enabled: false, reason: "disabled" };
-	if (entry && packageEntryDisablesExtensions(entry)) return { enabled: false, reason: "disabled by package filter" };
+	if (extension.critical !== true && entry && packageEntryDisablesExtensions(entry)) return { enabled: false, reason: "disabled by package filter" };
 	if (entry && configuredSource && configuredSource !== extension.source) {
 		return { enabled: true, reason: `enabled with configured package (${configuredSource})` };
 	}
@@ -471,8 +476,12 @@ function commandList(settings, defaultExtensions) {
 function commandSources(settings, defaultExtensions, { criticalOnly = false } = {}) {
 	for (const extension of defaultExtensions) {
 		if (criticalOnly && extension.critical !== true) continue;
+		if (extension.critical === true) {
+			if (!isDefaultSourceDeferred(settings, extension)) console.log(extension.source);
+			continue;
+		}
 		if (!isDefaultDisabled(settings, extension, defaultExtensions) && !isDefaultSourceDeferred(settings, extension)) {
-			console.log(extension.critical === true ? extension.source : (findPackageSource(settings, extension.source) || extension.source));
+			console.log(findPackageSource(settings, extension.source) || extension.source);
 		}
 	}
 }
