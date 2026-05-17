@@ -65,5 +65,28 @@
     "id": "dirty-repo-guard",
     "source": "npm:@diegopetrucci/pi-dirty-repo-guard",
     "description": "Prompt before session changes when the current git repo has uncommitted changes."
+  },
+  {
+    "id": "triage-comments",
+    "source": "npm:@diegopetrucci/pi-triage-comments",
+    "description": "Add /triage-comments and a read-only triage_comments subagent tool for review-comment triage."
+  },
+  {
+    "id": "subagents",
+    "aliases": ["pi-subagents"],
+    "replaces": ["npm:pi-subagents", "git:github.com/nicobailon/pi-subagents"],
+    "migrateReplacements": true,
+    "critical": true,
+    "source": "git:github.com/diegopetrucci/pi-subagents@tlh-v0.24.2-5",
+    "description": "Delegate work to isolated TLH-profile subagents."
+  },
+  {
+    "id": "intercom",
+    "aliases": ["pi-intercom"],
+    "replaces": ["npm:pi-intercom", "git:github.com/nicobailon/pi-intercom"],
+    "migrateReplacements": true,
+    "critical": true,
+    "source": "git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-1",
+    "description": "Allow child subagents to escalate questions to the supervising session."
   }
 ]

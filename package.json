@@ -21,7 +21,11 @@
   "engines": {
     "node": ">=20.6.0"
   },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
   "files": [
+    "agents",
     "config",
     "extensions",
     "prompts",
@@ -49,5 +53,8 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "jiti": "^2.7.0"
   }
 }

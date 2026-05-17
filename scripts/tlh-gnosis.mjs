@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, constants, copyFileSync, existsSync, fchmodSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
@@ -274,6 +274,28 @@ function findValidGnosis(settings, agentDir) {
 	return undefined;
 }
 
+function managedGnosisTargetPath(args, agentDir) {
+	const agentRoot = resolve(expandHome(agentDir));
+	return resolve(expandHome(args.target || join(agentRoot, "bin", "gn")));
+}
+
+function samePathForCompare(left, right) {
+	return realpathForCompare(left) === realpathForCompare(right);
+}
+
+function findValidGnosisForConfigure(args, settings, agentDir) {
+	const configured = configuredInstallPath(settings);
+	const managedTargetPath = managedGnosisTargetPath(args, agentDir);
+	const configuredIsManagedTarget = configured && samePathForCompare(configured, managedTargetPath);
+	if (configured && !configuredIsManagedTarget && validateGnosisCommand(configured)) return normalizeValidCandidate(configured);
+
+	const managedTarget = validateManagedGnosisTarget(args, agentDir);
+	for (const candidate of [managedTarget, "gn"]) {
+		if (validateGnosisCommand(candidate)) return normalizeValidCandidate(candidate);
+	}
+	return undefined;
+}
+
 function logStderr(args, message) {
 	if (!args.quiet) console.error(message);
 }
@@ -384,10 +406,63 @@ function findFileNamed(root, name) {
 	return undefined;
 }
 
+function resolvedManagedAgentDir(agentDir) {
+	return realpathForCompare(resolve(expandHome(agentDir)));
+}
+
+function assertManagedGnosisTempPath(path, agentDir, label, { mustExist = false, expectDirectory = false, expectFile = false } = {}) {
+	const stats = lstatIfExists(path);
+	if (!stats) {
+		if (mustExist) {
+			throw new Error(`Refusing to install managed Gnosis because temporary ${label} was not created: ${path}`);
+		}
+	} else {
+		if (stats.isSymbolicLink()) {
+			throw new Error(`Refusing to install managed Gnosis through symlinked temporary ${label}: ${path}`);
+		}
+		if (expectDirectory && !stats.isDirectory()) {
+			throw new Error(`Refusing to install managed Gnosis because temporary ${label} is not a directory: ${path}`);
+		}
+		if (expectFile && !stats.isFile()) {
+			throw new Error(`Refusing to install managed Gnosis because temporary ${label} is not a file: ${path}`);
+		}
+	}
+
+	const resolvedAgentDir = resolvedManagedAgentDir(agentDir);
+	const resolvedPath = stats ? realpathSync(path) : realpathForCompare(path);
+	if (!isPathInsideOrEqual(resolvedPath, resolvedAgentDir)) {
+		throw new Error(`Refusing to install managed Gnosis because temporary ${label} resolves outside the isolated tlh profile: ${path} (resolves to ${resolvedPath}; profile: ${resolvedAgentDir})`);
+	}
+}
+
+function createManagedGnosisTempTarget(args, agentDir, target) {
+	validateManagedGnosisTarget(args, agentDir);
+	const targetParent = dirname(target);
+	mkdirSync(targetParent, { recursive: true });
+	validateManagedGnosisTarget(args, agentDir);
+
+	const tempDir = mkdtempSync(join(targetParent, ".tlh-gnosis-"));
+	assertManagedGnosisTempPath(tempDir, agentDir, "install directory", { mustExist: true, expectDirectory: true });
+
+	const tempTarget = join(tempDir, "gn");
+	assertManagedGnosisTempPath(tempTarget, agentDir, "binary", { mustExist: false });
+	return { tempDir, tempTarget };
+}
+
+function copyFileExclusive(source, target, mode) {
+	let fd;
+	try {
+		const noFollowFlag = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
+		fd = openSync(target, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollowFlag, mode);
+		writeFileSync(fd, readFileSync(source));
+		fchmodSync(fd, mode);
+	} finally {
+		if (fd !== undefined) closeSync(fd);
+	}
+}
+
 async function installManagedGnosis(args, agentDir) {
-	const target = resolve(expandHome(args.target || join(agentDir, "bin", "gn")));
-	assertNotNormalPiPath(agentDir, "agent dir");
-	assertNotNormalPiPath(target, "managed gn target");
+	const target = validateManagedGnosisTarget(args, agentDir);
 	const platform = gnosisPlatform();
 	if (!platform) {
 		warnStderr(`Gnosis prebuilt binary is not available for this platform; install manually from https://github.com/${args.gnosisRepo}`);
@@ -411,13 +486,14 @@ async function installManagedGnosis(args, agentDir) {
 
 	const assetName = `gnosis_${version}_${platform.os}_${platform.arch}.tar.gz`;
 	const url = `https://github.com/${args.gnosisRepo}/releases/download/v${version}/${assetName}`;
-	let tempDir;
+	let downloadTempDir;
+	let installTempDir;
 	let tempTarget;
 
 	try {
-		tempDir = mkdtempSync(join(tmpdir(), "tlh-gnosis-"));
-		const archivePath = join(tempDir, "gnosis.tar.gz");
-		const extractDir = join(tempDir, "extract");
+		downloadTempDir = mkdtempSync(join(tmpdir(), "tlh-gnosis-"));
+		const archivePath = join(downloadTempDir, "gnosis.tar.gz");
+		const extractDir = join(downloadTempDir, "extract");
 		mkdirSync(extractDir, { recursive: true });
 
 		logStderr(args, `Installing Gnosis ${version} into isolated profile: ${target}`);
@@ -428,23 +504,25 @@ async function installManagedGnosis(args, agentDir) {
 		const extracted = findFileNamed(extractDir, "gn");
 		if (!extracted) throw new Error("Gnosis release archive did not contain a gn binary");
 
-		mkdirSync(dirname(target), { recursive: true });
-		tempTarget = `${target}.tmp.${process.pid}`;
-		copyFileSync(extracted, tempTarget);
-		chmodSync(tempTarget, 0o755);
+		({ tempDir: installTempDir, tempTarget } = createManagedGnosisTempTarget(args, agentDir, target));
+		copyFileExclusive(extracted, tempTarget, 0o755);
+		assertManagedGnosisTempPath(tempTarget, agentDir, "binary", { mustExist: true, expectFile: true });
 		if (!validateGnosisCommand(tempTarget)) {
-			rmSync(tempTarget, { force: true });
 			throw new Error("downloaded Gnosis binary did not validate");
 		}
-		renameSync(tempTarget, target);
-		return target;
+
+		assertManagedGnosisTempPath(tempTarget, agentDir, "binary", { mustExist: true, expectFile: true });
+		const finalTarget = validateManagedGnosisTarget(args, agentDir);
+		renameSync(tempTarget, finalTarget);
+		return finalTarget;
 	} catch (error) {
 		if (tempTarget) rmSync(tempTarget, { force: true });
 		const message = error instanceof Error ? error.message : String(error);
 		warnStderr(message);
 		return undefined;
 	} finally {
-		if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+		if (installTempDir) rmSync(installTempDir, { recursive: true, force: true });
+		if (downloadTempDir) rmSync(downloadTempDir, { recursive: true, force: true });
 	}
 }
 
@@ -486,6 +564,90 @@ function assertNotNormalPiPath(path, label) {
 	if (isUnderNormalPiConfig(path)) {
 		throw new Error(`Refusing to modify normal Pi config from The Last Harness gnosis command (${label}): ${path}`);
 	}
+}
+
+function lstatIfExists(path) {
+	try {
+		return lstatSync(path);
+	} catch (error) {
+		if (error && typeof error === "object" && ["ENOENT", "ENOTDIR"].includes(error.code)) return undefined;
+		throw error;
+	}
+}
+
+function isPathInsideOrEqual(path, root) {
+	const relativePath = relative(root, path);
+	return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
+}
+
+function assertManagedGnosisAgentDir(agentDir) {
+	const stats = lstatIfExists(agentDir);
+	if (!stats) return;
+
+	let directoryStats = stats;
+	if (stats.isSymbolicLink()) {
+		try {
+			directoryStats = statSync(agentDir);
+		} catch {
+			throw new Error(`Refusing to install managed Gnosis because agent dir does not resolve to a directory: ${agentDir}`);
+		}
+	}
+
+	if (!directoryStats.isDirectory()) {
+		throw new Error(`Refusing to install managed Gnosis because agent dir is not a directory: ${agentDir}`);
+	}
+}
+
+function assertNoSymlinkedManagedTargetParents(target, boundary) {
+	const parent = dirname(target);
+	if (!isPathInsideOrEqual(parent, boundary)) return;
+
+	const relativeParent = relative(boundary, parent);
+	if (!relativeParent) return;
+
+	let current = boundary;
+	for (const part of relativeParent.split(sep).filter(Boolean)) {
+		current = join(current, part);
+		const stats = lstatIfExists(current);
+		if (!stats) return;
+		if (stats.isSymbolicLink()) {
+			throw new Error(`Refusing to install managed Gnosis through symlinked target parent component: ${current}`);
+		}
+		if (!stats.isDirectory()) {
+			throw new Error(`Refusing to install managed Gnosis because target parent component is not a directory: ${current}`);
+		}
+	}
+}
+
+function validateManagedGnosisTarget(args, agentDir) {
+	const agentRoot = resolve(expandHome(agentDir));
+	const target = managedGnosisTargetPath(args, agentDir);
+
+	assertNotNormalPiPath(agentRoot, "agent dir");
+	assertNotNormalPiPath(target, "managed gn target");
+	if (!isPathInsideOrEqual(target, agentRoot)) {
+		throw new Error(`Refusing to install managed Gnosis outside the configured tlh profile path: ${target} (profile: ${agentRoot})`);
+	}
+	assertManagedGnosisAgentDir(agentRoot);
+
+	const targetStats = lstatIfExists(target);
+	if (targetStats?.isSymbolicLink()) {
+		throw new Error(`Refusing to install managed Gnosis over symlinked target file: ${target}`);
+	}
+	if (targetStats && !targetStats.isFile()) {
+		throw new Error(`Refusing to install managed Gnosis over non-file target: ${target}`);
+	}
+
+	const resolvedAgentDir = realpathForCompare(agentRoot);
+	assertNoSymlinkedManagedTargetParents(target, agentRoot);
+	assertNoSymlinkedManagedTargetParents(target, resolvedAgentDir);
+
+	const resolvedTarget = realpathForCompare(target);
+	if (!isPathInsideOrEqual(resolvedTarget, resolvedAgentDir)) {
+		throw new Error(`Refusing to install managed Gnosis outside the isolated tlh profile: ${target} (resolves to ${resolvedTarget}; profile: ${resolvedAgentDir})`);
+	}
+
+	return target;
 }
 
 function writeSettings(settingsPath, value, previousRaw, { dryRun }) {
@@ -567,7 +729,7 @@ async function commandConfigureInstall(args, settingsPath, settings, previousRaw
 
 		if (currentState === "enabled") {
 			detailLog(args, "Keeping existing Gnosis integration setting: enabled.");
-			const validPath = findValidGnosis(settings, agentDir);
+			const validPath = findValidGnosisForConfigure(args, settings, agentDir);
 			if (validPath) {
 				console.log(`Gnosis integration: enabled (${validPath})`);
 				return;
@@ -592,7 +754,7 @@ async function commandConfigureInstall(args, settingsPath, settings, previousRaw
 
 	if (requested !== "with") return;
 
-	const validPath = findValidGnosis(settings, agentDir);
+	const validPath = findValidGnosisForConfigure(args, settings, agentDir);
 	if (validPath) {
 		detailLog(args, `Found valid Gnosis binary: ${validPath}`);
 		setGnosisEnabled(args, settingsPath, settings, previousRaw, validPath);

@@ -5,10 +5,10 @@ Releases are GitHub tag based. Pushing a semver tag such as `v0.1.0` runs `.gith
 1. verifies the tag matches `package.json`;
 2. runs the release checks;
 3. builds an npm-style package tarball;
-4. generates a pinned `install.sh` asset with the tag baked in;
+4. generates a pinned stage-0 `install.sh` asset with the tag baked in, so it fetches the matching stage-1 helper/support files from that tag;
 5. creates a GitHub Release whose body is the matching `CHANGELOG.md` section, plus release assets.
 
-There is no `stable` branch. A release is the immutable Git tag plus its GitHub Release assets.
+There is no `stable` branch. A release is the immutable Git tag plus its GitHub Release assets. The stage-1 installer (`scripts/tlh-install.mjs`) and `scripts/lib/` helpers must be present in both the tag and package tarball.
 
 ## Prepare a release
 
@@ -24,7 +24,10 @@ git diff -- package.json
 Update `CHANGELOG.md` with a `## [$version] - YYYY-MM-DD` section, then run:
 
 ```sh
+npm install --no-package-lock --legacy-peer-deps
 bash scripts/check-installer-smoke.sh
+npm test
+node scripts/merge-settings.mjs --dry-run
 node scripts/release-notes.mjs --tag "v$version" --output /tmp/tlh-release-notes.md
 npm pack --dry-run
 ```
@@ -48,8 +51,8 @@ git push origin "v$version"
 
 After the workflow finishes, confirm the GitHub Release exists and includes:
 
-- `install.sh` — generated installer pinned to `v$version`
-- `the-last-harness-$version.tgz` — package tarball from `npm pack`
+- `install.sh` — generated stage-0 installer pinned to `v$version`
+- `the-last-harness-$version.tgz` — package tarball from `npm pack`, including `scripts/tlh-install.mjs` and `scripts/lib/`
 
 ## Install checks
 

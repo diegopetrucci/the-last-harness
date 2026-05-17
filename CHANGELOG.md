@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Added the TLH architect workflow with bundled specialist subagents and safer setup/update handling for the isolated profile.
+
 ### Changed
 
 - TLH-owned default settings now collapse upstream Pi changelog notices to the supported condensed one-line notice by default.

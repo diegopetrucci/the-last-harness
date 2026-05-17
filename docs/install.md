@@ -18,18 +18,28 @@ Once the installation is finished, start `tlh` by running… you guessed it, `tl
 
 Note: if you already have `pi` installed, `tlh` does not replace it — you can keep both, as it uses its own isolated config in `~/.the-last-harness/`.
 
+The installer is split into a stage-0 Bash bootstrapper (`install.sh`) and a stage-1 Node helper (`scripts/tlh-install.mjs`). Stage 0 parses the initial flags, preserves stdin `--dry-run` without downloads, and finds or fetches the matching stage-1 helper/support files from the selected release/ref; stage 1 runs the normal isolated install, settings merge, default-extension install, Gnosis setup, update metadata, and wrapper creation.
+
 ## More ways to install
 
-- Pinned, eg `curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.3.0/install.sh | bash -s --`
-- Main (unstable): `curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --ref main --track ref`
+- Pinned:
+
+```sh
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.6.0/install.sh | bash -s --
+```
+- Any remote branch, eg `main`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --ref main --track ref
+```
 
 ## Installer options
 
 ```text
---dry-run        Print actions and settings changes without writing
+--dry-run        Print actions and settings/keybinding changes without writing
 --force          Allow scalar isolated defaults and installer wrapper overwrite
 --no-pi-install  Fail instead of installing Pi when the `pi` command is missing
---no-settings     Install the package but skip isolated settings merge
+--no-settings     Install the package but skip isolated settings/keybinding merge
 --no-wrapper      Skip creating the tlh wrapper command
 --with-gnosis     Force install/re-enable Gnosis (`gn`) integration
 --without-gnosis  Opt out of Gnosis integration and keep it disabled
@@ -46,7 +56,7 @@ Note: if you already have `pi` installed, `tlh` does not replace it — you can 
 Example pinned install:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.3.0/install.sh | bash -s --
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.6.0/install.sh | bash -s --
 ```
 
 ## Update
@@ -59,18 +69,15 @@ Normal updates preserve your Gnosis setting. If you disabled it with `tlh gnosis
 
 The updating process is intentionally conservative, and won't replace your custom extensions, themes, and so on. If you spot anything that was overridden, [please open an issue](https://github.com/diegopetrucci/the-last-harness/issues).
 
+Bundled default-extension opt-outs apply only to non-critical defaults. The TLH subagents/intercom defaults are protected because architect delegation and supervisor escalation depend on them: `tlh defaults disable` rejects those IDs and aliases, and stale manual critical opt-outs are ignored or cleaned. If a critical package install or checkout refresh fails, fix that install/checkout and rerun `tlh update` instead of disabling the default.
+
 At launch, TLH checks GitHub Releases in the background at most once per day and warns once when a newer release is available. It never auto-updates. Set `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `TLH_SKIP_UPDATE_CHECK=1`, or `"tlh": { "updateCheck": { "enabled": false } }` in the isolated settings to disable the check.
 
 Release builds with TelemetryDeck identifiers configured also send at most one pseudonymous launch event when an interactive `tlh` process starts. The event includes a hashed random install ID, event type, TLH version, privacy-filtered model value, OS name/version, and OS architecture. It does not include prompts, cwd, command arguments, repo names, hostname, username, file contents, settings contents, full environment variables, extension/package lists, API keys, provider base URLs, auth state, headers, or account identifiers. TelemetryDeck receives normal network metadata such as source IP address and request time.
 
 To opt out persistently, set `"tlh": { "telemetry": { "enabled": false } }` in `~/.the-last-harness/agent/settings.json`. This opt-out is user-owned and survives `tlh update` and installer reruns. Per-run opt-outs are `PI_OFFLINE=1`, `TLH_SKIP_TELEMETRY=1`, `TLH_TELEMETRY_DISABLED=1`, or `PI_TELEMETRY=0`. To reset only the pseudonymous install ID, remove `~/.the-last-harness/agent/tlh/telemetry-state.json`.
 
-To update bundled default extension packages too:
-
-```sh
-PI_CODING_AGENT_DIR="$HOME/.the-last-harness/agent" \
-  pi update --extensions
-```
+To update bundled default extension packages too, run `tlh update`; it refreshes pinned critical defaults safely before updating other enabled defaults.
 
 ## Uninstall
 
@@ -88,3 +95,7 @@ To remove upstream Pi entirely, only if you installed it solely for The Last Har
 ```sh
 npm uninstall -g @earendil-works/pi-coding-agent
 ```
+
+## Security note
+
+The one-line installer and `tlh update` run shell commands on your machine, may install global npm packages for Pi and bundled default extensions, may download an optional Gnosis binary into the isolated TLH profile if you accept, creates an isolated Pi profile, and writes a wrapper command. Review `install.sh` and the stage-1 helper it fetches (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.

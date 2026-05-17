@@ -1,0 +1,220 @@
+import assert from "node:assert/strict";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import test from "node:test";
+
+import {
+	criticalGitSourceSpec,
+	gitSourceInstallSource,
+	packageSourceInstallDir,
+	parseGitSource,
+} from "../scripts/lib/tlh-install-package-source.mjs";
+import { assertGitSourceTargetSafe } from "../scripts/lib/tlh-install-git.mjs";
+import {
+	assertProfilePathWithinAgent,
+	ensureSafeProfileDir,
+	pathIsProtectedPiConfig,
+	safeProfileFileTarget,
+	validateInstallerTargets,
+} from "../scripts/lib/tlh-install-paths.mjs";
+import {
+	TLH_SUBAGENT_PROMPTS,
+	copyTlhSubagentPrompts,
+	findTlhSubagentsDir,
+	missingTlhSubagentPrompts,
+	settingsRequireTlhSubagentPrompts,
+} from "../scripts/lib/tlh-install-subagents.mjs";
+import { supportFileManifest } from "../scripts/lib/tlh-install-support-manifest.mjs";
+
+function tempFixture(t, prefix = "tlh-install-lib-test-") {
+	const dir = mkdtempSync(join(tmpdir(), prefix));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	return dir;
+}
+
+function writePromptSet(dir, label = "prompt") {
+	mkdirSync(dir, { recursive: true });
+	for (const prompt of TLH_SUBAGENT_PROMPTS) {
+		writeFileSync(join(dir, prompt), `${label}:${prompt}\n`);
+	}
+}
+
+test("package-source parsing resolves git, hash-pinned, and local package sources", (t) => {
+	const root = tempFixture(t);
+	const agentDir = join(root, "agent");
+	const homeDir = join(root, "home");
+
+	assert.deepEqual(parseGitSource("git:github.com/diegopetrucci/the-last-harness@main"), {
+		repo: "https://github.com/diegopetrucci/the-last-harness",
+		host: "github.com",
+		path: "diegopetrucci/the-last-harness",
+		ref: "main",
+	});
+	assert.deepEqual(criticalGitSourceSpec("git@github.com:owner/repo@feature", { agentDir }), {
+		targetDir: join(agentDir, "git", "github.com", "owner", "repo"),
+		repo: "git@github.com:owner/repo",
+		ref: "feature",
+	});
+	assert.equal(
+		gitSourceInstallSource("https://github.com/acme/tool.git#v1.2.3", { agentDir }),
+		"git:https://github.com/acme/tool.git@v1.2.3",
+	);
+	assert.equal(packageSourceInstallDir("../local-package", { agentDir, homeDir }), resolve(agentDir, "../local-package"));
+	assert.equal(packageSourceInstallDir("~/local-package", { agentDir, homeDir }), join(homeDir, "local-package"));
+	assert.equal(packageSourceInstallDir("github:owner/repo", { agentDir, homeDir }), "");
+});
+
+test("git source target guard rejects existing non-git checkout dirs", (t) => {
+	const root = tempFixture(t);
+	const agentDir = join(root, "agent");
+	const source = "git:github.com/owner/repo@main";
+	const targetDir = join(agentDir, "git", "github.com", "owner", "repo");
+
+	assert.doesNotThrow(() => assertGitSourceTargetSafe({ agentDir }, source, "The Last Harness package checkout"));
+	mkdirSync(targetDir, { recursive: true });
+	assert.throws(
+		() => assertGitSourceTargetSafe({ agentDir }, source, "The Last Harness package checkout"),
+		/refusing to use existing non-git The Last Harness package checkout/,
+	);
+});
+
+test("normal Pi config guards reject agent, wrapper, and profile writes under ~/.pi", (t) => {
+	const root = tempFixture(t);
+	const homeDir = join(root, "home");
+	mkdirSync(homeDir, { recursive: true });
+
+	assert.equal(pathIsProtectedPiConfig(join(homeDir, ".pi", "agent"), { homeDir }), true);
+	assert.equal(pathIsProtectedPiConfig(join(homeDir, ".pi-other", "agent"), { homeDir }), false);
+
+	assert.throws(
+		() => validateInstallerTargets({
+			agentDir: join(homeDir, ".pi", "agent"),
+			binDir: join(root, "bin"),
+			wrapperPath: join(root, "bin", "tlh"),
+			wrapperName: "tlh",
+			updateTrack: "ref",
+		}, { homeDir }),
+		/refusing to place The Last Harness agent dir under normal Pi config root/,
+	);
+	assert.throws(
+		() => validateInstallerTargets({
+			agentDir: join(root, "agent"),
+			binDir: join(homeDir, ".pi", "agent"),
+			wrapperPath: join(homeDir, ".pi", "agent", "tlh"),
+			wrapperName: "tlh",
+			updateTrack: "ref",
+		}, { homeDir }),
+		/refusing to place The Last Harness wrapper dir under normal Pi config root/,
+	);
+	assert.throws(
+		() => validateInstallerTargets({
+			agentDir: join(root, "agent"),
+			binDir: join(root, "bin"),
+			wrapperPath: join(homeDir, ".pi", "agent", "tlh"),
+			wrapperName: "tlh",
+			updateTrack: "ref",
+		}, { homeDir }),
+		/refusing to place The Last Harness wrapper under normal Pi config root/,
+	);
+	assert.doesNotThrow(() => validateInstallerTargets({
+		agentDir: join(root, "agent"),
+		binDir: join(root, "bin"),
+		wrapperPath: join(root, "bin", "tlh"),
+		wrapperName: "tlh",
+		updateTrack: "ref",
+	}, { homeDir }));
+	assert.equal(existsSync(join(homeDir, ".pi")), false);
+
+	assert.throws(
+		() => assertProfilePathWithinAgent({ agentDir: join(root, "agent") }, join(root, "outside", "settings.json"), "test file", { homeDir }),
+		/refusing to write test file outside the isolated TLH profile/,
+	);
+});
+
+test("safeProfileFileTarget rejects single-segment file targets", (t) => {
+	const root = tempFixture(t);
+	const agentDir = join(root, "agent");
+	const homeDir = join(root, "home");
+	mkdirSync(homeDir, { recursive: true });
+
+	assert.throws(
+		() => safeProfileFileTarget({ agentDir }, "settings.json", "test file", { homeDir }),
+		/refusing unsafe test file: settings\.json/,
+	);
+	assert.equal(existsSync(agentDir), false);
+	assert.equal(existsSync(join(agentDir, "settings.jso")), false);
+});
+
+test("ensureSafeProfileDir rejects protected profile roots before creating them", (t) => {
+	const root = tempFixture(t);
+	const homeDir = join(root, "home");
+	const protectedAgentDir = join(homeDir, ".pi", "agent");
+	mkdirSync(homeDir, { recursive: true });
+
+	assert.throws(
+		() => ensureSafeProfileDir({ agentDir: protectedAgentDir }, "tlh", "test directory", { homeDir }),
+		/refusing to write test directory under normal Pi config root/,
+	);
+	assert.equal(existsSync(protectedAgentDir), false);
+	assert.equal(existsSync(join(homeDir, ".pi")), false);
+});
+
+test("subagent prompt discovery honors source precedence and copies prompt files safely", (t) => {
+	const root = tempFixture(t);
+	const agentDir = join(root, "agent");
+	const localRepo = join(root, "local-repo");
+	const localPrompts = join(localRepo, "agents", "subagents");
+	const customPrompts = join(agentDir, "git", "github.com", "custom", "pkg", "agents", "subagents");
+	const defaultPrompts = join(agentDir, "git", "github.com", "diegopetrucci", "the-last-harness", "agents", "subagents");
+	writePromptSet(localPrompts, "local");
+	writePromptSet(customPrompts, "custom");
+	writePromptSet(defaultPrompts, "default");
+
+	const customConfig = {
+		agentDir,
+		repo: "diegopetrucci/the-last-harness",
+		packageSource: "git:github.com/custom/pkg@main",
+		packageSourceIsDefault: false,
+		tmpDir: "",
+	};
+	assert.equal(findTlhSubagentsDir(customConfig, { localRepoDir: localRepo }), customPrompts);
+
+	unlinkSync(join(customPrompts, TLH_SUBAGENT_PROMPTS[0]));
+	assert.deepEqual(missingTlhSubagentPrompts(customPrompts), [TLH_SUBAGENT_PROMPTS[0]]);
+	assert.equal(findTlhSubagentsDir(customConfig, { localRepoDir: localRepo }), localPrompts);
+
+	const defaultConfig = {
+		agentDir,
+		repo: "diegopetrucci/the-last-harness",
+		packageSource: "git:github.com/diegopetrucci/the-last-harness@main",
+		packageSourceIsDefault: true,
+		tmpDir: "",
+	};
+	assert.equal(findTlhSubagentsDir(defaultConfig, { localRepoDir: localRepo }), localPrompts);
+
+	const installedDir = copyTlhSubagentPrompts(defaultConfig, localPrompts);
+	assert.equal(installedDir, join(realpathSync.native(agentDir), "tlh", "agents", "subagents"));
+	for (const prompt of TLH_SUBAGENT_PROMPTS) {
+		assert.equal(readFileSync(join(installedDir, prompt), "utf8"), `local:${prompt}\n`);
+	}
+});
+
+test("support manifest includes stage-1 library dependencies", () => {
+	const relativePaths = supportFileManifest().map((file) => file.relativePath);
+	assert.ok(relativePaths.includes("scripts/lib/tlh-install-git.mjs"));
+	assert.ok(relativePaths.includes("scripts/lib/tlh-install-support-files.mjs"));
+});
+
+test("settings defaults declare when bundled subagent prompts are required", (t) => {
+	const root = tempFixture(t);
+	const defaults = join(root, "settings.defaults.json");
+	writeFileSync(defaults, JSON.stringify({ subagents: { agentDirs: ["tlh/agents/subagents"] } }));
+	assert.equal(settingsRequireTlhSubagentPrompts(defaults), true);
+
+	writeFileSync(defaults, JSON.stringify({ subagents: { agentDirs: ["other"] } }));
+	assert.equal(settingsRequireTlhSubagentPrompts(defaults), false);
+
+	writeFileSync(defaults, "not json");
+	assert.equal(settingsRequireTlhSubagentPrompts(defaults), false);
+});

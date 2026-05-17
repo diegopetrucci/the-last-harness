@@ -1,0 +1,373 @@
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import test from "node:test";
+
+const repoRoot = resolve(import.meta.dirname, "..");
+const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
+const defaultsScript = join(repoRoot, "scripts", "tlh-defaults.mjs");
+
+function tempFixture() {
+	const dir = mkdtempSync(join(tmpdir(), "tlh-defaults-test-"));
+	const defaults = join(dir, "settings.defaults.json");
+	const extensions = join(dir, "default-extensions.json");
+	const settings = join(dir, "settings.json");
+	writeFileSync(defaults, JSON.stringify({ packages: [] }, null, 2));
+	return { dir, defaults, extensions, settings };
+}
+
+function runNode(script, args, env = {}) {
+	return execFileSync(process.execPath, [script, ...args], {
+		cwd: repoRoot,
+		env: { ...process.env, ...env },
+		encoding: "utf8",
+	});
+}
+
+function readJson(path) {
+	return JSON.parse(readFileSync(path, "utf8"));
+}
+
+function packageSourceOf(entry) {
+	return typeof entry === "string" ? entry : entry?.source;
+}
+
+const disablingExtensionFilterCases = [
+	{ name: "empty extensions list", extensions: [] },
+	{ name: "dash wildcard exclusion", extensions: ["-*"] },
+	{ name: "bang wildcard exclusion", extensions: ["!*"] },
+	{ name: "real subagents entrypoint exclusion", extensions: ["-src/extension/index.ts"] },
+	{ name: "bang src tree exclusion", extensions: ["!src/**"] },
+	{ name: "allowlist excluding hard-coded entrypoint", extensions: ["other.ts"] },
+	{ name: "allowlist excluding real subagents entrypoint", extensions: ["index.ts"] },
+];
+
+test("merge ignores and cleans stale/manual critical opt-outs while preserving non-critical opt-outs", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "subagents",
+			aliases: ["pi-subagents"],
+			replaces: ["git:github.com/upstream/pi-subagents"],
+			migrateReplacements: true,
+			critical: true,
+			source: "git:github.com/tlh/pi-subagents@pinned",
+		},
+		{
+			id: "intercom",
+			replaces: ["npm:pi-intercom"],
+			migrateReplacements: true,
+			critical: true,
+			source: "git:github.com/tlh/pi-intercom@pinned",
+		},
+		{
+			id: "helper",
+			source: "npm:helper",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: ["git:github.com/upstream/pi-subagents", "npm:pi-intercom", "npm:helper"],
+		tlh: { disabledDefaultExtensions: ["intercom", "pi-subagents", "helper"] },
+	}, null, 2));
+
+	runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", fixture.extensions,
+		"--quiet",
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert(settings.packages.includes("git:github.com/tlh/pi-subagents@pinned"));
+	assert(settings.packages.includes("git:github.com/tlh/pi-intercom@pinned"));
+	assert(!settings.packages.includes("git:github.com/upstream/pi-subagents"));
+	assert(!settings.packages.includes("npm:pi-intercom"));
+	assert(!settings.packages.includes("npm:helper"));
+	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["helper"]);
+});
+
+test("tlh-defaults rejects disabling critical defaults without changing settings", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "subagents",
+			aliases: ["pi-subagents"],
+			critical: true,
+			source: "npm:subagents",
+		},
+		{
+			id: "helper",
+			source: "npm:helper",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: ["npm:subagents", "npm:helper"],
+		tlh: { disabledDefaultExtensions: ["helper"] },
+	}, null, 2));
+	const before = readFileSync(fixture.settings, "utf8");
+
+	const result = spawnSync(process.execPath, [
+		defaultsScript,
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"disable", "pi-subagents",
+	], {
+		cwd: repoRoot,
+		env: process.env,
+		encoding: "utf8",
+	});
+
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /critical default extension 'subagents' cannot be disabled/i);
+	assert.equal(readFileSync(fixture.settings, "utf8"), before);
+});
+
+test("tlh-defaults enable cleans stale critical opt-outs while preserving non-critical opt-outs", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "subagents",
+			aliases: ["pi-subagents"],
+			critical: true,
+			source: "npm:subagents",
+		},
+		{
+			id: "helper",
+			source: "npm:helper",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: ["npm:subagents"],
+		tlh: { disabledDefaultExtensions: ["pi-subagents", "helper"] },
+	}, null, 2));
+
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"enable", "subagents",
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["helper"]);
+	assert.deepEqual(settings.packages, ["npm:subagents"]);
+});
+
+test("merge updates critical package pins without --force", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "subagents",
+			critical: true,
+			source: "git:github.com/tlh/pi-subagents@new-pin",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({ packages: ["git:github.com/tlh/pi-subagents@old-pin"] }, null, 2));
+
+	runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", fixture.extensions,
+		"--quiet",
+	]);
+
+	const packages = readJson(fixture.settings).packages;
+	assert(packages.includes("git:github.com/tlh/pi-subagents@new-pin"));
+	assert(!packages.includes("git:github.com/tlh/pi-subagents@old-pin"));
+});
+
+test("merge repairs critical same-identity package entries with disabling extension filters", () => {
+	for (const { name, extensions } of disablingExtensionFilterCases) {
+		const fixture = tempFixture();
+		const criticalSource = "git:github.com/tlh/pi-subagents@new-pin";
+		const oldSource = "git:github.com/tlh/pi-subagents@old-pin";
+		writeFileSync(fixture.extensions, JSON.stringify([
+			{
+				id: "subagents",
+				critical: true,
+				source: criticalSource,
+			},
+		], null, 2));
+		writeFileSync(fixture.settings, JSON.stringify({
+			packages: [{ source: oldSource, extensions, owner: "preserve" }],
+		}, null, 2));
+
+		runNode(mergeScript, [
+			fixture.defaults,
+			"--settings", fixture.settings,
+			"--default-extensions", fixture.extensions,
+			"--quiet",
+		]);
+
+		const packages = readJson(fixture.settings).packages;
+		const repaired = packages.find((entry) => packageSourceOf(entry) === criticalSource);
+		assert(repaired, `${name}: critical package source was not repaired`);
+		assert.equal(repaired.owner, "preserve", `${name}: unrelated package fields should be preserved`);
+		assert.equal(Object.hasOwn(repaired, "extensions"), false, `${name}: disabling extension filter should be removed`);
+		assert.equal(packages.some((entry) => packageSourceOf(entry) === oldSource), false, `${name}: old source should be removed`);
+	}
+});
+
+test("merge removes critical package extension filters even when source is already canonical", () => {
+	const fixture = tempFixture();
+	const criticalSource = "git:github.com/tlh/pi-subagents@new-pin";
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "subagents",
+			critical: true,
+			source: criticalSource,
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [{ source: criticalSource, extensions: ["-src/extension/index.ts"], owner: "preserve" }],
+	}, null, 2));
+
+	runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", fixture.extensions,
+		"--quiet",
+	]);
+
+	const repaired = readJson(fixture.settings).packages.find((entry) => packageSourceOf(entry) === criticalSource);
+	assert.deepEqual(repaired, { source: criticalSource, owner: "preserve" });
+});
+
+test("merge --force updates non-critical package source when identity matches a new pinned source", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "helper",
+			source: "git:github.com/tlh/helper@new-pin",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({ packages: ["git:github.com/tlh/helper@old-pin"] }, null, 2));
+
+	runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", fixture.extensions,
+		"--force",
+		"--quiet",
+	]);
+
+	const packages = readJson(fixture.settings).packages;
+	assert(packages.includes("git:github.com/tlh/helper@new-pin"));
+	assert(!packages.includes("git:github.com/tlh/helper@old-pin"));
+});
+
+test("tlh-defaults emits critical sources despite disabling package extension filters", () => {
+	for (const { name, extensions } of disablingExtensionFilterCases) {
+		const fixture = tempFixture();
+		const criticalSource = "git:github.com/tlh/critical@new-pin";
+		writeFileSync(fixture.extensions, JSON.stringify([
+			{
+				id: "critical",
+				critical: true,
+				source: criticalSource,
+			},
+		], null, 2));
+		writeFileSync(fixture.settings, JSON.stringify({
+			packages: [{ source: "git:github.com/tlh/critical@old-pin", extensions }],
+		}, null, 2));
+
+		const sources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "sources"])
+			.trim()
+			.split("\n")
+			.filter(Boolean);
+		assert.deepEqual(sources, [criticalSource], `${name}: sources should include critical default`);
+
+		const criticalSources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "critical-sources"])
+			.trim()
+			.split("\n")
+			.filter(Boolean);
+		assert.deepEqual(criticalSources, [criticalSource], `${name}: critical-sources should include critical default`);
+	}
+});
+
+test("tlh-defaults list does not report critical defaults as disabled by package filters", () => {
+	for (const { name, extensions } of disablingExtensionFilterCases) {
+		const fixture = tempFixture();
+		const criticalSource = "git:github.com/tlh/critical@new-pin";
+		writeFileSync(fixture.extensions, JSON.stringify([
+			{
+				id: "critical",
+				critical: true,
+				source: criticalSource,
+			},
+		], null, 2));
+		writeFileSync(fixture.settings, JSON.stringify({
+			packages: [{ source: "git:github.com/tlh/critical@old-pin", extensions }],
+		}, null, 2));
+
+		const output = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "list"]);
+		assert.match(output, /enabled\s+critical/, `${name}: critical default should be listed as enabled`);
+		assert.doesNotMatch(output, /disabled by package filter/, `${name}: critical package filter should not disable status`);
+	}
+});
+
+test("tlh-defaults keeps non-critical allowlisted package entrypoints enabled", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "helper",
+			source: "npm:helper",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [{ source: "npm:helper", extensions: ["index.ts"] }],
+	}, null, 2));
+
+	const output = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "list"]);
+	assert.match(output, /enabled\s+helper/, "non-critical allowlist should be listed as enabled");
+	assert.doesNotMatch(output, /disabled by package filter/, "non-critical allowlist should not be treated as disabled");
+
+	const sources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "sources"])
+		.trim()
+		.split("\n")
+		.filter(Boolean);
+	assert.deepEqual(sources, ["npm:helper"]);
+});
+
+test("tlh-defaults sources defers non-migrating replacements and ignores stale/manual critical opt-outs", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "deferred",
+			replaces: ["npm:old-default"],
+			critical: true,
+			source: "npm:new-default",
+		},
+		{
+			id: "critical-enabled",
+			critical: true,
+			source: "git:github.com/tlh/critical@pin",
+		},
+		{
+			id: "critical-disabled",
+			critical: true,
+			source: "git:github.com/tlh/disabled@pin",
+		},
+		{
+			id: "non-critical-disabled",
+			source: "npm:non-critical",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: ["npm:old-default", "git:github.com/tlh/critical@old-pin"],
+		tlh: { disabledDefaultExtensions: ["critical-disabled", "non-critical-disabled"] },
+	}, null, 2));
+
+	const sources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "sources"])
+		.trim()
+		.split("\n")
+		.filter(Boolean);
+	assert.deepEqual(sources, ["git:github.com/tlh/critical@pin", "git:github.com/tlh/disabled@pin"]);
+
+	const criticalSources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "critical-sources"])
+		.trim()
+		.split("\n")
+		.filter(Boolean);
+	assert.deepEqual(criticalSources, ["git:github.com/tlh/critical@pin", "git:github.com/tlh/disabled@pin"]);
+});

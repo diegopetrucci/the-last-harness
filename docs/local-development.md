@@ -2,6 +2,17 @@
 
 Run these commands from the repository root. Prefer temporary isolated profile directories so local testing does not touch a real `tlh` or normal Pi profile.
 
+## Run validation
+
+For installer changes, run the smoke checks and package checks that cover the stage-0 Bash bootstrapper, the stage-1 Node helper, and packaged support files:
+
+```sh
+bash scripts/check-installer-smoke.sh
+npm test
+node scripts/merge-settings.mjs --dry-run
+npm pack --dry-run
+```
+
 ## Test the extension directly
 
 Test the extension directly from this checkout without installing it:
@@ -69,10 +80,50 @@ node scripts/tlh-gnosis.mjs --settings "$tmp/settings.json" enable
 node scripts/tlh-gnosis.mjs --settings "$tmp/settings.json" disable
 ```
 
-## Test installer wrapper behavior
+## Test installer bootstrap and wrapper behavior
 
-Dry-run first with temporary paths:
+Dry-run the stage-0 bootstrapper with temporary paths. From a complete local checkout, `install.sh` should discover the local stage-1 helper instead of downloading support files:
 
 ```sh
 bash install.sh --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -d)"
 ```
+
+You can also run the stage-1 helper directly when iterating on Node-side installer orchestration:
+
+```sh
+node scripts/tlh-install.mjs --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -d)"
+```
+
+Test the local checkout without pushing it:
+
+```sh
+tmp="$(mktemp -d)"
+TLH_PACKAGE_SOURCE="file:$PWD" bash install.sh \
+  --track custom \
+  --agent-dir "$tmp/agent" \
+  --bin-dir "$tmp/bin"
+"$tmp/bin/tlh"
+```
+
+You can also test any pushed branch through GitHub. Push the branch, then fetch
+that branch's installer and pass the same branch name as `--ref`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/subagents/install.sh |
+  bash -s -- --ref subagents --track ref
+```
+
+For temporary branch testing without touching your real `tlh` profile or wrapper:
+
+```sh
+tmp="$(mktemp -d)"
+curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/subagents/install.sh |
+  bash -s -- \
+    --ref subagents \
+    --track ref \
+    --agent-dir "$tmp/agent" \
+    --bin-dir "$tmp/bin"
+"$tmp/bin/tlh"
+```
+
+Replace `subagents` in both places with the pushed branch you want to test.

@@ -1,8 +1,12 @@
 # The last harness you'll ever need.
 
-`tlh` (the last harness) is a highly opinionated — albeit still simple — version of [pi](https://github.com/earendil-works/pi). Think of it, if you wish, as the macOS of harnesses. No bloat, no BS, but a strong direction.
+`tlh` (the last harness) is a highly opinionated — albeit still simple — version of [pi](https://github.com/earendil-works/pi). No bloat, no BS, but a strong direction.
 
-Install one-liner:
+`tlh` is modelled after two core principles:
+- _"you can outsource your thinking, but not your understanding"_: LLMs can, and should provide options, help out with discovery and exploration, filling the gaps in your understanding and technical knowledge — they should not, however, be used as a replacement for understanding. [Beware of cognitive debt](https://simonwillison.net/2026/Feb/15/cognitive-debt/).
+- you should not be babysitting your agents: if you need to manually call tools, run commands, and so on, the harness has failed you.
+
+If this resonates with you, welcome aboard:
 
 ```sh
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash -s --
@@ -10,52 +14,51 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/dow
 
 ## Core features
 
-- **Context discipline.** The context-cap extension helps keep long sessions under control.
-- **Project memory by default.** Gnosis integration is enabled by default on supported platforms so agents can record decisions, constraints, rejected alternatives, and lessons in repo-local memory unless you opt out.
-- **Safety rails for agent work.** Bundled permission and destructive-action confirmations add checkpoints before sensitive commands or file changes.
-- **Cleaner sessions.** An update-aware startup header, new-release launch warnings, custom footer, contextual steering/follow-up key hints, quieter tool output, completion notifications, and `/tlh` status keep the UI focused without hiding model-visible results.
-- **Reasoning controls.** Use `/effort` to quickly change model thinking level from the TUI or command line.
-- **Fast-mode controls.** The bundled OpenAI Fast extension adds `/fast` commands for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions while defaulting Fast mode off.
-- **Second opinions built in.** The Oracle extension can consult a separate read-only reasoning process for deeper review, debugging, and planning.
-- **Repository research.** The Librarian extension can scout GitHub repositories and optionally cache local checkouts.
-- **Opinionated defaults, conservative updates.** TLH installs a curated theme, prompt guidance, commands, and default extensions while preserving your custom settings and opt-outs across updates.
-- **Isolated Pi profile.** `tlh` runs upstream `pi` with its own profile at `~/.the-last-harness/agent`, leaving your normal `~/.pi/agent` config untouched.
+TLH is inspired by the architect-first workflow outlined in ["How I write software with LLMs"](https://www.stavros.io/posts/how-i-write-software-with-llms/).
 
-## Custom commands
+The gist:
+- Talk to the architect first, let it help you refine the requirements and scope, understand the codebase and implications, going back and forth as needed to nail the task
+- Once ready, approve the plan and the implementation tickets
+- The architect will then take it from there: implementation is handed off to a developer subagent, the code automatically reviewed, and you will be pinged once everything is done
 
-The following slash commands are available in interactive `tlh` sessions:
+Note: this workflow is optional. Disable it for the current session with `Shift+Tab`, or for all future ones with `/architect default off`. All subagents remain available when the architect persona is off.
 
-- `/gnosis [status|enable|disable|toggle]` — toggle or inspect Gnosis prompt integration. With no argument, `/gnosis` toggles it.
-- `/effort [off|minimal|low|medium|high|xhigh]` — pick or set model reasoning effort. Available levels depend on the current model; run `/effort` without an argument for the picker.
-- `/fast on|off|auto|toggle|status` — manage OpenAI Fast mode for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions.
+### Subagents
+
+TLH subagents are focused child sessions the architect delegates to: `repo-scout` for discovery, `developer` for implementation, `code-reviewer` for review, `diff-summarizer` for local diff orientation, `bug-hunter`/`bug-catcher` for bug investigation, and `librarian`/`oracle` for external research and second opinions.
+
+They run in fresh child contexts: they get the task and project context, not the whole architect conversation. They do not coordinate with each other as a swarm; they report back to the architect, which stays responsible for decisions and orchestration. Today they inherit your active model and effort unless configured otherwise; future TLH versions may give different roles their own model and thinking defaults.
+
+## Quality-of-life improvements to `pi`
+
+- **Project memory**: Gnosis integration is enabled by default on supported platforms so agents can record decisions, constraints, rejected alternatives, and lessons in repo-local memory (unless you opt out).
+- **Ticketed execution**: when `tk` is available, the architect turns the approved plan into dependency-tracked tickets and hands one ticket at a time to implementation and review agents. Without `tk`, TLH keeps the same small task tree in the conversation.
+- **Context management**: context is capped to 200k tokens to avoid the `dumb zone`, and `/context` lets you see what is eating up your context.
+- **Safety rails**: Bundled permission and destructive-action confirmations add checkpoints before sensitive commands or file changes.
+- **Inline bash snippets**: trusted `!{...}` snippets in your prompt are expanded through local bash before the agent sees them, useful for quick context like `!{git status --short}`.
+- **Dirty-repo guard**: TLH prompts before starting, switching, or forking sessions when the current git repo has uncommitted changes, so work-in-progress is harder to lose.
+- **Completion notifications**: TLH can notify you when an agent turn finishes and is waiting for input.
+- **Model niceties**: `/effort` makes it easier to switch thinking effort levels, and `/fast` enables OpenAI Fast mode controls.
+- **Cleaner sessions**: tlh's UI only shows what is relevant to you _right now_ — tools and bash output is collapsed by default, the information in the footer is trimmed.
+- **Conservative updates and isolation**: tlh runs independently from `pi`, and never overrides your settings across updates
+
+## Slash commands
+
+Common TLH commands:
+
+- `Shift+Tab` — disable or re-enable the architect persona for the current session.
+- `/tlh` / `/harness` — show TLH package, primary-agent, override, and settings status.
+- `/agent` — show the active TLH primary agent.
+- `/architect [status|on|off|toggle|reset|default on|default off|default reset]` — inspect or change architect mode for this session or future sessions.
+- `/effort ...` — pick or set model reasoning effort. Available levels depend on the current model.
+- `/gnosis [status|enable|disable|toggle]` — toggle or inspect Gnosis prompt integration.
+- `/fast [on|off|auto|toggle|status]` — manage OpenAI Fast mode for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions.
 - `/context [--no-open] [--keep] [--redact] [--full|--current]` — generate a local HTML breakdown of where the session context is going.
+- `/harness-plan` — open the bundled implementation-planning prompt.
 
-### Included Pi resources
+Bundled extension commands are also available for power users: /context-cap, /quiet-tools, /librarian-cache, /oracle-model, /fff-health, /fff-rescan, /fff-mode, /triage-comments, /intercom, /run, /parallel, /chain, /run-chain, /subagents-doctor, and Plannotator commands such as /plannotator-review and /plannotator-annotate.
 
-- `extensions/the-last-harness.ts` adds the custom `tlh` startup header and footer, lightweight default guidance, conditional Gnosis prompt instructions, `/tlh` status, `/gnosis` toggle/status, `/effort` reasoning-effort picker commands, and the 200k-token `DUMB ZONE` footer warning.
-- `skills/harness-setup/SKILL.md` documents safe setup/update/uninstall workflows.
-- `prompts/harness-plan.md` provides `/harness-plan` for reviewable implementation planning.
-- `themes/the-last-harness.json` provides the default isolated theme.
-
-## Bundled extensions
-
-The installer enables these standalone external Pi packages by default in the isolated `tlh` profile:
-
-- [`npm:@diegopetrucci/pi-permission-gate`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/permission-gate) — asks for confirmation before sensitive tool calls.
-- [`npm:@diegopetrucci/pi-oracle`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/oracle) — consults a separate read-only reasoning process for second opinions.
-- [`npm:@plannotator/pi-extension`](https://github.com/backnotprop/plannotator/tree/main/apps/pi-extension) — adds interactive plan review with annotations.
-- [`npm:@diegopetrucci/pi-openai-fast`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/openai-fast) — adds optional `/fast` commands for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions.
-- [`npm:@diegopetrucci/pi-librarian`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/librarian) — scouts GitHub repositories and optionally caches local checkouts.
-- [`npm:@ff-labs/pi-fff`](https://github.com/dmtrKovalenko/fff.nvim/tree/main/packages/pi-fff) — adds FFF-powered fuzzy file and content search.
-- [`npm:@diegopetrucci/pi-inline-bash`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/inline-bash) — expands inline bash commands in user prompts.
-- [`npm:@diegopetrucci/pi-notify`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/notify) — sends a notification when an agent turn finishes.
-- [`npm:@diegopetrucci/pi-context-cap`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/context-cap) — keeps context usage under a configured cap.
-- [`npm:@diegopetrucci/pi-context-inspector`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/context-inspector) — opens a local HTML dashboard showing where session context is going.
-- [`npm:@diegopetrucci/pi-quiet-tools`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/quiet-tools) — compacts collapsed built-in tool output without changing model-visible results.
-- [`npm:@diegopetrucci/pi-confirm-destructive`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/confirm-destructive) — confirms destructive shell and file operations before they run.
-- [`npm:@diegopetrucci/pi-dirty-repo-guard`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/dirty-repo-guard) — prompts before session changes when the current git repo has uncommitted changes.
-
-Manage persistent opt-outs after install:
+Manage persistent opt-outs for non-critical defaults after install:
 
 ```sh
 tlh defaults list
@@ -63,7 +66,7 @@ tlh defaults disable notify
 tlh defaults enable notify
 ```
 
-Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `tlh update`, `pi update --extensions`, and installer reruns.
+Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `tlh update`, `pi update --extensions`, and installer reruns. Installer settings merges preserve existing same-identity package sources by default; use installer `--force` only when you want bundled default-extension source migrations to rewrite existing entries. The isolation-critical subagents/intercom defaults are protected: `tlh defaults disable` rejects `subagents`, `intercom`, and their legacy aliases; stale manual entries in `tlh.disabledDefaultExtensions` are ignored during source resolution and cleaned during settings merges. Old `pi-subagents`/`pi-intercom` replacements are migrated to the bundled TLH forks so architect delegation uses the isolated minor-agent prompts. Installer runs fail if these critical bundled packages cannot be installed or refreshed; fix the package install/checkout and rerun the installer rather than trying to disable them.
 
 ### Gnosis integration
 
@@ -113,6 +116,8 @@ Opt out persistently by adding this to `~/.the-last-harness/agent/settings.json`
 That settings opt-out is preserved by `tlh update` and installer reruns.
 
 ## Install, update, and uninstall
+
+The release `install.sh` is a small stage-0 Bash bootstrapper: it finds or fetches the matching stage-1 Node helper (`scripts/tlh-install.mjs`) and support files, then stage-1 performs the isolated profile install.
 
 Install, update, and uninstall guidance lives in [`docs/install.md`](docs/install.md).
 

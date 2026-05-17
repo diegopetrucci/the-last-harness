@@ -76,5 +76,6 @@ git diff --cached
 
 ## Miscellaneous
 
-At the start of any task, run `gn help plan` and follow its instructions.
-After finishing a task, run `gn help review`.
+- At the start of any task, run `gn help plan` and follow its instructions.
+- After finishing a task, run `gn help review`.
+- This project uses a CLI ticket system for task management. Run `tk help` when you need to use it.

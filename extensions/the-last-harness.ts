@@ -1,6 +1,6 @@
 import { execFile, execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync, type Dirent } from "node:fs";
 import { arch as osArch, homedir, platform as osPlatform, release as osRelease, type as osType } from "node:os";
 import { basename, delimiter, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
@@ -24,6 +24,11 @@ import {
 	type ResolvedResource,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
+import {
+	ALLOWED_SUBAGENTS,
+	registerTlhStartupMode,
+	validateSubagentToolInput,
+} from "./the-last-harness-subagent-safety.mjs";
 
 const TLH_NAME = "tlh";
 const TLH_PACKAGE_NAME = "The Last Harness";
@@ -46,6 +51,9 @@ const DUMB_ZONE_LABEL = "DUMB ZONE";
 // tlh keeps autocomplete focused on the command description instead.
 const AUTOCOMPLETE_SOURCE_TAG_PATTERN = /(^|—\s*)\[(?:u|p|t)(?::(?:npm|git):[^\]]+)?\]\s*/g;
 const execFileAsync = promisify(execFile);
+const ACTIVE_PRIMARY_AGENT = "architect";
+const PRIMARY_AGENT_CYCLE_SHORTCUT = "shift+tab";
+const PRIMARY_AGENT_SESSION_STATE_ENTRY = "tlh-primary-agent-state";
 
 const HARNESS_PROMPT = `
 ## The Last Harness Defaults
@@ -65,6 +73,16 @@ const GNOSIS_PROMPT = [
 	"At the start of any task, run `gn help plan` and follow its instructions.",
 	"After finishing a task, run `gn help review`.",
 ].join("\n");
+
+const CHILD_SUBAGENT_PROMPT = `
+## TLH Child Subagent Defaults
+
+You are running inside a delegated TLH child subagent session.
+
+- Follow your assigned minor-agent prompt and task brief.
+- Do not run Gnosis (\`gn\`) planning, review, write, edit, or removal commands, and do not update project memory directly.
+- If you learn something durable that should be recorded in project memory, report it to the parent architect or supervisor instead.
+`;
 
 const GNOSIS_VALIDATION_TIMEOUT_MS = 5000;
 
@@ -93,11 +111,28 @@ type TlhTelemetryConfig = {
 	enabled?: boolean;
 };
 
+type TlhPrimaryAgentConfig = {
+	enabled?: boolean;
+	applyModel?: boolean;
+	applyThinking?: boolean;
+};
+
+type TlhPrimaryAgentSessionState = {
+	enabled?: boolean;
+};
+
+type TlhPrimaryAgentWriteResult = {
+	settingsPath: string;
+	backupPath?: string;
+	changed: boolean;
+};
+
 type TlhSettings = {
 	tlh?: {
 		gnosis?: TlhGnosisConfig;
 		updateCheck?: TlhUpdateCheckConfig;
 		telemetry?: TlhTelemetryConfig;
+		primaryAgent?: TlhPrimaryAgentConfig;
 	};
 };
 
@@ -142,6 +177,21 @@ type TlhLatestRelease = {
 	version: string;
 	tagName: string;
 	releaseUrl: string;
+};
+
+type AgentPrompt = {
+	name: string;
+	description: string;
+	model?: string;
+	thinking?: ThinkingLevel;
+	tools: string[];
+	systemPrompt: string;
+	filePath: string;
+};
+
+type SubagentMetadata = {
+	name: string;
+	description: string;
 };
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -192,6 +242,18 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function realpathForCompare(path: string): string {
+	const resolved = resolve(path);
+	if (existsSync(resolved)) {
+		return realpathSync(resolved);
+	}
+	const parent = dirname(resolved);
+	if (parent === resolved) {
+		return resolved;
+	}
+	return join(realpathForCompare(parent), basename(resolved));
+}
+
 function isTruthyEnvFlag(value: string | undefined): boolean {
 	if (!value) return false;
 	const normalized = value.trim().toLowerCase();
@@ -204,6 +266,23 @@ function isFalseyEnvFlag(value: string | undefined): boolean {
 	return normalized === "0" || normalized === "false" || normalized === "no";
 }
 
+function stripTrailingPathSeparators(path: string): string {
+	let stripped = path;
+	while (stripped.length > sep.length && stripped.endsWith(sep)) {
+		stripped = stripped.slice(0, -sep.length);
+	}
+	return stripped;
+}
+
+function pathWithinOrEqual(root: string, child: string): boolean {
+	const normalizedRoot = stripTrailingPathSeparators(root);
+	const normalizedChild = stripTrailingPathSeparators(child);
+	if (normalizedRoot === sep) {
+		return normalizedChild.startsWith(sep);
+	}
+	return normalizedChild === normalizedRoot || normalizedChild.startsWith(`${normalizedRoot}${sep}`);
+}
+
 function isDefaultPiAgentDir(agentDir: string): boolean {
 	const home = process.env.HOME || process.env.USERPROFILE;
 	if (!home) return false;
@@ -214,22 +293,46 @@ function isDefaultPiAgentDir(agentDir: string): boolean {
 	}
 }
 
-function tlhStateDir(): string | undefined {
-	// Only persist state when the wrapper has selected an isolated profile.
-	// This avoids mutating normal Pi config.
+function isNormalPiConfigPath(resolvedPath: string): boolean {
+	const home = process.env.HOME || process.env.USERPROFILE;
+	if (!home) {
+		return false;
+	}
+	const normalPiRoot = realpathForCompare(join(home, ".pi"));
+	return pathWithinOrEqual(normalPiRoot, resolvedPath);
+}
+
+function safeTlhProfileFilePath(relativePath: string): string | undefined {
 	const agentDir = getAgentDir();
 	if (!process.env.PI_CODING_AGENT_DIR || isDefaultPiAgentDir(agentDir)) {
 		return undefined;
 	}
-	return join(agentDir, "tlh");
+
+	const targetPath = join(agentDir, relativePath);
+	try {
+		const resolvedAgentDir = realpathForCompare(agentDir);
+		const resolvedTargetPath = realpathForCompare(targetPath);
+		if (!pathWithinOrEqual(resolvedAgentDir, resolvedTargetPath) || isNormalPiConfigPath(resolvedTargetPath)) {
+			return undefined;
+		}
+		return targetPath;
+	} catch {
+		return undefined;
+	}
+}
+
+function tlhStateDir(): string | undefined {
+	return safeTlhProfileFilePath("tlh");
 }
 
 function tlhStatePath(fileName: string): string | undefined {
-	const stateDir = tlhStateDir();
-	return stateDir ? join(stateDir, fileName) : undefined;
+	return safeTlhProfileFilePath(join("tlh", fileName));
 }
 
 function tlhStartupStatePath(): string | undefined {
+	// Only persist state when the wrapper has selected an isolated profile and
+	// the TLH support path resolves inside that profile. This avoids mutating
+	// normal Pi config through a symlinked `${AGENT_DIR}/tlh` directory.
 	return tlhStatePath("startup-state.json");
 }
 
@@ -252,8 +355,7 @@ function readTlhStartupState(): TlhStartupState {
 }
 
 function tlhInstallStatePath(): string | undefined {
-	const startupStatePath = tlhStartupStatePath();
-	return startupStatePath ? join(dirname(startupStatePath), "install-state.json") : undefined;
+	return safeTlhProfileFilePath(join("tlh", "install-state.json"));
 }
 
 function readTlhInstallState(): TlhInstallState {
@@ -270,14 +372,80 @@ function readTlhInstallState(): TlhInstallState {
 	}
 }
 
+function canUseTlhStartupStateDir(statePath: string): boolean {
+	const stateDir = dirname(statePath);
+	try {
+		const dirStat = lstatSync(stateDir);
+		if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
+			return false;
+		}
+	} catch (error) {
+		if (!isRecord(error) || error.code !== "ENOENT") {
+			return false;
+		}
+	}
+
+	try {
+		mkdirSync(stateDir, { recursive: true });
+		const dirStat = lstatSync(stateDir);
+		if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
+			return false;
+		}
+		return tlhStartupStatePath() === statePath;
+	} catch {
+		return false;
+	}
+}
+
+function canReplaceTlhStartupStateFile(statePath: string): boolean {
+	try {
+		const stateStat = lstatSync(statePath);
+		return !stateStat.isSymbolicLink() && stateStat.isFile();
+	} catch (error) {
+		return isRecord(error) && error.code === "ENOENT";
+	}
+}
+
+function writeTlhStartupStateAtomically(statePath: string, content: string): void {
+	const nofollowFlag = constants.O_NOFOLLOW;
+	// Startup state is best-effort. If this platform cannot protect the temp
+	// file's final component from symlinks, fail closed instead of weakening the
+	// atomic replacement by silently dropping O_NOFOLLOW.
+	if (typeof nofollowFlag !== "number" || nofollowFlag === 0) {
+		return;
+	}
+
+	const stateDir = dirname(statePath);
+	const stateBase = basename(statePath);
+	const tempPath = join(stateDir, `.${stateBase}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`);
+	let fd: number | undefined;
+	try {
+		fd = openSync(tempPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | nofollowFlag, 0o600);
+		writeFileSync(fd, content, { encoding: "utf8" });
+		closeSync(fd);
+		fd = undefined;
+		renameSync(tempPath, statePath);
+	} finally {
+		if (fd !== undefined) {
+			closeSync(fd);
+		}
+		try {
+			unlinkSync(tempPath);
+		} catch (error) {
+			if (!isRecord(error) || error.code !== "ENOENT") {
+				throw error;
+			}
+		}
+	}
+}
+
 function writeTlhStartupState(state: TlhStartupState): void {
 	try {
 		const statePath = tlhStartupStatePath();
-		if (!statePath) {
+		if (!statePath || !canUseTlhStartupStateDir(statePath) || !canReplaceTlhStartupStateFile(statePath)) {
 			return;
 		}
-		mkdirSync(dirname(statePath), { recursive: true });
-		writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+		writeTlhStartupStateAtomically(statePath, `${JSON.stringify(state, null, 2)}\n`);
 	} catch {
 		// Startup state is best-effort; never block launch.
 	}
@@ -508,6 +676,15 @@ function getTlhUpdateCheckConfig(cwd: string): TlhUpdateCheckConfig | undefined 
 	try {
 		const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as TlhSettings;
 		return settings.tlh?.updateCheck;
+	} catch {
+		return undefined;
+	}
+}
+
+function getTlhPrimaryAgentConfig(cwd: string): TlhPrimaryAgentConfig | undefined {
+	try {
+		const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as TlhSettings;
+		return settings.tlh?.primaryAgent;
 	} catch {
 		return undefined;
 	}
@@ -752,6 +929,137 @@ async function maybeSendTlhLaunchTelemetry(snapshot: TlhTelemetrySnapshot): Prom
 	}
 }
 
+function getTlhPrimaryAgentDefaultEnabled(cwd: string): boolean {
+	return getTlhPrimaryAgentConfig(cwd)?.enabled !== false;
+}
+
+function tlhSettingsPathForWrite(): string | undefined {
+	const agentDir = getAgentDir();
+	if (!process.env.PI_CODING_AGENT_DIR || isDefaultPiAgentDir(agentDir)) {
+		return undefined;
+	}
+	return join(agentDir, "settings.json");
+}
+
+function assertSafeTlhSettingsPath(settingsPath: string): void {
+	try {
+		const settingsStat = lstatSync(settingsPath);
+		if (settingsStat.isSymbolicLink()) {
+			throw new Error(`Refusing to write symlinked TLH settings file: ${settingsPath}`);
+		}
+		if (!settingsStat.isFile()) {
+			throw new Error(`Refusing to write non-file TLH settings path: ${settingsPath}`);
+		}
+		if (settingsStat.nlink > 1) {
+			throw new Error(`Refusing to write hardlinked TLH settings file: ${settingsPath}`);
+		}
+	} catch (error) {
+		if (!isRecord(error) || error.code !== "ENOENT") {
+			throw error;
+		}
+	}
+
+	const agentDir = realpathForCompare(getAgentDir());
+	const resolvedSettingsPath = realpathForCompare(settingsPath);
+	if (!pathWithinOrEqual(agentDir, resolvedSettingsPath)) {
+		throw new Error(`Refusing to write settings outside the isolated TLH profile: ${settingsPath}`);
+	}
+
+	if (isNormalPiConfigPath(resolvedSettingsPath)) {
+		throw new Error(`Refusing to modify normal Pi config from The Last Harness: ${settingsPath}`);
+	}
+}
+
+function parseTlhSettingsContent(content: string | undefined): Record<string, unknown> {
+	if (!content) {
+		return {};
+	}
+	const parsed = JSON.parse(content) as unknown;
+	if (!isRecord(parsed)) {
+		throw new Error("settings.json must contain a JSON object");
+	}
+	return parsed;
+}
+
+function settingsBackupTimestamp(): string {
+	return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+type SettingsStorageLike = {
+	withLock(scope: "global" | "project", fn: (current: string | undefined) => string | undefined): void;
+};
+
+function getSettingsStorageForWrite(cwd: string): SettingsStorageLike {
+	const manager = SettingsManager.create(cwd, getAgentDir()) as unknown as { storage?: SettingsStorageLike };
+	if (!manager.storage || typeof manager.storage.withLock !== "function") {
+		throw new Error("Pi settings storage is unavailable.");
+	}
+	return manager.storage;
+}
+
+function writeTlhPrimaryAgentDefault(cwd: string, enabled: boolean | undefined): TlhPrimaryAgentWriteResult {
+	const settingsPath = tlhSettingsPathForWrite();
+	if (!settingsPath) {
+		throw new Error("Refusing to write primary-agent settings outside the isolated TLH profile.");
+	}
+	assertSafeTlhSettingsPath(settingsPath);
+
+	let result: TlhPrimaryAgentWriteResult | undefined;
+	getSettingsStorageForWrite(cwd).withLock("global", (current) => {
+		const settings = parseTlhSettingsContent(current);
+		const rawTlh = settings.tlh;
+		let tlh: Record<string, unknown>;
+		if (rawTlh === undefined) {
+			tlh = {};
+			settings.tlh = tlh;
+		} else if (isRecord(rawTlh)) {
+			tlh = rawTlh;
+		} else {
+			throw new Error("settings.tlh must be an object to update primary-agent settings.");
+		}
+
+		const rawPrimaryAgent = tlh.primaryAgent;
+		let primaryAgent: Record<string, unknown>;
+		if (rawPrimaryAgent === undefined) {
+			primaryAgent = {};
+			tlh.primaryAgent = primaryAgent;
+		} else if (isRecord(rawPrimaryAgent)) {
+			primaryAgent = rawPrimaryAgent;
+		} else {
+			throw new Error("settings.tlh.primaryAgent must be an object to update architect defaults.");
+		}
+
+		const currentEnabled = primaryAgent.enabled;
+		let changed = false;
+		if (enabled === undefined) {
+			if (Object.prototype.hasOwnProperty.call(primaryAgent, "enabled")) {
+				delete primaryAgent.enabled;
+				changed = true;
+			}
+		} else if (currentEnabled !== enabled) {
+			primaryAgent.enabled = enabled;
+			changed = true;
+		}
+
+		if (!changed) {
+			result = { settingsPath, changed: false };
+			return undefined;
+		}
+
+		const backupPath = current ? `${settingsPath}.bak-${settingsBackupTimestamp()}` : undefined;
+		if (backupPath) {
+			writeFileSync(backupPath, current, { encoding: "utf8", flag: "wx", mode: 0o600 });
+		}
+		result = { settingsPath, backupPath, changed: true };
+		return `${JSON.stringify(settings, null, 2)}\n`;
+	});
+
+	if (!result) {
+		throw new Error("Pi settings storage did not return a write result.");
+	}
+	return result;
+}
+
 function configuredGnosisPath(config: TlhGnosisConfig | undefined): string | undefined {
 	const installPath = config?.installPath;
 	if (typeof installPath !== "string" || !installPath.trim()) {
@@ -821,18 +1129,6 @@ function formatGnosisToggleDescription(state: TlhGnosisState = currentGnosisStat
 function backupPathFor(settingsPath: string): string {
 	const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 	return `${settingsPath}.backup-tlh-gnosis-${stamp}`;
-}
-
-function realpathForCompare(path: string): string {
-	const resolved = resolve(path);
-	if (existsSync(resolved)) {
-		return realpathSync(resolved);
-	}
-	const parent = dirname(resolved);
-	if (parent === resolved) {
-		return resolved;
-	}
-	return join(realpathForCompare(parent), basename(resolved));
 }
 
 function assertNotNormalPiSettings(settingsPath: string): void {
@@ -918,6 +1214,124 @@ function findEnabledGnosisCommand(cwd: string): string | undefined {
 
 function shouldAppendGnosisPrompt(cwd: string): boolean {
 	return Boolean(findEnabledGnosisCommand(cwd));
+}
+
+function readMarkdownFilesRecursive(dir: string): string[] {
+	if (!existsSync(dir)) {
+		return [];
+	}
+
+	let entries: Dirent[];
+	try {
+		entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+	} catch {
+		return [];
+	}
+
+	const files: string[] = [];
+	for (const entry of entries) {
+		const filePath = join(dir, entry.name);
+		if (entry.isDirectory()) {
+			files.push(...readMarkdownFilesRecursive(filePath));
+			continue;
+		}
+		if (!entry.isFile() && !entry.isSymbolicLink()) {
+			continue;
+		}
+		if (entry.name.endsWith(".md")) {
+			files.push(filePath);
+		}
+	}
+	return files;
+}
+
+function parseFrontmatter(content: string): { frontmatter: Record<string, string>; body: string } {
+	if (!content.startsWith("---")) {
+		return { frontmatter: {}, body: content.trim() };
+	}
+	const end = content.indexOf("\n---", 3);
+	if (end === -1) {
+		return { frontmatter: {}, body: content.trim() };
+	}
+
+	const frontmatter: Record<string, string> = {};
+	for (const line of content.slice(3, end).split(/\r?\n/)) {
+		const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+		if (!match) {
+			continue;
+		}
+		frontmatter[match[1]] = match[2].trim().replace(/^['"]|['"]$/g, "");
+	}
+
+	return { frontmatter, body: content.slice(content.indexOf("\n", end + 1) + 1).trim() };
+}
+
+function splitCommaList(value: string | undefined): string[] {
+	return (value ?? "")
+		.split(",")
+		.map((item) => item.trim())
+		.filter(Boolean);
+}
+
+function parseThinkingLevelValue(value: string | undefined): ThinkingLevel | undefined {
+	return value && isThinkingLevel(value) ? value : undefined;
+}
+
+function parseAgentPrompt(filePath: string): AgentPrompt | undefined {
+	const content = readText(filePath);
+	if (!content) {
+		return undefined;
+	}
+	const { frontmatter, body } = parseFrontmatter(content);
+	const name = frontmatter.name?.trim();
+	const description = frontmatter.description?.trim();
+	if (!name || !description) {
+		return undefined;
+	}
+	return {
+		name,
+		description,
+		model: frontmatter.model?.trim() || undefined,
+		thinking: parseThinkingLevelValue(frontmatter.thinking),
+		tools: splitCommaList(frontmatter.tools),
+		systemPrompt: body,
+		filePath,
+	};
+}
+
+function loadPrimaryAgent(): AgentPrompt | undefined {
+	return parseAgentPrompt(join(packageRoot(), "agents", "primary", `${ACTIVE_PRIMARY_AGENT}.md`));
+}
+
+function loadSubagentMetadata(): SubagentMetadata[] {
+	return readMarkdownFilesRecursive(join(packageRoot(), "agents", "subagents"))
+		.map((filePath) => parseAgentPrompt(filePath))
+		.filter((agent): agent is AgentPrompt => Boolean(agent))
+		.map((agent) => ({ name: agent.name, description: agent.description }))
+		.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function formatAllowedSubagents(subagents: SubagentMetadata[]): string {
+	const allowed = new Set(ALLOWED_SUBAGENTS);
+	const lines = subagents
+		.filter((agent) => allowed.has(agent.name))
+		.map((agent) => `- ${agent.name}: ${agent.description}`);
+	if (lines.length === 0) {
+		return "";
+	}
+	return `## TLH Allowed Minor Subagents\n\nYou may delegate only to these minor agents via the subagent tool:\n\n${lines.join("\n")}`;
+}
+
+function buildTlhSystemPrompt(primary: AgentPrompt | undefined, subagents: SubagentMetadata[], architectEnabled: boolean): string {
+	const prompts = [HARNESS_PROMPT.trim()];
+	if (architectEnabled) {
+		prompts.push(primary?.systemPrompt.trim(), formatAllowedSubagents(subagents));
+	}
+	return prompts.filter(Boolean).join("\n\n");
+}
+
+function buildChildSubagentSystemPrompt(): string {
+	return [HARNESS_PROMPT.trim(), CHILD_SUBAGENT_PROMPT.trim()].filter(Boolean).join("\n\n");
 }
 
 function parseFrontmatterValue(content: string | undefined, key: string): string | undefined {
@@ -1053,6 +1467,77 @@ function collectUsageTotals(ctx: ExtensionContext) {
 		totals.cost += Number(usage.cost?.total) || 0;
 	}
 	return totals;
+}
+
+function parseProviderModel(model: string): { provider: string; id: string } | undefined {
+	const slash = model.indexOf("/");
+	if (slash <= 0 || slash === model.length - 1) {
+		return undefined;
+	}
+	return { provider: model.slice(0, slash), id: model.slice(slash + 1) };
+}
+
+function primaryToolAllowlist(primary: AgentPrompt | undefined): string[] {
+	return primary?.tools.length
+		? primary.tools
+		: ["read", "grep", "find", "ls", "bash", "subagent", "intercom"];
+}
+
+function sameToolSet(left: string[] | undefined, right: string[] | undefined): boolean {
+	if (!left || !right || left.length !== right.length) {
+		return false;
+	}
+	const rightSet = new Set(right);
+	return left.every((tool) => rightSet.has(tool));
+}
+
+function filterAvailableTools(toolNames: string[], availableToolNames: Set<string>): string[] {
+	return toolNames.filter((toolName) => availableToolNames.has(toolName));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+type BranchEntryLike = {
+	type: string;
+	customType?: string;
+	data?: unknown;
+};
+
+function primaryAgentOverrideFromBranch(entries: BranchEntryLike[]): boolean | undefined {
+	for (let index = entries.length - 1; index >= 0; index -= 1) {
+		const entry = entries[index];
+		if (entry.type !== "custom" || entry.customType !== PRIMARY_AGENT_SESSION_STATE_ENTRY) {
+			continue;
+		}
+		if (typeof entry.data === "boolean") {
+			return entry.data;
+		}
+		if (isRecord(entry.data) && typeof entry.data.enabled === "boolean") {
+			return entry.data.enabled;
+		}
+		return undefined;
+	}
+	return undefined;
+}
+
+function primaryAgentLabel(enabled: boolean): string {
+	return enabled ? ACTIVE_PRIMARY_AGENT : "disabled";
+}
+
+function primaryAgentDefaultLabel(enabled: boolean | undefined): string {
+	if (enabled === undefined) {
+		return "unset (TLH default: architect)";
+	}
+	return enabled ? "architect" : "disabled";
+}
+
+function primaryAgentOverrideLabel(enabled: boolean | undefined): string {
+	if (enabled === undefined) {
+		return "none";
+	}
+	return enabled ? "architect" : "disabled";
 }
 
 function formatPathFromCwd(cwd: string, filePath: string): string {
@@ -1194,6 +1679,7 @@ function createTlhFooter(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	theme: Theme,
+	getPrimaryName: () => string,
 	footerData?: ReadonlyFooterDataProvider,
 ) {
 	return {
@@ -1284,7 +1770,8 @@ function createTlhFooter(
 			const remainder = statsLine.slice(statsLeft.length);
 			const dimRemainder = theme.fg("dim", remainder);
 			const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
-			const lines = [pwdLine, dimStatsLeft + dimRemainder];
+			const agentLine = truncateToWidth(theme.fg("dim", `agent: ${getPrimaryName()}`), width, theme.fg("dim", "..."));
+			const lines = [pwdLine, dimStatsLeft + dimRemainder, agentLine];
 
 			const editorText = ctx.ui.getEditorText();
 			if (editorText.length > 0 && !ctx.isIdle()) {
@@ -1372,17 +1859,283 @@ function createTlhHeader(theme: Theme, resources: StartupResources, headerUpdate
 }
 
 export default function theLastHarness(pi: ExtensionAPI) {
+	if (registerTlhStartupMode(pi, { env: process.env, buildChildSubagentSystemPrompt }) === "child") {
+		return;
+	}
+
+	const primaryAgent = loadPrimaryAgent();
+	const subagentMetadata = loadSubagentMetadata();
+	const warned = new Set<string>();
+	let primaryAgentDefaultEnabled = true;
+	let sessionPrimaryAgentOverride: boolean | undefined;
+	let prePrimaryActiveTools: string[] | undefined;
+	let appliedPrimaryTools: string[] | undefined;
+
+	function warnOnce(ctx: ExtensionContext, key: string, message: string): void {
+		if (warned.has(key)) {
+			return;
+		}
+		warned.add(key);
+		ctx.ui.notify(message, "warning");
+	}
+
+	function syncPrimaryAgentState(ctx: ExtensionContext): void {
+		primaryAgentDefaultEnabled = getTlhPrimaryAgentDefaultEnabled(ctx.cwd);
+		sessionPrimaryAgentOverride = primaryAgentOverrideFromBranch(ctx.sessionManager.getBranch());
+	}
+
+	function isArchitectEnabled(): boolean {
+		return sessionPrimaryAgentOverride ?? primaryAgentDefaultEnabled;
+	}
+
+	function currentPrimaryAgentLabel(): string {
+		return primaryAgentLabel(isArchitectEnabled());
+	}
+
+	function primaryAgentStatusMessage(ctx: ExtensionContext): string {
+		syncPrimaryAgentState(ctx);
+		const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
+		const override = sessionPrimaryAgentOverride;
+		const effective = isArchitectEnabled();
+		const settingsPath = tlhSettingsPathForWrite();
+		const settingsLabel = settingsPath ? formatHomePath(settingsPath) : "unavailable outside isolated TLH profile";
+		return [
+			`${TLH_PACKAGE_NAME} (${TLH_NAME}) is active.`,
+			`Primary agent: ${primaryAgentLabel(effective)}.`,
+			`Session override: ${primaryAgentOverrideLabel(override)}.`,
+			`Persistent default: ${primaryAgentDefaultLabel(primaryConfig?.enabled)}.`,
+			`Settings: ${settingsLabel}.`,
+		].join("\n");
+	}
+
+	function setSessionPrimaryAgentOverride(enabled: boolean | undefined): void {
+		sessionPrimaryAgentOverride = enabled;
+		if (enabled === undefined) {
+			pi.appendEntry<TlhPrimaryAgentSessionState>(PRIMARY_AGENT_SESSION_STATE_ENTRY, {});
+			return;
+		}
+		pi.appendEntry<TlhPrimaryAgentSessionState>(PRIMARY_AGENT_SESSION_STATE_ENTRY, { enabled });
+	}
+
+	function getValidPrimaryTools(ctx: ExtensionContext): string[] {
+		const desiredTools = primaryToolAllowlist(primaryAgent);
+		const allToolNames = new Set(pi.getAllTools().map((tool) => tool.name));
+		const validTools = filterAvailableTools(desiredTools, allToolNames);
+		const missingTools = desiredTools.filter((tool) => !allToolNames.has(tool));
+		if (missingTools.length > 0) {
+			warnOnce(ctx, "missing-primary-tools", `TLH primary agent tools are not available yet: ${missingTools.join(", ")}`);
+		}
+		return validTools;
+	}
+
+	function applyPrimaryTools(ctx: ExtensionContext): void {
+		const validTools = getValidPrimaryTools(ctx);
+		if (validTools.length === 0) {
+			return;
+		}
+		const currentTools = pi.getActiveTools();
+		if (prePrimaryActiveTools === undefined) {
+			prePrimaryActiveTools = currentTools;
+		}
+		pi.setActiveTools(validTools);
+		appliedPrimaryTools = validTools;
+	}
+
+	function restorePrimaryToolsIfAppropriate(): void {
+		if (prePrimaryActiveTools === undefined) {
+			return;
+		}
+		const currentTools = pi.getActiveTools();
+		if (appliedPrimaryTools && !sameToolSet(currentTools, appliedPrimaryTools)) {
+			prePrimaryActiveTools = undefined;
+			appliedPrimaryTools = undefined;
+			return;
+		}
+		const allToolNames = new Set(pi.getAllTools().map((tool) => tool.name));
+		pi.setActiveTools(filterAvailableTools(prePrimaryActiveTools, allToolNames));
+		prePrimaryActiveTools = undefined;
+		appliedPrimaryTools = undefined;
+	}
+
+	async function applyPrimaryModel(ctx: ExtensionContext): Promise<void> {
+		if (!primaryAgent?.model) {
+			return;
+		}
+		const parsedModel = parseProviderModel(primaryAgent.model);
+		if (!parsedModel) {
+			warnOnce(ctx, "invalid-primary-model", `TLH primary agent model is invalid: ${primaryAgent.model}`);
+			return;
+		}
+		const model = ctx.modelRegistry.find(parsedModel.provider, parsedModel.id);
+		if (!model) {
+			warnOnce(ctx, "missing-primary-model", `TLH primary agent model not found: ${primaryAgent.model}`);
+			return;
+		}
+		if (ctx.model?.provider === model.provider && ctx.model?.id === model.id) {
+			return;
+		}
+		const success = await pi.setModel(model);
+		if (!success) {
+			warnOnce(ctx, "primary-model-unavailable", `TLH could not switch to primary agent model: ${primaryAgent.model}`);
+		}
+	}
+
+	function applyPrimaryThinking(): void {
+		if (!primaryAgent?.thinking || pi.getThinkingLevel() === primaryAgent.thinking) {
+			return;
+		}
+		pi.setThinkingLevel(primaryAgent.thinking);
+	}
+
+	async function applyPrimaryDefaults(ctx: ExtensionContext): Promise<void> {
+		if (!isArchitectEnabled()) {
+			restorePrimaryToolsIfAppropriate();
+			return;
+		}
+
+		applyPrimaryTools(ctx);
+
+		const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
+		if (primaryConfig?.applyModel === true) {
+			await applyPrimaryModel(ctx);
+		}
+		if (primaryConfig?.applyThinking === true) {
+			applyPrimaryThinking();
+		}
+	}
+
+	async function applyArchitectModeChange(ctx: ExtensionContext): Promise<void> {
+		await applyPrimaryDefaults(ctx);
+	}
+
+	function cleanNonArchitectSessionHint(enabled: boolean): string {
+		return enabled
+			? ""
+			: " Existing conversation history may still contain architect guidance; start a new session for a completely clean non-architect context.";
+	}
+
+	async function cycleSessionPrimaryAgent(ctx: ExtensionContext): Promise<void> {
+		syncPrimaryAgentState(ctx);
+		const nextOverride = !isArchitectEnabled();
+		const nextPrimaryAgent = primaryAgentLabel(nextOverride);
+		setSessionPrimaryAgentOverride(nextOverride);
+		await applyArchitectModeChange(ctx);
+		ctx.ui.notify(
+			`Shift+Tab switched TLH primary agent to ${nextPrimaryAgent} for this session.${cleanNonArchitectSessionHint(nextOverride)}`,
+			"info",
+		);
+	}
+
+	function architectCommandCompletions(prefix: string) {
+		const options = [
+			{ value: "status", description: "Show architect mode status" },
+			{ value: "on", description: "Enable architect for this session" },
+			{ value: "off", description: "Disable architect for this session" },
+			{ value: "toggle", description: "Toggle architect for this session" },
+			{ value: "reset", description: "Clear the session override" },
+			{ value: "default on", description: "Persistently enable architect for future sessions" },
+			{ value: "default off", description: "Persistently disable architect for future sessions" },
+			{ value: "default reset", description: "Remove the persistent architect setting" },
+		];
+		const normalizedPrefix = prefix.trim().toLowerCase();
+		const completions = options
+			.filter((option) => option.value.startsWith(normalizedPrefix))
+			.map((option) => ({ value: option.value, label: option.value, description: option.description }));
+		return completions.length > 0 ? completions : null;
+	}
+
 	pi.registerCommand("tlh", {
 		description: "Show tlh package status",
 		handler: async (_args, ctx) => {
-			ctx.ui.notify(`${TLH_PACKAGE_NAME} (${TLH_NAME}) profile is installed and active.`, "info");
+			ctx.ui.notify(primaryAgentStatusMessage(ctx), "info");
 		},
 	});
 
 	pi.registerCommand("harness", {
 		description: "Alias for /tlh",
 		handler: async (_args, ctx) => {
-			ctx.ui.notify(`${TLH_PACKAGE_NAME} (${TLH_NAME}) profile is installed and active.`, "info");
+			ctx.ui.notify(primaryAgentStatusMessage(ctx), "info");
+		},
+	});
+
+	pi.registerCommand("agent", {
+		description: "Show the active TLH primary agent",
+		handler: async (_args, ctx) => {
+			syncPrimaryAgentState(ctx);
+			ctx.ui.notify(`Active TLH primary agent: ${currentPrimaryAgentLabel()}.`, "info");
+		},
+	});
+
+	pi.registerShortcut(PRIMARY_AGENT_CYCLE_SHORTCUT, {
+		description: "Cycle TLH primary agent (architect/disabled)",
+		handler: async (ctx) => {
+			await cycleSessionPrimaryAgent(ctx);
+		},
+	});
+
+	pi.registerCommand("architect", {
+		description: "Show or change TLH architect primary-agent mode",
+		getArgumentCompletions: architectCommandCompletions,
+		handler: async (args, ctx) => {
+			syncPrimaryAgentState(ctx);
+			const parts = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
+			const [command, value] = parts;
+
+			if (!command || command === "status") {
+				ctx.ui.notify(primaryAgentStatusMessage(ctx), "info");
+				return;
+			}
+
+			if (command === "on" || command === "off" || command === "toggle" || command === "reset") {
+				if (parts.length > 1) {
+					ctx.ui.notify("Usage: /architect on|off|toggle|reset", "error");
+					return;
+				}
+
+				let nextOverride: boolean | undefined;
+				if (command === "on") {
+					nextOverride = true;
+				} else if (command === "off") {
+					nextOverride = false;
+				} else if (command === "toggle") {
+					nextOverride = !isArchitectEnabled();
+				}
+
+				setSessionPrimaryAgentOverride(nextOverride);
+				await applyArchitectModeChange(ctx);
+				if (nextOverride === undefined) {
+					ctx.ui.notify(`Cleared architect session override. Primary agent: ${currentPrimaryAgentLabel()}.`, "info");
+					return;
+				}
+				ctx.ui.notify(`Architect ${nextOverride ? "enabled" : "disabled"} for this session.${cleanNonArchitectSessionHint(nextOverride)}`, "info");
+				return;
+			}
+
+			if (command === "default") {
+				if (parts.length !== 2 || !["on", "off", "reset"].includes(value)) {
+					ctx.ui.notify("Usage: /architect default on|off|reset", "error");
+					return;
+				}
+
+				const nextDefault = value === "reset" ? undefined : value === "on";
+				try {
+					const result = writeTlhPrimaryAgentDefault(ctx.cwd, nextDefault);
+					syncPrimaryAgentState(ctx);
+					await applyArchitectModeChange(ctx);
+					const changedLabel = result.changed ? "Updated" : "No change to";
+					const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
+					ctx.ui.notify(
+						`${changedLabel} architect persistent default at ${formatHomePath(result.settingsPath)}. Primary agent: ${currentPrimaryAgentLabel()}.${backupLabel}`,
+						"info",
+					);
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					ctx.ui.notify(`Could not update architect persistent default: ${message}`, "error");
+				}
+				return;
+			}
+
+			ctx.ui.notify("Usage: /architect [status|on|off|toggle|reset|default on|default off|default reset]", "error");
 		},
 	});
 
@@ -1491,6 +2244,9 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", async (event, ctx) => {
+		syncPrimaryAgentState(ctx);
+		await applyPrimaryDefaults(ctx);
+
 		if (!ctx.hasUI) {
 			return;
 		}
@@ -1519,7 +2275,9 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		const headerUpdate = getTlhHeaderUpdate();
 
 		if (typeof ctx.ui.setFooter === "function") {
-			ctx.ui.setFooter((_tui, theme, footerData) => createTlhFooter(pi, ctx, theme, footerData));
+			ctx.ui.setFooter((_tui, theme, footerData) =>
+				createTlhFooter(pi, ctx, theme, () => currentPrimaryAgentLabel(), footerData),
+			);
 		}
 		if (typeof ctx.ui.setHeader === "function") {
 			ctx.ui.setHeader((_tui, theme) => createTlhHeader(theme, resources, headerUpdate));
@@ -1528,11 +2286,35 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		void maybeNotifyAvailableTlhUpdate(ctx).catch(() => undefined);
 	});
 
+	pi.on("session_tree", async (_event, ctx) => {
+		syncPrimaryAgentState(ctx);
+		await applyPrimaryDefaults(ctx);
+	});
+
+	pi.on("session_shutdown", async (_event, _ctx) => {
+		restorePrimaryToolsIfAppropriate();
+	});
+
 	pi.on("before_agent_start", async (event, ctx) => {
-		const prompts = [event.systemPrompt, HARNESS_PROMPT];
+		syncPrimaryAgentState(ctx);
+		const architectEnabled = isArchitectEnabled();
+		await applyPrimaryDefaults(ctx);
+		const prompts = [event.systemPrompt, buildTlhSystemPrompt(primaryAgent, subagentMetadata, architectEnabled)];
 		if (shouldAppendGnosisPrompt(ctx.cwd)) {
 			prompts.push(GNOSIS_PROMPT);
 		}
-		return { systemPrompt: prompts.join("\n") };
+		return { systemPrompt: prompts.filter(Boolean).join("\n\n") };
+	});
+
+	pi.on("tool_call", async (event, ctx) => {
+		if (event.toolName !== "subagent") {
+			return undefined;
+		}
+		syncPrimaryAgentState(ctx);
+		if (!isArchitectEnabled()) {
+			return undefined;
+		}
+		const reason = validateSubagentToolInput(event.input);
+		return reason ? { block: true, reason } : undefined;
 	});
 }
