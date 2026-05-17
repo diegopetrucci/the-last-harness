@@ -14,36 +14,34 @@ Use this workflow when changing this repository's Pi package, one-line installer
    - normal Pi uses `~/.pi/agent`
    - `tlh` uses `~/.the-last-harness/agent` by default
    - installer Pi commands must set `PI_CODING_AGENT_DIR` to the isolated agent dir
-3. Put shareable Pi resources in package directories:
+3. Keep the installer split clear: `install.sh` is the stage-0 Bash bootstrapper that finds/fetches support files, while `scripts/tlh-install.mjs` is the stage-1 Node helper that runs the normal install flow. Keep their support-file manifests aligned.
+4. Put shareable Pi resources in package directories:
    - `extensions/`
    - `skills/`
    - `prompts/`
    - `themes/`
-4. Put installer-owned default settings in `config/settings.defaults.json` and bundled default extension metadata in `config/default-extensions.json`.
-5. Merge settings conservatively into the isolated settings file only:
+5. Put installer-owned default settings in `config/settings.defaults.json` and bundled default extension metadata in `config/default-extensions.json`.
+6. Merge settings conservatively into the isolated settings file only:
    - append missing `packages` entries
    - respect persistent `tlh.disabledDefaultExtensions` opt-outs
    - preserve existing isolated user values by default
    - require `--force` before overwriting scalar values
    - back up existing isolated settings before writing
-6. Keep the installer idempotent. Running it twice should not duplicate package entries or clobber user settings.
-7. Document every persistent change and the uninstall path.
+7. Keep the installer idempotent. Running it twice should not duplicate package entries or clobber user settings.
+8. Document every persistent change and the uninstall path.
 
 ## Validation
 
 Before release, run:
 
 ```bash
-bash -n install.sh
-node --check scripts/merge-settings.mjs
-node --check scripts/tlh-defaults.mjs
-node --check scripts/tlh-gnosis.mjs
-node --check scripts/tlh-update.mjs
-node --check scripts/tlh-wrapper.mjs
-node --check scripts/tlh-install-state.mjs
+bash scripts/check-installer-smoke.sh
+npm test
 node scripts/merge-settings.mjs --dry-run
 npm pack --dry-run
 ```
+
+The smoke script includes syntax checks for stage-0, stage-1, helper CLIs, and `scripts/lib/`, plus a manifest check that keeps the bootstrapper aligned with the stage-1 support manifest.
 
 For install behavior, test with temporary isolated paths:
 

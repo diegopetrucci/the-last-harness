@@ -117,6 +117,8 @@ That settings opt-out is preserved by `tlh update` and installer reruns.
 
 ## Install, update, and uninstall
 
+The release `install.sh` is a small stage-0 Bash bootstrapper: it finds or fetches the matching stage-1 Node helper (`scripts/tlh-install.mjs`) and support files, then stage-1 performs the isolated profile install.
+
 Install, update, and uninstall guidance lives in [`docs/install.md`](docs/install.md).
 
 ## Local development

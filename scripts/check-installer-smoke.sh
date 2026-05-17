@@ -48,11 +48,83 @@ assert_not_contains() {
   fi
 }
 
+assert_pi_commands_isolated() {
+  local file="$1"
+  local agent_dir="$2"
+  local bad_file="${file}.unisolated-pi"
+
+  assert_contains "${file}" "PI_CODING_AGENT_DIR=${agent_dir}"
+  : >"${bad_file}"
+  grep -E '(^\+|^Would).*(^|[[:space:]])pi[[:space:]]+(install|update)([[:space:]]|$)' "${file}" \
+    | grep -F -v -- "PI_CODING_AGENT_DIR=${agent_dir}" >"${bad_file}" || true
+  if [[ -s "${bad_file}" ]]; then
+    printf '%s\n' "---- unisolated pi commands in ${file} ----" >&2
+    cat "${bad_file}" >&2 || true
+    printf '%s\n' '---- end ----' >&2
+    fail "dry-run output contained an unisolated pi command"
+  fi
+}
+
 combine_output() {
   local stdout_file="$1"
   local stderr_file="$2"
   local combined_file="$3"
   cat "${stdout_file}" "${stderr_file}" >"${combined_file}"
+}
+
+extract_stage0_support_manifest() {
+  local no_settings="$1"
+  node - "${no_settings}" <<'NODE_STAGE0_MANIFEST'
+const fs = require('node:fs');
+
+const noSettings = process.argv[2] === 'true';
+const source = fs.readFileSync('install.sh', 'utf8');
+
+function readHeredoc(label) {
+  const start = `cat <<'${label}'`;
+  const startIndex = source.indexOf(start);
+  if (startIndex === -1) throw new Error(`missing stage-0 support manifest heredoc: ${label}`);
+  const bodyStart = source.indexOf('\n', startIndex);
+  if (bodyStart === -1) throw new Error(`malformed stage-0 support manifest heredoc: ${label}`);
+  const endIndex = source.indexOf(`\n${label}`, bodyStart + 1);
+  if (endIndex === -1) throw new Error(`unterminated stage-0 support manifest heredoc: ${label}`);
+  return source.slice(bodyStart + 1, endIndex).split(/\r?\n/).filter(Boolean);
+}
+
+const lines = readHeredoc('EOF_SUPPORT_FILES');
+if (!noSettings) lines.push(...readHeredoc('EOF_SETTINGS_SUPPORT_FILES'));
+process.stdout.write(`${lines.join('\n')}\n`);
+NODE_STAGE0_MANIFEST
+}
+
+stage1_support_manifest_projection() {
+  local no_settings="$1"
+  if [[ "${no_settings}" == "true" ]]; then
+    node scripts/tlh-install.mjs --no-settings --print-support-manifest
+  else
+    node scripts/tlh-install.mjs --print-support-manifest
+  fi | awk -F'|' '{ print $2 "|" $3 }'
+}
+
+run_support_manifest_smoke() {
+  log "Running stage-0/stage-1 support manifest smoke check..."
+  local case_dir="${TMP_ROOT}/support-manifest"
+  mkdir -p "${case_dir}"
+
+  local mode no_settings stage0_file stage1_file
+  for mode in with-settings no-settings; do
+    no_settings=false
+    if [[ "${mode}" == "no-settings" ]]; then
+      no_settings=true
+    fi
+    stage0_file="${case_dir}/stage0-${mode}.txt"
+    stage1_file="${case_dir}/stage1-${mode}.txt"
+    extract_stage0_support_manifest "${no_settings}" >"${stage0_file}"
+    stage1_support_manifest_projection "${no_settings}" >"${stage1_file}"
+    if ! diff -u "${stage0_file}" "${stage1_file}"; then
+      fail "stage-0 bootstrap support manifest does not match stage-1 manifest (${mode})"
+    fi
+  done
 }
 
 make_failing_curl() {
@@ -92,14 +164,27 @@ if [[ -z "${url}" || -z "${out}" ]]; then
   printf 'fake legacy curl missing url or output path\n' >&2
   exit 2
 fi
-case "${LEGACY_SUPPORT_MODE:-missing-runtime}:${url}" in
-  missing-runtime:*/scripts/tlh-wrapper.mjs|missing-runtime:*/scripts/tlh-install-state.mjs|missing-wrapper-only:*/scripts/tlh-wrapper.mjs)
+relative="${url#https://example.invalid/legacy-ref/}"
+if [[ "${relative}" == "${url}" ]]; then
+  relative="${url#https://example.invalid/no-wrapper-ref/}"
+fi
+if [[ "${relative}" == "${url}" ]]; then
+  printf 'fake legacy curl received unexpected url: %s\n' "${url}" >&2
+  exit 2
+fi
+case "${LEGACY_SUPPORT_MODE:-missing-runtime}:${relative}" in
+  missing-runtime:scripts/tlh-wrapper.mjs|missing-runtime:scripts/tlh-install-state.mjs|missing-wrapper-only:scripts/tlh-wrapper.mjs)
     printf 'fake legacy ref missing %s\n' "${url}" >&2
     exit 22
     ;;
 esac
 mkdir -p "$(dirname "${out}")"
-printf '{}\n' >"${out}"
+source_path="${FAKE_SUPPORT_ROOT:-}/${relative}"
+if [[ -n "${FAKE_SUPPORT_ROOT:-}" && -f "${source_path}" ]]; then
+  cp "${source_path}" "${out}"
+else
+  printf '{}\n' >"${out}"
+fi
 EOF_LEGACY_SUPPORT_CURL
   chmod +x "${fakebin}/curl"
 }
@@ -118,6 +203,23 @@ EOF_FAKE_PI
   chmod +x "${fakebin}/pi"
 }
 
+make_fake_stage1_support_root() {
+  local root="$1"
+  local manifest_file="${root}/.fake-stage1-support-manifest"
+  local requirement relative_path
+  mkdir -p "${root}"
+  extract_stage0_support_manifest false >"${manifest_file}"
+  while IFS='|' read -r requirement relative_path; do
+    [[ -n "${relative_path}" ]] || continue
+    mkdir -p "${root}/$(dirname "${relative_path}")"
+    : >"${root}/${relative_path}"
+  done <"${manifest_file}"
+  cat >"${root}/scripts/tlh-install.mjs" <<'EOF_FAKE_STAGE1'
+#!/usr/bin/env node
+console.log("BUG: fake local stage-1 was invoked");
+EOF_FAKE_STAGE1
+}
+
 run_static_checks() {
   log "Running installer static checks..."
   bash -n install.sh
@@ -128,6 +230,14 @@ run_static_checks() {
   node --check scripts/tlh-update.mjs
   node --check scripts/tlh-wrapper.mjs
   node --check scripts/tlh-install-state.mjs
+  node --check scripts/tlh-install.mjs
+  node --check scripts/tlh-install-query.mjs
+  node --check scripts/lib/tlh-install-package-source.mjs
+  node --check scripts/lib/tlh-install-paths.mjs
+  node --check scripts/lib/tlh-install-git.mjs
+  node --check scripts/lib/tlh-install-subagents.mjs
+  node --check scripts/lib/tlh-install-support-files.mjs
+  node --check scripts/lib/tlh-install-support-manifest.mjs
   node --check scripts/release-notes.mjs
   check_extension_load_syntax
 }
@@ -178,6 +288,84 @@ jiti('./extensions/the-last-harness.ts');
 NODE_EXTENSION_CHECK
 }
 
+run_stage1_dry_run_smoke() {
+  log "Running stage-1 dry-run smoke check..."
+  local case_dir="${TMP_ROOT}/stage1-dry-run"
+  local agent_dir="${case_dir}/agent"
+  local bin_dir="${case_dir}/bin"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  mkdir -p "${case_dir}"
+
+  node scripts/tlh-install.mjs --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  assert_absent "${agent_dir}"
+  assert_absent "${bin_dir}"
+  assert_pi_commands_isolated "${combined_file}" "${agent_dir}"
+}
+
+run_stage1_relative_path_canonicalization_smoke() {
+  log "Running stage-1 relative path canonicalization smoke check..."
+  local case_dir="${TMP_ROOT}/stage1-relative-paths"
+  local home_dir="${case_dir}/home"
+  local cwd_dir="${case_dir}/workspace"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local run_dir
+  mkdir -p "${home_dir}" "${cwd_dir}"
+  run_dir="$(cd "${cwd_dir}" >/dev/null 2>&1 && pwd -P)"
+
+  (cd "${run_dir}" && HOME="${home_dir}" node "${ROOT_DIR}/scripts/tlh-install.mjs" --dry-run --agent-dir .pi/agent --bin-dir bin --without-gnosis >"${stdout_file}" 2>"${stderr_file}")
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  local agent_dir="${run_dir}/.pi/agent"
+  local bin_dir="${run_dir}/bin"
+  assert_absent "${agent_dir}"
+  assert_absent "${bin_dir}"
+  assert_pi_commands_isolated "${combined_file}" "${agent_dir}"
+  assert_contains "${combined_file}" "Isolated profile: ${agent_dir}"
+  assert_contains "${combined_file}" "Would write tlh update metadata: ${agent_dir}/tlh/install-state.json"
+  assert_contains "${combined_file}" "Installing wrapper command: ${bin_dir}/tlh"
+  assert_contains "${combined_file}" "+ mkdir -p ${bin_dir}"
+  assert_not_contains "${combined_file}" "PI_CODING_AGENT_DIR=.pi/agent"
+  assert_absent "${home_dir}/.pi"
+}
+
+run_stage1_staged_cwd_isolation_smoke() {
+  log "Running staged stage-1 cwd isolation smoke check..."
+  local case_dir="${TMP_ROOT}/stage1-cwd-isolation"
+  local stage_root="${case_dir}/stage-root"
+  local stage_scripts_dir="${stage_root}/scripts"
+  local agent_dir="${case_dir}/agent"
+  local bin_dir="${case_dir}/bin"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  mkdir -p "${stage_scripts_dir}/lib"
+  cp scripts/tlh-install.mjs "${stage_scripts_dir}/tlh-install.mjs"
+  cp scripts/tlh-install-query.mjs "${stage_scripts_dir}/tlh-install-query.mjs"
+  cp scripts/lib/tlh-install-package-source.mjs "${stage_scripts_dir}/lib/tlh-install-package-source.mjs"
+  cp scripts/lib/tlh-install-paths.mjs "${stage_scripts_dir}/lib/tlh-install-paths.mjs"
+  cp scripts/lib/tlh-install-git.mjs "${stage_scripts_dir}/lib/tlh-install-git.mjs"
+  cp scripts/lib/tlh-install-subagents.mjs "${stage_scripts_dir}/lib/tlh-install-subagents.mjs"
+  cp scripts/lib/tlh-install-support-files.mjs "${stage_scripts_dir}/lib/tlh-install-support-files.mjs"
+  cp scripts/lib/tlh-install-support-manifest.mjs "${stage_scripts_dir}/lib/tlh-install-support-manifest.mjs"
+
+  local stage_script
+  stage_script="$(cd "${stage_scripts_dir}" >/dev/null 2>&1 && pwd -P)/tlh-install.mjs"
+  node "${stage_script}" --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  assert_absent "${agent_dir}"
+  assert_absent "${bin_dir}"
+  assert_contains "${combined_file}" "Dry run only; no support files were downloaded."
+  assert_not_contains "${combined_file}" "Applying isolated settings..."
+  assert_pi_commands_isolated "${combined_file}" "${agent_dir}"
+}
+
 run_local_dry_run_smoke() {
   log "Running local dry-run smoke check..."
   local case_dir="${TMP_ROOT}/local-dry-run"
@@ -193,11 +381,9 @@ run_local_dry_run_smoke() {
 
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"
-  assert_contains "${combined_file}" "PI_CODING_AGENT_DIR=${agent_dir}"
-  if grep -E '^\+ pi (install|update)( |$)' "${combined_file}" >/dev/null; then
-    cat "${combined_file}" >&2
-    fail "dry-run output contained an unisolated pi command"
-  fi
+  assert_pi_commands_isolated "${combined_file}" "${agent_dir}"
+  assert_contains "${combined_file}" "Installing wrapper command: ${bin_dir}/tlh"
+  assert_not_contains "${combined_file}" "Would fetch installer support files from"
 }
 
 run_stdin_dry_run_smoke() {
@@ -206,19 +392,211 @@ run_stdin_dry_run_smoke() {
   local agent_dir="${case_dir}/agent"
   local bin_dir="${case_dir}/bin"
   local fakebin="${case_dir}/fakebin"
+  local home_dir="${case_dir}/home"
   local stdout_file="${case_dir}/stdout.log"
   local stderr_file="${case_dir}/stderr.log"
   local combined_file="${case_dir}/combined.log"
+  local status=0
   mkdir -p "${case_dir}"
   make_failing_curl "${fakebin}"
+  make_fake_stage1_support_root "${case_dir}"
 
-  PATH="${fakebin}:${PATH}" bash -s -- --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis < install.sh >"${stdout_file}" 2>"${stderr_file}"
+  (cd "${case_dir}" && PATH="${fakebin}:${PATH}" bash -s -- --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
 
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"
+  assert_contains "${combined_file}" "Would fetch installer support files from"
   assert_contains "${combined_file}" "Dry run only; no support files were downloaded."
+  assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   assert_not_contains "${combined_file}" "fake curl was invoked"
+
+  mkdir -p "${home_dir}"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  (cd "${case_dir}" && HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --dry-run --track nope --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "stdin dry-run invalid --track unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "--track must be one of: latest-release, pinned-tag, ref, custom"
+  assert_not_contains "${combined_file}" "Done. The Last Harness dry run completed without downloads or writes."
+  assert_not_contains "${combined_file}" "fake curl was invoked"
+  assert_absent "${agent_dir}"
+  assert_absent "${bin_dir}"
+
+  local relative_cwd="${case_dir}/relative-cwd"
+  local run_dir relative_agent_dir relative_bin_dir
+  mkdir -p "${relative_cwd}"
+  run_dir="$(cd "${relative_cwd}" >/dev/null 2>&1 && pwd -P)"
+  relative_agent_dir="${run_dir}/.pi/agent"
+  relative_bin_dir="${run_dir}/bin"
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  (cd "${run_dir}" && HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --dry-run --agent-dir .pi/agent --bin-dir bin --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  assert_absent "${relative_agent_dir}"
+  assert_absent "${relative_bin_dir}"
+  assert_contains "${combined_file}" "Isolated profile: ${relative_agent_dir}"
+  assert_contains "${combined_file}" "Would merge settings defaults into: ${relative_agent_dir}/settings.json"
+  assert_contains "${combined_file}" "Would merge keybinding defaults into: ${relative_agent_dir}/keybindings.json"
+  assert_contains "${combined_file}" "Start with: PI_CODING_AGENT_DIR=\"${relative_agent_dir}\" pi"
+  assert_contains "${combined_file}" "Wrapper path would be: ${relative_bin_dir}/tlh"
+  assert_not_contains "${combined_file}" 'PI_CODING_AGENT_DIR=".pi/agent"'
+  assert_not_contains "${combined_file}" "Isolated profile: .pi/agent"
+  assert_not_contains "${combined_file}" "Would merge settings defaults into: .pi/agent/settings.json"
+  assert_not_contains "${combined_file}" "Wrapper path would be: bin/tlh"
+  assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
+  assert_not_contains "${combined_file}" "fake curl was invoked"
+
+  local default_agent_dir="${home_dir}/.the-last-harness/agent"
+  local default_bin_dir="${home_dir}/.local/bin"
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  (cd "${case_dir}" && HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --dry-run --no-wrapper < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  assert_absent "${default_agent_dir}"
+  assert_absent "${default_bin_dir}"
+  assert_contains "${combined_file}" "Bootstrap-level/no-stage1 dry-run approximation"
+  assert_contains "${combined_file}" "Wrapper creation would be skipped (--no-wrapper)."
+  assert_contains "${combined_file}" "Dry run only; no support files were downloaded."
+  assert_not_contains "${combined_file}" "Wrapper path would be:"
+  assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
+  assert_not_contains "${combined_file}" "fake curl was invoked"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  (cd "${case_dir}" && HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --dry-run --agent-dir "~/.pi/agent" --bin-dir "${bin_dir}" --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "stdin dry-run normal Pi guard unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "refusing to place The Last Harness agent dir under normal Pi config root"
+  assert_not_contains "${combined_file}" "Dry run only; no support files were downloaded."
+  assert_not_contains "${combined_file}" "fake curl was invoked"
+  assert_absent "${home_dir}/.pi"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  (cd "${case_dir}" && HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --agent-dir "~/.pi/agent" --bin-dir "${bin_dir}" --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "stdin normal Pi guard unexpectedly succeeded before remote fetch"
+  fi
+  assert_contains "${combined_file}" "refusing to place The Last Harness agent dir under normal Pi config root"
+  assert_not_contains "${combined_file}" "fake curl was invoked"
+  assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
+  assert_absent "${home_dir}/.pi"
+}
+
+run_stage0_alias_guard_smoke() {
+  log "Running stage-0 alias normal Pi guard smoke check..."
+  local case_dir="${TMP_ROOT}/stage0-alias-guard"
+  local fakebin="${case_dir}/fakebin"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local home_physical=""
+  local home_alias=""
+  local alias_label=""
+  local status=0
+  mkdir -p "${case_dir}"
+  make_failing_curl "${fakebin}"
+  make_fake_stage1_support_root "${case_dir}"
+
+  local physical_case_dir
+  physical_case_dir="$(cd "${case_dir}" >/dev/null 2>&1 && pwd -P)"
+  if [[ -d /var && -d /private/var ]]; then
+    local var_real private_var_real logical_case_dir
+    var_real="$(cd /var >/dev/null 2>&1 && pwd -P || true)"
+    private_var_real="$(cd /private/var >/dev/null 2>&1 && pwd -P || true)"
+    if [[ -n "${var_real}" && "${var_real}" == "${private_var_real}" && "${physical_case_dir}" == /private/var/* ]]; then
+      logical_case_dir="/var/${physical_case_dir#/private/var/}"
+      if [[ -d "${logical_case_dir}" ]]; then
+        home_physical="${physical_case_dir}/home"
+        home_alias="${logical_case_dir}/home"
+        alias_label="/var-vs-/private/var"
+      fi
+    fi
+  fi
+
+  if [[ -z "${home_alias}" ]]; then
+    local physical_parent="${case_dir}/physical-root"
+    local logical_parent="${case_dir}/logical-root"
+    mkdir -p "${physical_parent}"
+    if ln -s "${physical_parent}" "${logical_parent}" 2>/dev/null; then
+      home_physical="${physical_parent}/home"
+      home_alias="${logical_parent}/home"
+      alias_label="synthetic-symlink"
+    else
+      log "Skipping stage-0 alias normal Pi guard smoke check; symlinks are unavailable."
+      return 0
+    fi
+  fi
+
+  mkdir -p "${home_physical}"
+  set +e
+  (cd "${case_dir}" && HOME="${home_alias}" PATH="${fakebin}:${PATH}" bash -s -- --dry-run --agent-dir "${home_physical}/.pi/agent" --bin-dir "${case_dir}/bin" --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "stage-0 alias normal Pi guard smoke unexpectedly succeeded (${alias_label})"
+  fi
+  assert_contains "${combined_file}" "refusing to place The Last Harness agent dir under normal Pi config root"
+  assert_not_contains "${combined_file}" "Dry run only; no support files were downloaded."
+  assert_not_contains "${combined_file}" "fake curl was invoked"
+  assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
+  assert_absent "${home_physical}/.pi"
+  assert_absent "${home_alias}/.pi"
+}
+
+run_stage0_validation_precedes_local_support_smoke() {
+  log "Running stage-0 validation ordering smoke check..."
+  local case_dir="${TMP_ROOT}/stage0-validation-order"
+  local stage_root="${case_dir}/stage-root"
+  local home_dir="${case_dir}/home"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  mkdir -p "${stage_root}" "${home_dir}"
+  cp install.sh "${stage_root}/install.sh"
+  make_fake_stage1_support_root "${stage_root}"
+
+  set +e
+  HOME="${home_dir}" bash "${stage_root}/install.sh" --dry-run --agent-dir "~/.pi/agent" --bin-dir "${case_dir}/bin" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "stage-0 validation ordering smoke unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "refusing to place The Last Harness agent dir under normal Pi config root"
+  assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
+  assert_absent "${home_dir}/.pi"
 }
 
 run_normal_pi_guard_smoke() {
@@ -315,7 +693,7 @@ run_missing_required_helper_preflight_smoke() {
   make_failing_pi "${fakebin}"
 
   set +e
-  PATH="${fakebin}:${PATH}" PI_SENTINEL="${pi_sentinel}" TLH_RAW_BASE="https://example.invalid/legacy-ref" bash -s -- --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis < install.sh >"${stdout_file}" 2>"${stderr_file}"
+  (cd "${case_dir}" && PATH="${fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${ROOT_DIR}" PI_SENTINEL="${pi_sentinel}" TLH_RAW_BASE="https://example.invalid/legacy-ref" bash -s -- --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
@@ -344,7 +722,7 @@ run_missing_required_helper_preflight_smoke() {
   : >"${stderr_file}"
 
   set +e
-  PATH="${no_wrapper_fakebin}:${PATH}" LEGACY_SUPPORT_MODE="missing-wrapper-only" PI_SENTINEL="${no_wrapper_pi_sentinel}" TLH_RAW_BASE="https://example.invalid/no-wrapper-ref" bash -s -- --agent-dir "${no_wrapper_agent_dir}" --bin-dir "${no_wrapper_bin_dir}" --without-gnosis --no-wrapper < install.sh >"${stdout_file}" 2>"${stderr_file}"
+  (cd "${no_wrapper_case_dir}" && PATH="${no_wrapper_fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${ROOT_DIR}" LEGACY_SUPPORT_MODE="missing-wrapper-only" PI_SENTINEL="${no_wrapper_pi_sentinel}" TLH_RAW_BASE="https://example.invalid/no-wrapper-ref" bash -s -- --agent-dir "${no_wrapper_agent_dir}" --bin-dir "${no_wrapper_bin_dir}" --without-gnosis --no-wrapper < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
@@ -442,8 +820,14 @@ NODE
 }
 
 run_static_checks
+run_support_manifest_smoke
+run_stage1_dry_run_smoke
+run_stage1_relative_path_canonicalization_smoke
+run_stage1_staged_cwd_isolation_smoke
 run_local_dry_run_smoke
 run_stdin_dry_run_smoke
+run_stage0_alias_guard_smoke
+run_stage0_validation_precedes_local_support_smoke
 run_normal_pi_guard_smoke
 run_gnosis_managed_normal_pi_guard_smoke
 run_missing_required_helper_preflight_smoke

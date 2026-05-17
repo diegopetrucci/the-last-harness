@@ -18,6 +18,8 @@ Once the installation is finished, start `tlh` by running… you guessed it, `tl
 
 Note: if you already have `pi` installed, `tlh` does not replace it — you can keep both, as it uses its own isolated config in `~/.the-last-harness/`.
 
+The installer is split into a stage-0 Bash bootstrapper (`install.sh`) and a stage-1 Node helper (`scripts/tlh-install.mjs`). Stage 0 parses the initial flags, preserves stdin `--dry-run` without downloads, and finds or fetches the matching stage-1 helper/support files from the selected release/ref; stage 1 runs the normal isolated install, settings merge, default-extension install, Gnosis setup, update metadata, and wrapper creation.
+
 ## More ways to install
 
 - Pinned:
@@ -93,3 +95,7 @@ To remove upstream Pi entirely, only if you installed it solely for The Last Har
 ```sh
 npm uninstall -g @earendil-works/pi-coding-agent
 ```
+
+## Security note
+
+The one-line installer and `tlh update` run shell commands on your machine, may install global npm packages for Pi and bundled default extensions, may download an optional Gnosis binary into the isolated TLH profile if you accept, creates an isolated Pi profile, and writes a wrapper command. Review `install.sh` and the stage-1 helper it fetches (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.
