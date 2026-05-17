@@ -99,11 +99,11 @@ export function assertProfilePathWithinAgent(config, path, label = "TLH profile 
 export function ensureSafeProfileDir(config, relativePath, label = "TLH profile directory", options = {}) {
 	validateProfileRelativePath(relativePath, label);
 	const root = realpathForCompare(config.agentDir);
+	assertProfilePathWithinAgent(config, root, label, options);
 	if (existsSync(root) && !lstatSync(root).isDirectory()) {
 		throw new Error(`refusing to use non-directory TLH profile root for ${label}: ${config.agentDir}`);
 	}
 	if (!existsSync(root)) mkdirSync(root, { recursive: true });
-	assertProfilePathWithinAgent(config, root, label, options);
 
 	let cursor = root;
 	for (const component of relativePath.split("/")) {
@@ -122,11 +122,12 @@ export function ensureSafeProfileDir(config, relativePath, label = "TLH profile 
 
 export function safeProfileFileTarget(config, relativePath, label = "TLH profile file", options = {}) {
 	validateProfileRelativePath(relativePath, label);
-	const parentRelative = relativePath.slice(0, relativePath.lastIndexOf("/"));
-	const base = basename(relativePath);
-	if (!parentRelative || !base || parentRelative === relativePath) {
+	const parentSeparatorIndex = relativePath.lastIndexOf("/");
+	if (parentSeparatorIndex < 1 || parentSeparatorIndex === relativePath.length - 1) {
 		throw new Error(`refusing unsafe ${label}: ${relativePath}`);
 	}
+	const parentRelative = relativePath.slice(0, parentSeparatorIndex);
+	const base = basename(relativePath);
 	const parent = ensureSafeProfileDir(config, parentRelative, `${label} parent directory`, options);
 	const target = join(parent, base);
 	if (isSymlink(target)) {

@@ -360,13 +360,13 @@ function applyReplacedDefaultExtensions(settings, defaultExtensions, disabledIds
 	}
 }
 
-function applyDefaultExtensionPackageDedupes(settings, defaultExtensions, disabledIds, changes, { force }) {
+function applyDefaultExtensionPackageDedupes(settings, defaultExtensions, disabledIds, changes, { force, sourceUpdatedIdentities = new Set() }) {
 	if (!Array.isArray(settings.packages)) return;
 
 	for (const extension of defaultExtensions) {
-		if (!shouldMigrateDefaultExtensionReplacements(extension, { force })) continue;
-		if (disabledIds.has(extension.id)) continue;
 		const identity = packageIdentity(extension.source);
+		if (!shouldMigrateDefaultExtensionReplacements(extension, { force }) && !sourceUpdatedIdentities.has(identity)) continue;
+		if (disabledIds.has(extension.id)) continue;
 		const removedSources = removeDuplicatePackagesByIdentity(settings, identity);
 		for (const removedSource of removedSources) {
 			changes.push(`remove duplicate default extension package: ${removedSource} (same identity as ${extension.source})`);
@@ -375,7 +375,8 @@ function applyDefaultExtensionPackageDedupes(settings, defaultExtensions, disabl
 }
 
 function applyDefaultExtensionSourceUpdates(settings, defaultExtensions, disabledIds, changes, { force }) {
-	if (!Array.isArray(settings.packages)) return;
+	const updatedIdentities = new Set();
+	if (!Array.isArray(settings.packages)) return updatedIdentities;
 
 	for (const extension of defaultExtensions) {
 		if (!force && extension.critical !== true) continue;
@@ -410,7 +411,10 @@ function applyDefaultExtensionSourceUpdates(settings, defaultExtensions, disable
 		if (removesCriticalExtensionFilter) {
 			changes.push(`remove critical default extension package filter: ${extension.id}`);
 		}
+		updatedIdentities.add(identity);
 	}
+
+	return updatedIdentities;
 }
 
 function applyDisabledDefaultExtensions(settings, defaultExtensions, disabledIds, changes) {
@@ -628,9 +632,9 @@ function main() {
 	const disabledIds = disabledDefaultExtensionIds(existing, defaultExtensions);
 	const defaults = prepareDefaults(rawDefaults, args.packageSource, defaultExtensions, disabledIds, existing, { force: args.force });
 	const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
-	applyDefaultExtensionSourceUpdates(next, defaultExtensions, disabledIds, changes, { force: args.force });
+	const sourceUpdatedIdentities = applyDefaultExtensionSourceUpdates(next, defaultExtensions, disabledIds, changes, { force: args.force });
 	applyReplacedDefaultExtensions(next, defaultExtensions, disabledIds, changes, { force: args.force });
-	applyDefaultExtensionPackageDedupes(next, defaultExtensions, disabledIds, changes, { force: args.force });
+	applyDefaultExtensionPackageDedupes(next, defaultExtensions, disabledIds, changes, { force: args.force, sourceUpdatedIdentities });
 	applyDisabledDefaultExtensions(next, defaultExtensions, disabledIds, changes);
 	removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
 

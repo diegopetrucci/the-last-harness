@@ -114,7 +114,8 @@ function main(argv = process.argv.slice(2), env = process.env) {
 			return defaultExtensionsRequireCriticalInstall(defaults, { noSettings: Boolean(options.noSettings) }) ? 0 : 1;
 		}
 		case "normalize-path":
-			printLine(realpathForCompare(options.path ?? ""));
+			if (options.path === undefined) throw new Error("normalize-path requires --path");
+			printLine(realpathForCompare(options.path));
 			return 0;
 		default:
 			throw new Error(`unknown command: ${command}`);

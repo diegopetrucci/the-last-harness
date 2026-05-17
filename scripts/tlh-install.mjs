@@ -16,6 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
 	criticalGitSourceSpec,
 	gitSourceInstallSource,
+	packageSourceInstallDir,
 } from "./lib/tlh-install-package-source.mjs";
 import {
 	assertSafeSettingsTarget,
@@ -265,6 +266,11 @@ function buildInstallConfig(parsedArgs, env = process.env) {
 	const scriptPath = fileURLToPath(import.meta.url);
 	const scriptDir = dirname(scriptPath);
 	const supportFiles = supportFileManifest({ noSettings: parsedArgs.noSettings });
+	const defaultPackageRoot = join(agentDir, "git", "github.com", parsedArgs.repo);
+	const packageRoot = packageSourceInstallDir(packageSource, {
+		agentDir,
+		homeDir: env.HOME || homedir(),
+	}) || defaultPackageRoot;
 
 	return {
 		...parsedArgs,
@@ -276,7 +282,7 @@ function buildInstallConfig(parsedArgs, env = process.env) {
 		supportDir: join(agentDir, "tlh"),
 		statePath: join(agentDir, "tlh", "install-state.json"),
 		wrapperPath,
-		packageRoot: join(agentDir, "git", "github.com", parsedArgs.repo),
+		packageRoot,
 		packageSource,
 		packageSourceIsDefault,
 		rawBase: parsedArgs.rawBaseInput || `https://raw.githubusercontent.com/${parsedArgs.repo}/${parsedArgs.ref}`,

@@ -19,6 +19,17 @@ fail() {
   exit 1
 }
 
+run_scrubbed_installer_env() {
+  local -a env_cmd=(env -u PI_CODING_AGENT_DIR)
+  local name
+  while IFS='=' read -r name _; do
+    if [[ "${name}" == TLH_* ]]; then
+      env_cmd+=(-u "${name}")
+    fi
+  done < <(env)
+  "${env_cmd[@]}" "$@"
+}
+
 assert_absent() {
   local path="$1"
   if [[ -e "${path}" ]]; then
@@ -100,9 +111,9 @@ NODE_STAGE0_MANIFEST
 stage1_support_manifest_projection() {
   local no_settings="$1"
   if [[ "${no_settings}" == "true" ]]; then
-    node scripts/tlh-install.mjs --no-settings --print-support-manifest
+    run_scrubbed_installer_env node scripts/tlh-install.mjs --no-settings --print-support-manifest
   else
-    node scripts/tlh-install.mjs --print-support-manifest
+    run_scrubbed_installer_env node scripts/tlh-install.mjs --print-support-manifest
   fi | awk -F'|' '{ print $2 "|" $3 }'
 }
 
@@ -125,6 +136,31 @@ run_support_manifest_smoke() {
       fail "stage-0 bootstrap support manifest does not match stage-1 manifest (${mode})"
     fi
   done
+}
+
+run_install_query_smoke() {
+  log "Running installer query smoke check..."
+  local case_dir="${TMP_ROOT}/install-query"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  mkdir -p "${case_dir}"
+
+  set +e
+  (
+    export TLH_AGENT_DIR="${case_dir}/poisoned-agent" PI_CODING_AGENT_DIR="${case_dir}/poisoned-pi-agent"
+    run_scrubbed_installer_env node scripts/tlh-install-query.mjs normalize-path
+  ) >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "normalize-path without --path unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "error: normalize-path requires --path"
 }
 
 make_failing_curl() {
@@ -298,7 +334,7 @@ run_stage1_dry_run_smoke() {
   local combined_file="${case_dir}/combined.log"
   mkdir -p "${case_dir}"
 
-  node scripts/tlh-install.mjs --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis >"${stdout_file}" 2>"${stderr_file}"
+  run_scrubbed_installer_env node scripts/tlh-install.mjs --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
 
   assert_absent "${agent_dir}"
@@ -318,7 +354,9 @@ run_stage1_relative_path_canonicalization_smoke() {
   mkdir -p "${home_dir}" "${cwd_dir}"
   run_dir="$(cd "${cwd_dir}" >/dev/null 2>&1 && pwd -P)"
 
-  (cd "${run_dir}" && HOME="${home_dir}" node "${ROOT_DIR}/scripts/tlh-install.mjs" --dry-run --agent-dir .pi/agent --bin-dir bin --without-gnosis >"${stdout_file}" 2>"${stderr_file}")
+  (cd "${run_dir}" && \
+    export PI_CODING_AGENT_DIR="${home_dir}/.pi/agent" TLH_AGENT_DIR="${home_dir}/.pi/agent" TLH_BIN_DIR="${home_dir}/.pi/agent" TLH_PACKAGE_SOURCE="~/poisoned-package" TLH_REPO="poisoned/repo" TLH_REF="poisoned-ref" TLH_UPDATE_TRACK="custom" && \
+    run_scrubbed_installer_env HOME="${home_dir}" node "${ROOT_DIR}/scripts/tlh-install.mjs" --dry-run --agent-dir .pi/agent --bin-dir bin --without-gnosis >"${stdout_file}" 2>"${stderr_file}")
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
 
   local agent_dir="${run_dir}/.pi/agent"
@@ -330,6 +368,7 @@ run_stage1_relative_path_canonicalization_smoke() {
   assert_contains "${combined_file}" "Would write tlh update metadata: ${agent_dir}/tlh/install-state.json"
   assert_contains "${combined_file}" "Installing wrapper command: ${bin_dir}/tlh"
   assert_contains "${combined_file}" "+ mkdir -p ${bin_dir}"
+  assert_not_contains "${combined_file}" "poisoned"
   assert_not_contains "${combined_file}" "PI_CODING_AGENT_DIR=.pi/agent"
   assert_absent "${home_dir}/.pi"
 }
@@ -356,7 +395,7 @@ run_stage1_staged_cwd_isolation_smoke() {
 
   local stage_script
   stage_script="$(cd "${stage_scripts_dir}" >/dev/null 2>&1 && pwd -P)/tlh-install.mjs"
-  node "${stage_script}" --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis >"${stdout_file}" 2>"${stderr_file}"
+  run_scrubbed_installer_env node "${stage_script}" --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
 
   assert_absent "${agent_dir}"
@@ -376,7 +415,7 @@ run_local_dry_run_smoke() {
   local combined_file="${case_dir}/combined.log"
   mkdir -p "${case_dir}"
 
-  bash install.sh --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis >"${stdout_file}" 2>"${stderr_file}"
+  run_scrubbed_installer_env bash install.sh --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
 
   assert_absent "${agent_dir}"
@@ -401,7 +440,7 @@ run_stdin_dry_run_smoke() {
   make_failing_curl "${fakebin}"
   make_fake_stage1_support_root "${case_dir}"
 
-  (cd "${case_dir}" && PATH="${fakebin}:${PATH}" bash -s -- --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  (cd "${case_dir}" && run_scrubbed_installer_env PATH="${fakebin}:${PATH}" bash -s -- --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
 
   assert_absent "${agent_dir}"
@@ -416,7 +455,7 @@ run_stdin_dry_run_smoke() {
   : >"${stdout_file}"
   : >"${stderr_file}"
   set +e
-  (cd "${case_dir}" && HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --dry-run --track nope --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  (cd "${case_dir}" && run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --dry-run --track nope --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
@@ -439,7 +478,7 @@ run_stdin_dry_run_smoke() {
   relative_bin_dir="${run_dir}/bin"
   : >"${stdout_file}"
   : >"${stderr_file}"
-  (cd "${run_dir}" && HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --dry-run --agent-dir .pi/agent --bin-dir bin --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  (cd "${run_dir}" && run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --dry-run --agent-dir .pi/agent --bin-dir bin --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
 
   assert_absent "${relative_agent_dir}"
@@ -460,7 +499,7 @@ run_stdin_dry_run_smoke() {
   local default_bin_dir="${home_dir}/.local/bin"
   : >"${stdout_file}"
   : >"${stderr_file}"
-  (cd "${case_dir}" && HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --dry-run --no-wrapper < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  (cd "${case_dir}" && run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --dry-run --no-wrapper < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
 
   assert_absent "${default_agent_dir}"
@@ -475,7 +514,7 @@ run_stdin_dry_run_smoke() {
   : >"${stdout_file}"
   : >"${stderr_file}"
   set +e
-  (cd "${case_dir}" && HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --dry-run --agent-dir "~/.pi/agent" --bin-dir "${bin_dir}" --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  (cd "${case_dir}" && run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --dry-run --agent-dir "~/.pi/agent" --bin-dir "${bin_dir}" --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
@@ -492,7 +531,7 @@ run_stdin_dry_run_smoke() {
   : >"${stdout_file}"
   : >"${stderr_file}"
   set +e
-  (cd "${case_dir}" && HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --agent-dir "~/.pi/agent" --bin-dir "${bin_dir}" --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  (cd "${case_dir}" && run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --agent-dir "~/.pi/agent" --bin-dir "${bin_dir}" --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
@@ -554,7 +593,7 @@ run_stage0_alias_guard_smoke() {
 
   mkdir -p "${home_physical}"
   set +e
-  (cd "${case_dir}" && HOME="${home_alias}" PATH="${fakebin}:${PATH}" bash -s -- --dry-run --agent-dir "${home_physical}/.pi/agent" --bin-dir "${case_dir}/bin" --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  (cd "${case_dir}" && run_scrubbed_installer_env HOME="${home_alias}" PATH="${fakebin}:${PATH}" bash -s -- --dry-run --agent-dir "${home_physical}/.pi/agent" --bin-dir "${case_dir}/bin" --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
@@ -585,7 +624,7 @@ run_stage0_validation_precedes_local_support_smoke() {
   make_fake_stage1_support_root "${stage_root}"
 
   set +e
-  HOME="${home_dir}" bash "${stage_root}/install.sh" --dry-run --agent-dir "~/.pi/agent" --bin-dir "${case_dir}/bin" >"${stdout_file}" 2>"${stderr_file}"
+  run_scrubbed_installer_env HOME="${home_dir}" bash "${stage_root}/install.sh" --dry-run --agent-dir "~/.pi/agent" --bin-dir "${case_dir}/bin" >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
@@ -610,7 +649,7 @@ run_normal_pi_guard_smoke() {
   mkdir -p "${home_dir}"
 
   set +e
-  HOME="${home_dir}" bash install.sh --dry-run --agent-dir "${home_dir}/.pi/agent" --bin-dir "${case_dir}/bin" >"${stdout_file}" 2>"${stderr_file}"
+  run_scrubbed_installer_env HOME="${home_dir}" bash install.sh --dry-run --agent-dir "${home_dir}/.pi/agent" --bin-dir "${case_dir}/bin" >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
@@ -625,7 +664,7 @@ run_normal_pi_guard_smoke() {
   : >"${stdout_file}"
   : >"${stderr_file}"
   set +e
-  HOME="${home_dir}" bash install.sh --dry-run --agent-dir "${case_dir}/agent" --bin-dir "${home_dir}/.pi/agent" >"${stdout_file}" 2>"${stderr_file}"
+  run_scrubbed_installer_env HOME="${home_dir}" bash install.sh --dry-run --agent-dir "${case_dir}/agent" --bin-dir "${home_dir}/.pi/agent" >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
@@ -693,7 +732,7 @@ run_missing_required_helper_preflight_smoke() {
   make_failing_pi "${fakebin}"
 
   set +e
-  (cd "${case_dir}" && PATH="${fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${ROOT_DIR}" PI_SENTINEL="${pi_sentinel}" TLH_RAW_BASE="https://example.invalid/legacy-ref" bash -s -- --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  (cd "${case_dir}" && run_scrubbed_installer_env PATH="${fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${ROOT_DIR}" PI_SENTINEL="${pi_sentinel}" TLH_RAW_BASE="https://example.invalid/legacy-ref" bash -s -- --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
@@ -722,7 +761,7 @@ run_missing_required_helper_preflight_smoke() {
   : >"${stderr_file}"
 
   set +e
-  (cd "${no_wrapper_case_dir}" && PATH="${no_wrapper_fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${ROOT_DIR}" LEGACY_SUPPORT_MODE="missing-wrapper-only" PI_SENTINEL="${no_wrapper_pi_sentinel}" TLH_RAW_BASE="https://example.invalid/no-wrapper-ref" bash -s -- --agent-dir "${no_wrapper_agent_dir}" --bin-dir "${no_wrapper_bin_dir}" --without-gnosis --no-wrapper < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  (cd "${no_wrapper_case_dir}" && run_scrubbed_installer_env PATH="${no_wrapper_fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${ROOT_DIR}" LEGACY_SUPPORT_MODE="missing-wrapper-only" PI_SENTINEL="${no_wrapper_pi_sentinel}" TLH_RAW_BASE="https://example.invalid/no-wrapper-ref" bash -s -- --agent-dir "${no_wrapper_agent_dir}" --bin-dir "${no_wrapper_bin_dir}" --without-gnosis --no-wrapper < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
@@ -821,6 +860,7 @@ NODE
 
 run_static_checks
 run_support_manifest_smoke
+run_install_query_smoke
 run_stage1_dry_run_smoke
 run_stage1_relative_path_canonicalization_smoke
 run_stage1_staged_cwd_isolation_smoke

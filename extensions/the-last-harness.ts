@@ -1866,7 +1866,6 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	const primaryAgent = loadPrimaryAgent();
 	const subagentMetadata = loadSubagentMetadata();
 	const warned = new Set<string>();
-	let primaryModelAttempted = false;
 	let primaryAgentDefaultEnabled = true;
 	let sessionPrimaryAgentOverride: boolean | undefined;
 	let prePrimaryActiveTools: string[] | undefined;
@@ -1959,10 +1958,9 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	}
 
 	async function applyPrimaryModel(ctx: ExtensionContext): Promise<void> {
-		if (!primaryAgent?.model || primaryModelAttempted) {
+		if (!primaryAgent?.model) {
 			return;
 		}
-		primaryModelAttempted = true;
 		const parsedModel = parseProviderModel(primaryAgent.model);
 		if (!parsedModel) {
 			warnOnce(ctx, "invalid-primary-model", `TLH primary agent model is invalid: ${primaryAgent.model}`);
@@ -1982,6 +1980,13 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		}
 	}
 
+	function applyPrimaryThinking(): void {
+		if (!primaryAgent?.thinking || pi.getThinkingLevel() === primaryAgent.thinking) {
+			return;
+		}
+		pi.setThinkingLevel(primaryAgent.thinking);
+	}
+
 	async function applyPrimaryDefaults(ctx: ExtensionContext): Promise<void> {
 		if (!isArchitectEnabled()) {
 			restorePrimaryToolsIfAppropriate();
@@ -1994,8 +1999,8 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		if (primaryConfig?.applyModel === true) {
 			await applyPrimaryModel(ctx);
 		}
-		if (primaryConfig?.applyThinking === true && primaryAgent?.thinking) {
-			pi.setThinkingLevel(primaryAgent.thinking);
+		if (primaryConfig?.applyThinking === true) {
+			applyPrimaryThinking();
 		}
 	}
 
@@ -2293,11 +2298,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	pi.on("before_agent_start", async (event, ctx) => {
 		syncPrimaryAgentState(ctx);
 		const architectEnabled = isArchitectEnabled();
-		if (architectEnabled) {
-			applyPrimaryTools(ctx);
-		} else {
-			restorePrimaryToolsIfAppropriate();
-		}
+		await applyPrimaryDefaults(ctx);
 		const prompts = [event.systemPrompt, buildTlhSystemPrompt(primaryAgent, subagentMetadata, architectEnabled)];
 		if (shouldAppendGnosisPrompt(ctx.cwd)) {
 			prompts.push(GNOSIS_PROMPT);

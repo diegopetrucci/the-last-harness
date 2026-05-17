@@ -13,7 +13,9 @@ import {
 import { assertGitSourceTargetSafe } from "../scripts/lib/tlh-install-git.mjs";
 import {
 	assertProfilePathWithinAgent,
+	ensureSafeProfileDir,
 	pathIsProtectedPiConfig,
+	safeProfileFileTarget,
 	validateInstallerTargets,
 } from "../scripts/lib/tlh-install-paths.mjs";
 import {
@@ -128,6 +130,34 @@ test("normal Pi config guards reject agent, wrapper, and profile writes under ~/
 		() => assertProfilePathWithinAgent({ agentDir: join(root, "agent") }, join(root, "outside", "settings.json"), "test file", { homeDir }),
 		/refusing to write test file outside the isolated TLH profile/,
 	);
+});
+
+test("safeProfileFileTarget rejects single-segment file targets", (t) => {
+	const root = tempFixture(t);
+	const agentDir = join(root, "agent");
+	const homeDir = join(root, "home");
+	mkdirSync(homeDir, { recursive: true });
+
+	assert.throws(
+		() => safeProfileFileTarget({ agentDir }, "settings.json", "test file", { homeDir }),
+		/refusing unsafe test file: settings\.json/,
+	);
+	assert.equal(existsSync(agentDir), false);
+	assert.equal(existsSync(join(agentDir, "settings.jso")), false);
+});
+
+test("ensureSafeProfileDir rejects protected profile roots before creating them", (t) => {
+	const root = tempFixture(t);
+	const homeDir = join(root, "home");
+	const protectedAgentDir = join(homeDir, ".pi", "agent");
+	mkdirSync(homeDir, { recursive: true });
+
+	assert.throws(
+		() => ensureSafeProfileDir({ agentDir: protectedAgentDir }, "tlh", "test directory", { homeDir }),
+		/refusing to write test directory under normal Pi config root/,
+	);
+	assert.equal(existsSync(protectedAgentDir), false);
+	assert.equal(existsSync(join(homeDir, ".pi")), false);
 });
 
 test("subagent prompt discovery honors source precedence and copies prompt files safely", (t) => {

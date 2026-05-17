@@ -9,13 +9,13 @@ const repoRoot = resolve(import.meta.dirname, "..");
 const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
 const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
 
-function tempFixture(defaultsValue, settingsValue) {
+function tempFixture(defaultsValue, settingsValue, extensionsValue = []) {
 	const dir = mkdtempSync(join(tmpdir(), "tlh-merge-settings-test-"));
 	const defaults = join(dir, "settings.defaults.json");
 	const extensions = join(dir, "default-extensions.json");
 	const settings = join(dir, "settings.json");
 	writeFileSync(defaults, JSON.stringify(defaultsValue, null, 2));
-	writeFileSync(extensions, "[]\n");
+	writeFileSync(extensions, `${JSON.stringify(extensionsValue, null, 2)}\n`);
 	writeFileSync(settings, JSON.stringify(settingsValue, null, 2));
 	return { defaults, extensions, settings };
 }
@@ -72,5 +72,35 @@ test("merge keeps exact append semantics for unrelated arrays", () => {
 	assert.deepEqual(readJson(fixture.settings).otherAgentDirs, [
 		"./tlh/agents/subagents",
 		"tlh/agents/subagents",
+	]);
+});
+
+test("critical source updates dedupe stale same-identity filtered packages", () => {
+	const criticalSource = "git:github.com/example/pi-critical@v2";
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				{ source: "git:github.com/example/pi-critical@v1", extensions: ["legacy-filter"] },
+				{ source: "git:github.com/example/pi-critical@v0", extensions: ["stale-filter"] },
+				"npm:unrelated-package",
+			],
+		},
+		[
+			{
+				id: "critical-extension",
+				critical: true,
+				source: criticalSource,
+			},
+		],
+	);
+
+	runMerge(fixture);
+
+	assert.deepEqual(readJson(fixture.settings).packages, [
+		harnessPackage,
+		criticalSource,
+		"npm:unrelated-package",
 	]);
 });

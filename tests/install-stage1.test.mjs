@@ -15,11 +15,20 @@ function makeTempDir(prefix = "tlh-install-stage1-test-") {
 	return mkdtempSync(join(tmpdir(), prefix));
 }
 
+function scrubInstallerEnv(overrides = {}, baseEnv = process.env) {
+	const env = {};
+	for (const [key, value] of Object.entries(baseEnv)) {
+		if (key === "PI_CODING_AGENT_DIR" || key.startsWith("TLH_")) continue;
+		env[key] = value;
+	}
+	return { ...env, ...overrides };
+}
+
 function runHelper(scriptRelativePath, args, { homeDir }) {
 	const scriptPath = join(repoRoot, scriptRelativePath);
 	const result = spawnSync(process.execPath, [scriptPath, ...args], {
 		cwd: repoRoot,
-		env: { ...process.env, HOME: homeDir },
+		env: scrubInstallerEnv({ HOME: homeDir }),
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 	});
@@ -29,6 +38,78 @@ function runHelper(scriptRelativePath, args, { homeDir }) {
 		`${scriptRelativePath} failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
 	);
 }
+
+function runQuery(args, env = scrubInstallerEnv()) {
+	return spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-install-query.mjs"), ...args], {
+		cwd: repoRoot,
+		env,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+}
+
+test("install query normalize-path requires explicit path", () => {
+	const result = runQuery(["normalize-path"], scrubInstallerEnv({}, {
+		...process.env,
+		PI_CODING_AGENT_DIR: "/tmp/poisoned-pi-agent",
+		TLH_AGENT_DIR: "/tmp/poisoned-agent",
+	}));
+
+	assert.notEqual(result.status, 0);
+	assert.equal(result.stdout, "");
+	assert.match(result.stderr, /error: normalize-path requires --path/);
+});
+
+test("stage-1 derives packageRoot from custom package source install dirs", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	mkdirSync(homeDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	const baseEnv = {
+		...process.env,
+		PI_CODING_AGENT_DIR: join(homeDir, ".pi", "agent"),
+		TLH_AGENT_DIR: join(homeDir, ".pi", "agent"),
+		TLH_REPO: "poisoned/repo",
+		TLH_REF: "poisoned-ref",
+	};
+	const configFor = (packageSource) => {
+		const env = scrubInstallerEnv({ HOME: homeDir, TLH_PACKAGE_SOURCE: packageSource }, baseEnv);
+		return buildInstallConfig(parseArgs(["--agent-dir", agentDir, "--bin-dir", binDir], env), env);
+	};
+
+	const gitConfig = configFor("git:github.com/custom/pkg@feature");
+	assert.equal(gitConfig.packageSourceIsDefault, false);
+	assert.equal(gitConfig.updateTrack, "custom");
+	assert.equal(gitConfig.packageRoot, join(agentDir, "git", "github.com", "custom", "pkg"));
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		gitConfig.agentDir,
+		"--bin-dir",
+		gitConfig.binDir,
+		"--wrapper-name",
+		gitConfig.wrapperName,
+		"--package-root",
+		gitConfig.packageRoot,
+	], { homeDir });
+	const wrapper = readFileSync(gitConfig.wrapperPath, "utf8");
+	assert.ok(wrapper.split(/\r?\n/).includes(`default_tlh_package_root='${gitConfig.packageRoot}'`));
+
+	const relativeLocalConfig = configFor("../local-package");
+	assert.equal(relativeLocalConfig.packageRoot, resolve(agentDir, "../local-package"));
+
+	const homeLocalConfig = configFor("~/local-package");
+	assert.equal(homeLocalConfig.packageRoot, join(homeDir, "local-package"));
+
+	const unsupportedConfig = configFor("github:owner/repo");
+	assert.equal(
+		unsupportedConfig.packageRoot,
+		join(agentDir, "git", "github.com", "diegopetrucci", "the-last-harness"),
+	);
+});
 
 test("stage-1 canonicalizes relative target dirs before deriving wrapper and state paths", (t) => {
 	const root = makeTempDir();
@@ -45,8 +126,18 @@ test("stage-1 canonicalizes relative target dirs before deriving wrapper and sta
 	process.chdir(cwd);
 	const canonicalCwd = process.cwd();
 
-	const parsed = parseArgs(["--agent-dir", ".pi/agent", "--bin-dir", "bin"]);
-	const config = buildInstallConfig(parsed, { ...process.env, HOME: homeDir });
+	const env = scrubInstallerEnv({ HOME: homeDir }, {
+		...process.env,
+		PI_CODING_AGENT_DIR: join(homeDir, ".pi", "agent"),
+		TLH_AGENT_DIR: join(homeDir, ".pi", "agent"),
+		TLH_BIN_DIR: join(homeDir, ".pi", "agent"),
+		TLH_PACKAGE_SOURCE: "~/poisoned-package",
+		TLH_REPO: "poisoned/repo",
+		TLH_REF: "poisoned-ref",
+		TLH_UPDATE_TRACK: "custom",
+	});
+	const parsed = parseArgs(["--agent-dir", ".pi/agent", "--bin-dir", "bin"], env);
+	const config = buildInstallConfig(parsed, env);
 	const expectedAgentDir = join(canonicalCwd, ".pi", "agent");
 	const expectedBinDir = join(canonicalCwd, "bin");
 	const normalPiAgentIfLeftRelative = join(homeDir, ".pi", "agent");
