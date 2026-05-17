@@ -5,6 +5,7 @@
   "theme": "the-last-harness",
   "editorPaddingX": 1,
   "quietStartup": true,
+  "collapseChangelog": true,
   "subagents": {
     "disableBuiltins": true,
     "agentDirs": [
