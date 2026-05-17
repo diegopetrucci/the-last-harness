@@ -36,7 +36,7 @@ They run in fresh child contexts: they get the task and project context, not the
 - **Dirty-repo guard**: TLH prompts before starting, switching, or forking sessions when the current git repo has uncommitted changes, so work-in-progress is harder to lose.
 - **Completion notifications**: TLH can notify you when an agent turn finishes and is waiting for input.
 - **Model niceties**: `/effort` makes it easier to switch thinking effort levels, and `/fast` enables OpenAI Fast mode controls.
-- **Cleaner sessions**: tlh's UI only shows what is relevant to you _right now_ — tools and bash output is collapsed by default, the information in the footer is trimmed.
+- **Cleaner sessions**: tlh's UI only shows what is relevant to you _right now_ — tools, bash output, and incoming intercom cards are collapsed by default; footer details are trimmed.
 - **Conservative updates and isolation**: tlh runs independently from `pi`, and never overrides your settings across updates
 
 ## Slash commands
