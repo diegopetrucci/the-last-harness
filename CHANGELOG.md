@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
+- Bundled `npm:@diegopetrucci/pi-triage-comments` as a default extension.
 - Bundled TLH-profile-aware forks of `pi-subagents` and `pi-intercom` as default extensions, including git-package intercom bridge detection and scoped `get` detail inspection for the subagent fork.
 - Added the default `architect` primary-agent prompt and TLH minor subagent prompts for `developer`, `code-reviewer`, `repo-scout`, and `diff-summarizer`.
 - Added bundled bug investigation subagents `bug-hunter` and `bug-catcher`, with parent-orchestrated `bug-hunter` then `bug-catcher` second-opinion review.
