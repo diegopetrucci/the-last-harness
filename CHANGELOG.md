@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-17
+
 ### Added
 
 - Added the TLH architect workflow with bundled specialist subagents and safer setup/update handling for the isolated profile.
