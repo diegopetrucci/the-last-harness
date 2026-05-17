@@ -12,7 +12,7 @@ function sourceSection(startMarker, endMarker) {
 	return extensionSource.slice(start, end);
 }
 
-test("before_agent_start reapplies architect defaults without a one-shot model gate", () => {
+test("before_agent_start reapplies primary defaults without a one-shot model gate", () => {
 	const beforeAgentStart = sourceSection('pi.on("before_agent_start"', 'pi.on("tool_call"');
 	const applyPrimaryModel = sourceSection("async function applyPrimaryModel", "function applyPrimaryThinking");
 	const applyPrimaryThinking = sourceSection("function applyPrimaryThinking", "async function applyPrimaryDefaults");
@@ -20,5 +20,17 @@ test("before_agent_start reapplies architect defaults without a one-shot model g
 	assert.doesNotMatch(extensionSource, /primaryModelAttempted/);
 	assert.match(beforeAgentStart, /await applyPrimaryDefaults\(ctx\);/);
 	assert.match(applyPrimaryModel, /ctx\.model\?\.provider === model\.provider && ctx\.model\?\.id === model\.id/);
-	assert.match(applyPrimaryThinking, /pi\.getThinkingLevel\(\) === primaryAgent\.thinking/);
+	assert.match(applyPrimaryThinking, /pi\.getThinkingLevel\(\) === primary\.thinking/);
+});
+
+test("extension wires multi-primary commands and active-primary safety", () => {
+	const agentCommand = sourceSection('pi.registerCommand("agent"', 'pi.registerShortcut');
+	const shortcut = sourceSection('pi.registerShortcut(PRIMARY_AGENT_CYCLE_SHORTCUT', 'pi.registerCommand("architect"');
+	const toolCall = sourceSection('pi.on("tool_call"', "const reason = validateSubagentToolInput");
+
+	assert.match(extensionSource, /function loadPrimaryAgents\(\): Map<TlhPrimaryAgentSelection, AgentPrompt>/);
+	assert.match(agentCommand, /default product/);
+	assert.match(agentCommand, /writeTlhPrimaryAgentDefault\(ctx\.cwd, defaultSelection\)/);
+	assert.match(shortcut, /architect\/product\/disabled/);
+	assert.match(toolCall, /!isEnabledPrimaryAgentSelection\(currentPrimaryAgentSelection\(\)\)/);
 });

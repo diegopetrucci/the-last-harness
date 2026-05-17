@@ -4,6 +4,11 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Added the product primary agent for strategy, product docs, and implementation-ticket shaping without source implementation.
+- Added multi-primary switching across architect, product, and disabled modes via `Shift+Tab` and `/agent`, while keeping `/architect` compatibility.
+
 ## [0.7.0] - 2026-05-17
 
 ### Added

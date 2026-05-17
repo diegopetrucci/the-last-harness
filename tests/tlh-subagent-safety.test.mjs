@@ -97,6 +97,19 @@ test("validateSubagentToolInput blocks unsafe actions and non-user scopes", () =
 	assert.match(validateSubagentToolInput({ action: "list", agentScope: "system" }), /may not use agentScope: "system"/);
 });
 
+test("validateSubagentToolInput uses generic primary-agent wording", () => {
+	const reasons = [
+		validateSubagentToolInput(null),
+		validateSubagentToolInput({ action: "resume" }),
+		validateSubagentToolInput({ agent: "developer", context: "resume" }),
+	].filter(Boolean);
+
+	for (const reason of reasons) {
+		assert.match(reason, /TLH primary(?:-agent| agents)/);
+		assert.doesNotMatch(reason, /TLH architect/);
+	}
+});
+
 test("validateSubagentToolInput rejects disallowed agents", () => {
 	assert.match(validateSubagentToolInput({ agent: "architect" }), /Disallowed target\(s\): architect/);
 	assert.match(
