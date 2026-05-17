@@ -4,5 +4,6 @@
   ],
   "theme": "the-last-harness",
   "editorPaddingX": 1,
-  "quietStartup": true
+  "quietStartup": true,
+  "collapseChangelog": true
 }

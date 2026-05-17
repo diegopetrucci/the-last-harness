@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- TLH-owned default settings now collapse upstream Pi changelog notices to the supported condensed one-line notice by default.
+
 ## [0.6.0] - 2026-05-13
 
 ### Added
