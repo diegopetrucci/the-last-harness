@@ -6,25 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
-- Bundled `npm:@diegopetrucci/pi-triage-comments` as a default extension.
-- Bundled TLH-profile-aware forks of `pi-subagents` and `pi-intercom` as default extensions, including git-package intercom bridge detection and scoped `get` detail inspection for the subagent fork.
-- Added the default `architect` primary-agent prompt and TLH minor subagent prompts for `developer`, `code-reviewer`, `repo-scout`, and `diff-summarizer`.
-- Added bundled bug investigation subagents `bug-hunter` and `bug-catcher`, with parent-orchestrated `bug-hunter` then `bug-catcher` second-opinion review.
-- Added bundled read-only `librarian` and `oracle` subagents for parent-orchestrated external GitHub research and high-reasoning second opinions.
-- Added `/architect` session and persistent controls to enable, disable, toggle, or reset the TLH architect primary-agent persona.
-- Copy TLH minor subagent prompts into the isolated profile during install and expose them through `subagents.agentDirs`.
-
-### Changed
-
-- Disable `pi-subagents` built-in agents by default in the isolated TLH profile.
-- The TLH extension now injects only the active primary-agent prompt plus compact allowed-subagent metadata into the main session.
-- Gnosis planning/review instructions are now injected only into the main session by the conditional Gnosis prompt, rather than being baked into the architect prompt; child subagents are told to report memory-worthy findings to the parent instead of writing to Gnosis directly.
-- In architect mode, TLH subagent execution plus `list` and `get` detail inspection are forced to the isolated user scope and fresh child context so project agents cannot shadow bundled minor agents and parent architect/Gnosis history is not forked into children, while async/background control actions such as `status` and `interrupt` remain available to the architect; `resume` is blocked in architect mode because persisted runs do not prove their original agent scope.
-- The architect/developer/reviewer prompts now use `tk` when available but fall back to self-contained numbered tasks, so fresh installs do not require an external ticket command.
-- TLH no longer switches the saved model or reasoning effort on startup unless `tlh.primaryAgent.applyModel` or `tlh.primaryAgent.applyThinking` is explicitly enabled.
-- Default-extension source migrations, replacement-package appends, and replaced-package cleanup now require installer `--force`, preserving user-pinned or user-managed package entries by default and avoiding duplicate or mismatched replaced/default extension update loads; disabling a bundled default now also removes any configured package identities it replaces. Isolation-critical `pi-subagents`/`pi-intercom` defaults are protected: `tlh defaults disable` rejects them, stale critical opt-outs are ignored/cleaned, and replacements are migrated to the bundled TLH forks by default.
-- Manual install docs now use the installed TLH package checkout for helper scripts and bundled subagent prompts, verify/copy prompts before settings merge, avoid symlink-following support-directory removal/copy commands, and use current pinned-release examples.
-- The installer now copies and verifies bundled subagent prompts before merging settings, prefers the explicit package source for prompts and fetches prompt files with other one-line-installer support assets for custom package sources, fails normal installs instead of enabling undiscoverable TLH subagents when prompts are missing or incomplete, fails installer runs when critical subagents/intercom default-extension installs or refreshes fail, and refuses to write installer-owned support files or git package refreshes through symlinked paths outside the isolated profile. Runtime startup/update state also refuses symlinked TLH support paths that resolve outside the isolated profile.
+- Added the TLH architect workflow with bundled specialist subagents and safer setup/update handling for the isolated profile.
 
 ## [0.6.0] - 2026-05-13
 
