@@ -90,6 +90,47 @@ test("install-managed rejects agent bin symlink during dry-run", () => {
 	assert.deepEqual(readdirSync(fixture.external), []);
 });
 
+test("install-managed revalidates target before creating swapped parent directories", { skip: process.platform === "win32" || !gnosisAssetName("1.2.3") }, () => {
+	const fixture = tempFixture();
+	const version = "1.2.3";
+	const assetName = gnosisAssetName(version);
+	const target = join(fixture.agent, "bin", "nested", "gn");
+
+	const archiveSource = join(fixture.dir, "archive-source");
+	mkdirSync(archiveSource, { recursive: true });
+	const gn = join(archiveSource, "gn");
+	writeFileSync(gn, `#!/usr/bin/env node\nconst first = process.argv[2];\nconst second = process.argv[3];\nprocess.exit(first === "help" && ["plan", "review"].includes(second) ? 0 : 1);\n`);
+	chmodSync(gn, 0o755);
+
+	const archivePath = join(fixture.dir, assetName);
+	const tarResult = spawnSync("tar", ["-czf", archivePath, "-C", archiveSource, "gn"], { encoding: "utf8" });
+	assert.equal(tarResult.status, 0, tarResult.stderr || String(tarResult.error));
+	const checksum = sha256File(archivePath);
+
+	const preload = join(fixture.dir, "swap-target-parent.mjs");
+	writeFileSync(preload, `import { readFileSync, symlinkSync } from "node:fs";\nconst archive = readFileSync(process.env.TLH_TEST_ARCHIVE);\nconst archiveBytes = archive.buffer.slice(archive.byteOffset, archive.byteOffset + archive.byteLength);\nconst checksums = \`${checksum}  ${assetName}\\n\`;\nglobalThis.fetch = async (url) => {\n\tif (String(url).endsWith("/checksums.txt")) {\n\t\tsymlinkSync(process.env.TLH_TEST_EXTERNAL_DIR, process.env.TLH_TEST_SWAP_LINK, "dir");\n\t\treturn { ok: true, status: 200, statusText: "OK", text: async () => checksums };\n\t}\n\treturn { ok: true, status: 200, statusText: "OK", arrayBuffer: async () => archiveBytes };\n};\n`);
+
+	const result = runGnosis([
+		"--agent-dir", fixture.agent,
+		"--target", target,
+		"--gnosis-version", version,
+		"install-managed",
+	], {
+		env: {
+			HOME: fixture.home,
+			TLH_TEST_ARCHIVE: archivePath,
+			TLH_TEST_EXTERNAL_DIR: fixture.external,
+			TLH_TEST_SWAP_LINK: join(fixture.agent, "bin"),
+		},
+		nodeArgs: ["--import", preload],
+	});
+
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /symlinked target parent component/i);
+	assert.equal(lstatSync(join(fixture.agent, "bin")).isSymbolicLink(), true);
+	assert.deepEqual(readdirSync(fixture.external), []);
+});
+
 test("install-managed rejects dry-run target spelled through a symlinked agent path", () => {
 	const fixture = tempFixture();
 	const agentLink = join(fixture.dir, "agent-link");

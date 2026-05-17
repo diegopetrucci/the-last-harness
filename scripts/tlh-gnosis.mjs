@@ -436,6 +436,7 @@ function assertManagedGnosisTempPath(path, agentDir, label, { mustExist = false,
 }
 
 function createManagedGnosisTempTarget(args, agentDir, target) {
+	validateManagedGnosisTarget(args, agentDir);
 	const targetParent = dirname(target);
 	mkdirSync(targetParent, { recursive: true });
 	validateManagedGnosisTarget(args, agentDir);
