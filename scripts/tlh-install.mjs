@@ -695,8 +695,20 @@ async function writeInstallState(config) {
 	runNodeScript(config, config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT, args);
 }
 
-function lineInOutput(candidate, output) {
-	return output.split(/\r?\n/).some((line) => line === candidate);
+function outputLines(output) {
+	return output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+function splitDefaultExtensionSources(sourcesOutput, criticalSourcesOutput) {
+	const criticalSourceSet = new Set(outputLines(criticalSourcesOutput));
+	const sources = outputLines(sourcesOutput);
+	const criticalSources = [];
+	const nonCriticalSources = [];
+	for (const source of sources) {
+		if (criticalSourceSet.has(source)) criticalSources.push(source);
+		else nonCriticalSources.push(source);
+	}
+	return { sources, criticalSources, nonCriticalSources };
 }
 
 function ensureCriticalGitSourceCheckout(config, source) {
@@ -712,6 +724,74 @@ function ensureCriticalGitSourceCheckout(config, source) {
 		missingMessage: `critical git extension checkout is missing or invalid: ${spec.targetDir}`,
 		warnOnMissing: true,
 	}, gitCheckoutIo());
+}
+
+function criticalDefaultGitSources(config, sources) {
+	return sources.filter((source) => criticalGitSourceSpec(source, { agentDir: config.agentDir }));
+}
+
+function preflightCriticalDefaultExtensionTargets(config, sources) {
+	const gitSources = criticalDefaultGitSources(config, sources);
+	if (gitSources.length === 0) return;
+	detailLog(config, `${config.dryRun ? "Would preflight" : "Preflighting"} ${gitSources.length} critical bundled default git checkout target(s) before any settings-wide default extension update.`);
+	for (const source of gitSources) {
+		assertGitSourceTargetSafe(config, source, "critical default extension package checkout", gitCheckoutIo());
+	}
+}
+
+function installCriticalDefaultExtension(config, source) {
+	verboseLog(config, `Installing critical bundled default extension package: ${source}`);
+	const installSource = gitSourceInstallSource(source, { agentDir: config.agentDir });
+	assertGitSourceTargetSafe(config, source, "critical default extension package checkout", gitCheckoutIo());
+	try {
+		runIsolatedPi(config, ["pi", "install", installSource]);
+	} catch (error) {
+		throw new Error(`critical default extension package install failed: ${source}. Fix the package install and rerun the installer; this isolation-critical default cannot be disabled.`);
+	}
+	if (!ensureCriticalGitSourceCheckout(config, source)) {
+		throw new Error(`critical default extension package checkout validation failed: ${source}. Fix the package checkout and rerun the installer; this isolation-critical default cannot be disabled.`);
+	}
+}
+
+function updateDefaultExtensionSourceBestEffort(config, source) {
+	verboseLog(config, `Installing bundled default extension package: ${source}`);
+	try {
+		runIsolatedPi(config, ["pi", "update", "--extension", source]);
+		return true;
+	} catch {
+		warn(`default extension package update failed; continuing: ${source}`);
+		return false;
+	}
+}
+
+function updateDefaultExtensionSourcesBestEffort(config, sources) {
+	let failures = 0;
+	for (const source of sources) {
+		if (!updateDefaultExtensionSourceBestEffort(config, source)) failures += 1;
+	}
+	return failures;
+}
+
+function updateNonCriticalDefaultExtensions(config, sources) {
+	if (sources.length === 0) return 0;
+	const fallbackDescription = `${sources.length} non-critical bundled default source(s)`;
+	if (config.dryRun) {
+		log(config, "Dry run: settings-wide extension refresh will run from merged settings.");
+	} else {
+		log(config, `Running settings-wide extension refresh from merged settings; fallback retries only ${fallbackDescription} individually.`);
+	}
+
+	try {
+		runIsolatedPi(config, ["pi", "update", "--extensions"]);
+	} catch {
+		warn(`settings-wide extension refresh from merged settings failed; falling back to per-source updates for only ${fallbackDescription}`);
+		return updateDefaultExtensionSourcesBestEffort(config, sources);
+	}
+
+	if (config.dryRun) {
+		log(config, `If the settings-wide extension refresh fails, the installer would retry only ${fallbackDescription} individually.`);
+	}
+	return 0;
 }
 
 function installDefaultExtensions(config) {
@@ -753,39 +833,19 @@ function installDefaultExtensions(config) {
 		criticalSourcesOutput = "";
 	}
 
-	const sources = sourcesOutput.split(/\r?\n/).filter((line) => line.trim());
+	const { sources, criticalSources, nonCriticalSources } = splitDefaultExtensionSources(sourcesOutput, criticalSourcesOutput);
 	if (sources.length === 0) {
 		log(config, "No bundled default extensions are enabled.");
 		return;
 	}
 
-	let failures = 0;
 	log(config, `Installing bundled default extensions (${sources.length})...`);
-	for (const source of sources) {
-		verboseLog(config, `Installing bundled default extension package: ${source}`);
-		if (lineInOutput(source, criticalSourcesOutput)) {
-			const installSource = gitSourceInstallSource(source, { agentDir: config.agentDir });
-			assertGitSourceTargetSafe(config, source, "critical default extension package checkout", gitCheckoutIo());
-			try {
-				runIsolatedPi(config, ["pi", "install", installSource]);
-			} catch (error) {
-				throw new Error(`critical default extension package install failed: ${source}. Fix the package install and rerun the installer; this isolation-critical default cannot be disabled.`);
-			}
-			if (!ensureCriticalGitSourceCheckout(config, source)) {
-				throw new Error(`critical default extension package checkout validation failed: ${source}. Fix the package checkout and rerun the installer; this isolation-critical default cannot be disabled.`);
-			}
-			continue;
-		}
-		try {
-			runIsolatedPi(config, ["pi", "update", "--extension", source]);
-		} catch {
-			warn(`default extension package update failed; continuing: ${source}`);
-			failures += 1;
-		}
-	}
+	preflightCriticalDefaultExtensionTargets(config, criticalSources);
+	const failures = updateNonCriticalDefaultExtensions(config, nonCriticalSources);
+	if (failures !== 0) warn(`${failures} bundled default extension package(s) failed to update`);
+	for (const source of criticalSources) installCriticalDefaultExtension(config, source);
 
 	if (failures === 0) verboseLog(config, "Bundled default extensions installed.");
-	else warn(`${failures} bundled default extension package(s) failed to update`);
 }
 
 function configureGnosis(config) {
@@ -986,6 +1046,7 @@ if (isMainModule()) {
 export {
 	buildInstallConfig,
 	expandPath,
+	installDefaultExtensions,
 	parseArgs,
 	run,
 	usage,
