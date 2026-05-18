@@ -14,47 +14,46 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/dow
 
 ## Core features
 
-TLH is inspired by the architect-first workflow outlined in ["How I write software with LLMs"](https://www.stavros.io/posts/how-i-write-software-with-llms/).
+A TLH primary agent is the role you talk to directly in the main session. The default primary is the **architect**, inspired by the architect-first workflow outlined in ["How I write software with LLMs"](https://www.stavros.io/posts/how-i-write-software-with-llms/): refine requirements and scope, understand codebase implications, turn approved plans into tickets, delegate implementation, request review, and report back when the work is done.
 
-The gist:
-- Talk to the architect first, let it help you refine the requirements and scope, understand the codebase and implications, going back and forth as needed to nail the task
-- Once ready, approve the plan and the implementation tickets
-- The architect will then take it from there: implementation is handed off to a developer subagent, the code automatically reviewed, and you will be pinged once everything is done
+TLH also includes a **product** primary agent for product strategy and decision support. It clarifies goals, frames tradeoffs, maintains product strategy docs, and shapes implementation-ready `tk` tickets for later architect/developer handoff. Product mode does not implement source changes, run implementation loops, or perform code review.
 
-Note: this workflow is optional. Disable it for the current session with `Shift+Tab`, or for all future ones with `/architect default off`. All subagents remain available when the architect persona is off.
+Primary agents are optional. Use `Shift+Tab` to cycle the current session through `architect` → `product` → `disabled`, or use `/agent` for explicit session and persistent-default controls. When primary agents are disabled, subagents remain available but TLH stops applying primary-agent persona/tool restrictions.
 
 ### Subagents
 
-TLH subagents are focused child sessions the architect delegates to: `repo-scout` for discovery, `developer` for implementation, `code-reviewer` for review, `diff-summarizer` for local diff orientation, `bug-hunter`/`bug-catcher` for bug investigation, and `librarian`/`oracle` for external research and second opinions.
+TLH subagents are focused child sessions used by the architect workflow: `repo-scout` for discovery, `developer` for implementation, `code-reviewer` for review, `diff-summarizer` for local diff orientation, `bug-hunter`/`bug-catcher` for bug investigation, and `librarian`/`oracle` for external research and second opinions.
 
-They run in fresh child contexts: they get the task and project context, not the whole architect conversation. They do not coordinate with each other as a swarm; they report back to the architect, which stays responsible for decisions and orchestration. Today they inherit your active model and effort unless configured otherwise; future TLH versions may give different roles their own model and thinking defaults.
+They run in fresh child contexts: they get the task and project context, not the whole primary-agent conversation. They do not coordinate with each other as a swarm; they report back to the parent primary agent, which stays responsible for decisions and orchestration. Today they inherit your active model and effort unless configured otherwise; future TLH versions may give different roles their own model and thinking defaults.
 
 ## Quality-of-life improvements to `pi`
 
 - **Project memory**: Gnosis integration is enabled by default on supported platforms so agents can record decisions, constraints, rejected alternatives, and lessons in repo-local memory (unless you opt out).
-- **Ticketed execution**: when `tk` is available, the architect turns the approved plan into dependency-tracked tickets and hands one ticket at a time to implementation and review agents. Without `tk`, TLH keeps the same small task tree in the conversation.
+- **Ticketed execution**: when `tk` is available, the architect turns the approved plan into dependency-tracked tickets and hands one ticket at a time to implementation and review agents; product mode can shape product-approved tickets for later handoff. Without `tk`, TLH keeps the same small task tree in the conversation.
 - **Context management**: context is capped to 200k tokens to avoid the `dumb zone`, and `/context` lets you see what is eating up your context.
 - **Safety rails**: Bundled permission and destructive-action confirmations add checkpoints before sensitive commands or file changes.
 - **Inline bash snippets**: trusted `!{...}` snippets in your prompt are expanded through local bash before the agent sees them, useful for quick context like `!{git status --short}`.
 - **Dirty-repo guard**: TLH prompts before starting, switching, or forking sessions when the current git repo has uncommitted changes, so work-in-progress is harder to lose.
 - **Completion notifications**: TLH can notify you when an agent turn finishes and is waiting for input.
 - **Model niceties**: `/effort` makes it easier to switch thinking effort levels, and `/fast` enables OpenAI Fast mode controls.
-- **Cleaner sessions**: tlh's UI only shows what is relevant to you _right now_ — tools and bash output is collapsed by default, the information in the footer is trimmed.
+- **Cleaner sessions**: tlh's UI only shows what is relevant to you _right now_ — tools, bash output, and incoming intercom cards are collapsed by default; footer details are trimmed.
 - **Conservative updates and isolation**: tlh runs independently from `pi`, and never overrides your settings across updates
 
 ## Slash commands
 
 Common TLH commands:
 
-- `Shift+Tab` — disable or re-enable the architect persona for the current session.
+- `Shift+Tab` — cycle the current session through `architect` → `product` → `disabled` primary-agent modes.
 - `/tlh` / `/harness` — show TLH package, primary-agent, override, and settings status.
-- `/agent` — show the active TLH primary agent.
-- `/architect [status|on|off|toggle|reset|default on|default off|default reset]` — inspect or change architect mode for this session or future sessions.
+- `/agent [status|architect|product|disabled|reset|default architect|default product|default disabled|default reset]` — inspect the active primary, set/reset the session override, or write/reset the persistent default.
+- `/architect [status|on|off|toggle|reset|default on|default off|default reset]` — compatibility controls for architect-only flows; maps to architect/disabled primary-agent settings.
 - `/effort ...` — pick or set model reasoning effort. Available levels depend on the current model.
 - `/gnosis [status|enable|disable|toggle]` — toggle or inspect Gnosis prompt integration.
 - `/fast [on|off|auto|toggle|status]` — manage OpenAI Fast mode for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions.
 - `/context [--no-open] [--keep] [--redact] [--full|--current]` — generate a local HTML breakdown of where the session context is going.
 - `/harness-plan` — open the bundled implementation-planning prompt.
+
+Persistent primary-agent changes are written under `tlh.primaryAgent` in the isolated TLH settings file at `~/.the-last-harness/agent/settings.json`, with a backup when an existing settings file is changed. Use `/agent default reset` or `/architect default reset` to remove those persistent fields and return future sessions to the built-in `architect` default. Use `/agent reset` or `/architect reset` for the current session only.
 
 Bundled extension commands are also available for power users: /context-cap, /quiet-tools, /librarian-cache, /oracle-model, /fff-health, /fff-rescan, /fff-mode, /triage-comments, /intercom, /run, /parallel, /chain, /run-chain, /subagents-doctor, and Plannotator commands such as /plannotator-review and /plannotator-annotate.
 

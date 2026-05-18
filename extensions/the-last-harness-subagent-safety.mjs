@@ -52,11 +52,11 @@ function forceUserAgentScope(input, mode) {
 	const rawScope = input.agentScope;
 	if (rawScope !== undefined) {
 		if (typeof rawScope !== "string") {
-			return `TLH architect subagent ${mode} calls must use agentScope: "user" or omit agentScope.`;
+			return `TLH primary-agent subagent ${mode} calls must use agentScope: "user" or omit agentScope.`;
 		}
 		const agentScope = rawScope.trim();
 		if (agentScope && agentScope !== "user") {
-			return `TLH architect subagent ${mode} calls may not use agentScope: "${agentScope}". TLH minor agents must run from the isolated user scope.`;
+			return `TLH primary-agent subagent ${mode} calls may not use agentScope: "${agentScope}". TLH minor agents must run from the isolated user scope.`;
 		}
 	}
 
@@ -68,11 +68,11 @@ function forceFreshSubagentContext(input) {
 	const rawContext = input.context;
 	if (rawContext !== undefined) {
 		if (typeof rawContext !== "string") {
-			return `TLH architect subagent execution must use context: "fresh" or omit context.`;
+			return `TLH primary-agent subagent execution must use context: "fresh" or omit context.`;
 		}
 		const context = rawContext.trim();
 		if (context && context !== "fresh") {
-			return `TLH architect subagent execution may not use context: "${context}". TLH child sessions must start fresh so parent architect/Gnosis context is not leaked.`;
+			return `TLH primary-agent subagent execution may not use context: "${context}". TLH child sessions must start fresh so parent primary-agent/Gnosis context is not leaked.`;
 		}
 	}
 
@@ -85,11 +85,11 @@ function validateNestedFreshContext(owner, path) {
 		return undefined;
 	}
 	if (typeof owner.context !== "string") {
-		return `TLH architect subagent execution nested ${path} must use context: "fresh" or omit context.`;
+		return `TLH primary-agent subagent execution nested ${path} must use context: "fresh" or omit context.`;
 	}
 	const context = owner.context.trim();
 	if (context !== "fresh") {
-		return `TLH architect subagent execution nested ${path} may not use context: "${context}". TLH child sessions must start fresh so parent architect/Gnosis context is not leaked.`;
+		return `TLH primary-agent subagent execution nested ${path} may not use context: "${context}". TLH child sessions must start fresh so parent primary-agent/Gnosis context is not leaked.`;
 	}
 	return undefined;
 }
@@ -120,13 +120,13 @@ function validateNestedFreshSubagentContexts(input) {
 
 export function validateSubagentToolInput(input) {
 	if (!isRecord(input)) {
-		return "TLH architect subagent calls must use an object input.";
+		return "TLH primary-agent subagent calls must use an object input.";
 	}
 
 	const action = stringField(input.action);
 	if (action) {
 		if (!SAFE_SUBAGENT_ACTION_SET.has(action)) {
-			return `TLH architect may not use subagent management action '${action}'. Allowed actions: ${SAFE_SUBAGENT_ACTIONS.join(", ")}.`;
+			return `TLH primary agents may not use subagent management action '${action}'. Allowed actions: ${SAFE_SUBAGENT_ACTIONS.join(", ")}.`;
 		}
 		return action === "list" || action === "get" ? forceUserAgentScope(input, action) : undefined;
 	}
@@ -148,12 +148,12 @@ export function validateSubagentToolInput(input) {
 
 	const targets = collectSubagentTargets(input);
 	if (targets.length === 0) {
-		return `TLH architect subagent execution must target one of: ${ALLOWED_SUBAGENTS.join(", ")}.`;
+		return `TLH primary-agent subagent execution must target one of: ${ALLOWED_SUBAGENTS.join(", ")}.`;
 	}
 
 	const disallowed = targets.filter((agent) => !ALLOWED_SUBAGENTS.includes(agent));
 	if (disallowed.length > 0) {
-		return `TLH architect may delegate only to: ${ALLOWED_SUBAGENTS.join(", ")}. Disallowed target(s): ${disallowed.join(", ")}.`;
+		return `TLH primary agents may delegate only to: ${ALLOWED_SUBAGENTS.join(", ")}. Disallowed target(s): ${disallowed.join(", ")}.`;
 	}
 
 	return undefined;
