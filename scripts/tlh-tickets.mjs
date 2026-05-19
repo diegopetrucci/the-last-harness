@@ -1126,7 +1126,7 @@ async function commandConfigureInstall(args, settingsPath, settings, previousRaw
 function commandStatus(args, settings, agentDir) {
 	const state = ticketsState(settings);
 	const valid = findValidTk(args, settings, agentDir);
-	const active = state === "enabled" && Boolean(valid);
+	const active = (state === "enabled" || state === "unset") && Boolean(valid);
 	console.log("Ticket CLI integration for tlh:");
 	console.log(`  setting: ${state}`);
 	console.log(`  active: ${active ? "yes" : "no"}`);
@@ -1135,8 +1135,8 @@ function commandStatus(args, settings, agentDir) {
 	if (state === "enabled" && !valid) {
 		console.log("  note: integration is enabled, but no valid `tk` command was found.");
 	}
-	if (state !== "enabled" && valid) {
-		console.log("  note: a valid `tk` command exists; run `tlh tickets enable` to enable ticket integration.");
+	if (state === "disabled" && valid) {
+		console.log("  note: ticket integration is explicitly disabled; run `tlh tickets enable` to re-enable it.");
 	}
 }
 

@@ -556,6 +556,47 @@ test("status does not report an enabled non-tk configured command as active", ()
 	assert.equal(existsSync(sentinel), false);
 });
 
+test("status treats unset settings with a valid tk command as active by default", () => {
+	const fixture = tempFixture();
+	const settings = join(fixture.agent, "settings.json");
+	const managedTk = join(fixture.agent, "bin", "tk");
+	mkdirSync(dirname(managedTk), { recursive: true });
+	writeValidTkLikeCommand(managedTk);
+
+	const result = runTickets([
+		"--settings", settings,
+		"--agent-dir", fixture.agent,
+		"status",
+	], { env: { HOME: fixture.home, PATH: "" } });
+
+	assert.equal(result.status, 0, result.stderr);
+	assert.match(result.stdout, /setting: unset/);
+	assert.match(result.stdout, /active: yes/);
+	assert.ok(result.stdout.includes(`  command: ${managedTk}`));
+	assert.doesNotMatch(result.stdout, /tlh tickets enable/);
+	assert.equal(existsSync(settings), false);
+});
+
+test("status keeps explicit disabled settings inactive even with a valid tk command", () => {
+	const fixture = tempFixture();
+	const settings = join(fixture.agent, "settings.json");
+	const managedTk = join(fixture.agent, "bin", "tk");
+	mkdirSync(dirname(managedTk), { recursive: true });
+	writeValidTkLikeCommand(managedTk);
+	writeFileSync(settings, `${JSON.stringify({ tlh: { tickets: { enabled: false } } })}\n`);
+
+	const result = runTickets([
+		"--settings", settings,
+		"--agent-dir", fixture.agent,
+		"status",
+	], { env: { HOME: fixture.home, PATH: "" } });
+
+	assert.equal(result.status, 0, result.stderr);
+	assert.match(result.stdout, /setting: disabled/);
+	assert.match(result.stdout, /active: no/);
+	assert.ok(result.stdout.includes(`  command: ${managedTk}`));
+});
+
 test("validate rejects a command whose basename is not tk before validation", () => {
 	const fixture = tempFixture();
 	const settings = join(fixture.agent, "settings.json");
