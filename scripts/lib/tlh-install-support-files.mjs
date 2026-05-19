@@ -107,7 +107,7 @@ export async function prepareSupportFilesFromRemote(config, io = {}) {
 		config.supportFilePaths[file.variable] = targetPath;
 		try {
 			await fetchFile(`${config.rawBase}/${file.relativePath}`, targetPath, io);
-		} catch (error) {
+		} catch {
 			if (file.requirement === "required") {
 				throw new Error(`required installer support file not found for ref ${config.ref}: ${file.relativePath}`);
 			}

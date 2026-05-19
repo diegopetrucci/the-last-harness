@@ -141,6 +141,7 @@ function writeTlhStartupStateAtomically(statePath: string, content: string): voi
 	const stateBase = basename(statePath);
 	const tempPath = join(stateDir, `.${stateBase}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`);
 	let fd: number | undefined;
+	let cleanupError: unknown;
 	try {
 		fd = openSync(tempPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | nofollowFlag, 0o600);
 		writeFileSync(fd, content, { encoding: "utf8" });
@@ -155,9 +156,12 @@ function writeTlhStartupStateAtomically(statePath: string, content: string): voi
 			unlinkSync(tempPath);
 		} catch (error) {
 			if (!isRecord(error) || error.code !== "ENOENT") {
-				throw error;
+				cleanupError = error;
 			}
 		}
+	}
+	if (cleanupError !== undefined) {
+		throw cleanupError;
 	}
 }
 

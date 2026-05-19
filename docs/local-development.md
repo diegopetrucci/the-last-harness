@@ -9,6 +9,7 @@ For installer changes, run the smoke checks and package checks that cover the st
 ```sh
 bash scripts/check-installer-smoke.sh
 npm test
+npm run lint
 node scripts/merge-settings.mjs --dry-run
 npm pack --dry-run
 ```

@@ -189,10 +189,6 @@ function normalizeManifestPath(path, label = "pi resource path") {
 	return parts.join("/") || ".";
 }
 
-function posixRelativePath(path) {
-	return normalizeManifestPath(path);
-}
-
 function packageSourceForRoot(root) {
 	return root;
 }
