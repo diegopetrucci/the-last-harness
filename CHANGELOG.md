@@ -4,14 +4,24 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-19
+
 ### Added
 
 - Added the product primary agent for strategy, product docs, and implementation-ticket shaping without source implementation.
 - Added multi-primary switching across architect, product, and disabled modes via `Shift+Tab` and `/agent`, while keeping `/architect` compatibility.
+- Bundled `npm:@gotgenes/pi-anthropic-auth` as a default extension to improve Anthropic Claude Pro/Max OAuth compatibility while preserving normal API-key behavior.
+- Added `scripts/benchmark-context-cap-embedding.mjs` to compare default-extension install performance and package-size tradeoffs when embedding bundled defaults.
 
 ### Changed
 
 - Bundled intercom now collapses incoming intercom/subagent result cards by default while leaving expanded content unchanged.
+- Installer default-extension updates now run one settings-wide refresh for non-critical defaults with per-source fallback retries, while critical subagents/intercom packages are still installed and validated separately.
+- Split the bundled TLH extension into focused modules to keep primary-agent, header/footer, Gnosis, telemetry, and update-check behavior maintainable without changing user-facing commands.
+
+### Fixed
+
+- Fixed latest-release installer assets and no-argument pipe-to-bash installs so they default to the latest-release update track without requiring `TLH_UPDATE_TRACK`, and avoid stage-0 Bash argument-forwarding failures.
 
 ## [0.7.0] - 2026-05-17
 
