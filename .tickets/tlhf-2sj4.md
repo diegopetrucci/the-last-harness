@@ -1,7 +1,7 @@
 ---
 id: tlhf-2sj4
 status: open
-deps: [tlhf-3dug]
+deps: []
 links: []
 created: 2026-05-19T12:35:33Z
 type: feature
