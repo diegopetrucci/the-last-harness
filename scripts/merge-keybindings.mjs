@@ -1,9 +1,11 @@
 #!/usr/bin/env node
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
+
+import { safeProfileFileTarget, writeSafeProfileFile } from "./lib/tlh-install-paths.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -146,12 +148,12 @@ function backupPathFor(keybindingsPath) {
 	return `${keybindingsPath}.backup-${stamp}`;
 }
 
-function realpathForCompare(path) {
-	const resolved = resolve(path);
-	if (existsSync(resolved)) return realpathSync(resolved);
-	const parent = dirname(resolved);
-	if (parent === resolved) return resolved;
-	return join(realpathForCompare(parent), basename(resolved));
+function profileFileReference(filePath) {
+	const absolutePath = resolve(filePath);
+	return {
+		config: { agentDir: dirname(absolutePath) },
+		profilePath: basename(absolutePath),
+	};
 }
 
 function assertKeybindingsTarget(keybindingsPath) {
@@ -159,28 +161,20 @@ function assertKeybindingsTarget(keybindingsPath) {
 		throw new Error(`Refusing to modify non-keybindings file: ${keybindingsPath}`);
 	}
 
-	const normalPiRoot = realpathForCompare(join(homedir(), ".pi"));
-	const resolvedKeybindingsPath = realpathForCompare(keybindingsPath);
-	if (resolvedKeybindingsPath === normalPiRoot || resolvedKeybindingsPath.startsWith(`${normalPiRoot}${sep}`)) {
-		throw new Error(`Refusing to modify normal Pi config from The Last Harness installer: ${keybindingsPath}`);
-	}
+	const target = profileFileReference(keybindingsPath);
+	safeProfileFileTarget(target.config, target.profilePath, "keybindings file", { createParents: false });
 }
 
-function writeKeybindings(keybindingsPath, value, { dryRun, existed }) {
+function writeKeybindings(keybindingsPath, value, { dryRun }) {
 	const formatted = `${JSON.stringify(value, null, 2)}\n`;
 	if (dryRun) return undefined;
 
-	mkdirSync(dirname(keybindingsPath), { recursive: true });
-	let backupPath;
-	if (existed) {
-		backupPath = backupPathFor(keybindingsPath);
-		copyFileSync(keybindingsPath, backupPath);
-	}
-
-	const tempPath = `${keybindingsPath}.tmp-${process.pid}`;
-	writeFileSync(tempPath, formatted, "utf8");
-	renameSync(tempPath, keybindingsPath);
-	return backupPath;
+	const target = profileFileReference(keybindingsPath);
+	const result = writeSafeProfileFile(target.config, target.profilePath, formatted, "keybindings file", {
+		backup: true,
+		backupPath: backupPathFor(keybindingsPath),
+	});
+	return result.backupPath;
 }
 
 function log(args, message) {
@@ -218,7 +212,7 @@ function main() {
 		return;
 	}
 
-	const backupPath = writeKeybindings(keybindingsPath, next, { dryRun: args.dryRun, existed });
+	const backupPath = writeKeybindings(keybindingsPath, next, { dryRun: args.dryRun });
 	if (backupPath) log(args, `Backed up previous keybindings to: ${backupPath}`);
 	log(args, "Keybindings updated.");
 }

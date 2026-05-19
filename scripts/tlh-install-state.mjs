@@ -1,8 +1,11 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
-import { homedir } from "node:os";
 import process from "node:process";
+
+import {
+	pathIsProtectedPiConfig,
+	safeProfileFileTarget,
+	writeSafeProfileFile,
+} from "./lib/tlh-install-paths.mjs";
 
 function usage() {
 	return `Usage: tlh-install-state.mjs [options]
@@ -174,24 +177,26 @@ function parseBoolean(value, flag) {
 	throw new Error(`${flag} must be true or false`);
 }
 
-function realpathForCompare(path) {
-	const resolved = resolve(path);
-	if (existsSync(resolved)) return realpathSync(resolved);
-	const parent = dirname(resolved);
-	if (parent === resolved) return resolved;
-	return join(realpathForCompare(parent), basename(resolved));
-}
-
-function isUnderNormalPiConfig(path) {
-	const normalPiRoot = realpathForCompare(join(homedir(), ".pi"));
-	const resolvedPath = realpathForCompare(path);
-	return resolvedPath === normalPiRoot || resolvedPath.startsWith(`${normalPiRoot}${sep}`);
-}
-
 function assertNotNormalPiPath(path, label) {
-	if (isUnderNormalPiConfig(path)) {
+	if (pathIsProtectedPiConfig(path)) {
 		throw new Error(`refusing to modify normal Pi config from The Last Harness install-state command (${label}): ${path}`);
 	}
+}
+
+function stateFileOptions(extraOptions = {}) {
+	return {
+		allowLegacyAbsoluteProfileBasenames: ["install-state.json"],
+		...extraOptions,
+	};
+}
+
+function assertSafeStatePath(args) {
+	safeProfileFileTarget(
+		{ agentDir: args.agentDir },
+		args.statePath,
+		"tlh install-state file",
+		stateFileOptions({ createParents: false }),
+	);
 }
 
 function log(args, message) {
@@ -221,15 +226,13 @@ function writeInstallState(args) {
 	}
 
 	const state = buildState(args);
-	const tmpPath = `${args.statePath}.tmp.${process.pid}`;
-	mkdirSync(dirname(args.statePath), { recursive: true });
-	try {
-		writeFileSync(tmpPath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
-		renameSync(tmpPath, args.statePath);
-	} catch (error) {
-		rmSync(tmpPath, { force: true });
-		throw error;
-	}
+	writeSafeProfileFile(
+		{ agentDir: args.agentDir },
+		args.statePath,
+		`${JSON.stringify(state, null, 2)}\n`,
+		"tlh install-state file",
+		stateFileOptions(),
+	);
 }
 
 function main() {
@@ -242,6 +245,7 @@ function main() {
 	assertNotNormalPiPath(args.statePath, "state path");
 	assertNotNormalPiPath(args.agentDir, "agent dir");
 	assertNotNormalPiPath(args.binDir, "wrapper install dir");
+	assertSafeStatePath(args);
 	writeInstallState(args);
 }
 

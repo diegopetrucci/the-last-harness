@@ -419,6 +419,43 @@ test("stage-1 keeps critical defaults on per-source install path while dry-run s
 	assert.doesNotMatch(stdout, /pi update --extension npm:helper/);
 });
 
+test("install-state refuses to write outside the configured isolated profile", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const outsideDir = join(root, "outside");
+	const outsideState = join(outsideDir, "install-state.json");
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(binDir, { recursive: true });
+	mkdirSync(outsideDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	const result = spawnSync(process.execPath, [
+		join(repoRoot, "scripts/tlh-install-state.mjs"),
+		"--state-path", outsideState,
+		"--repo", "owner/repo",
+		"--ref", "main",
+		"--track", "ref",
+		"--package-source", "git:github.com/owner/repo@main",
+		"--package-source-is-default", "true",
+		"--raw-base", "https://example.invalid/raw",
+		"--agent-dir", agentDir,
+		"--bin-dir", binDir,
+		"--wrapper-name", "tlh",
+	], {
+		cwd: repoRoot,
+		env: scrubInstallerEnv({ HOME: homeDir }),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /outside the isolated TLH profile/);
+	assert.equal(existsSync(outsideState), false);
+});
+
 test("stage-1 canonicalizes relative target dirs before deriving wrapper and state paths", (t) => {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");

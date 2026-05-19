@@ -1,9 +1,11 @@
 #!/usr/bin/env node
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
+
+import { safeProfileFileTarget, writeSafeProfileFile } from "./lib/tlh-install-paths.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -419,37 +421,29 @@ function backupPathFor(settingsPath) {
 	return `${settingsPath}.backup-tlh-defaults-${stamp}`;
 }
 
-function realpathForCompare(path) {
-	const resolved = resolve(path);
-	if (existsSync(resolved)) return realpathSync(resolved);
-	const parent = dirname(resolved);
-	if (parent === resolved) return resolved;
-	return join(realpathForCompare(parent), basename(resolved));
+function profileFileReference(filePath) {
+	const absolutePath = resolve(filePath);
+	return {
+		config: { agentDir: dirname(absolutePath) },
+		profilePath: basename(absolutePath),
+	};
 }
 
-function assertNotNormalPiSettings(settingsPath) {
-	const normalPiRoot = realpathForCompare(join(homedir(), ".pi"));
-	const resolvedSettingsPath = realpathForCompare(settingsPath);
-	if (resolvedSettingsPath === normalPiRoot || resolvedSettingsPath.startsWith(`${normalPiRoot}${sep}`)) {
-		throw new Error(`Refusing to modify normal Pi config from The Last Harness defaults command: ${settingsPath}`);
-	}
+function assertSafeSettingsTarget(settingsPath) {
+	const target = profileFileReference(settingsPath);
+	safeProfileFileTarget(target.config, target.profilePath, "settings file", { createParents: false });
 }
 
 function writeSettings(settingsPath, value, previousRaw) {
 	const formatted = `${JSON.stringify(value, null, 2)}\n`;
 	if (formatted === previousRaw) return undefined;
 
-	mkdirSync(dirname(settingsPath), { recursive: true });
-	let backupPath;
-	if (existsSync(settingsPath)) {
-		backupPath = backupPathFor(settingsPath);
-		copyFileSync(settingsPath, backupPath);
-	}
-
-	const tempPath = `${settingsPath}.tmp-${process.pid}`;
-	writeFileSync(tempPath, formatted, "utf8");
-	renameSync(tempPath, settingsPath);
-	return backupPath;
+	const target = profileFileReference(settingsPath);
+	const result = writeSafeProfileFile(target.config, target.profilePath, formatted, "settings file", {
+		backup: true,
+		backupPath: backupPathFor(settingsPath),
+	});
+	return result.backupPath;
 }
 
 function loadSettings(settingsPath) {
@@ -515,7 +509,7 @@ function main() {
 	const settingsPath = resolve(expandHome(args.settingsPath || defaultSettingsPath()));
 	const defaultExtensionsPath = resolve(expandHome(args.defaultExtensionsPath || defaultDefaultExtensionsPath()));
 	const mutatesSettings = args.command === "disable" || args.command === "enable";
-	if (mutatesSettings) assertNotNormalPiSettings(settingsPath);
+	if (mutatesSettings) assertSafeSettingsTarget(settingsPath);
 	const defaultExtensions = readDefaultExtensions(defaultExtensionsPath);
 	const { settings, previousRaw } = loadSettings(settingsPath);
 	validateSettings(settings);

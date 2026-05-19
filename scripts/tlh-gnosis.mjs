@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-import { closeSync, constants, copyFileSync, existsSync, fchmodSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fchmodSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
+
+import { safeProfileFileTarget, writeSafeProfileFile } from "./lib/tlh-install-paths.mjs";
 
 const VALIDATION_TIMEOUT_MS = 5000;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
@@ -554,10 +556,17 @@ function isUnderNormalPiConfig(path) {
 	return resolvedPath === normalPiRoot || resolvedPath.startsWith(`${normalPiRoot}${sep}`);
 }
 
+function profileFileReference(filePath) {
+	const absolutePath = resolve(filePath);
+	return {
+		config: { agentDir: dirname(absolutePath) },
+		profilePath: basename(absolutePath),
+	};
+}
+
 function assertNotNormalPiSettings(settingsPath) {
-	if (isUnderNormalPiConfig(settingsPath)) {
-		throw new Error(`Refusing to modify normal Pi config from The Last Harness gnosis command: ${settingsPath}`);
-	}
+	const target = profileFileReference(settingsPath);
+	safeProfileFileTarget(target.config, target.profilePath, "Gnosis settings file", { createParents: false });
 }
 
 function assertNotNormalPiPath(path, label) {
@@ -655,17 +664,12 @@ function writeSettings(settingsPath, value, previousRaw, { dryRun }) {
 	if (formatted === previousRaw) return "unchanged";
 	if (dryRun) return "dry-run";
 
-	mkdirSync(dirname(settingsPath), { recursive: true });
-	let backupPath;
-	if (existsSync(settingsPath)) {
-		backupPath = backupPathFor(settingsPath);
-		copyFileSync(settingsPath, backupPath);
-	}
-
-	const tempPath = `${settingsPath}.tmp-${process.pid}`;
-	writeFileSync(tempPath, formatted, "utf8");
-	renameSync(tempPath, settingsPath);
-	return backupPath || "written";
+	const target = profileFileReference(settingsPath);
+	const result = writeSafeProfileFile(target.config, target.profilePath, formatted, "Gnosis settings file", {
+		backup: true,
+		backupPath: backupPathFor(settingsPath),
+	});
+	return result.backupPath || "written";
 }
 
 function log(args, message) {

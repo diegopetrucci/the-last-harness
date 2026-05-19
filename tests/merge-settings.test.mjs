@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -37,6 +37,38 @@ function runMerge(fixture) {
 function readJson(path) {
 	return JSON.parse(readFileSync(path, "utf8"));
 }
+
+test("merge refuses to write a symlinked settings target", () => {
+	const dir = mkdtempSync(join(tmpdir(), "tlh-merge-settings-symlink-test-"));
+	const agentDir = join(dir, "agent");
+	const outsideDir = join(dir, "outside");
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(outsideDir, { recursive: true });
+	const defaults = join(dir, "settings.defaults.json");
+	const extensions = join(dir, "default-extensions.json");
+	const settings = join(agentDir, "settings.json");
+	const outsideSettings = join(outsideDir, "settings.json");
+	writeFileSync(defaults, JSON.stringify({ packages: ["npm:new-default"] }, null, 2));
+	writeFileSync(extensions, "[]\n");
+	writeFileSync(outsideSettings, JSON.stringify({ packages: [harnessPackage] }, null, 2));
+	symlinkSync(outsideSettings, settings);
+
+	const result = spawnSync(process.execPath, [
+		mergeScript,
+		defaults,
+		"--settings", settings,
+		"--default-extensions", extensions,
+		"--quiet",
+	], {
+		cwd: repoRoot,
+		env: process.env,
+		encoding: "utf8",
+	});
+
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /symlinked settings file/);
+	assert.deepEqual(readJson(outsideSettings), { packages: [harnessPackage] });
+});
 
 test("merge treats normalized subagents.agentDirs paths as duplicates", () => {
 	const fixture = tempFixture(

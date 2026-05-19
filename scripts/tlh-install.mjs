@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import {
-	copyFileSync,
 	existsSync,
 	mkdirSync,
 	readFileSync,
@@ -22,7 +21,6 @@ import {
 	assertSafeSettingsTarget,
 	copySafeProfileFile,
 	ensureSafeProfileDir,
-	isSymlink,
 	validateInstallerTargets,
 } from "./lib/tlh-install-paths.mjs";
 import {
@@ -513,15 +511,13 @@ function backupExistingSettingsBeforePiInstall(config) {
 	assertSafeSettingsTarget(config);
 	if (!existsSync(config.settingsPath)) return;
 	const stamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z").replace(/:/g, "-");
-	const backupPath = `${config.settingsPath}.backup-before-install-${stamp}`;
+	const backupName = `settings.json.backup-before-install-${stamp}`;
+	const backupPath = join(config.agentDir, backupName);
 	if (config.dryRun) {
 		log(config, `Would back up existing isolated settings to: ${backupPath}`);
 		return;
 	}
-	if (existsSync(backupPath) || isSymlink(backupPath)) {
-		throw new Error(`refusing to overwrite existing settings backup: ${backupPath}`);
-	}
-	copyFileSync(config.settingsPath, backupPath);
+	copySafeProfileFile(config, config.settingsPath, backupName, "pre-install settings backup", { exclusive: true });
 	detailLog(config, `Backed up existing isolated settings to: ${backupPath}`);
 }
 
