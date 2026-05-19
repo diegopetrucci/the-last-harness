@@ -1,0 +1,223 @@
+import { closeSync, constants, lstatSync, mkdirSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, join, resolve, sep } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { formatHomePath, isRecord, pathWithinOrEqual, readText, realpathForCompare } from "./common.js";
+import type { TlhInstallState, TlhStartupState } from "./types.js";
+
+export function isDefaultPiAgentDir(agentDir: string): boolean {
+	const home = process.env.HOME || process.env.USERPROFILE;
+	if (!home) return false;
+	try {
+		return realpathForCompare(agentDir) === realpathForCompare(join(home, ".pi", "agent"));
+	} catch {
+		return resolve(agentDir) === resolve(home, ".pi", "agent");
+	}
+}
+
+export function isNormalPiConfigPath(resolvedPath: string): boolean {
+	const home = process.env.HOME || process.env.USERPROFILE;
+	if (!home) {
+		return false;
+	}
+	const normalPiRoot = realpathForCompare(join(home, ".pi"));
+	return pathWithinOrEqual(normalPiRoot, resolvedPath);
+}
+
+export function safeTlhProfileFilePath(relativePath: string): string | undefined {
+	const agentDir = getAgentDir();
+	if (!process.env.PI_CODING_AGENT_DIR || isDefaultPiAgentDir(agentDir)) {
+		return undefined;
+	}
+
+	const targetPath = join(agentDir, relativePath);
+	try {
+		const resolvedAgentDir = realpathForCompare(agentDir);
+		const resolvedTargetPath = realpathForCompare(targetPath);
+		if (!pathWithinOrEqual(resolvedAgentDir, resolvedTargetPath) || isNormalPiConfigPath(resolvedTargetPath)) {
+			return undefined;
+		}
+		return targetPath;
+	} catch {
+		return undefined;
+	}
+}
+
+export function tlhStateDir(): string | undefined {
+	return safeTlhProfileFilePath("tlh");
+}
+
+export function tlhStatePath(fileName: string): string | undefined {
+	return safeTlhProfileFilePath(join("tlh", fileName));
+}
+
+export function tlhStartupStatePath(): string | undefined {
+	// Only persist state when the wrapper has selected an isolated profile and
+	// the TLH support path resolves inside that profile. This avoids mutating
+	// normal Pi config through a symlinked `${AGENT_DIR}/tlh` directory.
+	return tlhStatePath("startup-state.json");
+}
+
+export function tlhTelemetryStatePath(): string | undefined {
+	return tlhStatePath("telemetry-state.json");
+}
+
+export function readTlhStartupState(): TlhStartupState {
+	const statePath = tlhStartupStatePath();
+	const content = statePath ? readText(statePath) : undefined;
+	if (!content) {
+		return {};
+	}
+	try {
+		const parsed = JSON.parse(content) as TlhStartupState;
+		return parsed && typeof parsed === "object" ? parsed : {};
+	} catch {
+		return {};
+	}
+}
+
+export function tlhInstallStatePath(): string | undefined {
+	return safeTlhProfileFilePath(join("tlh", "install-state.json"));
+}
+
+export function readTlhInstallState(): TlhInstallState {
+	const statePath = tlhInstallStatePath();
+	const content = statePath ? readText(statePath) : undefined;
+	if (!content) {
+		return {};
+	}
+	try {
+		const parsed = JSON.parse(content) as TlhInstallState;
+		return parsed && typeof parsed === "object" ? parsed : {};
+	} catch {
+		return {};
+	}
+}
+
+function canUseTlhStartupStateDir(statePath: string): boolean {
+	const stateDir = dirname(statePath);
+	try {
+		const dirStat = lstatSync(stateDir);
+		if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
+			return false;
+		}
+	} catch (error) {
+		if (!isRecord(error) || error.code !== "ENOENT") {
+			return false;
+		}
+	}
+
+	try {
+		mkdirSync(stateDir, { recursive: true });
+		const dirStat = lstatSync(stateDir);
+		if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
+			return false;
+		}
+		return tlhStartupStatePath() === statePath;
+	} catch {
+		return false;
+	}
+}
+
+function canReplaceTlhStartupStateFile(statePath: string): boolean {
+	try {
+		const stateStat = lstatSync(statePath);
+		return !stateStat.isSymbolicLink() && stateStat.isFile();
+	} catch (error) {
+		return isRecord(error) && error.code === "ENOENT";
+	}
+}
+
+function writeTlhStartupStateAtomically(statePath: string, content: string): void {
+	const nofollowFlag = constants.O_NOFOLLOW;
+	// Startup state is best-effort. If this platform cannot protect the temp
+	// file's final component from symlinks, fail closed instead of weakening the
+	// atomic replacement by silently dropping O_NOFOLLOW.
+	if (typeof nofollowFlag !== "number" || nofollowFlag === 0) {
+		return;
+	}
+
+	const stateDir = dirname(statePath);
+	const stateBase = basename(statePath);
+	const tempPath = join(stateDir, `.${stateBase}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`);
+	let fd: number | undefined;
+	try {
+		fd = openSync(tempPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | nofollowFlag, 0o600);
+		writeFileSync(fd, content, { encoding: "utf8" });
+		closeSync(fd);
+		fd = undefined;
+		renameSync(tempPath, statePath);
+	} finally {
+		if (fd !== undefined) {
+			closeSync(fd);
+		}
+		try {
+			unlinkSync(tempPath);
+		} catch (error) {
+			if (!isRecord(error) || error.code !== "ENOENT") {
+				throw error;
+			}
+		}
+	}
+}
+
+export function writeTlhStartupState(state: TlhStartupState): void {
+	try {
+		const statePath = tlhStartupStatePath();
+		if (!statePath || !canUseTlhStartupStateDir(statePath) || !canReplaceTlhStartupStateFile(statePath)) {
+			return;
+		}
+		writeTlhStartupStateAtomically(statePath, `${JSON.stringify(state, null, 2)}\n`);
+	} catch {
+		// Startup state is best-effort; never block launch.
+	}
+}
+
+export function updateTlhStartupState(updates: Partial<TlhStartupState>): void {
+	writeTlhStartupState({ ...readTlhStartupState(), ...updates });
+}
+
+export function tlhSettingsPathForWrite(): string | undefined {
+	const agentDir = getAgentDir();
+	if (!process.env.PI_CODING_AGENT_DIR || isDefaultPiAgentDir(agentDir)) {
+		return undefined;
+	}
+	return join(agentDir, "settings.json");
+}
+
+export function assertSafeTlhSettingsPath(settingsPath: string): void {
+	try {
+		const settingsStat = lstatSync(settingsPath);
+		if (settingsStat.isSymbolicLink()) {
+			throw new Error(`Refusing to write symlinked TLH settings file: ${settingsPath}`);
+		}
+		if (!settingsStat.isFile()) {
+			throw new Error(`Refusing to write non-file TLH settings path: ${settingsPath}`);
+		}
+		if (settingsStat.nlink > 1) {
+			throw new Error(`Refusing to write hardlinked TLH settings file: ${settingsPath}`);
+		}
+	} catch (error) {
+		if (!isRecord(error) || error.code !== "ENOENT") {
+			throw error;
+		}
+	}
+
+	const agentDir = realpathForCompare(getAgentDir());
+	const resolvedSettingsPath = realpathForCompare(settingsPath);
+	if (!pathWithinOrEqual(agentDir, resolvedSettingsPath)) {
+		throw new Error(`Refusing to write settings outside the isolated TLH profile: ${settingsPath}`);
+	}
+
+	if (isNormalPiConfigPath(resolvedSettingsPath)) {
+		throw new Error(`Refusing to modify normal Pi config from The Last Harness: ${settingsPath}`);
+	}
+}
+
+export function assertNotNormalPiSettings(settingsPath: string): void {
+	const normalPiRoot = realpathForCompare(join(homedir(), ".pi"));
+	const resolvedSettingsPath = realpathForCompare(settingsPath);
+	if (resolvedSettingsPath === normalPiRoot || resolvedSettingsPath.startsWith(`${normalPiRoot}${sep}`)) {
+		throw new Error(`Refusing to modify normal Pi config from tlh: ${formatHomePath(settingsPath)}`);
+	}
+}

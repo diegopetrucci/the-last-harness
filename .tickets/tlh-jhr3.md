@@ -1,7 +1,7 @@
 ---
 id: tlh-jhr3
-status: open
-deps: []
+status: closed
+deps: [tlht-kdzo]
 links: []
 created: 2026-05-17T17:51:52Z
 type: task
@@ -15,4 +15,3 @@ Refactor extensions/the-last-harness.ts into smaller cohesive modules because th
 ## Acceptance Criteria
 
 extensions/the-last-harness.ts delegates distinct responsibilities to smaller files, public extension behaviour is unchanged, exported package resources still resolve, and the relevant syntax/smoke checks pass.
-
