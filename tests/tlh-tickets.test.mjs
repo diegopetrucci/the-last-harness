@@ -36,6 +36,23 @@ function sha256File(path) {
 	return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
+function writeValidTkLikeCommand(path, { sentinel } = {}) {
+	writeFileSync(path, `#!/bin/sh
+${sentinel ? `printf called > ${JSON.stringify(sentinel)}\n` : ""}case "\${1:-}" in
+  help|--help|-h)
+    echo "tk - minimal ticket system"
+    echo "Usage: tk <command> [args]"
+    echo "Tickets stored as markdown files in .tickets/"
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`);
+	chmodSync(path, 0o755);
+}
+
 function createTicketArchive(fixture) {
 	const archiveSource = join(fixture.dir, "archive-source");
 	const root = join(archiveSource, "ticket-0.3.2");
@@ -497,6 +514,64 @@ exit 42
 	assert.match(result.stderr, /did not validate/i);
 	assert.equal(existsSync(settings), false);
 	assert.deepEqual(readdirSync(fixture.agent), []);
+});
+
+test("enable rejects a requested command whose basename is not tk before validation", () => {
+	const fixture = tempFixture();
+	const settings = join(fixture.agent, "settings.json");
+	const ticket = join(fixture.external, "ticket");
+	const sentinel = join(fixture.dir, "ticket-called");
+	writeValidTkLikeCommand(ticket, { sentinel });
+
+	const result = runTickets([
+		"--settings", settings,
+		"--agent-dir", fixture.agent,
+		"--install-path", ticket,
+		"enable",
+	], { env: { HOME: fixture.home, PATH: "" } });
+
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /basename.*"tk"/i);
+	assert.equal(existsSync(settings), false);
+	assert.equal(existsSync(sentinel), false);
+});
+
+test("status does not report an enabled non-tk configured command as active", () => {
+	const fixture = tempFixture();
+	const settings = join(fixture.agent, "settings.json");
+	const ticket = join(fixture.external, "ticket");
+	const sentinel = join(fixture.dir, "ticket-called");
+	writeValidTkLikeCommand(ticket, { sentinel });
+	writeFileSync(settings, `${JSON.stringify({ tlh: { tickets: { enabled: true, installPath: ticket } } })}\n`);
+
+	const result = runTickets([
+		"--settings", settings,
+		"--agent-dir", fixture.agent,
+		"status",
+	], { env: { HOME: fixture.home, PATH: "" } });
+
+	assert.equal(result.status, 0, result.stderr);
+	assert.match(result.stdout, /active: no/);
+	assert.match(result.stdout, /command: not found/);
+	assert.equal(existsSync(sentinel), false);
+});
+
+test("validate rejects a command whose basename is not tk before validation", () => {
+	const fixture = tempFixture();
+	const settings = join(fixture.agent, "settings.json");
+	const ticket = join(fixture.external, "ticket");
+	const sentinel = join(fixture.dir, "ticket-called");
+	writeValidTkLikeCommand(ticket, { sentinel });
+
+	const result = runTickets([
+		"--settings", settings,
+		"--agent-dir", fixture.agent,
+		"validate", ticket,
+	], { env: { HOME: fixture.home, PATH: "" } });
+
+	assert.notEqual(result.status, 0);
+	assert.equal(result.stdout, "");
+	assert.equal(existsSync(sentinel), false);
 });
 
 test("settings writes do not follow the old predictable temp-file symlink", { skip: process.platform === "win32" }, () => {

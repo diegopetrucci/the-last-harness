@@ -245,6 +245,10 @@ function candidateCommands(args, settings, agentDir) {
 	return unique;
 }
 
+function hasTkCommandName(candidate) {
+	return candidate === "tk" || basename(candidate) === "tk";
+}
+
 function validateTkCommand(command) {
 	const result = spawnSync(command, ["help"], { encoding: "utf8", timeout: VALIDATION_TIMEOUT_MS });
 	if (result.error || result.status !== 0) return false;
@@ -265,6 +269,7 @@ function normalizeValidCandidate(candidate) {
 
 function findValidTk(args, settings, agentDir) {
 	for (const candidate of candidateCommands(args, settings, agentDir)) {
+		if (!hasTkCommandName(candidate)) continue;
 		if (validateTkCommand(candidate)) return normalizeValidCandidate(candidate);
 	}
 	return undefined;
@@ -278,10 +283,11 @@ function findValidTkForConfigure(args, settings, agentDir) {
 	const configured = configuredInstallPath(settings);
 	const managedTargetPath = managedTkTargetPath(args, agentDir);
 	const configuredIsManagedTarget = configured && samePathForCompare(configured, managedTargetPath);
-	if (configured && !configuredIsManagedTarget && validateTkCommand(configured)) return normalizeValidCandidate(configured);
+	if (configured && !configuredIsManagedTarget && hasTkCommandName(configured) && validateTkCommand(configured)) return normalizeValidCandidate(configured);
 
 	const managedTarget = validateManagedTkTarget(args, agentDir);
 	for (const candidate of [managedTarget, "tk"]) {
+		if (!hasTkCommandName(candidate)) continue;
 		if (validateTkCommand(candidate)) return normalizeValidCandidate(candidate);
 	}
 	return undefined;
@@ -1032,6 +1038,9 @@ function validatedRequestedInstallPath(args, agentDir, installPath) {
 	if (samePathForCompare(normalized, managedTarget)) {
 		validateManagedTkTarget(args, agentDir);
 	}
+	if (!hasTkCommandName(normalized)) {
+		throw new Error(`Refusing to enable tk integration because the command basename must be exactly "tk": ${normalized}`);
+	}
 	if (!validateTkCommand(normalized)) {
 		throw new Error(`Refusing to enable tk integration because the command did not validate: ${normalized}`);
 	}
@@ -1138,7 +1147,7 @@ function commandState(settings) {
 function commandValidate(args, settings, agentDir, commandArgs) {
 	const candidate = commandArgs[0];
 	if (candidate) {
-		if (!validateTkCommand(candidate)) {
+		if (!hasTkCommandName(candidate) || !validateTkCommand(candidate)) {
 			process.exitCode = 1;
 			return;
 		}

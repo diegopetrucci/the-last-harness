@@ -24,6 +24,7 @@ import {
 	loadPrimaryAgents,
 	loadSubagentMetadata,
 } from "./prompts.js";
+import { activateTlhTicketRuntime, isTlhTicketIntegrationEnabled } from "./tickets.js";
 import { assertSafeTlhSettingsPath, tlhSettingsPathForWrite } from "./profile-state.js";
 import type {
 	AgentPrompt,
@@ -56,10 +57,6 @@ function getTlhGlobalSettings(cwd: string): TlhSettings {
 
 function getTlhPrimaryAgentConfig(cwd: string): TlhPrimaryAgentConfig | undefined {
 	return getTlhGlobalSettings(cwd).tlh?.primaryAgent;
-}
-
-function isTlhTicketIntegrationEnabled(settings: TlhSettings): boolean {
-	return settings.tlh?.tickets?.enabled !== false;
 }
 
 function parseTlhSettingsContent(content: string | undefined): Record<string, unknown> {
@@ -616,6 +613,7 @@ function createTlhPrimaryAgentRuntime(
 			const selection = currentPrimaryAgentSelection();
 			const primaryEnabled = isEnabledPrimaryAgentSelection(selection);
 			const ticketIntegrationEnabled = isTlhTicketIntegrationEnabled(settings);
+			activateTlhTicketRuntime(settings, getAgentDir());
 			await applyPrimaryDefaults(ctx);
 			const prompts = [
 				event.systemPrompt,
