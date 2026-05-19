@@ -25,12 +25,14 @@ All notable changes to The Last Harness will be documented in this file.
 - Added multi-primary switching across architect, product, and disabled modes via `Shift+Tab` and `/agent`, while keeping `/architect` compatibility.
 - Bundled `npm:@gotgenes/pi-anthropic-auth` as a default extension to improve Anthropic Claude Pro/Max OAuth compatibility while preserving normal API-key behavior.
 - Added `scripts/benchmark-context-cap-embedding.mjs` to compare default-extension install performance and package-size tradeoffs when embedding bundled defaults.
+- Documented default `tk` ticket integration, the `tlh tickets ...` helper, managed `<agent>/bin/tk` installs, and ticket install/update flags.
 
 ### Changed
 
 - Bundled intercom now collapses incoming intercom/subagent result cards by default while leaving expanded content unchanged.
 - Installer default-extension updates now run one settings-wide refresh for non-critical defaults with per-source fallback retries, while critical subagents/intercom packages are still installed and validated separately.
 - Split the bundled TLH extension into focused modules to keep primary-agent, header/footer, Gnosis, telemetry, and update-check behavior maintainable without changing user-facing commands.
+- Installer smoke checks now cover managed `tk` default dry-run behavior and normal Pi guard coverage.
 
 ### Fixed
 

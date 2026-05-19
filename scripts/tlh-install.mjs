@@ -106,6 +106,9 @@ Options:
   --with-gnosis              Force install/re-enable Gnosis (\`gn\`) integration
   --without-gnosis           Opt out of Gnosis integration and keep it disabled
   --no-gnosis                Alias for --without-gnosis
+  --with-tickets             Force install/re-enable tk ticket integration
+  --without-tickets          Opt out of tk ticket integration and keep it disabled
+  --no-tickets               Alias for --without-tickets
   --agent-dir DIR            Isolated Pi agent dir (default: ~/.the-last-harness/agent)
   --bin-dir DIR              Wrapper install dir (default: ~/.local/bin)
   --wrapper-name N           Wrapper command name (default: tlh)
@@ -169,6 +172,7 @@ function parseArgs(argv, env = process.env) {
 		quiet: false,
 		verbose: false,
 		gnosisMode: "auto",
+		ticketsMode: "auto",
 		gnosisRepo: env.TLH_GNOSIS_REPO || DEFAULT_GNOSIS_REPO,
 		gnosisVersion: env.TLH_GNOSIS_VERSION || DEFAULT_GNOSIS_VERSION,
 		packageSourceInput: env.TLH_PACKAGE_SOURCE || "",
@@ -213,6 +217,14 @@ function parseArgs(argv, env = process.env) {
 		}
 		if (arg === "--without-gnosis" || arg === "--no-gnosis") {
 			args.gnosisMode = "without";
+			continue;
+		}
+		if (arg === "--with-tickets") {
+			args.ticketsMode = "with";
+			continue;
+		}
+		if (arg === "--without-tickets" || arg === "--no-tickets") {
+			args.ticketsMode = "without";
 			continue;
 		}
 		if (arg === "--quiet") {
@@ -330,6 +342,7 @@ function buildInstallConfig(parsedArgs, env = process.env) {
 		tmpDir: "",
 		supportFilesDryRunSkipped: false,
 		gnosisSummary: "",
+		ticketsSummary: "",
 	};
 }
 
@@ -920,6 +933,40 @@ function configureGnosis(config) {
 	config.gnosisSummary = runNodeScript(config, config.supportFilePaths.TLH_GNOSIS_SCRIPT, args, { captureStdout: true }).trimEnd();
 }
 
+function configureTickets(config) {
+	if (config.noSettings) {
+		log(config, "Skipping tk ticket integration (--no-settings).");
+		return;
+	}
+	if (!config.supportFilePaths.TLH_TICKETS_SCRIPT) {
+		if (config.ticketsMode !== "auto") {
+			warn(`tk ticket integration option was provided, but support files are unavailable for ref ${config.ref}; skipping`);
+		} else {
+			log(config, "Skipping default tk ticket integration; support files are unavailable.");
+		}
+		return;
+	}
+
+	const args = [
+		"--settings",
+		config.settingsPath,
+		"--agent-dir",
+		config.agentDir,
+		"--target",
+		join(config.agentDir, "bin", "tk"),
+		"--mode",
+		config.ticketsMode,
+		"--wrapper-name",
+		config.wrapperName,
+		"configure-install",
+	];
+	if (config.dryRun) args.push("--dry-run", "--detail");
+	else if (config.verbose) args.push("--detail");
+	if (config.quiet) args.push("--quiet");
+
+	config.ticketsSummary = runNodeScript(config, config.supportFilePaths.TLH_TICKETS_SCRIPT, args, { captureStdout: true }).trimEnd();
+}
+
 function wrapperIsManaged(config) {
 	if (!existsSync(config.wrapperPath)) return false;
 	try {
@@ -1002,6 +1049,7 @@ function printSummary(config) {
 	}
 	detailLog(config, `Settings: ${config.settingsPath}`);
 	if (config.gnosisSummary) detailLog(config, config.gnosisSummary);
+	if (config.ticketsSummary) detailLog(config, config.ticketsSummary);
 	detailLog(config, "Normal Pi config was not modified: ~/.pi/agent");
 	if (!config.noWrapper) {
 		detailLog(config, `Uninstall: rm -f "${config.wrapperPath}" && rm -rf "${config.agentDir}"`);
@@ -1029,6 +1077,7 @@ async function runInstallFlow(config) {
 	await writeInstallState(config);
 	installDefaultExtensions(config);
 	configureGnosis(config);
+	configureTickets(config);
 	await writeWrapper(config);
 	printSummary(config);
 }

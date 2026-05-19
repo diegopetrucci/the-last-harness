@@ -89,10 +89,29 @@ function formatAllowedSubagents(subagents: SubagentMetadata[]): string {
 	return `## TLH Allowed Minor Subagents\n\nYou may delegate only to these minor agents via the subagent tool:\n\n${lines.join("\n")}`;
 }
 
-export function buildTlhSystemPrompt(primary: AgentPrompt | undefined, subagents: SubagentMetadata[], primaryEnabled: boolean): string {
+const TICKET_INTEGRATION_DISABLED_PROMPT = `
+## TLH Ticket Integration Disabled
+
+The user has disabled TLH ticket integration (\`settings.tlh.tickets.enabled === false\`). This instruction overrides any earlier or static guidance about \`tk\` tickets.
+
+- Do not run, recommend, create, update, close, or rely on \`tk\`, even if a \`tk\` command is available on PATH.
+- Do not create, update, close, or rely on repo-local \`.tickets\` data for TLH planning or handoff.
+- For architect work, keep approved implementation task plans in the conversation and hand off non-ticket task briefs with acceptance criteria and dependencies.
+- For product work, prepare conversation- or document-based handoff material instead of \`tk\` tickets.
+`;
+
+export function buildTlhSystemPrompt(
+	primary: AgentPrompt | undefined,
+	subagents: SubagentMetadata[],
+	primaryEnabled: boolean,
+	ticketIntegrationEnabled = true,
+): string {
 	const prompts = [HARNESS_PROMPT.trim()];
 	if (primaryEnabled) {
 		prompts.push(primary?.systemPrompt.trim(), formatAllowedSubagents(subagents));
+		if (!ticketIntegrationEnabled) {
+			prompts.push(TICKET_INTEGRATION_DISABLED_PROMPT.trim());
+		}
 	}
 	return prompts.filter(Boolean).join("\n\n");
 }

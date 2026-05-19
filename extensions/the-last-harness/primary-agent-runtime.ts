@@ -45,13 +45,21 @@ export type TlhPrimaryAgentRuntime = {
 	currentPrimaryAgentLabel(): string;
 };
 
-function getTlhPrimaryAgentConfig(cwd: string): TlhPrimaryAgentConfig | undefined {
+function getTlhGlobalSettings(cwd: string): TlhSettings {
 	try {
-		const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as TlhSettings;
-		return settings.tlh?.primaryAgent;
+		const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as unknown;
+		return isRecord(settings) ? (settings as TlhSettings) : {};
 	} catch {
-		return undefined;
+		return {};
 	}
+}
+
+function getTlhPrimaryAgentConfig(cwd: string): TlhPrimaryAgentConfig | undefined {
+	return getTlhGlobalSettings(cwd).tlh?.primaryAgent;
+}
+
+function isTlhTicketIntegrationEnabled(settings: TlhSettings): boolean {
+	return settings.tlh?.tickets?.enabled !== false;
 }
 
 function parseTlhSettingsContent(content: string | undefined): Record<string, unknown> {
@@ -603,11 +611,16 @@ function createTlhPrimaryAgentRuntime(
 		});
 
 		pi.on("before_agent_start", async (event, ctx) => {
+			const settings = getTlhGlobalSettings(ctx.cwd);
 			syncPrimaryAgentState(ctx);
 			const selection = currentPrimaryAgentSelection();
 			const primaryEnabled = isEnabledPrimaryAgentSelection(selection);
+			const ticketIntegrationEnabled = isTlhTicketIntegrationEnabled(settings);
 			await applyPrimaryDefaults(ctx);
-			const prompts = [event.systemPrompt, buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled)];
+			const prompts = [
+				event.systemPrompt,
+				buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled, ticketIntegrationEnabled),
+			];
 			if (shouldAppendGnosisPrompt(ctx.cwd)) {
 				prompts.push(GNOSIS_PROMPT);
 			}

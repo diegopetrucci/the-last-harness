@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 
@@ -31,6 +31,9 @@ Options:
   --with-gnosis         Force install/re-enable Gnosis through the installer
   --without-gnosis      Opt out of Gnosis integration through the installer
   --no-gnosis           Alias for --without-gnosis
+  --with-tickets        Force install/re-enable tk ticket integration through the installer
+  --without-tickets     Opt out of tk ticket integration through the installer
+  --no-tickets          Alias for --without-tickets
   --quiet               Suppress installer progress output
   --verbose             Show underlying installer output
   -h, --help            Show this help
@@ -74,6 +77,7 @@ function parseArgs(argv) {
 		noSettings: false,
 		noWrapper: false,
 		gnosisMode: undefined,
+		ticketsMode: undefined,
 		quiet: false,
 		verbose: false,
 		help: false,
@@ -111,6 +115,14 @@ function parseArgs(argv) {
 		}
 		if (arg === "--without-gnosis" || arg === "--no-gnosis") {
 			args.gnosisMode = "without";
+			continue;
+		}
+		if (arg === "--with-tickets") {
+			args.ticketsMode = "with";
+			continue;
+		}
+		if (arg === "--without-tickets" || arg === "--no-tickets") {
+			args.ticketsMode = "without";
 			continue;
 		}
 		if (arg === "--quiet") {
@@ -201,6 +213,60 @@ function installStatePath(agentDir) {
 
 function settingsPath(agentDir) {
 	return join(agentDir, "settings.json");
+}
+
+function realpathIfPossible(path) {
+	try {
+		return realpathSync(path);
+	} catch {
+		return undefined;
+	}
+}
+
+function sanitizedPath(pathValue, agentDir) {
+	if (pathValue === undefined) return "";
+	const cwd = resolve(process.cwd());
+	const cwdRealpath = realpathIfPossible(cwd);
+	const managedBin = resolve(agentDir, "bin");
+	const managedBinRealpath = realpathIfPossible(managedBin);
+	return String(pathValue)
+		.split(delimiter)
+		.filter((entry) => {
+			if (!entry) return false;
+			const resolvedEntry = resolve(entry);
+			if (resolvedEntry === cwd || resolvedEntry === managedBin) return false;
+			const entryRealpath = realpathIfPossible(resolvedEntry);
+			if (entryRealpath && cwdRealpath && entryRealpath === cwdRealpath) return false;
+			if (entryRealpath && managedBinRealpath && entryRealpath === managedBinRealpath) return false;
+			return true;
+		})
+		.join(delimiter);
+}
+
+function envWithSanitizedPath(baseEnv, agentDir) {
+	return {
+		...baseEnv,
+		PATH: sanitizedPath(baseEnv.PATH, agentDir),
+	};
+}
+
+function isExecutable(path) {
+	try {
+		accessSync(path, constants.X_OK);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function resolveCommand(command, env) {
+	const pathValue = env.PATH || "";
+	for (const entry of pathValue.split(delimiter)) {
+		if (!entry) continue;
+		const candidate = resolve(entry, command);
+		if (isExecutable(candidate)) return candidate;
+	}
+	throw new Error(`required command not found on sanitized PATH: ${command}`);
 }
 
 function readJson(path) {
@@ -426,6 +492,8 @@ function buildInstallerArgs(plan, args) {
 	if (args.noWrapper) installerArgs.push("--no-wrapper");
 	if (args.gnosisMode === "with") installerArgs.push("--with-gnosis");
 	if (args.gnosisMode === "without") installerArgs.push("--without-gnosis");
+	if (args.ticketsMode === "with") installerArgs.push("--with-tickets");
+	if (args.ticketsMode === "without") installerArgs.push("--without-tickets");
 	if (args.quiet) installerArgs.push("--quiet");
 	if (args.verbose) installerArgs.push("--verbose");
 	return installerArgs;
@@ -484,8 +552,9 @@ async function main() {
 	const state = loadState(args);
 	const plan = resolvePlan(state, args);
 	const installerArgs = buildInstallerArgs(plan, args);
+	const sanitizedEnv = envWithSanitizedPath(process.env, args.agentDir);
 	const childEnv = {
-		...process.env,
+		...sanitizedEnv,
 		TLH_REPO: plan.repo,
 	};
 	delete childEnv.TLH_REF;
@@ -514,7 +583,8 @@ async function main() {
 	let temp;
 	try {
 		temp = await downloadInstaller(plan.url);
-		const result = spawnSync("bash", [temp.installerPath, ...installerArgs], {
+		const bashCommand = resolveCommand("bash", sanitizedEnv);
+		const result = spawnSync(bashCommand, [temp.installerPath, ...installerArgs], {
 			stdio: "inherit",
 			env: childEnv,
 		});

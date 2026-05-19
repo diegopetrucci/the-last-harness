@@ -36,6 +36,9 @@ Options:
   --with-gnosis     Force install/re-enable Gnosis (`gn`) integration
   --without-gnosis  Opt out of Gnosis integration and keep it disabled
   --no-gnosis       Alias for --without-gnosis
+  --with-tickets    Force install/re-enable tk ticket integration
+  --without-tickets Opt out of tk ticket integration and keep it disabled
+  --no-tickets      Alias for --without-tickets
   --agent-dir DIR   Isolated Pi agent dir (default: ~/.the-last-harness/agent)
   --bin-dir DIR     Wrapper install dir (default: ~/.local/bin)
   --wrapper-name N  Wrapper command name (default: tlh)
@@ -275,7 +278,7 @@ while [[ $# -gt 0 ]]; do
       DRY_RUN=true
       shift
       ;;
-    --force|--no-pi-install|--with-gnosis|--without-gnosis|--no-gnosis)
+    --force|--no-pi-install|--with-gnosis|--without-gnosis|--no-gnosis|--with-tickets|--without-tickets|--no-tickets)
       shift
       ;;
     --no-wrapper)
@@ -366,6 +369,7 @@ required|scripts/tlh-install-query.mjs
 required|scripts/merge-settings.mjs
 required|scripts/tlh-defaults.mjs
 optional|scripts/tlh-gnosis.mjs
+optional|scripts/tlh-tickets.mjs
 optional|scripts/tlh-update.mjs
 optional|scripts/tlh-wrapper.mjs
 optional|scripts/tlh-install-state.mjs
@@ -482,6 +486,9 @@ warn_missing_optional_support_file() {
     scripts/tlh-gnosis.mjs)
       warn "Gnosis support script not found for ref ${REF}; continuing without tlh gnosis helper"
       ;;
+    scripts/tlh-tickets.mjs)
+      warn "tlh tickets support script not found for ref ${REF}; continuing without tlh tickets helper"
+      ;;
     scripts/tlh-update.mjs)
       warn "tlh update support script not found for ref ${REF}; the wrapper update helper will be unavailable"
       ;;
@@ -573,6 +580,7 @@ dry_run_without_stage1() {
     log "Would install bundled default extension packages after settings merge."
   fi
   log "Would fetch Gnosis integration support files."
+  log "Would fetch tlh tickets support files."
   log "Would fetch tlh update support files."
   log "Would fetch tlh wrapper support files."
   log "Would fetch tlh install-state support files."

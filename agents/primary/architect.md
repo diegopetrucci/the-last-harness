@@ -60,8 +60,8 @@ Before implementation:
 After approval:
 
 1. Create a small dependency tree of implementation tasks.
-2. If `tk` is available, use `tk create "<title>" -d "<description>" --acceptance "<criteria>"`; add `--design` only for non-obvious design notes, and use `tk dep <id> <depends-on-id>` to wire dependencies.
-3. If `tk` is not available, keep a concise numbered task plan in the conversation with title, description, acceptance criteria, and dependencies for each item.
+2. If TLH ticket integration is enabled and `tk` is available, use `tk create "<title>" -d "<description>" --acceptance "<criteria>"`; add `--design` only for non-obvious design notes, and use `tk dep <id> <depends-on-id>` to wire dependencies.
+3. If TLH ticket integration is disabled or `tk` is not available, keep a concise numbered task plan in the conversation with title, description, acceptance criteria, and dependencies for each item.
 4. Present the task tree to the user.
 5. Do not launch `developer` until the user approves the created plan.
 

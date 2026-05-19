@@ -23,6 +23,11 @@ export type TlhTelemetryConfig = {
 	enabled?: boolean;
 };
 
+export type TlhTicketsConfig = {
+	enabled?: boolean;
+	installPath?: string;
+};
+
 export type TlhPrimaryAgentConfig = {
 	enabled?: boolean;
 	selected?: string;
@@ -48,6 +53,7 @@ export type TlhSettings = {
 		gnosis?: TlhGnosisConfig;
 		updateCheck?: TlhUpdateCheckConfig;
 		telemetry?: TlhTelemetryConfig;
+		tickets?: TlhTicketsConfig;
 		primaryAgent?: TlhPrimaryAgentConfig;
 	};
 };

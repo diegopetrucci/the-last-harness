@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { extname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { createJiti } from "jiti";
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const extensionsDir = fileURLToPath(new URL("../extensions/", import.meta.url));
@@ -13,6 +14,8 @@ const extensionSource = readFileSync(new URL("../extensions/the-last-harness.ts"
 const primaryRuntimeSource = readFileSync(new URL("../extensions/the-last-harness/primary-agent-runtime.ts", import.meta.url), "utf8");
 const effortSource = readFileSync(new URL("../extensions/the-last-harness/effort.ts", import.meta.url), "utf8");
 const promptsSource = readFileSync(new URL("../extensions/the-last-harness/prompts.ts", import.meta.url), "utf8");
+const jiti = createJiti(import.meta.url);
+const { buildTlhSystemPrompt, loadPrimaryAgents } = await jiti.import("../extensions/the-last-harness/prompts.ts");
 
 function sourceSection(source, startMarker, endMarker) {
 	const start = source.indexOf(startMarker);
@@ -66,6 +69,47 @@ test("before_agent_start reapplies primary defaults without a one-shot model gat
 	assert.match(beforeAgentStart, /await applyPrimaryDefaults\(ctx\);/);
 	assert.match(applyPrimaryModel, /ctx\.model\?\.provider === model\.provider && ctx\.model\?\.id === model\.id/);
 	assert.match(applyPrimaryThinking, /pi\.getThinkingLevel\(\) === primary\.thinking/);
+});
+
+test("before_agent_start reads ticket integration settings for primary prompt generation", () => {
+	const beforeAgentStart = sourceSection(primaryRuntimeSource, 'pi.on("before_agent_start"', 'pi.on("tool_call"');
+
+	assert.match(primaryRuntimeSource, /function getTlhGlobalSettings\(cwd: string\): TlhSettings/);
+	assert.match(primaryRuntimeSource, /settings\.tlh\?\.tickets\?\.enabled !== false/);
+	assert.match(beforeAgentStart, /const settings = getTlhGlobalSettings\(ctx\.cwd\);/);
+	assert.match(beforeAgentStart, /const ticketIntegrationEnabled = isTlhTicketIntegrationEnabled\(settings\);/);
+	assert.match(beforeAgentStart, /buildTlhSystemPrompt\([\s\S]*ticketIntegrationEnabled/);
+});
+
+test("disabled ticket integration appends no-tk primary guidance after static prompts", () => {
+	const primaryAgents = loadPrimaryAgents();
+	const architect = primaryAgents.get("architect");
+	assert.ok(architect, "architect primary prompt should load");
+
+	const prompt = buildTlhSystemPrompt(architect, [], true, false);
+
+	assert.match(prompt, /If TLH ticket integration is enabled and `tk` is available/);
+	assert.doesNotMatch(prompt, /If `tk` is available/);
+	assert.match(prompt, /## TLH Ticket Integration Disabled/);
+	assert.match(prompt, /overrides any earlier or static guidance about `tk` tickets/);
+	assert.match(prompt, /Do not run, recommend, create, update, close, or rely on `tk`/);
+	assert.match(prompt, /conversation/);
+	assert.ok(
+		prompt.indexOf(architect.systemPrompt.trim()) < prompt.indexOf("## TLH Ticket Integration Disabled"),
+		"disabled-ticket guidance should override by appearing after the static primary prompt",
+	);
+});
+
+test("ticket prompt generation is unchanged when ticket integration is unset or enabled", () => {
+	const primaryAgents = loadPrimaryAgents();
+	const architect = primaryAgents.get("architect");
+	assert.ok(architect, "architect primary prompt should load");
+
+	const defaultPrompt = buildTlhSystemPrompt(architect, [], true);
+	const enabledPrompt = buildTlhSystemPrompt(architect, [], true, true);
+
+	assert.equal(defaultPrompt, enabledPrompt);
+	assert.doesNotMatch(defaultPrompt, /## TLH Ticket Integration Disabled/);
 });
 
 test("extension imports extracted shared helpers from nested TypeScript modules", () => {

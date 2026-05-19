@@ -31,7 +31,7 @@ They run in fresh child contexts: they get the task and project context, not the
 ## Quality-of-life improvements to `pi`
 
 - **Project memory**: Gnosis integration is enabled by default on supported platforms so agents can record decisions, constraints, rejected alternatives, and lessons in repo-local memory (unless you opt out).
-- **Ticketed execution**: when `tk` is available, the architect turns the approved plan into dependency-tracked tickets and hands one ticket at a time to implementation and review agents; product mode can shape product-approved tickets for later handoff. Without `tk`, TLH keeps the same small task tree in the conversation.
+- **Ticketed execution**: TLH enables `tk` by default for dependency-tracked tickets, installing a managed command at `~/.the-last-harness/agent/bin/tk` when it needs to supply one. The architect hands one ticket at a time to implementation and review agents; product mode can shape product-approved tickets for later handoff.
 - **Context management**: context is capped to 200k tokens to avoid the `dumb zone`, and `/context` lets you see what is eating up your context.
 - **Safety rails**: Bundled permission and destructive-action confirmations add checkpoints before sensitive commands or file changes.
 - **Inline bash snippets**: trusted `!{...}` snippets in your prompt are expanded through local bash before the agent sees them, useful for quick context like `!{git status --short}`.
@@ -97,6 +97,26 @@ tlh gnosis disable
 ```
 
 Inside an interactive `tlh` session, use `/gnosis` to toggle the integration or `/gnosis status` to inspect it. Disabling Gnosis stops TLH from adding the prompt instructions; it does not delete existing repo-local memory or any managed `gn` binary. Gnosis project data lives in repo-local `.gnosis` directories.
+
+### Ticket integration
+
+TLH enables the `tk` ticket CLI by default for architect and product workflows. If no valid configured/existing `tk` is found, install and update place a managed copy at `~/.the-last-harness/agent/bin/tk`; TLH does not install `tk` globally or through Homebrew, and it never writes normal `~/.pi/agent` config.
+
+Opt out during install or update with `--without-tickets` / `--no-tickets`, or force it back on with `--with-tickets`:
+
+```sh
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s -- --without-tickets
+```
+
+Manage it after install:
+
+```sh
+tlh tickets status
+tlh tickets enable
+tlh tickets disable
+```
+
+The opt-out is written to `~/.the-last-harness/agent/settings.json` and survives `tlh update`. Disabling ticket integration stops TLH primary agents from using `tk` and makes architect/product workflows fall back to conversation-based plans or non-ticket handoff material. It does not delete repo-local `.tickets` data or any managed `tk`; removing `~/.the-last-harness` removes the managed copy. Managed installs download the pinned `wedow/ticket` source tarball (`v0.3.2`) and verify its SHA-256 before extracting the `ticket` script.
 
 ### Launch telemetry
 
