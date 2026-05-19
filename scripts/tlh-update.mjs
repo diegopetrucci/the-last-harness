@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { accessSync, chmodSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -252,6 +252,7 @@ function envWithSanitizedPath(baseEnv, agentDir) {
 
 function isExecutable(path) {
 	try {
+		if (!statSync(path).isFile()) return false;
 		accessSync(path, constants.X_OK);
 		return true;
 	} catch {

@@ -505,13 +505,14 @@ test("tlh update passes ticket integration flags through to the installer", (t) 
 	assert.match(noTicketsResult.stdout, /--without-tickets/);
 });
 
-test("tlh update removes isolated bin from PATH before resolving and running bash", (t) => {
+test("tlh update removes isolated bin and skips non-file bash candidates before running bash", (t) => {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");
 	const agentDir = join(root, "agent");
 	const agentBin = join(agentDir, "bin");
 	const agentBinLink = join(root, "agent-bin-link");
 	const binDir = join(root, "bin");
+	const poisonedBin = join(root, "poisoned-bin");
 	const safeBin = join(root, "safe-bin");
 	const cwdDir = join(root, "cwd");
 	const cwdLink = join(root, "cwd-link");
@@ -521,6 +522,7 @@ test("tlh update removes isolated bin from PATH before resolving and running bas
 	const fetchPreload = join(root, "stub-update-fetch.mjs");
 	mkdirSync(join(agentDir, "tlh"), { recursive: true });
 	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(poisonedBin, { recursive: true });
 	mkdirSync(safeBin, { recursive: true });
 	mkdirSync(cwdDir, { recursive: true });
 	mkdirSync(homeDir, { recursive: true });
@@ -541,13 +543,15 @@ test("tlh update removes isolated bin from PATH before resolving and running bas
 	chmodSync(join(agentBin, "bash"), 0o755);
 	writeFileSync(join(cwdDir, "bash"), "#!/bin/sh\nprintf 'current-dir bash intercepted\\n' >\"${CURRENT_BASH_LOG}\"\nexit 87\n", "utf8");
 	chmodSync(join(cwdDir, "bash"), 0o755);
+	mkdirSync(join(poisonedBin, "bash"), { recursive: true });
+	chmodSync(join(poisonedBin, "bash"), 0o755);
 	writeFileSync(join(safeBin, "bash"), "#!/bin/sh\n{ printf 'cmd=%s\\n' \"$0\"; printf 'argv=%s\\n' \"$*\"; printf 'path=%s\\n' \"${PATH:-}\"; } >\"${BASH_LOG}\"\n", "utf8");
 	chmodSync(join(safeBin, "bash"), 0o755);
 	writeFileSync(fetchPreload, `globalThis.fetch = async () => ({\n\tok: true,\n\tstatus: 200,\n\tstatusText: "OK",\n\ttext: async () => "#!/usr/bin/env bash\\nexit 0\\n",\n});\n`, "utf8");
 
 	const poisonedPathEntries = ["", ".", cwdDir, agentBin];
 	if (process.platform !== "win32") poisonedPathEntries.push(cwdLink, agentBinLink);
-	poisonedPathEntries.push(safeBin, process.env.PATH || "");
+	poisonedPathEntries.push(poisonedBin, safeBin, process.env.PATH || "");
 	const result = spawnSync(process.execPath, ["--import", fetchPreload, join(repoRoot, "scripts/tlh-update.mjs"), "--agent-dir", agentDir, "--bin-dir", binDir, "--quiet"], {
 		cwd: cwdDir,
 		env: scrubInstallerEnv({
@@ -572,7 +576,8 @@ test("tlh update removes isolated bin from PATH before resolving and running bas
 	assert.match(bashRecord.argv, /--agent-dir/);
 	assert.match(bashRecord.argv, /--bin-dir/);
 	const bashPathEntries = bashRecord.path.split(":");
-	assert.equal(bashPathEntries[0], safeBin);
+	assert.equal(bashPathEntries[0], poisonedBin);
+	assert.equal(bashPathEntries[1], safeBin);
 	assert.equal(bashPathEntries.includes(""), false);
 	assert.equal(bashPathEntries.includes("."), false);
 	assert.equal(bashPathEntries.includes(cwdDir), false);
