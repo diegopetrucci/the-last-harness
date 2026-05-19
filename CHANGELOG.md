@@ -4,9 +4,18 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-05-19
+
+### Added
+
+- Added a full validation GitHub Actions workflow for installer smoke checks, tests, settings-merge dry-runs, and package dry-runs.
+- Added contributor guidance for local development and release-prep validation.
+- Added tested helpers for parsing Git porcelain-v2 status and formatting TLH footer git/PR segments.
+
 ### Changed
 
 - The installer, package metadata, and release workflow now require Node.js >=22.19.0 to match upstream Pi 0.75+.
+- Non-critical default-extension fallback updates now use the old Pi-compatible positional `pi update <source>` form when the settings-wide refresh fails.
 
 ## [0.8.0] - 2026-05-19
 

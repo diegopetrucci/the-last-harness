@@ -790,7 +790,7 @@ function installCriticalDefaultExtension(config, source) {
 function updateDefaultExtensionSourceBestEffort(config, source) {
 	verboseLog(config, `Installing bundled default extension package: ${source}`);
 	try {
-		runIsolatedPi(config, ["pi", "update", "--extension", source]);
+		runIsolatedPi(config, ["pi", "update", source]);
 		return true;
 	} catch {
 		warn(`default extension package update failed; continuing: ${source}`);

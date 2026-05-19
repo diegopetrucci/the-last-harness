@@ -253,7 +253,7 @@ test("stage-1 batches non-critical default extension updates", (t) => {
 	assertPiCommands(piLog, agentDir, ["update --extensions"]);
 });
 
-test("stage-1 falls back to best-effort per-source non-critical updates when batch update fails", (t) => {
+test("stage-1 falls back to old-CLI positional per-source non-critical updates when batch update fails", (t) => {
 	const criticalSource = "git:github.com/example/critical";
 	const defaults = [
 		{ id: "critical", critical: true, source: criticalSource },
@@ -269,11 +269,15 @@ test("stage-1 falls back to best-effort per-source non-critical updates when bat
 			"\tprintf 'batch failed\\n' >&2",
 			"\texit 42",
 			"fi",
-			"if [[ \"$1\" == \"update\" && \"${2:-}\" == \"--extension\" && \"${3:-}\" == \"npm:helper-a\" ]]; then",
+			"if [[ \"$1\" == \"update\" && \"${2:-}\" == \"--extension\" ]]; then",
+			"\tprintf 'old pi does not support --extension\\n' >&2",
+			"\texit 98",
+			"fi",
+			"if [[ \"$1\" == \"update\" && \"${2:-}\" == \"npm:helper-a\" ]]; then",
 			"\ttouch \"${PI_CODING_AGENT_DIR}/fallback-a.done\"",
 			"\texit 0",
 			"fi",
-			"if [[ \"$1\" == \"update\" && \"${2:-}\" == \"--extension\" && \"${3:-}\" == \"npm:helper-b\" ]]; then",
+			"if [[ \"$1\" == \"update\" && \"${2:-}\" == \"npm:helper-b\" ]]; then",
 			"\ttouch \"${PI_CODING_AGENT_DIR}/fallback-b.attempted\"",
 			"\tprintf 'helper-b failed\\n' >&2",
 			"\texit 43",
@@ -289,8 +293,8 @@ test("stage-1 falls back to best-effort per-source non-critical updates when bat
 
 	assertPiCommands(piLog, agentDir, [
 		"update --extensions",
-		"update --extension npm:helper-a",
-		"update --extension npm:helper-b",
+		"update npm:helper-a",
+		"update npm:helper-b",
 		"install git:github.com/example/critical",
 	]);
 	assert.match(stderr, /warning: settings-wide extension refresh from merged settings failed; falling back to per-source updates for only 2 non-critical bundled default source\(s\)/);
