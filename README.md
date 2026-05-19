@@ -10,8 +10,6 @@
 
 If this resonates with you, welcome aboard:
 
-Prerequisite: Node.js >=22.19.0 must be available on your `PATH`.
-
 ```sh
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
 ```
@@ -127,3 +125,7 @@ Install, update, and uninstall guidance lives in [`docs/install.md`](docs/instal
 ## Local development
 
 Local testing and development commands live in [`docs/local-development.md`](docs/local-development.md).
+
+## Prerequisites
+
+Node.js >=22.19.0 must be available on your `PATH`.
