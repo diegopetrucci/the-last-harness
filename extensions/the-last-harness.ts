@@ -28,11 +28,24 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		if (!ctx.hasUI) {
 			return;
 		}
-		const previousSnapshot = subscriptionUsageService.getSnapshot(ctx.model?.provider);
+		const provider = ctx.model?.provider;
+		const previousSnapshot = subscriptionUsageService.getSnapshotForContext(ctx);
+		const previousEligible = subscriptionUsageService.isEligible(ctx);
+		const previousProviderSnapshot = provider ? subscriptionUsageService.getSnapshot(provider) : undefined;
+		const previousProviderEligible = provider ? subscriptionUsageService.isEligible(provider) : false;
 		void subscriptionUsageService
 			.refresh(ctx, options)
-			.then((snapshot) => {
-				if (snapshot && snapshot !== previousSnapshot) {
+			.then(() => {
+				const nextSnapshot = subscriptionUsageService.getSnapshotForContext(ctx);
+				const nextEligible = subscriptionUsageService.isEligible(ctx);
+				const nextProviderSnapshot = provider ? subscriptionUsageService.getSnapshot(provider) : undefined;
+				const nextProviderEligible = provider ? subscriptionUsageService.isEligible(provider) : false;
+				if (
+					nextSnapshot !== previousSnapshot ||
+					nextEligible !== previousEligible ||
+					nextProviderSnapshot !== previousProviderSnapshot ||
+					nextProviderEligible !== previousProviderEligible
+				) {
 					requestFooterRender?.();
 				}
 			})

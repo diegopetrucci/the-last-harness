@@ -32,6 +32,10 @@ function openAiUsage(used = 25) {
 	};
 }
 
+function assertNoCredentialMaterial(value) {
+	assert.doesNotMatch(JSON.stringify(value), /Authorization|Bearer|access|refresh|token/i);
+}
+
 test("normalizes OpenAI/Codex wham usage primary and secondary windows", () => {
 	const snapshot = normalizeOpenAICodexUsage(openAiUsage(75), { nowMs: NOW_MS });
 
@@ -214,10 +218,10 @@ test("fetches Anthropic OAuth usage with the beta header and fails soft on auth/
 
 	assert.equal(request?.url, TLH_SUBSCRIPTION_USAGE_ANTHROPIC_URL);
 	assert.equal(request?.init.method, "GET");
-	assert.ok(request?.init.headers.Authorization === `Bearer ${accessToken}`, "uses the supplied bearer token");
+	assert.match(request?.init.headers.Authorization, /^Bearer \S+$/);
 	assert.equal(request?.init.headers["anthropic-beta"], TLH_SUBSCRIPTION_USAGE_ANTHROPIC_BETA);
 	assert.equal(snapshot?.windows.session.used, 6);
-	assert.equal(JSON.stringify(snapshot).includes(accessToken), false);
+	assertNoCredentialMaterial(snapshot);
 
 	const authFailure = await fetchTlhSubscriptionUsage(
 		{ provider: "anthropic", accessToken: randomUUID() },
@@ -302,7 +306,7 @@ test("service gates OAuth usage, caches/throttles fetches, and keeps stale snaps
 	const first = await service.refresh(ctx);
 	assert.equal(callCount, 1);
 	assert.equal(requests[0]?.url, TLH_SUBSCRIPTION_USAGE_OPENAI_CODEX_URL);
-	assert.ok(requests[0]?.init.headers.Authorization === `Bearer ${accessToken}`, "uses the supplied bearer token");
+	assert.match(requests[0]?.init.headers.Authorization, /^Bearer \S+$/);
 	assert.equal(requests[0]?.init.headers["ChatGPT-Account-Id"], "acct_test");
 	assert.equal(first?.windows.session.used, 10);
 
@@ -339,7 +343,213 @@ test("service gates OAuth usage, caches/throttles fetches, and keeps stale snaps
 	assert.equal(stale, first);
 	assert.equal(service.getSnapshot("openai-codex"), first);
 	assert.equal(callCount, 2);
-	assert.equal(JSON.stringify(service.getSnapshot("openai-codex")).includes(accessToken), false);
+	assertNoCredentialMaterial(service.getSnapshot("openai-codex"));
+});
+
+test("service preserves same-credential cached usage when key resolution is temporarily unavailable", async () => {
+	const accessToken = randomUUID();
+	let keyMode = "ok";
+	let fetchCalls = 0;
+	let credential = { type: "oauth", access: accessToken, accountId: "acct_test" };
+	const service = createTlhSubscriptionUsageService({
+		now: () => NOW_MS,
+		cacheTtlMs: 0,
+		minFetchIntervalMs: 0,
+		timeoutMs: 0,
+		fetch: async () => {
+			fetchCalls += 1;
+			return {
+				ok: true,
+				json: async () => openAiUsage(40),
+			};
+		},
+	});
+	const ctx = {
+		model: { provider: "openai-codex" },
+		modelRegistry: {
+			isUsingOAuth: (model) => model?.provider === "openai-codex",
+			getApiKeyForProvider: async () => {
+				if (keyMode === "throw") {
+					throw new Error("oauth refresh unavailable");
+				}
+				return keyMode === "undefined" ? undefined : accessToken;
+			},
+			authStorage: {
+				get: (provider) => (provider === "openai-codex" ? credential : undefined),
+			},
+		},
+	};
+
+	const first = await service.refresh(ctx, { force: true });
+	assert.equal(first?.windows.session.used, 40);
+	assert.equal(fetchCalls, 1);
+	assert.equal(service.getSnapshotForContext(ctx), first);
+	assert.equal(service.isEligible(ctx), true);
+
+	keyMode = "undefined";
+	assert.equal(await service.refresh(ctx, { force: true }), first);
+	assert.equal(fetchCalls, 1);
+	assert.equal(service.getSnapshotForContext(ctx), first);
+	assert.equal(service.isEligible(ctx), true);
+
+	keyMode = "throw";
+	assert.equal(await service.refresh(ctx, { force: true }), first);
+	assert.equal(fetchCalls, 1);
+	assert.equal(service.getSnapshot("openai-codex"), first);
+	assert.equal(service.getSnapshotForContext(ctx), first);
+
+	credential = { type: "oauth", access: accessToken, accountId: "acct_changed" };
+	keyMode = "undefined";
+	assert.equal(service.getSnapshotForContext(ctx), undefined);
+	assert.equal(await service.refresh(ctx, { force: true }), undefined);
+	assert.equal(fetchCalls, 1);
+	assert.equal(service.getSnapshot("openai-codex"), undefined);
+});
+
+test("service preserves Anthropic cached usage across same stable-metadata credential reloads", async () => {
+	const accessToken = randomUUID();
+	const refreshToken = randomUUID();
+	const expires = NOW_MS + 60_000;
+	const organizationId = "org_test";
+	let keyMode = "ok";
+	let fetchCalls = 0;
+	let credential = { type: "oauth", access: accessToken, refresh: refreshToken, expires, organizationId };
+	const service = createTlhSubscriptionUsageService({
+		now: () => NOW_MS,
+		cacheTtlMs: 0,
+		minFetchIntervalMs: 0,
+		timeoutMs: 0,
+		fetch: async () => {
+			fetchCalls += 1;
+			return {
+				ok: true,
+				json: async () => ({ five_hour: { used: 3, limit: 10 } }),
+			};
+		},
+	});
+	const ctx = {
+		model: { provider: "anthropic" },
+		modelRegistry: {
+			isUsingOAuth: (model) => model?.provider === "anthropic",
+			getApiKeyForProvider: async () => (keyMode === "ok" ? accessToken : undefined),
+			authStorage: {
+				get: (provider) => (provider === "anthropic" ? credential : undefined),
+			},
+		},
+	};
+
+	const first = await service.refresh(ctx, { force: true });
+	assert.equal(first?.windows.session.used, 3);
+	assert.equal(fetchCalls, 1);
+	assert.equal(service.getSnapshotForContext(ctx), first);
+
+	const cacheKeys = Array.from(service.snapshots.keys());
+	assert.equal(cacheKeys.length, 1);
+	assert.match(cacheKeys[0], /^anthropic\tcredential:/);
+	assert.match(cacheKeys[0], /organizationId/);
+	assert.doesNotMatch(cacheKeys[0], /object|expires|access|refresh|token/i);
+
+	credential = { type: "oauth", access: accessToken, refresh: refreshToken, expires, organizationId };
+	keyMode = "undefined";
+	assert.equal(service.getSnapshotForContext(ctx), first);
+	assert.equal(await service.refresh(ctx, { force: true }), first);
+	assert.equal(fetchCalls, 1);
+});
+
+test("service does not reuse Anthropic cached usage across expiry-only credential reloads", async () => {
+	const firstAccessToken = randomUUID();
+	const firstRefreshToken = randomUUID();
+	const secondAccessToken = randomUUID();
+	const secondRefreshToken = randomUUID();
+	const expires = NOW_MS + 60_000;
+	let keyMode = "ok";
+	let fetchCalls = 0;
+	let credential = { type: "oauth", access: firstAccessToken, refresh: firstRefreshToken, expires };
+	const service = createTlhSubscriptionUsageService({
+		now: () => NOW_MS,
+		cacheTtlMs: 0,
+		minFetchIntervalMs: 0,
+		timeoutMs: 0,
+		fetch: async () => {
+			fetchCalls += 1;
+			return {
+				ok: true,
+				json: async () => ({ five_hour: { used: 6, limit: 10 } }),
+			};
+		},
+	});
+	const ctx = {
+		model: { provider: "anthropic" },
+		modelRegistry: {
+			isUsingOAuth: (model) => model?.provider === "anthropic",
+			getApiKeyForProvider: async () => (keyMode === "ok" ? credential.access : undefined),
+			authStorage: {
+				get: (provider) => (provider === "anthropic" ? credential : undefined),
+			},
+		},
+	};
+
+	const first = await service.refresh(ctx, { force: true });
+	assert.equal(first?.windows.session.used, 6);
+	assert.equal(fetchCalls, 1);
+	assert.equal(service.getSnapshotForContext(ctx), first);
+
+	const cacheKeys = Array.from(service.snapshots.keys());
+	assert.equal(cacheKeys.length, 1);
+	assert.match(cacheKeys[0], /^anthropic\tcredential-object:/);
+	assert.doesNotMatch(cacheKeys[0], /expires|access|refresh|token/i);
+
+	credential = { type: "oauth", access: secondAccessToken, refresh: secondRefreshToken, expires };
+	keyMode = "undefined";
+	assert.equal(service.getSnapshotForContext(ctx), undefined);
+	assert.equal(await service.refresh(ctx, { force: true }), undefined);
+	assert.equal(fetchCalls, 1);
+	assert.equal(service.getSnapshot("anthropic"), undefined);
+});
+
+test("service hides cached usage across OAuth account identity changes", async () => {
+	const firstToken = randomUUID();
+	const secondToken = randomUUID();
+	let credential = { type: "oauth", access: firstToken, accountId: "acct_first" };
+	const requests = [];
+	const service = createTlhSubscriptionUsageService({
+		now: () => NOW_MS,
+		cacheTtlMs: 60_000,
+		minFetchIntervalMs: 60_000,
+		timeoutMs: 0,
+		fetch: async (url, init) => {
+			requests.push({ url, init });
+			return {
+				ok: true,
+				json: async () => openAiUsage(requests.length * 10),
+			};
+		},
+	});
+	const ctx = {
+		model: { provider: "openai-codex" },
+		modelRegistry: {
+			isUsingOAuth: (model) => model?.provider === "openai-codex",
+			getApiKeyForProvider: async () => credential.access,
+			authStorage: {
+				get: (provider) => (provider === "openai-codex" ? credential : undefined),
+			},
+		},
+	};
+
+	const first = await service.refresh(ctx, { force: true });
+	assert.equal(first?.windows.session.used, 10);
+	assert.equal(service.getSnapshotForContext(ctx), first);
+	assert.deepEqual(Array.from(service.snapshots.keys()), ["openai-codex\taccount:acct_first"]);
+
+	credential = { type: "oauth", access: secondToken, accountId: "acct_second" };
+	assert.equal(service.getSnapshotForContext(ctx), undefined);
+
+	const second = await service.refresh(ctx, { force: true });
+	assert.equal(requests.length, 2);
+	assert.equal(requests[1]?.init.headers["ChatGPT-Account-Id"], "acct_second");
+	assert.equal(second?.windows.session.used, 20);
+	assert.equal(service.getSnapshotForContext(ctx), second);
+	assert.deepEqual(Array.from(service.snapshots.keys()), ["openai-codex\taccount:acct_second"]);
 });
 
 test("service does not fetch when a runtime key differs from the stored OAuth access token", async () => {
@@ -356,21 +566,29 @@ test("service does not fetch when a runtime key differs from the stored OAuth ac
 			throw new Error("unexpected usage request");
 		},
 	});
+	const mismatchCredential = { type: "oauth", access: oauthToken, expires: NOW_MS + 60_000 };
 	const mismatchCtx = {
 		model: { provider: "anthropic" },
 		modelRegistry: {
 			isUsingOAuth: (model) => model?.provider === "anthropic",
 			getApiKeyForProvider: async () => runtimeToken,
 			authStorage: {
-				get: (provider) => (provider === "anthropic" ? { type: "oauth", access: oauthToken } : undefined),
+				get: (provider) => (provider === "anthropic" ? mismatchCredential : undefined),
 			},
 		},
 	};
 
+	assert.equal(noCacheService.isEligible(mismatchCtx), true);
 	assert.equal(await noCacheService.refresh(mismatchCtx, { force: true }), undefined);
+	assert.equal(noCacheService.isEligible(mismatchCtx), false);
 	assert.equal(fetchCalls, 0);
 
 	let returnedToken = oauthToken;
+	const staleCredential = { type: "oauth", access: oauthToken };
+	const staleAuthStorage = {
+		runtimeOverrides: new Map(),
+		get: (provider) => (provider === "anthropic" ? staleCredential : undefined),
+	};
 	const requests = [];
 	const staleService = createTlhSubscriptionUsageService({
 		now: () => NOW_MS,
@@ -390,19 +608,21 @@ test("service does not fetch when a runtime key differs from the stored OAuth ac
 		modelRegistry: {
 			isUsingOAuth: (model) => model?.provider === "anthropic",
 			getApiKeyForProvider: async () => returnedToken,
-			authStorage: {
-				get: (provider) => (provider === "anthropic" ? { type: "oauth", access: oauthToken } : undefined),
-			},
+			authStorage: staleAuthStorage,
 		},
 	};
 
 	const first = await staleService.refresh(staleCtx, { force: true });
 	assert.equal(requests.length, 1);
-	assert.ok(requests[0]?.init.headers.Authorization === `Bearer ${oauthToken}`, "uses the stored OAuth bearer token");
+	assert.match(requests[0]?.init.headers.Authorization, /^Bearer \S+$/);
+	assert.equal(staleService.getSnapshotForContext(staleCtx), first);
 
 	returnedToken = runtimeToken;
+	staleAuthStorage.runtimeOverrides.set("anthropic", runtimeToken);
+	assert.equal(staleService.getSnapshotForContext(staleCtx), undefined);
 	const stale = await staleService.refresh(staleCtx, { force: true });
-	assert.equal(stale, first);
+	assert.equal(stale, undefined);
 	assert.equal(requests.length, 1);
-	assert.equal(JSON.stringify(stale).includes(runtimeToken), false);
+	assert.equal(staleService.getSnapshot("anthropic"), undefined);
+	assert.equal(staleService.getSnapshotForContext(staleCtx), undefined);
 });

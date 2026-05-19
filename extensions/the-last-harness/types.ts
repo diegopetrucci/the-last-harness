@@ -36,6 +36,8 @@ export type TlhSubscriptionUsageSnapshot = {
 
 export type TlhSubscriptionUsageSnapshotProvider = {
 	getSnapshot(provider?: string): TlhSubscriptionUsageSnapshot | undefined;
+	getSnapshotForContext?(ctx: unknown): TlhSubscriptionUsageSnapshot | undefined;
+	isEligible?(target?: unknown): boolean;
 };
 
 export type TlhUsageRefreshOptions = {

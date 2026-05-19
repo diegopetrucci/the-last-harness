@@ -147,18 +147,23 @@ export function formatTlhSubscriptionUsageFooterSegment(
 	return segments.join(" · ");
 }
 
-function isUsingSubscription(ctx: ExtensionContext, model: ExtensionContext["model"]): boolean {
-	if (!model) {
+function isSubscriptionUsageEligible(
+	ctx: ExtensionContext,
+	provider: string | undefined,
+	usageProvider: TlhSubscriptionUsageSnapshotProvider | undefined,
+): boolean {
+	if (!provider || !TLH_SUBSCRIPTION_USAGE_PROVIDERS.has(provider) || typeof usageProvider?.isEligible !== "function") {
 		return false;
 	}
 	try {
-		return ctx.modelRegistry.isUsingOAuth(model);
+		return usageProvider.isEligible(ctx) === true;
 	} catch {
 		return false;
 	}
 }
 
 function subscriptionUsageSnapshot(
+	ctx: ExtensionContext,
 	provider: string | undefined,
 	usageProvider: TlhSubscriptionUsageSnapshotProvider | undefined,
 ): TlhSubscriptionUsageSnapshot | undefined {
@@ -166,7 +171,8 @@ function subscriptionUsageSnapshot(
 		return undefined;
 	}
 	try {
-		const snapshot = usageProvider.getSnapshot(provider);
+		const snapshot =
+			typeof usageProvider.getSnapshotForContext === "function" ? usageProvider.getSnapshotForContext(ctx) : usageProvider.getSnapshot(provider);
 		return snapshot?.provider === provider ? snapshot : undefined;
 	} catch {
 		return undefined;
@@ -236,15 +242,15 @@ export function createTlhFooter(
 			});
 
 			const statsParts: string[] = [];
-			const usingSubscription = isUsingSubscription(ctx, model);
-			// In tlh, subscription users should not see dollar-cost estimates in the footer.
-			if (totals.cost > 0 && !usingSubscription) {
+			const subscriptionEligible = isSubscriptionUsageEligible(ctx, model?.provider, usageOptions.subscriptionUsage);
+			// In tlh, eligible subscription users should not see dollar-cost estimates in the footer.
+			if (totals.cost > 0 && !subscriptionEligible) {
 				statsParts.push(formatCost(totals.cost));
 			}
 
-			if (usingSubscription) {
+			if (subscriptionEligible) {
 				const usageSegment = formatTlhSubscriptionUsageFooterSegment(
-					subscriptionUsageSnapshot(model?.provider, usageOptions.subscriptionUsage),
+					subscriptionUsageSnapshot(ctx, model?.provider, usageOptions.subscriptionUsage),
 					{ showWeekly: shouldShowWeeklyUsage(usageOptions.shouldShowWeekly) },
 				);
 				if (usageSegment) {

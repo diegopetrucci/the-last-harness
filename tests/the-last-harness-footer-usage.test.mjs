@@ -4,6 +4,8 @@ import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { createJiti } from "jiti";
 
+import { createTlhSubscriptionUsageService } from "../extensions/the-last-harness/subscription-usage.mjs";
+
 const jiti = createJiti(import.meta.url);
 const { createTlhFooter, formatTlhSubscriptionUsageFooterSegment } = await jiti.import("../extensions/the-last-harness/footer.ts");
 
@@ -26,11 +28,18 @@ function createFooterData(options = {}) {
 	};
 }
 
-function usageProvider(snapshot, onGetSnapshot) {
+function usageProvider(snapshot, onGetSnapshot, eligible = true) {
 	return {
 		getSnapshot(provider) {
 			onGetSnapshot?.(provider);
-			return snapshot;
+			return eligible ? snapshot : undefined;
+		},
+		getSnapshotForContext(ctx) {
+			onGetSnapshot?.(ctx?.model?.provider);
+			return eligible ? snapshot : undefined;
+		},
+		isEligible() {
+			return eligible;
 		},
 	};
 }
@@ -84,6 +93,7 @@ function createCtx(options = {}) {
 				}
 				return options.usingOAuth ?? true;
 			},
+			authStorage: options.authStorage,
 		},
 		sessionManager: {
 			getEntries: () => options.entries ?? [assistantCostEntry(1.25)],
@@ -137,6 +147,8 @@ test("footer render reads cached usage snapshots without refreshing", () => {
 	let refreshCalls = 0;
 	const subscriptionUsage = {
 		getSnapshot: () => openAiSnapshot(),
+		getSnapshotForContext: () => openAiSnapshot(),
+		isEligible: () => true,
 		refresh: async () => {
 			refreshCalls += 1;
 			throw new Error("render must not refresh usage");
@@ -152,6 +164,56 @@ test("footer render reads cached usage snapshots without refreshing", () => {
 	assert.equal(refreshCalls, 0);
 });
 
+test("footer falls back to dollar cost when subscription usage is not strictly eligible", () => {
+	const line = renderFooterStatsLine(createCtx({ provider: "anthropic" }), {
+		subscriptionUsage: usageProvider(anthropicSnapshot(), undefined, false),
+		shouldShowWeekly: () => true,
+	});
+
+	assert.match(line, /\$1\.250/);
+	assert.doesNotMatch(line, /5h 42% used/);
+	assert.match(line, /12\.3%\/200k/);
+});
+
+test("footer suppresses dollar cost for eligible OAuth sessions before usage is cached", () => {
+	let fetchCalls = 0;
+	const runtimeOverrides = new Map();
+	const credential = { type: "oauth", access: "unused-oauth-access-token", expires: NOW_MS + 60_000 };
+	const ctx = createCtx({
+		provider: "anthropic",
+		authStorage: {
+			runtimeOverrides,
+			get: (provider) => (provider === "anthropic" ? credential : undefined),
+		},
+	});
+	const service = createTlhSubscriptionUsageService({
+		fetch: async () => {
+			fetchCalls += 1;
+			throw new Error("render must not refresh usage");
+		},
+	});
+
+	const line = renderFooterStatsLine(ctx, {
+		subscriptionUsage: service,
+		shouldShowWeekly: () => true,
+	});
+
+	assert.doesNotMatch(line, /\$/);
+	assert.doesNotMatch(line, /used/);
+	assert.match(line, /12\.3%\/200k/);
+	assert.equal(fetchCalls, 0);
+
+	runtimeOverrides.set("anthropic", "runtime-api-key");
+	const runtimeLine = renderFooterStatsLine(ctx, {
+		subscriptionUsage: service,
+		shouldShowWeekly: () => true,
+	});
+
+	assert.match(runtimeLine, /\$1\.250/);
+	assert.doesNotMatch(runtimeLine, /used/);
+	assert.equal(fetchCalls, 0);
+});
+
 test("footer leaves usage unchanged for unsupported providers and snapshot errors", () => {
 	const unsupportedLine = renderFooterStatsLine(createCtx({ provider: "openrouter" }), {
 		subscriptionUsage: usageProvider(openAiSnapshot()),
@@ -159,13 +221,19 @@ test("footer leaves usage unchanged for unsupported providers and snapshot error
 	});
 	assert.doesNotMatch(unsupportedLine, /used/);
 	assert.doesNotMatch(unsupportedLine, /weekly/);
-	assert.doesNotMatch(unsupportedLine, /\$/);
+	assert.match(unsupportedLine, /\$1\.250/);
 	assert.match(unsupportedLine, /12\.3%\/200k/);
 
 	const errorLine = renderFooterStatsLine(createCtx({ provider: "anthropic" }), {
 		subscriptionUsage: {
 			getSnapshot() {
 				throw new Error("cached usage unavailable");
+			},
+			getSnapshotForContext() {
+				throw new Error("cached usage unavailable");
+			},
+			isEligible() {
+				return true;
 			},
 		},
 		shouldShowWeekly: () => true,
