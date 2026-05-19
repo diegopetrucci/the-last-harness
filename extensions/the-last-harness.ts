@@ -1,4 +1,4 @@
-import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { createTlhAutocompleteProvider } from "./the-last-harness/autocomplete.js";
 import { registerEffortCommand } from "./the-last-harness/effort.js";
@@ -8,8 +8,10 @@ import { createTlhHeader } from "./the-last-harness/header.js";
 import { scheduleTlhLaunchTelemetry } from "./the-last-harness/launch-telemetry.js";
 import { registerTlhPrimaryAgentRuntime } from "./the-last-harness/primary-agent-runtime.js";
 import { collectStartupResources } from "./the-last-harness/resources.js";
+import { createTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage.mjs";
+import { getTlhUsageLimitsConfig, registerUsageCommand, shouldShowTlhUsageWeekly } from "./the-last-harness/usage-limits.js";
 import { getTlhHeaderUpdate, maybeNotifyAvailableTlhUpdate } from "./the-last-harness/update-check.js";
-import type { StartupResources } from "./the-last-harness/types.js";
+import type { StartupResources, TlhUsageRefreshOptions } from "./the-last-harness/types.js";
 
 export default function theLastHarness(pi: ExtensionAPI) {
 	const primaryAgentRuntime = registerTlhPrimaryAgentRuntime(pi, { env: process.env });
@@ -18,6 +20,32 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	}
 
 	registerEffortCommand(pi);
+	registerUsageCommand(pi);
+
+	const subscriptionUsageService = createTlhSubscriptionUsageService();
+	let requestFooterRender: (() => void) | undefined;
+	const refreshSubscriptionUsage = (ctx: ExtensionContext, options: TlhUsageRefreshOptions = {}) => {
+		if (!ctx.hasUI) {
+			return;
+		}
+		const previousSnapshot = subscriptionUsageService.getSnapshot(ctx.model?.provider);
+		void subscriptionUsageService
+			.refresh(ctx, options)
+			.then((snapshot) => {
+				if (snapshot && snapshot !== previousSnapshot) {
+					requestFooterRender?.();
+				}
+			})
+			.catch(() => undefined);
+	};
+
+	pi.on("model_select", (_event, ctx) => {
+		refreshSubscriptionUsage(ctx);
+	});
+
+	pi.on("turn_end", (_event, ctx) => {
+		refreshSubscriptionUsage(ctx);
+	});
 
 	pi.on("session_start", async (event, ctx) => {
 		await primaryAgentRuntime.applySessionStart(ctx);
@@ -42,25 +70,23 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		const headerUpdate = getTlhHeaderUpdate();
 
 		if (typeof ctx.ui.setFooter === "function") {
-			ctx.ui.setFooter((_tui, theme, footerData) => {
+			ctx.ui.setFooter((tui, theme, footerData) => {
+				requestFooterRender = () => tui.requestRender();
 				const gitCache = new FooterGitCache({
 					cwd: () => ctx.sessionManager.getCwd(),
 					onBranchChangeSource: footerData ? (cb) => footerData.onBranchChange(cb) : undefined,
 				});
-				return createTlhFooter(
-					pi,
-					ctx,
-					theme,
-					() => primaryAgentRuntime.currentPrimaryAgentLabel(),
-					footerData,
-					gitCache,
-				);
+				return createTlhFooter(pi, ctx, theme, () => primaryAgentRuntime.currentPrimaryAgentLabel(), footerData, {
+					subscriptionUsage: subscriptionUsageService,
+					shouldShowWeekly: () => shouldShowTlhUsageWeekly(getTlhUsageLimitsConfig(ctx.cwd)),
+				}, gitCache);
 			});
 		}
 		if (typeof ctx.ui.setHeader === "function") {
 			ctx.ui.setHeader((_tui, theme) => createTlhHeader(theme, resources, headerUpdate));
 		}
 
+		refreshSubscriptionUsage(ctx);
 		void maybeNotifyAvailableTlhUpdate(ctx).catch(() => undefined);
 	});
 }
