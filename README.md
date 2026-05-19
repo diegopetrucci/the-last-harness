@@ -10,6 +10,8 @@
 
 If this resonates with you, welcome aboard:
 
+Prerequisite: Node.js >=22.19.0 must be available on your `PATH`.
+
 ```sh
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
 ```

@@ -3,6 +3,8 @@ set -euo pipefail
 
 REPO="${TLH_REPO:-diegopetrucci/the-last-harness}"
 REF="${TLH_REF:-main}"
+# Keep in sync with MIN_NODE_VERSION in scripts/tlh-install.mjs.
+TLH_MIN_NODE_VERSION="22.19.0"
 
 DRY_RUN=false
 NO_SETTINGS=false
@@ -430,6 +432,50 @@ require_command() {
   fi
 }
 
+version_at_least_stage0() {
+  local current="$1"
+  local minimum="$2"
+  local current_major current_minor current_patch current_extra
+  local minimum_major minimum_minor minimum_patch minimum_extra
+
+  current="${current#v}"
+  minimum="${minimum#v}"
+  IFS='.' read -r current_major current_minor current_patch current_extra <<< "${current}"
+  IFS='.' read -r minimum_major minimum_minor minimum_patch minimum_extra <<< "${minimum}"
+  current_patch="${current_patch%%[^0-9]*}"
+  minimum_patch="${minimum_patch%%[^0-9]*}"
+  : "${current_extra:=}"
+  : "${minimum_extra:=}"
+
+  if [[ ! "${current_major}" =~ ^[0-9]+$ || ! "${current_minor}" =~ ^[0-9]+$ || ! "${current_patch}" =~ ^[0-9]+$ ]]; then
+    return 1
+  fi
+  if [[ ! "${minimum_major}" =~ ^[0-9]+$ || ! "${minimum_minor}" =~ ^[0-9]+$ || ! "${minimum_patch}" =~ ^[0-9]+$ ]]; then
+    return 1
+  fi
+
+  if (( 10#${current_major} > 10#${minimum_major} )); then return 0; fi
+  if (( 10#${current_major} < 10#${minimum_major} )); then return 1; fi
+  if (( 10#${current_minor} > 10#${minimum_minor} )); then return 0; fi
+  if (( 10#${current_minor} < 10#${minimum_minor} )); then return 1; fi
+  (( 10#${current_patch} >= 10#${minimum_patch} ))
+}
+
+require_supported_node_stage0() {
+  require_command node
+
+  local current_version=""
+  current_version="$(node --version 2>/dev/null || true)"
+  current_version="${current_version//$'\r'/}"
+  current_version="${current_version//$'\n'/}"
+  if [[ -z "${current_version}" ]]; then
+    die "unable to determine Node.js version; The Last Harness requires Node.js >= ${TLH_MIN_NODE_VERSION}."
+  fi
+  if ! version_at_least_stage0 "${current_version}" "${TLH_MIN_NODE_VERSION}"; then
+    die "Node.js >= ${TLH_MIN_NODE_VERSION} is required (found ${current_version}). Install or upgrade Node.js, then rerun the installer."
+  fi
+}
+
 warn_missing_optional_support_file() {
   local relative_path="$1"
   case "${relative_path}" in
@@ -543,6 +589,7 @@ dry_run_without_stage1() {
 }
 
 validate_stage0_fallback_targets
+require_supported_node_stage0
 
 LOCAL_SUPPORT_ROOT=""
 if LOCAL_SUPPORT_ROOT="$(find_local_support_root)"; then

@@ -2,6 +2,8 @@
 
 ## Install
 
+Requires Node.js >=22.19.0 on `PATH`. The installer checks this before downloading support files or invoking upstream Pi/npm.
+
 Run the one-liner:
 
 ```sh

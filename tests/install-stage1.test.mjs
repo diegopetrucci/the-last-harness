@@ -6,7 +6,14 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { buildInstallConfig, installDefaultExtensions, parseArgs } from "../scripts/tlh-install.mjs";
+import {
+	MIN_NODE_VERSION,
+	assertSupportedNodeRuntime,
+	buildInstallConfig,
+	installDefaultExtensions,
+	nodeVersionMeetsMinimum,
+	parseArgs,
+} from "../scripts/tlh-install.mjs";
 import { validateInstallerTargets } from "../scripts/lib/tlh-install-paths.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -121,6 +128,32 @@ function assertPiCommands(path, agentDir, commands) {
 	assert.deepEqual(records.map((record) => [record.agentDir, record.command]), commands.map((command) => [agentDir, command]));
 	for (const record of records) assert.equal(realpathSync(record.cwd), realpathSync(agentDir));
 }
+
+test("stage-1 enforces the TLH Node runtime minimum", () => {
+	assert.equal(MIN_NODE_VERSION, "22.19.0");
+	assert.equal(nodeVersionMeetsMinimum("22.18.9"), false);
+	assert.equal(nodeVersionMeetsMinimum("22.19.0"), true);
+	assert.equal(nodeVersionMeetsMinimum("23.0.0"), true);
+	assert.doesNotThrow(() => assertSupportedNodeRuntime("v22.19.0"));
+	assert.throws(
+		() => assertSupportedNodeRuntime("22.18.9"),
+		/Node\.js >= 22\.19\.0 is required \(found v22\.18\.9\)\. Install or upgrade Node\.js, then rerun the installer\./,
+	);
+	assert.throws(
+		() => assertSupportedNodeRuntime("not-a-version"),
+		/unable to determine Node\.js version; The Last Harness requires Node\.js >= 22\.19\.0\./,
+	);
+});
+
+test("declared Node minimum stays aligned across installer metadata", () => {
+	const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
+	const installSh = readFileSync(join(repoRoot, "install.sh"), "utf8");
+	const releaseWorkflow = readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8");
+
+	assert.equal(packageJson.engines.node, `>=${MIN_NODE_VERSION}`);
+	assert.ok(installSh.includes(`TLH_MIN_NODE_VERSION="${MIN_NODE_VERSION}"`));
+	assert.ok(releaseWorkflow.includes(`node-version: '${MIN_NODE_VERSION}'`));
+});
 
 test("stage-1 infers update track unless env or CLI overrides", (t) => {
 	const root = makeTempDir();

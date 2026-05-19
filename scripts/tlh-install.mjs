@@ -51,11 +51,45 @@ import {
 
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
+// Keep in sync with TLH_MIN_NODE_VERSION in install.sh.
+const MIN_NODE_VERSION = "22.19.0";
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
 const DEFAULT_GNOSIS_VERSION = "latest";
 const DEFAULT_WRAPPER_NAME = "tlh";
 const VALID_UPDATE_TRACKS = new Set(["latest-release", "pinned-tag", "ref", "custom"]);
 const COMMAND_MAX_BUFFER = 20 * 1024 * 1024;
+
+function parseNodeVersion(version) {
+	const match = String(version).trim().replace(/^v/, "").match(/^(\d+)\.(\d+)\.(\d+)/);
+	if (!match) return null;
+	return match.slice(1).map((part) => Number.parseInt(part, 10));
+}
+
+function nodeVersionMeetsMinimum(currentVersion, minimumVersion = MIN_NODE_VERSION) {
+	const current = parseNodeVersion(currentVersion);
+	const minimum = parseNodeVersion(minimumVersion);
+	if (!current || !minimum) return false;
+	for (let index = 0; index < minimum.length; index += 1) {
+		if (current[index] > minimum[index]) return true;
+		if (current[index] < minimum[index]) return false;
+	}
+	return true;
+}
+
+function formatNodeVersion(version) {
+	const text = String(version || "").trim();
+	if (!text) return "unknown";
+	return text.startsWith("v") ? text : `v${text}`;
+}
+
+function assertSupportedNodeRuntime(currentVersion = process.versions.node) {
+	if (!parseNodeVersion(currentVersion)) {
+		throw new Error(`unable to determine Node.js version; The Last Harness requires Node.js >= ${MIN_NODE_VERSION}.`);
+	}
+	if (!nodeVersionMeetsMinimum(currentVersion)) {
+		throw new Error(`Node.js >= ${MIN_NODE_VERSION} is required (found ${formatNodeVersion(currentVersion)}). Install or upgrade Node.js, then rerun the installer.`);
+	}
+}
 
 function usage() {
 	return `Usage: tlh-install.mjs [options]
@@ -1011,6 +1045,7 @@ async function run(argv = process.argv.slice(2), env = process.env) {
 		return;
 	}
 
+	assertSupportedNodeRuntime();
 	const config = buildInstallConfig(parsedArgs, env);
 	if (config.printSupportManifest) {
 		printSupportManifest(config);
@@ -1044,9 +1079,12 @@ if (isMainModule()) {
 }
 
 export {
+	MIN_NODE_VERSION,
+	assertSupportedNodeRuntime,
 	buildInstallConfig,
 	expandPath,
 	installDefaultExtensions,
+	nodeVersionMeetsMinimum,
 	parseArgs,
 	run,
 	usage,

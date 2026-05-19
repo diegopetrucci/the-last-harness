@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- The installer, package metadata, and release workflow now require Node.js >=22.19.0 to match upstream Pi 0.75+.
+
 ## [0.8.0] - 2026-05-19
 
 ### Added

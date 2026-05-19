@@ -12,7 +12,7 @@ There is no `stable` branch. A release is the immutable Git tag plus its GitHub 
 
 ## Prepare a release
 
-From a clean `main` branch:
+From a clean `main` branch with Node.js >=22.19.0:
 
 ```sh
 version=0.1.0

@@ -174,6 +174,22 @@ EOF_FAKE_CURL
   chmod +x "${fakebin}/curl"
 }
 
+make_fake_node_version() {
+  local fakebin="$1"
+  local version="$2"
+  mkdir -p "${fakebin}"
+  cat >"${fakebin}/node" <<EOF_FAKE_NODE
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "--version" ]]; then
+  printf '%s\n' '${version}'
+  exit 0
+fi
+printf 'fake node was invoked unexpectedly: %s\n' "\$*" >&2
+exit 99
+EOF_FAKE_NODE
+  chmod +x "${fakebin}/node"
+}
+
 make_support_copy_curl() {
   local fakebin="$1"
   mkdir -p "${fakebin}"
@@ -622,6 +638,59 @@ run_stdin_dry_run_smoke() {
   assert_absent "${home_dir}/.pi"
 }
 
+run_stage0_node_preflight_smoke() {
+  log "Running stage-0 Node version preflight smoke check..."
+  local case_dir="${TMP_ROOT}/stage0-node-preflight"
+  local agent_dir="${case_dir}/agent"
+  local bin_dir="${case_dir}/bin"
+  local fakebin="${case_dir}/fakebin"
+  local home_dir="${case_dir}/home"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  mkdir -p "${case_dir}" "${home_dir}"
+  make_failing_curl "${fakebin}"
+  make_fake_node_version "${fakebin}" "v22.18.9"
+
+  set +e
+  (cd "${case_dir}" && run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "stage-0 old Node remote preflight unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "Node.js >= 22.19.0 is required (found v22.18.9). Install or upgrade Node.js, then rerun the installer."
+  assert_not_contains "${combined_file}" "fake curl was invoked"
+  assert_absent "${agent_dir}"
+  assert_absent "${bin_dir}"
+
+  local stage_root="${case_dir}/stage-root"
+  mkdir -p "${stage_root}"
+  cp install.sh "${stage_root}/install.sh"
+  make_fake_stage1_support_root "${stage_root}"
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+
+  set +e
+  run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash "${stage_root}/install.sh" --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" --without-gnosis >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "stage-0 old Node local preflight unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "Node.js >= 22.19.0 is required (found v22.18.9). Install or upgrade Node.js, then rerun the installer."
+  assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
+  assert_absent "${agent_dir}"
+  assert_absent "${bin_dir}"
+}
+
 run_stage0_alias_guard_smoke() {
   log "Running stage-0 alias normal Pi guard smoke check..."
   local case_dir="${TMP_ROOT}/stage0-alias-guard"
@@ -984,6 +1053,7 @@ run_stage1_staged_cwd_isolation_smoke
 run_local_dry_run_smoke
 run_stdin_no_arg_smoke
 run_stdin_dry_run_smoke
+run_stage0_node_preflight_smoke
 run_stage0_alias_guard_smoke
 run_stage0_validation_precedes_local_support_smoke
 run_normal_pi_guard_smoke

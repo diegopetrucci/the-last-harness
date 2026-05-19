@@ -1,6 +1,6 @@
 # Local development
 
-Run these commands from the repository root. Prefer temporary isolated profile directories so local testing does not touch a real `tlh` or normal Pi profile.
+Run these commands from the repository root with Node.js >=22.19.0. Prefer temporary isolated profile directories so local testing does not touch a real `tlh` or normal Pi profile.
 
 ## Run validation
 
