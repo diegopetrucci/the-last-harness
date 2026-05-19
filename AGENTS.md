@@ -39,6 +39,7 @@ Run these before considering changes ready:
 
 ```sh
 bash scripts/check-installer-smoke.sh
+npm run lint
 node scripts/merge-settings.mjs --dry-run
 npm pack --dry-run
 ```

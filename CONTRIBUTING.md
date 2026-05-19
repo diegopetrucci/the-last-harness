@@ -29,6 +29,7 @@ Main repository validation:
 ```sh
 bash scripts/check-installer-smoke.sh
 npm test
+npm run lint
 node scripts/merge-settings.mjs --dry-run
 npm pack --dry-run
 ```

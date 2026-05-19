@@ -779,7 +779,7 @@ function installCriticalDefaultExtension(config, source) {
 	assertGitSourceTargetSafe(config, source, "critical default extension package checkout", gitCheckoutIo());
 	try {
 		runIsolatedPi(config, ["pi", "install", installSource]);
-	} catch (error) {
+	} catch {
 		throw new Error(`critical default extension package install failed: ${source}. Fix the package install and rerun the installer; this isolation-critical default cannot be disabled.`);
 	}
 	if (!ensureCriticalGitSourceCheckout(config, source)) {
@@ -993,20 +993,20 @@ function printSummary(config) {
 		if (pathContainsBinDir(config)) {
 			log(config, `Start with: ${config.wrapperName}`);
 		} else {
-			warn(`${config.binDir} is not on PATH. Add it with: export PATH=\"${config.binDir}:$PATH\"`);
-			log(config, `Start with: PI_CODING_AGENT_DIR=\"${config.agentDir}\" pi`);
+			warn(`${config.binDir} is not on PATH. Add it with: export PATH="${config.binDir}:$PATH"`);
+			log(config, `Start with: PI_CODING_AGENT_DIR="${config.agentDir}" pi`);
 		}
 		detailLog(config, `Wrapper: ${config.wrapperPath}`);
 	} else {
-		log(config, `Start with: PI_CODING_AGENT_DIR=\"${config.agentDir}\" pi`);
+		log(config, `Start with: PI_CODING_AGENT_DIR="${config.agentDir}" pi`);
 	}
 	detailLog(config, `Settings: ${config.settingsPath}`);
 	if (config.gnosisSummary) detailLog(config, config.gnosisSummary);
 	detailLog(config, "Normal Pi config was not modified: ~/.pi/agent");
 	if (!config.noWrapper) {
-		detailLog(config, `Uninstall: rm -f \"${config.wrapperPath}\" && rm -rf \"${config.agentDir}\"`);
+		detailLog(config, `Uninstall: rm -f "${config.wrapperPath}" && rm -rf "${config.agentDir}"`);
 	} else {
-		detailLog(config, `Uninstall: rm -rf \"${config.agentDir}\"`);
+		detailLog(config, `Uninstall: rm -rf "${config.agentDir}"`);
 	}
 }
 
