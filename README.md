@@ -1,5 +1,7 @@
 # The last harness you'll ever need.
 
+[![CI](https://github.com/diegopetrucci/the-last-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/diegopetrucci/the-last-harness/actions/workflows/ci.yml)
+
 `tlh` (the last harness) is a highly opinionated — albeit still simple — version of [pi](https://github.com/earendil-works/pi). No bloat, no BS, but a strong direction.
 
 `tlh` is modelled after two core principles:
