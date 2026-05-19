@@ -10,9 +10,15 @@ const repoRoot = resolve(import.meta.dirname, "..");
 const ticketsScript = join(repoRoot, "scripts", "tlh-tickets.mjs");
 
 function runTickets(args, options = {}) {
+	const env = { ...process.env };
+	for (const key of Object.keys(env)) {
+		if (key === "PI_CODING_AGENT_DIR" || key.startsWith("TLH_")) delete env[key];
+	}
+	Object.assign(env, options.env || {});
+
 	return spawnSync(process.execPath, [...(options.nodeArgs || []), ticketsScript, ...args], {
 		cwd: repoRoot,
-		env: { ...process.env, ...(options.env || {}) },
+		env,
 		encoding: "utf8",
 	});
 }
@@ -82,7 +88,7 @@ esac
 	return { archivePath, checksum: sha256File(archivePath), ticketContent: readFileSync(ticket, "utf8") };
 }
 
-function writeFetchPreload(fixture, archivePath) {
+function writeFetchPreload(fixture) {
 	const preload = join(fixture.dir, "stub-ticket-fetch.mjs");
 	writeFileSync(preload, `import { readFileSync, writeFileSync } from "node:fs";
 const archive = readFileSync(process.env.TLH_TEST_ARCHIVE);
@@ -344,11 +350,47 @@ globalThis.fetch = async () => {
 	return preload;
 }
 
+test("runTickets ignores inherited PI_CODING_AGENT_DIR and TLH_* environment", () => {
+	const fixture = tempFixture();
+	const defaultAgent = join(fixture.home, ".the-last-harness", "agent");
+	const inheritedPiAgent = join(fixture.dir, "inherited-pi-agent");
+	const inheritedTlhAgent = join(fixture.dir, "inherited-tlh-agent");
+	for (const agentDir of [defaultAgent, inheritedPiAgent, inheritedTlhAgent]) {
+		mkdirSync(agentDir, { recursive: true });
+	}
+	writeFileSync(join(defaultAgent, "settings.json"), `${JSON.stringify({ tlh: { tickets: { enabled: true } } })}\n`);
+	writeFileSync(join(inheritedPiAgent, "settings.json"), `${JSON.stringify({ tlh: { tickets: { enabled: false } } })}\n`);
+	writeFileSync(join(inheritedTlhAgent, "settings.json"), `${JSON.stringify({ tlh: { tickets: { enabled: false } } })}\n`);
+
+	const previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
+	const previousTlhAgentDir = process.env.TLH_AGENT_DIR;
+	try {
+		process.env.PI_CODING_AGENT_DIR = inheritedPiAgent;
+		process.env.TLH_AGENT_DIR = inheritedTlhAgent;
+
+		const result = runTickets(["state"], { env: { HOME: fixture.home } });
+
+		assert.equal(result.status, 0, result.stderr);
+		assert.equal(result.stdout.trim(), "enabled");
+	} finally {
+		if (previousPiAgentDir === undefined) {
+			delete process.env.PI_CODING_AGENT_DIR;
+		} else {
+			process.env.PI_CODING_AGENT_DIR = previousPiAgentDir;
+		}
+		if (previousTlhAgentDir === undefined) {
+			delete process.env.TLH_AGENT_DIR;
+		} else {
+			process.env.TLH_AGENT_DIR = previousTlhAgentDir;
+		}
+	}
+});
+
 test("install-managed installs only tk from a verified ticket source archive", { skip: process.platform === "win32" }, () => {
 	const fixture = tempFixture();
 	const { archivePath, checksum, ticketContent } = createTicketArchive(fixture);
 	const fetchSentinel = join(fixture.dir, "fetch-called");
-	const preload = writeFetchPreload(fixture, archivePath);
+	const preload = writeFetchPreload(fixture);
 	const target = join(fixture.agent, "bin", "tk");
 
 	const result = runTickets([
