@@ -85,3 +85,7 @@ After all tasks are complete:
 1. Delegate final review to `code-reviewer` against the full VCS diff and the completed ticket/task set.
 2. Evaluate findings; delegate fixes to `developer` if needed.
 3. Summarize implemented work, tradeoffs, validation, and remaining risks for the user.
+
+## Cleanup
+
+1. Once the user confirms the work is done, delete all tickets that were created and closed within this session. If a ticket was already present and got closed, ask the user what to do with it.
