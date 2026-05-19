@@ -10,6 +10,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Managed `tk` installs now use the pinned `wedow/ticket` v0.3.2 source and SHA-256 by default, ignore ambient `TLH_TICKET_SOURCE_*` overrides, and sanitize helper-tool PATH/archive extraction.
 - Installer smoke checks now cover managed `tk` default dry-run behavior and normal Pi guard coverage.
 
 ## [0.8.1] - 2026-05-19

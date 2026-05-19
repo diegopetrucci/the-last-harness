@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
@@ -13,6 +13,7 @@ const DEFAULT_TICKET_SOURCE_URL = `https://github.com/wedow/ticket/archive/refs/
 const DEFAULT_TICKET_SHA256 = "5d4c82ed1c5cb4a2aeb63b47c3c8931738c3287e555f43bf831d3d323687db0f";
 const DEFAULT_TICKET_ARCHIVE_ENTRY = `ticket-${DEFAULT_TICKET_VERSION}/ticket`;
 const NEW_SETTINGS_FILE_MODE = 0o600;
+const SAFE_HELPER_PATH = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(delimiter);
 
 function usage() {
 	return `Usage: tlh tickets <command>
@@ -40,10 +41,10 @@ Options:
   --quiet              Only print errors
   -h, --help           Show this help
 
-Environment:
-  TLH_TICKET_SOURCE_URL      Source tarball URL (default: pinned wedow/ticket v${DEFAULT_TICKET_VERSION})
-  TLH_TICKET_SOURCE_SHA256   Expected source tarball SHA256
-  TLH_TICKET_ARCHIVE_ENTRY   Ticket script entry inside the tarball
+Unsafe test-only source overrides (do not use in production):
+  --unsafe-test-ticket-source-url <url>      Source tarball URL
+  --unsafe-test-ticket-source-sha256 <hex>   Expected source tarball SHA256
+  --unsafe-test-ticket-archive-entry <path>  Ticket script entry inside the tarball
 `;
 }
 
@@ -53,9 +54,9 @@ function parseArgs(argv) {
 		agentDir: undefined,
 		installPath: undefined,
 		target: undefined,
-		ticketSourceUrl: process.env.TLH_TICKET_SOURCE_URL || DEFAULT_TICKET_SOURCE_URL,
-		ticketSourceSha256: process.env.TLH_TICKET_SOURCE_SHA256 || DEFAULT_TICKET_SHA256,
-		ticketArchiveEntry: process.env.TLH_TICKET_ARCHIVE_ENTRY || DEFAULT_TICKET_ARCHIVE_ENTRY,
+		ticketSourceUrl: DEFAULT_TICKET_SOURCE_URL,
+		ticketSourceSha256: DEFAULT_TICKET_SHA256,
+		ticketArchiveEntry: DEFAULT_TICKET_ARCHIVE_ENTRY,
 		mode: "auto",
 		wrapperName: "tlh",
 		command: undefined,
@@ -114,6 +115,30 @@ function parseArgs(argv) {
 		}
 		if (arg.startsWith("--target=")) {
 			args.target = arg.slice("--target=".length);
+			continue;
+		}
+		if (arg === "--unsafe-test-ticket-source-url") {
+			args.ticketSourceUrl = requiredValue(argv, ++index, arg);
+			continue;
+		}
+		if (arg.startsWith("--unsafe-test-ticket-source-url=")) {
+			args.ticketSourceUrl = arg.slice("--unsafe-test-ticket-source-url=".length);
+			continue;
+		}
+		if (arg === "--unsafe-test-ticket-source-sha256") {
+			args.ticketSourceSha256 = requiredValue(argv, ++index, arg);
+			continue;
+		}
+		if (arg.startsWith("--unsafe-test-ticket-source-sha256=")) {
+			args.ticketSourceSha256 = arg.slice("--unsafe-test-ticket-source-sha256=".length);
+			continue;
+		}
+		if (arg === "--unsafe-test-ticket-archive-entry") {
+			args.ticketArchiveEntry = requiredValue(argv, ++index, arg);
+			continue;
+		}
+		if (arg.startsWith("--unsafe-test-ticket-archive-entry=")) {
+			args.ticketArchiveEntry = arg.slice("--unsafe-test-ticket-archive-entry=".length);
 			continue;
 		}
 		if (arg === "--mode") {
@@ -249,17 +274,76 @@ function hasTkCommandName(candidate) {
 	return candidate === "tk" || basename(candidate) === "tk";
 }
 
-function validateTkCommand(command) {
-	const result = spawnSync(command, ["help"], { encoding: "utf8", timeout: VALIDATION_TIMEOUT_MS });
+function realpathIfPossible(path) {
+	try {
+		return realpathSync(path);
+	} catch {
+		return undefined;
+	}
+}
+
+function sanitizedHelperPath(pathValue, agentDir) {
+	const cwd = resolve(process.cwd());
+	const cwdRealpath = realpathIfPossible(cwd);
+	const managedBin = resolve(agentDir, "bin");
+	const managedBinRealpath = realpathIfPossible(managedBin);
+	const sanitizedPath = (pathValue === undefined ? [] : String(pathValue).split(delimiter))
+		.filter((entry) => {
+			if (!entry) return false;
+			const resolvedEntry = resolve(entry);
+			if (resolvedEntry === cwd || resolvedEntry === managedBin) return false;
+			const entryRealpath = realpathIfPossible(resolvedEntry);
+			if (entryRealpath && cwdRealpath && entryRealpath === cwdRealpath) return false;
+			if (entryRealpath && managedBinRealpath && entryRealpath === managedBinRealpath) return false;
+			return true;
+		})
+		.join(delimiter);
+	return sanitizedPath || SAFE_HELPER_PATH;
+}
+
+function helperEnv(agentDir, extraEnv = {}) {
+	const env = { ...process.env, ...extraEnv };
+	return {
+		...env,
+		PATH: sanitizedHelperPath(env.PATH, agentDir),
+	};
+}
+
+function commandHasPathSeparator(command) {
+	return command.includes("/") || command.includes("\\");
+}
+
+function isExecutableFile(path) {
+	try {
+		if (!statSync(path).isFile()) return false;
+		accessSync(path, constants.X_OK);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function resolveCommandFromPath(command, pathValue = process.env.PATH) {
+	if (commandHasPathSeparator(command)) return command;
+	for (const entry of String(pathValue || "").split(delimiter)) {
+		if (!entry) continue;
+		const candidate = resolve(entry, command);
+		if (isExecutableFile(candidate)) return candidate;
+	}
+	return undefined;
+}
+
+function validateTkCommand(command, agentDir) {
+	const resolvedCommand = resolveCommandFromPath(command);
+	if (!resolvedCommand) return false;
+	const result = spawnSync(resolvedCommand, ["help"], { encoding: "utf8", timeout: VALIDATION_TIMEOUT_MS, env: helperEnv(agentDir) });
 	if (result.error || result.status !== 0) return false;
 	const output = `${result.stdout || ""}\n${result.stderr || ""}`;
 	return /Usage:\s+tk\b/.test(output) && /ticket/i.test(output);
 }
 
 function commandPath(command) {
-	const result = spawnSync("sh", ["-c", "command -v -- \"$1\"", "sh", command], { encoding: "utf8" });
-	if (result.error || result.status !== 0) return undefined;
-	return result.stdout.trim().split(/\r?\n/)[0] || undefined;
+	return resolveCommandFromPath(command);
 }
 
 function normalizeValidCandidate(candidate) {
@@ -270,7 +354,7 @@ function normalizeValidCandidate(candidate) {
 function findValidTk(args, settings, agentDir) {
 	for (const candidate of candidateCommands(args, settings, agentDir)) {
 		if (!hasTkCommandName(candidate)) continue;
-		if (validateTkCommand(candidate)) return normalizeValidCandidate(candidate);
+		if (validateTkCommand(candidate, agentDir)) return normalizeValidCandidate(candidate);
 	}
 	return undefined;
 }
@@ -283,12 +367,12 @@ function findValidTkForConfigure(args, settings, agentDir) {
 	const configured = configuredInstallPath(settings);
 	const managedTargetPath = managedTkTargetPath(args, agentDir);
 	const configuredIsManagedTarget = configured && samePathForCompare(configured, managedTargetPath);
-	if (configured && !configuredIsManagedTarget && hasTkCommandName(configured) && validateTkCommand(configured)) return normalizeValidCandidate(configured);
+	if (configured && !configuredIsManagedTarget && hasTkCommandName(configured) && validateTkCommand(configured, agentDir)) return normalizeValidCandidate(configured);
 
 	const managedTarget = validateManagedTkTarget(args, agentDir);
 	for (const candidate of [managedTarget, "tk"]) {
 		if (!hasTkCommandName(candidate)) continue;
-		if (validateTkCommand(candidate)) return normalizeValidCandidate(candidate);
+		if (validateTkCommand(candidate, agentDir)) return normalizeValidCandidate(candidate);
 	}
 	return undefined;
 }
@@ -814,25 +898,25 @@ function verifyTicketArchive(args, archivePath) {
 	}
 }
 
-function listTarGzipEntries(archivePath) {
-	const result = spawnSync("tar", ["-tzf", archivePath], { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 });
+function listTarGzipEntries(archivePath, agentDir) {
+	const result = spawnSync("tar", ["-tzf", archivePath], { encoding: "utf8", maxBuffer: 10 * 1024 * 1024, env: helperEnv(agentDir) });
 	if (result.error) throw result.error;
 	if (result.status !== 0) throw new Error("failed to list ticket source archive");
 	return result.stdout.split(/\r?\n/).filter(Boolean);
 }
 
 function isSafeArchiveEntry(entry) {
-	if (!entry || entry.startsWith("/") || entry.includes("\\")) return false;
+	if (!entry || entry.startsWith("/") || isAbsolute(entry) || entry.includes("\\")) return false;
 	const parts = entry.split("/");
-	return parts.every((part) => part && part !== "." && part !== "..");
+	return parts.every((part) => part && part !== "." && part !== ".." && !part.startsWith("-"));
 }
 
 function isTicketScriptEntry(entry) {
 	return isSafeArchiveEntry(entry) && !entry.endsWith("/") && basename(entry) === "ticket";
 }
 
-function ticketArchiveEntry(archivePath, preferredEntry) {
-	const entries = listTarGzipEntries(archivePath);
+function ticketArchiveEntry(archivePath, preferredEntry, agentDir) {
+	const entries = listTarGzipEntries(archivePath, agentDir);
 	if (entries.includes(preferredEntry)) return preferredEntry;
 
 	const candidates = entries.filter(isTicketScriptEntry);
@@ -843,11 +927,11 @@ function ticketArchiveEntry(archivePath, preferredEntry) {
 	throw new Error(`Ticket source archive did not contain ${preferredEntry}`);
 }
 
-function extractTicketScript(archivePath, extractDir, preferredEntry) {
-	const entry = ticketArchiveEntry(archivePath, preferredEntry);
+function extractTicketScript(archivePath, extractDir, preferredEntry, agentDir) {
+	const entry = ticketArchiveEntry(archivePath, preferredEntry, agentDir);
 	if (!isSafeArchiveEntry(entry)) throw new Error(`Ticket archive entry is unsafe: ${entry}`);
 
-	const result = spawnSync("tar", ["-xzf", archivePath, "-C", extractDir, entry], { stdio: "ignore" });
+	const result = spawnSync("tar", ["-xzf", archivePath, "-C", extractDir, "--", entry], { stdio: "ignore", env: helperEnv(agentDir) });
 	if (result.error) throw result.error;
 	if (result.status !== 0) throw new Error("failed to extract ticket script from source archive");
 
@@ -888,16 +972,16 @@ async function installManagedTk(args, agentDir) {
 		logStderr(args, `Installing tk ${DEFAULT_TICKET_VERSION} into isolated profile: ${target}`);
 		await downloadToFile(args.ticketSourceUrl, archivePath);
 		verifyTicketArchive(args, archivePath);
-		const extracted = extractTicketScript(archivePath, extractDir, args.ticketArchiveEntry);
+		const extracted = extractTicketScript(archivePath, extractDir, args.ticketArchiveEntry, agentDir);
 		const staged = stageTkCommand(extracted, downloadTempDir);
-		if (!validateTkCommand(staged)) {
+		if (!validateTkCommand(staged, agentDir)) {
 			throw new Error("downloaded tk command did not validate");
 		}
 
 		validateManagedTkTarget(args, agentDir);
 		writeManagedTkTarget(args, agentDir, readFileSync(staged));
 		const installedTarget = validateManagedTkTarget(args, agentDir);
-		if (!validateTkCommand(installedTarget)) {
+		if (!validateTkCommand(installedTarget, agentDir)) {
 			throw new Error("installed tk command did not validate");
 		}
 		return installedTarget;
@@ -1041,7 +1125,7 @@ function validatedRequestedInstallPath(args, agentDir, installPath) {
 	if (!hasTkCommandName(normalized)) {
 		throw new Error(`Refusing to enable tk integration because the command basename must be exactly "tk": ${normalized}`);
 	}
-	if (!validateTkCommand(normalized)) {
+	if (!validateTkCommand(normalized, agentDir)) {
 		throw new Error(`Refusing to enable tk integration because the command did not validate: ${normalized}`);
 	}
 	return normalized;
@@ -1147,7 +1231,7 @@ function commandState(settings) {
 function commandValidate(args, settings, agentDir, commandArgs) {
 	const candidate = commandArgs[0];
 	if (candidate) {
-		if (!hasTkCommandName(candidate) || !validateTkCommand(candidate)) {
+		if (!hasTkCommandName(candidate) || !validateTkCommand(candidate, agentDir)) {
 			process.exitCode = 1;
 			return;
 		}

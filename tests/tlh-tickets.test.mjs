@@ -17,7 +17,7 @@ function runTickets(args, options = {}) {
 	Object.assign(env, options.env || {});
 
 	return spawnSync(process.execPath, [...(options.nodeArgs || []), ticketsScript, ...args], {
-		cwd: repoRoot,
+		cwd: options.cwd || repoRoot,
 		env,
 		encoding: "utf8",
 	});
@@ -59,12 +59,22 @@ esac
 	chmodSync(path, 0o755);
 }
 
-function createTicketArchive(fixture) {
+const fixtureTicketSourceUrl = "https://example.test/wedow-ticket.tar.gz";
+
+function unsafeTicketSourceArgs({ checksum, archiveEntry = "ticket-0.3.2/ticket" }) {
+	return [
+		"--unsafe-test-ticket-source-url", fixtureTicketSourceUrl,
+		"--unsafe-test-ticket-source-sha256", checksum,
+		"--unsafe-test-ticket-archive-entry", archiveEntry,
+	];
+}
+
+function createTicketArchive(fixture, { ticketContent } = {}) {
 	const archiveSource = join(fixture.dir, "archive-source");
 	const root = join(archiveSource, "ticket-0.3.2");
 	mkdirSync(root, { recursive: true });
 	const ticket = join(root, "ticket");
-	writeFileSync(ticket, `#!/usr/bin/env bash
+	const content = ticketContent || `#!/usr/bin/env bash
 set -euo pipefail
 command_name="$(basename "$0")"
 case "\${1:-}" in
@@ -78,7 +88,8 @@ case "\${1:-}" in
     exit 1
     ;;
 esac
-`);
+`;
+	writeFileSync(ticket, content);
 	chmodSync(ticket, 0o755);
 	writeFileSync(join(root, "extra"), "must not be installed");
 
@@ -86,6 +97,16 @@ esac
 	const tarResult = spawnSync("tar", ["-czf", archivePath, "-C", archiveSource, "ticket-0.3.2"], { encoding: "utf8" });
 	assert.equal(tarResult.status, 0, tarResult.stderr || String(tarResult.error));
 	return { archivePath, checksum: sha256File(archivePath), ticketContent: readFileSync(ticket, "utf8") };
+}
+
+function writePoisonCommand(dir, name, sentinel) {
+	mkdirSync(dir, { recursive: true });
+	const commandPath = join(dir, name);
+	writeFileSync(commandPath, `#!/bin/sh
+printf intercepted > ${JSON.stringify(sentinel)}
+exit 88
+`);
+	chmodSync(commandPath, 0o755);
 }
 
 function writeFetchPreload(fixture) {
@@ -386,7 +407,7 @@ test("runTickets ignores inherited PI_CODING_AGENT_DIR and TLH_* environment", (
 	}
 });
 
-test("install-managed installs only tk from a verified ticket source archive", { skip: process.platform === "win32" }, () => {
+test("install-managed installs only tk from a verified ticket source archive passed with explicit test-only flags", { skip: process.platform === "win32" }, () => {
 	const fixture = tempFixture();
 	const { archivePath, checksum, ticketContent } = createTicketArchive(fixture);
 	const fetchSentinel = join(fixture.dir, "fetch-called");
@@ -396,21 +417,20 @@ test("install-managed installs only tk from a verified ticket source archive", {
 	const result = runTickets([
 		"--agent-dir", fixture.agent,
 		"--target", target,
+		...unsafeTicketSourceArgs({ checksum }),
 		"install-managed",
 	], {
 		env: {
 			HOME: fixture.home,
 			TLH_TEST_ARCHIVE: archivePath,
 			TLH_TEST_FETCH_SENTINEL: fetchSentinel,
-			TLH_TICKET_SOURCE_URL: "https://example.test/wedow-ticket.tar.gz",
-			TLH_TICKET_SOURCE_SHA256: checksum,
 		},
 		nodeArgs: ["--import", preload],
 	});
 
 	assert.equal(result.status, 0, result.stderr);
 	assert.equal(result.stdout.trim(), target);
-	assert.equal(readFileSync(fetchSentinel, "utf8"), "https://example.test/wedow-ticket.tar.gz");
+	assert.equal(readFileSync(fetchSentinel, "utf8"), fixtureTicketSourceUrl);
 	assert.equal(readFileSync(target, "utf8"), ticketContent);
 	assert.equal(statSync(target).mode & 0o777, 0o755);
 	assert.deepEqual(readdirSync(join(fixture.agent, "bin")), ["tk"]);
@@ -419,6 +439,107 @@ test("install-managed installs only tk from a verified ticket source archive", {
 	const validation = spawnSync(target, ["help"], { encoding: "utf8" });
 	assert.equal(validation.status, 0, validation.stderr);
 	assert.match(validation.stdout, /Usage: tk/);
+});
+
+test("install-managed dry-run ignores inherited ticket source environment overrides", () => {
+	const fixture = tempFixture();
+	const target = join(fixture.agent, "bin", "tk");
+
+	const result = runTickets([
+		"--agent-dir", fixture.agent,
+		"--target", target,
+		"--dry-run",
+		"install-managed",
+	], {
+		env: {
+			HOME: fixture.home,
+			TLH_TICKET_SOURCE_URL: "https://attacker.example/ticket.tar.gz",
+			TLH_TICKET_SOURCE_SHA256: "not-a-sha256",
+			TLH_TICKET_ARCHIVE_ENTRY: "../attacker/ticket",
+		},
+	});
+
+	assert.equal(result.status, 0, result.stderr);
+	assert.equal(result.stdout.trim(), target);
+	assert.match(result.stderr, /https:\/\/github\.com\/wedow\/ticket\/archive\/refs\/tags\/v0\.3\.2\.tar\.gz/);
+	assert.match(result.stderr, /5d4c82ed1c5cb4a2aeb63b47c3c8931738c3287e555f43bf831d3d323687db0f/);
+	assert.doesNotMatch(result.stderr, /attacker\.example|not-a-sha256|\.\.\/attacker/);
+	assert.equal(existsSync(target), false);
+});
+
+test("install-managed uses fallback helper PATH when sanitized PATH would otherwise be empty", { skip: process.platform === "win32" }, () => {
+	const fixture = tempFixture();
+	const ticketContent = `#!/usr/bin/env sh
+command_name="$(basename "$0")"
+case "\${1:-}" in
+  help|--help|-h)
+    echo "\${command_name} - minimal ticket system with dependency tracking"
+    echo "Usage: \${command_name} <command> [args]"
+    echo "Tickets stored as markdown files in .tickets/"
+    exit 0
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+`;
+	const { archivePath, checksum } = createTicketArchive(fixture, { ticketContent });
+	const fetchSentinel = join(fixture.dir, "fetch-called");
+	const tarSentinel = join(fixture.dir, "tar-intercepted");
+	const shSentinel = join(fixture.dir, "sh-intercepted");
+	const preload = writeFetchPreload(fixture);
+	const agentBin = join(fixture.agent, "bin");
+	const target = join(agentBin, "tk");
+	writePoisonCommand(agentBin, "tar", tarSentinel);
+	writePoisonCommand(agentBin, "sh", shSentinel);
+
+	const result = runTickets([
+		"--agent-dir", fixture.agent,
+		"--target", target,
+		...unsafeTicketSourceArgs({ checksum }),
+		"install-managed",
+	], {
+		cwd: agentBin,
+		env: {
+			HOME: fixture.home,
+			PATH: agentBin,
+			TLH_TEST_ARCHIVE: archivePath,
+			TLH_TEST_FETCH_SENTINEL: fetchSentinel,
+		},
+		nodeArgs: ["--import", preload],
+	});
+
+	assert.equal(result.status, 0, result.stderr);
+	assert.equal(result.stdout.trim(), target);
+	assert.equal(readFileSync(fetchSentinel, "utf8"), fixtureTicketSourceUrl);
+	assert.equal(existsSync(tarSentinel), false);
+	assert.equal(existsSync(shSentinel), false);
+	assert.equal(readFileSync(target, "utf8"), ticketContent);
+});
+
+test("install-managed rejects dash-leading archive entry components before fetch", () => {
+	const fixture = tempFixture();
+	const fetchSentinel = join(fixture.dir, "fetch-called");
+	const preload = join(fixture.dir, "fail-fetch.mjs");
+	writeFileSync(preload, `import { writeFileSync } from "node:fs";
+globalThis.fetch = async () => {
+	writeFileSync(${JSON.stringify(fetchSentinel)}, "called");
+	throw new Error("fetch should not be called");
+};
+`);
+
+	const result = runTickets([
+		"--agent-dir", fixture.agent,
+		"--unsafe-test-ticket-archive-entry", "ticket-0.3.2/-ticket",
+		"install-managed",
+	], {
+		env: { HOME: fixture.home },
+		nodeArgs: ["--import", preload],
+	});
+
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /Ticket archive entry is unsafe: ticket-0\.3\.2\/-ticket/);
+	assert.equal(existsSync(fetchSentinel), false);
 });
 
 test("install-managed rejects non-tk managed target before fetch or overwrite", () => {
@@ -815,6 +936,7 @@ test("install-managed direct commit refuses parent swap before open without touc
 	const result = runTickets([
 		"--agent-dir", fixture.agent,
 		"--target", target,
+		...unsafeTicketSourceArgs({ checksum }),
 		"install-managed",
 	], {
 		env: {
@@ -823,14 +945,12 @@ test("install-managed direct commit refuses parent swap before open without touc
 			TLH_TEST_FETCH_SENTINEL: fetchSentinel,
 			TLH_TEST_SWAP_OPEN_PATH: target,
 			TLH_TEST_EXTERNAL: fixture.external,
-			TLH_TICKET_SOURCE_URL: "https://example.test/wedow-ticket.tar.gz",
-			TLH_TICKET_SOURCE_SHA256: checksum,
 		},
 		nodeArgs: ["--import", preload],
 	});
 
 	assert.notEqual(result.status, 0);
-	assert.equal(readFileSync(fetchSentinel, "utf8"), "https://example.test/wedow-ticket.tar.gz");
+	assert.equal(readFileSync(fetchSentinel, "utf8"), fixtureTicketSourceUrl);
 	assert.equal(readFileSync(externalSettings, "utf8"), "original settings sentinel");
 	assert.equal(readFileSync(externalTk, "utf8"), "original tk sentinel");
 });
@@ -848,6 +968,7 @@ test("install-managed removes empty file created by parent swap to external dire
 	const result = runTickets([
 		"--agent-dir", fixture.agent,
 		"--target", target,
+		...unsafeTicketSourceArgs({ checksum }),
 		"install-managed",
 	], {
 		env: {
@@ -856,14 +977,12 @@ test("install-managed removes empty file created by parent swap to external dire
 			TLH_TEST_FETCH_SENTINEL: fetchSentinel,
 			TLH_TEST_SWAP_OPEN_PATH: target,
 			TLH_TEST_EXTERNAL: fixture.external,
-			TLH_TICKET_SOURCE_URL: "https://example.test/wedow-ticket.tar.gz",
-			TLH_TICKET_SOURCE_SHA256: checksum,
 		},
 		nodeArgs: ["--import", preload],
 	});
 
 	assert.notEqual(result.status, 0);
-	assert.equal(readFileSync(fetchSentinel, "utf8"), "https://example.test/wedow-ticket.tar.gz");
+	assert.equal(readFileSync(fetchSentinel, "utf8"), fixtureTicketSourceUrl);
 	assert.equal(readFileSync(externalSettings, "utf8"), "original settings sentinel");
 	assert.equal(existsSync(externalTk), false);
 	assert.deepEqual(readdirSync(fixture.external), ["settings.json"]);
@@ -885,6 +1004,7 @@ test("install-managed does not clean up a managed bin directory when parent reva
 	const result = runTickets([
 		"--agent-dir", fixture.agent,
 		"--target", target,
+		...unsafeTicketSourceArgs({ checksum }),
 		"install-managed",
 	], {
 		env: {
@@ -893,15 +1013,13 @@ test("install-managed does not clean up a managed bin directory when parent reva
 			TLH_TEST_FETCH_SENTINEL: fetchSentinel,
 			TLH_TEST_SWAP_MKDIR_PATH: targetParent,
 			TLH_TEST_EXTERNAL: fixture.external,
-			TLH_TICKET_SOURCE_URL: "https://example.test/wedow-ticket.tar.gz",
-			TLH_TICKET_SOURCE_SHA256: checksum,
 		},
 		nodeArgs: ["--import", preload],
 	});
 
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /outside the intended directory|symlinked/i);
-	assert.equal(readFileSync(fetchSentinel, "utf8"), "https://example.test/wedow-ticket.tar.gz");
+	assert.equal(readFileSync(fetchSentinel, "utf8"), fixtureTicketSourceUrl);
 	assert.equal(readFileSync(externalSettings, "utf8"), "original settings sentinel");
 	assert.equal(readFileSync(externalTk, "utf8"), "original tk sentinel");
 	assert.equal(statSync(externalBin).isDirectory(), true);
@@ -924,6 +1042,7 @@ test("install-managed refuses parent swap before intended parent realpath captur
 	const result = runTickets([
 		"--agent-dir", fixture.agent,
 		"--target", target,
+		...unsafeTicketSourceArgs({ checksum }),
 		"install-managed",
 	], {
 		env: {
@@ -932,15 +1051,13 @@ test("install-managed refuses parent swap before intended parent realpath captur
 			TLH_TEST_FETCH_SENTINEL: fetchSentinel,
 			TLH_TEST_SWAP_REALPATH_PATH: targetParent,
 			TLH_TEST_EXTERNAL: fixture.external,
-			TLH_TICKET_SOURCE_URL: "https://example.test/wedow-ticket.tar.gz",
-			TLH_TICKET_SOURCE_SHA256: checksum,
 		},
 		nodeArgs: ["--import", preload],
 	});
 
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /intended target parent|isolated tlh profile|symlinked/i);
-	assert.equal(readFileSync(fetchSentinel, "utf8"), "https://example.test/wedow-ticket.tar.gz");
+	assert.equal(readFileSync(fetchSentinel, "utf8"), fixtureTicketSourceUrl);
 	assert.equal(readFileSync(externalSettings, "utf8"), "original settings sentinel");
 	assert.equal(readFileSync(externalTk, "utf8"), "original tk sentinel");
 	assert.deepEqual(readdirSync(fixture.external).sort(), ["settings.json", "tk"]);
