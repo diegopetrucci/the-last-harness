@@ -9,7 +9,7 @@
 If this resonates with you, welcome aboard:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash -s --
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
 ```
 
 ## Core features
@@ -74,7 +74,7 @@ Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `t
 Opt out during install or update with `--without-gnosis` / `--no-gnosis`, or disable it later with `tlh gnosis disable` or `/gnosis` inside an interactive session. For pipe-to-bash installs, pass installer flags after `bash -s --`:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash -s -- --without-gnosis
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s -- --without-gnosis
 ```
 
 The opt-out is written to `~/.the-last-harness/agent/settings.json` and survives `tlh update`; use `tlh update --with-gnosis` to install/re-enable it automatically, or install `gn` manually and run `tlh gnosis enable` or `/gnosis`.

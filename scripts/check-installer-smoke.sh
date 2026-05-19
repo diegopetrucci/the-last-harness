@@ -174,6 +174,49 @@ EOF_FAKE_CURL
   chmod +x "${fakebin}/curl"
 }
 
+make_support_copy_curl() {
+  local fakebin="$1"
+  mkdir -p "${fakebin}"
+  cat >"${fakebin}/curl" <<'EOF_SUPPORT_COPY_CURL'
+#!/usr/bin/env bash
+url=""
+out=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o)
+      out="${2:-}"
+      shift 2
+      ;;
+    -*)
+      shift
+      ;;
+    *)
+      url="$1"
+      shift
+      ;;
+  esac
+done
+if [[ -z "${url}" || -z "${out}" || -z "${FAKE_RAW_BASE:-}" || -z "${FAKE_SUPPORT_ROOT:-}" ]]; then
+  printf 'fake support curl missing url, output, or support env\n' >&2
+  exit 2
+fi
+base="${FAKE_RAW_BASE%/}/"
+if [[ "${url}" != "${base}"* ]]; then
+  printf 'fake support curl received unexpected url: %s\n' "${url}" >&2
+  exit 2
+fi
+relative="${url#"${base}"}"
+source_path="${FAKE_SUPPORT_ROOT}/${relative}"
+if [[ ! -f "${source_path}" ]]; then
+  printf 'fake support curl missing source: %s\n' "${relative}" >&2
+  exit 22
+fi
+mkdir -p "$(dirname "${out}")"
+cp "${source_path}" "${out}"
+EOF_SUPPORT_COPY_CURL
+  chmod +x "${fakebin}/curl"
+}
+
 make_legacy_support_curl() {
   local fakebin="$1"
   mkdir -p "${fakebin}"
@@ -423,6 +466,39 @@ run_local_dry_run_smoke() {
   assert_pi_commands_isolated "${combined_file}" "${agent_dir}"
   assert_contains "${combined_file}" "Installing wrapper command: ${bin_dir}/tlh"
   assert_not_contains "${combined_file}" "Would fetch installer support files from"
+}
+
+run_stdin_no_arg_smoke() {
+  log "Running stdin no-argument smoke check..."
+  local case_dir="${TMP_ROOT}/stdin-no-arg"
+  local support_root="${case_dir}/support"
+  local fakebin="${case_dir}/fakebin"
+  local home_dir="${case_dir}/home"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local raw_base="https://example.invalid/no-arg-ref"
+  mkdir -p "${case_dir}" "${home_dir}"
+  make_support_copy_curl "${fakebin}"
+  make_fake_stage1_support_root "${support_root}"
+  cat >"${support_root}/scripts/tlh-install.mjs" <<'EOF_FAKE_NO_ARG_STAGE1'
+#!/usr/bin/env node
+console.log(`argv_count=${process.argv.slice(2).length}`);
+console.log(`TLH_REF=${process.env.TLH_REF || ""}`);
+console.log(`TLH_RAW_BASE=${process.env.TLH_RAW_BASE || ""}`);
+console.log(`TLH_UPDATE_TRACK=${process.env.TLH_UPDATE_TRACK || ""}`);
+EOF_FAKE_NO_ARG_STAGE1
+
+  (cd "${case_dir}" && run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${support_root}" FAKE_RAW_BASE="${raw_base}" TLH_REF="no-arg-ref" TLH_RAW_BASE="${raw_base}" bash -s -- < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  assert_absent "${home_dir}/.the-last-harness"
+  assert_absent "${home_dir}/.local"
+  assert_contains "${combined_file}" "argv_count=0"
+  assert_contains "${combined_file}" "TLH_REF=no-arg-ref"
+  assert_contains "${combined_file}" "TLH_RAW_BASE=${raw_base}"
+  assert_contains "${combined_file}" "TLH_UPDATE_TRACK="
+  assert_not_contains "${combined_file}" "unbound variable"
 }
 
 run_stdin_dry_run_smoke() {
@@ -833,11 +909,15 @@ run_wrapper_install_state_normal_pi_guard_smoke() {
 }
 
 run_release_pinning_smoke() {
-  log "Running release installer pinning smoke check..."
+  log "Running release installer defaults smoke check..."
   local case_dir="${TMP_ROOT}/release-pinning"
   local dist_dir="${case_dir}/dist"
+  local home_dir="${case_dir}/home"
   local tag="v9.9.9"
-  mkdir -p "${dist_dir}"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  mkdir -p "${dist_dir}" "${home_dir}"
 
   TAG="${tag}" DIST_DIR="${dist_dir}" node <<'NODE'
 const fs = require('node:fs');
@@ -845,17 +925,54 @@ const path = require('node:path');
 const tag = process.env.TAG;
 const distDir = process.env.DIST_DIR;
 const source = fs.readFileSync('install.sh', 'utf8');
-const oldText = 'REF="${TLH_REF:-main}"';
-const newText = `REF="\${TLH_REF:-${tag}}"`;
-if (!source.includes(oldText)) {
-  throw new Error(`Expected installer default ref line not found: ${oldText}`);
+const replacements = [
+  ['REF="${TLH_REF:-main}"', `REF="\${TLH_REF:-${tag}}"`],
+  ['UPDATE_TRACK_INPUT="${TLH_UPDATE_TRACK:-}"', 'UPDATE_TRACK_INPUT="${TLH_UPDATE_TRACK:-latest-release}"'],
+];
+let output = source;
+for (const [oldText, newText] of replacements) {
+  if (!output.includes(oldText)) {
+    throw new Error(`Expected installer default line not found: ${oldText}`);
+  }
+  output = output.replace(oldText, newText);
 }
-fs.writeFileSync(path.join(distDir, 'install.sh'), source.replace(oldText, newText), 'utf8');
+fs.writeFileSync(path.join(distDir, 'install.sh'), output, 'utf8');
 NODE
   chmod +x "${dist_dir}/install.sh"
   bash -n "${dist_dir}/install.sh"
   assert_contains "${dist_dir}/install.sh" "REF=\"\${TLH_REF:-${tag}}\""
+  assert_contains "${dist_dir}/install.sh" 'UPDATE_TRACK_INPUT="${TLH_UPDATE_TRACK:-latest-release}"'
   assert_not_contains "${dist_dir}/install.sh" 'REF="${TLH_REF:-main}"'
+  assert_not_contains "${dist_dir}/install.sh" 'UPDATE_TRACK_INPUT="${TLH_UPDATE_TRACK:-}"'
+
+  local manifest_file="${case_dir}/stage0-manifest.txt"
+  local requirement relative_path
+  extract_stage0_support_manifest false >"${manifest_file}"
+  while IFS='|' read -r requirement relative_path; do
+    [[ -n "${relative_path}" ]] || continue
+    mkdir -p "${dist_dir}/$(dirname "${relative_path}")"
+    : >"${dist_dir}/${relative_path}"
+  done <"${manifest_file}"
+  cat >"${dist_dir}/scripts/tlh-install.mjs" <<'EOF_FAKE_RELEASE_STAGE1'
+#!/usr/bin/env node
+console.log(`TLH_UPDATE_TRACK=${process.env.TLH_UPDATE_TRACK || ""}`);
+EOF_FAKE_RELEASE_STAGE1
+
+  run_scrubbed_installer_env HOME="${home_dir}" bash "${dist_dir}/install.sh" --agent-dir "${case_dir}/agent" --bin-dir "${case_dir}/bin" --without-gnosis >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "TLH_UPDATE_TRACK=latest-release"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  run_scrubbed_installer_env HOME="${home_dir}" TLH_UPDATE_TRACK="pinned-tag" bash "${dist_dir}/install.sh" --agent-dir "${case_dir}/agent" --bin-dir "${case_dir}/bin" --without-gnosis >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "TLH_UPDATE_TRACK=pinned-tag"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  run_scrubbed_installer_env HOME="${home_dir}" bash "${dist_dir}/install.sh" --agent-dir "${case_dir}/agent" --bin-dir "${case_dir}/bin" --track ref --without-gnosis >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "TLH_UPDATE_TRACK=ref"
 }
 
 run_static_checks
@@ -865,6 +982,7 @@ run_stage1_dry_run_smoke
 run_stage1_relative_path_canonicalization_smoke
 run_stage1_staged_cwd_isolation_smoke
 run_local_dry_run_smoke
+run_stdin_no_arg_smoke
 run_stdin_dry_run_smoke
 run_stage0_alias_guard_smoke
 run_stage0_validation_precedes_local_support_smoke

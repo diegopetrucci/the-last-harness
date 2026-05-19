@@ -56,8 +56,8 @@ Environment overrides:
   TLH_GNOSIS_REPO      Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
 
 Examples:
-  curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash -s --
-  curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | TLH_UPDATE_TRACK=latest-release bash -s -- --dry-run
+  curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
+  curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s -- --dry-run
   bash install.sh --agent-dir ~/.tlh/agent --bin-dir ~/.local/bin
 
 Test any pushed branch by fetching that branch's installer and matching --ref:
@@ -494,8 +494,13 @@ fetch_remote_support_root() {
 run_stage1() {
   local support_root="$1"
   require_command node
-  TLH_REPO="${REPO}" TLH_REF="${REF}" TLH_RAW_BASE="${RAW_BASE}" \
-    node "${support_root}/scripts/tlh-install.mjs" "${ORIGINAL_ARGS[@]}"
+  if [[ "${#ORIGINAL_ARGS[@]}" -eq 0 ]]; then
+    TLH_REPO="${REPO}" TLH_REF="${REF}" TLH_RAW_BASE="${RAW_BASE}" TLH_UPDATE_TRACK="${UPDATE_TRACK_INPUT}" \
+      node "${support_root}/scripts/tlh-install.mjs"
+  else
+    TLH_REPO="${REPO}" TLH_REF="${REF}" TLH_RAW_BASE="${RAW_BASE}" TLH_UPDATE_TRACK="${UPDATE_TRACK_INPUT}" \
+      node "${support_root}/scripts/tlh-install.mjs" "${ORIGINAL_ARGS[@]}"
+  fi
 }
 
 dry_run_without_stage1() {

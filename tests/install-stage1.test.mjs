@@ -122,6 +122,25 @@ function assertPiCommands(path, agentDir, commands) {
 	for (const record of records) assert.equal(realpathSync(record.cwd), realpathSync(agentDir));
 }
 
+test("stage-1 infers update track unless env or CLI overrides", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	mkdirSync(homeDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	const configFor = (argv = [], overrides = {}) => {
+		const env = scrubInstallerEnv({ HOME: homeDir, ...overrides });
+		return buildInstallConfig(parseArgs(["--agent-dir", agentDir, "--bin-dir", binDir, ...argv], env), env);
+	};
+
+	assert.equal(configFor([], { TLH_REF: "feature" }).updateTrack, "ref");
+	assert.equal(configFor([], { TLH_REF: "v1.2.3" }).updateTrack, "pinned-tag");
+	assert.equal(configFor([], { TLH_REF: "v1.2.3", TLH_UPDATE_TRACK: "latest-release" }).updateTrack, "latest-release");
+	assert.equal(configFor(["--track", "ref"], { TLH_REF: "v1.2.3", TLH_UPDATE_TRACK: "latest-release" }).updateTrack, "ref");
+});
+
 test("install query normalize-path requires explicit path", () => {
 	const result = runQuery(["normalize-path"], scrubInstallerEnv({}, {
 		...process.env,
