@@ -20,6 +20,11 @@
     "description": "Enable optional OpenAI Codex Fast mode commands for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions."
   },
   {
+    "id": "anthropic-auth",
+    "source": "npm:@gotgenes/pi-anthropic-auth",
+    "description": "Improve compatibility with Anthropic Claude Pro/Max OAuth while preserving normal API-key behavior."
+  },
+  {
     "id": "librarian",
     "source": "npm:@diegopetrucci/pi-librarian",
     "description": "Research GitHub repositories and optionally cache local checkouts."

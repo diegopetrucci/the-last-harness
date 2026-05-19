@@ -35,7 +35,7 @@ They run in fresh child contexts: they get the task and project context, not the
 - **Inline bash snippets**: trusted `!{...}` snippets in your prompt are expanded through local bash before the agent sees them, useful for quick context like `!{git status --short}`.
 - **Dirty-repo guard**: TLH prompts before starting, switching, or forking sessions when the current git repo has uncommitted changes, so work-in-progress is harder to lose.
 - **Completion notifications**: TLH can notify you when an agent turn finishes and is waiting for input.
-- **Model niceties**: `/effort` makes it easier to switch thinking effort levels, and `/fast` enables OpenAI Fast mode controls.
+- **Model niceties**: `/effort` makes it easier to switch thinking effort levels, `/fast` enables OpenAI Fast mode controls, and bundled Anthropic OAuth compatibility helps `/login anthropic` work with Claude Pro/Max subscriptions.
 - **Cleaner sessions**: tlh's UI only shows what is relevant to you _right now_ — tools, bash output, and incoming intercom cards are collapsed by default; footer details are trimmed.
 - **Conservative updates and isolation**: tlh runs independently from `pi`, and never overrides your settings across updates
 
