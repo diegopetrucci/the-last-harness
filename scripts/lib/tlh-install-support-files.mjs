@@ -66,6 +66,7 @@ export function prepareSupportFilesFromLocalRepo(config, localDir) {
 
 export function supportFileDryRunMessage(variable) {
 	if (variable === "TLH_GNOSIS_SCRIPT") return "Would fetch Gnosis integration support files.";
+	if (variable === "TLH_TICKETS_SCRIPT") return "Would fetch tlh tickets support files.";
 	if (variable === "TLH_UPDATE_SCRIPT") return "Would fetch tlh update support files.";
 	if (variable === "TLH_WRAPPER_SCRIPT") return "Would fetch tlh wrapper support files.";
 	if (variable === "TLH_INSTALL_STATE_SCRIPT") return "Would fetch tlh install-state support files.";

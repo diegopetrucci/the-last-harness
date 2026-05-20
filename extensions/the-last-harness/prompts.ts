@@ -89,7 +89,11 @@ function formatAllowedSubagents(subagents: SubagentMetadata[]): string {
 	return `## TLH Allowed Minor Subagents\n\nYou may delegate only to these minor agents via the subagent tool:\n\n${lines.join("\n")}`;
 }
 
-export function buildTlhSystemPrompt(primary: AgentPrompt | undefined, subagents: SubagentMetadata[], primaryEnabled: boolean): string {
+export function buildTlhSystemPrompt(
+	primary: AgentPrompt | undefined,
+	subagents: SubagentMetadata[],
+	primaryEnabled: boolean,
+): string {
 	const prompts = [HARNESS_PROMPT.trim()];
 	if (primaryEnabled) {
 		prompts.push(primary?.systemPrompt.trim(), formatAllowedSubagents(subagents));
@@ -98,7 +102,8 @@ export function buildTlhSystemPrompt(primary: AgentPrompt | undefined, subagents
 }
 
 export function buildChildSubagentSystemPrompt(): string {
-	return [HARNESS_PROMPT.trim(), CHILD_SUBAGENT_PROMPT.trim()].filter(Boolean).join("\n\n");
+	const prompts: Array<string | undefined> = [HARNESS_PROMPT.trim(), CHILD_SUBAGENT_PROMPT.trim()];
+	return prompts.filter(Boolean).join("\n\n");
 }
 
 export function parseFrontmatterValue(content: string | undefined, key: string): string | undefined {

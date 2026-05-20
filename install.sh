@@ -363,6 +363,7 @@ required|scripts/tlh-install-query.mjs
 required|scripts/merge-settings.mjs
 required|scripts/tlh-defaults.mjs
 required|scripts/tlh-gnosis.mjs
+required|scripts/tlh-tickets.mjs
 optional|scripts/tlh-update.mjs
 optional|scripts/tlh-wrapper.mjs
 optional|scripts/tlh-install-state.mjs
@@ -567,6 +568,7 @@ dry_run_without_stage1() {
     log "Would install bundled default extension packages after settings merge."
   fi
   log "Would fetch Gnosis integration support files."
+  log "Would fetch tlh tickets support files."
   log "Would fetch tlh update support files."
   log "Would fetch tlh wrapper support files."
   log "Would fetch tlh install-state support files."

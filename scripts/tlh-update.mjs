@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 
@@ -189,6 +189,61 @@ function installStatePath(agentDir) {
 
 function settingsPath(agentDir) {
 	return join(agentDir, "settings.json");
+}
+
+function realpathIfPossible(path) {
+	try {
+		return realpathSync(path);
+	} catch {
+		return undefined;
+	}
+}
+
+function sanitizedPath(pathValue, agentDir) {
+	if (pathValue === undefined) return "";
+	const cwd = resolve(process.cwd());
+	const cwdRealpath = realpathIfPossible(cwd);
+	const managedBin = resolve(agentDir, "bin");
+	const managedBinRealpath = realpathIfPossible(managedBin);
+	return String(pathValue)
+		.split(delimiter)
+		.filter((entry) => {
+			if (!entry) return false;
+			const resolvedEntry = resolve(entry);
+			if (resolvedEntry === cwd || resolvedEntry === managedBin) return false;
+			const entryRealpath = realpathIfPossible(resolvedEntry);
+			if (entryRealpath && cwdRealpath && entryRealpath === cwdRealpath) return false;
+			if (entryRealpath && managedBinRealpath && entryRealpath === managedBinRealpath) return false;
+			return true;
+		})
+		.join(delimiter);
+}
+
+function envWithSanitizedPath(baseEnv, agentDir) {
+	return {
+		...baseEnv,
+		PATH: sanitizedPath(baseEnv.PATH, agentDir),
+	};
+}
+
+function isExecutable(path) {
+	try {
+		if (!statSync(path).isFile()) return false;
+		accessSync(path, constants.X_OK);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function resolveCommand(command, env) {
+	const pathValue = env.PATH || "";
+	for (const entry of pathValue.split(delimiter)) {
+		if (!entry) continue;
+		const candidate = resolve(entry, command);
+		if (isExecutable(candidate)) return candidate;
+	}
+	throw new Error(`required command not found on sanitized PATH: ${command}`);
 }
 
 function readJson(path) {
@@ -470,8 +525,9 @@ async function main() {
 	const state = loadState(args);
 	const plan = resolvePlan(state, args);
 	const installerArgs = buildInstallerArgs(plan, args);
+	const sanitizedEnv = envWithSanitizedPath(process.env, args.agentDir);
 	const childEnv = {
-		...process.env,
+		...sanitizedEnv,
 		TLH_REPO: plan.repo,
 	};
 	delete childEnv.TLH_REF;
@@ -500,7 +556,8 @@ async function main() {
 	let temp;
 	try {
 		temp = await downloadInstaller(plan.url);
-		const result = spawnSync("bash", [temp.installerPath, ...installerArgs], {
+		const bashCommand = resolveCommand("bash", sanitizedEnv);
+		const result = spawnSync(bashCommand, [temp.installerPath, ...installerArgs], {
 			stdio: "inherit",
 			env: childEnv,
 		});

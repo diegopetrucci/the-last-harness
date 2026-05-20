@@ -24,6 +24,7 @@ import {
 	loadPrimaryAgents,
 	loadSubagentMetadata,
 } from "./prompts.js";
+import { activateTlhTicketRuntime } from "./tickets.js";
 import { assertSafeTlhSettingsPath, tlhSettingsPathForWrite } from "./profile-state.js";
 import type {
 	AgentPrompt,
@@ -45,13 +46,17 @@ export type TlhPrimaryAgentRuntime = {
 	currentPrimaryAgentLabel(): string;
 };
 
-function getTlhPrimaryAgentConfig(cwd: string): TlhPrimaryAgentConfig | undefined {
+function getTlhGlobalSettings(cwd: string): TlhSettings {
 	try {
-		const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as TlhSettings;
-		return settings.tlh?.primaryAgent;
+		const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as unknown;
+		return isRecord(settings) ? (settings as TlhSettings) : {};
 	} catch {
-		return undefined;
+		return {};
 	}
+}
+
+function getTlhPrimaryAgentConfig(cwd: string): TlhPrimaryAgentConfig | undefined {
+	return getTlhGlobalSettings(cwd).tlh?.primaryAgent;
 }
 
 function parseTlhSettingsContent(content: string | undefined): Record<string, unknown> {
@@ -605,11 +610,16 @@ function createTlhPrimaryAgentRuntime(
 		});
 
 		pi.on("before_agent_start", async (event, ctx) => {
+			const settings = getTlhGlobalSettings(ctx.cwd);
 			syncPrimaryAgentState(ctx);
 			const selection = currentPrimaryAgentSelection();
 			const primaryEnabled = isEnabledPrimaryAgentSelection(selection);
+			activateTlhTicketRuntime(settings, getAgentDir());
 			await applyPrimaryDefaults(ctx);
-			const prompts = [event.systemPrompt, buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled)];
+			const prompts = [
+				event.systemPrompt,
+				buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled),
+			];
 			if (shouldAppendGnosisPrompt(ctx.cwd)) {
 				prompts.push(GNOSIS_PROMPT);
 			}
@@ -636,7 +646,13 @@ export function registerTlhPrimaryAgentRuntime(
 	pi: ExtensionAPI,
 	options: TlhPrimaryAgentRuntimeOptions = {},
 ): TlhPrimaryAgentRuntime | undefined {
-	if (registerTlhStartupMode(pi, { env: options.env ?? process.env, buildChildSubagentSystemPrompt }) === "child") {
+	const childPromptBuilder = (): string => buildChildSubagentSystemPrompt();
+	if (
+		registerTlhStartupMode(pi, {
+			env: options.env ?? process.env,
+			buildChildSubagentSystemPrompt: childPromptBuilder,
+		}) === "child"
+	) {
 		return undefined;
 	}
 
