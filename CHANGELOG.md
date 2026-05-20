@@ -17,18 +17,9 @@ All notable changes to The Last Harness will be documented in this file.
 
 > **Internal note:** `TLH_SKIP_GNOSIS_INSTALL=1` exists as a test/benchmark escape hatch only; it is not a supported user opt-out.
 
-### Added
-
-- Documented required `tk` ticket integration, the `tlh tickets ...` helper, managed `<agent>/bin/tk` installs, and install/update failure behavior when no valid `tk` can be provided.
-
 ### Changed
 
-- Managed `tk` installs now use the pinned `wedow/ticket` v0.3.2 source and SHA-256 by default, ignore ambient `TLH_TICKET_SOURCE_*` overrides, and sanitize helper-tool PATH/archive extraction.
-- Installer smoke checks now cover managed `tk` default dry-run behavior and normal Pi guard coverage.
-- The `tlh` wrapper now keeps the isolated `<agent>/bin` directory on `PATH` for the wrapped upstream Pi process, including legacy `settings.tlh.tickets.enabled=false` profiles, so a managed `tk` remains available to TLH sessions.
-- `tk` ticket integration is now mandatory for install/update: legacy ticket flags are rejected, legacy disabled settings are re-enabled, managed `tk` is installed into the isolated TLH profile when needed, and install/update fails if no valid `tk` can be found or provisioned.
-- Managed `tk` installs now record `settings.tlh.tickets.installedSha256` after a successful install. Future TLH releases that bump the pinned source SHA-256 will trigger a one-time reinstall on the next `tlh tickets configure-install` / `tlh update` invocation; legacy installs without a recorded SHA reinstall once to populate the field. Custom (non-managed) `installPath` values do not record or read this field.
-- The `--unsafe-test-ticket-source-url` flag now rejects any URL that does not start with `https://`. This affects only test fixtures; production installs already use the pinned HTTPS URL.
+- `tk` ticket integration is now mandatory: TLH documents the `tlh tickets ...` helper, rejects legacy ticket opt-outs, re-enables legacy disabled ticket settings, provisions the pinned `wedow/ticket` v0.3.2 managed `<agent>/bin/tk` with SHA-256 verification and sanitized helper-tool handling when needed, keeps `<agent>/bin` on `PATH` for sessions, fails install/update if no valid `tk` can be found or installed, and records managed install SHA-256 for future pinned-source reinstalls.
 
 ## [0.8.1] - 2026-05-19
 
