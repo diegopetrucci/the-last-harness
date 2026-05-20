@@ -24,7 +24,7 @@ import {
 	loadPrimaryAgents,
 	loadSubagentMetadata,
 } from "./prompts.js";
-import { activateTlhTicketRuntime, isTlhTicketIntegrationEnabled } from "./tickets.js";
+import { activateTlhTicketRuntime } from "./tickets.js";
 import { assertSafeTlhSettingsPath, tlhSettingsPathForWrite } from "./profile-state.js";
 import type {
 	AgentPrompt,
@@ -614,12 +614,11 @@ function createTlhPrimaryAgentRuntime(
 			syncPrimaryAgentState(ctx);
 			const selection = currentPrimaryAgentSelection();
 			const primaryEnabled = isEnabledPrimaryAgentSelection(selection);
-			const ticketIntegrationEnabled = isTlhTicketIntegrationEnabled(settings);
 			activateTlhTicketRuntime(settings, getAgentDir());
 			await applyPrimaryDefaults(ctx);
 			const prompts = [
 				event.systemPrompt,
-				buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled, ticketIntegrationEnabled),
+				buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled),
 			];
 			if (shouldAppendGnosisPrompt(ctx.cwd)) {
 				prompts.push(GNOSIS_PROMPT);
@@ -647,10 +646,7 @@ export function registerTlhPrimaryAgentRuntime(
 	pi: ExtensionAPI,
 	options: TlhPrimaryAgentRuntimeOptions = {},
 ): TlhPrimaryAgentRuntime | undefined {
-	const childPromptBuilder = (): string => {
-		const settings = getTlhGlobalSettings(process.cwd());
-		return buildChildSubagentSystemPrompt(isTlhTicketIntegrationEnabled(settings));
-	};
+	const childPromptBuilder = (): string => buildChildSubagentSystemPrompt();
 	if (
 		registerTlhStartupMode(pi, {
 			env: options.env ?? process.env,

@@ -6,8 +6,8 @@ import type { TlhSettings, TlhTicketsConfig } from "./types.js";
 
 const TK_VALIDATION_TIMEOUT_MS = 5000;
 
-export function isTlhTicketIntegrationEnabled(settings: TlhSettings): boolean {
-	return settings.tlh?.tickets?.enabled !== false;
+export function isTlhTicketIntegrationEnabled(_settings: TlhSettings): boolean {
+	return true;
 }
 
 function configuredTicketInstallPath(config: TlhTicketsConfig | undefined): string | undefined {
@@ -58,10 +58,6 @@ export function findValidTlhTicketCommand(
 	agentDir: string,
 	options: { prependPath?: boolean } = {},
 ): string | undefined {
-	if (!isTlhTicketIntegrationEnabled(settings)) {
-		return undefined;
-	}
-
 	for (const candidate of ticketCommandCandidates(settings, agentDir)) {
 		if (!hasTkCommandName(candidate)) continue;
 		if (!validateTlhTicketCommand(candidate)) continue;

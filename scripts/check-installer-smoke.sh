@@ -412,7 +412,7 @@ exit 98
 EOF_FAKE_GIT
   chmod +x "${fakebin}/sh" "${fakebin}/npm" "${fakebin}/git"
 
-  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 node scripts/tlh-install.mjs --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  run_scrubbed_installer_env PATH="${fakebin}" TLH_SKIP_GNOSIS_INSTALL=1 "${node_cmd}" scripts/tlh-install.mjs --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
 
   assert_absent "${agent_dir}"

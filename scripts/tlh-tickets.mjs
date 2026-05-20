@@ -23,8 +23,7 @@ Manage tk ticket CLI integration in the isolated tlh profile.
 Commands:
   status               Show integration status and detected tk command
   enable               Enable tk integration after validating a tk command
-  disable              Disable tk integration persistently
-  state                Print enabled, disabled, or unset (installer internal)
+  state                Print enabled or unset (installer internal)
   validate [path]      Validate a tk command, or print the first valid one
   install-managed      Install managed tk from the pinned source tarball (installer internal)
   configure-install    Configure installer-time tk integration (installer internal)
@@ -34,7 +33,7 @@ Options:
   --agent-dir <dir>    Isolated Pi agent dir (default: ~/.the-last-harness/agent, or PI_CODING_AGENT_DIR)
   --install-path <p>   Store this tk command path when enabling
   --target <path>      Managed tk install target (default: <agent-dir>/bin/tk)
-  --mode <mode>        Installer tickets mode: auto, with, or without
+  --mode <mode>        Installer tickets mode: auto or with (legacy without is treated as required)
   --wrapper-name <n>   Wrapper command name for user-facing guidance
   --detail             Print verbose/dry-run installer details
   --dry-run            Print intended changes without writing
@@ -235,11 +234,16 @@ function loadSettings(settingsPath) {
 	return { settings, previousRaw };
 }
 
-function ticketsState(settings) {
+function legacyTicketsState(settings) {
 	const enabled = settings.tlh?.tickets?.enabled;
 	if (enabled === true) return "enabled";
 	if (enabled === false) return "disabled";
 	return "unset";
+}
+
+function ticketsState(settings) {
+	const state = legacyTicketsState(settings);
+	return state === "disabled" ? "enabled" : state;
 }
 
 function normalizedInstallPath(path) {
@@ -1124,15 +1128,6 @@ function setTicketsEnabled(args, settingsPath, settings, previousRaw, installPat
 	logWriteResult(args, writeResult);
 }
 
-function setTicketsDisabled(args, settingsPath, settings, previousRaw) {
-	assertNotNormalPiSettings(settingsPath);
-	ensureMutableSettings(settings);
-	settings.tlh.tickets.enabled = false;
-	const writeResult = writeSettings(settingsPath, settings, previousRaw, { dryRun: args.dryRun });
-	detailLog(args, `${args.dryRun ? "Would disable" : "Disabled"} tk integration for the tlh profile.`);
-	logWriteResult(args, writeResult);
-}
-
 function validatedRequestedInstallPath(args, agentDir, installPath) {
 	const normalized = normalizedInstallPath(installPath);
 	if (!normalized) return undefined;
@@ -1161,72 +1156,23 @@ async function commandConfigureInstall(args, settingsPath, settings, previousRaw
 	}
 	assertNotNormalPiSettings(settingsPath);
 
-	const currentState = ticketsState(settings);
-	let requested = args.mode;
-
-	if (requested === "without") {
-		detailLog(args, "Disabling tk integration for tlh.");
-		setTicketsDisabled(args, settingsPath, settings, previousRaw);
-		log(args, "Ticket CLI integration: disabled");
-		return;
-	}
-
-	if (requested === "auto") {
-		if (currentState === "disabled") {
-			detailLog(args, "Keeping existing tk opt-out.");
-			log(args, "Ticket CLI integration: disabled");
-			return;
-		}
-
-		if (currentState === "enabled") {
-			detailLog(args, "Keeping existing tk integration setting: enabled.");
-
-			const managedTarget = managedTkTargetPath(args, agentDir);
-			const configured = configuredInstallPath(settings);
-			const pathOfInterestIsManaged = !configured || samePathForCompare(configured, managedTarget);
-			if (pathOfInterestIsManaged
-				&& !managedTkPinIsFresh(settings, args.ticketSourceSha256)
-				&& validateTkCommand(managedTarget, agentDir)) {
-				detailLog(args, "Managed tk pin changed; reinstalling.");
-				const reinstalledPath = await installManagedTk(args, agentDir);
-				if (reinstalledPath) {
-					setTicketsEnabled(args, settingsPath, settings, previousRaw, reinstalledPath, args.ticketSourceSha256);
-					log(args, `Ticket CLI integration: enabled (${reinstalledPath})`);
-					return;
-				}
-				warnStderr(args, "tk pin changed but reinstall failed; keeping existing managed tk in place.");
-			}
-
-			const validPath = findValidTkForConfigure(args, settings, agentDir);
-			if (validPath) {
-				log(args, `Ticket CLI integration: enabled (${validPath})`);
-				return;
-			}
-
-			warnStderr(args, "tk integration is enabled, but no valid tk command was found. Attempting to install it.");
-			const managedPath = await installManagedTk(args, agentDir);
-			if (managedPath) {
-				setTicketsEnabled(args, settingsPath, settings, previousRaw, managedPath, args.ticketSourceSha256);
-				log(args, `Ticket CLI integration: enabled (${managedPath})`);
-				return;
-			}
-
-			warnStderr(args, `tk integration remains enabled, but tk could not be installed automatically. Install tk manually and run: ${args.wrapperName} tickets enable`);
-			log(args, "Ticket CLI integration: enabled, but no valid tk command was found");
-			return;
-		}
-
+	const currentState = legacyTicketsState(settings);
+	if (args.mode === "without") {
+		detailLog(args, "Ignoring legacy tk installer opt-out because ticket integration is required.");
+	} else if (currentState === "disabled") {
+		detailLog(args, "Re-enabling existing tk opt-out because ticket integration is required.");
+	} else if (currentState === "enabled") {
+		detailLog(args, "Validating existing tk integration setting: enabled.");
+	} else {
 		detailLog(args, "Installing and enabling tk integration by default.");
-		requested = "with";
 	}
-
-	if (requested !== "with") return;
 
 	const managedTarget = managedTkTargetPath(args, agentDir);
 	const configured = configuredInstallPath(settings);
+	const managedPinIsFresh = managedTkPinIsFresh(settings, args.ticketSourceSha256);
 	const pathOfInterestIsManaged = !configured || samePathForCompare(configured, managedTarget);
 	if (pathOfInterestIsManaged
-		&& !managedTkPinIsFresh(settings, args.ticketSourceSha256)
+		&& !managedPinIsFresh
 		&& validateTkCommand(managedTarget, agentDir)) {
 		detailLog(args, "Managed tk pin changed; reinstalling.");
 		const reinstalledPath = await installManagedTk(args, agentDir);
@@ -1235,13 +1181,13 @@ async function commandConfigureInstall(args, settingsPath, settings, previousRaw
 			log(args, `Ticket CLI integration: enabled (${reinstalledPath})`);
 			return;
 		}
-		warnStderr(args, "tk pin changed but reinstall failed; falling back to existing managed tk discovery.");
+		warnStderr(args, "tk pin changed but reinstall failed; falling back to existing tk discovery.");
 	}
 
 	const validPath = findValidTkForConfigure(args, settings, agentDir);
 	if (validPath) {
 		detailLog(args, `Found valid tk command: ${validPath}`);
-		const sha = samePathForCompare(validPath, managedTarget) ? args.ticketSourceSha256 : undefined;
+		const sha = samePathForCompare(validPath, managedTarget) && managedPinIsFresh ? args.ticketSourceSha256 : undefined;
 		setTicketsEnabled(args, settingsPath, settings, previousRaw, validPath, sha);
 		log(args, `Ticket CLI integration: enabled (${validPath})`);
 		return;
@@ -1254,15 +1200,13 @@ async function commandConfigureInstall(args, settingsPath, settings, previousRaw
 		return;
 	}
 
-	warnStderr(args, "tk integration could not be installed automatically.");
-	warnStderr(args, `Leaving tk integration unchanged; install tk manually and run: ${args.wrapperName} tickets enable`);
-	log(args, "Ticket CLI integration: not enabled (tk was not installed)");
+	throw new Error(`tk ticket integration is required, but no valid tk command was found and managed tk could not be installed. Install tk manually and run: ${args.wrapperName} tickets enable`);
 }
 
 function commandStatus(args, settings, agentDir) {
 	const state = ticketsState(settings);
 	const valid = findValidTk(args, settings, agentDir);
-	const active = (state === "enabled" || state === "unset") && Boolean(valid);
+	const active = Boolean(valid);
 	console.log("Ticket CLI integration for tlh:");
 	console.log(`  setting: ${state}`);
 	console.log(`  active: ${active ? "yes" : "no"}`);
@@ -1270,9 +1214,6 @@ function commandStatus(args, settings, agentDir) {
 	console.log(`  managed target: ${managedTkTargetPath(args, agentDir)}`);
 	if (state === "enabled" && !valid) {
 		console.log("  note: integration is enabled, but no valid `tk` command was found.");
-	}
-	if (state === "disabled" && valid) {
-		console.log("  note: ticket integration is explicitly disabled; run `tlh tickets enable` to re-enable it.");
 	}
 }
 
@@ -1309,12 +1250,6 @@ function commandEnable(args, settingsPath, settings, previousRaw, agentDir) {
 	log(args, `${args.dryRun ? "Would enable" : "Enabled"} tk integration for the tlh profile.`);
 }
 
-function commandDisable(args, settingsPath, settings, previousRaw) {
-	assertNotNormalPiSettings(settingsPath);
-	setTicketsDisabled(args, settingsPath, settings, previousRaw);
-	log(args, `${args.dryRun ? "Would disable" : "Disabled"} tk integration for the tlh profile.`);
-}
-
 async function main() {
 	const args = parseArgs(process.argv.slice(2));
 	if (args.help || !args.command) {
@@ -1324,6 +1259,9 @@ async function main() {
 
 	const agentDir = resolve(getAgentDir(args.agentDir));
 	const settingsPath = resolve(expandHome(args.settingsPath || defaultSettingsPath(agentDir)));
+	if (args.command === "disable") {
+		throw new Error("disable is no longer supported because tk ticket integration is required");
+	}
 	const { settings, previousRaw } = loadSettings(settingsPath);
 
 	if (args.command === "status") {
@@ -1350,11 +1288,6 @@ async function main() {
 		commandEnable(args, settingsPath, settings, previousRaw, agentDir);
 		return;
 	}
-	if (args.command === "disable") {
-		commandDisable(args, settingsPath, settings, previousRaw);
-		return;
-	}
-
 	throw new Error(`Unknown command: ${args.command}`);
 }
 

@@ -59,6 +59,23 @@ esac
 	chmodSync(path, 0o755);
 }
 
+function writeValidTkForEnable(fixture) {
+	const command = join(fixture.dir, "valid-tk-bin", "tk");
+	mkdirSync(dirname(command), { recursive: true });
+	writeValidTkLikeCommand(command);
+	return command;
+}
+
+function ticketEnableArgs(fixture, settings, extraArgs = []) {
+	return [
+		"--settings", settings,
+		"--agent-dir", fixture.agent,
+		...extraArgs,
+		"--install-path", writeValidTkForEnable(fixture),
+		"enable",
+	];
+}
+
 const fixtureTicketSourceUrl = "https://example.test/wedow-ticket.tar.gz";
 
 function unsafeTicketSourceArgs({ checksum, archiveEntry = "ticket-0.3.2/ticket" }) {
@@ -772,7 +789,7 @@ test("status treats unset settings with a valid tk command as active by default"
 	assert.equal(existsSync(settings), false);
 });
 
-test("status keeps explicit disabled settings inactive even with a valid tk command", () => {
+test("status treats explicit legacy disabled settings as enabled", () => {
 	const fixture = tempFixture();
 	const settings = join(fixture.agent, "settings.json");
 	const managedTk = join(fixture.agent, "bin", "tk");
@@ -787,9 +804,29 @@ test("status keeps explicit disabled settings inactive even with a valid tk comm
 	], { env: { HOME: fixture.home, PATH: "" } });
 
 	assert.equal(result.status, 0, result.stderr);
-	assert.match(result.stdout, /setting: disabled/);
-	assert.match(result.stdout, /active: no/);
+	assert.match(result.stdout, /setting: enabled/);
+	assert.match(result.stdout, /active: yes/);
 	assert.ok(result.stdout.includes(`  command: ${managedTk}`));
+	assert.doesNotMatch(result.stdout, /disabled|tlh tickets enable/i);
+});
+
+test("disable command is unavailable and omitted from usage", () => {
+	const fixture = tempFixture();
+	const settings = join(fixture.agent, "settings.json");
+
+	const help = runTickets(["--help"], { env: { HOME: fixture.home } });
+	assert.equal(help.status, 0, help.stderr);
+	assert.doesNotMatch(help.stdout, /disable\s+Disable tk integration/);
+
+	const result = runTickets([
+		"--settings", settings,
+		"--agent-dir", fixture.agent,
+		"disable",
+	], { env: { HOME: fixture.home } });
+
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /disable is no longer supported/);
+	assert.equal(existsSync(settings), false);
 });
 
 test("validate rejects a command whose basename is not tk before validation", () => {
@@ -827,11 +864,7 @@ symlinkSync(process.env.TLH_TEST_SYMLINK_TARGET, oldTempPath, "file");
 writeFileSync(process.env.TLH_TEST_SYMLINK_PATH_RECORD, oldTempPath);
 `);
 
-	const result = runTickets([
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
-		"disable",
-	], {
+	const result = runTickets(ticketEnableArgs(fixture, settings), {
 		env: {
 			HOME: fixture.home,
 			TLH_TEST_SETTINGS_PATH: settings,
@@ -845,7 +878,7 @@ writeFileSync(process.env.TLH_TEST_SYMLINK_PATH_RECORD, oldTempPath);
 	assert.equal(readFileSync(symlinkTarget, "utf8"), "original sentinel");
 	assert.equal(existsSync(readFileSync(symlinkPathRecord, "utf8")), true);
 	const written = JSON.parse(readFileSync(settings, "utf8"));
-	assert.equal(written.tlh.tickets.enabled, false);
+	assert.equal(written.tlh.tickets.enabled, true);
 });
 
 test("settings direct write refuses parent swap before open without touching external sentinels", { skip: process.platform === "win32" }, () => {
@@ -857,11 +890,7 @@ test("settings direct write refuses parent swap before open without touching ext
 	writeFileSync(externalSettings, "original settings sentinel");
 	writeFileSync(externalTk, "original tk sentinel");
 
-	const result = runTickets([
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
-		"disable",
-	], {
+	const result = runTickets(ticketEnableArgs(fixture, settings), {
 		env: {
 			HOME: fixture.home,
 			TLH_TEST_SWAP_OPEN_PATH: settings,
@@ -886,11 +915,7 @@ test("settings direct write removes empty file created by parent swap to normal 
 	mkdirSync(normalPiAgent, { recursive: true });
 	writeFileSync(normalTk, "normal Pi tk sentinel");
 
-	const result = runTickets([
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
-		"disable",
-	], {
+	const result = runTickets(ticketEnableArgs(fixture, settings), {
 		env: {
 			HOME: fixture.home,
 			TLH_TEST_SWAP_OPEN_PATH: settings,
@@ -916,11 +941,7 @@ test("settings backup write refuses parent swap before open without copying sett
 	writeFileSync(externalSettings, "original settings sentinel");
 	writeFileSync(externalTk, "original tk sentinel");
 
-	const result = runTickets([
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
-		"disable",
-	], {
+	const result = runTickets(ticketEnableArgs(fixture, settings), {
 		env: {
 			HOME: fixture.home,
 			TLH_TEST_EXTERNAL: fixture.external,
@@ -1107,11 +1128,7 @@ test("settings write refuses parent swap before intended directory realpath capt
 	writeFileSync(normalSettings, "normal Pi settings sentinel");
 	writeFileSync(normalTk, "normal Pi tk sentinel");
 
-	const result = runTickets([
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
-		"disable",
-	], {
+	const result = runTickets(ticketEnableArgs(fixture, settings), {
 		env: {
 			HOME: fixture.home,
 			TLH_TEST_SWAP_REALPATH_PATH: settingsDir,
@@ -1140,11 +1157,7 @@ test("settings directory creation does not clean up a directory when parent reva
 	writeFileSync(normalSettings, "normal Pi settings sentinel");
 	writeFileSync(normalTk, "normal Pi tk sentinel");
 
-	const result = runTickets([
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
-		"disable",
-	], {
+	const result = runTickets(ticketEnableArgs(fixture, settings), {
 		env: {
 			HOME: fixture.home,
 			TLH_TEST_SWAP_MKDIR_PATH: settingsDir,
@@ -1175,11 +1188,7 @@ test("settings directory creation does not remove external directory swapped aft
 	writeFileSync(normalSettings, "normal Pi settings sentinel");
 	writeFileSync(normalTk, "normal Pi tk sentinel");
 
-	const result = runTickets([
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
-		"disable",
-	], {
+	const result = runTickets(ticketEnableArgs(fixture, settings), {
 		env: {
 			HOME: fixture.home,
 			TLH_TEST_SWAP_MKDIR_PATH: settingsDir,
@@ -1201,11 +1210,7 @@ test("settings writes create new settings with restrictive mode", { skip: proces
 	const fixture = tempFixture();
 	const settings = join(fixture.agent, "settings.json");
 
-	const result = runTickets([
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
-		"disable",
-	], { env: { HOME: fixture.home } });
+	const result = runTickets(ticketEnableArgs(fixture, settings), { env: { HOME: fixture.home } });
 
 	assert.equal(result.status, 0, result.stderr);
 	assert.equal(statSync(settings).mode & 0o777, 0o600);
@@ -1217,12 +1222,7 @@ test("settings writes preserve existing settings and backup modes", { skip: proc
 	writeFileSync(settings, `{"tlh":{"tickets":{"enabled":true}}}\n`);
 	chmodSync(settings, 0o640);
 
-	const result = runTickets([
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
-		"--detail",
-		"disable",
-	], { env: { HOME: fixture.home } });
+	const result = runTickets(ticketEnableArgs(fixture, settings, ["--detail"]), { env: { HOME: fixture.home } });
 
 	assert.equal(result.status, 0, result.stderr);
 	assert.equal(statSync(settings).mode & 0o777, 0o640);
@@ -1231,32 +1231,25 @@ test("settings writes preserve existing settings and backup modes", { skip: proc
 	assert.equal(statSync(join(fixture.agent, backups[0])).mode & 0o777, 0o640);
 });
 
-test("configure-install without supports dry-run and records persistent opt-out state", () => {
+test("configure-install re-enables legacy disabled ticket settings", () => {
 	const fixture = tempFixture();
 	const settings = join(fixture.agent, "settings.json");
-
-	const dryRun = runTickets([
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
-		"--mode", "without",
-		"--dry-run",
-		"configure-install",
-	], { env: { HOME: fixture.home } });
-
-	assert.equal(dryRun.status, 0, dryRun.stderr);
-	assert.match(dryRun.stdout, /disabled/);
-	assert.equal(existsSync(settings), false);
+	const customTk = join(fixture.external, "tk");
+	writeValidTkLikeCommand(customTk);
+	writeFileSync(settings, `${JSON.stringify({ tlh: { tickets: { enabled: false, installPath: customTk } } })}\n`);
 
 	const configured = runTickets([
 		"--settings", settings,
 		"--agent-dir", fixture.agent,
 		"--mode", "without",
 		"configure-install",
-	], { env: { HOME: fixture.home } });
+	], { env: { HOME: fixture.home, PATH: "" } });
 
 	assert.equal(configured.status, 0, configured.stderr);
+	assert.match(configured.stdout, /enabled/);
 	const written = JSON.parse(readFileSync(settings, "utf8"));
-	assert.equal(written.tlh.tickets.enabled, false);
+	assert.equal(written.tlh.tickets.enabled, true);
+	assert.equal(written.tlh.tickets.installPath, customTk);
 
 	const state = runTickets([
 		"--settings", settings,
@@ -1265,20 +1258,37 @@ test("configure-install without supports dry-run and records persistent opt-out 
 	], { env: { HOME: fixture.home } });
 
 	assert.equal(state.status, 0, state.stderr);
-	assert.equal(state.stdout.trim(), "disabled");
+	assert.equal(state.stdout.trim(), "enabled");
 });
 
-test("disable refuses to write settings under the normal Pi agent profile", () => {
+test("configure-install fails when no valid tk is available and managed install fails", () => {
+	const fixture = tempFixture();
+	const settings = join(fixture.agent, "settings.json");
+	const preload = join(fixture.dir, "fail-fetch.mjs");
+	writeFileSync(preload, `globalThis.fetch = async () => { throw new Error("managed tk unavailable"); };\n`);
+
+	const result = runTickets([
+		"--settings", settings,
+		"--agent-dir", fixture.agent,
+		"configure-install",
+	], {
+		env: { HOME: fixture.home, PATH: "" },
+		nodeArgs: ["--import", preload],
+	});
+
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /tk ticket integration is required/);
+	assert.equal(existsSync(settings), false);
+	assert.equal(existsSync(join(fixture.home, ".pi")), false);
+});
+
+test("enable refuses to write settings under the normal Pi agent profile", () => {
 	const fixture = tempFixture();
 	const normalPiAgent = join(fixture.home, ".pi", "agent");
 	mkdirSync(normalPiAgent, { recursive: true });
 	const settings = join(normalPiAgent, "settings.json");
 
-	const result = runTickets([
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
-		"disable",
-	], { env: { HOME: fixture.home } });
+	const result = runTickets(ticketEnableArgs(fixture, settings), { env: { HOME: fixture.home } });
 
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /normal Pi config/i);
@@ -1354,6 +1364,45 @@ test("configure-install reinstalls managed tk when installedSha256 does not matc
 	assert.equal(written.tlh.tickets.installPath, target);
 	assert.equal(written.tlh.tickets.installedSha256, checksum.toLowerCase());
 	assert.notEqual(written.tlh.tickets.installedSha256, staleSha);
+});
+
+test("configure-install clears stale managed installedSha256 when reinstall fails and old managed tk is reused", { skip: process.platform === "win32" }, () => {
+	const fixture = tempFixture();
+	const settings = join(fixture.agent, "settings.json");
+	const fetchSentinel = join(fixture.dir, "fetch-called");
+	const preload = join(fixture.dir, "fail-fetch.mjs");
+	const target = join(fixture.agent, "bin", "tk");
+	mkdirSync(dirname(target), { recursive: true });
+	writeValidTkLikeCommand(target);
+	const staleSha = "0".repeat(64);
+	const nextSha = "b".repeat(64);
+	writeFileSync(settings, `${JSON.stringify({ tlh: { tickets: { enabled: true, installPath: target, installedSha256: staleSha } } })}\n`);
+	writeFileSync(preload, `import { writeFileSync } from "node:fs";
+globalThis.fetch = async (url) => {
+	writeFileSync(${JSON.stringify(fetchSentinel)}, String(url));
+	throw new Error("managed tk unavailable");
+};
+`);
+
+	const result = runTickets([
+		"--settings", settings,
+		"--agent-dir", fixture.agent,
+		"--target", target,
+		"--mode", "auto",
+		...unsafeTicketSourceArgs({ checksum: nextSha }),
+		"configure-install",
+	], {
+		env: { HOME: fixture.home },
+		nodeArgs: ["--import", preload],
+	});
+
+	assert.equal(result.status, 0, result.stderr);
+	assert.equal(readFileSync(fetchSentinel, "utf8"), fixtureTicketSourceUrl, "expected reinstall to be attempted before reusing the old managed tk");
+	assert.match(result.stderr, /tk pin changed but reinstall failed/);
+	const written = JSON.parse(readFileSync(settings, "utf8"));
+	assert.equal(written.tlh.tickets.enabled, true);
+	assert.equal(written.tlh.tickets.installPath, target);
+	assert.equal(Object.prototype.hasOwnProperty.call(written.tlh.tickets, "installedSha256"), false);
 });
 
 test("configure-install reinstalls managed tk for legacy installs missing installedSha256", { skip: process.platform === "win32" }, () => {

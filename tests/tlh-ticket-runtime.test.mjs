@@ -71,24 +71,20 @@ test("ticket runtime prepends an external configured tk path outside PATH", { sk
 	});
 });
 
-test("disabled ticket integration does not validate or prepend a configured tk path", { skip: process.platform === "win32" }, () => {
+test("ticket runtime treats legacy disabled settings as enabled", { skip: process.platform === "win32" }, () => {
 	const fixture = tempFixture();
 	const externalTk = join(fixture.external, "tk");
-	const sentinel = join(fixture.dir, "disabled-tk-called");
-	writeFileSync(externalTk, `#!/bin/sh
-printf called > ${JSON.stringify(sentinel)}
-echo "Usage: tk <command> [args]"
-echo "ticket system"
-exit 0
-`);
-	chmodSync(externalTk, 0o755);
+	writeFakeTk(externalTk, "legacy-disabled-configured");
 
 	withPath("", () => {
 		const command = activateTlhTicketRuntime({ tlh: { tickets: { enabled: false, installPath: externalTk } } }, fixture.agent);
 
-		assert.equal(command, undefined);
-		assert.equal(process.env.PATH, "");
-		assert.equal(existsSync(sentinel), false);
+		assert.equal(command, externalTk);
+		assert.deepEqual(pathEntries(), [fixture.external]);
+
+		const result = spawnSync("tk", ["status"], { encoding: "utf8" });
+		assert.equal(result.status, 0, result.stderr || String(result.error));
+		assert.match(result.stdout, /legacy-disabled-configured:status/);
 	});
 });
 

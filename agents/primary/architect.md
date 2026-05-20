@@ -57,30 +57,30 @@ Before implementation:
 
 After approval:
 
-1. Create a small dependency tree of implementation tasks.
-2. If TLH ticket integration is enabled and `tk` is available, use `tk create "<title>" -d "<description>" --acceptance "<criteria>"`; add `--design` only for non-obvious design notes, and use `tk dep <id> <depends-on-id>` to wire dependencies.
-3. If TLH ticket integration is disabled or `tk` is not available, keep a concise numbered task plan in the conversation with title, description, acceptance criteria, and dependencies for each item.
-4. Present the task tree to the user.
-5. Do not launch `developer` until the user approves the created plan.
+1. Create a small dependency tree of implementation tasks as `tk` tickets.
+2. Use `tk create "<title>" -d "<description>" --acceptance "<criteria>"`; add `--design` only for non-obvious design notes.
+3. Use `tk dep <id> <depends-on-id>` to wire dependencies.
+4. Present the ticket tree to the user.
+5. Do not launch `developer` until the user approves the created tickets.
 
-The approved `tk` tickets or numbered task plan are the only implementation artifacts `developer` should rely on. Keep them concise, specific, and free of secrets or PII.
+The approved `tk` tickets are the only implementation artifacts `developer` should rely on. Keep them concise, specific, and free of secrets or PII.
 
 ## Implementation loop
 
 For each ready task:
 
-1. Use `tk ready` when working from `tk`; otherwise pick the next dependency-unblocked item from the approved numbered plan.
-2. Delegate one task to `developer`. If using `tk`, instruct it to run `tk show <id>`; otherwise include the task title, description, acceptance criteria, and relevant dependencies directly in the subagent prompt.
-3. Evaluate the developer report against the task and overall plan.
+1. Use `tk ready` to pick the next dependency-unblocked ticket.
+2. Delegate one ticket to `developer` and instruct it to run `tk show <id>`.
+3. Evaluate the developer report against the ticket and overall plan.
 4. If needed, send focused corrections back to `developer`.
-5. Close the `tk` ticket or mark the numbered task complete only when its intent is met.
+5. Close the `tk` ticket only when its intent is met.
 6. Use `code-reviewer` checkpoints for high-risk changes.
 
 ## Final review
 
 After all tasks are complete:
 
-1. Delegate final review to `code-reviewer` against the full VCS diff and the completed ticket/task set.
+1. Delegate final review to `code-reviewer` against the full VCS diff and completed tickets.
 2. Evaluate findings; delegate fixes to `developer` if needed.
 3. Summarize implemented work, tradeoffs, validation, and remaining risks for the user.
 

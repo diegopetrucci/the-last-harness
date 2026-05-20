@@ -155,11 +155,11 @@ test("declared Node minimum stays aligned across installer metadata", () => {
 	assert.ok(releaseWorkflow.includes(`node-version: '${MIN_NODE_VERSION}'`));
 });
 
-test("stage-1 parses ticket integration flags", () => {
-	assert.equal(parseArgs([]).ticketsMode, "auto");
-	assert.equal(parseArgs(["--with-tickets"]).ticketsMode, "with");
-	assert.equal(parseArgs(["--without-tickets"]).ticketsMode, "without");
-	assert.equal(parseArgs(["--no-tickets"]).ticketsMode, "without");
+test("stage-1 rejects legacy ticket integration flags", () => {
+	assert.doesNotThrow(() => parseArgs([]));
+	for (const flag of ["--with-tickets", "--without-tickets", "--no-tickets"]) {
+		assert.throws(() => parseArgs([flag]), new RegExp(`unknown option: ${flag}`));
+	}
 });
 
 test("stage-1 infers update track unless env or CLI overrides", (t) => {
@@ -548,14 +548,14 @@ test("wrapper includes managed_bin in pi PATH when tlh.tickets.enabled is true",
 	assert.equal(piPathEntries[0], agentBin, `expected managed bin first; got ${piPathEntries.join(":")}`);
 });
 
-test("wrapper omits managed_bin from pi PATH when tlh.tickets.enabled is false", (t) => {
+test("wrapper includes managed_bin in pi PATH when legacy tlh.tickets.enabled is false", (t) => {
 	const { agentDir, agentBin, runWrapper, readPiPath } = setupTicketsEnabledWrapperFixture(t);
 	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ tlh: { tickets: { enabled: false } } }, null, 2));
 
 	const result = runWrapper();
 	assert.equal(result.status, 0, result.stderr);
 	const piPathEntries = readPiPath();
-	assert.equal(piPathEntries.includes(agentBin), false, `expected managed bin absent; got ${piPathEntries.join(":")}`);
+	assert.equal(piPathEntries[0], agentBin, `expected managed bin first; got ${piPathEntries.join(":")}`);
 });
 
 test("wrapper defaults to managed_bin in pi PATH when settings.json is missing", (t) => {
@@ -578,7 +578,7 @@ test("wrapper defaults to managed_bin in pi PATH when tlh.tickets.enabled is not
 	assert.equal(piPathEntries[0], agentBin, `expected managed bin first; got ${piPathEntries.join(":")}`);
 });
 
-test("tlh update passes ticket integration flags through to the installer", (t) => {
+test("tlh update rejects legacy ticket integration flags", (t) => {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");
 	const agentDir = join(root, "agent");
@@ -606,17 +606,12 @@ test("tlh update passes ticket integration flags through to the installer", (t) 
 	assert.equal(defaultResult.status, 0, defaultResult.stderr);
 	assert.doesNotMatch(defaultResult.stdout, /--with-tickets|--without-tickets|--no-tickets/);
 
-	const withResult = runUpdate("--with-tickets");
-	assert.equal(withResult.status, 0, withResult.stderr);
-	assert.match(withResult.stdout, /--with-tickets/);
-
-	const withoutResult = runUpdate("--without-tickets");
-	assert.equal(withoutResult.status, 0, withoutResult.stderr);
-	assert.match(withoutResult.stdout, /--without-tickets/);
-
-	const noTicketsResult = runUpdate("--no-tickets");
-	assert.equal(noTicketsResult.status, 0, noTicketsResult.stderr);
-	assert.match(noTicketsResult.stdout, /--without-tickets/);
+	for (const flag of ["--with-tickets", "--without-tickets", "--no-tickets"]) {
+		const result = runUpdate(flag);
+		assert.notEqual(result.status, 0, `expected ${flag} to be rejected`);
+		assert.match(result.stderr, new RegExp(`Unknown option for tlh update: ${flag}`));
+		assert.equal(result.stdout, "");
+	}
 });
 
 test("tlh update removes isolated bin and skips non-file bash candidates before running bash", (t) => {

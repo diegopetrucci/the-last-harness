@@ -74,80 +74,42 @@ test("before_agent_start reapplies primary defaults without a one-shot model gat
 	assert.match(applyPrimaryThinking, /pi\.getThinkingLevel\(\) === primary\.thinking/);
 });
 
-test("before_agent_start reads and activates ticket integration settings for primary prompt generation", () => {
+test("before_agent_start activates ticket runtime without disabled-ticket prompt branching", () => {
 	const beforeAgentStart = sourceSection(primaryRuntimeSource, 'pi.on("before_agent_start"', 'pi.on("tool_call"');
 
 	assert.match(primaryRuntimeSource, /function getTlhGlobalSettings\(cwd: string\): TlhSettings/);
-	assert.match(ticketRuntimeSource, /settings\.tlh\?\.tickets\?\.enabled !== false/);
+	assert.match(ticketRuntimeSource, /return true;/);
 	assert.match(beforeAgentStart, /const settings = getTlhGlobalSettings\(ctx\.cwd\);/);
-	assert.match(beforeAgentStart, /const ticketIntegrationEnabled = isTlhTicketIntegrationEnabled\(settings\);/);
+	assert.doesNotMatch(beforeAgentStart, /ticketIntegrationEnabled/);
 	assert.match(beforeAgentStart, /activateTlhTicketRuntime\(settings, getAgentDir\(\)\);/);
-	assert.match(beforeAgentStart, /buildTlhSystemPrompt\([\s\S]*ticketIntegrationEnabled/);
+	assert.match(beforeAgentStart, /buildTlhSystemPrompt\(activePrimaryAgent\(\), subagentMetadata, primaryEnabled\)/);
 });
 
-test("disabled ticket integration appends no-tk primary guidance after static prompts", () => {
+test("primary and child prompts do not include disabled-ticket fallback guidance", () => {
 	const primaryAgents = loadPrimaryAgents();
 	const architect = primaryAgents.get("architect");
 	assert.ok(architect, "architect primary prompt should load");
 
-	const prompt = buildTlhSystemPrompt(architect, [], true, false);
+	const primaryPrompt = buildTlhSystemPrompt(architect, [], true);
+	const childPrompt = buildChildSubagentSystemPrompt();
 
-	assert.match(prompt, /If TLH ticket integration is enabled and `tk` is available/);
-	assert.doesNotMatch(prompt, /If `tk` is available/);
-	assert.match(prompt, /## TLH Ticket Integration Disabled/);
-	assert.match(prompt, /overrides any earlier or static guidance about `tk` tickets/);
-	assert.match(prompt, /Do not run, recommend, create, update, close, or rely on `tk`/);
-	assert.match(prompt, /conversation/);
-	assert.ok(
-		prompt.indexOf(architect.systemPrompt.trim()) < prompt.indexOf("## TLH Ticket Integration Disabled"),
-		"disabled-ticket guidance should override by appearing after the static primary prompt",
-	);
+	for (const prompt of [primaryPrompt, childPrompt]) {
+		assert.doesNotMatch(prompt, /## TLH Ticket Integration Disabled/);
+		assert.doesNotMatch(prompt, /non-ticket/i);
+		assert.doesNotMatch(prompt, /ticket integration is disabled/i);
+	}
 });
 
-test("ticket prompt generation is unchanged when ticket integration is unset or enabled", () => {
-	const primaryAgents = loadPrimaryAgents();
-	const architect = primaryAgents.get("architect");
-	assert.ok(architect, "architect primary prompt should load");
-
-	const defaultPrompt = buildTlhSystemPrompt(architect, [], true);
-	const enabledPrompt = buildTlhSystemPrompt(architect, [], true, true);
-
-	assert.equal(defaultPrompt, enabledPrompt);
-	assert.doesNotMatch(defaultPrompt, /## TLH Ticket Integration Disabled/);
-});
-
-test("child subagent prompt omits the disabled-ticket addendum when integration is unset or enabled", () => {
-	const defaultPrompt = buildChildSubagentSystemPrompt();
-	const enabledPrompt = buildChildSubagentSystemPrompt(true);
-
-	assert.equal(defaultPrompt, enabledPrompt);
-	assert.doesNotMatch(defaultPrompt, /## TLH Ticket Integration Disabled/);
-	assert.doesNotMatch(enabledPrompt, /## TLH Ticket Integration Disabled/);
-});
-
-test("child subagent prompt appends disabled-ticket guidance when integration is disabled", () => {
-	const disabledPrompt = buildChildSubagentSystemPrompt(false);
-	const enabledPrompt = buildChildSubagentSystemPrompt(true);
-
-	assert.match(disabledPrompt, /## TLH Ticket Integration Disabled/);
-	assert.match(disabledPrompt, /do not run `tk show <id>`/);
-	assert.match(disabledPrompt, /ask the architect \(via `contact_supervisor`\)/);
-	assert.ok(
-		disabledPrompt.startsWith(enabledPrompt),
-		"disabled-ticket child guidance should be appended after the enabled prompt",
-	);
-});
-
-test("child startup branch reads ticket integration settings and passes the flag through", () => {
+test("child startup branch uses the mandatory-ticket child prompt", () => {
 	const registerBlock = sourceSection(
 		primaryRuntimeSource,
 		"export function registerTlhPrimaryAgentRuntime",
 		"const runtime = createTlhPrimaryAgentRuntime",
 	);
 
-	assert.match(registerBlock, /getTlhGlobalSettings\(process\.cwd\(\)\)/);
-	assert.match(registerBlock, /isTlhTicketIntegrationEnabled\(settings\)/);
-	assert.match(registerBlock, /buildChildSubagentSystemPrompt\(isTlhTicketIntegrationEnabled\(settings\)\)/);
+	assert.doesNotMatch(registerBlock, /getTlhGlobalSettings\(process\.cwd\(\)\)/);
+	assert.doesNotMatch(registerBlock, /isTlhTicketIntegrationEnabled/);
+	assert.match(registerBlock, /buildChildSubagentSystemPrompt\(\)/);
 });
 
 test("extension imports extracted shared helpers from nested TypeScript modules", () => {
