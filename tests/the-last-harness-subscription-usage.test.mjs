@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 
 import {
@@ -17,23 +17,25 @@ const RESET_AT = "2026-05-19T20:00:00.000Z";
 
 function openAiUsage(used = 25) {
 	return {
-		rate_limit: {
-			primary_window: {
-				used,
-				limit: 100,
-				reset_at: RESET_AT,
-			},
-			secondary_window: {
-				requests_remaining: 800,
-				requests_limit: 1000,
-				seconds_until_reset: 3600,
-			},
+		primary_window: {
+			used,
+			limit: 100,
+			reset_at: RESET_AT,
+		},
+		secondary_window: {
+			requests_remaining: 800,
+			requests_limit: 1000,
+			seconds_until_reset: 3600,
 		},
 	};
 }
 
 function assertNoCredentialMaterial(value) {
 	assert.doesNotMatch(JSON.stringify(value), /Authorization|Bearer|access|refresh|token/i);
+}
+
+function tokenFingerprint(accessToken) {
+	return createHash("sha256").update(accessToken).digest("hex");
 }
 
 function createDeferred() {
@@ -131,25 +133,17 @@ test("prefers explicit usage percentages over derived count percentages", () => 
 	assert.equal(anthropicSnapshot?.windows.session.percent, 56.8);
 });
 
-test("normalizes Anthropic OAuth five-hour and closest weekly windows", () => {
+test("normalizes Anthropic OAuth five-hour and seven-day windows", () => {
 	const snapshot = normalizeAnthropicUsage(
 		{
-			usage: {
-				five_hour: {
-					used_tokens: 40,
-					max_tokens: 100,
-					reset_time: RESET_AT,
-				},
-				six_day: {
-					used: 300,
-					limit: 1000,
-					duration: "6d",
-				},
-				monthly: {
-					used: 1,
-					limit: 2,
-					duration: "30d",
-				},
+			five_hour: {
+				used_tokens: 40,
+				max_tokens: 100,
+				reset_time: RESET_AT,
+			},
+			seven_day: {
+				used: 300,
+				limit: 1000,
 			},
 		},
 		{ nowMs: NOW_MS },
@@ -166,7 +160,7 @@ test("normalizes Anthropic OAuth five-hour and closest weekly windows", () => {
 		resetsAt: RESET_AT,
 	});
 	assert.deepEqual(snapshot?.windows.weekly, {
-		key: "six_day",
+		key: "seven_day",
 		label: "weekly",
 		used: 300,
 		limit: 1000,
@@ -203,6 +197,35 @@ test("normalizes Anthropic OAuth utilization-only windows", () => {
 		percent: 88.9,
 		resetsAt: weeklyResetAt,
 	});
+});
+
+test("normalizers fail closed for unobserved window shapes", () => {
+	assert.equal(
+		normalizeOpenAICodexUsage(
+			{
+				rate_limit: {
+					primary_window: { used: 1, limit: 10 },
+					secondary_window: { used: 2, limit: 10 },
+				},
+			},
+			{ nowMs: NOW_MS },
+		),
+		undefined,
+	);
+	assert.equal(normalizeOpenAICodexUsage({ primaryWindow: { used: 1, limit: 10 } }, { nowMs: NOW_MS }), undefined);
+	assert.equal(
+		normalizeAnthropicUsage(
+			{
+				usage: {
+					five_hour: { used: 1, limit: 10 },
+					seven_day: { used: 2, limit: 10 },
+				},
+			},
+			{ nowMs: NOW_MS },
+		),
+		undefined,
+	);
+	assert.equal(normalizeAnthropicUsage({ fiveHour: { used: 1, limit: 10 }, six_day: { used: 2, limit: 10, duration: "6d" } }, { nowMs: NOW_MS }), undefined);
 });
 
 test("fetches Anthropic OAuth usage with the beta header and fails soft on auth/decode errors", async () => {
@@ -416,14 +439,13 @@ test("service preserves same-credential cached usage when key resolution is temp
 	assert.equal(service.getSnapshot("openai-codex"), undefined);
 });
 
-test("service preserves Anthropic cached usage across same stable-metadata credential reloads", async () => {
+test("service preserves Anthropic cached usage across same-token credential reloads", async () => {
 	const accessToken = randomUUID();
 	const refreshToken = randomUUID();
 	const expires = NOW_MS + 60_000;
-	const organizationId = "org_test";
 	let keyMode = "ok";
 	let fetchCalls = 0;
-	let credential = { type: "oauth", access: accessToken, refresh: refreshToken, expires, organizationId };
+	let credential = { type: "oauth", access: accessToken, refresh: refreshToken, expires };
 	const service = createTlhSubscriptionUsageService({
 		now: () => NOW_MS,
 		cacheTtlMs: 0,
@@ -454,19 +476,18 @@ test("service preserves Anthropic cached usage across same stable-metadata crede
 	assert.equal(service.getSnapshotForContext(ctx), first);
 
 	const cacheKeys = Array.from(service.snapshots.keys());
-	assert.equal(cacheKeys.length, 1);
-	assert.match(cacheKeys[0], /^anthropic\tcredential:/);
-	assert.match(cacheKeys[0], /organizationId/);
+	assert.deepEqual(cacheKeys, [`anthropic\tfingerprint:${tokenFingerprint(accessToken)}`]);
 	assert.doesNotMatch(cacheKeys[0], /object|expires|access|refresh|token/i);
+	assert.doesNotMatch(cacheKeys[0], new RegExp(accessToken));
 
-	credential = { type: "oauth", access: accessToken, refresh: refreshToken, expires, organizationId };
+	credential = { type: "oauth", access: accessToken, refresh: refreshToken, expires: NOW_MS + 120_000 };
 	keyMode = "undefined";
 	assert.equal(service.getSnapshotForContext(ctx), first);
 	assert.equal(await service.refresh(ctx, { force: true }), first);
 	assert.equal(fetchCalls, 1);
 });
 
-test("service does not reuse Anthropic cached usage across expiry-only credential reloads", async () => {
+test("service hides Anthropic cached usage across access-token changes", async () => {
 	const firstAccessToken = randomUUID();
 	const firstRefreshToken = randomUUID();
 	const secondAccessToken = randomUUID();
@@ -505,9 +526,9 @@ test("service does not reuse Anthropic cached usage across expiry-only credentia
 	assert.equal(service.getSnapshotForContext(ctx), first);
 
 	const cacheKeys = Array.from(service.snapshots.keys());
-	assert.equal(cacheKeys.length, 1);
-	assert.match(cacheKeys[0], /^anthropic\tcredential-object:/);
+	assert.deepEqual(cacheKeys, [`anthropic\tfingerprint:${tokenFingerprint(firstAccessToken)}`]);
 	assert.doesNotMatch(cacheKeys[0], /expires|access|refresh|token/i);
+	assert.doesNotMatch(cacheKeys[0], new RegExp(firstAccessToken));
 
 	credential = { type: "oauth", access: secondAccessToken, refresh: secondRefreshToken, expires };
 	keyMode = "undefined";
@@ -553,11 +574,12 @@ test("throttle survives credential object rotation when access token is unchange
 	assert.equal(service.getSnapshotForContext(ctx), first);
 	const firstCacheKey = service.activeCacheKeys.get("anthropic");
 
+	assert.equal(firstCacheKey, `anthropic\tfingerprint:${tokenFingerprint(accessToken)}`);
+
 	// Simulate Pi's AuthStorage.set() replacing the credential object on an
 	// OAuth refresh: new object identity (and a bumped expiry) but the same
-	// bearer access token. The cacheKey-based throttle resets because the
-	// WeakMap-derived synthetic id changes; only the access-token-hash
-	// throttle should keep the redundant fetch from going through.
+	// bearer access token. The fingerprint-derived cache key remains stable,
+	// so the normal cacheKey throttle keeps the redundant fetch from going through.
 	credential = { type: "oauth", access: accessToken, refresh: refreshToken, expires: NOW_MS + 120_000 };
 
 	const rotated = await service.refresh(ctx);
@@ -566,25 +588,23 @@ test("throttle survives credential object rotation when access token is unchange
 	assert.equal(service.getSnapshot("anthropic"), first);
 	assert.equal(service.getSnapshotForContext(ctx), first);
 	const rotatedCacheKey = service.activeCacheKeys.get("anthropic");
-	assert.notEqual(rotatedCacheKey, firstCacheKey);
+	assert.equal(rotatedCacheKey, firstCacheKey);
 	assert.deepEqual(Array.from(service.snapshots.keys()), [rotatedCacheKey]);
 
-	// And again, just to make sure the throttle remains armed for the
-	// rotated cacheKey rather than only firing on the first attempt.
+	// And again, just to make sure the throttle remains armed.
 	const rerotated = await service.refresh(ctx);
 	assert.equal(rerotated, first);
 	assert.equal(fetchCalls, 1);
 	assert.equal(service.getSnapshot("anthropic"), first);
 	assert.equal(service.getSnapshotForContext(ctx), first);
 
-	// Cache keys must remain keyed on the existing cacheKey scheme even
-	// though the secondary throttle now covers the rotation case.
 	for (const key of service.snapshots.keys()) {
 		assert.doesNotMatch(key, /access|refresh|token/i);
+		assert.doesNotMatch(key, new RegExp(accessToken));
 	}
 });
 
-test("concurrent same-token credential object rotations preserve the moved snapshot", async () => {
+test("concurrent same-token credential object rotations preserve the cached snapshot", async () => {
 	const accessToken = randomUUID();
 	const refreshToken = randomUUID();
 	let fetchCalls = 0;
@@ -632,6 +652,7 @@ test("concurrent same-token credential object rotations preserve the moved snaps
 	assert.equal(service.getSnapshot("anthropic"), first);
 	assert.equal(service.getSnapshotForContext(ctx), first);
 	const firstCacheKey = service.activeCacheKeys.get("anthropic");
+	assert.equal(firstCacheKey, `anthropic\tfingerprint:${tokenFingerprint(accessToken)}`);
 
 	credential = { type: "oauth", access: accessToken, refresh: refreshToken, expires: NOW_MS + 120_000 };
 	gateCredentialLookups = true;
@@ -652,10 +673,11 @@ test("concurrent same-token credential object rotations preserve the moved snaps
 	assert.equal(service.getSnapshot("anthropic"), first);
 	assert.equal(service.getSnapshotForContext(ctx), first);
 	const rotatedCacheKey = service.activeCacheKeys.get("anthropic");
-	assert.notEqual(rotatedCacheKey, firstCacheKey);
+	assert.equal(rotatedCacheKey, firstCacheKey);
 	assert.deepEqual(Array.from(service.snapshots.keys()), [rotatedCacheKey]);
 	for (const key of service.snapshots.keys()) {
 		assert.doesNotMatch(key, /access|refresh|token/i);
+		assert.doesNotMatch(key, new RegExp(accessToken));
 	}
 });
 

@@ -8,29 +8,9 @@ export const TLH_SUBSCRIPTION_USAGE_MIN_FETCH_INTERVAL_MS = 60_000;
 export const TLH_SUBSCRIPTION_USAGE_TIMEOUT_MS = 3_000;
 
 const SUPPORTED_PROVIDERS = new Set(["openai-codex", "anthropic"]);
-const OPENAI_ACCOUNT_ID_KEYS = ["accountId", "account_id", "chatgptAccountId", "chatgpt_account_id"];
-const NON_SECRET_CREDENTIAL_IDENTITY_KEYS = [
-	...OPENAI_ACCOUNT_ID_KEYS,
-	"organizationId",
-	"organization_id",
-	"workspaceId",
-	"workspace_id",
-	"tenantId",
-	"tenant_id",
-];
-const WINDOW_CONTAINERS = ["usage", "rate_limit", "rateLimit", "limits", "windows", "message_limits", "messageLimits"];
-const OPENAI_PRIMARY_WINDOW_KEYS = ["primary_window", "primaryWindow"];
-const OPENAI_SECONDARY_WINDOW_KEYS = ["secondary_window", "secondaryWindow"];
-const ANTHROPIC_SESSION_WINDOW_KEYS = ["five_hour", "fiveHour", "5h", "five_hours", "fiveHours"];
-const ANTHROPIC_WEEKLY_WINDOW_KEYS = ["seven_day", "sevenDay", "seven_days", "sevenDays", "7d", "weekly", "week", "one_week", "oneWeek"];
+const ACCOUNT_ID_KEYS = ["accountId", "account_id", "chatgptAccountId", "chatgpt_account_id"];
 const USAGE_PERCENT_KEYS = ["used_percent", "usedPercent", "utilization"];
 const WINDOW_DURATION_SECONDS_KEYS = ["limit_window_seconds", "limitWindowSeconds"];
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-const MIN_WEEKLY_CANDIDATE_MS = WEEK_MS / 2;
-const MAX_WEEKLY_CANDIDATE_MS = WEEK_MS * 2;
-
-const credentialObjectIds = new WeakMap();
-let nextCredentialObjectId = 1;
 
 function asObject(value) {
 	return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
@@ -82,50 +62,9 @@ function pickString(source, keys) {
 	return undefined;
 }
 
-function credentialIdentityMetadataValue(value) {
-	if (typeof value === "string" && value.trim()) {
-		return value.trim();
-	}
-	if (typeof value === "number" && Number.isFinite(value)) {
-		return value;
-	}
-	return undefined;
-}
-
-function nonSecretCredentialIdentityMetadata(credential) {
-	const stored = asObject(credential);
-	if (!stored) {
-		return undefined;
-	}
-	const entries = [];
-	for (const key of NON_SECRET_CREDENTIAL_IDENTITY_KEYS) {
-		const value = credentialIdentityMetadataValue(stored[key]);
-		if (value !== undefined) {
-			entries.push([key, value]);
-		}
-	}
-	return entries.length > 0 ? JSON.stringify(entries) : undefined;
-}
-
-function credentialObjectIdentity(credential) {
-	const stored = asObject(credential);
-	if (!stored) {
-		return undefined;
-	}
-	let identity = credentialObjectIds.get(stored);
-	if (identity === undefined) {
-		identity = nextCredentialObjectId;
-		nextCredentialObjectId += 1;
-		credentialObjectIds.set(stored, identity);
-	}
-	return String(identity);
-}
-
-// Stable, one-way fingerprint of a bearer access token. We use this as a
-// secondary throttle key so a fresh credential object (Pi's AuthStorage.set()
-// replaces the object on every OAuth refresh) cannot bypass the per-cacheKey
-// rate limit when the underlying bearer is unchanged. The hash is never
-// logged or returned to callers.
+// Stable, one-way fingerprint of a bearer access token. Used in cache keys
+// only when no account id is available; raw bearer material is never stored in
+// usage service state or returned in snapshots.
 function accessTokenFingerprint(accessToken) {
 	if (typeof accessToken !== "string" || !accessToken) {
 		return undefined;
@@ -273,125 +212,6 @@ function normalizeUsageWindow(source, key, label, nowMs) {
 	return Object.keys(normalized).length > 2 ? normalized : undefined;
 }
 
-function collectWindowContainers(data) {
-	const root = asObject(data);
-	if (!root) {
-		return [];
-	}
-	const containers = [root];
-	for (const key of WINDOW_CONTAINERS) {
-		const container = asObject(root[key]);
-		if (container) {
-			containers.push(container);
-		}
-	}
-	return containers;
-}
-
-function findWindow(data, keys) {
-	for (const container of collectWindowContainers(data)) {
-		for (const key of keys) {
-			const value = asObject(container[key]);
-			if (value) {
-				return { key, value };
-			}
-		}
-	}
-	return undefined;
-}
-
-function parseDurationMs(value) {
-	const numeric = finiteNumber(value);
-	if (numeric !== undefined) {
-		return numeric * 1000;
-	}
-	if (typeof value !== "string") {
-		return undefined;
-	}
-	const normalized = value.trim().toLowerCase().replaceAll("_", "-").replaceAll(" ", "-");
-	if (!normalized) {
-		return undefined;
-	}
-	if (["weekly", "week", "one-week", "seven-day", "seven-days", "7-day", "7-days", "7d", "p7d"].includes(normalized)) {
-		return WEEK_MS;
-	}
-	if (["five-hour", "five-hours", "5-hour", "5-hours", "5h"].includes(normalized)) {
-		return 5 * 60 * 60 * 1000;
-	}
-	const wordMatch = /^(one|two|three|four|five|six|seven|eight|nine|ten)-(hour|hours|day|days|week|weeks)$/.exec(normalized);
-	if (wordMatch) {
-		const wordAmounts = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
-		const amount = wordAmounts[wordMatch[1]];
-		const unit = wordMatch[2];
-		if (unit === "hour" || unit === "hours") return amount * 60 * 60 * 1000;
-		if (unit === "day" || unit === "days") return amount * 24 * 60 * 60 * 1000;
-		return amount * WEEK_MS;
-	}
-	const match = /^(\d+(?:\.\d+)?)(ms|s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks)$/.exec(
-		normalized,
-	);
-	if (!match) {
-		return undefined;
-	}
-	const amount = Number(match[1]);
-	const unit = match[2];
-	if (!Number.isFinite(amount)) {
-		return undefined;
-	}
-	if (unit === "ms") return amount;
-	if (["s", "sec", "secs", "second", "seconds"].includes(unit)) return amount * 1000;
-	if (["m", "min", "mins", "minute", "minutes"].includes(unit)) return amount * 60 * 1000;
-	if (["h", "hr", "hrs", "hour", "hours"].includes(unit)) return amount * 60 * 60 * 1000;
-	if (["d", "day", "days"].includes(unit)) return amount * 24 * 60 * 60 * 1000;
-	if (["w", "week", "weeks"].includes(unit)) return amount * WEEK_MS;
-	return undefined;
-}
-
-function numericDurationMs(value, unitMs) {
-	const numeric = finiteNumber(value);
-	if (numeric !== undefined) {
-		return numeric * unitMs;
-	}
-	return parseDurationMs(value);
-}
-
-function durationMsForWindow(key, value) {
-	const window = asObject(value);
-	return (
-		parseDurationMs(key) ??
-		parseDurationMs(window?.duration) ??
-		numericDurationMs(window?.duration_ms, 1) ??
-		numericDurationMs(window?.durationMs, 1) ??
-		numericDurationMs(window?.duration_seconds, 1000) ??
-		numericDurationMs(window?.durationSeconds, 1000) ??
-		parseDurationMs(window?.window) ??
-		parseDurationMs(window?.window_name) ??
-		parseDurationMs(window?.windowName) ??
-		parseDurationMs(window?.period) ??
-		parseDurationMs(window?.interval)
-	);
-}
-
-function findClosestWeeklyWindow(data, sessionKey) {
-	let best;
-	for (const container of collectWindowContainers(data)) {
-		for (const [key, value] of Object.entries(container)) {
-			if (key === sessionKey || !asObject(value)) {
-				continue;
-			}
-			const durationMs = durationMsForWindow(key, value);
-			if (durationMs === undefined || durationMs < MIN_WEEKLY_CANDIDATE_MS || durationMs > MAX_WEEKLY_CANDIDATE_MS) {
-				continue;
-			}
-			const distance = Math.abs(durationMs - WEEK_MS);
-			if (!best || distance < best.distance) {
-				best = { key, value, distance };
-			}
-		}
-	}
-	return best;
-}
-
 function createSnapshot(provider, session, weekly, fetchedAt) {
 	if (!session) {
 		return undefined;
@@ -409,19 +229,17 @@ export function isSupportedTlhSubscriptionUsageProvider(provider) {
 
 export function normalizeOpenAICodexUsage(data, options = {}) {
 	const nowMs = options.nowMs ?? Date.now();
-	const primary = findWindow(data, OPENAI_PRIMARY_WINDOW_KEYS);
-	const secondary = findWindow(data, OPENAI_SECONDARY_WINDOW_KEYS);
-	const session = normalizeUsageWindow(primary?.value, primary?.key ?? "primary_window", "session", nowMs);
-	const weekly = normalizeUsageWindow(secondary?.value, secondary?.key ?? "secondary_window", "weekly", nowMs);
+	const root = asObject(data);
+	const session = normalizeUsageWindow(root?.primary_window, "primary_window", "session", nowMs);
+	const weekly = normalizeUsageWindow(root?.secondary_window, "secondary_window", "weekly", nowMs);
 	return createSnapshot("openai-codex", session, weekly, nowMs);
 }
 
 export function normalizeAnthropicUsage(data, options = {}) {
 	const nowMs = options.nowMs ?? Date.now();
-	const fiveHour = findWindow(data, ANTHROPIC_SESSION_WINDOW_KEYS);
-	const sevenDay = findWindow(data, ANTHROPIC_WEEKLY_WINDOW_KEYS) ?? findClosestWeeklyWindow(data, fiveHour?.key);
-	const session = normalizeUsageWindow(fiveHour?.value, fiveHour?.key ?? "five_hour", "session", nowMs);
-	const weekly = normalizeUsageWindow(sevenDay?.value, sevenDay?.key ?? "seven_day", "weekly", nowMs);
+	const root = asObject(data);
+	const session = normalizeUsageWindow(root?.five_hour, "five_hour", "session", nowMs);
+	const weekly = normalizeUsageWindow(root?.seven_day, "seven_day", "weekly", nowMs);
 	return createSnapshot("anthropic", session, weekly, nowMs);
 }
 
@@ -461,37 +279,20 @@ function oauthAccessTokenFromCredential(credential) {
 	return access || undefined;
 }
 
-function openAiAccountIdFromCredential(credential) {
+function accountIdFromCredential(credential) {
 	const stored = asObject(credential);
 	if (!stored) {
 		return undefined;
 	}
-	return pickString(stored, OPENAI_ACCOUNT_ID_KEYS);
+	return pickString(stored, ACCOUNT_ID_KEYS);
 }
 
-function oauthCredentialIdentity(provider, credential) {
-	const accountId = provider === "openai-codex" ? openAiAccountIdFromCredential(credential) : undefined;
-	if (accountId) {
-		return `account:${accountId}`;
-	}
-	const metadata = nonSecretCredentialIdentityMetadata(credential);
-	if (metadata) {
-		return `credential:${metadata}`;
-	}
-	const objectIdentity = credentialObjectIdentity(credential);
-	return objectIdentity ? `credential-object:${objectIdentity}` : undefined;
-}
-
-function subscriptionUsageCacheKey(provider, credentialIdentity) {
-	return `${provider}\t${credentialIdentity}`;
+function subscriptionUsageCacheKey(provider, identity) {
+	return `${provider}\t${identity}`;
 }
 
 function cacheKeyMatchesProvider(cacheKey, provider) {
 	return typeof cacheKey === "string" && cacheKey.startsWith(`${provider}\t`);
-}
-
-function isCredentialObjectCacheKey(provider, cacheKey) {
-	return typeof cacheKey === "string" && cacheKey.startsWith(`${provider}\tcredential-object:`);
 }
 
 function hasRuntimeCredentialOverride(modelRegistry, provider) {
@@ -590,14 +391,23 @@ function resolveTlhSubscriptionUsageProvider(ctx) {
 }
 
 function credentialCacheTarget(provider, credential) {
-	const credentialIdentity = oauthCredentialIdentity(provider, credential);
-	if (!credentialIdentity) {
+	const accountId = accountIdFromCredential(credential);
+	if (accountId) {
+		return {
+			provider,
+			accountId: provider === "openai-codex" ? accountId : undefined,
+			cacheKey: subscriptionUsageCacheKey(provider, `account:${accountId}`),
+		};
+	}
+
+	const fingerprint = accessTokenFingerprint(oauthAccessTokenFromCredential(credential));
+	if (!fingerprint) {
 		return undefined;
 	}
 	return {
 		provider,
-		accountId: provider === "openai-codex" ? openAiAccountIdFromCredential(credential) : undefined,
-		cacheKey: subscriptionUsageCacheKey(provider, credentialIdentity),
+		accountId: undefined,
+		cacheKey: subscriptionUsageCacheKey(provider, `fingerprint:${fingerprint}`),
 	};
 }
 
@@ -663,18 +473,7 @@ export class TlhSubscriptionUsageService {
 		this.minFetchIntervalMs = options.minFetchIntervalMs ?? TLH_SUBSCRIPTION_USAGE_MIN_FETCH_INTERVAL_MS;
 		this.timeoutMs = options.timeoutMs ?? TLH_SUBSCRIPTION_USAGE_TIMEOUT_MS;
 		this.snapshots = new Map();
-		// Cache-key -> SHA-256 access token fingerprint for the stored snapshot.
-		// This lets object-identity rotations keep display state only when the
-		// bearer identity is unchanged.
-		this.snapshotTokenFingerprints = new Map();
 		this.lastAttempts = new Map();
-		// Secondary throttle keyed on a SHA-256 hash of the bearer access
-		// token. Pi's AuthStorage.set() swaps the credential object on every
-		// OAuth refresh, which produces a fresh WeakMap-based cacheKey for
-		// Anthropic credentials and would otherwise reset lastAttempts on
-		// every rotation. Entries here are intentionally not cleared by
-		// clearProvider() so the throttle survives the credential swap.
-		this.lastAccessTokenAttempts = new Map();
 		this.inFlight = new Map();
 		this.activeCacheKeys = new Map();
 		this.ineligibleCacheKeys = new Map();
@@ -706,29 +505,6 @@ export class TlhSubscriptionUsageService {
 		return this.snapshotForCacheKey(target.provider, target.cacheKey);
 	}
 
-	rotatedObjectSnapshot(provider, previousCacheKey, cacheKey, tokenFingerprint) {
-		if (
-			!previousCacheKey ||
-			previousCacheKey === cacheKey ||
-			tokenFingerprint === undefined ||
-			!isCredentialObjectCacheKey(provider, previousCacheKey) ||
-			!isCredentialObjectCacheKey(provider, cacheKey) ||
-			this.snapshotTokenFingerprints.get(previousCacheKey) !== tokenFingerprint
-		) {
-			return undefined;
-		}
-		return this.snapshots.get(previousCacheKey);
-	}
-
-	moveSnapshot(previousCacheKey, cacheKey, snapshot, tokenFingerprint) {
-		this.snapshots.set(cacheKey, snapshot);
-		this.snapshotTokenFingerprints.set(cacheKey, tokenFingerprint);
-		this.snapshots.delete(previousCacheKey);
-		this.snapshotTokenFingerprints.delete(previousCacheKey);
-		this.lastAttempts.delete(previousCacheKey);
-		this.inFlight.delete(previousCacheKey);
-	}
-
 	isEligible(target) {
 		if (typeof target === "string") {
 			return isSupportedTlhSubscriptionUsageProvider(target) && this.activeCacheKeys.has(target);
@@ -745,11 +521,6 @@ export class TlhSubscriptionUsageService {
 		for (const key of this.snapshots.keys()) {
 			if (cacheKeyMatchesProvider(key, provider)) {
 				this.snapshots.delete(key);
-			}
-		}
-		for (const key of this.snapshotTokenFingerprints.keys()) {
-			if (cacheKeyMatchesProvider(key, provider)) {
-				this.snapshotTokenFingerprints.delete(key);
 			}
 		}
 		for (const key of this.lastAttempts.keys()) {
@@ -774,9 +545,7 @@ export class TlhSubscriptionUsageService {
 
 	clear() {
 		this.snapshots.clear();
-		this.snapshotTokenFingerprints.clear();
 		this.lastAttempts.clear();
-		this.lastAccessTokenAttempts.clear();
 		this.inFlight.clear();
 		this.activeCacheKeys.clear();
 		this.ineligibleCacheKeys.clear();
@@ -826,32 +595,17 @@ export class TlhSubscriptionUsageService {
 
 		const target = targetResult.target;
 		const cacheKey = target.cacheKey;
-		// Both throttle windows must be stale before we issue another network
-		// call. The cacheKey throttle covers steady-state identity, while the
-		// access-token-hash throttle survives credential object rotation when
-		// the underlying bearer is unchanged (Pi mints a new credential
-		// object on every OAuth refresh).
-		const tokenFingerprint = accessTokenFingerprint(target.accessToken);
 		const activeCacheKey = this.activeCacheKeys.get(provider);
 		if (activeCacheKey && activeCacheKey !== cacheKey) {
-			const rotatedSnapshot = this.rotatedObjectSnapshot(provider, activeCacheKey, cacheKey, tokenFingerprint);
-			if (rotatedSnapshot) {
-				this.moveSnapshot(activeCacheKey, cacheKey, rotatedSnapshot, tokenFingerprint);
-			} else {
-				this.clearProvider(provider);
-			}
+			this.clearProvider(provider);
 		}
 		this.activeCacheKeys.set(provider, cacheKey);
 		const cached = this.snapshots.get(cacheKey);
 		const lastAttempt = this.lastAttempts.get(cacheKey);
-		const lastTokenAttempt = tokenFingerprint !== undefined ? this.lastAccessTokenAttempts.get(tokenFingerprint) : undefined;
 		if (!options.force && cached && nowMs - cached.fetchedAt < this.cacheTtlMs) {
 			return cached;
 		}
 		if (!options.force && lastAttempt !== undefined && nowMs - lastAttempt < this.minFetchIntervalMs) {
-			return cached;
-		}
-		if (!options.force && lastTokenAttempt !== undefined && nowMs - lastTokenAttempt < this.minFetchIntervalMs) {
 			return cached;
 		}
 
@@ -861,9 +615,6 @@ export class TlhSubscriptionUsageService {
 		}
 
 		this.lastAttempts.set(cacheKey, nowMs);
-		if (tokenFingerprint !== undefined) {
-			this.lastAccessTokenAttempts.set(tokenFingerprint, nowMs);
-		}
 		const pending = (async () => {
 			const snapshot = await fetchTlhSubscriptionUsage(target, {
 				fetch: this.fetch,
@@ -872,9 +623,6 @@ export class TlhSubscriptionUsageService {
 			});
 			if (snapshot?.provider === provider && this.activeCacheKeys.get(provider) === cacheKey) {
 				this.snapshots.set(cacheKey, snapshot);
-				if (tokenFingerprint !== undefined) {
-					this.snapshotTokenFingerprints.set(cacheKey, tokenFingerprint);
-				}
 				return snapshot;
 			}
 			return this.snapshotForCacheKey(provider, cacheKey);
