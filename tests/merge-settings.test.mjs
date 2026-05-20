@@ -75,6 +75,45 @@ test("merge keeps exact append semantics for unrelated arrays", () => {
 	]);
 });
 
+test("merge scrubs tlh.gnosis from existing settings while preserving other fields", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [harnessPackage],
+			tlh: {
+				gnosis: { enabled: true, installPath: "/some/path" },
+				disabledDefaultExtensions: [],
+			},
+			otherField: "preserved",
+		},
+	);
+
+	runMerge(fixture);
+
+	const result = readJson(fixture.settings);
+	assert.equal(Object.hasOwn(result.tlh ?? {}, "gnosis"), false, "tlh.gnosis should be removed");
+	assert.deepEqual(result.tlh.disabledDefaultExtensions, [], "other tlh fields should be preserved");
+	assert.equal(result.otherField, "preserved", "unrelated fields should be preserved");
+});
+
+test("merge leaves settings unchanged when tlh.gnosis is absent", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [harnessPackage],
+			tlh: { disabledDefaultExtensions: ["some-ext"] },
+			otherField: "untouched",
+		},
+	);
+
+	runMerge(fixture);
+
+	const result = readJson(fixture.settings);
+	assert.equal(Object.hasOwn(result.tlh ?? {}, "gnosis"), false, "gnosis key should not appear");
+	assert.deepEqual(result.tlh.disabledDefaultExtensions, ["some-ext"], "disabledDefaultExtensions unchanged");
+	assert.equal(result.otherField, "untouched", "unrelated fields unchanged");
+});
+
 test("critical source updates dedupe stale same-identity filtered packages", () => {
 	const criticalSource = "git:github.com/example/pi-critical@v2";
 	const fixture = tempFixture(

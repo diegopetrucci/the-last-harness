@@ -2,6 +2,8 @@
 name: developer
 description: Implements exactly one approved architect task at a time.
 tools: read, write, edit, grep, find, ls, bash, contact_supervisor
+model: anthropic/claude-sonnet-4-6
+thinking: high
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

@@ -10,15 +10,7 @@ Run the one-liner:
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
 ```
 
-On supported platforms, it installs and enables [gnosis](https://github.com/skorokithakis/gnosis) for project memory by default. It also enables `tk` ticket integration by default; if no valid configured/existing `tk` is found, TLH installs a managed copy at `~/.the-last-harness/agent/bin/tk`.
-
-To opt out during a pipe-to-bash install, pass flags after `bash -s --`:
-
-```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s -- --without-gnosis --without-tickets
-```
-
-Once the installation is finished, start `tlh` by running… you guessed it, `tlh`. Inside an interactive session, `/gnosis` toggles Gnosis prompt integration, and `tlh tickets status|enable|disable` manages ticket integration.
+On supported platforms (linux/darwin × x64/arm64), it installs [Gnosis](https://github.com/skorokithakis/gnosis) automatically. Installs on unsupported platforms hard-fail. TLH also requires `tk` ticket integration; if no valid configured/existing `tk` is found, TLH installs a managed copy at `~/.the-last-harness/agent/bin/tk`. If TLH cannot validate or install `tk`, install fails with an actionable error instead of creating an incomplete workflow. Once the installation is finished, start `tlh` by running… you guessed it, `tlh`.
 
 Note: if you already have `pi` installed, `tlh` does not replace it — you can keep both, as it uses its own isolated config in `~/.the-last-harness/` and never mutates normal `~/.pi/agent` settings.
 
@@ -45,12 +37,6 @@ curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main
 --no-pi-install  Fail instead of installing Pi when the `pi` command is missing
 --no-settings     Install the package but skip isolated settings/keybinding merge
 --no-wrapper      Skip creating the tlh wrapper command
---with-gnosis     Force install/re-enable Gnosis (`gn`) integration
---without-gnosis  Opt out of Gnosis integration and keep it disabled
---no-gnosis       Alias for --without-gnosis
---with-tickets    Force install/re-enable tk ticket integration
---without-tickets Opt out of tk ticket integration and keep it disabled
---no-tickets      Alias for --without-tickets
 --agent-dir DIR   Isolated Pi agent dir, default ~/.the-last-harness/agent
 --bin-dir DIR     Wrapper install dir, default ~/.local/bin
 --wrapper-name N  Wrapper command name, default tlh
@@ -72,9 +58,7 @@ You can just run `tlh update`.
 
 This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. If you are updating from an older install without `tlh update`, rerun the latest-release installer once.
 
-Normal updates preserve your Gnosis setting. If you disabled it with `tlh gnosis disable`, toggled it off with `/gnosis`, or installed with `--without-gnosis`, it stays disabled across `tlh update`; use `tlh update --with-gnosis` to install/re-enable it automatically, or install `gn` manually and run `tlh gnosis enable` or `/gnosis`.
-
-Normal updates also preserve your ticket setting. If you disabled it with `tlh tickets disable` or installed/updated with `--without-tickets` / `--no-tickets`, it stays disabled across `tlh update`; use `tlh update --with-tickets` to install/re-enable it automatically, or run `tlh tickets enable` after providing a valid `tk` command. While disabled, TLH primary agents do not use `tk` and fall back to conversation-based plans or non-ticket handoff material; existing repo-local `.tickets` data and managed `tk` binaries are left in place.
+Normal updates keep Gnosis and ticket integration enabled. They install or refresh the managed isolated `gn` binary when needed, re-enable legacy `settings.tlh.tickets.enabled=false` values, reuse a valid configured/existing `tk` when possible, and install or refresh the managed isolated copy at `~/.the-last-harness/agent/bin/tk` when needed. If no valid `tk` is available and the managed install fails, `tlh update` fails with an actionable error; provide a valid command with `tlh tickets enable --install-path /path/to/tk` or rerun the update once the managed download can succeed. Existing repo-local `.gnosis` and `.tickets` data is left in place.
 
 The updating process is intentionally conservative, and won't replace your custom extensions, themes, and so on. If you spot anything that was overridden, [please open an issue](https://github.com/diegopetrucci/the-last-harness/issues).
 
@@ -97,7 +81,7 @@ rm -f ~/.local/bin/tlh
 rm -rf ~/.the-last-harness
 ```
 
-This removes the managed `tk` copy under the TLH profile if one was installed. It does not uninstall upstream Pi or any separate global/Homebrew `tk`, because you may use them outside TLH. To roll back ticket integration without uninstalling TLH, run `tlh tickets disable` or `tlh update --without-tickets`; that stops TLH primary agents from using `tk` without deleting existing `.tickets` data or managed binaries.
+This removes the managed `tk` copy under the TLH profile if one was installed. It does not uninstall upstream Pi or any separate global/Homebrew `tk`, because you may use them outside TLH. Repo-local `.gnosis` and `.tickets` data is not stored under `~/.the-last-harness`; remove those directories from individual repositories if you want to delete integration data.
 
 To remove upstream Pi entirely, only if you installed it solely for The Last Harness:
 
@@ -107,4 +91,4 @@ npm uninstall -g @earendil-works/pi-coding-agent
 
 ## Security note
 
-The one-line installer and `tlh update` run shell commands on your machine, may install global npm packages for Pi and bundled default extensions, may download optional Gnosis and managed `tk` commands into the isolated TLH profile if enabled, creates an isolated Pi profile, and writes a wrapper command. Managed `tk` is copied from the pinned `wedow/ticket` source tarball (`v0.3.2`) only after SHA-256 verification; TLH does not install `tk` globally or through Homebrew. Review `install.sh` and the stage-1 helper it fetches (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.
+The one-line installer and `tlh update` run shell commands on your machine, may install global npm packages for Pi and bundled default extensions, install managed Gnosis and `tk` binaries into the isolated TLH profile when needed, create an isolated Pi profile, and write a wrapper command. Managed `tk` is copied from the pinned `wedow/ticket` source tarball (`v0.3.2`) only after SHA-256 verification; TLH does not install `tk` globally or through Homebrew. Review `install.sh` and the stage-1 helper it fetches (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.

@@ -104,12 +104,6 @@ Options:
   --no-pi-install            Fail instead of installing Pi when the \`pi\` command is missing
   --no-settings              Install the package but skip isolated settings/keybinding merge
   --no-wrapper               Skip creating the tlh wrapper command
-  --with-gnosis              Force install/re-enable Gnosis (\`gn\`) integration
-  --without-gnosis           Opt out of Gnosis integration and keep it disabled
-  --no-gnosis                Alias for --without-gnosis
-  --with-tickets             Force install/re-enable tk ticket integration
-  --without-tickets          Opt out of tk ticket integration and keep it disabled
-  --no-tickets               Alias for --without-tickets
   --agent-dir DIR            Isolated Pi agent dir (default: ~/.the-last-harness/agent)
   --bin-dir DIR              Wrapper install dir (default: ~/.local/bin)
   --wrapper-name N           Wrapper command name (default: tlh)
@@ -172,8 +166,6 @@ function parseArgs(argv, env = process.env) {
 		noWrapper: false,
 		quiet: false,
 		verbose: false,
-		gnosisMode: "auto",
-		ticketsMode: "auto",
 		gnosisRepo: env.TLH_GNOSIS_REPO || DEFAULT_GNOSIS_REPO,
 		gnosisVersion: env.TLH_GNOSIS_VERSION || DEFAULT_GNOSIS_VERSION,
 		packageSourceInput: env.TLH_PACKAGE_SOURCE || "",
@@ -210,22 +202,6 @@ function parseArgs(argv, env = process.env) {
 		}
 		if (arg === "--no-wrapper") {
 			args.noWrapper = true;
-			continue;
-		}
-		if (arg === "--with-gnosis") {
-			args.gnosisMode = "with";
-			continue;
-		}
-		if (arg === "--without-gnosis" || arg === "--no-gnosis") {
-			args.gnosisMode = "without";
-			continue;
-		}
-		if (arg === "--with-tickets") {
-			args.ticketsMode = "with";
-			continue;
-		}
-		if (arg === "--without-tickets" || arg === "--no-tickets") {
-			args.ticketsMode = "without";
 			continue;
 		}
 		if (arg === "--quiet") {
@@ -918,23 +894,21 @@ function installDefaultExtensions(config) {
 	if (failures === 0) verboseLog(config, "Bundled default extensions installed.");
 }
 
+function gnosisInstallSkippedByEnv(config) {
+	const value = config.env?.TLH_SKIP_GNOSIS_INSTALL;
+	return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
+}
+
 function configureGnosis(config) {
-	if (config.noSettings) {
-		log(config, "Skipping Gnosis integration (--no-settings).");
+	if (gnosisInstallSkippedByEnv(config)) {
+		log(config, "Skipping Gnosis integration (TLH_SKIP_GNOSIS_INSTALL is set).");
 		return;
 	}
-	if (!config.supportFilePaths.TLH_GNOSIS_SCRIPT) {
-		if (config.gnosisMode !== "auto") {
-			warn(`Gnosis integration option was provided, but support files are unavailable for ref ${config.ref}; skipping`);
-		} else {
-			log(config, "Skipping default Gnosis integration; support files are unavailable.");
-		}
-		return;
+	if (!config.supportFilePaths.TLH_GNOSIS_SCRIPT || !existsSync(config.supportFilePaths.TLH_GNOSIS_SCRIPT)) {
+		throw new Error(`required Gnosis support script not found for ref ${config.ref}: scripts/tlh-gnosis.mjs`);
 	}
 
 	const args = [
-		"--settings",
-		config.settingsPath,
 		"--agent-dir",
 		config.agentDir,
 		"--target",
@@ -943,31 +917,27 @@ function configureGnosis(config) {
 		config.gnosisRepo,
 		"--gnosis-version",
 		config.gnosisVersion,
-		"--mode",
-		config.gnosisMode,
-		"--wrapper-name",
-		config.wrapperName,
 		"configure-install",
 	];
 	if (config.dryRun) args.push("--dry-run", "--detail");
 	else if (config.verbose) args.push("--detail");
 	if (config.quiet) args.push("--quiet");
 
-	config.gnosisSummary = runNodeScript(config, config.supportFilePaths.TLH_GNOSIS_SCRIPT, args, { captureStdout: true }).trimEnd();
+	try {
+		config.gnosisSummary = runNodeScript(config, config.supportFilePaths.TLH_GNOSIS_SCRIPT, args, { captureStdout: true }).trimEnd();
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`failed to configure Gnosis integration: ${message}`);
+	}
 }
 
 function configureTickets(config) {
-	if (config.noSettings) {
-		log(config, "Skipping tk ticket integration (--no-settings).");
-		return;
-	}
 	if (!config.supportFilePaths.TLH_TICKETS_SCRIPT) {
-		if (config.ticketsMode !== "auto") {
-			warn(`tk ticket integration option was provided, but support files are unavailable for ref ${config.ref}; skipping`);
-		} else {
-			log(config, "Skipping default tk ticket integration; support files are unavailable.");
+		if (config.dryRun && config.supportFilesDryRunSkipped) {
+			log(config, "Would configure required tk ticket integration after fetching support files.");
+			return;
 		}
-		return;
+		throw new Error(`required tk ticket support script not found for ref ${config.ref}; re-run the installer from a release that includes scripts/tlh-tickets.mjs`);
 	}
 
 	const args = [
@@ -977,8 +947,6 @@ function configureTickets(config) {
 		config.agentDir,
 		"--target",
 		join(config.agentDir, "bin", "tk"),
-		"--mode",
-		config.ticketsMode,
 		"--wrapper-name",
 		config.wrapperName,
 		"configure-install",

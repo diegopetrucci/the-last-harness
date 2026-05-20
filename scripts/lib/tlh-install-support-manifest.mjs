@@ -74,14 +74,14 @@ const BASE_SUPPORT_FILES = Object.freeze([
 	},
 	{
 		variable: "TLH_GNOSIS_SCRIPT",
-		requirement: OPTIONAL,
+		requirement: REQUIRED,
 		relativePath: "scripts/tlh-gnosis.mjs",
 		tempPath: "tlh-gnosis.mjs",
 		installName: "tlh-gnosis.mjs",
 	},
 	{
 		variable: "TLH_TICKETS_SCRIPT",
-		requirement: OPTIONAL,
+		requirement: REQUIRED,
 		relativePath: "scripts/tlh-tickets.mjs",
 		tempPath: "tlh-tickets.mjs",
 		installName: "tlh-tickets.mjs",

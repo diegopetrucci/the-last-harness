@@ -181,6 +181,34 @@ test("stage-1 infers update track unless env or CLI overrides", (t) => {
 	assert.equal(configFor(["--track", "ref"], { TLH_REF: "v1.2.3", TLH_UPDATE_TRACK: "latest-release" }).updateTrack, "ref");
 });
 
+test("stage-1 --no-settings does not short-circuit Gnosis configure", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	mkdirSync(homeDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	const result = spawnSync(process.execPath, [
+		join(repoRoot, "scripts/tlh-install.mjs"),
+		"--dry-run",
+		"--no-settings",
+		"--agent-dir", agentDir,
+		"--bin-dir", binDir,
+	], {
+		cwd: repoRoot,
+		env: scrubInstallerEnv({ HOME: homeDir, TLH_SKIP_GNOSIS_INSTALL: "1" }),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	const output = `${result.stdout}\n${result.stderr}`;
+
+	assert.equal(result.status, 0, output);
+	assert.match(output, /Skipping settings\/keybinding merge \(--no-settings\)\./);
+	assert.match(output, /Skipping Gnosis integration \(TLH_SKIP_GNOSIS_INSTALL is set\)\./);
+	assert.doesNotMatch(output, /Skipping Gnosis integration \(--no-settings\)\./);
+});
+
 test("install query normalize-path requires explicit path", () => {
 	const result = runQuery(["normalize-path"], scrubInstallerEnv({}, {
 		...process.env,

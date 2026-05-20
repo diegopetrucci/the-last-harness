@@ -18,7 +18,7 @@ UPDATE_TRACK_INPUT="${TLH_UPDATE_TRACK:-}"
 RAW_BASE_INPUT="${TLH_RAW_BASE:-}"
 TMP_DIR=""
 ORIGINAL_ARGS=("$@")
-TLH_SUBAGENT_PROMPTS=(developer.md code-reviewer.md repo-scout.md diff-summarizer.md bug-hunter.md bug-catcher.md librarian.md oracle.md)
+TLH_SUBAGENT_PROMPTS=(developer.md code-reviewer.md repo-scout.md diff-summarizer.md librarian.md oracle.md)
 
 usage() {
   cat <<'USAGE'
@@ -33,12 +33,6 @@ Options:
   --no-pi-install  Fail instead of installing Pi when the `pi` command is missing
   --no-settings     Install the package but skip isolated settings/keybinding merge
   --no-wrapper      Skip creating the tlh wrapper command
-  --with-gnosis     Force install/re-enable Gnosis (`gn`) integration
-  --without-gnosis  Opt out of Gnosis integration and keep it disabled
-  --no-gnosis       Alias for --without-gnosis
-  --with-tickets    Force install/re-enable tk ticket integration
-  --without-tickets Opt out of tk ticket integration and keep it disabled
-  --no-tickets      Alias for --without-tickets
   --agent-dir DIR   Isolated Pi agent dir (default: ~/.the-last-harness/agent)
   --bin-dir DIR     Wrapper install dir (default: ~/.local/bin)
   --wrapper-name N  Wrapper command name (default: tlh)
@@ -278,7 +272,7 @@ while [[ $# -gt 0 ]]; do
       DRY_RUN=true
       shift
       ;;
-    --force|--no-pi-install|--with-gnosis|--without-gnosis|--no-gnosis|--with-tickets|--without-tickets|--no-tickets)
+    --force|--no-pi-install)
       shift
       ;;
     --no-wrapper)
@@ -368,8 +362,8 @@ required|scripts/lib/tlh-install-support-files.mjs
 required|scripts/tlh-install-query.mjs
 required|scripts/merge-settings.mjs
 required|scripts/tlh-defaults.mjs
-optional|scripts/tlh-gnosis.mjs
-optional|scripts/tlh-tickets.mjs
+required|scripts/tlh-gnosis.mjs
+required|scripts/tlh-tickets.mjs
 optional|scripts/tlh-update.mjs
 optional|scripts/tlh-wrapper.mjs
 optional|scripts/tlh-install-state.mjs
@@ -483,12 +477,6 @@ require_supported_node_stage0() {
 warn_missing_optional_support_file() {
   local relative_path="$1"
   case "${relative_path}" in
-    scripts/tlh-gnosis.mjs)
-      warn "Gnosis support script not found for ref ${REF}; continuing without tlh gnosis helper"
-      ;;
-    scripts/tlh-tickets.mjs)
-      warn "tlh tickets support script not found for ref ${REF}; continuing without tlh tickets helper"
-      ;;
     scripts/tlh-update.mjs)
       warn "tlh update support script not found for ref ${REF}; the wrapper update helper will be unavailable"
       ;;

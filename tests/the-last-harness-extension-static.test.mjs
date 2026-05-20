@@ -154,7 +154,8 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
 	assert.match(extensionSource, /from "\.\/the-last-harness\/autocomplete\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/effort\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/footer\.js"/);
-	assert.match(extensionSource, /from "\.\/the-last-harness\/gnosis\.js"/);
+	assert.doesNotMatch(extensionSource, /from "\.\/the-last-harness\/gnosis\.js"/);
+	assert.doesNotMatch(extensionSource, /registerGnosisCommand/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/header\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/primary-agent-runtime\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/resources\.js"/);
@@ -205,6 +206,6 @@ test("extension wires multi-primary commands and active-primary safety", () => {
 	assert.match(promptsSource, /function loadPrimaryAgents\(\): Map<TlhPrimaryAgentSelection, AgentPrompt>/);
 	assert.match(agentCommand, /default product/);
 	assert.match(agentCommand, /writeTlhPrimaryAgentDefault\(ctx\.cwd, defaultSelection\)/);
-	assert.match(shortcut, /architect\/product\/disabled/);
+	assert.match(shortcut, /architect\/product\/bug-hunter\/disabled/);
 	assert.match(toolCall, /!isEnabledPrimaryAgentSelection\(currentPrimaryAgentSelection\(\)\)/);
 });
