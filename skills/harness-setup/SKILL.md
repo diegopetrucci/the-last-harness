@@ -35,14 +35,10 @@ Use this workflow when changing this repository's Pi package, one-line installer
 Before release, run:
 
 ```bash
-bash scripts/check-installer-smoke.sh
-npm test
-npm run lint
-node scripts/merge-settings.mjs --dry-run
-npm pack --dry-run
+npm run validate
 ```
 
-The smoke script includes syntax checks for stage-0, stage-1, helper CLIs, and `scripts/lib/`, plus a manifest check that keeps the bootstrapper aligned with the stage-1 support manifest.
+The aggregate validation script runs installer smoke checks, `npm test`, `npm run lint`, the settings merge dry-run, and `npm pack --dry-run`. The smoke script includes syntax checks for stage-0, stage-1, helper CLIs, and `scripts/lib/`, plus a manifest check that keeps the bootstrapper aligned with the stage-1 support manifest.
 
 For install behavior, test with temporary isolated paths:
 

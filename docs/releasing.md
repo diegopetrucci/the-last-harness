@@ -21,16 +21,12 @@ npm version "$version" --no-git-tag-version
 git diff -- package.json
 ```
 
-Update `CHANGELOG.md` with a `## [$version] - YYYY-MM-DD` section, then run:
+Update `CHANGELOG.md` with a `## [$version] - YYYY-MM-DD` section, then run the aggregate validation script and release-notes check:
 
 ```sh
 npm install --no-package-lock --legacy-peer-deps
-bash scripts/check-installer-smoke.sh
-npm test
-npm run lint
-node scripts/merge-settings.mjs --dry-run
+npm run validate
 node scripts/release-notes.mjs --tag "v$version" --output /tmp/tlh-release-notes.md
-npm pack --dry-run
 ```
 
 Commit the release prep:

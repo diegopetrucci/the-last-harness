@@ -4,14 +4,10 @@ Run these commands from the repository root with Node.js >=22.19.0. Prefer tempo
 
 ## Run validation
 
-For installer changes, run the smoke checks and package checks that cover the stage-0 Bash bootstrapper, the stage-1 Node helper, and packaged support files:
+Run the aggregate validation script, which covers the installer smoke checks, test suite, lint, settings merge dry-run, and package dry-run:
 
 ```sh
-bash scripts/check-installer-smoke.sh
-npm test
-npm run lint
-node scripts/merge-settings.mjs --dry-run
-npm pack --dry-run
+npm run validate
 ```
 
 ## Test the extension directly

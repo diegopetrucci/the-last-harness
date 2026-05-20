@@ -46,10 +46,7 @@ jobs:
         run: npm install --no-package-lock --legacy-peer-deps
 
       - name: Run release checks
-        run: |
-          bash scripts/check-installer-smoke.sh
-          npm test
-          npm pack --dry-run
+        run: npm run validate
 
       - name: Build package tarball
         run: |

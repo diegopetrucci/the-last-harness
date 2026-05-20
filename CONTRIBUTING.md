@@ -27,11 +27,7 @@ Prefer temporary directories for installer and wrapper checks so local testing d
 Main repository validation:
 
 ```sh
-bash scripts/check-installer-smoke.sh
-npm test
-npm run lint
-node scripts/merge-settings.mjs --dry-run
-npm pack --dry-run
+npm run validate
 ```
 
 For installer-specific checks, use temporary paths, for example:
