@@ -2,6 +2,8 @@
 name: librarian
 description: Researches external GitHub repositories and project history using the librarian extension tool.
 tools: librarian, read, grep, find, ls, contact_supervisor
+model: anthropic/claude-haiku-4-5
+thinking: high
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

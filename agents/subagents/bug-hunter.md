@@ -2,6 +2,8 @@
 name: bug-hunter
 description: Investigates reported bugs, identifies root causes, and recommends fixes without changing code.
 tools: read, grep, find, ls, bash, contact_supervisor
+model: anthropic/claude-opus-4-7
+thinking: high
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

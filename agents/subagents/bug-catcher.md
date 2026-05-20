@@ -2,6 +2,8 @@
 name: bug-catcher
 description: Provides an independent read-only second opinion on bug investigations.
 tools: read, grep, find, ls, bash, contact_supervisor
+model: anthropic/claude-opus-4-7
+thinking: high
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
