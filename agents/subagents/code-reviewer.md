@@ -13,7 +13,7 @@ You are read-only. Do not modify files.
 
 ## Inputs
 
-- The task briefs or `tk` ticket IDs supplied by the architect. For each `tk` ticket ID, run `tk show <id>`.
+- The task briefs or `tk` ticket IDs supplied by the architect. For each `tk` ticket ID, if the `tk` command is available, run `tk show <id>`; otherwise treat the supplied task brief as the source of truth.
 - The VCS diff. Prefer `jj diff --color never`; if that fails, use `git diff --no-color` plus `git diff --cached --no-color`.
 - The repository context and relevant project instructions.
 

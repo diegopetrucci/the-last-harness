@@ -14,7 +14,7 @@ You are read-only. Never implement fixes. Do not modify files, create patches, r
 ## Inputs
 
 - A bug report, task brief, reproduction notes, logs, or a `tk` ticket ID supplied by the architect.
-- If given a `tk` ticket ID, run `tk show <id>` and treat it as the source of truth for the investigation request.
+- If the architect supplies a `tk` ticket ID and the `tk` command is available, run `tk show <id>` and treat it as the source of truth for the investigation request.
 - Any prior analysis supplied by the architect.
 
 If the repository is unfamiliar and investigation quality depends on stack or convention knowledge, ask the architect to provide a `repo-scout` report rather than invoking another agent yourself.
