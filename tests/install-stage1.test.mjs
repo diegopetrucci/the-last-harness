@@ -464,6 +464,92 @@ test("wrapper resolves pi to an absolute command path before exposing isolated b
 	assert.equal(existsSync(functionPiLog), false);
 });
 
+function setupTicketsEnabledWrapperFixture(t) {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const agentBin = join(agentDir, "bin");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const fakebin = join(root, "fakebin");
+	const cwdDir = join(root, "cwd");
+	const piLog = join(root, "pi.txt");
+	mkdirSync(join(agentDir, "tlh"), { recursive: true });
+	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	mkdirSync(cwdDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	writeFakePi(fakebin, "printf 'path=%s\\n' \"${PATH:-}\" >\"${PI_WRAPPER_LOG}\"");
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const runWrapper = () => spawnSync(wrapper, ["chat"], {
+		cwd: cwdDir,
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: [fakebin, process.env.PATH || ""].join(":"),
+			PI_WRAPPER_LOG: piLog,
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	const readPiPath = () => readFileSync(piLog, "utf8").trim().slice("path=".length).split(":");
+
+	return { agentDir, agentBin, fakebin, runWrapper, readPiPath };
+}
+
+test("wrapper includes managed_bin in pi PATH when tlh.tickets.enabled is true", (t) => {
+	const { agentDir, agentBin, runWrapper, readPiPath } = setupTicketsEnabledWrapperFixture(t);
+	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ tlh: { tickets: { enabled: true } } }, null, 2));
+
+	const result = runWrapper();
+	assert.equal(result.status, 0, result.stderr);
+	const piPathEntries = readPiPath();
+	assert.equal(piPathEntries[0], agentBin, `expected managed bin first; got ${piPathEntries.join(":")}`);
+});
+
+test("wrapper omits managed_bin from pi PATH when tlh.tickets.enabled is false", (t) => {
+	const { agentDir, agentBin, runWrapper, readPiPath } = setupTicketsEnabledWrapperFixture(t);
+	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ tlh: { tickets: { enabled: false } } }, null, 2));
+
+	const result = runWrapper();
+	assert.equal(result.status, 0, result.stderr);
+	const piPathEntries = readPiPath();
+	assert.equal(piPathEntries.includes(agentBin), false, `expected managed bin absent; got ${piPathEntries.join(":")}`);
+});
+
+test("wrapper defaults to managed_bin in pi PATH when settings.json is missing", (t) => {
+	const { agentDir, agentBin, runWrapper, readPiPath } = setupTicketsEnabledWrapperFixture(t);
+	assert.equal(existsSync(join(agentDir, "settings.json")), false);
+
+	const result = runWrapper();
+	assert.equal(result.status, 0, result.stderr);
+	const piPathEntries = readPiPath();
+	assert.equal(piPathEntries[0], agentBin, `expected managed bin first; got ${piPathEntries.join(":")}`);
+});
+
+test("wrapper defaults to managed_bin in pi PATH when tlh.tickets.enabled is not a boolean", (t) => {
+	const { agentDir, agentBin, runWrapper, readPiPath } = setupTicketsEnabledWrapperFixture(t);
+	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ tlh: { tickets: { enabled: "false" } } }, null, 2));
+
+	const result = runWrapper();
+	assert.equal(result.status, 0, result.stderr);
+	const piPathEntries = readPiPath();
+	assert.equal(piPathEntries[0], agentBin, `expected managed bin first; got ${piPathEntries.join(":")}`);
+});
+
 test("tlh update passes ticket integration flags through to the installer", (t) => {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");

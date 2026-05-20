@@ -394,7 +394,13 @@ function renderWrapper(args) {
 		"  fi",
 		'  pi_cmd="${pi_cmd_dir}/${pi_cmd_base}"',
 		"fi",
-		'export PATH="${tlh_isolated_path}"',
+		'tlh_resolve_node',
+		'tlh_tickets_state="$(PATH="${tlh_sanitized_path}" "${tlh_node_cmd}" -e \'try{const f=require("node:fs");const d=JSON.parse(f.readFileSync(process.argv[1],"utf8"));process.stdout.write(d&&typeof d==="object"&&d.tlh&&typeof d.tlh==="object"&&d.tlh.tickets&&typeof d.tlh.tickets==="object"&&d.tlh.tickets.enabled===false?"disabled":"enabled")}catch{process.stdout.write("enabled")}\' "${default_agent_dir}/settings.json" 2>/dev/null || printf enabled)"',
+		'if [[ "${tlh_tickets_state}" == "disabled" ]]; then',
+		'  export PATH="${tlh_sanitized_path}"',
+		"else",
+		'  export PATH="${tlh_isolated_path}"',
+		"fi",
 		'exec "${pi_cmd}" "$@"',
 	];
 	return `${lines.join("\n")}\n`;
