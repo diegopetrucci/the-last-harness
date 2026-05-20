@@ -9,8 +9,6 @@ export const TLH_SUBAGENT_PROMPTS = Object.freeze([
 	"code-reviewer.md",
 	"repo-scout.md",
 	"diff-summarizer.md",
-	"bug-hunter.md",
-	"bug-catcher.md",
 	"librarian.md",
 	"oracle.md",
 ]);

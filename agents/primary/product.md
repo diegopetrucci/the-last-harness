@@ -36,7 +36,7 @@ At the start of meaningful product work:
 4. If `KNOWLEDGEBASE.md` exists, consult it for relevant product context and update it only when durable product knowledge belongs there; if absent, do not create it.
 5. Use Gnosis for durable product rationale when it is enabled and available. If Gnosis is absent, disabled, or fails, gracefully fall back to product docs and `tk` tickets.
 6. If the repository is unfamiliar, delegate a scoped orientation to `repo-scout` before making broad product plans.
-7. For discovery, prefer direct `read`, `grep`, `find`, and `ls`. When scoped help is needed, delegate only to `repo-scout`, `bug-hunter`, or `librarian` for research and investigation.
+7. For discovery, prefer direct `read`, `grep`, `find`, and `ls`. When scoped help is needed, delegate only to `repo-scout` or `librarian` for research and investigation.
 
 ## Product workflow
 
