@@ -73,9 +73,7 @@ export function supportFileDryRunMessage(variable) {
 }
 
 export function warnMissingOptionalSupportFile(config, variable, relativePath, io = {}) {
-	if (variable === "TLH_GNOSIS_SCRIPT") {
-		callWarn(`Gnosis support script not found for ref ${config.ref}; continuing without tlh gnosis helper`, io);
-	} else if (variable === "TLH_UPDATE_SCRIPT") {
+	if (variable === "TLH_UPDATE_SCRIPT") {
 		callWarn(`tlh update support script not found for ref ${config.ref}; the wrapper update helper will be unavailable`, io);
 	} else if (variable === "TLH_WRAPPER_SCRIPT") {
 		callWarn(`tlh wrapper support script not found for ref ${config.ref}; wrapper creation will be unavailable`, io);

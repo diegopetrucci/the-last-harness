@@ -32,6 +32,16 @@ function symlinkDirectory(target, path) {
 	symlinkSync(target, path, process.platform === "win32" ? "junction" : "dir");
 }
 
+function writeUnsupportedPlatformPreload(fixture, { platform = "freebsd", arch = "x64" } = {}) {
+	const preload = join(fixture.dir, "unsupported-platform.mjs");
+	writeFileSync(preload, [
+		`Object.defineProperty(process, "platform", { value: ${JSON.stringify(platform)} });`,
+		`Object.defineProperty(process, "arch", { value: ${JSON.stringify(arch)} });`,
+		"",
+	].join("\n"));
+	return preload;
+}
+
 function gnosisAssetName(version) {
 	let os;
 	if (process.platform === "darwin") os = "darwin";
@@ -88,6 +98,46 @@ test("install-managed rejects agent bin symlink during dry-run", () => {
 	assert.match(result.stderr, /symlinked target parent component/i);
 	assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /Would install Gnosis/i);
 	assert.deepEqual(readdirSync(fixture.external), []);
+});
+
+test("install-managed fails on unsupported platforms before dry-run output", () => {
+	const fixture = tempFixture();
+	const preload = writeUnsupportedPlatformPreload(fixture);
+
+	const result = runGnosis([
+		"--agent-dir", fixture.agent,
+		"--target", join(fixture.agent, "bin", "gn"),
+		"--dry-run",
+		"install-managed",
+	], {
+		env: { HOME: fixture.home },
+		nodeArgs: ["--import", preload],
+	});
+
+	assert.notEqual(result.status, 0);
+	assert.equal(result.stdout, "");
+	assert.match(result.stderr, /Unsupported platform for managed Gnosis install: freebsd\/x64\. Prebuilt gn binaries are only available for darwin\/linux on x64\/arm64\./);
+	assert.doesNotMatch(result.stderr, /warning:/i);
+	assert.doesNotMatch(result.stderr, /Would install Gnosis/i);
+});
+
+test("configure-install fails on unsupported platforms when automatic install would be required", () => {
+	const fixture = tempFixture();
+	const preload = writeUnsupportedPlatformPreload(fixture);
+
+	const result = runGnosis([
+		"--agent-dir", fixture.agent,
+		"--target", join(fixture.agent, "bin", "gn"),
+		"configure-install",
+	], {
+		env: { HOME: fixture.home, PATH: "" },
+		nodeArgs: ["--import", preload],
+	});
+
+	assert.notEqual(result.status, 0);
+	assert.equal(result.stdout, "");
+	assert.match(result.stderr, /Unsupported platform for managed Gnosis install: freebsd\/x64\. Prebuilt gn binaries are only available for darwin\/linux on x64\/arm64\./);
+	assert.doesNotMatch(result.stderr, /warning:/i);
 });
 
 test("install-managed revalidates target before creating swapped parent directories", { skip: process.platform === "win32" || !gnosisAssetName("1.2.3") }, () => {
@@ -267,4 +317,34 @@ test("configure-install honors TLH_SKIP_GNOSIS_INSTALL", () => {
 
 	assert.equal(result.status, 0, result.stderr);
 	assert.match(result.stdout, /Gnosis integration: skipped/);
+});
+
+test("configure-install exits non-zero when release fetch fails", { skip: !gnosisAssetName("1.2.3") }, () => {
+	const fixture = tempFixture();
+
+	// Preload overrides fetch so every request throws, simulating an unreachable release host.
+	const preload = join(fixture.dir, "fail-fetch-configure.mjs");
+	writeFileSync(preload, [
+		"globalThis.fetch = async (url) => {",
+		"\tthrow new Error(`simulated fetch failure for configure-install: ${url}`);",
+		"};",
+		"",
+	].join("\n"));
+
+	const result = runGnosis([
+		"--agent-dir", fixture.agent,
+		"configure-install",
+	], {
+		env: { HOME: fixture.home, PATH: "" },
+		nodeArgs: ["--import", preload],
+	});
+
+	// Must exit non-zero.
+	assert.notEqual(result.status, 0);
+	// Must NOT print the ready line.
+	assert.doesNotMatch(result.stdout, /Gnosis integration: ready/);
+	// Must NOT print the old "not ready" success line.
+	assert.doesNotMatch(result.stdout, /Gnosis integration: not ready/);
+	// Must print a clear error on stderr.
+	assert.match(result.stderr, /error:.*[Gg]nosis/);
 });

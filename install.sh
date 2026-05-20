@@ -362,7 +362,7 @@ required|scripts/lib/tlh-install-support-files.mjs
 required|scripts/tlh-install-query.mjs
 required|scripts/merge-settings.mjs
 required|scripts/tlh-defaults.mjs
-optional|scripts/tlh-gnosis.mjs
+required|scripts/tlh-gnosis.mjs
 optional|scripts/tlh-update.mjs
 optional|scripts/tlh-wrapper.mjs
 optional|scripts/tlh-install-state.mjs
@@ -476,9 +476,6 @@ require_supported_node_stage0() {
 warn_missing_optional_support_file() {
   local relative_path="$1"
   case "${relative_path}" in
-    scripts/tlh-gnosis.mjs)
-      warn "Gnosis support script not found for ref ${REF}; continuing without tlh gnosis helper"
-      ;;
     scripts/tlh-update.mjs)
       warn "tlh update support script not found for ref ${REF}; the wrapper update helper will be unavailable"
       ;;

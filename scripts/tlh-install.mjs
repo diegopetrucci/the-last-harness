@@ -899,17 +899,12 @@ function gnosisInstallSkippedByEnv(config) {
 }
 
 function configureGnosis(config) {
-	if (config.noSettings) {
-		log(config, "Skipping Gnosis integration (--no-settings).");
-		return;
-	}
 	if (gnosisInstallSkippedByEnv(config)) {
 		log(config, "Skipping Gnosis integration (TLH_SKIP_GNOSIS_INSTALL is set).");
 		return;
 	}
-	if (!config.supportFilePaths.TLH_GNOSIS_SCRIPT) {
-		log(config, "Skipping default Gnosis integration; support files are unavailable.");
-		return;
+	if (!config.supportFilePaths.TLH_GNOSIS_SCRIPT || !existsSync(config.supportFilePaths.TLH_GNOSIS_SCRIPT)) {
+		throw new Error(`required Gnosis support script not found for ref ${config.ref}: scripts/tlh-gnosis.mjs`);
 	}
 
 	const args = [
@@ -927,7 +922,12 @@ function configureGnosis(config) {
 	else if (config.verbose) args.push("--detail");
 	if (config.quiet) args.push("--quiet");
 
-	config.gnosisSummary = runNodeScript(config, config.supportFilePaths.TLH_GNOSIS_SCRIPT, args, { captureStdout: true }).trimEnd();
+	try {
+		config.gnosisSummary = runNodeScript(config, config.supportFilePaths.TLH_GNOSIS_SCRIPT, args, { captureStdout: true }).trimEnd();
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`failed to configure Gnosis integration: ${message}`);
+	}
 }
 
 function wrapperIsManaged(config) {

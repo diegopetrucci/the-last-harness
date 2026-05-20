@@ -201,6 +201,10 @@ function gnosisPlatform() {
 	return { os, arch };
 }
 
+function unsupportedGnosisPlatformMessage() {
+	return `Unsupported platform for managed Gnosis install: ${process.platform}/${process.arch}. Prebuilt gn binaries are only available for darwin/linux on x64/arm64.`;
+}
+
 async function fetchWithTimeout(url, options = {}) {
 	const response = await fetch(url, {
 		...options,
@@ -347,10 +351,7 @@ function copyFileExclusive(source, target, mode) {
 async function installManagedGnosis(args, agentDir) {
 	const target = validateManagedGnosisTarget(args, agentDir);
 	const platform = gnosisPlatform();
-	if (!platform) {
-		warnStderr(`Gnosis prebuilt binary is not available for this platform; install manually from https://github.com/${args.gnosisRepo}`);
-		return undefined;
-	}
+	if (!platform) throw new Error(unsupportedGnosisPlatformMessage());
 
 	if (args.dryRun) {
 		logStderr(args, `Would install Gnosis into isolated profile: ${target}`);
@@ -550,8 +551,8 @@ async function commandConfigureInstall(args, agentDir) {
 		return;
 	}
 
-	warnStderr("Gnosis integration could not be installed automatically.");
-	console.log("Gnosis integration: not ready (gn was not installed)");
+	process.stderr.write("error: Gnosis managed install failed; cannot continue without a valid gn binary. Set TLH_SKIP_GNOSIS_INSTALL=1 to skip.\n");
+	process.exitCode = 1;
 }
 
 function commandValidate(agentDir, commandArgs) {
@@ -600,6 +601,6 @@ async function main() {
 
 main().catch((error) => {
 	const message = error instanceof Error ? error.message : String(error);
-	console.error(`tlh gnosis: ${message}`);
+	console.error(`tlh-gnosis: ${message}`);
 	process.exit(1);
 });
