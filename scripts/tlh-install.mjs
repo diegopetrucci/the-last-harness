@@ -53,6 +53,7 @@ const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
 // Keep in sync with TLH_MIN_NODE_VERSION in install.sh.
 const MIN_NODE_VERSION = "22.19.0";
+const MIN_PI_VERSION = "0.75.3";
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
 const DEFAULT_GNOSIS_VERSION = "latest";
 const DEFAULT_WRAPPER_NAME = "tlh";
@@ -492,10 +493,32 @@ function gitCheckoutIo() {
 	return { spawnCapture, runCommand, runInDir, printCommand, log, warn };
 }
 
+function assertSupportedPiVersion(config) {
+	// `pi --version` prints a bare semver (e.g. "0.75.3") on stdout. Older builds may
+	// differ, so we extract the first semver-shaped substring rather than match strictly.
+	const result = spawnCapture(config, ["pi", "--version"], { allowFailure: true });
+	if (result.error || result.status !== 0) {
+		warn(`unable to determine Pi version (pi --version exited with ${result.status ?? result.error?.code ?? "error"}); continuing without version check`);
+		return;
+	}
+	const output = `${result.stdout || ""}${result.stderr || ""}`;
+	const match = output.match(/\d+\.\d+\.\d+/);
+	if (!match) {
+		warn(`unable to parse Pi version from output: ${output.trim() || "<empty>"}; continuing without version check`);
+		return;
+	}
+	const currentVersion = match[0];
+	if (!nodeVersionMeetsMinimum(currentVersion, MIN_PI_VERSION)) {
+		throw new Error(`Pi >= ${MIN_PI_VERSION} is required (found ${currentVersion}). Upgrade with: npm install -g @earendil-works/pi-coding-agent`);
+	}
+	verboseLog(config, `Pi version: ${currentVersion}`);
+}
+
 function installPiIfNeeded(config) {
 	if (commandExists(config, "pi")) {
 		const result = spawnCapture(config, ["sh", "-c", "command -v -- pi"], { allowFailure: true });
 		verboseLog(config, `Pi is already installed: ${(result.stdout || "pi").trim() || "pi"}`);
+		assertSupportedPiVersion(config);
 		return;
 	}
 	if (config.noPiInstall) {
