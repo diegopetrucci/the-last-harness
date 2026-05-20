@@ -16,7 +16,7 @@ const ticketRuntimeSource = readFileSync(new URL("../extensions/the-last-harness
 const effortSource = readFileSync(new URL("../extensions/the-last-harness/effort.ts", import.meta.url), "utf8");
 const promptsSource = readFileSync(new URL("../extensions/the-last-harness/prompts.ts", import.meta.url), "utf8");
 const jiti = createJiti(import.meta.url);
-const { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents } = await jiti.import(
+const { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents, loadSubagentMetadata } = await jiti.import(
 	"../extensions/the-last-harness/prompts.ts",
 );
 
@@ -70,6 +70,7 @@ test("before_agent_start reapplies primary defaults without a one-shot model gat
 
 	assert.doesNotMatch(primaryRuntimeSource, /primaryModelAttempted/);
 	assert.match(beforeAgentStart, /await applyPrimaryDefaults\(ctx\);/);
+	assert.match(applyPrimaryModel, /selectProviderAwareAgentModel\(primary, ctx\.modelRegistry\.getAvailable\(\), ctx\.model\?\.provider\)/);
 	assert.match(applyPrimaryModel, /ctx\.model\?\.provider === model\.provider && ctx\.model\?\.id === model\.id/);
 	assert.match(applyPrimaryThinking, /pi\.getThinkingLevel\(\) === primary\.thinking/);
 });
@@ -89,6 +90,11 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	const primaryAgents = loadPrimaryAgents();
 	const architect = primaryAgents.get("architect");
 	assert.ok(architect, "architect primary prompt should load");
+	assert.deepEqual(architect.tlhOpenaiModels, ["openai-codex/gpt-5.5", "openai/gpt-5.5"]);
+	assert.deepEqual(
+		loadSubagentMetadata().find((agent) => agent.name === "developer")?.tlhOpenaiModels,
+		["openai-codex/gpt-5.4", "openai/gpt-5.4"],
+	);
 
 	const primaryPrompt = buildTlhSystemPrompt(architect, [], true);
 	const childPrompt = buildChildSubagentSystemPrompt();
@@ -124,6 +130,7 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
 	assert.match(extensionSource, /from "\.\/the-last-harness\/types\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/constants\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/gnosis\.js"/);
+	assert.match(primaryRuntimeSource, /from "\.\/model-defaults\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/profile-state\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/prompts\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/tickets\.js"/);
@@ -169,5 +176,6 @@ test("extension wires multi-primary commands and active-primary safety", () => {
 	assert.match(agentCommand, /default product/);
 	assert.match(agentCommand, /writeTlhPrimaryAgentDefault\(ctx\.cwd, defaultSelection\)/);
 	assert.match(shortcut, /architect\/product\/bug-hunter\/disabled/);
+	assert.match(toolCall, /applyProviderAwareSubagentModels\(event\.input, subagentsByName, ctx\.modelRegistry\.getAvailable\(\), ctx\.model\?\.provider\)/);
 	assert.match(toolCall, /!isEnabledPrimaryAgentSelection\(currentPrimaryAgentSelection\(\)\)/);
 });
