@@ -380,3 +380,168 @@ test("dispose() retains last-known snapshot and post-dispose refresh() is a no-o
 		"post-dispose refresh() must not clobber the retained snapshot",
 	);
 });
+
+test("non-zero git exit (not a repo) clears both snapshots and resets lastSeenBranch", async () => {
+	let gitMode = "ok";
+	const runner = (command) => {
+		if (command === "git") {
+			if (gitMode === "ok") {
+				return Promise.resolve({
+					stdout: gitStatusStdout({ branch: "main" }),
+					stderr: "",
+					exitCode: 0,
+				});
+			}
+			return Promise.resolve({
+				stdout: "",
+				stderr: "fatal: not a git repository (or any of the parent directories): .git\n",
+				exitCode: 128,
+			});
+		}
+		if (command === "gh") {
+			return Promise.resolve({
+				stdout: ghPrStdout({ number: 42, state: "OPEN", isDraft: false }),
+				stderr: "",
+				exitCode: 0,
+			});
+		}
+		return Promise.reject(new Error(`unexpected ${command}`));
+	};
+	const clock = createFakeClock();
+	const cache = new FooterGitCache({ cwd: () => "/repo", runner, clock, skipInitialRefresh: true });
+	try {
+		await cache.refresh();
+		assert.equal(cache.getStatusSnapshot()?.branch, "main");
+		assert.equal(cache.getPullRequestSnapshot()?.number, 42);
+
+		// Simulate cd'ing out of the repo: git now exits 128.
+		gitMode = "not-a-repo";
+		await cache.refresh();
+
+		assert.equal(cache.getStatusSnapshot(), undefined, "status snapshot must be cleared");
+		assert.equal(cache.getPullRequestSnapshot(), undefined, "PR snapshot must be cleared");
+
+		// After clearing, returning to the same branch should be treated as a
+		// fresh branch entry, not a no-op. Restore git and confirm a PR fetch
+		// runs (lastSeenBranch was reset).
+		gitMode = "ok";
+		await cache.refresh();
+		assert.equal(cache.getStatusSnapshot()?.branch, "main");
+		assert.equal(cache.getPullRequestSnapshot()?.number, 42);
+	} finally {
+		cache.dispose();
+	}
+});
+
+test("transient git failure (runner rejects) preserves both snapshots", async () => {
+	let gitMode = "ok";
+	const runner = (command) => {
+		if (command === "git") {
+			if (gitMode === "ok") {
+				return Promise.resolve({
+					stdout: gitStatusStdout({ branch: "main" }),
+					stderr: "",
+					exitCode: 0,
+				});
+			}
+			// Simulate a spawn error / timeout: runner rejects, runCommandSafely
+			// swallows it and fetchGitStatus returns kind:"transient".
+			return Promise.reject(Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }));
+		}
+		if (command === "gh") {
+			return Promise.resolve({
+				stdout: ghPrStdout({ number: 5, state: "OPEN", isDraft: false }),
+				stderr: "",
+				exitCode: 0,
+			});
+		}
+		return Promise.reject(new Error(`unexpected ${command}`));
+	};
+	const clock = createFakeClock();
+	const cache = new FooterGitCache({ cwd: () => "/repo", runner, clock, skipInitialRefresh: true });
+	try {
+		await cache.refresh();
+		const statusBefore = cache.getStatusSnapshot();
+		const prBefore = cache.getPullRequestSnapshot();
+		assert.ok(statusBefore);
+		assert.equal(statusBefore.branch, "main");
+		assert.equal(prBefore?.number, 5);
+
+		// Transient git failure on next refresh.
+		gitMode = "transient";
+		await cache.refresh();
+
+		assert.strictEqual(
+			cache.getStatusSnapshot(),
+			statusBefore,
+			"status snapshot must be preserved across transient failures",
+		);
+		assert.strictEqual(
+			cache.getPullRequestSnapshot(),
+			prBefore,
+			"PR snapshot must be preserved across transient failures",
+		);
+	} finally {
+		cache.dispose();
+	}
+});
+
+test("ok -> not-a-repo -> ok with a different branch transitions correctly", async () => {
+	let branch = "main";
+	let gitMode = "ok";
+	const ghCallsByBranch = [];
+	const runner = (command) => {
+		if (command === "git") {
+			if (gitMode === "not-a-repo") {
+				return Promise.resolve({
+					stdout: "",
+					stderr: "fatal: not a git repository\n",
+					exitCode: 128,
+				});
+			}
+			return Promise.resolve({
+				stdout: gitStatusStdout({ branch }),
+				stderr: "",
+				exitCode: 0,
+			});
+		}
+		if (command === "gh") {
+			ghCallsByBranch.push(branch);
+			return Promise.resolve({
+				stdout: ghPrStdout({
+					number: branch === "main" ? 1 : 2,
+					state: "OPEN",
+					isDraft: false,
+				}),
+				stderr: "",
+				exitCode: 0,
+			});
+		}
+		return Promise.reject(new Error(`unexpected ${command}`));
+	};
+	const clock = createFakeClock();
+	const cache = new FooterGitCache({ cwd: () => "/repo", runner, clock, skipInitialRefresh: true });
+	try {
+		// 1. ok in "main"
+		await cache.refresh();
+		assert.equal(cache.getStatusSnapshot()?.branch, "main");
+		assert.equal(cache.getPullRequestSnapshot()?.number, 1);
+		assert.deepEqual(ghCallsByBranch, ["main"]);
+
+		// 2. cwd leaves the repo
+		gitMode = "not-a-repo";
+		await cache.refresh();
+		assert.equal(cache.getStatusSnapshot(), undefined);
+		assert.equal(cache.getPullRequestSnapshot(), undefined);
+
+		// 3. cwd enters a different repo on a different branch
+		gitMode = "ok";
+		branch = "other-branch";
+		await cache.refresh();
+		assert.equal(cache.getStatusSnapshot()?.branch, "other-branch");
+		assert.equal(cache.getPullRequestSnapshot()?.number, 2);
+		assert.deepEqual(ghCallsByBranch, ["main", "other-branch"]);
+	} finally {
+		cache.dispose();
+	}
+});

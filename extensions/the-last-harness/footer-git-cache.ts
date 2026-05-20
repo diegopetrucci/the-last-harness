@@ -281,15 +281,25 @@ export class FooterGitCache {
 	}
 
 	private async runRefresh(): Promise<void> {
-		const status = await this.fetchGitStatus();
+		const result = await this.fetchGitStatus();
 		if (this.disposed) {
 			return;
 		}
-		if (status === undefined) {
-			// Preserve previous snapshot on failure. Do not touch the PR snapshot
-			// either: a transient git failure should not clobber recent PR data.
+		if (result.kind === "transient") {
+			// Timeout, spawn error, or exit-0-but-unparseable. Likely transient;
+			// keep last-known snapshots and retry on the next tick.
 			return;
 		}
+		if (result.kind === "not-a-repo") {
+			// cwd is no longer inside a git worktree (e.g. user cd'd to /tmp).
+			// Drop stale state so the footer renders just the path; otherwise the
+			// 8s poll would never recover because exit 128 is persistent.
+			this.statusSnapshot = undefined;
+			this.pullRequestSnapshot = undefined;
+			this.lastSeenBranch = undefined;
+			return;
+		}
+		const status = result.status;
 		this.statusSnapshot = status;
 
 		const branch = typeof status.branch === "string" ? status.branch : undefined;
@@ -321,12 +331,28 @@ export class FooterGitCache {
 		// Otherwise (same branch, gh failed): keep prior PR snapshot.
 	}
 
-	private async fetchGitStatus(): Promise<GitStatusSnapshot | undefined> {
+	// Three-way split so runRefresh can distinguish persistent "not a repo"
+	// failures (cwd left the worktree, exit 128) from transient ones (timeout,
+	// spawn error, or exit-0-but-unparseable). Collapsing them caused the
+	// footer to keep showing the previous repo's branch/PR forever after cd'ing
+	// out of a git directory.
+	private async fetchGitStatus(): Promise<
+		| { kind: "ok"; status: GitStatusSnapshot }
+		| { kind: "not-a-repo" }
+		| { kind: "transient" }
+	> {
 		const result = await this.runCommandSafely("git", GIT_STATUS_ARGS, this.gitTimeoutMs);
-		if (!result || result.exitCode !== 0) {
-			return undefined;
+		if (!result) {
+			return { kind: "transient" };
 		}
-		return parseGitStatusPorcelainV2(result.stdout) as GitStatusSnapshot;
+		if (result.exitCode !== 0) {
+			return { kind: "not-a-repo" };
+		}
+		const parsed = parseGitStatusPorcelainV2(result.stdout) as GitStatusSnapshot | undefined;
+		if (!parsed) {
+			return { kind: "transient" };
+		}
+		return { kind: "ok", status: parsed };
 	}
 
 	private async fetchPullRequest(): Promise<PullRequestSnapshot | undefined> {
