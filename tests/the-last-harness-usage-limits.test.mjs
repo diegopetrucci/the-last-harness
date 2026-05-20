@@ -126,6 +126,43 @@ test("usage weekly preference writes isolated settings and backs up existing set
 	});
 });
 
+test("usage weekly on is idempotent across repeated invocations", async () => {
+	const fixture = tempFixture();
+	const settingsPath = join(fixture.agent, "settings.json");
+	writeFileSync(settingsPath, `${JSON.stringify({ tlh: { gnosis: { enabled: true } } }, null, 2)}\n`);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const command = registeredUsageCommand();
+		const { ctx, notifications } = createCommandContext(fixture.dir);
+
+		await command.handler("weekly on", ctx);
+
+		const afterFirst = readFileSync(settingsPath);
+		const writtenAfterFirst = JSON.parse(afterFirst.toString("utf8"));
+		assert.equal(writtenAfterFirst.tlh.usageLimits.showWeekly, true);
+
+		const backupsAfterFirst = readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.bak-"));
+		assert.equal(backupsAfterFirst.length, 1, "first call must create exactly one backup");
+
+		const firstNotice = notifications.at(-1);
+		assert.equal(firstNotice?.type, "info");
+		assert.match(firstNotice?.message ?? "", /^Updated TLH usage weekly-window preference at /);
+
+		await command.handler("weekly on", ctx);
+
+		const afterSecond = readFileSync(settingsPath);
+		assert.ok(afterSecond.equals(afterFirst), "settings file must be byte-identical after the second call");
+
+		const backupsAfterSecond = readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.bak-"));
+		assert.deepEqual(backupsAfterSecond, backupsAfterFirst, "no additional backup should be produced on the second call");
+
+		const secondNotice = notifications.at(-1);
+		assert.equal(secondNotice?.type, "info");
+		assert.match(secondNotice?.message ?? "", /^No change to TLH usage weekly-window preference at /);
+		assert.doesNotMatch(secondNotice?.message ?? "", /Backup:/);
+	});
+});
+
 test("usage weekly off and toggle persist explicit preferences", async () => {
 	const offFixture = tempFixture();
 	const offSettingsPath = join(offFixture.agent, "settings.json");
