@@ -704,9 +704,21 @@ function setGnosisDisabled(args, settingsPath, settings, previousRaw) {
 	logWriteResult(args, writeResult);
 }
 
+function gnosisInstallSkippedByEnv() {
+	const raw = process.env.TLH_SKIP_GNOSIS_INSTALL;
+	if (raw === undefined || raw === null || raw === "") return false;
+	const normalized = String(raw).trim().toLowerCase();
+	if (normalized === "") return false;
+	return normalized !== "0" && normalized !== "false" && normalized !== "no";
+}
+
 async function commandConfigureInstall(args, settingsPath, settings, previousRaw, agentDir) {
 	if (!["auto", "with", "without"].includes(args.mode)) {
 		throw new Error("--mode must be one of: auto, with, without");
+	}
+	if (gnosisInstallSkippedByEnv()) {
+		console.log("Gnosis integration: skipped (TLH_SKIP_GNOSIS_INSTALL is set)");
+		return;
 	}
 	assertNotNormalPiSettings(settingsPath);
 

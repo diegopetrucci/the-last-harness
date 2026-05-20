@@ -33,9 +33,6 @@ Options:
   --no-pi-install  Fail instead of installing Pi when the `pi` command is missing
   --no-settings     Install the package but skip isolated settings/keybinding merge
   --no-wrapper      Skip creating the tlh wrapper command
-  --with-gnosis     Force install/re-enable Gnosis (`gn`) integration
-  --without-gnosis  Opt out of Gnosis integration and keep it disabled
-  --no-gnosis       Alias for --without-gnosis
   --agent-dir DIR   Isolated Pi agent dir (default: ~/.the-last-harness/agent)
   --bin-dir DIR     Wrapper install dir (default: ~/.local/bin)
   --wrapper-name N  Wrapper command name (default: tlh)
@@ -275,7 +272,7 @@ while [[ $# -gt 0 ]]; do
       DRY_RUN=true
       shift
       ;;
-    --force|--no-pi-install|--with-gnosis|--without-gnosis|--no-gnosis)
+    --force|--no-pi-install)
       shift
       ;;
     --no-wrapper)
