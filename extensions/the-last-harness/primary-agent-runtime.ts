@@ -645,7 +645,16 @@ export function registerTlhPrimaryAgentRuntime(
 	pi: ExtensionAPI,
 	options: TlhPrimaryAgentRuntimeOptions = {},
 ): TlhPrimaryAgentRuntime | undefined {
-	if (registerTlhStartupMode(pi, { env: options.env ?? process.env, buildChildSubagentSystemPrompt }) === "child") {
+	const childPromptBuilder = (): string => {
+		const settings = getTlhGlobalSettings(process.cwd());
+		return buildChildSubagentSystemPrompt(isTlhTicketIntegrationEnabled(settings));
+	};
+	if (
+		registerTlhStartupMode(pi, {
+			env: options.env ?? process.env,
+			buildChildSubagentSystemPrompt: childPromptBuilder,
+		}) === "child"
+	) {
 		return undefined;
 	}
 

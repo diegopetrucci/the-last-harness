@@ -100,6 +100,16 @@ The user has disabled TLH ticket integration (\`settings.tlh.tickets.enabled ===
 - For product work, prepare conversation- or document-based handoff material instead of \`tk\` tickets.
 `;
 
+export const TICKET_INTEGRATION_DISABLED_CHILD_PROMPT = `
+## TLH Ticket Integration Disabled
+
+The user has disabled TLH ticket integration (\`settings.tlh.tickets.enabled === false\`). This instruction overrides any earlier or static guidance about \`tk\` tickets.
+
+- If the architect supplies a \`tk\` ticket ID, do not run \`tk show <id>\` or any other \`tk\` command, even if a \`tk\` command is available on PATH.
+- Instead, ask the architect (via \`contact_supervisor\`) for the task brief, acceptance criteria, and dependencies in plain text, and treat that material as the source of truth.
+- Do not create, update, close, or rely on repo-local \`.tickets\` data.
+`;
+
 export function buildTlhSystemPrompt(
 	primary: AgentPrompt | undefined,
 	subagents: SubagentMetadata[],
@@ -116,8 +126,12 @@ export function buildTlhSystemPrompt(
 	return prompts.filter(Boolean).join("\n\n");
 }
 
-export function buildChildSubagentSystemPrompt(): string {
-	return [HARNESS_PROMPT.trim(), CHILD_SUBAGENT_PROMPT.trim()].filter(Boolean).join("\n\n");
+export function buildChildSubagentSystemPrompt(ticketIntegrationEnabled = true): string {
+	const prompts: Array<string | undefined> = [HARNESS_PROMPT.trim(), CHILD_SUBAGENT_PROMPT.trim()];
+	if (!ticketIntegrationEnabled) {
+		prompts.push(TICKET_INTEGRATION_DISABLED_CHILD_PROMPT.trim());
+	}
+	return prompts.filter(Boolean).join("\n\n");
 }
 
 export function parseFrontmatterValue(content: string | undefined, key: string): string | undefined {

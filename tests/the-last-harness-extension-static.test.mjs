@@ -16,7 +16,9 @@ const ticketRuntimeSource = readFileSync(new URL("../extensions/the-last-harness
 const effortSource = readFileSync(new URL("../extensions/the-last-harness/effort.ts", import.meta.url), "utf8");
 const promptsSource = readFileSync(new URL("../extensions/the-last-harness/prompts.ts", import.meta.url), "utf8");
 const jiti = createJiti(import.meta.url);
-const { buildTlhSystemPrompt, loadPrimaryAgents } = await jiti.import("../extensions/the-last-harness/prompts.ts");
+const { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents } = await jiti.import(
+	"../extensions/the-last-harness/prompts.ts",
+);
 
 function sourceSection(source, startMarker, endMarker) {
 	const start = source.indexOf(startMarker);
@@ -112,6 +114,40 @@ test("ticket prompt generation is unchanged when ticket integration is unset or 
 
 	assert.equal(defaultPrompt, enabledPrompt);
 	assert.doesNotMatch(defaultPrompt, /## TLH Ticket Integration Disabled/);
+});
+
+test("child subagent prompt omits the disabled-ticket addendum when integration is unset or enabled", () => {
+	const defaultPrompt = buildChildSubagentSystemPrompt();
+	const enabledPrompt = buildChildSubagentSystemPrompt(true);
+
+	assert.equal(defaultPrompt, enabledPrompt);
+	assert.doesNotMatch(defaultPrompt, /## TLH Ticket Integration Disabled/);
+	assert.doesNotMatch(enabledPrompt, /## TLH Ticket Integration Disabled/);
+});
+
+test("child subagent prompt appends disabled-ticket guidance when integration is disabled", () => {
+	const disabledPrompt = buildChildSubagentSystemPrompt(false);
+	const enabledPrompt = buildChildSubagentSystemPrompt(true);
+
+	assert.match(disabledPrompt, /## TLH Ticket Integration Disabled/);
+	assert.match(disabledPrompt, /do not run `tk show <id>`/);
+	assert.match(disabledPrompt, /ask the architect \(via `contact_supervisor`\)/);
+	assert.ok(
+		disabledPrompt.startsWith(enabledPrompt),
+		"disabled-ticket child guidance should be appended after the enabled prompt",
+	);
+});
+
+test("child startup branch reads ticket integration settings and passes the flag through", () => {
+	const registerBlock = sourceSection(
+		primaryRuntimeSource,
+		"export function registerTlhPrimaryAgentRuntime",
+		"const runtime = createTlhPrimaryAgentRuntime",
+	);
+
+	assert.match(registerBlock, /getTlhGlobalSettings\(process\.cwd\(\)\)/);
+	assert.match(registerBlock, /isTlhTicketIntegrationEnabled\(settings\)/);
+	assert.match(registerBlock, /buildChildSubagentSystemPrompt\(isTlhTicketIntegrationEnabled\(settings\)\)/);
 });
 
 test("extension imports extracted shared helpers from nested TypeScript modules", () => {
