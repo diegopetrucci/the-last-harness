@@ -1,37 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { delimiter, dirname, join, resolve } from "node:path";
 
-import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { expandHomePath } from "./common.js";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { GNOSIS_VALIDATION_TIMEOUT_MS } from "./constants.js";
-
-type GnosisPromptConfig = {
-	enabled?: boolean;
-	installPath?: string;
-};
-
-type GnosisPromptSettings = {
-	tlh?: {
-		gnosis?: GnosisPromptConfig;
-	};
-};
-
-function getTlhGnosisConfig(cwd: string): GnosisPromptConfig | undefined {
-	try {
-		const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as GnosisPromptSettings;
-		return settings.tlh?.gnosis;
-	} catch {
-		return undefined;
-	}
-}
-
-function configuredGnosisPath(config: GnosisPromptConfig | undefined): string | undefined {
-	const installPath = config?.installPath;
-	if (typeof installPath !== "string" || !installPath.trim()) {
-		return undefined;
-	}
-	return resolve(expandHomePath(installPath.trim()));
-}
 
 function uniqueGnosisCandidates(candidates: Array<string | undefined>): string[] {
 	const seen = new Set<string>();
@@ -67,11 +38,10 @@ function prependProcessPath(dir: string): void {
 }
 
 function findValidGnosisCommand(
-	config: GnosisPromptConfig | undefined,
 	agentDir: string,
 	options: { prependPath?: boolean } = {},
 ): string | undefined {
-	const candidates = uniqueGnosisCandidates([configuredGnosisPath(config), join(agentDir, "bin", "gn"), "gn"]);
+	const candidates = uniqueGnosisCandidates([join(agentDir, "bin", "gn"), "gn"]);
 	for (const candidate of candidates) {
 		if (!validateGnosisCommand(candidate)) continue;
 		if (options.prependPath && candidate !== "gn") {
@@ -82,15 +52,7 @@ function findValidGnosisCommand(
 	return undefined;
 }
 
-function findEnabledGnosisCommand(cwd: string): string | undefined {
-	const config = getTlhGnosisConfig(cwd);
-	if (config?.enabled !== true) {
-		return undefined;
-	}
-
-	return findValidGnosisCommand(config, getAgentDir(), { prependPath: true });
-}
-
-export function shouldAppendGnosisPrompt(cwd: string): boolean {
-	return Boolean(findEnabledGnosisCommand(cwd));
+export function shouldAppendGnosisPrompt(_cwd: string): boolean {
+	const agentDir = getAgentDir();
+	return Boolean(findValidGnosisCommand(agentDir, { prependPath: true }));
 }
