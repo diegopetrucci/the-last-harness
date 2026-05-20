@@ -127,12 +127,10 @@ function defaultRunner(
 			finish(new Error("aborted"));
 		};
 
-		if (options.signal.aborted) {
-			onAbort();
-			return;
-		}
-		options.signal.addEventListener("abort", onAbort, { once: true });
-
+		// Attach child listeners before checking a pre-aborted signal so a
+		// delayed ENOENT/close cannot escape as an uncaught exception that
+		// would terminate the host Pi process. The `settled` guard inside
+		// `finish()` makes any post-abort close/error a safe no-op.
 		child.stdout?.on("data", (chunk: Buffer | string) => {
 			stdout += typeof chunk === "string" ? chunk : chunk.toString("utf8");
 		});
@@ -145,6 +143,12 @@ function defaultRunner(
 		child.on("close", (code) => {
 			finish({ stdout, stderr, exitCode: code });
 		});
+
+		if (options.signal.aborted) {
+			onAbort();
+			return;
+		}
+		options.signal.addEventListener("abort", onAbort, { once: true });
 	});
 }
 
@@ -263,9 +267,15 @@ export class FooterGitCache {
 		if (this.refreshInFlight) {
 			return this.refreshInFlight;
 		}
-		const run = this.runRefresh().finally(() => {
-			this.refreshInFlight = undefined;
-		});
+		// Refresh is best-effort; swallow rejections at the cache boundary so
+		// `void this.refresh()` callers (interval tick, branch-change, initial
+		// kick) never produce unhandled rejections that could terminate the
+		// host Pi process under Node's default unhandled-rejection policy.
+		const run = this.runRefresh()
+			.finally(() => {
+				this.refreshInFlight = undefined;
+			})
+			.catch(() => undefined);
 		this.refreshInFlight = run;
 		return run;
 	}
