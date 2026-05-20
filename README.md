@@ -20,11 +20,13 @@ A TLH primary agent is the role you talk to directly in the main session. The de
 
 TLH also includes a **product** primary agent for product strategy and decision support. It clarifies goals, frames tradeoffs, maintains product strategy docs, and shapes implementation-ready `tk` tickets for later architect/developer handoff. Product mode does not implement source changes, run implementation loops, or perform code review.
 
-Primary agents are optional. Use `Shift+Tab` to cycle the current session through `architect` → `product` → `disabled`, or use `/agent` for explicit session and persistent-default controls. When primary agents are disabled, subagents remain available but TLH stops applying primary-agent persona/tool restrictions.
+TLH also includes a **bug-hunter** primary agent for read-only investigation and debugging. It analyzes bug reports, traces root causes, surveys the codebase for related patterns, and proposes candidate fixes — without modifying files, running destructive tools, or kicking off implementation loops. Bug-hunter is a peer to the architect and product primaries: useful when you want to understand a problem before handing off to a write-capable primary.
+
+Primary agents are optional. Use `Shift+Tab` to cycle the current session through `architect` → `product` → `bug-hunter` → `disabled`, or use `/agent` for explicit session and persistent-default controls. When primary agents are disabled, subagents remain available but TLH stops applying primary-agent persona/tool restrictions.
 
 ### Subagents
 
-TLH subagents are focused child sessions used by the architect workflow: `repo-scout` for discovery, `developer` for implementation, `code-reviewer` for review, `diff-summarizer` for local diff orientation, `bug-hunter`/`bug-catcher` for bug investigation, and `librarian`/`oracle` for external research and second opinions.
+TLH subagents are focused child sessions used by the architect workflow: `repo-scout` for discovery, `developer` for implementation, `code-reviewer` for review, `diff-summarizer` for local diff orientation, and `librarian`/`oracle` for external research and second opinions.
 
 They run in fresh child contexts: they get the task and project context, not the whole primary-agent conversation. They do not coordinate with each other as a swarm; they report back to the parent primary agent, which stays responsible for decisions and orchestration. Today they inherit your active model and effort unless configured otherwise; future TLH versions may give different roles their own model and thinking defaults.
 
@@ -45,9 +47,9 @@ They run in fresh child contexts: they get the task and project context, not the
 
 Common TLH commands:
 
-- `Shift+Tab` — cycle the current session through `architect` → `product` → `disabled` primary-agent modes.
+- `Shift+Tab` — cycle the current session through `architect` → `product` → `bug-hunter` → `disabled` primary-agent modes.
 - `/tlh` / `/harness` — show TLH package, primary-agent, override, and settings status.
-- `/agent [status|architect|product|disabled|reset|default architect|default product|default disabled|default reset]` — inspect the active primary, set/reset the session override, or write/reset the persistent default.
+- `/agent [status|architect|product|bug-hunter|disabled|reset|default architect|default product|default bug-hunter|default disabled|default reset]` — inspect the active primary, set/reset the session override, or write/reset the persistent default.
 - `/architect [status|on|off|toggle|reset|default on|default off|default reset]` — compatibility controls for architect-only flows; maps to architect/disabled primary-agent settings.
 - `/effort ...` — pick or set model reasoning effort. Available levels depend on the current model.
 - `/gnosis [status|enable|disable|toggle]` — toggle or inspect Gnosis prompt integration.

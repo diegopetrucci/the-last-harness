@@ -30,7 +30,7 @@ export type TlhPrimaryAgentConfig = {
 	applyThinking?: boolean;
 };
 
-export type TlhPrimaryAgentSelection = "architect" | "product" | "disabled";
+export type TlhPrimaryAgentSelection = "architect" | "product" | "bug-hunter" | "disabled";
 
 export type TlhPrimaryAgentSessionState = {
 	enabled?: boolean;

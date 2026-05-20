@@ -64,9 +64,10 @@ test("latest session primary state wins over earlier compatibility entries", () 
 	);
 });
 
-test("Shift+Tab cycle order is architect to product to disabled", () => {
-	assert.deepEqual(PRIMARY_AGENT_CYCLE, ["architect", "product", "disabled"]);
+test("Shift+Tab cycle order is architect to product to bug-hunter to disabled", () => {
+	assert.deepEqual(PRIMARY_AGENT_CYCLE, ["architect", "product", "bug-hunter", "disabled"]);
 	assert.equal(nextPrimaryAgentSelection("architect"), "product");
-	assert.equal(nextPrimaryAgentSelection("product"), "disabled");
+	assert.equal(nextPrimaryAgentSelection("product"), "bug-hunter");
+	assert.equal(nextPrimaryAgentSelection("bug-hunter"), "disabled");
 	assert.equal(nextPrimaryAgentSelection("disabled"), "architect");
 });

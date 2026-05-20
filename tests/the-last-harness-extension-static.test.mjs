@@ -122,6 +122,6 @@ test("extension wires multi-primary commands and active-primary safety", () => {
 	assert.match(promptsSource, /function loadPrimaryAgents\(\): Map<TlhPrimaryAgentSelection, AgentPrompt>/);
 	assert.match(agentCommand, /default product/);
 	assert.match(agentCommand, /writeTlhPrimaryAgentDefault\(ctx\.cwd, defaultSelection\)/);
-	assert.match(shortcut, /architect\/product\/disabled/);
+	assert.match(shortcut, /architect\/product\/bug-hunter\/disabled/);
 	assert.match(toolCall, /!isEnabledPrimaryAgentSelection\(currentPrimaryAgentSelection\(\)\)/);
 });
