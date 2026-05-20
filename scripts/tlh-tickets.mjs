@@ -23,27 +23,12 @@ Manage tk ticket CLI integration in the isolated tlh profile.
 Commands:
   status               Show integration status and detected tk command
   enable               Enable tk integration after validating a tk command
-  state                Print enabled or unset (installer internal)
-  validate [path]      Validate a tk command, or print the first valid one
-  install-managed      Install managed tk from the pinned source tarball (installer internal)
-  configure-install    Configure installer-time tk integration (installer internal)
 
 Options:
   --settings <path>    Settings file to update (default: ~/.the-last-harness/agent/settings.json, or PI_CODING_AGENT_DIR/settings.json)
   --agent-dir <dir>    Isolated Pi agent dir (default: ~/.the-last-harness/agent, or PI_CODING_AGENT_DIR)
   --install-path <p>   Store this tk command path when enabling
-  --target <path>      Managed tk install target (default: <agent-dir>/bin/tk)
-  --mode <mode>        Installer tickets mode: auto or with (legacy without is treated as required)
-  --wrapper-name <n>   Wrapper command name for user-facing guidance
-  --detail             Print verbose/dry-run installer details
-  --dry-run            Print intended changes without writing
-  --quiet              Only print errors
   -h, --help           Show this help
-
-Unsafe test-only source overrides (do not use in production):
-  --unsafe-test-ticket-source-url <https-url>  Source tarball URL (must start with https://)
-  --unsafe-test-ticket-source-sha256 <hex>     Expected source tarball SHA256
-  --unsafe-test-ticket-archive-entry <path>    Ticket script entry inside the tarball
 `;
 }
 
@@ -56,7 +41,6 @@ function parseArgs(argv) {
 		ticketSourceUrl: DEFAULT_TICKET_SOURCE_URL,
 		ticketSourceSha256: DEFAULT_TICKET_SHA256,
 		ticketArchiveEntry: DEFAULT_TICKET_ARCHIVE_ENTRY,
-		mode: "auto",
 		wrapperName: "tlh",
 		command: undefined,
 		commandArgs: [],
@@ -138,14 +122,6 @@ function parseArgs(argv) {
 		}
 		if (arg.startsWith("--unsafe-test-ticket-archive-entry=")) {
 			args.ticketArchiveEntry = arg.slice("--unsafe-test-ticket-archive-entry=".length);
-			continue;
-		}
-		if (arg === "--mode") {
-			args.mode = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--mode=")) {
-			args.mode = arg.slice("--mode=".length);
 			continue;
 		}
 		if (arg === "--wrapper-name") {
@@ -1151,15 +1127,10 @@ function validTkForEnable(args, settings, agentDir) {
 }
 
 async function commandConfigureInstall(args, settingsPath, settings, previousRaw, agentDir) {
-	if (!["auto", "with", "without"].includes(args.mode)) {
-		throw new Error("--mode must be one of: auto, with, without");
-	}
 	assertNotNormalPiSettings(settingsPath);
 
 	const currentState = legacyTicketsState(settings);
-	if (args.mode === "without") {
-		detailLog(args, "Ignoring legacy tk installer opt-out because ticket integration is required.");
-	} else if (currentState === "disabled") {
+	if (currentState === "disabled") {
 		detailLog(args, "Re-enabling existing tk opt-out because ticket integration is required.");
 	} else if (currentState === "enabled") {
 		detailLog(args, "Validating existing tk integration setting: enabled.");
@@ -1217,29 +1188,6 @@ function commandStatus(args, settings, agentDir) {
 	}
 }
 
-function commandState(settings) {
-	console.log(ticketsState(settings));
-}
-
-function commandValidate(args, settings, agentDir, commandArgs) {
-	const candidate = commandArgs[0];
-	if (candidate) {
-		if (!hasTkCommandName(candidate) || !validateTkCommand(candidate, agentDir)) {
-			process.exitCode = 1;
-			return;
-		}
-		console.log(candidate);
-		return;
-	}
-
-	const valid = findValidTk(args, settings, agentDir);
-	if (!valid) {
-		process.exitCode = 1;
-		return;
-	}
-	console.log(valid);
-}
-
 function commandEnable(args, settingsPath, settings, previousRaw, agentDir) {
 	assertNotNormalPiSettings(settingsPath);
 	const validPath = validTkForEnable(args, settings, agentDir);
@@ -1268,19 +1216,11 @@ async function main() {
 		commandStatus(args, settings, agentDir);
 		return;
 	}
-	if (args.command === "state") {
-		commandState(settings);
-		return;
-	}
-	if (args.command === "validate") {
-		commandValidate(args, settings, agentDir, args.commandArgs);
-		return;
-	}
 	if (args.command === "install-managed") {
 		await commandInstallManaged(args, agentDir);
 		return;
 	}
-	if (args.command === "configure-install" || args.command === "configure-install-style") {
+	if (args.command === "configure-install") {
 		await commandConfigureInstall(args, settingsPath, settings, previousRaw, agentDir);
 		return;
 	}

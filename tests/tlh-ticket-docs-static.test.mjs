@@ -30,6 +30,8 @@ const legacyTicketGuidancePatterns = [
 	/ticket integration is disabled/i,
 	/disable ticket integration/i,
 	/disabling ticket integration/i,
+	/tlh tickets configure-install/i,
+	/tickets configure-install/i,
 ];
 
 test("user-facing ticket docs describe mandatory managed tk behavior", () => {

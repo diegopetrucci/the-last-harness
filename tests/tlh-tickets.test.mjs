@@ -406,10 +406,10 @@ test("runTickets ignores inherited PI_CODING_AGENT_DIR and TLH_* environment", (
 		process.env.PI_CODING_AGENT_DIR = inheritedPiAgent;
 		process.env.TLH_AGENT_DIR = inheritedTlhAgent;
 
-		const result = runTickets(["state"], { env: { HOME: fixture.home } });
+		const result = runTickets(["status"], { env: { HOME: fixture.home } });
 
 		assert.equal(result.status, 0, result.stderr);
-		assert.equal(result.stdout.trim(), "enabled");
+		assert.match(result.stdout, /setting: enabled/);
 	} finally {
 		if (previousPiAgentDir === undefined) {
 			delete process.env.PI_CODING_AGENT_DIR;
@@ -810,40 +810,74 @@ test("status treats explicit legacy disabled settings as enabled", () => {
 	assert.doesNotMatch(result.stdout, /disabled|tlh tickets enable/i);
 });
 
-test("disable command is unavailable and omitted from usage", () => {
+test("help advertises only supported user-facing ticket commands and options", () => {
 	const fixture = tempFixture();
-	const settings = join(fixture.agent, "settings.json");
 
 	const help = runTickets(["--help"], { env: { HOME: fixture.home } });
+
 	assert.equal(help.status, 0, help.stderr);
-	assert.doesNotMatch(help.stdout, /disable\s+Disable tk integration/);
-
-	const result = runTickets([
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
-		"disable",
-	], { env: { HOME: fixture.home } });
-
-	assert.notEqual(result.status, 0);
-	assert.match(result.stderr, /disable is no longer supported/);
-	assert.equal(existsSync(settings), false);
+	assert.match(help.stdout, /status\s+Show integration status/);
+	assert.match(help.stdout, /enable\s+Enable tk integration/);
+	assert.match(help.stdout, /--settings <path>/);
+	assert.match(help.stdout, /--agent-dir <dir>/);
+	assert.match(help.stdout, /--install-path <p>/);
+	for (const hiddenSurface of [
+		/disable\s+Disable tk integration/,
+		/state\s+Print enabled/,
+		/validate \[path\]/,
+		/install-managed/,
+		/configure-install/,
+		/configure-install-style/,
+		/--target/,
+		/--mode/,
+		/--wrapper-name/,
+		/--detail/,
+		/--dry-run/,
+		/--quiet/,
+		/--unsafe-test-ticket-source-url/,
+		/--unsafe-test-ticket-source-sha256/,
+		/--unsafe-test-ticket-archive-entry/,
+	]) {
+		assert.doesNotMatch(help.stdout, hiddenSurface);
+	}
 });
 
-test("validate rejects a command whose basename is not tk before validation", () => {
+test("legacy ticket commands and options are unavailable", () => {
 	const fixture = tempFixture();
 	const settings = join(fixture.agent, "settings.json");
 	const ticket = join(fixture.external, "ticket");
 	const sentinel = join(fixture.dir, "ticket-called");
 	writeValidTkLikeCommand(ticket, { sentinel });
 
-	const result = runTickets([
+	for (const command of ["state", "validate", "configure-install-style"]) {
+		const result = runTickets([
+			"--settings", settings,
+			"--agent-dir", fixture.agent,
+			command,
+			ticket,
+		], { env: { HOME: fixture.home, PATH: "" } });
+		assert.notEqual(result.status, 0, `expected ${command} to fail`);
+		assert.match(result.stderr, new RegExp(`Unknown command: ${command}`));
+	}
+
+	const modeResult = runTickets([
 		"--settings", settings,
 		"--agent-dir", fixture.agent,
-		"validate", ticket,
+		"--mode", "auto",
+		"configure-install",
 	], { env: { HOME: fixture.home, PATH: "" } });
+	assert.notEqual(modeResult.status, 0);
+	assert.match(modeResult.stderr, /Unknown option: --mode/);
 
-	assert.notEqual(result.status, 0);
-	assert.equal(result.stdout, "");
+	const disableResult = runTickets([
+		"--settings", settings,
+		"--agent-dir", fixture.agent,
+		"disable",
+	], { env: { HOME: fixture.home } });
+	assert.notEqual(disableResult.status, 0);
+	assert.match(disableResult.stderr, /disable is no longer supported/);
+
+	assert.equal(existsSync(settings), false);
 	assert.equal(existsSync(sentinel), false);
 });
 
@@ -1241,7 +1275,6 @@ test("configure-install re-enables legacy disabled ticket settings", () => {
 	const configured = runTickets([
 		"--settings", settings,
 		"--agent-dir", fixture.agent,
-		"--mode", "without",
 		"configure-install",
 	], { env: { HOME: fixture.home, PATH: "" } });
 
@@ -1251,14 +1284,14 @@ test("configure-install re-enables legacy disabled ticket settings", () => {
 	assert.equal(written.tlh.tickets.enabled, true);
 	assert.equal(written.tlh.tickets.installPath, customTk);
 
-	const state = runTickets([
+	const status = runTickets([
 		"--settings", settings,
 		"--agent-dir", fixture.agent,
-		"state",
+		"status",
 	], { env: { HOME: fixture.home } });
 
-	assert.equal(state.status, 0, state.stderr);
-	assert.equal(state.stdout.trim(), "enabled");
+	assert.equal(status.status, 0, status.stderr);
+	assert.match(status.stdout, /setting: enabled/);
 });
 
 test("configure-install fails when no valid tk is available and managed install fails", () => {
@@ -1308,7 +1341,6 @@ test("configure-install with fresh managed install records installedSha256 in se
 		"--settings", settings,
 		"--agent-dir", fixture.agent,
 		"--target", target,
-		"--mode", "with",
 		...unsafeTicketSourceArgs({ checksum }),
 		"configure-install",
 	], {
@@ -1345,7 +1377,6 @@ test("configure-install reinstalls managed tk when installedSha256 does not matc
 		"--settings", settings,
 		"--agent-dir", fixture.agent,
 		"--target", target,
-		"--mode", "auto",
 		...unsafeTicketSourceArgs({ checksum }),
 		"configure-install",
 	], {
@@ -1388,7 +1419,6 @@ globalThis.fetch = async (url) => {
 		"--settings", settings,
 		"--agent-dir", fixture.agent,
 		"--target", target,
-		"--mode", "auto",
 		...unsafeTicketSourceArgs({ checksum: nextSha }),
 		"configure-install",
 	], {
@@ -1420,7 +1450,6 @@ test("configure-install reinstalls managed tk for legacy installs missing instal
 		"--settings", settings,
 		"--agent-dir", fixture.agent,
 		"--target", target,
-		"--mode", "auto",
 		...unsafeTicketSourceArgs({ checksum }),
 		"configure-install",
 	], {
@@ -1460,7 +1489,6 @@ globalThis.fetch = async () => {
 	const result = runTickets([
 		"--settings", settings,
 		"--agent-dir", fixture.agent,
-		"--mode", "auto",
 		"configure-install",
 	], {
 		env: { HOME: fixture.home },
@@ -1497,7 +1525,6 @@ globalThis.fetch = async () => {
 		"--settings", settings,
 		"--agent-dir", fixture.agent,
 		"--target", target,
-		"--mode", "auto",
 		...unsafeTicketSourceArgs({ checksum }),
 		"configure-install",
 	], {
