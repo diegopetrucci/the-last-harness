@@ -319,6 +319,7 @@ function buildInstallConfig(parsedArgs, env = process.env) {
 		tmpDir: "",
 		supportFilesDryRunSkipped: false,
 		gnosisSummary: "",
+		ticketsSummary: "",
 	};
 }
 
@@ -930,6 +931,33 @@ function configureGnosis(config) {
 	}
 }
 
+function configureTickets(config) {
+	if (!config.supportFilePaths.TLH_TICKETS_SCRIPT) {
+		if (config.dryRun && config.supportFilesDryRunSkipped) {
+			log(config, "Would configure required tk ticket integration after fetching support files.");
+			return;
+		}
+		throw new Error(`required tk ticket support script not found for ref ${config.ref}; re-run the installer from a release that includes scripts/tlh-tickets.mjs`);
+	}
+
+	const args = [
+		"--settings",
+		config.settingsPath,
+		"--agent-dir",
+		config.agentDir,
+		"--target",
+		join(config.agentDir, "bin", "tk"),
+		"--wrapper-name",
+		config.wrapperName,
+		"configure-install",
+	];
+	if (config.dryRun) args.push("--dry-run", "--detail");
+	else if (config.verbose) args.push("--detail");
+	if (config.quiet) args.push("--quiet");
+
+	config.ticketsSummary = runNodeScript(config, config.supportFilePaths.TLH_TICKETS_SCRIPT, args, { captureStdout: true }).trimEnd();
+}
+
 function wrapperIsManaged(config) {
 	if (!existsSync(config.wrapperPath)) return false;
 	try {
@@ -1012,6 +1040,7 @@ function printSummary(config) {
 	}
 	detailLog(config, `Settings: ${config.settingsPath}`);
 	if (config.gnosisSummary) detailLog(config, config.gnosisSummary);
+	if (config.ticketsSummary) detailLog(config, config.ticketsSummary);
 	detailLog(config, "Normal Pi config was not modified: ~/.pi/agent");
 	if (!config.noWrapper) {
 		detailLog(config, `Uninstall: rm -f "${config.wrapperPath}" && rm -rf "${config.agentDir}"`);
@@ -1039,6 +1068,7 @@ async function runInstallFlow(config) {
 	await writeInstallState(config);
 	installDefaultExtensions(config);
 	configureGnosis(config);
+	configureTickets(config);
 	await writeWrapper(config);
 	printSummary(config);
 }

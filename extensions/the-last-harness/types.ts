@@ -14,6 +14,12 @@ export type TlhTelemetryConfig = {
 	enabled?: boolean;
 };
 
+export type TlhTicketsConfig = {
+	enabled?: boolean;
+	installPath?: string;
+	installedSha256?: string;
+};
+
 export type TlhPrimaryAgentConfig = {
 	enabled?: boolean;
 	selected?: string;
@@ -38,6 +44,7 @@ export type TlhSettings = {
 	tlh?: {
 		updateCheck?: TlhUpdateCheckConfig;
 		telemetry?: TlhTelemetryConfig;
+		tickets?: TlhTicketsConfig;
 		primaryAgent?: TlhPrimaryAgentConfig;
 	};
 };

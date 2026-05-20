@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { extname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { createJiti } from "jiti";
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const extensionsDir = fileURLToPath(new URL("../extensions/", import.meta.url));
@@ -11,8 +12,13 @@ const PI_EXTENSION_DIRECTORY_ENTRYPOINT_FILES = ["package.json", "index.ts", "in
 
 const extensionSource = readFileSync(new URL("../extensions/the-last-harness.ts", import.meta.url), "utf8");
 const primaryRuntimeSource = readFileSync(new URL("../extensions/the-last-harness/primary-agent-runtime.ts", import.meta.url), "utf8");
+const ticketRuntimeSource = readFileSync(new URL("../extensions/the-last-harness/tickets.ts", import.meta.url), "utf8");
 const effortSource = readFileSync(new URL("../extensions/the-last-harness/effort.ts", import.meta.url), "utf8");
 const promptsSource = readFileSync(new URL("../extensions/the-last-harness/prompts.ts", import.meta.url), "utf8");
+const jiti = createJiti(import.meta.url);
+const { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents } = await jiti.import(
+	"../extensions/the-last-harness/prompts.ts",
+);
 
 function sourceSection(source, startMarker, endMarker) {
 	const start = source.indexOf(startMarker);
@@ -68,6 +74,44 @@ test("before_agent_start reapplies primary defaults without a one-shot model gat
 	assert.match(applyPrimaryThinking, /pi\.getThinkingLevel\(\) === primary\.thinking/);
 });
 
+test("before_agent_start activates ticket runtime without disabled-ticket prompt branching", () => {
+	const beforeAgentStart = sourceSection(primaryRuntimeSource, 'pi.on("before_agent_start"', 'pi.on("tool_call"');
+
+	assert.match(primaryRuntimeSource, /function getTlhGlobalSettings\(cwd: string\): TlhSettings/);
+	assert.match(ticketRuntimeSource, /return true;/);
+	assert.match(beforeAgentStart, /const settings = getTlhGlobalSettings\(ctx\.cwd\);/);
+	assert.doesNotMatch(beforeAgentStart, /ticketIntegrationEnabled/);
+	assert.match(beforeAgentStart, /activateTlhTicketRuntime\(settings, getAgentDir\(\)\);/);
+	assert.match(beforeAgentStart, /buildTlhSystemPrompt\(activePrimaryAgent\(\), subagentMetadata, primaryEnabled\)/);
+});
+
+test("primary and child prompts do not include disabled-ticket fallback guidance", () => {
+	const primaryAgents = loadPrimaryAgents();
+	const architect = primaryAgents.get("architect");
+	assert.ok(architect, "architect primary prompt should load");
+
+	const primaryPrompt = buildTlhSystemPrompt(architect, [], true);
+	const childPrompt = buildChildSubagentSystemPrompt();
+
+	for (const prompt of [primaryPrompt, childPrompt]) {
+		assert.doesNotMatch(prompt, /## TLH Ticket Integration Disabled/);
+		assert.doesNotMatch(prompt, /non-ticket/i);
+		assert.doesNotMatch(prompt, /ticket integration is disabled/i);
+	}
+});
+
+test("child startup branch uses the mandatory-ticket child prompt", () => {
+	const registerBlock = sourceSection(
+		primaryRuntimeSource,
+		"export function registerTlhPrimaryAgentRuntime",
+		"const runtime = createTlhPrimaryAgentRuntime",
+	);
+
+	assert.doesNotMatch(registerBlock, /getTlhGlobalSettings\(process\.cwd\(\)\)/);
+	assert.doesNotMatch(registerBlock, /isTlhTicketIntegrationEnabled/);
+	assert.match(registerBlock, /buildChildSubagentSystemPrompt\(\)/);
+});
+
 test("extension imports extracted shared helpers from nested TypeScript modules", () => {
 	assert.match(extensionSource, /from "\.\/the-last-harness\/autocomplete\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/effort\.js"/);
@@ -82,6 +126,7 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
 	assert.match(primaryRuntimeSource, /from "\.\/gnosis\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/profile-state\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/prompts\.js"/);
+	assert.match(primaryRuntimeSource, /from "\.\/tickets\.js"/);
 	assert.match(effortSource, /from "\.\/thinking\.js"/);
 	assert.match(promptsSource, /from "\.\/package-version\.js"/);
 	assert.doesNotMatch(extensionSource, /function safeTlhProfileFilePath/);

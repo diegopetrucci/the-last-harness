@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
@@ -155,6 +155,13 @@ test("declared Node minimum stays aligned across installer metadata", () => {
 	assert.ok(releaseWorkflow.includes(`node-version: '${MIN_NODE_VERSION}'`));
 });
 
+test("stage-1 rejects legacy ticket integration flags", () => {
+	assert.doesNotThrow(() => parseArgs([]));
+	for (const flag of ["--with-tickets", "--without-tickets", "--no-tickets"]) {
+		assert.throws(() => parseArgs([flag]), new RegExp(`unknown option: ${flag}`));
+	}
+});
+
 test("stage-1 infers update track unless env or CLI overrides", (t) => {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");
@@ -263,6 +270,431 @@ test("stage-1 derives packageRoot from custom package source install dirs", (t) 
 		unsupportedConfig.packageRoot,
 		join(agentDir, "git", "github.com", "diegopetrucci", "the-last-harness"),
 	);
+});
+
+test("wrapper uses original node for helpers while exposing isolated bin only for tickets and pi", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const agentBin = join(agentDir, "bin");
+	const agentBinLink = join(root, "agent-bin-link");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const fakebin = join(root, "fakebin");
+	const cwdDir = join(root, "cwd");
+	const cwdLink = join(root, "cwd-link");
+	const updateLog = join(root, "update.json");
+	const ticketsLog = join(root, "tickets.json");
+	const piLog = join(root, "pi.txt");
+	const fakeNodeLog = join(root, "fake-node.log");
+	const currentNodeLog = join(root, "current-node.log");
+	const currentPiLog = join(root, "current-pi.log");
+	const isolatedPiLog = join(root, "isolated-pi.log");
+	mkdirSync(join(agentDir, "tlh"), { recursive: true });
+	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	mkdirSync(cwdDir, { recursive: true });
+	if (process.platform !== "win32") {
+		symlinkSync(agentBin, agentBinLink, "dir");
+		symlinkSync(cwdDir, cwdLink, "dir");
+	}
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	writeFakeCommand(agentBin, "node", "printf 'isolated node intercepted\\n' >\"${FAKE_NODE_LOG}\"\nexit 88");
+	writeFakeCommand(agentBin, "tk", "if [[ \"${1:-}\" == \"help\" ]]; then printf 'isolated tk help\\n'; exit 0; fi\nexit 1");
+	writeFakeCommand(agentBin, "pi", "printf 'isolated pi intercepted\\n' >\"${ISOLATED_PI_LOG}\"\nexit 89");
+	writeFakeCommand(cwdDir, "node", "printf 'current-dir node intercepted\\n' >\"${CURRENT_NODE_LOG}\"\nexit 87");
+	writeFakeCommand(cwdDir, "pi", "printf 'current-dir pi intercepted\\n' >\"${CURRENT_PI_LOG}\"\nexit 86");
+	writeFileSync(join(agentDir, "tlh", "tlh-update.mjs"), `import { writeFileSync } from "node:fs";\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH } }));\n`, "utf8");
+	writeFileSync(join(agentDir, "tlh", "tlh-tickets.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst tk = spawnSync("tk", ["help"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_TICKETS_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, tk: { status: tk.status, stdout: (tk.stdout || "").trim(), stderr: (tk.stderr || "").trim(), error: tk.error?.message } }));\nprocess.exit(tk.status ?? (tk.error ? 1 : 0));\n`, "utf8");
+	writeFakePi(fakebin, "{ printf 'argv=%s\\n' \"$*\"; printf 'agent=%s\\n' \"${PI_CODING_AGENT_DIR:-}\"; printf 'path=%s\\n' \"${PATH:-}\"; } >\"${PI_WRAPPER_LOG}\"");
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const poisonedPathEntries = ["", ".", cwdDir, agentBin];
+	if (process.platform !== "win32") poisonedPathEntries.push(cwdLink, agentBinLink);
+	poisonedPathEntries.push(fakebin, process.env.PATH || "");
+	const wrapperEnv = scrubInstallerEnv({
+		HOME: homeDir,
+		PATH: poisonedPathEntries.join(":"),
+		TLH_UPDATE_LOG: updateLog,
+		TLH_TICKETS_LOG: ticketsLog,
+		PI_WRAPPER_LOG: piLog,
+		FAKE_NODE_LOG: fakeNodeLog,
+		CURRENT_NODE_LOG: currentNodeLog,
+		CURRENT_PI_LOG: currentPiLog,
+		ISOLATED_PI_LOG: isolatedPiLog,
+	});
+
+	const updateResult = spawnSync(wrapper, ["update", "--dry-run"], {
+		cwd: cwdDir,
+		env: wrapperEnv,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	assert.equal(updateResult.status, 0, updateResult.stderr);
+	const updateRecord = JSON.parse(readFileSync(updateLog, "utf8"));
+	assert.deepEqual(updateRecord.argv, [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--dry-run",
+	]);
+	assert.equal(updateRecord.env.PI_CODING_AGENT_DIR, agentDir);
+	const updatePathEntries = updateRecord.env.PATH.split(":");
+	assert.equal(updatePathEntries[0], fakebin);
+	assert.equal(updatePathEntries.includes(""), false);
+	assert.equal(updatePathEntries.includes("."), false);
+	assert.equal(updatePathEntries.includes(cwdDir), false);
+	assert.equal(updatePathEntries.includes(agentBin), false);
+	if (process.platform !== "win32") {
+		assert.equal(updatePathEntries.includes(cwdLink), false);
+		assert.equal(updatePathEntries.includes(agentBinLink), false);
+	}
+	assert.equal(existsSync(currentNodeLog), false);
+	assert.equal(existsSync(fakeNodeLog), false);
+
+	const ticketsResult = spawnSync(wrapper, ["tickets", "status"], {
+		cwd: cwdDir,
+		env: wrapperEnv,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	assert.equal(ticketsResult.status, 0, ticketsResult.stderr);
+	const ticketsRecord = JSON.parse(readFileSync(ticketsLog, "utf8"));
+	assert.deepEqual(ticketsRecord.argv, [
+		"--settings",
+		join(agentDir, "settings.json"),
+		"--agent-dir",
+		agentDir,
+		"--wrapper-name",
+		"tlh",
+		"status",
+	]);
+	assert.equal(ticketsRecord.env.PI_CODING_AGENT_DIR, agentDir);
+	const ticketsPathEntries = ticketsRecord.env.PATH.split(":");
+	assert.deepEqual(ticketsPathEntries.slice(0, 2), [agentBin, fakebin]);
+	assert.equal(ticketsPathEntries.includes(""), false);
+	assert.equal(ticketsPathEntries.includes("."), false);
+	assert.equal(ticketsPathEntries.includes(cwdDir), false);
+	if (process.platform !== "win32") {
+		assert.equal(ticketsPathEntries.includes(cwdLink), false);
+		assert.equal(ticketsPathEntries.includes(agentBinLink), false);
+	}
+	assert.equal(ticketsRecord.tk.status, 0);
+	assert.equal(ticketsRecord.tk.stdout, "isolated tk help");
+	assert.equal(existsSync(fakeNodeLog), false);
+
+	const piResult = spawnSync(wrapper, ["chat", "--version"], {
+		cwd: cwdDir,
+		env: wrapperEnv,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	assert.equal(piResult.status, 0, piResult.stderr);
+	const piRecord = Object.fromEntries(readFileSync(piLog, "utf8").trim().split(/\r?\n/).map((line) => {
+		const separator = line.indexOf("=");
+		return [line.slice(0, separator), line.slice(separator + 1)];
+	}));
+	assert.equal(piRecord.argv, "chat --version");
+	assert.equal(piRecord.agent, agentDir);
+	const piPathEntries = piRecord.path.split(":");
+	assert.deepEqual(piPathEntries.slice(0, 2), [agentBin, fakebin]);
+	assert.equal(piPathEntries.includes(""), false);
+	assert.equal(piPathEntries.includes("."), false);
+	assert.equal(piPathEntries.includes(cwdDir), false);
+	if (process.platform !== "win32") {
+		assert.equal(piPathEntries.includes(cwdLink), false);
+		assert.equal(piPathEntries.includes(agentBinLink), false);
+	}
+	assert.equal(existsSync(currentPiLog), false);
+	assert.equal(existsSync(isolatedPiLog), false);
+	assert.equal(existsSync(currentNodeLog), false);
+	assert.equal(existsSync(fakeNodeLog), false);
+});
+
+test("wrapper resolves pi to an absolute command path before exposing isolated bin", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const agentBin = join(agentDir, "bin");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const cwdDir = join(root, "cwd");
+	const safeBinName = "safe-bin";
+	const safeBin = join(cwdDir, safeBinName);
+	const bashEnv = join(root, "bash-env.sh");
+	const piLog = join(root, "pi.txt");
+	const isolatedPiLog = join(root, "isolated-pi.log");
+	const functionPiLog = join(root, "function-pi.log");
+	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	mkdirSync(cwdDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	writeFakePi(agentBin, "printf 'isolated pi intercepted\\n' >\"${ISOLATED_PI_LOG}\"\nexit 89");
+	writeFakePi(safeBin, "{ printf 'cmd=%s\\n' \"$0\"; printf 'argv=%s\\n' \"$*\"; printf 'agent=%s\\n' \"${PI_CODING_AGENT_DIR:-}\"; printf 'path=%s\\n' \"${PATH:-}\"; } >\"${PI_WRAPPER_LOG}\"");
+	writeFileSync(bashEnv, "pi() {\n\tprintf 'shell function pi intercepted\\n' >\"${FUNCTION_PI_LOG}\"\n\treturn 79\n}\n", "utf8");
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const result = spawnSync(wrapper, ["chat"], {
+		cwd: cwdDir,
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: [safeBinName, agentBin, process.env.PATH || ""].join(":"),
+			BASH_ENV: bashEnv,
+			PI_WRAPPER_LOG: piLog,
+			ISOLATED_PI_LOG: isolatedPiLog,
+			FUNCTION_PI_LOG: functionPiLog,
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+	const piRecord = Object.fromEntries(readFileSync(piLog, "utf8").trim().split(/\r?\n/).map((line) => {
+		const separator = line.indexOf("=");
+		return [line.slice(0, separator), line.slice(separator + 1)];
+	}));
+	assert.equal(piRecord.cmd, join(realpathSync(safeBin), "pi"));
+	assert.ok(isAbsolute(piRecord.cmd), `expected absolute pi path: ${piRecord.cmd}`);
+	assert.equal(piRecord.argv, "chat");
+	assert.equal(piRecord.agent, agentDir);
+	const piPathEntries = piRecord.path.split(":");
+	assert.deepEqual(piPathEntries.slice(0, 2), [agentBin, safeBinName]);
+	assert.equal(existsSync(isolatedPiLog), false);
+	assert.equal(existsSync(functionPiLog), false);
+});
+
+function setupTicketsEnabledWrapperFixture(t) {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const agentBin = join(agentDir, "bin");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const fakebin = join(root, "fakebin");
+	const cwdDir = join(root, "cwd");
+	const piLog = join(root, "pi.txt");
+	mkdirSync(join(agentDir, "tlh"), { recursive: true });
+	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	mkdirSync(cwdDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	writeFakePi(fakebin, "printf 'path=%s\\n' \"${PATH:-}\" >\"${PI_WRAPPER_LOG}\"");
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const runWrapper = () => spawnSync(wrapper, ["chat"], {
+		cwd: cwdDir,
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: [fakebin, process.env.PATH || ""].join(":"),
+			PI_WRAPPER_LOG: piLog,
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	const readPiPath = () => readFileSync(piLog, "utf8").trim().slice("path=".length).split(":");
+
+	return { agentDir, agentBin, fakebin, runWrapper, readPiPath };
+}
+
+test("wrapper includes managed_bin in pi PATH when tlh.tickets.enabled is true", (t) => {
+	const { agentDir, agentBin, runWrapper, readPiPath } = setupTicketsEnabledWrapperFixture(t);
+	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ tlh: { tickets: { enabled: true } } }, null, 2));
+
+	const result = runWrapper();
+	assert.equal(result.status, 0, result.stderr);
+	const piPathEntries = readPiPath();
+	assert.equal(piPathEntries[0], agentBin, `expected managed bin first; got ${piPathEntries.join(":")}`);
+});
+
+test("wrapper includes managed_bin in pi PATH when legacy tlh.tickets.enabled is false", (t) => {
+	const { agentDir, agentBin, runWrapper, readPiPath } = setupTicketsEnabledWrapperFixture(t);
+	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ tlh: { tickets: { enabled: false } } }, null, 2));
+
+	const result = runWrapper();
+	assert.equal(result.status, 0, result.stderr);
+	const piPathEntries = readPiPath();
+	assert.equal(piPathEntries[0], agentBin, `expected managed bin first; got ${piPathEntries.join(":")}`);
+});
+
+test("wrapper defaults to managed_bin in pi PATH when settings.json is missing", (t) => {
+	const { agentDir, agentBin, runWrapper, readPiPath } = setupTicketsEnabledWrapperFixture(t);
+	assert.equal(existsSync(join(agentDir, "settings.json")), false);
+
+	const result = runWrapper();
+	assert.equal(result.status, 0, result.stderr);
+	const piPathEntries = readPiPath();
+	assert.equal(piPathEntries[0], agentBin, `expected managed bin first; got ${piPathEntries.join(":")}`);
+});
+
+test("wrapper defaults to managed_bin in pi PATH when tlh.tickets.enabled is not a boolean", (t) => {
+	const { agentDir, agentBin, runWrapper, readPiPath } = setupTicketsEnabledWrapperFixture(t);
+	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ tlh: { tickets: { enabled: "false" } } }, null, 2));
+
+	const result = runWrapper();
+	assert.equal(result.status, 0, result.stderr);
+	const piPathEntries = readPiPath();
+	assert.equal(piPathEntries[0], agentBin, `expected managed bin first; got ${piPathEntries.join(":")}`);
+});
+
+test("tlh update rejects legacy ticket integration flags", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	mkdirSync(join(agentDir, "tlh"), { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify({
+		schemaVersion: 1,
+		repo: "diegopetrucci/the-last-harness",
+		track: "ref",
+		ref: "main",
+		packageSource: "git:github.com/diegopetrucci/the-last-harness@main",
+		packageSourceIsDefault: true,
+	}, null, 2));
+
+	const runUpdate = (...extraArgs) => spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-update.mjs"), "--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir, ...extraArgs], {
+		cwd: repoRoot,
+		env: scrubInstallerEnv({ HOME: homeDir }),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	const defaultResult = runUpdate();
+	assert.equal(defaultResult.status, 0, defaultResult.stderr);
+	assert.doesNotMatch(defaultResult.stdout, /--with-tickets|--without-tickets|--no-tickets/);
+
+	for (const flag of ["--with-tickets", "--without-tickets", "--no-tickets"]) {
+		const result = runUpdate(flag);
+		assert.notEqual(result.status, 0, `expected ${flag} to be rejected`);
+		assert.match(result.stderr, new RegExp(`Unknown option for tlh update: ${flag}`));
+		assert.equal(result.stdout, "");
+	}
+});
+
+test("tlh update removes isolated bin and skips non-file bash candidates before running bash", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const agentBin = join(agentDir, "bin");
+	const agentBinLink = join(root, "agent-bin-link");
+	const binDir = join(root, "bin");
+	const poisonedBin = join(root, "poisoned-bin");
+	const safeBin = join(root, "safe-bin");
+	const cwdDir = join(root, "cwd");
+	const cwdLink = join(root, "cwd-link");
+	const bashLog = join(root, "bash.txt");
+	const currentBashLog = join(root, "current-bash.log");
+	const interceptedBashLog = join(root, "intercepted-bash.log");
+	const fetchPreload = join(root, "stub-update-fetch.mjs");
+	mkdirSync(join(agentDir, "tlh"), { recursive: true });
+	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(poisonedBin, { recursive: true });
+	mkdirSync(safeBin, { recursive: true });
+	mkdirSync(cwdDir, { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	if (process.platform !== "win32") {
+		symlinkSync(agentBin, agentBinLink, "dir");
+		symlinkSync(cwdDir, cwdLink, "dir");
+	}
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify({
+		schemaVersion: 1,
+		repo: "diegopetrucci/the-last-harness",
+		track: "ref",
+		ref: "main",
+		packageSource: "git:github.com/diegopetrucci/the-last-harness@main",
+		packageSourceIsDefault: true,
+	}, null, 2));
+	writeFileSync(join(agentBin, "bash"), "#!/bin/sh\nprintf 'isolated bash intercepted\\n' >\"${INTERCEPTED_BASH_LOG}\"\nexit 88\n", "utf8");
+	chmodSync(join(agentBin, "bash"), 0o755);
+	writeFileSync(join(cwdDir, "bash"), "#!/bin/sh\nprintf 'current-dir bash intercepted\\n' >\"${CURRENT_BASH_LOG}\"\nexit 87\n", "utf8");
+	chmodSync(join(cwdDir, "bash"), 0o755);
+	mkdirSync(join(poisonedBin, "bash"), { recursive: true });
+	chmodSync(join(poisonedBin, "bash"), 0o755);
+	writeFileSync(join(safeBin, "bash"), "#!/bin/sh\n{ printf 'cmd=%s\\n' \"$0\"; printf 'argv=%s\\n' \"$*\"; printf 'path=%s\\n' \"${PATH:-}\"; } >\"${BASH_LOG}\"\n", "utf8");
+	chmodSync(join(safeBin, "bash"), 0o755);
+	writeFileSync(fetchPreload, `globalThis.fetch = async () => ({\n\tok: true,\n\tstatus: 200,\n\tstatusText: "OK",\n\ttext: async () => "#!/usr/bin/env bash\\nexit 0\\n",\n});\n`, "utf8");
+
+	const poisonedPathEntries = ["", ".", cwdDir, agentBin];
+	if (process.platform !== "win32") poisonedPathEntries.push(cwdLink, agentBinLink);
+	poisonedPathEntries.push(poisonedBin, safeBin, process.env.PATH || "");
+	const result = spawnSync(process.execPath, ["--import", fetchPreload, join(repoRoot, "scripts/tlh-update.mjs"), "--agent-dir", agentDir, "--bin-dir", binDir, "--quiet"], {
+		cwd: cwdDir,
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: poisonedPathEntries.join(":"),
+			BASH_LOG: bashLog,
+			CURRENT_BASH_LOG: currentBashLog,
+			INTERCEPTED_BASH_LOG: interceptedBashLog,
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	assert.equal(result.status, 0, result.stderr);
+	assert.equal(existsSync(currentBashLog), false);
+	assert.equal(existsSync(interceptedBashLog), false);
+	const bashRecord = Object.fromEntries(readFileSync(bashLog, "utf8").trim().split(/\r?\n/).map((line) => {
+		const separator = line.indexOf("=");
+		return [line.slice(0, separator), line.slice(separator + 1)];
+	}));
+	assert.equal(bashRecord.cmd, join(safeBin, "bash"));
+	assert.match(bashRecord.argv, /--agent-dir/);
+	assert.match(bashRecord.argv, /--bin-dir/);
+	const bashPathEntries = bashRecord.path.split(":");
+	assert.equal(bashPathEntries[0], poisonedBin);
+	assert.equal(bashPathEntries[1], safeBin);
+	assert.equal(bashPathEntries.includes(""), false);
+	assert.equal(bashPathEntries.includes("."), false);
+	assert.equal(bashPathEntries.includes(cwdDir), false);
+	assert.equal(bashPathEntries.includes(agentBin), false);
+	if (process.platform !== "win32") {
+		assert.equal(bashPathEntries.includes(cwdLink), false);
+		assert.equal(bashPathEntries.includes(agentBinLink), false);
+	}
 });
 
 test("stage-1 batches non-critical default extension updates", (t) => {

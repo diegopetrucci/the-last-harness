@@ -322,6 +322,7 @@ run_static_checks() {
   node --check scripts/merge-keybindings.mjs
   node --check scripts/tlh-defaults.mjs
   node --check scripts/tlh-gnosis.mjs
+  node --check scripts/tlh-tickets.mjs
   node --check scripts/tlh-update.mjs
   node --check scripts/tlh-wrapper.mjs
   node --check scripts/tlh-install-state.mjs
@@ -388,17 +389,39 @@ run_stage1_dry_run_smoke() {
   local case_dir="${TMP_ROOT}/stage1-dry-run"
   local agent_dir="${case_dir}/agent"
   local bin_dir="${case_dir}/bin"
+  local fakebin="${case_dir}/fakebin"
   local stdout_file="${case_dir}/stdout.log"
   local stderr_file="${case_dir}/stderr.log"
   local combined_file="${case_dir}/combined.log"
-  mkdir -p "${case_dir}"
+  local node_cmd
+  node_cmd="$(command -v node)"
+  mkdir -p "${fakebin}"
+  cat >"${fakebin}/sh" <<'EOF_FAKE_SH'
+#!/bin/sh
+exec /bin/sh "$@"
+EOF_FAKE_SH
+  cat >"${fakebin}/npm" <<'EOF_FAKE_NPM'
+#!/bin/sh
+printf 'fake npm should not run during dry-run\n' >&2
+exit 98
+EOF_FAKE_NPM
+  cat >"${fakebin}/git" <<'EOF_FAKE_GIT'
+#!/bin/sh
+printf 'fake git should not run during dry-run\n' >&2
+exit 98
+EOF_FAKE_GIT
+  chmod +x "${fakebin}/sh" "${fakebin}/npm" "${fakebin}/git"
 
-  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 node scripts/tlh-install.mjs --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  run_scrubbed_installer_env PATH="${fakebin}" TLH_SKIP_GNOSIS_INSTALL=1 "${node_cmd}" scripts/tlh-install.mjs --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
 
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"
   assert_pi_commands_isolated "${combined_file}" "${agent_dir}"
+  assert_contains "${combined_file}" "Would install tk into isolated profile: ${agent_dir}/bin/tk"
+  assert_contains "${combined_file}" "Would download pinned wedow/ticket source:"
+  assert_contains "${combined_file}" "Would verify SHA256:"
+  assert_contains "${combined_file}" "Ticket CLI integration: enabled (${agent_dir}/bin/tk)"
 }
 
 run_stage1_relative_path_canonicalization_smoke() {
@@ -861,6 +884,45 @@ run_gnosis_managed_normal_pi_guard_smoke() {
   assert_absent "${home_dir}/.pi"
 }
 
+run_tickets_managed_normal_pi_guard_smoke() {
+  log "Running managed tk normal Pi guard smoke check..."
+  local case_dir="${TMP_ROOT}/tickets-managed-guard"
+  local home_dir="${case_dir}/home"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  mkdir -p "${home_dir}"
+
+  set +e
+  HOME="${home_dir}" node scripts/tlh-tickets.mjs --agent-dir "${home_dir}/.pi/agent" --target "${case_dir}/target/tk" --dry-run install-managed >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "managed tk agent-dir guard smoke unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "Refusing to modify normal Pi config from The Last Harness tickets command (agent dir)"
+  assert_absent "${home_dir}/.pi"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  HOME="${home_dir}" node scripts/tlh-tickets.mjs --agent-dir "${case_dir}/agent" --target "${home_dir}/.pi/agent/bin/tk" --dry-run install-managed >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "managed tk target guard smoke unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "Refusing to modify normal Pi config from The Last Harness tickets command (managed tk target)"
+  assert_absent "${home_dir}/.pi"
+}
+
 run_missing_required_helper_preflight_smoke() {
   log "Running missing required helper preflight smoke check..."
   local case_dir="${TMP_ROOT}/missing-helper-preflight"
@@ -1058,6 +1120,7 @@ run_stage0_alias_guard_smoke
 run_stage0_validation_precedes_local_support_smoke
 run_normal_pi_guard_smoke
 run_gnosis_managed_normal_pi_guard_smoke
+run_tickets_managed_normal_pi_guard_smoke
 run_missing_required_helper_preflight_smoke
 run_wrapper_install_state_normal_pi_guard_smoke
 run_release_pinning_smoke

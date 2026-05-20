@@ -33,7 +33,7 @@ They run in fresh child contexts: they get the task and project context, not the
 ## Quality-of-life improvements to `pi`
 
 - **Project memory**: Gnosis is required and installed automatically on supported platforms (linux/darwin × x64/arm64) so agents can record decisions, constraints, rejected alternatives, and lessons in repo-local memory. Unsupported platforms hard-fail at install.
-- **Ticketed execution**: when `tk` is available, the architect turns the approved plan into dependency-tracked tickets and hands one ticket at a time to implementation and review agents; product mode can shape product-approved tickets for later handoff. Without `tk`, TLH keeps the same small task tree in the conversation.
+- **Ticketed execution**: TLH requires `tk` for dependency-tracked tickets, installing a managed command at `~/.the-last-harness/agent/bin/tk` when it needs to supply one. The architect hands one ticket at a time to implementation and review agents; product mode can shape product-approved tickets for later handoff.
 - **Context management**: context is capped to 200k tokens to avoid the `dumb zone`, and `/context` lets you see what is eating up your context.
 - **Safety rails**: Bundled permission and destructive-action confirmations add checkpoints before sensitive commands or file changes.
 - **Inline bash snippets**: trusted `!{...}` snippets in your prompt are expanded through local bash before the agent sees them, useful for quick context like `!{git status --short}`.
@@ -70,9 +70,11 @@ tlh defaults enable notify
 
 Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `tlh update`, `pi update --extensions`, and installer reruns. Installer settings merges preserve existing same-identity package sources by default; use installer `--force` only when you want bundled default-extension source migrations to rewrite existing entries. The isolation-critical subagents/intercom defaults are protected: `tlh defaults disable` rejects `subagents`, `intercom`, and their legacy aliases; stale manual entries in `tlh.disabledDefaultExtensions` are ignored during source resolution and cleaned during settings merges. Old `pi-subagents`/`pi-intercom` replacements are migrated to the bundled TLH forks so architect delegation uses the isolated minor-agent prompts. Installer runs fail if these critical bundled packages cannot be installed or refreshed; fix the package install/checkout and rerun the installer rather than trying to disable them.
 
-### Gnosis integration
+### Integrations
 
 [Gnosis](https://github.com/skorokithakis/gnosis) is a small `gn` CLI for recording project decisions, constraints, rejected alternatives, and lessons that are not obvious from code alone. TLH requires and installs Gnosis automatically on supported platforms: **linux and darwin on x64 and arm64**. Installs on unsupported platforms hard-fail.
+
+TLH also requires the `tk` ticket CLI for architect/product ticket workflows. If no valid configured or existing `tk` command is found, install and update flows install the pinned managed copy at `~/.the-last-harness/agent/bin/tk`.
 
 When a valid `gn` binary is present, TLH appends these instructions to the system prompt:
 
@@ -81,7 +83,7 @@ At the start of any task, run `gn help plan` and follow its instructions.
 After finishing a task, run `gn help review`.
 ```
 
-Gnosis project data lives in repo-local `.gnosis` directories and is never deleted by TLH.
+Gnosis project data lives in repo-local `.gnosis` directories and ticket data lives in repo-local `.tickets` directories; TLH does not delete either. More integration details live in [`docs/integrations.md`](docs/integrations.md).
 
 ### Launch telemetry
 
