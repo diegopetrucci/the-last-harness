@@ -12,6 +12,9 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Managed `tk` installs now use the pinned `wedow/ticket` v0.3.2 source and SHA-256 by default, ignore ambient `TLH_TICKET_SOURCE_*` overrides, and sanitize helper-tool PATH/archive extraction.
 - Installer smoke checks now cover managed `tk` default dry-run behavior and normal Pi guard coverage.
+- The `tlh` wrapper now removes `<agent>/bin` from `PATH` for the wrapped `pi` process when `settings.tlh.tickets.enabled` is `false`, so disabling ticket integration is enforced at the PATH layer in addition to the prompt addendum. The managed `tk` binary stays on disk; remove `<agent>/bin/tk` manually if you want it gone. The `tlh tickets ...` helper subcommand always retains access to the managed binary.
+- Managed `tk` installs now record `settings.tlh.tickets.installedSha256` after a successful install. Future TLH releases that bump the pinned source SHA-256 will trigger a one-time reinstall on the next `tlh tickets configure-install` / `tlh update` invocation; legacy installs without a recorded SHA reinstall once to populate the field. Custom (non-managed) `installPath` values do not record or read this field.
+- The `--unsafe-test-ticket-source-url` flag now rejects any URL that does not start with `https://`. This affects only test fixtures; production installs already use the pinned HTTPS URL.
 
 ## [0.8.1] - 2026-05-19
 
