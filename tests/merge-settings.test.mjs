@@ -38,6 +38,27 @@ function readJson(path) {
 	return JSON.parse(readFileSync(path, "utf8"));
 }
 
+test("merge treats a missing default-extension manifest as empty", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{ packages: [harnessPackage] },
+	);
+
+	execFileSync(process.execPath, [
+		mergeScript,
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", `${fixture.extensions}.missing`,
+		"--quiet",
+	], {
+		cwd: repoRoot,
+		env: process.env,
+		encoding: "utf8",
+	});
+
+	assert.deepEqual(readJson(fixture.settings).packages, [harnessPackage]);
+});
+
 test("merge treats normalized subagents.agentDirs paths as duplicates", () => {
 	const fixture = tempFixture(
 		{

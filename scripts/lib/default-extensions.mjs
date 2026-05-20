@@ -1,0 +1,154 @@
+import { existsSync, readFileSync } from "node:fs";
+
+function isPlainObject(value) {
+	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readManifestJson(path, { allowMissing }) {
+	if (!existsSync(path)) {
+		if (allowMissing) return [];
+		throw new Error(`File does not exist: ${path}`);
+	}
+	const raw = readFileSync(path, "utf8").replace(/^\uFEFF/, "");
+	if (!raw.trim()) return {};
+	try {
+		return JSON.parse(raw);
+	} catch (error) {
+		throw new Error(`Invalid JSON in ${path}: ${error.message}`);
+	}
+}
+
+function readStringArrayField(entry, key, label) {
+	if (entry[key] === undefined) return [];
+	if (!Array.isArray(entry[key])) {
+		throw new Error(`Default extension ${label} field '${key}' must be an array`);
+	}
+	return entry[key]
+		.map((value) => (typeof value === "string" ? value.trim() : ""))
+		.filter((value) => value.length > 0);
+}
+
+function readBooleanField(entry, key, label) {
+	if (entry[key] === undefined) return false;
+	if (typeof entry[key] !== "boolean") {
+		throw new Error(`Default extension ${label} field '${key}' must be a boolean`);
+	}
+	return entry[key];
+}
+
+function npmIdentity(spec) {
+	const withoutPrefix = spec.slice("npm:".length).trim();
+	if (!withoutPrefix) return spec;
+	if (withoutPrefix.startsWith("@")) {
+		const secondAt = withoutPrefix.indexOf("@", 1);
+		return `npm:${secondAt === -1 ? withoutPrefix : withoutPrefix.slice(0, secondAt)}`;
+	}
+	const firstAt = withoutPrefix.indexOf("@");
+	return `npm:${firstAt === -1 ? withoutPrefix : withoutPrefix.slice(0, firstAt)}`;
+}
+
+function gitIdentity(source) {
+	let value = source.trim();
+	if (value.startsWith("git:")) value = value.slice("git:".length).trim();
+	value = value.replace(/^https?:\/\//i, "");
+	value = value.replace(/^ssh:\/\//i, "");
+	value = value.replace(/^git:\/\//i, "");
+	value = value.replace(/^git@([^:]+):/, "$1/");
+	value = value.replace(/#.*$/, "");
+	value = value.replace(/\.git$/, "");
+	value = value.replace(/\.git(?=@)/, "");
+
+	const lastSlash = value.lastIndexOf("/");
+	const refAt = lastSlash === -1 ? -1 : value.indexOf("@", lastSlash + 1);
+	if (refAt !== -1) value = value.slice(0, refAt);
+
+	return `git:${value.toLowerCase()}`;
+}
+
+export function packageSourceOf(entry) {
+	if (typeof entry === "string") return entry;
+	if (isPlainObject(entry) && typeof entry.source === "string") return entry.source;
+	return undefined;
+}
+
+export function packageIdentity(entry) {
+	const source = packageSourceOf(entry);
+	if (!source) return undefined;
+	const trimmed = source.trim();
+	if (trimmed.startsWith("npm:")) return npmIdentity(trimmed);
+	if (
+		trimmed.startsWith("git:") ||
+		/^(https?|ssh|git):\/\//i.test(trimmed) ||
+		trimmed.startsWith("git@")
+	) {
+		return gitIdentity(trimmed);
+	}
+	return `local:${trimmed}`;
+}
+
+export function readDefaultExtensions(path, { allowMissing = false } = {}) {
+	const raw = readManifestJson(path, { allowMissing });
+	if (!Array.isArray(raw)) {
+		throw new Error(`Default extension manifest must be an array: ${path}`);
+	}
+
+	const seenIds = new Set();
+	const seenSources = new Set();
+	return raw.map((entry, index) => {
+		if (!isPlainObject(entry)) {
+			throw new Error(`Default extension entry ${index + 1} must be an object`);
+		}
+		const id = typeof entry.id === "string" ? entry.id.trim() : "";
+		const source = typeof entry.source === "string" ? entry.source.trim() : "";
+		const description = typeof entry.description === "string" ? entry.description.trim() : "";
+		const aliases = readStringArrayField(entry, "aliases", id || String(index + 1));
+		const replaces = readStringArrayField(entry, "replaces", id || String(index + 1));
+		const migrateReplacements = readBooleanField(entry, "migrateReplacements", id || String(index + 1));
+		const critical = readBooleanField(entry, "critical", id || String(index + 1));
+		if (!id) throw new Error(`Default extension entry ${index + 1} is missing id`);
+		if (!source) throw new Error(`Default extension ${id} is missing source`);
+		for (const candidateId of [id, ...aliases]) {
+			if (seenIds.has(candidateId)) throw new Error(`Duplicate default extension id or alias: ${candidateId}`);
+			seenIds.add(candidateId);
+		}
+		if (seenSources.has(packageIdentity(source))) throw new Error(`Duplicate default extension source: ${source}`);
+		seenSources.add(packageIdentity(source));
+		return { id, aliases, replaces, migrateReplacements, critical, source, description };
+	});
+}
+
+function rawDisabledDefaultExtensionIds(settings) {
+	if (!isPlainObject(settings)) return new Set();
+	const values = settings.tlh?.disabledDefaultExtensions;
+	if (!Array.isArray(values)) return new Set();
+	return new Set(values.filter((value) => typeof value === "string" && value.trim()).map((value) => value.trim()));
+}
+
+export function criticalDefaultExtensionOptOutIds(defaultExtensions) {
+	const ids = new Set();
+	for (const extension of defaultExtensions) {
+		if (extension.critical !== true) continue;
+		ids.add(extension.id);
+		for (const alias of extension.aliases) ids.add(alias);
+	}
+	return ids;
+}
+
+export function disabledDefaultExtensionIds(settings, defaultExtensions = []) {
+	const ids = rawDisabledDefaultExtensionIds(settings);
+	for (const id of criticalDefaultExtensionOptOutIds(defaultExtensions)) {
+		ids.delete(id);
+	}
+	for (const extension of defaultExtensions) {
+		if (extension.critical === true) continue;
+		if ([extension.id, ...extension.aliases].some((id) => ids.has(id))) {
+			ids.add(extension.id);
+			for (const alias of extension.aliases) ids.delete(alias);
+		}
+	}
+	return ids;
+}
+
+export function defaultExtensionPackageIdentities(extension) {
+	return [extension.source, ...extension.replaces].map(packageIdentity).filter(Boolean);
+}

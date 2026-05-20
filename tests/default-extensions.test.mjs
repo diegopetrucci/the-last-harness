@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
+import { packageIdentity, readDefaultExtensions } from "../scripts/lib/default-extensions.mjs";
+
 const repoRoot = resolve(import.meta.dirname, "..");
 const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
 const defaultsScript = join(repoRoot, "scripts", "tlh-defaults.mjs");
@@ -43,6 +45,62 @@ const disablingExtensionFilterCases = [
 	{ name: "allowlist excluding hard-coded entrypoint", extensions: ["other.ts"] },
 	{ name: "allowlist excluding real subagents entrypoint", extensions: ["index.ts"] },
 ];
+
+test("shared package identity keeps npm, git, and local source semantics", () => {
+	assert.equal(packageIdentity("npm:helper@1.2.3"), "npm:helper");
+	assert.equal(packageIdentity("npm:@scope/helper@1.2.3"), "npm:@scope/helper");
+	assert.equal(packageIdentity("git:github.com/TLH/helper@pin"), "git:github.com/tlh/helper");
+	assert.equal(packageIdentity("https://github.com/TLH/helper.git#pin"), "git:github.com/tlh/helper");
+	assert.equal(packageIdentity("git@github.com:TLH/helper.git"), "git:github.com/tlh/helper");
+	assert.equal(packageIdentity("../local-helper@pin"), "local:../local-helper@pin");
+});
+
+test("shared default-extension reader trims descriptions and can allow missing manifests", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "helper",
+			description: "  Helpful default  ",
+			source: "npm:helper",
+		},
+	], null, 2));
+
+	assert.deepEqual(readDefaultExtensions(fixture.extensions), [
+		{
+			id: "helper",
+			aliases: [],
+			replaces: [],
+			migrateReplacements: false,
+			critical: false,
+			source: "npm:helper",
+			description: "Helpful default",
+		},
+	]);
+	assert.deepEqual(readDefaultExtensions(join(fixture.dir, "missing-default-extensions.json"), { allowMissing: true }), []);
+	assert.throws(
+		() => readDefaultExtensions(join(fixture.dir, "missing-default-extensions.json")),
+		/File does not exist:/,
+	);
+});
+
+test("tlh-defaults errors when the default-extension manifest is missing", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.settings, JSON.stringify({ packages: [] }, null, 2));
+
+	const result = spawnSync(process.execPath, [
+		defaultsScript,
+		"--settings", fixture.settings,
+		"--defaults", join(fixture.dir, "missing-default-extensions.json"),
+		"list",
+	], {
+		cwd: repoRoot,
+		env: process.env,
+		encoding: "utf8",
+	});
+
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /File does not exist:/);
+});
 
 test("merge ignores and cleans stale/manual critical opt-outs while preserving non-critical opt-outs", () => {
 	const fixture = tempFixture();
