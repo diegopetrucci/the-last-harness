@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { closeSync, constants, copyFileSync, existsSync, fchmodSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fchmodSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
@@ -11,28 +11,20 @@ const DOWNLOAD_TIMEOUT_MS = 30_000;
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
 
 function usage() {
-	return `Usage: tlh gnosis <command>
+	return `Usage: tlh-gnosis.mjs <command>
 
-Manage Gnosis integration in the isolated tlh profile.
+Installer-internal helper for managing The Last Harness Gnosis integration.
 
 Commands:
-  status               Show integration status and detected gn binary
-  enable               Enable Gnosis prompt integration
-  disable              Disable Gnosis prompt integration
-  state                Print enabled, disabled, or unset (installer internal)
-  validate [path]      Validate a gnosis binary, or print the first valid one
-  install-managed      Install managed gn binary (installer internal)
-  configure-install    Configure installer-time Gnosis integration (installer internal)
+  install-managed      Install managed gn binary into the isolated profile (installer internal)
+  configure-install    Ensure a usable gn binary is available for the isolated profile (installer internal)
+  validate [path]      Validate a gnosis binary, or print the first valid candidate
 
 Options:
-  --settings <path>    Settings file to update (default: ~/.the-last-harness/agent/settings.json, or PI_CODING_AGENT_DIR/settings.json)
   --agent-dir <dir>    Isolated Pi agent dir (default: ~/.the-last-harness/agent, or PI_CODING_AGENT_DIR)
-  --install-path <p>   Store this gn binary path when enabling
   --target <path>      Managed gn install target (default: <agent-dir>/bin/gn)
   --gnosis-repo <r>    Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
   --gnosis-version <v> Gnosis version to install (default: latest)
-  --mode <mode>        Installer Gnosis mode: auto, with, or without
-  --wrapper-name <n>   Wrapper command name for user-facing guidance
   --detail             Print verbose/dry-run installer details
   --dry-run            Print intended changes without writing
   --quiet              Only print errors
@@ -42,14 +34,10 @@ Options:
 
 function parseArgs(argv) {
 	const args = {
-		settingsPath: undefined,
 		agentDir: undefined,
-		installPath: undefined,
 		target: undefined,
 		gnosisRepo: process.env.TLH_GNOSIS_REPO || DEFAULT_GNOSIS_REPO,
 		gnosisVersion: process.env.TLH_GNOSIS_VERSION || "latest",
-		mode: "auto",
-		wrapperName: "tlh",
 		command: undefined,
 		commandArgs: [],
 		dryRun: false,
@@ -76,28 +64,12 @@ function parseArgs(argv) {
 			args.quiet = true;
 			continue;
 		}
-		if (arg === "--settings") {
-			args.settingsPath = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--settings=")) {
-			args.settingsPath = arg.slice("--settings=".length);
-			continue;
-		}
 		if (arg === "--agent-dir") {
 			args.agentDir = requiredValue(argv, ++index, arg);
 			continue;
 		}
 		if (arg.startsWith("--agent-dir=")) {
 			args.agentDir = arg.slice("--agent-dir=".length);
-			continue;
-		}
-		if (arg === "--install-path") {
-			args.installPath = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--install-path=")) {
-			args.installPath = arg.slice("--install-path=".length);
 			continue;
 		}
 		if (arg === "--target") {
@@ -122,22 +94,6 @@ function parseArgs(argv) {
 		}
 		if (arg.startsWith("--gnosis-version=")) {
 			args.gnosisVersion = arg.slice("--gnosis-version=".length);
-			continue;
-		}
-		if (arg === "--mode") {
-			args.mode = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--mode=")) {
-			args.mode = arg.slice("--mode=".length);
-			continue;
-		}
-		if (arg === "--wrapper-name") {
-			args.wrapperName = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--wrapper-name=")) {
-			args.wrapperName = arg.slice("--wrapper-name=".length);
 			continue;
 		}
 		if (arg.startsWith("-")) {
@@ -171,72 +127,8 @@ function getAgentDir(argAgentDir) {
 	return expandHome(argAgentDir || process.env.PI_CODING_AGENT_DIR || process.env.TLH_AGENT_DIR || join(homedir(), ".the-last-harness", "agent"));
 }
 
-function defaultSettingsPath(agentDir) {
-	return join(agentDir, "settings.json");
-}
-
-function readJson(path, { missingValue } = {}) {
-	if (!existsSync(path)) {
-		if (missingValue !== undefined) return missingValue;
-		throw new Error(`File does not exist: ${path}`);
-	}
-	const raw = readFileSync(path, "utf8").replace(/^\uFEFF/, "");
-	if (!raw.trim()) return {};
-	try {
-		return JSON.parse(raw);
-	} catch (error) {
-		throw new Error(`Invalid JSON in ${path}: ${error.message}`);
-	}
-}
-
-function isPlainObject(value) {
-	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function validateSettings(settings) {
-	if (!isPlainObject(settings)) {
-		throw new Error("Settings must be a JSON object");
-	}
-	if (settings.tlh !== undefined && !isPlainObject(settings.tlh)) {
-		throw new Error("Settings field 'tlh' must be an object if present");
-	}
-	if (settings.tlh?.gnosis !== undefined && !isPlainObject(settings.tlh.gnosis)) {
-		throw new Error("Settings field 'tlh.gnosis' must be an object if present");
-	}
-}
-
-function ensureMutableSettings(settings) {
-	validateSettings(settings);
-	settings.tlh ??= {};
-	settings.tlh.gnosis ??= {};
-}
-
-function loadSettings(settingsPath) {
-	const previousRaw = existsSync(settingsPath) ? readFileSync(settingsPath, "utf8").replace(/^\uFEFF/, "") : "";
-	const settings = readJson(settingsPath, { missingValue: {} });
-	validateSettings(settings);
-	return { settings, previousRaw };
-}
-
-function gnosisState(settings) {
-	const enabled = settings.tlh?.gnosis?.enabled;
-	if (enabled === true) return "enabled";
-	if (enabled === false) return "disabled";
-	return "unset";
-}
-
-function normalizedInstallPath(path) {
-	if (!path) return undefined;
-	return resolve(expandHome(path));
-}
-
-function configuredInstallPath(settings) {
-	const path = settings.tlh?.gnosis?.installPath;
-	return typeof path === "string" && path.trim() ? normalizedInstallPath(path.trim()) : undefined;
-}
-
-function candidateCommands(settings, agentDir) {
-	const candidates = [configuredInstallPath(settings), join(agentDir, "bin", "gn"), "gn"].filter(Boolean);
+function candidateCommands(agentDir) {
+	const candidates = [join(agentDir, "bin", "gn"), "gn"];
 	const seen = new Set();
 	const unique = [];
 	for (const candidate of candidates) {
@@ -267,8 +159,8 @@ function normalizeValidCandidate(candidate) {
 	return candidate;
 }
 
-function findValidGnosis(settings, agentDir) {
-	for (const candidate of candidateCommands(settings, agentDir)) {
+function findValidGnosis(agentDir) {
+	for (const candidate of candidateCommands(agentDir)) {
 		if (validateGnosisCommand(candidate)) return normalizeValidCandidate(candidate);
 	}
 	return undefined;
@@ -279,16 +171,7 @@ function managedGnosisTargetPath(args, agentDir) {
 	return resolve(expandHome(args.target || join(agentRoot, "bin", "gn")));
 }
 
-function samePathForCompare(left, right) {
-	return realpathForCompare(left) === realpathForCompare(right);
-}
-
-function findValidGnosisForConfigure(args, settings, agentDir) {
-	const configured = configuredInstallPath(settings);
-	const managedTargetPath = managedGnosisTargetPath(args, agentDir);
-	const configuredIsManagedTarget = configured && samePathForCompare(configured, managedTargetPath);
-	if (configured && !configuredIsManagedTarget && validateGnosisCommand(configured)) return normalizeValidCandidate(configured);
-
+function findValidGnosisForConfigure(args, agentDir) {
 	const managedTarget = validateManagedGnosisTarget(args, agentDir);
 	for (const candidate of [managedTarget, "gn"]) {
 		if (validateGnosisCommand(candidate)) return normalizeValidCandidate(candidate);
@@ -316,6 +199,10 @@ function gnosisPlatform() {
 	else return undefined;
 
 	return { os, arch };
+}
+
+function unsupportedGnosisPlatformMessage() {
+	return `Unsupported platform for managed Gnosis install: ${process.platform}/${process.arch}. Prebuilt gn binaries are only available for darwin/linux on x64/arm64.`;
 }
 
 async function fetchWithTimeout(url, options = {}) {
@@ -464,10 +351,7 @@ function copyFileExclusive(source, target, mode) {
 async function installManagedGnosis(args, agentDir) {
 	const target = validateManagedGnosisTarget(args, agentDir);
 	const platform = gnosisPlatform();
-	if (!platform) {
-		warnStderr(`Gnosis prebuilt binary is not available for this platform; install manually from https://github.com/${args.gnosisRepo}`);
-		return undefined;
-	}
+	if (!platform) throw new Error(unsupportedGnosisPlatformMessage());
 
 	if (args.dryRun) {
 		logStderr(args, `Would install Gnosis into isolated profile: ${target}`);
@@ -535,11 +419,6 @@ async function commandInstallManaged(args, agentDir) {
 	console.log(installedPath);
 }
 
-function backupPathFor(settingsPath) {
-	const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-	return `${settingsPath}.backup-tlh-gnosis-${stamp}`;
-}
-
 function realpathForCompare(path) {
 	const resolved = resolve(path);
 	if (existsSync(resolved)) return realpathSync(resolved);
@@ -552,12 +431,6 @@ function isUnderNormalPiConfig(path) {
 	const normalPiRoot = realpathForCompare(join(homedir(), ".pi"));
 	const resolvedPath = realpathForCompare(path);
 	return resolvedPath === normalPiRoot || resolvedPath.startsWith(`${normalPiRoot}${sep}`);
-}
-
-function assertNotNormalPiSettings(settingsPath) {
-	if (isUnderNormalPiConfig(settingsPath)) {
-		throw new Error(`Refusing to modify normal Pi config from The Last Harness gnosis command: ${settingsPath}`);
-	}
 }
 
 function assertNotNormalPiPath(path, label) {
@@ -650,151 +523,39 @@ function validateManagedGnosisTarget(args, agentDir) {
 	return target;
 }
 
-function writeSettings(settingsPath, value, previousRaw, { dryRun }) {
-	const formatted = `${JSON.stringify(value, null, 2)}\n`;
-	if (formatted === previousRaw) return "unchanged";
-	if (dryRun) return "dry-run";
-
-	mkdirSync(dirname(settingsPath), { recursive: true });
-	let backupPath;
-	if (existsSync(settingsPath)) {
-		backupPath = backupPathFor(settingsPath);
-		copyFileSync(settingsPath, backupPath);
-	}
-
-	const tempPath = `${settingsPath}.tmp-${process.pid}`;
-	writeFileSync(tempPath, formatted, "utf8");
-	renameSync(tempPath, settingsPath);
-	return backupPath || "written";
-}
-
-function log(args, message) {
-	if (!args.quiet) console.log(message);
-}
-
 function detailLog(args, message) {
 	if (!args.quiet && args.detail) console.error(message);
 }
 
-function logWriteResult(args, writeResult) {
-	if (!args.detail) return;
-	if (writeResult && !["dry-run", "unchanged", "written"].includes(writeResult)) {
-		detailLog(args, `Backed up previous settings to: ${writeResult}`);
-	}
-	if (writeResult === "unchanged") detailLog(args, "No settings changes were needed.");
+function gnosisInstallSkippedByEnv() {
+	const value = process.env.TLH_SKIP_GNOSIS_INSTALL;
+	return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
 }
 
-function setGnosisEnabled(args, settingsPath, settings, previousRaw, installPath) {
-	assertNotNormalPiSettings(settingsPath);
-	ensureMutableSettings(settings);
-	settings.tlh.gnosis.enabled = true;
-	const normalized = normalizedInstallPath(installPath);
-	if (normalized) settings.tlh.gnosis.installPath = normalized;
-	const writeResult = writeSettings(settingsPath, settings, previousRaw, { dryRun: args.dryRun });
-	detailLog(args, `${args.dryRun ? "Would enable" : "Enabled"} Gnosis integration for the tlh profile.`);
-	logWriteResult(args, writeResult);
-}
-
-function setGnosisDisabled(args, settingsPath, settings, previousRaw) {
-	assertNotNormalPiSettings(settingsPath);
-	ensureMutableSettings(settings);
-	settings.tlh.gnosis.enabled = false;
-	const writeResult = writeSettings(settingsPath, settings, previousRaw, { dryRun: args.dryRun });
-	detailLog(args, `${args.dryRun ? "Would disable" : "Disabled"} Gnosis integration for the tlh profile.`);
-	logWriteResult(args, writeResult);
-}
-
-async function commandConfigureInstall(args, settingsPath, settings, previousRaw, agentDir) {
-	if (!["auto", "with", "without"].includes(args.mode)) {
-		throw new Error("--mode must be one of: auto, with, without");
-	}
-	assertNotNormalPiSettings(settingsPath);
-
-	const currentState = gnosisState(settings);
-	let requested = args.mode;
-
-	if (requested === "without") {
-		detailLog(args, "Disabling Gnosis integration for tlh.");
-		setGnosisDisabled(args, settingsPath, settings, previousRaw);
-		console.log("Gnosis integration: disabled");
+async function commandConfigureInstall(args, agentDir) {
+	if (gnosisInstallSkippedByEnv()) {
+		console.log("Gnosis integration: skipped (TLH_SKIP_GNOSIS_INSTALL is set)");
 		return;
 	}
 
-	if (requested === "auto") {
-		if (currentState === "disabled") {
-			detailLog(args, "Keeping existing Gnosis opt-out.");
-			console.log("Gnosis integration: disabled");
-			return;
-		}
-
-		if (currentState === "enabled") {
-			detailLog(args, "Keeping existing Gnosis integration setting: enabled.");
-			const validPath = findValidGnosisForConfigure(args, settings, agentDir);
-			if (validPath) {
-				console.log(`Gnosis integration: enabled (${validPath})`);
-				return;
-			}
-
-			warnStderr("Gnosis integration is enabled, but no valid gn binary was found. Attempting to install it.");
-			const managedPath = await installManagedGnosis(args, agentDir);
-			if (managedPath) {
-				setGnosisEnabled(args, settingsPath, settings, previousRaw, managedPath);
-				console.log(`Gnosis integration: enabled (${managedPath})`);
-				return;
-			}
-
-			warnStderr(`Gnosis integration remains enabled, but Gnosis could not be installed automatically. Install Gnosis manually and run: ${args.wrapperName} gnosis enable`);
-			console.log("Gnosis integration: enabled, but no valid gn binary was found");
-			return;
-		}
-
-		detailLog(args, "Installing and enabling Gnosis integration by default.");
-		requested = "with";
-	}
-
-	if (requested !== "with") return;
-
-	const validPath = findValidGnosisForConfigure(args, settings, agentDir);
+	const validPath = findValidGnosisForConfigure(args, agentDir);
 	if (validPath) {
 		detailLog(args, `Found valid Gnosis binary: ${validPath}`);
-		setGnosisEnabled(args, settingsPath, settings, previousRaw, validPath);
-		console.log(`Gnosis integration: enabled (${validPath})`);
+		console.log(`Gnosis integration: ready (${validPath})`);
 		return;
 	}
 
 	const managedPath = await installManagedGnosis(args, agentDir);
 	if (managedPath) {
-		setGnosisEnabled(args, settingsPath, settings, previousRaw, managedPath);
-		console.log(`Gnosis integration: enabled (${managedPath})`);
+		console.log(`Gnosis integration: ready (${managedPath})`);
 		return;
 	}
 
-	warnStderr("Gnosis integration could not be installed automatically.");
-	warnStderr(`Leaving Gnosis integration unchanged; install Gnosis manually and run: ${args.wrapperName} gnosis enable`);
-	console.log("Gnosis integration: not enabled (gn was not installed)");
+	process.stderr.write("error: Gnosis managed install failed; cannot continue without a valid gn binary. Set TLH_SKIP_GNOSIS_INSTALL=1 to skip.\n");
+	process.exitCode = 1;
 }
 
-function commandStatus(args, settings, agentDir) {
-	const state = gnosisState(settings);
-	const valid = findValidGnosis(settings, agentDir);
-	const active = state === "enabled" && Boolean(valid);
-	console.log("Gnosis integration for tlh:");
-	console.log(`  setting: ${state}`);
-	console.log(`  active: ${active ? "yes" : "no"}`);
-	console.log(`  binary: ${valid || "not found"}`);
-	if (state === "enabled" && !valid) {
-		console.log("  note: integration is enabled, but no valid Gnosis `gn` binary was found.");
-	}
-	if (state !== "enabled" && valid) {
-		console.log("  note: a valid `gn` binary exists; run `tlh gnosis enable` to enable prompt integration.");
-	}
-}
-
-function commandState(settings) {
-	console.log(gnosisState(settings));
-}
-
-function commandValidate(settings, agentDir, commandArgs) {
+function commandValidate(agentDir, commandArgs) {
 	const candidate = commandArgs[0];
 	if (candidate) {
 		if (!validateGnosisCommand(candidate)) {
@@ -805,34 +566,12 @@ function commandValidate(settings, agentDir, commandArgs) {
 		return;
 	}
 
-	const valid = findValidGnosis(settings, agentDir);
+	const valid = findValidGnosis(agentDir);
 	if (!valid) {
 		process.exitCode = 1;
 		return;
 	}
 	console.log(valid);
-}
-
-function commandEnable(args, settingsPath, settings, previousRaw) {
-	assertNotNormalPiSettings(settingsPath);
-	ensureMutableSettings(settings);
-	settings.tlh.gnosis.enabled = true;
-	const installPath = normalizedInstallPath(args.installPath || args.commandArgs[0]);
-	if (installPath) settings.tlh.gnosis.installPath = installPath;
-	const writeResult = writeSettings(settingsPath, settings, previousRaw, { dryRun: args.dryRun });
-	log(args, `${args.dryRun ? "Would enable" : "Enabled"} Gnosis integration for the tlh profile.`);
-	if (writeResult && !["dry-run", "unchanged", "written"].includes(writeResult)) log(args, `Backed up previous settings to: ${writeResult}`);
-	if (writeResult === "unchanged") log(args, "No settings changes were needed.");
-}
-
-function commandDisable(args, settingsPath, settings, previousRaw) {
-	assertNotNormalPiSettings(settingsPath);
-	ensureMutableSettings(settings);
-	settings.tlh.gnosis.enabled = false;
-	const writeResult = writeSettings(settingsPath, settings, previousRaw, { dryRun: args.dryRun });
-	log(args, `${args.dryRun ? "Would disable" : "Disabled"} Gnosis integration for the tlh profile.`);
-	if (writeResult && !["dry-run", "unchanged", "written"].includes(writeResult)) log(args, `Backed up previous settings to: ${writeResult}`);
-	if (writeResult === "unchanged") log(args, "No settings changes were needed.");
 }
 
 async function main() {
@@ -843,19 +582,9 @@ async function main() {
 	}
 
 	const agentDir = resolve(getAgentDir(args.agentDir));
-	const settingsPath = resolve(expandHome(args.settingsPath || defaultSettingsPath(agentDir)));
-	const { settings, previousRaw } = loadSettings(settingsPath);
 
-	if (args.command === "status") {
-		commandStatus(args, settings, agentDir);
-		return;
-	}
-	if (args.command === "state") {
-		commandState(settings);
-		return;
-	}
 	if (args.command === "validate") {
-		commandValidate(settings, agentDir, args.commandArgs);
+		commandValidate(agentDir, args.commandArgs);
 		return;
 	}
 	if (args.command === "install-managed") {
@@ -863,15 +592,7 @@ async function main() {
 		return;
 	}
 	if (args.command === "configure-install") {
-		await commandConfigureInstall(args, settingsPath, settings, previousRaw, agentDir);
-		return;
-	}
-	if (args.command === "enable") {
-		commandEnable(args, settingsPath, settings, previousRaw);
-		return;
-	}
-	if (args.command === "disable") {
-		commandDisable(args, settingsPath, settings, previousRaw);
+		await commandConfigureInstall(args, agentDir);
 		return;
 	}
 
@@ -880,6 +601,6 @@ async function main() {
 
 main().catch((error) => {
 	const message = error instanceof Error ? error.message : String(error);
-	console.error(`tlh gnosis: ${message}`);
+	console.error(`tlh-gnosis: ${message}`);
 	process.exit(1);
 });

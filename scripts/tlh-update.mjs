@@ -28,9 +28,6 @@ Options:
   --no-pi-install       Pass --no-pi-install to the installer
   --no-settings         Pass --no-settings to the installer
   --no-wrapper          Pass --no-wrapper to the installer
-  --with-gnosis         Force install/re-enable Gnosis through the installer
-  --without-gnosis      Opt out of Gnosis integration through the installer
-  --no-gnosis           Alias for --without-gnosis
   --quiet               Suppress installer progress output
   --verbose             Show underlying installer output
   -h, --help            Show this help
@@ -73,7 +70,6 @@ function parseArgs(argv) {
 		noPiInstall: false,
 		noSettings: false,
 		noWrapper: false,
-		gnosisMode: undefined,
 		quiet: false,
 		verbose: false,
 		help: false,
@@ -103,14 +99,6 @@ function parseArgs(argv) {
 		}
 		if (arg === "--no-wrapper") {
 			args.noWrapper = true;
-			continue;
-		}
-		if (arg === "--with-gnosis") {
-			args.gnosisMode = "with";
-			continue;
-		}
-		if (arg === "--without-gnosis" || arg === "--no-gnosis") {
-			args.gnosisMode = "without";
 			continue;
 		}
 		if (arg === "--quiet") {
@@ -424,8 +412,6 @@ function buildInstallerArgs(plan, args) {
 	if (args.noPiInstall) installerArgs.push("--no-pi-install");
 	if (args.noSettings) installerArgs.push("--no-settings");
 	if (args.noWrapper) installerArgs.push("--no-wrapper");
-	if (args.gnosisMode === "with") installerArgs.push("--with-gnosis");
-	if (args.gnosisMode === "without") installerArgs.push("--without-gnosis");
 	if (args.quiet) installerArgs.push("--quiet");
 	if (args.verbose) installerArgs.push("--verbose");
 	return installerArgs;

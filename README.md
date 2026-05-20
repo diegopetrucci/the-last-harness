@@ -32,7 +32,7 @@ They run in fresh child contexts: they get the task and project context, not the
 
 ## Quality-of-life improvements to `pi`
 
-- **Project memory**: Gnosis integration is enabled by default on supported platforms so agents can record decisions, constraints, rejected alternatives, and lessons in repo-local memory (unless you opt out).
+- **Project memory**: Gnosis is required and installed automatically on supported platforms (linux/darwin × x64/arm64) so agents can record decisions, constraints, rejected alternatives, and lessons in repo-local memory. Unsupported platforms hard-fail at install.
 - **Ticketed execution**: when `tk` is available, the architect turns the approved plan into dependency-tracked tickets and hands one ticket at a time to implementation and review agents; product mode can shape product-approved tickets for later handoff. Without `tk`, TLH keeps the same small task tree in the conversation.
 - **Context management**: context is capped to 200k tokens to avoid the `dumb zone`, and `/context` lets you see what is eating up your context.
 - **Safety rails**: Bundled permission and destructive-action confirmations add checkpoints before sensitive commands or file changes.
@@ -52,7 +52,6 @@ Common TLH commands:
 - `/agent [status|architect|product|bug-hunter|disabled|reset|default architect|default product|default bug-hunter|default disabled|default reset]` — inspect the active primary, set/reset the session override, or write/reset the persistent default.
 - `/architect [status|on|off|toggle|reset|default on|default off|default reset]` — compatibility controls for architect-only flows; maps to architect/disabled primary-agent settings.
 - `/effort ...` — pick or set model reasoning effort. Available levels depend on the current model.
-- `/gnosis [status|enable|disable|toggle]` — toggle or inspect Gnosis prompt integration.
 - `/fast [on|off|auto|toggle|status]` — manage OpenAI Fast mode for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions.
 - `/context [--no-open] [--keep] [--redact] [--full|--current]` — generate a local HTML breakdown of where the session context is going.
 - `/harness-plan` — open the bundled implementation-planning prompt.
@@ -73,32 +72,16 @@ Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `t
 
 ### Gnosis integration
 
-[Gnosis](https://github.com/skorokithakis/gnosis) is a small `gn` CLI for recording project decisions, constraints, rejected alternatives, and lessons that are not obvious from code alone. On supported platforms, TLH installs and enables it by default because `tlh` works better when agents can consult and update that project memory.
+[Gnosis](https://github.com/skorokithakis/gnosis) is a small `gn` CLI for recording project decisions, constraints, rejected alternatives, and lessons that are not obvious from code alone. TLH requires and installs Gnosis automatically on supported platforms: **linux and darwin on x64 and arm64**. Installs on unsupported platforms hard-fail.
 
-Opt out during install or update with `--without-gnosis` / `--no-gnosis`, or disable it later with `tlh gnosis disable` or `/gnosis` inside an interactive session. For pipe-to-bash installs, pass installer flags after `bash -s --`:
-
-```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s -- --without-gnosis
-```
-
-The opt-out is written to `~/.the-last-harness/agent/settings.json` and survives `tlh update`; use `tlh update --with-gnosis` to install/re-enable it automatically, or install `gn` manually and run `tlh gnosis enable` or `/gnosis`.
-
-If enabled and a valid Gnosis `gn` binary is present, TLH appends these instructions to the system prompt:
+When a valid `gn` binary is present, TLH appends these instructions to the system prompt:
 
 ```text
 At the start of any task, run `gn help plan` and follow its instructions.
 After finishing a task, run `gn help review`.
 ```
 
-Manage the integration after install:
-
-```sh
-tlh gnosis status
-tlh gnosis enable
-tlh gnosis disable
-```
-
-Inside an interactive `tlh` session, use `/gnosis` to toggle the integration or `/gnosis status` to inspect it. Disabling Gnosis stops TLH from adding the prompt instructions; it does not delete existing repo-local memory or any managed `gn` binary. Gnosis project data lives in repo-local `.gnosis` directories.
+Gnosis project data lives in repo-local `.gnosis` directories and is never deleted by TLH.
 
 ### Launch telemetry
 

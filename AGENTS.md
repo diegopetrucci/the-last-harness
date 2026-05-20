@@ -9,7 +9,7 @@ This repository packages **The Last Harness** as an isolated profile for the ups
 - `install.sh` — one-line installer and `tlh` wrapper creator.
 - `scripts/merge-settings.mjs` — conservative settings merge helper for the isolated profile.
 - `scripts/tlh-defaults.mjs` — manages persistent opt-outs for bundled default extensions.
-- `scripts/tlh-gnosis.mjs` — manages optional Gnosis integration settings for the isolated profile.
+- `scripts/tlh-gnosis.mjs` — manages Gnosis integration settings for the isolated profile.
 - `config/settings.defaults.json` — installer-owned default Pi settings.
 - `config/default-extensions.json` — bundled default extension package manifest.
 - `config/APPEND_SYSTEM.md` — packaged system-prompt guidance.
@@ -28,7 +28,7 @@ This repository packages **The Last Harness** as an isolated profile for the ups
 - Installer Pi commands must set `PI_CODING_AGENT_DIR` to the isolated profile directory.
 - Default isolated profile path: `~/.the-last-harness/agent`.
 - Default wrapper path: `~/.local/bin/tlh`.
-- The generated `tlh` wrapper should run upstream `pi` with the isolated `PI_CODING_AGENT_DIR`, except for installer-owned helper subcommands such as `tlh defaults` and `tlh gnosis`.
+- The generated `tlh` wrapper should run upstream `pi` with the isolated `PI_CODING_AGENT_DIR`, except for installer-owned helper subcommands such as `tlh defaults`.
 - Keep settings merges conservative: append missing packages, respect `tlh.disabledDefaultExtensions`, preserve existing isolated user values, and back up existing isolated settings before writes.
 - Public installs should use GitHub Release installer assets or explicit version tags; do not rely on a `stable` branch.
 - Do not clobber unmanaged files when creating wrappers; require explicit `--force` for overwrites.

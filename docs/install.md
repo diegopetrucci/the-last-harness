@@ -10,13 +10,7 @@ Run the one-liner:
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
 ```
 
-On supported platforms, it installs and enables [gnosis](https://github.com/skorokithakis/gnosis) for project memory by default. To opt out during a pipe-to-bash install, pass the flag after `bash -s --`:
-
-```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s -- --without-gnosis
-```
-
-Once the installation is finished, start `tlh` by running… you guessed it, `tlh`. Inside an interactive session, `/gnosis` toggles Gnosis prompt integration.
+On supported platforms (linux/darwin × x64/arm64), it installs [Gnosis](https://github.com/skorokithakis/gnosis) automatically. Installs on unsupported platforms hard-fail. Once the installation is finished, start `tlh` by running… you guessed it, `tlh`.
 
 Note: if you already have `pi` installed, `tlh` does not replace it — you can keep both, as it uses its own isolated config in `~/.the-last-harness/`.
 
@@ -43,9 +37,6 @@ curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main
 --no-pi-install  Fail instead of installing Pi when the `pi` command is missing
 --no-settings     Install the package but skip isolated settings/keybinding merge
 --no-wrapper      Skip creating the tlh wrapper command
---with-gnosis     Force install/re-enable Gnosis (`gn`) integration
---without-gnosis  Opt out of Gnosis integration and keep it disabled
---no-gnosis       Alias for --without-gnosis
 --agent-dir DIR   Isolated Pi agent dir, default ~/.the-last-harness/agent
 --bin-dir DIR     Wrapper install dir, default ~/.local/bin
 --wrapper-name N  Wrapper command name, default tlh
@@ -66,8 +57,6 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v
 You can just run `tlh update`.
 
 This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. If you are updating from an older install without `tlh update`, rerun the latest-release installer once.
-
-Normal updates preserve your Gnosis setting. If you disabled it with `tlh gnosis disable`, toggled it off with `/gnosis`, or installed with `--without-gnosis`, it stays disabled across `tlh update`; use `tlh update --with-gnosis` to install/re-enable it automatically, or install `gn` manually and run `tlh gnosis enable` or `/gnosis`.
 
 The updating process is intentionally conservative, and won't replace your custom extensions, themes, and so on. If you spot anything that was overridden, [please open an issue](https://github.com/diegopetrucci/the-last-harness/issues).
 
@@ -100,4 +89,4 @@ npm uninstall -g @earendil-works/pi-coding-agent
 
 ## Security note
 
-The one-line installer and `tlh update` run shell commands on your machine, may install global npm packages for Pi and bundled default extensions, may download an optional Gnosis binary into the isolated TLH profile if you accept, creates an isolated Pi profile, and writes a wrapper command. Review `install.sh` and the stage-1 helper it fetches (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.
+The one-line installer and `tlh update` run shell commands on your machine, may install global npm packages for Pi and bundled default extensions, install a Gnosis binary into the isolated TLH profile on supported platforms, create an isolated Pi profile, and write a wrapper command. Review `install.sh` and the stage-1 helper it fetches (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.

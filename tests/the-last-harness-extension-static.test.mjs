@@ -72,7 +72,8 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
 	assert.match(extensionSource, /from "\.\/the-last-harness\/autocomplete\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/effort\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/footer\.js"/);
-	assert.match(extensionSource, /from "\.\/the-last-harness\/gnosis\.js"/);
+	assert.doesNotMatch(extensionSource, /from "\.\/the-last-harness\/gnosis\.js"/);
+	assert.doesNotMatch(extensionSource, /registerGnosisCommand/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/header\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/primary-agent-runtime\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/resources\.js"/);
