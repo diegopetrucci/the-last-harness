@@ -36,6 +36,16 @@ function assertNoCredentialMaterial(value) {
 	assert.doesNotMatch(JSON.stringify(value), /Authorization|Bearer|access|refresh|token/i);
 }
 
+function createDeferred() {
+	let resolve;
+	let reject;
+	const promise = new Promise((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+	return { promise, resolve, reject };
+}
+
 test("normalizes OpenAI/Codex wham usage primary and secondary windows", () => {
 	const snapshot = normalizeOpenAICodexUsage(openAiUsage(75), { nowMs: NOW_MS });
 
@@ -507,6 +517,61 @@ test("service does not reuse Anthropic cached usage across expiry-only credentia
 	assert.equal(service.getSnapshot("anthropic"), undefined);
 });
 
+test("throttle survives credential object rotation when access token is unchanged", async () => {
+	const accessToken = randomUUID();
+	const refreshToken = randomUUID();
+	let fetchCalls = 0;
+	let credential = { type: "oauth", access: accessToken, refresh: refreshToken, expires: NOW_MS + 60_000 };
+	const service = createTlhSubscriptionUsageService({
+		now: () => NOW_MS,
+		cacheTtlMs: 60_000,
+		minFetchIntervalMs: 60_000,
+		timeoutMs: 0,
+		fetch: async () => {
+			fetchCalls += 1;
+			return {
+				ok: true,
+				json: async () => ({ five_hour: { used: 4, limit: 10 } }),
+			};
+		},
+	});
+	const ctx = {
+		model: { provider: "anthropic" },
+		modelRegistry: {
+			isUsingOAuth: (model) => model?.provider === "anthropic",
+			getApiKeyForProvider: async () => credential.access,
+			authStorage: {
+				get: (provider) => (provider === "anthropic" ? credential : undefined),
+			},
+		},
+	};
+
+	const first = await service.refresh(ctx);
+	assert.equal(first?.windows.session.used, 4);
+	assert.equal(fetchCalls, 1);
+
+	// Simulate Pi's AuthStorage.set() replacing the credential object on an
+	// OAuth refresh: new object identity (and a bumped expiry) but the same
+	// bearer access token. The cacheKey-based throttle resets because the
+	// WeakMap-derived synthetic id changes; only the access-token-hash
+	// throttle should keep the redundant fetch from going through.
+	credential = { type: "oauth", access: accessToken, refresh: refreshToken, expires: NOW_MS + 120_000 };
+
+	await service.refresh(ctx);
+	assert.equal(fetchCalls, 1);
+
+	// And again, just to make sure the throttle remains armed for the
+	// rotated cacheKey rather than only firing on the first attempt.
+	await service.refresh(ctx);
+	assert.equal(fetchCalls, 1);
+
+	// Cache keys must remain keyed on the existing cacheKey scheme even
+	// though the secondary throttle now covers the rotation case.
+	for (const key of service.snapshots.keys()) {
+		assert.doesNotMatch(key, /access|refresh|token/i);
+	}
+});
+
 test("service hides cached usage across OAuth account identity changes", async () => {
 	const firstToken = randomUUID();
 	const secondToken = randomUUID();
@@ -625,4 +690,53 @@ test("service does not fetch when a runtime key differs from the stored OAuth ac
 	assert.equal(requests.length, 1);
 	assert.equal(staleService.getSnapshot("anthropic"), undefined);
 	assert.equal(staleService.getSnapshotForContext(staleCtx), undefined);
+});
+
+test("service dedupes concurrent refresh() calls via the in-flight registry", async () => {
+	const accessToken = randomUUID();
+	const credential = { type: "oauth", access: accessToken, accountId: "acct_concurrent" };
+	let fetchCalls = 0;
+	const deferred = createDeferred();
+	const service = createTlhSubscriptionUsageService({
+		now: () => NOW_MS,
+		cacheTtlMs: 0,
+		minFetchIntervalMs: 0,
+		timeoutMs: 0,
+		fetch: () => {
+			fetchCalls += 1;
+			return deferred.promise;
+		},
+	});
+	const ctx = {
+		model: { provider: "openai-codex" },
+		modelRegistry: {
+			isUsingOAuth: (model) => model?.provider === "openai-codex",
+			getApiKeyForProvider: async () => accessToken,
+			authStorage: {
+				get: (provider) => (provider === "openai-codex" ? credential : undefined),
+			},
+		},
+	};
+
+	// Issue two concurrent refresh() calls without awaiting between them so
+	// both reach the in-flight check before the network request resolves.
+	const firstPromise = service.refresh(ctx);
+	const secondPromise = service.refresh(ctx);
+
+	// Drain pending microtasks so each refresh() advances past its internal
+	// awaits (credential resolution) and either populates or observes the
+	// in-flight entry. The deferred fetch promise keeps both calls parked
+	// until we explicitly resolve it below, so this is deterministic.
+	await new Promise((resolve) => setImmediate(resolve));
+
+	assert.equal(fetchCalls, 1, "fetch is invoked exactly once for concurrent refreshes");
+
+	deferred.resolve({ ok: true, json: async () => openAiUsage(50) });
+
+	const [first, second] = await Promise.all([firstPromise, secondPromise]);
+
+	assert.equal(fetchCalls, 1, "no additional fetch occurs after the deferred resolves");
+	assert.ok(first, "first refresh produced a snapshot");
+	assert.equal(first, second, "both refresh() calls resolve to the same snapshot instance");
+	assert.equal(first?.windows.session.used, 50);
 });

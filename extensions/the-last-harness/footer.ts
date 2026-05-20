@@ -162,6 +162,17 @@ function isSubscriptionUsageEligible(
 	}
 }
 
+function isModelUsingOAuth(ctx: ExtensionContext, model: ExtensionContext["model"]): boolean {
+	if (!model || typeof ctx.modelRegistry?.isUsingOAuth !== "function") {
+		return false;
+	}
+	try {
+		return ctx.modelRegistry.isUsingOAuth(model) === true;
+	} catch {
+		return false;
+	}
+}
+
 function subscriptionUsageSnapshot(
 	ctx: ExtensionContext,
 	provider: string | undefined,
@@ -243,8 +254,11 @@ export function createTlhFooter(
 
 			const statsParts: string[] = [];
 			const subscriptionEligible = isSubscriptionUsageEligible(ctx, model?.provider, usageOptions.subscriptionUsage);
-			// In tlh, eligible subscription users should not see dollar-cost estimates in the footer.
-			if (totals.cost > 0 && !subscriptionEligible) {
+			const usingOAuth = isModelUsingOAuth(ctx, model);
+			// In tlh, hide dollar-cost estimates whenever the user is on a subscription (eligible)
+			// or any other OAuth-authenticated provider (e.g. GitHub Copilot). The subscription-usage
+			// segment below still renders only for supported subscription providers.
+			if (totals.cost > 0 && !subscriptionEligible && !usingOAuth) {
 				statsParts.push(formatCost(totals.cost));
 			}
 

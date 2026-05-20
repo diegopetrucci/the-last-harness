@@ -165,7 +165,9 @@ test("footer render reads cached usage snapshots without refreshing", () => {
 });
 
 test("footer falls back to dollar cost when subscription usage is not strictly eligible", () => {
-	const line = renderFooterStatsLine(createCtx({ provider: "anthropic" }), {
+	// Non-OAuth Anthropic session (e.g. API-key user): no subscription tracking and no OAuth gate,
+	// so the dollar fallback must remain visible.
+	const line = renderFooterStatsLine(createCtx({ provider: "anthropic", usingOAuth: false }), {
 		subscriptionUsage: usageProvider(anthropicSnapshot(), undefined, false),
 		shouldShowWeekly: () => true,
 	});
@@ -209,13 +211,17 @@ test("footer suppresses dollar cost for eligible OAuth sessions before usage is 
 		shouldShowWeekly: () => true,
 	});
 
-	assert.match(runtimeLine, /\$1\.250/);
+	// The runtime override disables the subscription-usage panel, but the stored Anthropic
+	// credential is still OAuth so isUsingOAuth(model) remains true and the dollar fallback
+	// stays suppressed.
+	assert.doesNotMatch(runtimeLine, /\$/);
 	assert.doesNotMatch(runtimeLine, /used/);
 	assert.equal(fetchCalls, 0);
 });
 
 test("footer leaves usage unchanged for unsupported providers and snapshot errors", () => {
-	const unsupportedLine = renderFooterStatsLine(createCtx({ provider: "openrouter" }), {
+	// API-key user on an unsupported provider: cost should still render as the fallback.
+	const unsupportedLine = renderFooterStatsLine(createCtx({ provider: "openrouter", usingOAuth: false }), {
 		subscriptionUsage: usageProvider(openAiSnapshot()),
 		shouldShowWeekly: () => true,
 	});
@@ -242,6 +248,28 @@ test("footer leaves usage unchanged for unsupported providers and snapshot error
 	assert.doesNotMatch(errorLine, /weekly/);
 	assert.doesNotMatch(errorLine, /\$/);
 	assert.match(errorLine, /12\.3%\/200k/);
+});
+
+test("footer suppresses dollar cost for OAuth users on unsupported providers", () => {
+	const line = renderFooterStatsLine(createCtx({ provider: "github-copilot", usingOAuth: true }), {
+		subscriptionUsage: usageProvider(openAiSnapshot(), undefined, false),
+		shouldShowWeekly: () => true,
+	});
+
+	assert.doesNotMatch(line, /\$/);
+	assert.doesNotMatch(line, /used/);
+	assert.match(line, /12\.3%\/200k/);
+});
+
+test("footer shows dollar cost when neither OAuth nor subscription-eligible", () => {
+	const line = renderFooterStatsLine(createCtx({ provider: "openrouter", usingOAuth: false }), {
+		subscriptionUsage: usageProvider(openAiSnapshot(), undefined, false),
+		shouldShowWeekly: () => true,
+	});
+
+	assert.match(line, /\$1\.250/);
+	assert.doesNotMatch(line, /used/);
+	assert.match(line, /12\.3%\/200k/);
 });
 
 test("usage footer stays within narrow terminal widths", () => {

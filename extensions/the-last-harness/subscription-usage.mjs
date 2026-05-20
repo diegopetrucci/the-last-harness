@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export const TLH_SUBSCRIPTION_USAGE_OPENAI_CODEX_URL = "https://chatgpt.com/backend-api/wham/usage";
 export const TLH_SUBSCRIPTION_USAGE_ANTHROPIC_URL = "https://api.anthropic.com/api/oauth/usage";
 export const TLH_SUBSCRIPTION_USAGE_ANTHROPIC_BETA = "oauth-2025-04-20";
@@ -117,6 +119,18 @@ function credentialObjectIdentity(credential) {
 		credentialObjectIds.set(stored, identity);
 	}
 	return String(identity);
+}
+
+// Stable, one-way fingerprint of a bearer access token. We use this as a
+// secondary throttle key so a fresh credential object (Pi's AuthStorage.set()
+// replaces the object on every OAuth refresh) cannot bypass the per-cacheKey
+// rate limit when the underlying bearer is unchanged. The hash is never
+// logged or returned to callers.
+function accessTokenFingerprint(accessToken) {
+	if (typeof accessToken !== "string" || !accessToken) {
+		return undefined;
+	}
+	return createHash("sha256").update(accessToken).digest("hex");
 }
 
 function clampPercent(value) {
@@ -646,6 +660,13 @@ export class TlhSubscriptionUsageService {
 		this.timeoutMs = options.timeoutMs ?? TLH_SUBSCRIPTION_USAGE_TIMEOUT_MS;
 		this.snapshots = new Map();
 		this.lastAttempts = new Map();
+		// Secondary throttle keyed on a SHA-256 hash of the bearer access
+		// token. Pi's AuthStorage.set() swaps the credential object on every
+		// OAuth refresh, which produces a fresh WeakMap-based cacheKey for
+		// Anthropic credentials and would otherwise reset lastAttempts on
+		// every rotation. Entries here are intentionally not cleared by
+		// clearProvider() so the throttle survives the credential swap.
+		this.lastAccessTokenAttempts = new Map();
 		this.inFlight = new Map();
 		this.activeCacheKeys = new Map();
 		this.ineligibleCacheKeys = new Map();
@@ -718,6 +739,7 @@ export class TlhSubscriptionUsageService {
 	clear() {
 		this.snapshots.clear();
 		this.lastAttempts.clear();
+		this.lastAccessTokenAttempts.clear();
 		this.inFlight.clear();
 		this.activeCacheKeys.clear();
 		this.ineligibleCacheKeys.clear();
@@ -774,10 +796,20 @@ export class TlhSubscriptionUsageService {
 		this.activateTarget(provider, cacheKey);
 		const cached = this.snapshots.get(cacheKey);
 		const lastAttempt = this.lastAttempts.get(cacheKey);
+		// Both throttle windows must be stale before we issue another network
+		// call. The cacheKey throttle covers steady-state identity, while the
+		// access-token-hash throttle survives credential object rotation when
+		// the underlying bearer is unchanged (Pi mints a new credential
+		// object on every OAuth refresh).
+		const tokenFingerprint = accessTokenFingerprint(target.accessToken);
+		const lastTokenAttempt = tokenFingerprint !== undefined ? this.lastAccessTokenAttempts.get(tokenFingerprint) : undefined;
 		if (!options.force && cached && nowMs - cached.fetchedAt < this.cacheTtlMs) {
 			return cached;
 		}
 		if (!options.force && lastAttempt !== undefined && nowMs - lastAttempt < this.minFetchIntervalMs) {
+			return cached;
+		}
+		if (!options.force && lastTokenAttempt !== undefined && nowMs - lastTokenAttempt < this.minFetchIntervalMs) {
 			return cached;
 		}
 
@@ -787,6 +819,9 @@ export class TlhSubscriptionUsageService {
 		}
 
 		this.lastAttempts.set(cacheKey, nowMs);
+		if (tokenFingerprint !== undefined) {
+			this.lastAccessTokenAttempts.set(tokenFingerprint, nowMs);
+		}
 		const pending = (async () => {
 			const snapshot = await fetchTlhSubscriptionUsage(target, {
 				fetch: this.fetch,
