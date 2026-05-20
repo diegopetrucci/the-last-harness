@@ -1,0 +1,382 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { FooterGitCache } from "../extensions/the-last-harness/footer-git-cache.ts";
+
+const HASH = "1234567890abcdef1234567890abcdef12345678";
+
+function gitStatusStdout({ branch = "main", ahead = 0, behind = 0, lines = [] } = {}) {
+	const out = [`# branch.oid ${HASH}`, `# branch.head ${branch}`];
+	if (ahead > 0 || behind > 0) {
+		out.push(`# branch.ab +${ahead} -${behind}`);
+	}
+	out.push(...lines);
+	return out.join("\n") + "\n";
+}
+
+function ghPrStdout(pr) {
+	return JSON.stringify(pr);
+}
+
+function createFakeClock() {
+	let nextId = 1;
+	const intervals = new Map();
+	return {
+		intervals,
+		setInterval(callback, ms) {
+			const handle = { id: nextId++, ms, callback };
+			intervals.set(handle, callback);
+			return handle;
+		},
+		clearInterval(handle) {
+			intervals.delete(handle);
+		},
+		tick(handle) {
+			const cb = intervals.get(handle);
+			if (cb) cb();
+		},
+	};
+}
+
+function createRecordingRunner(handlers) {
+	const calls = [];
+	return {
+		calls,
+		runner(command, args, options) {
+			calls.push({ command, args: [...args], cwd: options.cwd });
+			const handler = handlers[command];
+			if (!handler) {
+				return Promise.reject(new Error(`unexpected command: ${command}`));
+			}
+			return handler({ command, args: [...args], options, callIndex: calls.length - 1 });
+		},
+	};
+}
+
+function flushMicrotasks() {
+	return new Promise((resolve) => setImmediate(resolve));
+}
+
+test("initial refresh populates status snapshot from injected runner", async () => {
+	const stdout = gitStatusStdout({
+		branch: "feature/git-footer",
+		lines: [
+			`1 M. N... 100644 100644 100644 ${HASH} ${HASH} staged.txt`,
+			`1 .M N... 100644 100644 100644 ${HASH} ${HASH} unstaged.txt`,
+			"? untracked.txt",
+		],
+	});
+	const { runner } = createRecordingRunner({
+		git: async () => ({ stdout, stderr: "", exitCode: 0 }),
+		gh: async () => ({ stdout: "", stderr: "no pr", exitCode: 1 }),
+	});
+	const clock = createFakeClock();
+
+	const cache = new FooterGitCache({ cwd: () => "/repo", runner, clock });
+	try {
+		await cache.refresh(); // shares the in-flight initial refresh
+		await flushMicrotasks();
+
+		const status = cache.getStatusSnapshot();
+		assert.ok(status, "expected status snapshot to be populated");
+		assert.equal(status.branch, "feature/git-footer");
+		assert.equal(status.staged, 1);
+		assert.equal(status.unstaged, 1);
+		assert.equal(status.untracked, 1);
+		assert.equal(cache.getPullRequestSnapshot(), undefined, "no PR when gh exits non-zero");
+	} finally {
+		cache.dispose();
+	}
+});
+
+test("git timeout aborts and snapshot remains undefined", async () => {
+	let observedSignal;
+	const runner = (command, _args, options) => {
+		if (command !== "git") {
+			return Promise.reject(new Error(`unexpected ${command}`));
+		}
+		observedSignal = options.signal;
+		return new Promise((_resolve, reject) => {
+			options.signal.addEventListener(
+				"abort",
+				() => reject(new Error("aborted")),
+				{ once: true },
+			);
+		});
+	};
+	const clock = createFakeClock();
+	const cache = new FooterGitCache({
+		cwd: () => "/repo",
+		runner,
+		clock,
+		gitTimeoutMs: 5,
+	});
+	try {
+		await cache.refresh();
+		assert.equal(cache.getStatusSnapshot(), undefined);
+		assert.equal(cache.getPullRequestSnapshot(), undefined);
+		assert.ok(observedSignal?.aborted, "expected runner signal to be aborted by timeout");
+	} finally {
+		cache.dispose();
+	}
+});
+
+test("missing-binary error from the runner is swallowed", async () => {
+	const runner = () => {
+		const err = new Error("spawn ENOENT");
+		err.code = "ENOENT";
+		return Promise.reject(err);
+	};
+	const clock = createFakeClock();
+	const cache = new FooterGitCache({ cwd: () => "/repo", runner, clock });
+	try {
+		await cache.refresh();
+		assert.equal(cache.getStatusSnapshot(), undefined);
+		assert.equal(cache.getPullRequestSnapshot(), undefined);
+	} finally {
+		cache.dispose();
+	}
+});
+
+test("branch change on next refresh triggers a fresh PR fetch", async () => {
+	let branch = "main";
+	const ghCallsByBranch = [];
+	const runner = (command) => {
+		if (command === "git") {
+			return Promise.resolve({ stdout: gitStatusStdout({ branch }), stderr: "", exitCode: 0 });
+		}
+		if (command === "gh") {
+			ghCallsByBranch.push(branch);
+			return Promise.resolve({
+				stdout: ghPrStdout({ number: branch === "main" ? 1 : 2, state: "OPEN", isDraft: false }),
+				stderr: "",
+				exitCode: 0,
+			});
+		}
+		return Promise.reject(new Error(`unexpected ${command}`));
+	};
+	const clock = createFakeClock();
+	const cache = new FooterGitCache({ cwd: () => "/repo", runner, clock });
+	try {
+		await cache.refresh();
+		assert.equal(cache.getStatusSnapshot()?.branch, "main");
+		assert.equal(cache.getPullRequestSnapshot()?.number, 1);
+		assert.deepEqual(ghCallsByBranch, ["main"]);
+
+		// Switch branch and trigger the next refresh via the fake clock.
+		branch = "feature/x";
+		const [intervalHandle] = [...clock.intervals.keys()];
+		clock.tick(intervalHandle);
+		// The timer callback fires `void cache.refresh()`; drain all microtasks
+		// before observing snapshots.
+		await flushMicrotasks();
+		await flushMicrotasks();
+
+		assert.equal(cache.getStatusSnapshot()?.branch, "feature/x");
+		assert.equal(cache.getPullRequestSnapshot()?.number, 2);
+		assert.deepEqual(ghCallsByBranch, ["main", "feature/x"]);
+	} finally {
+		cache.dispose();
+	}
+});
+
+test("dispose() clears the periodic timer and aborts in-flight subprocesses", async () => {
+	const observedSignals = [];
+	let resolveGit;
+	const runner = (command, _args, options) => {
+		observedSignals.push(options.signal);
+		return new Promise((resolve, reject) => {
+			options.signal.addEventListener(
+				"abort",
+				() => reject(new Error("aborted")),
+				{ once: true },
+			);
+			if (command === "git") {
+				resolveGit = resolve;
+			}
+		});
+	};
+	const clock = createFakeClock();
+	const cache = new FooterGitCache({
+		cwd: () => "/repo",
+		runner,
+		clock,
+		gitTimeoutMs: 60_000,
+		ghTimeoutMs: 60_000,
+	});
+
+	// Wait until the in-flight git call is observed.
+	const refreshPromise = cache.refresh();
+	while (observedSignals.length === 0) {
+		await flushMicrotasks();
+	}
+	assert.equal(clock.intervals.size, 1, "interval should be registered before dispose");
+
+	cache.dispose();
+
+	assert.equal(clock.intervals.size, 0, "interval should be cleared after dispose");
+	assert.ok(observedSignals[0].aborted, "in-flight git subprocess should be aborted");
+
+	// Even if the underlying runner later resolves, the cache should not crash
+	// or update state.
+	resolveGit?.({ stdout: gitStatusStdout(), stderr: "", exitCode: 0 });
+	await refreshPromise;
+	assert.equal(cache.getStatusSnapshot(), undefined);
+});
+
+test("gh failure does not clobber a valid git snapshot", async () => {
+	const runner = (command) => {
+		if (command === "git") {
+			return Promise.resolve({ stdout: gitStatusStdout({ branch: "main", ahead: 1 }), stderr: "", exitCode: 0 });
+		}
+		// Simulate `gh` not installed / not authenticated.
+		return Promise.reject(Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }));
+	};
+	const clock = createFakeClock();
+	const cache = new FooterGitCache({ cwd: () => "/repo", runner, clock });
+	try {
+		await cache.refresh();
+		const status = cache.getStatusSnapshot();
+		assert.ok(status, "expected status snapshot to survive gh failure");
+		assert.equal(status.branch, "main");
+		assert.equal(status.ahead, 1);
+		assert.equal(cache.getPullRequestSnapshot(), undefined);
+	} finally {
+		cache.dispose();
+	}
+});
+
+test("detached HEAD skips gh entirely", async () => {
+	let ghCalled = false;
+	const runner = (command) => {
+		if (command === "git") {
+			return Promise.resolve({ stdout: gitStatusStdout({ branch: "(detached)" }), stderr: "", exitCode: 0 });
+		}
+		ghCalled = true;
+		return Promise.resolve({ stdout: "{}", stderr: "", exitCode: 0 });
+	};
+	const clock = createFakeClock();
+	const cache = new FooterGitCache({ cwd: () => "/repo", runner, clock });
+	try {
+		await cache.refresh();
+		assert.equal(cache.getStatusSnapshot()?.branch, "detached");
+		assert.equal(ghCalled, false, "gh should not be invoked when branch is detached");
+	} finally {
+		cache.dispose();
+	}
+});
+
+test("dispose() is idempotent and refresh() becomes a no-op", async () => {
+	let gitCalls = 0;
+	const runner = (command) => {
+		if (command === "git") {
+			gitCalls += 1;
+			return Promise.resolve({ stdout: gitStatusStdout(), stderr: "", exitCode: 0 });
+		}
+		return Promise.resolve({ stdout: "", stderr: "", exitCode: 1 });
+	};
+	const clock = createFakeClock();
+	const cache = new FooterGitCache({
+		cwd: () => "/repo",
+		runner,
+		clock,
+		skipInitialRefresh: true,
+	});
+
+	cache.dispose();
+	cache.dispose(); // should not throw
+
+	await cache.refresh();
+	assert.equal(gitCalls, 0, "refresh() after dispose() must be a no-op");
+});
+
+test("concurrent refresh() calls share a single git/gh invocation", async () => {
+	let resolveGit;
+	const { calls, runner } = createRecordingRunner({
+		git: () =>
+			new Promise((resolve) => {
+				resolveGit = resolve;
+			}),
+		gh: async () => ({
+			stdout: ghPrStdout({ number: 7, state: "OPEN", isDraft: false }),
+			stderr: "",
+			exitCode: 0,
+		}),
+	});
+	const clock = createFakeClock();
+	const cache = new FooterGitCache({
+		cwd: () => "/repo",
+		runner,
+		clock,
+		skipInitialRefresh: true,
+	});
+	try {
+		// Three overlapping refresh() calls before the git promise resolves.
+		const r1 = cache.refresh();
+		const r2 = cache.refresh();
+		const r3 = cache.refresh();
+
+		// Let the runner record the git invocation.
+		await flushMicrotasks();
+
+		assert.ok(resolveGit, "git runner should have been invoked");
+		resolveGit({
+			stdout: gitStatusStdout({ branch: "main" }),
+			stderr: "",
+			exitCode: 0,
+		});
+
+		await Promise.all([r1, r2, r3]);
+
+		const gitCalls = calls.filter((c) => c.command === "git").length;
+		const ghCalls = calls.filter((c) => c.command === "gh").length;
+		assert.equal(gitCalls, 1, "concurrent refresh() calls must share one git spawn");
+		assert.ok(ghCalls <= 1, `expected at most one gh call, got ${ghCalls}`);
+	} finally {
+		cache.dispose();
+	}
+});
+
+test("dispose() retains last-known snapshot and post-dispose refresh() is a no-op", async () => {
+	const stdout = gitStatusStdout({
+		branch: "main",
+		lines: ["? untracked.txt"],
+	});
+	const { calls, runner } = createRecordingRunner({
+		git: async () => ({ stdout, stderr: "", exitCode: 0 }),
+		gh: async () => ({ stdout: "", stderr: "no pr", exitCode: 1 }),
+	});
+	const clock = createFakeClock();
+	const cache = new FooterGitCache({
+		cwd: () => "/repo",
+		runner,
+		clock,
+		skipInitialRefresh: true,
+	});
+
+	await cache.refresh();
+	const beforeDispose = cache.getStatusSnapshot();
+	assert.ok(beforeDispose, "expected snapshot to be populated after refresh");
+	assert.equal(beforeDispose.branch, "main");
+	assert.equal(beforeDispose.untracked, 1);
+
+	const callsBeforeDispose = calls.length;
+	cache.dispose();
+
+	const afterDispose = cache.getStatusSnapshot();
+	assert.strictEqual(afterDispose, beforeDispose, "snapshot reference must survive dispose()");
+	assert.equal(afterDispose?.branch, "main");
+	assert.equal(afterDispose?.untracked, 1);
+
+	await cache.refresh();
+	assert.equal(
+		calls.length,
+		callsBeforeDispose,
+		"runner must not be invoked again after dispose()",
+	);
+	assert.strictEqual(
+		cache.getStatusSnapshot(),
+		beforeDispose,
+		"post-dispose refresh() must not clobber the retained snapshot",
+	);
+});

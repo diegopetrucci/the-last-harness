@@ -3,6 +3,7 @@ import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createTlhAutocompleteProvider } from "./the-last-harness/autocomplete.js";
 import { registerEffortCommand } from "./the-last-harness/effort.js";
 import { createTlhFooter } from "./the-last-harness/footer.js";
+import { FooterGitCache } from "./the-last-harness/footer-git-cache.js";
 import { registerGnosisCommand } from "./the-last-harness/gnosis.js";
 import { createTlhHeader } from "./the-last-harness/header.js";
 import { scheduleTlhLaunchTelemetry } from "./the-last-harness/launch-telemetry.js";
@@ -43,9 +44,20 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		const headerUpdate = getTlhHeaderUpdate();
 
 		if (typeof ctx.ui.setFooter === "function") {
-			ctx.ui.setFooter((_tui, theme, footerData) =>
-				createTlhFooter(pi, ctx, theme, () => primaryAgentRuntime.currentPrimaryAgentLabel(), footerData),
-			);
+			ctx.ui.setFooter((_tui, theme, footerData) => {
+				const gitCache = new FooterGitCache({
+					cwd: () => ctx.sessionManager.getCwd(),
+					onBranchChangeSource: footerData ? (cb) => footerData.onBranchChange(cb) : undefined,
+				});
+				return createTlhFooter(
+					pi,
+					ctx,
+					theme,
+					() => primaryAgentRuntime.currentPrimaryAgentLabel(),
+					footerData,
+					gitCache,
+				);
+			});
 		}
 		if (typeof ctx.ui.setHeader === "function") {
 			ctx.ui.setHeader((_tui, theme) => createTlhHeader(theme, resources, headerUpdate));

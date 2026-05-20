@@ -1,0 +1,382 @@
+import { spawn } from "node:child_process";
+import { parseGitStatusPorcelainV2 } from "./footer-git.mjs";
+
+/**
+ * Snapshot shape used by `formatTlhGitFooterSegments` in `./footer-git.mjs`.
+ * Kept structurally compatible with the return value of `parseGitStatusPorcelainV2`.
+ */
+export type GitStatusSnapshot = {
+	branch?: string;
+	staged: number;
+	unstaged: number;
+	untracked: number;
+	conflict: number;
+	ahead: number;
+	behind: number;
+};
+
+/** Minimal pull-request shape consumed by `formatPullRequestFooterSegment`. */
+export type PullRequestSnapshot = {
+	number?: number | string;
+	state?: string;
+	isDraft?: boolean;
+	url?: string;
+	title?: string;
+};
+
+export type CommandResult = {
+	stdout: string;
+	stderr: string;
+	exitCode: number | null;
+};
+
+/**
+ * Subprocess runner contract. Injectable so tests can avoid real `git`/`gh` calls.
+ * Implementations must honor `signal` and reject (or surface a `signal.aborted`
+ * result) when it is aborted. Implementations may throw for spawn errors (e.g.
+ * missing binary); the cache swallows them.
+ */
+export type CommandRunner = (
+	command: string,
+	args: readonly string[],
+	options: { cwd: string; signal: AbortSignal },
+) => Promise<CommandResult>;
+
+/** Opaque handle returned by an injectable interval clock. */
+export type TimerHandle = unknown;
+
+/** Injectable interval clock. Defaults to `setInterval`/`clearInterval`. */
+export type Clock = {
+	setInterval(callback: () => void, ms: number): TimerHandle;
+	clearInterval(handle: TimerHandle): void;
+};
+
+export type FooterGitCacheOptions = {
+	/**
+	 * Accessor for the working directory used by every spawned subprocess.
+	 * Resolved lazily on each command invocation so that Pi-internal cwd
+	 * changes (e.g. `setCwd`) are reflected without recreating the cache.
+	 */
+	cwd: () => string;
+	runner?: CommandRunner;
+	clock?: Clock;
+	/** Periodic refresh cadence in ms. Default: 8_000. */
+	refreshIntervalMs?: number;
+	/** Per-invocation git timeout in ms. Default: 1500. */
+	gitTimeoutMs?: number;
+	/** Per-invocation gh timeout in ms. Default: 3000. */
+	ghTimeoutMs?: number;
+	/** Skip the construction-time refresh. Useful for deterministic tests. */
+	skipInitialRefresh?: boolean;
+	/**
+	 * Optional subscription to an external branch-change notifier. Shape
+	 * matches Pi's `ReadonlyFooterDataProvider.onBranchChange`: pass a
+	 * callback, receive an unsubscribe handle. When supplied, the cache
+	 * subscribes once in the constructor and triggers `refresh()` on each
+	 * callback; the unsubscribe handle is called from `dispose()`.
+	 */
+	onBranchChangeSource?: (callback: () => void) => () => void;
+};
+
+const DEFAULT_REFRESH_INTERVAL_MS = 8_000;
+const DEFAULT_GIT_TIMEOUT_MS = 1_500;
+const DEFAULT_GH_TIMEOUT_MS = 3_000;
+
+const GIT_STATUS_ARGS = ["--no-optional-locks", "status", "--porcelain=v2", "--branch"] as const;
+const GH_PR_VIEW_ARGS = ["pr", "view", "--json", "number,state,isDraft,url,title"] as const;
+
+function defaultRunner(
+	command: string,
+	args: readonly string[],
+	options: { cwd: string; signal: AbortSignal },
+): Promise<CommandResult> {
+	return new Promise((resolve, reject) => {
+		let child;
+		try {
+			child = spawn(command, [...args], {
+				cwd: options.cwd,
+				stdio: ["ignore", "pipe", "pipe"],
+				windowsHide: true,
+			});
+		} catch (error) {
+			reject(error);
+			return;
+		}
+
+		let stdout = "";
+		let stderr = "";
+		let settled = false;
+
+		const finish = (result: CommandResult | Error) => {
+			if (settled) return;
+			settled = true;
+			options.signal.removeEventListener("abort", onAbort);
+			if (result instanceof Error) {
+				reject(result);
+			} else {
+				resolve(result);
+			}
+		};
+
+		const onAbort = () => {
+			try {
+				child.kill("SIGTERM");
+			} catch {
+				// Ignore: process may already be gone.
+			}
+			finish(new Error("aborted"));
+		};
+
+		if (options.signal.aborted) {
+			onAbort();
+			return;
+		}
+		options.signal.addEventListener("abort", onAbort, { once: true });
+
+		child.stdout?.on("data", (chunk: Buffer | string) => {
+			stdout += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+		});
+		child.stderr?.on("data", (chunk: Buffer | string) => {
+			stderr += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+		});
+		child.on("error", (error) => {
+			finish(error);
+		});
+		child.on("close", (code) => {
+			finish({ stdout, stderr, exitCode: code });
+		});
+	});
+}
+
+function defaultClock(): Clock {
+	return {
+		setInterval(callback, ms) {
+			const handle = setInterval(callback, ms);
+			(handle as { unref?: () => void }).unref?.();
+			return handle;
+		},
+		clearInterval(handle) {
+			clearInterval(handle as ReturnType<typeof setInterval>);
+		},
+	};
+}
+
+function parsePullRequestJson(stdout: string): PullRequestSnapshot | undefined {
+	const trimmed = stdout.trim();
+	if (!trimmed) {
+		return undefined;
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(trimmed);
+	} catch {
+		return undefined;
+	}
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+		return undefined;
+	}
+	const record = parsed as Record<string, unknown>;
+	const snapshot: PullRequestSnapshot = {};
+	if (typeof record.number === "number" || typeof record.number === "string") {
+		snapshot.number = record.number;
+	}
+	if (typeof record.state === "string") {
+		snapshot.state = record.state;
+	}
+	if (typeof record.isDraft === "boolean") {
+		snapshot.isDraft = record.isDraft;
+	}
+	if (typeof record.url === "string") {
+		snapshot.url = record.url;
+	}
+	if (typeof record.title === "string") {
+		snapshot.title = record.title;
+	}
+	return snapshot;
+}
+
+/**
+ * Background cache for the TLH footer's git status and (best-effort) GitHub PR
+ * metadata. Refreshes asynchronously and exposes synchronous snapshot getters
+ * so footer `render()` never spawns subprocesses.
+ */
+export class FooterGitCache {
+	private readonly cwd: () => string;
+	private readonly runner: CommandRunner;
+	private readonly clock: Clock;
+	private readonly refreshIntervalMs: number;
+	private readonly gitTimeoutMs: number;
+	private readonly ghTimeoutMs: number;
+
+	private intervalHandle: TimerHandle | undefined;
+	private readonly inflightControllers = new Set<AbortController>();
+	private disposed = false;
+	private refreshInFlight: Promise<void> | undefined;
+	private branchChangeUnsubscribe: (() => void) | undefined;
+
+	private statusSnapshot: GitStatusSnapshot | undefined;
+	private pullRequestSnapshot: PullRequestSnapshot | undefined;
+	private lastSeenBranch: string | undefined;
+
+	constructor(options: FooterGitCacheOptions) {
+		this.cwd = options.cwd;
+		this.runner = options.runner ?? defaultRunner;
+		this.clock = options.clock ?? defaultClock();
+		this.refreshIntervalMs = options.refreshIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS;
+		this.gitTimeoutMs = options.gitTimeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
+		this.ghTimeoutMs = options.ghTimeoutMs ?? DEFAULT_GH_TIMEOUT_MS;
+
+		this.intervalHandle = this.clock.setInterval(() => {
+			void this.refresh();
+		}, this.refreshIntervalMs);
+
+		if (!options.skipInitialRefresh) {
+			void this.refresh();
+		}
+
+		// Subscribe to external branch-change notifications, if any. Each
+		// callback invocation schedules a refresh; the existing in-flight
+		// promise sharing automatically dedupes overlapping callbacks.
+		if (options.onBranchChangeSource) {
+			this.branchChangeUnsubscribe = options.onBranchChangeSource(() => {
+				void this.refresh();
+			});
+		}
+	}
+
+	getStatusSnapshot(): GitStatusSnapshot | undefined {
+		return this.statusSnapshot;
+	}
+
+	getPullRequestSnapshot(): PullRequestSnapshot | undefined {
+		return this.pullRequestSnapshot;
+	}
+
+	/**
+	 * Trigger a refresh. Concurrent calls share the in-flight promise. Safe to
+	 * call after `dispose()` (resolves immediately as a no-op).
+	 */
+	refresh(): Promise<void> {
+		if (this.disposed) {
+			return Promise.resolve();
+		}
+		if (this.refreshInFlight) {
+			return this.refreshInFlight;
+		}
+		const run = this.runRefresh().finally(() => {
+			this.refreshInFlight = undefined;
+		});
+		this.refreshInFlight = run;
+		return run;
+	}
+
+	private async runRefresh(): Promise<void> {
+		const status = await this.fetchGitStatus();
+		if (this.disposed) {
+			return;
+		}
+		if (status === undefined) {
+			// Preserve previous snapshot on failure. Do not touch the PR snapshot
+			// either: a transient git failure should not clobber recent PR data.
+			return;
+		}
+		this.statusSnapshot = status;
+
+		const branch = typeof status.branch === "string" ? status.branch : undefined;
+		const isValidBranch = !!branch && branch !== "detached";
+		const branchChanged = branch !== this.lastSeenBranch;
+
+		if (branchChanged) {
+			// Stale PR data belongs to the previous branch; clear it before
+			// attempting a fresh lookup for the new branch.
+			this.pullRequestSnapshot = undefined;
+		}
+		this.lastSeenBranch = branch;
+
+		if (!isValidBranch) {
+			this.pullRequestSnapshot = undefined;
+			return;
+		}
+
+		const pr = await this.fetchPullRequest();
+		if (this.disposed) {
+			return;
+		}
+		if (pr !== undefined) {
+			this.pullRequestSnapshot = pr;
+		} else if (branchChanged) {
+			// Branch changed and PR lookup failed; leave snapshot cleared above.
+			this.pullRequestSnapshot = undefined;
+		}
+		// Otherwise (same branch, gh failed): keep prior PR snapshot.
+	}
+
+	private async fetchGitStatus(): Promise<GitStatusSnapshot | undefined> {
+		const result = await this.runCommandSafely("git", GIT_STATUS_ARGS, this.gitTimeoutMs);
+		if (!result || result.exitCode !== 0) {
+			return undefined;
+		}
+		return parseGitStatusPorcelainV2(result.stdout) as GitStatusSnapshot;
+	}
+
+	private async fetchPullRequest(): Promise<PullRequestSnapshot | undefined> {
+		const result = await this.runCommandSafely("gh", GH_PR_VIEW_ARGS, this.ghTimeoutMs);
+		if (!result || result.exitCode !== 0) {
+			return undefined;
+		}
+		return parsePullRequestJson(result.stdout);
+	}
+
+	private async runCommandSafely(
+		command: string,
+		args: readonly string[],
+		timeoutMs: number,
+	): Promise<CommandResult | undefined> {
+		if (this.disposed) {
+			return undefined;
+		}
+		const controller = new AbortController();
+		this.inflightControllers.add(controller);
+		const timeoutId: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+			controller.abort();
+		}, timeoutMs);
+		(timeoutId as { unref?: () => void }).unref?.();
+		try {
+			return await this.runner(command, args, { cwd: this.cwd(), signal: controller.signal });
+		} catch {
+			// Silent: missing binary, abort, spawn error, non-zero stderr, etc.
+			return undefined;
+		} finally {
+			clearTimeout(timeoutId);
+			this.inflightControllers.delete(controller);
+		}
+	}
+
+	/**
+	 * Stop background refreshes and cancel any in-flight subprocesses.
+	 * Idempotent. After disposal the snapshot getters keep returning the
+	 * last-known values but no further refreshes occur.
+	 */
+	dispose(): void {
+		if (this.disposed) {
+			return;
+		}
+		this.disposed = true;
+		if (this.intervalHandle !== undefined) {
+			this.clock.clearInterval(this.intervalHandle);
+			this.intervalHandle = undefined;
+		}
+		if (this.branchChangeUnsubscribe) {
+			try {
+				this.branchChangeUnsubscribe();
+			} catch {
+				// Ignore: a misbehaving notifier must not block disposal.
+			}
+			this.branchChangeUnsubscribe = undefined;
+		}
+		for (const controller of this.inflightControllers) {
+			controller.abort();
+		}
+		this.inflightControllers.clear();
+	}
+}
