@@ -435,6 +435,13 @@ function applyDisabledDefaultExtensions(settings, defaultExtensions, disabledIds
 	}
 }
 
+function scrubGnosisSettings(settings, changes) {
+	if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
+	if (!Object.hasOwn(settings.tlh, "gnosis")) return;
+	delete settings.tlh.gnosis;
+	changes.push("remove tlh.gnosis (one-time cleanup)");
+}
+
 function removeCriticalDisabledDefaultExtensionOptOuts(settings, defaultExtensions, changes) {
 	if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
 	const values = settings.tlh.disabledDefaultExtensions;
@@ -637,6 +644,7 @@ function main() {
 	applyDefaultExtensionPackageDedupes(next, defaultExtensions, disabledIds, changes, { force: args.force, sourceUpdatedIdentities });
 	applyDisabledDefaultExtensions(next, defaultExtensions, disabledIds, changes);
 	removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
+	scrubGnosisSettings(next, changes);
 
 	log(args, `Pi settings: ${settingsPath}`);
 	if (changes.length === 0) {

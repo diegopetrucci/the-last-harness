@@ -201,9 +201,11 @@ test("subagent prompt discovery honors source precedence and copies prompt files
 });
 
 test("support manifest includes stage-1 library dependencies", () => {
-	const relativePaths = supportFileManifest().map((file) => file.relativePath);
+	const manifest = supportFileManifest();
+	const relativePaths = manifest.map((file) => file.relativePath);
 	assert.ok(relativePaths.includes("scripts/lib/tlh-install-git.mjs"));
 	assert.ok(relativePaths.includes("scripts/lib/tlh-install-support-files.mjs"));
+	assert.equal(manifest.find((file) => file.variable === "TLH_GNOSIS_SCRIPT")?.requirement, "required");
 });
 
 test("settings defaults declare when bundled subagent prompts are required", (t) => {

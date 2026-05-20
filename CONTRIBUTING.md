@@ -8,7 +8,7 @@ Thanks for helping improve The Last Harness (`tlh`). Keep changes small, safe, a
 - Do not overwrite or mutate a user's normal Pi configuration at `~/.pi/agent`.
 - The default isolated profile is `~/.the-last-harness/agent`; the default wrapper path is `~/.local/bin/tlh`.
 - Installer-created Pi commands must set `PI_CODING_AGENT_DIR` to the isolated profile directory.
-- The generated `tlh` wrapper should run upstream `pi` with that isolated profile, except for installer-owned helper subcommands such as `tlh defaults` and `tlh gnosis`.
+- The generated `tlh` wrapper should run upstream `pi` with that isolated profile, except for installer-owned helper subcommands such as `tlh defaults`.
 - Preserve user-owned isolated-profile settings. Merge defaults conservatively, respect opt-outs, and back up existing settings before writes.
 - Do not clobber unmanaged wrapper files unless the user explicitly passes `--force`.
 

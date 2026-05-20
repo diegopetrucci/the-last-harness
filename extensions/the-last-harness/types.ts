@@ -6,15 +6,6 @@ export type StartupResources = {
 	themes: string[];
 };
 
-export type TlhGnosisConfig = {
-	enabled?: boolean;
-	installPath?: string;
-};
-
-export type TlhGnosisState = "enabled" | "disabled" | "unset";
-
-export type TlhGnosisSlashAction = "toggle" | "status" | "enable" | "disable";
-
 export type TlhUpdateCheckConfig = {
 	enabled?: boolean;
 };
@@ -30,7 +21,7 @@ export type TlhPrimaryAgentConfig = {
 	applyThinking?: boolean;
 };
 
-export type TlhPrimaryAgentSelection = "architect" | "product" | "disabled";
+export type TlhPrimaryAgentSelection = "architect" | "product" | "bug-hunter" | "disabled";
 
 export type TlhPrimaryAgentSessionState = {
 	enabled?: boolean;
@@ -45,7 +36,6 @@ export type TlhPrimaryAgentWriteResult = {
 
 export type TlhSettings = {
 	tlh?: {
-		gnosis?: TlhGnosisConfig;
 		updateCheck?: TlhUpdateCheckConfig;
 		telemetry?: TlhTelemetryConfig;
 		primaryAgent?: TlhPrimaryAgentConfig;

@@ -392,10 +392,12 @@ function createTlhPrimaryAgentRuntime(
 			{ value: "status", description: "Show TLH primary-agent status" },
 			{ value: "architect", description: "Use the architect primary agent for this session" },
 			{ value: "product", description: "Use the product primary agent for this session" },
+			{ value: "bug-hunter", description: "Use the bug-hunter primary agent for this session" },
 			{ value: "disabled", description: "Disable TLH primary agents for this session" },
 			{ value: "reset", description: "Clear the session primary-agent override" },
 			{ value: "default architect", description: "Persistently select architect for future sessions" },
 			{ value: "default product", description: "Persistently select product for future sessions" },
+			{ value: "default bug-hunter", description: "Persistently select bug-hunter for future sessions" },
 			{ value: "default disabled", description: "Persistently disable TLH primaries for future sessions" },
 			{ value: "default reset", description: "Remove the persistent primary-agent setting" },
 		];
@@ -466,7 +468,7 @@ function createTlhPrimaryAgentRuntime(
 				const selected = parsePrimaryAgentSelection(command);
 				if (selected) {
 					if (parts.length !== 1) {
-						ctx.ui.notify("Usage: /agent architect|product|disabled", "error");
+						ctx.ui.notify("Usage: /agent architect|product|bug-hunter|disabled", "error");
 						return;
 					}
 					setSessionPrimaryAgentOverride(selected);
@@ -480,12 +482,12 @@ function createTlhPrimaryAgentRuntime(
 
 				if (command === "default") {
 					if (parts.length !== 2) {
-						ctx.ui.notify("Usage: /agent default architect|product|disabled|reset", "error");
+						ctx.ui.notify("Usage: /agent default architect|product|bug-hunter|disabled|reset", "error");
 						return;
 					}
 					const defaultSelection = value === "reset" ? undefined : parsePrimaryAgentSelection(value);
 					if (value !== "reset" && !defaultSelection) {
-						ctx.ui.notify("Usage: /agent default architect|product|disabled|reset", "error");
+						ctx.ui.notify("Usage: /agent default architect|product|bug-hunter|disabled|reset", "error");
 						return;
 					}
 
@@ -506,12 +508,12 @@ function createTlhPrimaryAgentRuntime(
 					return;
 				}
 
-				ctx.ui.notify("Usage: /agent [status|architect|product|disabled|reset|default architect|default product|default disabled|default reset]", "error");
+				ctx.ui.notify("Usage: /agent [status|architect|product|bug-hunter|disabled|reset|default architect|default product|default bug-hunter|default disabled|default reset]", "error");
 			},
 		});
 
 		pi.registerShortcut(PRIMARY_AGENT_CYCLE_SHORTCUT, {
-			description: "Cycle TLH primary agent (architect/product/disabled)",
+			description: "Cycle TLH primary agent (architect/product/bug-hunter/disabled)",
 			handler: async (ctx) => {
 				await cycleSessionPrimaryAgent(ctx);
 			},

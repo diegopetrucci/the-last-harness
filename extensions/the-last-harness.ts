@@ -4,7 +4,6 @@ import { createTlhAutocompleteProvider } from "./the-last-harness/autocomplete.j
 import { registerEffortCommand } from "./the-last-harness/effort.js";
 import { createTlhFooter } from "./the-last-harness/footer.js";
 import { FooterGitCache } from "./the-last-harness/footer-git-cache.js";
-import { registerGnosisCommand } from "./the-last-harness/gnosis.js";
 import { createTlhHeader } from "./the-last-harness/header.js";
 import { scheduleTlhLaunchTelemetry } from "./the-last-harness/launch-telemetry.js";
 import { registerTlhPrimaryAgentRuntime } from "./the-last-harness/primary-agent-runtime.js";
@@ -18,7 +17,6 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		return;
 	}
 
-	registerGnosisCommand(pi);
 	registerEffortCommand(pi);
 
 	pi.on("session_start", async (event, ctx) => {

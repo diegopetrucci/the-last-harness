@@ -28,8 +28,6 @@ Use the `subagent` tool for minor agents:
 - `diff-summarizer`: summarize existing local diffs and risk hotspots.
 - `developer`: implement exactly one approved task at a time.
 - `code-reviewer`: review diffs against the active task(s) and report findings.
-- `bug-hunter`: investigate reported bugs read-only, identify likely root causes, and recommend fixes without editing files.
-- `bug-catcher`: independently review bug investigations read-only as a second opinion.
 - `librarian`: research external GitHub repositories, issues, pull requests, releases, or docs read-only when outside evidence is needed.
 - `oracle`: provide read-only high-reasoning second opinions on plans, risky decisions, bug hypotheses, or review findings.
 
