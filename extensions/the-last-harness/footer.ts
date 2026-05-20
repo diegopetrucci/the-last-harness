@@ -8,6 +8,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { formatHomePath, sanitizeStatusText } from "./common.js";
+import type { FooterGitCache } from "./footer-git-cache.js";
+import { composeTlhFooterFirstLine } from "./footer-first-line.js";
 
 function formatTokens(count: number): string {
 	if (count < 1000) {
@@ -58,6 +60,7 @@ export function createTlhFooter(
 	theme: Theme,
 	getPrimaryName: () => string,
 	footerData?: ReadonlyFooterDataProvider,
+	gitCache?: FooterGitCache | null,
 ) {
 	return {
 		render(width: number): string[] {
@@ -68,15 +71,13 @@ export function createTlhFooter(
 			const contextPercentValue = contextUsage?.percent ?? 0;
 			const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
 
-			let pwd = formatHomePath(ctx.sessionManager.getCwd());
-			const branch = footerData?.getGitBranch?.();
-			if (branch) {
-				pwd = `${pwd} (${branch})`;
-			}
-			const sessionName = ctx.sessionManager.getSessionName();
-			if (sessionName) {
-				pwd = `${pwd} • ${sessionName}`;
-			}
+			const pwd = composeTlhFooterFirstLine({
+				cwd: formatHomePath(ctx.sessionManager.getCwd()),
+				sessionName: ctx.sessionManager.getSessionName(),
+				status: gitCache?.getStatusSnapshot(),
+				pullRequest: gitCache?.getPullRequestSnapshot(),
+				fallbackBranch: footerData?.getGitBranch?.(),
+			});
 
 			const statsParts: string[] = [];
 			const usingSubscription = model ? ctx.modelRegistry.isUsingOAuth(model) : false;
@@ -171,5 +172,8 @@ export function createTlhFooter(
 			return lines;
 		},
 		invalidate() {},
+		dispose() {
+			gitCache?.dispose();
+		},
 	};
 }
