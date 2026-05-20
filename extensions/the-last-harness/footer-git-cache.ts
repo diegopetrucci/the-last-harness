@@ -376,7 +376,6 @@ export class FooterGitCache {
 		const timeoutId: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
 			controller.abort();
 		}, timeoutMs);
-		(timeoutId as { unref?: () => void }).unref?.();
 		try {
 			return await this.runner(command, args, { cwd: this.cwd(), signal: controller.signal });
 		} catch {
