@@ -490,6 +490,10 @@ function cacheKeyMatchesProvider(cacheKey, provider) {
 	return typeof cacheKey === "string" && cacheKey.startsWith(`${provider}\t`);
 }
 
+function isCredentialObjectCacheKey(provider, cacheKey) {
+	return typeof cacheKey === "string" && cacheKey.startsWith(`${provider}\tcredential-object:`);
+}
+
 function hasRuntimeCredentialOverride(modelRegistry, provider) {
 	try {
 		const runtimeOverrides = modelRegistry?.authStorage?.runtimeOverrides;
@@ -659,6 +663,10 @@ export class TlhSubscriptionUsageService {
 		this.minFetchIntervalMs = options.minFetchIntervalMs ?? TLH_SUBSCRIPTION_USAGE_MIN_FETCH_INTERVAL_MS;
 		this.timeoutMs = options.timeoutMs ?? TLH_SUBSCRIPTION_USAGE_TIMEOUT_MS;
 		this.snapshots = new Map();
+		// Cache-key -> SHA-256 access token fingerprint for the stored snapshot.
+		// This lets object-identity rotations keep display state only when the
+		// bearer identity is unchanged.
+		this.snapshotTokenFingerprints = new Map();
 		this.lastAttempts = new Map();
 		// Secondary throttle keyed on a SHA-256 hash of the bearer access
 		// token. Pi's AuthStorage.set() swaps the credential object on every
@@ -698,6 +706,29 @@ export class TlhSubscriptionUsageService {
 		return this.snapshotForCacheKey(target.provider, target.cacheKey);
 	}
 
+	rotatedObjectSnapshot(provider, previousCacheKey, cacheKey, tokenFingerprint) {
+		if (
+			!previousCacheKey ||
+			previousCacheKey === cacheKey ||
+			tokenFingerprint === undefined ||
+			!isCredentialObjectCacheKey(provider, previousCacheKey) ||
+			!isCredentialObjectCacheKey(provider, cacheKey) ||
+			this.snapshotTokenFingerprints.get(previousCacheKey) !== tokenFingerprint
+		) {
+			return undefined;
+		}
+		return this.snapshots.get(previousCacheKey);
+	}
+
+	moveSnapshot(previousCacheKey, cacheKey, snapshot, tokenFingerprint) {
+		this.snapshots.set(cacheKey, snapshot);
+		this.snapshotTokenFingerprints.set(cacheKey, tokenFingerprint);
+		this.snapshots.delete(previousCacheKey);
+		this.snapshotTokenFingerprints.delete(previousCacheKey);
+		this.lastAttempts.delete(previousCacheKey);
+		this.inFlight.delete(previousCacheKey);
+	}
+
 	isEligible(target) {
 		if (typeof target === "string") {
 			return isSupportedTlhSubscriptionUsageProvider(target) && this.activeCacheKeys.has(target);
@@ -714,6 +745,11 @@ export class TlhSubscriptionUsageService {
 		for (const key of this.snapshots.keys()) {
 			if (cacheKeyMatchesProvider(key, provider)) {
 				this.snapshots.delete(key);
+			}
+		}
+		for (const key of this.snapshotTokenFingerprints.keys()) {
+			if (cacheKeyMatchesProvider(key, provider)) {
+				this.snapshotTokenFingerprints.delete(key);
 			}
 		}
 		for (const key of this.lastAttempts.keys()) {
@@ -738,6 +774,7 @@ export class TlhSubscriptionUsageService {
 
 	clear() {
 		this.snapshots.clear();
+		this.snapshotTokenFingerprints.clear();
 		this.lastAttempts.clear();
 		this.lastAccessTokenAttempts.clear();
 		this.inFlight.clear();
@@ -769,14 +806,14 @@ export class TlhSubscriptionUsageService {
 			this.clearProvider(provider);
 			return undefined;
 		}
-		const activeCacheKey = this.activeCacheKeys.get(provider);
-		if (activeCacheKey && activeCacheKey !== credentialTarget.cacheKey) {
-			this.clearProvider(provider);
-		}
-
 		const nowMs = this.now();
 		const targetResult = await resolveTlhSubscriptionUsageTarget(resolved);
+		const resolvedActiveCacheKey = this.activeCacheKeys.get(provider);
+		const credentialCacheKeyChanged = resolvedActiveCacheKey && resolvedActiveCacheKey !== credentialTarget.cacheKey;
 		if (targetResult.status === "transient-unavailable") {
+			if (credentialCacheKeyChanged) {
+				this.clearProvider(provider);
+			}
 			return this.snapshotForCacheKey(provider, credentialTarget.cacheKey);
 		}
 		if (targetResult.status !== "resolved") {
@@ -788,20 +825,25 @@ export class TlhSubscriptionUsageService {
 		}
 
 		const target = targetResult.target;
-		if (target.cacheKey !== credentialTarget.cacheKey) {
-			this.clearProvider(provider);
-		}
-
 		const cacheKey = target.cacheKey;
-		this.activateTarget(provider, cacheKey);
-		const cached = this.snapshots.get(cacheKey);
-		const lastAttempt = this.lastAttempts.get(cacheKey);
 		// Both throttle windows must be stale before we issue another network
 		// call. The cacheKey throttle covers steady-state identity, while the
 		// access-token-hash throttle survives credential object rotation when
 		// the underlying bearer is unchanged (Pi mints a new credential
 		// object on every OAuth refresh).
 		const tokenFingerprint = accessTokenFingerprint(target.accessToken);
+		const activeCacheKey = this.activeCacheKeys.get(provider);
+		if (activeCacheKey && activeCacheKey !== cacheKey) {
+			const rotatedSnapshot = this.rotatedObjectSnapshot(provider, activeCacheKey, cacheKey, tokenFingerprint);
+			if (rotatedSnapshot) {
+				this.moveSnapshot(activeCacheKey, cacheKey, rotatedSnapshot, tokenFingerprint);
+			} else {
+				this.clearProvider(provider);
+			}
+		}
+		this.activeCacheKeys.set(provider, cacheKey);
+		const cached = this.snapshots.get(cacheKey);
+		const lastAttempt = this.lastAttempts.get(cacheKey);
 		const lastTokenAttempt = tokenFingerprint !== undefined ? this.lastAccessTokenAttempts.get(tokenFingerprint) : undefined;
 		if (!options.force && cached && nowMs - cached.fetchedAt < this.cacheTtlMs) {
 			return cached;
@@ -830,6 +872,9 @@ export class TlhSubscriptionUsageService {
 			});
 			if (snapshot?.provider === provider && this.activeCacheKeys.get(provider) === cacheKey) {
 				this.snapshots.set(cacheKey, snapshot);
+				if (tokenFingerprint !== undefined) {
+					this.snapshotTokenFingerprints.set(cacheKey, tokenFingerprint);
+				}
 				return snapshot;
 			}
 			return this.snapshotForCacheKey(provider, cacheKey);

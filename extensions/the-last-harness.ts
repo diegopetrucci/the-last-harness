@@ -23,7 +23,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	registerUsageCommand(pi);
 
 	const subscriptionUsageService = createTlhSubscriptionUsageService();
-	let requestFooterRender: (() => void) | undefined;
+	const requestFooterRenderByContext = new WeakMap<ExtensionContext, () => void>();
 	const refreshSubscriptionUsage = (ctx: ExtensionContext, options: TlhUsageRefreshOptions = {}) => {
 		if (!ctx.hasUI) {
 			return;
@@ -46,7 +46,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 					nextProviderSnapshot !== previousProviderSnapshot ||
 					nextProviderEligible !== previousProviderEligible
 				) {
-					requestFooterRender?.();
+					requestFooterRenderByContext.get(ctx)?.();
 				}
 			})
 			.catch(() => undefined);
@@ -84,10 +84,11 @@ export default function theLastHarness(pi: ExtensionAPI) {
 
 		if (typeof ctx.ui.setFooter === "function") {
 			ctx.ui.setFooter((tui, theme, footerData) => {
-				requestFooterRender = () => tui.requestRender();
+				requestFooterRenderByContext.set(ctx, () => tui.requestRender());
 				const gitCache = new FooterGitCache({
 					cwd: () => ctx.sessionManager.getCwd(),
-					onBranchChangeSource: footerData ? (cb) => footerData.onBranchChange(cb) : undefined,
+					onBranchChangeSource:
+						typeof footerData?.onBranchChange === "function" ? (cb) => footerData.onBranchChange(cb) : undefined,
 				});
 				return createTlhFooter(pi, ctx, theme, () => primaryAgentRuntime.currentPrimaryAgentLabel(), footerData, {
 					subscriptionUsage: subscriptionUsageService,

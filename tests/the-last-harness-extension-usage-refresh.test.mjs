@@ -160,6 +160,97 @@ test("subscription usage refresh requests a footer render when a runtime overrid
 	}
 });
 
+test("subscription usage refresh renders only the footer for the refreshed context", async () => {
+	const tempDir = mkdtempSync(join(tmpdir(), "tlh-usage-context-scope-"));
+	const agentDir = join(tempDir, "agent");
+	const cwd = join(tempDir, "workspace");
+	const previousEnv = {
+		PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+		TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
+	};
+	const previousFetch = globalThis.fetch;
+
+	let fetchCalls = 0;
+	let contextARenderRequests = 0;
+	let contextBRenderRequests = 0;
+	let returnedAccessToken = "oauth-access-token";
+	const credential = { type: "oauth", access: "oauth-access-token" };
+	const authStorage = {
+		runtimeOverrides: new Map(),
+		get: (provider) => (provider === "anthropic" ? credential : undefined),
+	};
+
+	try {
+		delete process.env.PI_SUBAGENT_CHILD;
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		process.env.TLH_SKIP_UPDATE_CHECK = "1";
+		mkdirSync(agentDir, { recursive: true });
+		mkdirSync(cwd, { recursive: true });
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			`${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+		);
+
+		globalThis.fetch = async () => {
+			fetchCalls += 1;
+			return {
+				ok: true,
+				json: async () => ({ five_hour: { used: 4, limit: 10 } }),
+			};
+		};
+
+		const pi = createPi();
+		theLastHarness(pi);
+		const sessionStartHandler = pi.handlers.get("session_start")?.[0];
+		assert.ok(sessionStartHandler, "session_start handler must be registered by the extension");
+		const ctxA = createCtx({
+			cwd,
+			authStorage,
+			currentAccessToken: () => returnedAccessToken,
+			requestRender: () => {
+				contextARenderRequests += 1;
+			},
+		});
+		const ctxB = createCtx({
+			cwd,
+			authStorage,
+			currentAccessToken: () => returnedAccessToken,
+			requestRender: () => {
+				contextBRenderRequests += 1;
+			},
+		});
+
+		await sessionStartHandler({ reason: "restore" }, ctxA);
+		await eventually(
+			() => fetchCalls === 1 && contextARenderRequests === 1,
+			"initial usage fetch should request a render for the first context",
+		);
+		await sessionStartHandler({ reason: "restore" }, ctxB);
+		await new Promise((resolve) => setImmediate(resolve));
+		assert.equal(contextBRenderRequests, 0, "registering a second context should not render when usage is unchanged");
+
+		contextARenderRequests = 0;
+		contextBRenderRequests = 0;
+		returnedAccessToken = "runtime-api-key";
+		authStorage.runtimeOverrides.set("anthropic", "runtime-api-key");
+
+		pi.handlers.get("model_select")?.[0]?.({}, ctxA);
+		await eventually(
+			() => contextARenderRequests + contextBRenderRequests === 1,
+			"refreshing the first context should request exactly one footer render",
+		);
+
+		assert.equal(contextARenderRequests, 1, "refreshing context A should render context A's footer");
+		assert.equal(contextBRenderRequests, 0, "refreshing context A must not render context B's footer");
+		assert.equal(fetchCalls, 1);
+	} finally {
+		globalThis.fetch = previousFetch;
+		restoreEnv(previousEnv);
+		rmSync(tempDir, { recursive: true, force: true });
+	}
+});
+
 test("rapid turn_end burst collapses to a single fetch and no extra renders when the snapshot is unchanged", async () => {
 	const tempDir = mkdtempSync(join(tmpdir(), "tlh-usage-burst-"));
 	const agentDir = join(tempDir, "agent");

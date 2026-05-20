@@ -524,7 +524,7 @@ test("throttle survives credential object rotation when access token is unchange
 	let credential = { type: "oauth", access: accessToken, refresh: refreshToken, expires: NOW_MS + 60_000 };
 	const service = createTlhSubscriptionUsageService({
 		now: () => NOW_MS,
-		cacheTtlMs: 60_000,
+		cacheTtlMs: 0,
 		minFetchIntervalMs: 60_000,
 		timeoutMs: 0,
 		fetch: async () => {
@@ -549,6 +549,9 @@ test("throttle survives credential object rotation when access token is unchange
 	const first = await service.refresh(ctx);
 	assert.equal(first?.windows.session.used, 4);
 	assert.equal(fetchCalls, 1);
+	assert.equal(service.getSnapshot("anthropic"), first);
+	assert.equal(service.getSnapshotForContext(ctx), first);
+	const firstCacheKey = service.activeCacheKeys.get("anthropic");
 
 	// Simulate Pi's AuthStorage.set() replacing the credential object on an
 	// OAuth refresh: new object identity (and a bumped expiry) but the same
@@ -557,16 +560,100 @@ test("throttle survives credential object rotation when access token is unchange
 	// throttle should keep the redundant fetch from going through.
 	credential = { type: "oauth", access: accessToken, refresh: refreshToken, expires: NOW_MS + 120_000 };
 
-	await service.refresh(ctx);
+	const rotated = await service.refresh(ctx);
+	assert.equal(rotated, first);
 	assert.equal(fetchCalls, 1);
+	assert.equal(service.getSnapshot("anthropic"), first);
+	assert.equal(service.getSnapshotForContext(ctx), first);
+	const rotatedCacheKey = service.activeCacheKeys.get("anthropic");
+	assert.notEqual(rotatedCacheKey, firstCacheKey);
+	assert.deepEqual(Array.from(service.snapshots.keys()), [rotatedCacheKey]);
 
 	// And again, just to make sure the throttle remains armed for the
 	// rotated cacheKey rather than only firing on the first attempt.
-	await service.refresh(ctx);
+	const rerotated = await service.refresh(ctx);
+	assert.equal(rerotated, first);
 	assert.equal(fetchCalls, 1);
+	assert.equal(service.getSnapshot("anthropic"), first);
+	assert.equal(service.getSnapshotForContext(ctx), first);
 
 	// Cache keys must remain keyed on the existing cacheKey scheme even
 	// though the secondary throttle now covers the rotation case.
+	for (const key of service.snapshots.keys()) {
+		assert.doesNotMatch(key, /access|refresh|token/i);
+	}
+});
+
+test("concurrent same-token credential object rotations preserve the moved snapshot", async () => {
+	const accessToken = randomUUID();
+	const refreshToken = randomUUID();
+	let fetchCalls = 0;
+	let credential = { type: "oauth", access: accessToken, refresh: refreshToken, expires: NOW_MS + 60_000 };
+	let gateCredentialLookups = false;
+	let gatedLookupCount = 0;
+	const lookupGate = createDeferred();
+	const bothLookupsGated = createDeferred();
+	const service = createTlhSubscriptionUsageService({
+		now: () => NOW_MS,
+		cacheTtlMs: 0,
+		minFetchIntervalMs: 60_000,
+		timeoutMs: 0,
+		fetch: async () => {
+			fetchCalls += 1;
+			return {
+				ok: true,
+				json: async () => ({ five_hour: { used: 7, limit: 10 } }),
+			};
+		},
+	});
+	const ctx = {
+		model: { provider: "anthropic" },
+		modelRegistry: {
+			isUsingOAuth: (model) => model?.provider === "anthropic",
+			getApiKeyForProvider: async () => {
+				if (gateCredentialLookups) {
+					gatedLookupCount += 1;
+					if (gatedLookupCount === 2) {
+						bothLookupsGated.resolve();
+					}
+					await lookupGate.promise;
+				}
+				return credential.access;
+			},
+			authStorage: {
+				get: (provider) => (provider === "anthropic" ? credential : undefined),
+			},
+		},
+	};
+
+	const first = await service.refresh(ctx);
+	assert.equal(first?.windows.session.used, 7);
+	assert.equal(fetchCalls, 1);
+	assert.equal(service.getSnapshot("anthropic"), first);
+	assert.equal(service.getSnapshotForContext(ctx), first);
+	const firstCacheKey = service.activeCacheKeys.get("anthropic");
+
+	credential = { type: "oauth", access: accessToken, refresh: refreshToken, expires: NOW_MS + 120_000 };
+	gateCredentialLookups = true;
+
+	const firstRotatedRefresh = service.refresh(ctx);
+	const secondRotatedRefresh = service.refresh(ctx);
+
+	await bothLookupsGated.promise;
+	assert.equal(gatedLookupCount, 2);
+	assert.equal(fetchCalls, 1, "rotated refreshes wait at credential lookup before any extra fetch");
+
+	lookupGate.resolve();
+	const [firstRotated, secondRotated] = await Promise.all([firstRotatedRefresh, secondRotatedRefresh]);
+
+	assert.equal(firstRotated, first);
+	assert.equal(secondRotated, first);
+	assert.equal(fetchCalls, 1, "same-token concurrent rotations do not issue a redundant fetch");
+	assert.equal(service.getSnapshot("anthropic"), first);
+	assert.equal(service.getSnapshotForContext(ctx), first);
+	const rotatedCacheKey = service.activeCacheKeys.get("anthropic");
+	assert.notEqual(rotatedCacheKey, firstCacheKey);
+	assert.deepEqual(Array.from(service.snapshots.keys()), [rotatedCacheKey]);
 	for (const key of service.snapshots.keys()) {
 		assert.doesNotMatch(key, /access|refresh|token/i);
 	}
