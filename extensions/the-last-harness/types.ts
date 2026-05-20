@@ -26,6 +26,7 @@ export type TlhTelemetryConfig = {
 export type TlhTicketsConfig = {
 	enabled?: boolean;
 	installPath?: string;
+	installedSha256?: string;
 };
 
 export type TlhPrimaryAgentConfig = {
