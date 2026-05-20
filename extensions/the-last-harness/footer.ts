@@ -10,15 +10,11 @@ import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { formatHomePath, sanitizeStatusText } from "./common.js";
 import type { FooterGitCache } from "./footer-git-cache.js";
 import { composeTlhFooterFirstLine } from "./footer-first-line.js";
-import type {
-	TlhSubscriptionUsageSnapshot,
-	TlhSubscriptionUsageSnapshotProvider,
-	TlhSubscriptionUsageWindow,
-} from "./types.js";
-
-const TLH_SUBSCRIPTION_USAGE_PROVIDERS = new Set(["openai-codex", "anthropic"]);
-const HOUR_MS = 60 * 60 * 1000;
-const DAY_MS = 24 * HOUR_MS;
+import {
+	getTlhSubscriptionUsageFooterState,
+	type TlhFooterSubscriptionUsageOptions,
+} from "./footer-subscription-usage.js";
+export { formatTlhSubscriptionUsageFooterSegment } from "./footer-subscription-usage.js";
 
 function formatTokens(count: number): string {
 	if (count < 1000) {
@@ -38,164 +34,6 @@ function formatTokens(count: number): string {
 
 function formatCost(cost: number): string {
 	return cost < 0.001 ? "<$0.001" : `$${cost.toFixed(3)}`;
-}
-
-function finiteNumber(value: number | undefined): number | undefined {
-	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function formatUsagePercent(percent: number): string {
-	const rounded = Math.round(percent * 10) / 10;
-	return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
-}
-
-function formatUsageCount(count: number): string {
-	const normalized = Math.round(count * 10) / 10;
-	return formatTokens(normalized);
-}
-
-function formatUsageDuration(durationMs: number | undefined): string | undefined {
-	if (durationMs === undefined || !Number.isFinite(durationMs) || durationMs <= 0) {
-		return undefined;
-	}
-	const hours = durationMs / HOUR_MS;
-	if (Number.isInteger(hours) && hours < 24) {
-		return `${hours}h`;
-	}
-	const days = durationMs / DAY_MS;
-	if (Number.isInteger(days) && days < 14) {
-		return `${days}d`;
-	}
-	return undefined;
-}
-
-function normalizedUsageLabel(value: string | undefined): string {
-	return value?.trim().toLowerCase().replaceAll("_", "-").replaceAll(" ", "-") ?? "";
-}
-
-function formatUsageWindowLabel(
-	provider: string,
-	window: TlhSubscriptionUsageWindow,
-	windowType: "session" | "weekly",
-): string {
-	if (windowType === "weekly") {
-		return "weekly";
-	}
-
-	const duration = formatUsageDuration(window.durationMs);
-	if (duration) {
-		return duration;
-	}
-
-	const key = normalizedUsageLabel(window.key);
-	const label = normalizedUsageLabel(window.label);
-	if (provider === "anthropic" && [key, label].some((value) => ["five-hour", "five-hours", "5h"].includes(value))) {
-		return "5h";
-	}
-
-	return window.label && window.label !== windowType ? window.label : "session";
-}
-
-function formatUsageWindow(
-	provider: string,
-	window: TlhSubscriptionUsageWindow | undefined,
-	windowType: "session" | "weekly",
-): string | undefined {
-	if (!window) {
-		return undefined;
-	}
-
-	const label = formatUsageWindowLabel(provider, window, windowType);
-	const percent = finiteNumber(window.percent);
-	if (percent !== undefined) {
-		return `${label} ${formatUsagePercent(percent)}% used`;
-	}
-
-	const limit = finiteNumber(window.limit);
-	let used = finiteNumber(window.used);
-	const remaining = finiteNumber(window.remaining);
-	if (used === undefined && limit !== undefined && remaining !== undefined) {
-		used = Math.max(0, limit - remaining);
-	}
-	if (used !== undefined && limit !== undefined && limit > 0) {
-		return `${label} ${formatUsageCount(used)}/${formatUsageCount(limit)} used`;
-	}
-
-	return undefined;
-}
-
-export function formatTlhSubscriptionUsageFooterSegment(
-	snapshot: TlhSubscriptionUsageSnapshot | undefined,
-	options: { showWeekly?: boolean } = {},
-): string | undefined {
-	if (!snapshot || !TLH_SUBSCRIPTION_USAGE_PROVIDERS.has(snapshot.provider)) {
-		return undefined;
-	}
-
-	const sessionSegment = formatUsageWindow(snapshot.provider, snapshot.windows?.session, "session");
-	if (!sessionSegment) {
-		return undefined;
-	}
-
-	const segments = [sessionSegment];
-	if (options.showWeekly) {
-		const weeklySegment = formatUsageWindow(snapshot.provider, snapshot.windows?.weekly, "weekly");
-		if (weeklySegment) {
-			segments.push(weeklySegment);
-		}
-	}
-	return segments.join(" · ");
-}
-
-function isSubscriptionUsageEligible(
-	ctx: ExtensionContext,
-	provider: string | undefined,
-	usageProvider: TlhSubscriptionUsageSnapshotProvider | undefined,
-): boolean {
-	if (!provider || !TLH_SUBSCRIPTION_USAGE_PROVIDERS.has(provider) || typeof usageProvider?.isEligible !== "function") {
-		return false;
-	}
-	try {
-		return usageProvider.isEligible(ctx) === true;
-	} catch {
-		return false;
-	}
-}
-
-function isModelUsingOAuth(ctx: ExtensionContext, model: ExtensionContext["model"]): boolean {
-	if (!model || typeof ctx.modelRegistry?.isUsingOAuth !== "function") {
-		return false;
-	}
-	try {
-		return ctx.modelRegistry.isUsingOAuth(model) === true;
-	} catch {
-		return false;
-	}
-}
-
-function subscriptionUsageSnapshot(
-	ctx: ExtensionContext,
-	provider: string | undefined,
-	usageProvider: TlhSubscriptionUsageSnapshotProvider | undefined,
-): TlhSubscriptionUsageSnapshot | undefined {
-	if (!provider || !TLH_SUBSCRIPTION_USAGE_PROVIDERS.has(provider) || !usageProvider) {
-		return undefined;
-	}
-	try {
-		const snapshot =
-			typeof usageProvider.getSnapshotForContext === "function" ? usageProvider.getSnapshotForContext(ctx) : usageProvider.getSnapshot(provider);
-		return snapshot?.provider === provider ? snapshot : undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-function shouldShowWeeklyUsage(shouldShowWeekly: (() => boolean) | undefined): boolean {
-	try {
-		return shouldShowWeekly?.() === true;
-	} catch {
-		return false;
-	}
 }
 
 function getCurrentThinkingLevel(pi: ExtensionAPI): string {
@@ -221,10 +59,7 @@ function collectUsageTotals(ctx: ExtensionContext) {
 	return totals;
 }
 
-export type TlhFooterUsageOptions = {
-	subscriptionUsage?: TlhSubscriptionUsageSnapshotProvider;
-	shouldShowWeekly?: () => boolean;
-};
+export type TlhFooterUsageOptions = TlhFooterSubscriptionUsageOptions;
 
 export function createTlhFooter(
 	pi: ExtensionAPI,
@@ -253,23 +88,15 @@ export function createTlhFooter(
 			});
 
 			const statsParts: string[] = [];
-			const subscriptionEligible = isSubscriptionUsageEligible(ctx, model?.provider, usageOptions.subscriptionUsage);
-			const usingOAuth = isModelUsingOAuth(ctx, model);
+			const subscriptionUsageState = getTlhSubscriptionUsageFooterState(ctx, model, usageOptions);
 			// In tlh, hide dollar-cost estimates whenever the user is on a subscription (eligible)
 			// or any other OAuth-authenticated provider (e.g. GitHub Copilot). The subscription-usage
-			// segment below still renders only for supported subscription providers.
-			if (totals.cost > 0 && !subscriptionEligible && !usingOAuth) {
+			// segment still renders only for supported subscription providers.
+			if (totals.cost > 0 && !subscriptionUsageState.suppressCost) {
 				statsParts.push(formatCost(totals.cost));
 			}
-
-			if (subscriptionEligible) {
-				const usageSegment = formatTlhSubscriptionUsageFooterSegment(
-					subscriptionUsageSnapshot(ctx, model?.provider, usageOptions.subscriptionUsage),
-					{ showWeekly: shouldShowWeeklyUsage(usageOptions.shouldShowWeekly) },
-				);
-				if (usageSegment) {
-					statsParts.push(usageSegment);
-				}
+			if (subscriptionUsageState.segment) {
+				statsParts.push(subscriptionUsageState.segment);
 			}
 
 			const contextPercentDisplay =
