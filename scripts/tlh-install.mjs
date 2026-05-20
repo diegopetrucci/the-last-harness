@@ -894,11 +894,8 @@ function installDefaultExtensions(config) {
 }
 
 function gnosisInstallSkippedByEnv(config) {
-	const raw = config.env?.TLH_SKIP_GNOSIS_INSTALL;
-	if (raw === undefined || raw === null || raw === "") return false;
-	const normalized = String(raw).trim().toLowerCase();
-	if (normalized === "") return false;
-	return normalized !== "0" && normalized !== "false" && normalized !== "no";
+	const value = config.env?.TLH_SKIP_GNOSIS_INSTALL;
+	return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
 }
 
 function configureGnosis(config) {
@@ -916,8 +913,6 @@ function configureGnosis(config) {
 	}
 
 	const args = [
-		"--settings",
-		config.settingsPath,
 		"--agent-dir",
 		config.agentDir,
 		"--target",
@@ -926,8 +921,6 @@ function configureGnosis(config) {
 		config.gnosisRepo,
 		"--gnosis-version",
 		config.gnosisVersion,
-		"--wrapper-name",
-		config.wrapperName,
 		"configure-install",
 	];
 	if (config.dryRun) args.push("--dry-run", "--detail");

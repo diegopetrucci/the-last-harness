@@ -266,7 +266,7 @@ test("install invocation uses temp dirs, no wrapper, no gnosis, and a temp npm c
 	});
 
 	assert.deepEqual(invocation.command.slice(0, 4), ["bash", "install.sh", "--track", "custom"]);
-	assert.ok(invocation.command.includes("--without-gnosis"));
+	assert.equal(invocation.env.TLH_SKIP_GNOSIS_INSTALL, "1");
 	assert.ok(invocation.command.includes("--no-wrapper"));
 	assert.ok(invocation.command.includes("--no-pi-install"));
 	assert.ok(invocation.command.includes("--quiet"));

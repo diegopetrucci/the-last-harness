@@ -197,7 +197,7 @@ test("install-managed ignores a pre-existing predictable temp symlink", { skip: 
 	assert.deepEqual(readdirSync(dirname(target)).filter((entry) => entry.startsWith(".tlh-gnosis-")), []);
 });
 
-test("configure-install rejects a configured managed target before using the linked gn", () => {
+test("configure-install rejects a managed target whose parent is symlinked", () => {
 	const fixture = tempFixture();
 	const managedTarget = join(fixture.agent, "bin", "gn");
 	symlinkDirectory(fixture.external, join(fixture.agent, "bin"));
@@ -211,15 +211,9 @@ test("configure-install rejects a configured managed target before using the lin
 	const preload = join(fixture.dir, "fail-fetch.mjs");
 	writeFileSync(preload, `import { writeFileSync } from "node:fs";\nglobalThis.fetch = async () => {\n\twriteFileSync(${JSON.stringify(fetchSentinel)}, "called");\n\tthrow new Error("fetch should not be called");\n};\n`);
 
-	const settings = join(fixture.agent, "settings.json");
-	const initialSettings = JSON.stringify({ tlh: { gnosis: { enabled: true, installPath: managedTarget } } });
-	writeFileSync(settings, initialSettings);
-
 	const result = runGnosis([
-		"--settings", settings,
 		"--agent-dir", fixture.agent,
 		"--target", managedTarget,
-		"--mode", "with",
 		"configure-install",
 	], {
 		env: { GN_SENTINEL: gnSentinel, HOME: fixture.home },
@@ -230,12 +224,10 @@ test("configure-install rejects a configured managed target before using the lin
 	assert.match(result.stderr, /symlinked target parent component/i);
 	assert.equal(existsSync(gnSentinel), false);
 	assert.equal(existsSync(fetchSentinel), false);
-	assert.equal(readFileSync(settings, "utf8"), initialSettings);
-	assert.deepEqual(readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.backup")), []);
 	assert.deepEqual(readdirSync(fixture.external), ["gn"]);
 });
 
-test("configure-install rejects a differently spelled managed target before using the linked gn", () => {
+test("configure-install rejects a managed target spelled through a symlinked agent path", () => {
 	const fixture = tempFixture();
 	const agentLink = join(fixture.dir, "agent-link");
 	symlinkDirectory(fixture.agent, agentLink);
@@ -250,15 +242,8 @@ test("configure-install rejects a differently spelled managed target before usin
 	const preload = join(fixture.dir, "fail-fetch.mjs");
 	writeFileSync(preload, `import { writeFileSync } from "node:fs";\nglobalThis.fetch = async () => {\n\twriteFileSync(${JSON.stringify(fetchSentinel)}, "called");\n\tthrow new Error("fetch should not be called");\n};\n`);
 
-	const settings = join(fixture.agent, "settings.json");
-	const configuredPath = linkedGn;
-	const initialSettings = JSON.stringify({ tlh: { gnosis: { enabled: true, installPath: configuredPath } } });
-	writeFileSync(settings, initialSettings);
-
 	const result = runGnosis([
-		"--settings", settings,
 		"--agent-dir", agentLink,
-		"--mode", "with",
 		"configure-install",
 	], {
 		env: { GN_SENTINEL: gnSentinel, HOME: fixture.home },
@@ -269,56 +254,17 @@ test("configure-install rejects a differently spelled managed target before usin
 	assert.match(result.stderr, /symlinked target parent component/i);
 	assert.equal(existsSync(gnSentinel), false);
 	assert.equal(existsSync(fetchSentinel), false);
-	assert.equal(readFileSync(settings, "utf8"), initialSettings);
-	assert.deepEqual(readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.backup")), []);
 	assert.deepEqual(readdirSync(fixture.external), ["gn"]);
 });
 
-test("configure-install keeps a truly external configured gn path manual", () => {
+test("configure-install honors TLH_SKIP_GNOSIS_INSTALL", () => {
 	const fixture = tempFixture();
-	const managedExternal = join(fixture.dir, "managed-external");
-	const manual = join(fixture.dir, "manual");
-	mkdirSync(managedExternal, { recursive: true });
-	mkdirSync(manual, { recursive: true });
-	symlinkDirectory(managedExternal, join(fixture.agent, "bin"));
-
-	const manualGn = join(manual, "gn");
-	const gnSentinel = join(fixture.dir, "manual-gn-called");
-	writeFileSync(manualGn, `#!/usr/bin/env node\nimport { writeFileSync } from "node:fs";\nwriteFileSync(process.env.GN_SENTINEL, "called");\nconst [, , first, second] = process.argv;\nprocess.exit(first === "help" && ["plan", "review"].includes(second) ? 0 : 1);\n`);
-	chmodSync(manualGn, 0o755);
-
-	const settings = join(fixture.agent, "settings.json");
-	const initialSettings = JSON.stringify({ tlh: { gnosis: { enabled: true, installPath: manualGn } } });
-	writeFileSync(settings, initialSettings);
 
 	const result = runGnosis([
-		"--settings", settings,
 		"--agent-dir", fixture.agent,
-		"--mode", "with",
-		"--dry-run",
 		"configure-install",
-	], { env: { GN_SENTINEL: gnSentinel, HOME: fixture.home } });
+	], { env: { HOME: fixture.home, TLH_SKIP_GNOSIS_INSTALL: "1" } });
 
 	assert.equal(result.status, 0, result.stderr);
-	assert.match(result.stdout, new RegExp(`Gnosis integration: enabled \\(${manualGn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`));
-	assert.equal(existsSync(gnSentinel), true);
-	assert.equal(readFileSync(settings, "utf8"), initialSettings);
-});
-
-test("enable allows a manually managed external gn path", () => {
-	const fixture = tempFixture();
-	const settings = join(fixture.agent, "settings.json");
-	const externalGn = join(fixture.external, "gn");
-
-	const result = runGnosis([
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
-		"--install-path", externalGn,
-		"enable",
-	], { env: { HOME: fixture.home } });
-
-	assert.equal(result.status, 0, result.stderr);
-	const written = JSON.parse(readFileSync(settings, "utf8"));
-	assert.equal(written.tlh.gnosis.enabled, true);
-	assert.equal(written.tlh.gnosis.installPath, externalGn);
+	assert.match(result.stdout, /Gnosis integration: skipped/);
 });

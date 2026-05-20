@@ -708,6 +708,7 @@ function buildInstallInvocation({ variant, agentDir, binDir, cacheDir, baseEnv =
 	const packageSource = packageSourceForRoot(variant.packageRoot);
 	const envOverrides = {
 		TLH_PACKAGE_SOURCE: packageSource,
+		TLH_SKIP_GNOSIS_INSTALL: "1",
 		NPM_CONFIG_CACHE: cacheDir,
 		NPM_CONFIG_AUDIT: "false",
 		NPM_CONFIG_FUND: "false",
@@ -723,7 +724,6 @@ function buildInstallInvocation({ variant, agentDir, binDir, cacheDir, baseEnv =
 		agentDir,
 		"--bin-dir",
 		binDir,
-		"--without-gnosis",
 		"--no-wrapper",
 		"--no-pi-install",
 		verboseInstaller ? "--verbose" : "--quiet",
