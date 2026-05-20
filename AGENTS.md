@@ -35,13 +35,10 @@ This repository packages **The Last Harness** as an isolated profile for the ups
 
 ## Development Commands
 
-Run these before considering changes ready:
+Run this before considering changes ready:
 
 ```sh
-bash scripts/check-installer-smoke.sh
-npm run lint
-node scripts/merge-settings.mjs --dry-run
-npm pack --dry-run
+npm run validate
 ```
 
 Useful targeted checks:
