@@ -42,9 +42,9 @@ Options:
   -h, --help           Show this help
 
 Unsafe test-only source overrides (do not use in production):
-  --unsafe-test-ticket-source-url <url>      Source tarball URL
-  --unsafe-test-ticket-source-sha256 <hex>   Expected source tarball SHA256
-  --unsafe-test-ticket-archive-entry <path>  Ticket script entry inside the tarball
+  --unsafe-test-ticket-source-url <https-url>  Source tarball URL (must start with https://)
+  --unsafe-test-ticket-source-sha256 <hex>     Expected source tarball SHA256
+  --unsafe-test-ticket-archive-entry <path>    Ticket script entry inside the tarball
 `;
 }
 
@@ -854,6 +854,13 @@ function writeManagedTkTarget(args, agentDir, content) {
 function validateTicketSourceConfig(args) {
 	if (!args.ticketSourceUrl || typeof args.ticketSourceUrl !== "string") {
 		throw new Error("Ticket source URL is empty");
+	}
+	if (!args.ticketSourceUrl.startsWith("https://")) {
+		const schemeEnd = args.ticketSourceUrl.indexOf("://");
+		const prefix = schemeEnd >= 0
+			? args.ticketSourceUrl.slice(0, schemeEnd + 3)
+			: args.ticketSourceUrl.slice(0, 32);
+		throw new Error(`Ticket source URL must use https:// (got: ${prefix})`);
 	}
 	if (!/^[a-f0-9]{64}$/i.test(args.ticketSourceSha256 || "")) {
 		throw new Error("Ticket source SHA256 must be a 64-character hex digest");

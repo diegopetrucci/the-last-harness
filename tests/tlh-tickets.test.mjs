@@ -542,6 +542,38 @@ globalThis.fetch = async () => {
 	assert.equal(existsSync(fetchSentinel), false);
 });
 
+test("install-managed rejects non-https ticket source URLs before fetch", () => {
+	for (const url of ["http://example.test/ticket.tar.gz", "file:///tmp/ticket.tar.gz"]) {
+		const fixture = tempFixture();
+		const fetchSentinel = join(fixture.dir, "fetch-called");
+		const preload = join(fixture.dir, "fail-fetch.mjs");
+		writeFileSync(preload, `import { writeFileSync } from "node:fs";
+globalThis.fetch = async () => {
+	writeFileSync(${JSON.stringify(fetchSentinel)}, "called");
+	throw new Error("fetch should not be called");
+};
+`);
+
+		const result = runTickets([
+			"--agent-dir", fixture.agent,
+			"--unsafe-test-ticket-source-url", url,
+			"install-managed",
+		], {
+			env: { HOME: fixture.home },
+			nodeArgs: ["--import", preload],
+		});
+
+		assert.notEqual(result.status, 0, `expected non-zero exit for ${url}`);
+		const expectedPrefix = url.slice(0, url.indexOf("://") + 3);
+		assert.match(result.stderr, /Ticket source URL must use https:\/\//, `expected https:// guidance in stderr for ${url}: ${result.stderr}`);
+		assert.ok(
+			result.stderr.includes(`(got: ${expectedPrefix})`),
+			`expected stderr to mention prefix ${expectedPrefix} for ${url}: ${result.stderr}`,
+		);
+		assert.equal(existsSync(fetchSentinel), false, `fetch should not be called for ${url}`);
+	}
+});
+
 test("install-managed rejects non-tk managed target before fetch or overwrite", () => {
 	const fixture = tempFixture();
 	const settings = join(fixture.agent, "settings.json");
