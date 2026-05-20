@@ -4,6 +4,16 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Breaking
+
+- **Gnosis is now mandatory** on supported platforms (linux/darwin × x64/arm64). The installer hard-fails on unsupported platforms instead of falling back gracefully.
+- Removed installer flags `--with-gnosis`, `--without-gnosis`, and `--no-gnosis`. Passing these flags is now an error.
+- Removed `tlh gnosis` wrapper subcommand (`status`, `enable`, `disable`). Use `node scripts/tlh-gnosis.mjs validate` for local validation.
+- Removed `/gnosis` slash command. Gnosis prompt integration is always active when `gn` is available.
+- Settings key `tlh.gnosis` is ignored and scrubbed on the next settings merge.
+
+> **Internal note:** `TLH_SKIP_GNOSIS_INSTALL=1` exists as a test/benchmark escape hatch only; it is not a supported user opt-out.
+
 ## [0.8.1] - 2026-05-19
 
 ### Added

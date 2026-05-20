@@ -74,11 +74,11 @@ node scripts/tlh-defaults.mjs \
 
 ## Test the Gnosis manager
 
+Validate Gnosis setup without a full install:
+
 ```sh
 tmp="$(mktemp -d)"
-node scripts/tlh-gnosis.mjs --settings "$tmp/settings.json" status
-node scripts/tlh-gnosis.mjs --settings "$tmp/settings.json" enable
-node scripts/tlh-gnosis.mjs --settings "$tmp/settings.json" disable
+node scripts/tlh-gnosis.mjs --agent-dir "$tmp/agent" validate
 ```
 
 ## Test installer bootstrap and wrapper behavior
