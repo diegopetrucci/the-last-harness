@@ -22,6 +22,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Added
 
 - Added footer subscription usage for supported OpenAI/Codex and Anthropic OAuth subscription sessions; weekly usage remains hidden by default and is controlled with `/usage`.
+- Subscription usage footer relies on undocumented vendor endpoints (`https://chatgpt.com/backend-api/wham/usage` and `https://api.anthropic.com/api/oauth/usage` with the `oauth-2025-04-20` beta flag) called with the session's existing OAuth bearer; the footer segment is hidden when those fetches fail.
 
 ### Changed
 
