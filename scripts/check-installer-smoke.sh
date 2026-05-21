@@ -330,6 +330,7 @@ run_static_checks() {
   node --check scripts/tlh-install-query.mjs
   node --check scripts/lib/tlh-install-package-source.mjs
   node --check scripts/lib/tlh-install-paths.mjs
+  node --check scripts/lib/tlh-install-utils.mjs
   node --check scripts/lib/tlh-install-git.mjs
   node --check scripts/lib/tlh-install-subagents.mjs
   node --check scripts/lib/tlh-install-support-files.mjs
@@ -470,6 +471,7 @@ run_stage1_staged_cwd_isolation_smoke() {
   cp scripts/tlh-install-query.mjs "${stage_scripts_dir}/tlh-install-query.mjs"
   cp scripts/lib/tlh-install-package-source.mjs "${stage_scripts_dir}/lib/tlh-install-package-source.mjs"
   cp scripts/lib/tlh-install-paths.mjs "${stage_scripts_dir}/lib/tlh-install-paths.mjs"
+  cp scripts/lib/tlh-install-utils.mjs "${stage_scripts_dir}/lib/tlh-install-utils.mjs"
   cp scripts/lib/tlh-install-git.mjs "${stage_scripts_dir}/lib/tlh-install-git.mjs"
   cp scripts/lib/tlh-install-subagents.mjs "${stage_scripts_dir}/lib/tlh-install-subagents.mjs"
   cp scripts/lib/tlh-install-support-files.mjs "${stage_scripts_dir}/lib/tlh-install-support-files.mjs"

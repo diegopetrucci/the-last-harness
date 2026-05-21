@@ -26,6 +26,13 @@ import {
 	validateInstallerTargets,
 } from "./lib/tlh-install-paths.mjs";
 import {
+	assignRequiredEqualsValue,
+	backupPathWithTimestamp,
+	renderShellWords,
+	requiredValue,
+	shellWord,
+} from "./lib/tlh-install-utils.mjs";
+import {
 	TLH_SUBAGENT_PROMPTS,
 	copyTlhSubagentPrompts,
 	defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall,
@@ -142,19 +149,6 @@ function defaultBinDir(env = process.env) {
 	return env.TLH_BIN_DIR || join(homedir(), ".local", "bin");
 }
 
-function requiredValue(argv, index, flag) {
-	const value = argv[index];
-	if (!value || value.startsWith("-")) {
-		throw new Error(`${flag} requires a value`);
-	}
-	return value;
-}
-
-function assignEqualsValue(target, key, value, flag) {
-	if (!value) throw new Error(`${flag} requires a value`);
-	target[key] = value;
-}
-
 function parseArgs(argv, env = process.env) {
 	const args = {
 		repo: env.TLH_REPO || DEFAULT_REPO,
@@ -239,23 +233,23 @@ function parseArgs(argv, env = process.env) {
 			continue;
 		}
 		if (arg.startsWith("--agent-dir=")) {
-			assignEqualsValue(args, "agentDirInput", arg.slice("--agent-dir=".length), "--agent-dir");
+			assignRequiredEqualsValue(args, "agentDirInput", arg.slice("--agent-dir=".length), "--agent-dir");
 			continue;
 		}
 		if (arg.startsWith("--bin-dir=")) {
-			assignEqualsValue(args, "binDirInput", arg.slice("--bin-dir=".length), "--bin-dir");
+			assignRequiredEqualsValue(args, "binDirInput", arg.slice("--bin-dir=".length), "--bin-dir");
 			continue;
 		}
 		if (arg.startsWith("--wrapper-name=")) {
-			assignEqualsValue(args, "wrapperName", arg.slice("--wrapper-name=".length), "--wrapper-name");
+			assignRequiredEqualsValue(args, "wrapperName", arg.slice("--wrapper-name=".length), "--wrapper-name");
 			continue;
 		}
 		if (arg.startsWith("--ref=")) {
-			assignEqualsValue(args, "ref", arg.slice("--ref=".length), "--ref");
+			assignRequiredEqualsValue(args, "ref", arg.slice("--ref=".length), "--ref");
 			continue;
 		}
 		if (arg.startsWith("--track=")) {
-			assignEqualsValue(args, "updateTrackInput", arg.slice("--track=".length), "--track");
+			assignRequiredEqualsValue(args, "updateTrackInput", arg.slice("--track=".length), "--track");
 			continue;
 		}
 		throw new Error(`unknown option: ${arg}`);
@@ -343,22 +337,12 @@ function warn(message) {
 	console.error(`warning: ${message}`);
 }
 
-function shellQuote(value) {
-	return `'${String(value).replace(/'/g, `'\\''`)}'`;
-}
-
-function shellWord(value) {
-	const text = String(value);
-	if (/^[A-Za-z0-9_/:.,@%+=-]+$/.test(text)) return text;
-	return shellQuote(text);
-}
-
 function printCommand(commandArgs) {
-	console.log(`+ ${commandArgs.map(shellWord).join(" ")} `);
+	console.log(`+ ${renderShellWords(commandArgs)} `);
 }
 
 function commandDisplay(commandArgs) {
-	return commandArgs.map(shellWord).join(" ");
+	return renderShellWords(commandArgs);
 }
 
 function tailLines(text, count) {
@@ -524,8 +508,10 @@ function installPiIfNeeded(config) {
 function backupExistingSettingsBeforePiInstall(config) {
 	assertSafeSettingsTarget(config);
 	if (!existsSync(config.settingsPath)) return;
-	const stamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z").replace(/:/g, "-");
-	const backupPath = `${config.settingsPath}.backup-before-install-${stamp}`;
+	const backupPath = backupPathWithTimestamp(config.settingsPath, {
+		marker: "before-install",
+		includeMilliseconds: false,
+	});
 	if (config.dryRun) {
 		log(config, `Would back up existing isolated settings to: ${backupPath}`);
 		return;

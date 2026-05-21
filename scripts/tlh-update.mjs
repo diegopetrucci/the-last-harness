@@ -5,6 +5,8 @@ import { delimiter, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 
+import { requiredValue } from "./lib/tlh-install-utils.mjs";
+
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_WRAPPER_NAME = "tlh";
 const VALID_TRACKS = new Set(["latest-release", "pinned-tag", "ref", "custom"]);
@@ -46,14 +48,6 @@ function defaultAgentDir() {
 
 function defaultBinDir() {
 	return process.env.TLH_BIN_DIR || join(homedir(), ".local", "bin");
-}
-
-function requiredValue(argv, index, flag) {
-	const value = argv[index];
-	if (!value || value.startsWith("-")) {
-		throw new Error(`${flag} requires a value`);
-	}
-	return value;
 }
 
 function parseArgs(argv) {
@@ -247,6 +241,7 @@ function resolveCommand(command, env) {
 }
 
 function readJson(path) {
+	// Keep update metadata/settings parsing strict so existing diagnostics stay unchanged.
 	const content = readFileSync(path, "utf8").replace(/^\uFEFF/, "");
 	return JSON.parse(content);
 }
@@ -473,6 +468,7 @@ function buildInstallerArgs(plan, args) {
 }
 
 function shellQuote(value) {
+	// Keep this dry-run rendering style stable for existing update command output.
 	return `'${String(value).replace(/'/g, `'"'"'`)}'`;
 }
 
