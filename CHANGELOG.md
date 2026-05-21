@@ -4,6 +4,24 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-05-21
+
+### Added
+
+- Added TLH footer git and pull request segments, including cached branch/status/PR rendering on the footer first line.
+- Added OAuth subscription usage footer support for supported OpenAI/Codex and Anthropic sessions; weekly usage remains hidden by default and is controlled with `/usage`.
+- Added `npm run validate` as the aggregate local, CI, and release validation command.
+
+### Changed
+
+- Architect primary agent sessions can now write and edit files directly.
+- Default-extension and installer utility logic now use shared helper modules while preserving existing isolated-profile behavior.
+- CI, release, contributor, and local-development docs now point at the aggregate validation command.
+
+### Fixed
+
+- Fixed staged installer and release-smoke support manifests to include shared helper modules required by the installer and default-extension tools.
+
 ## [0.9.0] - 2026-05-20
 
 ### Breaking
@@ -18,11 +36,6 @@ All notable changes to The Last Harness will be documented in this file.
 - Any existing `tlh.gnosis.enabled = false` setting is scrubbed on the next merge and a managed `gn` binary will be installed into the isolated profile, regardless of prior opt-outs.
 
 > **Internal note:** `TLH_SKIP_GNOSIS_INSTALL=1` exists as a test/benchmark escape hatch only; it is not a supported user opt-out.
-
-### Added
-
-- Added footer subscription usage for supported OpenAI/Codex and Anthropic OAuth subscription sessions; weekly usage remains hidden by default and is controlled with `/usage`.
-- Subscription usage footer relies on undocumented vendor endpoints (`https://chatgpt.com/backend-api/wham/usage` and `https://api.anthropic.com/api/oauth/usage` with the `oauth-2025-04-20` beta flag) called with the session's existing OAuth bearer; the footer segment is hidden when those fetches fail.
 
 ### Changed
 
