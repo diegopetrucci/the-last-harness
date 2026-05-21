@@ -181,9 +181,10 @@ export function refreshGitCheckout(config, { targetDir, repo, ref, label, missin
 		commitTreeArgs.push("-m", `tlh backup ${timestamp}`);
 		const commit = gitOutput(config, targetDir, commitTreeArgs, io);
 
-		// Store behind a private ref and drop the staged index.
+		// Store behind a private ref. The working tree stays dirty for now; the
+		// forced checkout below discards it safely because the backup ref holds
+		// the user's changes.
 		runGitCommand(config, ["git", "-C", targetDir, "update-ref", backupRef, commit], io);
-		runGitCommand(config, ["git", "-C", targetDir, "reset", "--mixed"], io);
 
 		// Report the backup so the user knows how to recover.
 		const parentOrEmpty = parent ?? "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -208,7 +209,7 @@ export function refreshGitCheckout(config, { targetDir, repo, ref, label, missin
 		targetRef = `refs/remotes/origin/${ref}`;
 	}
 
-	runGitCommand(config, ["git", "-C", targetDir, "checkout", "--detach", targetRef], io);
+	runGitCommand(config, ["git", "-C", targetDir, "checkout", "-f", "--detach", targetRef], io);
 	runGitCommand(config, ["git", "-C", targetDir, "reset", "--hard", targetRef], io);
 	runGitCommand(config, ["git", "-C", targetDir, "clean", "-fdx"], io);
 	if (existsSync(join(targetDir, "package.json"))) {
