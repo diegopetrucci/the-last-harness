@@ -173,7 +173,7 @@ test("extension runs primary session_start work before UI startup in one handler
 test("extension wires multi-primary commands and active-primary safety", () => {
 	const agentCommand = sourceSection(primaryRuntimeSource, 'pi.registerCommand("agent"', 'pi.registerShortcut');
 	const shortcut = sourceSection(primaryRuntimeSource, 'pi.registerShortcut(PRIMARY_AGENT_CYCLE_SHORTCUT', 'pi.registerCommand("architect"');
-	const toolCall = sourceSection(primaryRuntimeSource, 'pi.on("tool_call"', "const reason = validateSubagentToolInput");
+	const toolCall = sourceSection(primaryRuntimeSource, 'pi.on("tool_call"', 'return reason ? { block: true, reason } : undefined;');
 
 	assert.match(promptsSource, /function loadPrimaryAgents\(\): Map<TlhPrimaryAgentSelection, AgentPrompt>/);
 	assert.match(agentCommand, /default product/);
@@ -181,6 +181,15 @@ test("extension wires multi-primary commands and active-primary safety", () => {
 	assert.match(shortcut, /architect\/product\/bug-hunter\/disabled/);
 	assert.match(toolCall, /applyProviderAwareSubagentModels\(event\.input, subagentsByName, ctx\.modelRegistry\.getAvailable\(\), ctx\.model\?\.provider\)/);
 	assert.match(toolCall, /!isEnabledPrimaryAgentSelection\(currentPrimaryAgentSelection\(\)\)/);
+	assert.match(toolCall, /const reason = validateSubagentToolInput\(event\.input\)/);
+	assert(
+		toolCall.indexOf("applyProviderAwareSubagentModels") < toolCall.indexOf("!isEnabledPrimaryAgentSelection"),
+		"provider-aware subagent defaults should run before the disabled-primary guard",
+	);
+	assert(
+		toolCall.indexOf("!isEnabledPrimaryAgentSelection") < toolCall.indexOf("validateSubagentToolInput"),
+		"subagent safety validation should stay behind the enabled-primary guard",
+	);
 });
 
 test("extension wires subscription usage to lifecycle refreshes and footer", () => {
