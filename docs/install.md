@@ -2,7 +2,7 @@
 
 ## Install
 
-Requires Node.js >=22.19.0 on `PATH`. The installer checks this before downloading support files or invoking upstream Pi/npm.
+Requires Node.js >=22.19.0 on `PATH`. The installer checks this before downloading the installer archive or invoking upstream Pi/npm.
 
 Run the one-liner:
 
@@ -14,7 +14,7 @@ On supported platforms (linux/darwin × x64/arm64), it installs [Gnosis](https:/
 
 Note: if you already have `pi` installed, `tlh` does not replace it — you can keep both, as it uses its own isolated config in `~/.the-last-harness/` and never mutates normal `~/.pi/agent` settings.
 
-The installer is split into a stage-0 Bash bootstrapper (`install.sh`) and a stage-1 Node helper (`scripts/tlh-install.mjs`). Stage 0 parses the initial flags, preserves stdin `--dry-run` without downloads, and finds or fetches the matching stage-1 helper/support files from the selected release/ref; stage 1 runs the normal isolated install, settings merge, default-extension install, Gnosis and ticket setup, update metadata, and wrapper creation.
+The installer is split into a stage-0 Bash bootstrapper (`install.sh`) and a stage-1 Node helper (`scripts/tlh-install.mjs`). Stage 0 parses the initial flags, preserves stdin `--dry-run` without downloads, and either uses the local checkout or downloads/extracts the matching installer archive (release package tarball for tagged releases, GitHub source archive for other refs). Stage 1 then runs the normal isolated install, settings merge, default-extension install, Gnosis and ticket setup, update metadata, and wrapper creation.
 
 ## More ways to install
 
@@ -91,4 +91,4 @@ npm uninstall -g @earendil-works/pi-coding-agent
 
 ## Security note
 
-The one-line installer and `tlh update` run shell commands on your machine, may install global npm packages for Pi and bundled default extensions, install managed Gnosis and `tk` binaries into the isolated TLH profile when needed, create an isolated Pi profile, and write a wrapper command. Managed `tk` is copied from the pinned `wedow/ticket` source tarball (`v0.3.2`) only after SHA-256 verification; TLH does not install `tk` globally or through Homebrew. Review `install.sh` and the stage-1 helper it fetches (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.
+The one-line installer and `tlh update` run shell commands on your machine, may install global npm packages for Pi and bundled default extensions, install managed Gnosis and `tk` binaries into the isolated TLH profile when needed, create an isolated Pi profile, and write a wrapper command. Managed `tk` is copied from the pinned `wedow/ticket` source tarball (`v0.3.2`) only after SHA-256 verification; TLH does not install `tk` globally or through Homebrew. Review `install.sh` and the stage-1 helper it runs from the downloaded installer archive (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.

@@ -228,10 +228,6 @@ test("support manifest includes stage-1 and installed helper library dependencie
 		tempPath: "lib/default-extensions.mjs",
 		installName: "lib/default-extensions.mjs",
 	});
-
-	const bootstrap = readFileSync(resolve(import.meta.dirname, "..", "install.sh"), "utf8");
-	assert.match(bootstrap, /^required\|scripts\/lib\/default-extensions\.mjs$/m);
-	assert.match(bootstrap, /^required\|scripts\/lib\/tlh-install-utils\.mjs$/m);
 });
 
 test("settings defaults declare when bundled subagent prompts are required", (t) => {

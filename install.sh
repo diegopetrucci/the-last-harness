@@ -17,8 +17,8 @@ WRAPPER_NAME="${TLH_WRAPPER_NAME:-tlh}"
 UPDATE_TRACK_INPUT="${TLH_UPDATE_TRACK:-}"
 RAW_BASE_INPUT="${TLH_RAW_BASE:-}"
 TMP_DIR=""
+REMOTE_SUPPORT_ROOT=""
 ORIGINAL_ARGS=("$@")
-TLH_SUBAGENT_PROMPTS=(developer.md code-reviewer.md repo-scout.md diff-summarizer.md librarian.md oracle.md)
 
 usage() {
   cat <<'USAGE'
@@ -50,7 +50,7 @@ Environment overrides:
   TLH_REF              Raw-file ref and package ref (default: main in source; release assets pin this to their tag)
   TLH_UPDATE_TRACK     Update track for future tlh update
   TLH_PACKAGE_SOURCE   Package source passed to `pi install`
-  TLH_RAW_BASE         Base URL for installer support files
+  TLH_RAW_BASE         Base URL for stage-1 installer support files
   TLH_GNOSIS_VERSION   Gnosis version to install (default: latest)
   TLH_GNOSIS_REPO      Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
 
@@ -350,47 +350,33 @@ done
 
 RAW_BASE="${RAW_BASE_INPUT:-https://raw.githubusercontent.com/${REPO}/${REF}}"
 
-bootstrap_support_manifest() {
-  cat <<'EOF_SUPPORT_FILES'
-required|scripts/tlh-install.mjs
-required|scripts/lib/tlh-install-support-manifest.mjs
-required|scripts/lib/tlh-install-package-source.mjs
-required|scripts/lib/tlh-install-paths.mjs
-required|scripts/lib/tlh-install-utils.mjs
-required|scripts/lib/tlh-install-git.mjs
-required|scripts/lib/tlh-install-subagents.mjs
-required|scripts/lib/tlh-install-support-files.mjs
-required|scripts/tlh-install-query.mjs
-required|scripts/merge-settings.mjs
-required|scripts/tlh-defaults.mjs
-required|scripts/lib/default-extensions.mjs
-required|scripts/tlh-gnosis.mjs
-required|scripts/tlh-tickets.mjs
-optional|scripts/tlh-update.mjs
-optional|scripts/tlh-wrapper.mjs
-optional|scripts/tlh-install-state.mjs
-required|config/settings.defaults.json
-required|config/default-extensions.json
-EOF_SUPPORT_FILES
-  if [[ "${NO_SETTINGS}" != "true" ]]; then
-    cat <<'EOF_SETTINGS_SUPPORT_FILES'
-required|scripts/merge-keybindings.mjs
-required|config/keybindings.defaults.json
-EOF_SETTINGS_SUPPORT_FILES
+print_support_manifest_for_root() {
+  local root="$1"
+
+  if [[ "${NO_SETTINGS}" == "true" ]]; then
+    (cd "${root}" >/dev/null 2>&1 && node scripts/tlh-install.mjs --no-settings --print-support-manifest)
+  else
+    (cd "${root}" >/dev/null 2>&1 && node scripts/tlh-install.mjs --print-support-manifest)
   fi
 }
 
-local_support_root_ready() {
+support_root_ready() {
   local root="$1"
-  local requirement relative_path
+  local manifest variable requirement relative_path temp_path install_name
+  local found_manifest=false
+
   [[ -f "${root}/scripts/tlh-install.mjs" ]] || return 1
-  while IFS='|' read -r requirement relative_path; do
+  manifest="$(print_support_manifest_for_root "${root}" 2>/dev/null)" || return 1
+
+  while IFS='|' read -r variable requirement relative_path temp_path install_name; do
     [[ -n "${relative_path}" ]] || continue
+    found_manifest=true
     if [[ "${requirement}" == "required" && ! -f "${root}/${relative_path}" ]]; then
       return 1
     fi
-  done <<< "$(bootstrap_support_manifest)"
-  return 0
+  done <<< "${manifest}"
+
+  [[ "${found_manifest}" == "true" ]]
 }
 
 find_local_support_root() {
@@ -417,7 +403,7 @@ find_local_support_root() {
   esac
 
   dir="$(cd "$(dirname "${source_path}")" >/dev/null 2>&1 && pwd -P)" || return 1
-  if local_support_root_ready "${dir}"; then
+  if support_root_ready "${dir}"; then
     printf '%s\n' "${dir}"
     return 0
   fi
@@ -476,62 +462,63 @@ require_supported_node_stage0() {
   fi
 }
 
-warn_missing_optional_support_file() {
-  local relative_path="$1"
-  case "${relative_path}" in
-    scripts/tlh-update.mjs)
-      warn "tlh update support script not found for ref ${REF}; the wrapper update helper will be unavailable"
-      ;;
-    scripts/tlh-wrapper.mjs)
-      warn "tlh wrapper support script not found for ref ${REF}; wrapper creation will be unavailable"
-      ;;
-    scripts/tlh-install-state.mjs)
-      warn "tlh install-state support script not found for ref ${REF}; update metadata helper will be unavailable"
-      ;;
-    *)
-      warn "optional installer support file not found for ref ${REF}: ${relative_path}"
-      ;;
-  esac
+stage0_uses_release_archive() {
+  local ref="$1"
+  [[ "${ref}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]
 }
 
-fetch_support_file() {
-  local url="$1"
-  local target_path="$2"
-  mkdir -p "$(dirname "${target_path}")"
-  curl -fsSL "${url}" -o "${target_path}"
+stage0_archive_url() {
+  local ref="$1"
+
+  if stage0_uses_release_archive "${ref}"; then
+    printf 'https://github.com/%s/releases/download/%s/the-last-harness-%s.tgz\n' "${REPO}" "${ref}" "${ref#v}"
+  else
+    printf 'https://codeload.github.com/%s/tar.gz/%s\n' "${REPO}" "${ref}"
+  fi
+}
+
+find_extracted_support_root() {
+  local root="$1"
+  local entry
+
+  if support_root_ready "${root}"; then
+    printf '%s\n' "${root}"
+    return 0
+  fi
+
+  for entry in "${root}"/*; do
+    [[ -d "${entry}" ]] || continue
+    if support_root_ready "${entry}"; then
+      printf '%s\n' "${entry}"
+      return 0
+    fi
+  done
+
+  return 1
 }
 
 fetch_remote_support_root() {
+  local archive_url archive_path extract_dir support_root
+
   require_command curl
+  require_command tar
   TMP_DIR="$(mktemp -d)"
   TMP_DIR="$(cd "${TMP_DIR}" >/dev/null 2>&1 && pwd -P)"
-  verbose_log "Fetching installer support files from ${RAW_BASE}"
+  extract_dir="${TMP_DIR}/extract"
+  archive_path="${TMP_DIR}/tlh-stage1.tar.gz"
+  archive_url="$(stage0_archive_url "${REF}")"
+  mkdir -p "${extract_dir}"
+  verbose_log "Downloading installer archive from ${archive_url}"
 
-  local requirement relative_path target_path
-  while IFS='|' read -r requirement relative_path; do
-    [[ -n "${relative_path}" ]] || continue
-    target_path="${TMP_DIR}/${relative_path}"
-    if fetch_support_file "${RAW_BASE}/${relative_path}" "${target_path}"; then
-      continue
-    fi
-    rm -f "${target_path}"
-    if [[ "${requirement}" == "required" ]]; then
-      die "required installer support file not found for ref ${REF}: ${relative_path}"
-    fi
-    warn_missing_optional_support_file "${relative_path}"
-  done <<< "$(bootstrap_support_manifest)"
-
-  if [[ "${NO_SETTINGS}" != "true" ]]; then
-    local prompt target_dir
-    target_dir="${TMP_DIR}/agents/subagents"
-    mkdir -p "${target_dir}"
-    for prompt in "${TLH_SUBAGENT_PROMPTS[@]}"; do
-      target_path="${target_dir}/${prompt}"
-      if ! fetch_support_file "${RAW_BASE}/agents/subagents/${prompt}" "${target_path}"; then
-        rm -f "${target_path}"
-      fi
-    done
+  if ! curl -fsSL "${archive_url}" -o "${archive_path}"; then
+    die "failed to download installer archive for ref ${REF}: ${archive_url}"
   fi
+  if ! tar -xzf "${archive_path}" -C "${extract_dir}"; then
+    die "failed to extract installer archive for ref ${REF}: ${archive_url}"
+  fi
+
+  support_root="$(find_extracted_support_root "${extract_dir}")" || die "installer archive for ref ${REF} did not contain the required stage-1 support files"
+  REMOTE_SUPPORT_ROOT="${support_root}"
 }
 
 run_stage1() {
@@ -560,7 +547,8 @@ dry_run_without_stage1() {
   if [[ -n "${package_source}" ]]; then
     log "Package source: ${package_source}"
   fi
-  log "Would fetch installer support files from ${RAW_BASE}"
+  log "Would download installer archive from $(stage0_archive_url "${REF}")"
+  log "Would run the stage-1 installer from the downloaded archive."
   if [[ "${NO_SETTINGS}" == "true" ]]; then
     log "Would skip settings and keybinding defaults merge (--no-settings)."
     log "Would skip bundled default extension packages (--no-settings)."
@@ -569,12 +557,7 @@ dry_run_without_stage1() {
     log "Would merge keybinding defaults into: ${keybindings_path}"
     log "Would install bundled default extension packages after settings merge."
   fi
-  log "Would fetch Gnosis integration support files."
-  log "Would fetch tlh tickets support files."
-  log "Would fetch tlh update support files."
-  log "Would fetch tlh wrapper support files."
-  log "Would fetch tlh install-state support files."
-  log "Dry run only; no support files were downloaded."
+  log "Dry run only; no installer archive was downloaded."
   log ""
   log "Done. The Last Harness dry run completed without downloads or writes."
   log "Start with: PI_CODING_AGENT_DIR=\"${agent_dir}\" pi"
@@ -600,6 +583,5 @@ if [[ "${DRY_RUN}" == "true" ]]; then
   exit 0
 fi
 
-require_command node
 fetch_remote_support_root
-run_stage1 "${TMP_DIR}"
+run_stage1 "${REMOTE_SUPPORT_ROOT}"

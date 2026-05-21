@@ -83,59 +83,33 @@ combine_output() {
   cat "${stdout_file}" "${stderr_file}" >"${combined_file}"
 }
 
-extract_stage0_support_manifest() {
-  local no_settings="$1"
-  node - "${no_settings}" <<'NODE_STAGE0_MANIFEST'
-const fs = require('node:fs');
-
-const noSettings = process.argv[2] === 'true';
-const source = fs.readFileSync('install.sh', 'utf8');
-
-function readHeredoc(label) {
-  const start = `cat <<'${label}'`;
-  const startIndex = source.indexOf(start);
-  if (startIndex === -1) throw new Error(`missing stage-0 support manifest heredoc: ${label}`);
-  const bodyStart = source.indexOf('\n', startIndex);
-  if (bodyStart === -1) throw new Error(`malformed stage-0 support manifest heredoc: ${label}`);
-  const endIndex = source.indexOf(`\n${label}`, bodyStart + 1);
-  if (endIndex === -1) throw new Error(`unterminated stage-0 support manifest heredoc: ${label}`);
-  return source.slice(bodyStart + 1, endIndex).split(/\r?\n/).filter(Boolean);
-}
-
-const lines = readHeredoc('EOF_SUPPORT_FILES');
-if (!noSettings) lines.push(...readHeredoc('EOF_SETTINGS_SUPPORT_FILES'));
-process.stdout.write(`${lines.join('\n')}\n`);
-NODE_STAGE0_MANIFEST
-}
-
-stage1_support_manifest_projection() {
+stage1_support_manifest() {
   local no_settings="$1"
   if [[ "${no_settings}" == "true" ]]; then
     run_scrubbed_installer_env node scripts/tlh-install.mjs --no-settings --print-support-manifest
   else
     run_scrubbed_installer_env node scripts/tlh-install.mjs --print-support-manifest
-  fi | awk -F'|' '{ print $2 "|" $3 }'
+  fi
 }
 
-run_support_manifest_smoke() {
-  log "Running stage-0/stage-1 support manifest smoke check..."
-  local case_dir="${TMP_ROOT}/support-manifest"
-  mkdir -p "${case_dir}"
+copy_stage1_support_tree() {
+  local dest="$1"
+  local no_settings="$2"
+  local variable requirement relative_path temp_path install_name
 
-  local mode no_settings stage0_file stage1_file
-  for mode in with-settings no-settings; do
-    no_settings=false
-    if [[ "${mode}" == "no-settings" ]]; then
-      no_settings=true
-    fi
-    stage0_file="${case_dir}/stage0-${mode}.txt"
-    stage1_file="${case_dir}/stage1-${mode}.txt"
-    extract_stage0_support_manifest "${no_settings}" >"${stage0_file}"
-    stage1_support_manifest_projection "${no_settings}" >"${stage1_file}"
-    if ! diff -u "${stage0_file}" "${stage1_file}"; then
-      fail "stage-0 bootstrap support manifest does not match stage-1 manifest (${mode})"
-    fi
-  done
+  mkdir -p "${dest}"
+  while IFS='|' read -r variable requirement relative_path temp_path install_name; do
+    [[ -n "${relative_path}" ]] || continue
+    mkdir -p "${dest}/$(dirname "${relative_path}")"
+    cp "${ROOT_DIR}/${relative_path}" "${dest}/${relative_path}"
+  done < <(stage1_support_manifest "${no_settings}")
+}
+
+pack_archive_tree() {
+  local source_parent="$1"
+  local entry_name="$2"
+  local archive_path="$3"
+  tar -czf "${archive_path}" -C "${source_parent}" "${entry_name}"
 }
 
 run_install_query_smoke() {
@@ -190,10 +164,10 @@ EOF_FAKE_NODE
   chmod +x "${fakebin}/node"
 }
 
-make_support_copy_curl() {
+make_archive_copy_curl() {
   local fakebin="$1"
   mkdir -p "${fakebin}"
-  cat >"${fakebin}/curl" <<'EOF_SUPPORT_COPY_CURL'
+  cat >"${fakebin}/curl" <<'EOF_ARCHIVE_COPY_CURL'
 #!/usr/bin/env bash
 url=""
 out=""
@@ -212,75 +186,20 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-if [[ -z "${url}" || -z "${out}" || -z "${FAKE_RAW_BASE:-}" || -z "${FAKE_SUPPORT_ROOT:-}" ]]; then
-  printf 'fake support curl missing url, output, or support env\n' >&2
+if [[ -z "${url}" || -z "${out}" || -z "${FAKE_ARCHIVE_PATH:-}" ]]; then
+  printf 'fake archive curl missing url, output, or archive path\n' >&2
   exit 2
 fi
-base="${FAKE_RAW_BASE%/}/"
-if [[ "${url}" != "${base}"* ]]; then
-  printf 'fake support curl received unexpected url: %s\n' "${url}" >&2
+if [[ -n "${FAKE_ARCHIVE_URL:-}" && "${url}" != "${FAKE_ARCHIVE_URL}" ]]; then
+  printf 'fake archive curl received unexpected url: %s\n' "${url}" >&2
   exit 2
 fi
-relative="${url#"${base}"}"
-source_path="${FAKE_SUPPORT_ROOT}/${relative}"
-if [[ ! -f "${source_path}" ]]; then
-  printf 'fake support curl missing source: %s\n' "${relative}" >&2
-  exit 22
+if [[ -n "${FAKE_CURL_LOG:-}" ]]; then
+  printf '%s\n' "${url}" >>"${FAKE_CURL_LOG}"
 fi
 mkdir -p "$(dirname "${out}")"
-cp "${source_path}" "${out}"
-EOF_SUPPORT_COPY_CURL
-  chmod +x "${fakebin}/curl"
-}
-
-make_legacy_support_curl() {
-  local fakebin="$1"
-  mkdir -p "${fakebin}"
-  cat >"${fakebin}/curl" <<'EOF_LEGACY_SUPPORT_CURL'
-#!/usr/bin/env bash
-url=""
-out=""
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -o)
-      out="${2:-}"
-      shift 2
-      ;;
-    -*)
-      shift
-      ;;
-    *)
-      url="$1"
-      shift
-      ;;
-  esac
-done
-if [[ -z "${url}" || -z "${out}" ]]; then
-  printf 'fake legacy curl missing url or output path\n' >&2
-  exit 2
-fi
-relative="${url#https://example.invalid/legacy-ref/}"
-if [[ "${relative}" == "${url}" ]]; then
-  relative="${url#https://example.invalid/no-wrapper-ref/}"
-fi
-if [[ "${relative}" == "${url}" ]]; then
-  printf 'fake legacy curl received unexpected url: %s\n' "${url}" >&2
-  exit 2
-fi
-case "${LEGACY_SUPPORT_MODE:-missing-runtime}:${relative}" in
-  missing-runtime:scripts/tlh-wrapper.mjs|missing-runtime:scripts/tlh-install-state.mjs|missing-wrapper-only:scripts/tlh-wrapper.mjs)
-    printf 'fake legacy ref missing %s\n' "${url}" >&2
-    exit 22
-    ;;
-esac
-mkdir -p "$(dirname "${out}")"
-source_path="${FAKE_SUPPORT_ROOT:-}/${relative}"
-if [[ -n "${FAKE_SUPPORT_ROOT:-}" && -f "${source_path}" ]]; then
-  cp "${source_path}" "${out}"
-else
-  printf '{}\n' >"${out}"
-fi
-EOF_LEGACY_SUPPORT_CURL
+cp "${FAKE_ARCHIVE_PATH}" "${out}"
+EOF_ARCHIVE_COPY_CURL
   chmod +x "${fakebin}/curl"
 }
 
@@ -300,19 +219,34 @@ EOF_FAKE_PI
 
 make_fake_stage1_support_root() {
   local root="$1"
-  local manifest_file="${root}/.fake-stage1-support-manifest"
-  local requirement relative_path
-  mkdir -p "${root}"
-  extract_stage0_support_manifest false >"${manifest_file}"
-  while IFS='|' read -r requirement relative_path; do
-    [[ -n "${relative_path}" ]] || continue
-    mkdir -p "${root}/$(dirname "${relative_path}")"
-    : >"${root}/${relative_path}"
-  done <"${manifest_file}"
+  mkdir -p "${root}/scripts"
   cat >"${root}/scripts/tlh-install.mjs" <<'EOF_FAKE_STAGE1'
 #!/usr/bin/env node
 console.log("BUG: fake local stage-1 was invoked");
 EOF_FAKE_STAGE1
+}
+
+write_fake_release_stage1() {
+  local path="$1"
+  cat >"${path}" <<'EOF_FAKE_RELEASE_STAGE1'
+#!/usr/bin/env node
+import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const manifestPath = resolve(rootDir, "support-manifest.txt");
+const sentinelPath = process.env.RELEASE_STAGE1_SENTINEL || "";
+
+if (process.argv.includes("--print-support-manifest")) {
+  process.stdout.write(readFileSync(manifestPath, "utf8"));
+  process.exit(0);
+}
+
+if (sentinelPath) writeFileSync(sentinelPath, "invoked\n");
+console.log(`TLH_UPDATE_TRACK=${process.env.TLH_UPDATE_TRACK || ""}`);
+EOF_FAKE_RELEASE_STAGE1
+  chmod +x "${path}"
 }
 
 run_static_checks() {
@@ -512,26 +446,49 @@ run_local_dry_run_smoke() {
 run_stdin_no_arg_smoke() {
   log "Running stdin no-argument smoke check..."
   local case_dir="${TMP_ROOT}/stdin-no-arg"
-  local support_root="${case_dir}/support"
   local fakebin="${case_dir}/fakebin"
   local home_dir="${case_dir}/home"
+  local archive_parent="${case_dir}/archive-parent"
+  local archive_root="the-last-harness-no-arg-ref"
+  local archive_path="${case_dir}/installer.tar.gz"
+  local archive_url="https://codeload.github.com/diegopetrucci/the-last-harness/tar.gz/no-arg-ref"
+  local curl_log="${case_dir}/curl.log"
   local stdout_file="${case_dir}/stdout.log"
   local stderr_file="${case_dir}/stderr.log"
   local combined_file="${case_dir}/combined.log"
   local raw_base="https://example.invalid/no-arg-ref"
-  mkdir -p "${case_dir}" "${home_dir}"
-  make_support_copy_curl "${fakebin}"
-  make_fake_stage1_support_root "${support_root}"
-  cat >"${support_root}/scripts/tlh-install.mjs" <<'EOF_FAKE_NO_ARG_STAGE1'
+  mkdir -p "${case_dir}" "${home_dir}" "${archive_parent}/${archive_root}"
+  make_archive_copy_curl "${fakebin}"
+  copy_stage1_support_tree "${archive_parent}/${archive_root}" false
+  stage1_support_manifest false >"${archive_parent}/${archive_root}/support-manifest.txt"
+  cat >"${archive_parent}/${archive_root}/scripts/tlh-install.mjs" <<'EOF_FAKE_NO_ARG_STAGE1'
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+if (process.argv.includes("--print-support-manifest")) {
+  process.stdout.write(readFileSync(resolve(rootDir, "support-manifest.txt"), "utf8"));
+  process.exit(0);
+}
+
 console.log(`argv_count=${process.argv.slice(2).length}`);
+console.log(`SCRIPT_PATH=${process.argv[1] || ""}`);
 console.log(`TLH_REF=${process.env.TLH_REF || ""}`);
 console.log(`TLH_RAW_BASE=${process.env.TLH_RAW_BASE || ""}`);
 console.log(`TLH_UPDATE_TRACK=${process.env.TLH_UPDATE_TRACK || ""}`);
 EOF_FAKE_NO_ARG_STAGE1
+  pack_archive_tree "${archive_parent}" "${archive_root}" "${archive_path}"
 
-  (cd "${case_dir}" && run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${support_root}" FAKE_RAW_BASE="${raw_base}" TLH_REF="no-arg-ref" TLH_RAW_BASE="${raw_base}" bash -s -- < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  (cd "${case_dir}" && run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" FAKE_ARCHIVE_PATH="${archive_path}" FAKE_ARCHIVE_URL="${archive_url}" FAKE_CURL_LOG="${curl_log}" TLH_REF="no-arg-ref" TLH_RAW_BASE="${raw_base}" bash -s -- < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  local stage1_script_path=""
+  stage1_script_path="$(grep '^SCRIPT_PATH=' "${combined_file}" | tail -n 1 | cut -d= -f2-)"
+  if [[ -z "${stage1_script_path}" ]]; then
+    fail "stdin no-argument smoke did not report extracted stage-1 path"
+  fi
 
   assert_absent "${home_dir}/.the-last-harness"
   assert_absent "${home_dir}/.local"
@@ -539,7 +496,27 @@ EOF_FAKE_NO_ARG_STAGE1
   assert_contains "${combined_file}" "TLH_REF=no-arg-ref"
   assert_contains "${combined_file}" "TLH_RAW_BASE=${raw_base}"
   assert_contains "${combined_file}" "TLH_UPDATE_TRACK="
+  assert_contains "${curl_log}" "${archive_url}"
   assert_not_contains "${combined_file}" "unbound variable"
+  assert_absent "${stage1_script_path}"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  : >"${curl_log}"
+
+  (cd "${case_dir}" && run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" FAKE_ARCHIVE_PATH="${archive_path}" FAKE_ARCHIVE_URL="${archive_url}" FAKE_CURL_LOG="${curl_log}" TLH_REF="no-arg-ref" TLH_RAW_BASE="${raw_base}" bash -s -- --verbose < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  stage1_script_path="$(grep '^SCRIPT_PATH=' "${combined_file}" | tail -n 1 | cut -d= -f2-)"
+  if [[ -z "${stage1_script_path}" ]]; then
+    fail "stdin verbose smoke did not report extracted stage-1 path"
+  fi
+
+  assert_contains "${combined_file}" "Downloading installer archive from ${archive_url}"
+  assert_contains "${combined_file}" "argv_count=1"
+  assert_contains "${combined_file}" "TLH_REF=no-arg-ref"
+  assert_contains "${curl_log}" "${archive_url}"
+  assert_absent "${stage1_script_path}"
 }
 
 run_stdin_dry_run_smoke() {
@@ -562,8 +539,8 @@ run_stdin_dry_run_smoke() {
 
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"
-  assert_contains "${combined_file}" "Would fetch installer support files from"
-  assert_contains "${combined_file}" "Dry run only; no support files were downloaded."
+  assert_contains "${combined_file}" "Would download installer archive from"
+  assert_contains "${combined_file}" "Dry run only; no installer archive was downloaded."
   assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   assert_not_contains "${combined_file}" "fake curl was invoked"
 
@@ -623,7 +600,7 @@ run_stdin_dry_run_smoke() {
   assert_absent "${default_bin_dir}"
   assert_contains "${combined_file}" "Bootstrap-level/no-stage1 dry-run approximation"
   assert_contains "${combined_file}" "Wrapper creation would be skipped (--no-wrapper)."
-  assert_contains "${combined_file}" "Dry run only; no support files were downloaded."
+  assert_contains "${combined_file}" "Dry run only; no installer archive was downloaded."
   assert_not_contains "${combined_file}" "Wrapper path would be:"
   assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   assert_not_contains "${combined_file}" "fake curl was invoked"
@@ -641,7 +618,7 @@ run_stdin_dry_run_smoke() {
     fail "stdin dry-run normal Pi guard unexpectedly succeeded"
   fi
   assert_contains "${combined_file}" "refusing to place The Last Harness agent dir under normal Pi config root"
-  assert_not_contains "${combined_file}" "Dry run only; no support files were downloaded."
+  assert_not_contains "${combined_file}" "Dry run only; no installer archive was downloaded."
   assert_not_contains "${combined_file}" "fake curl was invoked"
   assert_absent "${home_dir}/.pi"
 
@@ -773,7 +750,7 @@ run_stage0_alias_guard_smoke() {
     fail "stage-0 alias normal Pi guard smoke unexpectedly succeeded (${alias_label})"
   fi
   assert_contains "${combined_file}" "refusing to place The Last Harness agent dir under normal Pi config root"
-  assert_not_contains "${combined_file}" "Dry run only; no support files were downloaded."
+  assert_not_contains "${combined_file}" "Dry run only; no installer archive was downloaded."
   assert_not_contains "${combined_file}" "fake curl was invoked"
   assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   assert_absent "${home_physical}/.pi"
@@ -931,17 +908,25 @@ run_missing_required_helper_preflight_smoke() {
   local agent_dir="${case_dir}/agent"
   local bin_dir="${case_dir}/bin"
   local fakebin="${case_dir}/fakebin"
+  local archive_parent="${case_dir}/archive-parent"
+  local archive_root="the-last-harness-legacy-ref"
+  local archive_path="${case_dir}/installer.tar.gz"
+  local archive_url="https://codeload.github.com/diegopetrucci/the-last-harness/tar.gz/legacy-ref"
+  local curl_log="${case_dir}/curl.log"
   local pi_sentinel="${case_dir}/pi-invoked"
   local stdout_file="${case_dir}/stdout.log"
   local stderr_file="${case_dir}/stderr.log"
   local combined_file="${case_dir}/combined.log"
   local status=0
   mkdir -p "${case_dir}"
-  make_legacy_support_curl "${fakebin}"
+  make_archive_copy_curl "${fakebin}"
   make_failing_pi "${fakebin}"
+  copy_stage1_support_tree "${archive_parent}/${archive_root}" false
+  rm -f "${archive_parent}/${archive_root}/scripts/tlh-wrapper.mjs" "${archive_parent}/${archive_root}/scripts/tlh-install-state.mjs"
+  pack_archive_tree "${archive_parent}" "${archive_root}" "${archive_path}"
 
   set +e
-  (cd "${case_dir}" && run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 PATH="${fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${ROOT_DIR}" PI_SENTINEL="${pi_sentinel}" TLH_RAW_BASE="https://example.invalid/legacy-ref" bash -s -- --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  (cd "${case_dir}" && run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 PATH="${fakebin}:${PATH}" FAKE_ARCHIVE_PATH="${archive_path}" FAKE_ARCHIVE_URL="${archive_url}" FAKE_CURL_LOG="${curl_log}" PI_SENTINEL="${pi_sentinel}" TLH_REF="legacy-ref" TLH_RAW_BASE="https://example.invalid/legacy-ref" bash -s -- --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
@@ -953,6 +938,7 @@ run_missing_required_helper_preflight_smoke() {
   assert_contains "${combined_file}" "required installer support files not found for ref"
   assert_contains "${combined_file}" "scripts/tlh-wrapper.mjs"
   assert_contains "${combined_file}" "scripts/tlh-install-state.mjs"
+  assert_contains "${curl_log}" "${archive_url}"
   assert_not_contains "${combined_file}" "fake pi was invoked"
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"
@@ -962,15 +948,23 @@ run_missing_required_helper_preflight_smoke() {
   local no_wrapper_agent_dir="${no_wrapper_case_dir}/agent"
   local no_wrapper_bin_dir="${no_wrapper_case_dir}/bin"
   local no_wrapper_fakebin="${no_wrapper_case_dir}/fakebin"
+  local no_wrapper_archive_parent="${no_wrapper_case_dir}/archive-parent"
+  local no_wrapper_archive_root="the-last-harness-no-wrapper-ref"
+  local no_wrapper_archive_path="${no_wrapper_case_dir}/installer.tar.gz"
+  local no_wrapper_archive_url="https://codeload.github.com/diegopetrucci/the-last-harness/tar.gz/no-wrapper-ref"
+  local no_wrapper_curl_log="${no_wrapper_case_dir}/curl.log"
   local no_wrapper_pi_sentinel="${no_wrapper_case_dir}/pi-invoked"
   mkdir -p "${no_wrapper_case_dir}"
-  make_legacy_support_curl "${no_wrapper_fakebin}"
+  make_archive_copy_curl "${no_wrapper_fakebin}"
   make_failing_pi "${no_wrapper_fakebin}"
+  copy_stage1_support_tree "${no_wrapper_archive_parent}/${no_wrapper_archive_root}" false
+  rm -f "${no_wrapper_archive_parent}/${no_wrapper_archive_root}/scripts/tlh-wrapper.mjs"
+  pack_archive_tree "${no_wrapper_archive_parent}" "${no_wrapper_archive_root}" "${no_wrapper_archive_path}"
   : >"${stdout_file}"
   : >"${stderr_file}"
 
   set +e
-  (cd "${no_wrapper_case_dir}" && run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 PATH="${no_wrapper_fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${ROOT_DIR}" LEGACY_SUPPORT_MODE="missing-wrapper-only" PI_SENTINEL="${no_wrapper_pi_sentinel}" TLH_RAW_BASE="https://example.invalid/no-wrapper-ref" bash -s -- --agent-dir "${no_wrapper_agent_dir}" --bin-dir "${no_wrapper_bin_dir}" --no-wrapper < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  (cd "${no_wrapper_case_dir}" && run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 PATH="${no_wrapper_fakebin}:${PATH}" FAKE_ARCHIVE_PATH="${no_wrapper_archive_path}" FAKE_ARCHIVE_URL="${no_wrapper_archive_url}" FAKE_CURL_LOG="${no_wrapper_curl_log}" PI_SENTINEL="${no_wrapper_pi_sentinel}" TLH_REF="no-wrapper-ref" TLH_RAW_BASE="https://example.invalid/no-wrapper-ref" bash -s -- --agent-dir "${no_wrapper_agent_dir}" --bin-dir "${no_wrapper_bin_dir}" --no-wrapper < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
@@ -979,6 +973,7 @@ run_missing_required_helper_preflight_smoke() {
     cat "${combined_file}" >&2
     fail "missing wrapper --no-wrapper preflight smoke unexpectedly succeeded"
   fi
+  assert_contains "${no_wrapper_curl_log}" "${no_wrapper_archive_url}"
   assert_not_contains "${combined_file}" "required installer support files not found for ref"
   assert_contains "${combined_file}" "fake pi was invoked"
   if [[ ! -f "${no_wrapper_pi_sentinel}" ]]; then
@@ -1046,11 +1041,21 @@ run_release_pinning_smoke() {
   local case_dir="${TMP_ROOT}/release-pinning"
   local dist_dir="${case_dir}/dist"
   local home_dir="${case_dir}/home"
+  local fakebin="${case_dir}/fakebin"
+  local archive_parent="${case_dir}/archive-parent"
+  local archive_path="${case_dir}/the-last-harness-9.9.9.tgz"
+  local incomplete_archive_parent="${case_dir}/archive-parent-incomplete"
+  local incomplete_archive_path="${case_dir}/the-last-harness-9.9.9-incomplete.tgz"
+  local archive_url="https://github.com/diegopetrucci/the-last-harness/releases/download/v9.9.9/the-last-harness-9.9.9.tgz"
+  local curl_log="${case_dir}/curl.log"
+  local stage1_sentinel="${case_dir}/stage1-invoked"
   local tag="v9.9.9"
   local stdout_file="${case_dir}/stdout.log"
   local stderr_file="${case_dir}/stderr.log"
   local combined_file="${case_dir}/combined.log"
-  mkdir -p "${dist_dir}" "${home_dir}"
+  local status=0
+  mkdir -p "${dist_dir}" "${home_dir}" "${archive_parent}/package"
+  make_archive_copy_curl "${fakebin}"
 
   TAG="${tag}" DIST_DIR="${dist_dir}" node <<'NODE'
 const fs = require('node:fs');
@@ -1078,38 +1083,75 @@ NODE
   assert_not_contains "${dist_dir}/install.sh" 'REF="${TLH_REF:-main}"'
   assert_not_contains "${dist_dir}/install.sh" 'UPDATE_TRACK_INPUT="${TLH_UPDATE_TRACK:-}"'
 
-  local manifest_file="${case_dir}/stage0-manifest.txt"
-  local requirement relative_path
-  extract_stage0_support_manifest false >"${manifest_file}"
-  while IFS='|' read -r requirement relative_path; do
-    [[ -n "${relative_path}" ]] || continue
-    mkdir -p "${dist_dir}/$(dirname "${relative_path}")"
-    : >"${dist_dir}/${relative_path}"
-  done <"${manifest_file}"
-  cat >"${dist_dir}/scripts/tlh-install.mjs" <<'EOF_FAKE_RELEASE_STAGE1'
-#!/usr/bin/env node
-console.log(`TLH_UPDATE_TRACK=${process.env.TLH_UPDATE_TRACK || ""}`);
-EOF_FAKE_RELEASE_STAGE1
+  copy_stage1_support_tree "${archive_parent}/package" false
+  stage1_support_manifest false >"${archive_parent}/package/support-manifest.txt"
+  write_fake_release_stage1 "${archive_parent}/package/scripts/tlh-install.mjs"
+  pack_archive_tree "${archive_parent}" package "${archive_path}"
 
-  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 HOME="${home_dir}" bash "${dist_dir}/install.sh" --agent-dir "${case_dir}/agent" --bin-dir "${case_dir}/bin" >"${stdout_file}" 2>"${stderr_file}"
+  mkdir -p "${incomplete_archive_parent}"
+  cp -R "${archive_parent}/package" "${incomplete_archive_parent}/package"
+  rm -f "${incomplete_archive_parent}/package/config/default-extensions.json"
+  pack_archive_tree "${incomplete_archive_parent}" package "${incomplete_archive_path}"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  : >"${curl_log}"
+  rm -f "${stage1_sentinel}"
+  set +e
+  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 HOME="${home_dir}" PATH="${fakebin}:${PATH}" FAKE_ARCHIVE_PATH="${incomplete_archive_path}" FAKE_ARCHIVE_URL="${archive_url}" FAKE_CURL_LOG="${curl_log}" RELEASE_STAGE1_SENTINEL="${stage1_sentinel}" bash -s -- --agent-dir "${case_dir}/agent" --bin-dir "${case_dir}/bin" < "${dist_dir}/install.sh" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "incomplete release archive smoke unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "installer archive for ref ${tag} did not contain the required stage-1 support files"
+  assert_contains "${curl_log}" "${archive_url}"
+  assert_absent "${stage1_sentinel}"
+  assert_not_contains "${combined_file}" "TLH_UPDATE_TRACK="
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  : >"${curl_log}"
+  rm -f "${stage1_sentinel}"
+  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 HOME="${home_dir}" PATH="${fakebin}:${PATH}" FAKE_ARCHIVE_PATH="${archive_path}" FAKE_ARCHIVE_URL="${archive_url}" FAKE_CURL_LOG="${curl_log}" RELEASE_STAGE1_SENTINEL="${stage1_sentinel}" bash -s -- --agent-dir "${case_dir}/agent" --bin-dir "${case_dir}/bin" < "${dist_dir}/install.sh" >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
   assert_contains "${combined_file}" "TLH_UPDATE_TRACK=latest-release"
+  assert_contains "${curl_log}" "${archive_url}"
+  if [[ ! -f "${stage1_sentinel}" ]]; then
+    cat "${combined_file}" >&2
+    fail "release archive smoke did not invoke stage-1 installer"
+  fi
 
   : >"${stdout_file}"
   : >"${stderr_file}"
-  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 HOME="${home_dir}" TLH_UPDATE_TRACK="pinned-tag" bash "${dist_dir}/install.sh" --agent-dir "${case_dir}/agent" --bin-dir "${case_dir}/bin" >"${stdout_file}" 2>"${stderr_file}"
+  : >"${curl_log}"
+  rm -f "${stage1_sentinel}"
+  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 HOME="${home_dir}" PATH="${fakebin}:${PATH}" FAKE_ARCHIVE_PATH="${archive_path}" FAKE_ARCHIVE_URL="${archive_url}" FAKE_CURL_LOG="${curl_log}" RELEASE_STAGE1_SENTINEL="${stage1_sentinel}" TLH_UPDATE_TRACK="pinned-tag" bash -s -- --agent-dir "${case_dir}/agent" --bin-dir "${case_dir}/bin" < "${dist_dir}/install.sh" >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
   assert_contains "${combined_file}" "TLH_UPDATE_TRACK=pinned-tag"
+  assert_contains "${curl_log}" "${archive_url}"
+  if [[ ! -f "${stage1_sentinel}" ]]; then
+    cat "${combined_file}" >&2
+    fail "release archive pinned-tag smoke did not invoke stage-1 installer"
+  fi
 
   : >"${stdout_file}"
   : >"${stderr_file}"
-  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 HOME="${home_dir}" bash "${dist_dir}/install.sh" --agent-dir "${case_dir}/agent" --bin-dir "${case_dir}/bin" --track ref >"${stdout_file}" 2>"${stderr_file}"
+  : >"${curl_log}"
+  rm -f "${stage1_sentinel}"
+  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 HOME="${home_dir}" PATH="${fakebin}:${PATH}" FAKE_ARCHIVE_PATH="${archive_path}" FAKE_ARCHIVE_URL="${archive_url}" FAKE_CURL_LOG="${curl_log}" RELEASE_STAGE1_SENTINEL="${stage1_sentinel}" bash -s -- --agent-dir "${case_dir}/agent" --bin-dir "${case_dir}/bin" --track ref < "${dist_dir}/install.sh" >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
   assert_contains "${combined_file}" "TLH_UPDATE_TRACK=ref"
+  assert_contains "${curl_log}" "${archive_url}"
+  if [[ ! -f "${stage1_sentinel}" ]]; then
+    cat "${combined_file}" >&2
+    fail "release archive ref-track smoke did not invoke stage-1 installer"
+  fi
 }
 
 run_static_checks
-run_support_manifest_smoke
 run_install_query_smoke
 run_stage1_dry_run_smoke
 run_stage1_relative_path_canonicalization_smoke
