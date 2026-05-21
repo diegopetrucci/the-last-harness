@@ -4,6 +4,11 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Footer restructured into three logical lines: working directory/git (unchanged), a single flowing `agent: … • model • thinking • context` line, and an optional session-stats line showing cost and/or subscription usage. Empty lines are omitted entirely.
+- Subscription usage session label now reads e.g. `5h session 27% used` (was `5h 27% used`).
+
 ## [0.10.0] - 2026-05-21
 
 ### Added

@@ -7,7 +7,9 @@ import { createJiti } from "jiti";
 import { createTlhSubscriptionUsageService } from "../extensions/the-last-harness/subscription-usage.mjs";
 
 const jiti = createJiti(import.meta.url);
-const { createTlhFooter, formatTlhSubscriptionUsageFooterSegment } = await jiti.import("../extensions/the-last-harness/footer.ts");
+const { createTlhFooter, formatTlhSubscriptionUsageFooterSegment } = await jiti.import(
+	"../extensions/the-last-harness/footer.ts",
+);
 
 const NOW_MS = Date.parse("2026-05-19T19:00:00Z");
 const WIDTH = 100;
@@ -108,39 +110,68 @@ function createCtx(options = {}) {
 	};
 }
 
-function renderFooterStatsLine(ctx, usageOptions, width = WIDTH, footerData = createFooterData()) {
+// ---------------------------------------------------------------------------
+// Render helpers
+// ---------------------------------------------------------------------------
+
+function renderFooterLines(ctx, usageOptions, width = WIDTH, footerData = createFooterData()) {
 	const footer = createTlhFooter(pi, ctx, theme, () => "architect", footerData, usageOptions);
-	return footer.render(width)[1];
+	return footer.render(width);
 }
+
+/**
+ * Line 2 (index 1): agent: <name> • [(provider)] <model> [• thinking] • context%
+ */
+function renderAgentLine(ctx, usageOptions, width = WIDTH, footerData = createFooterData()) {
+	return renderFooterLines(ctx, usageOptions, width, footerData)[1] ?? "";
+}
+
+/**
+ * Line 3 (index 2, optional): [<cost> · ]<subscription usage segment>
+ * Returns "" when Line 3 is omitted.
+ */
+function renderSessionStatsLine(ctx, usageOptions, width = WIDTH, footerData = createFooterData()) {
+	return renderFooterLines(ctx, usageOptions, width, footerData)[2] ?? "";
+}
+
+// ---------------------------------------------------------------------------
+// Existing rendering tests (updated for three-line layout)
+// ---------------------------------------------------------------------------
 
 test("footer renders OpenAI/Codex session usage and hides weekly by default", () => {
 	let requestedProvider;
-	const line = renderFooterStatsLine(createCtx({ provider: "openai-codex" }), {
+	const usageOptions = {
 		subscriptionUsage: usageProvider(openAiSnapshot(), (provider) => {
 			requestedProvider = provider;
 		}),
 		shouldShowWeekly: () => false,
-	});
+	};
+	const ctx = createCtx({ provider: "openai-codex" });
+	const lines = renderFooterLines(ctx, usageOptions);
+	const agentLine = lines[1] ?? "";
+	const sessionLine = lines[2] ?? "";
 
 	assert.equal(requestedProvider, "openai-codex");
-	assert.match(line, /session 42% used/);
-	assert.doesNotMatch(line, /weekly/);
-	assert.doesNotMatch(line, /\$/);
-	assert.match(line, /12\.3%\/200k/);
+	assert.match(sessionLine, /session 42% used/);
+	assert.doesNotMatch(sessionLine, /weekly/);
+	assert.doesNotMatch(sessionLine, /\$/);
+	assert.match(agentLine, /12\.3%\/200k/);
 });
 
 test("footer includes Anthropic weekly usage only when the preference enables it", () => {
 	const snapshot = anthropicSnapshot();
-	assert.equal(formatTlhSubscriptionUsageFooterSegment(snapshot, { showWeekly: false }), "5h 42% used");
-	assert.equal(formatTlhSubscriptionUsageFooterSegment(snapshot, { showWeekly: true }), "5h 42% used · weekly 88.9% used");
+	assert.equal(formatTlhSubscriptionUsageFooterSegment(snapshot, { showWeekly: false }), "5h session 42% used");
+	assert.equal(formatTlhSubscriptionUsageFooterSegment(snapshot, { showWeekly: true }), "5h session 42% used · weekly 88.9% used");
 
-	const line = renderFooterStatsLine(createCtx({ provider: "anthropic" }), {
+	const ctx = createCtx({ provider: "anthropic" });
+	const usageOptions = {
 		subscriptionUsage: usageProvider(snapshot),
 		shouldShowWeekly: () => true,
-	});
+	};
+	const sessionLine = renderSessionStatsLine(ctx, usageOptions);
 
-	assert.match(line, /5h 42% used/);
-	assert.match(line, /weekly 88\.9% used/);
+	assert.match(sessionLine, /5h session 42% used/);
+	assert.match(sessionLine, /weekly 88\.9% used/);
 });
 
 test("footer render reads cached usage snapshots without refreshing", () => {
@@ -155,26 +186,29 @@ test("footer render reads cached usage snapshots without refreshing", () => {
 		},
 	};
 
-	const line = renderFooterStatsLine(createCtx({ provider: "openai-codex" }), {
+	const sessionLine = renderSessionStatsLine(createCtx({ provider: "openai-codex" }), {
 		subscriptionUsage,
 		shouldShowWeekly: () => false,
 	});
 
-	assert.match(line, /session 42% used/);
+	assert.match(sessionLine, /session 42% used/);
 	assert.equal(refreshCalls, 0);
 });
 
 test("footer falls back to dollar cost when subscription usage is not strictly eligible", () => {
 	// Non-OAuth Anthropic session (e.g. API-key user): no subscription tracking and no OAuth gate,
 	// so the dollar fallback must remain visible.
-	const line = renderFooterStatsLine(createCtx({ provider: "anthropic", usingOAuth: false }), {
+	const ctx = createCtx({ provider: "anthropic", usingOAuth: false });
+	const usageOptions = {
 		subscriptionUsage: usageProvider(anthropicSnapshot(), undefined, false),
 		shouldShowWeekly: () => true,
-	});
+	};
+	const agentLine = renderAgentLine(ctx, usageOptions);
+	const sessionLine = renderSessionStatsLine(ctx, usageOptions);
 
-	assert.match(line, /\$1\.250/);
-	assert.doesNotMatch(line, /5h 42% used/);
-	assert.match(line, /12\.3%\/200k/);
+	assert.match(sessionLine, /\$1\.250/);
+	assert.doesNotMatch(sessionLine, /5h session 42% used/);
+	assert.match(agentLine, /12\.3%\/200k/);
 });
 
 test("footer suppresses dollar cost for eligible OAuth sessions before usage is cached", () => {
@@ -195,42 +229,53 @@ test("footer suppresses dollar cost for eligible OAuth sessions before usage is 
 		},
 	});
 
-	const line = renderFooterStatsLine(ctx, {
+	const usageOptions = {
 		subscriptionUsage: service,
 		shouldShowWeekly: () => true,
-	});
+	};
 
-	assert.doesNotMatch(line, /\$/);
-	assert.doesNotMatch(line, /used/);
-	assert.match(line, /12\.3%\/200k/);
+	const lines = renderFooterLines(ctx, usageOptions);
+	const agentLine = lines[1] ?? "";
+	const sessionLine = lines[2] ?? "";
+
+	assert.doesNotMatch(agentLine, /\$/);
+	assert.doesNotMatch(agentLine, /used/);
+	assert.match(agentLine, /12\.3%\/200k/);
+	// Line 3 is omitted: cost suppressed (OAuth), no subscription segment yet
+	assert.equal(sessionLine, "");
 	assert.equal(fetchCalls, 0);
 
 	runtimeOverrides.set("anthropic", "runtime-api-key");
-	const runtimeLine = renderFooterStatsLine(ctx, {
-		subscriptionUsage: service,
-		shouldShowWeekly: () => true,
-	});
+	const runtimeLines = renderFooterLines(ctx, usageOptions);
+	const runtimeAgentLine = runtimeLines[1] ?? "";
+	const runtimeSessionLine = runtimeLines[2] ?? "";
 
 	// The runtime override disables the subscription-usage panel, but the stored Anthropic
 	// credential is still OAuth so isUsingOAuth(model) remains true and the dollar fallback
 	// stays suppressed.
-	assert.doesNotMatch(runtimeLine, /\$/);
-	assert.doesNotMatch(runtimeLine, /used/);
+	assert.doesNotMatch(runtimeAgentLine, /\$/);
+	assert.doesNotMatch(runtimeAgentLine, /used/);
+	assert.equal(runtimeSessionLine, "");
 	assert.equal(fetchCalls, 0);
 });
 
 test("footer leaves usage unchanged for unsupported providers and snapshot errors", () => {
 	// API-key user on an unsupported provider: cost should still render as the fallback.
-	const unsupportedLine = renderFooterStatsLine(createCtx({ provider: "openrouter", usingOAuth: false }), {
+	const unsupportedCtx = createCtx({ provider: "openrouter", usingOAuth: false });
+	const unsupportedUsage = {
 		subscriptionUsage: usageProvider(openAiSnapshot()),
 		shouldShowWeekly: () => true,
-	});
-	assert.doesNotMatch(unsupportedLine, /used/);
-	assert.doesNotMatch(unsupportedLine, /weekly/);
-	assert.match(unsupportedLine, /\$1\.250/);
-	assert.match(unsupportedLine, /12\.3%\/200k/);
+	};
+	const unsupportedAgentLine = renderAgentLine(unsupportedCtx, unsupportedUsage);
+	const unsupportedSessionLine = renderSessionStatsLine(unsupportedCtx, unsupportedUsage);
 
-	const errorLine = renderFooterStatsLine(createCtx({ provider: "anthropic" }), {
+	assert.doesNotMatch(unsupportedSessionLine, /used/);
+	assert.doesNotMatch(unsupportedSessionLine, /weekly/);
+	assert.match(unsupportedSessionLine, /\$1\.250/);
+	assert.match(unsupportedAgentLine, /12\.3%\/200k/);
+
+	const errorCtx = createCtx({ provider: "anthropic" });
+	const errorUsage = {
 		subscriptionUsage: {
 			getSnapshot() {
 				throw new Error("cached usage unavailable");
@@ -243,33 +288,42 @@ test("footer leaves usage unchanged for unsupported providers and snapshot error
 			},
 		},
 		shouldShowWeekly: () => true,
-	});
-	assert.doesNotMatch(errorLine, /used/);
-	assert.doesNotMatch(errorLine, /weekly/);
-	assert.doesNotMatch(errorLine, /\$/);
-	assert.match(errorLine, /12\.3%\/200k/);
+	};
+	const errorAgentLine = renderAgentLine(errorCtx, errorUsage);
+	const errorSessionLine = renderSessionStatsLine(errorCtx, errorUsage);
+
+	assert.doesNotMatch(errorSessionLine, /used/);
+	assert.doesNotMatch(errorSessionLine, /weekly/);
+	assert.doesNotMatch(errorSessionLine, /\$/);
+	assert.match(errorAgentLine, /12\.3%\/200k/);
 });
 
 test("footer suppresses dollar cost for OAuth users on unsupported providers", () => {
-	const line = renderFooterStatsLine(createCtx({ provider: "github-copilot", usingOAuth: true }), {
+	const ctx = createCtx({ provider: "github-copilot", usingOAuth: true });
+	const usageOptions = {
 		subscriptionUsage: usageProvider(openAiSnapshot(), undefined, false),
 		shouldShowWeekly: () => true,
-	});
+	};
+	const agentLine = renderAgentLine(ctx, usageOptions);
+	const sessionLine = renderSessionStatsLine(ctx, usageOptions);
 
-	assert.doesNotMatch(line, /\$/);
-	assert.doesNotMatch(line, /used/);
-	assert.match(line, /12\.3%\/200k/);
+	assert.doesNotMatch(sessionLine, /\$/);
+	assert.doesNotMatch(sessionLine, /used/);
+	assert.match(agentLine, /12\.3%\/200k/);
 });
 
 test("footer shows dollar cost when neither OAuth nor subscription-eligible", () => {
-	const line = renderFooterStatsLine(createCtx({ provider: "openrouter", usingOAuth: false }), {
+	const ctx = createCtx({ provider: "openrouter", usingOAuth: false });
+	const usageOptions = {
 		subscriptionUsage: usageProvider(openAiSnapshot(), undefined, false),
 		shouldShowWeekly: () => true,
-	});
+	};
+	const agentLine = renderAgentLine(ctx, usageOptions);
+	const sessionLine = renderSessionStatsLine(ctx, usageOptions);
 
-	assert.match(line, /\$1\.250/);
-	assert.doesNotMatch(line, /used/);
-	assert.match(line, /12\.3%\/200k/);
+	assert.match(sessionLine, /\$1\.250/);
+	assert.doesNotMatch(sessionLine, /used/);
+	assert.match(agentLine, /12\.3%\/200k/);
 });
 
 test("usage footer stays within narrow terminal widths", () => {
@@ -285,6 +339,89 @@ test("usage footer stays within narrow terminal widths", () => {
 	const width = 24;
 	const lines = footer.render(width);
 	assert.ok(lines.every((line) => visibleWidth(line) <= width));
+	// Agent line (index 1) is truncated due to the long model name
 	assert.match(lines[1], /\.\.\./);
-	assert.match(lines[1], /^5h 42% used/);
+	// Session stats line (index 2) starts with the subscription segment
+	assert.match(lines[2], /^5h session 42% used/);
+});
+
+// ---------------------------------------------------------------------------
+// NEW: focused line-2 composition tests
+// ---------------------------------------------------------------------------
+
+test("line 2 shows model without provider prefix when single provider", () => {
+	const line = renderAgentLine(createCtx({ provider: "anthropic" }), {});
+	assert.match(line, /^agent: architect • claude-sonnet-4-20250514 • /);
+	assert.doesNotMatch(line, /\(anthropic\)/);
+});
+
+test("line 2 shows provider prefix when multiple providers available", () => {
+	const line = renderAgentLine(createCtx({ provider: "anthropic" }), {}, WIDTH, createFooterData({ providerCount: 2 }));
+	assert.match(line, /^agent: architect • \(anthropic\) claude-sonnet-4-20250514 • /);
+});
+
+test("line 2 shows thinking level for reasoning models", () => {
+	const ctx = createCtx({
+		model: { provider: "anthropic", id: "claude-opus-4-reasoning", contextWindow: 200000, reasoning: true },
+	});
+	const line = renderAgentLine(ctx, {});
+	assert.match(line, /claude-opus-4-reasoning • medium • /);
+});
+
+test("line 2 shows thinking off label when thinking is disabled on a reasoning model", () => {
+	const piOff = { getThinkingLevel: () => "off" };
+	const ctx = createCtx({
+		model: { provider: "anthropic", id: "claude-opus-4-reasoning", contextWindow: 200000, reasoning: true },
+	});
+	const footer = createTlhFooter(piOff, ctx, theme, () => "architect", createFooterData(), {});
+	const line = footer.render(WIDTH)[1];
+	assert.match(line, /claude-opus-4-reasoning • thinking off • /);
+});
+
+test("line 2 shows no-model placeholder when context has no model", () => {
+	const ctx = { ...createCtx(), model: undefined };
+	const line = renderAgentLine(ctx, {});
+	assert.match(line, /^agent: architect • no-model • /);
+	assert.doesNotMatch(line, /\(undefined\)/);
+});
+
+test("line 2 includes context percent and omits provider prefix for no-model", () => {
+	const ctx = { ...createCtx(), model: undefined };
+	const line = renderAgentLine(ctx, {});
+	assert.match(line, /12\.3%\/200k/);
+	assert.doesNotMatch(line, /\(/);
+});
+
+// ---------------------------------------------------------------------------
+// NEW: focused line-3 rendered omission and presence tests
+// ---------------------------------------------------------------------------
+
+test("line 3 is omitted when cost is zero and there is no subscription segment", () => {
+	const ctx = createCtx({ entries: [], usingOAuth: false });
+	const lines = renderFooterLines(ctx, {
+		subscriptionUsage: usageProvider(openAiSnapshot(), undefined, false),
+		shouldShowWeekly: () => false,
+	});
+	// Only pwd (index 0) and agent line (index 1) — no stats line
+	assert.equal(lines.length, 2);
+});
+
+test("line 3 renders cost only when cost is present and subscription is absent", () => {
+	const ctx = createCtx({ provider: "openrouter", usingOAuth: false });
+	const sessionLine = renderSessionStatsLine(ctx, {
+		subscriptionUsage: usageProvider(undefined, undefined, false),
+		shouldShowWeekly: () => false,
+	});
+	assert.match(sessionLine, /^\$1\.250$/);
+	assert.doesNotMatch(sessionLine, /·/);
+});
+
+test("line 3 renders subscription only when cost is suppressed and segment is present", () => {
+	const ctx = createCtx({ provider: "anthropic" }); // usingOAuth: true → suppressCost
+	const sessionLine = renderSessionStatsLine(ctx, {
+		subscriptionUsage: usageProvider(anthropicSnapshot()),
+		shouldShowWeekly: () => false,
+	});
+	assert.match(sessionLine, /^5h session 42% used$/);
+	assert.doesNotMatch(sessionLine, /\$/);
 });

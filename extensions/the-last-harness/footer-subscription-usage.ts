@@ -79,16 +79,16 @@ function formatUsageWindowLabel(
 
 	const duration = formatUsageDuration(window.durationMs);
 	if (duration) {
-		return duration;
+		return `${duration} session`;
 	}
 
 	const key = normalizedUsageLabel(window.key);
 	const label = normalizedUsageLabel(window.label);
 	if (provider === "anthropic" && [key, label].some((value) => ["five-hour", "five-hours", "5h"].includes(value))) {
-		return "5h";
+		return "5h session";
 	}
 
-	return window.label && window.label !== windowType ? window.label : "session";
+	return "session";
 }
 
 function formatUsageWindow(
