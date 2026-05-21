@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 import { packageIdentity, readDefaultExtensions } from "../scripts/lib/default-extensions.mjs";
+import { installableSupportFiles } from "../scripts/lib/tlh-install-support-manifest.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
@@ -100,6 +101,38 @@ test("tlh-defaults errors when the default-extension manifest is missing", () =>
 
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /File does not exist:/);
+});
+
+test("installed tlh-defaults helper can resolve its copied default-extension library", () => {
+	const fixture = tempFixture();
+	const supportDir = join(fixture.dir, "agent", "tlh");
+	const copiedVariables = new Set([
+		"TLH_DEFAULTS_SCRIPT",
+		"TLH_INSTALL_PATHS_LIB",
+		"TLH_INSTALL_UTILS_LIB",
+		"DEFAULT_EXTENSIONS_LIB",
+		"DEFAULT_EXTENSIONS_FILE",
+	]);
+
+	for (const file of installableSupportFiles().filter((entry) => copiedVariables.has(entry.variable))) {
+		const target = join(supportDir, file.installName);
+		mkdirSync(dirname(target), { recursive: true });
+		copyFileSync(join(repoRoot, file.relativePath), target);
+	}
+	writeFileSync(fixture.settings, JSON.stringify({ packages: [] }, null, 2));
+
+	const result = spawnSync(process.execPath, [
+		join(supportDir, "tlh-defaults.mjs"),
+		"--settings", fixture.settings,
+		"--defaults", join(supportDir, "default-extensions.json"),
+		"sources",
+	], {
+		cwd: fixture.dir,
+		env: process.env,
+		encoding: "utf8",
+	});
+
+	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
 });
 
 test("merge ignores and cleans stale/manual critical opt-outs while preserving non-critical opt-outs", () => {

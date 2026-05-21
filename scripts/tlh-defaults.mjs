@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
@@ -11,6 +11,12 @@ import {
 	packageSourceOf,
 	readDefaultExtensions,
 } from "./lib/default-extensions.mjs";
+import {
+	assertNotInNormalPiConfig,
+	backupPathWithTimestamp,
+	readJsonFile,
+	requiredValue,
+} from "./lib/tlh-install-utils.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -82,14 +88,6 @@ function parseArgs(argv) {
 	return args;
 }
 
-function requiredValue(argv, index, flag) {
-	const value = argv[index];
-	if (!value || value.startsWith("-")) {
-		throw new Error(`${flag} requires a value`);
-	}
-	return value;
-}
-
 function expandHome(path) {
 	if (path === "~") return homedir();
 	if (path.startsWith("~/")) return join(homedir(), path.slice(2));
@@ -106,20 +104,6 @@ function defaultSettingsPath() {
 
 function defaultDefaultExtensionsPath() {
 	return join(resolve(__dirname, ".."), "config", "default-extensions.json");
-}
-
-function readJson(path, { missingValue } = {}) {
-	if (!existsSync(path)) {
-		if (missingValue !== undefined) return missingValue;
-		throw new Error(`File does not exist: ${path}`);
-	}
-	const raw = readFileSync(path, "utf8").replace(/^\uFEFF/, "");
-	if (!raw.trim()) return {};
-	try {
-		return JSON.parse(raw);
-	} catch (error) {
-		throw new Error(`Invalid JSON in ${path}: ${error.message}`);
-	}
 }
 
 function isPlainObject(value) {
@@ -291,24 +275,14 @@ function assertKnownExtension(defaultExtensions, id) {
 }
 
 function backupPathFor(settingsPath) {
-	const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-	return `${settingsPath}.backup-tlh-defaults-${stamp}`;
-}
-
-function realpathForCompare(path) {
-	const resolved = resolve(path);
-	if (existsSync(resolved)) return realpathSync(resolved);
-	const parent = dirname(resolved);
-	if (parent === resolved) return resolved;
-	return join(realpathForCompare(parent), basename(resolved));
+	return backupPathWithTimestamp(settingsPath, { marker: "tlh-defaults" });
 }
 
 function assertNotNormalPiSettings(settingsPath) {
-	const normalPiRoot = realpathForCompare(join(homedir(), ".pi"));
-	const resolvedSettingsPath = realpathForCompare(settingsPath);
-	if (resolvedSettingsPath === normalPiRoot || resolvedSettingsPath.startsWith(`${normalPiRoot}${sep}`)) {
-		throw new Error(`Refusing to modify normal Pi config from The Last Harness defaults command: ${settingsPath}`);
-	}
+	assertNotInNormalPiConfig(
+		settingsPath,
+		`Refusing to modify normal Pi config from The Last Harness defaults command: ${settingsPath}`,
+	);
 }
 
 function writeSettings(settingsPath, value, previousRaw) {
@@ -330,7 +304,7 @@ function writeSettings(settingsPath, value, previousRaw) {
 
 function loadSettings(settingsPath) {
 	const previousRaw = existsSync(settingsPath) ? readFileSync(settingsPath, "utf8").replace(/^\uFEFF/, "") : "";
-	const settings = readJson(settingsPath, { missingValue: {} });
+	const settings = readJsonFile(settingsPath, { missingValue: {} });
 	return { settings, previousRaw };
 }
 
