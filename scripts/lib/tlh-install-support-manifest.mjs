@@ -28,7 +28,14 @@ const BASE_SUPPORT_FILES = Object.freeze([
 		requirement: REQUIRED,
 		relativePath: "scripts/lib/tlh-install-paths.mjs",
 		tempPath: "lib/tlh-install-paths.mjs",
-		installName: "",
+		installName: "lib/tlh-install-paths.mjs",
+	},
+	{
+		variable: "TLH_INSTALL_UTILS_LIB",
+		requirement: REQUIRED,
+		relativePath: "scripts/lib/tlh-install-utils.mjs",
+		tempPath: "lib/tlh-install-utils.mjs",
+		installName: "lib/tlh-install-utils.mjs",
 	},
 	{
 		variable: "TLH_INSTALL_GIT_LIB",
@@ -71,6 +78,13 @@ const BASE_SUPPORT_FILES = Object.freeze([
 		relativePath: "scripts/tlh-defaults.mjs",
 		tempPath: "tlh-defaults.mjs",
 		installName: "tlh-defaults.mjs",
+	},
+	{
+		variable: "DEFAULT_EXTENSIONS_LIB",
+		requirement: REQUIRED,
+		relativePath: "scripts/lib/default-extensions.mjs",
+		tempPath: "lib/default-extensions.mjs",
+		installName: "lib/default-extensions.mjs",
 	},
 	{
 		variable: "TLH_GNOSIS_SCRIPT",

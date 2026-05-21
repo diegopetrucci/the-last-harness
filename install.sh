@@ -356,12 +356,14 @@ required|scripts/tlh-install.mjs
 required|scripts/lib/tlh-install-support-manifest.mjs
 required|scripts/lib/tlh-install-package-source.mjs
 required|scripts/lib/tlh-install-paths.mjs
+required|scripts/lib/tlh-install-utils.mjs
 required|scripts/lib/tlh-install-git.mjs
 required|scripts/lib/tlh-install-subagents.mjs
 required|scripts/lib/tlh-install-support-files.mjs
 required|scripts/tlh-install-query.mjs
 required|scripts/merge-settings.mjs
 required|scripts/tlh-defaults.mjs
+required|scripts/lib/default-extensions.mjs
 required|scripts/tlh-gnosis.mjs
 required|scripts/tlh-tickets.mjs
 optional|scripts/tlh-update.mjs

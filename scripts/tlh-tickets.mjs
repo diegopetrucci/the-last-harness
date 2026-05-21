@@ -6,6 +6,12 @@ import { homedir, tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 
+import {
+	backupPathWithTimestamp,
+	readJsonFile,
+	requiredValue,
+} from "./lib/tlh-install-utils.mjs";
+
 const VALIDATION_TIMEOUT_MS = 5000;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 const DEFAULT_TICKET_VERSION = "0.3.2";
@@ -145,14 +151,6 @@ function parseArgs(argv) {
 	return args;
 }
 
-function requiredValue(argv, index, flag) {
-	const value = argv[index];
-	if (!value || value.startsWith("-")) {
-		throw new Error(`${flag} requires a value`);
-	}
-	return value;
-}
-
 function expandHome(path) {
 	if (path === "~") return homedir();
 	if (path.startsWith("~/")) return join(homedir(), path.slice(2));
@@ -165,20 +163,6 @@ function getAgentDir(argAgentDir) {
 
 function defaultSettingsPath(agentDir) {
 	return join(agentDir, "settings.json");
-}
-
-function readJson(path, { missingValue } = {}) {
-	if (!existsSync(path)) {
-		if (missingValue !== undefined) return missingValue;
-		throw new Error(`File does not exist: ${path}`);
-	}
-	const raw = readFileSync(path, "utf8").replace(/^\uFEFF/, "");
-	if (!raw.trim()) return {};
-	try {
-		return JSON.parse(raw);
-	} catch (error) {
-		throw new Error(`Invalid JSON in ${path}: ${error.message}`);
-	}
 }
 
 function isPlainObject(value) {
@@ -205,7 +189,7 @@ function ensureMutableSettings(settings) {
 
 function loadSettings(settingsPath) {
 	const previousRaw = existsSync(settingsPath) ? readFileSync(settingsPath, "utf8").replace(/^\uFEFF/, "") : "";
-	const settings = readJson(settingsPath, { missingValue: {} });
+	const settings = readJsonFile(settingsPath, { missingValue: {} });
 	validateSettings(settings);
 	return { settings, previousRaw };
 }
@@ -380,8 +364,7 @@ function detailLog(args, message) {
 }
 
 function backupPathFor(settingsPath) {
-	const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-	return `${settingsPath}.backup-tlh-tickets-${stamp}`;
+	return backupPathWithTimestamp(settingsPath, { marker: "tlh-tickets" });
 }
 
 function realpathForCompare(path) {
@@ -393,6 +376,7 @@ function realpathForCompare(path) {
 }
 
 function normalPiAgentRoot() {
+	// Tickets only writes agent-scoped settings/bin state, so keep the narrower ~/.pi/agent guard local.
 	return realpathForCompare(join(homedir(), ".pi", "agent"));
 }
 

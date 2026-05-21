@@ -6,6 +6,8 @@ import { homedir, tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 
+import { requiredValue } from "./lib/tlh-install-utils.mjs";
+
 const VALIDATION_TIMEOUT_MS = 5000;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
@@ -107,14 +109,6 @@ function parseArgs(argv) {
 	}
 
 	return args;
-}
-
-function requiredValue(argv, index, flag) {
-	const value = argv[index];
-	if (!value || value.startsWith("-")) {
-		throw new Error(`${flag} requires a value`);
-	}
-	return value;
 }
 
 function expandHome(path) {
@@ -420,6 +414,7 @@ async function commandInstallManaged(args, agentDir) {
 }
 
 function realpathForCompare(path) {
+	// Managed binary install safety checks keep local path resolution to make symlink boundaries explicit.
 	const resolved = resolve(path);
 	if (existsSync(resolved)) return realpathSync(resolved);
 	const parent = dirname(resolved);

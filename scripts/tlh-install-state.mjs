@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
-import { homedir } from "node:os";
+import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import process from "node:process";
+
+import { assertNotInNormalPiConfig, requiredValue } from "./lib/tlh-install-utils.mjs";
 
 function usage() {
 	return `Usage: tlh-install-state.mjs [options]
@@ -24,14 +25,6 @@ Options:
   --quiet                           Suppress non-essential output
   -h, --help                        Show this help
 `;
-}
-
-function requiredValue(argv, index, flag) {
-	const value = argv[index];
-	if (!value || value.startsWith("-")) {
-		throw new Error(`${flag} requires a value`);
-	}
-	return value;
 }
 
 function parseArgs(argv) {
@@ -174,24 +167,11 @@ function parseBoolean(value, flag) {
 	throw new Error(`${flag} must be true or false`);
 }
 
-function realpathForCompare(path) {
-	const resolved = resolve(path);
-	if (existsSync(resolved)) return realpathSync(resolved);
-	const parent = dirname(resolved);
-	if (parent === resolved) return resolved;
-	return join(realpathForCompare(parent), basename(resolved));
-}
-
-function isUnderNormalPiConfig(path) {
-	const normalPiRoot = realpathForCompare(join(homedir(), ".pi"));
-	const resolvedPath = realpathForCompare(path);
-	return resolvedPath === normalPiRoot || resolvedPath.startsWith(`${normalPiRoot}${sep}`);
-}
-
 function assertNotNormalPiPath(path, label) {
-	if (isUnderNormalPiConfig(path)) {
-		throw new Error(`refusing to modify normal Pi config from The Last Harness install-state command (${label}): ${path}`);
-	}
+	assertNotInNormalPiConfig(
+		path,
+		`refusing to modify normal Pi config from The Last Harness install-state command (${label}): ${path}`,
+	);
 }
 
 function log(args, message) {

@@ -200,12 +200,38 @@ test("subagent prompt discovery honors source precedence and copies prompt files
 	}
 });
 
-test("support manifest includes stage-1 library dependencies", () => {
+test("support manifest includes stage-1 and installed helper library dependencies", () => {
 	const manifest = supportFileManifest();
 	const relativePaths = manifest.map((file) => file.relativePath);
 	assert.ok(relativePaths.includes("scripts/lib/tlh-install-git.mjs"));
 	assert.ok(relativePaths.includes("scripts/lib/tlh-install-support-files.mjs"));
+	assert.ok(relativePaths.includes("scripts/lib/tlh-install-utils.mjs"));
+	assert.deepEqual(manifest.find((file) => file.variable === "TLH_INSTALL_PATHS_LIB"), {
+		variable: "TLH_INSTALL_PATHS_LIB",
+		requirement: "required",
+		relativePath: "scripts/lib/tlh-install-paths.mjs",
+		tempPath: "lib/tlh-install-paths.mjs",
+		installName: "lib/tlh-install-paths.mjs",
+	});
+	assert.deepEqual(manifest.find((file) => file.variable === "TLH_INSTALL_UTILS_LIB"), {
+		variable: "TLH_INSTALL_UTILS_LIB",
+		requirement: "required",
+		relativePath: "scripts/lib/tlh-install-utils.mjs",
+		tempPath: "lib/tlh-install-utils.mjs",
+		installName: "lib/tlh-install-utils.mjs",
+	});
 	assert.equal(manifest.find((file) => file.variable === "TLH_GNOSIS_SCRIPT")?.requirement, "required");
+	assert.deepEqual(manifest.find((file) => file.variable === "DEFAULT_EXTENSIONS_LIB"), {
+		variable: "DEFAULT_EXTENSIONS_LIB",
+		requirement: "required",
+		relativePath: "scripts/lib/default-extensions.mjs",
+		tempPath: "lib/default-extensions.mjs",
+		installName: "lib/default-extensions.mjs",
+	});
+
+	const bootstrap = readFileSync(resolve(import.meta.dirname, "..", "install.sh"), "utf8");
+	assert.match(bootstrap, /^required\|scripts\/lib\/default-extensions\.mjs$/m);
+	assert.match(bootstrap, /^required\|scripts\/lib\/tlh-install-utils\.mjs$/m);
 });
 
 test("settings defaults declare when bundled subagent prompts are required", (t) => {

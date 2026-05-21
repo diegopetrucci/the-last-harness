@@ -1,9 +1,16 @@
 #!/usr/bin/env node
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
+
+import {
+	assertNotInNormalPiConfig,
+	backupPathWithTimestamp,
+	readJsonFile,
+	requiredValue,
+} from "./lib/tlh-install-utils.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -73,14 +80,6 @@ function parseArgs(argv) {
 	return args;
 }
 
-function requiredValue(argv, index, flag) {
-	const value = argv[index];
-	if (!value || value.startsWith("-")) {
-		throw new Error(`${flag} requires a value`);
-	}
-	return value;
-}
-
 function getAgentDir() {
 	return process.env.PI_CODING_AGENT_DIR || process.env.TLH_AGENT_DIR || join(homedir(), ".the-last-harness", "agent");
 }
@@ -91,20 +90,6 @@ function defaultKeybindingsPath() {
 
 function defaultDefaultsPath() {
 	return join(resolve(__dirname, ".."), "config", "keybindings.defaults.json");
-}
-
-function readJson(path, { missingValue } = {}) {
-	if (!existsSync(path)) {
-		if (missingValue !== undefined) return missingValue;
-		throw new Error(`File does not exist: ${path}`);
-	}
-	const raw = readFileSync(path, "utf8").replace(/^\uFEFF/, "");
-	if (!raw.trim()) return {};
-	try {
-		return JSON.parse(raw);
-	} catch (error) {
-		throw new Error(`Invalid JSON in ${path}: ${error.message}`);
-	}
 }
 
 function isPlainObject(value) {
@@ -142,16 +127,7 @@ function mergeKeybindings(existing, defaults) {
 }
 
 function backupPathFor(keybindingsPath) {
-	const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-	return `${keybindingsPath}.backup-${stamp}`;
-}
-
-function realpathForCompare(path) {
-	const resolved = resolve(path);
-	if (existsSync(resolved)) return realpathSync(resolved);
-	const parent = dirname(resolved);
-	if (parent === resolved) return resolved;
-	return join(realpathForCompare(parent), basename(resolved));
+	return backupPathWithTimestamp(keybindingsPath);
 }
 
 function assertKeybindingsTarget(keybindingsPath) {
@@ -159,11 +135,10 @@ function assertKeybindingsTarget(keybindingsPath) {
 		throw new Error(`Refusing to modify non-keybindings file: ${keybindingsPath}`);
 	}
 
-	const normalPiRoot = realpathForCompare(join(homedir(), ".pi"));
-	const resolvedKeybindingsPath = realpathForCompare(keybindingsPath);
-	if (resolvedKeybindingsPath === normalPiRoot || resolvedKeybindingsPath.startsWith(`${normalPiRoot}${sep}`)) {
-		throw new Error(`Refusing to modify normal Pi config from The Last Harness installer: ${keybindingsPath}`);
-	}
+	assertNotInNormalPiConfig(
+		keybindingsPath,
+		`Refusing to modify normal Pi config from The Last Harness installer: ${keybindingsPath}`,
+	);
 }
 
 function writeKeybindings(keybindingsPath, value, { dryRun, existed }) {
@@ -198,8 +173,8 @@ function main() {
 	const keybindingsPath = resolve(args.keybindingsPath || defaultKeybindingsPath());
 	assertKeybindingsTarget(keybindingsPath);
 	const existed = existsSync(keybindingsPath);
-	const existing = readJson(keybindingsPath, { missingValue: {} });
-	const defaults = readJson(defaultsPath);
+	const existing = readJsonFile(keybindingsPath, { missingValue: {} });
+	const defaults = readJsonFile(defaultsPath);
 	const { next, changes } = mergeKeybindings(existing, defaults);
 
 	log(args, `Keybindings: ${keybindingsPath}`);

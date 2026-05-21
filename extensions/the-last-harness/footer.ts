@@ -1,4 +1,4 @@
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 import {
 	keyText,
 	type ExtensionAPI,
@@ -10,6 +10,11 @@ import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { formatHomePath, sanitizeStatusText } from "./common.js";
 import type { FooterGitCache } from "./footer-git-cache.js";
 import { composeTlhFooterFirstLine } from "./footer-first-line.js";
+import {
+	getTlhSubscriptionUsageFooterState,
+	type TlhFooterSubscriptionUsageOptions,
+} from "./footer-subscription-usage.js";
+export { formatTlhSubscriptionUsageFooterSegment } from "./footer-subscription-usage.js";
 
 function formatTokens(count: number): string {
 	if (count < 1000) {
@@ -54,12 +59,15 @@ function collectUsageTotals(ctx: ExtensionContext) {
 	return totals;
 }
 
+export type TlhFooterUsageOptions = TlhFooterSubscriptionUsageOptions;
+
 export function createTlhFooter(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	theme: Theme,
 	getPrimaryName: () => string,
 	footerData?: ReadonlyFooterDataProvider,
+	usageOptions: TlhFooterUsageOptions = {},
 	gitCache?: FooterGitCache | null,
 ) {
 	return {
@@ -71,6 +79,7 @@ export function createTlhFooter(
 			const contextPercentValue = contextUsage?.percent ?? 0;
 			const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
 
+			// Line 1: cwd • branch • git-status • PR • sessionName (unchanged)
 			const pwd = composeTlhFooterFirstLine({
 				cwd: formatHomePath(ctx.sessionManager.getCwd()),
 				sessionName: ctx.sessionManager.getSessionName(),
@@ -78,12 +87,21 @@ export function createTlhFooter(
 				pullRequest: gitCache?.getPullRequestSnapshot(),
 				fallbackBranch: footerData?.getGitBranch?.(),
 			});
+			const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
 
-			const statsParts: string[] = [];
-			const usingSubscription = model ? ctx.modelRegistry.isUsingOAuth(model) : false;
-			// In tlh, subscription users should not see dollar-cost estimates in the footer.
-			if (totals.cost > 0 && !usingSubscription) {
-				statsParts.push(formatCost(totals.cost));
+			// Line 2 (single flowing left-justified line):
+			//   agent: <primaryName> • [(provider)] <model|no-model> [• thinking] • context% [• DUMB ZONE]
+			const modelOrNoModel = model?.id ?? "no-model";
+			let modelPart: string = modelOrNoModel;
+			if ((footerData?.getAvailableProviderCount?.() ?? 1) > 1 && model) {
+				modelPart = `(${model.provider}) ${modelOrNoModel}`;
+			}
+
+			const line2Parts: string[] = [`agent: ${getPrimaryName()}`, modelPart];
+
+			if (model?.reasoning) {
+				const thinkingLevel = getCurrentThinkingLevel(pi);
+				line2Parts.push(thinkingLevel === "off" ? "thinking off" : thinkingLevel);
 			}
 
 			const contextPercentDisplay =
@@ -96,61 +114,29 @@ export function createTlhFooter(
 			} else {
 				contextPercentStr = contextPercentDisplay;
 			}
-			let contextStats = contextPercentStr;
+			line2Parts.push(contextPercentStr);
+
+			let agentLine2Str = line2Parts.join(" • ");
 			if ((contextUsage?.tokens ?? 0) > DUMB_ZONE_THRESHOLD_TOKENS) {
-				contextStats += `${theme.fg("dim", " • ")}${theme.fg("error", DUMB_ZONE_LABEL)}`;
+				agentLine2Str += `${theme.fg("dim", " • ")}${theme.fg("error", DUMB_ZONE_LABEL)}`;
 			}
-			statsParts.push(contextStats);
+			const agentLine2 = truncateToWidth(theme.fg("dim", agentLine2Str), width, theme.fg("dim", "..."));
 
-			let statsLeft = statsParts.join(" ");
-			let statsLeftWidth = visibleWidth(statsLeft);
-			if (statsLeftWidth > width) {
-				statsLeft = truncateToWidth(statsLeft, width, "...");
-				statsLeftWidth = visibleWidth(statsLeft);
-			}
+			// Line 3 (optional): [<cost> · ]<subscription usage segment>
+			// Omitted entirely when both parts are absent.
+			const subscriptionUsageState = getTlhSubscriptionUsageFooterState(ctx, model, usageOptions);
+			const costStr = totals.cost > 0 && !subscriptionUsageState.suppressCost ? formatCost(totals.cost) : undefined;
+			const line3Parts: string[] = [];
+			if (costStr) line3Parts.push(costStr);
+			if (subscriptionUsageState.segment) line3Parts.push(subscriptionUsageState.segment);
+			const line3 = line3Parts.length > 0 ? line3Parts.join(" · ") : undefined;
 
-			const modelName = model?.id || "no-model";
-			let rightSideWithoutProvider = modelName;
-			if (model?.reasoning) {
-				const thinkingLevel = getCurrentThinkingLevel(pi);
-				rightSideWithoutProvider =
-					thinkingLevel === "off" ? `${modelName} • thinking off` : `${modelName} • ${thinkingLevel}`;
-			}
-
-			const minPadding = 2;
-			let rightSide = rightSideWithoutProvider;
-			if ((footerData?.getAvailableProviderCount?.() ?? 1) > 1 && model) {
-				rightSide = `(${model.provider}) ${rightSideWithoutProvider}`;
-				if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
-					rightSide = rightSideWithoutProvider;
-				}
+			const lines: string[] = [pwdLine, agentLine2];
+			if (line3 !== undefined) {
+				lines.push(truncateToWidth(theme.fg("dim", line3), width, theme.fg("dim", "...")));
 			}
 
-			const rightSideWidth = visibleWidth(rightSide);
-			const totalNeeded = statsLeftWidth + minPadding + rightSideWidth;
-			let statsLine: string;
-			if (totalNeeded <= width) {
-				const padding = " ".repeat(width - statsLeftWidth - rightSideWidth);
-				statsLine = statsLeft + padding + rightSide;
-			} else {
-				const availableForRight = width - statsLeftWidth - minPadding;
-				if (availableForRight > 0) {
-					const truncatedRight = truncateToWidth(rightSide, availableForRight, "");
-					const truncatedRightWidth = visibleWidth(truncatedRight);
-					const padding = " ".repeat(Math.max(0, width - statsLeftWidth - truncatedRightWidth));
-					statsLine = statsLeft + padding + truncatedRight;
-				} else {
-					statsLine = statsLeft;
-				}
-			}
-
-			const dimStatsLeft = theme.fg("dim", statsLeft);
-			const remainder = statsLine.slice(statsLeft.length);
-			const dimRemainder = theme.fg("dim", remainder);
-			const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
-			const agentLine = truncateToWidth(theme.fg("dim", `agent: ${getPrimaryName()}`), width, theme.fg("dim", "..."));
-			const lines = [pwdLine, dimStatsLeft + dimRemainder, agentLine];
-
+			// Hint line (conditional on pending editor text during an active turn)
 			const editorText = ctx.ui.getEditorText();
 			if (editorText.length > 0 && !ctx.isIdle()) {
 				const steerKey = keyText("tui.input.submit") || "enter";
@@ -160,6 +146,7 @@ export function createTlhFooter(
 				lines.push(truncateToWidth(`${steeringHint}${theme.fg("muted", " · ")}${queueHint}`, width, theme.fg("dim", "...")));
 			}
 
+			// Extension status line (conditional on registered extension statuses)
 			const extensionStatuses = footerData?.getExtensionStatuses?.();
 			if (extensionStatuses && extensionStatuses.size > 0) {
 				const statusLine = Array.from(extensionStatuses.entries())

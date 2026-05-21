@@ -1,8 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { packageSourceInstallDir } from "./tlh-install-package-source.mjs";
 import { copySafeProfileFile, ensureSafeProfileDir } from "./tlh-install-paths.mjs";
+import { readJsonFile } from "./tlh-install-utils.mjs";
 
 export const TLH_SUBAGENT_PROMPTS = Object.freeze([
 	"developer.md",
@@ -12,10 +13,6 @@ export const TLH_SUBAGENT_PROMPTS = Object.freeze([
 	"librarian.md",
 	"oracle.md",
 ]);
-
-function readJsonFile(path) {
-	return JSON.parse(readFileSync(path, "utf8").replace(/^\uFEFF/, ""));
-}
 
 function isPlainObject(value) {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);

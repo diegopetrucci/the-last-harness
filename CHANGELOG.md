@@ -4,6 +4,29 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Footer restructured into three logical lines: working directory/git (unchanged), a single flowing `agent: … • model • thinking • context` line, and an optional session-stats line showing cost and/or subscription usage. Empty lines are omitted entirely.
+- Subscription usage session label now reads e.g. `5h session 27% used` (was `5h 27% used`).
+
+## [0.10.0] - 2026-05-21
+
+### Added
+
+- Added TLH footer git and pull request segments, including cached branch/status/PR rendering on the footer first line.
+- Added OAuth subscription usage footer support for supported OpenAI/Codex and Anthropic sessions; weekly usage remains hidden by default and is controlled with `/usage`.
+- Added `npm run validate` as the aggregate local, CI, and release validation command.
+
+### Changed
+
+- Architect primary agent sessions can now write and edit files directly.
+- Default-extension and installer utility logic now use shared helper modules while preserving existing isolated-profile behavior.
+- CI, release, contributor, and local-development docs now point at the aggregate validation command.
+
+### Fixed
+
+- Fixed staged installer and release-smoke support manifests to include shared helper modules required by the installer and default-extension tools.
+
 ## [0.9.0] - 2026-05-20
 
 ### Breaking

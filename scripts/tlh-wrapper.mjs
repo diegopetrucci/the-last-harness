@@ -1,8 +1,14 @@
 #!/usr/bin/env node
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
-import { homedir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import process from "node:process";
+
+import {
+	assertNotInNormalPiConfig,
+	renderShellWords,
+	requiredValue,
+	shellQuote,
+} from "./lib/tlh-install-utils.mjs";
 
 const DEFAULT_MARKER = "Managed by The Last Harness installer";
 
@@ -21,14 +27,6 @@ Options:
   --quiet              Suppress non-essential output
   -h, --help           Show this help
 `;
-}
-
-function requiredValue(argv, index, flag) {
-	const value = argv[index];
-	if (!value || value.startsWith("-")) {
-		throw new Error(`${flag} requires a value`);
-	}
-	return value;
 }
 
 function parseArgs(argv) {
@@ -118,42 +116,19 @@ function warn(message) {
 	console.error(`warning: ${message}`);
 }
 
-function shellQuote(value) {
-	return `'${String(value).replace(/'/g, `'\\''`)}'`;
-}
-
-function shellWord(value) {
-	const text = String(value);
-	if (/^[A-Za-z0-9_/:.,@%+=-]+$/.test(text)) return text;
-	return shellQuote(text);
-}
-
 function printCommand(commandArgs) {
-	console.log(`+ ${commandArgs.map(shellWord).join(" ")} `);
+	console.log(`+ ${renderShellWords(commandArgs)} `);
 }
 
 function wrapperPath(args) {
 	return join(args.binDir, args.wrapperName);
 }
 
-function realpathForCompare(path) {
-	const resolved = resolve(path);
-	if (existsSync(resolved)) return realpathSync(resolved);
-	const parent = dirname(resolved);
-	if (parent === resolved) return resolved;
-	return join(realpathForCompare(parent), basename(resolved));
-}
-
-function isUnderNormalPiConfig(path) {
-	const normalPiRoot = realpathForCompare(join(homedir(), ".pi"));
-	const resolvedPath = realpathForCompare(path);
-	return resolvedPath === normalPiRoot || resolvedPath.startsWith(`${normalPiRoot}${sep}`);
-}
-
 function assertNotNormalPiPath(path, label) {
-	if (isUnderNormalPiConfig(path)) {
-		throw new Error(`refusing to modify normal Pi config from The Last Harness wrapper command (${label}): ${path}`);
-	}
+	assertNotInNormalPiConfig(
+		path,
+		`refusing to modify normal Pi config from The Last Harness wrapper command (${label}): ${path}`,
+	);
 }
 
 function wrapperIsManaged(path, marker = DEFAULT_MARKER) {
