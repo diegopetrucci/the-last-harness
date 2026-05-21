@@ -19,6 +19,11 @@ All notable changes to The Last Harness will be documented in this file.
 
 > **Internal note:** `TLH_SKIP_GNOSIS_INSTALL=1` exists as a test/benchmark escape hatch only; it is not a supported user opt-out.
 
+### Added
+
+- Added footer subscription usage for supported OpenAI/Codex and Anthropic OAuth subscription sessions; weekly usage remains hidden by default and is controlled with `/usage`.
+- Subscription usage footer relies on undocumented vendor endpoints (`https://chatgpt.com/backend-api/wham/usage` and `https://api.anthropic.com/api/oauth/usage` with the `oauth-2025-04-20` beta flag) called with the session's existing OAuth bearer; the footer segment is hidden when those fetches fail.
+
 ### Changed
 
 - `tk` ticket integration is now mandatory: TLH documents the `tlh tickets ...` helper, rejects legacy ticket opt-outs, re-enables legacy disabled ticket settings, provisions the pinned `wedow/ticket` v0.3.2 managed `<agent>/bin/tk` with SHA-256 verification and sanitized helper-tool handling when needed, keeps `<agent>/bin` on `PATH` for sessions, fails install/update if no valid `tk` can be found or installed, and records managed install SHA-256 for future pinned-source reinstalls.

@@ -15,6 +15,7 @@ const primaryRuntimeSource = readFileSync(new URL("../extensions/the-last-harnes
 const ticketRuntimeSource = readFileSync(new URL("../extensions/the-last-harness/tickets.ts", import.meta.url), "utf8");
 const effortSource = readFileSync(new URL("../extensions/the-last-harness/effort.ts", import.meta.url), "utf8");
 const promptsSource = readFileSync(new URL("../extensions/the-last-harness/prompts.ts", import.meta.url), "utf8");
+const usageLimitsSource = readFileSync(new URL("../extensions/the-last-harness/usage-limits.ts", import.meta.url), "utf8");
 const jiti = createJiti(import.meta.url);
 const { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents } = await jiti.import(
 	"../extensions/the-last-harness/prompts.ts",
@@ -121,7 +122,9 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
 	assert.match(extensionSource, /from "\.\/the-last-harness\/header\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/primary-agent-runtime\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/resources\.js"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/subscription-usage\.mjs"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/types\.js"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/usage-limits\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/constants\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/gnosis\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/profile-state\.js"/);
@@ -170,4 +173,27 @@ test("extension wires multi-primary commands and active-primary safety", () => {
 	assert.match(agentCommand, /writeTlhPrimaryAgentDefault\(ctx\.cwd, defaultSelection\)/);
 	assert.match(shortcut, /architect\/product\/bug-hunter\/disabled/);
 	assert.match(toolCall, /!isEnabledPrimaryAgentSelection\(currentPrimaryAgentSelection\(\)\)/);
+});
+
+test("extension wires subscription usage to lifecycle refreshes and footer", () => {
+	const sessionStart = sourceSection(extensionSource, 'pi.on("session_start"', "\n\t});\n}");
+
+	assert.match(extensionSource, /createTlhSubscriptionUsageService\(\)/);
+	assert.match(extensionSource, /pi\.on\("model_select"/);
+	assert.match(extensionSource, /pi\.on\("turn_end"/);
+	assert.match(sessionStart, /refreshSubscriptionUsage\(ctx\)/);
+	assert.match(sessionStart, /subscriptionUsage: subscriptionUsageService/);
+	assert.match(sessionStart, /shouldShowTlhUsageWeekly\(getTlhUsageLimitsConfig\(ctx\.cwd\)\)/);
+});
+
+test("extension wires usage-limit command to isolated TLH settings", () => {
+	assert.match(extensionSource, /registerUsageCommand\(pi\)/);
+	assert.match(usageLimitsSource, /pi\.registerCommand\("usage"/);
+	assert.match(usageLimitsSource, /value: "weekly on"/);
+	assert.match(usageLimitsSource, /value: "weekly off"/);
+	assert.match(usageLimitsSource, /value: "weekly toggle"/);
+	assert.match(usageLimitsSource, /tlhSettingsPathForWrite\(\)/);
+	assert.match(usageLimitsSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
+	assert.match(usageLimitsSource, /settings\.tlh\.usageLimits\.showWeekly = showWeekly/);
+	assert.match(usageLimitsSource, /showWeekly === true/);
 });
