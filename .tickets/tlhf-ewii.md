@@ -2,7 +2,7 @@
 id: tlhf-ewii
 status: open
 deps: []
-links: []
+links: [tlht-41ov, tlht-d5w7]
 created: 2026-05-19T20:37:35Z
 type: bug
 priority: 1

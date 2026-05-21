@@ -2,7 +2,7 @@
 id: tlh-s5pn
 status: open
 deps: []
-links: []
+links: [tlht-41ov, tlht-d5w7]
 created: 2026-05-17T17:51:52Z
 type: chore
 priority: 2

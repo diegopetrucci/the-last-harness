@@ -1,8 +1,8 @@
 ---
 id: tlht-azhc
 status: open
-deps: []
-links: []
+deps: [tlht-lsaq]
+links: [tlht-41ov]
 created: 2026-05-20T19:03:26Z
 type: task
 priority: 2
