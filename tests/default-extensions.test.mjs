@@ -84,6 +84,25 @@ test("shared default-extension reader trims descriptions and can allow missing m
 	);
 });
 
+test("bundled manifest keeps rtk replacements and quiet-tools-compatible load order", () => {
+	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
+	const ids = bundled.map(({ id }) => id);
+	const rtk = bundled.find(({ id }) => id === "rtk");
+
+	assert.ok(rtk, "bundled rtk default should exist");
+	assert.deepEqual(rtk.aliases, ["pi-rtk"]);
+	assert.deepEqual(rtk.replaces, [
+		"npm:pi-rtk",
+		"npm:@sherif-fanous/pi-rtk",
+		"git:github.com/sherif-fanous/pi-rtk",
+	]);
+	assert.equal(rtk.migrateReplacements, true);
+	assert.equal(rtk.critical, false);
+	assert.equal(rtk.source, "git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5");
+	assert(ids.indexOf("permission-gate") < ids.indexOf("rtk"), "permission-gate should load before rtk");
+	assert(ids.indexOf("rtk") < ids.indexOf("quiet-tools"), "quiet-tools should load after rtk");
+});
+
 test("tlh-defaults errors when the default-extension manifest is missing", () => {
 	const fixture = tempFixture();
 	writeFileSync(fixture.settings, JSON.stringify({ packages: [] }, null, 2));
@@ -179,6 +198,87 @@ test("merge ignores and cleans stale/manual critical opt-outs while preserving n
 	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["helper"]);
 });
 
+test("merge migrates non-critical pi-rtk replacements to the bundled TLH fork", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "rtk",
+			aliases: ["pi-rtk"],
+			replaces: ["npm:pi-rtk", "npm:@sherif-fanous/pi-rtk", "git:github.com/sherif-fanous/pi-rtk"],
+			migrateReplacements: true,
+			source: "git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: ["npm:@sherif-fanous/pi-rtk"],
+	}, null, 2));
+
+	runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", fixture.extensions,
+		"--quiet",
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert(settings.packages.includes("git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5"));
+	assert(!settings.packages.includes("npm:pi-rtk"));
+	assert(!settings.packages.includes("npm:@sherif-fanous/pi-rtk"));
+	assert(!settings.packages.includes("git:github.com/sherif-fanous/pi-rtk"));
+});
+
+test("merge reorders only targeted default extensions so unrelated defaults stay in place", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "permission-gate",
+			source: "npm:@diegopetrucci/pi-permission-gate",
+		},
+		{
+			id: "oracle",
+			source: "npm:@diegopetrucci/pi-oracle",
+		},
+		{
+			id: "rtk",
+			aliases: ["pi-rtk"],
+			replaces: ["npm:pi-rtk", "npm:@sherif-fanous/pi-rtk", "git:github.com/sherif-fanous/pi-rtk"],
+			migrateReplacements: true,
+			source: "git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
+		},
+		{
+			id: "quiet-tools",
+			replaces: ["npm:@diegopetrucci/pi-compact-bash"],
+			source: "npm:@diegopetrucci/pi-quiet-tools",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [
+			"npm:before",
+			"npm:@diegopetrucci/pi-compact-bash",
+			"npm:@diegopetrucci/pi-oracle",
+			"npm:@sherif-fanous/pi-rtk",
+			"npm:after",
+		],
+	}, null, 2));
+
+	const output = runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", fixture.extensions,
+	]);
+
+	assert.match(output, /reorder targeted default extension packages for load order: quiet-tools, permission-gate, rtk -> permission-gate, rtk, quiet-tools/);
+	assert.deepEqual(readJson(fixture.settings).packages, [
+		"npm:before",
+		"npm:@diegopetrucci/pi-permission-gate",
+		"npm:@diegopetrucci/pi-oracle",
+		"npm:after",
+		"git:github.com/diegopetrucci/the-last-harness",
+		"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
+		"npm:@diegopetrucci/pi-compact-bash",
+	]);
+});
+
 test("tlh-defaults rejects disabling critical defaults without changing settings", () => {
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
@@ -243,6 +343,62 @@ test("tlh-defaults enable cleans stale critical opt-outs while preserving non-cr
 	const settings = readJson(fixture.settings);
 	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["helper"]);
 	assert.deepEqual(settings.packages, ["npm:subagents"]);
+});
+
+test("tlh-defaults enable repairs targeted default extension load order for rtk", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "permission-gate",
+			source: "npm:@diegopetrucci/pi-permission-gate",
+		},
+		{
+			id: "oracle",
+			source: "npm:@diegopetrucci/pi-oracle",
+		},
+		{
+			id: "rtk",
+			aliases: ["pi-rtk"],
+			replaces: ["npm:pi-rtk", "npm:@sherif-fanous/pi-rtk", "git:github.com/sherif-fanous/pi-rtk"],
+			migrateReplacements: true,
+			source: "git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
+		},
+		{
+			id: "quiet-tools",
+			replaces: ["npm:@diegopetrucci/pi-compact-bash"],
+			source: "npm:@diegopetrucci/pi-quiet-tools",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [
+			"npm:before",
+			"npm:@diegopetrucci/pi-permission-gate",
+			"npm:@diegopetrucci/pi-oracle",
+			"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
+			"npm:@diegopetrucci/pi-compact-bash",
+		],
+	}, null, 2));
+
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"disable", "rtk",
+	]);
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"enable", "rtk",
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.packages, [
+		"npm:before",
+		"npm:@diegopetrucci/pi-permission-gate",
+		"npm:@diegopetrucci/pi-oracle",
+		"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
+		"npm:@diegopetrucci/pi-compact-bash",
+	]);
+	assert.deepEqual(settings.tlh?.disabledDefaultExtensions ?? [], []);
 });
 
 test("merge updates critical package pins without --force", () => {

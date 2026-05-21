@@ -12,6 +12,7 @@ import {
 	packageIdentity,
 	packageSourceOf,
 	readDefaultExtensions,
+	repairTargetedDefaultExtensionLoadOrder,
 } from "./lib/default-extensions.mjs";
 import {
 	assertNotInNormalPiConfig,
@@ -293,6 +294,14 @@ function applyDisabledDefaultExtensions(settings, defaultExtensions, disabledIds
 	}
 }
 
+function applyDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds, changes) {
+	const loadOrderRepair = repairTargetedDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds);
+	if (!loadOrderRepair) return;
+	changes.push(
+		`reorder targeted default extension packages for load order: ${loadOrderRepair.previous.join(", ")} -> ${loadOrderRepair.next.join(", ")}`,
+	);
+}
+
 function scrubGnosisSettings(settings, changes) {
 	if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
 	if (!Object.hasOwn(settings.tlh, "gnosis")) return;
@@ -491,6 +500,7 @@ function main() {
 	applyReplacedDefaultExtensions(next, defaultExtensions, disabledIds, changes, { force: args.force });
 	applyDefaultExtensionPackageDedupes(next, defaultExtensions, disabledIds, changes, { force: args.force, sourceUpdatedIdentities });
 	applyDisabledDefaultExtensions(next, defaultExtensions, disabledIds, changes);
+	applyDefaultExtensionLoadOrder(next, defaultExtensions, disabledIds, changes);
 	removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
 	scrubGnosisSettings(next, changes);
 
