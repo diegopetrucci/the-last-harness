@@ -35,6 +35,7 @@ They run in fresh child contexts: they get the task and project context, not the
 - **Project memory**: Gnosis is required and installed automatically on supported platforms (linux/darwin × x64/arm64) so agents can record decisions, constraints, rejected alternatives, and lessons in repo-local memory. Unsupported platforms hard-fail at install.
 - **Ticketed execution**: TLH requires `tk` for dependency-tracked tickets, installing a managed command at `~/.the-last-harness/agent/bin/tk` when it needs to supply one. The architect hands one ticket at a time to implementation and review agents; product mode can shape product-approved tickets for later handoff.
 - **Context management**: context is capped to 200k tokens to avoid the `dumb zone`, and `/context` lets you see what is eating up your context.
+- **Subscription usage footer**: OAuth subscription sessions on OpenAI/Codex and Anthropic show the current usage window in the footer; weekly usage is hidden by default and controlled with `/usage`.
 - **Safety rails**: Bundled permission and destructive-action confirmations add checkpoints before sensitive commands or file changes.
 - **Inline bash snippets**: trusted `!{...}` snippets in your prompt are expanded through local bash before the agent sees them, useful for quick context like `!{git status --short}`.
 - **Dirty-repo guard**: TLH prompts before starting, switching, or forking sessions when the current git repo has uncommitted changes, so work-in-progress is harder to lose.
@@ -53,10 +54,20 @@ Common TLH commands:
 - `/architect [status|on|off|toggle|reset|default on|default off|default reset]` — compatibility controls for architect-only flows; maps to architect/disabled primary-agent settings.
 - `/effort ...` — pick or set model reasoning effort. Available levels depend on the current model.
 - `/fast [on|off|auto|toggle|status]` — manage OpenAI Fast mode for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions.
+- `/usage [status|weekly on|weekly off|weekly toggle]` — inspect or change whether the footer shows weekly subscription usage.
 - `/context [--no-open] [--keep] [--redact] [--full|--current]` — generate a local HTML breakdown of where the session context is going.
 - `/harness-plan` — open the bundled implementation-planning prompt.
 
 Persistent primary-agent changes are written under `tlh.primaryAgent` in the isolated TLH settings file at `~/.the-last-harness/agent/settings.json`, with a backup when an existing settings file is changed. Use `/agent default reset` or `/architect default reset` to remove those persistent fields and return future sessions to the built-in `architect` default. Use `/agent reset` or `/architect reset` for the current session only.
+
+`/usage weekly on|off|toggle` writes the weekly footer preference under `tlh.usageLimits.showWeekly` in the same isolated settings file; the default is hidden when unset.
+
+The subscription usage footer fetches usage with the OAuth bearer your session already uses from two undocumented vendor endpoints:
+
+- `https://chatgpt.com/backend-api/wham/usage` for `openai-codex` sessions.
+- `https://api.anthropic.com/api/oauth/usage` for `anthropic` OAuth sessions (currently requires the `oauth-2025-04-20` beta flag).
+
+These are unsupported, internal endpoints and may change or be revoked without notice. No additional credentials are introduced — TLH reuses the same OAuth bearer the session already holds. When these fetches fail, TLH silently hides the footer segment. The feature is active only for `openai-codex` and `anthropic` OAuth subscription sessions and is on by default; an explicit disable mechanism is out of scope for this release.
 
 Bundled extension commands are also available for power users: /context-cap, /quiet-tools, /librarian-cache, /oracle-model, /fff-health, /fff-rescan, /fff-mode, /triage-comments, /intercom, /run, /parallel, /chain, /run-chain, /subagents-doctor, and Plannotator commands such as /plannotator-review and /plannotator-annotate.
 

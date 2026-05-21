@@ -10,6 +10,11 @@ import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { formatHomePath, sanitizeStatusText } from "./common.js";
 import type { FooterGitCache } from "./footer-git-cache.js";
 import { composeTlhFooterFirstLine } from "./footer-first-line.js";
+import {
+	getTlhSubscriptionUsageFooterState,
+	type TlhFooterSubscriptionUsageOptions,
+} from "./footer-subscription-usage.js";
+export { formatTlhSubscriptionUsageFooterSegment } from "./footer-subscription-usage.js";
 
 function formatTokens(count: number): string {
 	if (count < 1000) {
@@ -54,12 +59,15 @@ function collectUsageTotals(ctx: ExtensionContext) {
 	return totals;
 }
 
+export type TlhFooterUsageOptions = TlhFooterSubscriptionUsageOptions;
+
 export function createTlhFooter(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	theme: Theme,
 	getPrimaryName: () => string,
 	footerData?: ReadonlyFooterDataProvider,
+	usageOptions: TlhFooterUsageOptions = {},
 	gitCache?: FooterGitCache | null,
 ) {
 	return {
@@ -80,10 +88,15 @@ export function createTlhFooter(
 			});
 
 			const statsParts: string[] = [];
-			const usingSubscription = model ? ctx.modelRegistry.isUsingOAuth(model) : false;
-			// In tlh, subscription users should not see dollar-cost estimates in the footer.
-			if (totals.cost > 0 && !usingSubscription) {
+			const subscriptionUsageState = getTlhSubscriptionUsageFooterState(ctx, model, usageOptions);
+			// In tlh, hide dollar-cost estimates whenever the user is on a subscription (eligible)
+			// or any other OAuth-authenticated provider (e.g. GitHub Copilot). The subscription-usage
+			// segment still renders only for supported subscription providers.
+			if (totals.cost > 0 && !subscriptionUsageState.suppressCost) {
 				statsParts.push(formatCost(totals.cost));
+			}
+			if (subscriptionUsageState.segment) {
+				statsParts.push(subscriptionUsageState.segment);
 			}
 
 			const contextPercentDisplay =

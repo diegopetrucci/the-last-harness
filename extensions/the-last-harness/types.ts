@@ -6,6 +6,50 @@ export type StartupResources = {
 	themes: string[];
 };
 
+export type TlhUsageLimitsConfig = {
+	showWeekly?: boolean;
+};
+
+export type TlhUsageWeeklyAction = "on" | "off" | "toggle";
+
+export type TlhSubscriptionUsageProvider = "openai-codex" | "anthropic";
+
+export type TlhSubscriptionUsageWindow = {
+	key: string;
+	label: string;
+	used?: number;
+	limit?: number;
+	remaining?: number;
+	percent?: number;
+	resetsAt?: string;
+	durationMs?: number;
+};
+
+export type TlhSubscriptionUsageSnapshot = {
+	provider: TlhSubscriptionUsageProvider;
+	fetchedAt: number;
+	windows: {
+		session: TlhSubscriptionUsageWindow;
+		weekly?: TlhSubscriptionUsageWindow;
+	};
+};
+
+export type TlhSubscriptionUsageSnapshotProvider = {
+	getSnapshot(provider?: string): TlhSubscriptionUsageSnapshot | undefined;
+	getSnapshotForContext?(ctx: unknown): TlhSubscriptionUsageSnapshot | undefined;
+	isEligible?(target?: unknown): boolean;
+};
+
+export type TlhUsageRefreshOptions = {
+	force?: boolean;
+};
+
+export type TlhUsageLimitsWriteResult = {
+	settingsPath: string;
+	backupPath?: string;
+	changed: boolean;
+};
+
 export type TlhUpdateCheckConfig = {
 	enabled?: boolean;
 };
@@ -42,6 +86,7 @@ export type TlhPrimaryAgentWriteResult = {
 
 export type TlhSettings = {
 	tlh?: {
+		usageLimits?: TlhUsageLimitsConfig;
 		updateCheck?: TlhUpdateCheckConfig;
 		telemetry?: TlhTelemetryConfig;
 		tickets?: TlhTicketsConfig;
