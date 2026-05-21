@@ -2,6 +2,7 @@
 name: bug-hunter
 description: Investigates reported bugs, identifies root causes, and recommends fixes without changing code.
 model: anthropic/claude-opus-4-7
+tlhOpenaiModels: openai-codex/gpt-5.5, openai/gpt-5.5
 thinking: high
 tools: read, grep, find, ls, bash, subagent, intercom
 systemPromptMode: append

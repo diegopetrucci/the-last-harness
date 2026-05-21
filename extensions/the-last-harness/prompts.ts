@@ -55,6 +55,7 @@ function parseAgentPrompt(filePath: string): AgentPrompt | undefined {
 		name,
 		description,
 		model: frontmatter.model?.trim() || undefined,
+		tlhOpenaiModels: splitCommaList(frontmatter.tlhOpenaiModels),
 		thinking: parseThinkingLevelValue(frontmatter.thinking),
 		tools: splitCommaList(frontmatter.tools),
 		systemPrompt: body,
@@ -74,7 +75,12 @@ export function loadSubagentMetadata(): SubagentMetadata[] {
 	return readMarkdownFilesRecursive(join(packageRoot(), "agents", "subagents"))
 		.map((filePath) => parseAgentPrompt(filePath))
 		.filter((agent): agent is AgentPrompt => Boolean(agent))
-		.map((agent) => ({ name: agent.name, description: agent.description }))
+		.map((agent) => ({
+			name: agent.name,
+			description: agent.description,
+			model: agent.model,
+			tlhOpenaiModels: agent.tlhOpenaiModels,
+		}))
 		.sort((a, b) => a.name.localeCompare(b.name));
 }
 
