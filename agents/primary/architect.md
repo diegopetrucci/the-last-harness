@@ -3,7 +3,7 @@ name: architect
 description: Clarifies requirements, manages implementation tasks, and orchestrates minor subagents.
 model: anthropic/claude-opus-4-7
 thinking: high
-tools: read, grep, find, ls, bash, subagent, intercom
+tools: read, write, edit, grep, find, ls, bash, subagent, intercom
 systemPromptMode: append
 inheritProjectContext: true
 inheritSkills: false
