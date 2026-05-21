@@ -360,6 +360,7 @@ required|scripts/lib/tlh-install-utils.mjs
 required|scripts/lib/tlh-install-git.mjs
 required|scripts/lib/tlh-install-subagents.mjs
 required|scripts/lib/tlh-install-support-files.mjs
+required|scripts/lib/default-extensions.mjs
 required|scripts/tlh-install-query.mjs
 required|scripts/merge-settings.mjs
 required|scripts/tlh-defaults.mjs

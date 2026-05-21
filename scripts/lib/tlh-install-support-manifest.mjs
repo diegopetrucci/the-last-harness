@@ -59,6 +59,13 @@ const BASE_SUPPORT_FILES = Object.freeze([
 		installName: "",
 	},
 	{
+		variable: "DEFAULT_EXTENSIONS_LIB",
+		requirement: REQUIRED,
+		relativePath: "scripts/lib/default-extensions.mjs",
+		tempPath: "lib/default-extensions.mjs",
+		installName: "lib/default-extensions.mjs",
+	},
+	{
 		variable: "TLH_INSTALL_QUERY_SCRIPT",
 		requirement: REQUIRED,
 		relativePath: "scripts/tlh-install-query.mjs",

@@ -138,6 +138,53 @@ run_support_manifest_smoke() {
   done
 }
 
+run_runtime_helper_import_manifest_smoke() {
+  log "Running installer runtime helper import manifest smoke check..."
+  run_scrubbed_installer_env node --input-type=module <<'NODE_RUNTIME_IMPORT_MANIFEST'
+import { readFileSync } from 'node:fs';
+import { dirname, join, normalize, sep } from 'node:path';
+
+import { supportFileManifest } from './scripts/lib/tlh-install-support-manifest.mjs';
+
+const fetchedRuntimeScripts = [
+  'scripts/merge-settings.mjs',
+  'scripts/tlh-defaults.mjs',
+];
+
+function toPosixPath(path) {
+  return path.split(sep).join('/');
+}
+
+function importedScriptLibHelpers(scriptPath) {
+  const source = readFileSync(scriptPath, 'utf8');
+  const staticImportPattern = /(?:^|\n)\s*import\s+(?:(?:[^'\"]+?)\s+from\s+)?["']([^"']+)["']/g;
+  const dynamicImportPattern = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
+  return [
+    ...source.matchAll(staticImportPattern),
+    ...source.matchAll(dynamicImportPattern),
+  ]
+    .map((match) => match[1])
+    .filter((specifier) => specifier.startsWith('./lib/') || specifier.startsWith('../scripts/lib/'))
+    .map((specifier) => toPosixPath(normalize(join(dirname(scriptPath), specifier))))
+    .filter((relativePath) => relativePath.startsWith('scripts/lib/'));
+}
+
+const importedHelpers = new Set(fetchedRuntimeScripts.flatMap(importedScriptLibHelpers));
+const missingByMode = [];
+for (const noSettings of [false, true]) {
+  const manifestPaths = new Set(supportFileManifest({ noSettings }).map((file) => file.relativePath));
+  const missing = [...importedHelpers].filter((relativePath) => !manifestPaths.has(relativePath));
+  if (missing.length > 0) {
+    missingByMode.push(`${noSettings ? 'no-settings' : 'with-settings'}: ${missing.join(', ')}`);
+  }
+}
+
+if (missingByMode.length > 0) {
+  throw new Error(`scripts/lib helper imports are absent from installer support manifest: ${missingByMode.join('; ')}`);
+}
+NODE_RUNTIME_IMPORT_MANIFEST
+}
+
 run_install_query_smoke() {
   log "Running installer query smoke check..."
   local case_dir="${TMP_ROOT}/install-query"
@@ -1110,6 +1157,7 @@ EOF_FAKE_RELEASE_STAGE1
 
 run_static_checks
 run_support_manifest_smoke
+run_runtime_helper_import_manifest_smoke
 run_install_query_smoke
 run_stage1_dry_run_smoke
 run_stage1_relative_path_canonicalization_smoke
