@@ -158,6 +158,49 @@ export function refreshGitCheckout(config, { targetDir, repo, ref, label, missin
 	}
 	runGitCommand(config, ["git", "-C", targetDir, "fetch", "--prune", "--tags", "origin"], io);
 
+	// Detect a dirty tree and back it up before any destructive operations.
+	const statusOutput = gitOutput(config, targetDir, ["status", "--porcelain"], io);
+	if (statusOutput !== "") {
+		const timestamp = new Date().toISOString();
+		const refTimestamp = timestamp.replace(/:/g, "-");
+		const backupRef = `refs/tlh-backup/${refTimestamp}`;
+
+		// Stage everything that is not gitignored (no -f so node_modules etc. stay out).
+		runGitCommand(config, ["git", "-C", targetDir, "add", "-A"], io);
+
+		// Capture tree and (optional) parent objects.
+		const tree = gitOutput(config, targetDir, ["write-tree"], io);
+		let parent = null;
+		if (gitSucceeds(config, targetDir, ["rev-parse", "HEAD"], io)) {
+			parent = gitOutput(config, targetDir, ["rev-parse", "HEAD"], io);
+		}
+
+		// Build the backup commit.
+		const commitTreeArgs = ["commit-tree", tree];
+		if (parent) commitTreeArgs.push("-p", parent);
+		commitTreeArgs.push("-m", `tlh backup ${timestamp}`);
+		const commit = gitOutput(config, targetDir, commitTreeArgs, io);
+
+		// Store behind a private ref and drop the staged index.
+		runGitCommand(config, ["git", "-C", targetDir, "update-ref", backupRef, commit], io);
+		runGitCommand(config, ["git", "-C", targetDir, "reset", "--mixed"], io);
+
+		// Report the backup so the user knows how to recover.
+		const parentOrEmpty = parent ?? "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+		warn(`dirty checkout at ${targetDir} — local changes backed up to ${backupRef}`, io);
+		warn(`  git -C ${targetDir} show ${backupRef}`, io);
+		warn(`  git -C ${targetDir} diff ${parentOrEmpty} ${backupRef}`, io);
+
+		// Emit the diff body, capped at 200 lines.
+		const diffBody = gitOutput(config, targetDir, ["diff", parentOrEmpty, backupRef], io);
+		const diffLines = diffBody.split("\n");
+		const truncated = diffLines.length > 200;
+		warn(diffLines.slice(0, 200).join("\n"), io);
+		if (truncated) {
+			warn("... truncated, use the diff command above for full content", io);
+		}
+	}
+
 	let targetRef = ref;
 	if (gitSucceeds(config, targetDir, ["rev-parse", "--verify", "--quiet", `refs/tags/${ref}^{commit}`], io)) {
 		targetRef = `refs/tags/${ref}^{commit}`;
