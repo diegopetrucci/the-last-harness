@@ -30,6 +30,11 @@
     "description": "Research GitHub repositories and optionally cache local checkouts."
   },
   {
+    "id": "pi-web-access",
+    "source": "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1",
+    "description": "Exa-backed web search and URL fetch tools (web_search, fetch_content, get_search_content) used by the web-scout subagent."
+  },
+  {
     "id": "fff",
     "source": "npm:@ff-labs/pi-fff",
     "description": "FFF-powered fuzzy file and content search."

@@ -98,6 +98,44 @@ After finishing a task, run `gn help review`.
 
 Gnosis project data lives in repo-local `.gnosis` directories and ticket data lives in repo-local `.tickets` directories; TLH does not delete either. More integration details live in [`docs/integrations.md`](docs/integrations.md).
 
+### Web search
+
+TLH ships [`pi-web-access`](https://github.com/diegopetrucci/pi-web-access) (an Exa-only fork) as a non-critical default extension; the `web-scout` subagent uses its `web_search`, `fetch_content`, and `get_search_content` tools for general web research.
+
+**Extension:** pinned at `git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1`. Full design notes are in [`docs/web-search-spec.md`](docs/web-search-spec.md).
+
+**Configuration:**
+
+- Settings: `${PI_CODING_AGENT_DIR}/extensions/pi-web-access/settings.json`
+- Cache and Exa usage tracker: `${PI_CODING_AGENT_DIR}/cache/pi-web-access/`
+- The extension never reads or writes `~/.pi/`.
+
+**EXA API key precedence:**
+
+1. Explicit `exaApiKey` in `${PI_CODING_AGENT_DIR}/extensions/pi-web-access/settings.json`.
+2. `EXA_API_KEY` environment variable.
+3. Zero-config Exa MCP fallback (1 k req/mo shared free tier).
+
+The key is never persisted by TLH unless the user explicitly sets it.
+
+**Architect routing:** the architect delegates general web research to `web-scout` (Exa-backed, isolated read-only context). GitHub-specific research — repositories, issues, pull requests, releases, and project docs — still goes to `librarian`.
+
+**Privacy:** queries leave the machine via Exa. Exactly what is transmitted is documented in the fork's README under ["What leaves the machine"](https://github.com/diegopetrucci/pi-web-access/blob/tlh-v0.10.7-1/README.md#what-leaves-the-machine).
+
+**Opt-out:** the extension is non-critical — disabling it is safe and reversible:
+
+```sh
+tlh defaults disable pi-web-access   # opt out
+tlh defaults enable pi-web-access    # re-enable
+```
+
+**Manual migration:** TLH does not automatically migrate an existing `~/.pi/web-search.json`. To bring it over manually:
+
+```sh
+mkdir -p "${PI_CODING_AGENT_DIR}/extensions/pi-web-access" && \
+  cp ~/.pi/web-search.json "${PI_CODING_AGENT_DIR}/extensions/pi-web-access/settings.json"
+```
+
 ### Launch telemetry
 
 Release builds with TelemetryDeck identifiers configured send at most one pseudonymous launch event when an interactive `tlh` process starts. The event contains a hashed random install ID, event type, TLH version, privacy-filtered model value, OS name/version, and OS architecture. It does not include prompts, cwd, command arguments, repo names, hostname, username, file contents, settings contents, full environment variables, extension/package lists, API keys, provider base URLs, auth state, headers, or account identifiers. TelemetryDeck also receives normal network metadata such as source IP address and request time.

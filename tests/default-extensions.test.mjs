@@ -718,3 +718,29 @@ test("merge does not introduce warnings.anthropicExtraUsage when anthropic-auth 
 	assert.equal(settings.warnings?.anthropicExtraUsage, undefined, "warnings.anthropicExtraUsage should not be introduced by merge");
 	assert.equal(settings.warnings, undefined, "warnings object should not be created by merge");
 });
+
+test("bundled manifest contains pi-web-access entry with correct tag and flags", () => {
+	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
+	const webAccess = bundled.find(({ id }) => id === "pi-web-access");
+
+	assert.ok(webAccess, "bundled pi-web-access entry should exist");
+	assert.equal(webAccess.source, "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1");
+	assert.equal(webAccess.critical, false, "pi-web-access must not be critical");
+	assert.deepEqual(webAccess.replaces, [], "pi-web-access must have no replaces");
+	assert.equal(webAccess.migrateReplacements, false, "pi-web-access must have no migrateReplacements");
+	assert.deepEqual(webAccess.aliases, [], "pi-web-access must have no aliases");
+});
+
+test("bundled manifest has no duplicate ids or alias conflicts", () => {
+	// Note: runtime tool names registered by individual extensions are not statically introspectable
+	// from this manifest (they are set at extension runtime). The runtime-side tool-name uniqueness
+	// check lives in test/tool-name-uniqueness.test.mjs in the upstream fork.
+	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
+
+	const ids = bundled.map(({ id }) => id);
+	assert.equal(new Set(ids).size, ids.length, "bundled manifest must not contain duplicate ids");
+
+	// All ids plus all aliases must form a unique set so a new entry cannot accidentally alias an existing id.
+	const allNames = [...ids, ...bundled.flatMap(({ aliases }) => aliases)];
+	assert.equal(new Set(allNames).size, allNames.length, "bundled manifest ids and aliases must all be unique (no alias may shadow an existing id)");
+});

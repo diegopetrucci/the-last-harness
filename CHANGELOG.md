@@ -8,6 +8,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Bundled the patched TLH `pi-rtk` fork as a non-critical default extension, with quiet-tools-compatible load ordering and a documented `tlh defaults disable rtk` opt-out.
 - Suppressed the upstream Pi Anthropic extra-usage startup warning by default (`warnings.anthropicExtraUsage: false`); re-enable it by setting `"warnings": { "anthropicExtraUsage": true }` in `~/.the-last-harness/agent/settings.json`.
+- `pi-web-access` (Exa-only fork at `tlh-v0.10.7-1`) bundled as a non-critical default extension; supplies `web_search`, `fetch_content`, and `get_search_content` tools used by the `web-scout` subagent.
+- `web-scout` minor subagent (read-only, isolated fresh context, Exa-backed) for general web research; delegated freely by the architect.
 
 ### Changed
 
@@ -15,6 +17,14 @@ All notable changes to The Last Harness will be documented in this file.
 - Bundled TLH `pi-rtk` default now points at the no-footer fork tag, preserving `/rtk` repo-tooling behavior without adding a persistent footer indicator.
 - Footer restructured into three logical lines: working directory/git (unchanged), a single flowing `agent: … • model • thinking • context` line, and an optional session-stats line showing cost and/or subscription usage. Empty lines are omitted entirely.
 - Subscription usage session label now reads e.g. `5h session 27% used` (was `5h 27% used`).
+- Architect routing: GitHub research (repositories, issues, pull requests, releases, project docs) stays with `librarian`; general web research delegated to `web-scout`. Routing rule documented in `agents/primary/architect.md`.
+- `ALLOWED_SUBAGENTS` now includes `web-scout`.
+
+### Notes
+
+- The bundled `pi-web-access` extension is non-critical; `tlh defaults disable pi-web-access` opts out without affecting other features.
+- Web-search queries leave the machine via Exa (key from settings or env, or zero-config MCP fallback). See the fork README's ["What leaves the machine"](https://github.com/diegopetrucci/pi-web-access/blob/tlh-v0.10.7-1/README.md#what-leaves-the-machine) section.
+- Extension settings and cache live under `${PI_CODING_AGENT_DIR}`; TLH never touches `~/.pi/`.
 
 ## [0.10.0] - 2026-05-21
 

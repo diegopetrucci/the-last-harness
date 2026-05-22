@@ -20,6 +20,7 @@ This repository packages **The Last Harness** as an isolated profile for the ups
 - `README.md` — public install, update, uninstall, and security documentation.
 - `CHANGELOG.md` — release notes for versioned releases.
 - `docs/releasing.md` — tag-based release checklist and process.
+- `docs/web-search-spec.md` — locked spec and decisions for the web-search / web-scout work (source of truth for tlha-1xp0, tlha-bw2g, tlha-wbrc, tlha-nelh, tlha-sqox, tlha-kkye, tlha-7jwh).
 - `.github/workflows/release.yml` — tag-triggered GitHub Release workflow.
 
 ## Safety Requirements

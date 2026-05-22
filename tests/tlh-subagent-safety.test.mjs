@@ -36,8 +36,16 @@ test("ALLOWED_SUBAGENTS exposes bundled minor agents", () => {
 		"repo-scout",
 		"diff-summarizer",
 		"librarian",
+		"web-scout",
 		"oracle",
 	]);
+});
+
+test("validateSubagentToolInput allows web-scout as a permitted delegation target", () => {
+	const single = { agent: "web-scout", prompt: "research the general web for upstream release notes" };
+	assertAllowed(single);
+	assert.equal(single.agentScope, "user");
+	assert.equal(single.context, "fresh");
 });
 
 test("validateSubagentToolInput allows approved execution and forces fresh user context", () => {
