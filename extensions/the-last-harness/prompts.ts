@@ -40,6 +40,17 @@ function parseThinkingLevelValue(value: string | undefined): ThinkingLevel | und
 	return value && isThinkingLevel(value) ? value : undefined;
 }
 
+function parseBooleanValue(value: string | undefined): boolean | undefined {
+	const normalized = value?.trim().toLowerCase();
+	if (normalized === "true") {
+		return true;
+	}
+	if (normalized === "false") {
+		return false;
+	}
+	return undefined;
+}
+
 function parseAgentPrompt(filePath: string): AgentPrompt | undefined {
 	const content = readText(filePath);
 	if (!content) {
@@ -57,6 +68,9 @@ function parseAgentPrompt(filePath: string): AgentPrompt | undefined {
 		model: frontmatter.model?.trim() || undefined,
 		tlhOpenaiModels: splitCommaList(frontmatter.tlhOpenaiModels),
 		thinking: parseThinkingLevelValue(frontmatter.thinking),
+		tlhOpenaiThinking: parseThinkingLevelValue(frontmatter.tlhOpenaiThinking),
+		applyModel: parseBooleanValue(frontmatter.applyModel),
+		applyThinking: parseBooleanValue(frontmatter.applyThinking),
 		tools: splitCommaList(frontmatter.tools),
 		systemPrompt: body,
 		filePath,

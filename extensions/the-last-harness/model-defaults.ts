@@ -1,3 +1,5 @@
+import type { ThinkingLevel } from "./types.js";
+
 export type ProviderModelReference = {
 	provider: string;
 	id: string;
@@ -7,6 +9,13 @@ export type AgentModelDefaults = {
 	name: string;
 	model?: string;
 	tlhOpenaiModels?: string[];
+	thinking?: ThinkingLevel;
+	tlhOpenaiThinking?: ThinkingLevel;
+};
+
+export type ProviderAwareAgentDefaults<T extends ProviderModelReference = ProviderModelReference> = {
+	model?: T;
+	thinking?: ThinkingLevel;
 };
 
 const OPENAI_PROVIDERS = new Set(["openai-codex", "openai"]);
@@ -53,6 +62,20 @@ function availableOpenaiCandidate<T extends ProviderModelReference>(
 	return findAvailableProviderModel(availableModels, candidate);
 }
 
+function currentProviderOpenaiCandidate<T extends ProviderModelReference>(
+	agent: AgentModelDefaults | undefined,
+	availableModels: readonly T[],
+	currentProvider?: string,
+): T | undefined {
+	if (!isOpenaiProvider(currentProvider)) {
+		return undefined;
+	}
+	const currentProviderCandidate = agent?.tlhOpenaiModels?.find(
+		(candidate) => parseProviderModelReference(candidate)?.provider === currentProvider,
+	);
+	return availableOpenaiCandidate(availableModels, currentProviderCandidate);
+}
+
 export function selectProviderAwareAgentModel<T extends ProviderModelReference>(
 	agent: AgentModelDefaults | undefined,
 	availableModels: readonly T[],
@@ -67,16 +90,12 @@ export function selectProviderAwareAgentModel<T extends ProviderModelReference>(
 		return defaultModel;
 	}
 
-	const candidates = agent.tlhOpenaiModels ?? [];
-	if (isOpenaiProvider(currentProvider)) {
-		const currentProviderCandidate = candidates.find((candidate) => parseProviderModelReference(candidate)?.provider === currentProvider);
-		const currentProviderModel = availableOpenaiCandidate(availableModels, currentProviderCandidate);
-		if (currentProviderModel) {
-			return currentProviderModel;
-		}
+	const currentProviderModel = currentProviderOpenaiCandidate(agent, availableModels, currentProvider);
+	if (currentProviderModel) {
+		return currentProviderModel;
 	}
 
-	for (const candidate of candidates) {
+	for (const candidate of agent.tlhOpenaiModels ?? []) {
 		const model = availableOpenaiCandidate(availableModels, candidate);
 		if (model) {
 			return model;
@@ -84,6 +103,19 @@ export function selectProviderAwareAgentModel<T extends ProviderModelReference>(
 	}
 
 	return undefined;
+}
+
+export function selectProviderAwareAgentDefaults<T extends ProviderModelReference>(
+	agent: AgentModelDefaults | undefined,
+	availableModels: readonly T[],
+	currentProvider?: string,
+): ProviderAwareAgentDefaults<T> {
+	const model = currentProviderOpenaiCandidate(agent, availableModels, currentProvider)
+		?? selectProviderAwareAgentModel(agent, availableModels, currentProvider);
+	const thinking = isOpenaiProvider(model?.provider ?? currentProvider) && agent?.tlhOpenaiThinking
+		? agent.tlhOpenaiThinking
+		: agent?.thinking;
+	return { model, thinking };
 }
 
 export function selectProviderAwareAgentModelId(

@@ -5,6 +5,7 @@ import { createJiti } from "jiti";
 const jiti = createJiti(import.meta.url);
 const {
 	applyProviderAwareSubagentModels,
+	selectProviderAwareAgentDefaults,
 	selectProviderAwareAgentModelId,
 } = await jiti.import("../extensions/the-last-harness/model-defaults.ts");
 
@@ -18,6 +19,14 @@ const codeReviewer = {
 	name: "code-reviewer",
 	model: "anthropic/claude-opus-4-7",
 	tlhOpenaiModels: ["openai-codex/gpt-5.5", "openai/gpt-5.5"],
+};
+
+const rushLikePrimary = {
+	name: "rush",
+	model: "anthropic/claude-opus-4-7",
+	tlhOpenaiModels: ["openai-codex/gpt-5.5", "openai/gpt-5.5"],
+	thinking: "low",
+	tlhOpenaiThinking: "off",
 };
 
 const agents = new Map([
@@ -66,6 +75,42 @@ test("provider-aware model resolver prefers the current OpenAI provider when bot
 	const available = [...codexAvailable, ...openaiAvailable];
 	assert.equal(selectProviderAwareAgentModelId(developer, available, "openai"), "openai/gpt-5.4");
 	assert.equal(selectProviderAwareAgentModelId(developer, available, "openai-codex"), "openai-codex/gpt-5.4");
+});
+
+test("provider-aware primary defaults switch Rush-like thinking off for OpenAI providers", () => {
+	assert.deepEqual(selectProviderAwareAgentDefaults(rushLikePrimary, codexAvailable, "openai-codex"), {
+		model: { provider: "openai-codex", id: "gpt-5.5" },
+		thinking: "off",
+	});
+	assert.deepEqual(selectProviderAwareAgentDefaults(rushLikePrimary, openaiAvailable, "openai"), {
+		model: { provider: "openai", id: "gpt-5.5" },
+		thinking: "off",
+	});
+});
+
+test("provider-aware primary defaults prefer the current OpenAI provider over an available Anthropic default", () => {
+	const mixedCodexAvailable = [...anthropicAvailable, ...codexAvailable];
+	const mixedOpenaiAvailable = [...anthropicAvailable, ...openaiAvailable];
+
+	assert.deepEqual(selectProviderAwareAgentDefaults(rushLikePrimary, mixedCodexAvailable, "openai-codex"), {
+		model: { provider: "openai-codex", id: "gpt-5.5" },
+		thinking: "off",
+	});
+	assert.deepEqual(selectProviderAwareAgentDefaults(rushLikePrimary, mixedOpenaiAvailable, "openai"), {
+		model: { provider: "openai", id: "gpt-5.5" },
+		thinking: "off",
+	});
+});
+
+test("provider-aware primary defaults fall back to Anthropic thinking when OpenAI models are unavailable", () => {
+	assert.deepEqual(selectProviderAwareAgentDefaults(rushLikePrimary, anthropicAvailable, "openai-codex"), {
+		model: { provider: "anthropic", id: "claude-opus-4-7" },
+		thinking: "low",
+	});
+	assert.deepEqual(selectProviderAwareAgentDefaults({ ...rushLikePrimary, tlhOpenaiThinking: undefined }, codexAvailable, "openai-codex"), {
+		model: { provider: "openai-codex", id: "gpt-5.5" },
+		thinking: "low",
+	});
 });
 
 test("provider-aware subagent mutation preserves explicit model values", () => {

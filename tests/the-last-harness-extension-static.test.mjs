@@ -68,12 +68,17 @@ test("before_agent_start reapplies primary defaults without a one-shot model gat
 	const beforeAgentStart = sourceSection(primaryRuntimeSource, 'pi.on("before_agent_start"', 'pi.on("tool_call"');
 	const applyPrimaryModel = sourceSection(primaryRuntimeSource, "async function applyPrimaryModel", "function applyPrimaryThinking");
 	const applyPrimaryThinking = sourceSection(primaryRuntimeSource, "function applyPrimaryThinking", "async function applyPrimaryDefaults");
+	const applyPrimaryDefaults = sourceSection(primaryRuntimeSource, "async function applyPrimaryDefaults", "async function applyPrimaryModeChange");
 
 	assert.doesNotMatch(primaryRuntimeSource, /primaryModelAttempted/);
 	assert.match(beforeAgentStart, /await applyPrimaryDefaults\(ctx\);/);
-	assert.match(applyPrimaryModel, /selectProviderAwareAgentModel\(primary, ctx\.modelRegistry\.getAvailable\(\), ctx\.model\?\.provider\)/);
+	assert.match(applyPrimaryDefaults, /selectProviderAwareAgentDefaults\(primary, ctx\.modelRegistry\.getAvailable\(\), ctx\.model\?\.provider\)/);
+	assert.match(applyPrimaryDefaults, /resolvePrimaryAutoApplySetting\(primaryConfig, primary, "applyModel"\)/);
+	assert.match(applyPrimaryDefaults, /resolvePrimaryAutoApplySetting\(primaryConfig, primary, "applyThinking"\)/);
 	assert.match(applyPrimaryModel, /ctx\.model\?\.provider === model\.provider && ctx\.model\?\.id === model\.id/);
-	assert.match(applyPrimaryThinking, /pi\.getThinkingLevel\(\) === primary\.thinking/);
+	assert.match(applyPrimaryThinking, /pi\.getThinkingLevel\(\) === thinking/);
+	assert.match(promptsSource, /applyModel: parseBooleanValue\(frontmatter\.applyModel\)/);
+	assert.match(promptsSource, /applyThinking: parseBooleanValue\(frontmatter\.applyThinking\)/);
 });
 
 test("before_agent_start activates ticket runtime without disabled-ticket prompt branching", () => {
@@ -90,14 +95,22 @@ test("before_agent_start activates ticket runtime without disabled-ticket prompt
 test("primary and child prompts do not include disabled-ticket fallback guidance", () => {
 	const primaryAgents = loadPrimaryAgents();
 	const architect = primaryAgents.get("architect");
+	const rush = primaryAgents.get("rush");
 	assert.ok(architect, "architect primary prompt should load");
+	assert.ok(rush, "Rush primary prompt should load");
 	assert.deepEqual(architect.tlhOpenaiModels, ["openai-codex/gpt-5.5", "openai/gpt-5.5"]);
+	assert.deepEqual(rush.tlhOpenaiModels, ["openai-codex/gpt-5.5", "openai/gpt-5.5"]);
+	assert.equal(rush.thinking, "low");
+	assert.equal(rush.tlhOpenaiThinking, "off");
+	assert.equal(rush.applyModel, true);
+	assert.equal(rush.applyThinking, true);
+	assert.match(rush.systemPrompt, /Do not delegate implementation to `developer`/);
 	assert.deepEqual(
 		loadSubagentMetadata().find((agent) => agent.name === "developer")?.tlhOpenaiModels,
 		["openai-codex/gpt-5.4", "openai/gpt-5.4"],
 	);
 
-	const primaryPrompt = buildTlhSystemPrompt(architect, [], true);
+	const primaryPrompt = buildTlhSystemPrompt(rush, [], true);
 	const childPrompt = buildChildSubagentSystemPrompt();
 
 	for (const prompt of [primaryPrompt, childPrompt]) {
@@ -176,19 +189,21 @@ test("extension wires multi-primary commands and active-primary safety", () => {
 	const toolCall = sourceSection(primaryRuntimeSource, 'pi.on("tool_call"', 'return reason ? { block: true, reason } : undefined;');
 
 	assert.match(promptsSource, /function loadPrimaryAgents\(\): Map<TlhPrimaryAgentSelection, AgentPrompt>/);
-	assert.match(agentCommand, /default product/);
+	assert.match(agentCommand, /default rush/);
+	assert.match(agentCommand, /Usage: \/agent architect\|rush\|product\|bug-hunter\|disabled/);
 	assert.match(agentCommand, /writeTlhPrimaryAgentDefault\(ctx\.cwd, defaultSelection\)/);
-	assert.match(shortcut, /architect\/product\/bug-hunter\/disabled/);
+	assert.match(shortcut, /architect\/rush\/product\/bug-hunter\/disabled/);
 	assert.match(toolCall, /applyProviderAwareSubagentModels\(event\.input, subagentsByName, ctx\.modelRegistry\.getAvailable\(\), ctx\.model\?\.provider\)/);
-	assert.match(toolCall, /!isEnabledPrimaryAgentSelection\(currentPrimaryAgentSelection\(\)\)/);
+	assert.match(toolCall, /const selection = currentPrimaryAgentSelection\(\)/);
+	assert.match(toolCall, /if \(selection === "rush" && subagentCallTargetsAgent\(event\.input, "developer"\)\)/);
 	assert.match(toolCall, /const reason = validateSubagentToolInput\(event\.input\)/);
 	assert(
-		toolCall.indexOf("applyProviderAwareSubagentModels") < toolCall.indexOf("!isEnabledPrimaryAgentSelection"),
+		toolCall.indexOf("applyProviderAwareSubagentModels") < toolCall.indexOf("!isEnabledPrimaryAgentSelection(selection)"),
 		"provider-aware subagent defaults should run before the disabled-primary guard",
 	);
 	assert(
-		toolCall.indexOf("!isEnabledPrimaryAgentSelection") < toolCall.indexOf("validateSubagentToolInput"),
-		"subagent safety validation should stay behind the enabled-primary guard",
+		toolCall.indexOf('selection === "rush"') < toolCall.indexOf("validateSubagentToolInput"),
+		"Rush developer guard should run before generic subagent validation",
 	);
 });
 

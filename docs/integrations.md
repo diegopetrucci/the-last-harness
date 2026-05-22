@@ -1,6 +1,6 @@
 # Integrations
 
-TLH includes managed integrations for project memory and ticketed workflows. Gnosis project memory and `tk` ticket support are required for standard architect/product workflows.
+TLH includes managed integrations for project memory and ticketed workflows. Gnosis project memory and `tk` ticket support are required for standard architect/product workflows; Rush keeps that tooling available but handles small bounded tasks with direct edits instead of the default `tk` loop.
 
 ## Gnosis integration
 
@@ -17,7 +17,7 @@ Gnosis project data lives in repo-local `.gnosis` directories. Removing `~/.the-
 
 ## Ticket integration
 
-TLH requires the `tk` ticket CLI for architect and product workflows. Install and update first reuse a valid configured or existing `tk`; if none is available, they place a managed copy at `~/.the-last-harness/agent/bin/tk`. TLH does not install `tk` globally or through Homebrew, and it never writes normal `~/.pi/agent` config.
+TLH requires the `tk` ticket CLI for architect and product workflows. Rush is the exception in day-to-day usage: it edits directly for small bounded work and does not start with the default ticket/developer/review loop, even though the managed `tk` command is still installed for the rest of TLH. Install and update first reuse a valid configured or existing `tk`; if none is available, they place a managed copy at `~/.the-last-harness/agent/bin/tk`. TLH does not install `tk` globally or through Homebrew, and it never writes normal `~/.pi/agent` config.
 
 Inspect or reconfigure the command after install:
 

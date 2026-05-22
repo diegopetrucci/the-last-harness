@@ -20,7 +20,9 @@ test("primary-agent config defaults to architect without settings", () => {
 	assert.equal(primaryAgentDefaultLabel(undefined), "unset (TLH default: architect)");
 });
 
-test("primary-agent config supports product and disabled while preserving enabled=false compatibility", () => {
+test("primary-agent config supports rush, product, and disabled while preserving enabled=false compatibility", () => {
+	assert.equal(resolvePrimaryAgentConfig({ selected: "rush" }).selection, "rush");
+	assert.equal(resolvePrimaryAgentConfig({ enabled: true, selected: "rush" }).selection, "rush");
 	assert.equal(resolvePrimaryAgentConfig({ selected: "product" }).selection, "product");
 	assert.equal(resolvePrimaryAgentConfig({ enabled: true, selected: "product" }).selection, "product");
 	assert.equal(resolvePrimaryAgentConfig({ selected: "disabled" }).selection, DISABLED_PRIMARY_AGENT);
@@ -42,6 +44,8 @@ test("session primary state preserves old enabled booleans and supports selected
 	assert.equal(resolvePrimaryAgentSessionState(false).selection, DISABLED_PRIMARY_AGENT);
 	assert.equal(resolvePrimaryAgentSessionState({ enabled: true }).selection, DEFAULT_PRIMARY_AGENT);
 	assert.equal(resolvePrimaryAgentSessionState({ enabled: false }).selection, DISABLED_PRIMARY_AGENT);
+	assert.equal(resolvePrimaryAgentSessionState({ selected: "rush" }).selection, "rush");
+	assert.equal(resolvePrimaryAgentSessionState({ enabled: true, selected: "rush" }).selection, "rush");
 	assert.equal(resolvePrimaryAgentSessionState({ selected: "product" }).selection, "product");
 	assert.equal(resolvePrimaryAgentSessionState({ enabled: true, selected: "product" }).selection, "product");
 });
@@ -64,9 +68,10 @@ test("latest session primary state wins over earlier compatibility entries", () 
 	);
 });
 
-test("Shift+Tab cycle order is architect to product to bug-hunter to disabled", () => {
-	assert.deepEqual(PRIMARY_AGENT_CYCLE, ["architect", "product", "bug-hunter", "disabled"]);
-	assert.equal(nextPrimaryAgentSelection("architect"), "product");
+test("Shift+Tab cycle order is architect to rush to product to bug-hunter to disabled", () => {
+	assert.deepEqual(PRIMARY_AGENT_CYCLE, ["architect", "rush", "product", "bug-hunter", "disabled"]);
+	assert.equal(nextPrimaryAgentSelection("architect"), "rush");
+	assert.equal(nextPrimaryAgentSelection("rush"), "product");
 	assert.equal(nextPrimaryAgentSelection("product"), "bug-hunter");
 	assert.equal(nextPrimaryAgentSelection("bug-hunter"), "disabled");
 	assert.equal(nextPrimaryAgentSelection("disabled"), "architect");

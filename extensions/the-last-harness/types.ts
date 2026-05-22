@@ -71,7 +71,7 @@ export type TlhPrimaryAgentConfig = {
 	applyThinking?: boolean;
 };
 
-export type TlhPrimaryAgentSelection = "architect" | "product" | "bug-hunter" | "disabled";
+export type TlhPrimaryAgentSelection = "architect" | "rush" | "product" | "bug-hunter" | "disabled";
 
 export type TlhPrimaryAgentSessionState = {
 	enabled?: boolean;
@@ -166,6 +166,9 @@ export type AgentPrompt = {
 	model?: string;
 	tlhOpenaiModels?: string[];
 	thinking?: ThinkingLevel;
+	tlhOpenaiThinking?: ThinkingLevel;
+	applyModel?: boolean;
+	applyThinking?: boolean;
 	tools: string[];
 	systemPrompt: string;
 	filePath: string;
