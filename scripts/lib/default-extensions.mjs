@@ -65,6 +65,8 @@ function gitIdentity(source) {
 	return `git:${value.toLowerCase()}`;
 }
 
+const TARGETED_DEFAULT_EXTENSION_LOAD_ORDER = ["permission-gate", "rtk", "quiet-tools"];
+
 export function packageSourceOf(entry) {
 	if (typeof entry === "string") return entry;
 	if (isPlainObject(entry) && typeof entry.source === "string") return entry.source;
@@ -151,4 +153,46 @@ export function disabledDefaultExtensionIds(settings, defaultExtensions = []) {
 
 export function defaultExtensionPackageIdentities(extension) {
 	return [extension.source, ...extension.replaces].map(packageIdentity).filter(Boolean);
+}
+
+export function repairTargetedDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds = new Set()) {
+	if (!isPlainObject(settings) || !Array.isArray(settings.packages)) return undefined;
+
+	const identityOrder = new Map();
+	const identityLabels = new Map();
+	for (const [order, targetedId] of TARGETED_DEFAULT_EXTENSION_LOAD_ORDER.entries()) {
+		const extension = defaultExtensions.find(({ id }) => id === targetedId);
+		if (!extension || disabledIds.has(extension.id)) continue;
+		for (const identity of defaultExtensionPackageIdentities(extension)) {
+			if (identityOrder.has(identity)) continue;
+			identityOrder.set(identity, order);
+			identityLabels.set(identity, extension.id);
+		}
+	}
+
+	const matchedEntries = [];
+	for (const [index, entry] of settings.packages.entries()) {
+		const identity = packageIdentity(entry);
+		const order = identityOrder.get(identity);
+		if (order === undefined) continue;
+		matchedEntries.push({
+			index,
+			order,
+			entry,
+			label: identityLabels.get(identity) || identity,
+		});
+	}
+	if (matchedEntries.length < 2) return undefined;
+
+	const reorderedEntries = [...matchedEntries].sort((left, right) => left.order - right.order || left.index - right.index);
+	if (matchedEntries.every((entry, index) => entry === reorderedEntries[index])) return undefined;
+
+	for (let index = 0; index < matchedEntries.length; index += 1) {
+		settings.packages[matchedEntries[index].index] = reorderedEntries[index].entry;
+	}
+
+	return {
+		previous: matchedEntries.map(({ label }) => label),
+		next: reorderedEntries.map(({ label }) => label),
+	};
 }
