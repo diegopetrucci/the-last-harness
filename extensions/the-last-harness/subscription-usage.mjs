@@ -230,8 +230,9 @@ export function isSupportedTlhSubscriptionUsageProvider(provider) {
 export function normalizeOpenAICodexUsage(data, options = {}) {
 	const nowMs = options.nowMs ?? Date.now();
 	const root = asObject(data);
-	const session = normalizeUsageWindow(root?.primary_window, "primary_window", "session", nowMs);
-	const weekly = normalizeUsageWindow(root?.secondary_window, "secondary_window", "weekly", nowMs);
+	const rateLimit = asObject(root?.rate_limit);
+	const session = normalizeUsageWindow(rateLimit?.primary_window ?? root?.primary_window, "primary_window", "session", nowMs);
+	const weekly = normalizeUsageWindow(rateLimit?.secondary_window ?? root?.secondary_window, "secondary_window", "weekly", nowMs);
 	return createSnapshot("openai-codex", session, weekly, nowMs);
 }
 
