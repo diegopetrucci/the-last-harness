@@ -5,6 +5,7 @@ import { registerEffortCommand } from "./the-last-harness/effort.js";
 import { createTlhFooter } from "./the-last-harness/footer.js";
 import { FooterGitCache } from "./the-last-harness/footer-git-cache.js";
 import { createTlhHeader } from "./the-last-harness/header.js";
+import { maybeNotifyTlhInstallNotice } from "./the-last-harness/install-state.js";
 import { scheduleTlhLaunchTelemetry } from "./the-last-harness/launch-telemetry.js";
 import { registerTlhPrimaryAgentRuntime } from "./the-last-harness/primary-agent-runtime.js";
 import { collectStartupResources } from "./the-last-harness/resources.js";
@@ -69,6 +70,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 
 		if (event.reason === "startup") {
 			scheduleTlhLaunchTelemetry(ctx);
+			maybeNotifyTlhInstallNotice(ctx);
 		}
 
 		ctx.ui.addAutocompleteProvider(createTlhAutocompleteProvider);

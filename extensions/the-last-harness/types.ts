@@ -106,8 +106,31 @@ export type TlhStartupState = {
 };
 
 export type TlhInstallState = {
-	track?: string;
+	schemaVersion?: number;
+	repo?: string;
 	ref?: string;
+	track?: string;
+	packageSource?: string;
+	packageSourceIsDefault?: boolean;
+	rawBase?: string;
+	agentDir?: string;
+	binDir?: string;
+	wrapperName?: string;
+	installedAt?: string;
+};
+
+export type TlhInstallNoticeKind =
+	| "pinned-tag"
+	| "ref"
+	| "custom-track"
+	| "custom-package-source"
+	| "non-default-repo"
+	| "unknown";
+
+export type TlhInstallNotice = {
+	kind: TlhInstallNoticeKind;
+	summary: string;
+	detail?: string;
 };
 
 export type TlhTelemetryState = {
