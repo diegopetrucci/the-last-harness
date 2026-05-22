@@ -201,6 +201,8 @@ test("extension wires subscription usage to lifecycle refreshes and footer", () 
 	assert.match(sessionStart, /refreshSubscriptionUsage\(ctx\)/);
 	assert.match(sessionStart, /subscriptionUsage: subscriptionUsageService/);
 	assert.match(sessionStart, /shouldShowTlhUsageWeekly\(getTlhUsageLimitsConfig\(ctx\.cwd\)\)/);
+	assert.match(sessionStart, /onChange: \(\) => tui\.requestRender\(\)/);
+	assert.match(sessionStart, /typeof footerData\?\.onBranchChange === "function" \? \(cb\) => footerData\.onBranchChange\(cb\) : undefined/);
 });
 
 test("extension wires usage-limit command to isolated TLH settings", () => {

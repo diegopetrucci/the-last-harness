@@ -69,6 +69,12 @@ export type FooterGitCacheOptions = {
 	/** Skip the construction-time refresh. Useful for deterministic tests. */
 	skipInitialRefresh?: boolean;
 	/**
+	 * Optional callback fired after a refresh changes the visible footer git
+	 * snapshots. Not called for transient failures, identical snapshots, or
+	 * once the cache has been disposed.
+	 */
+	onChange?: () => void;
+	/**
 	 * Optional subscription to an external branch-change notifier. Shape
 	 * matches Pi's `ReadonlyFooterDataProvider.onBranchChange`: pass a
 	 * callback, receive an unsubscribe handle. When supplied, the cache
@@ -199,6 +205,34 @@ function parsePullRequestJson(stdout: string): PullRequestSnapshot | undefined {
 	return snapshot;
 }
 
+function gitStatusSnapshotsEqual(
+	left: GitStatusSnapshot | undefined,
+	right: GitStatusSnapshot | undefined,
+): boolean {
+	return (
+		left?.branch === right?.branch
+		&& left?.staged === right?.staged
+		&& left?.unstaged === right?.unstaged
+		&& left?.untracked === right?.untracked
+		&& left?.conflict === right?.conflict
+		&& left?.ahead === right?.ahead
+		&& left?.behind === right?.behind
+	);
+}
+
+function pullRequestSnapshotsEqual(
+	left: PullRequestSnapshot | undefined,
+	right: PullRequestSnapshot | undefined,
+): boolean {
+	return (
+		left?.number === right?.number
+		&& left?.state === right?.state
+		&& left?.isDraft === right?.isDraft
+		&& left?.url === right?.url
+		&& left?.title === right?.title
+	);
+}
+
 /**
  * Background cache for the TLH footer's git status and (best-effort) GitHub PR
  * metadata. Refreshes asynchronously and exposes synchronous snapshot getters
@@ -211,6 +245,7 @@ export class FooterGitCache {
 	private readonly refreshIntervalMs: number;
 	private readonly gitTimeoutMs: number;
 	private readonly ghTimeoutMs: number;
+	private readonly onChange: (() => void) | undefined;
 
 	private intervalHandle: TimerHandle | undefined;
 	private readonly inflightControllers = new Set<AbortController>();
@@ -229,6 +264,7 @@ export class FooterGitCache {
 		this.refreshIntervalMs = options.refreshIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS;
 		this.gitTimeoutMs = options.gitTimeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
 		this.ghTimeoutMs = options.ghTimeoutMs ?? DEFAULT_GH_TIMEOUT_MS;
+		this.onChange = options.onChange;
 
 		this.intervalHandle = this.clock.setInterval(() => {
 			void this.refresh();
@@ -281,6 +317,9 @@ export class FooterGitCache {
 	}
 
 	private async runRefresh(): Promise<void> {
+		const previousStatusSnapshot = this.statusSnapshot;
+		const previousPullRequestSnapshot = this.pullRequestSnapshot;
+
 		const result = await this.fetchGitStatus();
 		if (this.disposed) {
 			return;
@@ -297,6 +336,7 @@ export class FooterGitCache {
 			this.statusSnapshot = undefined;
 			this.pullRequestSnapshot = undefined;
 			this.lastSeenBranch = undefined;
+			this.emitChangeIfSnapshotsChanged(previousStatusSnapshot, previousPullRequestSnapshot);
 			return;
 		}
 		const status = result.status;
@@ -315,6 +355,7 @@ export class FooterGitCache {
 
 		if (!isValidBranch) {
 			this.pullRequestSnapshot = undefined;
+			this.emitChangeIfSnapshotsChanged(previousStatusSnapshot, previousPullRequestSnapshot);
 			return;
 		}
 
@@ -329,6 +370,27 @@ export class FooterGitCache {
 			this.pullRequestSnapshot = undefined;
 		}
 		// Otherwise (same branch, gh failed): keep prior PR snapshot.
+		this.emitChangeIfSnapshotsChanged(previousStatusSnapshot, previousPullRequestSnapshot);
+	}
+
+	private emitChangeIfSnapshotsChanged(
+		previousStatusSnapshot: GitStatusSnapshot | undefined,
+		previousPullRequestSnapshot: PullRequestSnapshot | undefined,
+	): void {
+		if (this.disposed) {
+			return;
+		}
+		if (
+			gitStatusSnapshotsEqual(previousStatusSnapshot, this.statusSnapshot)
+			&& pullRequestSnapshotsEqual(previousPullRequestSnapshot, this.pullRequestSnapshot)
+		) {
+			return;
+		}
+		try {
+			this.onChange?.();
+		} catch {
+			// Silent: rendering hooks must not break refreshes.
+		}
 	}
 
 	// Three-way split so runRefresh can distinguish persistent "not a repo"

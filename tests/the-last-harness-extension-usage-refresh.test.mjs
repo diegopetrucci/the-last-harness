@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -42,13 +42,19 @@ function createPi() {
 }
 
 function createCtx(options) {
+	const provider = options.provider ?? "anthropic";
 	return {
 		hasUI: true,
 		cwd: options.cwd,
-		model: { provider: "anthropic", id: "claude-sonnet-4-20250514", contextWindow: 200000 },
+		model: {
+			provider,
+			id: options.modelId ?? (provider === "anthropic" ? "claude-sonnet-4-20250514" : `${provider}-model`),
+			contextWindow: 200000,
+		},
 		modelRegistry: {
-			isUsingOAuth: (model) => model?.provider === "anthropic",
-			getApiKeyForProvider: async (provider) => (provider === "anthropic" ? options.currentAccessToken() : undefined),
+			isUsingOAuth: (model) => options.isUsingOAuth?.(model) ?? model?.provider === "anthropic",
+			getApiKeyForProvider: async (targetProvider) =>
+				targetProvider === provider ? options.currentAccessToken?.() : undefined,
 			find: () => undefined,
 			authStorage: options.authStorage,
 		},
@@ -72,8 +78,8 @@ function createCtx(options) {
 	};
 }
 
-async function eventually(predicate, message) {
-	for (let attempt = 0; attempt < 30; attempt += 1) {
+async function eventually(predicate, message, { attempts = 30 } = {}) {
+	for (let attempt = 0; attempt < attempts; attempt += 1) {
 		if (predicate()) {
 			return;
 		}
@@ -91,6 +97,76 @@ function restoreEnv(previousEnv) {
 		}
 	}
 }
+
+function writeFakeCommand(fakebin, name, body) {
+	mkdirSync(fakebin, { recursive: true });
+	const commandPath = join(fakebin, name);
+	writeFileSync(commandPath, `#!/usr/bin/env bash\nset -euo pipefail\n${body}\n`, "utf8");
+	chmodSync(commandPath, 0o755);
+}
+
+test("git cache refresh requests a footer render without unrelated UI activity", async () => {
+	const tempDir = mkdtempSync(join(tmpdir(), "tlh-git-footer-refresh-"));
+	const agentDir = join(tempDir, "agent");
+	const cwd = join(tempDir, "workspace");
+	const fakebin = join(tempDir, "fakebin");
+	const previousEnv = {
+		PATH: process.env.PATH,
+		PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+		TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
+	};
+
+	let renderRequests = 0;
+	const authStorage = {
+		runtimeOverrides: new Map(),
+		get: () => undefined,
+	};
+
+	try {
+		delete process.env.PI_SUBAGENT_CHILD;
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		process.env.TLH_SKIP_UPDATE_CHECK = "1";
+		process.env.PATH = `${fakebin}:${previousEnv.PATH ?? ""}`;
+		mkdirSync(agentDir, { recursive: true });
+		mkdirSync(cwd, { recursive: true });
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			`${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+		);
+		writeFakeCommand(
+			fakebin,
+			"git",
+			`cat <<'EOF'
+# branch.oid 1234567890abcdef1234567890abcdef12345678
+# branch.head (detached)
+EOF`,
+		);
+		writeFakeCommand(fakebin, "gh", "exit 1");
+
+		const pi = createPi();
+		theLastHarness(pi);
+		const ctx = createCtx({
+			cwd,
+			provider: "example-provider",
+			authStorage,
+			isUsingOAuth: () => false,
+			requestRender: () => {
+				renderRequests += 1;
+			},
+		});
+
+		await pi.handlers.get("session_start")?.[0]?.({ reason: "restore" }, ctx);
+		await eventually(() => renderRequests === 1, "initial git cache refresh should request one footer render", {
+			attempts: 500,
+		});
+		await new Promise((resolve) => setImmediate(resolve));
+		assert.equal(renderRequests, 1, "git cache refresh should be the only render trigger in this scenario");
+	} finally {
+		restoreEnv(previousEnv);
+		rmSync(tempDir, { recursive: true, force: true });
+	}
+});
 
 test("subscription usage refresh requests a footer render when a runtime override clears active usage", async () => {
 	const tempDir = mkdtempSync(join(tmpdir(), "tlh-usage-refresh-"));
