@@ -132,8 +132,9 @@ tlh defaults enable pi-web-access    # re-enable
 **Manual migration:** TLH does not automatically migrate an existing `~/.pi/web-search.json`. To bring it over manually:
 
 ```sh
-mkdir -p "${PI_CODING_AGENT_DIR}/extensions/pi-web-access" && \
-  cp ~/.pi/web-search.json "${PI_CODING_AGENT_DIR}/extensions/pi-web-access/settings.json"
+agent_dir="${PI_CODING_AGENT_DIR:-$HOME/.the-last-harness/agent}" && \
+  mkdir -p "$agent_dir/extensions/pi-web-access" && \
+  cp ~/.pi/web-search.json "$agent_dir/extensions/pi-web-access/settings.json"
 ```
 
 ### Launch telemetry
