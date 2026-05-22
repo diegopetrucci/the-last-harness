@@ -176,7 +176,7 @@ export function refreshGitCheckout(config, { targetDir, repo, ref, label, missin
 		}
 
 		// Build the backup commit.
-		const commitTreeArgs = ["commit-tree", tree];
+		const commitTreeArgs = ["-c", "user.name=tlh-backup", "-c", "user.email=tlh-backup@local", "commit-tree", tree];
 		if (parent) commitTreeArgs.push("-p", parent);
 		commitTreeArgs.push("-m", `tlh backup ${timestamp}`);
 		const commit = gitOutput(config, targetDir, commitTreeArgs, io);
