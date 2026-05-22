@@ -1,10 +1,12 @@
 # Web-Search Spec (tlha-s6xu)
 
-> **Source of truth.** This document locks every parameter for the web-search
-> work (tickets tlha-1xp0, tlha-bw2g, tlha-wbrc, tlha-nelh, tlha-sqox,
-> tlha-kkye, tlha-7jwh). All downstream tickets reference **tlha-s6xu** as
-> their spec source. Do not change decisions recorded here without updating
-> this file and the referencing tickets.
+> **Historical/planning reference.** Durable web-search / web-scout decisions
+> for this work now live in repo-local Gnosis (entries `ywsuwh` and `gbmehw`).
+> This document remains the working note for pinned fork/tag details, tool and
+> config snapshots, and other actionable implementation context tied to tickets
+> tlha-1xp0, tlha-bw2g, tlha-wbrc, tlha-nelh, tlha-sqox, tlha-kkye, and
+> tlha-7jwh. When those durable decisions or these implementation notes change,
+> keep the related tickets and this file aligned.
 
 ---
 

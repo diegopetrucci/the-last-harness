@@ -39,6 +39,7 @@ They run in fresh child contexts: they get the task and project context, not the
 - **Safety rails**: Bundled permission and destructive-action confirmations add checkpoints before sensitive commands or file changes.
 - **Inline bash snippets**: trusted `!{...}` snippets in your prompt are expanded through local bash before the agent sees them, useful for quick context like `!{git status --short}`.
 - **Repo toolkit helper**: TLH bundles a patched `pi-rtk` fork. Its repo-tooling features need an `rtk` binary on your `PATH`; use `/rtk` to check status, and `tlh defaults disable rtk` if you do not want the bundled default. TLH loads it in a `quiet-tools`-compatible order so collapsed bash rendering stays active without adding a persistent footer indicator.
+- **Web search**: TLH bundles Exa-backed web research for `web-scout`; setup and privacy notes live in [`docs/web-search.md`](docs/web-search.md).
 - **Dirty-repo guard**: TLH prompts before starting, switching, or forking sessions when the current git repo has uncommitted changes, so work-in-progress is harder to lose.
 - **Completion notifications**: TLH can notify you when an agent turn finishes and is waiting for input.
 - **Model niceties**: `/effort` makes it easier to switch thinking effort levels, `/fast` enables OpenAI Fast mode controls, and bundled Anthropic OAuth compatibility helps `/login anthropic` work with Claude Pro/Max subscriptions.
@@ -100,42 +101,9 @@ Gnosis project data lives in repo-local `.gnosis` directories and ticket data li
 
 ### Web search
 
-TLH ships [`pi-web-access`](https://github.com/diegopetrucci/pi-web-access) (an Exa-only fork) as a non-critical default extension; the `web-scout` subagent uses its `web_search`, `fetch_content`, and `get_search_content` tools for general web research.
+TLH ships [`pi-web-access`](https://github.com/diegopetrucci/pi-web-access) (an Exa-only fork) as a non-critical default extension for `web-scout`.
 
-**Extension:** pinned at `git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1`. Full design notes are in [`docs/web-search-spec.md`](docs/web-search-spec.md).
-
-**Configuration:**
-
-- Settings: `${PI_CODING_AGENT_DIR}/extensions/pi-web-access/settings.json`
-- Cache and Exa usage tracker: `${PI_CODING_AGENT_DIR}/cache/pi-web-access/`
-- The extension never reads or writes `~/.pi/`.
-
-**EXA API key precedence:**
-
-1. Explicit `exaApiKey` in `${PI_CODING_AGENT_DIR}/extensions/pi-web-access/settings.json`.
-2. `EXA_API_KEY` environment variable.
-3. Zero-config Exa MCP fallback (1 k req/mo shared free tier).
-
-The key is never persisted by TLH unless the user explicitly sets it.
-
-**Architect routing:** the architect delegates general web research to `web-scout` (Exa-backed, isolated read-only context). GitHub-specific research — repositories, issues, pull requests, releases, and project docs — still goes to `librarian`.
-
-**Privacy:** queries leave the machine via Exa. Exactly what is transmitted is documented in the fork's README under ["What leaves the machine"](https://github.com/diegopetrucci/pi-web-access/blob/tlh-v0.10.7-1/README.md#what-leaves-the-machine).
-
-**Opt-out:** the extension is non-critical — disabling it is safe and reversible:
-
-```sh
-tlh defaults disable pi-web-access   # opt out
-tlh defaults enable pi-web-access    # re-enable
-```
-
-**Manual migration:** TLH does not automatically migrate an existing `~/.pi/web-search.json`. To bring it over manually:
-
-```sh
-agent_dir="${PI_CODING_AGENT_DIR:-$HOME/.the-last-harness/agent}" && \
-  mkdir -p "$agent_dir/extensions/pi-web-access" && \
-  cp ~/.pi/web-search.json "$agent_dir/extensions/pi-web-access/settings.json"
-```
+For configuration, EXA key precedence, privacy, opt-out, and manual migration from `~/.pi/web-search.json`, see [`docs/web-search.md`](docs/web-search.md). Pinned fork/tag notes remain in [`docs/web-search-spec.md`](docs/web-search-spec.md).
 
 ### Launch telemetry
 
