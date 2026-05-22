@@ -618,3 +618,103 @@ test("tlh-defaults sources defers non-migrating replacements and ignores stale/m
 		.filter(Boolean);
 	assert.deepEqual(criticalSources, ["git:github.com/tlh/critical@pin", "git:github.com/tlh/disabled@pin"]);
 });
+
+test("tlh-defaults disable anthropic-auth removes package and drops warnings.anthropicExtraUsage when it is the tlh default", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "anthropic-auth",
+			source: "npm:@gotgenes/pi-anthropic-auth",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: ["npm:@gotgenes/pi-anthropic-auth"],
+		warnings: { anthropicExtraUsage: false },
+	}, null, 2));
+
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"disable", "anthropic-auth",
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert(!settings.packages.includes("npm:@gotgenes/pi-anthropic-auth"), "package should be removed");
+	assert.equal(settings.warnings, undefined, "warnings should be dropped when it becomes empty");
+});
+
+test("tlh-defaults enable anthropic-auth restores warnings.anthropicExtraUsage when no warnings object is present", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "anthropic-auth",
+			source: "npm:@gotgenes/pi-anthropic-auth",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [],
+		tlh: { disabledDefaultExtensions: ["anthropic-auth"] },
+	}, null, 2));
+
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"enable", "anthropic-auth",
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert(settings.packages.includes("npm:@gotgenes/pi-anthropic-auth"), "package should be added");
+	assert.equal(settings.warnings?.anthropicExtraUsage, false, "warnings.anthropicExtraUsage should be set to false");
+});
+
+test("tlh-defaults disable anthropic-auth preserves explicit warnings.anthropicExtraUsage: true set by the user", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "anthropic-auth",
+			source: "npm:@gotgenes/pi-anthropic-auth",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: ["npm:@gotgenes/pi-anthropic-auth"],
+		warnings: { anthropicExtraUsage: true },
+	}, null, 2));
+
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"disable", "anthropic-auth",
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert(!settings.packages.includes("npm:@gotgenes/pi-anthropic-auth"), "package should be removed");
+	assert.equal(settings.warnings?.anthropicExtraUsage, true, "explicit true value should be preserved");
+	assert(settings.warnings !== undefined, "warnings object should remain intact");
+});
+
+test("merge does not introduce warnings.anthropicExtraUsage when anthropic-auth is in disabledDefaultExtensions", () => {
+	const fixture = tempFixture();
+	// Synthetic defaults with the warnings suppression that ships in config/settings.defaults.json.
+	writeFileSync(fixture.defaults, JSON.stringify({ packages: [], warnings: { anthropicExtraUsage: false } }, null, 2));
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "anthropic-auth",
+			source: "npm:@gotgenes/pi-anthropic-auth",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [],
+		tlh: { disabledDefaultExtensions: ["anthropic-auth"] },
+	}, null, 2));
+
+	runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", fixture.extensions,
+		"--quiet",
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.equal(settings.warnings?.anthropicExtraUsage, undefined, "warnings.anthropicExtraUsage should not be introduced by merge");
+	assert.equal(settings.warnings, undefined, "warnings object should not be created by merge");
+});

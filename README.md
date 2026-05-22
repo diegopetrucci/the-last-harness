@@ -42,7 +42,7 @@ They run in fresh child contexts: they get the task and project context, not the
 - **Dirty-repo guard**: TLH prompts before starting, switching, or forking sessions when the current git repo has uncommitted changes, so work-in-progress is harder to lose.
 - **Completion notifications**: TLH can notify you when an agent turn finishes and is waiting for input.
 - **Model niceties**: `/effort` makes it easier to switch thinking effort levels, `/fast` enables OpenAI Fast mode controls, and bundled Anthropic OAuth compatibility helps `/login anthropic` work with Claude Pro/Max subscriptions.
-- **Cleaner sessions**: tlh's UI only shows what is relevant to you _right now_ — tools, bash output, and incoming intercom cards are collapsed by default; footer details are trimmed.
+- **Cleaner sessions**: tlh's UI only shows what is relevant to you _right now_ — tools, bash output, and incoming intercom cards are collapsed by default; footer details are trimmed. The upstream Pi startup warning about Anthropic subscription auth and extra-usage is also suppressed by default (`warnings.anthropicExtraUsage: false`), since tlh users have already opted into a third-party harness. To re-enable it, set `"warnings": { "anthropicExtraUsage": true }` in `~/.the-last-harness/agent/settings.json`; existing user values are preserved by the conservative settings merge and will not be overridden by installer reruns.
 - **Conservative updates and isolation**: tlh runs independently from `pi`, and never overrides your settings across updates
 
 ## Slash commands
