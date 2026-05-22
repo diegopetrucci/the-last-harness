@@ -149,6 +149,19 @@ function shouldEnsureDefaultExtensionSource(existingPackages, extension, { force
 
 function prepareDefaults(defaults, packageSource, defaultExtensions, disabledIds, existingSettings, { force }) {
 	const next = clone(defaults);
+
+	// Strip the anthropic-auth warning suppression from the defaults clone when
+	// that extension is disabled, so the merge engine cannot re-introduce
+	// warnings.anthropicExtraUsage into an opted-out user's settings on update.
+	if (disabledIds.has("anthropic-auth")) {
+		if (isPlainObject(next.warnings) && next.warnings.anthropicExtraUsage !== undefined) {
+			delete next.warnings.anthropicExtraUsage;
+			if (Object.keys(next.warnings).length === 0) {
+				delete next.warnings;
+			}
+		}
+	}
+
 	const ensuredSource = packageSource || DEFAULT_PACKAGE_SOURCE;
 	const existingPackages = isPlainObject(existingSettings) && Array.isArray(existingSettings.packages) ? existingSettings.packages : [];
 	const ensuredPackages = [

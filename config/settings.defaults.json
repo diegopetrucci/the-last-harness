@@ -11,5 +11,8 @@
     "agentDirs": [
       "tlh/agents/subagents"
     ]
+  },
+  "warnings": {
+    "anthropicExtraUsage": false
   }
 }

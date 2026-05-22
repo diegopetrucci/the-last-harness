@@ -337,6 +337,24 @@ function commandSources(settings, defaultExtensions, { criticalOnly = false } = 
 	}
 }
 
+function applyAnthropicWarningOnDisable(settings) {
+	if (!isPlainObject(settings.warnings)) return false;
+	if (settings.warnings.anthropicExtraUsage !== false) return false;
+	delete settings.warnings.anthropicExtraUsage;
+	if (Object.keys(settings.warnings).length === 0) {
+		delete settings.warnings;
+	}
+	return true;
+}
+
+function applyAnthropicWarningOnEnable(settings) {
+	if (settings.warnings !== undefined && !isPlainObject(settings.warnings)) return false;
+	if (settings.warnings?.anthropicExtraUsage !== undefined) return false;
+	settings.warnings ??= {};
+	settings.warnings.anthropicExtraUsage = false;
+	return true;
+}
+
 function commandDisable(settings, defaultExtensions, id) {
 	const extension = assertKnownExtension(defaultExtensions, id);
 	if (extension.critical === true) {
@@ -346,6 +364,10 @@ function commandDisable(settings, defaultExtensions, id) {
 	disabledIds.add(extension.id);
 	setDisabledIds(settings, disabledIds, defaultExtensions);
 	disablePackage(settings, extension);
+	if (extension.id === "anthropic-auth") {
+		return applyAnthropicWarningOnDisable(settings);
+	}
+	return false;
 }
 
 function commandEnable(settings, defaultExtensions, id) {
@@ -355,6 +377,10 @@ function commandEnable(settings, defaultExtensions, id) {
 	setDisabledIds(settings, disabledIds, defaultExtensions);
 	enablePackage(settings, extension);
 	repairTargetedDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds);
+	if (extension.id === "anthropic-auth") {
+		return applyAnthropicWarningOnEnable(settings);
+	}
+	return false;
 }
 
 function main() {
@@ -387,10 +413,11 @@ function main() {
 		const id = args.commandArgs[0];
 		if (!id || args.commandArgs.length !== 1) throw new Error("Usage: tlh defaults disable <id>");
 		const before = JSON.stringify(settings);
-		commandDisable(settings, defaultExtensions, id);
+		const warningChanged = commandDisable(settings, defaultExtensions, id);
 		const changed = before !== JSON.stringify(settings);
 		const backupPath = changed ? writeSettings(settingsPath, settings, previousRaw) : undefined;
 		console.log(`${id} is disabled for the tlh profile.`);
+		if (warningChanged) console.log("Restored upstream warnings.anthropicExtraUsage default (warning will reappear).");
 		if (backupPath) console.log(`Backed up previous settings to: ${backupPath}`);
 		if (!changed) console.log("No settings changes were needed.");
 		return;
@@ -400,10 +427,11 @@ function main() {
 		const id = args.commandArgs[0];
 		if (!id || args.commandArgs.length !== 1) throw new Error("Usage: tlh defaults enable <id>");
 		const before = JSON.stringify(settings);
-		commandEnable(settings, defaultExtensions, id);
+		const warningChanged = commandEnable(settings, defaultExtensions, id);
 		const changed = before !== JSON.stringify(settings);
 		const backupPath = changed ? writeSettings(settingsPath, settings, previousRaw) : undefined;
 		console.log(`${id} is enabled for the tlh profile.`);
+		if (warningChanged) console.log("Suppressed warnings.anthropicExtraUsage (tlh default).");
 		if (backupPath) console.log(`Backed up previous settings to: ${backupPath}`);
 		if (!changed) console.log("No settings changes were needed.");
 		return;
