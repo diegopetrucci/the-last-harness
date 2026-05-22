@@ -1,7 +1,7 @@
 ---
 id: tlhf-fkxm
 status: open
-deps: [tlhf-2yiy]
+deps: []
 links: []
 created: 2026-05-19T20:37:35Z
 type: feature

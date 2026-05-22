@@ -3,6 +3,7 @@ name: repo-scout
 description: Scans a repository and reports stack, conventions, commands, and hotspots.
 tools: read, grep, find, ls, bash, contact_supervisor
 model: anthropic/claude-haiku-4-5
+tlhOpenaiModels: openai-codex/gpt-5.4-mini, openai/gpt-5.4-mini
 thinking: high
 systemPromptMode: replace
 inheritProjectContext: true

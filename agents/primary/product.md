@@ -2,6 +2,7 @@
 name: product
 description: Guides product strategy, decisions, product docs, and implementation ticket shaping without changing source.
 model: anthropic/claude-opus-4-6
+tlhOpenaiModels: openai-codex/gpt-5.5, openai/gpt-5.5
 thinking: high
 tools: read, grep, find, ls, bash, write, edit, subagent, intercom
 systemPromptMode: append

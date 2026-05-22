@@ -17,7 +17,7 @@ const effortSource = readFileSync(new URL("../extensions/the-last-harness/effort
 const promptsSource = readFileSync(new URL("../extensions/the-last-harness/prompts.ts", import.meta.url), "utf8");
 const usageLimitsSource = readFileSync(new URL("../extensions/the-last-harness/usage-limits.ts", import.meta.url), "utf8");
 const jiti = createJiti(import.meta.url);
-const { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents } = await jiti.import(
+const { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents, loadSubagentMetadata } = await jiti.import(
 	"../extensions/the-last-harness/prompts.ts",
 );
 
@@ -71,6 +71,7 @@ test("before_agent_start reapplies primary defaults without a one-shot model gat
 
 	assert.doesNotMatch(primaryRuntimeSource, /primaryModelAttempted/);
 	assert.match(beforeAgentStart, /await applyPrimaryDefaults\(ctx\);/);
+	assert.match(applyPrimaryModel, /selectProviderAwareAgentModel\(primary, ctx\.modelRegistry\.getAvailable\(\), ctx\.model\?\.provider\)/);
 	assert.match(applyPrimaryModel, /ctx\.model\?\.provider === model\.provider && ctx\.model\?\.id === model\.id/);
 	assert.match(applyPrimaryThinking, /pi\.getThinkingLevel\(\) === primary\.thinking/);
 });
@@ -90,6 +91,11 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	const primaryAgents = loadPrimaryAgents();
 	const architect = primaryAgents.get("architect");
 	assert.ok(architect, "architect primary prompt should load");
+	assert.deepEqual(architect.tlhOpenaiModels, ["openai-codex/gpt-5.5", "openai/gpt-5.5"]);
+	assert.deepEqual(
+		loadSubagentMetadata().find((agent) => agent.name === "developer")?.tlhOpenaiModels,
+		["openai-codex/gpt-5.4", "openai/gpt-5.4"],
+	);
 
 	const primaryPrompt = buildTlhSystemPrompt(architect, [], true);
 	const childPrompt = buildChildSubagentSystemPrompt();
@@ -127,6 +133,7 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
 	assert.match(extensionSource, /from "\.\/the-last-harness\/usage-limits\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/constants\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/gnosis\.js"/);
+	assert.match(primaryRuntimeSource, /from "\.\/model-defaults\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/profile-state\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/prompts\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/tickets\.js"/);
@@ -166,13 +173,23 @@ test("extension runs primary session_start work before UI startup in one handler
 test("extension wires multi-primary commands and active-primary safety", () => {
 	const agentCommand = sourceSection(primaryRuntimeSource, 'pi.registerCommand("agent"', 'pi.registerShortcut');
 	const shortcut = sourceSection(primaryRuntimeSource, 'pi.registerShortcut(PRIMARY_AGENT_CYCLE_SHORTCUT', 'pi.registerCommand("architect"');
-	const toolCall = sourceSection(primaryRuntimeSource, 'pi.on("tool_call"', "const reason = validateSubagentToolInput");
+	const toolCall = sourceSection(primaryRuntimeSource, 'pi.on("tool_call"', 'return reason ? { block: true, reason } : undefined;');
 
 	assert.match(promptsSource, /function loadPrimaryAgents\(\): Map<TlhPrimaryAgentSelection, AgentPrompt>/);
 	assert.match(agentCommand, /default product/);
 	assert.match(agentCommand, /writeTlhPrimaryAgentDefault\(ctx\.cwd, defaultSelection\)/);
 	assert.match(shortcut, /architect\/product\/bug-hunter\/disabled/);
+	assert.match(toolCall, /applyProviderAwareSubagentModels\(event\.input, subagentsByName, ctx\.modelRegistry\.getAvailable\(\), ctx\.model\?\.provider\)/);
 	assert.match(toolCall, /!isEnabledPrimaryAgentSelection\(currentPrimaryAgentSelection\(\)\)/);
+	assert.match(toolCall, /const reason = validateSubagentToolInput\(event\.input\)/);
+	assert(
+		toolCall.indexOf("applyProviderAwareSubagentModels") < toolCall.indexOf("!isEnabledPrimaryAgentSelection"),
+		"provider-aware subagent defaults should run before the disabled-primary guard",
+	);
+	assert(
+		toolCall.indexOf("!isEnabledPrimaryAgentSelection") < toolCall.indexOf("validateSubagentToolInput"),
+		"subagent safety validation should stay behind the enabled-primary guard",
+	);
 });
 
 test("extension wires subscription usage to lifecycle refreshes and footer", () => {

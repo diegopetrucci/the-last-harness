@@ -18,6 +18,7 @@ import { registerTlhStartupMode, validateSubagentToolInput } from "../the-last-h
 import { formatHomePath, isRecord } from "./common.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME } from "./constants.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
+import { applyProviderAwareSubagentModels, selectProviderAwareAgentModel } from "./model-defaults.js";
 import {
 	buildChildSubagentSystemPrompt,
 	buildTlhSystemPrompt,
@@ -159,14 +160,6 @@ function writeTlhPrimaryAgentDefault(cwd: string, selection: TlhPrimaryAgentSele
 	return result;
 }
 
-function parseProviderModel(model: string): { provider: string; id: string } | undefined {
-	const slash = model.indexOf("/");
-	if (slash <= 0 || slash === model.length - 1) {
-		return undefined;
-	}
-	return { provider: model.slice(0, slash), id: model.slice(slash + 1) };
-}
-
 function primaryToolAllowlist(primary: AgentPrompt | undefined): string[] {
 	return primary?.tools.length
 		? primary.tools
@@ -188,6 +181,7 @@ function createTlhPrimaryAgentRuntime(
 ): TlhPrimaryAgentRuntime & { registerCommands(): void; registerLifecycleHooks(): void } {
 	const warned = new Set<string>();
 	const primaryToolState = createPrimaryToolState();
+	const subagentsByName = new Map(subagentMetadata.map((agent) => [agent.name, agent]));
 	let primaryAgentDefaultSelection: TlhPrimaryAgentSelection = DEFAULT_PRIMARY_AGENT;
 	let sessionPrimaryAgentOverride: TlhPrimaryAgentSelection | undefined;
 
@@ -313,17 +307,10 @@ function createTlhPrimaryAgentRuntime(
 	}
 
 	async function applyPrimaryModel(ctx: ExtensionContext, primary: AgentPrompt): Promise<void> {
-		if (!primary.model) {
-			return;
-		}
-		const parsedModel = parseProviderModel(primary.model);
-		if (!parsedModel) {
-			warnOnce(ctx, `invalid-primary-model-${primary.name}`, `TLH primary agent model is invalid: ${primary.model}`);
-			return;
-		}
-		const model = ctx.modelRegistry.find(parsedModel.provider, parsedModel.id);
+		const model = selectProviderAwareAgentModel(primary, ctx.modelRegistry.getAvailable(), ctx.model?.provider);
 		if (!model) {
-			warnOnce(ctx, `missing-primary-model-${primary.name}`, `TLH primary agent model not found: ${primary.model}`);
+			const candidates = [primary.model, ...(primary.tlhOpenaiModels ?? [])].filter(Boolean).join(", ");
+			warnOnce(ctx, `missing-primary-model-${primary.name}`, `TLH primary agent models are not available for configured providers: ${candidates}`);
 			return;
 		}
 		if (ctx.model?.provider === model.provider && ctx.model?.id === model.id) {
@@ -331,7 +318,7 @@ function createTlhPrimaryAgentRuntime(
 		}
 		const success = await pi.setModel(model);
 		if (!success) {
-			warnOnce(ctx, `primary-model-unavailable-${primary.name}`, `TLH could not switch to primary agent model: ${primary.model}`);
+			warnOnce(ctx, `primary-model-unavailable-${primary.name}`, `TLH could not switch to primary agent model: ${model.provider}/${model.id}`);
 		}
 	}
 
@@ -630,6 +617,7 @@ function createTlhPrimaryAgentRuntime(
 			if (event.toolName !== "subagent") {
 				return undefined;
 			}
+			applyProviderAwareSubagentModels(event.input, subagentsByName, ctx.modelRegistry.getAvailable(), ctx.model?.provider);
 			syncPrimaryAgentState(ctx);
 			if (!isEnabledPrimaryAgentSelection(currentPrimaryAgentSelection())) {
 				return undefined;
