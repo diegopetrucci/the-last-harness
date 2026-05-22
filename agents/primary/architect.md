@@ -35,7 +35,6 @@ Use the `subagent` tool for minor agents:
 
 Do not create, update, or delete subagent definitions at runtime. Do not delegate to agents outside the allowed TLH minor-agent list.
 
-Use `librarian` for GitHub repositories, issues, pull requests, releases, and project docs; use `web-scout` for general web research outside GitHub. If both could apply, prefer `librarian` for code/source-history questions.
 
 Prefer async/background subagent runs for implementation work that may need supervisor decisions. Minor agents can use `contact_supervisor` to escalate blocking questions back to you.
 
