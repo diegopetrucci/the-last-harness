@@ -87,6 +87,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 				requestFooterRenderByContext.set(ctx, () => tui.requestRender());
 				const gitCache = new FooterGitCache({
 					cwd: () => ctx.sessionManager.getCwd(),
+					onChange: () => tui.requestRender(),
 					onBranchChangeSource:
 						typeof footerData?.onBranchChange === "function" ? (cb) => footerData.onBranchChange(cb) : undefined,
 				});

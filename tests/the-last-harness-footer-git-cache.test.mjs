@@ -545,3 +545,234 @@ test("ok -> not-a-repo -> ok with a different branch transitions correctly", asy
 		cache.dispose();
 	}
 });
+
+test("onChange fires after the initial refresh populates visible snapshots", async () => {
+	const notifications = [];
+	const runner = (command) => {
+		if (command === "git") {
+			return Promise.resolve({
+				stdout: gitStatusStdout({ branch: "main" }),
+				stderr: "",
+				exitCode: 0,
+			});
+		}
+		if (command === "gh") {
+			return Promise.resolve({
+				stdout: ghPrStdout({ number: 17, state: "OPEN", isDraft: false }),
+				stderr: "",
+				exitCode: 0,
+			});
+		}
+		return Promise.reject(new Error(`unexpected ${command}`));
+	};
+	const clock = createFakeClock();
+	let cache;
+	cache = new FooterGitCache({
+		cwd: () => "/repo",
+		runner,
+		clock,
+		onChange: () => {
+			notifications.push({
+				branch: cache.getStatusSnapshot()?.branch,
+				prNumber: cache.getPullRequestSnapshot()?.number,
+			});
+		},
+	});
+	try {
+		await cache.refresh();
+		assert.deepEqual(notifications, [{ branch: "main", prNumber: 17 }]);
+	} finally {
+		cache.dispose();
+	}
+});
+
+test("onChange does not fire when a manual refresh keeps both snapshots identical", async () => {
+	let notifications = 0;
+	const runner = (command) => {
+		if (command === "git") {
+			return Promise.resolve({
+				stdout: gitStatusStdout({ branch: "main", ahead: 1 }),
+				stderr: "",
+				exitCode: 0,
+			});
+		}
+		if (command === "gh") {
+			return Promise.resolve({
+				stdout: ghPrStdout({ number: 8, state: "OPEN", isDraft: false }),
+				stderr: "",
+				exitCode: 0,
+			});
+		}
+		return Promise.reject(new Error(`unexpected ${command}`));
+	};
+	const clock = createFakeClock();
+	const cache = new FooterGitCache({
+		cwd: () => "/repo",
+		runner,
+		clock,
+		skipInitialRefresh: true,
+		onChange: () => {
+			notifications += 1;
+		},
+	});
+	try {
+		await cache.refresh();
+		await cache.refresh();
+		assert.equal(notifications, 1);
+	} finally {
+		cache.dispose();
+	}
+});
+
+test("onChange fires when a timer refresh clears stale snapshots after leaving a repo", async () => {
+	let gitMode = "ok";
+	const notifications = [];
+	const runner = (command) => {
+		if (command === "git") {
+			if (gitMode === "not-a-repo") {
+				return Promise.resolve({
+					stdout: "",
+					stderr: "fatal: not a git repository\n",
+					exitCode: 128,
+				});
+			}
+			return Promise.resolve({
+				stdout: gitStatusStdout({ branch: "main" }),
+				stderr: "",
+				exitCode: 0,
+			});
+		}
+		if (command === "gh") {
+			return Promise.resolve({
+				stdout: ghPrStdout({ number: 42, state: "OPEN", isDraft: false }),
+				stderr: "",
+				exitCode: 0,
+			});
+		}
+		return Promise.reject(new Error(`unexpected ${command}`));
+	};
+	const clock = createFakeClock();
+	let cache;
+	cache = new FooterGitCache({
+		cwd: () => "/repo",
+		runner,
+		clock,
+		skipInitialRefresh: true,
+		onChange: () => {
+			notifications.push({
+				branch: cache.getStatusSnapshot()?.branch,
+				prNumber: cache.getPullRequestSnapshot()?.number,
+			});
+		},
+	});
+	try {
+		await cache.refresh();
+		gitMode = "not-a-repo";
+		const [intervalHandle] = [...clock.intervals.keys()];
+		clock.tick(intervalHandle);
+		await flushMicrotasks();
+		await flushMicrotasks();
+		assert.deepEqual(notifications, [
+			{ branch: "main", prNumber: 42 },
+			{ branch: undefined, prNumber: undefined },
+		]);
+	} finally {
+		cache.dispose();
+	}
+});
+
+test("onChange fires after branch-change refresh clears a stale PR snapshot", async () => {
+	let branch = "main";
+	let branchChangeCallback;
+	const notifications = [];
+	const runner = (command) => {
+		if (command === "git") {
+			return Promise.resolve({
+				stdout: gitStatusStdout({ branch }),
+				stderr: "",
+				exitCode: 0,
+			});
+		}
+		if (command === "gh") {
+			if (branch === "main") {
+				return Promise.resolve({
+					stdout: ghPrStdout({ number: 3, state: "OPEN", isDraft: false }),
+					stderr: "",
+					exitCode: 0,
+				});
+			}
+			return Promise.resolve({ stdout: "", stderr: "no pr", exitCode: 1 });
+		}
+		return Promise.reject(new Error(`unexpected ${command}`));
+	};
+	const clock = createFakeClock();
+	let cache;
+	cache = new FooterGitCache({
+		cwd: () => "/repo",
+		runner,
+		clock,
+		skipInitialRefresh: true,
+		onChange: () => {
+			notifications.push({
+				branch: cache.getStatusSnapshot()?.branch,
+				prNumber: cache.getPullRequestSnapshot()?.number,
+			});
+		},
+		onBranchChangeSource: (callback) => {
+			branchChangeCallback = callback;
+			return () => {};
+		},
+	});
+	try {
+		await cache.refresh();
+		branch = "feature/x";
+		branchChangeCallback();
+		await flushMicrotasks();
+		await flushMicrotasks();
+		assert.deepEqual(notifications, [
+			{ branch: "main", prNumber: 3 },
+			{ branch: "feature/x", prNumber: undefined },
+		]);
+	} finally {
+		cache.dispose();
+	}
+});
+
+test("onChange does not fire when dispose() interrupts an in-flight refresh", async () => {
+	let observedSignal;
+	let notifications = 0;
+	const runner = (command, _args, options) => {
+		if (command !== "git") {
+			return Promise.reject(new Error(`unexpected ${command}`));
+		}
+		observedSignal = options.signal;
+		return new Promise((_resolve, reject) => {
+			options.signal.addEventListener(
+				"abort",
+				() => reject(new Error("aborted")),
+				{ once: true },
+			);
+		});
+	};
+	const clock = createFakeClock();
+	const cache = new FooterGitCache({
+		cwd: () => "/repo",
+		runner,
+		clock,
+		gitTimeoutMs: 60_000,
+		onChange: () => {
+			notifications += 1;
+		},
+		skipInitialRefresh: true,
+	});
+
+	const refreshPromise = cache.refresh();
+	while (!observedSignal) {
+		await flushMicrotasks();
+	}
+
+	cache.dispose();
+	await refreshPromise;
+	assert.ok(observedSignal.aborted);
+	assert.equal(notifications, 0);
+});
