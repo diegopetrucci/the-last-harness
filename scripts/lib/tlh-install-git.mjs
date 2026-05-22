@@ -136,7 +136,7 @@ export function refreshGitCheckout(config, { targetDir, repo, ref, label, missin
 		logDryRun(config, `Would prefer tag ${ref}, then origin/${ref}, then ${ref}.`, io);
 		printDryRunCommand(["git", "-C", targetDir, "checkout", "--detach", "<resolved-ref>"], io);
 		printDryRunCommand(["git", "-C", targetDir, "reset", "--hard", "<resolved-ref>"], io);
-		printDryRunCommand(["git", "-C", targetDir, "clean", "-fdx"], io);
+		printDryRunCommand(["git", "-C", targetDir, "clean", "-fd"], io);
 		logDryRun(config, "Would run npm install --omit=dev --legacy-peer-deps --package-lock=false if package.json is present.", io);
 		return true;
 	}
@@ -176,7 +176,7 @@ export function refreshGitCheckout(config, { targetDir, repo, ref, label, missin
 		}
 
 		// Build the backup commit.
-		const commitTreeArgs = ["commit-tree", tree];
+		const commitTreeArgs = ["-c", "user.name=tlh-backup", "-c", "user.email=tlh-backup@local", "commit-tree", tree];
 		if (parent) commitTreeArgs.push("-p", parent);
 		commitTreeArgs.push("-m", `tlh backup ${timestamp}`);
 		const commit = gitOutput(config, targetDir, commitTreeArgs, io);
@@ -211,7 +211,7 @@ export function refreshGitCheckout(config, { targetDir, repo, ref, label, missin
 
 	runGitCommand(config, ["git", "-C", targetDir, "checkout", "-f", "--detach", targetRef], io);
 	runGitCommand(config, ["git", "-C", targetDir, "reset", "--hard", targetRef], io);
-	runGitCommand(config, ["git", "-C", targetDir, "clean", "-fdx"], io);
+	runGitCommand(config, ["git", "-C", targetDir, "clean", "-fd"], io);
 	if (existsSync(join(targetDir, "package.json"))) {
 		runGitCommandInDir(config, targetDir, ["npm", "install", "--omit=dev", "--legacy-peer-deps", "--package-lock=false"], io);
 	}

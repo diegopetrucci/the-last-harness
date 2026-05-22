@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -10,7 +11,7 @@ import {
 	packageSourceInstallDir,
 	parseGitSource,
 } from "../scripts/lib/tlh-install-package-source.mjs";
-import { assertGitSourceTargetSafe } from "../scripts/lib/tlh-install-git.mjs";
+import { assertGitSourceTargetSafe, refreshGitCheckout } from "../scripts/lib/tlh-install-git.mjs";
 import {
 	assertProfilePathWithinAgent,
 	ensureSafeProfileDir,
@@ -38,6 +39,62 @@ function writePromptSet(dir, label = "prompt") {
 	for (const prompt of TLH_SUBAGENT_PROMPTS) {
 		writeFileSync(join(dir, prompt), `${label}:${prompt}\n`);
 	}
+}
+
+function runCommand(command, args, options = {}) {
+	const result = spawnSync(command, args, {
+		encoding: "utf8",
+		...options,
+	});
+	assert.equal(result.status, 0, result.stderr || result.stdout || String(result.error));
+	return result.stdout.trim();
+}
+
+function runGit(args, options = {}) {
+	return runCommand("git", args, options);
+}
+
+function createManagedGitCheckout(t) {
+	const root = tempFixture(t, "tlh-install-git-test-");
+	const agentDir = join(root, "agent");
+	const seedDir = join(root, "seed");
+	const originDir = join(root, "origin.git");
+	const targetDir = join(agentDir, "git", "github.com", "owner", "repo");
+
+	mkdirSync(seedDir, { recursive: true });
+	runGit(["init", seedDir]);
+	runGit(["-C", seedDir, "checkout", "-b", "main"]);
+	runGit(["-C", seedDir, "config", "user.email", "tests@example.com"]);
+	runGit(["-C", seedDir, "config", "user.name", "TLH Tests"]);
+	writeFileSync(join(seedDir, ".gitignore"), "build/\n");
+	writeFileSync(join(seedDir, "tracked.txt"), "tracked v1\n");
+	runGit(["-C", seedDir, "add", "."]);
+	runGit(["-C", seedDir, "commit", "-m", "initial"]);
+	runGit(["clone", "--bare", seedDir, originDir]);
+	mkdirSync(join(agentDir, "git", "github.com", "owner"), { recursive: true });
+	runGit(["clone", originDir, targetDir]);
+
+	return { agentDir, originDir, targetDir };
+}
+
+function gitCheckoutIo(warnings) {
+	return {
+		runCommand(_config, commandArgs, options = {}) {
+			const [command, ...args] = commandArgs;
+			runCommand(command, args, {
+				cwd: options.cwd,
+				env: options.env ? { ...process.env, ...options.env } : process.env,
+			});
+		},
+		warn(message) {
+			warnings.push(message);
+		},
+	};
+}
+
+function listBackupRefs(targetDir) {
+	const refs = runGit(["-C", targetDir, "for-each-ref", "refs/tlh-backup", "--format=%(refname)"]);
+	return refs === "" ? [] : refs.split("\n");
 }
 
 test("package-source parsing resolves git, hash-pinned, and local package sources", (t) => {
@@ -159,6 +216,50 @@ test("ensureSafeProfileDir rejects protected profile roots before creating them"
 	assert.equal(existsSync(protectedAgentDir), false);
 	assert.equal(existsSync(join(homeDir, ".pi")), false);
 });
+
+test("refreshGitCheckout preserves ignored local files without creating backup refs", (t) => {
+	const { agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+	const warnings = [];
+	const ignoredFile = join(targetDir, "build", "local.txt");
+
+	mkdirSync(join(targetDir, "build"), { recursive: true });
+	writeFileSync(ignoredFile, "keep me\n");
+
+	refreshGitCheckout({ agentDir }, {
+		targetDir,
+		repo: originDir,
+		ref: "main",
+		label: "test checkout",
+		missingMessage: `missing checkout: ${targetDir}`,
+	}, gitCheckoutIo(warnings));
+
+	assert.equal(readFileSync(ignoredFile, "utf8"), "keep me\n");
+	assert.deepEqual(listBackupRefs(targetDir), []);
+	assert.equal(warnings.some((message) => message.includes("dirty checkout")), false);
+});
+
+
+test("refreshGitCheckout still backs up git-visible local changes", (t) => {
+	const { agentDir, targetDir, originDir } = createManagedGitCheckout(t);
+	const warnings = [];
+
+	writeFileSync(join(targetDir, "tracked.txt"), "tracked local\n");
+
+	refreshGitCheckout({ agentDir }, {
+		targetDir,
+		repo: originDir,
+		ref: "main",
+		label: "test checkout",
+		missingMessage: `missing checkout: ${targetDir}`,
+	}, gitCheckoutIo(warnings));
+
+	const backupRefs = listBackupRefs(targetDir);
+	assert.equal(backupRefs.length, 1);
+	assert.equal(runGit(["-C", targetDir, "show", `${backupRefs[0]}:tracked.txt`]), "tracked local");
+	assert.equal(readFileSync(join(targetDir, "tracked.txt"), "utf8"), "tracked v1\n");
+	assert.equal(warnings.some((message) => message.includes("dirty checkout") && message.includes(backupRefs[0])), true);
+});
+
 
 test("subagent prompt discovery honors source precedence and copies prompt files safely", (t) => {
 	const root = tempFixture(t);
