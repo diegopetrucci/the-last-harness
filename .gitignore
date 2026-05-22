@@ -1,6 +1,11 @@
 node_modules/
 npm-debug.log*
 .DS_Store
-.pi/
+.pi/*
+!.pi/skills/
+.pi/skills/*
+!.pi/skills/tlh-dev-hygiene/
+.pi/skills/tlh-dev-hygiene/*
+!.pi/skills/tlh-dev-hygiene/SKILL.md
 *.tmp
 PLAN.md
