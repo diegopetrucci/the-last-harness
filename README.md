@@ -38,6 +38,7 @@ They run in fresh child contexts: they get the task and project context, not the
 - **Subscription usage footer**: OAuth subscription sessions on OpenAI/Codex and Anthropic show the current usage window in the footer; weekly usage is hidden by default and controlled with `/usage`.
 - **Safety rails**: Bundled permission and destructive-action confirmations add checkpoints before sensitive commands or file changes.
 - **Inline bash snippets**: trusted `!{...}` snippets in your prompt are expanded through local bash before the agent sees them, useful for quick context like `!{git status --short}`.
+- **Repo toolkit helper**: TLH bundles a patched `pi-rtk` fork. Its repo-tooling features need an `rtk` binary on your `PATH`; use `/rtk` to check status, and `tlh defaults disable rtk` if you do not want the bundled default. TLH loads it in a `quiet-tools`-compatible order so collapsed bash rendering stays active without adding a persistent footer indicator.
 - **Dirty-repo guard**: TLH prompts before starting, switching, or forking sessions when the current git repo has uncommitted changes, so work-in-progress is harder to lose.
 - **Completion notifications**: TLH can notify you when an agent turn finishes and is waiting for input.
 - **Model niceties**: `/effort` makes it easier to switch thinking effort levels, `/fast` enables OpenAI Fast mode controls, and bundled Anthropic OAuth compatibility helps `/login anthropic` work with Claude Pro/Max subscriptions.
@@ -69,17 +70,18 @@ The subscription usage footer fetches usage with the OAuth bearer your session a
 
 These are unsupported, internal endpoints and may change or be revoked without notice. No additional credentials are introduced — TLH reuses the same OAuth bearer the session already holds. When these fetches fail, TLH silently hides the footer segment. The feature is active only for `openai-codex` and `anthropic` OAuth subscription sessions and is on by default; an explicit disable mechanism is out of scope for this release.
 
-Bundled extension commands are also available for power users: /context-cap, /quiet-tools, /librarian-cache, /oracle-model, /fff-health, /fff-rescan, /fff-mode, /triage-comments, /intercom, /run, /parallel, /chain, /run-chain, /subagents-doctor, and Plannotator commands such as /plannotator-review and /plannotator-annotate.
+Bundled extension commands are also available for power users: /context-cap, /quiet-tools, /rtk, /librarian-cache, /oracle-model, /fff-health, /fff-rescan, /fff-mode, /triage-comments, /intercom, /run, /parallel, /chain, /run-chain, /subagents-doctor, and Plannotator commands such as /plannotator-review and /plannotator-annotate.
 
 Manage persistent opt-outs for non-critical defaults after install:
 
 ```sh
 tlh defaults list
 tlh defaults disable notify
+tlh defaults disable rtk
 tlh defaults enable notify
 ```
 
-Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `tlh update`, `pi update --extensions`, and installer reruns. Installer settings merges preserve existing same-identity package sources by default; use installer `--force` only when you want bundled default-extension source migrations to rewrite existing entries. The isolation-critical subagents/intercom defaults are protected: `tlh defaults disable` rejects `subagents`, `intercom`, and their legacy aliases; stale manual entries in `tlh.disabledDefaultExtensions` are ignored during source resolution and cleaned during settings merges. Old `pi-subagents`/`pi-intercom` replacements are migrated to the bundled TLH forks so architect delegation uses the isolated minor-agent prompts. Installer runs fail if these critical bundled packages cannot be installed or refreshed; fix the package install/checkout and rerun the installer rather than trying to disable them.
+Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `tlh update`, `pi update --extensions`, and installer reruns. Installer settings merges preserve existing same-identity package sources by default, so non-critical same-identity source pin updates still need installer `--force`. Bundled defaults marked for replacement migration, including `rtk`, can still replace listed legacy/upstream sources during normal install, update, and rerun flows. The isolation-critical subagents/intercom defaults are protected: `tlh defaults disable` rejects `subagents`, `intercom`, and their legacy aliases; stale manual entries in `tlh.disabledDefaultExtensions` are ignored during source resolution and cleaned during settings merges. Old `pi-subagents`/`pi-intercom` replacements are migrated to the bundled TLH forks so architect delegation uses the isolated minor-agent prompts. Installer runs fail if these critical bundled packages cannot be installed or refreshed; fix the package install/checkout and rerun the installer rather than trying to disable them.
 
 ### Integrations
 
