@@ -10,6 +10,7 @@ import {
 	packageIdentity,
 	packageSourceOf,
 	readDefaultExtensions,
+	repairTargetedDefaultExtensionLoadOrder,
 } from "./lib/default-extensions.mjs";
 import {
 	assertNotInNormalPiConfig,
@@ -353,6 +354,7 @@ function commandEnable(settings, defaultExtensions, id) {
 	disabledIds.delete(extension.id);
 	setDisabledIds(settings, disabledIds, defaultExtensions);
 	enablePackage(settings, extension);
+	repairTargetedDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds);
 }
 
 function main() {
