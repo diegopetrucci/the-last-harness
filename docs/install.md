@@ -29,6 +29,8 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v
 curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --ref main --track ref
 ```
 
+These alternatives keep TLH isolated, but they are not the official latest stable install path. TLH surfaces that at launch with an install warning so you can tell when you are on a pinned tag, non-stable ref, custom track, custom package source, non-default repo/fork, or an install with missing/invalid metadata.
+
 ## Installer options
 
 ```text
@@ -57,6 +59,20 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v
 You can just run `tlh update`.
 
 This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. If you are updating from an older install without `tlh update`, rerun the latest-release installer once.
+
+At launch, TLH also warns when your install metadata says you are not on the official latest stable path, or when it cannot verify that metadata. That warning is informational only; it does not change your isolated install or auto-update anything.
+
+- If you installed from a pinned release tag, a non-stable git ref, or another custom update track while still using the default TLH repo/package source, return to the official latest stable release track with:
+
+```sh
+tlh update --track latest-release
+```
+
+- If you installed from a custom package source, a non-default repo/fork, or TLH reports missing/invalid install metadata, return to the official latest stable release path by rerunning the official latest-release installer:
+
+```sh
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
+```
 
 Normal updates keep Gnosis and ticket integration enabled. They install or refresh the managed isolated `gn` binary when needed, re-enable legacy `settings.tlh.tickets.enabled=false` values, reuse a valid configured/existing `tk` when possible, and install or refresh the managed isolated copy at `~/.the-last-harness/agent/bin/tk` when needed. If no valid `tk` is available and the managed install fails, `tlh update` fails with an actionable error; provide a valid command with `tlh tickets enable --install-path /path/to/tk` or rerun the update once the managed download can succeed. Existing repo-local `.gnosis` and `.tickets` data is left in place.
 
