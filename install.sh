@@ -18,7 +18,7 @@ UPDATE_TRACK_INPUT="${TLH_UPDATE_TRACK:-}"
 RAW_BASE_INPUT="${TLH_RAW_BASE:-}"
 TMP_DIR=""
 ORIGINAL_ARGS=("$@")
-TLH_SUBAGENT_PROMPTS=(developer.md code-reviewer.md repo-scout.md diff-summarizer.md librarian.md oracle.md)
+TLH_SUBAGENT_PROMPTS=(developer.md code-reviewer.md repo-scout.md diff-summarizer.md librarian.md oracle.md web-scout.md)
 
 usage() {
   cat <<'USAGE'
