@@ -17,6 +17,12 @@ const PINNED_TAG_INSTALL_STATE = {
 	packageSourceIsDefault: true,
 };
 
+const PINNED_TAG_LOCAL_INSTALL_STATE = {
+	...PINNED_TAG_INSTALL_STATE,
+	packageSource: "../the-last-harness",
+	packageSourceIsDefault: false,
+};
+
 const LATEST_STABLE_INSTALL_STATE = {
 	...PINNED_TAG_INSTALL_STATE,
 	track: "latest-release",
@@ -125,17 +131,21 @@ async function runSessionStart({ reason, installState, hasUI = true }) {
 	}
 }
 
-test("interactive startup warns for non-latest-stable installs with an actionable stable-track hint", async () => {
+test("interactive startup shows the concise non-latest track notice", async () => {
 	const notifications = await runSessionStart({ reason: "startup", installState: PINNED_TAG_INSTALL_STATE });
 
 	assert.equal(notifications.length, 1);
 	assert.equal(notifications[0]?.type, "warning");
-	assert.match(notifications[0]?.message ?? "", /The Last Harness install warning:/);
-	assert.match(notifications[0]?.message ?? "", /pinned to a specific release tag/i);
-	assert.match(notifications[0]?.message ?? "", /Detail: v0\.10\.0\./);
-	assert.match(notifications[0]?.message ?? "", /latest stable release track/i);
-	assert.match(notifications[0]?.message ?? "", /tlh update --track latest-release/);
-	assert.match(notifications[0]?.message ?? "", /github\.com\/diegopetrucci\/the-last-harness\/releases/);
+	assert.equal(notifications[0]?.message, "TLH: v0.10.0 track");
+});
+
+
+test("interactive startup prefers the pinned ref label over a local package-source label", async () => {
+	const notifications = await runSessionStart({ reason: "startup", installState: PINNED_TAG_LOCAL_INSTALL_STATE });
+
+	assert.equal(notifications.length, 1);
+	assert.equal(notifications[0]?.type, "warning");
+	assert.equal(notifications[0]?.message, "TLH: v0.10.0 track");
 });
 
 test("interactive startup stays quiet for latest-stable installs", async () => {
@@ -143,14 +153,14 @@ test("interactive startup stays quiet for latest-stable installs", async () => {
 	assert.deepEqual(notifications, []);
 });
 
-test("non-startup session reasons do not show the non-stable install warning", async () => {
+test("non-startup session reasons do not show the install-track notice", async () => {
 	for (const reason of ["reload", "new", "resume", "fork"]) {
 		const notifications = await runSessionStart({ reason, installState: PINNED_TAG_INSTALL_STATE });
 		assert.deepEqual(notifications, [], `expected no install warning for ${reason}`);
 	}
 });
 
-test("startup without UI does not show the non-stable install warning", async () => {
+test("startup without UI does not show the install-track notice", async () => {
 	const notifications = await runSessionStart({ reason: "startup", installState: PINNED_TAG_INSTALL_STATE, hasUI: false });
 	assert.deepEqual(notifications, []);
 });

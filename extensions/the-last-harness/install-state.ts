@@ -1,10 +1,11 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { TLH_PACKAGE_NAME, TLH_RELEASES_URL, TLH_REPO } from "./constants.js";
+import { TLH_REPO } from "./constants.js";
 import { readTlhInstallState } from "./profile-state.js";
 import type { TlhInstallNotice, TlhInstallState } from "./types.js";
 
 const STABLE_TRACK = "latest-release";
 const VALID_TRACKS = new Set([STABLE_TRACK, "pinned-tag", "ref", "custom"]);
+const REF_REQUIRED_TRACKS = new Set([STABLE_TRACK, "pinned-tag", "ref"]);
 
 function normalizedString(value: unknown): string | undefined {
 	if (typeof value !== "string") {
@@ -12,6 +13,27 @@ function normalizedString(value: unknown): string | undefined {
 	}
 	const normalized = value.trim();
 	return normalized ? normalized : undefined;
+}
+
+function isLocalPackageSource(value: string | undefined): boolean {
+	const source = normalizedString(value);
+	if (!source) {
+		return false;
+	}
+
+	const normalized = source.toLowerCase();
+	return (
+		normalized === "."
+		|| normalized === ".."
+		|| normalized === "~"
+		|| source.startsWith("./")
+		|| source.startsWith("../")
+		|| source.startsWith("~/")
+		|| source.startsWith("/")
+		|| source.startsWith("\\\\")
+		|| /^[A-Za-z]:[\\/]/.test(source)
+		|| normalized.startsWith("file:")
+	);
 }
 
 function isDefaultPackageSource(state: TlhInstallState | undefined): boolean | undefined {
@@ -29,8 +51,16 @@ export function classifyTlhInstallState(state: TlhInstallState | undefined): Tlh
 	const track = normalizedString(state?.track);
 	const ref = normalizedString(state?.ref);
 	const packageSource = normalizedString(state?.packageSource);
+	const defaultPackageSource = isDefaultPackageSource(state);
 
-	if (!repo || !track || !VALID_TRACKS.has(track)) {
+	if (!repo || !track || !VALID_TRACKS.has(track) || !packageSource || defaultPackageSource === undefined) {
+		return {
+			kind: "unknown",
+			summary: "TLH install metadata is missing or invalid.",
+		};
+	}
+
+	if (REF_REQUIRED_TRACKS.has(track) && !ref) {
 		return {
 			kind: "unknown",
 			summary: "TLH install metadata is missing or invalid.",
@@ -45,18 +75,26 @@ export function classifyTlhInstallState(state: TlhInstallState | undefined): Tlh
 		};
 	}
 
-	const defaultPackageSource = isDefaultPackageSource(state);
+	if (track === "pinned-tag" && ref) {
+		return {
+			kind: "pinned-tag",
+			summary: "TLH is pinned to a specific release tag.",
+			detail: ref,
+		};
+	}
+	if (track === "ref" && ref) {
+		return {
+			kind: "ref",
+			summary: "TLH follows a non-stable git ref.",
+			detail: ref,
+		};
+	}
+
 	if (defaultPackageSource === false) {
 		return {
 			kind: "custom-package-source",
 			summary: "TLH uses a custom package source.",
 			detail: packageSource,
-		};
-	}
-	if (defaultPackageSource !== true) {
-		return {
-			kind: "unknown",
-			summary: "TLH install metadata is missing or invalid.",
 		};
 	}
 
@@ -88,23 +126,21 @@ export function readTlhInstallNotice(): TlhInstallNotice | undefined {
 	return classifyTlhInstallState(readTlhInstallState());
 }
 
-function formatTlhInstallNoticeAction(notice: TlhInstallNotice): string {
-	switch (notice.kind) {
-		case "pinned-tag":
-		case "ref":
-		case "custom-track":
-			return "To switch to the latest stable release track, run: tlh update --track latest-release.";
-		case "custom-package-source":
-		case "non-default-repo":
-		case "unknown":
-		default:
-			return "To get back to the official latest stable release install path, rerun the official latest-release installer.";
+function formatTlhInstallNoticeLabel(notice: TlhInstallNotice): string {
+	if (notice.kind === "unknown") {
+		return "unknown";
 	}
+	if (notice.kind === "custom-package-source" && isLocalPackageSource(normalizedString(notice.detail))) {
+		return "local";
+	}
+	if ((notice.kind === "pinned-tag" || notice.kind === "ref") && normalizedString(notice.detail)) {
+		return normalizedString(notice.detail) || "custom";
+	}
+	return "custom";
 }
 
 export function formatTlhInstallNoticeMessage(notice: TlhInstallNotice): string {
-	const detail = notice.detail ? ` Detail: ${notice.detail}.` : "";
-	return `${TLH_PACKAGE_NAME} install warning: ${notice.summary}${detail} ${formatTlhInstallNoticeAction(notice)} Releases: ${TLH_RELEASES_URL}`;
+	return `TLH: ${formatTlhInstallNoticeLabel(notice)} track`;
 }
 
 export function maybeNotifyTlhInstallNotice(ctx: ExtensionContext): void {
