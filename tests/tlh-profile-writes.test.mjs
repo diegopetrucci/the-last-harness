@@ -78,6 +78,163 @@ test("safe TLH profile writes reject normal Pi config targets before creating th
 	assert.equal(existsSync(join(fixture.home, ".pi")), false);
 });
 
+test("safe TLH profile writes create missing agent directories inside the intended profile", (t) => {
+	const fixture = tempFixture(t);
+	const agentDir = join(fixture.dir, "missing-agent", "profile");
+	const target = join(agentDir, "config", "settings.json");
+	const plan = createSafeTlhProfileWritePlan({
+		agentDir,
+		homeDir: fixture.home,
+		label: "settings",
+		targetPath: target,
+	});
+
+	writeSafeTlhProfileFile(plan, '{"created":true}\n', { exclusive: true, mode: 0o600 });
+
+	assert.equal(readFileSync(target, "utf8"), '{"created":true}\n');
+	assert.equal(existsSync(join(agentDir, "config")), true);
+	assert.equal(existsSync(join(fixture.external, "config", "settings.json")), false);
+});
+
+test("safe TLH profile writes reject targets equal to the configured profile root", (t) => {
+	const fixture = tempFixture(t);
+
+	assert.throws(
+		() => createSafeTlhProfileWritePlan({
+			agentDir: fixture.agent,
+			homeDir: fixture.home,
+			label: "settings",
+			targetPath: fixture.agent,
+		}),
+		/configured TLH profile directory/i,
+	);
+});
+
+test("safe TLH profile writes reject targets outside the configured profile", (t) => {
+	const fixture = tempFixture(t);
+
+	assert.throws(
+		() => createSafeTlhProfileWritePlan({
+			agentDir: fixture.agent,
+			homeDir: fixture.home,
+			label: "settings",
+			targetPath: join(fixture.external, "settings.json"),
+		}),
+		/outside the configured TLH profile path/i,
+	);
+});
+
+test("safe TLH profile writes reject non-directory target parents", (t) => {
+	const fixture = tempFixture(t);
+	const parentFile = join(fixture.agent, "config");
+	writeFileSync(parentFile, "not-a-directory\n");
+
+	assert.throws(
+		() => createSafeTlhProfileWritePlan({
+			agentDir: fixture.agent,
+			homeDir: fixture.home,
+			label: "settings",
+			targetPath: join(parentFile, "settings.json"),
+		}),
+		/target parent component is not a directory|target parent is not a directory/i,
+	);
+});
+
+test("safe TLH profile writes reject non-file final targets", (t) => {
+	const fixture = tempFixture(t);
+	const target = join(fixture.agent, "settings.json");
+	mkdirSync(target, { recursive: true });
+
+	assert.throws(
+		() => createSafeTlhProfileWritePlan({
+			agentDir: fixture.agent,
+			homeDir: fixture.home,
+			label: "settings",
+			targetPath: target,
+		}),
+		/path is not a regular file/i,
+	);
+});
+
+test("safe TLH profile writes honor exclusive creation for new and existing targets", (t) => {
+	const fixture = tempFixture(t);
+	const target = join(fixture.agent, "settings.json");
+	const plan = createSafeTlhProfileWritePlan({
+		agentDir: fixture.agent,
+		homeDir: fixture.home,
+		label: "settings",
+		targetPath: target,
+	});
+
+	writeSafeTlhProfileFile(plan, '{"created":1}\n', { exclusive: true, mode: 0o600 });
+	assert.equal(readFileSync(target, "utf8"), '{"created":1}\n');
+
+	assert.throws(
+		() => writeSafeTlhProfileFile(plan, '{"created":2}\n', { exclusive: true, mode: 0o600 }),
+		/already exists/i,
+	);
+	assert.equal(readFileSync(target, "utf8"), '{"created":1}\n');
+});
+
+test("safe TLH profile writes honor explicit replace:false without truncating trailing content", (t) => {
+	const fixture = tempFixture(t);
+	const target = join(fixture.agent, "settings.json");
+	writeFileSync(target, "abcdef");
+	const plan = createSafeTlhProfileWritePlan({
+		agentDir: fixture.agent,
+		homeDir: fixture.home,
+		label: "settings",
+		targetPath: target,
+	});
+
+	writeSafeTlhProfileFile(plan, "xy", { mode: 0o600, replace: false });
+	assert.equal(readFileSync(target, "utf8"), "xycdef");
+});
+
+test("safe TLH profile writes accept symlink ancestors above the configured profile root when containment stays anchored", { skip: process.platform === "win32" }, (t) => {
+	const fixture = tempFixture(t);
+	const realBase = join(fixture.external, "real-base");
+	mkdirSync(join(realBase, "agent"), { recursive: true });
+	const linkedBase = join(fixture.dir, "linked-base");
+	symlinkDirectory(realBase, linkedBase);
+	const agentDir = join(linkedBase, "agent");
+	const target = join(agentDir, "settings.json");
+	const plan = createSafeTlhProfileWritePlan({
+		agentDir,
+		homeDir: fixture.home,
+		label: "settings",
+		targetPath: target,
+	});
+
+	writeSafeTlhProfileFile(plan, '{"anchored":true}\n', { mode: 0o600, replace: true });
+	assert.equal(readFileSync(target, "utf8"), '{"anchored":true}\n');
+	assert.equal(readFileSync(join(realBase, "agent", "settings.json"), "utf8"), '{"anchored":true}\n');
+});
+
+test("safe TLH profile writes reject invalid modes before mutating the filesystem", (t) => {
+	const fixture = tempFixture(t);
+	const agentDir = join(fixture.dir, "mode-agent", "profile");
+	const target = join(agentDir, "config", "settings.json");
+	const plan = createSafeTlhProfileWritePlan({
+		agentDir,
+		homeDir: fixture.home,
+		label: "settings",
+		targetPath: target,
+	});
+
+	for (const [mode, pattern] of [
+		["0o600", /invalid file mode/i],
+		[0o1000, /outside 0o000-0o777/i],
+		[0o666, /group or other write bits/i],
+		[0o777, /group or other write bits/i],
+		[0o400, /owner read\/write bits/i],
+	]) {
+		assert.throws(() => writeSafeTlhProfileFile(plan, '{}\n', { mode }), pattern);
+		assert.equal(existsSync(agentDir), false);
+		assert.equal(existsSync(target), false);
+	}
+});
+
 test("safe TLH profile writes reject symlinked TLH profile roots", { skip: process.platform === "win32" }, (t) => {
 	const fixture = tempFixture(t);
 	const linkedAgent = join(fixture.dir, "agent-link");
@@ -280,7 +437,7 @@ test("safe TLH profile writes refuse parent swaps before realpath without touchi
 	assert.equal(readFileSync(externalTarget, "utf8"), "external sentinel");
 });
 
-test("safe TLH profile writes set requested modes for new and rewritten files", { skip: process.platform === "win32" }, (t) => {
+test("safe TLH profile writes set requested modes for new, rewritten, and executable-safe files", { skip: process.platform === "win32" }, (t) => {
 	const fixture = tempFixture(t);
 	const target = join(fixture.agent, "settings.json");
 	const plan = createSafeTlhProfileWritePlan({
@@ -297,6 +454,116 @@ test("safe TLH profile writes set requested modes for new and rewritten files", 
 	writeSafeTlhProfileFile(plan, '{"step":2}\n', { mode: 0o640, replace: true });
 	assert.equal(statSync(target).mode & 0o777, 0o640);
 	assert.equal(readFileSync(target, "utf8"), '{"step":2}\n');
+
+	writeSafeTlhProfileFile(plan, "#!/bin/sh\n", { mode: 0o755, replace: true });
+	assert.equal(statSync(target).mode & 0o777, 0o755);
+	assert.equal(readFileSync(target, "utf8"), "#!/bin/sh\n");
+});
+
+test("safe TLH profile writes keep new wider-mode files restrictive until content write completes", { skip: process.platform === "win32" }, (t) => {
+	const fixture = tempFixture(t);
+	const originalOpenSync = fs.openSync;
+	const originalWriteFileSync = fs.writeFileSync;
+	const originalFchmodSync = fs.fchmodSync;
+	let expectedTarget;
+	let expectedMode;
+	let writeCompleted = false;
+	let sawCreate = false;
+	let sawFinalChmod = false;
+	patchFs(t, {
+		openSync(path, flags, mode) {
+			if (String(path) === expectedTarget && (flags & fs.constants.O_CREAT) !== 0) {
+				sawCreate = true;
+				assert.equal(mode, 0o600);
+			}
+			return originalOpenSync(path, flags, mode);
+		},
+		writeFileSync(fd, content, ...args) {
+			if (typeof fd !== "number") {
+				return originalWriteFileSync(fd, content, ...args);
+			}
+			assert.ok(expectedTarget);
+			assert.equal(statSync(expectedTarget).mode & 0o777, 0o600);
+			const result = originalWriteFileSync(fd, content, ...args);
+			writeCompleted = true;
+			return result;
+		},
+		fchmodSync(fd, mode) {
+			if (mode === expectedMode) {
+				assert.equal(writeCompleted, true);
+				sawFinalChmod = true;
+			}
+			return originalFchmodSync(fd, mode);
+		},
+	});
+
+	for (const mode of [0o644, 0o755]) {
+		expectedTarget = join(fixture.agent, `mode-${mode.toString(8)}.txt`);
+		expectedMode = mode;
+		writeCompleted = false;
+		sawCreate = false;
+		sawFinalChmod = false;
+		const plan = createSafeTlhProfileWritePlan({
+			agentDir: fixture.agent,
+			homeDir: fixture.home,
+			label: "settings",
+			targetPath: expectedTarget,
+		});
+
+		writeSafeTlhProfileFile(plan, `mode=${mode.toString(8)}\n`, { exclusive: true, mode });
+		assert.equal(sawCreate, true);
+		assert.equal(sawFinalChmod, true);
+		assert.equal(statSync(expectedTarget).mode & 0o777, mode);
+		assert.equal(readFileSync(expectedTarget, "utf8"), `mode=${mode.toString(8)}\n`);
+	}
+});
+
+test("safe TLH profile writes keep restrictive modes until wider rewrites finish writing", { skip: process.platform === "win32" }, (t) => {
+	const fixture = tempFixture(t);
+	const originalWriteFileSync = fs.writeFileSync;
+	const originalFchmodSync = fs.fchmodSync;
+	let expectedTarget;
+	let expectedMode;
+	let writeCompleted = false;
+	let sawFinalChmod = false;
+	patchFs(t, {
+		writeFileSync(fd, content, ...args) {
+			if (typeof fd !== "number") {
+				return originalWriteFileSync(fd, content, ...args);
+			}
+			assert.ok(expectedTarget);
+			assert.equal(statSync(expectedTarget).mode & 0o777, 0o600);
+			const result = originalWriteFileSync(fd, content, ...args);
+			writeCompleted = true;
+			return result;
+		},
+		fchmodSync(fd, mode) {
+			if (mode === expectedMode) {
+				assert.equal(writeCompleted, true);
+				sawFinalChmod = true;
+			}
+			return originalFchmodSync(fd, mode);
+		},
+	});
+
+	for (const mode of [0o644, 0o755]) {
+		expectedTarget = join(fixture.agent, `rewrite-${mode.toString(8)}.txt`);
+		expectedMode = mode;
+		writeCompleted = false;
+		sawFinalChmod = false;
+		writeFileSync(expectedTarget, "original\n", { mode: 0o600 });
+		const plan = createSafeTlhProfileWritePlan({
+			agentDir: fixture.agent,
+			homeDir: fixture.home,
+			label: "settings",
+			targetPath: expectedTarget,
+		});
+
+		writeSafeTlhProfileFile(plan, `mode=${mode.toString(8)}\n`, { mode, replace: true });
+		assert.equal(sawFinalChmod, true);
+		assert.equal(statSync(expectedTarget).mode & 0o777, mode);
+		assert.equal(readFileSync(expectedTarget, "utf8"), `mode=${mode.toString(8)}\n`);
+	}
 });
 
 test("safe TLH profile writes tighten existing file mode before truncating rewritten content", { skip: process.platform === "win32" }, (t) => {

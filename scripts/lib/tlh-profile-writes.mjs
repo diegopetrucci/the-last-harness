@@ -17,6 +17,32 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 
 import { pathIsProtectedPiConfig, pathWithinOrEqual, realpathForCompare } from "./tlh-install-paths.mjs";
 
+const FILE_PERMISSION_MASK = 0o777;
+const FILE_MODE_COMPARISON_MASK = 0o7777;
+const REQUIRED_OWNER_READ_WRITE_BITS = 0o600;
+const DISALLOWED_GROUP_OTHER_WRITE_BITS = 0o022;
+const INITIAL_CREATED_FILE_MODE = REQUIRED_OWNER_READ_WRITE_BITS;
+
+function formatMode(mode) {
+	return `0o${mode.toString(8)}`;
+}
+
+function validateSafeWriteMode(mode, label) {
+	if (!Number.isSafeInteger(mode)) {
+		throw new Error(`refusing to write ${label} with invalid file mode: ${mode}`);
+	}
+	if (mode < 0 || mode > FILE_PERMISSION_MASK) {
+		throw new Error(`refusing to write ${label} with unsupported file mode outside 0o000-0o777: ${formatMode(mode)}`);
+	}
+	if ((mode & REQUIRED_OWNER_READ_WRITE_BITS) !== REQUIRED_OWNER_READ_WRITE_BITS) {
+		throw new Error(`refusing to write ${label} with unsupported file mode missing owner read/write bits: ${formatMode(mode)}`);
+	}
+	if ((mode & DISALLOWED_GROUP_OTHER_WRITE_BITS) !== 0) {
+		throw new Error(`refusing to write ${label} with unsupported file mode containing group or other write bits: ${formatMode(mode)}`);
+	}
+	return mode;
+}
+
 function lstatIfExists(path) {
 	try {
 		return lstatSync(path);
@@ -322,6 +348,10 @@ function cleanupCreatedEmptyFile(fd, path) {
 	return true;
 }
 
+function shouldTightenModeBeforeWrite(currentMode, requestedMode) {
+	return requestedMode !== currentMode && (requestedMode & ~currentMode) === 0;
+}
+
 function writeDirectValidated(path, content, { mode, intendedRoot, label, exclusive = false, replace = false, validateParent }) {
 	let fd;
 	let createdByUs = false;
@@ -342,13 +372,17 @@ function writeDirectValidated(path, content, { mode, intendedRoot, label, exclus
 			}
 			fd = openSync(path, constants.O_RDWR | noFollowFlag, mode);
 		} else {
-			fd = openSync(path, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | noFollowFlag, mode);
+			fd = openSync(path, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | noFollowFlag, INITIAL_CREATED_FILE_MODE);
 			createdByUs = true;
 		}
 		if (validateParent) validateParent();
 		validateOpenedFileForDirectWrite(fd, path, intendedRoot, label);
 		validationComplete = true;
-		fchmodSync(fd, mode);
+
+		const currentMode = fstatSync(fd).mode & FILE_MODE_COMPARISON_MASK;
+		if (!createdByUs && shouldTightenModeBeforeWrite(currentMode, mode)) {
+			fchmodSync(fd, mode);
+		}
 		if (replace) ftruncateSync(fd, 0);
 		writeFileSync(fd, content);
 		fchmodSync(fd, mode);
@@ -362,6 +396,14 @@ function writeDirectValidated(path, content, { mode, intendedRoot, label, exclus
 	}
 }
 
+/**
+ * Captures a direct-write plan for a managed tlh profile file.
+ *
+ * Safety policy:
+ * - anchor all later containment checks to the captured realpath of the configured profile root
+ * - allow symlink ancestors above `agentDir` only when that resolved profile root and the resolved target still stay inside the intended profile
+ * - reject symlinked profile roots, target parents, and final targets inside the managed profile path
+ */
 export function createSafeTlhProfileWritePlan({ agentDir, targetPath, label = "TLH profile file", homeDir = homedir() }) {
 	const agentRoot = resolve(agentDir);
 	const target = resolve(targetPath);
@@ -406,7 +448,21 @@ export function createSafeTlhProfileWritePlan({ agentDir, targetPath, label = "T
 	return Object.freeze(plan);
 }
 
+/**
+ * Writes directly to `plan.targetPath` in place.
+ *
+ * This helper does not provide atomic rename semantics, backups, or rollback/crash-recovery guarantees.
+ * Callers that need recovery must create backups before writing.
+ *
+ * `replace: true` truncates before writing. `replace: false` writes from offset 0 without truncating,
+ * so shorter content can leave trailing bytes behind.
+ *
+ * Accepted modes are safe integer permission bits within `0o000..0o777` that keep owner read/write,
+ * reject special bits, and reject group/other write bits. This preserves `0o600`/`0o640` behavior while
+ * still allowing future managed executable profile artifacts such as `0o755`.
+ */
 export function writeSafeTlhProfileFile(plan, content, { mode = 0o600, exclusive = false, replace } = {}) {
+	const validatedMode = validateSafeWriteMode(mode, plan.label);
 	const replaceContent = replace ?? !exclusive;
 	ensureDirectorySafely(plan.targetParent, plan.intendedTargetParent, `${plan.label} parent directory`);
 	assertProfileRootSafe(plan);
@@ -415,7 +471,7 @@ export function writeSafeTlhProfileFile(plan, content, { mode = 0o600, exclusive
 		exclusive,
 		intendedRoot: plan.intendedTargetParent,
 		label: plan.label,
-		mode,
+		mode: validatedMode,
 		replace: replaceContent,
 		validateParent: () => {
 			assertProfileRootSafe(plan);
