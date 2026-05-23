@@ -41,7 +41,7 @@ TLH does not automatically migrate an existing `~/.pi/web-search.json`. To copy 
 ```sh
 agent_dir="${PI_CODING_AGENT_DIR:-$HOME/.the-last-harness/agent}" && \
   mkdir -p "$agent_dir/extensions/pi-web-access" && \
-  cp ~/.pi/web-search.json "$agent_dir/extensions/pi-web-access/settings.json"
+  install -m 600 ~/.pi/web-search.json "$agent_dir/extensions/pi-web-access/settings.json"
 ```
 
 For pinned fork/tag details and implementation notes, see [`docs/web-search-spec.md`](web-search-spec.md).

@@ -14,9 +14,9 @@ test("architect.md contains web-scout bullet in the subagent tools list", () => 
 	);
 });
 
-test("architect.md contains librarian/web-scout routing rule paragraph", () => {
+test("architect.md lists librarian and web-scout as allowed minor agents with distinct research scopes", () => {
 	assert.match(
 		architectMd,
-		/Use `librarian` for GitHub repositories, issues, pull requests, releases, and project docs; use `web-scout` for general web research outside GitHub\. If both could apply, prefer `librarian` for code\/source-history questions\./,
+		/- `librarian`: research external GitHub repositories, issues, pull requests, releases, or docs read-only when outside evidence is needed\.\n- `web-scout`: research the general web outside GitHub via Exa-backed search and fetch in an isolated read-only context\./,
 	);
 });
