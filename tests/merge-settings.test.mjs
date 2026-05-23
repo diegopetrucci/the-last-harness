@@ -164,3 +164,30 @@ test("critical source updates dedupe stale same-identity filtered packages", () 
 		"npm:unrelated-package",
 	]);
 });
+
+
+test("merge defers bundled pi-web-access when an upstream package is already installed", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				"npm:pi-web-access",
+			],
+		},
+		[
+			{
+				id: "pi-web-access",
+				replaces: ["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access"],
+				source: "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1",
+			},
+		],
+	);
+
+	runMerge(fixture);
+
+	assert.deepEqual(readJson(fixture.settings).packages, [
+		harnessPackage,
+		"npm:pi-web-access",
+	]);
+});
