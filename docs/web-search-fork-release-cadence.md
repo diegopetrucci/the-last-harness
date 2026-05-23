@@ -4,7 +4,7 @@ This document describes how `pi-web-access` is forked, tagged, and updated for T
 
 ## Where the fork lives
 
-Fork: <https://github.com/diegopetrucci/pi-web-access>  
+Fork: <https://github.com/diegopetrucci/pi-web-access>
 Upstream: `nicobailon/pi-web-access`
 
 ## Tag naming
