@@ -619,6 +619,31 @@ test("tlh-defaults sources defers non-migrating replacements and ignores stale/m
 	assert.deepEqual(criticalSources, ["git:github.com/tlh/critical@pin", "git:github.com/tlh/disabled@pin"]);
 });
 
+test("tlh-defaults enable switches deferred pi-web-access replacements to the bundled TLH source", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "pi-web-access",
+			replaces: ["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access"],
+			source: "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: ["git:github.com/nicobailon/pi-web-access@v0.10.7"],
+		tlh: { disabledDefaultExtensions: ["pi-web-access"] },
+	}, null, 2));
+
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"enable", "pi-web-access",
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.packages, ["git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1"]);
+	assert.deepEqual(settings.tlh.disabledDefaultExtensions, []);
+});
+
 test("tlh-defaults disable anthropic-auth removes package and drops warnings.anthropicExtraUsage when it is the tlh default", () => {
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
@@ -719,15 +744,18 @@ test("merge does not introduce warnings.anthropicExtraUsage when anthropic-auth 
 	assert.equal(settings.warnings, undefined, "warnings object should not be created by merge");
 });
 
-test("bundled manifest contains pi-web-access entry with correct tag and flags", () => {
+test("bundled manifest contains pi-web-access entry with correct tag and defer flags", () => {
 	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
 	const webAccess = bundled.find(({ id }) => id === "pi-web-access");
 
 	assert.ok(webAccess, "bundled pi-web-access entry should exist");
 	assert.equal(webAccess.source, "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1");
 	assert.equal(webAccess.critical, false, "pi-web-access must not be critical");
-	assert.deepEqual(webAccess.replaces, [], "pi-web-access must have no replaces");
-	assert.equal(webAccess.migrateReplacements, false, "pi-web-access must have no migrateReplacements");
+	assert.deepEqual(webAccess.replaces, [
+		"npm:pi-web-access",
+		"git:github.com/nicobailon/pi-web-access",
+	], "pi-web-access should defer to common upstream/manual installs");
+	assert.equal(webAccess.migrateReplacements, false, "pi-web-access replacements must stay deferred by default");
 	assert.deepEqual(webAccess.aliases, [], "pi-web-access must have no aliases");
 });
 
