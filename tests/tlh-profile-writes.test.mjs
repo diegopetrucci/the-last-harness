@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
-import fs, { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import fs, { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { createSafeTlhProfileWritePlan, writeSafeTlhProfileFile } from "../scripts/lib/tlh-profile-writes.mjs";
+
+const repoRoot = join(import.meta.dirname, "..");
 
 function tempFixture(t) {
 	const dir = mkdtempSync(join(tmpdir(), "tlh-profile-writes-test-"));
@@ -45,6 +48,18 @@ function patchFs(t, overrides) {
 		syncBuiltinESMExports();
 	});
 }
+
+test("copied profile write helper resolves its installed sibling dependency", async (t) => {
+	const fixture = tempFixture(t);
+	const supportLibDir = join(fixture.agent, "tlh", "lib");
+	mkdirSync(supportLibDir, { recursive: true });
+	copyFileSync(join(repoRoot, "scripts", "lib", "tlh-profile-writes.mjs"), join(supportLibDir, "tlh-profile-writes.mjs"));
+	copyFileSync(join(repoRoot, "scripts", "lib", "tlh-install-paths.mjs"), join(supportLibDir, "tlh-install-paths.mjs"));
+
+	const helper = await import(pathToFileURL(join(supportLibDir, "tlh-profile-writes.mjs")).href);
+	assert.equal(typeof helper.createSafeTlhProfileWritePlan, "function");
+	assert.equal(typeof helper.writeSafeTlhProfileFile, "function");
+});
 
 test("safe TLH profile writes reject normal Pi config targets before creating them", (t) => {
 	const fixture = tempFixture(t);
