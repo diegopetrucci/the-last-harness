@@ -18,7 +18,7 @@ import { registerTlhStartupMode, validateSubagentToolInput } from "../the-last-h
 import { formatHomePath, isRecord } from "./common.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME } from "./constants.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
-import { applyProviderAwareSubagentModels, selectProviderAwareAgentModel } from "./model-defaults.js";
+import { applyProviderAwareSubagentModels, selectProviderAwareAgentDefaults } from "./model-defaults.js";
 import {
 	buildChildSubagentSystemPrompt,
 	buildTlhSystemPrompt,
@@ -40,6 +40,8 @@ import type {
 
 type TlhPrimaryAgentRuntimeOptions = {
 	env?: Record<string, string | undefined>;
+	primaryAgents?: Map<TlhPrimaryAgentSelection, AgentPrompt>;
+	subagentMetadata?: SubagentMetadata[];
 };
 
 export type TlhPrimaryAgentRuntime = {
@@ -58,6 +60,18 @@ function getTlhGlobalSettings(cwd: string): TlhSettings {
 
 function getTlhPrimaryAgentConfig(cwd: string): TlhPrimaryAgentConfig | undefined {
 	return getTlhGlobalSettings(cwd).tlh?.primaryAgent;
+}
+
+function resolvePrimaryAutoApplySetting(
+	primaryConfig: TlhPrimaryAgentConfig | undefined,
+	primary: AgentPrompt,
+	key: "applyModel" | "applyThinking",
+): boolean {
+	const configured = primaryConfig?.[key];
+	if (typeof configured === "boolean") {
+		return configured;
+	}
+	return primary[key] === true;
 }
 
 function parseTlhSettingsContent(content: string | undefined): Record<string, unknown> {
@@ -172,6 +186,41 @@ function primaryAgentLabel(selection: TlhPrimaryAgentSelection): string {
 
 function primaryAgentOverrideLabel(selection: TlhPrimaryAgentSelection | undefined): string {
 	return selection ?? "none";
+}
+
+function matchesSubagentName(value: unknown, target: string): boolean {
+	return typeof value === "string" && value.trim().toLowerCase() === target;
+}
+
+function subagentCallTargetsAgent(input: unknown, target: string): boolean {
+	if (!isRecord(input)) {
+		return false;
+	}
+	if (matchesSubagentName(input.agent, target)) {
+		return true;
+	}
+	if (Array.isArray(input.tasks) && input.tasks.some((task) => subagentCallTargetsAgent(task, target))) {
+		return true;
+	}
+	if (!Array.isArray(input.chain)) {
+		return false;
+	}
+	for (const step of input.chain) {
+		if (!isRecord(step)) {
+			continue;
+		}
+		if (matchesSubagentName(step.agent, target)) {
+			return true;
+		}
+		if (Array.isArray(step.parallel) && step.parallel.some((task) => subagentCallTargetsAgent(task, target))) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function rushDeveloperDelegationReason(): string {
+	return "TLH Rush may not delegate implementation to developer. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.";
 }
 
 function createTlhPrimaryAgentRuntime(
@@ -306,27 +355,32 @@ function createTlhPrimaryAgentRuntime(
 		}
 	}
 
-	async function applyPrimaryModel(ctx: ExtensionContext, primary: AgentPrompt): Promise<void> {
-		const model = selectProviderAwareAgentModel(primary, ctx.modelRegistry.getAvailable(), ctx.model?.provider);
+	async function applyPrimaryModel(
+		ctx: ExtensionContext,
+		primary: AgentPrompt,
+		model: { provider: string; id: string } | undefined,
+	): Promise<{ provider: string; id: string } | undefined> {
 		if (!model) {
 			const candidates = [primary.model, ...(primary.tlhOpenaiModels ?? [])].filter(Boolean).join(", ");
 			warnOnce(ctx, `missing-primary-model-${primary.name}`, `TLH primary agent models are not available for configured providers: ${candidates}`);
-			return;
+			return undefined;
 		}
 		if (ctx.model?.provider === model.provider && ctx.model?.id === model.id) {
-			return;
+			return model;
 		}
 		const success = await pi.setModel(model);
 		if (!success) {
 			warnOnce(ctx, `primary-model-unavailable-${primary.name}`, `TLH could not switch to primary agent model: ${model.provider}/${model.id}`);
+			return undefined;
 		}
+		return model;
 	}
 
-	function applyPrimaryThinking(primary: AgentPrompt): void {
-		if (!primary.thinking || pi.getThinkingLevel() === primary.thinking) {
+	function applyPrimaryThinking(thinking: AgentPrompt["thinking"]): void {
+		if (!thinking || pi.getThinkingLevel() === thinking) {
 			return;
 		}
-		pi.setThinkingLevel(primary.thinking);
+		pi.setThinkingLevel(thinking);
 	}
 
 	async function applyPrimaryDefaults(ctx: ExtensionContext): Promise<void> {
@@ -345,11 +399,13 @@ function createTlhPrimaryAgentRuntime(
 		applyPrimaryTools(ctx, primary);
 
 		const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
-		if (primaryConfig?.applyModel === true) {
-			await applyPrimaryModel(ctx, primary);
-		}
-		if (primaryConfig?.applyThinking === true) {
-			applyPrimaryThinking(primary);
+		const shouldApplyModel = resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyModel");
+		const shouldApplyThinking = resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyThinking");
+		const primaryDefaults = selectProviderAwareAgentDefaults(primary, ctx.modelRegistry.getAvailable(), ctx.model?.provider);
+		const currentProviderDefaults = selectProviderAwareAgentDefaults(primary, [], ctx.model?.provider);
+		const activePrimaryModel = shouldApplyModel ? await applyPrimaryModel(ctx, primary, primaryDefaults.model) : undefined;
+		if (shouldApplyThinking) {
+			applyPrimaryThinking(activePrimaryModel ? primaryDefaults.thinking : currentProviderDefaults.thinking);
 		}
 	}
 
@@ -383,11 +439,13 @@ function createTlhPrimaryAgentRuntime(
 		const options = [
 			{ value: "status", description: "Show TLH primary-agent status" },
 			{ value: "architect", description: "Use the architect primary agent for this session" },
+			{ value: "rush", description: "Use the Rush primary agent for this session" },
 			{ value: "product", description: "Use the product primary agent for this session" },
 			{ value: "bug-hunter", description: "Use the bug-hunter primary agent for this session" },
 			{ value: "disabled", description: "Disable TLH primary agents for this session" },
 			{ value: "reset", description: "Clear the session primary-agent override" },
 			{ value: "default architect", description: "Persistently select architect for future sessions" },
+			{ value: "default rush", description: "Persistently select Rush for future sessions" },
 			{ value: "default product", description: "Persistently select product for future sessions" },
 			{ value: "default bug-hunter", description: "Persistently select bug-hunter for future sessions" },
 			{ value: "default disabled", description: "Persistently disable TLH primaries for future sessions" },
@@ -460,7 +518,7 @@ function createTlhPrimaryAgentRuntime(
 				const selected = parsePrimaryAgentSelection(command);
 				if (selected) {
 					if (parts.length !== 1) {
-						ctx.ui.notify("Usage: /agent architect|product|bug-hunter|disabled", "error");
+						ctx.ui.notify("Usage: /agent architect|rush|product|bug-hunter|disabled", "error");
 						return;
 					}
 					setSessionPrimaryAgentOverride(selected);
@@ -474,12 +532,12 @@ function createTlhPrimaryAgentRuntime(
 
 				if (command === "default") {
 					if (parts.length !== 2) {
-						ctx.ui.notify("Usage: /agent default architect|product|bug-hunter|disabled|reset", "error");
+						ctx.ui.notify("Usage: /agent default architect|rush|product|bug-hunter|disabled|reset", "error");
 						return;
 					}
 					const defaultSelection = value === "reset" ? undefined : parsePrimaryAgentSelection(value);
 					if (value !== "reset" && !defaultSelection) {
-						ctx.ui.notify("Usage: /agent default architect|product|bug-hunter|disabled|reset", "error");
+						ctx.ui.notify("Usage: /agent default architect|rush|product|bug-hunter|disabled|reset", "error");
 						return;
 					}
 
@@ -500,12 +558,12 @@ function createTlhPrimaryAgentRuntime(
 					return;
 				}
 
-				ctx.ui.notify("Usage: /agent [status|architect|product|bug-hunter|disabled|reset|default architect|default product|default bug-hunter|default disabled|default reset]", "error");
+				ctx.ui.notify("Usage: /agent [status|architect|rush|product|bug-hunter|disabled|reset|default architect|default rush|default product|default bug-hunter|default disabled|default reset]", "error");
 			},
 		});
 
 		pi.registerShortcut(PRIMARY_AGENT_CYCLE_SHORTCUT, {
-			description: "Cycle TLH primary agent (architect/product/bug-hunter/disabled)",
+			description: "Cycle TLH primary agent (architect/rush/product/bug-hunter/disabled)",
 			handler: async (ctx) => {
 				await cycleSessionPrimaryAgent(ctx);
 			},
@@ -619,8 +677,12 @@ function createTlhPrimaryAgentRuntime(
 			}
 			applyProviderAwareSubagentModels(event.input, subagentsByName, ctx.modelRegistry.getAvailable(), ctx.model?.provider);
 			syncPrimaryAgentState(ctx);
-			if (!isEnabledPrimaryAgentSelection(currentPrimaryAgentSelection())) {
+			const selection = currentPrimaryAgentSelection();
+			if (!isEnabledPrimaryAgentSelection(selection)) {
 				return undefined;
+			}
+			if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
+				return { block: true, reason: rushDeveloperDelegationReason() };
 			}
 			const reason = validateSubagentToolInput(event.input);
 			return reason ? { block: true, reason } : undefined;
@@ -644,7 +706,11 @@ export function registerTlhPrimaryAgentRuntime(
 		return undefined;
 	}
 
-	const runtime = createTlhPrimaryAgentRuntime(pi, loadPrimaryAgents(), loadSubagentMetadata());
+	const runtime = createTlhPrimaryAgentRuntime(
+		pi,
+		options.primaryAgents ?? loadPrimaryAgents(),
+		options.subagentMetadata ?? loadSubagentMetadata(),
+	);
 	runtime.registerCommands();
 	runtime.registerLifecycleHooks();
 	return runtime;

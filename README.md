@@ -18,11 +18,13 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/dow
 
 A TLH primary agent is the role you talk to directly in the main session. The default primary is the **architect**, inspired by the architect-first workflow outlined in ["How I write software with LLMs"](https://www.stavros.io/posts/how-i-write-software-with-llms/): refine requirements and scope, understand codebase implications, turn approved plans into tickets, delegate implementation, request review, and report back when the work is done.
 
+TLH also includes **Rush**, a selectable primary for small bounded implementation tasks. Rush edits directly, runs narrow validation, and skips the default architect `tk`/developer/review loop. It only asks before using `code-reviewer` when a review pass seems worth the risk/latency tradeoff, and `oracle` is an optional deeper second opinion rather than a default step. Provider defaults are GPT-5.5 with thinking off on OpenAI/OpenAI-Codex, and Anthropic Opus with low thinking on Anthropic.
+
 TLH also includes a **product** primary agent for product strategy and decision support. It clarifies goals, frames tradeoffs, maintains product strategy docs, and shapes implementation-ready `tk` tickets for later architect/developer handoff. Product mode does not implement source changes, run implementation loops, or perform code review.
 
-TLH also includes a **bug-hunter** primary agent for read-only investigation and debugging. It analyzes bug reports, traces root causes, surveys the codebase for related patterns, and proposes candidate fixes — without modifying files, running destructive tools, or kicking off implementation loops. Bug-hunter is a peer to the architect and product primaries: useful when you want to understand a problem before handing off to a write-capable primary.
+TLH also includes a **bug-hunter** primary agent for read-only investigation and debugging. It analyzes bug reports, traces root causes, surveys the codebase for related patterns, and proposes candidate fixes — without modifying files, running destructive tools, or kicking off implementation loops. Bug-hunter is a peer to the architect, Rush, and product primaries: useful when you want to understand a problem before handing off to a write-capable primary.
 
-Primary agents are optional. Use `Shift+Tab` to cycle the current session through `architect` → `product` → `bug-hunter` → `disabled`, or use `/agent` for explicit session and persistent-default controls. When primary agents are disabled, subagents remain available but TLH stops applying primary-agent persona/tool restrictions.
+Primary agents are optional. Use `Shift+Tab` to cycle the current session through `architect` → `rush` → `product` → `bug-hunter` → `disabled`, or use `/agent` for explicit session and persistent-default controls. When primary agents are disabled, subagents remain available but TLH stops applying primary-agent persona/tool restrictions.
 
 ### Subagents
 
@@ -33,7 +35,7 @@ They run in fresh child contexts: they get the task and project context, not the
 ## Quality-of-life improvements to `pi`
 
 - **Project memory**: Gnosis is required and installed automatically on supported platforms (linux/darwin × x64/arm64) so agents can record decisions, constraints, rejected alternatives, and lessons in repo-local memory. Unsupported platforms hard-fail at install.
-- **Ticketed execution**: TLH requires `tk` for dependency-tracked tickets, installing a managed command at `~/.the-last-harness/agent/bin/tk` when it needs to supply one. The architect hands one ticket at a time to implementation and review agents; product mode can shape product-approved tickets for later handoff.
+- **Ticketed execution**: TLH requires `tk` for dependency-tracked tickets, installing a managed command at `~/.the-last-harness/agent/bin/tk` when it needs to supply one. The architect hands one ticket at a time to implementation and review agents; product mode can shape product-approved tickets for later handoff; Rush is the small-task exception and edits directly instead of starting that default loop.
 - **Context management**: context is capped to 200k tokens to avoid the `dumb zone`, and `/context` lets you see what is eating up your context.
 - **Subscription usage footer**: OAuth subscription sessions on OpenAI/Codex and Anthropic show the current usage window in the footer; weekly usage is hidden by default and controlled with `/usage`.
 - **Safety rails**: Bundled permission and destructive-action confirmations add checkpoints before sensitive commands or file changes.
@@ -49,9 +51,9 @@ They run in fresh child contexts: they get the task and project context, not the
 
 Common TLH commands:
 
-- `Shift+Tab` — cycle the current session through `architect` → `product` → `bug-hunter` → `disabled` primary-agent modes.
+- `Shift+Tab` — cycle the current session through `architect` → `rush` → `product` → `bug-hunter` → `disabled` primary-agent modes.
 - `/tlh` / `/harness` — show TLH package, primary-agent, override, and settings status.
-- `/agent [status|architect|product|bug-hunter|disabled|reset|default architect|default product|default bug-hunter|default disabled|default reset]` — inspect the active primary, set/reset the session override, or write/reset the persistent default.
+- `/agent [status|architect|rush|product|bug-hunter|disabled|reset|default architect|default rush|default product|default bug-hunter|default disabled|default reset]` — inspect the active primary, switch this session, or write/reset the persistent default.
 - `/architect [status|on|off|toggle|reset|default on|default off|default reset]` — compatibility controls for architect-only flows; maps to architect/disabled primary-agent settings.
 - `/effort ...` — pick or set model reasoning effort. Available levels depend on the current model.
 - `/fast [on|off|auto|toggle|status]` — manage OpenAI Fast mode for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions.
