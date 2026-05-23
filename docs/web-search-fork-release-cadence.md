@@ -57,10 +57,10 @@ Follow these steps the next time a tag is rolled:
    # or: git tag -s tlh-vX.Y.Z-1 -m "TLH fork of pi-web-access vX.Y.Z, revision 1"
    ```
 
-7. Push branch and tag explicitly (branch and tag share the same name, so the bare
-   `git push origin <name>` form is ambiguous — use the explicit refspec for the tag):
+7. Push branch and tag explicitly (branch and tag share the same name, so fully qualify
+   both refspecs):
    ```sh
-   git push origin tlh-vX.Y.Z-1 refs/tags/tlh-vX.Y.Z-1
+   git push origin refs/heads/tlh-vX.Y.Z-1:refs/heads/tlh-vX.Y.Z-1 refs/tags/tlh-vX.Y.Z-1:refs/tags/tlh-vX.Y.Z-1
    ```
 
 8. In `the-last-harness-alt`:
@@ -72,9 +72,9 @@ Follow these steps the next time a tag is rolled:
 
 ## Notes
 
-- The branch and tag intentionally share the same name (`tlh-vX.Y.Z-1`). `git push origin
-  tlh-vX.Y.Z-1` alone will push only the branch (or fail with an ambiguous-refspec error). Always
-  use the explicit `refs/tags/tlh-vX.Y.Z-1` form to push the tag.
+- The branch and tag intentionally share the same name (`tlh-vX.Y.Z-1`). When pushing both,
+  fully qualify each ref (`refs/heads/...` and `refs/tags/...`) so Git does not need to infer which
+  same-name ref you meant.
 - Running the upstream `pi-web-access` extension alongside the TLH fork simultaneously is
   unsupported. Tool names are unchanged (`web_search`, `fetch_content`, `get_search_content`) and
   conflicts will occur if both are active.
