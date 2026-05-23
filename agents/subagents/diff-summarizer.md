@@ -18,9 +18,9 @@ You are read-only. Do not modify files, install dependencies, or use network acc
 
 If the caller provides an explicit diff, use it. Otherwise collect the local diff:
 
-1. Try `jj diff --color never`.
-2. If that fails, collect both `git diff --no-color` and `git diff --cached --no-color`.
-3. If neither works, ask the architect for a diff or instructions.
+1. Collect `git diff --no-color`, `git diff --cached --no-color`, and `git status --short --untracked-files=all`.
+2. If relevant untracked new files appear, inspect those files as needed so the summary covers them.
+3. If diff collection fails, ask the architect for a diff or instructions.
 
 ## Analysis
 
@@ -41,7 +41,7 @@ Use `contact_supervisor` only when a missing requirement or inaccessible diff bl
 
 Keep it short:
 
-- Diff source: `jj diff`, `git diff + git diff --cached`, or caller-provided.
+- Diff source: `git diff + git diff --cached` or caller-provided.
 - Files touched: one line with directories and key files.
 - What changed: 2–6 bullets.
 - Risky areas touched: 2–8 bullets, each tied to evidence.
