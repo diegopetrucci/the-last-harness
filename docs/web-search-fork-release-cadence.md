@@ -1,6 +1,6 @@
 # Web-search fork release cadence
 
-This document describes how `pi-web-access` is forked, tagged, and updated for The Last Harness.
+This document covers the pinned fork/tag workflow for `pi-web-access`. Durable web-search / web-scout policy decisions live in repo-local Gnosis entries `ywsuwh` and `gbmehw`.
 
 ## Where the fork lives
 
@@ -16,11 +16,15 @@ TLH release tags follow the form `tlh-vX.Y.Z-N`:
 
 Example: `tlh-v0.10.7-1` is the first TLH revision on top of upstream `v0.10.7`.
 
-## Upstream commit pinning
+## Current TLH pin
 
 Every TLH fork tag records the upstream commit SHA in `NOTICE` for auditability.
 
-Current pin: upstream `v0.10.7` at `076bf0db5e739b200286ca37486e4edd8d19123c`.
+- TLH fork tag: `tlh-v0.10.7-1`
+- Upstream version: `v0.10.7`
+- Upstream commit SHA: `076bf0db5e739b200286ca37486e4edd8d19123c`
+- Tag audit: annotated, currently unsigned; tag SHA `863cb9fa1746eb2cb35543e20440508fd57fc85b`; tagged `2026-05-22`
+- Branch HEAD at tag: `cf224b77ed45bb4826f30898dfb8f559fb69622f`
 
 ## Bump process
 
@@ -64,7 +68,7 @@ Follow these steps the next time a tag is rolled:
    ```
 
 8. In the TLH repo:
-   - Update `docs/web-search-spec.md` Pinned tag section with the new tag and commit SHA.
+   - Update this document's current pin section with the new tag and upstream commit SHA.
    - Bump `config/default-extensions.json` entry for `pi-web-access` (`source`) to the new tag.
    - Update `tests/default-extensions.test.mjs` to pin the new tag string.
 

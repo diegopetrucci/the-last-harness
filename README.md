@@ -105,7 +105,7 @@ Gnosis project data lives in repo-local `.gnosis` directories and ticket data li
 
 TLH ships [`pi-web-access`](https://github.com/diegopetrucci/pi-web-access) (an Exa-only fork) as a non-critical default extension for `web-scout`.
 
-For configuration, EXA key precedence, privacy, opt-out, and manual migration from `~/.pi/web-search.json`, see [`docs/web-search.md`](docs/web-search.md). Pinned fork/tag notes remain in [`docs/web-search-spec.md`](docs/web-search-spec.md).
+For configuration, EXA key precedence, privacy, opt-out, and manual migration from `~/.pi/web-search.json`, see [`docs/web-search.md`](docs/web-search.md). Durable web-search / web-scout decisions live in repo-local Gnosis entries `ywsuwh` and `gbmehw`; pinned fork/tag process notes live in [`docs/web-search-fork-release-cadence.md`](docs/web-search-fork-release-cadence.md).
 
 ### Launch telemetry
 

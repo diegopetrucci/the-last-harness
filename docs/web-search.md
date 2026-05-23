@@ -52,4 +52,4 @@ agent_dir="${PI_CODING_AGENT_DIR:-$HOME/.the-last-harness/agent}" && \
 
 If `$target` already exists, review or merge it manually instead of overwriting it by default.
 
-For pinned fork/tag details and implementation notes, see [`docs/web-search-spec.md`](web-search-spec.md).
+For durable web-search / web-scout decisions, see repo-local Gnosis entries `ywsuwh` and `gbmehw`. For pinned fork/tag process details, see [`docs/web-search-fork-release-cadence.md`](web-search-fork-release-cadence.md).

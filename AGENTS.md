@@ -20,7 +20,7 @@ This repository packages **The Last Harness** as an isolated profile for the ups
 - `README.md` — public install, update, uninstall, and security documentation.
 - `CHANGELOG.md` — release notes for versioned releases.
 - `docs/releasing.md` — tag-based release checklist and process.
-- `docs/web-search-spec.md` — historical and planning notes for the web-search / web-scout work, including the pinned fork/tag details and actionable implementation context that complements repo-local Gnosis decisions.
+- `docs/web-search-fork-release-cadence.md` — pinned fork/tag process notes for the web-search fork; durable web-search / web-scout decisions live in repo-local Gnosis entries `ywsuwh` and `gbmehw`.
 - `.github/workflows/release.yml` — tag-triggered GitHub Release workflow.
 
 ## Safety Requirements
