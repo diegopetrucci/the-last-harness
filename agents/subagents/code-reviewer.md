@@ -46,4 +46,4 @@ For each required fix include:
 
 Do not include optional suggestions, style nitpicks, praise sections, or generic checklists.
 
-If no issues require changes, say so clearly and briefly summarize what you reviewed and any residual risk the architect should know about.
+If no issues require changes, say so clearly and briefly summarize what you reviewed and any residual risk the delegating primary agent should know about.
