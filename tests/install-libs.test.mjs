@@ -307,12 +307,20 @@ test("support manifest includes stage-1 and installed helper library dependencie
 	assert.ok(relativePaths.includes("scripts/lib/tlh-install-git.mjs"));
 	assert.ok(relativePaths.includes("scripts/lib/tlh-install-support-files.mjs"));
 	assert.ok(relativePaths.includes("scripts/lib/tlh-install-utils.mjs"));
+	assert.ok(relativePaths.includes("scripts/lib/tlh-profile-writes.mjs"));
 	assert.deepEqual(manifest.find((file) => file.variable === "TLH_INSTALL_PATHS_LIB"), {
 		variable: "TLH_INSTALL_PATHS_LIB",
 		requirement: "required",
 		relativePath: "scripts/lib/tlh-install-paths.mjs",
 		tempPath: "lib/tlh-install-paths.mjs",
 		installName: "lib/tlh-install-paths.mjs",
+	});
+	assert.deepEqual(manifest.find((file) => file.variable === "TLH_PROFILE_WRITES_LIB"), {
+		variable: "TLH_PROFILE_WRITES_LIB",
+		requirement: "required",
+		relativePath: "scripts/lib/tlh-profile-writes.mjs",
+		tempPath: "lib/tlh-profile-writes.mjs",
+		installName: "lib/tlh-profile-writes.mjs",
 	});
 	assert.deepEqual(manifest.find((file) => file.variable === "TLH_INSTALL_UTILS_LIB"), {
 		variable: "TLH_INSTALL_UTILS_LIB",
@@ -332,6 +340,7 @@ test("support manifest includes stage-1 and installed helper library dependencie
 
 	const bootstrap = readFileSync(resolve(import.meta.dirname, "..", "install.sh"), "utf8");
 	assert.match(bootstrap, /^required\|scripts\/lib\/default-extensions\.mjs$/m);
+	assert.match(bootstrap, /^required\|scripts\/lib\/tlh-profile-writes\.mjs$/m);
 	assert.match(bootstrap, /^required\|scripts\/lib\/tlh-install-utils\.mjs$/m);
 });
 
