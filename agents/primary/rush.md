@@ -5,6 +5,7 @@ model: anthropic/claude-opus-4-7
 tlhOpenaiModels: openai-codex/gpt-5.5, openai/gpt-5.5
 thinking: low
 tlhOpenaiThinking: off
+preferCurrentOpenaiModel: true
 applyModel: true
 applyThinking: true
 tools: read, write, edit, grep, find, ls, bash, subagent, intercom

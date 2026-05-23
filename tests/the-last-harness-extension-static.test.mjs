@@ -77,6 +77,7 @@ test("before_agent_start reapplies primary defaults without a one-shot model gat
 	assert.match(applyPrimaryDefaults, /resolvePrimaryAutoApplySetting\(primaryConfig, primary, "applyThinking"\)/);
 	assert.match(applyPrimaryModel, /ctx\.model\?\.provider === model\.provider && ctx\.model\?\.id === model\.id/);
 	assert.match(applyPrimaryThinking, /pi\.getThinkingLevel\(\) === thinking/);
+	assert.match(promptsSource, /preferCurrentOpenaiModel: parseBooleanValue\(frontmatter\.preferCurrentOpenaiModel\)/);
 	assert.match(promptsSource, /applyModel: parseBooleanValue\(frontmatter\.applyModel\)/);
 	assert.match(promptsSource, /applyThinking: parseBooleanValue\(frontmatter\.applyThinking\)/);
 });
@@ -102,6 +103,8 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	assert.deepEqual(rush.tlhOpenaiModels, ["openai-codex/gpt-5.5", "openai/gpt-5.5"]);
 	assert.equal(rush.thinking, "low");
 	assert.equal(rush.tlhOpenaiThinking, "off");
+	assert.equal(rush.preferCurrentOpenaiModel, true);
+	assert.equal(architect.preferCurrentOpenaiModel, undefined);
 	assert.equal(rush.applyModel, true);
 	assert.equal(rush.applyThinking, true);
 	assert.match(rush.systemPrompt, /Do not delegate implementation to `developer`/);

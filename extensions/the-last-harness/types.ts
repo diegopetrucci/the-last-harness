@@ -167,6 +167,7 @@ export type AgentPrompt = {
 	tlhOpenaiModels?: string[];
 	thinking?: ThinkingLevel;
 	tlhOpenaiThinking?: ThinkingLevel;
+	preferCurrentOpenaiModel?: boolean;
 	applyModel?: boolean;
 	applyThinking?: boolean;
 	tools: string[];

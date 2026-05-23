@@ -11,6 +11,7 @@ export type AgentModelDefaults = {
 	tlhOpenaiModels?: string[];
 	thinking?: ThinkingLevel;
 	tlhOpenaiThinking?: ThinkingLevel;
+	preferCurrentOpenaiModel?: boolean;
 };
 
 export type ProviderAwareAgentDefaults<T extends ProviderModelReference = ProviderModelReference> = {
@@ -110,8 +111,10 @@ export function selectProviderAwareAgentDefaults<T extends ProviderModelReferenc
 	availableModels: readonly T[],
 	currentProvider?: string,
 ): ProviderAwareAgentDefaults<T> {
-	const model = currentProviderOpenaiCandidate(agent, availableModels, currentProvider)
-		?? selectProviderAwareAgentModel(agent, availableModels, currentProvider);
+	const model = agent?.preferCurrentOpenaiModel
+		? currentProviderOpenaiCandidate(agent, availableModels, currentProvider)
+			?? selectProviderAwareAgentModel(agent, availableModels, currentProvider)
+		: selectProviderAwareAgentModel(agent, availableModels, currentProvider);
 	const thinking = isOpenaiProvider(model?.provider ?? currentProvider) && agent?.tlhOpenaiThinking
 		? agent.tlhOpenaiThinking
 		: agent?.thinking;

@@ -69,6 +69,7 @@ function parseAgentPrompt(filePath: string): AgentPrompt | undefined {
 		tlhOpenaiModels: splitCommaList(frontmatter.tlhOpenaiModels),
 		thinking: parseThinkingLevelValue(frontmatter.thinking),
 		tlhOpenaiThinking: parseThinkingLevelValue(frontmatter.tlhOpenaiThinking),
+		preferCurrentOpenaiModel: parseBooleanValue(frontmatter.preferCurrentOpenaiModel),
 		applyModel: parseBooleanValue(frontmatter.applyModel),
 		applyThinking: parseBooleanValue(frontmatter.applyThinking),
 		tools: splitCommaList(frontmatter.tools),

@@ -27,6 +27,13 @@ const rushLikePrimary = {
 	tlhOpenaiModels: ["openai-codex/gpt-5.5", "openai/gpt-5.5"],
 	thinking: "low",
 	tlhOpenaiThinking: "off",
+	preferCurrentOpenaiModel: true,
+};
+
+const anthropicFirstPrimary = {
+	...rushLikePrimary,
+	name: "architect",
+	preferCurrentOpenaiModel: undefined,
 };
 
 const agents = new Map([
@@ -88,7 +95,7 @@ test("provider-aware primary defaults switch Rush-like thinking off for OpenAI p
 	});
 });
 
-test("provider-aware primary defaults prefer the current OpenAI provider over an available Anthropic default", () => {
+test("provider-aware primary defaults let Rush prefer the current OpenAI provider over an available Anthropic default", () => {
 	const mixedCodexAvailable = [...anthropicAvailable, ...codexAvailable];
 	const mixedOpenaiAvailable = [...anthropicAvailable, ...openaiAvailable];
 
@@ -99,6 +106,21 @@ test("provider-aware primary defaults prefer the current OpenAI provider over an
 	assert.deepEqual(selectProviderAwareAgentDefaults(rushLikePrimary, mixedOpenaiAvailable, "openai"), {
 		model: { provider: "openai", id: "gpt-5.5" },
 		thinking: "off",
+	});
+});
+
+
+test("provider-aware primary defaults keep the Anthropic default first without the Rush-only opt-in", () => {
+	const mixedCodexAvailable = [...anthropicAvailable, ...codexAvailable];
+	const mixedOpenaiAvailable = [...anthropicAvailable, ...openaiAvailable];
+
+	assert.deepEqual(selectProviderAwareAgentDefaults(anthropicFirstPrimary, mixedCodexAvailable, "openai-codex"), {
+		model: { provider: "anthropic", id: "claude-opus-4-7" },
+		thinking: "low",
+	});
+	assert.deepEqual(selectProviderAwareAgentDefaults(anthropicFirstPrimary, mixedOpenaiAvailable, "openai"), {
+		model: { provider: "anthropic", id: "claude-opus-4-7" },
+		thinking: "low",
 	});
 });
 
