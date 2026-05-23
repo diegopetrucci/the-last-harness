@@ -20,9 +20,6 @@ All notable changes to The Last Harness will be documented in this file.
 - Bundled `pi-web-access` now defers to existing upstream/manual `pi-web-access` installs during normal merges and updates, avoiding duplicate `web_search`/`fetch_content`/`get_search_content` providers unless you explicitly switch to the TLH fork.
 - Footer restructured into three logical lines: working directory/git (unchanged), a single flowing `agent: … • model • thinking • context` line, and an optional session-stats line showing cost and/or subscription usage. Empty lines are omitted entirely.
 - Subscription usage session label now reads e.g. `5h session 27% used` (was `5h 27% used`).
-- The bundled `pi-web-access` extension is non-critical; `tlh defaults disable pi-web-access` opts out without affecting other features.
-- Web-search queries leave the machine via Exa (key from settings or env, or zero-config MCP fallback). See the fork README's ["What leaves the machine"](https://github.com/diegopetrucci/pi-web-access/blob/tlh-v0.10.7-1/README.md#what-leaves-the-machine) section.
-- Extension settings and cache live under `${PI_CODING_AGENT_DIR}`; TLH never touches `~/.pi/`.
 
 ## [0.10.0] - 2026-05-21
 
