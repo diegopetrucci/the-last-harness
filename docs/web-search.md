@@ -4,7 +4,7 @@ TLH ships [`pi-web-access`](https://github.com/diegopetrucci/pi-web-access) (an 
 
 GitHub-specific research — repositories, issues, pull requests, releases, and project docs — still goes to `librarian`.
 
-Running the upstream `pi-web-access` extension alongside the TLH fork is unsupported because the tool names conflict.
+Running the upstream `pi-web-access` extension alongside the TLH fork is unsupported because the tool names conflict. If conflicts appear, keep only one provider active: remove your upstream/manual `pi-web-access` install from the same isolated profile, or temporarily opt the TLH bundle out with `tlh defaults disable pi-web-access` until you clean up the duplicate.
 
 ## Configuration
 
@@ -40,8 +40,16 @@ TLH does not automatically migrate an existing `~/.pi/web-search.json`. To copy 
 
 ```sh
 agent_dir="${PI_CODING_AGENT_DIR:-$HOME/.the-last-harness/agent}" && \
+  case "$agent_dir" in "$HOME/.pi/agent"|"$HOME/.pi/agent/"*)
+    echo "Refusing to write to the normal Pi profile: $agent_dir" >&2; exit 1 ;;
+  esac && \
+  target="$agent_dir/extensions/pi-web-access/settings.json" && \
+  test ! -e "$target" || {
+    echo "Refusing to overwrite existing TLH settings: $target" >&2; exit 1; } && \
   mkdir -p "$agent_dir/extensions/pi-web-access" && \
-  install -m 600 ~/.pi/web-search.json "$agent_dir/extensions/pi-web-access/settings.json"
+  install -m 600 ~/.pi/web-search.json "$target"
 ```
+
+If `$target` already exists, review or merge it manually instead of overwriting it by default.
 
 For pinned fork/tag details and implementation notes, see [`docs/web-search-spec.md`](web-search-spec.md).

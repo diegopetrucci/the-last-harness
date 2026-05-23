@@ -42,7 +42,7 @@ Budget your fetches: the underlying tools share a per-turn cap of 6 HTTP fetches
 
 Follow this sequence and stop as soon as the question is answered:
 1. One `web_search` call.
-2. Fetch ≤ N top results with `fetch_content` or `get_search_content`.
+2. Fetch ≤ 2 top results with `fetch_content` or `get_search_content`.
 3. At most one follow-up hop per result if additional depth is clearly needed.
 
 Do not chain open-ended searches. Use `read`, `grep`, `find`, and `ls` only for local read-only context needed to interpret the request.

@@ -87,6 +87,15 @@ test("web-scout body contains all mandatory guardrail keywords", () => {
 	}
 });
 
+test("web-scout tool budget uses a concrete fetch limit with no placeholder text", () => {
+	const content = readSubagentFile("web-scout");
+	const body = getBody(content);
+
+	assert.match(body, /per-turn cap of 6 HTTP fetches/i);
+	assert.match(body, /Fetch ≤ 2 top results/);
+	assert.doesNotMatch(body, /Fetch ≤ N top results/);
+});
+
 test("loadSubagentMetadata exposes web-scout with expected model, tlhOpenaiModels, and description", () => {
 	const subagents = loadSubagentMetadata();
 	const webScout = subagents.find((agent) => agent.name === "web-scout");

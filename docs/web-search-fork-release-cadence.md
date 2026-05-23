@@ -26,7 +26,7 @@ Current pin: upstream `v0.10.7` at `076bf0db5e739b200286ca37486e4edd8d19123c`.
 
 Follow these steps the next time a tag is rolled:
 
-1. Fetch upstream tags in `~/Developer/forks/pi-web-access`:
+1. Fetch upstream tags in your fork checkout:
    ```sh
    git fetch upstream --tags
    ```
@@ -63,18 +63,18 @@ Follow these steps the next time a tag is rolled:
    git push origin refs/heads/tlh-vX.Y.Z-1:refs/heads/tlh-vX.Y.Z-1 refs/tags/tlh-vX.Y.Z-1:refs/tags/tlh-vX.Y.Z-1
    ```
 
-8. In `the-last-harness-alt`:
+8. In the TLH repo:
    - Update `docs/web-search-spec.md` Pinned tag section with the new tag and commit SHA.
    - Bump `config/default-extensions.json` entry for `pi-web-access` (`source`) to the new tag.
    - Update `tests/default-extensions.test.mjs` to pin the new tag string.
 
-9. Run `npm run validate` in `the-last-harness-alt` and fix any fallout.
+9. Run `npm run validate` in the TLH repo and fix any fallout.
 
 ## Notes
 
 - The branch and tag intentionally share the same name (`tlh-vX.Y.Z-1`). When pushing both,
   fully qualify each ref (`refs/heads/...` and `refs/tags/...`) so Git does not need to infer which
   same-name ref you meant.
-- Running the upstream `pi-web-access` extension alongside the TLH fork simultaneously is
+- Running the upstream `pi-web-access` extension alongside the TLH fork at the same time is
   unsupported. Tool names are unchanged (`web_search`, `fetch_content`, `get_search_content`) and
   conflicts will occur if both are active.
