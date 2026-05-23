@@ -30,6 +30,12 @@ function openAiUsage(used = 25) {
 	};
 }
 
+function openAiNestedUsage(used = 25) {
+	return {
+		rate_limit: openAiUsage(used),
+	};
+}
+
 function assertNoCredentialMaterial(value) {
 	assert.doesNotMatch(JSON.stringify(value), /Authorization|Bearer|access|refresh|token/i);
 }
@@ -48,8 +54,33 @@ function createDeferred() {
 	return { promise, resolve, reject };
 }
 
-test("normalizes OpenAI/Codex wham usage primary and secondary windows", () => {
+test("normalizes OpenAI/Codex wham usage top-level primary and secondary windows", () => {
 	const snapshot = normalizeOpenAICodexUsage(openAiUsage(75), { nowMs: NOW_MS });
+
+	assert.equal(snapshot?.provider, "openai-codex");
+	assert.equal(snapshot?.fetchedAt, NOW_MS);
+	assert.deepEqual(snapshot?.windows.session, {
+		key: "primary_window",
+		label: "session",
+		used: 75,
+		limit: 100,
+		remaining: 25,
+		percent: 75,
+		resetsAt: RESET_AT,
+	});
+	assert.deepEqual(snapshot?.windows.weekly, {
+		key: "secondary_window",
+		label: "weekly",
+		used: 200,
+		limit: 1000,
+		remaining: 800,
+		percent: 20,
+		resetsAt: RESET_AT,
+	});
+});
+
+test("normalizes OpenAI/Codex wham nested rate_limit primary and secondary windows", () => {
+	const snapshot = normalizeOpenAICodexUsage(openAiNestedUsage(75), { nowMs: NOW_MS });
 
 	assert.equal(snapshot?.provider, "openai-codex");
 	assert.equal(snapshot?.fetchedAt, NOW_MS);
@@ -200,18 +231,6 @@ test("normalizes Anthropic OAuth utilization-only windows", () => {
 });
 
 test("normalizers fail closed for unobserved window shapes", () => {
-	assert.equal(
-		normalizeOpenAICodexUsage(
-			{
-				rate_limit: {
-					primary_window: { used: 1, limit: 10 },
-					secondary_window: { used: 2, limit: 10 },
-				},
-			},
-			{ nowMs: NOW_MS },
-		),
-		undefined,
-	);
 	assert.equal(normalizeOpenAICodexUsage({ primaryWindow: { used: 1, limit: 10 } }, { nowMs: NOW_MS }), undefined);
 	assert.equal(
 		normalizeAnthropicUsage(

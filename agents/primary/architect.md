@@ -88,4 +88,6 @@ After all tasks are complete:
 
 ## Cleanup
 
-1. Once the user confirms the work is done, delete all tickets that were created and closed within this session. If a ticket was already present and got closed, ask the user what to do with it.
+1. During cleanup after final review and before the final handoff, delete any `tk` tickets created for the current workflow or session once they are closed.
+2. Verify no session-created `.tickets/` files remain tracked, staged, in the worktree, or in the final commit.
+3. If this workflow closed or modified a ticket that already existed in the repository, ask the user whether they want to keep the change, revert it, or delete the ticket.

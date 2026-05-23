@@ -50,6 +50,21 @@ test("user-facing ticket docs describe mandatory managed tk behavior", () => {
 	assert.match(changelog, /`tk` ticket integration is now mandatory/);
 });
 
+test("README and integrations docs describe Rush primary behavior and commands", () => {
+	const readme = readRepoFile("README.md");
+	const integrations = readRepoFile("docs/integrations.md");
+
+	assert.match(readme, /selectable primary for small bounded implementation tasks/i);
+	assert.match(readme, /skips the default architect `tk`\/developer\/review loop/i);
+	assert.match(readme, /`code-reviewer`/);
+	assert.match(readme, /`oracle` is an optional deeper second opinion/i);
+	assert.match(readme, /GPT-5\.5 with thinking off on OpenAI\/OpenAI-Codex/i);
+	assert.match(readme, /Anthropic Opus with low thinking on Anthropic/i);
+	assert.match(readme, /`architect` → `rush` → `product` → `bug-hunter` → `disabled`/);
+	assert.match(readme, /\/agent \[status\|architect\|rush\|product\|bug-hunter\|disabled\|reset\|default architect\|default rush\|default product\|default bug-hunter\|default disabled\|default reset\]/);
+	assert.match(integrations, /Rush keeps that tooling available but handles small bounded tasks with direct edits instead of the default `tk` loop/i);
+});
+
 test("user-facing docs and installer help do not advertise legacy ticket opt-outs", () => {
 	const sources = [...userFacingDocs, "install.sh"];
 
