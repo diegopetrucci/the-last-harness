@@ -17,7 +17,7 @@ You are read-only. Do not modify files.
 ## Inputs
 
 - Either the `tk` ticket IDs supplied by the delegating primary agent, or a supplied task brief plus the diff. If ticket IDs are supplied, run `tk show <id>` for each and treat them as the source of truth. Otherwise treat the supplied brief plus the diff as the source of truth.
-- The VCS diff. Use `git diff --no-color` plus `git diff --cached --no-color`.
+- The VCS diff. Use `git diff --no-color`, `git diff --cached --no-color`, and `git status --short --untracked-files=all`. Inspect relevant untracked new files when needed so the review covers pre-staging changes.
 - The repository context and relevant project instructions.
 
 If the repository is unfamiliar and review quality depends on understanding stack or conventions, ask the delegating primary agent to provide a `repo-scout` report.

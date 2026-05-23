@@ -18,8 +18,9 @@ You are read-only. Do not modify files, install dependencies, or use network acc
 
 If the caller provides an explicit diff, use it. Otherwise collect the local diff:
 
-1. Collect both `git diff --no-color` and `git diff --cached --no-color`.
-2. If that fails, ask the architect for a diff or instructions.
+1. Collect `git diff --no-color`, `git diff --cached --no-color`, and `git status --short --untracked-files=all`.
+2. If relevant untracked new files appear, inspect those files as needed so the summary covers them.
+3. If diff collection fails, ask the architect for a diff or instructions.
 
 ## Analysis
 
