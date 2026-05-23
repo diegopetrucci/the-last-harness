@@ -759,6 +759,21 @@ test("bundled manifest contains pi-web-access entry with correct tag and defer f
 	assert.deepEqual(webAccess.aliases, [], "pi-web-access must have no aliases");
 });
 
+test("bundled manifest contains subagents entry with correct tag and critical flags", () => {
+	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
+	const subagents = bundled.find(({ id }) => id === "subagents");
+
+	assert.ok(subagents, "bundled subagents entry should exist");
+	assert.equal(subagents.source, "git:github.com/diegopetrucci/pi-subagents@tlh-v0.25.0-1");
+	assert.equal(subagents.critical, true, "subagents must stay critical");
+	assert.deepEqual(subagents.aliases, ["pi-subagents"]);
+	assert.deepEqual(subagents.replaces, [
+		"npm:pi-subagents",
+		"git:github.com/nicobailon/pi-subagents",
+	]);
+	assert.equal(subagents.migrateReplacements, true, "subagents replacements must stay enabled");
+});
+
 test("bundled manifest has no duplicate ids or alias conflicts", () => {
 	// Note: runtime tool names registered by individual extensions are not statically introspectable
 	// from this manifest (they are set at extension runtime). The runtime-side tool-name uniqueness
