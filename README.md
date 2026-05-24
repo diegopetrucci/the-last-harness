@@ -60,7 +60,6 @@ Common TLH commands:
 - `/fast [on|off|auto|toggle|status]` — manage OpenAI Fast mode for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions.
 - `/usage [status|weekly on|weekly off|weekly toggle]` — inspect or change whether the footer shows weekly subscription usage.
 - `/context [--no-open] [--keep] [--redact] [--full|--current]` — generate a local HTML breakdown of where the session context is going.
-- `/harness-plan` — open the bundled implementation-planning prompt.
 - `/analyse-tlh-sessions` — open a bundled read-only prompt to review the past week of tlh sessions for notable issues.
 
 Persistent primary-agent changes are written under `tlh.primaryAgent` in the isolated TLH settings file at `~/.the-last-harness/agent/settings.json`, with a backup when an existing settings file is changed. Use `/agent default reset` or `/architect default reset` to remove those persistent fields and return future sessions to the built-in `architect` default. Use `/agent reset` or `/architect reset` for the current session only.
