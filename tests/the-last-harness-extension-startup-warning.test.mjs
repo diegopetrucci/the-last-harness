@@ -9,6 +9,11 @@ import { createJiti } from "jiti";
 const jiti = createJiti(import.meta.url);
 const { default: theLastHarness } = await jiti.import("../extensions/the-last-harness.ts");
 
+const theme = {
+	fg: (_color, text) => text,
+	bold: (text) => text,
+};
+
 const PINNED_TAG_INSTALL_STATE = {
 	repo: "diegopetrucci/the-last-harness",
 	track: "pinned-tag",
@@ -46,7 +51,7 @@ function createPi() {
 	};
 }
 
-function createCtx({ cwd, notifications, hasUI = true }) {
+function createCtx({ cwd, notifications, hasUI = true, onSetHeader }) {
 	return {
 		hasUI,
 		cwd,
@@ -67,7 +72,9 @@ function createCtx({ cwd, notifications, hasUI = true }) {
 		ui: {
 			addAutocompleteProvider() {},
 			setFooter() {},
-			setHeader() {},
+			setHeader(factory) {
+				onSetHeader?.(factory);
+			},
 			notify(message, type) {
 				notifications.push({ message, type });
 			},
@@ -118,49 +125,66 @@ async function runSessionStart({ reason, installState, hasUI = true }) {
 		const pi = createPi();
 		theLastHarness(pi);
 		const notifications = [];
-		const ctx = createCtx({ cwd, notifications, hasUI });
+		let headerFactory;
+		const ctx = createCtx({
+			cwd,
+			notifications,
+			hasUI,
+			onSetHeader(factory) {
+				headerFactory = factory;
+			},
+		});
 		const sessionStartHandler = pi.handlers.get("session_start")?.[0];
 		assert.ok(sessionStartHandler, "session_start handler must be registered by the extension");
 
 		await sessionStartHandler({ reason }, ctx);
 		await new Promise((resolve) => setImmediate(resolve));
-		return notifications;
+		const headerLines = headerFactory ? headerFactory({ requestRender() {} }, theme).render(200) : undefined;
+		return { notifications, headerLines };
 	} finally {
 		restoreEnv(previousEnv);
 		rmSync(tempDir, { recursive: true, force: true });
 	}
 }
 
-test("interactive startup shows the concise non-latest track notice", async () => {
-	const notifications = await runSessionStart({ reason: "startup", installState: PINNED_TAG_INSTALL_STATE });
+test("interactive startup renders the non-latest track warning in the TLH header", async () => {
+	const { notifications, headerLines } = await runSessionStart({ reason: "startup", installState: PINNED_TAG_INSTALL_STATE });
 
-	assert.equal(notifications.length, 1);
-	assert.equal(notifications[0]?.type, "warning");
-	assert.equal(notifications[0]?.message, "TLH: v0.10.0 track");
+	assert.deepEqual(notifications, []);
+	assert.ok(headerLines);
+	assert.ok(headerLines.includes("Warning: running TLH from v0.10.0 track"));
 });
 
-
 test("interactive startup prefers the pinned ref label over a local package-source label", async () => {
-	const notifications = await runSessionStart({ reason: "startup", installState: PINNED_TAG_LOCAL_INSTALL_STATE });
+	const { notifications, headerLines } = await runSessionStart({ reason: "startup", installState: PINNED_TAG_LOCAL_INSTALL_STATE });
 
-	assert.equal(notifications.length, 1);
-	assert.equal(notifications[0]?.type, "warning");
-	assert.equal(notifications[0]?.message, "TLH: v0.10.0 track");
+	assert.deepEqual(notifications, []);
+	assert.ok(headerLines);
+	assert.ok(headerLines.includes("Warning: running TLH from v0.10.0 track"));
 });
 
 test("interactive startup stays quiet for latest-stable installs", async () => {
-	const notifications = await runSessionStart({ reason: "startup", installState: LATEST_STABLE_INSTALL_STATE });
+	const { notifications, headerLines } = await runSessionStart({ reason: "startup", installState: LATEST_STABLE_INSTALL_STATE });
 	assert.deepEqual(notifications, []);
+	assert.ok(headerLines);
+	assert.equal(headerLines.some((line) => line.startsWith("Warning:")), false);
 });
 
-test("non-startup session reasons do not show the install-track notice", async () => {
+test("non-startup session reasons do not render the install-track warning in the TLH header", async () => {
 	for (const reason of ["reload", "new", "resume", "fork"]) {
-		const notifications = await runSessionStart({ reason, installState: PINNED_TAG_INSTALL_STATE });
-		assert.deepEqual(notifications, [], `expected no install warning for ${reason}`);
+		const { notifications, headerLines } = await runSessionStart({ reason, installState: PINNED_TAG_INSTALL_STATE });
+		assert.deepEqual(notifications, [], `expected no install warning notification for ${reason}`);
+		assert.ok(headerLines, `expected TLH header for ${reason}`);
+		assert.equal(
+			headerLines.some((line) => line.startsWith("Warning:")),
+			false,
+			`expected no install-track warning in header for ${reason}`,
+		);
 	}
 });
 
 test("startup without UI does not show the install-track notice", async () => {
-	const notifications = await runSessionStart({ reason: "startup", installState: PINNED_TAG_INSTALL_STATE, hasUI: false });
+	const { notifications, headerLines } = await runSessionStart({ reason: "startup", installState: PINNED_TAG_INSTALL_STATE, hasUI: false });
 	assert.deepEqual(notifications, []);
+	assert.equal(headerLines, undefined);
 });
