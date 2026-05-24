@@ -1,6 +1,7 @@
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { createTlhAutocompleteProvider } from "./the-last-harness/autocomplete.js";
+import { registerTlhChangelogCommand } from "./the-last-harness/changelog.js";
 import { registerEffortCommand } from "./the-last-harness/effort.js";
 import { createTlhFooter } from "./the-last-harness/footer.js";
 import { FooterGitCache } from "./the-last-harness/footer-git-cache.js";
@@ -21,6 +22,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	}
 
 	registerEffortCommand(pi);
+	registerTlhChangelogCommand(pi);
 	registerUsageCommand(pi);
 
 	const subscriptionUsageService = createTlhSubscriptionUsageService();

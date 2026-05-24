@@ -9,25 +9,48 @@ function stripAutocompleteSourceTag(description: string | undefined): string | u
 	return stripped || undefined;
 }
 
-function stripAutocompleteSourceTags(suggestions: AutocompleteSuggestions | null): AutocompleteSuggestions | null {
+function isSlashCommandNameContext(lines: string[], cursorLine: number, cursorCol: number): boolean {
+	const currentLine = lines[cursorLine] || "";
+	const textBeforeCursor = currentLine.slice(0, cursorCol);
+	return textBeforeCursor.startsWith("/") && !textBeforeCursor.includes(" ");
+}
+
+function transformSuggestions(
+	suggestions: AutocompleteSuggestions | null,
+	options: { hideUpstreamChangelog: boolean },
+): AutocompleteSuggestions | null {
 	if (!suggestions) {
 		return suggestions;
 	}
 
 	let changed = false;
-	const items = suggestions.items.map((item) => {
+	const items: AutocompleteItem[] = [];
+	for (const item of suggestions.items) {
+		if (options.hideUpstreamChangelog && item.value === "changelog") {
+			changed = true;
+			continue;
+		}
+
 		const description = stripAutocompleteSourceTag(item.description);
 		if (description === item.description) {
-			return item;
+			items.push(item);
+			continue;
 		}
+
 		changed = true;
 		if (description) {
-			return { ...item, description };
+			items.push({ ...item, description });
+			continue;
 		}
+
 		const next = { ...item };
 		delete next.description;
-		return next;
-	});
+		items.push(next);
+	}
+
+	if (items.length === 0) {
+		return null;
+	}
 
 	return changed ? { ...suggestions, items } : suggestions;
 }
@@ -40,7 +63,9 @@ export function createTlhAutocompleteProvider(current: AutocompleteProvider): Au
 			cursorCol: number,
 			options: { signal: AbortSignal; force?: boolean },
 		) {
-			return stripAutocompleteSourceTags(await current.getSuggestions(lines, cursorLine, cursorCol, options));
+			return transformSuggestions(await current.getSuggestions(lines, cursorLine, cursorCol, options), {
+				hideUpstreamChangelog: isSlashCommandNameContext(lines, cursorLine, cursorCol),
+			});
 		},
 		applyCompletion(lines: string[], cursorLine: number, cursorCol: number, item: AutocompleteItem, prefix: string) {
 			return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);

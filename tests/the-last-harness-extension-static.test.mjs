@@ -11,6 +11,7 @@ const PI_EXTENSION_FILE_ENTRYPOINT_EXTENSIONS = new Set([".ts", ".js"]);
 const PI_EXTENSION_DIRECTORY_ENTRYPOINT_FILES = ["package.json", "index.ts", "index.js"];
 
 const extensionSource = readFileSync(new URL("../extensions/the-last-harness.ts", import.meta.url), "utf8");
+const changelogSource = readFileSync(new URL("../extensions/the-last-harness/changelog.ts", import.meta.url), "utf8");
 const primaryRuntimeSource = readFileSync(new URL("../extensions/the-last-harness/primary-agent-runtime.ts", import.meta.url), "utf8");
 const ticketRuntimeSource = readFileSync(new URL("../extensions/the-last-harness/tickets.ts", import.meta.url), "utf8");
 const effortSource = readFileSync(new URL("../extensions/the-last-harness/effort.ts", import.meta.url), "utf8");
@@ -137,6 +138,7 @@ test("child startup branch uses the mandatory-ticket child prompt", () => {
 
 test("extension imports extracted shared helpers from nested TypeScript modules", () => {
 	assert.match(extensionSource, /from "\.\/the-last-harness\/autocomplete\.js"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/changelog\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/effort\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/footer\.js"/);
 	assert.doesNotMatch(extensionSource, /from "\.\/the-last-harness\/gnosis\.js"/);
@@ -221,6 +223,14 @@ test("extension wires subscription usage to lifecycle refreshes and footer", () 
 	assert.match(sessionStart, /shouldShowTlhUsageWeekly\(getTlhUsageLimitsConfig\(ctx\.cwd\)\)/);
 	assert.match(sessionStart, /onChange: \(\) => tui\.requestRender\(\)/);
 	assert.match(sessionStart, /typeof footerData\?\.onBranchChange === "function" \? \(cb\) => footerData\.onBranchChange\(cb\) : undefined/);
+});
+
+test("extension wires TLH changelog command and release-notes rendering", () => {
+	assert.match(extensionSource, /registerTlhChangelogCommand\(pi\)/);
+	assert.match(changelogSource, /pi\.registerCommand\("tlh-changelog"/);
+	assert.match(changelogSource, /new Markdown\(changelog/);
+	assert.match(changelogSource, /ctx\.ui\.custom/);
+	assert.match(changelogSource, /pi\.sendMessage\(\{/);
 });
 
 test("extension wires usage-limit command to isolated TLH settings", () => {
