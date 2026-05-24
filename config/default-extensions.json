@@ -1,10 +1,5 @@
 [
   {
-    "id": "permission-gate",
-    "source": "npm:@diegopetrucci/pi-permission-gate",
-    "description": "Ask for confirmation before sensitive tool calls."
-  },
-  {
     "id": "oracle",
     "source": "npm:@diegopetrucci/pi-oracle",
     "description": "Consult a separate read-only reasoning process for second opinions."
