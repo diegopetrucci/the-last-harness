@@ -4,7 +4,9 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const { classifyTlhInstallState, formatTlhInstallNoticeMessage } = await jiti.import("../extensions/the-last-harness/install-state.ts");
+const { classifyTlhInstallState, formatTlhInstallNoticeMessage, formatTlhInstallNoticeTrackLabel } = await jiti.import(
+	"../extensions/the-last-harness/install-state.ts",
+);
 
 const OFFICIAL_LATEST_STABLE = {
 	repo: "diegopetrucci/the-last-harness",
@@ -14,8 +16,45 @@ const OFFICIAL_LATEST_STABLE = {
 	packageSourceIsDefault: true,
 };
 
+function assertNoticeLabel(notice, label, message) {
+	assert.ok(notice, message);
+	assert.equal(formatTlhInstallNoticeTrackLabel(notice), label, message);
+	assert.equal(formatTlhInstallNoticeMessage(notice), `Warning: running TLH from ${label} track`, message);
+}
+
 test("classifier returns no notice for official latest-stable installs", () => {
 	assert.equal(classifyTlhInstallState(OFFICIAL_LATEST_STABLE), undefined);
+});
+
+test("formats pinned/ref/local/unknown labels for install-track notices", () => {
+	assertNoticeLabel(
+		classifyTlhInstallState({
+			...OFFICIAL_LATEST_STABLE,
+			track: "pinned-tag",
+		}),
+		"v0.10.0",
+		"pinned-tag",
+	);
+	assertNoticeLabel(
+		classifyTlhInstallState({
+			...OFFICIAL_LATEST_STABLE,
+			track: "ref",
+			ref: "main",
+			packageSource: "git:github.com/diegopetrucci/the-last-harness@main",
+		}),
+		"main",
+		"ref",
+	);
+	assertNoticeLabel(
+		classifyTlhInstallState({
+			...OFFICIAL_LATEST_STABLE,
+			packageSource: "../the-last-harness",
+			packageSourceIsDefault: false,
+		}),
+		"local",
+		"local",
+	);
+	assertNoticeLabel(classifyTlhInstallState(undefined), "unknown", "unknown");
 });
 
 test("formats pinned-tag install notices with the pinned ref label", () => {
@@ -28,9 +67,8 @@ test("formats pinned-tag install notices with the pinned ref label", () => {
 		summary: "TLH is pinned to a specific release tag.",
 		detail: "v0.10.0",
 	});
-	assert.equal(formatTlhInstallNoticeMessage(notice), "TLH: v0.10.0 track");
+	assertNoticeLabel(notice, "v0.10.0");
 });
-
 
 test("prefers the pinned ref label over a custom package-source label", () => {
 	const notice = classifyTlhInstallState({
@@ -44,7 +82,7 @@ test("prefers the pinned ref label over a custom package-source label", () => {
 		summary: "TLH is pinned to a specific release tag.",
 		detail: "v0.10.0",
 	});
-	assert.equal(formatTlhInstallNoticeMessage(notice), "TLH: v0.10.0 track");
+	assertNoticeLabel(notice, "v0.10.0");
 });
 
 test("formats ref install notices with the ref label", () => {
@@ -59,9 +97,8 @@ test("formats ref install notices with the ref label", () => {
 		summary: "TLH follows a non-stable git ref.",
 		detail: "main",
 	});
-	assert.equal(formatTlhInstallNoticeMessage(notice), "TLH: main track");
+	assertNoticeLabel(notice, "main");
 });
-
 
 test("prefers the ref label over a custom package-source label", () => {
 	const notice = classifyTlhInstallState({
@@ -76,7 +113,7 @@ test("prefers the ref label over a custom package-source label", () => {
 		summary: "TLH follows a non-stable git ref.",
 		detail: "main",
 	});
-	assert.equal(formatTlhInstallNoticeMessage(notice), "TLH: main track");
+	assertNoticeLabel(notice, "main");
 });
 
 test("formats custom-track notices with the custom label", () => {
@@ -89,7 +126,7 @@ test("formats custom-track notices with the custom label", () => {
 		summary: "TLH uses a custom update track.",
 		detail: "custom",
 	});
-	assert.equal(formatTlhInstallNoticeMessage(notice), "TLH: custom track");
+	assertNoticeLabel(notice, "custom");
 });
 
 test("formats local package-source notices with the local label", () => {
@@ -103,8 +140,7 @@ test("formats local package-source notices with the local label", () => {
 		summary: "TLH uses a custom package source.",
 		detail: "../the-last-harness",
 	});
-	assert.ok(notice);
-	assert.equal(formatTlhInstallNoticeMessage(notice), "TLH: local track");
+	assertNoticeLabel(notice, "local");
 });
 
 test("formats git@ custom package-source notices with the custom label", () => {
@@ -118,8 +154,7 @@ test("formats git@ custom package-source notices with the custom label", () => {
 		summary: "TLH uses a custom package source.",
 		detail: "git@github.com:owner/repo.git",
 	});
-	assert.ok(notice);
-	assert.equal(formatTlhInstallNoticeMessage(notice), "TLH: custom track");
+	assertNoticeLabel(notice, "custom");
 });
 
 test("formats host-path custom package-source notices with the custom label", () => {
@@ -133,10 +168,8 @@ test("formats host-path custom package-source notices with the custom label", ()
 		summary: "TLH uses a custom package source.",
 		detail: "github.com/owner/repo@main",
 	});
-	assert.ok(notice);
-	assert.equal(formatTlhInstallNoticeMessage(notice), "TLH: custom track");
+	assertNoticeLabel(notice, "custom");
 });
-
 
 test("formats ambiguous custom package-source notices with the custom label", () => {
 	const notice = classifyTlhInstallState({
@@ -149,8 +182,7 @@ test("formats ambiguous custom package-source notices with the custom label", ()
 		summary: "TLH uses a custom package source.",
 		detail: "the-last-harness@next",
 	});
-	assert.ok(notice);
-	assert.equal(formatTlhInstallNoticeMessage(notice), "TLH: custom track");
+	assertNoticeLabel(notice, "custom");
 });
 
 test("formats non-default repository notices with the custom label", () => {
@@ -163,8 +195,7 @@ test("formats non-default repository notices with the custom label", () => {
 		summary: "TLH is installed from a non-default repository.",
 		detail: "someone-else/the-last-harness",
 	});
-	assert.ok(notice);
-	assert.equal(formatTlhInstallNoticeMessage(notice), "TLH: custom track");
+	assertNoticeLabel(notice, "custom");
 });
 
 test("formats missing install-state notices with the unknown label", () => {
@@ -173,8 +204,7 @@ test("formats missing install-state notices with the unknown label", () => {
 		kind: "unknown",
 		summary: "TLH install metadata is missing or invalid.",
 	});
-	assert.ok(notice);
-	assert.equal(formatTlhInstallNoticeMessage(notice), "TLH: unknown track");
+	assertNoticeLabel(notice, "unknown");
 });
 
 test("classifies installs with missing package-source metadata as unknown", () => {
@@ -213,8 +243,7 @@ test("classifies installs with missing package-source metadata as unknown", () =
 			kind: "unknown",
 			summary: "TLH install metadata is missing or invalid.",
 		});
-		assert.ok(notice);
-		assert.equal(formatTlhInstallNoticeMessage(notice), "TLH: unknown track");
+		assertNoticeLabel(notice, "unknown");
 	}
 });
 
@@ -238,8 +267,7 @@ test("classifies pinned-tag/ref installs with invalid package-source metadata as
 			kind: "unknown",
 			summary: "TLH install metadata is missing or invalid.",
 		});
-		assert.ok(notice);
-		assert.equal(formatTlhInstallNoticeMessage(notice), "TLH: unknown track");
+		assertNoticeLabel(notice, "unknown");
 	}
 });
 
@@ -276,8 +304,7 @@ test("classifies latest-release/pinned-tag/ref installs with missing ref metadat
 			kind: "unknown",
 			summary: "TLH install metadata is missing or invalid.",
 		}, label);
-		assert.ok(notice, label);
-		assert.equal(formatTlhInstallNoticeMessage(notice), "TLH: unknown track", label);
+		assertNoticeLabel(notice, "unknown", label);
 	}
 });
 
@@ -319,8 +346,7 @@ test("classifies latest-release/pinned-tag/ref installs with blank ref metadata 
 			kind: "unknown",
 			summary: "TLH install metadata is missing or invalid.",
 		}, label);
-		assert.ok(notice, label);
-		assert.equal(formatTlhInstallNoticeMessage(notice), "TLH: unknown track", label);
+		assertNoticeLabel(notice, "unknown", label);
 	}
 });
 

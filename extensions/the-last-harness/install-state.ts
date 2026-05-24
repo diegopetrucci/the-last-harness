@@ -1,4 +1,3 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { TLH_REPO } from "./constants.js";
 import { readTlhInstallState } from "./profile-state.js";
 import type { TlhInstallNotice, TlhInstallState } from "./types.js";
@@ -126,7 +125,7 @@ export function readTlhInstallNotice(): TlhInstallNotice | undefined {
 	return classifyTlhInstallState(readTlhInstallState());
 }
 
-function formatTlhInstallNoticeLabel(notice: TlhInstallNotice): string {
+export function formatTlhInstallNoticeTrackLabel(notice: TlhInstallNotice): string {
 	if (notice.kind === "unknown") {
 		return "unknown";
 	}
@@ -140,13 +139,6 @@ function formatTlhInstallNoticeLabel(notice: TlhInstallNotice): string {
 }
 
 export function formatTlhInstallNoticeMessage(notice: TlhInstallNotice): string {
-	return `TLH: ${formatTlhInstallNoticeLabel(notice)} track`;
+	return `Warning: running TLH from ${formatTlhInstallNoticeTrackLabel(notice)} track`;
 }
 
-export function maybeNotifyTlhInstallNotice(ctx: ExtensionContext): void {
-	const notice = readTlhInstallNotice();
-	if (!notice) {
-		return;
-	}
-	ctx.ui.notify(formatTlhInstallNoticeMessage(notice), "warning");
-}
