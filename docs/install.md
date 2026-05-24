@@ -29,7 +29,7 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v
 curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --ref main --track ref
 ```
 
-These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH shows a short track notice only for those installs, formatted as `TLH: <label> track` (for example `TLH: v0.6.0 track`, `TLH: main track`, `TLH: local track`, or `TLH: unknown track`). Official latest-release installs stay silent.
+These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH shows a header warning only for those installs. It appears above `Context:` and reads `Warning: running TLH from {name} track` (for example `Warning: running TLH from v0.6.0 track`, `Warning: running TLH from main track`, `Warning: running TLH from local track`, or `Warning: running TLH from unknown track`). Official latest-release installs stay silent.
 
 ## Installer options
 
@@ -60,7 +60,7 @@ You can just run `tlh update`.
 
 This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. If you are updating from an older install without `tlh update`, rerun the latest-release installer once.
 
-At launch, TLH also shows that short `TLH: <label> track` notice when your install metadata says you are not on the official latest stable path, or when it cannot verify that metadata. The notice is informational only; it does not change your isolated install or auto-update anything.
+At launch, TLH also shows that `Warning: running TLH from {name} track` header warning above `Context:` when your install metadata says you are not on the official latest stable path, or when it cannot verify that metadata. The warning is informational only; it does not change your isolated install or auto-update anything.
 
 - If you installed from a pinned release tag, a non-stable git ref, or another custom update track while still using the default TLH repo/package source, return to the official latest stable release track with:
 
