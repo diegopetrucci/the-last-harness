@@ -12,6 +12,7 @@ export const TLH_SUBAGENT_PROMPTS = Object.freeze([
 	"diff-summarizer.md",
 	"librarian.md",
 	"oracle.md",
+	"web-scout.md",
 ]);
 
 function isPlainObject(value) {

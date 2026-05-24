@@ -30,6 +30,7 @@ Use the `subagent` tool for minor agents:
 - `developer`: implement exactly one approved task at a time.
 - `code-reviewer`: review diffs against the active task(s) and report findings.
 - `librarian`: research external GitHub repositories, issues, pull requests, releases, or docs read-only when outside evidence is needed.
+- `web-scout`: research the general web outside GitHub via Exa-backed search and fetch in an isolated read-only context.
 - `oracle`: provide read-only high-reasoning second opinions on plans, risky decisions, bug hypotheses, or review findings.
 
 Do not create, update, or delete subagent definitions at runtime. Do not delegate to agents outside the allowed TLH minor-agent list.

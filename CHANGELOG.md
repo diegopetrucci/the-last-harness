@@ -8,11 +8,17 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Bundled the patched TLH `pi-rtk` fork as a non-critical default extension, with quiet-tools-compatible load ordering and a documented `tlh defaults disable rtk` opt-out.
 - Suppressed the upstream Pi Anthropic extra-usage startup warning by default (`warnings.anthropicExtraUsage: false`); re-enable it by setting `"warnings": { "anthropicExtraUsage": true }` in `~/.the-last-harness/agent/settings.json`.
+- `pi-web-access` (Exa-only fork at `tlh-v0.10.7-1`) bundled as a non-critical default extension; supplies `web_search`, `fetch_content`, and `get_search_content` tools used by the `web-scout` subagent.
+- `web-scout` minor subagent (read-only, isolated fresh context, Exa-backed) for general web research; delegated freely by the architect.
+- Rush selectable primary-agent support for small bounded implementation tasks, with direct edits and narrow validation outside the default architect `tk`/developer/review loop.
+- Provider-aware TLH model/thinking defaults: OpenAI/OpenAI-Codex sessions prefer GPT-5.5, and Rush switches thinking off there while Anthropic keeps Opus with low thinking.
 
 ### Changed
 
+- Bundled `pi-subagents` now pins `git:github.com/diegopetrucci/pi-subagents@tlh-v0.25.0-1`.
 - Couple `tlh defaults disable/enable anthropic-auth` with `warnings.anthropicExtraUsage` so the upstream extra-usage warning reappears when the compatibility layer is off; installer reruns also stop re-introducing the suppression for users who have opted out.
 - Bundled TLH `pi-rtk` default now points at the no-footer fork tag, preserving `/rtk` repo-tooling behavior without adding a persistent footer indicator.
+- Bundled `pi-web-access` now defers to existing upstream/manual `pi-web-access` installs during normal merges and updates, avoiding duplicate `web_search`/`fetch_content`/`get_search_content` providers unless you explicitly switch to the TLH fork.
 - Footer restructured into three logical lines: working directory/git (unchanged), a single flowing `agent: … • model • thinking • context` line, and an optional session-stats line showing cost and/or subscription usage. Empty lines are omitted entirely.
 - Subscription usage session label now reads e.g. `5h session 27% used` (was `5h 27% used`).
 

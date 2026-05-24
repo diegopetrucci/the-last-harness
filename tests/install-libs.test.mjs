@@ -296,6 +296,8 @@ test("subagent prompt discovery honors source precedence and copies prompt files
 
 	const installedDir = copyTlhSubagentPrompts(defaultConfig, localPrompts);
 	assert.equal(installedDir, join(realpathSync.native(agentDir), "tlh", "agents", "subagents"));
+	assert.equal(TLH_SUBAGENT_PROMPTS.includes("web-scout.md"), true);
+	assert.equal(readFileSync(join(installedDir, "web-scout.md"), "utf8"), "local:web-scout.md\n");
 	for (const prompt of TLH_SUBAGENT_PROMPTS) {
 		assert.equal(readFileSync(join(installedDir, prompt), "utf8"), `local:${prompt}\n`);
 	}
@@ -307,20 +309,12 @@ test("support manifest includes stage-1 and installed helper library dependencie
 	assert.ok(relativePaths.includes("scripts/lib/tlh-install-git.mjs"));
 	assert.ok(relativePaths.includes("scripts/lib/tlh-install-support-files.mjs"));
 	assert.ok(relativePaths.includes("scripts/lib/tlh-install-utils.mjs"));
-	assert.ok(relativePaths.includes("scripts/lib/tlh-profile-writes.mjs"));
 	assert.deepEqual(manifest.find((file) => file.variable === "TLH_INSTALL_PATHS_LIB"), {
 		variable: "TLH_INSTALL_PATHS_LIB",
 		requirement: "required",
 		relativePath: "scripts/lib/tlh-install-paths.mjs",
 		tempPath: "lib/tlh-install-paths.mjs",
 		installName: "lib/tlh-install-paths.mjs",
-	});
-	assert.deepEqual(manifest.find((file) => file.variable === "TLH_PROFILE_WRITES_LIB"), {
-		variable: "TLH_PROFILE_WRITES_LIB",
-		requirement: "required",
-		relativePath: "scripts/lib/tlh-profile-writes.mjs",
-		tempPath: "lib/tlh-profile-writes.mjs",
-		installName: "lib/tlh-profile-writes.mjs",
 	});
 	assert.deepEqual(manifest.find((file) => file.variable === "TLH_INSTALL_UTILS_LIB"), {
 		variable: "TLH_INSTALL_UTILS_LIB",
@@ -340,7 +334,6 @@ test("support manifest includes stage-1 and installed helper library dependencie
 
 	const bootstrap = readFileSync(resolve(import.meta.dirname, "..", "install.sh"), "utf8");
 	assert.match(bootstrap, /^required\|scripts\/lib\/default-extensions\.mjs$/m);
-	assert.match(bootstrap, /^required\|scripts\/lib\/tlh-profile-writes\.mjs$/m);
 	assert.match(bootstrap, /^required\|scripts\/lib\/tlh-install-utils\.mjs$/m);
 });
 

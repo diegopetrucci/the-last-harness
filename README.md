@@ -28,7 +28,7 @@ Primary agents are optional. Use `Shift+Tab` to cycle the current session throug
 
 ### Subagents
 
-TLH subagents are focused child sessions used by the architect workflow: `repo-scout` for discovery, `developer` for implementation, `code-reviewer` for review, `diff-summarizer` for local diff orientation, and `librarian`/`oracle` for external research and second opinions.
+TLH subagents are focused child sessions used by the architect workflow: `repo-scout` for discovery, `web-scout` for web research, `developer` for implementation, `code-reviewer` for review, `diff-summarizer` for local diff orientation, and `librarian`/`oracle` for external research and second opinions.
 
 They run in fresh child contexts: they get the task and project context, not the whole primary-agent conversation. They do not coordinate with each other as a swarm; they report back to the parent primary agent, which stays responsible for decisions and orchestration. TLH uses bundled per-role model defaults.
 
@@ -41,6 +41,7 @@ They run in fresh child contexts: they get the task and project context, not the
 - **Safety rails**: Bundled permission and destructive-action confirmations add checkpoints before sensitive commands or file changes.
 - **Inline bash snippets**: trusted `!{...}` snippets in your prompt are expanded through local bash before the agent sees them, useful for quick context like `!{git status --short}`.
 - **Repo toolkit helper**: TLH bundles a patched `pi-rtk` fork. Its repo-tooling features need an `rtk` binary on your `PATH`; use `/rtk` to check status, and `tlh defaults disable rtk` if you do not want the bundled default. TLH loads it in a `quiet-tools`-compatible order so collapsed bash rendering stays active without adding a persistent footer indicator.
+- **Web search**: TLH bundles Exa-backed web research for `web-scout`; setup and privacy notes live in [`docs/web-search.md`](docs/web-search.md).
 - **Dirty-repo guard**: TLH prompts before starting, switching, or forking sessions when the current git repo has uncommitted changes, so work-in-progress is harder to lose.
 - **Completion notifications**: TLH can notify you when an agent turn finishes and is waiting for input.
 - **Model niceties**: `/effort` makes it easier to switch thinking effort levels, `/fast` enables OpenAI Fast mode controls, and bundled Anthropic OAuth compatibility helps `/login anthropic` work with Claude Pro/Max subscriptions.
@@ -60,6 +61,7 @@ Common TLH commands:
 - `/usage [status|weekly on|weekly off|weekly toggle]` — inspect or change whether the footer shows weekly subscription usage.
 - `/context [--no-open] [--keep] [--redact] [--full|--current]` — generate a local HTML breakdown of where the session context is going.
 - `/harness-plan` — open the bundled implementation-planning prompt.
+- `/analyse-tlh-sessions` — open a bundled read-only prompt to review the past week of tlh sessions for notable issues.
 
 Persistent primary-agent changes are written under `tlh.primaryAgent` in the isolated TLH settings file at `~/.the-last-harness/agent/settings.json`, with a backup when an existing settings file is changed. Use `/agent default reset` or `/architect default reset` to remove those persistent fields and return future sessions to the built-in `architect` default. Use `/agent reset` or `/architect reset` for the current session only.
 
@@ -99,6 +101,12 @@ After finishing a task, run `gn help review`.
 ```
 
 Gnosis project data lives in repo-local `.gnosis` directories and ticket data lives in repo-local `.tickets` directories; TLH does not delete either. More integration details live in [`docs/integrations.md`](docs/integrations.md).
+
+### Web search
+
+TLH ships [`pi-web-access`](https://github.com/diegopetrucci/pi-web-access) (an Exa-only fork) as a non-critical default extension for `web-scout`.
+
+For configuration, EXA key precedence, privacy, opt-out, and manual migration from `~/.pi/web-search.json`, see [`docs/web-search.md`](docs/web-search.md). Durable web-search / web-scout decisions live in repo-local Gnosis entries `ywsuwh` and `gbmehw`; pinned fork/tag process notes live in [`docs/web-search-fork-release-cadence.md`](docs/web-search-fork-release-cadence.md).
 
 ### Launch telemetry
 
