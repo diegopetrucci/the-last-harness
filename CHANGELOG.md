@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
+- `/tlh-changelog` now shows TLH release notes from the packaged `CHANGELOG.md` while leaving manual upstream `/changelog` available.
 - Bundled the patched TLH `pi-rtk` fork as a non-critical default extension, with quiet-tools-compatible load ordering and a documented `tlh defaults disable rtk` opt-out.
 - Suppressed the upstream Pi Anthropic extra-usage startup warning by default (`warnings.anthropicExtraUsage: false`); re-enable it by setting `"warnings": { "anthropicExtraUsage": true }` in `~/.the-last-harness/agent/settings.json`.
 - `pi-web-access` (Exa-only fork at `tlh-v0.10.7-1`) bundled as a non-critical default extension; supplies `web_search`, `fetch_content`, and `get_search_content` tools used by the `web-scout` subagent.
@@ -15,7 +16,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
-- Bundled TLH `pi-subagents` now pins hardened tag `tlh-v0.25.0-3`, keeping the packaged pause-all subagent support while tightening safety.
+- TLH now hides upstream Pi automatic changelog/update notices in the isolated profile by default to reduce startup noise.
 - Couple `tlh defaults disable/enable anthropic-auth` with `warnings.anthropicExtraUsage` so the upstream extra-usage warning reappears when the compatibility layer is off; installer reruns also stop re-introducing the suppression for users who have opted out.
 - Bundled TLH `pi-rtk` default now points at the no-footer fork tag, preserving `/rtk` repo-tooling behavior without adding a persistent footer indicator.
 - Bundled `pi-web-access` now defers to existing upstream/manual `pi-web-access` installs during normal merges and updates, avoiding duplicate `web_search`/`fetch_content`/`get_search_content` providers unless you explicitly switch to the TLH fork.

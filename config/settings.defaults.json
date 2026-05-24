@@ -6,6 +6,7 @@
   "editorPaddingX": 1,
   "quietStartup": true,
   "collapseChangelog": true,
+  "lastChangelogVersion": "9999.0.0",
   "subagents": {
     "disableBuiltins": true,
     "agentDirs": [

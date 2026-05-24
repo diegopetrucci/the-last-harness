@@ -25,6 +25,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const DEFAULT_PACKAGE_SOURCE = "git:github.com/diegopetrucci/the-last-harness";
+const TLH_CHANGELOG_SENTINEL = "9999.0.0";
 const HARNESS_PACKAGE_IDENTITY = packageIdentity(DEFAULT_PACKAGE_SOURCE);
 
 function usage() {
@@ -149,6 +150,7 @@ function shouldEnsureDefaultExtensionSource(existingPackages, extension, { force
 
 function prepareDefaults(defaults, packageSource, defaultExtensions, disabledIds, existingSettings, { force }) {
 	const next = clone(defaults);
+	next.lastChangelogVersion = TLH_CHANGELOG_SENTINEL;
 
 	// Strip the anthropic-auth warning suppression from the defaults clone when
 	// that extension is disabled, so the merge engine cannot re-introduce
@@ -356,6 +358,10 @@ function isPersistentTelemetryOptOut(path, currentValue, defaultValue) {
 	return path.join(".") === "tlh.telemetry.enabled" && currentValue === false && defaultValue === true;
 }
 
+function isInstallerOwnedSetting(path) {
+	return path.join(".") === "lastChangelogVersion";
+}
+
 function mergeObject(target, defaults, changes, options) {
 	for (const [key, value] of Object.entries(defaults)) {
 		const path = [...options.path, key];
@@ -386,7 +392,7 @@ function mergeObject(target, defaults, changes, options) {
 			continue;
 		}
 
-		if (options.force && JSON.stringify(target[key]) !== JSON.stringify(value)) {
+		if ((options.force || isInstallerOwnedSetting(path)) && JSON.stringify(target[key]) !== JSON.stringify(value)) {
 			target[key] = clone(value);
 			changes.push(`overwrite ${label}`);
 		}
