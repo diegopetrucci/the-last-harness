@@ -24,7 +24,7 @@ TLH also includes a **product** primary agent for product strategy and decision 
 
 TLH also includes a **bug-hunter** primary agent for read-only investigation and debugging. It analyzes bug reports, traces root causes, surveys the codebase for related patterns, and proposes candidate fixes — without modifying files, running destructive tools, or kicking off implementation loops. Bug-hunter is a peer to the architect, Rush, and product primaries: useful when you want to understand a problem before handing off to a write-capable primary.
 
-Primary agents are optional. Use `Shift+Tab` to cycle the current session through `architect` → `rush` → `product` → `bug-hunter` → `disabled`, or use `/agent` for explicit session and persistent-default controls. When primary agents are disabled, subagents remain available but TLH stops applying primary-agent persona/tool restrictions.
+Primary agents are optional. Use `Shift+Tab` to cycle the current session through `architect` → `rush` → `product` → `bug-hunter` → `disabled`, or use `/switch-primary-agent` for explicit session and persistent-default controls. When primary agents are disabled, subagents remain available but TLH stops applying primary-agent persona/tool restrictions.
 
 ### Subagents
 
@@ -53,16 +53,14 @@ They run in fresh child contexts: they get the task and project context, not the
 Common TLH commands:
 
 - `Shift+Tab` — cycle the current session through `architect` → `rush` → `product` → `bug-hunter` → `disabled` primary-agent modes.
-- `/tlh` / `/harness` — show TLH package, primary-agent, override, and settings status.
-- `/agent [status|architect|rush|product|bug-hunter|disabled|reset|default architect|default rush|default product|default bug-hunter|default disabled|default reset]` — inspect the active primary, switch this session, or write/reset the persistent default.
-- `/architect [status|on|off|toggle|reset|default on|default off|default reset]` — compatibility controls for architect-only flows; maps to architect/disabled primary-agent settings.
+- `/switch-primary-agent [status|architect|rush|product|bug-hunter|disabled|reset|default architect|default rush|default product|default bug-hunter|default disabled|default reset]` — inspect the active primary, switch this session, or write/reset the persistent default.
 - `/effort ...` — pick or set model reasoning effort. Available levels depend on the current model.
 - `/fast [on|off|auto|toggle|status]` — manage OpenAI Fast mode for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions.
 - `/usage [status|weekly on|weekly off|weekly toggle]` — inspect or change whether the footer shows weekly subscription usage.
 - `/context [--no-open] [--keep] [--redact] [--full|--current]` — generate a local HTML breakdown of where the session context is going.
 - `/analyse-tlh-sessions` — open a bundled read-only prompt to review the past week of tlh sessions for notable issues.
 
-Persistent primary-agent changes are written under `tlh.primaryAgent` in the isolated TLH settings file at `~/.the-last-harness/agent/settings.json`, with a backup when an existing settings file is changed. Use `/agent default reset` or `/architect default reset` to remove those persistent fields and return future sessions to the built-in `architect` default. Use `/agent reset` or `/architect reset` for the current session only.
+Persistent primary-agent changes are written under `tlh.primaryAgent` in the isolated TLH settings file at `~/.the-last-harness/agent/settings.json`, with a backup when an existing settings file is changed. Use `/switch-primary-agent default reset` to remove those persistent fields and return future sessions to the built-in `architect` default. Use `/switch-primary-agent reset` for the current session only.
 
 `/usage weekly on|off|toggle` writes the weekly footer preference under `tlh.usageLimits.showWeekly` in the same isolated settings file; the default is hidden when unset.
 

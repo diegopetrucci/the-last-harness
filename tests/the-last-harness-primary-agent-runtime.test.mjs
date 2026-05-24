@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -52,7 +52,7 @@ function createPiHarness() {
 	};
 }
 
-function createToolCallContext(branchEntries = [], notifications) {
+function createToolCallContext(branchEntries = [], notifications, overrides = {}) {
 	return {
 		cwd: process.cwd(),
 		sessionManager: { getBranch: () => branchEntries },
@@ -65,6 +65,7 @@ function createToolCallContext(branchEntries = [], notifications) {
 			getAvailable: () => [{ provider: "openai-codex", id: "gpt-5.4" }],
 		},
 		model: { provider: "openai-codex", id: "gpt-5.4" },
+		...overrides,
 	};
 }
 
@@ -145,9 +146,9 @@ function rushLikePrimary(name = "architect") {
 	});
 }
 
-function createCommandContext(branchEntries = []) {
+function createCommandContext(branchEntries = [], overrides = {}) {
 	const notifications = [];
-	return { notifications, ctx: createToolCallContext(branchEntries, notifications) };
+	return { notifications, ctx: createToolCallContext(branchEntries, notifications, overrides) };
 }
 
 test("disabled primary mode still injects provider-aware subagent models", async () => {
@@ -180,10 +181,14 @@ test("enabled primary mode validates subagent input after injecting provider-awa
 	assert.equal(event.input.agentScope, "user");
 });
 
-test("/agent includes Rush completions, usage, and status strings", async () => {
+test("/switch-primary-agent includes Rush completions, usage, and status strings", async () => {
 	const { pi } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
-	const command = pi.commands.get("agent");
-	assert.ok(command, "registers /agent");
+	const command = pi.commands.get("switch-primary-agent");
+	assert.ok(command, "registers /switch-primary-agent");
+	assert.equal(pi.commands.has("agent"), false);
+	assert.equal(pi.commands.has("architect"), false);
+	assert.equal(pi.commands.has("tlh"), false);
+	assert.equal(pi.commands.has("harness"), false);
 
 	assert.deepEqual(
 		(await command.getArgumentCompletions("r")).map((completion) => completion.value),
@@ -197,7 +202,7 @@ test("/agent includes Rush completions, usage, and status strings", async () => 
 	const usage = createCommandContext();
 	await command.handler("rush extra", usage.ctx);
 	assert.deepEqual(usage.notifications.at(-1), {
-		message: "Usage: /agent architect|rush|product|bug-hunter|disabled",
+		message: "Usage: /switch-primary-agent architect|rush|product|bug-hunter|disabled",
 		type: "error",
 	});
 
@@ -207,6 +212,33 @@ test("/agent includes Rush completions, usage, and status strings", async () => 
 	await command.handler("status", status.ctx);
 	assert.equal(status.notifications.at(-1)?.type, "info");
 	assert.match(status.notifications.at(-1)?.message ?? "", /Primary agent: rush\./);
+});
+
+test("/switch-primary-agent default writes tlh.primaryAgent with a backup", async () => {
+	const fixture = tempFixture();
+	const initialSettings = `${JSON.stringify({ tlh: { primaryAgent: { selected: "architect" } } }, null, 2)}\n`;
+
+	try {
+		writeFileSync(join(fixture.agent, "settings.json"), initialSettings);
+		await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+			const { pi } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+			const command = pi.commands.get("switch-primary-agent");
+			assert.ok(command, "registers /switch-primary-agent");
+
+			const writeDefault = createCommandContext([], { cwd: fixture.cwd });
+			await command.handler("default rush", writeDefault.ctx);
+
+			const written = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
+			assert.deepEqual(written.tlh.primaryAgent, { enabled: true, selected: "rush" });
+			const backups = readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.bak-"));
+			assert.equal(backups.length, 1);
+			assert.equal(readFileSync(join(fixture.agent, backups[0]), "utf8"), initialSettings);
+			assert.equal(writeDefault.notifications.at(-1)?.type, "info");
+			assert.match(writeDefault.notifications.at(-1)?.message ?? "", /Updated TLH primary-agent persistent default/);
+		});
+	} finally {
+		rmSync(fixture.dir, { recursive: true, force: true });
+	}
 });
 
 test("Rush blocks developer delegation even inside nested subagent plans", async () => {

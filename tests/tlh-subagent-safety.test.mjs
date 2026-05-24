@@ -156,7 +156,7 @@ test("PI_SUBAGENT_CHILD=1 registers only child prompt behavior", async () => {
 		registerParent: () => {
 			parentStartupCalled = true;
 			pi.on("tool_call", () => ({ block: true }));
-			pi.registerCommand("agent");
+			pi.registerCommand("dummy-parent-command");
 			pi.registerShortcut("shift+tab");
 		},
 	});

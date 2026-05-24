@@ -435,7 +435,7 @@ function createTlhPrimaryAgentRuntime(
 		return PRIMARY_AGENT_CYCLE.includes(normalized) ? (normalized as TlhPrimaryAgentSelection) : undefined;
 	}
 
-	function agentCommandCompletions(prefix: string) {
+	function switchPrimaryAgentCommandCompletions(prefix: string) {
 		const options = [
 			{ value: "status", description: "Show TLH primary-agent status" },
 			{ value: "architect", description: "Use the architect primary agent for this session" },
@@ -458,42 +458,10 @@ function createTlhPrimaryAgentRuntime(
 		return completions.length > 0 ? completions : null;
 	}
 
-	function architectCommandCompletions(prefix: string) {
-		const options = [
-			{ value: "status", description: "Show architect mode status" },
-			{ value: "on", description: "Enable architect for this session" },
-			{ value: "off", description: "Disable architect for this session" },
-			{ value: "toggle", description: "Toggle architect for this session" },
-			{ value: "reset", description: "Clear the session override" },
-			{ value: "default on", description: "Persistently enable architect for future sessions" },
-			{ value: "default off", description: "Persistently disable architect for future sessions" },
-			{ value: "default reset", description: "Remove the persistent architect setting" },
-		];
-		const normalizedPrefix = prefix.trim().toLowerCase();
-		const completions = options
-			.filter((option) => option.value.startsWith(normalizedPrefix))
-			.map((option) => ({ value: option.value, label: option.value, description: option.description }));
-		return completions.length > 0 ? completions : null;
-	}
-
 	function registerCommands(): void {
-		pi.registerCommand("tlh", {
-			description: "Show tlh package status",
-			handler: async (_args, ctx) => {
-				ctx.ui.notify(primaryAgentStatusMessage(ctx), "info");
-			},
-		});
-
-		pi.registerCommand("harness", {
-			description: "Alias for /tlh",
-			handler: async (_args, ctx) => {
-				ctx.ui.notify(primaryAgentStatusMessage(ctx), "info");
-			},
-		});
-
-		pi.registerCommand("agent", {
-			description: "Show or change the TLH primary agent",
-			getArgumentCompletions: agentCommandCompletions,
+		pi.registerCommand("switch-primary-agent", {
+			description: "Show or switch the TLH primary agent",
+			getArgumentCompletions: switchPrimaryAgentCommandCompletions,
 			handler: async (args, ctx) => {
 				syncPrimaryAgentState(ctx);
 				const parts = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -506,7 +474,7 @@ function createTlhPrimaryAgentRuntime(
 
 				if (command === "reset") {
 					if (parts.length !== 1) {
-						ctx.ui.notify("Usage: /agent reset", "error");
+						ctx.ui.notify("Usage: /switch-primary-agent reset", "error");
 						return;
 					}
 					setSessionPrimaryAgentOverride(undefined);
@@ -518,7 +486,7 @@ function createTlhPrimaryAgentRuntime(
 				const selected = parsePrimaryAgentSelection(command);
 				if (selected) {
 					if (parts.length !== 1) {
-						ctx.ui.notify("Usage: /agent architect|rush|product|bug-hunter|disabled", "error");
+						ctx.ui.notify("Usage: /switch-primary-agent architect|rush|product|bug-hunter|disabled", "error");
 						return;
 					}
 					setSessionPrimaryAgentOverride(selected);
@@ -532,12 +500,12 @@ function createTlhPrimaryAgentRuntime(
 
 				if (command === "default") {
 					if (parts.length !== 2) {
-						ctx.ui.notify("Usage: /agent default architect|rush|product|bug-hunter|disabled|reset", "error");
+						ctx.ui.notify("Usage: /switch-primary-agent default architect|rush|product|bug-hunter|disabled|reset", "error");
 						return;
 					}
 					const defaultSelection = value === "reset" ? undefined : parsePrimaryAgentSelection(value);
 					if (value !== "reset" && !defaultSelection) {
-						ctx.ui.notify("Usage: /agent default architect|rush|product|bug-hunter|disabled|reset", "error");
+						ctx.ui.notify("Usage: /switch-primary-agent default architect|rush|product|bug-hunter|disabled|reset", "error");
 						return;
 					}
 
@@ -558,7 +526,7 @@ function createTlhPrimaryAgentRuntime(
 					return;
 				}
 
-				ctx.ui.notify("Usage: /agent [status|architect|rush|product|bug-hunter|disabled|reset|default architect|default rush|default product|default bug-hunter|default disabled|default reset]", "error");
+				ctx.ui.notify("Usage: /switch-primary-agent [status|architect|rush|product|bug-hunter|disabled|reset|default architect|default rush|default product|default bug-hunter|default disabled|default reset]", "error");
 			},
 		});
 
@@ -566,75 +534,6 @@ function createTlhPrimaryAgentRuntime(
 			description: "Cycle TLH primary agent (architect/rush/product/bug-hunter/disabled)",
 			handler: async (ctx) => {
 				await cycleSessionPrimaryAgent(ctx);
-			},
-		});
-
-		pi.registerCommand("architect", {
-			description: "Show or change TLH architect primary-agent mode",
-			getArgumentCompletions: architectCommandCompletions,
-			handler: async (args, ctx) => {
-				syncPrimaryAgentState(ctx);
-				const parts = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
-				const [command, value] = parts;
-
-				if (!command || command === "status") {
-					ctx.ui.notify(primaryAgentStatusMessage(ctx), "info");
-					return;
-				}
-
-				if (command === "on" || command === "off" || command === "toggle" || command === "reset") {
-					if (parts.length > 1) {
-						ctx.ui.notify("Usage: /architect on|off|toggle|reset", "error");
-						return;
-					}
-
-					let nextOverride: TlhPrimaryAgentSelection | undefined;
-					if (command === "on") {
-						nextOverride = "architect";
-					} else if (command === "off") {
-						nextOverride = DISABLED_PRIMARY_AGENT;
-					} else if (command === "toggle") {
-						nextOverride = currentPrimaryAgentSelection() === "architect" ? DISABLED_PRIMARY_AGENT : "architect";
-					}
-
-					setSessionPrimaryAgentOverride(nextOverride);
-					await applyPrimaryModeChange(ctx);
-					if (nextOverride === undefined) {
-						ctx.ui.notify(`Cleared architect session override. Primary agent: ${currentPrimaryAgentLabel()}.`, "info");
-						return;
-					}
-					ctx.ui.notify(
-						`Architect ${nextOverride === "architect" ? "enabled" : "disabled"} for this session.${cleanDisabledPrimarySessionHint(nextOverride)}`,
-						"info",
-					);
-					return;
-				}
-
-				if (command === "default") {
-					if (parts.length !== 2 || !["on", "off", "reset"].includes(value)) {
-						ctx.ui.notify("Usage: /architect default on|off|reset", "error");
-						return;
-					}
-
-					const nextDefault = value === "reset" ? undefined : value === "on" ? "architect" : DISABLED_PRIMARY_AGENT;
-					try {
-						const result = writeTlhPrimaryAgentDefault(ctx.cwd, nextDefault);
-						syncPrimaryAgentState(ctx);
-						await applyPrimaryModeChange(ctx);
-						const changedLabel = result.changed ? "Updated" : "No change to";
-						const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
-						ctx.ui.notify(
-							`${changedLabel} architect persistent default at ${formatHomePath(result.settingsPath)}. Primary agent: ${currentPrimaryAgentLabel()}.${backupLabel}`,
-							"info",
-						);
-					} catch (error) {
-						const message = error instanceof Error ? error.message : String(error);
-						ctx.ui.notify(`Could not update architect persistent default: ${message}`, "error");
-					}
-					return;
-				}
-
-				ctx.ui.notify("Usage: /architect [status|on|off|toggle|reset|default on|default off|default reset]", "error");
 			},
 		});
 	}

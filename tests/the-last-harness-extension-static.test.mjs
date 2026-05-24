@@ -186,16 +186,20 @@ test("extension runs primary session_start work before UI startup in one handler
 	assert.doesNotMatch(lifecycleHooks, /pi\.on\("session_start"/);
 });
 
-test("extension wires multi-primary commands and active-primary safety", () => {
-	const agentCommand = sourceSection(primaryRuntimeSource, 'pi.registerCommand("agent"', 'pi.registerShortcut');
-	const shortcut = sourceSection(primaryRuntimeSource, 'pi.registerShortcut(PRIMARY_AGENT_CYCLE_SHORTCUT', 'pi.registerCommand("architect"');
+test("extension wires switch-primary-agent and active-primary safety", () => {
+	const switchPrimaryAgentCommand = sourceSection(primaryRuntimeSource, 'pi.registerCommand("switch-primary-agent"', 'pi.registerShortcut');
+	const shortcut = sourceSection(primaryRuntimeSource, 'pi.registerShortcut(PRIMARY_AGENT_CYCLE_SHORTCUT', 'async function applySessionStart');
 	const toolCall = sourceSection(primaryRuntimeSource, 'pi.on("tool_call"', 'return reason ? { block: true, reason } : undefined;');
 
 	assert.match(promptsSource, /function loadPrimaryAgents\(\): Map<TlhPrimaryAgentSelection, AgentPrompt>/);
-	assert.match(agentCommand, /default rush/);
-	assert.match(agentCommand, /Usage: \/agent architect\|rush\|product\|bug-hunter\|disabled/);
-	assert.match(agentCommand, /writeTlhPrimaryAgentDefault\(ctx\.cwd, defaultSelection\)/);
+	assert.match(switchPrimaryAgentCommand, /default rush/);
+	assert.match(switchPrimaryAgentCommand, /Usage: \/switch-primary-agent architect\|rush\|product\|bug-hunter\|disabled/);
+	assert.match(switchPrimaryAgentCommand, /writeTlhPrimaryAgentDefault\(ctx\.cwd, defaultSelection\)/);
 	assert.match(shortcut, /architect\/rush\/product\/bug-hunter\/disabled/);
+	assert.doesNotMatch(primaryRuntimeSource, /pi\.registerCommand\("agent"/);
+	assert.doesNotMatch(primaryRuntimeSource, /pi\.registerCommand\("architect"/);
+	assert.doesNotMatch(primaryRuntimeSource, /pi\.registerCommand\("tlh"/);
+	assert.doesNotMatch(primaryRuntimeSource, /pi\.registerCommand\("harness"/);
 	assert.match(toolCall, /applyProviderAwareSubagentModels\(event\.input, subagentsByName, ctx\.modelRegistry\.getAvailable\(\), ctx\.model\?\.provider\)/);
 	assert.match(toolCall, /const selection = currentPrimaryAgentSelection\(\)/);
 	assert.match(toolCall, /if \(selection === "rush" && subagentCallTargetsAgent\(event\.input, "developer"\)\)/);
