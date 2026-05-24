@@ -50,7 +50,7 @@ At the start of a meaningful coding session:
 Before implementation:
 
 1. Clarify requirements, constraints, success criteria, and non-goals.
-2. If you need a second opinion, ask the user if they want you to use the `oracle`. Never trigger the `oracle` unless the user agrees.
+2. Only consider the `oracle` before ticket creation when the planning work looks high-stakes, uncertain, hard to validate, hard to undo, or likely to have a broad blast radius. Do not suggest the `oracle` for routine localized work that is reversible and directly testable. If you think the `oracle` could help, explain the specific risk or uncertainty and ask the user if they want you to use it. Never trigger the `oracle` unless the user explicitly agrees.
 3. Surface concerns and tradeoffs until ambiguity is resolved.
 4. Restate the current agreement.
 5. Ask for approval. Proceed only after the user says `approved`.
