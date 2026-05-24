@@ -6,7 +6,7 @@ import { registerEffortCommand } from "./the-last-harness/effort.js";
 import { createTlhFooter } from "./the-last-harness/footer.js";
 import { FooterGitCache } from "./the-last-harness/footer-git-cache.js";
 import { createTlhHeader } from "./the-last-harness/header.js";
-import { maybeNotifyTlhInstallNotice } from "./the-last-harness/install-state.js";
+import { readTlhInstallNotice } from "./the-last-harness/install-state.js";
 import { scheduleTlhLaunchTelemetry } from "./the-last-harness/launch-telemetry.js";
 import { registerTlhPrimaryAgentRuntime } from "./the-last-harness/primary-agent-runtime.js";
 import { collectStartupResources } from "./the-last-harness/resources.js";
@@ -72,7 +72,6 @@ export default function theLastHarness(pi: ExtensionAPI) {
 
 		if (event.reason === "startup") {
 			scheduleTlhLaunchTelemetry(ctx);
-			maybeNotifyTlhInstallNotice(ctx);
 		}
 
 		ctx.ui.addAutocompleteProvider(createTlhAutocompleteProvider);
@@ -85,6 +84,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		}
 
 		const headerUpdate = getTlhHeaderUpdate();
+		const installNotice = event.reason === "startup" ? readTlhInstallNotice() : undefined;
 
 		if (typeof ctx.ui.setFooter === "function") {
 			ctx.ui.setFooter((tui, theme, footerData) => {
@@ -102,7 +102,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 			});
 		}
 		if (typeof ctx.ui.setHeader === "function") {
-			ctx.ui.setHeader((_tui, theme) => createTlhHeader(theme, resources, headerUpdate));
+			ctx.ui.setHeader((_tui, theme) => createTlhHeader(theme, resources, headerUpdate, installNotice));
 		}
 
 		refreshSubscriptionUsage(ctx);
