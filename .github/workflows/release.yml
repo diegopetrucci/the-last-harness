@@ -43,7 +43,7 @@ jobs:
           fi
 
       - name: Install test dependencies
-        run: npm install --no-package-lock --legacy-peer-deps
+        run: npm install --legacy-peer-deps
 
       - name: Run release checks
         run: npm run validate
