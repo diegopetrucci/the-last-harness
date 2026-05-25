@@ -50,7 +50,7 @@ test("user-facing ticket docs describe mandatory managed tk behavior", () => {
 	assert.match(changelog, /`tk` ticket integration is now mandatory/);
 });
 
-test("README and integrations docs describe Rush primary behavior and commands", () => {
+test("README and integrations docs describe Rush primary behavior and switching controls", () => {
 	const readme = readRepoFile("README.md");
 	const integrations = readRepoFile("docs/integrations.md");
 
@@ -61,7 +61,11 @@ test("README and integrations docs describe Rush primary behavior and commands",
 	assert.match(readme, /GPT-5\.5 with thinking off on OpenAI\/OpenAI-Codex/i);
 	assert.match(readme, /Anthropic Opus with low thinking on Anthropic/i);
 	assert.match(readme, /`architect` → `rush` → `product` → `bug-hunter` → `disabled`/);
-	assert.match(readme, /\/agent \[status\|architect\|rush\|product\|bug-hunter\|disabled\|reset\|default architect\|default rush\|default product\|default bug-hunter\|default disabled\|default reset\]/);
+	assert.match(readme, /\/switch-primary-agent \[status\|architect\|rush\|product\|bug-hunter\|disabled\|reset\|default architect\|default rush\|default product\|default bug-hunter\|default disabled\|default reset\]/);
+	assert.doesNotMatch(readme, /`\/tlh(?=`| \[)/);
+	assert.doesNotMatch(readme, /`\/harness(?=`| \[)/);
+	assert.doesNotMatch(readme, /`\/agent(?=`| \[)/);
+	assert.doesNotMatch(readme, /`\/architect(?=`| \[)/);
 	assert.match(integrations, /Rush keeps that tooling available but handles small bounded tasks with direct edits instead of the default `tk` loop/i);
 });
 
