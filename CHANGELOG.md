@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
+- `/tlh-changelog` now shows TLH release notes from the packaged `CHANGELOG.md` while leaving manual upstream `/changelog` available.
 - Bundled the patched TLH `pi-rtk` fork as a non-critical default extension, with quiet-tools-compatible load ordering and a documented `tlh defaults disable rtk` opt-out.
 - Suppressed the upstream Pi Anthropic extra-usage startup warning by default (`warnings.anthropicExtraUsage: false`); re-enable it by setting `"warnings": { "anthropicExtraUsage": true }` in `~/.the-last-harness/agent/settings.json`.
 - `pi-web-access` (Exa-only fork at `tlh-v0.10.7-1`) bundled as a non-critical default extension; supplies `web_search`, `fetch_content`, and `get_search_content` tools used by the `web-scout` subagent.
@@ -15,10 +16,11 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
-- Bundled `pi-subagents` now pins `git:github.com/diegopetrucci/pi-subagents@tlh-v0.25.0-1`.
+- TLH now hides upstream Pi automatic changelog/update notices in the isolated profile by default to reduce startup noise.
 - Couple `tlh defaults disable/enable anthropic-auth` with `warnings.anthropicExtraUsage` so the upstream extra-usage warning reappears when the compatibility layer is off; installer reruns also stop re-introducing the suppression for users who have opted out.
 - Bundled TLH `pi-rtk` default now points at the no-footer fork tag, preserving `/rtk` repo-tooling behavior without adding a persistent footer indicator.
 - Bundled `pi-web-access` now defers to existing upstream/manual `pi-web-access` installs during normal merges and updates, avoiding duplicate `web_search`/`fetch_content`/`get_search_content` providers unless you explicitly switch to the TLH fork.
+- Bundled critical `pi-subagents` now pins `git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-1`, matching the merged fork tag and the reduced bundled slash-command surface (`/subagents-doctor` only).
 - Footer restructured into three logical lines: working directory/git (unchanged), a single flowing `agent: … • model • thinking • context` line, and an optional session-stats line showing cost and/or subscription usage. Empty lines are omitted entirely.
 - Subscription usage session label now reads e.g. `5h session 27% used` (was `5h 27% used`).
 - Removed the `/tlh`, `/harness`, `/agent`, and `/architect` TLH slash commands. Use `/switch-primary-agent` for explicit primary-agent status/default controls, or `Shift+Tab` to cycle the active primary.

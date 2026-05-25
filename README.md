@@ -38,14 +38,14 @@ They run in fresh child contexts: they get the task and project context, not the
 - **Ticketed execution**: TLH requires `tk` for dependency-tracked tickets, installing a managed command at `~/.the-last-harness/agent/bin/tk` when it needs to supply one. The architect hands one ticket at a time to implementation and review agents; product mode can shape product-approved tickets for later handoff; Rush is the small-task exception and edits directly instead of starting that default loop.
 - **Context management**: context is capped to 200k tokens to avoid the `dumb zone`, and `/context` lets you see what is eating up your context.
 - **Subscription usage footer**: OAuth subscription sessions on OpenAI/Codex and Anthropic show the current usage window in the footer; weekly usage is hidden by default and controlled with `/usage`.
-- **Safety rails**: Bundled permission and destructive-action confirmations add checkpoints before sensitive commands or file changes.
+- **Safety rails**: Bundled destructive-action confirmations add checkpoints before destructive commands or file changes.
 - **Inline bash snippets**: trusted `!{...}` snippets in your prompt are expanded through local bash before the agent sees them, useful for quick context like `!{git status --short}`.
 - **Repo toolkit helper**: TLH bundles a patched `pi-rtk` fork. Its repo-tooling features need an `rtk` binary on your `PATH`; use `/rtk` to check status, and `tlh defaults disable rtk` if you do not want the bundled default. TLH loads it in a `quiet-tools`-compatible order so collapsed bash rendering stays active without adding a persistent footer indicator.
 - **Web search**: TLH bundles Exa-backed web research for `web-scout`; setup and privacy notes live in [`docs/web-search.md`](docs/web-search.md).
 - **Dirty-repo guard**: TLH prompts before starting, switching, or forking sessions when the current git repo has uncommitted changes, so work-in-progress is harder to lose.
 - **Completion notifications**: TLH can notify you when an agent turn finishes and is waiting for input.
 - **Model niceties**: `/effort` makes it easier to switch thinking effort levels, `/fast` enables OpenAI Fast mode controls, and bundled Anthropic OAuth compatibility helps `/login anthropic` work with Claude Pro/Max subscriptions.
-- **Cleaner sessions**: tlh's UI only shows what is relevant to you _right now_ — tools, bash output, and incoming intercom cards are collapsed by default; footer details are trimmed. The upstream Pi startup warning about Anthropic subscription auth and extra-usage is also suppressed by default (`warnings.anthropicExtraUsage: false`), since tlh users have already opted into a third-party harness. To re-enable it, set `"warnings": { "anthropicExtraUsage": true }` in `~/.the-last-harness/agent/settings.json`; existing user values are preserved by the conservative settings merge and will not be overridden by installer reruns.
+- **Cleaner sessions**: tlh's UI only shows what is relevant to you _right now_ — tools, bash output, and incoming intercom cards are collapsed by default; footer details are trimmed. The upstream Pi startup warning about Anthropic subscription auth and extra-usage is also suppressed by default (`warnings.anthropicExtraUsage: false`), since tlh users have already opted into a third-party harness. TLH also hides upstream Pi automatic changelog/update notices in the isolated profile to reduce startup noise. To re-enable the Anthropic warning, set `"warnings": { "anthropicExtraUsage": true }` in `~/.the-last-harness/agent/settings.json`; existing user values are preserved by the conservative settings merge and will not be overridden by installer reruns.
 - **Conservative updates and isolation**: tlh runs independently from `pi`, and never overrides your settings across updates
 
 ## Slash commands
@@ -57,6 +57,8 @@ Common TLH commands:
 - `/effort ...` — pick or set model reasoning effort. Available levels depend on the current model.
 - `/fast [on|off|auto|toggle|status]` — manage OpenAI Fast mode for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions.
 - `/usage [status|weekly on|weekly off|weekly toggle]` — inspect or change whether the footer shows weekly subscription usage.
+- `/changelog` — manually show the upstream Pi changelog when you want it; TLH hides the automatic upstream changelog/update notice in its isolated profile.
+- `/tlh-changelog` — show TLH release notes from the packaged `CHANGELOG.md`.
 - `/context [--no-open] [--keep] [--redact] [--full|--current]` — generate a local HTML breakdown of where the session context is going.
 - `/analyse-tlh-sessions` — open a bundled read-only prompt to review the past week of tlh sessions for notable issues.
 
@@ -71,7 +73,7 @@ The subscription usage footer fetches usage with the OAuth bearer your session a
 
 These are unsupported, internal endpoints and may change or be revoked without notice. No additional credentials are introduced — TLH reuses the same OAuth bearer the session already holds. When these fetches fail, TLH silently hides the footer segment. The feature is active only for `openai-codex` and `anthropic` OAuth subscription sessions and is on by default; an explicit disable mechanism is out of scope for this release.
 
-Bundled extension commands are also available for power users: /context-cap, /quiet-tools, /rtk, /librarian-cache, /oracle-model, /fff-health, /fff-rescan, /fff-mode, /triage-comments, /intercom, /run, /parallel, /chain, /run-chain, /subagents-doctor, and Plannotator commands such as /plannotator-review and /plannotator-annotate.
+Bundled extension commands are also available for power users: /context-cap, /quiet-tools, /rtk, /librarian-cache, /oracle-model, /fff-health, /fff-rescan, /fff-mode, /triage-comments, /intercom, /subagents-doctor, and Plannotator commands such as /plannotator-review and /plannotator-annotate.
 
 Manage persistent opt-outs for non-critical defaults after install:
 

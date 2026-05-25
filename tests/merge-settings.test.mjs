@@ -7,7 +7,9 @@ import test from "node:test";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
+const settingsDefaultsPath = join(repoRoot, "config", "settings.defaults.json");
 const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
+const changelogSentinel = "9999.0.0";
 
 function tempFixture(defaultsValue, settingsValue, extensionsValue = []) {
 	const dir = mkdtempSync(join(tmpdir(), "tlh-merge-settings-test-"));
@@ -20,14 +22,16 @@ function tempFixture(defaultsValue, settingsValue, extensionsValue = []) {
 	return { defaults, extensions, settings };
 }
 
-function runMerge(fixture) {
-	execFileSync(process.execPath, [
+function runMerge(fixture, { dryRun = false, quiet = true } = {}) {
+	const args = [
 		mergeScript,
 		fixture.defaults,
 		"--settings", fixture.settings,
 		"--default-extensions", fixture.extensions,
-		"--quiet",
-	], {
+	];
+	if (dryRun) args.push("--dry-run");
+	if (quiet) args.push("--quiet");
+	return execFileSync(process.execPath, args, {
 		cwd: repoRoot,
 		env: process.env,
 		encoding: "utf8",
@@ -37,6 +41,46 @@ function runMerge(fixture) {
 function readJson(path) {
 	return JSON.parse(readFileSync(path, "utf8"));
 }
+
+test("packaged defaults pin lastChangelogVersion to the changelog sentinel", () => {
+	assert.equal(readJson(settingsDefaultsPath).lastChangelogVersion, changelogSentinel);
+});
+
+test("merge adds the changelog sentinel when isolated settings omit it", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{ packages: [harnessPackage] },
+	);
+
+	runMerge(fixture);
+
+	assert.equal(readJson(fixture.settings).lastChangelogVersion, changelogSentinel);
+});
+
+test("merge migrates existing lastChangelogVersion to the changelog sentinel", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{ packages: [harnessPackage], lastChangelogVersion: "0.10.0" },
+	);
+
+	runMerge(fixture);
+
+	assert.equal(readJson(fixture.settings).lastChangelogVersion, changelogSentinel);
+});
+
+test("merge dry-run reports changelog sentinel migration without writing settings", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{ packages: [harnessPackage], lastChangelogVersion: "0.10.0" },
+	);
+	const before = readFileSync(fixture.settings, "utf8");
+
+	const output = runMerge(fixture, { dryRun: true, quiet: false });
+
+	assert.match(output, /Would overwrite lastChangelogVersion/);
+	assert.match(output, /Dry run only; no settings were changed\./);
+	assert.equal(readFileSync(fixture.settings, "utf8"), before);
+});
 
 test("merge treats a missing default-extension manifest as empty", () => {
 	const fixture = tempFixture(
