@@ -84,11 +84,15 @@ test("shared default-extension reader trims descriptions and can allow missing m
 	);
 });
 
-test("bundled manifest keeps rtk replacements and quiet-tools-compatible load order", () => {
+test("bundled manifest keeps confirm-destructive plus quiet-tools-compatible rtk load order", () => {
 	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
 	const ids = bundled.map(({ id }) => id);
 	const rtk = bundled.find(({ id }) => id === "rtk");
+	const confirmDestructive = bundled.find(({ id }) => id === "confirm-destructive");
 
+	assert.ok(confirmDestructive, "bundled confirm-destructive default should exist");
+	assert.equal(confirmDestructive.source, "npm:@diegopetrucci/pi-confirm-destructive");
+	assert.equal(ids.includes("permission-gate"), false);
 	assert.ok(rtk, "bundled rtk default should exist");
 	assert.deepEqual(rtk.aliases, ["pi-rtk"]);
 	assert.deepEqual(rtk.replaces, [
@@ -99,7 +103,6 @@ test("bundled manifest keeps rtk replacements and quiet-tools-compatible load or
 	assert.equal(rtk.migrateReplacements, true);
 	assert.equal(rtk.critical, false);
 	assert.equal(rtk.source, "git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5");
-	assert(ids.indexOf("permission-gate") < ids.indexOf("rtk"), "permission-gate should load before rtk");
 	assert(ids.indexOf("rtk") < ids.indexOf("quiet-tools"), "quiet-tools should load after rtk");
 });
 
@@ -231,10 +234,6 @@ test("merge reorders only targeted default extensions so unrelated defaults stay
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
 		{
-			id: "permission-gate",
-			source: "npm:@diegopetrucci/pi-permission-gate",
-		},
-		{
 			id: "oracle",
 			source: "npm:@diegopetrucci/pi-oracle",
 		},
@@ -267,14 +266,13 @@ test("merge reorders only targeted default extensions so unrelated defaults stay
 		"--default-extensions", fixture.extensions,
 	]);
 
-	assert.match(output, /reorder targeted default extension packages for load order: quiet-tools, permission-gate, rtk -> permission-gate, rtk, quiet-tools/);
+	assert.match(output, /reorder targeted default extension packages for load order: quiet-tools, rtk -> rtk, quiet-tools/);
 	assert.deepEqual(readJson(fixture.settings).packages, [
 		"npm:before",
-		"npm:@diegopetrucci/pi-permission-gate",
+		"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
 		"npm:@diegopetrucci/pi-oracle",
 		"npm:after",
 		"git:github.com/diegopetrucci/the-last-harness",
-		"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
 		"npm:@diegopetrucci/pi-compact-bash",
 	]);
 });
@@ -349,10 +347,6 @@ test("tlh-defaults enable repairs targeted default extension load order for rtk"
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
 		{
-			id: "permission-gate",
-			source: "npm:@diegopetrucci/pi-permission-gate",
-		},
-		{
 			id: "oracle",
 			source: "npm:@diegopetrucci/pi-oracle",
 		},
@@ -372,7 +366,6 @@ test("tlh-defaults enable repairs targeted default extension load order for rtk"
 	writeFileSync(fixture.settings, JSON.stringify({
 		packages: [
 			"npm:before",
-			"npm:@diegopetrucci/pi-permission-gate",
 			"npm:@diegopetrucci/pi-oracle",
 			"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
 			"npm:@diegopetrucci/pi-compact-bash",
@@ -393,7 +386,6 @@ test("tlh-defaults enable repairs targeted default extension load order for rtk"
 	const settings = readJson(fixture.settings);
 	assert.deepEqual(settings.packages, [
 		"npm:before",
-		"npm:@diegopetrucci/pi-permission-gate",
 		"npm:@diegopetrucci/pi-oracle",
 		"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
 		"npm:@diegopetrucci/pi-compact-bash",

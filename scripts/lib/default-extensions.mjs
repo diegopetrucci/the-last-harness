@@ -65,7 +65,7 @@ function gitIdentity(source) {
 	return `git:${value.toLowerCase()}`;
 }
 
-const TARGETED_DEFAULT_EXTENSION_LOAD_ORDER = ["permission-gate", "rtk", "quiet-tools"];
+const TARGETED_DEFAULT_EXTENSION_LOAD_ORDER = ["rtk", "quiet-tools"];
 
 export function packageSourceOf(entry) {
 	if (typeof entry === "string") return entry;
