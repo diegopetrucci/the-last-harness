@@ -199,6 +199,23 @@ test("enabled primary mode allows approved delegation targets and forces safe to
 	assert.equal(event.input.context, "fresh");
 });
 
+test("architect allows strict embedded subagent targets in single, parallel, and chain calls", async () => {
+	const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+	const ctx = createToolCallContext([
+		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
+	]);
+
+	for (const event of [
+		{ toolName: "subagent", input: { agent: "embedded.repo-helper", prompt: "Inspect the repo" } },
+		{ toolName: "subagent", input: { tasks: [{ agent: "embedded.parallel-helper", prompt: "Inspect one area" }] } },
+		{ toolName: "subagent", input: { chain: [{ agent: "embedded.chain-helper", prompt: "Continue the work" }] } },
+	]) {
+		assert.equal(await toolCall(event, ctx), undefined);
+		assert.equal(event.input.agentScope, "user");
+		assert.equal(event.input.context, "fresh");
+	}
+});
+
 test("enabled primary mode blocks disallowed nested delegation targets after forcing safe defaults", async () => {
 	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
 	const event = {
@@ -215,7 +232,7 @@ test("enabled primary mode blocks disallowed nested delegation targets after for
 	assert.deepEqual(await toolCall(event, ctx), {
 		block: true,
 		reason:
-			"TLH primary agents may delegate only to: developer, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle. Disallowed target(s): planner.",
+			"TLH primary agents may delegate only to: developer, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle, or embedded.<slug>. Disallowed target(s): planner.",
 	});
 	assert.equal(event.input.agentScope, "user");
 	assert.equal(event.input.context, "fresh");
@@ -227,8 +244,8 @@ test("enabled primary mode allows safe management calls and blocks non-user mana
 		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
 	]);
 	const listEvent = { toolName: "subagent", input: { action: "list" } };
-	const getEvent = { toolName: "subagent", input: { action: "get", agentScope: "" } };
-	const blockedEvent = { toolName: "subagent", input: { action: "get", agentScope: "project" } };
+	const getEvent = { toolName: "subagent", input: { action: "get", agent: "developer", agentScope: "" } };
+	const blockedEvent = { toolName: "subagent", input: { action: "get", agent: "developer", agentScope: "project" } };
 
 	assert.equal(await toolCall(listEvent, ctx), undefined);
 	assert.equal(listEvent.input.agentScope, "user");
@@ -297,6 +314,55 @@ test("/switch-primary-agent default writes tlh.primaryAgent with a backup", asyn
 		});
 	} finally {
 		rmSync(fixture.dir, { recursive: true, force: true });
+	}
+});
+
+test("enabled non-architect primaries block embedded subagent delegation", async () => {
+	const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+
+	for (const [selection, input, reason] of [
+		[
+			"rush",
+			{ agent: "embedded.repo-helper", prompt: "Inspect the repo" },
+			"TLH Rush may not delegate to trusted embedded subagents. Rush may use only bundled TLH minor agents.",
+		],
+		[
+			"product",
+			{ tasks: [{ agent: "embedded.parallel-helper", prompt: "Inspect one area" }] },
+			"TLH product may not delegate to trusted embedded subagents. Product mode is limited to bundled TLH minor agents.",
+		],
+		[
+			"bug-hunter",
+			{ chain: [{ parallel: [{ agent: "embedded.chain-helper", prompt: "Continue the work" }] }] },
+			"TLH bug-hunter may not delegate to trusted embedded subagents. Bug-hunter is limited to bundled TLH minor agents.",
+		],
+	]) {
+		const event = { toolName: "subagent", input };
+		const ctx = createToolCallContext([
+			{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: selection } },
+		]);
+		assert.deepEqual(await toolCall(event, ctx), { block: true, reason });
+		assert.equal(event.input.agentScope, undefined);
+		assert.equal(event.input.context, undefined);
+	}
+});
+
+test("enabled non-architect primaries allow embedded and bundled subagent inspection via get", async () => {
+	const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+
+	for (const [selection, input] of [
+		["rush", { action: "get", agent: "embedded.repo-helper" }],
+		["rush", { action: "get", agent: "developer" }],
+		["product", { action: "get", agent: "embedded.parallel-helper" }],
+		["bug-hunter", { action: "get", agent: "code-reviewer" }],
+	]) {
+		const event = { toolName: "subagent", input };
+		const ctx = createToolCallContext([
+			{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: selection } },
+		]);
+		assert.equal(await toolCall(event, ctx), undefined);
+		assert.equal(event.input.agentScope, "user");
+		assert.equal(event.input.context, undefined);
 	}
 });
 

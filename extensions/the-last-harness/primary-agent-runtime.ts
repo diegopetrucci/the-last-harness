@@ -14,7 +14,11 @@ import {
 	resolvePrimaryAgentConfig,
 } from "../the-last-harness-primary-agent.mjs";
 import { createPrimaryToolState, filterAvailableTools } from "../the-last-harness-primary-tools.mjs";
-import { registerTlhStartupMode, validateSubagentToolInput } from "../the-last-harness-subagent-safety.mjs";
+import {
+	isEmbeddedSubagentTarget,
+	registerTlhStartupMode,
+	validateSubagentToolInput,
+} from "../the-last-harness-subagent-safety.mjs";
 import { formatHomePath, isRecord } from "./common.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME } from "./constants.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
@@ -192,14 +196,18 @@ function matchesSubagentName(value: unknown, target: string): boolean {
 	return typeof value === "string" && value.trim().toLowerCase() === target;
 }
 
-function subagentCallTargetsAgent(input: unknown, target: string): boolean {
+function subagentTargetMatches(value: unknown, predicate: (target: string) => boolean): boolean {
+	return typeof value === "string" && predicate(value.trim());
+}
+
+function subagentCallTargets(input: unknown, predicate: (target: string) => boolean): boolean {
 	if (!isRecord(input)) {
 		return false;
 	}
-	if (matchesSubagentName(input.agent, target)) {
+	if (subagentTargetMatches(input.agent, predicate)) {
 		return true;
 	}
-	if (Array.isArray(input.tasks) && input.tasks.some((task) => subagentCallTargetsAgent(task, target))) {
+	if (Array.isArray(input.tasks) && input.tasks.some((task) => subagentCallTargets(task, predicate))) {
 		return true;
 	}
 	if (!Array.isArray(input.chain)) {
@@ -209,18 +217,44 @@ function subagentCallTargetsAgent(input: unknown, target: string): boolean {
 		if (!isRecord(step)) {
 			continue;
 		}
-		if (matchesSubagentName(step.agent, target)) {
+		if (subagentTargetMatches(step.agent, predicate)) {
 			return true;
 		}
-		if (Array.isArray(step.parallel) && step.parallel.some((task) => subagentCallTargetsAgent(task, target))) {
+		if (Array.isArray(step.parallel) && step.parallel.some((task) => subagentCallTargets(task, predicate))) {
 			return true;
 		}
 	}
 	return false;
 }
 
+function subagentCallTargetsAgent(input: unknown, target: string): boolean {
+	return subagentCallTargets(input, (candidate) => matchesSubagentName(candidate, target));
+}
+
+function subagentManagementAction(input: unknown): string | undefined {
+	if (!isRecord(input) || typeof input.action !== "string") {
+		return undefined;
+	}
+	const action = input.action.trim();
+	return action || undefined;
+}
+
+function subagentCallTargetsEmbeddedAgent(input: unknown): boolean {
+	return subagentCallTargets(input, isEmbeddedSubagentTarget);
+}
+
 function rushDeveloperDelegationReason(): string {
 	return "TLH Rush may not delegate implementation to developer. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.";
+}
+
+function embeddedDelegationBlockedReason(selection: Exclude<TlhPrimaryAgentSelection, "architect" | "disabled">): string {
+	if (selection === "rush") {
+		return "TLH Rush may not delegate to trusted embedded subagents. Rush may use only bundled TLH minor agents.";
+	}
+	if (selection === "product") {
+		return "TLH product may not delegate to trusted embedded subagents. Product mode is limited to bundled TLH minor agents.";
+	}
+	return "TLH bug-hunter may not delegate to trusted embedded subagents. Bug-hunter is limited to bundled TLH minor agents.";
 }
 
 function createTlhPrimaryAgentRuntime(
@@ -580,8 +614,12 @@ function createTlhPrimaryAgentRuntime(
 			if (!isEnabledPrimaryAgentSelection(selection)) {
 				return undefined;
 			}
-			if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
+			const managementAction = subagentManagementAction(event.input);
+			if (!managementAction && selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
 				return { block: true, reason: rushDeveloperDelegationReason() };
+			}
+			if (!managementAction && selection !== "architect" && selection !== "disabled" && subagentCallTargetsEmbeddedAgent(event.input)) {
+				return { block: true, reason: embeddedDelegationBlockedReason(selection) };
 			}
 			const reason = validateSubagentToolInput(event.input);
 			return reason ? { block: true, reason } : undefined;

@@ -204,7 +204,8 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 	assert.doesNotMatch(primaryRuntimeSource, /pi\.registerCommand\("harness"/);
 	assert.match(toolCall, /applyProviderAwareSubagentModels\(event\.input, subagentsByName, ctx\.modelRegistry\.getAvailable\(\), ctx\.model\?\.provider\)/);
 	assert.match(toolCall, /const selection = currentPrimaryAgentSelection\(\)/);
-	assert.match(toolCall, /if \(selection === "rush" && subagentCallTargetsAgent\(event\.input, "developer"\)\)/);
+	assert.match(toolCall, /const managementAction = subagentManagementAction\(event\.input\)/);
+	assert.match(toolCall, /if \(!managementAction && selection === "rush" && subagentCallTargetsAgent\(event\.input, "developer"\)\)/);
 	assert.match(toolCall, /const reason = validateSubagentToolInput\(event\.input\)/);
 	assert(
 		toolCall.indexOf("applyProviderAwareSubagentModels") < toolCall.indexOf("!isEnabledPrimaryAgentSelection(selection)"),

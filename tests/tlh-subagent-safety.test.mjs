@@ -4,6 +4,8 @@ import test from "node:test";
 import {
 	ALLOWED_SUBAGENTS,
 	SUBAGENT_CHILD_ENV,
+	isAllowedSubagentTarget,
+	isEmbeddedSubagentTarget,
 	registerTlhStartupMode,
 	validateSubagentToolInput,
 } from "../extensions/the-last-harness-subagent-safety.mjs";
@@ -48,6 +50,17 @@ test("validateSubagentToolInput allows web-scout as a permitted delegation targe
 	assert.equal(single.context, "fresh");
 });
 
+test("embedded target helpers accept strict embedded.<slug> names only", () => {
+	assert.equal(isEmbeddedSubagentTarget("embedded.scout"), true);
+	assert.equal(isEmbeddedSubagentTarget("embedded.scout-2"), true);
+	assert.equal(isEmbeddedSubagentTarget("embedded.scout.extra"), false);
+	assert.equal(isEmbeddedSubagentTarget("embedded.Scout"), false);
+	assert.equal(isEmbeddedSubagentTarget("embedded._scout"), false);
+	assert.equal(isAllowedSubagentTarget("developer"), true);
+	assert.equal(isAllowedSubagentTarget("embedded.scout"), true);
+	assert.equal(isAllowedSubagentTarget("embedded.scout.extra"), false);
+});
+
 test("validateSubagentToolInput allows approved execution and forces fresh user context", () => {
 	const single = { agent: "developer", prompt: "implement the ticket" };
 	assertAllowed(single);
@@ -76,14 +89,30 @@ test("validateSubagentToolInput allows approved execution and forces fresh user 
 	assert.equal(batched.context, "fresh");
 });
 
+test("validateSubagentToolInput allows strict embedded targets in single, parallel, and chain execution", () => {
+	for (const input of [
+		{ agent: "embedded.repo-helper", prompt: "inspect the repo" },
+		{ tasks: [{ agent: "embedded.parallel-helper", prompt: "inspect one area" }] },
+		{ chain: [{ agent: "embedded.chain-helper", prompt: "continue the work" }] },
+	]) {
+		assertAllowed(input);
+		assert.equal(input.agentScope, "user");
+		assert.equal(input.context, "fresh");
+	}
+});
+
 test("validateSubagentToolInput allows approved management calls and forces user scope where needed", () => {
 	const list = { action: "list" };
 	assertAllowed(list);
 	assert.equal(list.agentScope, "user");
 
-	const get = { action: "get", agentScope: "" };
-	assertAllowed(get);
-	assert.equal(get.agentScope, "user");
+	const bundledGet = { action: "get", agent: "developer", agentScope: "" };
+	assertAllowed(bundledGet);
+	assert.equal(bundledGet.agentScope, "user");
+
+	const embeddedGet = { action: "get", agent: "embedded.repo-helper" };
+	assertAllowed(embeddedGet);
+	assert.equal(embeddedGet.agentScope, "user");
 
 	for (const action of ["status", "interrupt", "doctor"]) {
 		assertAllowed({ action });
@@ -97,6 +126,9 @@ test("validateSubagentToolInput blocks unsafe actions and non-user scopes", () =
 	assert.match(validateSubagentToolInput({ agent: "librarian", agentScope: "project" }), /may not use agentScope: "project"/);
 	assert.match(validateSubagentToolInput({ agent: "oracle", context: "resume" }), /may not use context: "resume"/);
 	assert.match(validateSubagentToolInput({ action: "list", agentScope: "system" }), /may not use agentScope: "system"/);
+	assert.match(validateSubagentToolInput({ action: "get", chainName: "review-flow" }), /may not use subagent chain management via chainName/);
+	assert.match(validateSubagentToolInput({ action: "get" }), /must specify agent/);
+	assert.match(validateSubagentToolInput({ action: "get", agent: "embedded.repo.helper" }), /Disallowed target: embedded\.repo\.helper/);
 });
 
 test("validateSubagentToolInput uses generic primary-agent wording", () => {
@@ -114,6 +146,8 @@ test("validateSubagentToolInput uses generic primary-agent wording", () => {
 
 test("validateSubagentToolInput rejects disallowed agents", () => {
 	assert.match(validateSubagentToolInput({ agent: "architect" }), /Disallowed target\(s\): architect/);
+	assert.match(validateSubagentToolInput({ agent: "embedded.repo.helper" }), /Disallowed target\(s\): embedded\.repo\.helper/);
+	assert.match(validateSubagentToolInput({ agent: "embedded.Repo-helper" }), /Disallowed target\(s\): embedded\.Repo-helper/);
 	assert.match(
 		validateSubagentToolInput({ tasks: [{ agent: "developer" }, { agent: "planner" }] }),
 		/Disallowed target\(s\): planner/,

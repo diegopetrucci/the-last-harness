@@ -3,6 +3,8 @@ export const SAFE_SUBAGENT_ACTIONS = Object.freeze(["list", "get", "status", "in
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 
 const SAFE_SUBAGENT_ACTION_SET = new Set(SAFE_SUBAGENT_ACTIONS);
+const ALLOWED_SUBAGENT_SET = new Set(ALLOWED_SUBAGENTS);
+const EMBEDDED_SUBAGENT_TARGET_PATTERN = /^embedded\.[a-z0-9][a-z0-9-]*$/;
 
 function isRecord(value) {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -10,6 +12,19 @@ function isRecord(value) {
 
 function stringField(value) {
 	return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+export function isEmbeddedSubagentTarget(value) {
+	return typeof value === "string" && EMBEDDED_SUBAGENT_TARGET_PATTERN.test(value.trim());
+}
+
+export function isAllowedSubagentTarget(value) {
+	const target = stringField(value);
+	return Boolean(target) && (ALLOWED_SUBAGENT_SET.has(target) || isEmbeddedSubagentTarget(target));
+}
+
+function allowedSubagentTargetSummary() {
+	return `${ALLOWED_SUBAGENTS.join(", ")}, or embedded.<slug>`;
 }
 
 function collectSubagentTargets(input) {
@@ -94,6 +109,23 @@ function validateNestedFreshContext(owner, path) {
 	return undefined;
 }
 
+function validateGetSubagentTarget(input) {
+	if (Object.prototype.hasOwnProperty.call(input, "chainName") && input.chainName !== undefined) {
+		return "TLH primary agents may not use subagent chain management via chainName.";
+	}
+
+	const target = stringField(input.agent);
+	if (!target) {
+		return `TLH primary-agent subagent get calls must specify agent: ${allowedSubagentTargetSummary()}.`;
+	}
+
+	if (!isAllowedSubagentTarget(target)) {
+		return `TLH primary agents may inspect only bundled or embedded subagents via get. Allowed targets: ${allowedSubagentTargetSummary()}. Disallowed target: ${target}.`;
+	}
+
+	return undefined;
+}
+
 function validateNestedFreshSubagentContexts(input) {
 	if (Array.isArray(input.tasks)) {
 		for (let index = 0; index < input.tasks.length; index += 1) {
@@ -128,7 +160,14 @@ export function validateSubagentToolInput(input) {
 		if (!SAFE_SUBAGENT_ACTION_SET.has(action)) {
 			return `TLH primary agents may not use subagent management action '${action}'. Allowed actions: ${SAFE_SUBAGENT_ACTIONS.join(", ")}.`;
 		}
-		return action === "list" || action === "get" ? forceUserAgentScope(input, action) : undefined;
+		if (action === "list") {
+			return forceUserAgentScope(input, action);
+		}
+		if (action === "get") {
+			const scopeReason = forceUserAgentScope(input, action);
+			return scopeReason ?? validateGetSubagentTarget(input);
+		}
+		return undefined;
 	}
 
 	const scopeReason = forceUserAgentScope(input, "execution");
@@ -148,12 +187,12 @@ export function validateSubagentToolInput(input) {
 
 	const targets = collectSubagentTargets(input);
 	if (targets.length === 0) {
-		return `TLH primary-agent subagent execution must target one of: ${ALLOWED_SUBAGENTS.join(", ")}.`;
+		return `TLH primary-agent subagent execution must target one of: ${allowedSubagentTargetSummary()}.`;
 	}
 
-	const disallowed = targets.filter((agent) => !ALLOWED_SUBAGENTS.includes(agent));
+	const disallowed = targets.filter((agent) => !isAllowedSubagentTarget(agent));
 	if (disallowed.length > 0) {
-		return `TLH primary agents may delegate only to: ${ALLOWED_SUBAGENTS.join(", ")}. Disallowed target(s): ${disallowed.join(", ")}.`;
+		return `TLH primary agents may delegate only to: ${allowedSubagentTargetSummary()}. Disallowed target(s): ${disallowed.join(", ")}.`;
 	}
 
 	return undefined;

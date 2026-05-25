@@ -31,6 +31,8 @@ TLH subagents are focused child sessions used by the architect workflow: `repo-s
 
 They run in fresh child contexts: they get the task and project context, not the whole primary-agent conversation. They do not coordinate with each other as a swarm; they report back to the parent primary agent, which stays responsible for decisions and orchestration. TLH uses bundled per-role model defaults. If a child may need supervisor decisions mid-task, prefer async/background delegation; foreground children should return blockers in their final result instead of waiting on blocking supervisor contact.
 
+Advanced users can also add trusted user-owned embedded subagents in the isolated TLH profile. See [`docs/embedded-subagents.md`](docs/embedded-subagents.md) for the supported path, `embedded.<slug>` naming, starter templates, safety caveats, and removal steps. With primary agents enabled, only architect may run `embedded.<slug>`, and only when you explicitly ask for that trusted agent.
+
 ## Quality-of-life improvements to `pi`
 
 - **Project memory**: Gnosis is required and installed automatically on supported platforms (linux/darwin × x64/arm64) so agents can record decisions, constraints, rejected alternatives, and lessons in repo-local memory. Unsupported platforms hard-fail at install.

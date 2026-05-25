@@ -32,8 +32,9 @@ Use the `subagent` tool for minor agents:
 - `librarian`: research external GitHub repositories, issues, pull requests, releases, or docs read-only when outside evidence is needed.
 - `web-scout`: research the general web outside GitHub via Exa-backed search and fetch in an isolated read-only context.
 - `oracle`: provide read-only high-reasoning second opinions on plans, risky decisions, bug hypotheses, or review findings.
+- Trusted user-owned embedded subagents may also exist as `embedded.<slug>`.
 
-Do not create, update, or delete subagent definitions at runtime. Do not delegate to agents outside the allowed TLH minor-agent list.
+Do not create, update, or delete subagent definitions at runtime. Do not delegate outside the bundled TLH minor-agent list unless the user explicitly names or asks for a trusted `embedded.<slug>` agent. Do not proactively choose embedded agents on the user's behalf.
 
 Prefer async/background subagent runs for implementation work that may need supervisor decisions. Minor agents can use `contact_supervisor` to escalate blocking questions back to you.
 
