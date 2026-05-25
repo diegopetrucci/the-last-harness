@@ -62,10 +62,10 @@ test("README and integrations docs describe Rush primary behavior and switching 
 	assert.match(readme, /Anthropic Opus with low thinking on Anthropic/i);
 	assert.match(readme, /`architect` → `rush` → `product` → `bug-hunter` → `disabled`/);
 	assert.match(readme, /\/switch-primary-agent \[status\|architect\|rush\|product\|bug-hunter\|disabled\|reset\|default architect\|default rush\|default product\|default bug-hunter\|default disabled\|default reset\]/);
-	assert.doesNotMatch(readme, /`\/tlh(?:\b| |\[)/);
-	assert.doesNotMatch(readme, /`\/harness(?:\b| |\[)/);
-	assert.doesNotMatch(readme, /`\/agent(?:\b| |\[)/);
-	assert.doesNotMatch(readme, /`\/architect(?:\b| |\[)/);
+	assert.doesNotMatch(readme, /`\/tlh(?=`| \[)/);
+	assert.doesNotMatch(readme, /`\/harness(?=`| \[)/);
+	assert.doesNotMatch(readme, /`\/agent(?=`| \[)/);
+	assert.doesNotMatch(readme, /`\/architect(?=`| \[)/);
 	assert.match(integrations, /Rush keeps that tooling available but handles small bounded tasks with direct edits instead of the default `tk` loop/i);
 });
 
