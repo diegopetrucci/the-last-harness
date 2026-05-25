@@ -16,15 +16,15 @@ From a clean `main` branch with Node.js >=22.19.0:
 
 ```sh
 version=0.1.0
-# Skip this if package.json already has the release version.
+# Skip this if package.json and package-lock.json already have the release version.
 npm version "$version" --no-git-tag-version
-git diff -- package.json
+git diff -- package.json package-lock.json
 ```
 
 Update `CHANGELOG.md` with a `## [$version] - YYYY-MM-DD` section, then run the aggregate validation script and release-notes check:
 
 ```sh
-npm install --no-package-lock --legacy-peer-deps
+npm install --legacy-peer-deps
 npm run validate
 node scripts/release-notes.mjs --tag "v$version" --output /tmp/tlh-release-notes.md
 ```

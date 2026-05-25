@@ -14,11 +14,13 @@ Thanks for helping improve The Last Harness (`tlh`). Keep changes small, safe, a
 
 ## Development setup
 
-Use Node.js >=22.19.0 from the repository root. Install dependencies with:
+Use Node.js >=22.19.0 from the repository root. Install dependencies with the committed lockfile:
 
 ```sh
-npm install --no-package-lock --legacy-peer-deps
+npm install --legacy-peer-deps
 ```
+
+That install runs the package `prepare` step, which installs the local Husky hooks for this clone.
 
 Prefer temporary directories for installer and wrapper checks so local testing does not touch a real `tlh` profile or normal Pi profile.
 
@@ -29,6 +31,8 @@ Main repository validation:
 ```sh
 npm run validate
 ```
+
+The installed Husky `pre-push` hook runs that same `npm run validate` command before `git push`. If you intentionally need to bypass local hooks for a specific push, use `git push --no-verify` and be explicit about why.
 
 For installer-specific checks, use temporary paths, for example:
 
