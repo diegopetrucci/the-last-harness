@@ -17,41 +17,50 @@ function createProvider(suggestions) {
 	};
 }
 
-test("autocomplete hides only changelog in slash-command-name context", async () => {
+test("autocomplete hides changelog and bundled maintenance commands in slash-command-name context", async () => {
 	const suggestions = {
 		items: [
 			{ value: "changelog", label: "/changelog" },
+			{ value: "fff-health", label: "/fff-health" },
+			{ value: "fff-rescan", label: "/fff-rescan" },
+			{ value: "fff-mode", label: "/fff-mode" },
+			{ value: "intercom", label: "/intercom" },
 			{ value: "tlh-changelog", label: "/tlh-changelog" },
 			{ value: "agent", label: "/agent" },
 		],
 	};
 	const provider = createTlhAutocompleteProvider(createProvider(suggestions));
 
-	const result = await provider.getSuggestions(["/ch"], 0, 3, { signal: AbortSignal.abort() });
+	const result = await provider.getSuggestions(["/f"], 0, 2, { signal: AbortSignal.abort() });
 
 	assert.deepEqual(result?.items.map((item) => item.value), ["tlh-changelog", "agent"]);
 });
 
-test("autocomplete keeps changelog outside slash-command-name context", async () => {
+test("autocomplete keeps hidden commands outside slash-command-name context", async () => {
 	const suggestions = {
 		items: [
 			{ value: "changelog", label: "/changelog" },
+			{ value: "fff-health", label: "/fff-health" },
+			{ value: "intercom", label: "/intercom" },
 			{ value: "agent", label: "/agent" },
 		],
 	};
 	const provider = createTlhAutocompleteProvider(createProvider(suggestions));
 
-	const result = await provider.getSuggestions(["/agent ch"], 0, 9, { signal: AbortSignal.abort() });
+	const result = await provider.getSuggestions(["/agent fff"], 0, 10, { signal: AbortSignal.abort() });
 
 	assert.strictEqual(result, suggestions);
 });
 
-test("autocomplete returns null when changelog filtering removes every suggestion", async () => {
+test("autocomplete returns null when filtering removes every slash-command suggestion", async () => {
 	const provider = createTlhAutocompleteProvider(createProvider({
-		items: [{ value: "changelog", label: "/changelog" }],
+		items: [
+			{ value: "changelog", label: "/changelog" },
+			{ value: "fff-health", label: "/fff-health" },
+		],
 	}));
 
-	const result = await provider.getSuggestions(["/changelog"], 0, 10, { signal: AbortSignal.abort() });
+	const result = await provider.getSuggestions(["/fff-health"], 0, 11, { signal: AbortSignal.abort() });
 
 	assert.equal(result, null);
 });
