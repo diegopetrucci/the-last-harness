@@ -126,6 +126,7 @@ Do not expect architect to proactively choose an embedded agent on your behalf.
 
 - Embedded agents are **user-scope only** when TLH primaries are enabled.
 - Enabled TLH primaries force `agentScope: "user"` and `context: "fresh"` for embedded execution.
+- Runtime enforcement here is limited to user-scope execution plus strict `embedded.<slug>` target naming. The "only when you explicitly ask" rule above is architect primary-agent prompt policy, not a separate hard runtime authorization gate.
 - Project-scoped `.pi/agents/**/*.md` embedded agents are **not** a supported path for TLH-primary embedded delegation.
 - `Rush`, `product`, and `bug-hunter` do not run `embedded.*`; architect is the only TLH primary that can execute them.
 - `embedded.*` is for **trusted, user-owned** agents. Do not treat it as a way to safely run repo-controlled prompts from untrusted repositories.
