@@ -298,6 +298,20 @@ EOF_FAKE_PI
   chmod +x "${fakebin}/pi"
 }
 
+make_fake_present_pi() {
+  local fakebin="$1"
+  mkdir -p "${fakebin}"
+  cat >"${fakebin}/pi" <<'EOF_FAKE_PRESENT_PI'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+  printf '0.75.3\n'
+  exit 0
+fi
+exit 0
+EOF_FAKE_PRESENT_PI
+  chmod +x "${fakebin}/pi"
+}
+
 make_fake_stage1_support_root() {
   local root="$1"
   local manifest_file="${root}/.fake-stage1-support-manifest"
@@ -318,6 +332,7 @@ EOF_FAKE_STAGE1
 run_static_checks() {
   log "Running installer static checks..."
   bash -n install.sh
+  bash -n uninstall.sh
   node --check scripts/merge-settings.mjs
   node --check scripts/merge-keybindings.mjs
   node --check scripts/tlh-defaults.mjs
@@ -1108,8 +1123,316 @@ EOF_FAKE_RELEASE_STAGE1
   assert_contains "${combined_file}" "TLH_UPDATE_TRACK=ref"
 }
 
+# ── piInstalledByTlh smoke tests ───────────────────────────────────────────────
+
+run_install_state_pi_field_smoke() {
+  log "Running install-state piInstalledByTlh field smoke check..."
+  local case_dir="${TMP_ROOT}/install-state-pi-field"
+  local agent_dir="${case_dir}/agent"
+  local bin_dir="${case_dir}/bin"
+  local state_file="${case_dir}/state.json"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  mkdir -p "${agent_dir}" "${bin_dir}"
+
+  local -a common_args=(
+    --state-path "${state_file}"
+    --repo diegopetrucci/the-last-harness
+    --ref main
+    --track ref
+    --package-source "git:github.com/diegopetrucci/the-last-harness@main"
+    --package-source-is-default true
+    --raw-base "https://example.invalid/raw"
+    --agent-dir "${agent_dir}"
+    --bin-dir "${bin_dir}"
+    --wrapper-name tlh
+  )
+
+  # --pi-installed-by-tlh true persists the field
+  node scripts/tlh-install-state.mjs "${common_args[@]}" --pi-installed-by-tlh true
+  assert_contains "${state_file}" '"piInstalledByTlh": true'
+  rm -f "${state_file}"
+
+  # --pi-installed-by-tlh false persists the field
+  node scripts/tlh-install-state.mjs "${common_args[@]}" --pi-installed-by-tlh false
+  assert_contains "${state_file}" '"piInstalledByTlh": false'
+  rm -f "${state_file}"
+
+  # omitting --pi-installed-by-tlh leaves the field absent
+  node scripts/tlh-install-state.mjs "${common_args[@]}"
+  assert_not_contains "${state_file}" 'piInstalledByTlh'
+  rm -f "${state_file}"
+
+  # invalid value fails with a clear error
+  set +e
+  node scripts/tlh-install-state.mjs "${common_args[@]}" --pi-installed-by-tlh maybe >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "install-state --pi-installed-by-tlh=maybe unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "--pi-installed-by-tlh must be true or false"
+}
+
+run_install_dry_run_pi_field_smoke() {
+  log "Running install dry-run piInstalledByTlh field smoke check..."
+  local case_dir="${TMP_ROOT}/install-dry-run-pi-field"
+  local node_cmd
+  node_cmd="$(command -v node)"
+  mkdir -p "${case_dir}"
+
+  # ── pi absent: TLH would install pi → piInstalledByTlh: true ──────────────
+  local absent_dir="${case_dir}/pi-absent"
+  local absent_agent="${absent_dir}/agent"
+  local absent_bin="${absent_dir}/bin"
+  local absent_fakebin="${absent_dir}/fakebin"
+  local absent_stdout="${absent_dir}/stdout.log"
+  local absent_stderr="${absent_dir}/stderr.log"
+  local absent_combined="${absent_dir}/combined.log"
+  mkdir -p "${absent_fakebin}"
+  cat >"${absent_fakebin}/sh" <<'EOF_ABSENT_SH'
+#!/bin/sh
+exec /bin/sh "$@"
+EOF_ABSENT_SH
+  cat >"${absent_fakebin}/npm" <<'EOF_ABSENT_NPM'
+#!/bin/sh
+printf 'fake npm should not run during dry-run\n' >&2
+exit 98
+EOF_ABSENT_NPM
+  cat >"${absent_fakebin}/git" <<'EOF_ABSENT_GIT'
+#!/bin/sh
+printf 'fake git should not run during dry-run\n' >&2
+exit 98
+EOF_ABSENT_GIT
+  chmod +x "${absent_fakebin}/sh" "${absent_fakebin}/npm" "${absent_fakebin}/git"
+
+  run_scrubbed_installer_env PATH="${absent_fakebin}" TLH_SKIP_GNOSIS_INSTALL=1 "${node_cmd}" scripts/tlh-install.mjs --dry-run --agent-dir "${absent_agent}" --bin-dir "${absent_bin}" >"${absent_stdout}" 2>"${absent_stderr}"
+  combine_output "${absent_stdout}" "${absent_stderr}" "${absent_combined}"
+  assert_contains "${absent_combined}" "(piInstalledByTlh: true)"
+
+  # ── pi present: TLH did NOT install pi → piInstalledByTlh: false ──────────
+  local present_dir="${case_dir}/pi-present"
+  local present_agent="${present_dir}/agent"
+  local present_bin="${present_dir}/bin"
+  local present_fakebin="${present_dir}/fakebin"
+  local present_stdout="${present_dir}/stdout.log"
+  local present_stderr="${present_dir}/stderr.log"
+  local present_combined="${present_dir}/combined.log"
+  mkdir -p "${present_fakebin}"
+  cat >"${present_fakebin}/sh" <<'EOF_PRESENT_SH'
+#!/bin/sh
+exec /bin/sh "$@"
+EOF_PRESENT_SH
+  cat >"${present_fakebin}/npm" <<'EOF_PRESENT_NPM'
+#!/bin/sh
+printf 'fake npm should not run during dry-run\n' >&2
+exit 98
+EOF_PRESENT_NPM
+  cat >"${present_fakebin}/git" <<'EOF_PRESENT_GIT'
+#!/bin/sh
+printf 'fake git should not run during dry-run\n' >&2
+exit 98
+EOF_PRESENT_GIT
+  chmod +x "${present_fakebin}/sh" "${present_fakebin}/npm" "${present_fakebin}/git"
+  make_fake_present_pi "${present_fakebin}"
+
+  run_scrubbed_installer_env PATH="${present_fakebin}" TLH_SKIP_GNOSIS_INSTALL=1 "${node_cmd}" scripts/tlh-install.mjs --dry-run --agent-dir "${present_agent}" --bin-dir "${present_bin}" >"${present_stdout}" 2>"${present_stderr}"
+  combine_output "${present_stdout}" "${present_stderr}" "${present_combined}"
+  assert_contains "${present_combined}" "(piInstalledByTlh: false)"
+}
+
+run_update_pi_field_threading_smoke() {
+  log "Running tlh-update.mjs piInstalledByTlh threading smoke check..."
+  local case_dir="${TMP_ROOT}/update-pi-field-threading"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  mkdir -p "${case_dir}"
+
+  # ── state with piInstalledByTlh:true threads the flag into installer args ──
+  local with_field_dir="${case_dir}/with-field"
+  mkdir -p "${with_field_dir}/tlh"
+  cat >"${with_field_dir}/tlh/install-state.json" <<'EOF_STATE_WITH_FIELD'
+{
+  "schemaVersion": 1,
+  "repo": "diegopetrucci/the-last-harness",
+  "ref": "main",
+  "track": "ref",
+  "packageSource": "git:github.com/diegopetrucci/the-last-harness@main",
+  "packageSourceIsDefault": true,
+  "piInstalledByTlh": true
+}
+EOF_STATE_WITH_FIELD
+
+  run_scrubbed_installer_env node scripts/tlh-update.mjs --dry-run --agent-dir "${with_field_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "--pi-installed-by-tlh"
+
+  # ── state without piInstalledByTlh omits the flag from installer args ──────
+  local without_field_dir="${case_dir}/without-field"
+  mkdir -p "${without_field_dir}/tlh"
+  cat >"${without_field_dir}/tlh/install-state.json" <<'EOF_STATE_WITHOUT_FIELD'
+{
+  "schemaVersion": 1,
+  "repo": "diegopetrucci/the-last-harness",
+  "ref": "main",
+  "track": "ref",
+  "packageSource": "git:github.com/diegopetrucci/the-last-harness@main",
+  "packageSourceIsDefault": true
+}
+EOF_STATE_WITHOUT_FIELD
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  run_scrubbed_installer_env node scripts/tlh-update.mjs --dry-run --agent-dir "${without_field_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_not_contains "${combined_file}" "--pi-installed-by-tlh"
+}
+
+run_uninstall_dry_run_pi_smoke() {
+  log "Running uninstall.sh --dry-run piInstalledByTlh smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-dry-run-pi"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  mkdir -p "${case_dir}"
+
+  # ── piInstalledByTlh:true → plan shows npm uninstall ──────────────────────
+  local true_agent="${case_dir}/pi-true/agent"
+  mkdir -p "${true_agent}/tlh"
+  cat >"${true_agent}/tlh/install-state.json" <<'EOF_UNINSTALL_STATE_TRUE'
+{
+  "schemaVersion": 1,
+  "repo": "diegopetrucci/the-last-harness",
+  "piInstalledByTlh": true
+}
+EOF_UNINSTALL_STATE_TRUE
+
+  bash uninstall.sh --dry-run --agent-dir "${true_agent}" --bin-dir "${case_dir}/bin-true" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would npm uninstall pi: npm uninstall -g @earendil-works/pi-coding-agent"
+
+  # ── piInstalledByTlh:false → plan shows skip ──────────────────────────────
+  local false_agent="${case_dir}/pi-false/agent"
+  mkdir -p "${false_agent}/tlh"
+  cat >"${false_agent}/tlh/install-state.json" <<'EOF_UNINSTALL_STATE_FALSE'
+{
+  "schemaVersion": 1,
+  "repo": "diegopetrucci/the-last-harness",
+  "piInstalledByTlh": false
+}
+EOF_UNINSTALL_STATE_FALSE
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${false_agent}" --bin-dir "${case_dir}/bin-false" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi removal (install-state: piInstalledByTlh=false)"
+
+  # ── install-state absent → plan shows skip ────────────────────────────────
+  local absent_agent="${case_dir}/pi-absent/agent"
+  mkdir -p "${absent_agent}"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${absent_agent}" --bin-dir "${case_dir}/bin-absent" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi removal (install-state absent or piInstalledByTlh field missing)"
+}
+
+run_uninstall_flag_override_smoke() {
+  log "Running uninstall.sh flag override smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-flag-override"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  mkdir -p "${case_dir}"
+
+  # ── --force-include-pi overrides piInstalledByTlh=false → removes pi ──────
+  local force_agent="${case_dir}/force-include/agent"
+  mkdir -p "${force_agent}/tlh"
+  cat >"${force_agent}/tlh/install-state.json" <<'EOF_FORCE_STATE'
+{
+  "schemaVersion": 1,
+  "repo": "diegopetrucci/the-last-harness",
+  "piInstalledByTlh": false
+}
+EOF_FORCE_STATE
+
+  bash uninstall.sh --dry-run --force-include-pi --agent-dir "${force_agent}" --bin-dir "${case_dir}/bin-force" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would npm uninstall pi: npm uninstall -g @earendil-works/pi-coding-agent"
+
+  # ── --keep-pi overrides piInstalledByTlh=true → skips pi ─────────────────
+  local keep_agent="${case_dir}/keep-pi/agent"
+  mkdir -p "${keep_agent}/tlh"
+  cat >"${keep_agent}/tlh/install-state.json" <<'EOF_KEEP_STATE'
+{
+  "schemaVersion": 1,
+  "repo": "diegopetrucci/the-last-harness",
+  "piInstalledByTlh": true
+}
+EOF_KEEP_STATE
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  bash uninstall.sh --dry-run --keep-pi --agent-dir "${keep_agent}" --bin-dir "${case_dir}/bin-keep" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi removal (--keep-pi flag)"
+
+  # ── both flags together → exit 2 with conflict message ───────────────────
+  local conflict_agent="${case_dir}/conflict/agent"
+  mkdir -p "${conflict_agent}"
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  bash uninstall.sh --dry-run --force-include-pi --keep-pi --agent-dir "${conflict_agent}" --bin-dir "${case_dir}/bin-conflict" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -ne 2 ]]; then
+    cat "${combined_file}" >&2
+    fail "mutually exclusive flags did not exit with code 2 (got ${status})"
+  fi
+  assert_contains "${combined_file}" "--force-include-pi and --keep-pi are mutually exclusive"
+}
+
+run_uninstall_normal_pi_guard_smoke() {
+  log "Running uninstall.sh normal Pi config guard smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-normal-pi-guard"
+  local home_dir="${case_dir}/home"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  mkdir -p "${home_dir}"
+
+  set +e
+  HOME="${home_dir}" bash uninstall.sh --dry-run --agent-dir "${home_dir}/.pi/agent" --bin-dir "${case_dir}/bin" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall.sh normal Pi config guard unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "refusing to operate"
+  assert_absent "${home_dir}/.pi"
+}
+
 run_static_checks
 run_support_manifest_smoke
+run_install_state_pi_field_smoke
+run_install_dry_run_pi_field_smoke
+run_update_pi_field_threading_smoke
+run_uninstall_dry_run_pi_smoke
+run_uninstall_flag_override_smoke
+run_uninstall_normal_pi_guard_smoke
 run_install_query_smoke
 run_stage1_dry_run_smoke
 run_stage1_relative_path_canonicalization_smoke
