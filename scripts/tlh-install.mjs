@@ -544,7 +544,7 @@ function installPiIfNeeded(config) {
 		prefix,
 		"@earendil-works/pi-coding-agent",
 	]);
-	if (config.dryRun) return;
+	if (config.dryRun) return true;
 	const piBin = join(piBinDir, "pi");
 	const onPath = commandExists(config, "pi");
 	if (!existsSync(piBin) && !onPath) {
