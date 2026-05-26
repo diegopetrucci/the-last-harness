@@ -20,7 +20,7 @@ Use Node.js >=22.19.0 from the repository root. Install dependencies with the co
 npm install --legacy-peer-deps
 ```
 
-That install runs the package `prepare` step, which installs the local Husky hooks for this clone.
+That install runs the package `prepare` step. Contributor clones with dev dependencies and `.git` metadata install the local Husky hooks; CI, `HUSKY=0`, and end-user `--omit=dev` installs skip Husky cleanly.
 
 Prefer temporary directories for installer and wrapper checks so local testing does not touch a real `tlh` profile or normal Pi profile.
 
