@@ -37,6 +37,13 @@ assert_absent() {
   fi
 }
 
+assert_present() {
+  local path="$1"
+  if [[ ! -e "${path}" ]]; then
+    fail "expected path to be present: ${path}"
+  fi
+}
+
 assert_contains() {
   local file="$1"
   local expected="$2"
@@ -1537,6 +1544,45 @@ EOF_PIPED_UNINSTALL_STATE
   assert_absent "${profile_root}"
 }
 
+run_uninstall_sibling_preservation_smoke() {
+  log "Running uninstall.sh sibling-preservation regression smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-sibling-preservation"
+  local profile_root="${case_dir}/profile"
+  local agent_dir="${profile_root}/agent"
+  local bin_dir="${case_dir}/bin"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  mkdir -p "${agent_dir}/tlh" "${bin_dir}"
+  cat >"${agent_dir}/tlh/install-state.json" <<'EOF_SIBLING_UNINSTALL_STATE'
+{
+  "schemaVersion": 1,
+  "repo": "diegopetrucci/the-last-harness",
+  "piInstalledByTlh": false
+}
+EOF_SIBLING_UNINSTALL_STATE
+  # Sibling file under profile root — must survive uninstall (regression guard).
+  printf 'sibling file — must survive uninstall\n' >"${profile_root}/sibling_keep.txt"
+  touch "${bin_dir}/tlh"
+
+  set +e
+  cat uninstall.sh | bash -s -- --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -ne 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall sibling-preservation smoke exited with non-zero status: ${status}"
+  fi
+  assert_absent "${bin_dir}/tlh"
+  assert_absent "${agent_dir}"
+  # Regression assertion: sibling and non-empty parent must survive.
+  assert_present "${profile_root}/sibling_keep.txt"
+  assert_present "${profile_root}"
+}
+
 run_static_checks
 run_support_manifest_smoke
 run_install_state_pi_field_smoke
@@ -1547,6 +1593,7 @@ run_uninstall_dry_run_pi_smoke
 run_uninstall_flag_override_smoke
 run_uninstall_normal_pi_guard_smoke
 run_uninstall_piped_smoke
+run_uninstall_sibling_preservation_smoke
 run_install_query_smoke
 run_stage1_dry_run_smoke
 run_stage1_relative_path_canonicalization_smoke

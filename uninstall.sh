@@ -234,7 +234,7 @@ Options:
   --keep-pi              Skip pi removal even when install-state says
                            piInstalledByTlh=true.
   --agent-dir DIR        Override isolated agent dir (default: ~/.the-last-harness/agent).
-                           The profile root (parent dir) is what gets removed.
+                           Only the agent dir is removed; parent dir is cleaned up only if empty.
   --bin-dir DIR          Override wrapper install dir (default: ~/.local/bin).
   --wrapper-name NAME    Override wrapper command basename (default: tlh).
   --quiet                Suppress non-essential output (errors and summary always shown).
@@ -426,9 +426,11 @@ fi
 if [[ "${AGENT_DIR_EXISTS}" == "true" ]]; then
   STEP=$(( STEP + 1 ))
   if [[ "${DRY_RUN}" == "true" ]]; then
-    say "  ${STEP}. would run: rm -rf ${PROFILE_ROOT}"
+    say "  ${STEP}. would run: rm -rf ${AGENT_DIR}"
+    say "             and rmdir ${PROFILE_ROOT} if empty"
   else
-    say "  ${STEP}. Remove profile root: ${PROFILE_ROOT}"
+    say "  ${STEP}. Remove agent dir:    ${AGENT_DIR}"
+    say "             (parent ${PROFILE_ROOT} removed only if empty)"
   fi
 fi
 
@@ -467,8 +469,12 @@ if [[ "${WRAPPER_EXISTS}" == "true" ]]; then
 fi
 
 if [[ "${AGENT_DIR_EXISTS}" == "true" ]]; then
-  log "Removing profile root: ${PROFILE_ROOT}"
-  removal_run rm -rf "${PROFILE_ROOT}"
+  log "Removing agent dir: ${AGENT_DIR}"
+  removal_run rm -rf "${AGENT_DIR}"
+  if [[ "${VERBOSE}" == "true" ]]; then
+    say "  + rmdir ${PROFILE_ROOT}"
+  fi
+  rmdir "${PROFILE_ROOT}" 2>/dev/null || true
 fi
 
 if [[ "${REMOVE_PI}" == "true" ]]; then

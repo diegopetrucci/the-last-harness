@@ -96,7 +96,7 @@ Run the one-liner from the release asset:
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/uninstall.sh | bash -s --
 ```
 
-The script removes the isolated `~/.the-last-harness` profile root, the `tlh` wrapper, and (when install-state indicates it) the global pi package. Normal Pi config at `~/.pi/agent` is never touched.
+The script removes the isolated agent dir under `~/.the-last-harness` (and the now-empty parent dir, if any), the `tlh` wrapper, and (when install-state indicates it) the global pi package. Normal Pi config at `~/.pi/agent` is never touched.
 
 ### Uninstaller flags
 
@@ -107,7 +107,7 @@ The uninstaller prints its plan and then proceeds immediately — there is no co
 | `--dry-run` | Print planned actions without performing any removals. |
 | `--force-include-pi` | Remove pi via npm even when install-state says `piInstalledByTlh=false` or the field is absent. |
 | `--keep-pi` | Skip pi removal even when install-state says `piInstalledByTlh=true`. |
-| `--agent-dir DIR` | Override isolated agent dir (default: `~/.the-last-harness/agent`). The profile root (parent dir) is what gets removed. |
+| `--agent-dir DIR` | Override isolated agent dir (default: `~/.the-last-harness/agent`). Only the agent dir is removed; the parent dir is cleaned up only if empty. |
 | `--bin-dir DIR` | Override wrapper install dir (default: `~/.local/bin`). |
 | `--wrapper-name NAME` | Override wrapper command basename (default: `tlh`). |
 | `--quiet` | Suppress non-essential output (errors and summary always shown). |
