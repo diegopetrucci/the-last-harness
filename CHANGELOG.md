@@ -2,6 +2,13 @@
 
 All notable changes to The Last Harness will be documented in this file.
 
+## [0.12.0] - 2026-05-26
+
+### Changed
+
+- TLH installs and updates now place the bundled Pi runtime per-user under `~/.local` (so `pi` lands at `~/.local/bin/pi`) instead of using a global `npm install -g`. This removes the need for `sudo`, matches Pi's own install guidance, and is consistent with the default TLH bin dir (`~/.local/bin`). When the per-user prefix is not yet on `PATH`, the installer prepends it for the current process and prints a one-time hint to add `export PATH="$HOME/.local/bin:$PATH"` to your shell profile.
+- The Pi version-too-old upgrade hint now points at the same per-user `npm install -g --ignore-scripts --prefix "$HOME/.local" @earendil-works/pi-coding-agent` invocation that the installer uses, so the suggested fix matches the install layout.
+
 ## [0.11.0] - 2026-05-26
 
 ### Added
