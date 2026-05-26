@@ -2,10 +2,11 @@
 
 All notable changes to The Last Harness will be documented in this file.
 
-## [Unreleased]
+## [0.11.0] - 2026-05-26
 
 ### Added
 
+- Added `/analyse-tlh-sessions` TLH session-analysis prompt.
 - `/tlh-changelog` now shows TLH release notes from the packaged `CHANGELOG.md` while leaving manual upstream `/changelog` available.
 - Bundled the patched TLH `pi-rtk` fork as a non-critical default extension, with quiet-tools-compatible load ordering and a documented `tlh defaults disable rtk` opt-out.
 - Suppressed the upstream Pi Anthropic extra-usage startup warning by default (`warnings.anthropicExtraUsage: false`); re-enable it by setting `"warnings": { "anthropicExtraUsage": true }` in `~/.the-last-harness/agent/settings.json`.
@@ -25,6 +26,8 @@ All notable changes to The Last Harness will be documented in this file.
 - Footer restructured into three logical lines: working directory/git (unchanged), a single flowing `agent: … • model • thinking • context` line, and an optional session-stats line showing cost and/or subscription usage. Empty lines are omitted entirely.
 - Subscription usage session label now reads e.g. `5h session 27% used` (was `5h 27% used`).
 - Removed the `/tlh`, `/harness`, `/agent`, and `/architect` TLH slash commands. Use `/switch-primary-agent` for explicit primary-agent status/default controls, or `Shift+Tab` to cycle the active primary.
+- Non-stable-install track warning is now rendered in the TLH header instead of as a standalone launch notice, and the launch notice copy was simplified.
+- Trimmed the README power-user bundled-extension command list to match the reduced default-extension surface (no `/context-cap`, `/quiet-tools`, `/fff-*`, `/oracle-model`, `/intercom`, `/plannotator-*` in the list).
 
 ## [0.10.0] - 2026-05-21
 
