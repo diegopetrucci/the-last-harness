@@ -5,6 +5,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
 
+import { ALLOWED_SUBAGENTS } from "../extensions/the-last-harness-subagent-safety.mjs";
+
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const extensionsDir = fileURLToPath(new URL("../extensions/", import.meta.url));
 const PI_EXTENSION_FILE_ENTRYPOINT_EXTENSIONS = new Set([".ts", ".js"]);
@@ -28,6 +30,12 @@ function sourceSection(source, startMarker, endMarker) {
 	const end = source.indexOf(endMarker, start);
 	assert.notEqual(end, -1, `missing end marker: ${endMarker}`);
 	return source.slice(start, end);
+}
+
+function promptSection(prompt, heading) {
+	const start = prompt.indexOf(heading);
+	assert.notEqual(start, -1, `missing heading: ${heading}`);
+	return prompt.slice(start);
 }
 
 function discoverPiExtensionEntrypoints(extensionDirectory) {
@@ -121,6 +129,41 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 		assert.doesNotMatch(prompt, /## TLH Ticket Integration Disabled/);
 		assert.doesNotMatch(prompt, /non-ticket/i);
 		assert.doesNotMatch(prompt, /ticket integration is disabled/i);
+	}
+});
+
+test("allowed-subagents prompt keeps bundled minor-agent listings and scopes embedded guidance to architect", () => {
+	const primaryAgents = loadPrimaryAgents();
+	const subagentMetadata = loadSubagentMetadata();
+	const bundledLines = subagentMetadata
+		.filter((agent) => ALLOWED_SUBAGENTS.includes(agent.name))
+		.map((agent) => `- ${agent.name}: ${agent.description}`);
+	const architect = primaryAgents.get("architect");
+	assert.ok(architect, "architect primary prompt should load");
+
+	const architectSection = promptSection(
+		buildTlhSystemPrompt(architect, subagentMetadata, true),
+		"## TLH Allowed Minor Subagents",
+	);
+	assert.match(architectSection, /You may delegate to these bundled TLH minor agents via the subagent tool:/);
+	assert.match(
+		architectSection,
+		/You may also delegate to a trusted `embedded\.<slug>` only when the user explicitly names or asks for that trusted agent\./,
+	);
+	for (const line of bundledLines) {
+		assert.ok(architectSection.includes(line), `architect prompt should list bundled minor agent: ${line}`);
+	}
+
+	for (const selection of ["rush", "product", "bug-hunter"]) {
+		const primary = primaryAgents.get(selection);
+		assert.ok(primary, `${selection} primary prompt should load`);
+		const section = promptSection(buildTlhSystemPrompt(primary, subagentMetadata, true), "## TLH Allowed Minor Subagents");
+		assert.match(section, /You may delegate only to these bundled TLH minor agents via the subagent tool:/);
+		assert.match(section, /Do not delegate outside this bundled TLH minor-agent list\./);
+		assert.doesNotMatch(section, /embedded\.<slug>/);
+		for (const line of bundledLines) {
+			assert.ok(section.includes(line), `${selection} prompt should list bundled minor agent: ${line}`);
+		}
 	}
 });
 

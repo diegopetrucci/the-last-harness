@@ -99,7 +99,7 @@ export function loadSubagentMetadata(): SubagentMetadata[] {
 		.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function formatAllowedSubagents(subagents: SubagentMetadata[]): string {
+function formatAllowedSubagents(primary: AgentPrompt | undefined, subagents: SubagentMetadata[]): string {
 	const allowed = new Set(ALLOWED_SUBAGENTS);
 	const lines = subagents
 		.filter((agent) => allowed.has(agent.name))
@@ -107,7 +107,11 @@ function formatAllowedSubagents(subagents: SubagentMetadata[]): string {
 	if (lines.length === 0) {
 		return "";
 	}
-	return `## TLH Allowed Minor Subagents\n\nYou may delegate only to these minor agents via the subagent tool:\n\n${lines.join("\n")}`;
+	const bundledList = lines.join("\n");
+	if (primary?.name === "architect") {
+		return `## TLH Allowed Minor Subagents\n\nYou may delegate to these bundled TLH minor agents via the subagent tool:\n\n${bundledList}\n\nYou may also delegate to a trusted \`embedded.<slug>\` only when the user explicitly names or asks for that trusted agent. Do not proactively choose embedded agents on the user's behalf.`;
+	}
+	return `## TLH Allowed Minor Subagents\n\nYou may delegate only to these bundled TLH minor agents via the subagent tool:\n\n${bundledList}\n\nDo not delegate outside this bundled TLH minor-agent list.`;
 }
 
 export function buildTlhSystemPrompt(
@@ -117,7 +121,7 @@ export function buildTlhSystemPrompt(
 ): string {
 	const prompts = [HARNESS_PROMPT.trim()];
 	if (primaryEnabled) {
-		prompts.push(primary?.systemPrompt.trim(), formatAllowedSubagents(subagents));
+		prompts.push(primary?.systemPrompt.trim(), formatAllowedSubagents(primary, subagents));
 	}
 	return prompts.filter(Boolean).join("\n\n");
 }
