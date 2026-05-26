@@ -90,16 +90,61 @@ To update bundled default extension packages too, run `tlh update`; it refreshes
 
 ## Uninstall
 
-Remove the isolated wrapper and profile:
+Run the one-liner from the release asset:
+
+```sh
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/uninstall.sh | bash -s --
+```
+
+The script removes the isolated `~/.the-last-harness` profile root, the `tlh` wrapper, and (when install-state indicates it) the global pi package. Normal Pi config at `~/.pi/agent` is never touched.
+
+### Uninstaller flags
+
+| Flag | Description |
+|---|---|
+| `--dry-run` | Print planned actions without performing any removals. |
+| `--yes`, `-y` | Skip the confirmation prompt and proceed immediately. |
+| `--force-include-pi` | Remove pi via npm even when install-state says `piInstalledByTlh=false` or the field is absent. |
+| `--keep-pi` | Skip pi removal even when install-state says `piInstalledByTlh=true`. |
+| `--agent-dir DIR` | Override isolated agent dir (default: `~/.the-last-harness/agent`). The profile root (parent dir) is what gets removed. |
+| `--bin-dir DIR` | Override wrapper install dir (default: `~/.local/bin`). |
+| `--wrapper-name NAME` | Override wrapper command basename (default: `tlh`). |
+| `--quiet` | Suppress non-essential output (errors and summary always shown). |
+| `--verbose` | Print each removal command before executing it. |
+| `-h`, `--help` | Show help. |
+
+`--force-include-pi` and `--keep-pi` are mutually exclusive.
+
+### Pi removal decision
+
+At install time, TLH records `piInstalledByTlh` in `~/.the-last-harness/agent/tlh/install-state.json`. The uninstaller uses this field to decide whether to remove the global pi package, so a shared or pre-existing pi install is not accidentally removed. This field was added in this release; older installs that lack it default to leaving pi in place.
+
+| Condition | pi removal |
+|---|---|
+| `piInstalledByTlh = true` | removed via npm |
+| `piInstalledByTlh = false` | kept |
+| field absent (older install) | kept |
+| `--force-include-pi` flag | removed (overrides state) |
+| `--keep-pi` flag | kept (overrides state) |
+
+### What stays behind
+
+The uninstaller never auto-removes:
+
+- **`~/.pi`** — Pi's own user config directory. To remove it manually: `rm -rf ~/.pi`
+- **Separately-installed pi binary** — if pi was installed before or independently of TLH, it is left in place. To remove it: `npm uninstall -g @earendil-works/pi-coding-agent`
+- **Repo-local `.gnosis/` and `.tickets/` data** — per-repository and managed separately. To remove from a repo: `rm -rf .gnosis .tickets`
+
+### Manual removal
+
+If you prefer to skip the script entirely:
 
 ```sh
 rm -f ~/.local/bin/tlh
 rm -rf ~/.the-last-harness
 ```
 
-This removes the managed `tk` copy under the TLH profile if one was installed. It does not uninstall upstream Pi or any separate global/Homebrew `tk`, because you may use them outside TLH. Repo-local `.gnosis` and `.tickets` data is not stored under `~/.the-last-harness`; remove those directories from individual repositories if you want to delete integration data.
-
-To remove upstream Pi entirely, only if you installed it solely for The Last Harness:
+This also removes the managed `tk` copy under the TLH profile if one was installed. To also remove the global pi package (only if you installed it solely for The Last Harness):
 
 ```sh
 npm uninstall -g --prefix "$HOME/.local" @earendil-works/pi-coding-agent
