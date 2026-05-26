@@ -527,7 +527,14 @@ function installPiIfNeeded(config) {
 		throw new Error(`Pi install completed, but ${piBin} does not exist and pi is not on PATH`);
 	}
 	if (!onPath) {
-		warn(`${piBin} installed but ${piBinDir} is not on PATH. Add it with: export PATH="${piBinDir}:$PATH"`);
+		// Pi was just installed to a per-user prefix that is not yet on PATH.
+		// Prepend the prefix bin dir to PATH for the remainder of this process
+		// so downstream steps (`pi install`, `pi update`, ...) can resolve the
+		// binary by name via spawnSync. config.env is the same reference as
+		// process.env, so this mutation propagates to every later spawn.
+		const currentPath = config.env.PATH || "";
+		config.env.PATH = currentPath ? `${piBinDir}:${currentPath}` : piBinDir;
+		warn(`${piBin} installed but ${piBinDir} is not on PATH. Added it to PATH for this install; add it to your shell profile with: export PATH="${piBinDir}:$PATH"`);
 	}
 }
 
