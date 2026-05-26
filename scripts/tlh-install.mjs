@@ -170,6 +170,7 @@ function parseArgs(argv, env = process.env) {
 		wrapperName: env.TLH_WRAPPER_NAME || DEFAULT_WRAPPER_NAME,
 		printSupportManifest: false,
 		help: false,
+		piInstalledByTlhOverride: undefined,
 	};
 
 	for (let index = 0; index < argv.length; index += 1) {
@@ -210,6 +211,15 @@ function parseArgs(argv, env = process.env) {
 		}
 		if (arg === "--print-support-manifest") {
 			args.printSupportManifest = true;
+			continue;
+		}
+		if (arg === "--pi-installed-by-tlh") {
+			const raw = requiredValue(argv, ++index, arg);
+			const lower = raw.toLowerCase();
+			if (lower !== "true" && lower !== "false") {
+				throw new Error(`--pi-installed-by-tlh must be true or false (got: ${raw})`);
+			}
+			args.piInstalledByTlhOverride = lower === "true";
 			continue;
 		}
 		if (arg === "--agent-dir") {
@@ -263,6 +273,8 @@ function isSemverTag(ref) {
 }
 
 function buildInstallConfig(parsedArgs, env = process.env) {
+	// piInstalledByTlhOverride is set when an explicit --pi-installed-by-tlh flag was passed
+	// (e.g. tlh-update.mjs carries through the preserved value from an existing install-state).
 	const agentDir = resolve(expandPath(parsedArgs.agentDirInput));
 	const binDir = resolve(expandPath(parsedArgs.binDirInput));
 	const wrapperPath = join(binDir, parsedArgs.wrapperName);
@@ -308,6 +320,8 @@ function buildInstallConfig(parsedArgs, env = process.env) {
 		updateTrack,
 		subagentPrompts: [...TLH_SUBAGENT_PROMPTS],
 		supportFiles,
+		piInstalledByTlhOverride: parsedArgs.piInstalledByTlhOverride,
+		piInstalledByTlh: undefined,
 		supportFilePaths: Object.fromEntries(supportFiles.map((file) => [file.variable, ""])),
 		scriptPath,
 		scriptDir,
@@ -502,7 +516,7 @@ function installPiIfNeeded(config) {
 		const result = spawnCapture(config, ["sh", "-c", "command -v -- pi"], { allowFailure: true });
 		verboseLog(config, `Pi is already installed: ${(result.stdout || "pi").trim() || "pi"}`);
 		assertSupportedPiVersion(config);
-		return;
+		return false;
 	}
 	if (config.noPiInstall) {
 		throw new Error("pi is not installed and --no-pi-install was provided");
@@ -536,6 +550,7 @@ function installPiIfNeeded(config) {
 		config.env.PATH = currentPath ? `${piBinDir}:${currentPath}` : piBinDir;
 		warn(`${piBin} installed but ${piBinDir} is not on PATH. Added it to PATH for this install; add it to your shell profile with: export PATH="${piBinDir}:$PATH"`);
 	}
+	return true;
 }
 
 function backupExistingSettingsBeforePiInstall(config) {
@@ -754,6 +769,14 @@ async function writeInstallState(config) {
 		"--wrapper-name",
 		config.wrapperName,
 	];
+	// Write piInstalledByTlh when: (a) an explicit override was provided (update preserving an
+	// existing value), or (b) the state file does not yet exist (genuine fresh install). This
+	// prevents an update run from inventing the field when the prior install-state lacked it.
+	const writePiInstalledByTlh =
+		config.piInstalledByTlhOverride !== undefined || !existsSync(config.statePath);
+	if (writePiInstalledByTlh && config.piInstalledByTlh !== undefined) {
+		args.push("--pi-installed-by-tlh", String(config.piInstalledByTlh));
+	}
 	if (config.dryRun) args.push("--dry-run");
 	if (config.quiet) args.push("--quiet");
 
@@ -1080,7 +1103,15 @@ async function runInstallFlow(config) {
 	requireCommand(config, "git");
 	await preflightRuntimeSupportFiles(config, supportFileIo());
 
-	installPiIfNeeded(config);
+	const piInstalledByTlh = installPiIfNeeded(config);
+	// Use the explicit override when provided (e.g. tlh update preserving an existing value).
+	// Otherwise use what actually happened this run. The value is only written to install-state
+	// on a fresh install (state file absent) or when an override was explicitly supplied; this
+	// prevents an update run from inventing or overwriting the field when it was absent in the
+	// prior install-state.
+	config.piInstalledByTlh = config.piInstalledByTlhOverride !== undefined
+		? config.piInstalledByTlhOverride
+		: piInstalledByTlh;
 	installHarnessPackage(config);
 	await installSupportFilesToProfile(config);
 	await mergeSettings(config);
