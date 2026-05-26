@@ -188,17 +188,21 @@ export function refreshGitCheckout(config, { targetDir, repo, ref, label, missin
 
 		// Report the backup so the user knows how to recover.
 		const parentOrEmpty = parent ?? "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-		warn(`dirty checkout at ${targetDir} — local changes backed up to ${backupRef}`, io);
-		warn(`  git -C ${targetDir} show ${backupRef}`, io);
-		warn(`  git -C ${targetDir} diff ${parentOrEmpty} ${backupRef}`, io);
+		if (!config.quiet) {
+			warn(`dirty checkout at ${targetDir} — local changes backed up to ${backupRef}`, io);
+			warn(`  git -C ${targetDir} show ${backupRef}`, io);
+			warn(`  git -C ${targetDir} diff ${parentOrEmpty} ${backupRef}`, io);
+		}
 
-		// Emit the diff body, capped at 200 lines.
-		const diffBody = gitOutput(config, targetDir, ["diff", parentOrEmpty, backupRef], io);
-		const diffLines = diffBody.split("\n");
-		const truncated = diffLines.length > 200;
-		warn(diffLines.slice(0, 200).join("\n"), io);
-		if (truncated) {
-			warn("... truncated, use the diff command above for full content", io);
+		if (config.verbose && !config.quiet) {
+			// Emit the diff body for verbose diagnostics, capped at 200 lines.
+			const diffBody = gitOutput(config, targetDir, ["diff", parentOrEmpty, backupRef], io);
+			const diffLines = diffBody.split("\n");
+			const truncated = diffLines.length > 200;
+			warn(diffLines.slice(0, 200).join("\n"), io);
+			if (truncated) {
+				warn("... truncated, use the diff command above for full content", io);
+			}
 		}
 	}
 

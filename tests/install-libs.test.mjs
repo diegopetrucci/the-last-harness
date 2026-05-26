@@ -239,7 +239,7 @@ test("refreshGitCheckout preserves ignored local files without creating backup r
 });
 
 
-test("refreshGitCheckout still backs up git-visible local changes", (t) => {
+test("refreshGitCheckout keeps dirty-checkout backup output concise by default", (t) => {
 	const { agentDir, targetDir, originDir } = createManagedGitCheckout(t);
 	const warnings = [];
 
@@ -258,6 +258,52 @@ test("refreshGitCheckout still backs up git-visible local changes", (t) => {
 	assert.equal(runGit(["-C", targetDir, "show", `${backupRefs[0]}:tracked.txt`]), "tracked local");
 	assert.equal(readFileSync(join(targetDir, "tracked.txt"), "utf8"), "tracked v1\n");
 	assert.equal(warnings.some((message) => message.includes("dirty checkout") && message.includes(backupRefs[0])), true);
+	assert.equal(warnings.some((message) => message.includes("diff --git")), false);
+	assert.equal(warnings.some((message) => message.includes("@@")), false);
+});
+
+
+test("refreshGitCheckout emits dirty-checkout diff details only in verbose mode", (t) => {
+	const { agentDir, targetDir, originDir } = createManagedGitCheckout(t);
+	const warnings = [];
+
+	writeFileSync(join(targetDir, "tracked.txt"), "tracked local\n");
+
+	refreshGitCheckout({ agentDir, verbose: true }, {
+		targetDir,
+		repo: originDir,
+		ref: "main",
+		label: "test checkout",
+		missingMessage: `missing checkout: ${targetDir}`,
+	}, gitCheckoutIo(warnings));
+
+	const backupRefs = listBackupRefs(targetDir);
+	assert.equal(backupRefs.length, 1);
+	assert.equal(warnings.some((message) => message.includes("dirty checkout") && message.includes(backupRefs[0])), true);
+	assert.equal(warnings.some((message) => message.includes("diff --git a/tracked.txt b/tracked.txt")), true);
+	assert.equal(warnings.some((message) => message.includes("-tracked v1") && message.includes("+tracked local")), true);
+});
+
+
+test("refreshGitCheckout stays quiet about dirty-checkout backups in quiet mode", (t) => {
+	const { agentDir, targetDir, originDir } = createManagedGitCheckout(t);
+	const warnings = [];
+
+	writeFileSync(join(targetDir, "tracked.txt"), "tracked local\n");
+
+	refreshGitCheckout({ agentDir, quiet: true }, {
+		targetDir,
+		repo: originDir,
+		ref: "main",
+		label: "test checkout",
+		missingMessage: `missing checkout: ${targetDir}`,
+	}, gitCheckoutIo(warnings));
+
+	const backupRefs = listBackupRefs(targetDir);
+	assert.equal(backupRefs.length, 1);
+	assert.equal(runGit(["-C", targetDir, "show", `${backupRefs[0]}:tracked.txt`]), "tracked local");
+	assert.equal(readFileSync(join(targetDir, "tracked.txt"), "utf8"), "tracked v1\n");
+	assert.deepEqual(warnings, []);
 });
 
 
