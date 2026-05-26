@@ -222,6 +222,16 @@ function parseArgs(argv, env = process.env) {
 			args.piInstalledByTlhOverride = lower === "true";
 			continue;
 		}
+		if (arg.startsWith("--pi-installed-by-tlh=")) {
+			const raw = arg.slice("--pi-installed-by-tlh=".length);
+			if (!raw) throw new Error("--pi-installed-by-tlh requires a value");
+			const lower = raw.toLowerCase();
+			if (lower !== "true" && lower !== "false") {
+				throw new Error(`--pi-installed-by-tlh must be true or false (got: ${raw})`);
+			}
+			args.piInstalledByTlhOverride = lower === "true";
+			continue;
+		}
 		if (arg === "--agent-dir") {
 			args.agentDirInput = requiredValue(argv, ++index, arg);
 			continue;

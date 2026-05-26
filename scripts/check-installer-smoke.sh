@@ -1293,6 +1293,55 @@ EOF_STATE_WITHOUT_FIELD
   assert_not_contains "${combined_file}" "--pi-installed-by-tlh"
 }
 
+run_install_sh_pi_installed_by_tlh_passthrough_smoke() {
+  log "Running install.sh --pi-installed-by-tlh passthrough smoke check..."
+  local case_dir="${TMP_ROOT}/install-sh-pi-flag-passthrough"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  mkdir -p "${case_dir}"
+
+  # ── space-separated form: stage-0 accepts, stage-1 validates → exit 0 ─────
+  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 bash install.sh \
+    --pi-installed-by-tlh true \
+    --dry-run \
+    --agent-dir "${case_dir}/space/agent" \
+    --bin-dir "${case_dir}/space/bin" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_not_contains "${combined_file}" "unknown option"
+
+  # ── equals form: stage-0 accepts, stage-1 validates → exit 0 ──────────────
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 bash install.sh \
+    --pi-installed-by-tlh=true \
+    --dry-run \
+    --agent-dir "${case_dir}/eq/agent" \
+    --bin-dir "${case_dir}/eq/bin" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_not_contains "${combined_file}" "unknown option"
+
+  # ── invalid boolean: stage-1 validation error (not stage-0 unknown option) ─
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 bash install.sh \
+    --pi-installed-by-tlh maybe \
+    --dry-run \
+    --agent-dir "${case_dir}/bad/agent" \
+    --bin-dir "${case_dir}/bad/bin" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "expected --pi-installed-by-tlh maybe to fail but exited 0"
+  fi
+  assert_contains "${combined_file}" "--pi-installed-by-tlh must be true or false"
+  assert_not_contains "${combined_file}" "unknown option"
+}
+
 run_uninstall_dry_run_pi_smoke() {
   log "Running uninstall.sh --dry-run piInstalledByTlh smoke check..."
   local case_dir="${TMP_ROOT}/uninstall-dry-run-pi"
@@ -1430,6 +1479,7 @@ run_support_manifest_smoke
 run_install_state_pi_field_smoke
 run_install_dry_run_pi_field_smoke
 run_update_pi_field_threading_smoke
+run_install_sh_pi_installed_by_tlh_passthrough_smoke
 run_uninstall_dry_run_pi_smoke
 run_uninstall_flag_override_smoke
 run_uninstall_normal_pi_guard_smoke
