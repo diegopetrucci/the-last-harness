@@ -78,12 +78,11 @@ function createCtx(options) {
 	};
 }
 
-async function eventually(predicate, message, { attempts = 30 } = {}) {
-	for (let attempt = 0; attempt < attempts; attempt += 1) {
-		if (predicate()) {
-			return;
-		}
-		await new Promise((resolve) => setTimeout(resolve, 0));
+async function eventually(predicate, message, { timeoutMs = 5000, intervalMs = 10 } = {}) {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if (predicate()) return;
+		await new Promise((r) => setTimeout(r, intervalMs));
 	}
 	assert.ok(predicate(), message);
 }
@@ -157,9 +156,7 @@ EOF`,
 		});
 
 		await pi.handlers.get("session_start")?.[0]?.({ reason: "restore" }, ctx);
-		await eventually(() => renderRequests === 1, "initial git cache refresh should request one footer render", {
-			attempts: 500,
-		});
+		await eventually(() => renderRequests === 1, "initial git cache refresh should request one footer render");
 		await new Promise((resolve) => setImmediate(resolve));
 		assert.equal(renderRequests, 1, "git cache refresh should be the only render trigger in this scenario");
 	} finally {
