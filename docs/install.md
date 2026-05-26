@@ -133,7 +133,7 @@ At install time, TLH records `piInstalledByTlh` in `~/.the-last-harness/agent/tl
 The uninstaller never auto-removes:
 
 - **`~/.pi`** — Pi's own user config directory. To remove it manually: `rm -rf ~/.pi`
-- **Separately-installed pi binary** — if pi was installed before or independently of TLH, it is left in place. To remove it: `npm uninstall -g @earendil-works/pi-coding-agent`
+- **Separately-installed pi binary** — if pi was installed before or independently of TLH, it is left in place. To remove TLH's per-user install: `npm uninstall -g --prefix "$HOME/.local" @earendil-works/pi-coding-agent`. If your `pi` command is owned by a different npm prefix, uninstall it from that same prefix instead.
 - **Repo-local `.gnosis/` and `.tickets/` data** — per-repository and managed separately. To remove from a repo: `rm -rf .gnosis .tickets`
 
 ### Manual removal

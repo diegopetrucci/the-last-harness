@@ -17,6 +17,7 @@ VERBOSE=false
 PI_NPM_PREFIX="${HOME}/.local"
 PI_PACKAGE_NAME="@earendil-works/pi-coding-agent"
 PI_UNINSTALL_DISPLAY="npm uninstall -g --prefix \"${PI_NPM_PREFIX}\" ${PI_PACKAGE_NAME}"
+TLH_WRAPPER_MARKER_LINE="# Managed by The Last Harness installer"
 
 # ── output helpers ─────────────────────────────────────────────────────────────
 
@@ -144,6 +145,60 @@ realpath_for_compare() {
   fi
 }
 
+symlinked_parent_component_is_allowed_root_alias() {
+  local path="$1"
+  local expected_target=""
+
+  case "${path}" in
+    /var) expected_target="/private/var" ;;
+    /tmp) expected_target="/private/tmp" ;;
+    /etc) expected_target="/private/etc" ;;
+    *) return 1 ;;
+  esac
+
+  [[ "$(realpath_for_compare "${path}")" == "$(normalize_path "${expected_target}")" ]]
+}
+
+find_symlinked_existing_parent_component() {
+  local path="$1"
+  local current remainder part parent_path
+
+  path="$(normalize_path "${path}")"
+  parent_path="$(dirname "${path}")"
+  [[ "${parent_path}" == "/" ]] && return 1
+
+  current="/"
+  remainder="${parent_path#/}"
+
+  while [[ -n "${remainder}" ]]; do
+    if [[ "${remainder}" == */* ]]; then
+      part="${remainder%%/*}"
+      remainder="${remainder#*/}"
+    else
+      part="${remainder}"
+      remainder=""
+    fi
+
+    if [[ "${current}" == "/" ]]; then
+      current="/${part}"
+    else
+      current="${current}/${part}"
+    fi
+
+    if [[ -L "${current}" ]]; then
+      if ! symlinked_parent_component_is_allowed_root_alias "${current}"; then
+        printf '%s\n' "${current}"
+        return 0
+      fi
+    fi
+    if [[ ! -e "${current}" ]]; then
+      return 1
+    fi
+  done
+
+  return 1
+}
+
 path_within_or_equal() {
   local root="$1" path="$2"
   [[ "${path}" == "${root}" || "${path}" == "${root}/"* ]]
@@ -157,6 +212,126 @@ path_is_protected_pi_config() {
   pi_root="$(realpath_for_compare "${HOME}/.pi")"
   pi_agent_root="$(realpath_for_compare "${HOME}/.pi/agent")"
   path_within_or_equal "${pi_root}" "${path}" || path_within_or_equal "${pi_agent_root}" "${path}"
+}
+
+path_is_dangerous_recursive_target() {
+  local path="$1"
+  local compare_path="${2:-$1}"
+  local home_normalized home_compare candidate cursor root home_path
+  local -a system_roots=(
+    "/Applications"
+    "/Library"
+    "/System"
+    "/Users"
+    "/Volumes"
+    "/bin"
+    "/boot"
+    "/dev"
+    "/etc"
+    "/home"
+    "/lib"
+    "/lib64"
+    "/media"
+    "/mnt"
+    "/opt"
+    "/private"
+    "/private/etc"
+    "/private/tmp"
+    "/private/var"
+    "/private/var/tmp"
+    "/proc"
+    "/root"
+    "/run"
+    "/sbin"
+    "/srv"
+    "/tmp"
+    "/usr"
+    "/var"
+    "/var/tmp"
+  )
+  local -a candidate_paths=("${path}")
+  local -a home_paths=()
+
+  if [[ "${compare_path}" != "${path}" ]]; then
+    candidate_paths+=("${compare_path}")
+  fi
+
+  home_normalized="$(normalize_path "${HOME}")"
+  home_compare="$(realpath_for_compare "${HOME}")"
+  home_paths+=("${home_normalized}")
+  if [[ "${home_compare}" != "${home_normalized}" ]]; then
+    home_paths+=("${home_compare}")
+  fi
+
+  for candidate in "${candidate_paths[@]}"; do
+    [[ "${candidate}" == "/" ]] && return 0
+
+    for home_path in "${home_paths[@]}"; do
+      [[ "${candidate}" == "${home_path}" ]] && return 0
+
+      cursor="${home_path}"
+      while [[ "${cursor}" != "/" ]]; do
+        cursor="$(dirname "${cursor}")"
+        [[ "${candidate}" == "${cursor}" ]] && return 0
+      done
+    done
+
+    for root in "${system_roots[@]}"; do
+      [[ "${candidate}" == "${root}" ]] && return 0
+    done
+  done
+
+  return 1
+}
+
+tlh_ownership_marker_path() {
+  printf '%s/tlh/install-state.json\n' "$1"
+}
+
+has_tlh_ownership_marker() {
+  local agent_dir="$1"
+  local marker marker_dir agent_dir_physical marker_physical
+
+  marker="$(tlh_ownership_marker_path "${agent_dir}")"
+  marker_dir="$(dirname "${marker}")"
+
+  [[ -d "${marker_dir}" ]] || return 1
+  [[ -f "${marker}" ]] || return 1
+  [[ ! -L "${marker_dir}" ]] || return 1
+  [[ ! -L "${marker}" ]] || return 1
+
+  agent_dir_physical="$(realpath_for_compare "${agent_dir}")"
+  marker_physical="$(realpath_for_compare "${marker}")"
+  path_within_or_equal "${agent_dir_physical}" "${marker_physical}"
+}
+
+wrapper_file_has_tlh_marker() {
+  local path="$1"
+  local marker_line=""
+
+  [[ -f "${path}" ]] || return 1
+  marker_line="$(awk 'NR == 3 { sub(/\r$/, ""); print; exit }' "${path}" 2>/dev/null || true)"
+  [[ "${marker_line}" == "${TLH_WRAPPER_MARKER_LINE}" ]]
+}
+
+wrapper_symlink_target_path() {
+  local path="$1"
+  local target=""
+
+  target="$(readlink "${path}")" || return 1
+  if [[ "${target}" == /* ]]; then
+    normalize_path "${target}"
+  else
+    normalize_path "$(dirname "${path}")/${target}"
+  fi
+}
+
+wrapper_symlink_is_tlh_owned() {
+  local path="$1" profile_root="$2" profile_root_compare="$3"
+  local target_path=""
+
+  target_path="$(wrapper_symlink_target_path "${path}")" || return 1
+  path_within_or_equal "${profile_root}" "${target_path}" || path_within_or_equal "${profile_root_compare}" "${target_path}"
 }
 
 need_value() {
@@ -325,21 +500,24 @@ fi
 
 # ── resolve paths ──────────────────────────────────────────────────────────────
 
-AGENT_DIR="$(realpath_for_compare "${AGENT_DIR_INPUT}")"
-PROFILE_ROOT="$(dirname "${AGENT_DIR}")"
+AGENT_DIR="$(normalize_path "${AGENT_DIR_INPUT}")"
+PROFILE_ROOT="$(normalize_path "$(dirname "${AGENT_DIR}")")"
+SYMLINKED_AGENT_PARENT="$(find_symlinked_existing_parent_component "${AGENT_DIR}" || true)"
+AGENT_DIR_COMPARE="$(realpath_for_compare "${AGENT_DIR_INPUT}")"
+PROFILE_ROOT_COMPARE="$(realpath_for_compare "${PROFILE_ROOT}")"
 BIN_DIR="$(realpath_for_compare "${BIN_DIR_INPUT}")"
 WRAPPER_PATH="${BIN_DIR}/${WRAPPER_NAME}"
-INSTALL_STATE="${AGENT_DIR}/tlh/install-state.json"
+INSTALL_STATE="$(tlh_ownership_marker_path "${AGENT_DIR}")"
 
 # ── safety guard: refuse any path under normal Pi config (~/.pi) ───────────────
 # Runs before wrapper-name character validation so that traversal via ".." in
 # WRAPPER_NAME (e.g. "../.pi/agent/foo") is caught here rather than by the
 # simpler character-class check below.
 
-if path_is_protected_pi_config "${AGENT_DIR}"; then
+if path_is_protected_pi_config "${AGENT_DIR_COMPARE}"; then
   die "refusing to operate: --agent-dir is inside normal Pi config root (${AGENT_DIR_INPUT})"
 fi
-if path_is_protected_pi_config "${PROFILE_ROOT}"; then
+if path_is_protected_pi_config "${PROFILE_ROOT_COMPARE}"; then
   die "refusing to operate: profile root is inside normal Pi config root (${PROFILE_ROOT})"
 fi
 if path_is_protected_pi_config "${BIN_DIR}"; then
@@ -353,6 +531,64 @@ fi
 
 if [[ ! "${WRAPPER_NAME}" =~ ^[A-Za-z0-9._-]+$ ]]; then
   die "--wrapper-name must be a simple command name (letters, numbers, dot, underscore, dash)"
+fi
+
+# ── validate agent-dir removal target ─────────────────────────────────────────
+
+if [[ -n "${SYMLINKED_AGENT_PARENT}" ]]; then
+  die "refusing to operate: --agent-dir traverses symlinked parent component (${SYMLINKED_AGENT_PARENT})"
+fi
+
+if path_is_dangerous_recursive_target "${AGENT_DIR}" "${AGENT_DIR_COMPARE}"; then
+  die "refusing dangerous recursive --agent-dir target: ${AGENT_DIR}"
+fi
+
+# ── detect what exists ────────────────────────────────────────────────────────
+# Use the agent dir (not the profile root) as the presence signal for TLH
+# content. An empty parent directory created by e.g. mktemp is not a signal.
+
+WRAPPER_EXISTS=false
+WRAPPER_REMOVE=false
+WRAPPER_SKIP_REASON=""
+WRAPPER_TARGET_LITERAL=""
+AGENT_DIR_EXISTS=false
+AGENT_DIR_PRESENT=false
+[[ -e "${WRAPPER_PATH}" || -L "${WRAPPER_PATH}" ]] && WRAPPER_EXISTS=true
+[[ -e "${AGENT_DIR}" || -L "${AGENT_DIR}" ]] && AGENT_DIR_PRESENT=true
+
+if [[ "${WRAPPER_EXISTS}" == "true" ]]; then
+  if [[ -L "${WRAPPER_PATH}" ]]; then
+    WRAPPER_TARGET_LITERAL="$(readlink "${WRAPPER_PATH}" 2>/dev/null || true)"
+    if wrapper_symlink_is_tlh_owned "${WRAPPER_PATH}" "${PROFILE_ROOT}" "${PROFILE_ROOT_COMPARE}"; then
+      WRAPPER_REMOVE=true
+    else
+      WRAPPER_SKIP_REASON="existing symlink target is outside the TLH profile"
+      if [[ -n "${WRAPPER_TARGET_LITERAL}" ]]; then
+        WRAPPER_SKIP_REASON+=" (${WRAPPER_TARGET_LITERAL})"
+      fi
+    fi
+  elif [[ -f "${WRAPPER_PATH}" ]]; then
+    if wrapper_file_has_tlh_marker "${WRAPPER_PATH}"; then
+      WRAPPER_REMOVE=true
+    else
+      WRAPPER_SKIP_REASON="existing file is not managed by The Last Harness installer"
+    fi
+  else
+    WRAPPER_SKIP_REASON="existing path is not a regular file or symlink"
+  fi
+fi
+
+if [[ "${AGENT_DIR_PRESENT}" == "true" ]]; then
+  if [[ -L "${AGENT_DIR}" ]]; then
+    die "refusing to remove symlinked --agent-dir: ${AGENT_DIR}"
+  fi
+  if [[ ! -d "${AGENT_DIR}" ]]; then
+    die "refusing to remove non-directory --agent-dir: ${AGENT_DIR}"
+  fi
+  if ! has_tlh_ownership_marker "${AGENT_DIR}"; then
+    die "refusing to remove existing --agent-dir without TLH ownership marker: ${INSTALL_STATE}"
+  fi
+  AGENT_DIR_EXISTS=true
 fi
 
 # ── parse install-state; compute pi-removal decision ──────────────────────────
@@ -385,15 +621,6 @@ else
   fi
 fi
 
-# ── detect what exists ────────────────────────────────────────────────────────
-# Use the agent dir (not the profile root) as the presence signal for TLH
-# content. An empty parent directory created by e.g. mktemp is not a signal.
-
-WRAPPER_EXISTS=false
-AGENT_DIR_EXISTS=false
-[[ -e "${WRAPPER_PATH}" || -L "${WRAPPER_PATH}" ]] && WRAPPER_EXISTS=true
-[[ -e "${AGENT_DIR}" ]]    && AGENT_DIR_EXISTS=true
-
 # ── idempotency: nothing to remove ────────────────────────────────────────────
 
 if [[ "${WRAPPER_EXISTS}" == "false" && "${AGENT_DIR_EXISTS}" == "false" && "${REMOVE_PI}" == "false" ]]; then
@@ -418,11 +645,16 @@ fi
 STEP=0
 
 if [[ "${WRAPPER_EXISTS}" == "true" ]]; then
-  STEP=$(( STEP + 1 ))
-  if [[ "${DRY_RUN}" == "true" ]]; then
-    say "  ${STEP}. would run: rm -f ${WRAPPER_PATH}"
+  if [[ "${WRAPPER_REMOVE}" == "true" ]]; then
+    STEP=$(( STEP + 1 ))
+    if [[ "${DRY_RUN}" == "true" ]]; then
+      say "  ${STEP}. would run: rm -f ${WRAPPER_PATH}"
+    else
+      say "  ${STEP}. Remove wrapper:      ${WRAPPER_PATH}"
+    fi
   else
-    say "  ${STEP}. Remove wrapper:      ${WRAPPER_PATH}"
+    say "     Skip wrapper removal: ${WRAPPER_PATH}"
+    say "        (${WRAPPER_SKIP_REASON})"
   fi
 fi
 
@@ -467,8 +699,12 @@ fi
 say ""
 
 if [[ "${WRAPPER_EXISTS}" == "true" ]]; then
-  log "Removing wrapper: ${WRAPPER_PATH}"
-  removal_run rm -f "${WRAPPER_PATH}"
+  if [[ "${WRAPPER_REMOVE}" == "true" ]]; then
+    log "Removing wrapper: ${WRAPPER_PATH}"
+    removal_run rm -f "${WRAPPER_PATH}"
+  else
+    warn "skipping wrapper removal for ${WRAPPER_PATH}; ${WRAPPER_SKIP_REASON}"
+  fi
 fi
 
 if [[ "${AGENT_DIR_EXISTS}" == "true" ]]; then
