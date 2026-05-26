@@ -1,6 +1,8 @@
 import type { AutocompleteItem, AutocompleteProvider, AutocompleteSuggestions } from "@earendil-works/pi-tui";
 import { AUTOCOMPLETE_SOURCE_TAG_PATTERN } from "./constants.js";
 
+const HIDDEN_BUNDLED_COMMANDS = new Set(["fff-health", "fff-rescan", "fff-mode", "intercom"]);
+
 function stripAutocompleteSourceTag(description: string | undefined): string | undefined {
 	if (!description) {
 		return description;
@@ -17,7 +19,7 @@ function isSlashCommandNameContext(lines: string[], cursorLine: number, cursorCo
 
 function transformSuggestions(
 	suggestions: AutocompleteSuggestions | null,
-	options: { hideUpstreamChangelog: boolean },
+	options: { filterSlashCommandSuggestions: boolean },
 ): AutocompleteSuggestions | null {
 	if (!suggestions) {
 		return suggestions;
@@ -26,7 +28,10 @@ function transformSuggestions(
 	let changed = false;
 	const items: AutocompleteItem[] = [];
 	for (const item of suggestions.items) {
-		if (options.hideUpstreamChangelog && item.value === "changelog") {
+		if (
+			options.filterSlashCommandSuggestions &&
+			(HIDDEN_BUNDLED_COMMANDS.has(item.value) || item.value === "changelog")
+		) {
 			changed = true;
 			continue;
 		}
@@ -64,7 +69,7 @@ export function createTlhAutocompleteProvider(current: AutocompleteProvider): Au
 			options: { signal: AbortSignal; force?: boolean },
 		) {
 			return transformSuggestions(await current.getSuggestions(lines, cursorLine, cursorCol, options), {
-				hideUpstreamChangelog: isSlashCommandNameContext(lines, cursorLine, cursorCol),
+				filterSlashCommandSuggestions: isSlashCommandNameContext(lines, cursorLine, cursorCol),
 			});
 		},
 		applyCompletion(lines: string[], cursorLine: number, cursorCol: number, item: AutocompleteItem, prefix: string) {

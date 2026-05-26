@@ -73,7 +73,7 @@ The subscription usage footer fetches usage with the OAuth bearer your session a
 
 These are unsupported, internal endpoints and may change or be revoked without notice. No additional credentials are introduced — TLH reuses the same OAuth bearer the session already holds. When these fetches fail, TLH silently hides the footer segment. The feature is active only for `openai-codex` and `anthropic` OAuth subscription sessions and is on by default; an explicit disable mechanism is out of scope for this release.
 
-Bundled extension commands are also available for power users: /context-cap, /quiet-tools, /rtk, /librarian-cache, /oracle-model, /fff-health, /fff-rescan, /fff-mode, /triage-comments, /intercom, /subagents-doctor, and Plannotator commands such as /plannotator-review and /plannotator-annotate.
+Bundled extension commands are also available for power users: /context-cap, /quiet-tools, /rtk, /librarian-cache, /oracle-model, /triage-comments, /subagents-doctor, and Plannotator commands such as /plannotator-review and /plannotator-annotate.
 
 Manage persistent opt-outs for non-critical defaults after install:
 
