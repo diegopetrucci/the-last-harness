@@ -106,6 +106,12 @@ TLH ships [`pi-web-access`](https://github.com/diegopetrucci/pi-web-access) (an 
 
 For configuration, EXA key precedence, privacy, opt-out, and manual migration from `~/.pi/web-search.json`, see [`docs/web-search.md`](docs/web-search.md). Durable web-search / web-scout decisions live in repo-local Gnosis entries `ywsuwh` and `gbmehw`; pinned fork/tag process notes live in [`docs/web-search-fork-release-cadence.md`](docs/web-search-fork-release-cadence.md).
 
+### MCP adapter
+
+TLH also ships the upstream `pi-mcp-adapter` as the non-critical bundled default `mcporter` for connecting TLH to MCP servers.
+
+For proxy-first usage, slash commands, config locations, OAuth setup, `directTools` caveats, and opt-out/undo guidance, see [`docs/mcp.md`](docs/mcp.md).
+
 ### Launch telemetry
 
 Release builds with TelemetryDeck identifiers configured send at most one pseudonymous launch event when an interactive `tlh` process starts. The event contains a hashed random install ID, event type, TLH version, privacy-filtered model value, OS name/version, and OS architecture. It does not include prompts, cwd, command arguments, repo names, hostname, username, file contents, settings contents, full environment variables, extension/package lists, API keys, provider base URLs, auth state, headers, or account identifiers. TelemetryDeck also receives normal network metadata such as source IP address and request time.

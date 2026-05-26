@@ -751,6 +751,32 @@ test("bundled manifest contains pi-web-access entry with correct tag and defer f
 	assert.deepEqual(webAccess.aliases, [], "pi-web-access must have no aliases");
 });
 
+test("bundled manifest contains mcporter entry and tlh-defaults accepts its aliases", () => {
+	const bundledPath = join(repoRoot, "config", "default-extensions.json");
+	const bundled = readDefaultExtensions(bundledPath);
+	const mcporter = bundled.find(({ id }) => id === "mcporter");
+
+	assert.ok(mcporter, "bundled mcporter entry should exist");
+	assert.equal(mcporter.source, "npm:pi-mcp-adapter");
+	assert.equal(mcporter.critical, false, "mcporter must not be critical");
+	assert.deepEqual(mcporter.aliases, ["pi-mcp-adapter", "mcp-adapter"]);
+	assert.deepEqual(mcporter.replaces, []);
+	assert.equal(mcporter.migrateReplacements, false, "mcporter replacements must stay disabled by default");
+
+	const fixture = tempFixture();
+	writeFileSync(fixture.settings, JSON.stringify({ packages: ["npm:pi-mcp-adapter"] }, null, 2));
+
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", bundledPath,
+		"disable", "mcp-adapter",
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["mcporter"]);
+	assert.deepEqual(settings.packages, []);
+});
+
 test("bundled manifest contains subagents entry with correct tag and critical flags", () => {
 	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
 	const subagents = bundled.find(({ id }) => id === "subagents");
