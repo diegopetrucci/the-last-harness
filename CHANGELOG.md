@@ -17,6 +17,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Changed
 
 - TLH now hides upstream Pi automatic changelog/update notices in the isolated profile by default to reduce startup noise.
+- Guarded the package `prepare` step so contributor clones still install local Husky hooks while CI and end-user `npm install --omit=dev` flows skip Husky cleanly.
 - Couple `tlh defaults disable/enable anthropic-auth` with `warnings.anthropicExtraUsage` so the upstream extra-usage warning reappears when the compatibility layer is off; installer reruns also stop re-introducing the suppression for users who have opted out.
 - Bundled TLH `pi-rtk` default now points at the no-footer fork tag, preserving `/rtk` repo-tooling behavior without adding a persistent footer indicator.
 - Bundled `pi-web-access` now defers to existing upstream/manual `pi-web-access` installs during normal merges and updates, avoiding duplicate `web_search`/`fetch_content`/`get_search_content` providers unless you explicitly switch to the TLH fork.
