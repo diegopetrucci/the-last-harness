@@ -102,8 +102,10 @@ This removes the managed `tk` copy under the TLH profile if one was installed. I
 To remove upstream Pi entirely, only if you installed it solely for The Last Harness:
 
 ```sh
-npm uninstall -g @earendil-works/pi-coding-agent
+npm uninstall -g --prefix "$HOME/.local" @earendil-works/pi-coding-agent
 ```
+
+TLH installs Pi per-user under `~/.local` (the binary lives at `~/.local/bin/pi`). If you previously installed Pi globally with sudo from older instructions, use `sudo npm uninstall -g @earendil-works/pi-coding-agent` instead.
 
 ## Security note
 
