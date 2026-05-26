@@ -2,9 +2,8 @@
 
 [![CI](https://github.com/diegopetrucci/the-last-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/diegopetrucci/the-last-harness/actions/workflows/ci.yml)
 
-`tlh` (the last harness) is a highly opinionated — albeit still simple — version of [pi](https://github.com/earendil-works/pi). No bloat, no BS, but a strong direction.
+`tlh` (the last harness) is a highly opinionated — albeit still simple — version of [pi](https://github.com/earendil-works/pi). It's modelled after two core principles:
 
-`tlh` is modelled after two core principles:
 - _"you can outsource your thinking, but not your understanding"_: LLMs can, and should provide options, help out with discovery and exploration, filling the gaps in your understanding and technical knowledge — they should not, however, be used as a replacement for understanding. [Beware of cognitive debt](https://simonwillison.net/2026/Feb/15/cognitive-debt/).
 - you should not be babysitting your agents: if you need to manually call tools, run commands, and so on, the harness has failed you.
 
