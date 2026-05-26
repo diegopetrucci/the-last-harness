@@ -14,6 +14,9 @@ FORCE_INCLUDE_PI=false
 KEEP_PI=false
 QUIET=false
 VERBOSE=false
+PI_NPM_PREFIX="${HOME}/.local"
+PI_PACKAGE_NAME="@earendil-works/pi-coding-agent"
+PI_UNINSTALL_DISPLAY="npm uninstall -g --prefix \"${PI_NPM_PREFIX}\" ${PI_PACKAGE_NAME}"
 
 # ── output helpers ─────────────────────────────────────────────────────────────
 
@@ -388,7 +391,7 @@ fi
 
 WRAPPER_EXISTS=false
 AGENT_DIR_EXISTS=false
-[[ -e "${WRAPPER_PATH}" ]] && WRAPPER_EXISTS=true
+[[ -e "${WRAPPER_PATH}" || -L "${WRAPPER_PATH}" ]] && WRAPPER_EXISTS=true
 [[ -e "${AGENT_DIR}" ]]    && AGENT_DIR_EXISTS=true
 
 # ── idempotency: nothing to remove ────────────────────────────────────────────
@@ -437,9 +440,9 @@ fi
 if [[ "${REMOVE_PI}" == "true" ]]; then
   STEP=$(( STEP + 1 ))
   if [[ "${DRY_RUN}" == "true" ]]; then
-    say "  ${STEP}. would npm uninstall pi: npm uninstall -g @earendil-works/pi-coding-agent"
+    say "  ${STEP}. would npm uninstall pi: ${PI_UNINSTALL_DISPLAY}"
   else
-    say "  ${STEP}. Remove pi (npm):     npm uninstall -g @earendil-works/pi-coding-agent"
+    say "  ${STEP}. Remove pi (npm):     ${PI_UNINSTALL_DISPLAY}"
   fi
 else
   if [[ "${DRY_RUN}" == "true" ]]; then
@@ -480,10 +483,10 @@ fi
 if [[ "${REMOVE_PI}" == "true" ]]; then
   if ! command -v npm >/dev/null 2>&1; then
     warn "npm not found on PATH; pi must be removed manually."
-    warn "To remove pi: npm uninstall -g @earendil-works/pi-coding-agent"
+    warn "To remove pi: ${PI_UNINSTALL_DISPLAY}"
   else
     log "Removing pi via npm..."
-    removal_run npm uninstall -g @earendil-works/pi-coding-agent
+    removal_run npm uninstall -g --prefix "${PI_NPM_PREFIX}" "${PI_PACKAGE_NAME}"
   fi
 fi
 

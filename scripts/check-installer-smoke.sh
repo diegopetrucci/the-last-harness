@@ -44,6 +44,22 @@ assert_present() {
   fi
 }
 
+assert_under_tmp_root() {
+  local path="$1"
+  case "${path}" in
+    "${TMP_ROOT}" | "${TMP_ROOT}"/*) ;;
+    *) fail "unsafe test path outside TMP_ROOT: ${path}" ;;
+  esac
+}
+
+assert_safe_uninstall_smoke_paths() {
+  local agent_dir="$1"
+  local bin_dir="$2"
+
+  assert_under_tmp_root "${agent_dir}"
+  assert_under_tmp_root "${bin_dir}"
+}
+
 assert_contains() {
   local file="$1"
   local expected="$2"
@@ -1371,7 +1387,7 @@ EOF_UNINSTALL_STATE_TRUE
 
   bash uninstall.sh --dry-run --agent-dir "${true_agent}" --bin-dir "${case_dir}/bin-true" >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
-  assert_contains "${combined_file}" "would npm uninstall pi: npm uninstall -g @earendil-works/pi-coding-agent"
+  assert_contains "${combined_file}" "would npm uninstall pi: npm uninstall -g --prefix \"${HOME}/.local\" @earendil-works/pi-coding-agent"
 
   # ── piInstalledByTlh:false → plan shows skip ──────────────────────────────
   local false_agent="${case_dir}/pi-false/agent"
@@ -1423,7 +1439,7 @@ EOF_FORCE_STATE
 
   bash uninstall.sh --dry-run --force-include-pi --agent-dir "${force_agent}" --bin-dir "${case_dir}/bin-force" >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
-  assert_contains "${combined_file}" "would npm uninstall pi: npm uninstall -g @earendil-works/pi-coding-agent"
+  assert_contains "${combined_file}" "would npm uninstall pi: npm uninstall -g --prefix \"${HOME}/.local\" @earendil-works/pi-coding-agent"
 
   # ── --keep-pi overrides piInstalledByTlh=true → skips pi ─────────────────
   local keep_agent="${case_dir}/keep-pi/agent"
@@ -1511,6 +1527,38 @@ run_uninstall_normal_pi_guard_smoke() {
   assert_absent "${home_dir}/.pi"
 }
 
+run_uninstall_dangling_wrapper_symlink_smoke() {
+  log "Running uninstall.sh dangling-wrapper-symlink smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-dangling-wrapper-symlink"
+  local profile_root="${case_dir}/profile"
+  local agent_dir="${profile_root}/agent"
+  local bin_dir="${case_dir}/bin"
+  local wrapper_path
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  assert_safe_uninstall_smoke_paths "${agent_dir}" "${bin_dir}"
+  mkdir -p "${agent_dir}" "${bin_dir}"
+  wrapper_path="$(cd "${bin_dir}" >/dev/null 2>&1 && pwd -P)/tlh"
+  ln -s "${case_dir}/missing-wrapper-target" "${wrapper_path}"
+
+  set +e
+  bash uninstall.sh --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -ne 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall dangling-wrapper-symlink smoke exited with non-zero status: ${status}"
+  fi
+  assert_contains "${combined_file}" "Remove wrapper:      ${wrapper_path}"
+  if [[ -e "${wrapper_path}" || -L "${wrapper_path}" ]]; then
+    fail "expected dangling wrapper symlink to be removed: ${wrapper_path}"
+  fi
+}
+
 run_uninstall_piped_smoke() {
   log "Running uninstall.sh piped-stdin end-to-end smoke check..."
   local case_dir="${TMP_ROOT}/uninstall-piped"
@@ -1521,6 +1569,7 @@ run_uninstall_piped_smoke() {
   local stderr_file="${case_dir}/stderr.log"
   local combined_file="${case_dir}/combined.log"
   local status=0
+  assert_safe_uninstall_smoke_paths "${agent_dir}" "${bin_dir}"
   mkdir -p "${agent_dir}/tlh" "${bin_dir}"
   cat >"${agent_dir}/tlh/install-state.json" <<'EOF_PIPED_UNINSTALL_STATE'
 {
@@ -1555,6 +1604,7 @@ run_uninstall_sibling_preservation_smoke() {
   local stderr_file="${case_dir}/stderr.log"
   local combined_file="${case_dir}/combined.log"
   local status=0
+  assert_safe_uninstall_smoke_paths "${agent_dir}" "${bin_dir}"
   mkdir -p "${agent_dir}/tlh" "${bin_dir}"
   cat >"${agent_dir}/tlh/install-state.json" <<'EOF_SIBLING_UNINSTALL_STATE'
 {
@@ -1593,6 +1643,7 @@ run_install_sh_pi_installed_by_tlh_passthrough_smoke
 run_uninstall_dry_run_pi_smoke
 run_uninstall_flag_override_smoke
 run_uninstall_normal_pi_guard_smoke
+run_uninstall_dangling_wrapper_symlink_smoke
 run_uninstall_piped_smoke
 run_uninstall_sibling_preservation_smoke
 run_install_query_smoke
