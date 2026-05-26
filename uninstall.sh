@@ -10,7 +10,6 @@ AGENT_DIR_INPUT="${HOME}/.the-last-harness/agent"
 BIN_DIR_INPUT="${HOME}/.local/bin"
 WRAPPER_NAME="tlh"
 DRY_RUN=false
-YES=false
 FORCE_INCLUDE_PI=false
 KEEP_PI=false
 QUIET=false
@@ -230,7 +229,6 @@ Normal Pi config at ~/.pi/agent is never touched by this script.
 
 Options:
   --dry-run              Print planned actions without performing any removals.
-  --yes, -y              Skip the confirmation prompt and proceed immediately.
   --force-include-pi     Remove pi via npm even when install-state says
                            piInstalledByTlh=false or the field is absent.
   --keep-pi              Skip pi removal even when install-state says
@@ -259,10 +257,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)
       DRY_RUN=true
-      shift
-      ;;
-    --yes|-y)
-      YES=true
       shift
       ;;
     --force-include-pi)
@@ -461,19 +455,6 @@ say "  - Repo-local .gnosis/ and .tickets/ data (per-repo, untouched)"
 if [[ "${DRY_RUN}" == "true" ]]; then
   print_advisory
   exit 0
-fi
-
-# ── confirmation prompt ────────────────────────────────────────────────────────
-
-if [[ "${YES}" != "true" ]]; then
-  say ""
-  printf 'Proceed? [y/N] '
-  read -r UNINSTALL_REPLY
-  UNINSTALL_REPLY="$(printf '%s' "${UNINSTALL_REPLY}" | tr '[:upper:]' '[:lower:]')"
-  if [[ "${UNINSTALL_REPLY}" != "y" && "${UNINSTALL_REPLY}" != "yes" ]]; then
-    say "Aborted."
-    exit 1
-  fi
 fi
 
 # ── execute removals ───────────────────────────────────────────────────────────

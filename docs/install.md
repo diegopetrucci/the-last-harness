@@ -100,10 +100,11 @@ The script removes the isolated `~/.the-last-harness` profile root, the `tlh` wr
 
 ### Uninstaller flags
 
+The uninstaller prints its plan and then proceeds immediately — there is no confirmation prompt. Use `--dry-run` to preview what would be removed without performing any removals.
+
 | Flag | Description |
 |---|---|
 | `--dry-run` | Print planned actions without performing any removals. |
-| `--yes`, `-y` | Skip the confirmation prompt and proceed immediately. |
 | `--force-include-pi` | Remove pi via npm even when install-state says `piInstalledByTlh=false` or the field is absent. |
 | `--keep-pi` | Skip pi removal even when install-state says `piInstalledByTlh=true`. |
 | `--agent-dir DIR` | Override isolated agent dir (default: `~/.the-last-harness/agent`). The profile root (parent dir) is what gets removed. |

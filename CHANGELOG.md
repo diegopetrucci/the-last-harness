@@ -6,8 +6,12 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
-- Added `uninstall.sh` and the `curl -fsSL .../uninstall.sh | bash -s --` one-liner for removing the isolated TLH profile, `tlh` wrapper, and (conditionally) the global pi package. Flags cover dry-run, skip-confirm, path overrides, pi-removal overrides (`--force-include-pi`, `--keep-pi`), quiet, and verbose.
+- Added `uninstall.sh` and the `curl -fsSL .../uninstall.sh | bash -s --` one-liner for removing the isolated TLH profile, `tlh` wrapper, and (conditionally) the global pi package. Flags cover dry-run, path overrides, pi-removal overrides (`--force-include-pi`, `--keep-pi`), quiet, and verbose.
 - Added `piInstalledByTlh` field to `install-state.json`, written at install time so the uninstaller can decide whether to remove the global pi package without touching a shared or pre-existing install. The field is additive: older installs that lack it are unaffected and default to leaving pi in place.
+
+### Changed
+
+- The uninstaller no longer prompts for confirmation. It prints the removal plan and proceeds immediately. Use `--dry-run` to preview what would be removed without making any changes.
 
 ## [0.13.0] - 2026-05-26
 
