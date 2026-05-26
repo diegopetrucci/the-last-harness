@@ -284,14 +284,16 @@ function buildInstallConfig(parsedArgs, env = process.env) {
 	const scriptDir = dirname(scriptPath);
 	const supportFiles = supportFileManifest({ noSettings: parsedArgs.noSettings });
 	const defaultPackageRoot = join(agentDir, "git", "github.com", parsedArgs.repo);
+	const homeDir = env.HOME || homedir();
 	const packageRoot = packageSourceInstallDir(packageSource, {
 		agentDir,
-		homeDir: env.HOME || homedir(),
+		homeDir,
 	}) || defaultPackageRoot;
 
 	return {
 		...parsedArgs,
 		env,
+		homeDir,
 		agentDir,
 		binDir,
 		settingsPath: join(agentDir, "settings.json"),
@@ -482,9 +484,17 @@ function assertSupportedPiVersion(config) {
 	}
 	const currentVersion = match[0];
 	if (!nodeVersionMeetsMinimum(currentVersion, MIN_PI_VERSION)) {
-		throw new Error(`Pi >= ${MIN_PI_VERSION} is required (found ${currentVersion}). Upgrade with: npm install -g @earendil-works/pi-coding-agent`);
+		const piPrefix = piInstallPrefix(config);
+		throw new Error(`Pi >= ${MIN_PI_VERSION} is required (found ${currentVersion}). Upgrade with: npm install -g --ignore-scripts --prefix "${piPrefix}" @earendil-works/pi-coding-agent`);
 	}
 	verboseLog(config, `Pi version: ${currentVersion}`);
+}
+
+function piInstallPrefix(config) {
+	// Install Pi per-user under ~/.local so `pi` lands at ~/.local/bin/pi
+	// without requiring sudo. Matches Pi's own docs guidance and is consistent
+	// with the default TLH bin dir (~/.local/bin).
+	return join(config.homeDir, ".local");
 }
 
 function installPiIfNeeded(config) {
@@ -498,10 +508,26 @@ function installPiIfNeeded(config) {
 		throw new Error("pi is not installed and --no-pi-install was provided");
 	}
 
-	log(config, "Installing Pi runtime...");
-	runCommand(config, ["npm", "install", "-g", "@earendil-works/pi-coding-agent"]);
-	if (!config.dryRun && !commandExists(config, "pi")) {
-		throw new Error("Pi install completed, but the pi command is still not on PATH");
+	const prefix = piInstallPrefix(config);
+	const piBinDir = join(prefix, "bin");
+	log(config, `Installing Pi runtime to ${prefix} (per-user, no sudo)...`);
+	runCommand(config, [
+		"npm",
+		"install",
+		"-g",
+		"--ignore-scripts",
+		"--prefix",
+		prefix,
+		"@earendil-works/pi-coding-agent",
+	]);
+	if (config.dryRun) return;
+	const piBin = join(piBinDir, "pi");
+	const onPath = commandExists(config, "pi");
+	if (!existsSync(piBin) && !onPath) {
+		throw new Error(`Pi install completed, but ${piBin} does not exist and pi is not on PATH`);
+	}
+	if (!onPath) {
+		warn(`${piBin} installed but ${piBinDir} is not on PATH. Add it with: export PATH="${piBinDir}:$PATH"`);
 	}
 }
 
