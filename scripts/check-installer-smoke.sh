@@ -314,7 +314,8 @@ if [[ "${1:-}" == "--version" ]]; then
   printf '0.75.3\n'
   exit 0
 fi
-exit 0
+printf 'fake pi should only be invoked with --version during dry-run; got: %s\n' "$*" >&2
+exit 98
 EOF_FAKE_PRESENT_PI
   chmod +x "${fakebin}/pi"
 }
