@@ -326,12 +326,6 @@ if [[ "${FORCE_INCLUDE_PI}" == "true" && "${KEEP_PI}" == "true" ]]; then
   die "--force-include-pi and --keep-pi are mutually exclusive; pass only one" 2
 fi
 
-# ── wrapper name validation ────────────────────────────────────────────────────
-
-if [[ ! "${WRAPPER_NAME}" =~ ^[A-Za-z0-9._-]+$ ]]; then
-  die "--wrapper-name must be a simple command name (letters, numbers, dot, underscore, dash)"
-fi
-
 # ── resolve paths ──────────────────────────────────────────────────────────────
 
 AGENT_DIR="$(realpath_for_compare "${AGENT_DIR_INPUT}")"
@@ -341,12 +335,27 @@ WRAPPER_PATH="${BIN_DIR}/${WRAPPER_NAME}"
 INSTALL_STATE="${AGENT_DIR}/tlh/install-state.json"
 
 # ── safety guard: refuse any path under normal Pi config (~/.pi) ───────────────
+# Runs before wrapper-name character validation so that traversal via ".." in
+# WRAPPER_NAME (e.g. "../.pi/agent/foo") is caught here rather than by the
+# simpler character-class check below.
 
 if path_is_protected_pi_config "${AGENT_DIR}"; then
   die "refusing to operate: --agent-dir is inside normal Pi config root (${AGENT_DIR_INPUT})"
 fi
 if path_is_protected_pi_config "${PROFILE_ROOT}"; then
   die "refusing to operate: profile root is inside normal Pi config root (${PROFILE_ROOT})"
+fi
+if path_is_protected_pi_config "${BIN_DIR}"; then
+  die "refusing to operate: --bin-dir is inside normal Pi config root (${BIN_DIR_INPUT})"
+fi
+if path_is_protected_pi_config "$(realpath_for_compare "${WRAPPER_PATH}")"; then
+  die "refusing to operate: resolved wrapper path is inside normal Pi config root (${WRAPPER_PATH})"
+fi
+
+# ── wrapper name validation ────────────────────────────────────────────────────
+
+if [[ ! "${WRAPPER_NAME}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  die "--wrapper-name must be a simple command name (letters, numbers, dot, underscore, dash)"
 fi
 
 # ── parse install-state; compute pi-removal decision ──────────────────────────

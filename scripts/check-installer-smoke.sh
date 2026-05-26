@@ -1461,6 +1461,7 @@ run_uninstall_normal_pi_guard_smoke() {
   local status=0
   mkdir -p "${home_dir}"
 
+  # Case: --agent-dir inside ~/.pi
   set +e
   HOME="${home_dir}" bash uninstall.sh --dry-run --agent-dir "${home_dir}/.pi/agent" --bin-dir "${case_dir}/bin" >"${stdout_file}" 2>"${stderr_file}"
   status=$?
@@ -1468,9 +1469,37 @@ run_uninstall_normal_pi_guard_smoke() {
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
   if [[ "${status}" -eq 0 ]]; then
     cat "${combined_file}" >&2
-    fail "uninstall.sh normal Pi config guard unexpectedly succeeded"
+    fail "uninstall.sh --agent-dir guard unexpectedly succeeded"
   fi
-  assert_contains "${combined_file}" "refusing to operate"
+  assert_contains "${combined_file}" "refusing to operate: --agent-dir is inside normal Pi config root"
+  assert_absent "${home_dir}/.pi"
+
+  # Case: --bin-dir inside ~/.pi
+  set +e
+  HOME="${home_dir}" bash uninstall.sh --dry-run --agent-dir "${case_dir}/agent" --bin-dir "${home_dir}/.pi/agent" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall.sh --bin-dir guard unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "refusing to operate: --bin-dir is inside normal Pi config root"
+  assert_absent "${home_dir}/.pi"
+
+  # Case: --wrapper-name with path traversal resolving inside ~/.pi
+  # BIN_DIR is set to home_dir/bin (not inside ~/.pi); WRAPPER_NAME contains
+  # '../' so that BIN_DIR/WRAPPER_NAME resolves to home_dir/.pi/agent/settings.json.
+  set +e
+  HOME="${home_dir}" bash uninstall.sh --dry-run --agent-dir "${case_dir}/agent" --bin-dir "${home_dir}/bin" --wrapper-name "../.pi/agent/settings.json" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall.sh wrapper-path traversal guard unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "refusing to operate: resolved wrapper path is inside normal Pi config root"
   assert_absent "${home_dir}/.pi"
 }
 
