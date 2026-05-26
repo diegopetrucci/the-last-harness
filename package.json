@@ -22,7 +22,6 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "prepare": "node scripts/prepare-husky.mjs",
     "lint": "eslint \"scripts/**/*.{js,mjs,ts}\" \"tests/**/*.{js,mjs,ts}\" \"extensions/**/*.{js,mjs,ts}\"",
     "test": "node --test tests/*.test.mjs",
     "validate": "bash scripts/check-installer-smoke.sh && npm test && npm run lint && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
@@ -64,7 +63,6 @@
     "@eslint/js": "^9.39.4",
     "eslint": "^9.39.4",
     "globals": "^14.0.0",
-    "husky": "^9.1.7",
     "jiti": "^2.7.0",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.59.4"
