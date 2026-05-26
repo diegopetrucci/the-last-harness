@@ -2,6 +2,16 @@
 
 All notable changes to The Last Harness will be documented in this file.
 
+## [0.13.0] - 2026-05-26
+
+### Added
+
+- TLH now bundles the upstream `pi-mcp-adapter` as the non-critical default extension `mcporter`, making it easier to connect TLH to MCP servers out of the box. See `docs/mcp.md` for setup, OAuth, config locations, and opt-out guidance.
+
+### Changed
+
+- Managed git-checkout refreshes now keep dirty-checkout backup output concise by default while still preserving local changes; verbose diff details remain available in verbose mode.
+
 ## [0.12.0] - 2026-05-26
 
 ### Changed
