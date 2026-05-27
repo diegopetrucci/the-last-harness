@@ -130,15 +130,10 @@ Opt out persistently by adding this to `~/.the-last-harness/agent/settings.json`
 
 That settings opt-out is preserved by `tlh update` and installer reruns.
 
-## Install, update, and uninstall
+## Docs dump
 
-The release `install.sh` is a small stage-0 Bash bootstrapper: it finds or fetches the matching stage-1 Node helper (`scripts/tlh-install.mjs`) and support files, then stage-1 performs the isolated profile install.
-
-Install, update, and uninstall guidance lives in [`docs/install.md`](docs/install.md).
-
-## Local development
-
-Local testing and development commands live in [`docs/local-development.md`](docs/local-development.md).
+- Install, update, and uninstall guidance: [`docs/install.md`](docs/install.md)
+- Local testing and development commands [`docs/local-development.md`](docs/local-development.md).
 
 ## Prerequisites
 
