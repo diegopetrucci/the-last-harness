@@ -49,6 +49,7 @@ git push origin "v$version"
 After the workflow finishes, confirm the GitHub Release exists and includes:
 
 - `install.sh` — generated stage-0 installer pinned to `v$version` and defaulting future updates to `latest-release`
+- `uninstall.sh` — uninstaller script (published as-is from the repository root)
 - `the-last-harness-$version.tgz` — package tarball from `npm pack`, including `scripts/tlh-install.mjs` and `scripts/lib/`
 
 ## Install checks
@@ -97,5 +98,5 @@ bash -n dist/install.sh
 node scripts/release-notes.mjs --tag "v$version" --output release-notes.md
 npm pack --json > pack-output.json
 tarball="$(node -e "const fs = require('node:fs'); const [pkg] = JSON.parse(fs.readFileSync('pack-output.json', 'utf8')); console.log(pkg.filename);")"
-gh release create "v$version" "$tarball" "dist/install.sh#install.sh" --verify-tag --title "v$version" --notes-file release-notes.md
+gh release create "v$version" "$tarball" "dist/install.sh#install.sh" "uninstall.sh#uninstall.sh" --verify-tag --title "v$version" --notes-file release-notes.md
 ```

@@ -310,6 +310,15 @@ while [[ $# -gt 0 ]]; do
       [[ -n "${WRAPPER_NAME}" ]] || die "--wrapper-name requires a value"
       shift
       ;;
+    --pi-installed-by-tlh)
+      # Accept and pass through to stage-1, which owns boolean validation.
+      need_value "$1" "${2:-}" >/dev/null
+      shift 2
+      ;;
+    --pi-installed-by-tlh=*)
+      [[ -n "${1#--pi-installed-by-tlh=}" ]] || die "--pi-installed-by-tlh requires a value"
+      shift
+      ;;
     --quiet)
       QUIET=true
       VERBOSE=false

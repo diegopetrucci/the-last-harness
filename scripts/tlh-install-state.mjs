@@ -21,6 +21,7 @@ Options:
   --agent-dir DIR                   Isolated Pi agent dir
   --bin-dir DIR                     Wrapper install dir
   --wrapper-name NAME               Wrapper command name
+  --pi-installed-by-tlh BOOL        Whether TLH installed Pi globally (true|false; omit to leave field absent)
   --dry-run                         Print intended changes without writing
   --quiet                           Suppress non-essential output
   -h, --help                        Show this help
@@ -39,6 +40,7 @@ function parseArgs(argv) {
 		agentDir: undefined,
 		binDir: undefined,
 		wrapperName: undefined,
+		piInstalledByTlh: undefined,
 		dryRun: false,
 		quiet: false,
 		help: false,
@@ -138,6 +140,24 @@ function parseArgs(argv) {
 			args.wrapperName = arg.slice("--wrapper-name=".length);
 			continue;
 		}
+		if (arg === "--pi-installed-by-tlh") {
+			const raw = requiredValue(argv, ++index, arg);
+			const lower = raw.toLowerCase();
+			if (lower !== "true" && lower !== "false") {
+				throw new Error(`--pi-installed-by-tlh must be true or false (got: ${raw})`);
+			}
+			args.piInstalledByTlh = lower === "true";
+			continue;
+		}
+		if (arg.startsWith("--pi-installed-by-tlh=")) {
+			const raw = arg.slice("--pi-installed-by-tlh=".length);
+			const lower = raw.toLowerCase();
+			if (lower !== "true" && lower !== "false") {
+				throw new Error(`--pi-installed-by-tlh must be true or false (got: ${raw})`);
+			}
+			args.piInstalledByTlh = lower === "true";
+			continue;
+		}
 		throw new Error(`Unknown option: ${arg}`);
 	}
 
@@ -179,7 +199,7 @@ function log(args, message) {
 }
 
 function buildState(args) {
-	return {
+	const state = {
 		schemaVersion: 1,
 		repo: args.repo,
 		ref: args.ref,
@@ -192,11 +212,18 @@ function buildState(args) {
 		wrapperName: args.wrapperName,
 		installedAt: new Date().toISOString(),
 	};
+	if (args.piInstalledByTlh !== undefined) {
+		state.piInstalledByTlh = args.piInstalledByTlh;
+	}
+	return state;
 }
 
 function writeInstallState(args) {
 	if (args.dryRun) {
-		log(args, `Would write tlh update metadata: ${args.statePath}`);
+		const piField = args.piInstalledByTlh !== undefined
+			? ` (piInstalledByTlh: ${args.piInstalledByTlh})`
+			: "";
+		log(args, `Would write tlh update metadata: ${args.statePath}${piField}`);
 		return;
 	}
 

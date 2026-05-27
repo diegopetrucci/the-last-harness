@@ -69,6 +69,16 @@ test("README and integrations docs describe Rush primary behavior and switching 
 	assert.match(integrations, /Rush keeps that tooling available but handles small bounded tasks with direct edits instead of the default `tk` loop/i);
 });
 
+test("install docs describe separate pi removal with the TLH per-user npm prefix", () => {
+	const install = readRepoFile("docs/install.md");
+
+	assert.match(
+		install,
+		/Separately-installed pi binary[\s\S]{0,240}npm uninstall -g --prefix "\$HOME\/\.local" @earendil-works\/pi-coding-agent/,
+	);
+	assert.match(install, /owned by a different npm prefix, uninstall it from that same prefix instead/i);
+});
+
 test("user-facing docs and installer help do not advertise legacy ticket opt-outs", () => {
 	const sources = [...userFacingDocs, "install.sh"];
 

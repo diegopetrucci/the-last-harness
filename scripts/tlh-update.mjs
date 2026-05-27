@@ -329,6 +329,8 @@ function normalizeState(raw, fallback = {}) {
 		packageSource,
 		packageSourceIsDefault: raw.packageSourceIsDefault === true,
 		inferred: raw.inferred === true,
+		// Carry piInstalledByTlh only when it is a boolean; absent in older install-states.
+		...(typeof raw.piInstalledByTlh === "boolean" && { piInstalledByTlh: raw.piInstalledByTlh }),
 	};
 }
 
@@ -443,7 +445,7 @@ function resolvePlan(state, args) {
 	};
 }
 
-function buildInstallerArgs(plan, args) {
+function buildInstallerArgs(plan, args, state) {
 	const installerArgs = [
 		"--agent-dir",
 		args.agentDir,
@@ -464,6 +466,12 @@ function buildInstallerArgs(plan, args) {
 	if (args.noWrapper) installerArgs.push("--no-wrapper");
 	if (args.quiet) installerArgs.push("--quiet");
 	if (args.verbose) installerArgs.push("--verbose");
+	// Preserve piInstalledByTlh from the existing install-state so the update does not
+	// reinvent or clear a value that was set during the original install. When absent in the
+	// prior state (older installs), omit the flag so install-state.json stays field-free.
+	if (typeof state?.piInstalledByTlh === "boolean") {
+		installerArgs.push("--pi-installed-by-tlh", String(state.piInstalledByTlh));
+	}
 	return installerArgs;
 }
 
@@ -520,7 +528,7 @@ async function main() {
 
 	const state = loadState(args);
 	const plan = resolvePlan(state, args);
-	const installerArgs = buildInstallerArgs(plan, args);
+	const installerArgs = buildInstallerArgs(plan, args, state);
 	const sanitizedEnv = envWithSanitizedPath(process.env, args.agentDir);
 	const childEnv = {
 		...sanitizedEnv,

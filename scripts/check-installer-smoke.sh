@@ -5,8 +5,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd -P)"
 cd "${ROOT_DIR}"
 
 TMP_ROOT="$(mktemp -d)"
+EXTRA_CLEANUP_PATHS=()
 cleanup() {
   rm -rf "${TMP_ROOT}"
+  if [[ "${#EXTRA_CLEANUP_PATHS[@]}" -gt 0 ]]; then
+    rm -rf "${EXTRA_CLEANUP_PATHS[@]}"
+  fi
 }
 trap cleanup EXIT
 
@@ -32,9 +36,32 @@ run_scrubbed_installer_env() {
 
 assert_absent() {
   local path="$1"
-  if [[ -e "${path}" ]]; then
+  if [[ -e "${path}" || -L "${path}" ]]; then
     fail "expected path to be absent: ${path}"
   fi
+}
+
+assert_present() {
+  local path="$1"
+  if [[ ! -e "${path}" && ! -L "${path}" ]]; then
+    fail "expected path to be present: ${path}"
+  fi
+}
+
+assert_under_tmp_root() {
+  local path="$1"
+  case "${path}" in
+    "${TMP_ROOT}" | "${TMP_ROOT}"/*) ;;
+    *) fail "unsafe test path outside TMP_ROOT: ${path}" ;;
+  esac
+}
+
+assert_safe_uninstall_smoke_paths() {
+  local agent_dir="$1"
+  local bin_dir="$2"
+
+  assert_under_tmp_root "${agent_dir}"
+  assert_under_tmp_root "${bin_dir}"
 }
 
 assert_contains() {
@@ -57,6 +84,32 @@ assert_not_contains() {
     printf '%s\n' '---- end ----' >&2
     fail "expected output not to contain: ${unexpected}"
   fi
+}
+
+write_tlh_install_state() {
+  local agent_dir="$1"
+  local pi_installed_by_tlh="${2:-false}"
+
+  mkdir -p "${agent_dir}/tlh"
+  cat >"${agent_dir}/tlh/install-state.json" <<EOF_INSTALL_STATE
+{
+  "schemaVersion": 1,
+  "repo": "diegopetrucci/the-last-harness",
+  "piInstalledByTlh": ${pi_installed_by_tlh}
+}
+EOF_INSTALL_STATE
+}
+
+write_managed_wrapper() {
+  local wrapper_path="$1"
+
+  mkdir -p "$(dirname "${wrapper_path}")"
+  cat >"${wrapper_path}" <<'EOF_MANAGED_WRAPPER'
+#!/usr/bin/env bash
+set -euo pipefail
+# Managed by The Last Harness installer
+EOF_MANAGED_WRAPPER
+  chmod +x "${wrapper_path}"
 }
 
 assert_pi_commands_isolated() {
@@ -298,6 +351,21 @@ EOF_FAKE_PI
   chmod +x "${fakebin}/pi"
 }
 
+make_fake_present_pi() {
+  local fakebin="$1"
+  mkdir -p "${fakebin}"
+  cat >"${fakebin}/pi" <<'EOF_FAKE_PRESENT_PI'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+  printf '0.75.3\n'
+  exit 0
+fi
+printf 'fake pi should only be invoked with --version during dry-run; got: %s\n' "$*" >&2
+exit 98
+EOF_FAKE_PRESENT_PI
+  chmod +x "${fakebin}/pi"
+}
+
 make_fake_stage1_support_root() {
   local root="$1"
   local manifest_file="${root}/.fake-stage1-support-manifest"
@@ -318,6 +386,7 @@ EOF_FAKE_STAGE1
 run_static_checks() {
   log "Running installer static checks..."
   bash -n install.sh
+  bash -n uninstall.sh
   node --check scripts/merge-settings.mjs
   node --check scripts/merge-keybindings.mjs
   node --check scripts/tlh-defaults.mjs
@@ -1108,8 +1177,794 @@ EOF_FAKE_RELEASE_STAGE1
   assert_contains "${combined_file}" "TLH_UPDATE_TRACK=ref"
 }
 
+# ── piInstalledByTlh smoke tests ───────────────────────────────────────────────
+
+run_install_state_pi_field_smoke() {
+  log "Running install-state piInstalledByTlh field smoke check..."
+  local case_dir="${TMP_ROOT}/install-state-pi-field"
+  local agent_dir="${case_dir}/agent"
+  local bin_dir="${case_dir}/bin"
+  local state_file="${case_dir}/state.json"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  mkdir -p "${agent_dir}" "${bin_dir}"
+
+  local -a common_args=(
+    --state-path "${state_file}"
+    --repo diegopetrucci/the-last-harness
+    --ref main
+    --track ref
+    --package-source "git:github.com/diegopetrucci/the-last-harness@main"
+    --package-source-is-default true
+    --raw-base "https://example.invalid/raw"
+    --agent-dir "${agent_dir}"
+    --bin-dir "${bin_dir}"
+    --wrapper-name tlh
+  )
+
+  # --pi-installed-by-tlh true persists the field
+  node scripts/tlh-install-state.mjs "${common_args[@]}" --pi-installed-by-tlh true
+  assert_contains "${state_file}" '"piInstalledByTlh": true'
+  rm -f "${state_file}"
+
+  # --pi-installed-by-tlh false persists the field
+  node scripts/tlh-install-state.mjs "${common_args[@]}" --pi-installed-by-tlh false
+  assert_contains "${state_file}" '"piInstalledByTlh": false'
+  rm -f "${state_file}"
+
+  # omitting --pi-installed-by-tlh leaves the field absent
+  node scripts/tlh-install-state.mjs "${common_args[@]}"
+  assert_not_contains "${state_file}" 'piInstalledByTlh'
+  rm -f "${state_file}"
+
+  # invalid value fails with a clear error
+  set +e
+  node scripts/tlh-install-state.mjs "${common_args[@]}" --pi-installed-by-tlh maybe >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "install-state --pi-installed-by-tlh=maybe unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "--pi-installed-by-tlh must be true or false"
+}
+
+run_install_dry_run_pi_field_smoke() {
+  log "Running install dry-run piInstalledByTlh field smoke check..."
+  local case_dir="${TMP_ROOT}/install-dry-run-pi-field"
+  local node_cmd
+  node_cmd="$(command -v node)"
+  mkdir -p "${case_dir}"
+
+  # ── pi absent: TLH would install pi → piInstalledByTlh: true ──────────────
+  local absent_dir="${case_dir}/pi-absent"
+  local absent_agent="${absent_dir}/agent"
+  local absent_bin="${absent_dir}/bin"
+  local absent_fakebin="${absent_dir}/fakebin"
+  local absent_stdout="${absent_dir}/stdout.log"
+  local absent_stderr="${absent_dir}/stderr.log"
+  local absent_combined="${absent_dir}/combined.log"
+  mkdir -p "${absent_fakebin}"
+  cat >"${absent_fakebin}/sh" <<'EOF_ABSENT_SH'
+#!/bin/sh
+exec /bin/sh "$@"
+EOF_ABSENT_SH
+  cat >"${absent_fakebin}/npm" <<'EOF_ABSENT_NPM'
+#!/bin/sh
+printf 'fake npm should not run during dry-run\n' >&2
+exit 98
+EOF_ABSENT_NPM
+  cat >"${absent_fakebin}/git" <<'EOF_ABSENT_GIT'
+#!/bin/sh
+printf 'fake git should not run during dry-run\n' >&2
+exit 98
+EOF_ABSENT_GIT
+  chmod +x "${absent_fakebin}/sh" "${absent_fakebin}/npm" "${absent_fakebin}/git"
+
+  run_scrubbed_installer_env PATH="${absent_fakebin}" TLH_SKIP_GNOSIS_INSTALL=1 "${node_cmd}" scripts/tlh-install.mjs --dry-run --agent-dir "${absent_agent}" --bin-dir "${absent_bin}" >"${absent_stdout}" 2>"${absent_stderr}"
+  combine_output "${absent_stdout}" "${absent_stderr}" "${absent_combined}"
+  assert_contains "${absent_combined}" "(piInstalledByTlh: true)"
+
+  # ── pi present: TLH did NOT install pi → piInstalledByTlh: false ──────────
+  local present_dir="${case_dir}/pi-present"
+  local present_agent="${present_dir}/agent"
+  local present_bin="${present_dir}/bin"
+  local present_fakebin="${present_dir}/fakebin"
+  local present_stdout="${present_dir}/stdout.log"
+  local present_stderr="${present_dir}/stderr.log"
+  local present_combined="${present_dir}/combined.log"
+  mkdir -p "${present_fakebin}"
+  cat >"${present_fakebin}/sh" <<'EOF_PRESENT_SH'
+#!/bin/sh
+exec /bin/sh "$@"
+EOF_PRESENT_SH
+  cat >"${present_fakebin}/npm" <<'EOF_PRESENT_NPM'
+#!/bin/sh
+printf 'fake npm should not run during dry-run\n' >&2
+exit 98
+EOF_PRESENT_NPM
+  cat >"${present_fakebin}/git" <<'EOF_PRESENT_GIT'
+#!/bin/sh
+printf 'fake git should not run during dry-run\n' >&2
+exit 98
+EOF_PRESENT_GIT
+  chmod +x "${present_fakebin}/sh" "${present_fakebin}/npm" "${present_fakebin}/git"
+  make_fake_present_pi "${present_fakebin}"
+
+  run_scrubbed_installer_env PATH="${present_fakebin}" TLH_SKIP_GNOSIS_INSTALL=1 "${node_cmd}" scripts/tlh-install.mjs --dry-run --agent-dir "${present_agent}" --bin-dir "${present_bin}" >"${present_stdout}" 2>"${present_stderr}"
+  combine_output "${present_stdout}" "${present_stderr}" "${present_combined}"
+  assert_contains "${present_combined}" "(piInstalledByTlh: false)"
+}
+
+run_update_pi_field_threading_smoke() {
+  log "Running tlh-update.mjs piInstalledByTlh threading smoke check..."
+  local case_dir="${TMP_ROOT}/update-pi-field-threading"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  mkdir -p "${case_dir}"
+
+  # ── state with piInstalledByTlh:true threads the flag into installer args ──
+  local with_field_dir="${case_dir}/with-field"
+  mkdir -p "${with_field_dir}/tlh"
+  cat >"${with_field_dir}/tlh/install-state.json" <<'EOF_STATE_WITH_FIELD'
+{
+  "schemaVersion": 1,
+  "repo": "diegopetrucci/the-last-harness",
+  "ref": "main",
+  "track": "ref",
+  "packageSource": "git:github.com/diegopetrucci/the-last-harness@main",
+  "packageSourceIsDefault": true,
+  "piInstalledByTlh": true
+}
+EOF_STATE_WITH_FIELD
+
+  run_scrubbed_installer_env node scripts/tlh-update.mjs --dry-run --agent-dir "${with_field_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "--pi-installed-by-tlh"
+
+  # ── state without piInstalledByTlh omits the flag from installer args ──────
+  local without_field_dir="${case_dir}/without-field"
+  mkdir -p "${without_field_dir}/tlh"
+  cat >"${without_field_dir}/tlh/install-state.json" <<'EOF_STATE_WITHOUT_FIELD'
+{
+  "schemaVersion": 1,
+  "repo": "diegopetrucci/the-last-harness",
+  "ref": "main",
+  "track": "ref",
+  "packageSource": "git:github.com/diegopetrucci/the-last-harness@main",
+  "packageSourceIsDefault": true
+}
+EOF_STATE_WITHOUT_FIELD
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  run_scrubbed_installer_env node scripts/tlh-update.mjs --dry-run --agent-dir "${without_field_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_not_contains "${combined_file}" "--pi-installed-by-tlh"
+}
+
+run_install_sh_pi_installed_by_tlh_passthrough_smoke() {
+  log "Running install.sh --pi-installed-by-tlh passthrough smoke check..."
+  local case_dir="${TMP_ROOT}/install-sh-pi-flag-passthrough"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  mkdir -p "${case_dir}"
+
+  # ── space-separated form: stage-0 accepts, stage-1 validates → exit 0 ─────
+  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 bash install.sh \
+    --pi-installed-by-tlh true \
+    --dry-run \
+    --agent-dir "${case_dir}/space/agent" \
+    --bin-dir "${case_dir}/space/bin" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_not_contains "${combined_file}" "unknown option"
+
+  # ── equals form: stage-0 accepts, stage-1 validates → exit 0 ──────────────
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 bash install.sh \
+    --pi-installed-by-tlh=true \
+    --dry-run \
+    --agent-dir "${case_dir}/eq/agent" \
+    --bin-dir "${case_dir}/eq/bin" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_not_contains "${combined_file}" "unknown option"
+
+  # ── invalid boolean: stage-1 validation error (not stage-0 unknown option) ─
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 bash install.sh \
+    --pi-installed-by-tlh maybe \
+    --dry-run \
+    --agent-dir "${case_dir}/bad/agent" \
+    --bin-dir "${case_dir}/bad/bin" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "expected --pi-installed-by-tlh maybe to fail but exited 0"
+  fi
+  assert_contains "${combined_file}" "--pi-installed-by-tlh must be true or false"
+  assert_not_contains "${combined_file}" "unknown option"
+}
+
+run_uninstall_dry_run_pi_smoke() {
+  log "Running uninstall.sh --dry-run piInstalledByTlh smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-dry-run-pi"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  mkdir -p "${case_dir}"
+
+  # ── piInstalledByTlh:true → plan shows npm uninstall ──────────────────────
+  local true_agent="${case_dir}/pi-true/agent"
+  mkdir -p "${true_agent}/tlh"
+  cat >"${true_agent}/tlh/install-state.json" <<'EOF_UNINSTALL_STATE_TRUE'
+{
+  "schemaVersion": 1,
+  "repo": "diegopetrucci/the-last-harness",
+  "piInstalledByTlh": true
+}
+EOF_UNINSTALL_STATE_TRUE
+
+  bash uninstall.sh --dry-run --agent-dir "${true_agent}" --bin-dir "${case_dir}/bin-true" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would npm uninstall pi: npm uninstall -g --prefix \"${HOME}/.local\" @earendil-works/pi-coding-agent"
+
+  # ── piInstalledByTlh:false → plan shows skip ──────────────────────────────
+  local false_agent="${case_dir}/pi-false/agent"
+  mkdir -p "${false_agent}/tlh"
+  cat >"${false_agent}/tlh/install-state.json" <<'EOF_UNINSTALL_STATE_FALSE'
+{
+  "schemaVersion": 1,
+  "repo": "diegopetrucci/the-last-harness",
+  "piInstalledByTlh": false
+}
+EOF_UNINSTALL_STATE_FALSE
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${false_agent}" --bin-dir "${case_dir}/bin-false" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi removal (install-state: piInstalledByTlh=false)"
+
+  # ── install-state field missing → plan shows skip ────────────────────────
+  local absent_agent="${case_dir}/pi-absent/agent"
+  mkdir -p "${absent_agent}/tlh"
+  cat >"${absent_agent}/tlh/install-state.json" <<'EOF_UNINSTALL_STATE_ABSENT'
+{
+  "schemaVersion": 1,
+  "repo": "diegopetrucci/the-last-harness"
+}
+EOF_UNINSTALL_STATE_ABSENT
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${absent_agent}" --bin-dir "${case_dir}/bin-absent" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi removal (install-state absent or piInstalledByTlh field missing)"
+}
+
+run_uninstall_flag_override_smoke() {
+  log "Running uninstall.sh flag override smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-flag-override"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  mkdir -p "${case_dir}"
+
+  # ── --force-include-pi overrides piInstalledByTlh=false → removes pi ──────
+  local force_agent="${case_dir}/force-include/agent"
+  mkdir -p "${force_agent}/tlh"
+  cat >"${force_agent}/tlh/install-state.json" <<'EOF_FORCE_STATE'
+{
+  "schemaVersion": 1,
+  "repo": "diegopetrucci/the-last-harness",
+  "piInstalledByTlh": false
+}
+EOF_FORCE_STATE
+
+  bash uninstall.sh --dry-run --force-include-pi --agent-dir "${force_agent}" --bin-dir "${case_dir}/bin-force" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would npm uninstall pi: npm uninstall -g --prefix \"${HOME}/.local\" @earendil-works/pi-coding-agent"
+
+  # ── --keep-pi overrides piInstalledByTlh=true → skips pi ─────────────────
+  local keep_agent="${case_dir}/keep-pi/agent"
+  mkdir -p "${keep_agent}/tlh"
+  cat >"${keep_agent}/tlh/install-state.json" <<'EOF_KEEP_STATE'
+{
+  "schemaVersion": 1,
+  "repo": "diegopetrucci/the-last-harness",
+  "piInstalledByTlh": true
+}
+EOF_KEEP_STATE
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  bash uninstall.sh --dry-run --keep-pi --agent-dir "${keep_agent}" --bin-dir "${case_dir}/bin-keep" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi removal (--keep-pi flag)"
+
+  # ── both flags together → exit 2 with conflict message ───────────────────
+  local conflict_agent="${case_dir}/conflict/agent"
+  mkdir -p "${conflict_agent}"
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  bash uninstall.sh --dry-run --force-include-pi --keep-pi --agent-dir "${conflict_agent}" --bin-dir "${case_dir}/bin-conflict" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -ne 2 ]]; then
+    cat "${combined_file}" >&2
+    fail "mutually exclusive flags did not exit with code 2 (got ${status})"
+  fi
+  assert_contains "${combined_file}" "--force-include-pi and --keep-pi are mutually exclusive"
+}
+
+run_uninstall_normal_pi_guard_smoke() {
+  log "Running uninstall.sh normal Pi config guard smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-normal-pi-guard"
+  local home_dir="${case_dir}/home"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  mkdir -p "${home_dir}"
+
+  # Case: --agent-dir inside ~/.pi
+  set +e
+  HOME="${home_dir}" bash uninstall.sh --dry-run --agent-dir "${home_dir}/.pi/agent" --bin-dir "${case_dir}/bin" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall.sh --agent-dir guard unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "refusing to operate: --agent-dir is inside normal Pi config root"
+  assert_absent "${home_dir}/.pi"
+
+  # Case: --bin-dir inside ~/.pi
+  set +e
+  HOME="${home_dir}" bash uninstall.sh --dry-run --agent-dir "${case_dir}/agent" --bin-dir "${home_dir}/.pi/agent" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall.sh --bin-dir guard unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "refusing to operate: --bin-dir is inside normal Pi config root"
+  assert_absent "${home_dir}/.pi"
+
+  # Case: --wrapper-name with path traversal resolving inside ~/.pi
+  # BIN_DIR is set to home_dir/bin (not inside ~/.pi); WRAPPER_NAME contains
+  # '../' so that BIN_DIR/WRAPPER_NAME resolves to home_dir/.pi/agent/settings.json.
+  set +e
+  HOME="${home_dir}" bash uninstall.sh --dry-run --agent-dir "${case_dir}/agent" --bin-dir "${home_dir}/bin" --wrapper-name "../.pi/agent/settings.json" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall.sh wrapper-path traversal guard unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "refusing to operate: resolved wrapper path is inside normal Pi config root"
+  assert_absent "${home_dir}/.pi"
+}
+
+run_uninstall_dangerous_agent_dir_smoke() {
+  log "Running uninstall.sh dangerous-agent-dir smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-dangerous-agent-dir"
+  local home_dir="${case_dir}/home"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  mkdir -p "${home_dir}"
+
+  set +e
+  HOME="${home_dir}" bash uninstall.sh --dry-run --agent-dir / --bin-dir "${case_dir}/bin-root" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall.sh dangerous / --agent-dir smoke unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "refusing dangerous recursive --agent-dir target: /"
+  assert_not_contains "${combined_file}" "would run: rm -rf /"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  HOME="${home_dir}" bash uninstall.sh --dry-run --agent-dir "${home_dir}" --bin-dir "${case_dir}/bin-home" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall.sh dangerous HOME --agent-dir smoke unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "refusing dangerous recursive --agent-dir target: ${home_dir}"
+  assert_not_contains "${combined_file}" "would run: rm -rf ${home_dir}"
+}
+
+run_uninstall_home_alias_guard_smoke() {
+  log "Running uninstall.sh HOME alias dangerous-agent-dir smoke check..."
+  local tmp_real=""
+  local private_tmp_real=""
+  tmp_real="$(cd /tmp >/dev/null 2>&1 && pwd -P || true)"
+  private_tmp_real="$(cd /private/tmp >/dev/null 2>&1 && pwd -P || true)"
+
+  if [[ -z "${tmp_real}" || "${tmp_real}" != "${private_tmp_real}" ]]; then
+    log "Skipping uninstall HOME alias dangerous-agent-dir smoke check; /tmp alias is unavailable."
+    return 0
+  fi
+
+  local case_dir_path=""
+  local case_dir_physical=""
+  local case_dir_alias=""
+  local home_physical=""
+  local home_alias=""
+  local bin_dir=""
+  local stdout_file=""
+  local stderr_file=""
+  local combined_file=""
+  local status=0
+
+  case_dir_path="$(mktemp -d /tmp/tlh-uninstall-home-alias.XXXXXX)"
+  case_dir_physical="$(cd "${case_dir_path}" >/dev/null 2>&1 && pwd -P)"
+  case_dir_alias="/tmp/${case_dir_physical#/private/tmp/}"
+  EXTRA_CLEANUP_PATHS+=("${case_dir_physical}")
+
+  if [[ ! -d "${case_dir_alias}" ]]; then
+    log "Skipping uninstall HOME alias dangerous-agent-dir smoke check; /tmp alias path was not created."
+    return 0
+  fi
+
+  home_physical="${case_dir_physical}/home"
+  home_alias="${case_dir_alias}/home"
+  bin_dir="${case_dir_physical}/bin"
+  stdout_file="${case_dir_physical}/stdout.log"
+  stderr_file="${case_dir_physical}/stderr.log"
+  combined_file="${case_dir_physical}/combined.log"
+
+  mkdir -p "${home_physical}" "${bin_dir}"
+  write_tlh_install_state "${home_physical}" false
+
+  set +e
+  HOME="${home_physical}" bash uninstall.sh --dry-run --agent-dir "${home_alias}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall.sh HOME alias dangerous-agent-dir smoke unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "refusing dangerous recursive --agent-dir target: ${home_alias}"
+  assert_not_contains "${combined_file}" "would run: rm -rf ${home_alias}"
+  assert_present "${home_physical}/tlh/install-state.json"
+}
+
+run_uninstall_symlinked_agent_dir_smoke() {
+  log "Running uninstall.sh symlinked-agent-dir smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-symlinked-agent-dir"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  local real_agent_dir="${case_dir}/real-agent"
+  local agent_symlink="${case_dir}/agent-link"
+  local real_profile_root="${case_dir}/real-profile"
+  local profile_symlink="${case_dir}/profile-link"
+  mkdir -p "${case_dir}"
+
+  write_tlh_install_state "${real_agent_dir}" false
+  ln -s "${real_agent_dir}" "${agent_symlink}"
+
+  set +e
+  bash uninstall.sh --dry-run --agent-dir "${agent_symlink}" --bin-dir "${case_dir}/bin-agent-link" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall.sh symlinked --agent-dir smoke unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "refusing to remove symlinked --agent-dir: ${agent_symlink}"
+  assert_present "${agent_symlink}"
+
+  mkdir -p "${real_profile_root}"
+  ln -s "${real_profile_root}" "${profile_symlink}"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  bash uninstall.sh --dry-run --agent-dir "${profile_symlink}/agent" --bin-dir "${case_dir}/bin-parent-link" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall.sh symlinked parent component smoke unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "refusing to operate: --agent-dir traverses symlinked parent component (${profile_symlink})"
+}
+
+run_uninstall_missing_marker_smoke() {
+  log "Running uninstall.sh missing-marker smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-missing-marker"
+  local agent_dir="${case_dir}/profile/agent"
+  local bin_dir="${case_dir}/bin"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  assert_safe_uninstall_smoke_paths "${agent_dir}" "${bin_dir}"
+  mkdir -p "${agent_dir}" "${bin_dir}"
+
+  set +e
+  bash uninstall.sh --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall.sh missing ownership marker smoke unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "refusing to remove existing --agent-dir without TLH ownership marker: ${agent_dir}/tlh/install-state.json"
+  assert_not_contains "${combined_file}" "would run: rm -rf ${agent_dir}"
+  assert_present "${agent_dir}"
+}
+
+run_uninstall_valid_marked_removal_smoke() {
+  log "Running uninstall.sh valid-marked-removal smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-valid-marked-removal"
+  local profile_root="${case_dir}/profile"
+  local agent_dir="${profile_root}/agent"
+  local bin_dir="${case_dir}/bin"
+  local wrapper_path
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  assert_safe_uninstall_smoke_paths "${agent_dir}" "${bin_dir}"
+  mkdir -p "${bin_dir}"
+  write_tlh_install_state "${agent_dir}" false
+  wrapper_path="$(cd "${bin_dir}" >/dev/null 2>&1 && pwd -P)/tlh"
+  write_managed_wrapper "${wrapper_path}"
+
+  set +e
+  bash uninstall.sh --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -ne 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall valid marked removal smoke exited with non-zero status: ${status}"
+  fi
+  assert_contains "${combined_file}" "Remove wrapper:      ${wrapper_path}"
+  assert_contains "${combined_file}" "Remove agent dir:    ${agent_dir}"
+  assert_absent "${wrapper_path}"
+  assert_absent "${profile_root}"
+}
+
+run_uninstall_wrapper_ownership_smoke() {
+  log "Running uninstall.sh wrapper-ownership smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-wrapper-ownership"
+  local profile_root="${case_dir}/profile"
+  local agent_dir="${profile_root}/agent"
+  local bin_dir="${case_dir}/bin"
+  local wrapper_path
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  assert_safe_uninstall_smoke_paths "${agent_dir}" "${bin_dir}"
+  mkdir -p "${bin_dir}"
+  write_tlh_install_state "${agent_dir}" false
+  wrapper_path="$(cd "${bin_dir}" >/dev/null 2>&1 && pwd -P)/tlh"
+  printf '#!/usr/bin/env bash\nprintf "unmanaged wrapper\n"\n' >"${wrapper_path}"
+  chmod +x "${wrapper_path}"
+
+  set +e
+  bash uninstall.sh --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -ne 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall unmanaged wrapper smoke exited with non-zero status: ${status}"
+  fi
+  assert_contains "${combined_file}" "Skip wrapper removal: ${wrapper_path}"
+  assert_contains "${combined_file}" "(existing file is not managed by The Last Harness installer)"
+  assert_contains "${combined_file}" "warning: skipping wrapper removal for ${wrapper_path}; existing file is not managed by The Last Harness installer"
+  assert_contains "${combined_file}" "Remove agent dir:    ${agent_dir}"
+  assert_present "${wrapper_path}"
+  assert_absent "${profile_root}"
+}
+
+run_uninstall_dangling_profile_wrapper_symlink_smoke() {
+  log "Running uninstall.sh dangling-profile-wrapper-symlink smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-dangling-profile-wrapper-symlink"
+  local profile_root="${case_dir}/profile"
+  local agent_dir="${profile_root}/agent"
+  local bin_dir="${case_dir}/bin"
+  local wrapper_path
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  assert_safe_uninstall_smoke_paths "${agent_dir}" "${bin_dir}"
+  mkdir -p "${bin_dir}"
+  write_tlh_install_state "${agent_dir}" false
+  wrapper_path="$(cd "${bin_dir}" >/dev/null 2>&1 && pwd -P)/tlh"
+  ln -s "${profile_root}/missing-wrapper-target" "${wrapper_path}"
+
+  set +e
+  bash uninstall.sh --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -ne 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall dangling profile wrapper symlink smoke exited with non-zero status: ${status}"
+  fi
+  assert_contains "${combined_file}" "Remove wrapper:      ${wrapper_path}"
+  assert_absent "${wrapper_path}"
+  assert_absent "${profile_root}"
+}
+
+run_uninstall_unrelated_wrapper_symlink_smoke() {
+  log "Running uninstall.sh unrelated-wrapper-symlink smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-unrelated-wrapper-symlink"
+  local profile_root="${case_dir}/profile"
+  local agent_dir="${profile_root}/agent"
+  local bin_dir="${case_dir}/bin"
+  local wrapper_path
+  local unrelated_target="${case_dir}/outside/missing-wrapper-target"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  assert_safe_uninstall_smoke_paths "${agent_dir}" "${bin_dir}"
+  mkdir -p "${bin_dir}"
+  write_tlh_install_state "${agent_dir}" false
+  wrapper_path="$(cd "${bin_dir}" >/dev/null 2>&1 && pwd -P)/tlh"
+  ln -s "${unrelated_target}" "${wrapper_path}"
+
+  set +e
+  bash uninstall.sh --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -ne 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall unrelated wrapper symlink smoke exited with non-zero status: ${status}"
+  fi
+  assert_contains "${combined_file}" "Skip wrapper removal: ${wrapper_path}"
+  assert_contains "${combined_file}" "(existing symlink target is outside the TLH profile (${unrelated_target}))"
+  assert_contains "${combined_file}" "warning: skipping wrapper removal for ${wrapper_path}; existing symlink target is outside the TLH profile (${unrelated_target})"
+  assert_contains "${combined_file}" "Remove agent dir:    ${agent_dir}"
+  assert_present "${wrapper_path}"
+  assert_absent "${profile_root}"
+}
+
+run_uninstall_piped_smoke() {
+  log "Running uninstall.sh piped-stdin end-to-end smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-piped"
+  local profile_root="${case_dir}/profile"
+  local agent_dir="${profile_root}/agent"
+  local bin_dir="${case_dir}/bin"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  assert_safe_uninstall_smoke_paths "${agent_dir}" "${bin_dir}"
+  mkdir -p "${agent_dir}/tlh" "${bin_dir}"
+  cat >"${agent_dir}/tlh/install-state.json" <<'EOF_PIPED_UNINSTALL_STATE'
+{
+  "schemaVersion": 1,
+  "repo": "diegopetrucci/the-last-harness",
+  "piInstalledByTlh": false
+}
+EOF_PIPED_UNINSTALL_STATE
+  write_managed_wrapper "${bin_dir}/tlh"
+
+  set +e
+  cat uninstall.sh | bash -s -- --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -ne 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall piped-stdin smoke exited with non-zero status: ${status}"
+  fi
+  assert_absent "${bin_dir}/tlh"
+  assert_absent "${profile_root}"
+}
+
+run_uninstall_sibling_preservation_smoke() {
+  log "Running uninstall.sh sibling-preservation regression smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-sibling-preservation"
+  local profile_root="${case_dir}/profile"
+  local agent_dir="${profile_root}/agent"
+  local bin_dir="${case_dir}/bin"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  assert_safe_uninstall_smoke_paths "${agent_dir}" "${bin_dir}"
+  mkdir -p "${agent_dir}/tlh" "${bin_dir}"
+  cat >"${agent_dir}/tlh/install-state.json" <<'EOF_SIBLING_UNINSTALL_STATE'
+{
+  "schemaVersion": 1,
+  "repo": "diegopetrucci/the-last-harness",
+  "piInstalledByTlh": false
+}
+EOF_SIBLING_UNINSTALL_STATE
+  # Sibling file under profile root — must survive uninstall (regression guard).
+  printf 'sibling file — must survive uninstall\n' >"${profile_root}/sibling_keep.txt"
+  write_managed_wrapper "${bin_dir}/tlh"
+
+  set +e
+  cat uninstall.sh | bash -s -- --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -ne 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "uninstall sibling-preservation smoke exited with non-zero status: ${status}"
+  fi
+  assert_absent "${bin_dir}/tlh"
+  assert_absent "${agent_dir}"
+  # Regression assertion: sibling and non-empty parent must survive.
+  assert_present "${profile_root}/sibling_keep.txt"
+  assert_present "${profile_root}"
+}
+
 run_static_checks
 run_support_manifest_smoke
+run_install_state_pi_field_smoke
+run_install_dry_run_pi_field_smoke
+run_update_pi_field_threading_smoke
+run_install_sh_pi_installed_by_tlh_passthrough_smoke
+run_uninstall_dry_run_pi_smoke
+run_uninstall_flag_override_smoke
+run_uninstall_normal_pi_guard_smoke
+run_uninstall_dangerous_agent_dir_smoke
+run_uninstall_home_alias_guard_smoke
+run_uninstall_symlinked_agent_dir_smoke
+run_uninstall_missing_marker_smoke
+run_uninstall_valid_marked_removal_smoke
+run_uninstall_wrapper_ownership_smoke
+run_uninstall_dangling_profile_wrapper_symlink_smoke
+run_uninstall_unrelated_wrapper_symlink_smoke
+run_uninstall_piped_smoke
+run_uninstall_sibling_preservation_smoke
 run_install_query_smoke
 run_stage1_dry_run_smoke
 run_stage1_relative_path_canonicalization_smoke
