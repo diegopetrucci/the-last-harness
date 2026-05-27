@@ -130,6 +130,54 @@ Opt out persistently by adding this to `~/.the-last-harness/agent/settings.json`
 
 That settings opt-out is preserved by `tlh update` and installer reruns.
 
+## Reviewing changes (/review)
+
+Run a code review on a chosen scope (uncommitted changes, a branch comparison, a single commit, a PR, or a folder snapshot) via an isolated `code-reviewer` subagent.
+
+Run `/review` with no arguments to open an interactive mode picker. If you choose `commit`, `pr`, or `folder`, tlh prompts for the required SHA, PR number/URL, or paths before dispatching the review. Or pass a mode directly:
+
+```
+/review uncommitted              # staged + unstaged changes vs HEAD, plus untracked non-gitignored files
+/review branch                   # commits on this branch vs main
+/review branch release/1.2       # commits on this branch vs release/1.2
+/review commit abc1234           # a single commit
+/review pr 123                   # a pull request by number or URL
+/review folder src/              # files in one or more folders
+```
+
+`/review branch` defaults to `main` when you omit the base branch. `/review uncommitted` also includes untracked files that are not gitignored.
+
+Append `--extra "..."` to pass additional context or focus instructions to the reviewer:
+
+```
+/review uncommitted --extra "focus on error handling"
+```
+
+### PR mode
+
+PR mode requires the [GitHub CLI](https://cli.github.com) installed and authenticated (`gh auth login`). Cross-repository PRs are not supported yet; fetch the branch locally and use `/review branch <base>` instead.
+
+If you are not already on the PR's head branch when you run `/review pr <n>`:
+
+- **Dirty working tree**: the command refuses and tells you to stash or commit first.
+- **Clean working tree**: the command shows a confirmation prompt before switching.
+
+If you confirm the switch, you are left on the PR branch. Return to your prior branch with `git checkout -`.
+
+### Folder mode
+
+Folder mode collects a snapshot of files under the given paths. It includes tracked files plus untracked files that aren't gitignored — so newly added files show up even before a first commit. Binary files are skipped with a `[skipped binary: ...]` marker.
+
+### How the architect handles review results
+
+`/review` delegates to a fresh, isolated `code-reviewer` subagent — no chat history bleeds in from the current session. When the subagent returns, the architect critically evaluates the findings: it pushes back on weak or speculative observations, confirms strong ones, and presents a digested summary with its own judgment rather than a raw transcript.
+
+There is no `/end-review` command. After the summary is delivered, you are back in normal architect mode; follow-ups such as asking the architect to apply fixes go through the standard clarify → plan → tickets → developer loop.
+
+### Large diffs
+
+`/review` prints a one-time warning when the gathered diff or snapshot exceeds ~200 KB, but always proceeds. Consider narrowing the scope if a review feels noisy.
+
 ## Docs dump
 
 - Install, update, and uninstall guidance: [`docs/install.md`](docs/install.md)
