@@ -37,8 +37,8 @@ The Last Harness (tlh) profile is active. Prefer safe, transparent, and reviewab
 `;
 
 export const GNOSIS_PROMPT = [
-	"At the start of any task, run `gn help plan` and follow its instructions.",
-	"After finishing a task, run `gn help review`.",
+	"Use or load the packaged `tlh-gnosis-workflow` skill for the TLH Gnosis workflow summary: search memory with relevant `OR` keywords before implementation, surface conflicts, write only durable human-origin or cross-cutting knowledge, and re-check memory implications during review.",
+	"If that summary is missing, stale, conflicting, or you are uncertain, read full `gn help plan` before implementation and full `gn help review` before final review.",
 ].join("\n");
 
 export const CHILD_SUBAGENT_PROMPT = `

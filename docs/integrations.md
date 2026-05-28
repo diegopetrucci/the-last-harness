@@ -6,12 +6,7 @@ TLH includes managed integrations for project memory and ticketed workflows. Gno
 
 [Gnosis](https://github.com/skorokithakis/gnosis) is a small `gn` CLI for recording project decisions, constraints, rejected alternatives, and lessons that are not obvious from code alone. On supported platforms (linux/darwin × x64/arm64), TLH installs it automatically because `tlh` works better when agents can consult and update repo-local project memory. Installs and updates on unsupported platforms hard-fail.
 
-When a valid Gnosis `gn` binary is present, TLH appends these instructions to the system prompt:
-
-```text
-At the start of any task, run `gn help plan` and follow its instructions.
-After finishing a task, run `gn help review`.
-```
+When a valid Gnosis `gn` binary is present, TLH appends concise workflow guidance to the system prompt. It tells agents to use or load the packaged `tlh-gnosis-workflow` skill (`skills/tlh-gnosis-workflow/SKILL.md`) for keyword-first memory search, conflict checks, durable-memory write rules, and review-time checks. It keeps full `gn help plan` and `gn help review` as fallbacks when the summary is missing, stale, conflicting, or the agent is uncertain.
 
 Gnosis project data lives in repo-local `.gnosis` directories. Removing `~/.the-last-harness` removes only the managed `gn` binary under the isolated profile; it does not delete repo-local memory.
 

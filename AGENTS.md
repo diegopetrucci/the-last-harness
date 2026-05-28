@@ -75,8 +75,8 @@ git diff --cached
 
 ## Miscellaneous
 
-- At the start of any task, run `gn help plan` and follow its instructions.
+- Before implementation, use or load the packaged `tlh-gnosis-workflow` skill at `skills/tlh-gnosis-workflow/SKILL.md`. Search relevant keywords with `OR`, read the relevant hits, and surface conflicts early. If your role is allowed to run `gn` and that summary is missing, stale, conflicting, or you are uncertain, read full `gn help plan`. If your role forbids `gn` (for example, child subagents), do not run Gnosis commands; report durable findings to the parent agent or supervisor instead.
 - Before final handoff or review for TLH repository work, load and apply the repo-local hygiene skill at `.pi/skills/tlh-dev-hygiene/SKILL.md`.
 - The `tlh-dev-hygiene` checklist is for TLH repository contributors only; it is not part of the packaged end-user tlh workflow.
-- After finishing a task, run `gn help review`.
+- During review or handoff, follow the packaged Gnosis workflow skill's durable-memory guidance. If your role is allowed to run `gn` and that summary is missing, stale, conflicting, or you are uncertain, read full `gn help review`. If your role forbids `gn` (for example, child subagents), do not run Gnosis commands; report durable findings to the parent agent or supervisor instead.
 - This project uses a CLI ticket system for task management. Run `tk help` when you need to use it.

@@ -91,12 +91,7 @@ Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `t
 
 TLH also requires the `tk` ticket CLI for architect/product ticket workflows. If no valid configured or existing `tk` command is found, install and update flows install the pinned managed copy at `~/.the-last-harness/agent/bin/tk`.
 
-When a valid `gn` binary is present, TLH appends these instructions to the system prompt:
-
-```text
-At the start of any task, run `gn help plan` and follow its instructions.
-After finishing a task, run `gn help review`.
-```
+When a valid `gn` binary is present, TLH appends concise Gnosis workflow guidance to the system prompt. It tells agents to use or load the packaged `tlh-gnosis-workflow` skill (`skills/tlh-gnosis-workflow/SKILL.md`) for keyword-first memory search, conflict checks, durable-memory write rules, and review-time checks. It keeps full `gn help plan` and `gn help review` as fallbacks when the summary is missing, stale, conflicting, or the agent is uncertain.
 
 Gnosis project data lives in repo-local `.gnosis` directories and ticket data lives in repo-local `.tickets` directories; TLH does not delete either. More integration details live in [`docs/integrations.md`](docs/integrations.md).
 
