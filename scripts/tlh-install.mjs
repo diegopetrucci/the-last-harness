@@ -58,7 +58,7 @@ import {
 
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
-// Keep in sync with TLH_MIN_NODE_VERSION in install.sh.
+// Keep in sync with TLH_MIN_NODE_VERSION and TLH_MIN_PI_VERSION in install.sh.
 const MIN_NODE_VERSION = "22.19.0";
 const MIN_PI_VERSION = "0.75.3";
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
@@ -104,6 +104,11 @@ function usage() {
 
 Stage-1 The Last Harness installer helper. It runs the normal install flow using
 an isolated Pi profile and installer-owned helper commands.
+
+Requirements:
+  Node.js >= ${MIN_NODE_VERSION} on PATH
+  Upstream Pi >= ${MIN_PI_VERSION} (installed per-user under ~/.local when missing;
+  older versions stop with an upgrade error)
 
 Options:
   --dry-run                  Print actions and settings/keybinding changes without writing
