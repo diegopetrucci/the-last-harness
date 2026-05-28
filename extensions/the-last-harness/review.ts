@@ -1,4 +1,5 @@
-import { open, readdir, readFile, stat, type FileHandle } from "node:fs/promises";
+import type { Stats } from "node:fs";
+import { lstat, open, readdir, readFile, type FileHandle } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
 import { DynamicBorder, getSelectListTheme, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -8,8 +9,9 @@ import { Container, matchesKey, SelectList, Text } from "@earendil-works/pi-tui"
 
 const REVIEW_TITLE = "Choose a review mode";
 const REVIEW_PICKER_HINT = "↑/↓ to move  Enter to confirm  Esc to cancel";
+const REVIEW_DEFAULT_BRANCH_BASE = "main";
 const REVIEW_COMMAND_HELP =
-	"Usage: /review [uncommitted|branch [base]|commit [sha]|pr [n-or-url]|folder [paths...]] [--extra '...']";
+	"Usage: /review [uncommitted|branch [base=main]|commit <sha>|pr <n-or-url>|folder <paths...>] [--extra '...']\nNote: uncommitted mode also includes untracked non-gitignored files.";
 
 export const REVIEW_MODES = ["uncommitted", "branch", "commit", "pr", "folder"] as const;
 export type ReviewMode = (typeof REVIEW_MODES)[number];
@@ -18,12 +20,15 @@ export type ReviewMode = (typeof REVIEW_MODES)[number];
 export const REVIEW_LARGE_BODY_BYTES = 200 * 1024; // 200 KB
 
 const REVIEW_MODE_DESCRIPTIONS: Record<ReviewMode, string> = {
-	uncommitted: "Review staged and unstaged changes in the working tree",
+	uncommitted: "Review staged/unstaged changes plus untracked non-gitignored files",
 	branch: "Review commits on the current branch vs a base (default: main)",
 	commit: "Review a single commit by SHA",
 	pr: "Review a pull request by number or URL",
 	folder: "Review files in one or more folders",
 };
+
+const REVIEW_UNTRACKED_BEGIN_DELIMITER = "--- begin untracked files ---";
+const REVIEW_UNTRACKED_END_DELIMITER = "--- end untracked files ---";
 
 // --- Types ---
 
@@ -64,6 +69,7 @@ function isReviewMode(value: string): value is ReviewMode {
 /**
  * Tokenise a raw args string from the command handler, respecting single- and
  * double-quoted groups so that --extra "some phrase" is collapsed into one token.
+ * Unquoted whitespace, including newlines from picker follow-up prompts, splits tokens.
  */
 function tokenizeArgs(raw: string): string[] {
 	if (!raw.trim()) return [];
@@ -78,7 +84,7 @@ function tokenizeArgs(raw: string): string[] {
 			inSingleQuote = !inSingleQuote;
 		} else if (ch === '"' && !inSingleQuote) {
 			inDoubleQuote = !inDoubleQuote;
-		} else if (ch === " " && !inSingleQuote && !inDoubleQuote) {
+		} else if (/\s/.test(ch) && !inSingleQuote && !inDoubleQuote) {
 			if (current) {
 				tokens.push(current);
 				current = "";
@@ -103,7 +109,7 @@ function tokenizeArgs(raw: string): string[] {
  *
  * Supported shapes:
  *   /review uncommitted [--extra '...']
- *   /review branch [base] [--extra '...']
+ *   /review branch [base=main] [--extra '...']
  *   /review commit [sha] [--extra '...']
  *   /review pr [n-or-url] [--extra '...']
  *   /review folder [path...] [--extra '...']
@@ -136,7 +142,7 @@ export function parseReviewArgs(argv: string[]): ParsedReviewArgs {
 		case "uncommitted":
 			return { mode: "uncommitted", extra };
 		case "branch":
-			return { mode: "branch", base: args[1], extra };
+			return { mode: "branch", base: args[1] ?? REVIEW_DEFAULT_BRANCH_BASE, extra };
 		case "commit":
 			return { mode: "commit", sha: args[1], extra };
 		case "pr":
@@ -218,7 +224,7 @@ export function buildReviewEnvelope(
 	// ── Body fenced section ───────────────────────────────────────────────────
 	const hasBody = ctx?.body !== undefined;
 	const fenceKind = hasBody ? (ctx?.bodyKind ?? "diff") : "(pending)";
-	const bodyText = hasBody ? (ctx?.body as string) : "(no body gathered)";
+	const bodyText = hasBody ? escapeEnvelopeFenceLines(ctx?.body as string, fenceKind) : "(no body gathered)";
 
 	lines.push(`--- begin ${fenceKind} ---`);
 	lines.push(bodyText);
@@ -229,13 +235,13 @@ export function buildReviewEnvelope(
 
 // --- Helpers for picker integration ---
 
-/** Construct a full ParsedReviewArgs for a mode chosen interactively (no mode-specific args). */
+/** Construct a full ParsedReviewArgs for a mode chosen interactively with defaults applied. */
 function makePickedArgs(mode: ReviewMode): ParsedReviewArgs & { mode: ReviewMode } {
 	switch (mode) {
 		case "uncommitted":
 			return { mode: "uncommitted", extra: undefined };
 		case "branch":
-			return { mode: "branch", base: undefined, extra: undefined };
+			return { mode: "branch", base: REVIEW_DEFAULT_BRANCH_BASE, extra: undefined };
 		case "commit":
 			return { mode: "commit", sha: undefined, extra: undefined };
 		case "pr":
@@ -243,6 +249,42 @@ function makePickedArgs(mode: ReviewMode): ParsedReviewArgs & { mode: ReviewMode
 		case "folder":
 			return { mode: "folder", paths: [], extra: undefined };
 	}
+}
+
+async function promptForReviewInput(
+	ctx: ExtensionCommandContext,
+	title: string,
+): Promise<string | undefined> {
+	const response = await ctx.ui.editor(title);
+	const trimmed = response?.trim();
+	return trimmed ? trimmed : undefined;
+}
+
+async function completePickedArgs(
+	ctx: ExtensionCommandContext,
+	mode: ReviewMode,
+): Promise<(ParsedReviewArgs & { mode: ReviewMode }) | undefined> {
+	if (mode === "uncommitted" || mode === "branch") {
+		return makePickedArgs(mode);
+	}
+
+	if (mode === "commit") {
+		const sha = await promptForReviewInput(ctx, "Review commit: enter commit SHA");
+		return sha ? { mode: "commit", sha, extra: undefined } : undefined;
+	}
+
+	if (mode === "pr") {
+		const nOrUrl = await promptForReviewInput(ctx, "Review PR: enter PR number or URL");
+		return nOrUrl ? { mode: "pr", nOrUrl, extra: undefined } : undefined;
+	}
+
+	const rawPaths = await promptForReviewInput(ctx, "Review folder: enter one or more paths (quote paths with spaces)");
+	if (!rawPaths) {
+		return undefined;
+	}
+
+	const paths = tokenizeArgs(rawPaths);
+	return paths.length > 0 ? { mode: "folder", paths, extra: undefined } : undefined;
 }
 
 // --- Interactive picker ---
@@ -309,6 +351,7 @@ function rejectFlagLike(value: string, fieldName: string): { ok: true } | { ok: 
 
 /**
  * Gather staged + unstaged changes vs HEAD for the uncommitted mode.
+ * Also appends untracked, non-gitignored file contents so brand-new files are reviewable.
  */
 async function gatherUncommitted(pi: ExtensionAPI, cmdCtx: ExtensionCommandContext): Promise<GatherResult> {
 	const cwd = cmdCtx.cwd;
@@ -332,9 +375,23 @@ async function gatherUncommitted(pi: ExtensionAPI, cmdCtx: ExtensionCommandConte
 		return { ok: false, message };
 	}
 
+	// Include untracked, non-gitignored files so the reviewer can see newly added content.
+	const untrackedResult = await pi.exec("git", ["ls-files", "-z", "--others", "--exclude-standard", "--", "."], { cwd });
+	if (untrackedResult.code !== 0) {
+		const message = detectNotGitRepo(untrackedResult.stderr)
+			? "Not inside a git repository. Run /review from a directory that contains a .git folder."
+			: `git ls-files for untracked files failed: ${untrackedResult.stderr.trim()}`;
+		return { ok: false, message };
+	}
+
+	const untrackedFiles = parseNullDelimitedGitPaths(untrackedResult.stdout)
+		.map((filePath) => resolve(cwd, filePath));
+	const untrackedParts = await buildSnapshotParts(cwd, untrackedFiles, "untracked file");
+	const body = appendUntrackedSnapshot(diffResult.stdout, untrackedParts);
+
 	return {
 		ok: true,
-		ctx: { currentBranch, body: diffResult.stdout, bodyKind: "diff" },
+		ctx: { currentBranch, body, bodyKind: "diff" },
 	};
 }
 
@@ -346,13 +403,7 @@ async function gatherBranch(
 	cmdCtx: ExtensionCommandContext,
 	base: string | undefined,
 ): Promise<GatherResult> {
-	if (!base) {
-		return {
-			ok: false,
-			message: "branch mode requires a base branch name, e.g. /review branch main",
-		};
-	}
-
+	const effectiveBase = base?.trim() || REVIEW_DEFAULT_BRANCH_BASE;
 	const cwd = cmdCtx.cwd;
 
 	// Refuse if HEAD is detached
@@ -376,26 +427,26 @@ async function gatherBranch(
 	const currentBranch = branchResult.code === 0 ? branchResult.stdout.trim() : undefined;
 
 	// Reject flag-like values before passing to git
-	const baseCheck = rejectFlagLike(base, "base");
+	const baseCheck = rejectFlagLike(effectiveBase, "base");
 	if (!baseCheck.ok) {
 		return { ok: false, message: baseCheck.message };
 	}
 
 	// Validate that the base ref resolves
-	const verifyResult = await pi.exec("git", ["rev-parse", "--verify", base], { cwd });
+	const verifyResult = await pi.exec("git", ["rev-parse", "--verify", effectiveBase], { cwd });
 	if (verifyResult.code !== 0) {
 		return {
 			ok: false,
-			message: `Branch base '${base}' does not resolve to a valid ref. Make sure the branch or commit exists locally.`,
+			message: `Branch base '${effectiveBase}' does not resolve to a valid ref. Make sure the branch or commit exists locally.`,
 		};
 	}
 
 	// Compute three-dot diff vs merge-base
-	const diffResult = await pi.exec("git", ["diff", `${base}...HEAD`], { cwd });
+	const diffResult = await pi.exec("git", ["diff", `${effectiveBase}...HEAD`], { cwd });
 	if (diffResult.code !== 0) {
 		return {
 			ok: false,
-			message: `git diff ${base}...HEAD failed: ${diffResult.stderr.trim()}`,
+			message: `git diff ${effectiveBase}...HEAD failed: ${diffResult.stderr.trim()}`,
 		};
 	}
 
@@ -483,7 +534,7 @@ async function isBinaryFile(filePath: string): Promise<boolean> {
 }
 
 /**
- * Recursively collect all regular files under a directory.
+ * Recursively collect all non-directory entries under a directory.
  *
  * Subdirectories named `node_modules` or starting with `.` are skipped
  * to avoid generating useless snapshots from tooling/VCS directories.
@@ -501,11 +552,105 @@ async function walkDir(dir: string): Promise<string[]> {
 				continue;
 			}
 			files.push(...(await walkDir(full)));
-		} else if (entry.isFile()) {
+		} else {
 			files.push(full);
 		}
 	}
 	return files;
+}
+
+function parseNullDelimitedGitPaths(stdout: string): string[] {
+	return stdout.split("\0").filter((filePath) => filePath.length > 0);
+}
+
+function escapeDelimitedContentLine(line: string): string {
+	return `\\${line}`;
+}
+
+function escapeContentDelimiters(content: string): string {
+	return content
+		.split("\n")
+		.map((line) => {
+			if (
+				line === "--- begin snapshot ---"
+				|| line === "--- end snapshot ---"
+				|| line === REVIEW_UNTRACKED_BEGIN_DELIMITER
+				|| line === REVIEW_UNTRACKED_END_DELIMITER
+				|| /^--- (?:file|untracked file): .* ---$/.test(line)
+			) {
+				return escapeDelimitedContentLine(line);
+			}
+			return line;
+		})
+		.join("\n");
+}
+
+function escapeEnvelopeFenceLines(body: string, fenceKind: string): string {
+	const beginFence = `--- begin ${fenceKind} ---`;
+	const endFence = `--- end ${fenceKind} ---`;
+	return body
+		.split("\n")
+		.map((line) => (line === beginFence || line === endFence ? escapeDelimitedContentLine(line) : line))
+		.join("\n");
+}
+
+function renderDelimitedPath(relPath: string): string {
+	return JSON.stringify(relPath)
+		.replace(/[\u007f-\u009f\u2028\u2029]/g, (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`)
+		.replace(/\[/g, "\\u005b")
+		.replace(/\]/g, "\\u005d");
+}
+
+function getNonRegularSnapshotMarker(relPath: string, pathStat: Stats): string | undefined {
+	const renderedPath = renderDelimitedPath(relPath);
+	if (pathStat.isSymbolicLink()) {
+		return `[skipped symlink: ${renderedPath}]`;
+	}
+	if (pathStat.isDirectory()) {
+		return `[skipped directory: ${renderedPath}]`;
+	}
+	if (!pathStat.isFile()) {
+		return `[skipped non-regular entry: ${renderedPath}]`;
+	}
+	return undefined;
+}
+
+/**
+ * Build snapshot entries for a set of file paths.
+ * Binary files are skipped with an annotation instead of inline content.
+ */
+async function buildSnapshotParts(cwd: string, filePaths: string[], label: string): Promise<string[]> {
+	const parts: string[] = [];
+
+	for (const filePath of filePaths) {
+		const relPath = relative(cwd, filePath);
+		const renderedPath = renderDelimitedPath(relPath);
+		const pathStat = await lstat(filePath);
+		const nonRegularMarker = getNonRegularSnapshotMarker(relPath, pathStat);
+		if (nonRegularMarker) {
+			parts.push(nonRegularMarker);
+			continue;
+		}
+
+		const bin = await isBinaryFile(filePath);
+		if (bin) {
+			parts.push(`[skipped binary: ${renderedPath}]`);
+			continue;
+		}
+		const content = escapeContentDelimiters(await readFile(filePath, "utf8"));
+		parts.push(`--- ${label}: ${renderedPath} ---\n${content}`);
+	}
+
+	return parts;
+}
+
+function appendUntrackedSnapshot(diffBody: string, untrackedParts: string[]): string {
+	if (untrackedParts.length === 0) {
+		return diffBody;
+	}
+
+	const untrackedBody = [REVIEW_UNTRACKED_BEGIN_DELIMITER, ...untrackedParts, REVIEW_UNTRACKED_END_DELIMITER].join("\n");
+	return diffBody.trim().length > 0 ? `${diffBody}\n\n${untrackedBody}` : untrackedBody;
 }
 
 /**
@@ -530,7 +675,7 @@ async function gatherFolder(
 	// Validate all paths exist before doing any work
 	for (let i = 0; i < absPaths.length; i++) {
 		try {
-			await stat(absPaths[i]);
+			await lstat(absPaths[i]);
 		} catch {
 			return {
 				ok: false,
@@ -548,38 +693,34 @@ async function gatherFolder(
 
 	const parts: string[] = [];
 
-	for (const absPath of absPaths) {
-		const pathStat = await stat(absPath);
+	for (let i = 0; i < absPaths.length; i++) {
+		const absPath = absPaths[i];
+		const pathStat = await lstat(absPath);
 		let filePaths: string[];
 
 		if (pathStat.isDirectory()) {
 			// Prefer git ls-files to respect .gitignore naturally;
-			// --others --exclude-standard includes untracked-but-not-gitignored files
-			const lsResult = await pi.exec("git", ["ls-files", "--cached", "--others", "--exclude-standard", "--", "."], { cwd: absPath });
-			if (lsResult.code === 0 && lsResult.stdout.trim()) {
-				filePaths = lsResult.stdout
-					.trim()
-					.split("\n")
-					.filter(Boolean)
-					.map((f) => join(absPath, f));
-			} else {
-				// Fall back to plain recursive walk when not in a git repo
+			// --others --exclude-standard includes untracked-but-not-gitignored files.
+			// If git reports zero files for this directory, keep that empty result instead of
+			// walking the tree and accidentally snapshotting ignored files.
+			const lsResult = await pi.exec("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."], { cwd: absPath });
+			if (lsResult.code === 0) {
+				filePaths = parseNullDelimitedGitPaths(lsResult.stdout)
+					.map((filePath) => join(absPath, filePath));
+			} else if (detectNotGitRepo(lsResult.stderr)) {
+				// Fall back to a plain recursive walk only when outside git entirely.
 				filePaths = await walkDir(absPath);
+			} else {
+				return {
+					ok: false,
+					message: `git ls-files failed for folder path '${paths[i]}': ${lsResult.stderr.trim()}`,
+				};
 			}
 		} else {
 			filePaths = [absPath];
 		}
 
-		for (const filePath of filePaths) {
-			const relPath = relative(cwd, filePath);
-			const bin = await isBinaryFile(filePath);
-			if (bin) {
-				parts.push(`[skipped binary: ${relPath}]`);
-				continue;
-			}
-			const content = await readFile(filePath, "utf8");
-			parts.push(`--- file: ${relPath} ---\n${content}`);
-		}
+		parts.push(...(await buildSnapshotParts(cwd, filePaths, "file")));
 	}
 
 	return {
@@ -727,7 +868,14 @@ async function gatherPr(
 	if (currentBranch !== headRefName) {
 		// Check whether the working tree is dirty
 		const statusResult = await pi.exec("git", ["status", "--porcelain"], { cwd });
-		const isDirty = statusResult.code === 0 && statusResult.stdout.trim().length > 0;
+		if (statusResult.code !== 0) {
+			const firstLine = statusResult.stderr.split("\n")[0]?.trim() ?? "git status failed";
+			return {
+				ok: false,
+				message: `Could not determine whether the working tree is clean before switching branches: ${firstLine}`,
+			};
+		}
+		const isDirty = statusResult.stdout.trim().length > 0;
 
 		// Working tree is clean — confirm before switching
 		let userConfirm = false;
@@ -891,7 +1039,12 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
 					// User cancelled — clean no-op.
 					return;
 				}
-				await dispatchReviewMode(pi, ctx, makePickedArgs(mode));
+				const completedArgs = await completePickedArgs(ctx, mode);
+				if (completedArgs === undefined) {
+					// User cancelled or left required follow-up input blank.
+					return;
+				}
+				await dispatchReviewMode(pi, ctx, completedArgs);
 				return;
 			}
 
