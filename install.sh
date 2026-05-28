@@ -31,14 +31,13 @@ config under ~/.pi/agent is not modified.
 Requirements:
   Node.js >= ${TLH_MIN_NODE_VERSION} on PATH
   Upstream Pi >= ${TLH_MIN_PI_VERSION} (installed per-user under ~/.local when missing;
-  older versions stop with an upgrade error)
+  install failures stop with an actionable error; older versions stop with an upgrade error)
 USAGE
   cat <<'USAGE'
 
 Options:
   --dry-run        Print actions and settings/keybinding changes without writing
   --force          Allow scalar isolated defaults and installer wrapper overwrite
-  --no-pi-install  Fail instead of installing Pi when the `pi` command is missing
   --no-settings     Install the package but skip isolated settings/keybinding merge
   --no-wrapper      Skip creating the tlh wrapper command
   --agent-dir DIR   Isolated Pi agent dir (default: ~/.the-last-harness/agent)
@@ -280,7 +279,7 @@ while [[ $# -gt 0 ]]; do
       DRY_RUN=true
       shift
       ;;
-    --force|--no-pi-install)
+    --force)
       shift
       ;;
     --no-wrapper)

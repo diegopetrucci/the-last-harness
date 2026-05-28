@@ -16,6 +16,7 @@ function usage() {
 	return `Usage: tlh update [options]
 
 Run The Last Harness installer update flow for the current isolated profile.
+Missing upstream Pi is installed per-user under ~/.local by the installer when needed.
 
 Options:
   --agent-dir DIR       Isolated profile dir (default: ~/.the-last-harness/agent)
@@ -27,7 +28,6 @@ Options:
   --package-source SRC  Preserve a custom package source via TLH_PACKAGE_SOURCE
   --dry-run             Print the update plan without downloading or running installer
   --force               Pass --force to the installer
-  --no-pi-install       Pass --no-pi-install to the installer
   --no-settings         Pass --no-settings to the installer
   --no-wrapper          Pass --no-wrapper to the installer
   --quiet               Suppress installer progress output
@@ -61,7 +61,6 @@ function parseArgs(argv) {
 		packageSource: process.env.TLH_PACKAGE_SOURCE,
 		dryRun: false,
 		force: false,
-		noPiInstall: false,
 		noSettings: false,
 		noWrapper: false,
 		quiet: false,
@@ -81,10 +80,6 @@ function parseArgs(argv) {
 		}
 		if (arg === "--force") {
 			args.force = true;
-			continue;
-		}
-		if (arg === "--no-pi-install") {
-			args.noPiInstall = true;
 			continue;
 		}
 		if (arg === "--no-settings") {
@@ -461,7 +456,6 @@ function buildInstallerArgs(plan, args, state) {
 		installerArgs.push("--ref", plan.ref);
 	}
 	if (args.force) installerArgs.push("--force");
-	if (args.noPiInstall) installerArgs.push("--no-pi-install");
 	if (args.noSettings) installerArgs.push("--no-settings");
 	if (args.noWrapper) installerArgs.push("--no-wrapper");
 	if (args.quiet) installerArgs.push("--quiet");

@@ -2,7 +2,7 @@
 
 ## Install
 
-Requires Node.js >=22.19.0 on `PATH`. TLH uses upstream Pi >=0.75.3. If `pi` is missing, the installer adds a compatible per-user copy under `~/.local` unless you pass `--no-pi-install`. If `pi` is present but older than 0.75.3, install stops with an upgrade error instead of changing that existing runtime automatically.
+Requires Node.js >=22.19.0 on `PATH`. TLH uses upstream Pi >=0.75.3. If `pi` is missing, the installer adds a compatible per-user copy under `~/.local` and hard-fails with an actionable error if that install cannot complete. If `pi` is present but older than 0.75.3, install stops with an upgrade error instead of changing that existing runtime automatically.
 
 Run the one-liner:
 
@@ -36,7 +36,6 @@ These alternatives keep TLH isolated, but they are not the official latest stabl
 ```text
 --dry-run        Print actions and settings/keybinding changes without writing
 --force          Allow scalar isolated defaults and installer wrapper overwrite
---no-pi-install  Fail instead of installing Pi when the `pi` command is missing
 --no-settings     Install the package but skip isolated settings/keybinding merge
 --no-wrapper      Skip creating the tlh wrapper command
 --agent-dir DIR   Isolated Pi agent dir, default ~/.the-last-harness/agent
