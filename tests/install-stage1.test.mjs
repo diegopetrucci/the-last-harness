@@ -13,6 +13,7 @@ import {
 	installDefaultExtensions,
 	nodeVersionMeetsMinimum,
 	parseArgs,
+	usage,
 } from "../scripts/tlh-install.mjs";
 import { validateInstallerTargets } from "../scripts/lib/tlh-install-paths.mjs";
 
@@ -168,6 +169,56 @@ test("stage-1 rejects legacy ticket integration flags", () => {
 	for (const flag of ["--with-tickets", "--without-tickets", "--no-tickets"]) {
 		assert.throws(() => parseArgs([flag]), new RegExp(`unknown option: ${flag}`));
 	}
+});
+
+test("installer helpers no longer support the removed --no-pi-install opt-out", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	mkdirSync(homeDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	const stage0Help = spawnSync("bash", [join(repoRoot, "install.sh"), "--help"], {
+		cwd: repoRoot,
+		env: scrubInstallerEnv({ HOME: homeDir }),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	assert.equal(stage0Help.status, 0, stage0Help.stderr);
+	assert.match(stage0Help.stdout, /installed per-user under ~\/\.local when missing;/);
+	assert.doesNotMatch(stage0Help.stdout, /--no-pi-install/);
+
+	const stage0RemovedFlag = spawnSync("bash", [join(repoRoot, "install.sh"), "--no-pi-install"], {
+		cwd: repoRoot,
+		env: scrubInstallerEnv({ HOME: homeDir }),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	assert.notEqual(stage0RemovedFlag.status, 0);
+	assert.match(stage0RemovedFlag.stderr, /error: unknown option: --no-pi-install/);
+	assert.equal(stage0RemovedFlag.stdout, "");
+
+	assert.throws(() => parseArgs(["--no-pi-install"]), /unknown option: --no-pi-install/);
+	assert.doesNotMatch(usage(), /--no-pi-install/);
+
+	const updateHelp = spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-update.mjs"), "--help"], {
+		cwd: repoRoot,
+		env: scrubInstallerEnv({ HOME: homeDir }),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	assert.equal(updateHelp.status, 0, updateHelp.stderr);
+	assert.match(updateHelp.stdout, /Missing upstream Pi is installed per-user under ~\/\.local/);
+	assert.doesNotMatch(updateHelp.stdout, /--no-pi-install/);
+
+	const updateRemovedFlag = spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-update.mjs"), "--no-pi-install"], {
+		cwd: repoRoot,
+		env: scrubInstallerEnv({ HOME: homeDir }),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	assert.notEqual(updateRemovedFlag.status, 0);
+	assert.match(updateRemovedFlag.stderr, /Unknown option for tlh update: --no-pi-install/);
+	assert.equal(updateRemovedFlag.stdout, "");
 });
 
 test("stage-1 infers update track unless env or CLI overrides", (t) => {

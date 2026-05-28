@@ -138,3 +138,5 @@ That settings opt-out is preserved by `tlh update` and installer reruns.
 ## Prerequisites
 
 Node.js >=22.19.0 must be available on your `PATH`.
+
+TLH uses upstream Pi >=0.75.3; if `pi` is missing, the installer automatically adds a compatible per-user copy under `~/.local`.

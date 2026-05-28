@@ -3,8 +3,9 @@ set -euo pipefail
 
 REPO="${TLH_REPO:-diegopetrucci/the-last-harness}"
 REF="${TLH_REF:-main}"
-# Keep in sync with MIN_NODE_VERSION in scripts/tlh-install.mjs.
+# Keep in sync with MIN_NODE_VERSION and MIN_PI_VERSION in scripts/tlh-install.mjs.
 TLH_MIN_NODE_VERSION="22.19.0"
+TLH_MIN_PI_VERSION="0.75.3"
 
 DRY_RUN=false
 NO_SETTINGS=false
@@ -21,16 +22,22 @@ ORIGINAL_ARGS=("$@")
 TLH_SUBAGENT_PROMPTS=(developer.md code-reviewer.md repo-scout.md diff-summarizer.md librarian.md oracle.md web-scout.md)
 
 usage() {
-  cat <<'USAGE'
+  cat <<USAGE
 Usage: install.sh [options]
 
-Install upstream Pi and The Last Harness as a separate `tlh` command. Normal Pi
+Install upstream Pi and The Last Harness as a separate tlh command. Normal Pi
 config under ~/.pi/agent is not modified.
+
+Requirements:
+  Node.js >= ${TLH_MIN_NODE_VERSION} on PATH
+  Upstream Pi >= ${TLH_MIN_PI_VERSION} (installed per-user under ~/.local when missing;
+  install failures stop with an actionable error; older versions stop with an upgrade error)
+USAGE
+  cat <<'USAGE'
 
 Options:
   --dry-run        Print actions and settings/keybinding changes without writing
   --force          Allow scalar isolated defaults and installer wrapper overwrite
-  --no-pi-install  Fail instead of installing Pi when the `pi` command is missing
   --no-settings     Install the package but skip isolated settings/keybinding merge
   --no-wrapper      Skip creating the tlh wrapper command
   --agent-dir DIR   Isolated Pi agent dir (default: ~/.the-last-harness/agent)
@@ -272,7 +279,7 @@ while [[ $# -gt 0 ]]; do
       DRY_RUN=true
       shift
       ;;
-    --force|--no-pi-install)
+    --force)
       shift
       ;;
     --no-wrapper)

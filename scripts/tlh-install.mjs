@@ -58,7 +58,7 @@ import {
 
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
-// Keep in sync with TLH_MIN_NODE_VERSION in install.sh.
+// Keep in sync with TLH_MIN_NODE_VERSION and TLH_MIN_PI_VERSION in install.sh.
 const MIN_NODE_VERSION = "22.19.0";
 const MIN_PI_VERSION = "0.75.3";
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
@@ -105,10 +105,14 @@ function usage() {
 Stage-1 The Last Harness installer helper. It runs the normal install flow using
 an isolated Pi profile and installer-owned helper commands.
 
+Requirements:
+  Node.js >= ${MIN_NODE_VERSION} on PATH
+  Upstream Pi >= ${MIN_PI_VERSION} (installed per-user under ~/.local when missing;
+  install failures stop with an actionable error; older versions stop with an upgrade error)
+
 Options:
   --dry-run                  Print actions and settings/keybinding changes without writing
   --force                    Allow scalar isolated defaults and installer wrapper overwrite
-  --no-pi-install            Fail instead of installing Pi when the \`pi\` command is missing
   --no-settings              Install the package but skip isolated settings/keybinding merge
   --no-wrapper               Skip creating the tlh wrapper command
   --agent-dir DIR            Isolated Pi agent dir (default: ~/.the-last-harness/agent)
@@ -155,7 +159,6 @@ function parseArgs(argv, env = process.env) {
 		ref: env.TLH_REF || DEFAULT_REF,
 		dryRun: false,
 		force: false,
-		noPiInstall: false,
 		noSettings: false,
 		noWrapper: false,
 		quiet: false,
@@ -185,10 +188,6 @@ function parseArgs(argv, env = process.env) {
 		}
 		if (arg === "--force") {
 			args.force = true;
-			continue;
-		}
-		if (arg === "--no-pi-install") {
-			args.noPiInstall = true;
 			continue;
 		}
 		if (arg === "--no-settings") {
@@ -528,10 +527,6 @@ function installPiIfNeeded(config) {
 		assertSupportedPiVersion(config);
 		return false;
 	}
-	if (config.noPiInstall) {
-		throw new Error("pi is not installed and --no-pi-install was provided");
-	}
-
 	const prefix = piInstallPrefix(config);
 	const piBinDir = join(prefix, "bin");
 	log(config, `Installing Pi runtime to ${prefix} (per-user, no sudo)...`);

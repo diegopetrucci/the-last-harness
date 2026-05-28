@@ -2,7 +2,7 @@
 
 ## Install
 
-Requires Node.js >=22.19.0 on `PATH`. The installer checks this before downloading support files or invoking upstream Pi/npm.
+Requires Node.js >=22.19.0 on `PATH`. TLH uses upstream Pi >=0.75.3. If `pi` is missing, the installer adds a compatible per-user copy under `~/.local` and hard-fails with an actionable error if that install cannot complete. If `pi` is present but older than 0.75.3, install stops with an upgrade error instead of changing that existing runtime automatically.
 
 Run the one-liner:
 
@@ -36,7 +36,6 @@ These alternatives keep TLH isolated, but they are not the official latest stabl
 ```text
 --dry-run        Print actions and settings/keybinding changes without writing
 --force          Allow scalar isolated defaults and installer wrapper overwrite
---no-pi-install  Fail instead of installing Pi when the `pi` command is missing
 --no-settings     Install the package but skip isolated settings/keybinding merge
 --no-wrapper      Skip creating the tlh wrapper command
 --agent-dir DIR   Isolated Pi agent dir, default ~/.the-last-harness/agent
@@ -96,7 +95,7 @@ Run the one-liner from the release asset:
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/uninstall.sh | bash -s --
 ```
 
-The script removes the isolated agent dir under `~/.the-last-harness` (and the now-empty parent dir, if any), the `tlh` wrapper, and (when install-state indicates it) the global pi package. Normal Pi config at `~/.pi/agent` is never touched.
+The script removes the isolated agent dir under `~/.the-last-harness` (and the now-empty parent dir, if any), the `tlh` wrapper, and (when install-state indicates it) the TLH-installed per-user Pi package. Normal Pi config at `~/.pi/agent` is never touched.
 
 ### Uninstaller flags
 
@@ -118,7 +117,7 @@ The uninstaller prints its plan and then proceeds immediately — there is no co
 
 ### Pi removal decision
 
-At install time, TLH records `piInstalledByTlh` in `~/.the-last-harness/agent/tlh/install-state.json`. The uninstaller uses this field to decide whether to remove the global pi package, so a shared or pre-existing pi install is not accidentally removed. This field was added in this release; older installs that lack it default to leaving pi in place.
+At install time, TLH records `piInstalledByTlh` in `~/.the-last-harness/agent/tlh/install-state.json`. The uninstaller uses this field to decide whether to remove the TLH-installed per-user Pi package, so a shared or pre-existing pi install is not accidentally removed. This field was added in this release; older installs that lack it default to leaving pi in place.
 
 | Condition | pi removal |
 |---|---|
@@ -145,7 +144,7 @@ rm -f ~/.local/bin/tlh
 rm -rf ~/.the-last-harness
 ```
 
-This also removes the managed `tk` copy under the TLH profile if one was installed. To also remove the global pi package (only if you installed it solely for The Last Harness):
+This also removes the managed `tk` copy under the TLH profile if one was installed. To also remove the TLH-installed per-user Pi package (only if you installed it solely for The Last Harness):
 
 ```sh
 npm uninstall -g --prefix "$HOME/.local" @earendil-works/pi-coding-agent
@@ -155,4 +154,4 @@ TLH installs Pi per-user under `~/.local` (the binary lives at `~/.local/bin/pi`
 
 ## Security note
 
-The one-line installer and `tlh update` run shell commands on your machine, may install global npm packages for Pi and bundled default extensions, install managed Gnosis and `tk` binaries into the isolated TLH profile when needed, create an isolated Pi profile, and write a wrapper command. Managed `tk` is copied from the pinned `wedow/ticket` source tarball (`v0.3.2`) only after SHA-256 verification; TLH does not install `tk` globally or through Homebrew. Review `install.sh` and the stage-1 helper it fetches (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.
+The one-line installer and `tlh update` run shell commands on your machine, may install the upstream Pi npm package per-user under `~/.local` and bundled default extensions, install managed Gnosis and `tk` binaries into the isolated TLH profile when needed, create an isolated Pi profile, and write a wrapper command. Managed `tk` is copied from the pinned `wedow/ticket` source tarball (`v0.3.2`) only after SHA-256 verification; TLH does not install `tk` globally or through Homebrew. Review `install.sh` and the stage-1 helper it fetches (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.
