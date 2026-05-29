@@ -2,15 +2,17 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import test from "node:test";
 
-import { packageIdentity, readDefaultExtensions } from "../scripts/lib/default-extensions.mjs";
+import { DefaultPackageManager } from "@earendil-works/pi-coding-agent";
+import { embeddedDefaultExtensionFilter, packageIdentity, readDefaultExtensions } from "../scripts/lib/default-extensions.mjs";
 import { installableSupportFiles } from "../scripts/lib/tlh-install-support-manifest.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
 const defaultsScript = join(repoRoot, "scripts", "tlh-defaults.mjs");
+const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
 
 function tempFixture() {
 	const dir = mkdtempSync(join(tmpdir(), "tlh-defaults-test-"));
@@ -35,6 +37,30 @@ function readJson(path) {
 
 function packageSourceOf(entry) {
 	return typeof entry === "string" ? entry : entry?.source;
+}
+
+function toPosixRelativePath(root, path) {
+	return relative(root, path).split("\\").join("/");
+}
+
+async function resolvePackageExtensions(packages, cwd = mkdtempSync(join(tmpdir(), "tlh-pi-resolve-"))) {
+	const settingsManager = {
+		getGlobalSettings() {
+			return { packages };
+		},
+		getProjectSettings() {
+			return {};
+		},
+	};
+	const packageManager = new DefaultPackageManager({
+		cwd,
+		agentDir: cwd,
+		settingsManager,
+	});
+	return (await packageManager.resolve()).extensions.map((entry) => ({
+		...entry,
+		relativePath: toPosixRelativePath(repoRoot, entry.path),
+	}));
 }
 
 const disablingExtensionFilterCases = [
@@ -75,6 +101,8 @@ test("shared default-extension reader trims descriptions and can allow missing m
 			critical: false,
 			source: "npm:helper",
 			description: "Helpful default",
+			embeddedEntry: undefined,
+			embeddedVersion: undefined,
 		},
 	]);
 	assert.deepEqual(readDefaultExtensions(join(fixture.dir, "missing-default-extensions.json"), { allowMissing: true }), []);
@@ -84,14 +112,18 @@ test("shared default-extension reader trims descriptions and can allow missing m
 	);
 });
 
-test("bundled manifest keeps confirm-destructive plus quiet-tools-compatible rtk load order", () => {
+test("bundled manifest embeds the five pilot defaults and keeps quiet-tools-compatible rtk load order", () => {
 	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
 	const ids = bundled.map(({ id }) => id);
 	const rtk = bundled.find(({ id }) => id === "rtk");
 	const confirmDestructive = bundled.find(({ id }) => id === "confirm-destructive");
+	const embeddedIds = bundled.filter(({ embeddedEntry }) => typeof embeddedEntry === "string").map(({ id }) => id);
 
+	assert.deepEqual(embeddedIds, ["inline-bash", "notify", "context-cap", "confirm-destructive", "dirty-repo-guard"]);
 	assert.ok(confirmDestructive, "bundled confirm-destructive default should exist");
 	assert.equal(confirmDestructive.source, "npm:@diegopetrucci/pi-confirm-destructive");
+	assert.equal(confirmDestructive.embeddedEntry, "extensions/embedded-defaults/confirm-destructive/index.ts");
+	assert.equal(confirmDestructive.embeddedVersion, "0.1.2");
 	assert.equal(ids.includes("permission-gate"), false);
 	assert.ok(rtk, "bundled rtk default should exist");
 	assert.deepEqual(rtk.aliases, ["pi-rtk"]);
@@ -104,6 +136,33 @@ test("bundled manifest keeps confirm-destructive plus quiet-tools-compatible rtk
 	assert.equal(rtk.critical, false);
 	assert.equal(rtk.source, "git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5");
 	assert(ids.indexOf("rtk") < ids.indexOf("quiet-tools"), "quiet-tools should load after rtk");
+});
+
+test("Pi package resolution exposes embedded defaults at the exact TLH opt-out filter paths", async () => {
+	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
+	const embeddedDefaults = bundled.filter(({ embeddedEntry }) => typeof embeddedEntry === "string");
+	const notify = embeddedDefaults.find(({ id }) => id === "notify");
+
+	assert.ok(notify, "bundled notify default should exist");
+	const resolvedExtensions = await resolvePackageExtensions([
+		{
+			source: repoRoot,
+			extensions: [embeddedDefaultExtensionFilter(notify)],
+		},
+	]);
+	const embeddedEntriesByPath = new Map(
+		resolvedExtensions
+			.filter(({ relativePath }) => relativePath === "extensions/the-last-harness.ts" || relativePath.startsWith("extensions/embedded-defaults/"))
+			.map(({ relativePath, enabled }) => [relativePath, enabled]),
+	);
+
+	assert.equal(embeddedEntriesByPath.get("extensions/the-last-harness.ts"), true);
+	assert.equal(embeddedEntriesByPath.get(notify.embeddedEntry), false);
+	assert.equal(embeddedEntriesByPath.has("extensions/embedded-defaults/notify"), false);
+	for (const extension of embeddedDefaults) {
+		if (extension.id === notify.id) continue;
+		assert.equal(embeddedEntriesByPath.get(extension.embeddedEntry), true, `${extension.id} should resolve at ${extension.embeddedEntry}`);
+	}
 });
 
 test("tlh-defaults errors when the default-extension manifest is missing", () => {
@@ -734,6 +793,149 @@ test("merge does not introduce warnings.anthropicExtraUsage when anthropic-auth 
 	const settings = readJson(fixture.settings);
 	assert.equal(settings.warnings?.anthropicExtraUsage, undefined, "warnings.anthropicExtraUsage should not be introduced by merge");
 	assert.equal(settings.warnings, undefined, "warnings object should not be created by merge");
+});
+
+test("merge removes legacy embedded packages and canonicalizes TLH embedded default filters", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "notify",
+			source: "npm:@diegopetrucci/pi-notify",
+			embeddedEntry: "extensions/embedded-defaults/notify/index.ts",
+		},
+		{
+			id: "context-cap",
+			source: "npm:@diegopetrucci/pi-context-cap",
+			embeddedEntry: "extensions/embedded-defaults/context-cap/index.ts",
+		},
+		{
+			id: "helper",
+			source: "npm:helper",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [
+			{
+				source: harnessPackage,
+				extensions: [
+					"keep-me",
+					"-extensions/embedded-defaults/notify/index.ts",
+					"-extensions/embedded-defaults/notify/index.ts",
+					"-extensions/embedded-defaults/context-cap/index.ts",
+				],
+				owner: "preserve",
+			},
+			"npm:@diegopetrucci/pi-notify",
+			"npm:@diegopetrucci/pi-context-cap",
+		],
+		tlh: { disabledDefaultExtensions: ["context-cap"] },
+	}, null, 2));
+
+	runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", fixture.extensions,
+		"--quiet",
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.packages, [
+		{
+			source: harnessPackage,
+			extensions: [
+				"keep-me",
+				"-extensions/embedded-defaults/context-cap/index.ts",
+			],
+			owner: "preserve",
+		},
+		"npm:helper",
+	]);
+	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["context-cap"]);
+});
+
+test("tlh-defaults disable and enable embedded defaults preserve unrelated TLH package filters", () => {
+	const fixture = tempFixture();
+	const customHarnessPackage = join(fixture.dir, "the-last-harness-local");
+	const installStatePath = join(fixture.dir, "tlh", "install-state.json");
+	mkdirSync(dirname(installStatePath), { recursive: true });
+	writeFileSync(installStatePath, JSON.stringify({ packageSource: customHarnessPackage }, null, 2));
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "notify",
+			source: "npm:@diegopetrucci/pi-notify",
+			embeddedEntry: "extensions/embedded-defaults/notify/index.ts",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [{
+			source: customHarnessPackage,
+			extensions: ["keep-me"],
+			owner: "preserve",
+		}],
+	}, null, 2));
+
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"disable", "notify",
+	]);
+	assert.deepEqual(readJson(fixture.settings), {
+		packages: [{
+			source: customHarnessPackage,
+			extensions: ["keep-me", "-extensions/embedded-defaults/notify/index.ts"],
+			owner: "preserve",
+		}],
+		tlh: { disabledDefaultExtensions: ["notify"] },
+	});
+
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"enable", "notify",
+	]);
+	assert.deepEqual(readJson(fixture.settings), {
+		packages: [{
+			source: customHarnessPackage,
+			extensions: ["keep-me"],
+			owner: "preserve",
+		}],
+		tlh: { disabledDefaultExtensions: [] },
+	});
+});
+
+test("tlh-defaults sources omit embedded defaults while keeping non-embedded and critical defaults", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "notify",
+			source: "npm:@diegopetrucci/pi-notify",
+			embeddedEntry: "extensions/embedded-defaults/notify/index.ts",
+		},
+		{
+			id: "helper",
+			source: "npm:helper",
+		},
+		{
+			id: "critical",
+			critical: true,
+			source: "git:github.com/tlh/critical@pin",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [harnessPackage, "npm:helper", "git:github.com/tlh/critical@pin"],
+	}, null, 2));
+
+	const sources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "sources"])
+		.trim()
+		.split("\n")
+		.filter(Boolean);
+	assert.deepEqual(sources, ["npm:helper", "git:github.com/tlh/critical@pin"]);
+
+	const criticalSources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "critical-sources"])
+		.trim()
+		.split("\n")
+		.filter(Boolean);
+	assert.deepEqual(criticalSources, ["git:github.com/tlh/critical@pin"]);
 });
 
 test("bundled manifest contains pi-web-access entry with correct tag and defer flags", () => {

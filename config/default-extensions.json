@@ -44,16 +44,22 @@
   {
     "id": "inline-bash",
     "source": "npm:@diegopetrucci/pi-inline-bash",
+    "embeddedEntry": "extensions/embedded-defaults/inline-bash/index.ts",
+    "embeddedVersion": "0.1.1",
     "description": "Expand inline bash commands in user prompts."
   },
   {
     "id": "notify",
     "source": "npm:@diegopetrucci/pi-notify",
+    "embeddedEntry": "extensions/embedded-defaults/notify/index.ts",
+    "embeddedVersion": "0.1.4",
     "description": "Send a notification when an agent turn finishes."
   },
   {
     "id": "context-cap",
     "source": "npm:@diegopetrucci/pi-context-cap",
+    "embeddedEntry": "extensions/embedded-defaults/context-cap/index.ts",
+    "embeddedVersion": "0.1.1",
     "description": "Keep context usage under a configured cap."
   },
   {
@@ -64,6 +70,8 @@
   {
     "id": "confirm-destructive",
     "source": "npm:@diegopetrucci/pi-confirm-destructive",
+    "embeddedEntry": "extensions/embedded-defaults/confirm-destructive/index.ts",
+    "embeddedVersion": "0.1.2",
     "description": "Confirm destructive shell/file operations before they run."
   },
   {
@@ -84,6 +92,8 @@
   {
     "id": "dirty-repo-guard",
     "source": "npm:@diegopetrucci/pi-dirty-repo-guard",
+    "embeddedEntry": "extensions/embedded-defaults/dirty-repo-guard/index.ts",
+    "embeddedVersion": "0.1.1",
     "description": "Prompt before session changes when the current git repo has uncommitted changes."
   },
   {

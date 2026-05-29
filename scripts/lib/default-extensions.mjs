@@ -36,6 +36,15 @@ function readBooleanField(entry, key, label) {
 	return entry[key];
 }
 
+function readOptionalStringField(entry, key, label) {
+	if (entry[key] === undefined) return undefined;
+	if (typeof entry[key] !== "string") {
+		throw new Error(`Default extension ${label} field '${key}' must be a string`);
+	}
+	const value = entry[key].trim();
+	return value || undefined;
+}
+
 function npmIdentity(spec) {
 	const withoutPrefix = spec.slice("npm:".length).trim();
 	if (!withoutPrefix) return spec;
@@ -96,6 +105,7 @@ export function readDefaultExtensions(path, { allowMissing = false } = {}) {
 
 	const seenIds = new Set();
 	const seenSources = new Set();
+	const seenEmbeddedEntries = new Set();
 	return raw.map((entry, index) => {
 		if (!isPlainObject(entry)) {
 			throw new Error(`Default extension entry ${index + 1} must be an object`);
@@ -107,6 +117,11 @@ export function readDefaultExtensions(path, { allowMissing = false } = {}) {
 		const replaces = readStringArrayField(entry, "replaces", id || String(index + 1));
 		const migrateReplacements = readBooleanField(entry, "migrateReplacements", id || String(index + 1));
 		const critical = readBooleanField(entry, "critical", id || String(index + 1));
+		const embeddedEntry = readOptionalStringField(entry, "embeddedEntry", id || String(index + 1));
+		const embeddedVersion = readOptionalStringField(entry, "embeddedVersion", id || String(index + 1));
+		if (embeddedEntry && seenEmbeddedEntries.has(embeddedEntry)) {
+			throw new Error(`Duplicate default extension embeddedEntry: ${embeddedEntry}`);
+		}
 		if (!id) throw new Error(`Default extension entry ${index + 1} is missing id`);
 		if (!source) throw new Error(`Default extension ${id} is missing source`);
 		for (const candidateId of [id, ...aliases]) {
@@ -115,8 +130,17 @@ export function readDefaultExtensions(path, { allowMissing = false } = {}) {
 		}
 		if (seenSources.has(packageIdentity(source))) throw new Error(`Duplicate default extension source: ${source}`);
 		seenSources.add(packageIdentity(source));
-		return { id, aliases, replaces, migrateReplacements, critical, source, description };
+		if (embeddedEntry) seenEmbeddedEntries.add(embeddedEntry);
+		return { id, aliases, replaces, migrateReplacements, critical, source, description, embeddedEntry, embeddedVersion };
 	});
+}
+
+export function isEmbeddedDefaultExtension(extension) {
+	return typeof extension?.embeddedEntry === "string" && extension.embeddedEntry.length > 0;
+}
+
+export function embeddedDefaultExtensionFilter(extension) {
+	return isEmbeddedDefaultExtension(extension) ? `-${extension.embeddedEntry}` : undefined;
 }
 
 function rawDisabledDefaultExtensionIds(settings) {

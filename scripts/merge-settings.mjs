@@ -9,6 +9,8 @@ import {
 	criticalDefaultExtensionOptOutIds,
 	defaultExtensionPackageIdentities,
 	disabledDefaultExtensionIds,
+	embeddedDefaultExtensionFilter,
+	isEmbeddedDefaultExtension,
 	packageIdentity,
 	packageSourceOf,
 	readDefaultExtensions,
@@ -143,9 +145,73 @@ function shouldMigrateDefaultExtensionReplacements(extension, { force }) {
 }
 
 function shouldEnsureDefaultExtensionSource(existingPackages, extension, { force }) {
+	if (isEmbeddedDefaultExtension(extension)) return false;
 	if (shouldMigrateDefaultExtensionReplacements(extension, { force })) return true;
 	if (packageIdentityExists(existingPackages, packageIdentity(extension.source))) return true;
 	return !extension.replaces.some((oldSource) => packageIdentityExists(existingPackages, packageIdentity(oldSource)));
+}
+
+function embeddedDefaultExtensionFilters(defaultExtensions, disabledIds) {
+	return defaultExtensions
+		.filter((extension) => isEmbeddedDefaultExtension(extension) && disabledIds.has(extension.id))
+		.map((extension) => embeddedDefaultExtensionFilter(extension))
+		.filter(Boolean);
+}
+
+function embeddedDefaultExtensionFilterSet(defaultExtensions) {
+	return new Set(
+		defaultExtensions
+			.filter(isEmbeddedDefaultExtension)
+			.map((extension) => embeddedDefaultExtensionFilter(extension))
+			.filter(Boolean),
+	);
+}
+
+function packageEntryWithEmbeddedDefaultFilters(entry, packageSource, filters, knownEmbeddedFilters) {
+	const currentSource = packageSourceOf(entry) || packageSource;
+	const next = isPlainObject(entry) ? clone(entry) : { source: currentSource };
+	const currentExtensions = Array.isArray(next.extensions) ? [...next.extensions] : [];
+	const unrelatedExtensions = currentExtensions.filter(
+		(value) => typeof value !== "string" || !knownEmbeddedFilters.has(value.trim()),
+	);
+	const nextExtensions = [...unrelatedExtensions, ...filters];
+	if (nextExtensions.length > 0) {
+		next.extensions = nextExtensions;
+	} else {
+		delete next.extensions;
+	}
+	return Object.keys(next).length === 1 && typeof next.source === "string" ? next.source : next;
+}
+
+function applyEmbeddedDefaultExtensionSelections(settings, packageSource, defaultExtensions, disabledIds, changes) {
+	if (!Array.isArray(settings.packages)) return;
+
+	const embeddedExtensions = defaultExtensions.filter(isEmbeddedDefaultExtension);
+	for (const extension of embeddedExtensions) {
+		const removedSources = [];
+		for (const identity of defaultExtensionPackageIdentities(extension)) {
+			let removedSource;
+			while ((removedSource = removePackageByIdentity(settings, identity))) {
+				removedSources.push(removedSource);
+			}
+		}
+		if (removedSources.length > 0) {
+			changes.push(`remove legacy embedded default extension package: ${extension.id}`);
+		}
+	}
+
+	const harnessIdentity = packageIdentity(packageSource);
+	if (!harnessIdentity) return;
+	const harnessIndex = settings.packages.findIndex((entry) => packageIdentity(entry) === harnessIdentity);
+	if (harnessIndex === -1) return;
+
+	const desiredFilters = embeddedDefaultExtensionFilters(defaultExtensions, disabledIds);
+	const knownEmbeddedFilters = embeddedDefaultExtensionFilterSet(defaultExtensions);
+	const currentEntry = settings.packages[harnessIndex];
+	const nextEntry = packageEntryWithEmbeddedDefaultFilters(currentEntry, packageSource, desiredFilters, knownEmbeddedFilters);
+	if (JSON.stringify(currentEntry) === JSON.stringify(nextEntry)) return;
+	settings.packages[harnessIndex] = nextEntry;
+	changes.push("reconcile TLH embedded default extension filters");
 }
 
 function prepareDefaults(defaults, packageSource, defaultExtensions, disabledIds, existingSettings, { force }) {
@@ -220,6 +286,7 @@ function applyReplacedDefaultExtensions(settings, defaultExtensions, disabledIds
 	if (!Array.isArray(settings.packages)) return;
 
 	for (const extension of defaultExtensions) {
+		if (isEmbeddedDefaultExtension(extension)) continue;
 		if (!shouldMigrateDefaultExtensionReplacements(extension, { force })) continue;
 		if (disabledIds.has(extension.id)) continue;
 		const newIdentity = packageIdentity(extension.source);
@@ -238,6 +305,7 @@ function applyDefaultExtensionPackageDedupes(settings, defaultExtensions, disabl
 	if (!Array.isArray(settings.packages)) return;
 
 	for (const extension of defaultExtensions) {
+		if (isEmbeddedDefaultExtension(extension)) continue;
 		const identity = packageIdentity(extension.source);
 		if (!shouldMigrateDefaultExtensionReplacements(extension, { force }) && !sourceUpdatedIdentities.has(identity)) continue;
 		if (disabledIds.has(extension.id)) continue;
@@ -253,6 +321,7 @@ function applyDefaultExtensionSourceUpdates(settings, defaultExtensions, disable
 	if (!Array.isArray(settings.packages)) return updatedIdentities;
 
 	for (const extension of defaultExtensions) {
+		if (isEmbeddedDefaultExtension(extension)) continue;
 		if (!force && extension.critical !== true) continue;
 		if (disabledIds.has(extension.id)) continue;
 		const identity = packageIdentity(extension.source);
@@ -295,6 +364,7 @@ function applyDisabledDefaultExtensions(settings, defaultExtensions, disabledIds
 	if (disabledIds.size === 0 || !Array.isArray(settings.packages)) return;
 
 	for (const extension of defaultExtensions) {
+		if (isEmbeddedDefaultExtension(extension)) continue;
 		if (!disabledIds.has(extension.id)) continue;
 		const removedSources = [];
 		for (const identity of defaultExtensionPackageIdentities(extension)) {
@@ -513,12 +583,14 @@ function main() {
 	const rawDefaults = readJsonFile(defaultsPath);
 	const defaultExtensions = readDefaultExtensions(defaultExtensionsPath, { allowMissing: true });
 	const disabledIds = disabledDefaultExtensionIds(existing, defaultExtensions);
-	const defaults = prepareDefaults(rawDefaults, args.packageSource, defaultExtensions, disabledIds, existing, { force: args.force });
+	const ensuredSource = args.packageSource || DEFAULT_PACKAGE_SOURCE;
+	const defaults = prepareDefaults(rawDefaults, ensuredSource, defaultExtensions, disabledIds, existing, { force: args.force });
 	const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
 	const sourceUpdatedIdentities = applyDefaultExtensionSourceUpdates(next, defaultExtensions, disabledIds, changes, { force: args.force });
 	applyReplacedDefaultExtensions(next, defaultExtensions, disabledIds, changes, { force: args.force });
 	applyDefaultExtensionPackageDedupes(next, defaultExtensions, disabledIds, changes, { force: args.force, sourceUpdatedIdentities });
 	applyDisabledDefaultExtensions(next, defaultExtensions, disabledIds, changes);
+	applyEmbeddedDefaultExtensionSelections(next, ensuredSource, defaultExtensions, disabledIds, changes);
 	applyDefaultExtensionLoadOrder(next, defaultExtensions, disabledIds, changes);
 	removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
 	scrubGnosisSettings(next, changes);

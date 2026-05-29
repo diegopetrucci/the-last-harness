@@ -7,6 +7,8 @@ import process from "node:process";
 
 import {
 	disabledDefaultExtensionIds as disabledIdsFromSettings,
+	embeddedDefaultExtensionFilter,
+	isEmbeddedDefaultExtension,
 	packageIdentity,
 	packageSourceOf,
 	readDefaultExtensions,
@@ -21,6 +23,7 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const DEFAULT_PACKAGE_SOURCE = "git:github.com/diegopetrucci/the-last-harness";
 
 function usage() {
 	return `Usage: tlh defaults <command>
@@ -107,12 +110,52 @@ function defaultDefaultExtensionsPath() {
 	return join(resolve(__dirname, ".."), "config", "default-extensions.json");
 }
 
+function defaultInstallStatePath(settingsPath) {
+	return join(dirname(settingsPath), "tlh", "install-state.json");
+}
+
 function isPlainObject(value) {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function clone(value) {
 	return JSON.parse(JSON.stringify(value));
+}
+
+function embeddedDefaultExtensionFilterSet(defaultExtensions) {
+	return new Set(
+		defaultExtensions
+			.filter(isEmbeddedDefaultExtension)
+			.map((extension) => embeddedDefaultExtensionFilter(extension))
+			.filter(Boolean),
+	);
+}
+
+function detectHarnessPackageSourceFromSettings(settings, defaultExtensions) {
+	const knownEmbeddedFilters = embeddedDefaultExtensionFilterSet(defaultExtensions);
+	for (const entry of settings.packages ?? []) {
+		if (!isPlainObject(entry) || !Array.isArray(entry.extensions)) continue;
+		if (entry.extensions.some((value) => typeof value === "string" && knownEmbeddedFilters.has(value.trim()))) {
+			return packageSourceOf(entry);
+		}
+	}
+	const defaultIdentity = packageIdentity(DEFAULT_PACKAGE_SOURCE);
+	for (const entry of settings.packages ?? []) {
+		if (packageIdentity(entry) === defaultIdentity) return packageSourceOf(entry);
+	}
+	for (const entry of settings.packages ?? []) {
+		const source = packageSourceOf(entry);
+		if (typeof source === "string" && source.includes("the-last-harness")) return source;
+	}
+	return undefined;
+}
+
+function resolveHarnessPackageSource(settingsPath, settings, defaultExtensions) {
+	const installState = readJsonFile(defaultInstallStatePath(settingsPath), { missingValue: {} });
+	if (typeof installState?.packageSource === "string" && installState.packageSource.trim()) {
+		return installState.packageSource.trim();
+	}
+	return detectHarnessPackageSourceFromSettings(settings, defaultExtensions) || DEFAULT_PACKAGE_SOURCE;
 }
 
 function packageEntryDisablesExtensions(entry) {
@@ -190,6 +233,40 @@ function removeDuplicatePackagesAfterIndex(settings, identity, firstIndex) {
 	}
 }
 
+function packageEntryWithEmbeddedDefaultFilters(entry, packageSource, filters, knownEmbeddedFilters) {
+	const currentSource = packageSourceOf(entry) || packageSource;
+	const next = isPlainObject(entry) ? clone(entry) : { source: currentSource };
+	const currentExtensions = Array.isArray(next.extensions) ? [...next.extensions] : [];
+	const unrelatedExtensions = currentExtensions.filter(
+		(value) => typeof value !== "string" || !knownEmbeddedFilters.has(value.trim()),
+	);
+	const nextExtensions = [...unrelatedExtensions, ...filters];
+	if (nextExtensions.length > 0) {
+		next.extensions = nextExtensions;
+	} else {
+		delete next.extensions;
+	}
+	return Object.keys(next).length === 1 && typeof next.source === "string" ? next.source : next;
+}
+
+function updateHarnessEmbeddedDefaultFilters(settings, defaultExtensions, disabledIds, harnessPackageSource) {
+	const harnessIdentity = packageIdentity(harnessPackageSource);
+	if (!harnessIdentity) return false;
+	const harnessIndex = settings.packages.findIndex((entry) => packageIdentity(entry) === harnessIdentity);
+	if (harnessIndex === -1) return false;
+
+	const desiredFilters = defaultExtensions
+		.filter((extension) => isEmbeddedDefaultExtension(extension) && disabledIds.has(extension.id))
+		.map((extension) => embeddedDefaultExtensionFilter(extension))
+		.filter(Boolean);
+	const knownEmbeddedFilters = embeddedDefaultExtensionFilterSet(defaultExtensions);
+	const currentEntry = settings.packages[harnessIndex];
+	const nextEntry = packageEntryWithEmbeddedDefaultFilters(currentEntry, harnessPackageSource, desiredFilters, knownEmbeddedFilters);
+	if (JSON.stringify(currentEntry) === JSON.stringify(nextEntry)) return false;
+	settings.packages[harnessIndex] = nextEntry;
+	return true;
+}
+
 function replacedPackageSource(settings, extension) {
 	for (const oldSource of extension.replaces) {
 		const source = findPackageSource(settings, oldSource);
@@ -199,6 +276,7 @@ function replacedPackageSource(settings, extension) {
 }
 
 function isDefaultSourceDeferred(settings, extension) {
+	if (isEmbeddedDefaultExtension(extension)) return false;
 	return extension.migrateReplacements !== true
 		&& findPackageIndex(settings, extension.source) === -1
 		&& Boolean(replacedPackageSource(settings, extension));
@@ -206,51 +284,56 @@ function isDefaultSourceDeferred(settings, extension) {
 
 function isDefaultDisabled(settings, extension, defaultExtensions) {
 	if (disabledIdsFromSettings(settings, defaultExtensions).has(extension.id)) return true;
-	if (extension.critical === true) return false;
+	if (extension.critical === true || isEmbeddedDefaultExtension(extension)) return false;
 	const index = findPackageIndex(settings, extension.source);
 	if (index === -1) return false;
 	return packageEntryDisablesExtensions(settings.packages[index]);
 }
 
-function disablePackage(settings, extension) {
+function disablePackage(settings, extension, defaultExtensions, harnessPackageSource) {
 	for (const source of [extension.source, ...extension.replaces]) {
 		removePackage(settings, source);
 	}
+	if (!isEmbeddedDefaultExtension(extension)) return false;
+	return updateHarnessEmbeddedDefaultFilters(settings, defaultExtensions, disabledIdsFromSettings(settings, defaultExtensions), harnessPackageSource);
 }
 
-function enablePackage(settings, extension) {
+function enablePackage(settings, extension, defaultExtensions, harnessPackageSource) {
 	for (const oldSource of extension.replaces) {
 		removePackage(settings, oldSource);
+	}
+	if (isEmbeddedDefaultExtension(extension)) {
+		return updateHarnessEmbeddedDefaultFilters(settings, defaultExtensions, disabledIdsFromSettings(settings, defaultExtensions), harnessPackageSource);
 	}
 
 	const identity = packageIdentity(extension.source);
 	const index = findPackageIndex(settings, extension.source);
 	if (index === -1) {
 		settings.packages.push(extension.source);
-		return;
+		return true;
 	}
 
 	removeDuplicatePackagesAfterIndex(settings, identity, index);
 	const current = settings.packages[index];
 	if (!isPlainObject(current)) {
-		return;
+		return false;
 	}
 
 	const next = { ...clone(current), source: packageSourceOf(current) || extension.source };
 	delete next.extensions;
-	if (Object.keys(next).length === 1 && typeof next.source === "string") {
-		settings.packages[index] = next.source;
-	} else {
-		settings.packages[index] = next;
-	}
+	settings.packages[index] = Object.keys(next).length === 1 && typeof next.source === "string" ? next.source : next;
+	return true;
 }
 
 function defaultStatus(settings, extension, defaultExtensions) {
 	const markerDisabled = disabledIdsFromSettings(settings, defaultExtensions).has(extension.id);
+	if (markerDisabled) return { enabled: false, reason: "disabled" };
+	if (isEmbeddedDefaultExtension(extension)) {
+		return { enabled: true, reason: "enabled from the TLH package" };
+	}
 	const packageIndex = findPackageIndex(settings, extension.source);
 	const entry = packageIndex === -1 ? undefined : settings.packages[packageIndex];
 	const configuredSource = entry ? packageSourceOf(entry) : undefined;
-	if (markerDisabled) return { enabled: false, reason: "disabled" };
 	if (extension.critical !== true && entry && packageEntryDisablesExtensions(entry)) return { enabled: false, reason: "disabled by package filter" };
 	if (entry && configuredSource && configuredSource !== extension.source) {
 		return { enabled: true, reason: `enabled with configured package (${configuredSource})` };
@@ -327,6 +410,7 @@ function commandList(settings, defaultExtensions) {
 function enabledDefaultExtensionProfiles(settings, defaultExtensions) {
 	const profiles = [];
 	for (const extension of defaultExtensions) {
+		if (isEmbeddedDefaultExtension(extension)) continue;
 		if (isDefaultSourceDeferred(settings, extension)) continue;
 		if (extension.critical === true) {
 			profiles.push({
@@ -375,7 +459,7 @@ function applyAnthropicWarningOnEnable(settings) {
 	return true;
 }
 
-function commandDisable(settings, defaultExtensions, id) {
+function commandDisable(settings, defaultExtensions, id, harnessPackageSource) {
 	const extension = assertKnownExtension(defaultExtensions, id);
 	if (extension.critical === true) {
 		throw new Error(`Critical default extension '${extension.id}' cannot be disabled.`);
@@ -383,19 +467,19 @@ function commandDisable(settings, defaultExtensions, id) {
 	const disabledIds = disabledIdsFromSettings(settings, defaultExtensions);
 	disabledIds.add(extension.id);
 	setDisabledIds(settings, disabledIds, defaultExtensions);
-	disablePackage(settings, extension);
+	disablePackage(settings, extension, defaultExtensions, harnessPackageSource);
 	if (extension.id === "anthropic-auth") {
 		return applyAnthropicWarningOnDisable(settings);
 	}
 	return false;
 }
 
-function commandEnable(settings, defaultExtensions, id) {
+function commandEnable(settings, defaultExtensions, id, harnessPackageSource) {
 	const extension = assertKnownExtension(defaultExtensions, id);
 	const disabledIds = disabledIdsFromSettings(settings, defaultExtensions);
 	disabledIds.delete(extension.id);
 	setDisabledIds(settings, disabledIds, defaultExtensions);
-	enablePackage(settings, extension);
+	enablePackage(settings, extension, defaultExtensions, harnessPackageSource);
 	repairTargetedDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds);
 	if (extension.id === "anthropic-auth") {
 		return applyAnthropicWarningOnEnable(settings);
@@ -417,6 +501,7 @@ function main() {
 	const defaultExtensions = readDefaultExtensions(defaultExtensionsPath);
 	const { settings, previousRaw } = loadSettings(settingsPath);
 	validateSettings(settings);
+	const harnessPackageSource = resolveHarnessPackageSource(settingsPath, settings, defaultExtensions);
 
 	if (args.command === "list") {
 		commandList(settings, defaultExtensions);
@@ -437,7 +522,7 @@ function main() {
 		const id = args.commandArgs[0];
 		if (!id || args.commandArgs.length !== 1) throw new Error("Usage: tlh defaults disable <id>");
 		const before = JSON.stringify(settings);
-		const warningChanged = commandDisable(settings, defaultExtensions, id);
+		const warningChanged = commandDisable(settings, defaultExtensions, id, harnessPackageSource);
 		const changed = before !== JSON.stringify(settings);
 		const backupPath = changed ? writeSettings(settingsPath, settings, previousRaw) : undefined;
 		console.log(`${id} is disabled for the tlh profile.`);
@@ -451,7 +536,7 @@ function main() {
 		const id = args.commandArgs[0];
 		if (!id || args.commandArgs.length !== 1) throw new Error("Usage: tlh defaults enable <id>");
 		const before = JSON.stringify(settings);
-		const warningChanged = commandEnable(settings, defaultExtensions, id);
+		const warningChanged = commandEnable(settings, defaultExtensions, id, harnessPackageSource);
 		const changed = before !== JSON.stringify(settings);
 		const backupPath = changed ? writeSettings(settingsPath, settings, previousRaw) : undefined;
 		console.log(`${id} is enabled for the tlh profile.`);

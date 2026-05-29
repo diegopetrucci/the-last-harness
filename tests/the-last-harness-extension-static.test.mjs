@@ -11,6 +11,7 @@ const PI_EXTENSION_FILE_ENTRYPOINT_EXTENSIONS = new Set([".ts", ".js"]);
 const PI_EXTENSION_DIRECTORY_ENTRYPOINT_FILES = ["package.json", "index.ts", "index.js"];
 
 const extensionSource = readFileSync(new URL("../extensions/the-last-harness.ts", import.meta.url), "utf8");
+const embeddedDefaultsManifest = JSON.parse(readFileSync(new URL("../extensions/embedded-defaults/package.json", import.meta.url), "utf8"));
 const changelogSource = readFileSync(new URL("../extensions/the-last-harness/changelog.ts", import.meta.url), "utf8");
 const primaryRuntimeSource = readFileSync(new URL("../extensions/the-last-harness/primary-agent-runtime.ts", import.meta.url), "utf8");
 const ticketRuntimeSource = readFileSync(new URL("../extensions/the-last-harness/tickets.ts", import.meta.url), "utf8");
@@ -59,10 +60,18 @@ function existingNestedExtensionEntrypoints(directoryName) {
 	);
 }
 
-test("package extension discovery exposes only the top-level TLH entrypoint", () => {
+test("package extension discovery exposes the top-level TLH entrypoint plus the embedded-default manifest", () => {
 	assert.deepEqual(packageJson.pi?.extensions, ["./extensions"]);
 	assert.deepEqual(existingNestedExtensionEntrypoints("the-last-harness"), []);
-	assert.deepEqual(discoverPiExtensionEntrypoints(extensionsDir), ["the-last-harness.ts"]);
+	assert.deepEqual(existingNestedExtensionEntrypoints("embedded-defaults"), ["embedded-defaults/package.json"]);
+	assert.deepEqual(discoverPiExtensionEntrypoints(extensionsDir), ["embedded-defaults/package.json", "the-last-harness.ts"]);
+	assert.deepEqual(embeddedDefaultsManifest.pi?.extensions, [
+		"./confirm-destructive/index.ts",
+		"./dirty-repo-guard/index.ts",
+		"./inline-bash/index.ts",
+		"./context-cap/index.ts",
+		"./notify/index.ts",
+	]);
 });
 
 test("before_agent_start reapplies primary defaults without a one-shot model gate", () => {

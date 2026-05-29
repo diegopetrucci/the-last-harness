@@ -209,6 +209,41 @@ test("critical source updates dedupe stale same-identity filtered packages", () 
 	]);
 });
 
+test("merge preserves unrelated TLH package filters when no embedded default filters remain", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				{
+					source: harnessPackage,
+					extensions: [
+						"keep-me",
+						"-extensions/embedded-defaults/notify/index.ts",
+					],
+					owner: "preserve",
+				},
+			],
+			tlh: { disabledDefaultExtensions: [] },
+		},
+		[
+			{
+				id: "notify",
+				source: "npm:@diegopetrucci/pi-notify",
+				embeddedEntry: "extensions/embedded-defaults/notify/index.ts",
+			},
+		],
+	);
+
+	runMerge(fixture);
+
+	assert.deepEqual(readJson(fixture.settings).packages, [
+		{
+			source: harnessPackage,
+			extensions: ["keep-me"],
+			owner: "preserve",
+		},
+	]);
+});
 
 test("merge defers bundled pi-web-access when an upstream package is already installed", () => {
 	const fixture = tempFixture(

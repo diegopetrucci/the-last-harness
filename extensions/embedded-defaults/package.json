@@ -1,0 +1,14 @@
+{
+  "name": "tlh-embedded-defaults",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./confirm-destructive/index.ts",
+      "./dirty-repo-guard/index.ts",
+      "./inline-bash/index.ts",
+      "./context-cap/index.ts",
+      "./notify/index.ts"
+    ]
+  }
+}
