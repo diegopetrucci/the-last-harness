@@ -1,57 +1,14 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
 
-const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+import { readAgentPrompt, splitCommaList } from "./agent-prompt-test-helpers.mjs";
+
 const jiti = createJiti(import.meta.url);
 const { loadSubagentMetadata } = await jiti.import("../extensions/the-last-harness/prompts.ts");
 
-function readSubagentFile(name) {
-	return readFileSync(join(repoRoot, "agents", "subagents", `${name}.md`), "utf8");
-}
-
-function parseFrontmatterAll(content) {
-	if (!content.startsWith("---")) {
-		return {};
-	}
-	const end = content.indexOf("\n---", 3);
-	if (end === -1) {
-		return {};
-	}
-	const result = {};
-	for (const line of content.slice(3, end).split(/\r?\n/)) {
-		const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
-		if (match) {
-			result[match[1]] = match[2].trim().replace(/^["']|["']$/g, "");
-		}
-	}
-	return result;
-}
-
-function getBody(content) {
-	if (!content.startsWith("---")) {
-		return content.trim();
-	}
-	const end = content.indexOf("\n---", 3);
-	if (end === -1) {
-		return content.trim();
-	}
-	return content.slice(content.indexOf("\n", end + 1) + 1).trim();
-}
-
-function splitCommaList(value) {
-	return (value ?? "")
-		.split(",")
-		.map((item) => item.trim())
-		.filter(Boolean);
-}
-
 test("web-scout frontmatter has expected metadata fields", () => {
-	const content = readSubagentFile("web-scout");
-	const fm = parseFrontmatterAll(content);
+	const { frontmatter: fm } = readAgentPrompt("subagents", "web-scout");
 
 	assert.equal(fm.name, "web-scout");
 	assert.equal(fm.description, "Performs Exa-backed web research and URL fetch in an isolated read-only context.");
@@ -69,8 +26,7 @@ test("web-scout frontmatter has expected metadata fields", () => {
 });
 
 test("web-scout body contains all mandatory guardrail keywords", () => {
-	const content = readSubagentFile("web-scout");
-	const body = getBody(content);
+	const { body } = readAgentPrompt("subagents", "web-scout");
 
 	const guardrails = [
 		["read-only invariant", /read-only invariant/i],
@@ -88,8 +44,7 @@ test("web-scout body contains all mandatory guardrail keywords", () => {
 });
 
 test("web-scout tool budget uses a concrete fetch limit with no placeholder text", () => {
-	const content = readSubagentFile("web-scout");
-	const body = getBody(content);
+	const { body } = readAgentPrompt("subagents", "web-scout");
 
 	assert.match(body, /per-turn cap of 6 HTTP fetches/i);
 	assert.match(body, /Fetch ≤ 2 top results/);

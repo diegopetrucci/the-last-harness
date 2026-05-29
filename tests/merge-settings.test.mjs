@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 const repoRoot = resolve(import.meta.dirname, "..");
@@ -22,7 +22,7 @@ function tempFixture(defaultsValue, settingsValue, extensionsValue = []) {
 	return { defaults, extensions, settings };
 }
 
-function runMerge(fixture, { dryRun = false, quiet = true } = {}) {
+function runMerge(fixture, { dryRun = false, force = false, quiet = true } = {}) {
 	const args = [
 		mergeScript,
 		fixture.defaults,
@@ -30,6 +30,7 @@ function runMerge(fixture, { dryRun = false, quiet = true } = {}) {
 		"--default-extensions", fixture.extensions,
 	];
 	if (dryRun) args.push("--dry-run");
+	if (force) args.push("--force");
 	if (quiet) args.push("--quiet");
 	return execFileSync(process.execPath, args, {
 		cwd: repoRoot,
@@ -42,8 +43,26 @@ function readJson(path) {
 	return JSON.parse(readFileSync(path, "utf8"));
 }
 
+function backupFiles(settingsPath) {
+	return readdirSync(dirname(settingsPath))
+		.filter((name) => name.startsWith("settings.json.backup-"))
+		.sort();
+}
+
 test("packaged defaults pin lastChangelogVersion to the changelog sentinel", () => {
 	assert.equal(readJson(settingsDefaultsPath).lastChangelogVersion, changelogSentinel);
+});
+
+test("packaged defaults keep the isolated startup/privacy guardrails enabled", () => {
+	const defaults = readJson(settingsDefaultsPath);
+
+	assert.equal(defaults.quietStartup, true);
+	assert.equal(defaults.collapseChangelog, true);
+	assert.equal(defaults.warnings?.anthropicExtraUsage, false);
+	assert.deepEqual(defaults.subagents, {
+		disableBuiltins: true,
+		agentDirs: ["tlh/agents/subagents"],
+	});
 });
 
 test("merge adds the changelog sentinel when isolated settings omit it", () => {
@@ -177,6 +196,66 @@ test("merge leaves settings unchanged when tlh.gnosis is absent", () => {
 	assert.equal(Object.hasOwn(result.tlh ?? {}, "gnosis"), false, "gnosis key should not appear");
 	assert.deepEqual(result.tlh.disabledDefaultExtensions, ["some-ext"], "disabledDefaultExtensions unchanged");
 	assert.equal(result.otherField, "untouched", "unrelated fields unchanged");
+});
+
+test("merge reruns preserve user-owned settings and stay idempotent", () => {
+	const fixture = tempFixture(
+		readJson(settingsDefaultsPath),
+		{
+			packages: [harnessPackage],
+			theme: "custom-theme",
+			tlh: { disabledDefaultExtensions: ["notify"] },
+			otherField: "preserved",
+		},
+		[
+			{
+				id: "notify",
+				source: "npm:@diegopetrucci/pi-notify",
+			},
+		],
+	);
+
+	runMerge(fixture);
+	const afterFirst = readFileSync(fixture.settings, "utf8");
+	const backupsAfterFirst = backupFiles(fixture.settings);
+	const firstSettings = readJson(fixture.settings);
+	assert.equal(firstSettings.theme, "custom-theme");
+	assert.deepEqual(firstSettings.tlh.disabledDefaultExtensions, ["notify"]);
+	assert.equal(firstSettings.otherField, "preserved");
+	assert.equal(firstSettings.quietStartup, true);
+	assert.equal(firstSettings.collapseChangelog, true);
+	assert.equal(firstSettings.warnings?.anthropicExtraUsage, false);
+	assert.equal(backupsAfterFirst.length, 1);
+
+	const secondOutput = runMerge(fixture, { quiet: false });
+	assert.match(secondOutput, /No settings changes needed\./);
+	assert.equal(readFileSync(fixture.settings, "utf8"), afterFirst);
+	assert.deepEqual(backupFiles(fixture.settings), backupsAfterFirst);
+});
+
+test("merge --force preserves tlh.telemetry.enabled=false while applying defaults", () => {
+	const fixture = tempFixture(
+		{
+			packages: [],
+			theme: "the-last-harness",
+			quietStartup: true,
+			warnings: { anthropicExtraUsage: false },
+			tlh: { telemetry: { enabled: true } },
+		},
+		{
+			packages: [harnessPackage],
+			theme: "custom-theme",
+			tlh: { telemetry: { enabled: false } },
+		},
+	);
+
+	runMerge(fixture, { force: true });
+
+	const settings = readJson(fixture.settings);
+	assert.equal(settings.theme, "the-last-harness");
+	assert.equal(settings.quietStartup, true);
+	assert.equal(settings.warnings?.anthropicExtraUsage, false);
+	assert.equal(settings.tlh.telemetry.enabled, false, "telemetry opt-out must survive forced reruns");
 });
 
 test("critical source updates dedupe stale same-identity filtered packages", () => {

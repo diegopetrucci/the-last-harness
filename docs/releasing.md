@@ -54,6 +54,8 @@ After the workflow finishes, confirm the GitHub Release exists and includes:
 
 ## Install checks
 
+These are release-tier manual checks for published assets. They are separate from `npm run validate`, require a pushed tag or GitHub Release asset, and should normally stay in `--dry-run` mode so they leave no installed TLH state behind.
+
 Latest release asset:
 
 ```sh
