@@ -525,9 +525,6 @@ async function isBinaryFile(filePath: string): Promise<boolean> {
 		const buf = Buffer.alloc(8192);
 		const { bytesRead } = await handle.read(buf, 0, 8192, 0);
 		return buf.subarray(0, bytesRead).includes(0);
-	} catch {
-		// Unreadable file — treat as non-binary so the caller surfaces the read error
-		return false;
 	} finally {
 		await handle?.close();
 	}
@@ -625,20 +622,39 @@ async function buildSnapshotParts(cwd: string, filePaths: string[], label: strin
 	for (const filePath of filePaths) {
 		const relPath = relative(cwd, filePath);
 		const renderedPath = renderDelimitedPath(relPath);
-		const pathStat = await lstat(filePath);
+
+		let pathStat: Stats;
+		try {
+			pathStat = await lstat(filePath);
+		} catch {
+			parts.push(`[skipped lstat failure: ${renderedPath}]`);
+			continue;
+		}
+
 		const nonRegularMarker = getNonRegularSnapshotMarker(relPath, pathStat);
 		if (nonRegularMarker) {
 			parts.push(nonRegularMarker);
 			continue;
 		}
 
-		const bin = await isBinaryFile(filePath);
+		let bin: boolean;
+		try {
+			bin = await isBinaryFile(filePath);
+		} catch {
+			parts.push(`[skipped binary detection failure: ${renderedPath}]`);
+			continue;
+		}
 		if (bin) {
 			parts.push(`[skipped binary: ${renderedPath}]`);
 			continue;
 		}
-		const content = escapeContentDelimiters(await readFile(filePath, "utf8"));
-		parts.push(`--- ${label}: ${renderedPath} ---\n${content}`);
+
+		try {
+			const content = escapeContentDelimiters(await readFile(filePath, "utf8"));
+			parts.push(`--- ${label}: ${renderedPath} ---\n${content}`);
+		} catch {
+			parts.push(`[skipped read failure: ${renderedPath}]`);
+		}
 	}
 
 	return parts;

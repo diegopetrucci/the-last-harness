@@ -136,7 +136,7 @@ Run a code review on a chosen scope (uncommitted changes, a branch comparison, a
 
 Run `/review` with no arguments to open an interactive mode picker. If you choose `commit`, `pr`, or `folder`, tlh prompts for the required SHA, PR number/URL, or paths before dispatching the review. Or pass a mode directly:
 
-```
+```text
 /review uncommitted              # staged + unstaged changes vs HEAD, plus untracked non-gitignored files
 /review branch                   # commits on this branch vs main
 /review branch release/1.2       # commits on this branch vs release/1.2
@@ -149,7 +149,7 @@ Run `/review` with no arguments to open an interactive mode picker. If you choos
 
 Append `--extra "..."` to pass additional context or focus instructions to the reviewer:
 
-```
+```text
 /review uncommitted --extra "focus on error handling"
 ```
 

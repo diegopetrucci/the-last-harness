@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -398,6 +398,86 @@ test("/review picker-selected branch uses main by default without extra prompts"
 	assert.match(harness.sentMessages[0], /base: main/);
 });
 
+
+test("/review branch rejects a leading-dash base before using it as a git ref", async (t) => {
+	const cwd = makeTempDir(t, "tlh-review-branch-leading-dash-");
+
+	const harness = createReviewHarness({
+		cwd,
+		exec: async (command, args) => {
+			assert.equal(args.includes("-main"), false, "should reject before passing -main to git");
+			if (command === "git" && args.join(" ") === "symbolic-ref -q HEAD") {
+				return { code: 0, stdout: "refs/heads/feature/review\n", stderr: "" };
+			}
+			if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD") {
+				return { code: 0, stdout: "feature/review\n", stderr: "" };
+			}
+			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
+		},
+	});
+
+	await harness.handler("branch -main", harness.ctx);
+
+	assert.equal(harness.sentMessages.length, 0);
+	assert.deepEqual(harness.notifications, [
+		{
+			message: "base cannot start with '-' (got '-main'). If this is intentional, run the underlying command manually.",
+			level: "error",
+		},
+	]);
+	assert.equal(
+		harness.execCalls.some(({ args }) => args.includes("-main")),
+		false,
+		"should not pass the leading-dash base to git",
+	);
+});
+
+
+test("/review commit rejects a leading-dash sha before git use", async (t) => {
+	const cwd = makeTempDir(t, "tlh-review-commit-leading-dash-");
+
+	const harness = createReviewHarness({
+		cwd,
+		exec: async (command, args) => {
+			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
+		},
+	});
+
+	await harness.handler("commit -abc123", harness.ctx);
+
+	assert.equal(harness.execCalls.length, 0);
+	assert.equal(harness.sentMessages.length, 0);
+	assert.deepEqual(harness.notifications, [
+		{
+			message: "sha cannot start with '-' (got '-abc123'). If this is intentional, run the underlying command manually.",
+			level: "error",
+		},
+	]);
+});
+
+
+test("/review pr rejects a leading-dash ref before gh use", async (t) => {
+	const cwd = makeTempDir(t, "tlh-review-pr-leading-dash-");
+
+	const harness = createReviewHarness({
+		cwd,
+		exec: async (command, args) => {
+			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
+		},
+	});
+
+	await harness.handler("pr -42", harness.ctx);
+
+	assert.equal(harness.execCalls.length, 0);
+	assert.equal(harness.sentMessages.length, 0);
+	assert.deepEqual(harness.notifications, [
+		{
+			message: "pr cannot start with '-' (got '-42'). If this is intentional, run the underlying command manually.",
+			level: "error",
+		},
+	]);
+});
+
 test("/review picker-selected commit prompts for a sha before dispatch", async (t) => {
 	const cwd = makeTempDir(t, "tlh-review-picker-commit-");
 
@@ -772,6 +852,53 @@ test("/review folder escapes snapshot fence lines found in file content", async 
 	assert.equal(harness.sentMessages.length, 1);
 	assert.match(harness.sentMessages[0], /\\--- end snapshot ---/);
 	assert.match(harness.sentMessages[0], /\n--- end snapshot ---$/);
+});
+
+
+test("/review folder skips per-file lstat and binary-check failures while continuing", async (t) => {
+	const cwd = makeTempDir(t, "tlh-review-folder-problematic-");
+	const docsDir = join(cwd, "docs");
+	const unreadablePath = join(docsDir, "secret.txt");
+	mkdirSync(docsDir, { recursive: true });
+	writeFileSync(join(docsDir, "guide.md"), "# Guide\n");
+	writeFileSync(unreadablePath, "top secret\n");
+	chmodSync(unreadablePath, 0o000);
+	t.after(() => {
+		try {
+			chmodSync(unreadablePath, 0o600);
+		} catch {
+			// Ignore cleanup failures if the temp directory is already gone.
+		}
+	});
+
+	const harness = createReviewHarness({
+		cwd,
+		exec: async (command, args, options) => {
+			if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD") {
+				return { code: 0, stdout: "main\n", stderr: "" };
+			}
+			if (
+				command === "git" &&
+				args.join(" ") === "ls-files -z --cached --others --exclude-standard -- ." &&
+				options.cwd === docsDir
+			) {
+				return { code: 0, stdout: "missing.md\0secret.txt\0guide.md\0", stderr: "" };
+			}
+			throw new Error(`Unexpected exec: ${command} ${args.join(" ")} @ ${options.cwd ?? ""}`);
+		},
+	});
+
+	await harness.handler("folder docs", harness.ctx);
+
+	assert.equal(harness.notifications.length, 0);
+	assert.equal(harness.sentMessages.length, 1);
+	assertRenderedPathLine(harness.sentMessages[0], /^\[skipped lstat failure: (".*")\]$/, "docs/missing.md");
+	assertRenderedPathLine(
+		harness.sentMessages[0],
+		/^\[skipped binary detection failure: (".*")\]$/,
+		"docs/secret.txt",
+	);
+	assert.match(harness.sentMessages[0], /--- file: "docs\/guide\.md" ---\n# Guide/);
 });
 
 test("/review folder renders newline/control/delimiter-like snapshot paths as escaped labels", async (t) => {
