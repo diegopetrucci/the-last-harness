@@ -56,6 +56,15 @@ function runQuery(args, env = scrubInstallerEnv()) {
 	});
 }
 
+function runInstaller(args, env = scrubInstallerEnv()) {
+	return spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-install.mjs"), ...args], {
+		cwd: repoRoot,
+		env,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+}
+
 function captureConsole(method, callback) {
 	const original = console[method];
 	const lines = [];
@@ -144,6 +153,108 @@ test("stage-1 enforces the TLH Node runtime minimum", () => {
 		() => assertSupportedNodeRuntime("not-a-version"),
 		/unable to determine Node\.js version; The Last Harness requires Node\.js >= 22\.19\.0\./,
 	);
+});
+
+test("stage-1 hard-fails existing Pi version probes that exit nonzero", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const fakebin = join(root, "fakebin");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(binDir, { recursive: true });
+	writeFakePi(fakebin, "printf 'version probe failed\\n' >&2\nexit 23");
+	const env = scrubInstallerEnv({
+		HOME: homeDir,
+		PATH: `${fakebin}:${process.env.PATH || ""}`,
+		TLH_SKIP_GNOSIS_INSTALL: "1",
+	});
+	const result = runInstaller(["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], env);
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /unable to determine Pi version from existing pi on PATH/);
+	assert.match(result.stderr, /pi --version exited with 23/);
+	assert.match(result.stderr, /The Last Harness requires Pi >= 0\.75\.3/);
+	assert.match(result.stderr, /Verify that `pi --version` works, or upgrade with: npm install -g --ignore-scripts --prefix /);
+	assert.match(result.stderr, /Probe output: version probe failed/);
+});
+
+test("stage-1 probes existing Pi version with the isolated agent dir", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const fakebin = join(root, "fakebin");
+	const probeLog = join(root, "pi-version-probe.log");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(binDir, { recursive: true });
+	writeFakePi(fakebin, [
+		"printf '%s\\n' \"${PI_CODING_AGENT_DIR:-}\" >\"${PROBE_LOG}\"",
+		"if [[ \"${PI_CODING_AGENT_DIR:-}\" != \"${EXPECTED_AGENT_DIR}\" ]]; then",
+		"\tprintf 'poisoned profile\\n' >&2",
+		"\texit 24",
+		"fi",
+		"printf '0.75.3\\n'",
+	].join("\n"));
+	const env = scrubInstallerEnv({
+		HOME: homeDir,
+		PATH: `${fakebin}:${process.env.PATH || ""}`,
+		PI_CODING_AGENT_DIR: join(root, "poisoned-pi-agent"),
+		EXPECTED_AGENT_DIR: agentDir,
+		PROBE_LOG: probeLog,
+		TLH_SKIP_GNOSIS_INSTALL: "1",
+	});
+	const result = runInstaller(["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], env);
+	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+	assert.equal(readFileSync(probeLog, "utf8").trim(), agentDir);
+	assert.doesNotMatch(result.stderr, /poisoned profile/);
+});
+
+test("stage-1 hard-fails existing Pi version probes with unparsable output", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const fakebin = join(root, "fakebin");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(binDir, { recursive: true });
+	writeFakePi(fakebin, "printf 'development build\\n'");
+	const env = scrubInstallerEnv({
+		HOME: homeDir,
+		PATH: `${fakebin}:${process.env.PATH || ""}`,
+		TLH_SKIP_GNOSIS_INSTALL: "1",
+	});
+	const result = runInstaller(["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], env);
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /unable to parse Pi version from existing pi on PATH: development build/);
+	assert.match(result.stderr, /The Last Harness requires Pi >= 0\.75\.3/);
+	assert.match(result.stderr, /Verify that `pi --version` prints a semantic version like 0\.75\.3, or upgrade with: npm install -g --ignore-scripts --prefix /);
+});
+
+test("stage-1 rejects existing Pi older than the TLH minimum", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const fakebin = join(root, "fakebin");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(binDir, { recursive: true });
+	writeFakePi(fakebin, "printf '0.75.2\\n'");
+	const env = scrubInstallerEnv({
+		HOME: homeDir,
+		PATH: `${fakebin}:${process.env.PATH || ""}`,
+		TLH_SKIP_GNOSIS_INSTALL: "1",
+	});
+	const result = runInstaller(["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], env);
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /Pi >= 0\.75\.3 is required \(found 0\.75\.2\)\. Upgrade with: npm install -g --ignore-scripts --prefix /);
 });
 
 test("declared Node minimum stays aligned across installer metadata", () => {
