@@ -19,6 +19,14 @@ const userFacingDocs = [
 	"docs/releasing.md",
 ];
 
+const publicDocs = [
+	"README.md",
+	"CHANGELOG.md",
+	"docs/install.md",
+	"docs/integrations.md",
+	"docs/releasing.md",
+];
+
 const legacyTicketGuidancePatterns = [
 	/--with-tickets/,
 	/--without-tickets/,
@@ -87,5 +95,21 @@ test("user-facing docs and installer help do not advertise legacy ticket opt-out
 		for (const pattern of legacyTicketGuidancePatterns) {
 			assert.doesNotMatch(source, pattern, `${path} still matches ${pattern}`);
 		}
+	}
+});
+
+test("local development docs explain the hidden install timing workflow", () => {
+	const localDevelopment = readRepoFile("docs/local-development.md");
+
+	assert.match(localDevelopment, /--dev-install-timings/);
+	assert.match(localDevelopment, /local development profiling only/i);
+	assert.match(localDevelopment, /complete local checkout/i);
+	assert.match(localDevelopment, /fresh install timing/i);
+	assert.match(localDevelopment, /warm rerun timing/i);
+});
+
+test("hidden dev install timing flag stays out of public docs", () => {
+	for (const path of publicDocs) {
+		assert.doesNotMatch(readRepoFile(path), /--dev-install-timings/, `${path} should not mention --dev-install-timings`);
 	}
 });

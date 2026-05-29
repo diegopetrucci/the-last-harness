@@ -64,6 +64,7 @@ const MIN_PI_VERSION = "0.76.0";
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
 const DEFAULT_GNOSIS_VERSION = "latest";
 const DEFAULT_WRAPPER_NAME = "tlh";
+const DEV_INSTALL_TIMINGS_MARKER = "TLH_DEV_INSTALL_TIMINGS_LOCAL";
 const VALID_UPDATE_TRACKS = new Set(["latest-release", "pinned-tag", "ref", "custom"]);
 const COMMAND_MAX_BUFFER = 20 * 1024 * 1024;
 
@@ -153,6 +154,10 @@ function defaultBinDir(env = process.env) {
 	return env.TLH_BIN_DIR || join(homedir(), ".local", "bin");
 }
 
+function devInstallTimingsAllowed(env = process.env) {
+	return env[DEV_INSTALL_TIMINGS_MARKER] === "1";
+}
+
 function parseArgs(argv, env = process.env) {
 	const args = {
 		repo: env.TLH_REPO || DEFAULT_REPO,
@@ -173,6 +178,7 @@ function parseArgs(argv, env = process.env) {
 		wrapperName: env.TLH_WRAPPER_NAME || DEFAULT_WRAPPER_NAME,
 		printSupportManifest: false,
 		help: false,
+		devInstallTimings: false,
 		piInstalledByTlhOverride: undefined,
 	};
 
@@ -210,6 +216,13 @@ function parseArgs(argv, env = process.env) {
 		}
 		if (arg === "--print-support-manifest") {
 			args.printSupportManifest = true;
+			continue;
+		}
+		if (arg === "--dev-install-timings") {
+			if (!devInstallTimingsAllowed(env)) {
+				throw new Error("--dev-install-timings is only supported when install.sh runs stage-1 from a complete local checkout");
+			}
+			args.devInstallTimings = true;
 			continue;
 		}
 		if (arg === "--pi-installed-by-tlh") {
@@ -339,11 +352,66 @@ function buildInstallConfig(parsedArgs, env = process.env) {
 		supportFilesDryRunSkipped: false,
 		gnosisSummary: "",
 		ticketsSummary: "",
+		installTimingStartedAtMs: 0,
+		installTimingPhases: [],
+		installTimingDefaultExtensions: [],
+		installTimingSummaryPrinted: false,
 	};
 }
 
 function validateInputs(config) {
 	validateInstallerTargets(config, { validUpdateTracks: VALID_UPDATE_TRACKS });
+}
+
+function installTimingNowMs() {
+	return Number(process.hrtime.bigint()) / 1_000_000;
+}
+
+function formatInstallTimingDuration(durationMs) {
+	if (!Number.isFinite(durationMs)) return "unknown";
+	if (durationMs >= 10_000) return `${(durationMs / 1000).toFixed(1)}s`;
+	if (durationMs >= 1000) return `${(durationMs / 1000).toFixed(2)}s`;
+	if (durationMs >= 100) return `${durationMs.toFixed(0)}ms`;
+	if (durationMs >= 10) return `${durationMs.toFixed(1)}ms`;
+	return `${durationMs.toFixed(2)}ms`;
+}
+
+async function timeInstallPhase(config, phase, operation) {
+	if (!config.devInstallTimings) return await operation();
+	const startedAtMs = installTimingNowMs();
+	try {
+		return await operation();
+	} finally {
+		config.installTimingPhases.push({
+			phase,
+			durationMs: installTimingNowMs() - startedAtMs,
+		});
+	}
+}
+
+function printInstallTimingSummary(config) {
+	if (!config.devInstallTimings || config.installTimingSummaryPrinted || config.installTimingStartedAtMs <= 0) return;
+	config.installTimingSummaryPrinted = true;
+	const totalDurationMs = installTimingNowMs() - config.installTimingStartedAtMs;
+	const labels = ["total", ...config.installTimingPhases.map(({ phase }) => phase)];
+	const labelWidth = Math.max(...labels.map((label) => label.length));
+	const lines = ["", "Local development profiling: stage-1 install timing summary"];
+	lines.push(`  ${"total".padEnd(labelWidth)}  ${formatInstallTimingDuration(totalDurationMs)}`);
+	for (const { phase, durationMs } of config.installTimingPhases) {
+		lines.push(`  ${phase.padEnd(labelWidth)}  ${formatInstallTimingDuration(durationMs)}`);
+	}
+	if (config.installTimingDefaultExtensions.length > 0) {
+		const extensionLabelWidth = Math.max(...config.installTimingDefaultExtensions.map(({ id, source }) => `${id} (${source})`.length));
+		const classLabelWidth = Math.max(...config.installTimingDefaultExtensions.map(({ critical }) => critical ? "critical".length : "non-critical".length));
+		const statusLabelWidth = Math.max(...config.installTimingDefaultExtensions.map(({ status }) => status.length));
+		lines.push("", "Local development profiling: bundled default extension per-source profile (timing mode only; uses per-source profiling instead of the normal settings-wide refresh)");
+		for (const { id, source, critical, status, durationMs } of config.installTimingDefaultExtensions) {
+			const extensionLabel = `${id} (${source})`;
+			const classLabel = critical ? "critical" : "non-critical";
+			lines.push(`  ${extensionLabel.padEnd(extensionLabelWidth)}  ${classLabel.padEnd(classLabelWidth)}  ${status.padEnd(statusLabelWidth)}  ${formatInstallTimingDuration(durationMs)}`);
+		}
+	}
+	console.log(lines.join("\n"));
 }
 
 function log(config, message = "") {
@@ -807,6 +875,66 @@ function splitDefaultExtensionSources(sourcesOutput, criticalSourcesOutput) {
 	return { sources, criticalSources, nonCriticalSources };
 }
 
+function readDefaultExtensionTimingProfiles(config) {
+	let profilesOutput;
+	try {
+		profilesOutput = runNodeScript(config, config.supportFilePaths.TLH_DEFAULTS_SCRIPT, [
+			"--settings",
+			config.settingsPath,
+			"--defaults",
+			config.supportFilePaths.DEFAULT_EXTENSIONS_FILE,
+			"profile-sources",
+		], { captureStdout: true });
+	} catch (error) {
+		throw new Error(`failed to read bundled default extension profiling sources: ${error.message}`);
+	}
+
+	let profiles;
+	try {
+		profiles = JSON.parse(profilesOutput || "[]");
+	} catch (error) {
+		throw new Error(`failed to parse bundled default extension profiling sources: ${error.message}`);
+	}
+	if (!Array.isArray(profiles)) {
+		throw new Error("failed to parse bundled default extension profiling sources: expected a JSON array");
+	}
+
+	return profiles.map((profile, index) => {
+		if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
+			throw new Error(`failed to parse bundled default extension profiling sources: entry ${index + 1} must be an object`);
+		}
+		const id = typeof profile.id === "string" ? profile.id.trim() : "";
+		const source = typeof profile.source === "string" ? profile.source.trim() : "";
+		if (!id || !source || typeof profile.critical !== "boolean") {
+			throw new Error(`failed to parse bundled default extension profiling sources: entry ${index + 1} is missing id, source, or critical`);
+		}
+		return { id, source, critical: profile.critical };
+	});
+}
+
+function recordDefaultExtensionTiming(config, extension, status, durationMs) {
+	config.installTimingDefaultExtensions.push({
+		id: extension.id,
+		source: extension.source,
+		critical: extension.critical === true,
+		status,
+		durationMs,
+	});
+}
+
+function profileDefaultExtensionOperation(config, extension, operation, { continueOnFailure = false } = {}) {
+	const startedAtMs = installTimingNowMs();
+	try {
+		operation();
+		recordDefaultExtensionTiming(config, extension, config.dryRun ? "dry-run" : "success", installTimingNowMs() - startedAtMs);
+		return true;
+	} catch (error) {
+		recordDefaultExtensionTiming(config, extension, "failed", installTimingNowMs() - startedAtMs);
+		if (continueOnFailure) return false;
+		throw error;
+	}
+}
+
 function ensureCriticalGitSourceCheckout(config, source) {
 	const spec = criticalGitSourceSpec(source, { agentDir: config.agentDir });
 	if (!spec) return true;
@@ -829,7 +957,10 @@ function criticalDefaultGitSources(config, sources) {
 function preflightCriticalDefaultExtensionTargets(config, sources) {
 	const gitSources = criticalDefaultGitSources(config, sources);
 	if (gitSources.length === 0) return;
-	detailLog(config, `${config.dryRun ? "Would preflight" : "Preflighting"} ${gitSources.length} critical bundled default git checkout target(s) before any settings-wide default extension update.`);
+	const updateDescription = config.devInstallTimings
+		? "before per-source default extension profiling."
+		: "before any settings-wide default extension update.";
+	detailLog(config, `${config.dryRun ? "Would preflight" : "Preflighting"} ${gitSources.length} critical bundled default git checkout target(s) ${updateDescription}`);
 	for (const source of gitSources) {
 		assertGitSourceTargetSafe(config, source, "critical default extension package checkout", gitCheckoutIo());
 	}
@@ -849,10 +980,14 @@ function installCriticalDefaultExtension(config, source) {
 	}
 }
 
-function updateDefaultExtensionSourceBestEffort(config, source) {
+function updateDefaultExtensionSource(config, source) {
 	verboseLog(config, `Installing bundled default extension package: ${source}`);
+	runIsolatedPi(config, ["pi", "update", source]);
+}
+
+function updateDefaultExtensionSourceBestEffort(config, source) {
 	try {
-		runIsolatedPi(config, ["pi", "update", source]);
+		updateDefaultExtensionSource(config, source);
 		return true;
 	} catch {
 		warn(`default extension package update failed; continuing: ${source}`);
@@ -890,6 +1025,37 @@ function updateNonCriticalDefaultExtensions(config, sources) {
 	return 0;
 }
 
+function installDefaultExtensionsWithTiming(config) {
+	const extensions = readDefaultExtensionTimingProfiles(config);
+	if (extensions.length === 0) {
+		log(config, "No bundled default extensions are enabled.");
+		return;
+	}
+
+	log(config, `Profiling bundled default extensions per source (${extensions.length}); timing mode uses per-source profiling instead of the normal settings-wide refresh.`);
+	const criticalSources = extensions.filter(({ critical }) => critical).map(({ source }) => source);
+	preflightCriticalDefaultExtensionTargets(config, criticalSources);
+
+	let failures = 0;
+	for (const extension of extensions) {
+		if (extension.critical) continue;
+		const success = profileDefaultExtensionOperation(config, extension, () => updateDefaultExtensionSource(config, extension.source), {
+			continueOnFailure: true,
+		});
+		if (success) continue;
+		warn(`default extension package update failed; continuing: ${extension.source}`);
+		failures += 1;
+	}
+	if (failures !== 0) warn(`${failures} bundled default extension package(s) failed to update`);
+
+	for (const extension of extensions) {
+		if (!extension.critical) continue;
+		profileDefaultExtensionOperation(config, extension, () => installCriticalDefaultExtension(config, extension.source));
+	}
+
+	if (failures === 0) verboseLog(config, "Bundled default extensions installed.");
+}
+
 function installDefaultExtensions(config) {
 	if (config.noSettings) {
 		log(config, "Skipping bundled default extensions (--no-settings).");
@@ -897,6 +1063,11 @@ function installDefaultExtensions(config) {
 	}
 	if (!config.supportFilePaths.TLH_DEFAULTS_SCRIPT || !config.supportFilePaths.DEFAULT_EXTENSIONS_FILE) {
 		if (config.dryRun) log(config, "Would install bundled default extension packages after settings merge.");
+		return;
+	}
+
+	if (config.devInstallTimings) {
+		installDefaultExtensionsWithTiming(config);
 		return;
 	}
 
@@ -1100,18 +1271,21 @@ function printSummary(config) {
 }
 
 async function runInstallFlow(config) {
+	config.installTimingStartedAtMs = installTimingNowMs();
 	log(config, "The Last Harness installer");
 	detailLog(config, `Isolated profile: ${config.agentDir}`);
 	if (!config.packageSourceIsDefault || config.verbose) log(config, `Package source: ${config.packageSource}`);
 	verboseLog(config, `Repository: ${config.repo}`);
 	verboseLog(config, `Update track: ${config.updateTrack}`);
 
-	validateInputs(config);
-	requireCommand(config, "npm");
-	requireCommand(config, "git");
-	await preflightRuntimeSupportFiles(config, supportFileIo());
+	await timeInstallPhase(config, "preflight", async () => {
+		validateInputs(config);
+		requireCommand(config, "npm");
+		requireCommand(config, "git");
+		await preflightRuntimeSupportFiles(config, supportFileIo());
+	});
 
-	const piInstalledByTlh = installPiIfNeeded(config);
+	const piInstalledByTlh = await timeInstallPhase(config, "pi", () => installPiIfNeeded(config));
 	// Use the explicit override when provided (e.g. tlh update preserving an existing value).
 	// Otherwise use what actually happened this run. The value is only written to install-state
 	// on a fresh install (state file absent) or when an override was explicitly supplied; this
@@ -1120,14 +1294,14 @@ async function runInstallFlow(config) {
 	config.piInstalledByTlh = config.piInstalledByTlhOverride !== undefined
 		? config.piInstalledByTlhOverride
 		: piInstalledByTlh;
-	installHarnessPackage(config);
-	await installSupportFilesToProfile(config);
-	await mergeSettings(config);
-	await writeInstallState(config);
-	installDefaultExtensions(config);
-	configureGnosis(config);
-	configureTickets(config);
-	await writeWrapper(config);
+	await timeInstallPhase(config, "package", () => installHarnessPackage(config));
+	await timeInstallPhase(config, "support-files", () => installSupportFilesToProfile(config));
+	await timeInstallPhase(config, "settings", () => mergeSettings(config));
+	await timeInstallPhase(config, "install-state", () => writeInstallState(config));
+	await timeInstallPhase(config, "default-extensions", () => installDefaultExtensions(config));
+	await timeInstallPhase(config, "gnosis", () => configureGnosis(config));
+	await timeInstallPhase(config, "tickets", () => configureTickets(config));
+	await timeInstallPhase(config, "wrapper", () => writeWrapper(config));
 	printSummary(config);
 }
 
@@ -1153,6 +1327,7 @@ async function run(argv = process.argv.slice(2), env = process.env) {
 	try {
 		await runInstallFlow(config);
 	} finally {
+		printInstallTimingSummary(config);
 		if (config.tmpDir) rmSync(config.tmpDir, { recursive: true, force: true });
 	}
 }
@@ -1184,6 +1359,7 @@ export {
 	installDefaultExtensions,
 	nodeVersionMeetsMinimum,
 	parseArgs,
+	printInstallTimingSummary,
 	run,
 	usage,
 	validateInputs,

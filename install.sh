@@ -12,6 +12,7 @@ NO_SETTINGS=false
 NO_WRAPPER=false
 QUIET=false
 VERBOSE=false
+DEV_INSTALL_TIMINGS=false
 AGENT_DIR_INPUT="${TLH_AGENT_DIR:-$HOME/.the-last-harness/agent}"
 BIN_DIR_INPUT="${TLH_BIN_DIR:-$HOME/.local/bin}"
 WRAPPER_NAME="${TLH_WRAPPER_NAME:-tlh}"
@@ -336,6 +337,10 @@ while [[ $# -gt 0 ]]; do
       QUIET=false
       shift
       ;;
+    --dev-install-timings)
+      DEV_INSTALL_TIMINGS=true
+      shift
+      ;;
     --ref)
       REF="$(need_value "$1" "${2:-}")"
       shift 2
@@ -553,6 +558,17 @@ fetch_remote_support_root() {
 run_stage1() {
   local support_root="$1"
   require_command node
+  if [[ "${DEV_INSTALL_TIMINGS}" == "true" ]]; then
+    if [[ "${#ORIGINAL_ARGS[@]}" -eq 0 ]]; then
+      TLH_REPO="${REPO}" TLH_REF="${REF}" TLH_RAW_BASE="${RAW_BASE}" TLH_UPDATE_TRACK="${UPDATE_TRACK_INPUT}" TLH_DEV_INSTALL_TIMINGS_LOCAL="1" \
+        node "${support_root}/scripts/tlh-install.mjs"
+    else
+      TLH_REPO="${REPO}" TLH_REF="${REF}" TLH_RAW_BASE="${RAW_BASE}" TLH_UPDATE_TRACK="${UPDATE_TRACK_INPUT}" TLH_DEV_INSTALL_TIMINGS_LOCAL="1" \
+        node "${support_root}/scripts/tlh-install.mjs" "${ORIGINAL_ARGS[@]}"
+    fi
+    return
+  fi
+
   if [[ "${#ORIGINAL_ARGS[@]}" -eq 0 ]]; then
     TLH_REPO="${REPO}" TLH_REF="${REF}" TLH_RAW_BASE="${RAW_BASE}" TLH_UPDATE_TRACK="${UPDATE_TRACK_INPUT}" \
       node "${support_root}/scripts/tlh-install.mjs"
@@ -609,6 +625,10 @@ LOCAL_SUPPORT_ROOT=""
 if LOCAL_SUPPORT_ROOT="$(find_local_support_root)"; then
   run_stage1 "${LOCAL_SUPPORT_ROOT}"
   exit $?
+fi
+
+if [[ "${DEV_INSTALL_TIMINGS}" == "true" ]]; then
+  die "--dev-install-timings is only supported when install.sh is run from a complete local checkout"
 fi
 
 if [[ "${DRY_RUN}" == "true" ]]; then

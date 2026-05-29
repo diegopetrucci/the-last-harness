@@ -324,17 +324,37 @@ function commandList(settings, defaultExtensions) {
 	console.log("Use 'tlh defaults disable <id>' for non-critical defaults, or 'tlh defaults enable <id>'.");
 }
 
-function commandSources(settings, defaultExtensions, { criticalOnly = false } = {}) {
+function enabledDefaultExtensionProfiles(settings, defaultExtensions) {
+	const profiles = [];
 	for (const extension of defaultExtensions) {
-		if (criticalOnly && extension.critical !== true) continue;
+		if (isDefaultSourceDeferred(settings, extension)) continue;
 		if (extension.critical === true) {
-			if (!isDefaultSourceDeferred(settings, extension)) console.log(extension.source);
+			profiles.push({
+				id: extension.id,
+				source: extension.source,
+				critical: true,
+			});
 			continue;
 		}
-		if (!isDefaultDisabled(settings, extension, defaultExtensions) && !isDefaultSourceDeferred(settings, extension)) {
-			console.log(findPackageSource(settings, extension.source) || extension.source);
-		}
+		if (isDefaultDisabled(settings, extension, defaultExtensions)) continue;
+		profiles.push({
+			id: extension.id,
+			source: findPackageSource(settings, extension.source) || extension.source,
+			critical: false,
+		});
 	}
+	return profiles;
+}
+
+function commandSources(settings, defaultExtensions, { criticalOnly = false } = {}) {
+	for (const profile of enabledDefaultExtensionProfiles(settings, defaultExtensions)) {
+		if (criticalOnly && profile.critical !== true) continue;
+		console.log(profile.source);
+	}
+}
+
+function commandProfileSources(settings, defaultExtensions) {
+	process.stdout.write(`${JSON.stringify(enabledDefaultExtensionProfiles(settings, defaultExtensions), null, 2)}\n`);
 }
 
 function applyAnthropicWarningOnDisable(settings) {
@@ -404,6 +424,10 @@ function main() {
 	}
 	if (args.command === "sources" || args.command === "critical-sources") {
 		commandSources(settings, defaultExtensions, { criticalOnly: args.command === "critical-sources" });
+		return;
+	}
+	if (args.command === "profile-sources") {
+		commandProfileSources(settings, defaultExtensions);
 		return;
 	}
 

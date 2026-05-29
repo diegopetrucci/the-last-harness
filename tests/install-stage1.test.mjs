@@ -13,6 +13,7 @@ import {
 	installDefaultExtensions,
 	nodeVersionMeetsMinimum,
 	parseArgs,
+	printInstallTimingSummary,
 	usage,
 } from "../scripts/tlh-install.mjs";
 import { validateInstallerTargets } from "../scripts/lib/tlh-install-paths.mjs";
@@ -70,6 +71,16 @@ function runInstaller(args, env = scrubInstallerEnv()) {
 	});
 }
 
+function runStage0(args, { env = scrubInstallerEnv(), cwd = repoRoot, input } = {}) {
+	return spawnSync("bash", input ? ["-s", "--", ...args] : [join(repoRoot, "install.sh"), ...args], {
+		cwd,
+		env,
+		input,
+		encoding: "utf8",
+		stdio: [input ? "pipe" : "ignore", "pipe", "pipe"],
+	});
+}
+
 function captureConsole(method, callback) {
 	const original = console[method];
 	const lines = [];
@@ -89,6 +100,12 @@ function writeFakeCommand(fakebin, name, body) {
 	const commandPath = join(fakebin, name);
 	writeFileSync(commandPath, `#!/usr/bin/env bash\nset -euo pipefail\n${body}\n`, "utf8");
 	chmodSync(commandPath, 0o755);
+}
+
+function enableInstallTimingSummary(config) {
+	config.devInstallTimings = true;
+	config.installTimingStartedAtMs = Number(process.hrtime.bigint()) / 1_000_000 - 1;
+	config.installTimingSummaryPrinted = false;
 }
 
 function writeFakePi(fakebin, body) {
@@ -285,6 +302,88 @@ test("stage-1 rejects legacy ticket integration flags", () => {
 	for (const flag of ["--with-tickets", "--without-tickets", "--no-tickets"]) {
 		assert.throws(() => parseArgs([flag]), new RegExp(`unknown option: ${flag}`));
 	}
+});
+
+test("install timing mode stays hidden from public installer help", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	mkdirSync(homeDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	const stage0Help = runStage0(["--help"], {
+		env: scrubInstallerEnv({ HOME: homeDir }),
+	});
+	assert.equal(stage0Help.status, 0, stage0Help.stderr);
+	assert.doesNotMatch(stage0Help.stdout, /--dev-install-timings/);
+	assert.doesNotMatch(usage(), /--dev-install-timings/);
+});
+
+test("stage-1 rejects dev install timings without the local stage-0 marker", () => {
+	assert.throws(
+		() => parseArgs(["--dev-install-timings"]),
+		/--dev-install-timings is only supported when install\.sh runs stage-1 from a complete local checkout/,
+	);
+	assert.equal(
+		parseArgs(["--dev-install-timings"], { ...scrubInstallerEnv(), TLH_DEV_INSTALL_TIMINGS_LOCAL: "1" }).devInstallTimings,
+		true,
+	);
+});
+
+test("stage-0 rejects dev install timings from bootstrap installer paths", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	mkdirSync(homeDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	const result = runStage0([
+		"--dry-run",
+		"--dev-install-timings",
+		"--agent-dir", agentDir,
+		"--bin-dir", binDir,
+	], {
+		cwd: homeDir,
+		env: scrubInstallerEnv({ HOME: homeDir }),
+		input: readFileSync(join(repoRoot, "install.sh"), "utf8"),
+	});
+
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /--dev-install-timings is only supported when install\.sh is run from a complete local checkout/);
+});
+
+test("local stage-0 timing mode prints a phase summary even with --quiet", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const fakebin = join(root, "fakebin");
+	mkdirSync(homeDir, { recursive: true });
+	writeFakePi(fakebin, "if [[ \"${1:-}\" == \"--version\" ]]; then\n\tprintf '0.76.0\\n'\n\texit 0\nfi\nexit 0");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	const result = runStage0([
+		"--dry-run",
+		"--quiet",
+		"--dev-install-timings",
+		"--agent-dir", agentDir,
+		"--bin-dir", binDir,
+	], {
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: `${fakebin}:${process.env.PATH || ""}`,
+			TLH_SKIP_GNOSIS_INSTALL: "1",
+		}),
+	});
+	const output = `${result.stdout}\n${result.stderr}`;
+
+	assert.equal(result.status, 0, output);
+	assert.match(output, /Local development profiling: stage-1 install timing summary/);
+	assert.match(output, /(?:^|\n)\s*total\s+\S+/);
+	assert.match(output, /(?:^|\n)\s*preflight\s+\S+/);
+	assert.match(output, /(?:^|\n)\s*package\s+\S+/);
+	assert.match(output, /(?:^|\n)\s*default-extensions\s+\S+/);
+	assert.match(output, /(?:^|\n)\s*wrapper\s+\S+/);
 });
 
 test("installer helpers no longer support the removed --no-pi-install opt-out", (t) => {
@@ -1058,6 +1157,168 @@ test("stage-1 keeps critical defaults on per-source install path while dry-run s
 	assert.match(stdout, /would retry only 1 non-critical bundled default source\(s\) individually/i);
 	assert.doesNotMatch(stdout, /^Would.*\bpi\s+update\b/m);
 	assert.doesNotMatch(stdout, /pi update --extension npm:helper/);
+});
+
+test("stage-1 timing mode profiles bundled default extensions per source", (t) => {
+	const criticalSource = "git:github.com/example/critical@pin";
+	const defaults = [
+		{ id: "helper-a", source: "npm:helper-a" },
+		{ id: "helper-b", source: "npm:helper-b" },
+		{ id: "critical", critical: true, source: criticalSource },
+	];
+	const { config, agentDir, piLog } = makeDefaultExtensionInstallConfig(t, {
+		defaultExtensions: defaults,
+		settings: { packages: defaults.map((entry) => entry.source) },
+		fakePiBody: [
+			"printf '%s|%s|%s\\n' \"${PI_CODING_AGENT_DIR:-}\" \"$PWD\" \"$*\" >>\"${PI_LOG}\"",
+			"exit 0",
+		].join("\n"),
+		fakeGitBody: [
+			"target=''",
+			"if [[ \"${1:-}\" == \"-C\" ]]; then target=\"$2\"; shift 2; fi",
+			"if [[ \"${1:-}\" == \"rev-parse\" && \"${2:-}\" == \"--show-toplevel\" ]]; then printf '%s\\n' \"$target\"; exit 0; fi",
+			"if [[ \"${1:-}\" == \"rev-parse\" && \"${2:-}\" == \"--absolute-git-dir\" ]]; then printf '%s/.git\\n' \"$target\"; exit 0; fi",
+			"if [[ \"${1:-}\" == \"rev-parse\" && \"${2:-}\" == \"--git-common-dir\" ]]; then printf '%s/.git\\n' \"$target\"; exit 0; fi",
+			"exit 0",
+		].join("\n"),
+	});
+	mkdirSync(join(agentDir, "git", "github.com", "example", "critical", ".git"), { recursive: true });
+	enableInstallTimingSummary(config);
+
+	installDefaultExtensions(config);
+
+	assertPiCommands(piLog, agentDir, [
+		"update npm:helper-a",
+		"update npm:helper-b",
+		"install git:github.com/example/critical@pin",
+	]);
+	assert.deepEqual(config.installTimingDefaultExtensions.map(({ id, source, critical, status }) => ({ id, source, critical, status })), [
+		{ id: "helper-a", source: "npm:helper-a", critical: false, status: "success" },
+		{ id: "helper-b", source: "npm:helper-b", critical: false, status: "success" },
+		{ id: "critical", source: criticalSource, critical: true, status: "success" },
+	]);
+
+	const summary = captureConsole("log", () => printInstallTimingSummary(config));
+	assert.match(summary, /Local development profiling: bundled default extension per-source profile/);
+	assert.match(summary, /helper-a \(npm:helper-a\)\s+non-critical\s+success\s+\S+/);
+	assert.match(summary, /helper-b \(npm:helper-b\)\s+non-critical\s+success\s+\S+/);
+	assert.match(summary, /critical \(git:github\.com\/example\/critical@pin\)\s+critical\s+success\s+\S+/);
+});
+
+test("stage-1 timing mode keeps failed non-critical extension profiles best-effort", (t) => {
+	const criticalSource = "git:github.com/example/critical@pin";
+	const defaults = [
+		{ id: "helper-a", source: "npm:helper-a" },
+		{ id: "helper-b", source: "npm:helper-b" },
+		{ id: "critical", critical: true, source: criticalSource },
+	];
+	const { config, agentDir, piLog } = makeDefaultExtensionInstallConfig(t, {
+		defaultExtensions: defaults,
+		settings: { packages: defaults.map((entry) => entry.source) },
+		fakePiBody: [
+			"printf '%s|%s|%s\\n' \"${PI_CODING_AGENT_DIR:-}\" \"$PWD\" \"$*\" >>\"${PI_LOG}\"",
+			"if [[ \"$1\" == \"update\" && \"${2:-}\" == \"npm:helper-b\" ]]; then printf 'helper-b failed\\n' >&2; exit 43; fi",
+			"exit 0",
+		].join("\n"),
+		fakeGitBody: [
+			"target=''",
+			"if [[ \"${1:-}\" == \"-C\" ]]; then target=\"$2\"; shift 2; fi",
+			"if [[ \"${1:-}\" == \"rev-parse\" && \"${2:-}\" == \"--show-toplevel\" ]]; then printf '%s\\n' \"$target\"; exit 0; fi",
+			"if [[ \"${1:-}\" == \"rev-parse\" && \"${2:-}\" == \"--absolute-git-dir\" ]]; then printf '%s/.git\\n' \"$target\"; exit 0; fi",
+			"if [[ \"${1:-}\" == \"rev-parse\" && \"${2:-}\" == \"--git-common-dir\" ]]; then printf '%s/.git\\n' \"$target\"; exit 0; fi",
+			"exit 0",
+		].join("\n"),
+	});
+	mkdirSync(join(agentDir, "git", "github.com", "example", "critical", ".git"), { recursive: true });
+	enableInstallTimingSummary(config);
+
+	const stderr = captureConsole("error", () => installDefaultExtensions(config));
+
+	assertPiCommands(piLog, agentDir, [
+		"update npm:helper-a",
+		"update npm:helper-b",
+		"install git:github.com/example/critical@pin",
+	]);
+	assert.deepEqual(config.installTimingDefaultExtensions.map(({ id, status }) => ({ id, status })), [
+		{ id: "helper-a", status: "success" },
+		{ id: "helper-b", status: "failed" },
+		{ id: "critical", status: "success" },
+	]);
+	assert.match(stderr, /warning: default extension package update failed; continuing: npm:helper-b/);
+	assert.match(stderr, /warning: 1 bundled default extension package\(s\) failed to update/);
+});
+
+test("stage-1 timing mode keeps critical extension profiling fatal", (t) => {
+	const criticalSource = "git:github.com/example/critical@pin";
+	const defaults = [
+		{ id: "helper", source: "npm:helper" },
+		{ id: "critical", critical: true, source: criticalSource },
+	];
+	const { config, agentDir, piLog } = makeDefaultExtensionInstallConfig(t, {
+		defaultExtensions: defaults,
+		settings: { packages: defaults.map((entry) => entry.source) },
+		fakePiBody: [
+			"printf '%s|%s|%s\\n' \"${PI_CODING_AGENT_DIR:-}\" \"$PWD\" \"$*\" >>\"${PI_LOG}\"",
+			"if [[ \"$1\" == \"install\" && \"${2:-}\" == \"git:github.com/example/critical@pin\" ]]; then printf 'critical failed\\n' >&2; exit 52; fi",
+			"exit 0",
+		].join("\n"),
+		fakeGitBody: [
+			"target=''",
+			"if [[ \"${1:-}\" == \"-C\" ]]; then target=\"$2\"; shift 2; fi",
+			"if [[ \"${1:-}\" == \"rev-parse\" && \"${2:-}\" == \"--show-toplevel\" ]]; then printf '%s\\n' \"$target\"; exit 0; fi",
+			"if [[ \"${1:-}\" == \"rev-parse\" && \"${2:-}\" == \"--absolute-git-dir\" ]]; then printf '%s/.git\\n' \"$target\"; exit 0; fi",
+			"if [[ \"${1:-}\" == \"rev-parse\" && \"${2:-}\" == \"--git-common-dir\" ]]; then printf '%s/.git\\n' \"$target\"; exit 0; fi",
+			"exit 0",
+		].join("\n"),
+	});
+	mkdirSync(join(agentDir, "git", "github.com", "example", "critical", ".git"), { recursive: true });
+	enableInstallTimingSummary(config);
+
+	assert.throws(
+		() => installDefaultExtensions(config),
+		/critical default extension package install failed: git:github\.com\/example\/critical@pin/,
+	);
+	assertPiCommands(piLog, agentDir, [
+		"update npm:helper",
+		"install git:github.com/example/critical@pin",
+	]);
+	assert.deepEqual(config.installTimingDefaultExtensions.map(({ id, status }) => ({ id, status })), [
+		{ id: "helper", status: "success" },
+		{ id: "critical", status: "failed" },
+	]);
+});
+
+test("stage-1 timing mode keeps dry-run bundled default extension profiling coherent", (t) => {
+	const criticalSource = "git:github.com/example/critical@pin";
+	const defaults = [
+		{ id: "helper", source: "npm:helper" },
+		{ id: "critical", critical: true, source: criticalSource },
+	];
+	const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+		defaultExtensions: defaults,
+		settings: { packages: defaults.map((entry) => entry.source) },
+		dryRun: true,
+		fakeGitBody: [
+			"target=''",
+			"if [[ \"${1:-}\" == \"-C\" ]]; then target=\"$2\"; shift 2; fi",
+			"if [[ \"${1:-}\" == \"rev-parse\" && \"${2:-}\" == \"--show-toplevel\" ]]; then printf '%s\\n' \"$target\"; exit 0; fi",
+			"if [[ \"${1:-}\" == \"rev-parse\" && \"${2:-}\" == \"--absolute-git-dir\" ]]; then printf '%s/.git\\n' \"$target\"; exit 0; fi",
+			"if [[ \"${1:-}\" == \"rev-parse\" && \"${2:-}\" == \"--git-common-dir\" ]]; then printf '%s/.git\\n' \"$target\"; exit 0; fi",
+			"exit 0",
+		].join("\n"),
+	});
+	mkdirSync(join(agentDir, "git", "github.com", "example", "critical", ".git"), { recursive: true });
+	enableInstallTimingSummary(config);
+
+	const stdout = captureConsole("log", () => installDefaultExtensions(config));
+	const summary = captureConsole("log", () => printInstallTimingSummary(config));
+
+	assert.match(stdout, /Profiling bundled default extensions per source \(2\); timing mode uses per-source profiling instead of the normal settings-wide refresh/);
+	assert.match(stdout, /PI_CODING_AGENT_DIR=.*pi update npm:helper/);
+	assert.match(stdout, /PI_CODING_AGENT_DIR=.*pi install git:github\.com\/example\/critical@pin/);
+	assert.doesNotMatch(stdout, /PI_CODING_AGENT_DIR=.*pi update --extensions/);
+	assert.match(summary, /helper \(npm:helper\)\s+non-critical\s+dry-run\s+\S+/);
+	assert.match(summary, /critical \(git:github\.com\/example\/critical@pin\)\s+critical\s+dry-run\s+\S+/);
 });
 
 test("stage-1 canonicalizes relative target dirs before deriving wrapper and state paths", (t) => {

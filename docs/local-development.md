@@ -45,7 +45,7 @@ PI_CODING_AGENT_DIR="$tmp/agent" pi --no-extensions -e ./extensions/the-last-har
 
 ```sh
 tmp="$(mktemp -d)"
-PI_CODING_AGENT_DIR="$tmp/agent" pi install "file:$PWD"
+PI_CODING_AGENT_DIR="$tmp/agent" pi install "$PWD"
 PI_CODING_AGENT_DIR="$tmp/agent" pi
 ```
 
@@ -95,12 +95,42 @@ Test the local checkout without pushing it:
 
 ```sh
 tmp="$(mktemp -d)"
-TLH_PACKAGE_SOURCE="file:$PWD" bash install.sh \
+TLH_PACKAGE_SOURCE="$PWD" bash install.sh \
   --track custom \
   --agent-dir "$tmp/agent" \
   --bin-dir "$tmp/bin"
 "$tmp/bin/tlh"
 ```
+
+## Profile local install timings
+
+The hidden `--dev-install-timings` flag is for local development profiling only. It is intentionally omitted from public installer help and user docs, and it only works when this checkout's `install.sh` runs from a complete local checkout. Piped/bootstrap paths such as `bash -s -- < install.sh`, `curl ... | bash`, and direct `node scripts/tlh-install.mjs --dev-install-timings` invocations reject it.
+
+Use fresh temporary dirs for the first run, then rerun the same command against those same dirs for a warm install measurement. `--quiet` still prints the timing summary.
+
+```sh
+tmp="$(mktemp -d)"
+agent_dir="$tmp/agent"
+bin_dir="$tmp/bin"
+
+# Fresh install timing.
+TLH_PACKAGE_SOURCE="$PWD" bash install.sh \
+  --dev-install-timings \
+  --quiet \
+  --agent-dir "$agent_dir" \
+  --bin-dir "$bin_dir"
+
+# Warm rerun timing against the same isolated profile and wrapper dir.
+TLH_PACKAGE_SOURCE="$PWD" bash install.sh \
+  --dev-install-timings \
+  --quiet \
+  --agent-dir "$agent_dir" \
+  --bin-dir "$bin_dir"
+
+rm -rf "$tmp"
+```
+
+Timing mode prints a total/phase summary and, when bundled default extensions run, a per-source bundled default extension timing table.
 
 You can also test any pushed branch through GitHub. Push the branch, then fetch
 that branch's installer and pass the same branch name as `--ref`:
