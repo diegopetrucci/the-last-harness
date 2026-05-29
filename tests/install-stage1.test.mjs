@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -18,6 +18,11 @@ import {
 import { validateInstallerTargets } from "../scripts/lib/tlh-install-paths.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repoNodeModulesBin = join(repoRoot, "node_modules", ".bin");
+
+function pathWithoutRepoNodeModulesBin(pathValue = process.env.PATH || "") {
+	return pathValue.split(delimiter).filter((entry) => entry && resolve(entry) !== repoNodeModulesBin).join(delimiter);
+}
 
 function makeTempDir(prefix = "tlh-install-stage1-test-") {
 	return mkdtempSync(join(tmpdir(), prefix));
@@ -175,7 +180,7 @@ test("stage-1 hard-fails existing Pi version probes that exit nonzero", (t) => {
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /unable to determine Pi version from existing pi on PATH/);
 	assert.match(result.stderr, /pi --version exited with 23/);
-	assert.match(result.stderr, /The Last Harness requires Pi >= 0\.75\.3/);
+	assert.match(result.stderr, /The Last Harness requires Pi >= 0\.76\.0/);
 	assert.match(result.stderr, /Verify that `pi --version` works, or upgrade with: npm install -g --ignore-scripts --prefix /);
 	assert.match(result.stderr, /Probe output: version probe failed/);
 });
@@ -197,7 +202,7 @@ test("stage-1 probes existing Pi version with the isolated agent dir", (t) => {
 		"\tprintf 'poisoned profile\\n' >&2",
 		"\texit 24",
 		"fi",
-		"printf '0.75.3\\n'",
+		"printf '0.76.0\\n'",
 	].join("\n"));
 	const env = scrubInstallerEnv({
 		HOME: homeDir,
@@ -232,8 +237,8 @@ test("stage-1 hard-fails existing Pi version probes with unparsable output", (t)
 	const result = runInstaller(["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], env);
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /unable to parse Pi version from existing pi on PATH: development build/);
-	assert.match(result.stderr, /The Last Harness requires Pi >= 0\.75\.3/);
-	assert.match(result.stderr, /Verify that `pi --version` prints a semantic version like 0\.75\.3, or upgrade with: npm install -g --ignore-scripts --prefix /);
+	assert.match(result.stderr, /The Last Harness requires Pi >= 0\.76\.0/);
+	assert.match(result.stderr, /Verify that `pi --version` prints a semantic version like 0\.76\.0, or upgrade with: npm install -g --ignore-scripts --prefix /);
 });
 
 test("stage-1 rejects existing Pi older than the TLH minimum", (t) => {
@@ -254,7 +259,7 @@ test("stage-1 rejects existing Pi older than the TLH minimum", (t) => {
 	});
 	const result = runInstaller(["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], env);
 	assert.notEqual(result.status, 0);
-	assert.match(result.stderr, /Pi >= 0\.75\.3 is required \(found 0\.75\.2\)\. Upgrade with: npm install -g --ignore-scripts --prefix /);
+	assert.match(result.stderr, /Pi >= 0\.76\.0 is required \(found 0\.75\.2\)\. Upgrade with: npm install -g --ignore-scripts --prefix /);
 });
 
 test("declared Node minimum stays aligned across installer metadata", () => {
@@ -356,7 +361,9 @@ test("stage-1 --no-settings does not short-circuit Gnosis configure", (t) => {
 	const homeDir = join(root, "home");
 	const agentDir = join(root, "agent");
 	const binDir = join(root, "bin");
+	const fakebin = join(root, "fakebin");
 	mkdirSync(homeDir, { recursive: true });
+	writeFakePi(fakebin, "if [[ \"${1:-}\" == \"--version\" ]]; then\n\tprintf '0.76.0\\n'\n\texit 0\nfi\nexit 0");
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
 	const result = spawnSync(process.execPath, [
@@ -367,7 +374,11 @@ test("stage-1 --no-settings does not short-circuit Gnosis configure", (t) => {
 		"--bin-dir", binDir,
 	], {
 		cwd: repoRoot,
-		env: scrubInstallerEnv({ HOME: homeDir, TLH_SKIP_GNOSIS_INSTALL: "1" }),
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: [fakebin, pathWithoutRepoNodeModulesBin()].filter(Boolean).join(delimiter),
+			TLH_SKIP_GNOSIS_INSTALL: "1",
+		}),
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 	});

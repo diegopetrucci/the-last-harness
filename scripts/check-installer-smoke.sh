@@ -4,6 +4,25 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd -P)"
 cd "${ROOT_DIR}"
 
+# npm run scripts prepend repo-local node_modules/.bin, which can leave validation
+# using a stale upstream pi runtime after package.json bumps. Strip only the
+# repo-local shim so smoke checks exercise the ambient/global runtime unless a
+# test intentionally overrides PATH.
+if [[ -n "${PATH:-}" ]]; then
+  IFS=':' read -r -a _tlh_smoke_path_entries <<<"${PATH}"
+  _tlh_smoke_sanitized_path=()
+  for _tlh_smoke_path_entry in "${_tlh_smoke_path_entries[@]}"; do
+    if [[ "${_tlh_smoke_path_entry}" == "${ROOT_DIR}/node_modules/.bin" ]]; then
+      continue
+    fi
+    _tlh_smoke_sanitized_path+=("${_tlh_smoke_path_entry}")
+  done
+  if [[ "${#_tlh_smoke_sanitized_path[@]}" -gt 0 ]]; then
+    PATH="$(IFS=:; printf '%s' "${_tlh_smoke_sanitized_path[*]}")"
+    export PATH
+  fi
+fi
+
 TMP_ROOT="$(mktemp -d)"
 EXTRA_CLEANUP_PATHS=()
 cleanup() {
@@ -357,7 +376,7 @@ make_fake_present_pi() {
   cat >"${fakebin}/pi" <<'EOF_FAKE_PRESENT_PI'
 #!/bin/sh
 if [ "${1:-}" = "--version" ]; then
-  printf '0.75.3\n'
+  printf '0.76.0\n'
   exit 0
 fi
 printf 'fake pi should only be invoked with --version during dry-run; got: %s\n' "$*" >&2

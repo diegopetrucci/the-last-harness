@@ -60,7 +60,7 @@ const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
 // Keep in sync with TLH_MIN_NODE_VERSION and TLH_MIN_PI_VERSION in install.sh.
 const MIN_NODE_VERSION = "22.19.0";
-const MIN_PI_VERSION = "0.75.3";
+const MIN_PI_VERSION = "0.76.0";
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
 const DEFAULT_GNOSIS_VERSION = "latest";
 const DEFAULT_WRAPPER_NAME = "tlh";
@@ -492,7 +492,7 @@ function gitCheckoutIo() {
 }
 
 function assertSupportedPiVersion(config) {
-	// `pi --version` prints a bare semver (e.g. "0.75.3") on stdout. Older builds may
+	// `pi --version` prints a bare semver (e.g. "0.76.0") on stdout. Older builds may
 	// differ, so we extract the first semver-shaped substring rather than match strictly.
 	const result = spawnCapture(config, ["pi", "--version"], {
 		allowFailure: true,
