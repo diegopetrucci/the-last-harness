@@ -134,35 +134,26 @@ That settings opt-out is preserved by `tlh update` and installer reruns.
 
 Run a code review on a chosen scope (uncommitted changes, a branch comparison, a single commit, a PR, or a folder snapshot) via an isolated `code-reviewer` subagent.
 
-Run `/review` with no arguments to open an interactive mode picker. If you choose `commit`, `pr`, or `folder`, tlh prompts for the required SHA, PR number/URL, or paths before dispatching the review. Or pass a mode directly:
+Run `/review` with no arguments to open the interactive mode picker. This is the only supported command shape.
 
-```text
-/review uncommitted              # staged + unstaged changes vs HEAD, plus untracked non-gitignored files
-/review branch                   # commits on this branch vs main
-/review branch release/1.2       # commits on this branch vs release/1.2
-/review commit abc1234           # a single commit
-/review pr 123                   # a pull request by number or URL
-/review folder src/              # files in one or more folders
-```
+- Choose `uncommitted` to review staged + unstaged changes vs `HEAD`, plus untracked non-gitignored files.
+- Choose `branch` to review commits on the current branch vs `main`.
+- Choose `commit`, `pr`, or `folder` to get an editor prompt for the required SHA, PR number/URL, or paths.
 
-`/review branch` defaults to `main` when you omit the base branch. `/review uncommitted` also includes untracked files that are not gitignored.
+Typed shortcuts such as `/review uncommitted`, `/review branch main`, `/review pr 123`, `/review folder src/`, and `/review ... --extra "..."` are rejected with picker-only guidance rather than dispatched directly.
 
-Append `--extra "..."` to pass additional context or focus instructions to the reviewer:
-
-```text
-/review uncommitted --extra "focus on error handling"
-```
+`/review` requires the interactive TLH TUI. In no-TUI contexts, it fails with a clear picker-required message.
 
 ### PR mode
 
-PR mode requires the [GitHub CLI](https://cli.github.com) installed and authenticated (`gh auth login`). Cross-repository PRs are not supported yet; fetch the branch locally and use `/review branch <base>` instead.
+PR mode requires the [GitHub CLI](https://cli.github.com) installed and authenticated (`gh auth login`). Cross-repository PRs are not supported yet; fetch the branch locally and use `/review` with branch mode instead.
 
-If you are not already on the PR's head branch when you run `/review pr <n>`:
+If you choose PR mode while you are not already on the PR's head branch:
 
 - **Dirty working tree**: the command refuses and tells you to stash or commit first.
 - **Clean working tree**: the command shows a confirmation prompt before switching.
 
-If you confirm the switch, you are left on the PR branch. Return to your prior branch with `git checkout -`.
+If you confirm the switch, tlh uses `gh pr checkout <number>` and leaves you on the PR branch. Return to your prior branch with `git checkout -`.
 
 ### Folder mode
 

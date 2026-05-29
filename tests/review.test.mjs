@@ -113,82 +113,25 @@ function assertStandaloneLineCount(message, expectedLine, expectedCount) {
 
 // ─── (a) parseReviewArgs ───────────────────────────────────────────────────────
 
-test("parseReviewArgs: empty argv returns pickerRequested", () => {
-	assert.deepEqual(parseReviewArgs([]), { mode: null, pickerRequested: true });
+test("parseReviewArgs: empty argv requests the picker", () => {
+	assert.deepEqual(parseReviewArgs([]), { pickerRequested: true });
 });
 
-test("parseReviewArgs: uncommitted mode with no extra", () => {
-	assert.deepEqual(parseReviewArgs(["uncommitted"]), { mode: "uncommitted", extra: undefined });
-});
-
-test("parseReviewArgs: branch mode with base", () => {
-	assert.deepEqual(parseReviewArgs(["branch", "main"]), { mode: "branch", base: "main", extra: undefined });
-});
-
-test("parseReviewArgs: branch mode without base defaults to main", () => {
-	assert.deepEqual(parseReviewArgs(["branch"]), { mode: "branch", base: "main", extra: undefined });
-});
-
-test("parseReviewArgs: commit mode with sha", () => {
-	assert.deepEqual(parseReviewArgs(["commit", "abc123"]), { mode: "commit", sha: "abc123", extra: undefined });
-});
-
-test("parseReviewArgs: pr mode with number string", () => {
-	assert.deepEqual(parseReviewArgs(["pr", "42"]), { mode: "pr", nOrUrl: "42", extra: undefined });
-});
-
-test("parseReviewArgs: pr mode with full URL", () => {
-	assert.deepEqual(parseReviewArgs(["pr", "https://github.com/o/r/pull/9"]), {
-		mode: "pr",
-		nOrUrl: "https://github.com/o/r/pull/9",
-		extra: undefined,
-	});
-});
-
-test("parseReviewArgs: folder mode with multiple paths", () => {
-	assert.deepEqual(parseReviewArgs(["folder", "src", "docs"]), {
-		mode: "folder",
-		paths: ["src", "docs"],
-		extra: undefined,
-	});
-});
-
-test("parseReviewArgs: folder mode without paths yields empty array", () => {
-	assert.deepEqual(parseReviewArgs(["folder"]), { mode: "folder", paths: [], extra: undefined });
-});
-
-test("parseReviewArgs: uncommitted mode with --extra flag", () => {
-	assert.deepEqual(parseReviewArgs(["uncommitted", "--extra", "focus on perf"]), {
-		mode: "uncommitted",
-		extra: "focus on perf",
-	});
-});
-
-test("parseReviewArgs: branch mode with base and --extra flag", () => {
-	assert.deepEqual(parseReviewArgs(["branch", "main", "--extra", "x"]), {
-		mode: "branch",
-		base: "main",
-		extra: "x",
-	});
-});
-
-test("parseReviewArgs: branch mode without base still defaults to main when --extra is present", () => {
-	assert.deepEqual(parseReviewArgs(["branch", "--extra", "focus on regressions"]), {
-		mode: "branch",
-		base: "main",
-		extra: "focus on regressions",
-	});
-});
-
-test("parseReviewArgs: --extra before mode positional is captured regardless of position", () => {
-	assert.deepEqual(parseReviewArgs(["--extra", "x", "uncommitted"]), {
-		mode: "uncommitted",
-		extra: "x",
-	});
-});
-
-test("parseReviewArgs: unknown mode falls back to pickerRequested", () => {
-	assert.deepEqual(parseReviewArgs(["wat"]), { mode: null, pickerRequested: true });
+test("parseReviewArgs: typed review args are rejected with picker-only guidance", () => {
+	for (const argv of [
+		["uncommitted"],
+		["branch", "main"],
+		["commit", "abc123"],
+		["pr", "42"],
+		["folder", "src"],
+		["uncommitted", "--extra", "focus on perf"],
+	]) {
+		assert.deepEqual(parseReviewArgs(argv), {
+			pickerRequested: false,
+			message:
+				"/review is picker-only. Run /review with no arguments, then choose a mode in the picker. Typed shortcuts like `/review pr 123` and `--extra` are no longer supported.",
+		});
+	}
 });
 
 // ─── (b) buildReviewEnvelope ───────────────────────────────────────────────────
@@ -333,38 +276,65 @@ test("decideBranchAction: clean mismatch with no confirmation returns abort-canc
 
 // ─── (d) command gather regressions ───────────────────────────────────────────
 
-test("/review branch defaults base to main when omitted", async (t) => {
-	const cwd = makeTempDir(t, "tlh-review-branch-default-");
+test("/review rejects typed shortcuts and does not open the picker", async (t) => {
+	const cwd = makeTempDir(t, "tlh-review-typed-shortcuts-");
 
 	const harness = createReviewHarness({
 		cwd,
+		custom: () => {
+			throw new Error("picker should not open when typed args are provided");
+		},
 		exec: async (command, args) => {
-			if (command === "git" && args.join(" ") === "symbolic-ref -q HEAD") {
-				return { code: 0, stdout: "refs/heads/feature/review\n", stderr: "" };
-			}
-			if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD") {
-				return { code: 0, stdout: "feature/review\n", stderr: "" };
-			}
-			if (command === "git" && args.join(" ") === "rev-parse --verify main") {
-				return { code: 0, stdout: "abc123\n", stderr: "" };
-			}
-			if (command === "git" && args.join(" ") === "diff main...HEAD") {
-				return { code: 0, stdout: "diff --git a/src/app.ts b/src/app.ts\n", stderr: "" };
-			}
 			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
 		},
 	});
 
-	await harness.handler("branch", harness.ctx);
+	for (const input of [
+		"uncommitted",
+		"branch main",
+		"commit abc123",
+		"pr 123",
+		"folder src",
+		"uncommitted --extra \"focus on error handling\"",
+	]) {
+		await harness.handler(input, harness.ctx);
+	}
 
-	assert.equal(harness.notifications.length, 0);
-	assert.equal(harness.sentMessages.length, 1);
-	assert.match(harness.sentMessages[0], /mode: branch/);
-	assert.match(harness.sentMessages[0], /base: main/);
-	assert.equal(
-		harness.execCalls.some(({ command, args }) => command === "git" && args.join(" ") === "diff main...HEAD"),
-		true,
+	assert.equal(harness.customCallCount, 0);
+	assert.equal(harness.execCalls.length, 0);
+	assert.equal(harness.sentMessages.length, 0);
+	assert.deepEqual(
+		harness.notifications,
+		Array.from({ length: 6 }, () => ({
+			message:
+				"/review is picker-only. Run /review with no arguments, then choose a mode in the picker. Typed shortcuts like `/review pr 123` and `--extra` are no longer supported.",
+			level: "error",
+		})),
 	);
+});
+
+test("/review without TUI fails clearly because the picker is required", async (t) => {
+	const cwd = makeTempDir(t, "tlh-review-no-tui-");
+
+	const harness = createReviewHarness({
+		cwd,
+		hasUI: false,
+		exec: async (command, args) => {
+			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
+		},
+	});
+
+	await harness.handler("", harness.ctx);
+
+	assert.equal(harness.customCallCount, 0);
+	assert.equal(harness.execCalls.length, 0);
+	assert.equal(harness.sentMessages.length, 0);
+	assert.deepEqual(harness.notifications, [
+		{
+			message: "/review requires the interactive TUI picker. Re-run /review in the TLH UI.",
+			level: "error",
+		},
+	]);
 });
 
 test("/review picker-selected branch uses main by default without extra prompts", async (t) => {
@@ -399,52 +369,21 @@ test("/review picker-selected branch uses main by default without extra prompts"
 });
 
 
-test("/review branch rejects a leading-dash base before using it as a git ref", async (t) => {
-	const cwd = makeTempDir(t, "tlh-review-branch-leading-dash-");
-
-	const harness = createReviewHarness({
-		cwd,
-		exec: async (command, args) => {
-			assert.equal(args.includes("-main"), false, "should reject before passing -main to git");
-			if (command === "git" && args.join(" ") === "symbolic-ref -q HEAD") {
-				return { code: 0, stdout: "refs/heads/feature/review\n", stderr: "" };
-			}
-			if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD") {
-				return { code: 0, stdout: "feature/review\n", stderr: "" };
-			}
-			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
-		},
-	});
-
-	await harness.handler("branch -main", harness.ctx);
-
-	assert.equal(harness.sentMessages.length, 0);
-	assert.deepEqual(harness.notifications, [
-		{
-			message: "base cannot start with '-' (got '-main'). If this is intentional, run the underlying command manually.",
-			level: "error",
-		},
-	]);
-	assert.equal(
-		harness.execCalls.some(({ args }) => args.includes("-main")),
-		false,
-		"should not pass the leading-dash base to git",
-	);
-});
-
-
-test("/review commit rejects a leading-dash sha before git use", async (t) => {
+test("/review picker-selected commit rejects a leading-dash sha before git use", async (t) => {
 	const cwd = makeTempDir(t, "tlh-review-commit-leading-dash-");
 
 	const harness = createReviewHarness({
 		cwd,
+		custom: () => "commit",
+		editor: () => "-abc123",
 		exec: async (command, args) => {
 			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
 		},
 	});
 
-	await harness.handler("commit -abc123", harness.ctx);
+	await harness.handler("", harness.ctx);
 
+	assert.equal(harness.customCallCount, 1);
 	assert.equal(harness.execCalls.length, 0);
 	assert.equal(harness.sentMessages.length, 0);
 	assert.deepEqual(harness.notifications, [
@@ -456,18 +395,21 @@ test("/review commit rejects a leading-dash sha before git use", async (t) => {
 });
 
 
-test("/review pr rejects a leading-dash ref before gh use", async (t) => {
+test("/review picker-selected pr rejects a leading-dash ref before gh use", async (t) => {
 	const cwd = makeTempDir(t, "tlh-review-pr-leading-dash-");
 
 	const harness = createReviewHarness({
 		cwd,
+		custom: () => "pr",
+		editor: () => "-42",
 		exec: async (command, args) => {
 			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
 		},
 	});
 
-	await harness.handler("pr -42", harness.ctx);
+	await harness.handler("", harness.ctx);
 
+	assert.equal(harness.customCallCount, 1);
 	assert.equal(harness.execCalls.length, 0);
 	assert.equal(harness.sentMessages.length, 0);
 	assert.deepEqual(harness.notifications, [
@@ -619,21 +561,25 @@ test("/review uncommitted appends untracked non-gitignored file content", async 
 
 	const harness = createReviewHarness({
 		cwd,
-		exec: async (command, args) => {
+		custom: () => "uncommitted",
+		exec: async (command, args, options) => {
 			if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD") {
 				return { code: 0, stdout: "feature/untracked\n", stderr: "" };
 			}
 			if (command === "git" && args.join(" ") === "diff HEAD") {
 				return { code: 0, stdout: "diff --git a/app.ts b/app.ts\n", stderr: "" };
 			}
-			if (command === "git" && args.join(" ") === "ls-files -z --others --exclude-standard -- .") {
+			if (command === "git" && args.join(" ") === "rev-parse --show-toplevel" && options.cwd === cwd) {
+				return { code: 0, stdout: `${cwd}\n`, stderr: "" };
+			}
+			if (command === "git" && args.join(" ") === "ls-files -z --others --exclude-standard -- ." && options.cwd === cwd) {
 				return { code: 0, stdout: "new-file.ts\0", stderr: "" };
 			}
-			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
+			throw new Error(`Unexpected exec: ${command} ${args.join(" ")} @ ${options.cwd ?? ""}`);
 		},
 	});
 
-	await harness.handler("uncommitted", harness.ctx);
+	await harness.handler("", harness.ctx);
 
 	assert.equal(harness.notifications.length, 0);
 	assert.equal(harness.sentMessages.length, 1);
@@ -647,6 +593,53 @@ test("/review uncommitted appends untracked non-gitignored file content", async 
 	);
 });
 
+test("/review uncommitted scans untracked files from the repo root when invoked from a subdirectory", async (t) => {
+	const repoRoot = makeTempDir(t, "tlh-review-uncommitted-root-");
+	const cwd = join(repoRoot, "packages", "app");
+	mkdirSync(cwd, { recursive: true });
+	writeFileSync(join(repoRoot, "outside.ts"), "export const outside = true;\n");
+
+	const harness = createReviewHarness({
+		cwd,
+		custom: () => "uncommitted",
+		exec: async (command, args, options) => {
+			if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD" && options.cwd === cwd) {
+				return { code: 0, stdout: "feature/untracked\n", stderr: "" };
+			}
+			if (command === "git" && args.join(" ") === "diff HEAD" && options.cwd === cwd) {
+				return { code: 0, stdout: "diff --git a/app.ts b/app.ts\n", stderr: "" };
+			}
+			if (command === "git" && args.join(" ") === "rev-parse --show-toplevel" && options.cwd === cwd) {
+				return { code: 0, stdout: `${repoRoot}\n`, stderr: "" };
+			}
+			if (
+				command === "git" &&
+				args.join(" ") === "ls-files -z --others --exclude-standard -- ." &&
+				options.cwd === repoRoot
+			) {
+				return { code: 0, stdout: "outside.ts\0", stderr: "" };
+			}
+			throw new Error(`Unexpected exec: ${command} ${args.join(" ")} @ ${options.cwd ?? ""}`);
+		},
+	});
+
+	await harness.handler("", harness.ctx);
+
+	assert.equal(harness.sentMessages.length, 1);
+	assert.match(harness.sentMessages[0], /--- untracked file: "outside\.ts" ---\nexport const outside = true;/);
+	assert.doesNotMatch(harness.sentMessages[0], /--- untracked file: "\.\.\/outside\.ts" ---/);
+	assert.ok(
+		harness.execCalls.some(({ command, args, cwd: callCwd }) =>
+			command === "git" && args.join(" ") === "rev-parse --show-toplevel" && callCwd === cwd),
+		"should resolve the repository root from the invocation cwd",
+	);
+	assert.ok(
+		harness.execCalls.some(({ command, args, cwd: callCwd }) =>
+			command === "git" && args.join(" ") === "ls-files -z --others --exclude-standard -- ." && callCwd === repoRoot),
+		"should scan untracked files from the repository root",
+	);
+});
+
 test("/review uncommitted preserves exact git-reported paths with leading or trailing spaces", async (t) => {
 	const cwd = makeTempDir(t, "tlh-review-untracked-spaces-");
 	writeFileSync(join(cwd, " leading.ts"), "export const leading = true;\n");
@@ -654,21 +647,25 @@ test("/review uncommitted preserves exact git-reported paths with leading or tra
 
 	const harness = createReviewHarness({
 		cwd,
-		exec: async (command, args) => {
+		custom: () => "uncommitted",
+		exec: async (command, args, options) => {
 			if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD") {
 				return { code: 0, stdout: "feature/untracked\n", stderr: "" };
 			}
 			if (command === "git" && args.join(" ") === "diff HEAD") {
 				return { code: 0, stdout: "", stderr: "" };
 			}
-			if (command === "git" && args.join(" ") === "ls-files -z --others --exclude-standard -- .") {
+			if (command === "git" && args.join(" ") === "rev-parse --show-toplevel" && options.cwd === cwd) {
+				return { code: 0, stdout: `${cwd}\n`, stderr: "" };
+			}
+			if (command === "git" && args.join(" ") === "ls-files -z --others --exclude-standard -- ." && options.cwd === cwd) {
 				return { code: 0, stdout: " leading.ts\0trailing .ts\0", stderr: "" };
 			}
-			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
+			throw new Error(`Unexpected exec: ${command} ${args.join(" ")} @ ${options.cwd ?? ""}`);
 		},
 	});
 
-	await harness.handler("uncommitted", harness.ctx);
+	await harness.handler("", harness.ctx);
 
 	assert.equal(harness.sentMessages.length, 1);
 	assert.ok(harness.sentMessages[0].includes("--- untracked file: \" leading.ts\" ---"));
@@ -682,21 +679,25 @@ test("/review uncommitted renders newline/control/delimiter-like untracked paths
 
 	const harness = createReviewHarness({
 		cwd,
-		exec: async (command, args) => {
+		custom: () => "uncommitted",
+		exec: async (command, args, options) => {
 			if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD") {
 				return { code: 0, stdout: "feature/untracked\n", stderr: "" };
 			}
 			if (command === "git" && args.join(" ") === "diff HEAD") {
 				return { code: 0, stdout: "", stderr: "" };
 			}
-			if (command === "git" && args.join(" ") === "ls-files -z --others --exclude-standard -- .") {
+			if (command === "git" && args.join(" ") === "rev-parse --show-toplevel" && options.cwd === cwd) {
+				return { code: 0, stdout: `${cwd}\n`, stderr: "" };
+			}
+			if (command === "git" && args.join(" ") === "ls-files -z --others --exclude-standard -- ." && options.cwd === cwd) {
 				return { code: 0, stdout: `${weirdPath}\0`, stderr: "" };
 			}
-			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
+			throw new Error(`Unexpected exec: ${command} ${args.join(" ")} @ ${options.cwd ?? ""}`);
 		},
 	});
 
-	await harness.handler("uncommitted", harness.ctx);
+	await harness.handler("", harness.ctx);
 
 	assert.equal(harness.sentMessages.length, 1);
 	assertRenderedPathLine(harness.sentMessages[0], /^--- untracked file: (".*") ---$/, weirdPath);
@@ -712,21 +713,25 @@ test("/review uncommitted skips symlinked untracked files instead of reading tar
 
 	const harness = createReviewHarness({
 		cwd,
-		exec: async (command, args) => {
+		custom: () => "uncommitted",
+		exec: async (command, args, options) => {
 			if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD") {
 				return { code: 0, stdout: "feature/untracked\n", stderr: "" };
 			}
 			if (command === "git" && args.join(" ") === "diff HEAD") {
 				return { code: 0, stdout: "", stderr: "" };
 			}
-			if (command === "git" && args.join(" ") === "ls-files -z --others --exclude-standard -- .") {
+			if (command === "git" && args.join(" ") === "rev-parse --show-toplevel" && options.cwd === cwd) {
+				return { code: 0, stdout: `${cwd}\n`, stderr: "" };
+			}
+			if (command === "git" && args.join(" ") === "ls-files -z --others --exclude-standard -- ." && options.cwd === cwd) {
 				return { code: 0, stdout: "outside-link.txt\0", stderr: "" };
 			}
-			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
+			throw new Error(`Unexpected exec: ${command} ${args.join(" ")} @ ${options.cwd ?? ""}`);
 		},
 	});
 
-	await harness.handler("uncommitted", harness.ctx);
+	await harness.handler("", harness.ctx);
 
 	assert.equal(harness.sentMessages.length, 1);
 	assertRenderedPathLine(harness.sentMessages[0], /^\[skipped symlink: (".*")\]$/, "outside-link.txt");
@@ -743,21 +748,25 @@ test("/review uncommitted renders escaped symlink skip markers for newline/delim
 
 	const harness = createReviewHarness({
 		cwd,
-		exec: async (command, args) => {
+		custom: () => "uncommitted",
+		exec: async (command, args, options) => {
 			if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD") {
 				return { code: 0, stdout: "feature/untracked\n", stderr: "" };
 			}
 			if (command === "git" && args.join(" ") === "diff HEAD") {
 				return { code: 0, stdout: "", stderr: "" };
 			}
-			if (command === "git" && args.join(" ") === "ls-files -z --others --exclude-standard -- .") {
+			if (command === "git" && args.join(" ") === "rev-parse --show-toplevel" && options.cwd === cwd) {
+				return { code: 0, stdout: `${cwd}\n`, stderr: "" };
+			}
+			if (command === "git" && args.join(" ") === "ls-files -z --others --exclude-standard -- ." && options.cwd === cwd) {
 				return { code: 0, stdout: `${weirdLinkPath}\0`, stderr: "" };
 			}
-			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
+			throw new Error(`Unexpected exec: ${command} ${args.join(" ")} @ ${options.cwd ?? ""}`);
 		},
 	});
 
-	await harness.handler("uncommitted", harness.ctx);
+	await harness.handler("", harness.ctx);
 
 	assert.equal(harness.sentMessages.length, 1);
 	assertRenderedPathLine(harness.sentMessages[0], /^\[skipped symlink: (".*")\]$/, weirdLinkPath);
@@ -772,6 +781,8 @@ test("/review folder keeps empty git ls-files results instead of walking ignored
 
 	const harness = createReviewHarness({
 		cwd,
+		custom: () => "folder",
+		editor: () => "ignored-only",
 		exec: async (command, args, options) => {
 			if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD") {
 				return { code: 0, stdout: "main\n", stderr: "" };
@@ -787,7 +798,7 @@ test("/review folder keeps empty git ls-files results instead of walking ignored
 		},
 	});
 
-	await harness.handler("folder ignored-only", harness.ctx);
+	await harness.handler("", harness.ctx);
 
 	assert.equal(harness.notifications.length, 0);
 	assert.equal(harness.sentMessages.length, 1);
@@ -803,6 +814,8 @@ test("/review folder still falls back to a plain walk outside git", async (t) =>
 
 	const harness = createReviewHarness({
 		cwd,
+		custom: () => "folder",
+		editor: () => "docs",
 		exec: async (command, args, options) => {
 			if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD") {
 				return { code: 128, stdout: "", stderr: "fatal: not a git repository" };
@@ -818,7 +831,7 @@ test("/review folder still falls back to a plain walk outside git", async (t) =>
 		},
 	});
 
-	await harness.handler("folder docs", harness.ctx);
+	await harness.handler("", harness.ctx);
 
 	assert.equal(harness.notifications.length, 0);
 	assert.equal(harness.sentMessages.length, 1);
@@ -832,6 +845,8 @@ test("/review folder escapes snapshot fence lines found in file content", async 
 
 	const harness = createReviewHarness({
 		cwd,
+		custom: () => "folder",
+		editor: () => "docs",
 		exec: async (command, args, options) => {
 			if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD") {
 				return { code: 128, stdout: "", stderr: "fatal: not a git repository" };
@@ -847,7 +862,7 @@ test("/review folder escapes snapshot fence lines found in file content", async 
 		},
 	});
 
-	await harness.handler("folder docs", harness.ctx);
+	await harness.handler("", harness.ctx);
 
 	assert.equal(harness.sentMessages.length, 1);
 	assert.match(harness.sentMessages[0], /\\--- end snapshot ---/);
@@ -877,6 +892,8 @@ test("/review folder skips per-file lstat and binary-check failures while contin
 
 	const harness = createReviewHarness({
 		cwd,
+		custom: () => "folder",
+		editor: () => "docs",
 		exec: async (command, args, options) => {
 			if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD") {
 				return { code: 0, stdout: "main\n", stderr: "" };
@@ -892,7 +909,7 @@ test("/review folder skips per-file lstat and binary-check failures while contin
 		},
 	});
 
-	await harness.handler("folder docs", harness.ctx);
+	await harness.handler("", harness.ctx);
 
 	assert.equal(harness.notifications.length, 0);
 	assert.equal(harness.sentMessages.length, 1);
@@ -913,6 +930,8 @@ test("/review folder renders newline/control/delimiter-like snapshot paths as es
 
 	const harness = createReviewHarness({
 		cwd,
+		custom: () => "folder",
+		editor: () => "docs",
 		exec: async (command, args, options) => {
 			if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD") {
 				return { code: 128, stdout: "", stderr: "fatal: not a git repository" };
@@ -928,21 +947,94 @@ test("/review folder renders newline/control/delimiter-like snapshot paths as es
 		},
 	});
 
-	await harness.handler("folder docs", harness.ctx);
+	await harness.handler("", harness.ctx);
 
 	assert.equal(harness.sentMessages.length, 1);
 	assertRenderedPathLine(harness.sentMessages[0], /^--- file: (".*") ---$/, `docs/${weirdName}`);
 	assertNoStandaloneLine(harness.sentMessages[0], "--- begin untracked files ---");
 });
 
+test("/review pr uses gh pr checkout before diff when switching to the PR head", async (t) => {
+	const cwd = makeTempDir(t, "tlh-review-pr-checkout-");
+	const customResponses = ["pr", true];
+
+	const harness = createReviewHarness({
+		cwd,
+		custom: () => customResponses.shift(),
+		editor: () => "123",
+		exec: async (command, args) => {
+			if (command === "gh" && args.join(" ") === "--version") {
+				return { code: 0, stdout: "gh version 2.0.0\n", stderr: "" };
+			}
+			if (
+				command === "gh" &&
+				args.join(" ") ===
+					"pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
+			) {
+				return {
+					code: 0,
+					stdout: JSON.stringify({
+						number: 123,
+						headRefName: "feature/review",
+						baseRefName: "main",
+						isCrossRepository: false,
+					}),
+					stderr: "",
+				};
+			}
+			if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD") {
+				return { code: 0, stdout: "main\n", stderr: "" };
+			}
+			if (command === "git" && args.join(" ") === "status --porcelain") {
+				return { code: 0, stdout: "", stderr: "" };
+			}
+			if (command === "gh" && args.join(" ") === "pr checkout 123") {
+				return { code: 0, stdout: "", stderr: "" };
+			}
+			if (command === "gh" && args.join(" ") === "pr diff 123") {
+				return { code: 0, stdout: "diff --git a/src/app.ts b/src/app.ts\n", stderr: "" };
+			}
+			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
+		},
+	});
+
+	await harness.handler("", harness.ctx);
+
+	assert.equal(harness.sentMessages.length, 1);
+	assert.deepEqual(harness.notifications, [
+		{
+			message: "Switched from 'main' to 'feature/review'. Use `git checkout -` to return.",
+			level: "info",
+		},
+	]);
+	assert.ok(
+		harness.execCalls.some(({ command, args }) => command === "gh" && args.join(" ") === "pr checkout 123"),
+		"should use gh pr checkout for the branch switch",
+	);
+	assert.equal(
+		harness.execCalls.some(({ command, args }) => command === "git" && args[0] === "checkout"),
+		false,
+	);
+	assert.ok(
+		harness.execCalls.findIndex(({ command, args }) => command === "gh" && args.join(" ") === "pr checkout 123") <
+			harness.execCalls.findIndex(({ command, args }) => command === "gh" && args.join(" ") === "pr diff 123"),
+		"should switch branches before gathering the PR diff",
+	);
+});
+
 test("/review pr aborts before checkout when git status dirty-check fails", async (t) => {
 	const cwd = makeTempDir(t, "tlh-review-pr-");
+	const customResponses = ["pr"];
 
 	const harness = createReviewHarness({
 		cwd,
 		custom: () => {
-			throw new Error("branch switch confirmation should not be shown when git status fails");
+			if (customResponses.length === 0) {
+				throw new Error("branch switch confirmation should not be shown when git status fails");
+			}
+			return customResponses.shift();
 		},
+		editor: () => "123",
 		exec: async (command, args) => {
 			if (command === "gh" && args.join(" ") === "--version") {
 				return { code: 0, stdout: "gh version 2.0.0\n", stderr: "" };
@@ -973,12 +1065,16 @@ test("/review pr aborts before checkout when git status dirty-check fails", asyn
 		},
 	});
 
-	await harness.handler("pr 123", harness.ctx);
+	await harness.handler("", harness.ctx);
 
 	assert.equal(harness.sentMessages.length, 0);
-	assert.equal(harness.customCallCount, 0);
+	assert.equal(harness.customCallCount, 1);
 	assert.equal(
 		harness.execCalls.some(({ command, args }) => command === "git" && args[0] === "checkout"),
+		false,
+	);
+	assert.equal(
+		harness.execCalls.some(({ command, args }) => command === "gh" && args.join(" ") === "pr checkout 123"),
 		false,
 	);
 	assert.deepEqual(harness.notifications, [

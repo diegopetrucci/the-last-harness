@@ -10,8 +10,10 @@ import { Container, matchesKey, SelectList, Text } from "@earendil-works/pi-tui"
 const REVIEW_TITLE = "Choose a review mode";
 const REVIEW_PICKER_HINT = "↑/↓ to move  Enter to confirm  Esc to cancel";
 const REVIEW_DEFAULT_BRANCH_BASE = "main";
-const REVIEW_COMMAND_HELP =
-	"Usage: /review [uncommitted|branch [base=main]|commit <sha>|pr <n-or-url>|folder <paths...>] [--extra '...']\nNote: uncommitted mode also includes untracked non-gitignored files.";
+const REVIEW_PICKER_ONLY_GUIDANCE =
+	"/review is picker-only. Run /review with no arguments, then choose a mode in the picker. Typed shortcuts like `/review pr 123` and `--extra` are no longer supported.";
+const REVIEW_TUI_REQUIRED_MESSAGE =
+	"/review requires the interactive TUI picker. Re-run /review in the TLH UI.";
 
 export const REVIEW_MODES = ["uncommitted", "branch", "commit", "pr", "folder"] as const;
 export type ReviewMode = (typeof REVIEW_MODES)[number];
@@ -36,7 +38,10 @@ const REVIEW_UNTRACKED_END_DELIMITER = "--- end untracked files ---";
 export type BranchDecisionAction = "proceed" | "abort-dirty" | "switch" | "abort-cancelled";
 
 export type ParsedReviewArgs =
-	| { mode: null; pickerRequested: true }
+	| { pickerRequested: true }
+	| { pickerRequested: false; message: string };
+
+export type ReviewDispatchArgs =
 	| { mode: "uncommitted"; extra: string | undefined }
 	| { mode: "branch"; base: string | undefined; extra: string | undefined }
 	| { mode: "commit"; sha: string | undefined; extra: string | undefined }
@@ -62,14 +67,10 @@ export function decideBranchAction(params: {
 	return userConfirm ? "switch" : "abort-cancelled";
 }
 
-function isReviewMode(value: string): value is ReviewMode {
-	return (REVIEW_MODES as readonly string[]).includes(value);
-}
-
 /**
  * Tokenise a raw args string from the command handler, respecting single- and
- * double-quoted groups so that --extra "some phrase" is collapsed into one token.
- * Unquoted whitespace, including newlines from picker follow-up prompts, splits tokens.
+ * double-quoted groups so that quoted picker follow-up input stays grouped.
+ * Unquoted whitespace, including newlines from editor prompts, splits tokens.
  */
 function tokenizeArgs(raw: string): string[] {
 	if (!raw.trim()) return [];
@@ -100,56 +101,19 @@ function tokenizeArgs(raw: string): string[] {
 }
 
 /**
- * Parse an argv array (positional and flag tokens, not including the command
- * name) into a structured ParsedReviewArgs result.
- *
- * Bare /review with no args (empty argv) returns { mode: null, pickerRequested: true }.
- * An unrecognised mode also returns pickerRequested: true so the caller can
- * show the picker instead of erroring.
- *
- * Supported shapes:
- *   /review uncommitted [--extra '...']
- *   /review branch [base=main] [--extra '...']
- *   /review commit [sha] [--extra '...']
- *   /review pr [n-or-url] [--extra '...']
- *   /review folder [path...] [--extra '...']
+ * /review is picker-only. Bare /review requests the picker; any typed
+ * arguments are rejected with explicit guidance so users do not think the
+ * command silently ignored meaningful input.
  */
 export function parseReviewArgs(argv: string[]): ParsedReviewArgs {
-	const args = [...argv];
-
-	// Extract --extra <value> from any position before processing positionals.
-	let extra: string | undefined;
-	const extraIdx = args.indexOf("--extra");
-	if (extraIdx !== -1) {
-		const extraValue = args[extraIdx + 1];
-		args.splice(extraIdx, extraValue !== undefined ? 2 : 1);
-		extra = extraValue;
+	if (argv.length === 0) {
+		return { pickerRequested: true };
 	}
 
-	const rawMode = args[0]?.toLowerCase();
-
-	if (!rawMode) {
-		return { mode: null, pickerRequested: true };
-	}
-
-	if (!isReviewMode(rawMode)) {
-		// Unknown positional — show picker rather than throw so callers get a
-		// recoverable path.
-		return { mode: null, pickerRequested: true };
-	}
-
-	switch (rawMode) {
-		case "uncommitted":
-			return { mode: "uncommitted", extra };
-		case "branch":
-			return { mode: "branch", base: args[1] ?? REVIEW_DEFAULT_BRANCH_BASE, extra };
-		case "commit":
-			return { mode: "commit", sha: args[1], extra };
-		case "pr":
-			return { mode: "pr", nOrUrl: args[1], extra };
-		case "folder":
-			return { mode: "folder", paths: args.slice(1), extra };
-	}
+	return {
+		pickerRequested: false,
+		message: REVIEW_PICKER_ONLY_GUIDANCE,
+	};
 }
 
 /**
@@ -179,7 +143,7 @@ export interface ReviewGatheredContext {
  * for PR mode and also fills `ctx.checkout` when it switches branches.
  */
 export function buildReviewEnvelope(
-	parsed: ParsedReviewArgs & { mode: ReviewMode },
+	parsed: ReviewDispatchArgs,
 	ctx?: ReviewGatheredContext,
 ): string {
 	const { mode, extra } = parsed;
@@ -235,8 +199,8 @@ export function buildReviewEnvelope(
 
 // --- Helpers for picker integration ---
 
-/** Construct a full ParsedReviewArgs for a mode chosen interactively with defaults applied. */
-function makePickedArgs(mode: ReviewMode): ParsedReviewArgs & { mode: ReviewMode } {
+/** Construct full dispatch args for a mode chosen interactively with defaults applied. */
+function makePickedArgs(mode: ReviewMode): ReviewDispatchArgs {
 	switch (mode) {
 		case "uncommitted":
 			return { mode: "uncommitted", extra: undefined };
@@ -263,7 +227,7 @@ async function promptForReviewInput(
 async function completePickedArgs(
 	ctx: ExtensionCommandContext,
 	mode: ReviewMode,
-): Promise<(ParsedReviewArgs & { mode: ReviewMode }) | undefined> {
+): Promise<ReviewDispatchArgs | undefined> {
 	if (mode === "uncommitted" || mode === "branch") {
 		return makePickedArgs(mode);
 	}
@@ -336,6 +300,22 @@ function detectNotGitRepo(stderr: string): boolean {
 	return /not a git repository/i.test(stderr);
 }
 
+async function resolveRepoRoot(
+	pi: ExtensionAPI,
+	cwd: string,
+	context: string,
+): Promise<{ ok: true; root: string } | { ok: false; message: string }> {
+	const repoRootResult = await pi.exec("git", ["rev-parse", "--show-toplevel"], { cwd });
+	if (repoRootResult.code !== 0) {
+		const message = detectNotGitRepo(repoRootResult.stderr)
+			? "Not inside a git repository. Run /review from a directory that contains a .git folder."
+			: `Could not determine repository root for ${context}: ${repoRootResult.stderr.trim() || "git rev-parse --show-toplevel failed"}`;
+		return { ok: false, message };
+	}
+
+	return { ok: true, root: repoRootResult.stdout.trim() };
+}
+
 /**
  * Reject values that look like git/gh flags (start with '-').
  * pi.exec is argv-based (no shell injection), but a leading dash could still
@@ -375,8 +355,13 @@ async function gatherUncommitted(pi: ExtensionAPI, cmdCtx: ExtensionCommandConte
 		return { ok: false, message };
 	}
 
+	const repoRootResult = await resolveRepoRoot(pi, cwd, "the untracked file scan");
+	if (!repoRootResult.ok) {
+		return repoRootResult;
+	}
+
 	// Include untracked, non-gitignored files so the reviewer can see newly added content.
-	const untrackedResult = await pi.exec("git", ["ls-files", "-z", "--others", "--exclude-standard", "--", "."], { cwd });
+	const untrackedResult = await pi.exec("git", ["ls-files", "-z", "--others", "--exclude-standard", "--", "."], { cwd: repoRootResult.root });
 	if (untrackedResult.code !== 0) {
 		const message = detectNotGitRepo(untrackedResult.stderr)
 			? "Not inside a git repository. Run /review from a directory that contains a .git folder."
@@ -385,8 +370,8 @@ async function gatherUncommitted(pi: ExtensionAPI, cmdCtx: ExtensionCommandConte
 	}
 
 	const untrackedFiles = parseNullDelimitedGitPaths(untrackedResult.stdout)
-		.map((filePath) => resolve(cwd, filePath));
-	const untrackedParts = await buildSnapshotParts(cwd, untrackedFiles, "untracked file");
+		.map((filePath) => resolve(repoRootResult.root, filePath));
+	const untrackedParts = await buildSnapshotParts(repoRootResult.root, untrackedFiles, "untracked file");
 	const body = appendUntrackedSnapshot(diffResult.stdout, untrackedParts);
 
 	return {
@@ -418,7 +403,7 @@ async function gatherBranch(
 		}
 		return {
 			ok: false,
-			message: "HEAD is detached. Check out a branch before running /review branch.",
+			message: "HEAD is detached. Check out a branch before running /review.",
 		};
 	}
 
@@ -467,7 +452,7 @@ async function gatherCommit(
 	if (!sha) {
 		return {
 			ok: false,
-			message: "commit mode requires a SHA, e.g. /review commit abc1234",
+			message: "Commit review requires a SHA. Re-run /review and choose commit.",
 		};
 	}
 
@@ -681,7 +666,7 @@ async function gatherFolder(
 	if (paths.length === 0) {
 		return {
 			ok: false,
-			message: "folder mode requires at least one path, e.g. /review folder src/",
+			message: "Folder review requires at least one path. Re-run /review and choose folder.",
 		};
 	}
 
@@ -812,7 +797,7 @@ async function gatherPr(
 	if (!nOrUrl || !nOrUrl.trim()) {
 		return {
 			ok: false,
-			message: "pr mode requires a PR number or URL, e.g. /review pr 123",
+			message: "PR review requires a PR number or URL. Re-run /review and choose PR.",
 		};
 	}
 
@@ -860,7 +845,7 @@ async function gatherPr(
 		return {
 			ok: false,
 			message:
-				"Cross-repository PRs are not supported yet. Fetch the branch locally first and re-run with /review branch <base>.",
+				"Cross-repository PRs are not supported yet. Fetch the branch locally first, then re-run /review and choose branch mode.",
 		};
 	}
 
@@ -872,7 +857,7 @@ async function gatherPr(
 		return {
 			ok: false,
 			message:
-				"Not inside a git repository. Run /review pr from a directory that contains the PR's repo.",
+				"Not inside a git repository. Run /review from a directory that contains the PR's repo.",
 		};
 	}
 	const currentBranch = branchResult.stdout.trim();
@@ -900,7 +885,7 @@ async function gatherPr(
 				return {
 					ok: false,
 					message:
-						`Branch switch confirmation requires the TUI. You're on '${currentBranch}'; PR head is '${headRefName}'. Run \`git checkout ${headRefName}\` then re-run /review pr ${prNumber}.`,
+						`Branch switch confirmation requires the TUI. You're on '${currentBranch}'; PR head is '${headRefName}'. Run \`gh pr checkout ${prNumber}\` manually, then re-run /review and choose PR mode.`,
 				};
 			}
 			userConfirm = await showBranchSwitchConfirm(cmdCtx, currentBranch, headRefName, baseRefName);
@@ -912,7 +897,7 @@ async function gatherPr(
 			return {
 				ok: false,
 				message:
-					`Working tree has uncommitted changes. Commit or stash them, then re-run /review pr ${prNumber}.\nCurrent branch: ${currentBranch}\nPR head:        ${headRefName}`,
+					`Working tree has uncommitted changes. Commit or stash them, then re-run /review and choose PR mode.\nCurrent branch: ${currentBranch}\nPR head:        ${headRefName}`,
 			};
 		}
 
@@ -921,12 +906,12 @@ async function gatherPr(
 		}
 
 		// action === "switch" — perform the checkout
-		const checkoutResult = await pi.exec("git", ["checkout", headRefName], { cwd });
+		const checkoutResult = await pi.exec("gh", ["pr", "checkout", String(prNumber)], { cwd });
 		if (checkoutResult.code !== 0) {
 			const firstLine = checkoutResult.stderr.split("\n")[0]?.trim() ?? "";
 			return {
 				ok: false,
-				message: `git checkout ${headRefName} failed: ${firstLine}`,
+				message: `gh pr checkout ${prNumber} failed: ${firstLine}`,
 			};
 		}
 
@@ -961,7 +946,7 @@ async function gatherPr(
 async function dispatchReviewMode(
 	pi: ExtensionAPI,
 	cmdCtx: ExtensionCommandContext,
-	parsed: ParsedReviewArgs & { mode: ReviewMode },
+	parsed: ReviewDispatchArgs,
 ): Promise<void> {
 	// --- Gather phase (all modes) ---
 	let result: GatherResult;
@@ -1015,22 +1000,7 @@ async function dispatchReviewMode(
 
 // --- Argument completions ---
 
-function getReviewArgumentCompletions(prefix: string) {
-	const trimmed = prefix.trim().toLowerCase();
-	const parts = trimmed.split(/\s+/).filter(Boolean);
-
-	// Only suggest modes when the user is still typing the first positional
-	// and has not started a flag.
-	if (parts.length <= 1 && !trimmed.includes("--")) {
-		const partialMode = parts[0] ?? "";
-		const completions = REVIEW_MODES.filter((mode) => mode.startsWith(partialMode)).map((mode) => ({
-			value: mode,
-			label: mode,
-			description: REVIEW_MODE_DESCRIPTIONS[mode],
-		}));
-		return completions.length > 0 ? completions : null;
-	}
-
+function getReviewArgumentCompletions() {
 	return null;
 }
 
@@ -1038,33 +1008,33 @@ function getReviewArgumentCompletions(prefix: string) {
 
 export function registerReviewCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("review", {
-		description: "Review code changes (uncommitted, branch, commit, pr, or folder)",
+		description: "Review code changes via an interactive mode picker",
 		getArgumentCompletions: getReviewArgumentCompletions,
 		handler: async (args, ctx) => {
 			const argv = tokenizeArgs(args);
 			const parsed = parseReviewArgs(argv);
 
-			if (parsed.mode === null) {
-				// No mode given — show interactive picker.
-				if (!ctx.hasUI) {
-					ctx.ui.notify(REVIEW_COMMAND_HELP, "info");
-					return;
-				}
-				const mode = await showReviewPicker(ctx);
-				if (mode === undefined) {
-					// User cancelled — clean no-op.
-					return;
-				}
-				const completedArgs = await completePickedArgs(ctx, mode);
-				if (completedArgs === undefined) {
-					// User cancelled or left required follow-up input blank.
-					return;
-				}
-				await dispatchReviewMode(pi, ctx, completedArgs);
+			if (!parsed.pickerRequested) {
+				ctx.ui.notify(parsed.message, "error");
 				return;
 			}
 
-			await dispatchReviewMode(pi, ctx, parsed);
+			if (!ctx.hasUI) {
+				ctx.ui.notify(REVIEW_TUI_REQUIRED_MESSAGE, "error");
+				return;
+			}
+
+			const mode = await showReviewPicker(ctx);
+			if (mode === undefined) {
+				// User cancelled — clean no-op.
+				return;
+			}
+			const completedArgs = await completePickedArgs(ctx, mode);
+			if (completedArgs === undefined) {
+				// User cancelled or left required follow-up input blank.
+				return;
+			}
+			await dispatchReviewMode(pi, ctx, completedArgs);
 		},
 	});
 }
