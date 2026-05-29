@@ -8,7 +8,9 @@
       "./dirty-repo-guard/index.ts",
       "./inline-bash/index.ts",
       "./context-cap/index.ts",
-      "./notify/index.ts"
+      "./notify/index.ts",
+      "./openai-fast/index.ts",
+      "./quiet-tools/index.ts"
     ]
   }
 }

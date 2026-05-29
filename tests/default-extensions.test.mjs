@@ -112,18 +112,30 @@ test("shared default-extension reader trims descriptions and can allow missing m
 	);
 });
 
-test("bundled manifest embeds the five pilot defaults and keeps quiet-tools-compatible rtk load order", () => {
+test("bundled manifest embeds the approved low-risk defaults and keeps quiet-tools metadata intact", () => {
 	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
 	const ids = bundled.map(({ id }) => id);
-	const rtk = bundled.find(({ id }) => id === "rtk");
+	const openAIFast = bundled.find(({ id }) => id === "openai-fast");
 	const confirmDestructive = bundled.find(({ id }) => id === "confirm-destructive");
+	const quietTools = bundled.find(({ id }) => id === "quiet-tools");
+	const rtk = bundled.find(({ id }) => id === "rtk");
 	const embeddedIds = bundled.filter(({ embeddedEntry }) => typeof embeddedEntry === "string").map(({ id }) => id);
 
-	assert.deepEqual(embeddedIds, ["inline-bash", "notify", "context-cap", "confirm-destructive", "dirty-repo-guard"]);
+	assert.deepEqual(embeddedIds, ["openai-fast", "inline-bash", "notify", "context-cap", "confirm-destructive", "quiet-tools", "dirty-repo-guard"]);
+	assert.ok(openAIFast, "bundled openai-fast default should exist");
+	assert.equal(openAIFast.source, "npm:@diegopetrucci/pi-openai-fast");
+	assert.equal(openAIFast.embeddedEntry, "extensions/embedded-defaults/openai-fast/index.ts");
+	assert.equal(openAIFast.embeddedVersion, "0.1.2");
 	assert.ok(confirmDestructive, "bundled confirm-destructive default should exist");
 	assert.equal(confirmDestructive.source, "npm:@diegopetrucci/pi-confirm-destructive");
 	assert.equal(confirmDestructive.embeddedEntry, "extensions/embedded-defaults/confirm-destructive/index.ts");
 	assert.equal(confirmDestructive.embeddedVersion, "0.1.2");
+	assert.ok(quietTools, "bundled quiet-tools default should exist");
+	assert.deepEqual(quietTools.aliases, ["compact-bash"]);
+	assert.deepEqual(quietTools.replaces, ["npm:@diegopetrucci/pi-compact-bash"]);
+	assert.equal(quietTools.source, "npm:@diegopetrucci/pi-quiet-tools");
+	assert.equal(quietTools.embeddedEntry, "extensions/embedded-defaults/quiet-tools/index.ts");
+	assert.equal(quietTools.embeddedVersion, "0.1.2");
 	assert.equal(ids.includes("permission-gate"), false);
 	assert.ok(rtk, "bundled rtk default should exist");
 	assert.deepEqual(rtk.aliases, ["pi-rtk"]);
@@ -135,7 +147,7 @@ test("bundled manifest embeds the five pilot defaults and keeps quiet-tools-comp
 	assert.equal(rtk.migrateReplacements, true);
 	assert.equal(rtk.critical, false);
 	assert.equal(rtk.source, "git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5");
-	assert(ids.indexOf("rtk") < ids.indexOf("quiet-tools"), "quiet-tools should load after rtk");
+	assert(ids.indexOf("rtk") < ids.indexOf("quiet-tools"), "quiet-tools should remain listed after rtk");
 });
 
 test("Pi package resolution exposes embedded defaults at the exact TLH opt-out filter paths", async () => {
@@ -157,11 +169,14 @@ test("Pi package resolution exposes embedded defaults at the exact TLH opt-out f
 	);
 
 	assert.equal(embeddedEntriesByPath.get("extensions/the-last-harness.ts"), true);
-	assert.equal(embeddedEntriesByPath.get(notify.embeddedEntry), false);
-	assert.equal(embeddedEntriesByPath.has("extensions/embedded-defaults/notify"), false);
 	for (const extension of embeddedDefaults) {
-		if (extension.id === notify.id) continue;
-		assert.equal(embeddedEntriesByPath.get(extension.embeddedEntry), true, `${extension.id} should resolve at ${extension.embeddedEntry}`);
+		const shorthandEntry = extension.embeddedEntry.replace(/\/index\.ts$/, "");
+		assert.equal(embeddedEntriesByPath.has(shorthandEntry), false, `${extension.id} should resolve with an explicit index.ts path`);
+		assert.equal(
+			embeddedEntriesByPath.get(extension.embeddedEntry),
+			extension.id === notify.id ? false : true,
+			`${extension.id} should resolve at ${extension.embeddedEntry}`,
+		);
 	}
 });
 
@@ -795,7 +810,7 @@ test("merge does not introduce warnings.anthropicExtraUsage when anthropic-auth 
 	assert.equal(settings.warnings, undefined, "warnings object should not be created by merge");
 });
 
-test("merge removes legacy embedded packages and canonicalizes TLH embedded default filters", () => {
+test("merge removes legacy embedded packages and quiet-tools replacement packages while canonicalizing TLH embedded default filters", () => {
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
 		{
@@ -807,6 +822,13 @@ test("merge removes legacy embedded packages and canonicalizes TLH embedded defa
 			id: "context-cap",
 			source: "npm:@diegopetrucci/pi-context-cap",
 			embeddedEntry: "extensions/embedded-defaults/context-cap/index.ts",
+		},
+		{
+			id: "quiet-tools",
+			aliases: ["compact-bash"],
+			replaces: ["npm:@diegopetrucci/pi-compact-bash"],
+			source: "npm:@diegopetrucci/pi-quiet-tools",
+			embeddedEntry: "extensions/embedded-defaults/quiet-tools/index.ts",
 		},
 		{
 			id: "helper",
@@ -822,13 +844,16 @@ test("merge removes legacy embedded packages and canonicalizes TLH embedded defa
 					"-extensions/embedded-defaults/notify/index.ts",
 					"-extensions/embedded-defaults/notify/index.ts",
 					"-extensions/embedded-defaults/context-cap/index.ts",
+					"-extensions/embedded-defaults/quiet-tools/index.ts",
 				],
 				owner: "preserve",
 			},
 			"npm:@diegopetrucci/pi-notify",
 			"npm:@diegopetrucci/pi-context-cap",
+			"npm:@diegopetrucci/pi-quiet-tools",
+			"npm:@diegopetrucci/pi-compact-bash",
 		],
-		tlh: { disabledDefaultExtensions: ["context-cap"] },
+		tlh: { disabledDefaultExtensions: ["context-cap", "quiet-tools"] },
 	}, null, 2));
 
 	runNode(mergeScript, [
@@ -845,12 +870,13 @@ test("merge removes legacy embedded packages and canonicalizes TLH embedded defa
 			extensions: [
 				"keep-me",
 				"-extensions/embedded-defaults/context-cap/index.ts",
+				"-extensions/embedded-defaults/quiet-tools/index.ts",
 			],
 			owner: "preserve",
 		},
 		"npm:helper",
 	]);
-	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["context-cap"]);
+	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["context-cap", "quiet-tools"]);
 });
 
 test("tlh-defaults disable and enable embedded defaults preserve unrelated TLH package filters", () => {
@@ -903,6 +929,133 @@ test("tlh-defaults disable and enable embedded defaults preserve unrelated TLH p
 	});
 });
 
+test("tlh-defaults disable and enable embedded quiet-tools remove legacy package entries and accept compact-bash alias", () => {
+	const fixture = tempFixture();
+	const customHarnessPackage = join(fixture.dir, "the-last-harness-local");
+	const installStatePath = join(fixture.dir, "tlh", "install-state.json");
+	mkdirSync(dirname(installStatePath), { recursive: true });
+	writeFileSync(installStatePath, JSON.stringify({ packageSource: customHarnessPackage }, null, 2));
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "quiet-tools",
+			aliases: ["compact-bash"],
+			replaces: ["npm:@diegopetrucci/pi-compact-bash"],
+			source: "npm:@diegopetrucci/pi-quiet-tools",
+			embeddedEntry: "extensions/embedded-defaults/quiet-tools/index.ts",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [
+			{
+				source: customHarnessPackage,
+				extensions: ["keep-me"],
+				owner: "preserve",
+			},
+			"npm:@diegopetrucci/pi-quiet-tools",
+			"npm:@diegopetrucci/pi-compact-bash",
+		],
+	}, null, 2));
+
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"disable", "compact-bash",
+	]);
+	assert.deepEqual(readJson(fixture.settings), {
+		packages: [{
+			source: customHarnessPackage,
+			extensions: ["keep-me", "-extensions/embedded-defaults/quiet-tools/index.ts"],
+			owner: "preserve",
+		}],
+		tlh: { disabledDefaultExtensions: ["quiet-tools"] },
+	});
+
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"enable", "quiet-tools",
+	]);
+	assert.deepEqual(readJson(fixture.settings), {
+		packages: [{
+			source: customHarnessPackage,
+			extensions: ["keep-me"],
+			owner: "preserve",
+		}],
+		tlh: { disabledDefaultExtensions: [] },
+	});
+});
+
+test("tlh-defaults enable embedded defaults removes stale standalone sources while clearing TLH filters", () => {
+	const fixture = tempFixture();
+	const customHarnessPackage = join(fixture.dir, "the-last-harness-local");
+	const installStatePath = join(fixture.dir, "tlh", "install-state.json");
+	mkdirSync(dirname(installStatePath), { recursive: true });
+	writeFileSync(installStatePath, JSON.stringify({ packageSource: customHarnessPackage }, null, 2));
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "openai-fast",
+			source: "npm:@diegopetrucci/pi-openai-fast",
+			embeddedEntry: "extensions/embedded-defaults/openai-fast/index.ts",
+		},
+		{
+			id: "quiet-tools",
+			aliases: ["compact-bash"],
+			replaces: ["npm:@diegopetrucci/pi-compact-bash"],
+			source: "npm:@diegopetrucci/pi-quiet-tools",
+			embeddedEntry: "extensions/embedded-defaults/quiet-tools/index.ts",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [
+			{
+				source: customHarnessPackage,
+				extensions: [
+					"keep-me",
+					"-extensions/embedded-defaults/openai-fast/index.ts",
+					"-extensions/embedded-defaults/quiet-tools/index.ts",
+				],
+				owner: "preserve",
+			},
+			"npm:@diegopetrucci/pi-openai-fast",
+			"npm:@diegopetrucci/pi-quiet-tools",
+			"npm:@diegopetrucci/pi-compact-bash",
+		],
+		tlh: { disabledDefaultExtensions: ["openai-fast", "quiet-tools"] },
+	}, null, 2));
+
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"enable", "openai-fast",
+	]);
+	assert.deepEqual(readJson(fixture.settings), {
+		packages: [
+			{
+				source: customHarnessPackage,
+				extensions: ["keep-me", "-extensions/embedded-defaults/quiet-tools/index.ts"],
+				owner: "preserve",
+			},
+			"npm:@diegopetrucci/pi-quiet-tools",
+			"npm:@diegopetrucci/pi-compact-bash",
+		],
+		tlh: { disabledDefaultExtensions: ["quiet-tools"] },
+	});
+
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"enable", "quiet-tools",
+	]);
+	assert.deepEqual(readJson(fixture.settings), {
+		packages: [{
+			source: customHarnessPackage,
+			extensions: ["keep-me"],
+			owner: "preserve",
+		}],
+		tlh: { disabledDefaultExtensions: [] },
+	});
+});
+
 test("tlh-defaults sources omit embedded defaults while keeping non-embedded and critical defaults", () => {
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
@@ -910,6 +1063,18 @@ test("tlh-defaults sources omit embedded defaults while keeping non-embedded and
 			id: "notify",
 			source: "npm:@diegopetrucci/pi-notify",
 			embeddedEntry: "extensions/embedded-defaults/notify/index.ts",
+		},
+		{
+			id: "openai-fast",
+			source: "npm:@diegopetrucci/pi-openai-fast",
+			embeddedEntry: "extensions/embedded-defaults/openai-fast/index.ts",
+		},
+		{
+			id: "quiet-tools",
+			aliases: ["compact-bash"],
+			replaces: ["npm:@diegopetrucci/pi-compact-bash"],
+			source: "npm:@diegopetrucci/pi-quiet-tools",
+			embeddedEntry: "extensions/embedded-defaults/quiet-tools/index.ts",
 		},
 		{
 			id: "helper",
@@ -922,7 +1087,15 @@ test("tlh-defaults sources omit embedded defaults while keeping non-embedded and
 		},
 	], null, 2));
 	writeFileSync(fixture.settings, JSON.stringify({
-		packages: [harnessPackage, "npm:helper", "git:github.com/tlh/critical@pin"],
+		packages: [
+			harnessPackage,
+			"npm:@diegopetrucci/pi-notify",
+			"npm:@diegopetrucci/pi-openai-fast",
+			"npm:@diegopetrucci/pi-quiet-tools",
+			"npm:@diegopetrucci/pi-compact-bash",
+			"npm:helper",
+			"git:github.com/tlh/critical@pin",
+		],
 	}, null, 2));
 
 	const sources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "sources"])

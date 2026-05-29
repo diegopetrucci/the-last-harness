@@ -71,6 +71,8 @@ test("package extension discovery exposes the top-level TLH entrypoint plus the 
 		"./inline-bash/index.ts",
 		"./context-cap/index.ts",
 		"./notify/index.ts",
+		"./openai-fast/index.ts",
+		"./quiet-tools/index.ts",
 	]);
 });
 

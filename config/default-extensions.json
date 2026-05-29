@@ -12,6 +12,8 @@
   {
     "id": "openai-fast",
     "source": "npm:@diegopetrucci/pi-openai-fast",
+    "embeddedEntry": "extensions/embedded-defaults/openai-fast/index.ts",
+    "embeddedVersion": "0.1.2",
     "description": "Enable optional OpenAI Codex Fast mode commands for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions."
   },
   {
@@ -87,6 +89,8 @@
     "aliases": ["compact-bash"],
     "replaces": ["npm:@diegopetrucci/pi-compact-bash"],
     "source": "npm:@diegopetrucci/pi-quiet-tools",
+    "embeddedEntry": "extensions/embedded-defaults/quiet-tools/index.ts",
+    "embeddedVersion": "0.1.2",
     "description": "Compact collapsed built-in tool output in the TUI without changing model-visible results."
   },
   {

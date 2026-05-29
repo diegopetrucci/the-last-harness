@@ -299,11 +299,14 @@ function disablePackage(settings, extension, defaultExtensions, harnessPackageSo
 }
 
 function enablePackage(settings, extension, defaultExtensions, harnessPackageSource) {
+	if (isEmbeddedDefaultExtension(extension)) {
+		for (const oldSource of [extension.source, ...extension.replaces]) {
+			removePackage(settings, oldSource);
+		}
+		return updateHarnessEmbeddedDefaultFilters(settings, defaultExtensions, disabledIdsFromSettings(settings, defaultExtensions), harnessPackageSource);
+	}
 	for (const oldSource of extension.replaces) {
 		removePackage(settings, oldSource);
-	}
-	if (isEmbeddedDefaultExtension(extension)) {
-		return updateHarnessEmbeddedDefaultFilters(settings, defaultExtensions, disabledIdsFromSettings(settings, defaultExtensions), harnessPackageSource);
 	}
 
 	const identity = packageIdentity(extension.source);

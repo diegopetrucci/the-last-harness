@@ -77,7 +77,7 @@ Normal updates keep Gnosis and ticket integration enabled. They install or refre
 
 The updating process is intentionally conservative, and won't replace your custom extensions, themes, and so on. If you spot anything that was overridden, [please open an issue](https://github.com/diegopetrucci/the-last-harness/issues).
 
-Bundled default-extension opt-outs apply only to non-critical defaults. Five low-risk defaults — `inline-bash`, `notify`, `context-cap`, `confirm-destructive`, and `dirty-repo-guard` — are embedded in the TLH package, so they update on the TLH release cadence and are no longer preserved or refreshed as separate default package sources. `tlh defaults disable|enable` still toggles them by writing TLH package filters in the isolated settings. The TLH subagents/intercom defaults are protected because architect delegation and supervisor escalation depend on them: `tlh defaults disable` rejects those IDs and aliases, and stale manual critical opt-outs are ignored or cleaned. If a critical package install or checkout refresh fails, fix that install/checkout and rerun `tlh update` instead of disabling the default.
+Bundled default-extension opt-outs apply only to non-critical defaults. Seven low-risk defaults — `openai-fast`, `inline-bash`, `notify`, `context-cap`, `confirm-destructive`, `quiet-tools`, and `dirty-repo-guard` — are embedded in the TLH package, so they update on the TLH release cadence and are no longer preserved or refreshed as separate default package sources. `tlh defaults disable|enable` still toggles them by writing TLH package filters in the isolated settings. The TLH subagents/intercom defaults are protected because architect delegation and supervisor escalation depend on them: `tlh defaults disable` rejects those IDs and aliases, and stale manual critical opt-outs are ignored or cleaned. If a critical package install or checkout refresh fails, fix that install/checkout and rerun `tlh update` instead of disabling the default.
 
 At launch, TLH checks GitHub Releases in the background at most once per day and warns once when a newer release is available. It never auto-updates. Set `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `TLH_SKIP_UPDATE_CHECK=1`, or `"tlh": { "updateCheck": { "enabled": false } }` in the isolated settings to disable the check.
 
@@ -85,7 +85,7 @@ Release builds with TelemetryDeck identifiers configured also send at most one p
 
 To opt out persistently, set `"tlh": { "telemetry": { "enabled": false } }` in `~/.the-last-harness/agent/settings.json`. This opt-out is user-owned and survives `tlh update` and installer reruns. Per-run opt-outs are `PI_OFFLINE=1`, `TLH_SKIP_TELEMETRY=1`, `TLH_TELEMETRY_DISABLED=1`, or `PI_TELEMETRY=0`. To reset only the pseudonymous install ID, remove `~/.the-last-harness/agent/tlh/telemetry-state.json`.
 
-To update bundled default extension packages too, run `tlh update`; it refreshes pinned critical defaults safely before updating other enabled non-embedded defaults. The five embedded defaults above ride along with the TLH package update itself, so `pi update --extensions` does not refresh them separately.
+To update bundled default extension packages too, run `tlh update`; it refreshes pinned critical defaults safely before updating other enabled non-embedded defaults. Those seven embedded defaults ride along with the TLH package update itself, so `pi update --extensions` does not refresh them separately.
 
 ## Uninstall
 
