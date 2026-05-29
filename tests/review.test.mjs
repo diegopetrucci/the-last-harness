@@ -857,6 +857,10 @@ test("/review folder escapes snapshot fence lines found in file content", async 
 
 test("/review folder skips per-file lstat and binary-check failures while continuing", async (t) => {
 	const cwd = makeTempDir(t, "tlh-review-folder-problematic-");
+	if (process.getuid?.() === 0) {
+		t.skip("skipping unreadable-file permission test when running as root");
+		return;
+	}
 	const docsDir = join(cwd, "docs");
 	const unreadablePath = join(docsDir, "secret.txt");
 	mkdirSync(docsDir, { recursive: true });
