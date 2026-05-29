@@ -355,8 +355,8 @@ make_fake_present_pi() {
   local fakebin="$1"
   mkdir -p "${fakebin}"
   cat >"${fakebin}/pi" <<'EOF_FAKE_PRESENT_PI'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "--version" ]]; then
+#!/bin/sh
+if [ "${1:-}" = "--version" ]; then
   printf '0.75.3\n'
   exit 0
 fi

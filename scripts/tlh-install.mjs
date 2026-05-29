@@ -494,21 +494,24 @@ function gitCheckoutIo() {
 function assertSupportedPiVersion(config) {
 	// `pi --version` prints a bare semver (e.g. "0.75.3") on stdout. Older builds may
 	// differ, so we extract the first semver-shaped substring rather than match strictly.
-	const result = spawnCapture(config, ["pi", "--version"], { allowFailure: true });
+	const result = spawnCapture(config, ["pi", "--version"], {
+		allowFailure: true,
+		env: { PI_CODING_AGENT_DIR: config.agentDir },
+	});
+	const output = `${result.stdout || ""}${result.stderr || ""}`.trim();
+	const upgradeCommand = `npm install -g --ignore-scripts --prefix "${piInstallPrefix(config)}" @earendil-works/pi-coding-agent`;
 	if (result.error || result.status !== 0) {
-		warn(`unable to determine Pi version (pi --version exited with ${result.status ?? result.error?.code ?? "error"}); continuing without version check`);
-		return;
+		const status = result.status ?? result.signal ?? result.error?.code ?? "error";
+		const probeDetails = output ? ` Probe output: ${output}` : "";
+		throw new Error(`unable to determine Pi version from existing pi on PATH (pi --version exited with ${status}). The Last Harness requires Pi >= ${MIN_PI_VERSION}. Verify that \`pi --version\` works, or upgrade with: ${upgradeCommand}.${probeDetails}`);
 	}
-	const output = `${result.stdout || ""}${result.stderr || ""}`;
 	const match = output.match(/\d+\.\d+\.\d+/);
 	if (!match) {
-		warn(`unable to parse Pi version from output: ${output.trim() || "<empty>"}; continuing without version check`);
-		return;
+		throw new Error(`unable to parse Pi version from existing pi on PATH: ${output || "<empty>"}. The Last Harness requires Pi >= ${MIN_PI_VERSION}. Verify that \`pi --version\` prints a semantic version like ${MIN_PI_VERSION}, or upgrade with: ${upgradeCommand}.`);
 	}
 	const currentVersion = match[0];
 	if (!nodeVersionMeetsMinimum(currentVersion, MIN_PI_VERSION)) {
-		const piPrefix = piInstallPrefix(config);
-		throw new Error(`Pi >= ${MIN_PI_VERSION} is required (found ${currentVersion}). Upgrade with: npm install -g --ignore-scripts --prefix "${piPrefix}" @earendil-works/pi-coding-agent`);
+		throw new Error(`Pi >= ${MIN_PI_VERSION} is required (found ${currentVersion}). Upgrade with: ${upgradeCommand}`);
 	}
 	verboseLog(config, `Pi version: ${currentVersion}`);
 }
