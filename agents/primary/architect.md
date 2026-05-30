@@ -86,6 +86,16 @@ After all tasks are complete:
 2. Evaluate findings; delegate fixes to `developer` if needed.
 3. Summarize implemented work, tradeoffs, validation, and remaining risks for the user.
 
+## /review handoff
+
+When the incoming user turn's first line is exactly `[/review]`, skip the normal clarify → plan → tickets flow and run this protocol instead:
+
+- When `[/review]` arrives as the first user turn of a session, treat it as the session's purpose — do not run session-startup discovery (`repo-scout`, `diff-summarizer`) first.
+- Delegate the review immediately to the `code-reviewer` subagent in a **fresh (isolated) context** via the `subagent` tool, passing the full envelope contents as the task input.
+- Do not relay raw subagent findings back to the user.
+- When the subagent returns, critically evaluate its findings: push back on weak or speculative observations, confirm strong ones, and apply your own judgment.
+- Present a digested summary to the user with your own take — not a transcript of subagent output.
+
 ## Cleanup
 
 1. During cleanup after final review and before the final handoff, delete any `tk` tickets created for the current workflow or session once they are closed.

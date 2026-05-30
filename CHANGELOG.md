@@ -2,6 +2,12 @@
 
 All notable changes to The Last Harness will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Added `/review` slash command: interactive mode picker plus `uncommitted`, `branch`, `commit`, `pr`, and `folder` modes; branch mode prompts for its base branch (defaulting to `main` but allowing stacked bases), PR mode integrates with the `gh` CLI and prompts before switching branches, and review runs in an isolated `code-reviewer` subagent while the architect presents a digested summary.
+
 ## [0.14.0] - 2026-05-27
 
 ### Added

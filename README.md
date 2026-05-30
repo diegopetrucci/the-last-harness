@@ -130,6 +130,43 @@ Opt out persistently by adding this to `~/.the-last-harness/agent/settings.json`
 
 That settings opt-out is preserved by `tlh update` and installer reruns.
 
+## Reviewing changes (/review)
+
+Run a code review on a chosen scope (uncommitted changes, a branch comparison, a single commit, a PR, or a folder snapshot) via an isolated `code-reviewer` subagent.
+
+Run `/review` with no arguments to open the interactive mode picker. This is the only supported command shape.
+
+`/review` is architect-only. If the active primary agent is Rush, product, bug-hunter, or disabled, switch back to architect with `/switch-primary-agent architect` (or `Shift+Tab`) and rerun `/review`.
+
+- Choose `uncommitted` to review staged + unstaged changes vs `HEAD`, plus untracked non-gitignored files.
+- Choose `branch` to get an editor prompt for the base branch. Leave it blank to review against `main`, or enter another base such as `feature/parent` for stacked branch reviews.
+- Choose `commit`, `pr`, or `folder` to get an editor prompt for the required SHA, PR number/URL, or paths.
+
+Typed shortcuts such as `/review uncommitted`, `/review branch feature/parent`, `/review pr 123`, `/review folder src/`, and `/review ... --extra "..."` are rejected with picker-only guidance rather than dispatched directly.
+
+`/review` requires the interactive TLH TUI. In no-TUI contexts, it fails with a clear picker-required message.
+
+### PR mode
+
+PR mode requires the [GitHub CLI](https://cli.github.com) installed and authenticated (`gh auth login`). Cross-repository PRs are not supported yet; fetch the branch locally and use `/review` with branch mode instead.
+
+If you choose PR mode while you are not already on the PR's head branch:
+
+- **Dirty working tree**: the command refuses and tells you to stash or commit first.
+- **Clean working tree**: the command shows a confirmation prompt before switching.
+
+If you confirm the switch, tlh uses `gh pr checkout <number>` and leaves you on the PR branch. Return to your prior branch with `git checkout -`.
+
+### Folder mode
+
+Folder mode collects a snapshot of files under the given paths. It includes tracked files plus untracked files that aren't gitignored — so newly added files show up even before a first commit. Binary files are skipped with a `[skipped binary: ...]` marker.
+
+### How the architect handles review results
+
+`/review` delegates to a fresh, isolated `code-reviewer` subagent — no chat history bleeds in from the current session. When the subagent returns, the architect critically evaluates the findings: it pushes back on weak or speculative observations, confirms strong ones, and presents a digested summary with its own judgment rather than a raw transcript.
+
+There is no `/end-review` command. After the summary is delivered, you are back in normal architect mode; follow-ups such as asking the architect to apply fixes go through the standard clarify → plan → tickets → developer loop.
+
 ## Docs dump
 
 - Install, update, and uninstall guidance: [`docs/install.md`](docs/install.md)

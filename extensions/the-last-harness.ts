@@ -3,6 +3,7 @@ import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-cod
 import { createTlhAutocompleteProvider } from "./the-last-harness/autocomplete.js";
 import { registerTlhChangelogCommand } from "./the-last-harness/changelog.js";
 import { registerEffortCommand } from "./the-last-harness/effort.js";
+import { registerReviewCommand } from "./the-last-harness/review.js";
 import { createTlhFooter } from "./the-last-harness/footer.js";
 import { FooterGitCache } from "./the-last-harness/footer-git-cache.js";
 import { createTlhHeader } from "./the-last-harness/header.js";
@@ -22,6 +23,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	}
 
 	registerEffortCommand(pi);
+	registerReviewCommand(pi);
 	registerTlhChangelogCommand(pi);
 	registerUsageCommand(pi);
 
