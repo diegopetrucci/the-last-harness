@@ -43,6 +43,29 @@ export const TRACE_POLICY_FIXTURES = [
 		},
 	},
 	{
+		name: "architect invalid if it directly edits source code",
+		valid: false,
+		expectedCodes: ["architect.direct_source_mutation"],
+		transcript: {
+			agent: "architect",
+			steps: [
+				{ type: "tool", tool: "read", path: "src/greeter.mjs" },
+				{ type: "tool", tool: "edit", path: "src/greeter.mjs" },
+			],
+		},
+	},
+	{
+		name: "architect invalid if it directly writes source code",
+		valid: false,
+		expectedCodes: ["architect.direct_source_mutation"],
+		transcript: {
+			agent: "architect",
+			steps: [
+				{ type: "tool", tool: "write", path: "src/greeter.mjs" },
+			],
+		},
+	},
+	{
 		name: "rush valid direct edit flow with no ticket ceremony",
 		valid: true,
 		transcript: {
@@ -88,6 +111,39 @@ export const TRACE_POLICY_FIXTURES = [
 			steps: [
 				{ type: "tool", tool: "read", path: "scripts/merge-settings.mjs" },
 				{ type: "tool", tool: "edit", path: "scripts/merge-settings.mjs" },
+			],
+		},
+	},
+	{
+		name: "product invalid if it delegates implementation to developer",
+		valid: false,
+		expectedCodes: ["product.no_implementation_delegation"],
+		transcript: {
+			agent: "product",
+			steps: [
+				{ type: "tool", tool: "subagent", input: { agent: "developer", prompt: "Implement the fix." } },
+			],
+		},
+	},
+	{
+		name: "product invalid if it delegates code review",
+		valid: false,
+		expectedCodes: ["product.no_implementation_delegation"],
+		transcript: {
+			agent: "product",
+			steps: [
+				{ type: "tool", tool: "subagent", input: { agent: "code-reviewer", prompt: "Review the diff." } },
+			],
+		},
+	},
+	{
+		name: "product invalid if docs traversal escapes the allowlist",
+		valid: false,
+		expectedCodes: ["product.write_boundary"],
+		transcript: {
+			agent: "product",
+			steps: [
+				{ type: "tool", tool: "edit", path: "docs/../scripts/merge-settings.mjs" },
 			],
 		},
 	},

@@ -34,7 +34,7 @@ Options:
   --run                  Actually run the selected scenarios
   --scenario ID[,ID...]  Run only the named scenario ids
   --keep-artifacts       Keep the temp workspace even when only automated checks ran
-  --artifacts-dir DIR    Write the temp workspace under DIR instead of a new mktemp root
+  --artifacts-dir DIR    Create the temp workspace under parent DIR instead of the system temp root
   --results-file FILE    Write redacted JSON results to FILE outside the temp workspace
   -h, --help             Show this help
 `;
@@ -254,9 +254,15 @@ function runCommand(ctx, {
 	return { ...result, combined, commandText };
 }
 
-function createContext(args) {
-	const rootDir = args.artifactsDir ? resolve(args.artifactsDir) : mkdtempSync(join(tmpdir(), tempRootPrefix));
-	ensureDir(rootDir);
+function createWorkspaceRoot(artifactsDir = "") {
+	if (!artifactsDir) return mkdtempSync(join(tmpdir(), tempRootPrefix));
+	const parentDir = resolve(artifactsDir);
+	ensureDir(parentDir);
+	return mkdtempSync(join(parentDir, tempRootPrefix));
+}
+
+export function createContext(args) {
+	const rootDir = createWorkspaceRoot(args.artifactsDir);
 	const homeDir = join(rootDir, "home");
 	const agentDir = join(rootDir, "agent");
 	const binDir = join(rootDir, "bin");

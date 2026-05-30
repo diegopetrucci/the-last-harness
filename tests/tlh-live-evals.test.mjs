@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { join } from "node:path";
+import { basename, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { allScenarios, createScenarioScoreResult, writeWorkspaceOutputs } from "./evals/tlh-live-evals.mjs";
+import { allScenarios, createContext, createScenarioScoreResult, writeWorkspaceOutputs } from "./evals/tlh-live-evals.mjs";
 import { createBinaryScoreCheck, createScenarioResult, createSuiteResult } from "./evals/tlh-live-eval-results.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -114,28 +114,32 @@ test("manual live eval failures no longer masquerade as pending manual reviews",
 	assert.equal(result.checks[0].id, "runner-detected-failure");
 });
 
+function createPassingSuiteResult() {
+	return createSuiteResult({
+		selectedScenarios: [{ id: "install-update-smoke", mode: "automated" }],
+		scenarioResults: [createScenarioResult({
+			scenarioId: "install-update-smoke",
+			mode: "automated",
+			summary: "Smoke.",
+			status: "passed",
+			detail: "wrapper ready",
+			checks: [createBinaryScoreCheck({
+				id: "install-bootstrap",
+				label: "Bootstrap isolated install created the tlh wrapper",
+				passed: true,
+				details: "ok",
+			})],
+		})],
+		startedAt: "2026-05-29T00:00:00.000Z",
+		finishedAt: "2026-05-29T00:00:05.000Z",
+		keepWorkspace: true,
+	});
+}
+
 test("workspace outputs write both README.md and results.json", () => {
 	const tempDir = mkdtempSync(join(tmpdir(), "tlh-live-eval-workspace-"));
 	try {
-		const suiteResult = createSuiteResult({
-			selectedScenarios: [{ id: "install-update-smoke", mode: "automated" }],
-			scenarioResults: [createScenarioResult({
-				scenarioId: "install-update-smoke",
-				mode: "automated",
-				summary: "Smoke.",
-				status: "passed",
-				detail: "wrapper ready",
-				checks: [createBinaryScoreCheck({
-					id: "install-bootstrap",
-					label: "Bootstrap isolated install created the tlh wrapper",
-					passed: true,
-					details: "ok",
-				})],
-			})],
-			startedAt: "2026-05-29T00:00:00.000Z",
-			finishedAt: "2026-05-29T00:00:05.000Z",
-			keepWorkspace: true,
-		});
+		const suiteResult = createPassingSuiteResult();
 		writeWorkspaceOutputs({
 			rootDir: tempDir,
 			homeDir: join(tempDir, "home"),
@@ -154,6 +158,29 @@ test("workspace outputs write both README.md and results.json", () => {
 		assert.equal(results.scenarios[0].id, "install-update-smoke");
 	} finally {
 		rmSync(tempDir, { recursive: true, force: true });
+	}
+});
+
+test("artifacts-dir uses a fresh child workspace and preserves parent README/results files", () => {
+	const artifactsParentDir = mkdtempSync(join(tmpdir(), "tlh-live-eval-parent-"));
+	const parentReadmePath = join(artifactsParentDir, "README.md");
+	const parentResultsPath = join(artifactsParentDir, "results.json");
+	writeFileSync(parentReadmePath, "parent README\n", "utf8");
+	writeFileSync(parentResultsPath, '{"parent":true}\n', "utf8");
+	const ctx = createContext({ artifactsDir: artifactsParentDir });
+	try {
+		assert.notEqual(ctx.rootDir, artifactsParentDir);
+		assert.equal(relative(artifactsParentDir, ctx.rootDir).startsWith(".."), false);
+		assert.match(basename(ctx.rootDir), /^tlh-live-evals-/);
+
+		writeWorkspaceOutputs(ctx, createPassingSuiteResult());
+
+		assert.equal(readFileSync(parentReadmePath, "utf8"), "parent README\n");
+		assert.equal(readFileSync(parentResultsPath, "utf8"), '{"parent":true}\n');
+		assert.match(readFileSync(join(ctx.rootDir, "README.md"), "utf8"), /Structured results: results\.json/);
+		assert.equal(JSON.parse(readFileSync(join(ctx.rootDir, "results.json"), "utf8")).scenarios[0].id, "install-update-smoke");
+	} finally {
+		rmSync(artifactsParentDir, { recursive: true, force: true });
 	}
 });
 
@@ -178,6 +205,7 @@ test("contributing docs describe repo-only live eval commands and score artifact
 	assert.match(docs, /These workflows are contributor tooling for this repository only/i);
 	assert.match(docs, /node tests\/evals\/tlh-live-evals\.mjs --list/);
 	assert.match(docs, /--results-file \/path\/to\/results\.json/);
+	assert.match(docs, /fresh `tlh-live-evals-\*` child workspace under that parent/i);
 	assert.match(docs, /tests\/tlh-live-eval-results\.test\.mjs/);
 	assert.match(docs, /binary pass\/fail/i);
 	assert.match(docs, /top-level `results\.json`/i);

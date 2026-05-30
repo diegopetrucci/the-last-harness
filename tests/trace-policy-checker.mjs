@@ -1,9 +1,44 @@
+import { posix as pathPosix } from "node:path";
+
 function isRecord(value) {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function normalizeText(value) {
 	return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeRepoPath(value) {
+	const rawPath = normalizeText(value);
+	if (!rawPath) {
+		return undefined;
+	}
+
+	const normalized = pathPosix.normalize(rawPath.replaceAll("\\", "/")).replace(/^(?:\.\/)+/, "");
+	if (!normalized || normalized === "." || pathPosix.isAbsolute(normalized)) {
+		return undefined;
+	}
+	if (normalized === ".." || normalized.startsWith("../")) {
+		return undefined;
+	}
+	return normalized;
+}
+
+function isAllowedNonSourcePath(path) {
+	const normalized = normalizeRepoPath(path);
+	if (!normalized) {
+		return false;
+	}
+	if (normalized === "AGENTS.md" || normalized === "KNOWLEDGEBASE.md") {
+		return true;
+	}
+	if (normalized.startsWith("docs/")) {
+		return true;
+	}
+	if (normalized.startsWith(".tickets/")) {
+		return true;
+	}
+	return false;
 }
 
 function isExactApprovedStep(step) {
@@ -102,23 +137,12 @@ function subagentTargets(step) {
 }
 
 function isDisallowedProductPath(path) {
-	if (!path) {
-		return false;
-	}
-	if (path === "AGENTS.md" || path === "KNOWLEDGEBASE.md") {
-		return false;
-	}
-	if (path.startsWith("docs/")) {
-		return false;
-	}
-	if (path.startsWith(".tickets/")) {
-		return false;
-	}
-	return true;
+	return !isAllowedNonSourcePath(path);
 }
 
 function isProductTicketPath(path) {
-	return Boolean(path) && path.startsWith(".tickets/");
+	const normalized = normalizeRepoPath(path);
+	return Boolean(normalized) && normalized.startsWith(".tickets/");
 }
 
 function oracleInput(step) {
@@ -151,6 +175,15 @@ function evaluateArchitect(transcript, addViolation) {
 			}
 			pendingApproval = undefined;
 			continue;
+		}
+
+		const name = toolName(step);
+		if ((["write", "edit"].includes(name) || (readOnlyBashMutation(step) && !isTkMutatingCommand(step))) && !isAllowedNonSourcePath(stepPath(step))) {
+			addViolation(
+				"architect.direct_source_mutation",
+				index,
+				"Architect may not directly mutate source files. Delegate implementation changes to developer instead.",
+			);
 		}
 		if (isTkMutatingCommand(step) && !planApproved) {
 			addViolation(
@@ -223,6 +256,14 @@ function evaluateProduct(transcript, addViolation) {
 					"Product may not create or change ticket artifacts until the user explicitly approves ticket creation.",
 				);
 			}
+		}
+
+		if (subagentTargets(step).some((target) => ["developer", "code-reviewer"].includes(target))) {
+			addViolation(
+				"product.no_implementation_delegation",
+				index,
+				"Product may not delegate implementation or code review. Hand implementation work to architect later instead.",
+			);
 		}
 
 		if (isTkMutatingCommand(step) && !ticketsApproved) {

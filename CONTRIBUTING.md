@@ -79,10 +79,10 @@ Runner behavior and safety constraints:
 
 - Running without `--run`, or with `--list`, only prints the scenario list and prerequisites.
 - `--run` or `TLH_RUN_LIVE_EVALS=1` is required to execute anything.
-- The runner creates an isolated temp root containing `home/`, `agent/`, `bin/`, `workspace/`, a top-level `README.md`, a top-level `results.json`, and per-scenario artifacts under `artifacts/<scenario>/`.
+- The runner creates an isolated temp root containing `home/`, `agent/`, `bin/`, `workspace/`, a top-level `README.md`, a top-level `results.json`, and per-scenario artifacts under `artifacts/<scenario>/`. If you pass `--artifacts-dir DIR`, TLH creates a fresh `tlh-live-evals-*` child workspace under that parent instead of writing those top-level files directly into `DIR`.
 - Saved artifacts redact the temp paths plus environment values whose names look secret-bearing (`KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `COOKIE`, `SESSION`, `BEARER`). Review artifacts before sharing them.
 - Per-run score results stay ephemeral by default. Use `--results-file /path/to/results.json` only when you explicitly want a redacted JSON artifact outside the temp workspace.
-- Manual scenarios always keep the workspace. Automated-only success deletes it unless you pass `--keep-artifacts` or `--artifacts-dir DIR`.
+- Manual scenarios always keep the workspace. Automated-only success deletes it unless you pass `--keep-artifacts`; specifying `--artifacts-dir DIR` also keeps the fresh child workspace under that parent for inspection.
 - Cleanup is always the printed `rm -rf ...` command. Removing that temp root fully undoes the live eval.
 - Keep all live evals pointed at temp paths; do not reuse your real `~/.the-last-harness/agent`, `~/.pi/agent`, or normal shell wrapper paths.
 - Keep secrets in environment variables or isolated config only. Do not paste keys into fixture files or committed docs.
