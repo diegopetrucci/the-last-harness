@@ -62,6 +62,8 @@ function existingNestedExtensionEntrypoints(directoryName) {
 
 test("package extension discovery exposes the top-level TLH entrypoint plus the embedded-default manifest", () => {
 	assert.deepEqual(packageJson.pi?.extensions, ["./extensions"]);
+	assert.equal(packageJson.dependencies?.["@earendil-works/pi-ai"], "^0.76.0");
+	assert.equal(packageJson.dependencies?.typebox, "^1.1.39");
 	assert.deepEqual(existingNestedExtensionEntrypoints("the-last-harness"), []);
 	assert.deepEqual(existingNestedExtensionEntrypoints("embedded-defaults"), ["embedded-defaults/package.json"]);
 	assert.deepEqual(discoverPiExtensionEntrypoints(extensionsDir), ["embedded-defaults/package.json", "the-last-harness.ts"]);
@@ -70,8 +72,11 @@ test("package extension discovery exposes the top-level TLH entrypoint plus the 
 		"./dirty-repo-guard/index.ts",
 		"./inline-bash/index.ts",
 		"./context-cap/index.ts",
+		"./context-inspector/index.ts",
+		"./librarian/index.ts",
 		"./notify/index.ts",
 		"./openai-fast/index.ts",
+		"./oracle/index.ts",
 		"./quiet-tools/index.ts",
 	]);
 });

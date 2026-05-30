@@ -112,16 +112,30 @@ test("shared default-extension reader trims descriptions and can allow missing m
 	);
 });
 
-test("bundled manifest embeds the approved low-risk defaults and keeps quiet-tools metadata intact", () => {
+test("bundled manifest embeds the approved defaults and keeps quiet-tools metadata intact", () => {
 	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
 	const ids = bundled.map(({ id }) => id);
 	const openAIFast = bundled.find(({ id }) => id === "openai-fast");
 	const confirmDestructive = bundled.find(({ id }) => id === "confirm-destructive");
+	const contextInspector = bundled.find(({ id }) => id === "context-inspector");
+	const librarian = bundled.find(({ id }) => id === "librarian");
+	const oracle = bundled.find(({ id }) => id === "oracle");
 	const quietTools = bundled.find(({ id }) => id === "quiet-tools");
 	const rtk = bundled.find(({ id }) => id === "rtk");
 	const embeddedIds = bundled.filter(({ embeddedEntry }) => typeof embeddedEntry === "string").map(({ id }) => id);
 
-	assert.deepEqual(embeddedIds, ["openai-fast", "inline-bash", "notify", "context-cap", "confirm-destructive", "quiet-tools", "dirty-repo-guard"]);
+	assert.deepEqual(embeddedIds, [
+		"oracle",
+		"openai-fast",
+		"librarian",
+		"inline-bash",
+		"notify",
+		"context-cap",
+		"context-inspector",
+		"confirm-destructive",
+		"quiet-tools",
+		"dirty-repo-guard",
+	]);
 	assert.ok(openAIFast, "bundled openai-fast default should exist");
 	assert.equal(openAIFast.source, "npm:@diegopetrucci/pi-openai-fast");
 	assert.equal(openAIFast.embeddedEntry, "extensions/embedded-defaults/openai-fast/index.ts");
@@ -130,6 +144,24 @@ test("bundled manifest embeds the approved low-risk defaults and keeps quiet-too
 	assert.equal(confirmDestructive.source, "npm:@diegopetrucci/pi-confirm-destructive");
 	assert.equal(confirmDestructive.embeddedEntry, "extensions/embedded-defaults/confirm-destructive/index.ts");
 	assert.equal(confirmDestructive.embeddedVersion, "0.1.2");
+	assert.ok(contextInspector, "bundled context-inspector default should exist");
+	assert.equal(contextInspector.source, "npm:@diegopetrucci/pi-context-inspector");
+	assert.equal(contextInspector.embeddedEntry, "extensions/embedded-defaults/context-inspector/index.ts");
+	assert.equal(contextInspector.embeddedVersion, "0.1.1");
+	assert.deepEqual(contextInspector.aliases, []);
+	assert.deepEqual(contextInspector.replaces, []);
+	assert.ok(librarian, "bundled librarian default should exist");
+	assert.equal(librarian.source, "npm:@diegopetrucci/pi-librarian");
+	assert.equal(librarian.embeddedEntry, "extensions/embedded-defaults/librarian/index.ts");
+	assert.equal(librarian.embeddedVersion, "0.1.3");
+	assert.deepEqual(librarian.aliases, []);
+	assert.deepEqual(librarian.replaces, []);
+	assert.ok(oracle, "bundled oracle default should exist");
+	assert.equal(oracle.source, "npm:@diegopetrucci/pi-oracle");
+	assert.equal(oracle.embeddedEntry, "extensions/embedded-defaults/oracle/index.ts");
+	assert.equal(oracle.embeddedVersion, "0.1.10");
+	assert.deepEqual(oracle.aliases, []);
+	assert.deepEqual(oracle.replaces, []);
 	assert.ok(quietTools, "bundled quiet-tools default should exist");
 	assert.deepEqual(quietTools.aliases, ["compact-bash"]);
 	assert.deepEqual(quietTools.replaces, ["npm:@diegopetrucci/pi-compact-bash"]);
@@ -879,6 +911,72 @@ test("merge removes legacy embedded packages and quiet-tools replacement package
 	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["context-cap", "quiet-tools"]);
 });
 
+test("merge removes stale standalone sources for newly embedded defaults while canonicalizing TLH filters", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "context-inspector",
+			source: "npm:@diegopetrucci/pi-context-inspector",
+			embeddedEntry: "extensions/embedded-defaults/context-inspector/index.ts",
+		},
+		{
+			id: "librarian",
+			source: "npm:@diegopetrucci/pi-librarian",
+			embeddedEntry: "extensions/embedded-defaults/librarian/index.ts",
+		},
+		{
+			id: "oracle",
+			source: "npm:@diegopetrucci/pi-oracle",
+			embeddedEntry: "extensions/embedded-defaults/oracle/index.ts",
+		},
+		{
+			id: "helper",
+			source: "npm:helper",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [
+			{
+				source: harnessPackage,
+				extensions: [
+					"keep-me",
+					"-extensions/embedded-defaults/context-inspector/index.ts",
+					"-extensions/embedded-defaults/oracle/index.ts",
+					"-extensions/embedded-defaults/oracle/index.ts",
+					"-extensions/embedded-defaults/librarian/index.ts",
+				],
+				owner: "preserve",
+			},
+			"npm:@diegopetrucci/pi-context-inspector",
+			"npm:@diegopetrucci/pi-librarian",
+			"npm:@diegopetrucci/pi-oracle",
+		],
+		tlh: { disabledDefaultExtensions: ["librarian", "oracle"] },
+	}, null, 2));
+
+	runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", fixture.extensions,
+		"--quiet",
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.packages, [
+		{
+			source: harnessPackage,
+			extensions: [
+				"keep-me",
+				"-extensions/embedded-defaults/librarian/index.ts",
+				"-extensions/embedded-defaults/oracle/index.ts",
+			],
+			owner: "preserve",
+		},
+		"npm:helper",
+	]);
+	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["librarian", "oracle"]);
+});
+
 test("tlh-defaults disable and enable embedded defaults preserve unrelated TLH package filters", () => {
 	const fixture = tempFixture();
 	const customHarnessPackage = join(fixture.dir, "the-last-harness-local");
@@ -1035,8 +1133,6 @@ test("tlh-defaults enable embedded defaults removes stale standalone sources whi
 				extensions: ["keep-me", "-extensions/embedded-defaults/quiet-tools/index.ts"],
 				owner: "preserve",
 			},
-			"npm:@diegopetrucci/pi-quiet-tools",
-			"npm:@diegopetrucci/pi-compact-bash",
 		],
 		tlh: { disabledDefaultExtensions: ["quiet-tools"] },
 	});
@@ -1056,6 +1152,92 @@ test("tlh-defaults enable embedded defaults removes stale standalone sources whi
 	});
 });
 
+test("tlh-defaults disable and enable newly embedded defaults remove stale standalone sources", () => {
+	const fixture = tempFixture();
+	const customHarnessPackage = join(fixture.dir, "the-last-harness-local");
+	const installStatePath = join(fixture.dir, "tlh", "install-state.json");
+	mkdirSync(dirname(installStatePath), { recursive: true });
+	writeFileSync(installStatePath, JSON.stringify({ packageSource: customHarnessPackage }, null, 2));
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "context-inspector",
+			source: "npm:@diegopetrucci/pi-context-inspector",
+			embeddedEntry: "extensions/embedded-defaults/context-inspector/index.ts",
+		},
+		{
+			id: "librarian",
+			source: "npm:@diegopetrucci/pi-librarian",
+			embeddedEntry: "extensions/embedded-defaults/librarian/index.ts",
+		},
+		{
+			id: "oracle",
+			source: "npm:@diegopetrucci/pi-oracle",
+			embeddedEntry: "extensions/embedded-defaults/oracle/index.ts",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [
+			{
+				source: customHarnessPackage,
+				extensions: ["keep-me", "-extensions/embedded-defaults/oracle/index.ts"],
+				owner: "preserve",
+			},
+			"npm:@diegopetrucci/pi-context-inspector",
+			"npm:@diegopetrucci/pi-librarian",
+			"npm:@diegopetrucci/pi-oracle",
+		],
+		tlh: { disabledDefaultExtensions: ["oracle"] },
+	}, null, 2));
+
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"disable", "librarian",
+	]);
+	assert.deepEqual(readJson(fixture.settings), {
+		packages: [
+			{
+				source: customHarnessPackage,
+				extensions: [
+					"keep-me",
+					"-extensions/embedded-defaults/librarian/index.ts",
+					"-extensions/embedded-defaults/oracle/index.ts",
+				],
+				owner: "preserve",
+			},
+		],
+		tlh: { disabledDefaultExtensions: ["librarian", "oracle"] },
+	});
+
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"enable", "oracle",
+	]);
+	assert.deepEqual(readJson(fixture.settings), {
+		packages: [{
+			source: customHarnessPackage,
+			extensions: ["keep-me", "-extensions/embedded-defaults/librarian/index.ts"],
+			owner: "preserve",
+		}],
+		tlh: { disabledDefaultExtensions: ["librarian"] },
+	});
+
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"enable", "context-inspector",
+	]);
+	assert.deepEqual(readJson(fixture.settings), {
+		packages: [{
+			source: customHarnessPackage,
+			extensions: ["keep-me", "-extensions/embedded-defaults/librarian/index.ts"],
+			owner: "preserve",
+		}],
+		tlh: { disabledDefaultExtensions: ["librarian"] },
+	});
+});
+
 test("tlh-defaults sources omit embedded defaults while keeping non-embedded and critical defaults", () => {
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
@@ -1068,6 +1250,21 @@ test("tlh-defaults sources omit embedded defaults while keeping non-embedded and
 			id: "openai-fast",
 			source: "npm:@diegopetrucci/pi-openai-fast",
 			embeddedEntry: "extensions/embedded-defaults/openai-fast/index.ts",
+		},
+		{
+			id: "context-inspector",
+			source: "npm:@diegopetrucci/pi-context-inspector",
+			embeddedEntry: "extensions/embedded-defaults/context-inspector/index.ts",
+		},
+		{
+			id: "librarian",
+			source: "npm:@diegopetrucci/pi-librarian",
+			embeddedEntry: "extensions/embedded-defaults/librarian/index.ts",
+		},
+		{
+			id: "oracle",
+			source: "npm:@diegopetrucci/pi-oracle",
+			embeddedEntry: "extensions/embedded-defaults/oracle/index.ts",
 		},
 		{
 			id: "quiet-tools",
@@ -1091,6 +1288,9 @@ test("tlh-defaults sources omit embedded defaults while keeping non-embedded and
 			harnessPackage,
 			"npm:@diegopetrucci/pi-notify",
 			"npm:@diegopetrucci/pi-openai-fast",
+			"npm:@diegopetrucci/pi-context-inspector",
+			"npm:@diegopetrucci/pi-librarian",
+			"npm:@diegopetrucci/pi-oracle",
 			"npm:@diegopetrucci/pi-quiet-tools",
 			"npm:@diegopetrucci/pi-compact-bash",
 			"npm:helper",

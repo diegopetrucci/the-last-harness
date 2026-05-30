@@ -2,6 +2,8 @@
   {
     "id": "oracle",
     "source": "npm:@diegopetrucci/pi-oracle",
+    "embeddedEntry": "extensions/embedded-defaults/oracle/index.ts",
+    "embeddedVersion": "0.1.10",
     "description": "Consult a separate read-only reasoning process for second opinions."
   },
   {
@@ -24,6 +26,8 @@
   {
     "id": "librarian",
     "source": "npm:@diegopetrucci/pi-librarian",
+    "embeddedEntry": "extensions/embedded-defaults/librarian/index.ts",
+    "embeddedVersion": "0.1.3",
     "description": "Research GitHub repositories and optionally cache local checkouts."
   },
   {
@@ -67,6 +71,8 @@
   {
     "id": "context-inspector",
     "source": "npm:@diegopetrucci/pi-context-inspector",
+    "embeddedEntry": "extensions/embedded-defaults/context-inspector/index.ts",
+    "embeddedVersion": "0.1.1",
     "description": "Open a local HTML dashboard explaining where the current session context is going."
   },
   {

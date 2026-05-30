@@ -225,6 +225,19 @@ function removePackage(settings, source) {
 	}
 }
 
+function removeEmbeddedDefaultPackages(settings, defaultExtensions) {
+	let removed = false;
+	for (const embeddedExtension of defaultExtensions) {
+		if (!isEmbeddedDefaultExtension(embeddedExtension)) continue;
+		for (const source of [embeddedExtension.source, ...embeddedExtension.replaces]) {
+			const beforeLength = settings.packages.length;
+			removePackage(settings, source);
+			if (settings.packages.length !== beforeLength) removed = true;
+		}
+	}
+	return removed;
+}
+
 function removeDuplicatePackagesAfterIndex(settings, identity, firstIndex) {
 	for (let index = settings.packages.length - 1; index > firstIndex; index -= 1) {
 		if (packageIdentity(settings.packages[index]) === identity) {
@@ -295,15 +308,26 @@ function disablePackage(settings, extension, defaultExtensions, harnessPackageSo
 		removePackage(settings, source);
 	}
 	if (!isEmbeddedDefaultExtension(extension)) return false;
-	return updateHarnessEmbeddedDefaultFilters(settings, defaultExtensions, disabledIdsFromSettings(settings, defaultExtensions), harnessPackageSource);
+	const removedEmbeddedPackages = removeEmbeddedDefaultPackages(settings, defaultExtensions);
+	const updatedFilters = updateHarnessEmbeddedDefaultFilters(
+		settings,
+		defaultExtensions,
+		disabledIdsFromSettings(settings, defaultExtensions),
+		harnessPackageSource,
+	);
+	return removedEmbeddedPackages || updatedFilters;
 }
 
 function enablePackage(settings, extension, defaultExtensions, harnessPackageSource) {
 	if (isEmbeddedDefaultExtension(extension)) {
-		for (const oldSource of [extension.source, ...extension.replaces]) {
-			removePackage(settings, oldSource);
-		}
-		return updateHarnessEmbeddedDefaultFilters(settings, defaultExtensions, disabledIdsFromSettings(settings, defaultExtensions), harnessPackageSource);
+		const removedEmbeddedPackages = removeEmbeddedDefaultPackages(settings, defaultExtensions);
+		const updatedFilters = updateHarnessEmbeddedDefaultFilters(
+			settings,
+			defaultExtensions,
+			disabledIdsFromSettings(settings, defaultExtensions),
+			harnessPackageSource,
+		);
+		return removedEmbeddedPackages || updatedFilters;
 	}
 	for (const oldSource of extension.replaces) {
 		removePackage(settings, oldSource);

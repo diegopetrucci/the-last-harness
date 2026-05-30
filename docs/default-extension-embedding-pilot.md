@@ -1,16 +1,21 @@
 # Embedded default extension pilot
 
-Pilot goal: cut TLH install/update time without changing opt-out semantics or bundling higher-risk defaults.
+Pilot goal: cut TLH install/update time without changing opt-out semantics. The first pass intentionally started with lower-risk defaults; later passes expanded to behavior-heavier defaults after follow-up audits.
 
-As of the second pass, TLH embeds these seven low-risk defaults in the main package:
+As of the third pass, TLH embeds these ten defaults in the main package:
 
 - `openai-fast` (`@diegopetrucci/pi-openai-fast@0.1.2`)
 - `inline-bash` (`@diegopetrucci/pi-inline-bash@0.1.1`)
 - `notify` (`@diegopetrucci/pi-notify@0.1.4`)
 - `context-cap` (`@diegopetrucci/pi-context-cap@0.1.1`)
+- `context-inspector` (`@diegopetrucci/pi-context-inspector@0.1.1`)
 - `confirm-destructive` (`@diegopetrucci/pi-confirm-destructive@0.1.2`)
+- `librarian` (`@diegopetrucci/pi-librarian@0.1.3`)
+- `oracle` (`@diegopetrucci/pi-oracle@0.1.10`)
 - `quiet-tools` (`@diegopetrucci/pi-quiet-tools@0.1.2`)
 - `dirty-repo-guard` (`@diegopetrucci/pi-dirty-repo-guard@0.1.1`)
+
+The third pass added `context-inspector`, `librarian`, and `oracle`.
 
 ## Benchmark takeaway
 
@@ -32,7 +37,7 @@ The initial batch embedded these five non-critical, small, no-extra-package-depe
 4. `context-cap`
 5. `notify`
 
-Do **not** include dependency-heavy or higher-risk defaults in this pilot (`plannotator`, `fff`, `pi-web-access`, `rtk`, etc.), and do **not** embed critical defaults (`subagents`, `intercom`).
+At that stage, the pilot explicitly excluded dependency-heavy or higher-risk defaults (`plannotator`, `fff`, `pi-web-access`, `rtk`, etc.) and did not embed critical defaults (`subagents`, `intercom`). Those first-pass guardrails were historical, not a permanent rule for later audited passes.
 
 ## Proposed mechanism
 
@@ -135,6 +140,120 @@ node scripts/tlh-defaults.mjs \
   --settings "$(mktemp -d)/settings.json" \
   --defaults config/default-extensions.json \
   list
+
+# Authoritative normal timings were collected by timing this command externally
+# across three fresh/warm temp-dir cycles:
+TLH_PACKAGE_SOURCE="$PWD" bash install.sh \
+  --quiet \
+  --agent-dir "$agent_dir" \
+  --bin-dir "$bin_dir"
+
+# Confirmatory per-source profiling:
+TLH_PACKAGE_SOURCE="$PWD" bash install.sh \
+  --dev-install-timings \
+  --quiet \
+  --agent-dir "$agent_dir" \
+  --bin-dir "$bin_dir"
+```
+
+## 2026-05 approved third-pass audit
+
+This section is the source of truth for the third embedding pass tracked by `tlhf-1zv1`. The final third-pass embed set is exactly:
+
+1. `context-inspector` (`@diegopetrucci/pi-context-inspector@0.1.1`)
+2. `librarian` (`@diegopetrucci/pi-librarian@0.1.3`)
+3. `oracle` (`@diegopetrucci/pi-oracle@0.1.10`)
+
+No other default extensions are included in the third pass.
+
+Versions below are `npm` `latest` results captured on 2026-05-30, and they matched the `version` field in the tarballs pulled with `npm pack`.
+
+| ID | Current upstream package | Size / packaged files | Dependency / peer surface | Runtime assets / persistence | External-tool / subprocess / cache behavior | Update-cadence risk | Vendoring constraints |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `context-inspector` | `@diegopetrucci/pi-context-inspector@0.1.1` | 16.2 KB tgz / 58.3 KB unpacked, 4 files: `.pi-fleet-tested-version`, `README.md`, `index.ts`, `package.json` | No direct deps; peer `@earendil-works/pi-coding-agent` only. No aliases/replacements in `config/default-extensions.json`. | No packaged static assets beyond the single-file extension; the HTML/CSS/JS dashboard is inlined inside `index.ts`. Writes reports either under `.pi/context-reports/` in the current workspace or a temp dir created with `mkdtempSync(join(tmpdir(), "pi-context-"))`; tightens dir perms to `0700` and report-file perms to `0600`. | No long-lived cache. Opens the generated report through `pi.exec("open")`, `pi.exec("cmd", ["/c", "start", ...])`, or `pi.exec("xdg-open")` unless `--no-open` is used. | Medium: only two publishes so far (`0.1.0` on 2026-05-11, `0.1.1` on 2026-05-28), but the report logic is tightly coupled to upstream transcript block shapes, tool-schema serialization, and token-accounting details. | Preserve the locked-down temp/workspace file permissions, `--keep`/`--no-open` behavior, and the self-contained HTML bundle. Re-audit when upstream transcript/tool-schema or footer-token shapes move. |
+| `librarian` | `@diegopetrucci/pi-librarian@0.1.3` | 12.1 KB tgz / 37.8 KB unpacked, 4 files: `.pi-fleet-tested-version`, `README.md`, `index.ts`, `package.json` | No direct deps; peers `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`, and `typebox`. No aliases/replacements in `config/default-extensions.json`. | No packaged static assets. Persists cache preference in `<agentDir>/extensions/librarian.json`. Creates a temp workspace under `os.tmpdir()/pi-librarian/run-*` and an optional persistent checkout cache under the platform cache root (or `PI_LIBRARIAN_CACHE_ROOT`). Lazy cleanup removes repo caches unused for 7 days. | Shells out through guarded `bash` usage for `gh`, `git`, `jq`, `rg`, `find`/`fd`, `ls`, `stat`, `mkdir`, `base64`, and `nl -ba`. Creates agent sessions, blocks destructive/credential-inspection commands, and allows local clone/fetch flows only when the checkout cache is enabled. | Medium-high: four publishes between 2026-05-10 and 2026-05-28, plus likely follow-up churn in cache policy and runtime guardrails as more GitHub research edge cases appear. | Embedding must not silently relax the read/bash guardrails, cache TTL, cleanup, or config-path behavior. This pass now relies on TLH declaring `typebox` directly, so future bumps need an install-time and compatibility recheck. |
+| `oracle` | `@diegopetrucci/pi-oracle@0.1.10` | 13.2 KB tgz / 47.9 KB unpacked, 4 files: `.pi-fleet-tested-version`, `README.md`, `index.ts`, `package.json` | No direct deps; peers `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`, and `typebox`. No aliases/replacements in `config/default-extensions.json`. | No packaged static assets, but `index.ts` carries large provider/model preference tables and renders a status line plus below-editor widget for active runs. Persists defaults in `<agentDir>/extensions/oracle.json`. | Spawns a separate `pi`/runtime subprocess with `--mode json -p --no-session`, streams JSON events back into the parent session, optionally exposes read-only `bash`, and handles abort/kill timing itself. No local disk cache beyond saved defaults, but the tool tracks model cache-read/cache-write token usage. | High: six publishes between 2026-04-18 and 2026-05-28, with provider/model list churn and thinking-level compatibility fixes likely to continue. | Preserve subprocess isolation, JSON-stream parsing/error handling, config persistence, and status/widget UI. This pass now depends on direct TLH `@earendil-works/pi-ai` and `typebox` installs, so future bumps need explicit install-time and runtime compatibility rechecks. |
+
+### Third-pass scope guardrails
+
+- This ticket approves only the three packages above for the next embed pass.
+- No other default extensions are included in that pass: `plannotator`, `anthropic-auth`, `mcporter`, `pi-web-access`, `fff`, `rtk`, `triage-comments`, `subagents`, and `intercom` remain out of scope here.
+- Because all three approved packages are behavior-heavy, the implementation ticket should keep explicit upstream provenance/version markers and treat their upstream release notes as part of the TLH release checklist.
+
+## Third-pass audit commands
+
+```sh
+npm view @diegopetrucci/pi-context-inspector@latest --json
+npm view @diegopetrucci/pi-librarian@latest --json
+npm view @diegopetrucci/pi-oracle@latest --json
+
+npm view @diegopetrucci/pi-context-inspector time --json
+npm view @diegopetrucci/pi-librarian time --json
+npm view @diegopetrucci/pi-oracle time --json
+
+npm pack @diegopetrucci/pi-context-inspector --json
+npm pack @diegopetrucci/pi-librarian --json
+npm pack @diegopetrucci/pi-oracle --json
+
+# Tarball file list and targeted index.ts/package.json inspection.
+```
+
+## Third-pass settings/defaults sanity check
+
+A temp-profile install using `TLH_PACKAGE_SOURCE="$PWD"` confirmed that the newly embedded defaults are now surfaced as TLH-package defaults rather than standalone package sources:
+
+- `tlh-defaults list` showed `context-inspector`, `librarian`, and `oracle` as `enabled from the TLH package`.
+- `tlh-defaults sources` omitted all three IDs/sources.
+
+## Third-pass benchmark methodology
+
+- Normal installer timings are authoritative; `--dev-install-timings` runs are confirmatory only because they replace the normal settings-wide refresh with per-source profiling.
+- Fresh timings used a new temp `--agent-dir` and `--bin-dir` with `TLH_PACKAGE_SOURCE="$PWD" bash install.sh --quiet ...`.
+- Warm timings immediately reran the same command against the same temp dirs.
+- Normal timings were collected by timing `bash install.sh` externally from a local `python3` wrapper so the installer path stayed unchanged.
+- Three fresh/warm cycles were recorded on the same development machine. These runs used fresh TLH profile/wrapper dirs, but they did **not** clear host-level npm/Pi/git caches between runs.
+- These third-pass timings used `TLH_PACKAGE_SOURCE="$PWD"` from a local working tree. They confirm the local-package-source installer path end to end, but they do **not** by themselves prove when a cold published-package install would first install the new TLH root dependencies (`@earendil-works/pi-ai`, `typebox`) versus reusing already available local/host state.
+
+## Third-pass benchmark results
+
+Authoritative normal installer timings after embedding `context-inspector`, `librarian`, and `oracle`:
+
+- Run 1: **14.53s fresh / 6.40s warm**
+- Run 2: **13.48s fresh / 8.32s warm**
+- Run 3: **11.91s fresh / 6.45s warm**
+- Mean: **13.31s fresh / 7.06s warm**
+
+Impact relative to earlier checkpoints:
+
+- Versus the second-pass embedded baseline (**13.48s fresh / 6.74s warm**), the three-run mean was about **0.17s faster fresh** and **0.32s slower warm**.
+- Versus the pre-pilot baseline (**19.5s fresh / 7.5s warm**), the three-run mean was about **6.19s faster fresh** and **0.44s faster warm**.
+- The smaller gain versus the second pass is consistent with this batch removing three separate default-extension fetches, but these local-source timings do not isolate how much of the change comes from the new TLH root dependencies (`@earendil-works/pi-ai`, `typebox`) versus normal cache/noise effects.
+- Warm timings were noisier than the second-pass average because the same-host cache state still moves between runs; Run 2's warm spike was the biggest outlier.
+
+Confirmatory `--dev-install-timings` runs measured **30.3s fresh / 9.22s warm** and no longer listed `context-inspector`, `librarian`, or `oracle` in the bundled default-extension per-source table. After the third pass, that table showed only 9 separately refreshed bundled sources: `plannotator`, `anthropic-auth`, `mcporter`, `pi-web-access`, `fff`, `rtk`, `triage-comments`, `subagents`, and `intercom`.
+
+## Third-pass residual risks
+
+- `context-inspector`, `librarian`, and `oracle` now ride the TLH release cadence, so upstream behavior or compatibility fixes for any of the three need a TLH release instead of an independent package refresh.
+- The new direct TLH dependencies (`@earendil-works/pi-ai` and `typebox`) can offset some install-time savings on colder hosts and add one more compatibility surface to recheck during TLH upgrades.
+- The normal fresh timing here is a fresh-profile measurement, not a cold-host measurement; npm/Pi/git cache state and network conditions can still move the number noticeably.
+- `librarian` and `oracle` remain behavior-heavy defaults with subprocess, cache, and UI/runtime coupling, so future upstream churn could erase the convenience of embedding if TLH releases lag.
+
+## Third-pass benchmark and sanity-check commands
+
+```sh
+agent_dir="/tmp/tlh-agent"
+bin_dir="/tmp/tlh-bin"
+
+node scripts/tlh-defaults.mjs \
+  --settings "$agent_dir/settings.json" \
+  --defaults config/default-extensions.json \
+  list
+
+node scripts/tlh-defaults.mjs \
+  --settings "$agent_dir/settings.json" \
+  --defaults config/default-extensions.json \
+  sources
 
 # Authoritative normal timings were collected by timing this command externally
 # across three fresh/warm temp-dir cycles:
