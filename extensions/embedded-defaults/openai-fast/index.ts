@@ -1,3 +1,11 @@
+// Vendored from @diegopetrucci/pi-openai-fast@0.1.2.
+
+/**
+ * Enables optional OpenAI Codex Fast mode for eligible ChatGPT-auth sessions.
+ *
+ * Loads global/project config, injects service_tier=priority, and exposes /fast controls.
+ */
+
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {

@@ -1,4 +1,11 @@
 // Vendored from @diegopetrucci/pi-context-inspector@0.1.1.
+
+/**
+ * Opens a local HTML report that explains where current session context is going.
+ *
+ * Supports redacted output, current-vs-full history views, and a persistent report mode.
+ */
+
 /* eslint-disable @typescript-eslint/no-unused-vars */
 
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";

@@ -1,5 +1,11 @@
 // Vendored from @diegopetrucci/pi-context-cap@0.1.1.
 
+/**
+ * Caps effective model context windows at 200k tokens for this session.
+ *
+ * Adds a compact status indicator and a /context-cap command to toggle the cap.
+ */
+
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Model, Api } from "@earendil-works/pi-ai";
 

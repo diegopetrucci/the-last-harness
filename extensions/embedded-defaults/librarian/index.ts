@@ -1,4 +1,11 @@
 // Vendored from @diegopetrucci/pi-librarian@0.1.3.
+
+/**
+ * Adds the Librarian GitHub research tool and cache toggle command.
+ *
+ * Librarian runs an evidence-first scout with an optional local checkout cache.
+ */
+
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-function-type */
 
 import type { Dirent } from "node:fs";

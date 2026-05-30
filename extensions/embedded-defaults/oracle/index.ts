@@ -1,4 +1,11 @@
 // Vendored from @diegopetrucci/pi-oracle@0.1.10.
+
+/**
+ * Adds a read-only Oracle subprocess for deep analysis and second opinions.
+ *
+ * Includes commands for choosing default model and thinking-level preferences.
+ */
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { spawn } from "node:child_process";

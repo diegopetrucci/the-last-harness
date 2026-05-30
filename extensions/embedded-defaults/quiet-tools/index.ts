@@ -1,3 +1,11 @@
+// Vendored from @diegopetrucci/pi-quiet-tools@0.1.2.
+
+/**
+ * Replaces collapsed built-in tool rows with quieter one-line previews.
+ *
+ * The /quiet-tools command toggles the compact TUI rendering without changing tool results.
+ */
+
 /* eslint-disable @typescript-eslint/no-explicit-any, no-control-regex */
 import { homedir } from "node:os";
 
