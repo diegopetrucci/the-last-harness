@@ -782,7 +782,7 @@ test("bundled manifest contains subagents entry with correct tag and critical fl
 	const subagents = bundled.find(({ id }) => id === "subagents");
 
 	assert.ok(subagents, "bundled subagents entry should exist");
-	assert.equal(subagents.source, "git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-1");
+	assert.equal(subagents.source, "git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-2");
 	assert.equal(subagents.critical, true, "subagents must stay critical");
 	assert.deepEqual(subagents.aliases, ["pi-subagents"]);
 	assert.deepEqual(subagents.replaces, [
@@ -790,6 +790,21 @@ test("bundled manifest contains subagents entry with correct tag and critical fl
 		"git:github.com/nicobailon/pi-subagents",
 	]);
 	assert.equal(subagents.migrateReplacements, true, "subagents replacements must stay enabled");
+});
+
+test("bundled manifest contains intercom entry with correct tag and critical flags", () => {
+	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
+	const intercom = bundled.find(({ id }) => id === "intercom");
+
+	assert.ok(intercom, "bundled intercom entry should exist");
+	assert.equal(intercom.source, "git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-3");
+	assert.equal(intercom.critical, true, "intercom must stay critical");
+	assert.deepEqual(intercom.aliases, ["pi-intercom"]);
+	assert.deepEqual(intercom.replaces, [
+		"npm:pi-intercom",
+		"git:github.com/nicobailon/pi-intercom",
+	]);
+	assert.equal(intercom.migrateReplacements, true, "intercom replacements must stay enabled");
 });
 
 test("bundled manifest has no duplicate ids or alias conflicts", () => {
