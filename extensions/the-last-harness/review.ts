@@ -2,8 +2,10 @@ import type { Stats } from "node:fs";
 import { lstat, open, readdir, readFile, type FileHandle } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
-import { DynamicBorder, getSelectListTheme, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder, getAgentDir, getSelectListTheme, SettingsManager, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Container, matchesKey, SelectList, Text } from "@earendil-works/pi-tui";
+
+import { primaryAgentSelectionFromBranch, resolvePrimaryAgentConfig } from "../the-last-harness-primary-agent.mjs";
 
 // --- Constants ---
 
@@ -14,6 +16,44 @@ const REVIEW_PICKER_ONLY_GUIDANCE =
 	"/review is picker-only. Run /review with no arguments, then choose a mode in the picker. Typed shortcuts like `/review pr 123` and `--extra` are no longer supported.";
 const REVIEW_TUI_REQUIRED_MESSAGE =
 	"/review requires the interactive TUI picker. Re-run /review in the TLH UI.";
+
+type ReviewPrimaryAgentSelection = "architect" | "rush" | "product" | "bug-hunter" | "disabled";
+type ReviewSettings = {
+	tlh?: {
+		primaryAgent?: {
+			enabled?: boolean;
+			selected?: string;
+		};
+	};
+};
+
+const REVIEW_REQUIRED_PRIMARY: ReviewPrimaryAgentSelection = "architect";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function getTlhGlobalSettings(cwd: string): ReviewSettings {
+	try {
+		const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as unknown;
+		return isRecord(settings) ? (settings as ReviewSettings) : {};
+	} catch {
+		return {};
+	}
+}
+
+function currentReviewPrimaryAgentSelection(ctx: ExtensionCommandContext): ReviewPrimaryAgentSelection {
+	const defaultResolution = resolvePrimaryAgentConfig(getTlhGlobalSettings(ctx.cwd).tlh?.primaryAgent) as {
+		selection: ReviewPrimaryAgentSelection;
+	};
+	const branchEntries = typeof ctx.sessionManager?.getBranch === "function" ? ctx.sessionManager.getBranch() : [];
+	const sessionResolution = primaryAgentSelectionFromBranch(branchEntries) as { selection?: ReviewPrimaryAgentSelection };
+	return sessionResolution.selection ?? defaultResolution.selection;
+}
+
+function reviewPrimaryBlockedMessage(activePrimary: ReviewPrimaryAgentSelection): string {
+	return `/review only works while the architect primary agent is active. Current primary agent: ${activePrimary}. Switch to architect with /switch-primary-agent architect (or Shift+Tab), then rerun /review.`;
+}
 
 export const REVIEW_MODES = ["uncommitted", "branch", "commit", "pr", "folder"] as const;
 export type ReviewMode = (typeof REVIEW_MODES)[number];
@@ -1012,6 +1052,12 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
 		description: "Review code changes via an interactive mode picker",
 		getArgumentCompletions: getReviewArgumentCompletions,
 		handler: async (args, ctx) => {
+			const activePrimary = currentReviewPrimaryAgentSelection(ctx);
+			if (activePrimary !== REVIEW_REQUIRED_PRIMARY) {
+				ctx.ui.notify(reviewPrimaryBlockedMessage(activePrimary), "error");
+				return;
+			}
+
 			const argv = tokenizeArgs(args);
 			const parsed = parseReviewArgs(argv);
 

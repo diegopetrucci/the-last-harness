@@ -11,6 +11,29 @@ import {
 	registerReviewCommand,
 } from "../extensions/the-last-harness/review.ts";
 
+const reviewEnvRoot = mkdtempSync(join(tmpdir(), "tlh-review-agent-env-"));
+const reviewEnvHome = join(reviewEnvRoot, "home");
+const reviewEnvAgent = join(reviewEnvRoot, "agent");
+const previousReviewPiAgentDir = process.env.PI_CODING_AGENT_DIR;
+const previousReviewHome = process.env.HOME;
+mkdirSync(reviewEnvHome, { recursive: true });
+mkdirSync(reviewEnvAgent, { recursive: true });
+process.env.PI_CODING_AGENT_DIR = reviewEnvAgent;
+process.env.HOME = reviewEnvHome;
+process.on("exit", () => {
+	rmSync(reviewEnvRoot, { force: true, recursive: true });
+	if (previousReviewPiAgentDir === undefined) {
+		delete process.env.PI_CODING_AGENT_DIR;
+	} else {
+		process.env.PI_CODING_AGENT_DIR = previousReviewPiAgentDir;
+	}
+	if (previousReviewHome === undefined) {
+		delete process.env.HOME;
+	} else {
+		process.env.HOME = previousReviewHome;
+	}
+});
+
 /**
  * @param {{
  * 	cwd: string;
@@ -18,9 +41,10 @@ import {
  * 	hasUI?: boolean;
  * 	custom?: () => Promise<unknown> | unknown;
  * 	editor?: (title: string, prefill?: string) => Promise<string | undefined> | string | undefined;
+ * 	branchEntries?: unknown[];
  * }} params
  */
-function createReviewHarness({ cwd, exec, hasUI = true, custom, editor }) {
+function createReviewHarness({ cwd, exec, hasUI = true, custom, editor, branchEntries = [] }) {
 	let handler;
 	/** @type {Array<{ command: string; args: string[]; cwd?: string }>} */
 	const execCalls = [];
@@ -61,6 +85,9 @@ function createReviewHarness({ cwd, exec, hasUI = true, custom, editor }) {
 		ctx: {
 			cwd,
 			hasUI,
+			sessionManager: {
+				getBranch: () => branchEntries,
+			},
 			ui: {
 				notify(message, level) {
 					notifications.push({ message, level });
@@ -84,6 +111,40 @@ function makeTempDir(t, prefix) {
 		rmSync(cwd, { force: true, recursive: true });
 	});
 	return cwd;
+}
+
+function makePrimaryFixture(t, prefix) {
+	const dir = makeTempDir(t, prefix);
+	const home = join(dir, "home");
+	const agent = join(dir, "agent");
+	const cwd = join(dir, "workspace");
+	mkdirSync(home, { recursive: true });
+	mkdirSync(agent, { recursive: true });
+	mkdirSync(cwd, { recursive: true });
+	return { dir, home, agent, cwd };
+}
+
+async function withEnv(env, fn) {
+	const previous = new Map();
+	for (const key of Object.keys(env)) {
+		previous.set(key, process.env[key]);
+		if (env[key] === undefined) {
+			delete process.env[key];
+		} else {
+			process.env[key] = env[key];
+		}
+	}
+	try {
+		return await fn();
+	} finally {
+		for (const [key, value] of previous) {
+			if (value === undefined) {
+				delete process.env[key];
+			} else {
+				process.env[key] = value;
+			}
+		}
+	}
 }
 
 function assertRenderedPathLine(message, linePattern, expectedPath) {
@@ -332,6 +393,64 @@ test("/review without TUI fails clearly because the picker is required", async (
 	assert.deepEqual(harness.notifications, [
 		{
 			message: "/review requires the interactive TUI picker. Re-run /review in the TLH UI.",
+			level: "error",
+		},
+	]);
+});
+
+
+test("/review still opens the picker when the architect primary agent is active", async (t) => {
+	const fixture = makePrimaryFixture(t, "tlh-review-architect-primary-");
+	const harness = createReviewHarness({
+		cwd: fixture.cwd,
+		branchEntries: [
+			{ type: "custom", customType: "tlh-primary-agent-state", data: { selected: "architect" } },
+		],
+		custom: () => undefined,
+		exec: async (command, args) => {
+			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
+		},
+	});
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		await harness.handler("", harness.ctx);
+	});
+
+	assert.equal(harness.customCallCount, 1);
+	assert.equal(harness.execCalls.length, 0);
+	assert.equal(harness.sentMessages.length, 0);
+	assert.deepEqual(harness.notifications, []);
+});
+
+
+test("/review blocks non-architect primary mode before opening the picker or gathering diffs", async (t) => {
+	const fixture = makePrimaryFixture(t, "tlh-review-rush-primary-");
+	writeFileSync(
+		join(fixture.agent, "settings.json"),
+		`${JSON.stringify({ tlh: { primaryAgent: { enabled: true, selected: "rush" } } }, null, 2)}\n`,
+	);
+
+	const harness = createReviewHarness({
+		cwd: fixture.cwd,
+		custom: () => {
+			throw new Error("picker should not open outside architect mode");
+		},
+		exec: async (command, args) => {
+			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
+		},
+	});
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		await harness.handler("", harness.ctx);
+	});
+
+	assert.equal(harness.customCallCount, 0);
+	assert.equal(harness.execCalls.length, 0);
+	assert.equal(harness.sentMessages.length, 0);
+	assert.deepEqual(harness.notifications, [
+		{
+			message:
+				"/review only works while the architect primary agent is active. Current primary agent: rush. Switch to architect with /switch-primary-agent architect (or Shift+Tab), then rerun /review.",
 			level: "error",
 		},
 	]);

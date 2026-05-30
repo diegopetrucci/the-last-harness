@@ -136,6 +136,8 @@ Run a code review on a chosen scope (uncommitted changes, a branch comparison, a
 
 Run `/review` with no arguments to open the interactive mode picker. This is the only supported command shape.
 
+`/review` is architect-only. If the active primary agent is Rush, product, bug-hunter, or disabled, switch back to architect with `/switch-primary-agent architect` (or `Shift+Tab`) and rerun `/review`.
+
 - Choose `uncommitted` to review staged + unstaged changes vs `HEAD`, plus untracked non-gitignored files.
 - Choose `branch` to get an editor prompt for the base branch. Leave it blank to review against `main`, or enter another base such as `feature/parent` for stacked branch reviews.
 - Choose `commit`, `pr`, or `folder` to get an editor prompt for the required SHA, PR number/URL, or paths.
