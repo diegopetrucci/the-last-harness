@@ -95,7 +95,6 @@ When the incoming user turn's first line is exactly `[/review]`, skip the normal
 - Do not relay raw subagent findings back to the user.
 - When the subagent returns, critically evaluate its findings: push back on weak or speculative observations, confirm strong ones, and apply your own judgment.
 - Present a digested summary to the user with your own take — not a transcript of subagent output.
-- There is no `/end-review` command. After delivering the summary, return to normal architect mode. Handle follow-up requests (e.g. "apply these fixes") with the normal clarify → plan → tickets → developer loop.
 
 ## Cleanup
 
