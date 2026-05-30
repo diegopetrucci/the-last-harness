@@ -342,12 +342,15 @@ test("child runtime wires commit attribution prompt and bash guard without prima
 	);
 
 	assert.match(childRuntime, /pi\.on\("before_agent_start"/);
+	assert.match(childRuntime, /const childAgentName = env\.PI_SUBAGENT_CHILD_AGENT;/);
+	assert.match(childRuntime, /buildChildExperimentalPrompt\(childAgentName, settings\.tlh\?\.experimental\)/);
 	assert.match(childRuntime, /buildTlhCommitAttributionPrompt\(commitAttributionState\)/);
 	assert.match(childRuntime, /pi\.on\("tool_call"/);
 	assert.match(childRuntime, /if \(event\.toolName !== "bash"\)/);
 	assert.match(childRuntime, /getTlhGitCommitAttributionBlockReason\(event\.input\.command, commitAttributionState\)/);
+	assert.match(registerBlock, /const env = options\.env \?\? process\.env;/);
 	assert.match(registerBlock, /registerChild: \(\) => \{/);
-	assert.match(registerBlock, /registerChildSubagentRuntime\(pi, childPromptBuilder\);/);
+	assert.match(registerBlock, /registerChildSubagentRuntime\(pi, childPromptBuilder, env\);/);
 });
 
 test("extension wires subscription usage to lifecycle refreshes and footer", () => {
@@ -381,6 +384,7 @@ test("extension wires TLH experimental, attribution, and usage commands to isola
 	assert.match(extensionSource, /registerExperimentalCommand\(pi\)/);
 	assert.match(experimentalSource, /pi\.registerCommand\("experimental"/);
 	assert.match(experimentalSource, /run-tests-last/);
+	assert.match(experimentalSource, /delta-follow-up-reviews/);
 	assert.match(
 		experimentalSource,
 		/withLockedTlhSettingsWrite\(cwd, "Refusing to write experimental settings outside the isolated TLH profile\./,

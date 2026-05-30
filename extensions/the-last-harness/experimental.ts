@@ -5,6 +5,7 @@ import { withLockedTlhSettingsWrite } from "./profile-state.js";
 import type { AgentPrompt, TlhExperimentalConfig, TlhExperimentalFeatureId, TlhSettings } from "./types.js";
 
 export const RUN_TESTS_LAST_FEATURE: TlhExperimentalFeatureId = "run-tests-last";
+export const DELTA_FOLLOW_UP_REVIEWS_FEATURE: TlhExperimentalFeatureId = "delta-follow-up-reviews";
 
 const EXPERIMENTAL_COMMAND_HELP = [
 	"Usage: /experimental [list|status [feature]|enable <feature>|disable <feature>|toggle <feature>]",
@@ -26,11 +27,36 @@ When implementation work needs broader verification, prefer this workflow:
 6. Do not defer meaningful ticket-local checks that are needed to implement a ticket safely.
 `;
 
+const DELTA_FOLLOW_UP_REVIEWS_ARCHITECT_PROMPT = `
+## TLH Experimental Feature: delta-follow-up-reviews
+
+This TLH experiment is enabled for the architect primary agent.
+
+When a \`code-reviewer\` finding leads to a developer fix round:
+
+1. Default the follow-up \`code-reviewer\` request to the delta since the last reviewed checkpoint instead of rereading the full branch diff.
+2. In every follow-up review request, pass the prior findings plus the exact delta baseline, git range or checkpoint, or explicit changed-file list to review.
+3. Keep or expand to targeted wider review or full re-review for installer or other destructive-path changes, trust-boundary changes, auth or execution changes, unresolved reviewer disagreement, or whenever the delta cannot be validated safely without wider context.
+`;
+
+const DELTA_FOLLOW_UP_REVIEWS_CODE_REVIEWER_PROMPT = `
+## TLH Experimental Feature: delta-follow-up-reviews
+
+This TLH experiment is enabled for the \`code-reviewer\` child agent.
+
+For follow-up review after fixes:
+
+1. Expect prior findings plus an exact delta baseline, git range or checkpoint, or explicit changed-file list from the delegating primary agent. Do not assume every follow-up review includes the full branch diff.
+2. Default to the requested delta and prior findings: verify the reported fixes, check touched areas for regressions, and avoid rereading the full branch diff unless wider context is needed.
+3. You may read adjacent code or other targeted context when needed for safety or correctness, and should widen to targeted or full re-review for installer or other destructive-path changes, trust-boundary changes, auth or execution changes, unresolved reviewer disagreement, or whenever the requested delta cannot be validated safely without wider context.
+`;
+
 type TlhExperimentalFeature = {
 	id: TlhExperimentalFeatureId;
 	title: string;
 	description: string;
 	primaryAgentPrompt?: string;
+	codeReviewerPrompt?: string;
 };
 
 type TlhExperimentalSlashAction =
@@ -51,6 +77,13 @@ const TLH_EXPERIMENTAL_FEATURES: TlhExperimentalFeature[] = [
 		title: "Run tests last",
 		description: "Architect guidance to keep implementation-ticket validation narrow and defer broad verification to a final validation ticket.",
 		primaryAgentPrompt: RUN_TESTS_LAST_PROMPT.trim(),
+	},
+	{
+		id: DELTA_FOLLOW_UP_REVIEWS_FEATURE,
+		title: "Delta follow-up reviews",
+		description: "Architect and code-reviewer guidance to scope follow-up reviews to a requested delta after fixes.",
+		primaryAgentPrompt: DELTA_FOLLOW_UP_REVIEWS_ARCHITECT_PROMPT.trim(),
+		codeReviewerPrompt: DELTA_FOLLOW_UP_REVIEWS_CODE_REVIEWER_PROMPT.trim(),
 	},
 ];
 
@@ -114,6 +147,15 @@ function readEnabledFeatures(config: unknown): string[] {
 		return [];
 	}
 	return normalizeEnabledFeatures(enabledFeatures);
+}
+
+function enabledExperimentalPrompts(
+	config: TlhExperimentalConfig | undefined,
+	promptKey: "primaryAgentPrompt" | "codeReviewerPrompt",
+): string[] {
+	return TLH_EXPERIMENTAL_FEATURES.filter((feature) => isTlhExperimentalFeatureEnabled(config, feature.id))
+		.map((feature) => feature[promptKey])
+		.filter((prompt): prompt is string => Boolean(prompt));
 }
 
 export function getTlhExperimentalConfig(cwd: string): TlhExperimentalConfig | undefined {
@@ -239,10 +281,17 @@ export function buildPrimaryExperimentalPrompt(
 	if (primary?.name !== "architect") {
 		return undefined;
 	}
-	return TLH_EXPERIMENTAL_FEATURES.filter((feature) => isTlhExperimentalFeatureEnabled(config, feature.id))
-		.map((feature) => feature.primaryAgentPrompt)
-		.filter(Boolean)
-		.join("\n\n") || undefined;
+	return enabledExperimentalPrompts(config, "primaryAgentPrompt").join("\n\n") || undefined;
+}
+
+export function buildChildExperimentalPrompt(
+	childAgentName: string | undefined,
+	config: TlhExperimentalConfig | undefined,
+): string | undefined {
+	if (childAgentName?.trim().toLowerCase() !== "code-reviewer") {
+		return undefined;
+	}
+	return enabledExperimentalPrompts(config, "codeReviewerPrompt").join("\n\n") || undefined;
 }
 
 export function registerExperimentalCommand(pi: ExtensionAPI): void {

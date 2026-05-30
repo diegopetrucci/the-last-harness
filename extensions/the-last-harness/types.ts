@@ -87,7 +87,7 @@ export type TlhPrimaryAgentConfig = {
 	applyThinking?: boolean;
 };
 
-export type TlhExperimentalFeatureId = "run-tests-last";
+export type TlhExperimentalFeatureId = "run-tests-last" | "delta-follow-up-reviews";
 
 export type TlhExperimentalConfig = {
 	enabledFeatures?: string[];

@@ -9,6 +9,7 @@ import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mj
 
 const jiti = createJiti(import.meta.url);
 const {
+	DELTA_FOLLOW_UP_REVIEWS_FEATURE,
 	RUN_TESTS_LAST_FEATURE,
 	getTlhExperimentalConfig,
 	isTlhExperimentalFeatureEnabled,
@@ -56,11 +57,11 @@ test("experimental command registers completions and lists default-off feature s
 		const command = registeredExperimentalCommand();
 		assert.deepEqual(
 			(await command.getArgumentCompletions("enable ")).map((completion) => completion.value),
-			[`enable ${RUN_TESTS_LAST_FEATURE}`],
+			[`enable ${RUN_TESTS_LAST_FEATURE}`, `enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`],
 		);
 		assert.deepEqual(
 			(await command.getArgumentCompletions("status ")).map((completion) => completion.value),
-			["status", `status ${RUN_TESTS_LAST_FEATURE}`],
+			["status", `status ${RUN_TESTS_LAST_FEATURE}`, `status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`],
 		);
 		assert.equal(await command.getArgumentCompletions("unknown"), null);
 
@@ -71,6 +72,7 @@ test("experimental command registers completions and lists default-off feature s
 		assert.match(notifications.at(-1)?.message ?? "", /TLH experimental features:/);
 		assert.match(notifications.at(-1)?.message ?? "", /disabled \(default\)/);
 		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable run-tests-last/);
+		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable delta-follow-up-reviews/);
 	});
 });
 
@@ -109,37 +111,42 @@ test("experimental read paths fail closed on malformed enabledFeatures while wri
 	}
 });
 
-test("experimental enable is idempotent, preserves settings, and creates one backup", async (t) => {
+test("experimental enable is idempotent, preserves settings, and does not clobber other enabled features", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
 	const settingsPath = join(fixture.agent, "settings.json");
-	const initialSettings = `${JSON.stringify({ tlh: { primaryAgent: { selected: "architect" } } }, null, 2)}\n`;
+	const initialSettings = `${JSON.stringify(
+		{ tlh: { primaryAgent: { selected: "architect" }, experimental: { enabledFeatures: [RUN_TESTS_LAST_FEATURE] } } },
+		null,
+		2,
+	)}\n`;
 	writeFileSync(settingsPath, initialSettings);
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const command = registeredExperimentalCommand();
 		const { ctx, notifications } = createCommandContext(fixture.dir);
 
-		await command.handler(`enable ${RUN_TESTS_LAST_FEATURE}`, ctx);
+		await command.handler(`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, ctx);
 
 		const writtenAfterFirst = JSON.parse(readFileSync(settingsPath, "utf8"));
 		assert.deepEqual(writtenAfterFirst.tlh.primaryAgent, { selected: "architect" });
-		assert.deepEqual(writtenAfterFirst.tlh.experimental.enabledFeatures, [RUN_TESTS_LAST_FEATURE]);
+		assert.deepEqual(writtenAfterFirst.tlh.experimental.enabledFeatures, [DELTA_FOLLOW_UP_REVIEWS_FEATURE, RUN_TESTS_LAST_FEATURE]);
 		assert.equal(isTlhExperimentalFeatureEnabled(getTlhExperimentalConfig(fixture.dir), RUN_TESTS_LAST_FEATURE), true);
+		assert.equal(isTlhExperimentalFeatureEnabled(getTlhExperimentalConfig(fixture.dir), DELTA_FOLLOW_UP_REVIEWS_FEATURE), true);
 
 		const backupsAfterFirst = readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.bak-"));
 		assert.equal(backupsAfterFirst.length, 1);
 		assert.equal(readFileSync(join(fixture.agent, backupsAfterFirst[0]), "utf8"), initialSettings);
-		assert.match(notifications.at(-1)?.message ?? "", /Updated TLH experimental feature run-tests-last/);
-		assert.match(notifications.at(-1)?.message ?? "", /Undo with \/experimental disable run-tests-last/);
+		assert.match(notifications.at(-1)?.message ?? "", /Updated TLH experimental feature delta-follow-up-reviews/);
+		assert.match(notifications.at(-1)?.message ?? "", /Undo with \/experimental disable delta-follow-up-reviews/);
 		assert.match(notifications.at(-1)?.message ?? "", /Backup:/);
 
-		await command.handler(`enable ${RUN_TESTS_LAST_FEATURE}`, ctx);
+		await command.handler(`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, ctx);
 
 		assert.deepEqual(
 			readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.bak-")),
 			backupsAfterFirst,
 		);
-		assert.match(notifications.at(-1)?.message ?? "", /No change to TLH experimental feature run-tests-last/);
+		assert.match(notifications.at(-1)?.message ?? "", /No change to TLH experimental feature delta-follow-up-reviews/);
 		assert.doesNotMatch(notifications.at(-1)?.message ?? "", /Backup:/);
 	});
 });

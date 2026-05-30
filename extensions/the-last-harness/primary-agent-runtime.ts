@@ -20,7 +20,7 @@ import {
 } from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME } from "./constants.js";
-import { buildPrimaryExperimentalPrompt } from "./experimental.js";
+import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import { applyProviderAwareSubagentModels, selectProviderAwareAgentDefaults } from "./model-defaults.js";
 import { isThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
@@ -205,11 +205,22 @@ function rushDeveloperDelegationReason(): string {
 	return "TLH Rush may not delegate implementation to developer. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.";
 }
 
-function registerChildSubagentRuntime(pi: ExtensionAPI, buildChildPrompt: () => string): void {
+function registerChildSubagentRuntime(
+	pi: ExtensionAPI,
+	buildChildPrompt: () => string,
+	env: Record<string, string | undefined>,
+): void {
 	pi.on("before_agent_start", async (event, ctx) => {
-		const commitAttributionState = resolveTlhCommitAttribution(getTlhGlobalSettings(ctx.cwd).tlh?.attribution);
+		const settings = getTlhGlobalSettings(ctx.cwd);
+		const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
+		const childAgentName = env.PI_SUBAGENT_CHILD_AGENT;
 		return {
-			systemPrompt: [event.systemPrompt, buildChildPrompt(), buildTlhCommitAttributionPrompt(commitAttributionState)]
+			systemPrompt: [
+				event.systemPrompt,
+				buildChildPrompt(),
+				buildChildExperimentalPrompt(childAgentName, settings.tlh?.experimental),
+				buildTlhCommitAttributionPrompt(commitAttributionState),
+			]
 				.filter(Boolean)
 				.join("\n\n"),
 		};
@@ -617,13 +628,14 @@ export function registerTlhPrimaryAgentRuntime(
 	pi: ExtensionAPI,
 	options: TlhPrimaryAgentRuntimeOptions = {},
 ): TlhPrimaryAgentRuntime | undefined {
+	const env = options.env ?? process.env;
 	const childPromptBuilder = (): string => buildChildSubagentSystemPrompt();
 	if (
 		registerTlhStartupMode(pi, {
-			env: options.env ?? process.env,
+			env,
 			buildChildSubagentSystemPrompt: childPromptBuilder,
 			registerChild: () => {
-				registerChildSubagentRuntime(pi, childPromptBuilder);
+				registerChildSubagentRuntime(pi, childPromptBuilder, env);
 			},
 		}) === "child"
 	) {
