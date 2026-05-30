@@ -14,5 +14,5 @@ Address the two still-valid PR #57 review comments in uninstall.sh: uninstall Pi
 
 ## Acceptance Criteria
 
-uninstall.sh plan/execution/manual warning use npm uninstall -g --prefix "/Users/diegopetrucci/.local" @earendil-works/pi-coding-agent or equivalent shared prefix; wrapper existence check treats dangling symlinks as existing; targeted smoke/validation passes
+uninstall.sh plan/execution/manual warning use npm uninstall -g --prefix <TLH npm prefix> @earendil-works/pi-coding-agent or equivalent shared prefix; wrapper existence check treats dangling symlinks as existing; targeted smoke/validation passes
 
