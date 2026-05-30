@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -84,14 +84,17 @@ test("shared default-extension reader trims descriptions and can allow missing m
 	);
 });
 
-test("bundled manifest keeps confirm-destructive plus quiet-tools-compatible rtk load order", () => {
+test("bundled manifest keeps security defaults plus quiet-tools-compatible rtk load order", () => {
 	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
 	const ids = bundled.map(({ id }) => id);
 	const rtk = bundled.find(({ id }) => id === "rtk");
 	const confirmDestructive = bundled.find(({ id }) => id === "confirm-destructive");
+	const dirtyRepoGuard = bundled.find(({ id }) => id === "dirty-repo-guard");
 
 	assert.ok(confirmDestructive, "bundled confirm-destructive default should exist");
 	assert.equal(confirmDestructive.source, "npm:@diegopetrucci/pi-confirm-destructive");
+	assert.ok(dirtyRepoGuard, "bundled dirty-repo-guard default should exist");
+	assert.equal(dirtyRepoGuard.source, "npm:@diegopetrucci/pi-dirty-repo-guard");
 	assert.equal(ids.includes("permission-gate"), false);
 	assert.ok(rtk, "bundled rtk default should exist");
 	assert.deepEqual(rtk.aliases, ["pi-rtk"]);
@@ -311,6 +314,33 @@ test("tlh-defaults rejects disabling critical defaults without changing settings
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /critical default extension 'subagents' cannot be disabled/i);
 	assert.equal(readFileSync(fixture.settings, "utf8"), before);
+});
+
+test("tlh-defaults refuses to mutate normal Pi config paths", () => {
+	const fixture = tempFixture();
+	const homeDir = join(fixture.dir, "home");
+	const protectedSettings = join(homeDir, ".pi", "agent", "settings.json");
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "helper",
+			source: "npm:helper",
+		},
+	], null, 2));
+
+	const result = spawnSync(process.execPath, [
+		defaultsScript,
+		"--settings", protectedSettings,
+		"--defaults", fixture.extensions,
+		"disable", "helper",
+	], {
+		cwd: repoRoot,
+		env: { ...process.env, HOME: homeDir },
+		encoding: "utf8",
+	});
+
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /Refusing to modify normal Pi config from The Last Harness defaults command/);
+	assert.equal(existsSync(join(homeDir, ".pi")), false);
 });
 
 test("tlh-defaults enable cleans stale critical opt-outs while preserving non-critical opt-outs", () => {
@@ -777,9 +807,10 @@ test("bundled manifest contains mcporter entry and tlh-defaults accepts its alia
 	assert.deepEqual(settings.packages, []);
 });
 
-test("bundled manifest contains subagents entry with correct tag and critical flags", () => {
+test("bundled manifest contains subagents and intercom entries with correct critical migration flags", () => {
 	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
 	const subagents = bundled.find(({ id }) => id === "subagents");
+	const intercom = bundled.find(({ id }) => id === "intercom");
 
 	assert.ok(subagents, "bundled subagents entry should exist");
 	assert.equal(subagents.source, "git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-2");
@@ -790,6 +821,16 @@ test("bundled manifest contains subagents entry with correct tag and critical fl
 		"git:github.com/nicobailon/pi-subagents",
 	]);
 	assert.equal(subagents.migrateReplacements, true, "subagents replacements must stay enabled");
+
+	assert.ok(intercom, "bundled intercom entry should exist");
+	assert.equal(intercom.source, "git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-3");
+	assert.equal(intercom.critical, true, "intercom must stay critical");
+	assert.deepEqual(intercom.aliases, ["pi-intercom"]);
+	assert.deepEqual(intercom.replaces, [
+		"npm:pi-intercom",
+		"git:github.com/nicobailon/pi-intercom",
+	]);
+	assert.equal(intercom.migrateReplacements, true, "intercom replacements must stay enabled");
 });
 
 test("bundled manifest contains intercom entry with correct tag and critical flags", () => {

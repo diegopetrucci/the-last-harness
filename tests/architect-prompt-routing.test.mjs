@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
-const repoRoot = fileURLToPath(new URL("..", import.meta.url));
-const architectMd = readFileSync(join(repoRoot, "agents", "primary", "architect.md"), "utf8");
+import { readAgentPrompt } from "./agent-prompt-test-helpers.mjs";
+
+const { content: architectMd } = readAgentPrompt("primary", "architect");
 
 test("architect.md contains web-scout bullet in the subagent tools list", () => {
 	assert.match(

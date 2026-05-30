@@ -10,6 +10,8 @@ Run the aggregate validation script, which covers the installer smoke checks, te
 npm run validate
 ```
 
+This default validation path stays deterministic and repo-local.
+
 ## Test the extension directly
 
 Test the extension directly from this checkout without installing it:

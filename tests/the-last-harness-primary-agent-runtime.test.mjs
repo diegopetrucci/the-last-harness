@@ -181,6 +181,65 @@ test("enabled primary mode validates subagent input after injecting provider-awa
 	assert.equal(event.input.agentScope, "user");
 });
 
+test("enabled primary mode allows approved delegation targets and forces safe top-level defaults", async () => {
+	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
+	const event = {
+		toolName: "subagent",
+		input: {
+			tasks: [{ agent: "repo-scout", prompt: "Map the repository" }],
+			chain: [{ parallel: [{ agent: "web-scout", prompt: "Research upstream release notes" }] }],
+		},
+	};
+	const ctx = createToolCallContext([
+		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
+	]);
+
+	assert.equal(await toolCall(event, ctx), undefined);
+	assert.equal(event.input.agentScope, "user");
+	assert.equal(event.input.context, "fresh");
+});
+
+test("enabled primary mode blocks disallowed nested delegation targets after forcing safe defaults", async () => {
+	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
+	const event = {
+		toolName: "subagent",
+		input: {
+			tasks: [{ agent: "repo-scout", prompt: "Inspect the repo" }],
+			chain: [{ parallel: [{ agent: "planner", prompt: "Plan the work" }] }],
+		},
+	};
+	const ctx = createToolCallContext([
+		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
+	]);
+
+	assert.deepEqual(await toolCall(event, ctx), {
+		block: true,
+		reason:
+			"TLH primary agents may delegate only to: developer, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle. Disallowed target(s): planner.",
+	});
+	assert.equal(event.input.agentScope, "user");
+	assert.equal(event.input.context, "fresh");
+});
+
+test("enabled primary mode allows safe management calls and blocks non-user management scopes", async () => {
+	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
+	const ctx = createToolCallContext([
+		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
+	]);
+	const listEvent = { toolName: "subagent", input: { action: "list" } };
+	const getEvent = { toolName: "subagent", input: { action: "get", agentScope: "" } };
+	const blockedEvent = { toolName: "subagent", input: { action: "get", agentScope: "project" } };
+
+	assert.equal(await toolCall(listEvent, ctx), undefined);
+	assert.equal(listEvent.input.agentScope, "user");
+	assert.equal(await toolCall(getEvent, ctx), undefined);
+	assert.equal(getEvent.input.agentScope, "user");
+	assert.deepEqual(await toolCall(blockedEvent, ctx), {
+		block: true,
+		reason: 'TLH primary-agent subagent get calls may not use agentScope: "project". TLH minor agents must run from the isolated user scope.',
+	});
+});
+
 test("/switch-primary-agent includes Rush completions, usage, and status strings", async () => {
 	const { pi } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
 	const command = pi.commands.get("switch-primary-agent");
