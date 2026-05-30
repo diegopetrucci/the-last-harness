@@ -291,6 +291,7 @@ function evaluateBugHunter(transcript, addViolation) {
 function evaluateWebScout(transcript, addViolation) {
 	let searchCount = 0;
 	let networkCount = 0;
+	let fetchBudgetExceeded = false;
 
 	for (const [index, step] of transcript.steps.entries()) {
 		const name = toolName(step);
@@ -315,7 +316,8 @@ function evaluateWebScout(transcript, addViolation) {
 		if (["fetch_content", "get_search_content"].includes(name)) {
 			networkCount += 1;
 		}
-		if (networkCount > 6) {
+		if (networkCount > 6 && !fetchBudgetExceeded) {
+			fetchBudgetExceeded = true;
 			addViolation(
 				"web-scout.fetch_budget_exceeded",
 				index,

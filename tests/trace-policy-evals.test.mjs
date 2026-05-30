@@ -60,3 +60,22 @@ test("reported product docs traversal regression is rejected", () => {
 		],
 	}), ["product.write_boundary"]);
 });
+
+test("web-scout fetch budget violation is emitted once when later steps are non-network", () => {
+	const result = evaluateTracePolicy({
+		agent: "web-scout",
+		steps: [
+			{ type: "tool", tool: "web_search", query: "release notes" },
+			{ type: "tool", tool: "fetch_content", url: "https://example.com/1" },
+			{ type: "tool", tool: "fetch_content", url: "https://example.com/2" },
+			{ type: "tool", tool: "fetch_content", url: "https://example.com/3" },
+			{ type: "tool", tool: "fetch_content", url: "https://example.com/4" },
+			{ type: "tool", tool: "fetch_content", url: "https://example.com/5" },
+			{ type: "tool", tool: "fetch_content", url: "https://example.com/6" },
+			{ type: "tool", tool: "read", path: "README.md" },
+		],
+	});
+
+	assert.equal(result.ok, false);
+	assert.deepEqual(result.violations.map((violation) => violation.code), ["web-scout.fetch_budget_exceeded"]);
+});
