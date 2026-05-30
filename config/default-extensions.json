@@ -97,7 +97,7 @@
     "replaces": ["npm:pi-subagents", "git:github.com/nicobailon/pi-subagents"],
     "migrateReplacements": true,
     "critical": true,
-    "source": "git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-1",
+    "source": "git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-2",
     "description": "Delegate work to isolated TLH-profile subagents."
   },
   {
@@ -106,7 +106,7 @@
     "replaces": ["npm:pi-intercom", "git:github.com/nicobailon/pi-intercom"],
     "migrateReplacements": true,
     "critical": true,
-    "source": "git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-2",
+    "source": "git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-3",
     "description": "Allow child subagents to escalate questions to the supervising session."
   }
 ]

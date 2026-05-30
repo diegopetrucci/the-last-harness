@@ -29,7 +29,7 @@ Primary agents are optional. Use `Shift+Tab` to cycle the current session throug
 
 TLH subagents are focused child sessions used by the architect workflow: `repo-scout` for discovery, `web-scout` for web research, `developer` for implementation, `code-reviewer` for review, `diff-summarizer` for local diff orientation, and `librarian`/`oracle` for external research and second opinions.
 
-They run in fresh child contexts: they get the task and project context, not the whole primary-agent conversation. They do not coordinate with each other as a swarm; they report back to the parent primary agent, which stays responsible for decisions and orchestration. TLH uses bundled per-role model defaults.
+They run in fresh child contexts: they get the task and project context, not the whole primary-agent conversation. They do not coordinate with each other as a swarm; they report back to the parent primary agent, which stays responsible for decisions and orchestration. TLH uses bundled per-role model defaults. If a child may need supervisor decisions mid-task, prefer async/background delegation; foreground children should return blockers in their final result instead of waiting on blocking supervisor contact.
 
 ## Quality-of-life improvements to `pi`
 
