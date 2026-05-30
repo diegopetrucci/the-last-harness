@@ -120,7 +120,7 @@ test("parseReviewArgs: empty argv requests the picker", () => {
 test("parseReviewArgs: typed review args are rejected with picker-only guidance", () => {
 	for (const argv of [
 		["uncommitted"],
-		["branch", "main"],
+		["branch", "feature/parent"],
 		["commit", "abc123"],
 		["pr", "42"],
 		["folder", "src"],
@@ -291,7 +291,7 @@ test("/review rejects typed shortcuts and does not open the picker", async (t) =
 
 	for (const input of [
 		"uncommitted",
-		"branch main",
+		"branch feature/parent",
 		"commit abc123",
 		"pr 123",
 		"folder src",
@@ -337,12 +337,13 @@ test("/review without TUI fails clearly because the picker is required", async (
 	]);
 });
 
-test("/review picker-selected branch uses main by default without extra prompts", async (t) => {
+test("/review picker-selected branch prompts for a base and defaults blank input to main", async (t) => {
 	const cwd = makeTempDir(t, "tlh-review-picker-branch-");
 
 	const harness = createReviewHarness({
 		cwd,
 		custom: () => "branch",
+		editor: () => "   ",
 		exec: async (command, args) => {
 			if (command === "git" && args.join(" ") === "symbolic-ref -q HEAD") {
 				return { code: 0, stdout: "refs/heads/feature/review\n", stderr: "" };
@@ -363,11 +364,109 @@ test("/review picker-selected branch uses main by default without extra prompts"
 	await harness.handler("", harness.ctx);
 
 	assert.equal(harness.customCallCount, 1);
-	assert.deepEqual(harness.editorCalls, []);
+	assert.deepEqual(harness.editorCalls, [
+		{
+			title: "Review branch: enter base branch (blank defaults to main)",
+			prefill: "main",
+		},
+	]);
 	assert.equal(harness.sentMessages.length, 1);
 	assert.match(harness.sentMessages[0], /base: main/);
 });
 
+test("/review picker-selected branch uses a non-empty prompted base", async (t) => {
+	const cwd = makeTempDir(t, "tlh-review-picker-branch-custom-base-");
+
+	const harness = createReviewHarness({
+		cwd,
+		custom: () => "branch",
+		editor: () => "feature/parent",
+		exec: async (command, args) => {
+			if (command === "git" && args.join(" ") === "symbolic-ref -q HEAD") {
+				return { code: 0, stdout: "refs/heads/feature/review\n", stderr: "" };
+			}
+			if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD") {
+				return { code: 0, stdout: "feature/review\n", stderr: "" };
+			}
+			if (command === "git" && args.join(" ") === "rev-parse --verify feature/parent") {
+				return { code: 0, stdout: "def456\n", stderr: "" };
+			}
+			if (command === "git" && args.join(" ") === "diff feature/parent...HEAD") {
+				return { code: 0, stdout: "diff --git a/src/app.ts b/src/app.ts\n", stderr: "" };
+			}
+			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
+		},
+	});
+
+	await harness.handler("", harness.ctx);
+
+	assert.equal(harness.customCallCount, 1);
+	assert.deepEqual(harness.editorCalls, [
+		{
+			title: "Review branch: enter base branch (blank defaults to main)",
+			prefill: "main",
+		},
+	]);
+	assert.equal(harness.sentMessages.length, 1);
+	assert.match(harness.sentMessages[0], /base: feature\/parent/);
+});
+
+test("/review picker-selected branch cancellation aborts without dispatch", async (t) => {
+	const cwd = makeTempDir(t, "tlh-review-picker-branch-cancel-");
+
+	const harness = createReviewHarness({
+		cwd,
+		custom: () => "branch",
+		editor: () => undefined,
+		exec: async (command, args) => {
+			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
+		},
+	});
+
+	await harness.handler("", harness.ctx);
+
+	assert.equal(harness.customCallCount, 1);
+	assert.deepEqual(harness.editorCalls, [
+		{
+			title: "Review branch: enter base branch (blank defaults to main)",
+			prefill: "main",
+		},
+	]);
+	assert.equal(harness.execCalls.length, 0);
+	assert.equal(harness.sentMessages.length, 0);
+	assert.equal(harness.notifications.length, 0);
+});
+
+test("/review picker-selected branch rejects a leading-dash base before git use", async (t) => {
+	const cwd = makeTempDir(t, "tlh-review-branch-leading-dash-");
+
+	const harness = createReviewHarness({
+		cwd,
+		custom: () => "branch",
+		editor: () => "-feature/parent",
+		exec: async (command, args) => {
+			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
+		},
+	});
+
+	await harness.handler("", harness.ctx);
+
+	assert.equal(harness.customCallCount, 1);
+	assert.deepEqual(harness.editorCalls, [
+		{
+			title: "Review branch: enter base branch (blank defaults to main)",
+			prefill: "main",
+		},
+	]);
+	assert.equal(harness.execCalls.length, 0);
+	assert.equal(harness.sentMessages.length, 0);
+	assert.deepEqual(harness.notifications, [
+		{
+			message: "base cannot start with '-' (got '-feature/parent'). If this is intentional, run the underlying command manually.",
+			level: "error",
+		},
+	]);
+});
 
 test("/review picker-selected commit rejects a leading-dash sha before git use", async (t) => {
 	const cwd = makeTempDir(t, "tlh-review-commit-leading-dash-");

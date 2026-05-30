@@ -18,12 +18,9 @@ const REVIEW_TUI_REQUIRED_MESSAGE =
 export const REVIEW_MODES = ["uncommitted", "branch", "commit", "pr", "folder"] as const;
 export type ReviewMode = (typeof REVIEW_MODES)[number];
 
-/** Byte-length threshold for the diff/snapshot body; warn-only, never blocks. */
-export const REVIEW_LARGE_BODY_BYTES = 200 * 1024; // 200 KB
-
 const REVIEW_MODE_DESCRIPTIONS: Record<ReviewMode, string> = {
 	uncommitted: "Review staged/unstaged changes plus untracked non-gitignored files",
-	branch: "Review commits on the current branch vs a base (default: main)",
+	branch: "Review commits on the current branch vs a chosen base (prompted; blank defaults to main)",
 	commit: "Review a single commit by SHA",
 	pr: "Review a pull request by number or URL",
 	folder: "Review files in one or more folders",
@@ -200,22 +197,11 @@ export function buildReviewEnvelope(
 // --- Helpers for picker integration ---
 
 /** Construct full dispatch args for a mode chosen interactively with defaults applied. */
-function makePickedArgs(mode: ReviewMode): ReviewDispatchArgs {
-	switch (mode) {
-		case "uncommitted":
-			return { mode: "uncommitted", extra: undefined };
-		case "branch":
-			return { mode: "branch", base: REVIEW_DEFAULT_BRANCH_BASE, extra: undefined };
-		case "commit":
-			return { mode: "commit", sha: undefined, extra: undefined };
-		case "pr":
-			return { mode: "pr", nOrUrl: undefined, extra: undefined };
-		case "folder":
-			return { mode: "folder", paths: [], extra: undefined };
-	}
+function makePickedArgs(mode: "uncommitted"): ReviewDispatchArgs {
+	return { mode, extra: undefined };
 }
 
-async function promptForReviewInput(
+async function promptForRequiredReviewInput(
 	ctx: ExtensionCommandContext,
 	title: string,
 ): Promise<string | undefined> {
@@ -224,25 +210,48 @@ async function promptForReviewInput(
 	return trimmed ? trimmed : undefined;
 }
 
+async function promptForBranchBase(
+	ctx: ExtensionCommandContext,
+): Promise<string | undefined> {
+	const response = await ctx.ui.editor(
+		"Review branch: enter base branch (blank defaults to main)",
+		REVIEW_DEFAULT_BRANCH_BASE,
+	);
+	if (response === undefined) {
+		return undefined;
+	}
+
+	const trimmed = response.trim();
+	return trimmed || REVIEW_DEFAULT_BRANCH_BASE;
+}
+
 async function completePickedArgs(
 	ctx: ExtensionCommandContext,
 	mode: ReviewMode,
 ): Promise<ReviewDispatchArgs | undefined> {
-	if (mode === "uncommitted" || mode === "branch") {
+	if (mode === "uncommitted") {
 		return makePickedArgs(mode);
 	}
 
+	if (mode === "branch") {
+		const base = await promptForBranchBase(ctx);
+		return base ? { mode: "branch", base, extra: undefined } : undefined;
+	}
+
 	if (mode === "commit") {
-		const sha = await promptForReviewInput(ctx, "Review commit: enter commit SHA");
+		const sha = await promptForRequiredReviewInput(ctx, "Review commit: enter commit SHA");
 		return sha ? { mode: "commit", sha, extra: undefined } : undefined;
 	}
 
 	if (mode === "pr") {
-		const nOrUrl = await promptForReviewInput(ctx, "Review PR: enter PR number or URL");
+		const nOrUrl = await promptForRequiredReviewInput(ctx, "Review PR: enter PR number or URL");
 		return nOrUrl ? { mode: "pr", nOrUrl, extra: undefined } : undefined;
 	}
 
-	const rawPaths = await promptForReviewInput(ctx, "Review folder: enter one or more paths (quote paths with spaces)");
+	const rawPaths = await promptForRequiredReviewInput(
+		ctx,
+		"Review folder: enter one or more paths (quote paths with spaces)",
+	);
 	if (!rawPaths) {
 		return undefined;
 	}
@@ -389,6 +398,13 @@ async function gatherBranch(
 	base: string | undefined,
 ): Promise<GatherResult> {
 	const effectiveBase = base?.trim() || REVIEW_DEFAULT_BRANCH_BASE;
+
+	// Reject flag-like values before passing anything to git.
+	const baseCheck = rejectFlagLike(effectiveBase, "base");
+	if (!baseCheck.ok) {
+		return { ok: false, message: baseCheck.message };
+	}
+
 	const cwd = cmdCtx.cwd;
 
 	// Refuse if HEAD is detached
@@ -410,12 +426,6 @@ async function gatherBranch(
 	// Resolve current branch
 	const branchResult = await pi.exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd });
 	const currentBranch = branchResult.code === 0 ? branchResult.stdout.trim() : undefined;
-
-	// Reject flag-like values before passing to git
-	const baseCheck = rejectFlagLike(effectiveBase, "base");
-	if (!baseCheck.ok) {
-		return { ok: false, message: baseCheck.message };
-	}
 
 	// Validate that the base ref resolves
 	const verifyResult = await pi.exec("git", ["rev-parse", "--verify", effectiveBase], { cwd });
@@ -981,15 +991,6 @@ async function dispatchReviewMode(
 		cmdCtx.ui.notify(
 			`Switched from '${result.ctx.checkout.priorBranch}' to '${result.ctx.currentBranch}'. Use \`git checkout -\` to return.`,
 			"info",
-		);
-	}
-
-	// --- Large payload warning (warn-only, never blocks) ---
-	const bodyBytes = result.ctx.body?.length ?? 0;
-	if (bodyBytes > REVIEW_LARGE_BODY_BYTES) {
-		cmdCtx.ui.notify(
-			`Large review payload (~${Math.round(bodyBytes / 1024)} KB); proceeding anyway — consider narrowing scope.`,
-			"warning",
 		);
 	}
 

@@ -137,10 +137,10 @@ Run a code review on a chosen scope (uncommitted changes, a branch comparison, a
 Run `/review` with no arguments to open the interactive mode picker. This is the only supported command shape.
 
 - Choose `uncommitted` to review staged + unstaged changes vs `HEAD`, plus untracked non-gitignored files.
-- Choose `branch` to review commits on the current branch vs `main`.
+- Choose `branch` to get an editor prompt for the base branch. Leave it blank to review against `main`, or enter another base such as `feature/parent` for stacked branch reviews.
 - Choose `commit`, `pr`, or `folder` to get an editor prompt for the required SHA, PR number/URL, or paths.
 
-Typed shortcuts such as `/review uncommitted`, `/review branch main`, `/review pr 123`, `/review folder src/`, and `/review ... --extra "..."` are rejected with picker-only guidance rather than dispatched directly.
+Typed shortcuts such as `/review uncommitted`, `/review branch feature/parent`, `/review pr 123`, `/review folder src/`, and `/review ... --extra "..."` are rejected with picker-only guidance rather than dispatched directly.
 
 `/review` requires the interactive TLH TUI. In no-TUI contexts, it fails with a clear picker-required message.
 
@@ -164,10 +164,6 @@ Folder mode collects a snapshot of files under the given paths. It includes trac
 `/review` delegates to a fresh, isolated `code-reviewer` subagent — no chat history bleeds in from the current session. When the subagent returns, the architect critically evaluates the findings: it pushes back on weak or speculative observations, confirms strong ones, and presents a digested summary with its own judgment rather than a raw transcript.
 
 There is no `/end-review` command. After the summary is delivered, you are back in normal architect mode; follow-ups such as asking the architect to apply fixes go through the standard clarify → plan → tickets → developer loop.
-
-### Large diffs
-
-`/review` prints a one-time warning when the gathered diff or snapshot exceeds ~200 KB, but always proceeds. Consider narrowing the scope if a review feels noisy.
 
 ## Docs dump
 
