@@ -25,10 +25,6 @@ function invalidSelectionLabel(value) {
 	return String(value);
 }
 
-export function isPrimaryAgentSelection(value) {
-	return typeof value === "string" && PRIMARY_AGENT_SELECTIONS.has(value);
-}
-
 export function isEnabledPrimaryAgentSelection(selection) {
 	return selection !== DISABLED_PRIMARY_AGENT;
 }

@@ -210,31 +210,6 @@ run_support_manifest_smoke() {
   done
 }
 
-run_install_query_smoke() {
-  log "Running installer query smoke check..."
-  local case_dir="${TMP_ROOT}/install-query"
-  local stdout_file="${case_dir}/stdout.log"
-  local stderr_file="${case_dir}/stderr.log"
-  local combined_file="${case_dir}/combined.log"
-  local status=0
-  mkdir -p "${case_dir}"
-
-  set +e
-  (
-    export TLH_AGENT_DIR="${case_dir}/poisoned-agent" PI_CODING_AGENT_DIR="${case_dir}/poisoned-pi-agent"
-    run_scrubbed_installer_env node scripts/tlh-install-query.mjs normalize-path
-  ) >"${stdout_file}" 2>"${stderr_file}"
-  status=$?
-  set -e
-  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
-
-  if [[ "${status}" -eq 0 ]]; then
-    cat "${combined_file}" >&2
-    fail "normalize-path without --path unexpectedly succeeded"
-  fi
-  assert_contains "${combined_file}" "error: normalize-path requires --path"
-}
-
 make_failing_curl() {
   local fakebin="$1"
   mkdir -p "${fakebin}"
@@ -415,7 +390,6 @@ run_static_checks() {
   node --check scripts/tlh-wrapper.mjs
   node --check scripts/tlh-install-state.mjs
   node --check scripts/tlh-install.mjs
-  node --check scripts/tlh-install-query.mjs
   node --check scripts/lib/tlh-install-package-source.mjs
   node --check scripts/lib/tlh-install-paths.mjs
   node --check scripts/lib/tlh-install-utils.mjs
@@ -556,7 +530,6 @@ run_stage1_staged_cwd_isolation_smoke() {
   local combined_file="${case_dir}/combined.log"
   mkdir -p "${stage_scripts_dir}/lib"
   cp scripts/tlh-install.mjs "${stage_scripts_dir}/tlh-install.mjs"
-  cp scripts/tlh-install-query.mjs "${stage_scripts_dir}/tlh-install-query.mjs"
   cp scripts/lib/tlh-install-package-source.mjs "${stage_scripts_dir}/lib/tlh-install-package-source.mjs"
   cp scripts/lib/tlh-install-paths.mjs "${stage_scripts_dir}/lib/tlh-install-paths.mjs"
   cp scripts/lib/tlh-install-utils.mjs "${stage_scripts_dir}/lib/tlh-install-utils.mjs"
@@ -1984,7 +1957,6 @@ run_uninstall_dangling_profile_wrapper_symlink_smoke
 run_uninstall_unrelated_wrapper_symlink_smoke
 run_uninstall_piped_smoke
 run_uninstall_sibling_preservation_smoke
-run_install_query_smoke
 run_stage1_dry_run_smoke
 run_stage1_relative_path_canonicalization_smoke
 run_stage1_staged_cwd_isolation_smoke
