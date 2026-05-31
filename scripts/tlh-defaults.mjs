@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 
@@ -14,9 +13,11 @@ import {
 } from "./lib/default-extensions.mjs";
 import {
 	assertNotInNormalPiConfig,
+	assignOptionValue,
 	backupPathWithTimestamp,
+	defaultTlhSettingsPath,
+	expandHomePath,
 	readJsonFile,
-	requiredValue,
 } from "./lib/tlh-install-utils.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -56,24 +57,14 @@ function parseArgs(argv) {
 			args.help = true;
 			continue;
 		}
-		if (arg === "--settings") {
-			args.settingsPath = requiredValue(argv, ++index, arg);
+		const settingsIndex = assignOptionValue(args, "settingsPath", argv, index, "--settings");
+		if (settingsIndex !== undefined) {
+			index = settingsIndex;
 			continue;
 		}
-		if (arg.startsWith("--settings=")) {
-			args.settingsPath = arg.slice("--settings=".length);
-			continue;
-		}
-		if (arg === "--defaults" || arg === "--default-extensions") {
-			args.defaultExtensionsPath = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--defaults=")) {
-			args.defaultExtensionsPath = arg.slice("--defaults=".length);
-			continue;
-		}
-		if (arg.startsWith("--default-extensions=")) {
-			args.defaultExtensionsPath = arg.slice("--default-extensions=".length);
+		const defaultsIndex = assignOptionValue(args, "defaultExtensionsPath", argv, index, ["--defaults", "--default-extensions"]);
+		if (defaultsIndex !== undefined) {
+			index = defaultsIndex;
 			continue;
 		}
 		if (arg.startsWith("-")) {
@@ -87,20 +78,6 @@ function parseArgs(argv) {
 	}
 
 	return args;
-}
-
-function expandHome(path) {
-	if (path === "~") return homedir();
-	if (path.startsWith("~/")) return join(homedir(), path.slice(2));
-	return path;
-}
-
-function getAgentDir() {
-	return process.env.PI_CODING_AGENT_DIR || process.env.TLH_AGENT_DIR || join(homedir(), ".the-last-harness", "agent");
-}
-
-function defaultSettingsPath() {
-	return join(getAgentDir(), "settings.json");
 }
 
 function defaultDefaultExtensionsPath() {
@@ -390,8 +367,8 @@ function main() {
 		return;
 	}
 
-	const settingsPath = resolve(expandHome(args.settingsPath || defaultSettingsPath()));
-	const defaultExtensionsPath = resolve(expandHome(args.defaultExtensionsPath || defaultDefaultExtensionsPath()));
+	const settingsPath = resolve(expandHomePath(args.settingsPath || defaultTlhSettingsPath()));
+	const defaultExtensionsPath = resolve(expandHomePath(args.defaultExtensionsPath || defaultDefaultExtensionsPath()));
 	const mutatesSettings = args.command === "disable" || args.command === "enable";
 	if (mutatesSettings) assertNotNormalPiSettings(settingsPath);
 	const defaultExtensions = readDefaultExtensions(defaultExtensionsPath);

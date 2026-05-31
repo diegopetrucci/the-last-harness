@@ -5,8 +5,8 @@ import process from "node:process";
 
 import {
 	assertNotInNormalPiConfig,
+	assignOptionValue,
 	renderShellWords,
-	requiredValue,
 	shellQuote,
 } from "./lib/tlh-install-utils.mjs";
 
@@ -59,36 +59,24 @@ function parseArgs(argv) {
 			args.quiet = true;
 			continue;
 		}
-		if (arg === "--agent-dir") {
-			args.agentDir = requiredValue(argv, ++index, arg);
+		const agentDirIndex = assignOptionValue(args, "agentDir", argv, index, "--agent-dir");
+		if (agentDirIndex !== undefined) {
+			index = agentDirIndex;
 			continue;
 		}
-		if (arg.startsWith("--agent-dir=")) {
-			args.agentDir = arg.slice("--agent-dir=".length);
+		const binDirIndex = assignOptionValue(args, "binDir", argv, index, "--bin-dir");
+		if (binDirIndex !== undefined) {
+			index = binDirIndex;
 			continue;
 		}
-		if (arg === "--bin-dir") {
-			args.binDir = requiredValue(argv, ++index, arg);
+		const wrapperNameIndex = assignOptionValue(args, "wrapperName", argv, index, "--wrapper-name");
+		if (wrapperNameIndex !== undefined) {
+			index = wrapperNameIndex;
 			continue;
 		}
-		if (arg.startsWith("--bin-dir=")) {
-			args.binDir = arg.slice("--bin-dir=".length);
-			continue;
-		}
-		if (arg === "--wrapper-name") {
-			args.wrapperName = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--wrapper-name=")) {
-			args.wrapperName = arg.slice("--wrapper-name=".length);
-			continue;
-		}
-		if (arg === "--package-root") {
-			args.packageRoot = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--package-root=")) {
-			args.packageRoot = arg.slice("--package-root=".length);
+		const packageRootIndex = assignOptionValue(args, "packageRoot", argv, index, "--package-root");
+		if (packageRootIndex !== undefined) {
+			index = packageRootIndex;
 			continue;
 		}
 		throw new Error(`Unknown option: ${arg}`);

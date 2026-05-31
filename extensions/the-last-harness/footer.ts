@@ -7,7 +7,7 @@ import {
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
 import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
-import { formatHomePath, sanitizeStatusText } from "./common.js";
+import { formatCompactTokenCount, formatHomePath, sanitizeStatusText } from "./common.js";
 import type { FooterGitCache } from "./footer-git-cache.js";
 import { composeTlhFooterFirstLine } from "./footer-first-line.js";
 import {
@@ -15,22 +15,6 @@ import {
 	type TlhFooterSubscriptionUsageOptions,
 } from "./footer-subscription-usage.js";
 export { formatTlhSubscriptionUsageFooterSegment } from "./footer-subscription-usage.js";
-
-function formatTokens(count: number): string {
-	if (count < 1000) {
-		return count.toString();
-	}
-	if (count < 10000) {
-		return `${(count / 1000).toFixed(1)}k`;
-	}
-	if (count < 1000000) {
-		return `${Math.round(count / 1000)}k`;
-	}
-	if (count < 10000000) {
-		return `${(count / 1000000).toFixed(1)}M`;
-	}
-	return `${Math.round(count / 1000000)}M`;
-}
 
 function formatCost(cost: number): string {
 	return cost < 0.001 ? "<$0.001" : `$${cost.toFixed(3)}`;
@@ -105,7 +89,7 @@ export function createTlhFooter(
 			}
 
 			const contextPercentDisplay =
-				contextPercent === "?" ? `?/${formatTokens(contextWindow)}` : `${contextPercent}%/${formatTokens(contextWindow)}`;
+				contextPercent === "?" ? `?/${formatCompactTokenCount(contextWindow)}` : `${contextPercent}%/${formatCompactTokenCount(contextWindow)}`;
 			let contextPercentStr: string;
 			if (contextPercentValue > 90) {
 				contextPercentStr = theme.fg("error", contextPercentDisplay);

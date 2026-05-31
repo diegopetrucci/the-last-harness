@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import process from "node:process";
 
 import { pathWithinOrEqual, realpathForCompare } from "./tlh-install-paths.mjs";
 
@@ -15,6 +16,66 @@ export function requiredValue(argv, index, flag) {
 export function assignRequiredEqualsValue(target, key, value, flag) {
 	if (!value) throw new Error(`${flag} requires a value`);
 	target[key] = value;
+}
+
+export function readOptionValue(argv, index, flags, { requireEqualsValue = false } = {}) {
+	const arg = argv[index];
+	if (typeof arg !== "string") return undefined;
+	for (const flag of Array.isArray(flags) ? flags : [flags]) {
+		if (arg === flag) {
+			return { flag, value: requiredValue(argv, index + 1, arg), nextIndex: index + 1 };
+		}
+		const prefix = `${flag}=`;
+		if (!arg.startsWith(prefix)) continue;
+		const value = arg.slice(prefix.length);
+		if (requireEqualsValue && !value) throw new Error(`${flag} requires a value`);
+		return { flag, value, nextIndex: index };
+	}
+	return undefined;
+}
+
+export function assignOptionValue(target, key, argv, index, flags, options = {}) {
+	const match = readOptionValue(argv, index, flags, options);
+	if (!match) return undefined;
+	target[key] = match.value;
+	return match.nextIndex;
+}
+
+export function expandHomePath(path, { homeDir = homedir() } = {}) {
+	if (typeof path !== "string") return path;
+	if (path === "~") return homeDir;
+	if (path.startsWith("~/")) return join(homeDir, path.slice(2));
+	return path;
+}
+
+function firstConfiguredValue(...values) {
+	for (const value of values) {
+		if (typeof value === "string" && value) return value;
+	}
+	return undefined;
+}
+
+export function defaultTlhAgentDir(env = process.env, { homeDir = homedir(), preferTlhAgentDir = false } = {}) {
+	const configured = preferTlhAgentDir
+		? firstConfiguredValue(env.TLH_AGENT_DIR, env.PI_CODING_AGENT_DIR)
+		: firstConfiguredValue(env.PI_CODING_AGENT_DIR, env.TLH_AGENT_DIR);
+	return expandHomePath(configured || join(homeDir, ".the-last-harness", "agent"), { homeDir });
+}
+
+export function resolveTlhAgentDir(agentDir, options = {}) {
+	return expandHomePath(agentDir || defaultTlhAgentDir(options.env, options), options);
+}
+
+export function defaultTlhSettingsPath({ agentDir, env = process.env, homeDir = homedir(), preferTlhAgentDir = false } = {}) {
+	return join(resolveTlhAgentDir(agentDir, { env, homeDir, preferTlhAgentDir }), "settings.json");
+}
+
+export function defaultTlhKeybindingsPath({ agentDir, env = process.env, homeDir = homedir(), preferTlhAgentDir = false } = {}) {
+	return join(resolveTlhAgentDir(agentDir, { env, homeDir, preferTlhAgentDir }), "keybindings.json");
+}
+
+export function defaultTlhBinDir(env = process.env, { homeDir = homedir() } = {}) {
+	return expandHomePath(env.TLH_BIN_DIR || join(homeDir, ".local", "bin"), { homeDir });
 }
 
 export function readJsonFile(path, { missingValue, emptyValue = {} } = {}) {
