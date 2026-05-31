@@ -68,8 +68,394 @@ function commandText(step) {
 	return typeof step.command === "string" ? step.command : "";
 }
 
+const MUTATING_SHELL_COMMANDS = new Set(["chmod", "chown", "cp", "install", "ln", "mkdir", "mv", "rm", "rmdir", "touch", "truncate"]);
+const MUTATING_GIT_SUBCOMMANDS = new Set(["add", "apply", "checkout", "clean", "commit", "merge", "mv", "pull", "push", "rebase", "reset", "restore", "revert", "rm", "stash", "switch"]);
+const TK_MUTATING_SUBCOMMANDS = new Set(["assign", "close", "create", "delete", "dep", "edit", "open", "reopen", "update"]);
+const MUTATING_PACKAGE_SUBCOMMANDS = new Map([
+	["apt", new Set(["install", "purge", "remove"])],
+	["apt-get", new Set(["install", "purge", "remove"])],
+	["brew", new Set(["install", "reinstall", "remove", "uninstall", "upgrade"])],
+	["bun", new Set(["add", "install", "remove", "rm", "uninstall", "update"])],
+	["cargo", new Set(["install", "uninstall"])],
+	["dnf", new Set(["install", "remove"])],
+	["npm", new Set(["add", "ci", "i", "install", "remove", "rm", "uninstall"])],
+	["pacman", new Set(["-r", "-s", "-u"])],
+	["pip", new Set(["install", "uninstall"])],
+	["pip3", new Set(["install", "uninstall"])],
+	["pnpm", new Set(["add", "i", "install", "remove", "rm", "uninstall", "update"])],
+	["uv", new Set(["add", "remove", "sync"])],
+	["yarn", new Set(["add", "install", "remove", "up", "upgrade"])],
+	["yum", new Set(["install", "remove"])],
+]);
+const SHELL_COMMAND_PREFIXES = new Set(["builtin", "command", "env", "exec", "noglob", "sudo", "time"]);
+const GIT_GLOBAL_OPTIONS_WITH_VALUES = new Set(["-C", "-c", "--config-env", "--exec-path", "--git-dir", "--namespace", "--super-prefix", "--work-tree"]);
+const PACKAGE_GLOBAL_OPTIONS_WITH_VALUES = new Map([
+	["apt", new Set()],
+	["apt-get", new Set()],
+	["brew", new Set(["--cache", "--env", "--prefix", "--repository"])],
+	["bun", new Set(["--cwd"])],
+	["cargo", new Set(["--config"])],
+	["dnf", new Set(["--config"])],
+	["npm", new Set(["-C", "--cache", "--prefix", "--userconfig"])],
+	["pacman", new Set(["--config", "--root"])],
+	["pip", new Set(["--cache-dir", "--config-file"])],
+	["pip3", new Set(["--cache-dir", "--config-file"])],
+	["pnpm", new Set(["-C", "--dir", "--prefix", "--store-dir"])],
+	["uv", new Set(["--cache-dir", "--config-file", "--directory", "--project"])],
+	["yarn", new Set(["--cache-folder", "--cwd"])],
+	["yum", new Set(["--config"])],
+]);
+
+function isShellBackgroundOperator(command, index) {
+	return command[index - 1] !== ">" && command[index + 1] !== ">";
+}
+
+function shellCommandSegments(command) {
+	const segments = [];
+	let singleQuoted = false;
+	let doubleQuoted = false;
+	let escaped = false;
+	let segmentStart = 0;
+
+	for (let index = 0; index < command.length; index += 1) {
+		const char = command[index];
+		if (escaped) {
+			escaped = false;
+			continue;
+		}
+		if (char === "\\" && !singleQuoted) {
+			escaped = true;
+			continue;
+		}
+		if (char === "'" && !doubleQuoted) {
+			singleQuoted = !singleQuoted;
+			continue;
+		}
+		if (char === '"' && !singleQuoted) {
+			doubleQuoted = !doubleQuoted;
+			continue;
+		}
+		if (singleQuoted || doubleQuoted) {
+			continue;
+		}
+		if ((char === "&" || char === "|") && command[index + 1] === char) {
+			segments.push(command.slice(segmentStart, index));
+			segmentStart = index + 2;
+			index += 1;
+			continue;
+		}
+		if (char === "&") {
+			if (isShellBackgroundOperator(command, index)) {
+				segments.push(command.slice(segmentStart, index));
+				segmentStart = index + 1;
+			}
+			continue;
+		}
+		if (char === ";" || char === "\n" || char === "|") {
+			segments.push(command.slice(segmentStart, index));
+			segmentStart = index + 1;
+		}
+	}
+
+	segments.push(command.slice(segmentStart));
+	return segments;
+}
+
+function shellWords(segment) {
+	const words = [];
+	let current = "";
+	let singleQuoted = false;
+	let doubleQuoted = false;
+	let escaped = false;
+
+	for (const char of segment) {
+		if (escaped) {
+			current += char;
+			escaped = false;
+			continue;
+		}
+		if (char === "\\" && !singleQuoted) {
+			escaped = true;
+			continue;
+		}
+		if (char === "'" && !doubleQuoted) {
+			singleQuoted = !singleQuoted;
+			continue;
+		}
+		if (char === '"' && !singleQuoted) {
+			doubleQuoted = !doubleQuoted;
+			continue;
+		}
+		if (!singleQuoted && !doubleQuoted && /\s/.test(char)) {
+			if (current) {
+				words.push(current);
+				current = "";
+			}
+			continue;
+		}
+		current += char;
+	}
+
+	if (current) {
+		words.push(current);
+	}
+	return words;
+}
+
+function firstShellCommand(words) {
+	for (const [index, token] of words.entries()) {
+		if (!token) {
+			continue;
+		}
+		if (SHELL_COMMAND_PREFIXES.has(token)) {
+			continue;
+		}
+		if (/^[A-Za-z_][A-Za-z0-9_]*=.*/.test(token) && !token.includes("/")) {
+			continue;
+		}
+		return { index, word: token };
+	}
+	return undefined;
+}
+
+function firstPositionalArgument(args, optionsWithValues = new Set()) {
+	let skipNext = false;
+
+	for (const arg of args) {
+		if (skipNext) {
+			skipNext = false;
+			continue;
+		}
+		if (!arg) {
+			continue;
+		}
+		if (arg === "--") {
+			return undefined;
+		}
+		if (optionsWithValues.has(arg)) {
+			skipNext = true;
+			continue;
+		}
+		if (arg.startsWith("-")) {
+			continue;
+		}
+		return arg;
+	}
+
+	return undefined;
+}
+
+function hasSedInPlaceFlag(args) {
+	return args.some((arg) => arg === "-i" || arg.startsWith("-i") || arg === "--in-place" || arg.startsWith("--in-place="));
+}
+
+function isMutatingGitCommand(args) {
+	const subcommand = firstPositionalArgument(args, GIT_GLOBAL_OPTIONS_WITH_VALUES);
+	return Boolean(subcommand) && MUTATING_GIT_SUBCOMMANDS.has(subcommand);
+}
+
+function isMutatingPackageCommand(commandWord, args) {
+	const mutatingSubcommands = MUTATING_PACKAGE_SUBCOMMANDS.get(commandWord);
+	if (!mutatingSubcommands) {
+		return false;
+	}
+	const subcommand = firstPositionalArgument(args, PACKAGE_GLOBAL_OPTIONS_WITH_VALUES.get(commandWord));
+	return Boolean(subcommand) && mutatingSubcommands.has(subcommand);
+}
+
+function hasMutatingShellCommand(command) {
+	for (const segment of shellCommandSegments(command)) {
+		const words = shellWords(segment);
+		const shellCommand = firstShellCommand(words);
+		if (!shellCommand) {
+			continue;
+		}
+		const { index, word: commandWord } = shellCommand;
+		const args = words.slice(index + 1);
+		if (
+			MUTATING_SHELL_COMMANDS.has(commandWord)
+			|| (commandWord === "sed" && hasSedInPlaceFlag(args))
+			|| (commandWord === "git" && isMutatingGitCommand(args))
+			|| isMutatingPackageCommand(commandWord, args)
+		) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function isSafeShellSink(target) {
+	return ["/dev/null", "/dev/stderr", "/dev/stdout"].includes(target) || /^\/dev\/fd\/\d+$/.test(target);
+}
+
+function extractShellRedirectionTarget(command) {
+	let singleQuoted = false;
+	let doubleQuoted = false;
+	let escaped = false;
+	let doubleBracketDepth = 0;
+	let doubleParenDepth = 0;
+
+	for (let index = 0; index < command.length; index += 1) {
+		const char = command[index];
+		const nextChar = command[index + 1];
+		if (escaped) {
+			escaped = false;
+			continue;
+		}
+		if (char === "\\" && !singleQuoted) {
+			escaped = true;
+			continue;
+		}
+		if (char === "'" && !doubleQuoted) {
+			singleQuoted = !singleQuoted;
+			continue;
+		}
+		if (char === '"' && !singleQuoted) {
+			doubleQuoted = !doubleQuoted;
+			continue;
+		}
+		if (singleQuoted || doubleQuoted) {
+			continue;
+		}
+		if (doubleBracketDepth > 0) {
+			if (char === "[" && nextChar === "[") {
+				doubleBracketDepth += 1;
+				index += 1;
+				continue;
+			}
+			if (char === "]" && nextChar === "]") {
+				doubleBracketDepth -= 1;
+				index += 1;
+			}
+			continue;
+		}
+		if (doubleParenDepth > 0) {
+			if (char === "(" && nextChar === "(") {
+				doubleParenDepth += 1;
+				index += 1;
+				continue;
+			}
+			if (char === ")" && nextChar === ")") {
+				doubleParenDepth -= 1;
+				index += 1;
+			}
+			continue;
+		}
+		if (char === "[" && nextChar === "[") {
+			doubleBracketDepth += 1;
+			index += 1;
+			continue;
+		}
+		if (char === "(" && nextChar === "(") {
+			doubleParenDepth += 1;
+			index += 1;
+			continue;
+		}
+		if (char !== ">") {
+			continue;
+		}
+
+		let cursor = index + 1;
+		while (command[cursor] === ">") {
+			cursor += 1;
+		}
+		while (/\s/.test(command[cursor] || "")) {
+			cursor += 1;
+		}
+		if (!command[cursor] || command[cursor] === "&") {
+			continue;
+		}
+
+		let target = "";
+		if (command[cursor] === "'" || command[cursor] === '"') {
+			const quote = command[cursor];
+			cursor += 1;
+			const start = cursor;
+			while (cursor < command.length && command[cursor] !== quote) {
+				cursor += 1;
+			}
+			target = command.slice(start, cursor);
+		} else {
+			const start = cursor;
+			while (cursor < command.length && !/[\s;&|]/.test(command[cursor])) {
+				cursor += 1;
+			}
+			target = command.slice(start, cursor);
+		}
+
+		const normalizedTarget = normalizeText(target);
+		if (!normalizedTarget || isSafeShellSink(normalizedTarget)) {
+			continue;
+		}
+		return normalizedTarget;
+	}
+
+	return undefined;
+}
+
+function extractSedInPlaceTarget(command) {
+	for (const segment of shellCommandSegments(command)) {
+		const words = shellWords(segment);
+		const shellCommand = firstShellCommand(words);
+		if (!shellCommand || shellCommand.word !== "sed") {
+			continue;
+		}
+		const args = words.slice(shellCommand.index + 1);
+		if (!hasSedInPlaceFlag(args)) {
+			continue;
+		}
+		for (let index = args.length - 1; index >= 0; index -= 1) {
+			const candidate = normalizeText(args[index]);
+			if (candidate && !candidate.startsWith("-")) {
+				return candidate;
+			}
+		}
+	}
+	return undefined;
+}
+
+function bashMutationPath(step) {
+	if (toolName(step) !== "bash") {
+		return undefined;
+	}
+	const command = commandText(step);
+	return extractShellRedirectionTarget(command) || extractSedInPlaceTarget(command);
+}
+
+function isTkMutatingShellSegment(segment) {
+	const words = shellWords(segment);
+	const shellCommand = firstShellCommand(words);
+	if (!shellCommand || shellCommand.word.toLowerCase() !== "tk") {
+		return false;
+	}
+	const subcommand = normalizeText(words[shellCommand.index + 1]).toLowerCase();
+	return Boolean(subcommand) && TK_MUTATING_SUBCOMMANDS.has(subcommand);
+}
+
+function isPureTkMutatingCommand(step) {
+	if (toolName(step) !== "bash") {
+		return false;
+	}
+	const command = commandText(step);
+	if (!command || hasMutatingShellCommand(command) || extractShellRedirectionTarget(command)) {
+		return false;
+	}
+	const segments = shellCommandSegments(command).map((segment) => normalizeText(segment)).filter(Boolean);
+	return segments.length > 0 && segments.every(isTkMutatingShellSegment);
+}
+
 function isTkMutatingCommand(step) {
-	return /(?:^|\s)tk\s+(create|dep|update|edit|close|open|delete|reopen|assign)\b/i.test(commandText(step));
+	if (toolName(step) !== "bash") {
+		return false;
+	}
+	const command = commandText(step);
+	if (!command) {
+		return false;
+	}
+	return shellCommandSegments(command)
+		.map((segment) => normalizeText(segment))
+		.filter(Boolean)
+		.some(isTkMutatingShellSegment);
 }
 
 function readOnlyBashMutation(step) {
@@ -79,14 +465,18 @@ function readOnlyBashMutation(step) {
 	if (step.mutates === true) {
 		return true;
 	}
-	return false;
+	const command = commandText(step);
+	if (!command) {
+		return false;
+	}
+	return hasMutatingShellCommand(command) || isTkMutatingCommand(step) || Boolean(extractShellRedirectionTarget(command));
 }
 
 function stepPath(step) {
 	if (!isRecord(step)) {
 		return undefined;
 	}
-	return normalizeText(step.path || step.file || step.target) || undefined;
+	return normalizeText(step.path || step.file || step.target || bashMutationPath(step)) || undefined;
 }
 
 function collectSubagentTargets(value) {
@@ -178,7 +568,7 @@ function evaluateArchitect(transcript, addViolation) {
 		}
 
 		const name = toolName(step);
-		if ((["write", "edit"].includes(name) || (readOnlyBashMutation(step) && !isTkMutatingCommand(step))) && !isAllowedNonSourcePath(stepPath(step))) {
+		if ((["write", "edit"].includes(name) || (readOnlyBashMutation(step) && !isPureTkMutatingCommand(step))) && !isAllowedNonSourcePath(stepPath(step))) {
 			addViolation(
 				"architect.direct_source_mutation",
 				index,
