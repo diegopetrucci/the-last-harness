@@ -155,10 +155,6 @@ export function copySafeProfileFile(config, source, relativePath, label = "TLH p
 	}
 }
 
-export function fileLinkCount(path) {
-	return lstatSync(path).nlink;
-}
-
 export function assertSafeSettingsTarget(config, options = {}) {
 	const settingsDir = dirname(config.settingsPath);
 	const settingsBase = basename(config.settingsPath);
@@ -170,7 +166,7 @@ export function assertSafeSettingsTarget(config, options = {}) {
 		throw new Error(`refusing to let Pi replace non-file isolated settings path: ${config.settingsPath}`);
 	}
 	assertProfilePathWithinAgent(config, config.settingsPath, "Pi settings file", options);
-	if (existsSync(config.settingsPath) && fileLinkCount(config.settingsPath) !== 1) {
+	if (existsSync(config.settingsPath) && lstatSync(config.settingsPath).nlink !== 1) {
 		throw new Error(`refusing to let Pi mutate hard-linked isolated settings file: ${config.settingsPath}`);
 	}
 	if (settingsBase !== "settings.json") {

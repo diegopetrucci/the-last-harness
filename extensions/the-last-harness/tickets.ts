@@ -6,10 +6,6 @@ import type { TlhSettings, TlhTicketsConfig } from "./types.js";
 
 const TK_VALIDATION_TIMEOUT_MS = 5000;
 
-export function isTlhTicketIntegrationEnabled(_settings: TlhSettings): boolean {
-	return true;
-}
-
 function configuredTicketInstallPath(config: TlhTicketsConfig | undefined): string | undefined {
 	const installPath = config?.installPath;
 	if (typeof installPath !== "string" || !installPath.trim()) {

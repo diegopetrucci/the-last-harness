@@ -44,7 +44,7 @@ export function missingTlhSubagentPrompts(dir, { prompts = TLH_SUBAGENT_PROMPTS 
 	return prompts.filter((prompt) => !existsSync(join(dir, prompt)));
 }
 
-export function tlhSubagentPromptsComplete(dir, options = {}) {
+function tlhSubagentPromptsComplete(dir, options = {}) {
 	return existsSync(dir) && missingTlhSubagentPrompts(dir, options).length === 0;
 }
 

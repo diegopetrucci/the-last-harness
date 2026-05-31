@@ -29,10 +29,6 @@ function callWarn(message, io) {
 	else console.error(`warning: ${message}`);
 }
 
-function settingsRequireTlhSubagentPrompts(config) {
-	return settingsFileRequiresTlhSubagentPrompts(config.supportFilePaths.DEFAULTS_FILE, { noSettings: config.noSettings });
-}
-
 export function resetSupportFilePaths(config) {
 	for (const file of config.supportFiles) config.supportFilePaths[file.variable] = "";
 }
@@ -116,7 +112,9 @@ export async function prepareSupportFilesFromRemote(config, io = {}) {
 		}
 	}
 
-	if (settingsRequireTlhSubagentPrompts(config)) {
+	if (settingsFileRequiresTlhSubagentPrompts(config.supportFilePaths.DEFAULTS_FILE, {
+		noSettings: config.noSettings,
+	})) {
 		const targetDir = join(config.tmpDir, "agents", "subagents");
 		mkdirSync(targetDir, { recursive: true });
 		for (const prompt of config.subagentPrompts) {

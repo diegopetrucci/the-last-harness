@@ -137,8 +137,3 @@ export function formatTlhInstallNoticeTrackLabel(notice: TlhInstallNotice): stri
 	}
 	return "custom";
 }
-
-export function formatTlhInstallNoticeMessage(notice: TlhInstallNotice): string {
-	return `Warning: running TLH from ${formatTlhInstallNoticeTrackLabel(notice)} track`;
-}
-
