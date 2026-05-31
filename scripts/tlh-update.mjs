@@ -462,7 +462,8 @@ function buildInstallerArgs(plan, args, state) {
 	if (args.verbose) installerArgs.push("--verbose");
 	// Preserve piInstalledByTlh from the existing install-state so the update does not
 	// reinvent or clear a value that was set during the original install. When absent in the
-	// prior state (older installs), omit the flag so install-state.json stays field-free.
+	// prior state (older installs), omit the flag; the installer itself will still record true
+	// if this update run has to install Pi.
 	if (typeof state?.piInstalledByTlh === "boolean") {
 		installerArgs.push("--pi-installed-by-tlh", String(state.piInstalledByTlh));
 	}

@@ -58,6 +58,7 @@ import {
 
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
+const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 // Keep in sync with TLH_MIN_NODE_VERSION and TLH_MIN_PI_VERSION in install.sh.
 const MIN_NODE_VERSION = "22.19.0";
 const MIN_PI_VERSION = "0.76.0";
@@ -491,29 +492,43 @@ function gitCheckoutIo() {
 	return { spawnCapture, runCommand, runInDir, printCommand, log, warn };
 }
 
-function assertSupportedPiVersion(config) {
+function assertSupportedPiVersion(
+	config,
+	{
+		piCommand = "pi",
+		sourceDescription = "existing pi on PATH",
+		versionCommandDisplay = "pi --version",
+	} = {},
+) {
 	// `pi --version` prints a bare semver (e.g. "0.76.0") on stdout. Older builds may
 	// differ, so we extract the first semver-shaped substring rather than match strictly.
-	const result = spawnCapture(config, ["pi", "--version"], {
+	const result = spawnCapture(config, [piCommand, "--version"], {
 		allowFailure: true,
 		env: { PI_CODING_AGENT_DIR: config.agentDir },
 	});
 	const output = `${result.stdout || ""}${result.stderr || ""}`.trim();
-	const upgradeCommand = `npm install -g --ignore-scripts --prefix "${piInstallPrefix(config)}" @earendil-works/pi-coding-agent`;
+	const upgradeCommand = `npm install -g --ignore-scripts --prefix "${piInstallPrefix(config)}" ${PI_PACKAGE_NAME}`;
 	if (result.error || result.status !== 0) {
 		const status = result.status ?? result.signal ?? result.error?.code ?? "error";
 		const probeDetails = output ? ` Probe output: ${output}` : "";
-		throw new Error(`unable to determine Pi version from existing pi on PATH (pi --version exited with ${status}). The Last Harness requires Pi >= ${MIN_PI_VERSION}. Verify that \`pi --version\` works, or upgrade with: ${upgradeCommand}.${probeDetails}`);
+		throw new Error(`unable to determine Pi version from ${sourceDescription} (${versionCommandDisplay} exited with ${status}). The Last Harness requires Pi >= ${MIN_PI_VERSION}. Verify that \`${versionCommandDisplay}\` works, or upgrade with: ${upgradeCommand}.${probeDetails}`);
 	}
 	const match = output.match(/\d+\.\d+\.\d+/);
 	if (!match) {
-		throw new Error(`unable to parse Pi version from existing pi on PATH: ${output || "<empty>"}. The Last Harness requires Pi >= ${MIN_PI_VERSION}. Verify that \`pi --version\` prints a semantic version like ${MIN_PI_VERSION}, or upgrade with: ${upgradeCommand}.`);
+		throw new Error(`unable to parse Pi version from ${sourceDescription}: ${output || "<empty>"}. The Last Harness requires Pi >= ${MIN_PI_VERSION}. Verify that \`${versionCommandDisplay}\` prints a semantic version like ${MIN_PI_VERSION}, or upgrade with: ${upgradeCommand}.`);
 	}
 	const currentVersion = match[0];
 	if (!nodeVersionMeetsMinimum(currentVersion, MIN_PI_VERSION)) {
 		throw new Error(`Pi >= ${MIN_PI_VERSION} is required (found ${currentVersion}). Upgrade with: ${upgradeCommand}`);
 	}
-	verboseLog(config, `Pi version: ${currentVersion}`);
+	verboseLog(config, `Pi version (${sourceDescription}): ${currentVersion}`);
+}
+
+function addToPathForCurrentInstall(config, binDir, reason) {
+	if (`:${config.env.PATH || ""}:`.includes(`:${binDir}:`)) return;
+	const currentPath = config.env.PATH || "";
+	config.env.PATH = currentPath ? `${binDir}:${currentPath}` : binDir;
+	warn(`${reason} Added it to PATH for this install; add it to your shell profile with: export PATH="${binDir}:$PATH"`);
 }
 
 function piInstallPrefix(config) {
@@ -523,15 +538,41 @@ function piInstallPrefix(config) {
 	return join(config.homeDir, ".local");
 }
 
+function perUserPiPackageDir(prefix) {
+	return join(prefix, "lib", "node_modules", ...PI_PACKAGE_NAME.split("/"));
+}
+
 function installPiIfNeeded(config) {
+	const prefix = piInstallPrefix(config);
+	const piBinDir = join(prefix, "bin");
+	const piBin = join(piBinDir, "pi");
+	const piPackageDir = perUserPiPackageDir(prefix);
+
 	if (commandExists(config, "pi")) {
 		const result = spawnCapture(config, ["sh", "-c", "command -v -- pi"], { allowFailure: true });
 		verboseLog(config, `Pi is already installed: ${(result.stdout || "pi").trim() || "pi"}`);
 		assertSupportedPiVersion(config);
 		return false;
 	}
-	const prefix = piInstallPrefix(config);
-	const piBinDir = join(prefix, "bin");
+
+	if (existsSync(piBin)) {
+		verboseLog(config, `Pi is already installed: ${piBin}`);
+		assertSupportedPiVersion(config, {
+			piCommand: piBin,
+			sourceDescription: `existing per-user Pi runtime at ${piBin}`,
+			versionCommandDisplay: `${piBin} --version`,
+		});
+		// Reuse the pre-existing per-user Pi runtime without claiming ownership.
+		// Add its bin dir to PATH for the remainder of this process so later `pi`
+		// commands resolve the same validated binary by name.
+		addToPathForCurrentInstall(config, piBinDir, `Existing Pi runtime ${piBin} is not on PATH.`);
+		return false;
+	}
+
+	if (existsSync(piPackageDir)) {
+		throw new Error(`detected an existing per-user Pi npm package at ${piPackageDir}, but no runnable pi binary could be validated (${piBin} is missing and pi is not on PATH). The Last Harness will not reinstall over that package or mark it TLH-owned. Repair or remove the existing package, then rerun the installer. To repair it in place, run: npm install -g --ignore-scripts --prefix "${prefix}" ${PI_PACKAGE_NAME}`);
+	}
+
 	log(config, `Installing Pi runtime to ${prefix} (per-user, no sudo)...`);
 	runCommand(config, [
 		"npm",
@@ -540,10 +581,9 @@ function installPiIfNeeded(config) {
 		"--ignore-scripts",
 		"--prefix",
 		prefix,
-		"@earendil-works/pi-coding-agent",
+		PI_PACKAGE_NAME,
 	]);
 	if (config.dryRun) return true;
-	const piBin = join(piBinDir, "pi");
 	const onPath = commandExists(config, "pi");
 	if (!existsSync(piBin) && !onPath) {
 		throw new Error(`Pi install completed, but ${piBin} does not exist and pi is not on PATH`);
@@ -554,9 +594,7 @@ function installPiIfNeeded(config) {
 		// so downstream steps (`pi install`, `pi update`, ...) can resolve the
 		// binary by name via spawnSync. config.env is the same reference as
 		// process.env, so this mutation propagates to every later spawn.
-		const currentPath = config.env.PATH || "";
-		config.env.PATH = currentPath ? `${piBinDir}:${currentPath}` : piBinDir;
-		warn(`${piBin} installed but ${piBinDir} is not on PATH. Added it to PATH for this install; add it to your shell profile with: export PATH="${piBinDir}:$PATH"`);
+		addToPathForCurrentInstall(config, piBinDir, `${piBin} installed but ${piBinDir} is not on PATH.`);
 	}
 	return true;
 }
@@ -777,11 +815,14 @@ async function writeInstallState(config) {
 		"--wrapper-name",
 		config.wrapperName,
 	];
-	// Write piInstalledByTlh when: (a) an explicit override was provided (update preserving an
-	// existing value), or (b) the state file does not yet exist (genuine fresh install). This
-	// prevents an update run from inventing the field when the prior install-state lacked it.
+	// Write piInstalledByTlh when: (a) this run installed Pi, (b) an explicit override was
+	// provided, or (c) the state file does not yet exist (genuine fresh install). This keeps
+	// fresh installs explicit, preserves existing update metadata, and records TLH ownership if
+	// an update ends up installing Pi.
 	const writePiInstalledByTlh =
-		config.piInstalledByTlhOverride !== undefined || !existsSync(config.statePath);
+		config.piInstalledByTlh === true
+		|| config.piInstalledByTlhOverride !== undefined
+		|| !existsSync(config.statePath);
 	if (writePiInstalledByTlh && config.piInstalledByTlh !== undefined) {
 		args.push("--pi-installed-by-tlh", String(config.piInstalledByTlh));
 	}
@@ -1112,14 +1153,14 @@ async function runInstallFlow(config) {
 	await preflightRuntimeSupportFiles(config, supportFileIo());
 
 	const piInstalledByTlh = installPiIfNeeded(config);
-	// Use the explicit override when provided (e.g. tlh update preserving an existing value).
-	// Otherwise use what actually happened this run. The value is only written to install-state
-	// on a fresh install (state file absent) or when an override was explicitly supplied; this
-	// prevents an update run from inventing or overwriting the field when it was absent in the
-	// prior install-state.
-	config.piInstalledByTlh = config.piInstalledByTlhOverride !== undefined
-		? config.piInstalledByTlhOverride
-		: piInstalledByTlh;
+	// A runtime installed by this run is always TLH-owned, even if an update passed through a
+	// stale false/absent value from an older install-state. Otherwise preserve the explicit
+	// override when provided, and fall back to the observed result for fresh installs.
+	config.piInstalledByTlh = piInstalledByTlh
+		? true
+		: config.piInstalledByTlhOverride !== undefined
+			? config.piInstalledByTlhOverride
+			: false;
 	installHarnessPackage(config);
 	await installSupportFilesToProfile(config);
 	await mergeSettings(config);
