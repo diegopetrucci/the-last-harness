@@ -1,4 +1,5 @@
 node_modules/
+.symphony/tlh-sessions/
 npm-debug.log*
 .DS_Store
 .pi/*
