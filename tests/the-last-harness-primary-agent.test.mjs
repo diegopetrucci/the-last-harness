@@ -20,11 +20,13 @@ test("primary-agent config defaults to architect without settings", () => {
 	assert.equal(primaryAgentDefaultLabel(undefined), "unset (TLH default: architect)");
 });
 
-test("primary-agent config supports rush, product, and disabled while preserving enabled=false compatibility", () => {
+test("primary-agent config supports selectable primaries and disabled while preserving enabled=false compatibility", () => {
 	assert.equal(resolvePrimaryAgentConfig({ selected: "rush" }).selection, "rush");
 	assert.equal(resolvePrimaryAgentConfig({ enabled: true, selected: "rush" }).selection, "rush");
 	assert.equal(resolvePrimaryAgentConfig({ selected: "product" }).selection, "product");
 	assert.equal(resolvePrimaryAgentConfig({ enabled: true, selected: "product" }).selection, "product");
+	assert.equal(resolvePrimaryAgentConfig({ selected: "bug-hunter" }).selection, "bug-hunter");
+	assert.equal(resolvePrimaryAgentConfig({ enabled: true, selected: "bug-hunter" }).selection, "bug-hunter");
 	assert.equal(resolvePrimaryAgentConfig({ selected: "disabled" }).selection, DISABLED_PRIMARY_AGENT);
 	assert.equal(resolvePrimaryAgentConfig({ enabled: false }).selection, DISABLED_PRIMARY_AGENT);
 	assert.equal(resolvePrimaryAgentConfig({ enabled: false, selected: "product" }).selection, DISABLED_PRIMARY_AGENT);
@@ -48,6 +50,8 @@ test("session primary state preserves old enabled booleans and supports selected
 	assert.equal(resolvePrimaryAgentSessionState({ enabled: true, selected: "rush" }).selection, "rush");
 	assert.equal(resolvePrimaryAgentSessionState({ selected: "product" }).selection, "product");
 	assert.equal(resolvePrimaryAgentSessionState({ enabled: true, selected: "product" }).selection, "product");
+	assert.equal(resolvePrimaryAgentSessionState({ selected: "bug-hunter" }).selection, "bug-hunter");
+	assert.equal(resolvePrimaryAgentSessionState({ enabled: true, selected: "bug-hunter" }).selection, "bug-hunter");
 });
 
 test("latest session primary state wins over earlier compatibility entries", () => {

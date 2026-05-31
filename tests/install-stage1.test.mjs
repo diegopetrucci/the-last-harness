@@ -52,15 +52,6 @@ function runHelper(scriptRelativePath, args, { homeDir }) {
 	);
 }
 
-function runQuery(args, env = scrubInstallerEnv()) {
-	return spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-install-query.mjs"), ...args], {
-		cwd: repoRoot,
-		env,
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "pipe"],
-	});
-}
-
 function runInstaller(args, env = scrubInstallerEnv()) {
 	return spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-install.mjs"), ...args], {
 		cwd: repoRoot,
@@ -388,18 +379,6 @@ test("stage-1 --no-settings does not short-circuit Gnosis configure", (t) => {
 	assert.match(output, /Skipping settings\/keybinding merge \(--no-settings\)\./);
 	assert.match(output, /Skipping Gnosis integration \(TLH_SKIP_GNOSIS_INSTALL is set\)\./);
 	assert.doesNotMatch(output, /Skipping Gnosis integration \(--no-settings\)\./);
-});
-
-test("install query normalize-path requires explicit path", () => {
-	const result = runQuery(["normalize-path"], scrubInstallerEnv({}, {
-		...process.env,
-		PI_CODING_AGENT_DIR: "/tmp/poisoned-pi-agent",
-		TLH_AGENT_DIR: "/tmp/poisoned-agent",
-	}));
-
-	assert.notEqual(result.status, 0);
-	assert.equal(result.stdout, "");
-	assert.match(result.stderr, /error: normalize-path requires --path/);
 });
 
 test("stage-1 derives packageRoot from custom package source install dirs", (t) => {

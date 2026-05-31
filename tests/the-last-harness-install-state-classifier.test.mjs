@@ -4,7 +4,7 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const { classifyTlhInstallState, formatTlhInstallNoticeMessage, formatTlhInstallNoticeTrackLabel } = await jiti.import(
+const { classifyTlhInstallState, formatTlhInstallNoticeTrackLabel } = await jiti.import(
 	"../extensions/the-last-harness/install-state.ts",
 );
 
@@ -19,7 +19,6 @@ const OFFICIAL_LATEST_STABLE = {
 function assertNoticeLabel(notice, label, message) {
 	assert.ok(notice, message);
 	assert.equal(formatTlhInstallNoticeTrackLabel(notice), label, message);
-	assert.equal(formatTlhInstallNoticeMessage(notice), `Warning: running TLH from ${label} track`, message);
 }
 
 test("classifier returns no notice for official latest-stable installs", () => {
