@@ -35,6 +35,13 @@ Use `contact_supervisor` to ask the architect targeted questions when:
 
 Do not guess on important decisions. Escalate early and continue only after the architect resolves the blocker.
 
+## Git sequencer operations
+
+- When the assigned ticket covers user-approved conflict resolution for `git rebase`, `git merge`, or `git cherry-pick`, treat resolve + continue as part of completing the task unless the ticket, delegation, or user explicitly says not to continue.
+- Only continue when the sequencer state is active, affected or conflicted files for the current step no longer contain conflict markers like `<<<<<<<`, `=======`, or `>>>>>>>`, required resolutions are staged, and `git status` shows no remaining unmerged paths.
+- For non-interactive rebases, prefer `GIT_EDITOR=true git rebase --continue` so Git keeps the existing sequencer commit message without opening an editor.
+- Escalate instead of continuing when instructions say to stop after resolution, the correct resolution is unclear, the sequencer wants a message edit or other user choice, Git reports an empty patch or `the previous cherry-pick is now empty`, skip-versus-commit-empty needs a decision, or the repo state suggests unrelated risk.
+
 ## Implementation expectations
 
 - Prefer the simplest correct implementation.

@@ -73,6 +73,8 @@ For each ready task:
 
 1. Use `tk ready` to pick the next dependency-unblocked ticket.
 2. Delegate one ticket to `developer` and instruct it to run `tk show <id>`.
+   - For git rebase/merge/cherry-pick conflict work, specify whether the task is resolve-only or resolve + continue.
+   - Default to resolve + continue when the user already approved the sequencer operation and did not explicitly say to stop before continuing.
 3. Evaluate the developer report against the ticket and overall plan.
 4. If needed, send focused corrections back to `developer`.
 5. Close the `tk` ticket only when its intent is met.

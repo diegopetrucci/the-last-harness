@@ -25,6 +25,8 @@ const contracts = [
 			orderedTerms("exact approved signoff gate", ["exact word", "approved"]),
 			orderedTerms("developer waits for approved tickets", ["do not launch", "developer", "until", "approves", "tickets"]),
 			includesAllTerms("high-risk oracle gating", ["high-stakes", "broad blast radius", "explicitly agrees"]),
+			orderedTerms("architect specifies sequencer continue behavior", ["git rebase/merge/cherry-pick", "specify", "resolve-only", "resolve + continue"]),
+			orderedTerms("architect defaults approved sequencer work to continue", ["Default to resolve + continue", "approved", "did not explicitly say to stop"]),
 		],
 	},
 	{
@@ -79,11 +81,16 @@ const contracts = [
 		anchors: [
 			heading("Operating model"),
 			heading("Ambiguity and escalation"),
+			heading("Git sequencer operations"),
 			heading("Validation"),
 			heading("Completion report"),
 			orderedTerms("developer treats ticket as source of truth", ["tk show <id>", "source of truth"]),
 			bodyPattern("developer uses contact_supervisor for blocking decisions", /contact_supervisor/i),
 			orderedTerms("developer runs narrow validation", ["narrowest meaningful validation"]),
+			orderedTerms("developer defaults approved sequencer work to continue", ["user-approved conflict resolution", "git rebase", "git merge", "git cherry-pick", "resolve + continue"]),
+			orderedTerms("developer checks safe sequencer continue preconditions", ["Only continue", "sequencer state is active", "conflict markers", "<<<<<<<", "=======", ">>>>>>>", "required resolutions are staged", "git status", "no remaining unmerged paths"]),
+			orderedTerms("developer uses non-interactive rebase continue guidance", ["GIT_EDITOR=true git rebase --continue", "existing sequencer commit message", "without opening an editor"]),
+			orderedTerms("developer escalates real sequencer decisions", ["Escalate instead of continuing", "stop after resolution", "message edit", "empty patch", "previous cherry-pick is now empty", "skip-versus-commit-empty", "unrelated risk"]),
 		],
 	},
 	{
