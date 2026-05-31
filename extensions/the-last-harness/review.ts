@@ -345,6 +345,18 @@ async function showReviewPicker(ctx: ExtensionCommandContext): Promise<ReviewMod
 
 type GatherResult = { ok: true; ctx: ReviewGatheredContext } | { ok: false; message: string };
 
+function formatPostCheckoutPrFailure(
+	message: string,
+	checkoutCtx: ReviewGatheredContext["checkout"] | undefined,
+	currentBranch: string,
+): string {
+	if (!checkoutCtx?.performed) {
+		return message;
+	}
+
+	return `${message}\n/review already switched from '${checkoutCtx.priorBranch}' to '${currentBranch}' before the failure. Use \`git checkout -\` to return to '${checkoutCtx.priorBranch}'.`;
+}
+
 function detectNotGitRepo(stderr: string): boolean {
 	return /not a git repository/i.test(stderr);
 }
@@ -975,7 +987,11 @@ async function gatherPr(
 		const firstLine = diffResult.stderr.split("\n")[0]?.trim() ?? "";
 		return {
 			ok: false,
-			message: `gh pr diff failed for PR #${prNumber}: ${firstLine}`,
+			message: formatPostCheckoutPrFailure(
+				`gh pr diff failed for PR #${prNumber}: ${firstLine}`,
+				checkoutCtx,
+				effectiveBranch,
+			),
 		};
 	}
 

@@ -1240,6 +1240,71 @@ test("/review pr uses gh pr checkout before diff when switching to the PR head",
 	);
 });
 
+test("/review pr reports the branch switch when gh pr diff fails after checkout", async (t) => {
+	const cwd = makeTempDir(t, "tlh-review-pr-diff-failure-");
+	const customResponses = ["pr", true];
+
+	const harness = createReviewHarness({
+		cwd,
+		custom: () => customResponses.shift(),
+		editor: () => "123",
+		exec: async (command, args) => {
+			if (command === "gh" && args.join(" ") === "--version") {
+				return { code: 0, stdout: "gh version 2.0.0\n", stderr: "" };
+			}
+			if (
+				command === "gh" &&
+				args.join(" ") ===
+					"pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
+			) {
+				return {
+					code: 0,
+					stdout: JSON.stringify({
+						number: 123,
+						headRefName: "feature/review",
+						baseRefName: "main",
+						isCrossRepository: false,
+					}),
+					stderr: "",
+				};
+			}
+			if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD") {
+				return { code: 0, stdout: "main\n", stderr: "" };
+			}
+			if (command === "git" && args.join(" ") === "status --porcelain") {
+				return { code: 0, stdout: "", stderr: "" };
+			}
+			if (command === "gh" && args.join(" ") === "pr checkout 123") {
+				return { code: 0, stdout: "", stderr: "" };
+			}
+			if (command === "gh" && args.join(" ") === "pr diff 123") {
+				return { code: 1, stdout: "", stderr: "GraphQL: something exploded\nmore detail" };
+			}
+			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
+		},
+	});
+
+	await harness.handler("", harness.ctx);
+
+	assert.equal(harness.sentMessages.length, 0);
+	assert.deepEqual(harness.notifications, [
+		{
+			message:
+				"gh pr diff failed for PR #123: GraphQL: something exploded\n/review already switched from 'main' to 'feature/review' before the failure. Use `git checkout -` to return to 'main'.",
+			level: "error",
+		},
+	]);
+	assert.ok(
+		harness.execCalls.findIndex(({ command, args }) => command === "gh" && args.join(" ") === "pr checkout 123") <
+			harness.execCalls.findIndex(({ command, args }) => command === "gh" && args.join(" ") === "pr diff 123"),
+		"should switch branches before the diff failure",
+	);
+	assert.equal(
+		harness.execCalls.some(({ command, args }) => command === "git" && args[0] === "checkout"),
+		false,
+	);
+});
+
 test("/review pr aborts before checkout when git status dirty-check fails", async (t) => {
 	const cwd = makeTempDir(t, "tlh-review-pr-");
 	const customResponses = ["pr"];
