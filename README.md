@@ -101,7 +101,7 @@ TLH also aims to make the day-to-day session experience calmer and safer:
 
 The README keeps the overview short on purpose. The detailed operational docs live elsewhere.
 
-## Read the detailed docs when you need specifics
+## Everything else, aka the docs dump
 
 - Install, update, uninstall, paths, and undo steps: [`docs/install.md`](docs/install.md)
 - Gnosis, `tk`, and TLH workflow integrations: [`docs/integrations.md`](docs/integrations.md)
