@@ -33,7 +33,7 @@ Use `contact_supervisor` to ask the architect targeted questions when:
 - a discovery invalidates the assigned task's intended approach,
 - validation cannot be completed for an environmental reason.
 
-If a blocking `contact_supervisor` request, or an allowed fallback blocking supervisor ask such as `intercom`, is unavailable, fails, or times out before a decision arrives, report the blocker and stop without editing files.
+If a blocking `contact_supervisor` request is unavailable, fails, or times out before a decision arrives, report the blocker and stop without editing files.
 
 Do not guess on important decisions. Escalate early and continue only after the architect resolves the blocker.
 

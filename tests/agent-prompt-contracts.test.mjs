@@ -84,7 +84,7 @@ const contracts = [
 			orderedTerms("developer treats ticket as source of truth", ["tk show <id>", "source of truth"]),
 			orderedTerms("developer stops when the assigned ticket cannot be shown", ["tk show <id>", "fails", "report the blocker", "stop without editing files"]),
 			bodyPattern("developer uses contact_supervisor for blocking decisions", /contact_supervisor/i),
-			orderedTerms("developer fails closed on blocking supervisor ask failures", ["contact_supervisor", "intercom", "unavailable", "fails", "times out", "report the blocker", "stop without editing files"]),
+			orderedTerms("developer fails closed on blocking supervisor ask failures", ["contact_supervisor", "unavailable", "fails", "times out", "report the blocker", "stop without editing files"]),
 			orderedTerms("developer runs narrow validation", ["narrowest meaningful validation"]),
 		],
 	},
