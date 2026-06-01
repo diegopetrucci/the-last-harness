@@ -80,12 +80,6 @@ TLH is not just “Pi, but with a new prompt.” The harness bakes in workflow a
 - **Safety and quiet-by-default UX matter**: destructive-action confirmations, quieter tool rendering, trimmed footer noise, usage-window visibility, notifications when turns finish, and dirty-repo prompts are part of the package.
 - **Useful integrations are already wired in**: web research and MCP support are part of the default story rather than an afterthought.
 
-### `/review` is architect-only
-
-The supported shape is bare `/review` in the TLH UI: it opens an interactive picker for **uncommitted**, **branch**, **commit**, **PR**, or **folder** review scopes.
-
-PR review needs the GitHub CLI with `gh auth login`, and TLH only offers the optional `gh pr checkout` branch switch when your working tree is clean and you confirm it. The actual review runs in a fresh isolated `code-reviewer` child session, then the architect returns a digested judgment rather than dumping raw reviewer output.
-
 ## What you get beyond the workflow
 
 TLH also aims to make the day-to-day session experience calmer and safer:
