@@ -8,6 +8,7 @@ import { PRIMARY_AGENT_SESSION_STATE_ENTRY } from "../extensions/the-last-harnes
 import { cleanupTempDir, createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
+const { TLH_DEFAULT_COMMIT_ATTRIBUTION } = await jiti.import("../extensions/the-last-harness/attribution.ts");
 const { registerTlhPrimaryAgentRuntime } = await jiti.import("../extensions/the-last-harness/primary-agent-runtime.ts");
 
 function createPiHarness() {
@@ -72,9 +73,11 @@ function createToolCallContext(branchEntries = [], notifications, overrides = {}
 function registerRuntimeHarness(options = {}) {
 	const pi = createPiHarness();
 	const runtime = registerTlhPrimaryAgentRuntime(pi, { env: {}, ...options });
+	const beforeAgentStart = pi.events.find((event) => event.name === "before_agent_start")?.handler;
 	const toolCall = pi.events.find((event) => event.name === "tool_call")?.handler;
+	assert.equal(typeof beforeAgentStart, "function");
 	assert.equal(typeof toolCall, "function");
-	return { pi, runtime, toolCall };
+	return { pi, runtime, beforeAgentStart, toolCall };
 }
 
 
@@ -146,6 +149,61 @@ test("enabled primary mode validates subagent input after injecting provider-awa
 	});
 	assert.equal(event.input.model, "openai-codex/gpt-5.4");
 	assert.equal(event.input.agentScope, "user");
+});
+
+test("before_agent_start adds TLH commit attribution guidance only when enabled", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { beforeAgentStart } = registerRuntimeHarness();
+		const enabledPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		assert.match(enabledPrompt.systemPrompt, /## TLH Git Commit Attribution/);
+		assert.match(enabledPrompt.systemPrompt, /Co-authored-by: The Last Harness/);
+
+		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
+		const disabledPrompt = await beforeAgentStart(
+			{ systemPrompt: "base prompt" },
+			createToolCallContext([], undefined, { cwd: fixture.cwd }),
+		);
+		assert.doesNotMatch(disabledPrompt.systemPrompt, /## TLH Git Commit Attribution/);
+	});
+});
+
+test("tool_call blocks obvious unattributed bash git commits only when attribution is enabled", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const attributedHereDoc = `git commit -F - <<EOF\nsubject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}\nEOF`;
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { toolCall } = registerRuntimeHarness();
+		for (const command of ['git commit -m "ship it"', 'git -C repo commit -m "ship it"', 'git commit -F-']) {
+			const blocked = await toolCall(
+				{ toolName: "bash", input: { command } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			);
+			assert.equal(blocked?.block, true);
+			assert.match(blocked?.reason ?? "", /TLH attribution footer/);
+		}
+		assert.equal(
+			await toolCall({ toolName: "bash", input: { command: attributedHereDoc } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+			undefined,
+		);
+		const mixedCommits = await toolCall(
+			{ toolName: "bash", input: { command: `${attributedHereDoc}\ngit commit -m "ship it"` } },
+			createToolCallContext([], undefined, { cwd: fixture.cwd }),
+		);
+		assert.equal(mixedCommits?.block, true);
+		assert.match(mixedCommits?.reason ?? "", /TLH attribution footer/);
+		assert.equal(
+			await toolCall({ toolName: "bash", input: { command: 'git commit -F .git/COMMIT_EDITMSG' } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+			undefined,
+		);
+
+		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
+		assert.equal(
+			await toolCall({ toolName: "bash", input: { command: 'git commit -m "ship it"' } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+			undefined,
+		);
+	});
 });
 
 test("enabled primary mode allows approved delegation targets and forces safe top-level defaults", async () => {

@@ -11,12 +11,14 @@ const PI_EXTENSION_FILE_ENTRYPOINT_EXTENSIONS = new Set([".ts", ".js"]);
 const PI_EXTENSION_DIRECTORY_ENTRYPOINT_FILES = ["package.json", "index.ts", "index.js"];
 
 const extensionSource = readFileSync(new URL("../extensions/the-last-harness.ts", import.meta.url), "utf8");
+const attributionSource = readFileSync(new URL("../extensions/the-last-harness/attribution.ts", import.meta.url), "utf8");
 const changelogSource = readFileSync(new URL("../extensions/the-last-harness/changelog.ts", import.meta.url), "utf8");
 const primaryRuntimeSource = readFileSync(new URL("../extensions/the-last-harness/primary-agent-runtime.ts", import.meta.url), "utf8");
 const effortSource = readFileSync(new URL("../extensions/the-last-harness/effort.ts", import.meta.url), "utf8");
 const promptsSource = readFileSync(new URL("../extensions/the-last-harness/prompts.ts", import.meta.url), "utf8");
 const usageLimitsSource = readFileSync(new URL("../extensions/the-last-harness/usage-limits.ts", import.meta.url), "utf8");
 const profileStateSource = readFileSync(new URL("../extensions/the-last-harness/profile-state.ts", import.meta.url), "utf8");
+const typesSource = readFileSync(new URL("../extensions/the-last-harness/types.ts", import.meta.url), "utf8");
 const jiti = createJiti(import.meta.url);
 const { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents, loadSubagentMetadata } = await jiti.import(
 	"../extensions/the-last-harness/prompts.ts",
@@ -135,6 +137,7 @@ test("child startup branch uses the mandatory-ticket child prompt", () => {
 });
 
 test("extension imports extracted shared helpers from nested TypeScript modules", () => {
+	assert.match(extensionSource, /from "\.\/the-last-harness\/attribution\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/autocomplete\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/changelog\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/effort\.js"/);
@@ -194,7 +197,7 @@ test("extension runs primary session_start work before UI startup in one handler
 test("extension wires switch-primary-agent and active-primary safety", () => {
 	const switchPrimaryAgentCommand = sourceSection(primaryRuntimeSource, 'pi.registerCommand("switch-primary-agent"', 'pi.registerShortcut');
 	const shortcut = sourceSection(primaryRuntimeSource, 'pi.registerShortcut(PRIMARY_AGENT_CYCLE_SHORTCUT', 'async function applySessionStart');
-	const toolCall = sourceSection(primaryRuntimeSource, 'pi.on("tool_call"', 'return reason ? { block: true, reason } : undefined;');
+	const toolCall = sourceSection(primaryRuntimeSource, 'pi.on("tool_call"', '\n\t\t});\n\t}');
 
 	assert.match(promptsSource, /function loadPrimaryAgents\(\): Map<TlhPrimaryAgentSelection, AgentPrompt>/);
 	assert.match(switchPrimaryAgentCommand, /default rush/);
@@ -205,6 +208,9 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 	assert.doesNotMatch(primaryRuntimeSource, /pi\.registerCommand\("architect"/);
 	assert.doesNotMatch(primaryRuntimeSource, /pi\.registerCommand\("tlh"/);
 	assert.doesNotMatch(primaryRuntimeSource, /pi\.registerCommand\("harness"/);
+	assert.match(toolCall, /resolveTlhCommitAttribution\(getTlhGlobalSettings\(ctx\.cwd\)\.tlh\?\.attribution\)/);
+	assert.match(toolCall, /if \(event\.toolName === "bash"\)/);
+	assert.match(toolCall, /getTlhGitCommitAttributionBlockReason\(event\.input\.command, commitAttributionState\)/);
 	assert.match(toolCall, /applyProviderAwareSubagentModels\(event\.input, subagentsByName, ctx\.modelRegistry\.getAvailable\(\), ctx\.model\?\.provider\)/);
 	assert.match(toolCall, /const selection = currentPrimaryAgentSelection\(\)/);
 	assert.match(toolCall, /if \(selection === "rush" && subagentCallTargetsAgent\(event\.input, "developer"\)\)/);
@@ -240,13 +246,33 @@ test("extension wires TLH changelog command and release-notes rendering", () => 
 	assert.match(changelogSource, /pi\.sendMessage\(\{/);
 });
 
-test("extension wires usage-limit command to isolated TLH settings", () => {
+test("extension wires the TLH git attribution toggle command and usage-limit commands to isolated TLH settings", () => {
 	const lockedWriteHelper = sourceSection(
 		profileStateSource,
 		"export function withLockedTlhSettingsWrite",
 		"export function assertSafeTlhSettingsPath",
 	);
 
+	assert.doesNotMatch(extensionSource, /registerTlhCommitAttributionRuntime\(pi\)/);
+	assert.match(extensionSource, /registerToggleTlhGitAttributionCommand\(pi\)/);
+	assert.match(attributionSource, /from "\.\/profile-state\.js"/);
+	assert.doesNotMatch(attributionSource, /pi\.on\("before_agent_start"/);
+	assert.doesNotMatch(attributionSource, /pi\.on\("tool_call"/);
+	assert.doesNotMatch(attributionSource, /user_bash/);
+	assert.match(attributionSource, /pi\.registerCommand\("toggle-tlh-git-attribution"/);
+	assert.doesNotMatch(attributionSource, /pi\.registerCommand\("attribution"/);
+	assert.doesNotMatch(attributionSource, /value: "toggle"/);
+	assert.match(attributionSource, /Usage: \/toggle-tlh-git-attribution/);
+	assert.match(
+		attributionSource,
+		/withLockedTlhSettingsWrite\(cwd, "Refusing to write attribution settings outside the isolated TLH profile\./,
+	);
+	assert.doesNotMatch(attributionSource, /tlhSettingsPathForWrite\(\)/);
+	assert.doesNotMatch(attributionSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
+	assert.match(attributionSource, /TLH_DEFAULT_COMMIT_ATTRIBUTION/);
+	assert.match(attributionSource, /settings\.tlh\.attribution = \{ commit: nextEnabled \}/);
+	assert.match(attributionSource, /typeof commit !== "boolean"/);
+	assert.match(typesSource, /commit\?: boolean;/);
 	assert.match(extensionSource, /registerUsageCommand\(pi\)/);
 	assert.match(usageLimitsSource, /from "\.\/profile-state\.js"/);
 	assert.match(usageLimitsSource, /pi\.registerCommand\("usage"/);

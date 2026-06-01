@@ -13,6 +13,11 @@ import {
 } from "../the-last-harness-primary-agent.mjs";
 import { createPrimaryToolState, filterAvailableTools } from "../the-last-harness-primary-tools.mjs";
 import { registerTlhStartupMode, validateSubagentToolInput } from "../the-last-harness-subagent-safety.mjs";
+import {
+	buildTlhCommitAttributionPrompt,
+	getTlhGitCommitAttributionBlockReason,
+	resolveTlhCommitAttribution,
+} from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME } from "./constants.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
@@ -525,6 +530,7 @@ function createTlhPrimaryAgentRuntime(
 
 		pi.on("before_agent_start", async (event, ctx) => {
 			const settings = getTlhGlobalSettings(ctx.cwd);
+			const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
 			syncPrimaryAgentState(ctx);
 			const selection = currentPrimaryAgentSelection();
 			const primaryEnabled = isEnabledPrimaryAgentSelection(selection);
@@ -533,6 +539,7 @@ function createTlhPrimaryAgentRuntime(
 			const prompts = [
 				event.systemPrompt,
 				buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled),
+				buildTlhCommitAttributionPrompt(commitAttributionState),
 			];
 			if (shouldAppendGnosisPrompt(ctx.cwd)) {
 				prompts.push(GNOSIS_PROMPT);
@@ -541,6 +548,11 @@ function createTlhPrimaryAgentRuntime(
 		});
 
 		pi.on("tool_call", async (event, ctx) => {
+			const commitAttributionState = resolveTlhCommitAttribution(getTlhGlobalSettings(ctx.cwd).tlh?.attribution);
+			if (event.toolName === "bash") {
+				const reason = getTlhGitCommitAttributionBlockReason(event.input.command, commitAttributionState);
+				return reason ? { block: true, reason } : undefined;
+			}
 			if (event.toolName !== "subagent") {
 				return undefined;
 			}

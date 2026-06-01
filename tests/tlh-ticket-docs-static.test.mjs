@@ -70,6 +70,22 @@ test("README and integrations docs describe Rush primary behavior and switching 
 	assert.match(integrations, /Rush keeps that tooling available but handles small bounded tasks with direct edits instead of the default `tk` loop/i);
 });
 
+test("README and changelog document boolean-only TLH commit attribution", () => {
+	const readme = readRepoFile("README.md");
+	const changelog = readRepoFile("CHANGELOG.md");
+
+	assert.match(readme, /`\/toggle-tlh-git-attribution`/);
+	assert.match(readme, /`tlh\.attribution\.commit` is unset or `true`/);
+	assert.match(readme, /Set `tlh\.attribution\.commit` to `false`/);
+	assert.match(readme, /Deleting `tlh\.attribution\.commit` from `~\/\.the-last-harness\/agent\/settings\.json`/);
+	assert.doesNotMatch(readme, /`\/attribution toggle`/);
+	assert.doesNotMatch(readme, /Set `tlh\.attribution\.commit` to `""`/);
+	assert.doesNotMatch(readme, /custom footer/i);
+	assert.match(changelog, /`\/toggle-tlh-git-attribution`/);
+	assert.match(changelog, /boolean `tlh\.attribution\.commit` settings/);
+	assert.doesNotMatch(changelog, /`\/attribution toggle`/);
+});
+
 test("install docs describe separate pi removal with the TLH per-user npm prefix", () => {
 	const install = readRepoFile("docs/install.md");
 
