@@ -46,16 +46,8 @@ export function resolveTlhCommitAttribution(config: TlhAttributionConfig | undef
 	};
 }
 
-function commandIncludesTlhCommitAttributionFooter(command: string, footer: string): boolean {
-	let searchOffset = 0;
-	for (const line of footer.split("\n").filter(Boolean)) {
-		const index = command.indexOf(line, searchOffset);
-		if (index === -1) {
-			return false;
-		}
-		searchOffset = index + line.length;
-	}
-	return true;
+function commitMessageEndsWithFooter(message: string, footer: string): boolean {
+	return message.trimEnd().endsWith(footer);
 }
 
 function readHereDocSpec(command: string, startIndex: number): { spec: HereDocSpec; endIndex: number } | undefined {
@@ -167,6 +159,13 @@ function readShellCommandSegment(command: string, startIndex: number): { segment
 			quote = character;
 			continue;
 		}
+		if (character === "<" && command[index + 1] === "(") {
+			const processSubstitution = readProcessSubstitutionBody(command, index + 2);
+			if (processSubstitution) {
+				index = processSubstitution.endIndex - 1;
+				continue;
+			}
+		}
 		if (character === "<" && command[index + 1] === "<") {
 			const spec = readHereDocSpec(command, index);
 			if (spec) {
@@ -196,16 +195,24 @@ function readShellCommandSegment(command: string, startIndex: number): { segment
 	return { segment: command.slice(startIndex), nextIndex: command.length };
 }
 
-function splitShellCommandSegments(command: string): string[] {
+type ShellCommandSegment = {
+	segment: string;
+	separator: string;
+};
+
+function splitShellCommandSegments(command: string): ShellCommandSegment[] {
 	if (!command) {
-		return [""];
+		return [{ segment: "", separator: "" }];
 	}
 
-	const segments: string[] = [];
+	const segments: ShellCommandSegment[] = [];
 	let startIndex = 0;
 	while (startIndex < command.length) {
 		const { segment, nextIndex } = readShellCommandSegment(command, startIndex);
-		segments.push(segment);
+		segments.push({
+			segment,
+			separator: command.slice(startIndex + segment.length, nextIndex),
+		});
 		if (nextIndex <= startIndex) {
 			break;
 		}
@@ -220,7 +227,8 @@ function tokenizeShellWords(command: string): string[] {
 	let quote: "'" | '"' | "`" | undefined;
 	let escaped = false;
 
-	for (const character of command) {
+	for (let index = 0; index < command.length; index += 1) {
+		const character = command[index];
 		if (escaped) {
 			current += character;
 			escaped = false;
@@ -262,6 +270,14 @@ function tokenizeShellWords(command: string): string[] {
 			quote = character;
 			continue;
 		}
+		if (character === "<" && command[index + 1] === "(") {
+			const processSubstitution = readProcessSubstitutionBody(command, index + 2);
+			if (processSubstitution) {
+				current += command.slice(index, processSubstitution.endIndex);
+				index = processSubstitution.endIndex - 1;
+				continue;
+			}
+		}
 		if (/\s/.test(character)) {
 			if (current) {
 				tokens.push(current);
@@ -278,8 +294,30 @@ function tokenizeShellWords(command: string): string[] {
 	return tokens;
 }
 
+function isShellVariableAssignmentToken(token: string): boolean {
+	return /^[A-Za-z_][A-Za-z0-9_]*=/.test(token);
+}
+
+function stripLeadingShellCommandPrefixes(tokens: string[]): string[] {
+	let startIndex = 0;
+	while (startIndex < tokens.length) {
+		const token = tokens[startIndex];
+		const lowerToken = token.toLowerCase();
+		if (["!", "if", "then", "else", "do", "command"].includes(lowerToken)) {
+			startIndex += 1;
+			continue;
+		}
+		if (isShellVariableAssignmentToken(token)) {
+			startIndex += 1;
+			continue;
+		}
+		break;
+	}
+	return tokens.slice(startIndex);
+}
+
 function getGitCommitArguments(segment: string): string[] | undefined {
-	const tokens = tokenizeShellWords(segment);
+	const tokens = stripLeadingShellCommandPrefixes(tokenizeShellWords(segment));
 	if (tokens[0]?.toLowerCase() !== "git") {
 		return undefined;
 	}
@@ -350,39 +388,37 @@ function hasInlineGitCommitMessageArgument(commitArguments: string[]): boolean {
 	return getInlineGitCommitMessageParts(commitArguments).length > 0;
 }
 
-function getInlineGitCommitFileArgument(commitArguments: string[]): "stdin" | "process-substitution" | undefined {
+function getInlineGitCommitFileArgumentValue(commitArguments: string[]): string | undefined {
+	let value: string | undefined;
 	for (let index = 0; index < commitArguments.length; index += 1) {
 		const token = commitArguments[index];
 		const lowerToken = token.toLowerCase();
 		if (lowerToken === "-f" || lowerToken === "--file") {
-			const value = commitArguments[index + 1];
-			if (value === "-") {
-				return "stdin";
-			}
-			if (value?.startsWith("<(")) {
-				return "process-substitution";
+			const nextValue = commitArguments[index + 1];
+			if (nextValue !== undefined) {
+				value = nextValue;
+				index += 1;
 			}
 			continue;
 		}
 		if (lowerToken.startsWith("-f")) {
-			const value = token.slice(2);
-			if (value === "-") {
-				return "stdin";
-			}
-			if (value.startsWith("<(")) {
-				return "process-substitution";
-			}
+			value = token.slice(2);
 			continue;
 		}
 		if (lowerToken.startsWith("--file=")) {
-			const value = token.slice("--file=".length);
-			if (value === "-") {
-				return "stdin";
-			}
-			if (value.startsWith("<(")) {
-				return "process-substitution";
-			}
+			value = token.slice("--file=".length);
 		}
+	}
+	return value;
+}
+
+function getInlineGitCommitFileArgument(commitArguments: string[]): "stdin" | "process-substitution" | undefined {
+	const value = getInlineGitCommitFileArgumentValue(commitArguments);
+	if (value === "-") {
+		return "stdin";
+	}
+	if (value?.startsWith("<(")) {
+		return "process-substitution";
 	}
 	return undefined;
 }
@@ -448,28 +484,273 @@ function normalizeTrailingLineEnding(value: string): string {
 	return value.replace(/\r?\n$/, "");
 }
 
-function hasInlineGitCommitFileArgument(commitArguments: string[]): boolean {
-	return getInlineGitCommitFileArgument(commitArguments) !== undefined;
+function readProcessSubstitutionBody(command: string, startIndex: number): { body: string; endIndex: number } | undefined {
+	let quote: "'" | '"' | "`" | undefined;
+	let escaped = false;
+	const hereDocs: HereDocSpec[] = [];
+	let depth = 1;
+
+	for (let index = startIndex; index < command.length; index += 1) {
+		const character = command[index];
+		if (escaped) {
+			escaped = false;
+			continue;
+		}
+		if (quote === "'") {
+			if (character === "'") {
+				quote = undefined;
+			}
+			continue;
+		}
+		if (quote === '"') {
+			if (character === "\\") {
+				escaped = true;
+				continue;
+			}
+			if (character === '"') {
+				quote = undefined;
+			}
+			continue;
+		}
+		if (quote === "`") {
+			if (character === "`") {
+				quote = undefined;
+			}
+			continue;
+		}
+		if (character === "\\") {
+			escaped = true;
+			continue;
+		}
+		if (character === "'" || character === '"' || character === "`") {
+			quote = character;
+			continue;
+		}
+		if (character === "<" && command[index + 1] === "<") {
+			const spec = readHereDocSpec(command, index);
+			if (spec) {
+				hereDocs.push(spec.spec);
+				index = spec.endIndex - 1;
+				continue;
+			}
+		}
+		if (character === "\n" && hereDocs.length > 0) {
+			const { nextIndex } = readHereDocBodies(command, index + 1, hereDocs);
+			index = nextIndex - 1;
+			hereDocs.length = 0;
+			continue;
+		}
+		if (character === "(") {
+			depth += 1;
+			continue;
+		}
+		if (character !== ")") {
+			continue;
+		}
+		depth -= 1;
+		if (depth === 0) {
+			return { body: command.slice(startIndex, index), endIndex: index + 1 };
+		}
+	}
+
+	return undefined;
 }
 
-function unwrapSimpleShellControlFlowPrefix(segment: string): string {
-	let unwrapped = segment.trimStart();
+function getShellCommandPrefix(command: string): string {
+	let quote: "'" | '"' | "`" | undefined;
+	let escaped = false;
 
-	while (true) {
-		const withoutNegation = unwrapped.replace(/^!\s+/, "");
-		if (withoutNegation !== unwrapped) {
-			unwrapped = withoutNegation.trimStart();
+	for (let index = 0; index < command.length; index += 1) {
+		const character = command[index];
+		if (escaped) {
+			escaped = false;
 			continue;
 		}
-
-		const withoutKeyword = unwrapped.replace(/^(?:then|else|do)\b\s+/, "");
-		if (withoutKeyword !== unwrapped) {
-			unwrapped = withoutKeyword.trimStart();
+		if (quote === "'") {
+			if (character === "'") {
+				quote = undefined;
+			}
 			continue;
 		}
-
-		return unwrapped;
+		if (quote === '"') {
+			if (character === "\\") {
+				escaped = true;
+				continue;
+			}
+			if (character === '"') {
+				quote = undefined;
+			}
+			continue;
+		}
+		if (quote === "`") {
+			if (character === "`") {
+				quote = undefined;
+			}
+			continue;
+		}
+		if (character === "\\") {
+			escaped = true;
+			continue;
+		}
+		if (character === "'" || character === '"' || character === "`") {
+			quote = character;
+			continue;
+		}
+		if (character === "\n") {
+			return command.slice(0, index);
+		}
 	}
+
+	return command;
+}
+
+function renderPrintfEscape(format: string, index: number): { output: string; nextIndex: number } | undefined {
+	const specifier = format[index + 1];
+	if (specifier === undefined) {
+		return undefined;
+	}
+	if (specifier === "n") {
+		return { output: "\n", nextIndex: index + 1 };
+	}
+	return undefined;
+}
+
+function renderPrintfCycle(format: string, args: string[], startIndex: number): { output: string; nextIndex: number } | undefined {
+	let output = "";
+	let nextIndex = startIndex;
+
+	for (let index = 0; index < format.length; index += 1) {
+		const character = format[index];
+		if (character === "\\") {
+			const escape = renderPrintfEscape(format, index);
+			if (!escape) {
+				return undefined;
+			}
+			output += escape.output;
+			index = escape.nextIndex;
+			continue;
+		}
+		if (character !== "%") {
+			output += character;
+			continue;
+		}
+		const specifier = format[index + 1];
+		if (specifier === undefined) {
+			return undefined;
+		}
+		index += 1;
+		if (specifier === "%") {
+			output += "%";
+			continue;
+		}
+		if (specifier !== "s") {
+			return undefined;
+		}
+		output += args[nextIndex] ?? "";
+		nextIndex += 1;
+	}
+
+	return { output, nextIndex };
+}
+
+function renderPrintfOutput(args: string[]): string | undefined {
+	let formatIndex = 0;
+	if (args[formatIndex] === "--") {
+		formatIndex += 1;
+	}
+	const format = args[formatIndex];
+	if (format === undefined) {
+		return "";
+	}
+
+	const values = args.slice(formatIndex + 1);
+	if (format.length === 0) {
+		return "";
+	}
+
+	let output = "";
+	let nextIndex = 0;
+	do {
+		const cycle = renderPrintfCycle(format, values, nextIndex);
+		if (!cycle) {
+			return undefined;
+		}
+		output += cycle.output;
+		if (cycle.nextIndex === nextIndex && nextIndex < values.length) {
+			return undefined;
+		}
+		nextIndex = cycle.nextIndex;
+	} while (nextIndex < values.length);
+
+	return output;
+}
+
+function renderEchoOutput(args: string[]): string {
+	let index = 0;
+	let appendTrailingNewline = true;
+	while (/^-n+$/.test(args[index] ?? "")) {
+		appendTrailingNewline = false;
+		index += 1;
+	}
+	if (args[index] === "--") {
+		index += 1;
+	}
+	return `${args.slice(index).join(" ")}${appendTrailingNewline ? "\n" : ""}`;
+}
+
+function getObviousShellSegmentOutput(segment: string): string | undefined {
+	const commandPrefix = getShellCommandPrefix(segment);
+	const tokens = stripLeadingShellCommandPrefixes(tokenizeShellWords(commandPrefix.trim()));
+	if (tokens.length === 0) {
+		return "";
+	}
+
+	const command = tokens[0]?.toLowerCase();
+	if (command === "cat") {
+		const hereDocBodies = extractHereDocBodies(segment);
+		if (hereDocBodies.length === 0 || tokens.slice(1).some((token) => !token.startsWith("<<"))) {
+			return undefined;
+		}
+		return hereDocBodies.join("");
+	}
+	if (command === "printf") {
+		return renderPrintfOutput(tokens.slice(1));
+	}
+	if (command === "echo") {
+		return renderEchoOutput(tokens.slice(1));
+	}
+	return undefined;
+}
+
+function getProcessSubstitutionOutput(command: string): string | undefined {
+	let output = "";
+	for (const { segment, separator } of splitShellCommandSegments(command)) {
+		if (separator && separator !== ";" && separator !== "\n") {
+			return undefined;
+		}
+		const trimmedSegment = segment.trim();
+		if (!trimmedSegment) {
+			continue;
+		}
+		const segmentOutput = getObviousShellSegmentOutput(trimmedSegment);
+		if (segmentOutput === undefined) {
+			return undefined;
+		}
+		output += segmentOutput;
+	}
+	return output;
+}
+
+function processSubstitutionIncludesTlhCommitAttributionFooter(fileArgument: string, footer: string): boolean {
+	if (!fileArgument.startsWith("<(") || !fileArgument.endsWith(")")) {
+		return false;
+	}
+	const output = getProcessSubstitutionOutput(fileArgument.slice(2, -1));
+	return output !== undefined && commitMessageEndsWithFooter(output, footer);
+}
+
+function hasInlineGitCommitFileArgument(commitArguments: string[]): boolean {
+	return getInlineGitCommitFileArgument(commitArguments) !== undefined;
 }
 
 function isObviousInlineGitCommitCommand(segment: string): boolean {
@@ -487,15 +768,16 @@ function isAttributedObviousInlineGitCommitSegment(segment: string, footer: stri
 	}
 	const inlineMessages = getInlineGitCommitMessageParts(commitArguments);
 	if (inlineMessages.length > 0) {
-		return inlineMessages.join("\n\n").endsWith(footer);
+		return commitMessageEndsWithFooter(inlineMessages.join("\n\n"), footer);
 	}
 	const fileArgument = getInlineGitCommitFileArgument(commitArguments);
 	if (fileArgument === "stdin") {
 		const hereDocBody = extractHereDocBodies(segment).at(-1);
-		return hereDocBody !== undefined && normalizeTrailingLineEnding(hereDocBody).endsWith(footer);
+		return hereDocBody !== undefined && commitMessageEndsWithFooter(normalizeTrailingLineEnding(hereDocBody), footer);
 	}
 	if (fileArgument === "process-substitution") {
-		return commandIncludesTlhCommitAttributionFooter(segment, footer);
+		const fileValue = getInlineGitCommitFileArgumentValue(commitArguments);
+		return fileValue !== undefined && processSubstitutionIncludesTlhCommitAttributionFooter(fileValue, footer);
 	}
 	return false;
 }
@@ -515,8 +797,8 @@ export function getTlhGitCommitAttributionBlockReason(command: string, state: Tl
 	if (!state.enabled || !state.footer) {
 		return undefined;
 	}
-	for (const segment of splitShellCommandSegments(command)) {
-		const trimmedSegment = unwrapSimpleShellControlFlowPrefix(segment.trim());
+	for (const { segment } of splitShellCommandSegments(command)) {
+		const trimmedSegment = segment.trim();
 		if (!isObviousInlineGitCommitCommand(trimmedSegment)) {
 			continue;
 		}

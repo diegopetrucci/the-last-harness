@@ -568,8 +568,8 @@ function createTlhPrimaryAgentRuntime(
 		});
 
 		pi.on("tool_call", async (event, ctx) => {
-			const commitAttributionState = resolveTlhCommitAttribution(getTlhGlobalSettings(ctx.cwd).tlh?.attribution);
 			if (event.toolName === "bash") {
+				const commitAttributionState = resolveTlhCommitAttribution(getTlhGlobalSettings(ctx.cwd).tlh?.attribution);
 				const reason = getTlhGitCommitAttributionBlockReason(event.input.command, commitAttributionState);
 				return reason ? { block: true, reason } : undefined;
 			}

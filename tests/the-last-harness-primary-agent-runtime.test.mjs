@@ -227,6 +227,36 @@ test("tool_call blocks obvious unattributed bash git commits only when attributi
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const attributedHereDoc = `git commit -F - <<EOF\nsubject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}\nEOF`;
 	const wrappedAttributedHereDoc = `if true; then git commit -F - <<EOF\nsubject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}\nEOF\nfi`;
+	const attributedProcessSubstitution = `git commit -F <(printf '%s' "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}")`;
+	const attributedPrintfEscapedNewlineProcessSubstitution = `git commit -F <(printf '%s\\n' "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}")`;
+	const attributedEchoProcessSubstitution = `git commit -F <(echo "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}")`;
+	const unattributedProcessSubstitution = `git commit -F <(printf '%s' "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}\n\nextra")`;
+	const unattributedPrintfFormatProcessSubstitution = `git commit -F <(printf 'subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}extra')`;
+	const unattributedPrintfArgsProcessSubstitution = `git commit -F <(printf '%s' "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}" extra)`;
+	const attributedHereDocProcessSubstitution = `git commit -F <(cat <<'EOF'
+subject
+
+${TLH_DEFAULT_COMMIT_ATTRIBUTION}
+EOF
+)`;
+	const unattributedHereDocProcessSubstitution = `git commit -F <(cat <<'EOF'
+subject
+
+${TLH_DEFAULT_COMMIT_ATTRIBUTION}
+
+extra
+EOF
+)`;
+	const unattributedTrailingOutputProcessSubstitution = `git commit -F <(cat <<'EOF'
+subject
+
+${TLH_DEFAULT_COMMIT_ATTRIBUTION}
+EOF
+printf 'extra'
+)`;
+	const unattributedWrongFileProcessSubstitution = `git commit -F <(printf '%s' subject) <(printf '%s' "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}")`;
+	const unattributedLastFileProcessSubstitution = `git commit -F <(printf '%s' "${TLH_DEFAULT_COMMIT_ATTRIBUTION}") -F <(printf '%s' subject)`;
+	const attributedLastFileProcessSubstitution = `git commit -F <(printf '%s' subject) -F <(printf '%s' "${TLH_DEFAULT_COMMIT_ATTRIBUTION}")`;
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const { toolCall } = registerRuntimeHarness();
@@ -238,6 +268,16 @@ test("tool_call blocks obvious unattributed bash git commits only when attributi
 			'if false; then :; else git commit -m "ship it"; fi',
 			'for f in x; do git commit -m "ship it"; done',
 			'! git commit -m "ship it"',
+			'if git commit -m "ship it"; then echo done; fi',
+			'command git commit -m "ship it"',
+			'FOO=bar git commit -m "ship it"',
+			unattributedProcessSubstitution,
+			unattributedPrintfFormatProcessSubstitution,
+			unattributedPrintfArgsProcessSubstitution,
+			unattributedHereDocProcessSubstitution,
+			unattributedTrailingOutputProcessSubstitution,
+			unattributedWrongFileProcessSubstitution,
+			unattributedLastFileProcessSubstitution,
 		]) {
 			const blocked = await toolCall(
 				{ toolName: "bash", input: { command } },
@@ -257,6 +297,41 @@ test("tool_call blocks obvious unattributed bash git commits only when attributi
 			),
 			undefined,
 		);
+		assert.equal(
+			await toolCall(
+				{ toolName: "bash", input: { command: attributedProcessSubstitution } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			),
+			undefined,
+		);
+		assert.equal(
+			await toolCall(
+				{ toolName: "bash", input: { command: attributedPrintfEscapedNewlineProcessSubstitution } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			),
+			undefined,
+		);
+		assert.equal(
+			await toolCall(
+				{ toolName: "bash", input: { command: attributedEchoProcessSubstitution } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			),
+			undefined,
+		);
+		assert.equal(
+			await toolCall(
+				{ toolName: "bash", input: { command: attributedHereDocProcessSubstitution } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			),
+			undefined,
+		);
+		assert.equal(
+			await toolCall(
+				{ toolName: "bash", input: { command: attributedLastFileProcessSubstitution } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			),
+			undefined,
+		);
 		const mixedCommits = await toolCall(
 			{ toolName: "bash", input: { command: `${attributedHereDoc}\ngit commit -m "ship it"` } },
 			createToolCallContext([], undefined, { cwd: fixture.cwd }),
@@ -269,13 +344,53 @@ test("tool_call blocks obvious unattributed bash git commits only when attributi
 		);
 
 		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
-		assert.equal(
-			await toolCall(
-				{ toolName: "bash", input: { command: 'if true; then git commit -m "ship it"; fi' } },
-				createToolCallContext([], undefined, { cwd: fixture.cwd }),
-			),
-			undefined,
+		for (const command of [
+			'if true; then git commit -m "ship it"; fi',
+			'if git commit -m "ship it"; then echo done; fi',
+			'command git commit -m "ship it"',
+			'FOO=bar git commit -m "ship it"',
+		]) {
+			assert.equal(
+				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				undefined,
+			);
+		}
+	});
+});
+
+test("tool_call blocks process substitutions with top-level conditional operators", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { toolCall } = registerRuntimeHarness();
+		const blocked = await toolCall(
+			{
+				toolName: "bash",
+				input: { command: `git commit -F <(printf '%s' subject || printf '%s' "${TLH_DEFAULT_COMMIT_ATTRIBUTION}")` },
+			},
+			createToolCallContext([], undefined, { cwd: fixture.cwd }),
 		);
+		assert.equal(blocked?.block, true);
+		assert.match(blocked?.reason ?? "", /TLH attribution footer/);
+	});
+});
+
+test("tool_call blocks non-progress printf process substitutions", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { toolCall } = registerRuntimeHarness();
+		for (const command of [
+			"git commit -F <(printf 'subject' extra)",
+			"git commit -F <(printf '%%' extra)",
+		]) {
+			const blocked = await toolCall(
+				{ toolName: "bash", input: { command } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			);
+			assert.equal(blocked?.block, true);
+			assert.match(blocked?.reason ?? "", /TLH attribution footer/);
+		}
 	});
 });
 
