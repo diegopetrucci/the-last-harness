@@ -355,6 +355,7 @@ test("stage-1 refuses to reinstall over a broken per-user Pi npm package", (t) =
 	mkdirSync(binDir, { recursive: true });
 	mkdirSync(packageDir, { recursive: true });
 	mkdirSync(perUserPiPackageDir, { recursive: true });
+	writeFakeCommand(fakebin, "git", "exit 0");
 	writeFakeCommand(fakebin, "npm", `printf '%s\\n' "$*" >>"${npmLog}"`);
 
 	const env = scrubInstallerEnv({
