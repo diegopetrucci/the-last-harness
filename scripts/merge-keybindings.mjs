@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 import { copyFileSync, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 
 import {
 	assertNotInNormalPiConfig,
+	assignOptionValue,
 	backupPathWithTimestamp,
+	defaultTlhKeybindingsPath,
+	expandHomePath,
 	readJsonFile,
-	requiredValue,
 } from "./lib/tlh-install-utils.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -52,20 +53,14 @@ function parseArgs(argv) {
 			args.help = true;
 			continue;
 		}
-		if (arg === "--keybindings") {
-			args.keybindingsPath = requiredValue(argv, ++index, arg);
+		const keybindingsIndex = assignOptionValue(args, "keybindingsPath", argv, index, "--keybindings");
+		if (keybindingsIndex !== undefined) {
+			index = keybindingsIndex;
 			continue;
 		}
-		if (arg.startsWith("--keybindings=")) {
-			args.keybindingsPath = arg.slice("--keybindings=".length);
-			continue;
-		}
-		if (arg === "--defaults") {
-			args.defaultsPath = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--defaults=")) {
-			args.defaultsPath = arg.slice("--defaults=".length);
+		const defaultsIndex = assignOptionValue(args, "defaultsPath", argv, index, "--defaults");
+		if (defaultsIndex !== undefined) {
+			index = defaultsIndex;
 			continue;
 		}
 		if (arg.startsWith("-")) {
@@ -78,14 +73,6 @@ function parseArgs(argv) {
 	}
 
 	return args;
-}
-
-function getAgentDir() {
-	return process.env.PI_CODING_AGENT_DIR || process.env.TLH_AGENT_DIR || join(homedir(), ".the-last-harness", "agent");
-}
-
-function defaultKeybindingsPath() {
-	return join(getAgentDir(), "keybindings.json");
 }
 
 function defaultDefaultsPath() {
@@ -169,8 +156,8 @@ function main() {
 		return;
 	}
 
-	const defaultsPath = resolve(args.defaultsPath || defaultDefaultsPath());
-	const keybindingsPath = resolve(args.keybindingsPath || defaultKeybindingsPath());
+	const defaultsPath = resolve(expandHomePath(args.defaultsPath || defaultDefaultsPath()));
+	const keybindingsPath = resolve(expandHomePath(args.keybindingsPath || defaultTlhKeybindingsPath()));
 	assertKeybindingsTarget(keybindingsPath);
 	const existed = existsSync(keybindingsPath);
 	const existing = readJsonFile(keybindingsPath, { missingValue: {} });

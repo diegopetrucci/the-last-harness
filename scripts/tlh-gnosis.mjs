@@ -6,7 +6,11 @@ import { homedir, tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 
-import { requiredValue } from "./lib/tlh-install-utils.mjs";
+import {
+	assignOptionValue,
+	expandHomePath,
+	resolveTlhAgentDir,
+} from "./lib/tlh-install-utils.mjs";
 
 const VALIDATION_TIMEOUT_MS = 5000;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
@@ -66,36 +70,24 @@ function parseArgs(argv) {
 			args.quiet = true;
 			continue;
 		}
-		if (arg === "--agent-dir") {
-			args.agentDir = requiredValue(argv, ++index, arg);
+		const agentDirIndex = assignOptionValue(args, "agentDir", argv, index, "--agent-dir");
+		if (agentDirIndex !== undefined) {
+			index = agentDirIndex;
 			continue;
 		}
-		if (arg.startsWith("--agent-dir=")) {
-			args.agentDir = arg.slice("--agent-dir=".length);
+		const targetIndex = assignOptionValue(args, "target", argv, index, "--target");
+		if (targetIndex !== undefined) {
+			index = targetIndex;
 			continue;
 		}
-		if (arg === "--target") {
-			args.target = requiredValue(argv, ++index, arg);
+		const repoIndex = assignOptionValue(args, "gnosisRepo", argv, index, "--gnosis-repo");
+		if (repoIndex !== undefined) {
+			index = repoIndex;
 			continue;
 		}
-		if (arg.startsWith("--target=")) {
-			args.target = arg.slice("--target=".length);
-			continue;
-		}
-		if (arg === "--gnosis-repo") {
-			args.gnosisRepo = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--gnosis-repo=")) {
-			args.gnosisRepo = arg.slice("--gnosis-repo=".length);
-			continue;
-		}
-		if (arg === "--gnosis-version") {
-			args.gnosisVersion = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--gnosis-version=")) {
-			args.gnosisVersion = arg.slice("--gnosis-version=".length);
+		const versionIndex = assignOptionValue(args, "gnosisVersion", argv, index, "--gnosis-version");
+		if (versionIndex !== undefined) {
+			index = versionIndex;
 			continue;
 		}
 		if (arg.startsWith("-")) {
@@ -109,16 +101,6 @@ function parseArgs(argv) {
 	}
 
 	return args;
-}
-
-function expandHome(path) {
-	if (path === "~") return homedir();
-	if (path.startsWith("~/")) return join(homedir(), path.slice(2));
-	return path;
-}
-
-function getAgentDir(argAgentDir) {
-	return expandHome(argAgentDir || process.env.PI_CODING_AGENT_DIR || process.env.TLH_AGENT_DIR || join(homedir(), ".the-last-harness", "agent"));
 }
 
 function candidateCommands(agentDir) {
@@ -161,8 +143,8 @@ function findValidGnosis(agentDir) {
 }
 
 function managedGnosisTargetPath(args, agentDir) {
-	const agentRoot = resolve(expandHome(agentDir));
-	return resolve(expandHome(args.target || join(agentRoot, "bin", "gn")));
+	const agentRoot = resolve(expandHomePath(agentDir));
+	return resolve(expandHomePath(args.target || join(agentRoot, "bin", "gn")));
 }
 
 function findValidGnosisForConfigure(args, agentDir) {
@@ -288,7 +270,7 @@ function findFileNamed(root, name) {
 }
 
 function resolvedManagedAgentDir(agentDir) {
-	return realpathForCompare(resolve(expandHome(agentDir)));
+	return realpathForCompare(resolve(expandHomePath(agentDir)));
 }
 
 function assertManagedGnosisTempPath(path, agentDir, label, { mustExist = false, expectDirectory = false, expectFile = false } = {}) {
@@ -488,7 +470,7 @@ function assertNoSymlinkedManagedTargetParents(target, boundary) {
 }
 
 function validateManagedGnosisTarget(args, agentDir) {
-	const agentRoot = resolve(expandHome(agentDir));
+	const agentRoot = resolve(expandHomePath(agentDir));
 	const target = managedGnosisTargetPath(args, agentDir);
 
 	assertNotNormalPiPath(agentRoot, "agent dir");
@@ -576,7 +558,7 @@ async function main() {
 		return;
 	}
 
-	const agentDir = resolve(getAgentDir(args.agentDir));
+	const agentDir = resolve(resolveTlhAgentDir(args.agentDir));
 
 	if (args.command === "validate") {
 		commandValidate(agentDir, args.commandArgs);

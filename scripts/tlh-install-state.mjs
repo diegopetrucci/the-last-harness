@@ -3,7 +3,11 @@ import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import process from "node:process";
 
-import { assertNotInNormalPiConfig, requiredValue } from "./lib/tlh-install-utils.mjs";
+import {
+	assertNotInNormalPiConfig,
+	assignOptionValue,
+	readOptionValue,
+} from "./lib/tlh-install-utils.mjs";
 
 function usage() {
 	return `Usage: tlh-install-state.mjs [options]
@@ -60,102 +64,65 @@ function parseArgs(argv) {
 			args.quiet = true;
 			continue;
 		}
-		if (arg === "--state-path") {
-			args.statePath = requiredValue(argv, ++index, arg);
+		const statePathIndex = assignOptionValue(args, "statePath", argv, index, "--state-path");
+		if (statePathIndex !== undefined) {
+			index = statePathIndex;
 			continue;
 		}
-		if (arg.startsWith("--state-path=")) {
-			args.statePath = arg.slice("--state-path=".length);
+		const repoIndex = assignOptionValue(args, "repo", argv, index, "--repo");
+		if (repoIndex !== undefined) {
+			index = repoIndex;
 			continue;
 		}
-		if (arg === "--repo") {
-			args.repo = requiredValue(argv, ++index, arg);
+		const refIndex = assignOptionValue(args, "ref", argv, index, "--ref");
+		if (refIndex !== undefined) {
+			index = refIndex;
 			continue;
 		}
-		if (arg.startsWith("--repo=")) {
-			args.repo = arg.slice("--repo=".length);
+		const trackIndex = assignOptionValue(args, "track", argv, index, "--track");
+		if (trackIndex !== undefined) {
+			index = trackIndex;
 			continue;
 		}
-		if (arg === "--ref") {
-			args.ref = requiredValue(argv, ++index, arg);
+		const packageSourceIndex = assignOptionValue(args, "packageSource", argv, index, "--package-source");
+		if (packageSourceIndex !== undefined) {
+			index = packageSourceIndex;
 			continue;
 		}
-		if (arg.startsWith("--ref=")) {
-			args.ref = arg.slice("--ref=".length);
+		const packageSourceIsDefaultIndex = assignOptionValue(args, "packageSourceIsDefault", argv, index, "--package-source-is-default");
+		if (packageSourceIsDefaultIndex !== undefined) {
+			index = packageSourceIsDefaultIndex;
 			continue;
 		}
-		if (arg === "--track") {
-			args.track = requiredValue(argv, ++index, arg);
+		const rawBaseIndex = assignOptionValue(args, "rawBase", argv, index, "--raw-base");
+		if (rawBaseIndex !== undefined) {
+			index = rawBaseIndex;
 			continue;
 		}
-		if (arg.startsWith("--track=")) {
-			args.track = arg.slice("--track=".length);
+		const agentDirIndex = assignOptionValue(args, "agentDir", argv, index, "--agent-dir");
+		if (agentDirIndex !== undefined) {
+			index = agentDirIndex;
 			continue;
 		}
-		if (arg === "--package-source") {
-			args.packageSource = requiredValue(argv, ++index, arg);
+		const binDirIndex = assignOptionValue(args, "binDir", argv, index, "--bin-dir");
+		if (binDirIndex !== undefined) {
+			index = binDirIndex;
 			continue;
 		}
-		if (arg.startsWith("--package-source=")) {
-			args.packageSource = arg.slice("--package-source=".length);
+		const wrapperNameIndex = assignOptionValue(args, "wrapperName", argv, index, "--wrapper-name");
+		if (wrapperNameIndex !== undefined) {
+			index = wrapperNameIndex;
 			continue;
 		}
-		if (arg === "--package-source-is-default") {
-			args.packageSourceIsDefault = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--package-source-is-default=")) {
-			args.packageSourceIsDefault = arg.slice("--package-source-is-default=".length);
-			continue;
-		}
-		if (arg === "--raw-base") {
-			args.rawBase = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--raw-base=")) {
-			args.rawBase = arg.slice("--raw-base=".length);
-			continue;
-		}
-		if (arg === "--agent-dir") {
-			args.agentDir = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--agent-dir=")) {
-			args.agentDir = arg.slice("--agent-dir=".length);
-			continue;
-		}
-		if (arg === "--bin-dir") {
-			args.binDir = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--bin-dir=")) {
-			args.binDir = arg.slice("--bin-dir=".length);
-			continue;
-		}
-		if (arg === "--wrapper-name") {
-			args.wrapperName = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--wrapper-name=")) {
-			args.wrapperName = arg.slice("--wrapper-name=".length);
-			continue;
-		}
-		if (arg === "--pi-installed-by-tlh") {
-			const raw = requiredValue(argv, ++index, arg);
+		const piInstalledByTlh = readOptionValue(argv, index, "--pi-installed-by-tlh");
+		if (piInstalledByTlh) {
+			const raw = piInstalledByTlh.value;
 			const lower = raw.toLowerCase();
 			if (lower !== "true" && lower !== "false") {
 				throw new Error(`--pi-installed-by-tlh must be true or false (got: ${raw})`);
 			}
 			args.piInstalledByTlh = lower === "true";
-			continue;
-		}
-		if (arg.startsWith("--pi-installed-by-tlh=")) {
-			const raw = arg.slice("--pi-installed-by-tlh=".length);
-			const lower = raw.toLowerCase();
-			if (lower !== "true" && lower !== "false") {
-				throw new Error(`--pi-installed-by-tlh must be true or false (got: ${raw})`);
-			}
-			args.piInstalledByTlh = lower === "true";
+			index = piInstalledByTlh.nextIndex;
 			continue;
 		}
 		throw new Error(`Unknown option: ${arg}`);
