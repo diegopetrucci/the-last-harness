@@ -4,9 +4,20 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-06-01
+
 ### Added
 
 - Added `/review` slash command: interactive mode picker plus `uncommitted`, `branch`, `commit`, `pr`, and `folder` modes; branch mode prompts for its base branch (defaulting to `main` but allowing stacked bases), PR mode integrates with the `gh` CLI and prompts before switching branches, and review runs in an isolated `code-reviewer` subagent while the architect presents a digested summary.
+
+### Breaking
+
+- Removed `--no-pi-install` from install and update flows. When `pi` is missing, TLH now always attempts the managed per-user install under `~/.local`, and install/update stop with an actionable error if that install cannot complete.
+
+### Changed
+
+- TLH now requires upstream Pi >=0.76.0. When `pi` is missing, the installer continues to add a compatible per-user Pi runtime under `~/.local`.
+- Installer and update flows now hard-fail when an existing `pi` on `PATH` cannot be version-verified, with actionable upgrade guidance, instead of continuing past an unverifiable runtime.
 
 ## [0.14.0] - 2026-05-27
 
