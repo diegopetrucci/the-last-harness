@@ -86,6 +86,35 @@ function writeFakePi(fakebin, body) {
 	writeFakeCommand(fakebin, "pi", body);
 }
 
+function readJson(path) {
+	return JSON.parse(readFileSync(path, "utf8"));
+}
+
+function safeInstallerPath(fakebin) {
+	return [fakebin, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(delimiter);
+}
+
+function writeFakeTk(fakebin) {
+	writeFakeCommand(fakebin, "tk", "printf 'Usage: tk help\\nTicket CLI helper\\n'");
+}
+
+function writeLoggingPi(commandDir, logPath, version = "0.76.0") {
+	writeFakePi(commandDir, [
+		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${logPath}"`,
+		`if [[ "\${1:-}" == "--version" ]]; then printf '${version}\\n'; exit 0; fi`,
+		"exit 0",
+	].join("\n"));
+}
+
+function writeFakeNpmInstaller(fakebin, { npmLog, templatePiPath, installedPiPath }) {
+	writeFakeCommand(fakebin, "npm", [
+		`printf '%s\\n' "$*" >>"${npmLog}"`,
+		`mkdir -p "${dirname(installedPiPath)}"`,
+		`cp "${templatePiPath}" "${installedPiPath}"`,
+		`chmod +x "${installedPiPath}"`,
+	].join("\n"));
+}
+
 function makeDefaultExtensionInstallConfig(t, { defaultExtensions, settings, dryRun = false, fakePiBody = "exit 0", fakeGitBody = "" }) {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");
@@ -251,6 +280,180 @@ test("stage-1 rejects existing Pi older than the TLH minimum", (t) => {
 	const result = runInstaller(["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], env);
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /Pi >= 0\.76\.0 is required \(found 0\.75\.2\)\. Upgrade with: npm install -g --ignore-scripts --prefix /);
+});
+
+test("stage-1 reuses a per-user Pi runtime outside PATH without claiming ownership", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const fakebin = join(root, "fakebin");
+	const packageDir = join(root, "package-source");
+	const npmLog = join(root, "npm.log");
+	const piLog = join(root, "pi.log");
+	const perUserPiDir = join(homeDir, ".local", "bin");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(binDir, { recursive: true });
+	mkdirSync(packageDir, { recursive: true });
+	writeFakeCommand(fakebin, "git", "exit 0");
+	writeFakeCommand(fakebin, "npm", `printf '%s\\n' "$*" >>"${npmLog}"`);
+	writeFakeTk(fakebin);
+	writeLoggingPi(perUserPiDir, piLog);
+
+	const env = scrubInstallerEnv({
+		HOME: homeDir,
+		PATH: safeInstallerPath(fakebin),
+		TLH_PACKAGE_SOURCE: packageDir,
+		TLH_SKIP_GNOSIS_INSTALL: "1",
+	});
+	const result = runInstaller([
+		"--agent-dir", agentDir,
+		"--bin-dir", binDir,
+		"--no-settings",
+		"--no-wrapper",
+	], env);
+	const output = `${result.stdout}\n${result.stderr}`;
+
+	assert.equal(result.status, 0, output);
+	assert.equal(existsSync(npmLog), false, output);
+	assert.match(output, /Existing Pi runtime .*\.local\/bin\/pi is not on PATH\. Added it to PATH for this install/);
+	assert.doesNotMatch(output, /Installing Pi runtime to .*\.local/);
+	const piRecords = readPiLogRecords(piLog);
+	assert.equal(piRecords[0]?.command, "--version");
+	assert.equal(piRecords[0]?.agentDir, agentDir);
+	assert.equal(realpathSync(piRecords[1]?.cwd), realpathSync(agentDir));
+	assert.equal(realpathSync(piRecords[2]?.cwd), realpathSync(agentDir));
+	assert.equal(piRecords[1]?.command, `install ${packageDir}`);
+	assert.equal(piRecords[2]?.command, `update ${packageDir}`);
+	const state = readJson(join(agentDir, "tlh", "install-state.json"));
+	assert.equal(state.piInstalledByTlh, false);
+});
+
+test("stage-1 refuses to reinstall over a broken per-user Pi npm package", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const fakebin = join(root, "fakebin");
+	const packageDir = join(root, "package-source");
+	const npmLog = join(root, "npm.log");
+	const perUserPiPackageDir = join(homeDir, ".local", "lib", "node_modules", "@earendil-works", "pi-coding-agent");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(binDir, { recursive: true });
+	mkdirSync(packageDir, { recursive: true });
+	mkdirSync(perUserPiPackageDir, { recursive: true });
+	writeFakeCommand(fakebin, "git", "exit 0");
+	writeFakeCommand(fakebin, "npm", `printf '%s\\n' "$*" >>"${npmLog}"`);
+
+	const env = scrubInstallerEnv({
+		HOME: homeDir,
+		PATH: safeInstallerPath(fakebin),
+		TLH_PACKAGE_SOURCE: packageDir,
+		TLH_SKIP_GNOSIS_INSTALL: "1",
+	});
+	const result = runInstaller([
+		"--agent-dir", agentDir,
+		"--bin-dir", binDir,
+		"--no-settings",
+		"--no-wrapper",
+	], env);
+	const output = `${result.stdout}\n${result.stderr}`;
+
+	assert.notEqual(result.status, 0, output);
+	assert.equal(existsSync(npmLog), false, output);
+	assert.match(output, /detected an existing per-user Pi npm package/);
+	assert.match(output, new RegExp(perUserPiPackageDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+	assert.match(output, /no runnable pi binary could be validated/);
+	assert.match(output, /The Last Harness will not reinstall over that package or mark it TLH-owned/);
+	assert.match(output, /Repair or remove the existing package, then rerun the installer/);
+	assert.match(output, /npm install -g --ignore-scripts --prefix /);
+	assert.equal(existsSync(join(agentDir, "tlh", "install-state.json")), false, output);
+});
+
+test("stage-1 records piInstalledByTlh=true when an update installs Pi", (t) => {
+	for (const scenario of [
+		{
+			name: "previous false field",
+			state: {
+				schemaVersion: 1,
+				repo: "diegopetrucci/the-last-harness",
+				track: "ref",
+				ref: "main",
+				packageSource: "git:github.com/diegopetrucci/the-last-harness@main",
+				packageSourceIsDefault: true,
+				piInstalledByTlh: false,
+			},
+			args: ["--pi-installed-by-tlh", "false"],
+		},
+		{
+			name: "missing previous field",
+			state: {
+				schemaVersion: 1,
+				repo: "diegopetrucci/the-last-harness",
+				track: "ref",
+				ref: "main",
+				packageSource: "git:github.com/diegopetrucci/the-last-harness@main",
+				packageSourceIsDefault: true,
+			},
+			args: [],
+		},
+	]) {
+		const root = makeTempDir(`tlh-install-stage1-update-${scenario.name.replace(/\s+/g, "-")}-`);
+		const homeDir = join(root, "home");
+		const agentDir = join(root, "agent");
+		const binDir = join(root, "bin");
+		const fakebin = join(root, "fakebin");
+		const packageDir = join(root, "package-source");
+		const npmLog = join(root, "npm.log");
+		const piLog = join(root, "pi.log");
+		const templateDir = join(root, "pi-template");
+		const installedPiPath = join(homeDir, ".local", "bin", "pi");
+		t.after(() => rmSync(root, { recursive: true, force: true }));
+		mkdirSync(homeDir, { recursive: true });
+		mkdirSync(agentDir, { recursive: true });
+		mkdirSync(binDir, { recursive: true });
+		mkdirSync(packageDir, { recursive: true });
+		mkdirSync(join(agentDir, "tlh"), { recursive: true });
+		writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify(scenario.state, null, 2));
+		writeFakeCommand(fakebin, "git", "exit 0");
+		writeFakeTk(fakebin);
+		writeLoggingPi(templateDir, piLog);
+		writeFakeNpmInstaller(fakebin, {
+			npmLog,
+			templatePiPath: join(templateDir, "pi"),
+			installedPiPath,
+		});
+
+		const env = scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: safeInstallerPath(fakebin),
+			TLH_PACKAGE_SOURCE: packageDir,
+			TLH_SKIP_GNOSIS_INSTALL: "1",
+		});
+		const result = runInstaller([
+			"--agent-dir", agentDir,
+			"--bin-dir", binDir,
+			"--no-settings",
+			"--no-wrapper",
+			...scenario.args,
+		], env);
+		const output = `${result.stdout}\n${result.stderr}`;
+
+		assert.equal(result.status, 0, `${scenario.name}\n${output}`);
+		assert.deepEqual(readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [
+			`install -g --ignore-scripts --prefix ${join(homeDir, ".local")} @earendil-works/pi-coding-agent`,
+		], scenario.name);
+		const state = readJson(join(agentDir, "tlh", "install-state.json"));
+		assert.equal(state.piInstalledByTlh, true, scenario.name);
+		assert.deepEqual(readPiLogRecords(piLog).map((record) => record.command), [
+			`install ${packageDir}`,
+			`update ${packageDir}`,
+		], scenario.name);
+	}
 });
 
 test("declared Node minimum stays aligned across installer metadata", () => {
