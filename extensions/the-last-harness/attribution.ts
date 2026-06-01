@@ -452,6 +452,26 @@ function hasInlineGitCommitFileArgument(commitArguments: string[]): boolean {
 	return getInlineGitCommitFileArgument(commitArguments) !== undefined;
 }
 
+function unwrapSimpleShellControlFlowPrefix(segment: string): string {
+	let unwrapped = segment.trimStart();
+
+	while (true) {
+		const withoutNegation = unwrapped.replace(/^!\s+/, "");
+		if (withoutNegation !== unwrapped) {
+			unwrapped = withoutNegation.trimStart();
+			continue;
+		}
+
+		const withoutKeyword = unwrapped.replace(/^(?:then|else|do)\b\s+/, "");
+		if (withoutKeyword !== unwrapped) {
+			unwrapped = withoutKeyword.trimStart();
+			continue;
+		}
+
+		return unwrapped;
+	}
+}
+
 function isObviousInlineGitCommitCommand(segment: string): boolean {
 	const commitArguments = getGitCommitArguments(segment);
 	if (!commitArguments) {
@@ -496,7 +516,7 @@ export function getTlhGitCommitAttributionBlockReason(command: string, state: Tl
 		return undefined;
 	}
 	for (const segment of splitShellCommandSegments(command)) {
-		const trimmedSegment = segment.trim();
+		const trimmedSegment = unwrapSimpleShellControlFlowPrefix(segment.trim());
 		if (!isObviousInlineGitCommitCommand(trimmedSegment)) {
 			continue;
 		}

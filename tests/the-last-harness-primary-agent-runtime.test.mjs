@@ -169,13 +169,76 @@ test("before_agent_start adds TLH commit attribution guidance only when enabled"
 	});
 });
 
+test("child mode keeps parent-only controls disabled while applying commit attribution prompt and bash guard", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const pi = createPiHarness();
+		const runtime = registerTlhPrimaryAgentRuntime(pi, { env: { PI_SUBAGENT_CHILD: "1" } });
+		assert.equal(runtime, undefined);
+		assert.deepEqual([...pi.commands.keys()], []);
+		assert.deepEqual([...pi.shortcuts.keys()], []);
+		assert.deepEqual(
+			pi.events.map((event) => event.name),
+			["before_agent_start", "tool_call"],
+		);
+
+		const beforeAgentStart = pi.events.find((event) => event.name === "before_agent_start")?.handler;
+		const toolCall = pi.events.find((event) => event.name === "tool_call")?.handler;
+		assert.equal(typeof beforeAgentStart, "function");
+		assert.equal(typeof toolCall, "function");
+
+		const enabledPrompt = await beforeAgentStart(
+			{ systemPrompt: "base prompt" },
+			createToolCallContext([], undefined, { cwd: fixture.cwd }),
+		);
+		assert.match(enabledPrompt.systemPrompt, /## TLH Git Commit Attribution/);
+		assert.match(enabledPrompt.systemPrompt, /Co-authored-by: The Last Harness <hi@thelastharness\.com>/);
+
+		const blockedCommit = await toolCall(
+			{ toolName: "bash", input: { command: 'git commit -m "ship it"' } },
+			createToolCallContext([], undefined, { cwd: fixture.cwd }),
+		);
+		assert.equal(blockedCommit?.block, true);
+		assert.match(blockedCommit?.reason ?? "", /TLH attribution footer/);
+
+		const childSubagentCall = { toolName: "subagent", input: { agent: "developer", context: "resume" } };
+		assert.equal(await toolCall(childSubagentCall, createToolCallContext([], undefined, { cwd: fixture.cwd })), undefined);
+		assert.equal(childSubagentCall.input.agentScope, undefined);
+		assert.equal(childSubagentCall.input.context, "resume");
+
+		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
+		const disabledPrompt = await beforeAgentStart(
+			{ systemPrompt: "base prompt" },
+			createToolCallContext([], undefined, { cwd: fixture.cwd }),
+		);
+		assert.doesNotMatch(disabledPrompt.systemPrompt, /## TLH Git Commit Attribution/);
+		assert.equal(
+			await toolCall(
+				{ toolName: "bash", input: { command: 'git commit -m "ship it"' } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			),
+			undefined,
+		);
+	});
+});
+
 test("tool_call blocks obvious unattributed bash git commits only when attribution is enabled", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const attributedHereDoc = `git commit -F - <<EOF\nsubject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}\nEOF`;
+	const wrappedAttributedHereDoc = `if true; then git commit -F - <<EOF\nsubject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}\nEOF\nfi`;
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const { toolCall } = registerRuntimeHarness();
-		for (const command of ['git commit -m "ship it"', 'git -C repo commit -m "ship it"', 'git commit -F-']) {
+		for (const command of [
+			'git commit -m "ship it"',
+			'git -C repo commit -m "ship it"',
+			'git commit -F-',
+			'if true; then git commit -m "ship it"; fi',
+			'if false; then :; else git commit -m "ship it"; fi',
+			'for f in x; do git commit -m "ship it"; done',
+			'! git commit -m "ship it"',
+		]) {
 			const blocked = await toolCall(
 				{ toolName: "bash", input: { command } },
 				createToolCallContext([], undefined, { cwd: fixture.cwd }),
@@ -185,6 +248,13 @@ test("tool_call blocks obvious unattributed bash git commits only when attributi
 		}
 		assert.equal(
 			await toolCall({ toolName: "bash", input: { command: attributedHereDoc } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+			undefined,
+		);
+		assert.equal(
+			await toolCall(
+				{ toolName: "bash", input: { command: wrappedAttributedHereDoc } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			),
 			undefined,
 		);
 		const mixedCommits = await toolCall(
@@ -200,7 +270,10 @@ test("tool_call blocks obvious unattributed bash git commits only when attributi
 
 		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
 		assert.equal(
-			await toolCall({ toolName: "bash", input: { command: 'git commit -m "ship it"' } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+			await toolCall(
+				{ toolName: "bash", input: { command: 'if true; then git commit -m "ship it"; fi' } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			),
 			undefined,
 		);
 	});

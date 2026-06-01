@@ -85,6 +85,7 @@ test("git commit attribution guard blocks only obvious unattributed inline commi
 	const disabled = resolveTlhCommitAttribution({ commit: false });
 	const [footerHeading, footerCoAuthor] = TLH_DEFAULT_COMMIT_ATTRIBUTION.split("\n\n");
 	const attributedHereDoc = `git commit -F - <<EOF\nsubject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}\nEOF`;
+	const wrappedAttributedHereDoc = `if true; then git commit -F - <<EOF\nsubject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}\nEOF\nfi`;
 
 	for (const command of [
 		'git commit -m "ship it"',
@@ -95,6 +96,10 @@ test("git commit attribution guard blocks only obvious unattributed inline commi
 		'git commit -F -',
 		'git commit --file=-',
 		'git commit --file -',
+		'if true; then git commit -m "ship it"; fi',
+		'if false; then :; else git commit -m "ship it"; fi',
+		'for f in x; do git commit -m "ship it"; done',
+		'! git commit -m "ship it"',
 		`printf '${TLH_DEFAULT_COMMIT_ATTRIBUTION}' && git commit -m "ship it"`,
 		`git commit -m "${TLH_DEFAULT_COMMIT_ATTRIBUTION}" && git commit -m "ship it"`,
 		`git commit -m "${TLH_DEFAULT_COMMIT_ATTRIBUTION}\n\nship it"`,
@@ -114,9 +119,14 @@ test("git commit attribution guard blocks only obvious unattributed inline commi
 		undefined,
 	);
 	assert.equal(getTlhGitCommitAttributionBlockReason(attributedHereDoc, enabled), undefined);
+	assert.equal(
+		getTlhGitCommitAttributionBlockReason(`if true; then git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"; fi`, enabled),
+		undefined,
+	);
+	assert.equal(getTlhGitCommitAttributionBlockReason(wrappedAttributedHereDoc, enabled), undefined);
 	assert.equal(getTlhGitCommitAttributionBlockReason('git commit -F .git/COMMIT_EDITMSG', enabled), undefined);
 	assert.equal(getTlhGitCommitAttributionBlockReason('git push origin HEAD', enabled), undefined);
-	assert.equal(getTlhGitCommitAttributionBlockReason('git commit -m "ship it"', disabled), undefined);
+	assert.equal(getTlhGitCommitAttributionBlockReason('if true; then git commit -m "ship it"; fi', disabled), undefined);
 });
 
 test("toggle attribution command accepts no arguments", async (t) => {

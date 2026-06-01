@@ -198,6 +198,26 @@ function rushDeveloperDelegationReason(): string {
 	return "TLH Rush may not delegate implementation to developer. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.";
 }
 
+function registerChildSubagentRuntime(pi: ExtensionAPI, buildChildPrompt: () => string): void {
+	pi.on("before_agent_start", async (event, ctx) => {
+		const commitAttributionState = resolveTlhCommitAttribution(getTlhGlobalSettings(ctx.cwd).tlh?.attribution);
+		return {
+			systemPrompt: [event.systemPrompt, buildChildPrompt(), buildTlhCommitAttributionPrompt(commitAttributionState)]
+				.filter(Boolean)
+				.join("\n\n"),
+		};
+	});
+
+	pi.on("tool_call", async (event, ctx) => {
+		if (event.toolName !== "bash") {
+			return undefined;
+		}
+		const commitAttributionState = resolveTlhCommitAttribution(getTlhGlobalSettings(ctx.cwd).tlh?.attribution);
+		const reason = getTlhGitCommitAttributionBlockReason(event.input.command, commitAttributionState);
+		return reason ? { block: true, reason } : undefined;
+	});
+}
+
 function createTlhPrimaryAgentRuntime(
 	pi: ExtensionAPI,
 	primaryAgents: Map<TlhPrimaryAgentSelection, AgentPrompt>,
@@ -582,6 +602,9 @@ export function registerTlhPrimaryAgentRuntime(
 		registerTlhStartupMode(pi, {
 			env: options.env ?? process.env,
 			buildChildSubagentSystemPrompt: childPromptBuilder,
+			registerChild: () => {
+				registerChildSubagentRuntime(pi, childPromptBuilder);
+			},
 		}) === "child"
 	) {
 		return undefined;

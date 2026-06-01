@@ -68,7 +68,8 @@ test("package extension discovery exposes only the top-level TLH entrypoint", ()
 });
 
 test("before_agent_start reapplies primary defaults without a one-shot model gate", () => {
-	const beforeAgentStart = sourceSection(primaryRuntimeSource, 'pi.on("before_agent_start"', 'pi.on("tool_call"');
+	const lifecycleHooks = sourceSection(primaryRuntimeSource, "function registerLifecycleHooks()", "\n\n\treturn { applySessionStart");
+	const beforeAgentStart = sourceSection(lifecycleHooks, 'pi.on("before_agent_start"', 'pi.on("tool_call"');
 	const applyPrimaryModel = sourceSection(primaryRuntimeSource, "async function applyPrimaryModel", "function applyPrimaryThinking");
 	const applyPrimaryThinking = sourceSection(primaryRuntimeSource, "function applyPrimaryThinking", "async function applyPrimaryDefaults");
 	const applyPrimaryDefaults = sourceSection(primaryRuntimeSource, "async function applyPrimaryDefaults", "async function applyPrimaryModeChange");
@@ -86,7 +87,8 @@ test("before_agent_start reapplies primary defaults without a one-shot model gat
 });
 
 test("before_agent_start activates ticket runtime without disabled-ticket prompt branching", () => {
-	const beforeAgentStart = sourceSection(primaryRuntimeSource, 'pi.on("before_agent_start"', 'pi.on("tool_call"');
+	const lifecycleHooks = sourceSection(primaryRuntimeSource, "function registerLifecycleHooks()", "\n\n\treturn { applySessionStart");
+	const beforeAgentStart = sourceSection(lifecycleHooks, 'pi.on("before_agent_start"', 'pi.on("tool_call"');
 
 	assert.match(primaryRuntimeSource, /function getTlhGlobalSettings\(cwd: string\): TlhSettings/);
 	assert.match(beforeAgentStart, /const settings = getTlhGlobalSettings\(ctx\.cwd\);/);
@@ -195,9 +197,10 @@ test("extension runs primary session_start work before UI startup in one handler
 });
 
 test("extension wires switch-primary-agent and active-primary safety", () => {
+	const lifecycleHooks = sourceSection(primaryRuntimeSource, "function registerLifecycleHooks()", "\n\n\treturn { applySessionStart");
 	const switchPrimaryAgentCommand = sourceSection(primaryRuntimeSource, 'pi.registerCommand("switch-primary-agent"', 'pi.registerShortcut');
 	const shortcut = sourceSection(primaryRuntimeSource, 'pi.registerShortcut(PRIMARY_AGENT_CYCLE_SHORTCUT', 'async function applySessionStart');
-	const toolCall = sourceSection(primaryRuntimeSource, 'pi.on("tool_call"', '\n\t\t});\n\t}');
+	const toolCall = sourceSection(lifecycleHooks, 'pi.on("tool_call"', '\n\t\t});\n\t}');
 
 	assert.match(promptsSource, /function loadPrimaryAgents\(\): Map<TlhPrimaryAgentSelection, AgentPrompt>/);
 	assert.match(switchPrimaryAgentCommand, /default rush/);
@@ -223,6 +226,23 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 		toolCall.indexOf('selection === "rush"') < toolCall.indexOf("validateSubagentToolInput"),
 		"Rush developer guard should run before generic subagent validation",
 	);
+});
+
+test("child runtime wires commit attribution prompt and bash guard without primary controls", () => {
+	const childRuntime = sourceSection(primaryRuntimeSource, "function registerChildSubagentRuntime", "\n\nfunction createTlhPrimaryAgentRuntime");
+	const registerBlock = sourceSection(
+		primaryRuntimeSource,
+		"export function registerTlhPrimaryAgentRuntime",
+		"const runtime = createTlhPrimaryAgentRuntime",
+	);
+
+	assert.match(childRuntime, /pi\.on\("before_agent_start"/);
+	assert.match(childRuntime, /buildTlhCommitAttributionPrompt\(commitAttributionState\)/);
+	assert.match(childRuntime, /pi\.on\("tool_call"/);
+	assert.match(childRuntime, /if \(event\.toolName !== "bash"\)/);
+	assert.match(childRuntime, /getTlhGitCommitAttributionBlockReason\(event\.input\.command, commitAttributionState\)/);
+	assert.match(registerBlock, /registerChild: \(\) => \{/);
+	assert.match(registerBlock, /registerChildSubagentRuntime\(pi, childPromptBuilder\);/);
 });
 
 test("extension wires subscription usage to lifecycle refreshes and footer", () => {
