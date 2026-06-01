@@ -977,6 +977,168 @@ test("tlh update rejects legacy ticket integration flags", (t) => {
 	}
 });
 
+test("tlh update --extensions dry-run prints the isolated package update plan and rejects installer-only flags", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const fakebin = join(root, "fakebin");
+	const dryRunPiLog = join(root, "dry-run-pi.log");
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	writeFakePi(fakebin, "printf 'pi should not run during dry-run\\n' >\"${DRY_RUN_PI_LOG}\"\nexit 91");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	const runUpdate = (...extraArgs) => spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-update.mjs"), "--extensions", "--dry-run", "--agent-dir", agentDir, ...extraArgs], {
+		cwd: repoRoot,
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: `${fakebin}:${process.env.PATH || ""}`,
+			DRY_RUN_PI_LOG: dryRunPiLog,
+			PI_CODING_AGENT_DIR: join(homeDir, ".pi", "agent"),
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	const defaultResult = runUpdate();
+	assert.equal(defaultResult.status, 0, defaultResult.stderr);
+	assert.match(defaultResult.stdout, /The Last Harness extension update plan/);
+	assert.ok(defaultResult.stdout.includes(`Agent dir: ${agentDir}`));
+	assert.match(defaultResult.stdout, /Would run: PI_CODING_AGENT_DIR='/);
+	assert.match(defaultResult.stdout, /'update' '--extensions'/);
+	assert.equal(defaultResult.stdout.includes(join(homeDir, ".pi", "agent")), false);
+	assert.equal(defaultResult.stderr, "");
+	assert.equal(existsSync(dryRunPiLog), false);
+
+	const unsupportedFlags = [
+		["--track", "ref"],
+		["--ref", "main"],
+		["--repo", "owner/repo"],
+		["--package-source", "git:github.com/owner/repo@main"],
+		["--force"],
+		["--no-settings"],
+		["--no-wrapper"],
+	];
+	for (const [flag, value] of unsupportedFlags) {
+		const result = value ? runUpdate(flag, value) : runUpdate(flag);
+		assert.notEqual(result.status, 0, `expected ${flag} to be rejected`);
+		assert.match(result.stderr, /--extensions does not support /);
+		assert.match(result.stderr, new RegExp(flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+		assert.equal(result.stdout, "");
+	}
+});
+
+test("tlh update --extensions refuses to target normal Pi config via explicit or inherited agent dir selection", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const protectedAgentDir = join(homeDir, ".pi", "agent");
+	mkdirSync(homeDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	const scenarios = [
+		{
+			name: "explicit --agent-dir",
+			args: ["--agent-dir", protectedAgentDir],
+			env: {},
+		},
+		{
+			name: "PI_CODING_AGENT_DIR fallback",
+			args: [],
+			env: { PI_CODING_AGENT_DIR: protectedAgentDir },
+		},
+		{
+			name: "TLH_AGENT_DIR override",
+			args: [],
+			env: { TLH_AGENT_DIR: protectedAgentDir },
+		},
+	];
+
+	for (const scenario of scenarios) {
+		const result = spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-update.mjs"), "--extensions", "--dry-run", ...scenario.args], {
+			cwd: repoRoot,
+			env: scrubInstallerEnv({
+				HOME: homeDir,
+				PATH: "",
+				...scenario.env,
+			}),
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+
+		assert.notEqual(result.status, 0, `expected ${scenario.name} to be rejected`);
+		assert.equal(result.stdout, "");
+		assert.match(result.stderr, /refusing to run The Last Harness extension update against normal Pi config root/);
+		assert.ok(result.stderr.includes(protectedAgentDir), `${scenario.name} stderr should mention the protected agent dir`);
+		assert.doesNotMatch(result.stderr, /required command not found on sanitized PATH: pi/);
+	}
+	assert.equal(existsSync(join(homeDir, ".pi")), false);
+});
+
+test("tlh update --extensions resolves pi on the sanitized PATH and targets the isolated agent dir", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const agentBin = join(agentDir, "bin");
+	const agentBinLink = join(root, "agent-bin-link");
+	const cwdDir = join(root, "cwd");
+	const cwdLink = join(root, "cwd-link");
+	const safeBin = join(root, "safe-bin");
+	const piLog = join(root, "pi.txt");
+	const currentPiLog = join(root, "current-pi.log");
+	const isolatedPiLog = join(root, "isolated-pi.log");
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(cwdDir, { recursive: true });
+	if (process.platform !== "win32") {
+		symlinkSync(agentBin, agentBinLink, "dir");
+		symlinkSync(cwdDir, cwdLink, "dir");
+	}
+	writeFakePi(agentBin, "printf 'isolated pi intercepted\\n' >\"${ISOLATED_PI_LOG}\"\nexit 89");
+	writeFakePi(cwdDir, "printf 'current-dir pi intercepted\\n' >\"${CURRENT_PI_LOG}\"\nexit 86");
+	writeFakePi(safeBin, "{ printf 'cmd=%s\\n' \"$0\"; printf 'argv=%s\\n' \"$*\"; printf 'agent=%s\\n' \"${PI_CODING_AGENT_DIR:-}\"; printf 'path=%s\\n' \"${PATH:-}\"; } >\"${PI_WRAPPER_LOG}\"");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	const poisonedPathEntries = ["", ".", cwdDir, agentBin];
+	if (process.platform !== "win32") poisonedPathEntries.push(cwdLink, agentBinLink);
+	poisonedPathEntries.push(safeBin, process.env.PATH || "");
+	const result = spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-update.mjs"), "--extensions", "--agent-dir", agentDir, "--quiet"], {
+		cwd: cwdDir,
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: poisonedPathEntries.join(":"),
+			PI_WRAPPER_LOG: piLog,
+			CURRENT_PI_LOG: currentPiLog,
+			ISOLATED_PI_LOG: isolatedPiLog,
+			PI_CODING_AGENT_DIR: join(homeDir, ".pi", "agent"),
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	assert.equal(result.status, 0, result.stderr);
+	assert.equal(result.stdout, "");
+	const piRecord = Object.fromEntries(readFileSync(piLog, "utf8").trim().split(/\r?\n/).map((line) => {
+		const separator = line.indexOf("=");
+		return [line.slice(0, separator), line.slice(separator + 1)];
+	}));
+	assert.equal(piRecord.cmd, join(safeBin, "pi"));
+	assert.equal(piRecord.argv, "update --extensions");
+	assert.equal(piRecord.agent, agentDir);
+	assert.notEqual(piRecord.agent, join(homeDir, ".pi", "agent"));
+	const piPathEntries = piRecord.path.split(":");
+	assert.equal(piPathEntries[0], safeBin);
+	assert.equal(piPathEntries.includes(""), false);
+	assert.equal(piPathEntries.includes("."), false);
+	assert.equal(piPathEntries.includes(cwdDir), false);
+	assert.equal(piPathEntries.includes(agentBin), false);
+	if (process.platform !== "win32") {
+		assert.equal(piPathEntries.includes(cwdLink), false);
+		assert.equal(piPathEntries.includes(agentBinLink), false);
+	}
+	assert.equal(existsSync(currentPiLog), false);
+	assert.equal(existsSync(isolatedPiLog), false);
+});
+
 test("tlh update removes isolated bin and skips non-file bash candidates before running bash", (t) => {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");

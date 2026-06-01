@@ -142,6 +142,7 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
 	assert.doesNotMatch(extensionSource, /from "\.\/the-last-harness\/gnosis\.js"/);
 	assert.doesNotMatch(extensionSource, /registerGnosisCommand/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/header\.js"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/package-update-notice\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/primary-agent-runtime\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/resources\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/subscription-usage\.mjs"/);
@@ -174,6 +175,10 @@ test("extension delegates launch update and telemetry services to feature module
 	assert.match(sessionStart, /maybeNotifyAvailableTlhUpdate\(ctx\)/);
 	assert.doesNotMatch(extensionSource, /function maybeSendTlhLaunchTelemetry/);
 	assert.doesNotMatch(extensionSource, /function fetchLatestTlhRelease/);
+});
+
+test("extension installs the TLH package-update startup notice override during activation", () => {
+	assert.match(extensionSource, /installTlhPackageUpdateNotificationOverride\(\)/);
 });
 
 test("extension runs primary session_start work before UI startup in one handler", () => {
