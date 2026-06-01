@@ -59,13 +59,6 @@ const BASE_SUPPORT_FILES = Object.freeze([
 		installName: "",
 	},
 	{
-		variable: "TLH_INSTALL_QUERY_SCRIPT",
-		requirement: REQUIRED,
-		relativePath: "scripts/tlh-install-query.mjs",
-		tempPath: "tlh-install-query.mjs",
-		installName: "",
-	},
-	{
 		variable: "MERGE_SCRIPT",
 		requirement: REQUIRED,
 		relativePath: "scripts/merge-settings.mjs",
@@ -163,7 +156,7 @@ export function supportFileManifest({ noSettings = false } = {}) {
 	return files.map(cloneSupportFile);
 }
 
-export function formatSupportFileManifestRow(file) {
+function formatSupportFileManifestRow(file) {
 	return [
 		file.variable,
 		file.requirement,
@@ -181,15 +174,6 @@ export function requiredSupportFiles(options = {}) {
 	return supportFileManifest(options).filter((file) => file.requirement === REQUIRED);
 }
 
-export function optionalSupportFiles(options = {}) {
-	return supportFileManifest(options).filter((file) => file.requirement === OPTIONAL);
-}
-
 export function installableSupportFiles(options = {}) {
 	return supportFileManifest(options).filter((file) => Boolean(file.installName));
 }
-
-export const SUPPORT_FILE_REQUIREMENTS = Object.freeze({
-	REQUIRED,
-	OPTIONAL,
-});

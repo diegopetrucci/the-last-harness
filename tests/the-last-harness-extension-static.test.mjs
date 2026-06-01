@@ -13,10 +13,10 @@ const PI_EXTENSION_DIRECTORY_ENTRYPOINT_FILES = ["package.json", "index.ts", "in
 const extensionSource = readFileSync(new URL("../extensions/the-last-harness.ts", import.meta.url), "utf8");
 const changelogSource = readFileSync(new URL("../extensions/the-last-harness/changelog.ts", import.meta.url), "utf8");
 const primaryRuntimeSource = readFileSync(new URL("../extensions/the-last-harness/primary-agent-runtime.ts", import.meta.url), "utf8");
-const ticketRuntimeSource = readFileSync(new URL("../extensions/the-last-harness/tickets.ts", import.meta.url), "utf8");
 const effortSource = readFileSync(new URL("../extensions/the-last-harness/effort.ts", import.meta.url), "utf8");
 const promptsSource = readFileSync(new URL("../extensions/the-last-harness/prompts.ts", import.meta.url), "utf8");
 const usageLimitsSource = readFileSync(new URL("../extensions/the-last-harness/usage-limits.ts", import.meta.url), "utf8");
+const profileStateSource = readFileSync(new URL("../extensions/the-last-harness/profile-state.ts", import.meta.url), "utf8");
 const jiti = createJiti(import.meta.url);
 const { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents, loadSubagentMetadata } = await jiti.import(
 	"../extensions/the-last-harness/prompts.ts",
@@ -87,7 +87,6 @@ test("before_agent_start activates ticket runtime without disabled-ticket prompt
 	const beforeAgentStart = sourceSection(primaryRuntimeSource, 'pi.on("before_agent_start"', 'pi.on("tool_call"');
 
 	assert.match(primaryRuntimeSource, /function getTlhGlobalSettings\(cwd: string\): TlhSettings/);
-	assert.match(ticketRuntimeSource, /return true;/);
 	assert.match(beforeAgentStart, /const settings = getTlhGlobalSettings\(ctx\.cwd\);/);
 	assert.doesNotMatch(beforeAgentStart, /ticketIntegrationEnabled/);
 	assert.match(beforeAgentStart, /activateTlhTicketRuntime\(settings, getAgentDir\(\)\);/);
@@ -132,7 +131,6 @@ test("child startup branch uses the mandatory-ticket child prompt", () => {
 	);
 
 	assert.doesNotMatch(registerBlock, /getTlhGlobalSettings\(process\.cwd\(\)\)/);
-	assert.doesNotMatch(registerBlock, /isTlhTicketIntegrationEnabled/);
 	assert.match(registerBlock, /buildChildSubagentSystemPrompt\(\)/);
 });
 
@@ -238,13 +236,28 @@ test("extension wires TLH changelog command and release-notes rendering", () => 
 });
 
 test("extension wires usage-limit command to isolated TLH settings", () => {
+	const lockedWriteHelper = sourceSection(
+		profileStateSource,
+		"export function withLockedTlhSettingsWrite",
+		"export function assertSafeTlhSettingsPath",
+	);
+
 	assert.match(extensionSource, /registerUsageCommand\(pi\)/);
+	assert.match(usageLimitsSource, /from "\.\/profile-state\.js"/);
 	assert.match(usageLimitsSource, /pi\.registerCommand\("usage"/);
 	assert.match(usageLimitsSource, /value: "weekly on"/);
 	assert.match(usageLimitsSource, /value: "weekly off"/);
 	assert.match(usageLimitsSource, /value: "weekly toggle"/);
-	assert.match(usageLimitsSource, /tlhSettingsPathForWrite\(\)/);
-	assert.match(usageLimitsSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
+	assert.match(
+		usageLimitsSource,
+		/withLockedTlhSettingsWrite\(cwd, "Refusing to write usage-limit settings outside the isolated TLH profile\./,
+	);
+	assert.doesNotMatch(usageLimitsSource, /tlhSettingsPathForWrite\(\)/);
+	assert.doesNotMatch(usageLimitsSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
+	assert.match(lockedWriteHelper, /const settingsPath = tlhSettingsPathForWrite\(\);/);
+	assert.match(lockedWriteHelper, /assertSafeTlhSettingsPath\(settingsPath\);/);
+	assert.match(lockedWriteHelper, /const backupPath = current \? `\$\{settingsPath\}\.bak-\$\{settingsBackupTimestamp\(\)\}` : undefined;/);
+	assert.match(lockedWriteHelper, /writeFileSync\(backupPath, current, \{ encoding: "utf8", flag: "wx", mode: 0o600 \}\);/);
 	assert.match(usageLimitsSource, /settings\.tlh\.usageLimits\.showWeekly = showWeekly/);
 	assert.match(usageLimitsSource, /showWeekly === true/);
 });

@@ -174,6 +174,28 @@ test("footer includes Anthropic weekly usage only when the preference enables it
 	assert.match(sessionLine, /weekly 88\.9% used/);
 });
 
+test("footer context and subscription usage keep compact token formatting", () => {
+	const snapshot = {
+		provider: "openai-codex",
+		fetchedAt: NOW_MS,
+		windows: {
+			session: { key: "primary_window", label: "session", used: 1500, limit: 9999 },
+		},
+	};
+	const ctx = createCtx({
+		provider: "openai-codex",
+		contextUsage: { tokens: 1000, contextWindow: 9999, percent: 12.3 },
+	});
+	const usageOptions = {
+		subscriptionUsage: usageProvider(snapshot),
+		shouldShowWeekly: () => false,
+	};
+
+	assert.match(renderAgentLine(ctx, usageOptions), /12\.3%\/10\.0k/);
+	assert.equal(formatTlhSubscriptionUsageFooterSegment(snapshot), "session 1.5k/10.0k used");
+	assert.match(renderSessionStatsLine(ctx, usageOptions), /session 1\.5k\/10\.0k used/);
+});
+
 test("footer render reads cached usage snapshots without refreshing", () => {
 	let refreshCalls = 0;
 	const subscriptionUsage = {

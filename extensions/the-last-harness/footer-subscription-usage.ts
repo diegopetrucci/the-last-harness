@@ -1,4 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { formatCompactTokenCount } from "./common.js";
 import type {
 	TlhSubscriptionUsageSnapshot,
 	TlhSubscriptionUsageSnapshotProvider,
@@ -19,22 +20,6 @@ export type TlhSubscriptionUsageFooterState = {
 	segment?: string;
 };
 
-function formatUsageTokens(count: number): string {
-	if (count < 1000) {
-		return count.toString();
-	}
-	if (count < 10000) {
-		return `${(count / 1000).toFixed(1)}k`;
-	}
-	if (count < 1000000) {
-		return `${Math.round(count / 1000)}k`;
-	}
-	if (count < 10000000) {
-		return `${(count / 1000000).toFixed(1)}M`;
-	}
-	return `${Math.round(count / 1000000)}M`;
-}
-
 function finiteNumber(value: number | undefined): number | undefined {
 	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
@@ -46,7 +31,7 @@ function formatUsagePercent(percent: number): string {
 
 function formatUsageCount(count: number): string {
 	const normalized = Math.round(count * 10) / 10;
-	return formatUsageTokens(normalized);
+	return formatCompactTokenCount(normalized);
 }
 
 function formatUsageDuration(durationMs: number | undefined): string | undefined {

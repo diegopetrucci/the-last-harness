@@ -7,9 +7,12 @@ import { spawnSync } from "node:child_process";
 import process from "node:process";
 
 import {
+	assignOptionValue,
 	backupPathWithTimestamp,
+	defaultTlhSettingsPath,
+	expandHomePath,
 	readJsonFile,
-	requiredValue,
+	resolveTlhAgentDir,
 } from "./lib/tlh-install-utils.mjs";
 
 const VALIDATION_TIMEOUT_MS = 5000;
@@ -74,68 +77,44 @@ function parseArgs(argv) {
 			args.quiet = true;
 			continue;
 		}
-		if (arg === "--settings") {
-			args.settingsPath = requiredValue(argv, ++index, arg);
+		const settingsIndex = assignOptionValue(args, "settingsPath", argv, index, "--settings");
+		if (settingsIndex !== undefined) {
+			index = settingsIndex;
 			continue;
 		}
-		if (arg.startsWith("--settings=")) {
-			args.settingsPath = arg.slice("--settings=".length);
+		const agentDirIndex = assignOptionValue(args, "agentDir", argv, index, "--agent-dir");
+		if (agentDirIndex !== undefined) {
+			index = agentDirIndex;
 			continue;
 		}
-		if (arg === "--agent-dir") {
-			args.agentDir = requiredValue(argv, ++index, arg);
+		const installPathIndex = assignOptionValue(args, "installPath", argv, index, "--install-path");
+		if (installPathIndex !== undefined) {
+			index = installPathIndex;
 			continue;
 		}
-		if (arg.startsWith("--agent-dir=")) {
-			args.agentDir = arg.slice("--agent-dir=".length);
+		const targetIndex = assignOptionValue(args, "target", argv, index, "--target");
+		if (targetIndex !== undefined) {
+			index = targetIndex;
 			continue;
 		}
-		if (arg === "--install-path") {
-			args.installPath = requiredValue(argv, ++index, arg);
+		const sourceUrlIndex = assignOptionValue(args, "ticketSourceUrl", argv, index, "--unsafe-test-ticket-source-url");
+		if (sourceUrlIndex !== undefined) {
+			index = sourceUrlIndex;
 			continue;
 		}
-		if (arg.startsWith("--install-path=")) {
-			args.installPath = arg.slice("--install-path=".length);
+		const sourceShaIndex = assignOptionValue(args, "ticketSourceSha256", argv, index, "--unsafe-test-ticket-source-sha256");
+		if (sourceShaIndex !== undefined) {
+			index = sourceShaIndex;
 			continue;
 		}
-		if (arg === "--target") {
-			args.target = requiredValue(argv, ++index, arg);
+		const archiveEntryIndex = assignOptionValue(args, "ticketArchiveEntry", argv, index, "--unsafe-test-ticket-archive-entry");
+		if (archiveEntryIndex !== undefined) {
+			index = archiveEntryIndex;
 			continue;
 		}
-		if (arg.startsWith("--target=")) {
-			args.target = arg.slice("--target=".length);
-			continue;
-		}
-		if (arg === "--unsafe-test-ticket-source-url") {
-			args.ticketSourceUrl = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--unsafe-test-ticket-source-url=")) {
-			args.ticketSourceUrl = arg.slice("--unsafe-test-ticket-source-url=".length);
-			continue;
-		}
-		if (arg === "--unsafe-test-ticket-source-sha256") {
-			args.ticketSourceSha256 = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--unsafe-test-ticket-source-sha256=")) {
-			args.ticketSourceSha256 = arg.slice("--unsafe-test-ticket-source-sha256=".length);
-			continue;
-		}
-		if (arg === "--unsafe-test-ticket-archive-entry") {
-			args.ticketArchiveEntry = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--unsafe-test-ticket-archive-entry=")) {
-			args.ticketArchiveEntry = arg.slice("--unsafe-test-ticket-archive-entry=".length);
-			continue;
-		}
-		if (arg === "--wrapper-name") {
-			args.wrapperName = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--wrapper-name=")) {
-			args.wrapperName = arg.slice("--wrapper-name=".length);
+		const wrapperNameIndex = assignOptionValue(args, "wrapperName", argv, index, "--wrapper-name");
+		if (wrapperNameIndex !== undefined) {
+			index = wrapperNameIndex;
 			continue;
 		}
 		if (arg.startsWith("-")) {
@@ -149,20 +128,6 @@ function parseArgs(argv) {
 	}
 
 	return args;
-}
-
-function expandHome(path) {
-	if (path === "~") return homedir();
-	if (path.startsWith("~/")) return join(homedir(), path.slice(2));
-	return path;
-}
-
-function getAgentDir(argAgentDir) {
-	return expandHome(argAgentDir || process.env.PI_CODING_AGENT_DIR || process.env.TLH_AGENT_DIR || join(homedir(), ".the-last-harness", "agent"));
-}
-
-function defaultSettingsPath(agentDir) {
-	return join(agentDir, "settings.json");
 }
 
 function isPlainObject(value) {
@@ -208,7 +173,7 @@ function ticketsState(settings) {
 
 function normalizedInstallPath(path) {
 	if (!path) return undefined;
-	return resolve(expandHome(path));
+	return resolve(expandHomePath(path));
 }
 
 function configuredInstallPath(settings) {
@@ -223,8 +188,8 @@ function managedTkPinIsFresh(settings, expectedSha256) {
 }
 
 function managedTkTargetPath(args, agentDir) {
-	const agentRoot = resolve(expandHome(agentDir));
-	return resolve(expandHome(args.target || join(agentRoot, "bin", "tk")));
+	const agentRoot = resolve(expandHomePath(agentDir));
+	return resolve(expandHomePath(args.target || join(agentRoot, "bin", "tk")));
 }
 
 function candidateCommands(args, settings, agentDir) {
@@ -517,7 +482,7 @@ function resolvedPathFromRoot(path, root, resolvedRoot) {
 }
 
 function managedTkTargetPlan(args, agentDir) {
-	const agentRoot = resolve(expandHome(agentDir));
+	const agentRoot = resolve(expandHomePath(agentDir));
 	const target = managedTkTargetPath(args, agentDir);
 
 	assertNotNormalPiPath(agentRoot, "agent dir");
@@ -1189,8 +1154,8 @@ async function main() {
 		return;
 	}
 
-	const agentDir = resolve(getAgentDir(args.agentDir));
-	const settingsPath = resolve(expandHome(args.settingsPath || defaultSettingsPath(agentDir)));
+	const agentDir = resolve(resolveTlhAgentDir(args.agentDir));
+	const settingsPath = resolve(expandHomePath(args.settingsPath || defaultTlhSettingsPath({ agentDir })));
 	if (args.command === "disable") {
 		throw new Error("disable is no longer supported because tk ticket integration is required");
 	}

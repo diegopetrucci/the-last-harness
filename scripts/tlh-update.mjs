@@ -1,11 +1,16 @@
 #!/usr/bin/env node
 import { accessSync, chmodSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 
-import { requiredValue } from "./lib/tlh-install-utils.mjs";
+import {
+	assignOptionValue,
+	defaultTlhAgentDir,
+	defaultTlhBinDir,
+	expandHomePath,
+} from "./lib/tlh-install-utils.mjs";
 
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_WRAPPER_NAME = "tlh";
@@ -36,24 +41,10 @@ Options:
 `;
 }
 
-function expandHome(path) {
-	if (path === "~") return homedir();
-	if (path.startsWith("~/")) return join(homedir(), path.slice(2));
-	return path;
-}
-
-function defaultAgentDir() {
-	return process.env.TLH_AGENT_DIR || process.env.PI_CODING_AGENT_DIR || join(homedir(), ".the-last-harness", "agent");
-}
-
-function defaultBinDir() {
-	return process.env.TLH_BIN_DIR || join(homedir(), ".local", "bin");
-}
-
 function parseArgs(argv) {
 	const args = {
-		agentDir: defaultAgentDir(),
-		binDir: defaultBinDir(),
+		agentDir: defaultTlhAgentDir(process.env, { preferTlhAgentDir: true }),
+		binDir: defaultTlhBinDir(process.env),
 		wrapperName: process.env.TLH_WRAPPER_NAME || DEFAULT_WRAPPER_NAME,
 		repo: process.env.TLH_REPO,
 		track: undefined,
@@ -100,67 +91,46 @@ function parseArgs(argv) {
 			args.quiet = false;
 			continue;
 		}
-		if (arg === "--agent-dir") {
-			args.agentDir = requiredValue(argv, ++i, arg);
+		const agentDirIndex = assignOptionValue(args, "agentDir", argv, i, "--agent-dir");
+		if (agentDirIndex !== undefined) {
+			i = agentDirIndex;
 			continue;
 		}
-		if (arg === "--bin-dir") {
-			args.binDir = requiredValue(argv, ++i, arg);
+		const binDirIndex = assignOptionValue(args, "binDir", argv, i, "--bin-dir");
+		if (binDirIndex !== undefined) {
+			i = binDirIndex;
 			continue;
 		}
-		if (arg === "--wrapper-name") {
-			args.wrapperName = requiredValue(argv, ++i, arg);
+		const wrapperNameIndex = assignOptionValue(args, "wrapperName", argv, i, "--wrapper-name");
+		if (wrapperNameIndex !== undefined) {
+			i = wrapperNameIndex;
 			continue;
 		}
-		if (arg === "--track") {
-			args.track = requiredValue(argv, ++i, arg);
+		const trackIndex = assignOptionValue(args, "track", argv, i, "--track");
+		if (trackIndex !== undefined) {
+			i = trackIndex;
 			continue;
 		}
-		if (arg === "--ref") {
-			args.ref = requiredValue(argv, ++i, arg);
+		const refIndex = assignOptionValue(args, "ref", argv, i, "--ref");
+		if (refIndex !== undefined) {
+			i = refIndex;
 			continue;
 		}
-		if (arg === "--repo") {
-			args.repo = requiredValue(argv, ++i, arg);
+		const repoIndex = assignOptionValue(args, "repo", argv, i, "--repo");
+		if (repoIndex !== undefined) {
+			i = repoIndex;
 			continue;
 		}
-		if (arg === "--package-source") {
-			args.packageSource = requiredValue(argv, ++i, arg);
-			continue;
-		}
-		if (arg.startsWith("--agent-dir=")) {
-			args.agentDir = arg.slice("--agent-dir=".length);
-			continue;
-		}
-		if (arg.startsWith("--bin-dir=")) {
-			args.binDir = arg.slice("--bin-dir=".length);
-			continue;
-		}
-		if (arg.startsWith("--wrapper-name=")) {
-			args.wrapperName = arg.slice("--wrapper-name=".length);
-			continue;
-		}
-		if (arg.startsWith("--track=")) {
-			args.track = arg.slice("--track=".length);
-			continue;
-		}
-		if (arg.startsWith("--ref=")) {
-			args.ref = arg.slice("--ref=".length);
-			continue;
-		}
-		if (arg.startsWith("--repo=")) {
-			args.repo = arg.slice("--repo=".length);
-			continue;
-		}
-		if (arg.startsWith("--package-source=")) {
-			args.packageSource = arg.slice("--package-source=".length);
+		const packageSourceIndex = assignOptionValue(args, "packageSource", argv, i, "--package-source");
+		if (packageSourceIndex !== undefined) {
+			i = packageSourceIndex;
 			continue;
 		}
 		throw new Error(`Unknown option for tlh update: ${arg}`);
 	}
 
-	args.agentDir = expandHome(args.agentDir);
-	args.binDir = expandHome(args.binDir);
+	args.agentDir = expandHomePath(args.agentDir);
+	args.binDir = expandHomePath(args.binDir);
 	return args;
 }
 

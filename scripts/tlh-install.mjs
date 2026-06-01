@@ -711,27 +711,19 @@ async function mergeSettings(config) {
 	runNodeScript(config, keybindingArgs[0], keybindingArgs.slice(1));
 }
 
-function settingsRequireTlhSubagentPrompts(config) {
-	return settingsFileRequiresTlhSubagentPrompts(config.supportFilePaths.DEFAULTS_FILE, { noSettings: config.noSettings });
-}
-
-function defaultExtensionsRequireCriticalInstall(config) {
-	return defaultExtensionsFileRequiresCriticalInstall(config.supportFilePaths.DEFAULT_EXTENSIONS_FILE, { noSettings: config.noSettings });
-}
-
-function findTlhSubagentsDir(config) {
-	return findTlhSubagentsDirFromSources(config, {
-		localRepoDir: findLocalRepoDir(config) || "",
-		prompts: config.subagentPrompts,
-	});
-}
-
 async function installSupportFilesToProfile(config) {
 	if (!installableSupportFilesArePrepared(config)) await ensureSupportFilesPrepared(config, supportFileIo());
 	if (!installableSupportFilesArePrepared(config)) return;
 
-	const requireSubagentPrompts = settingsRequireTlhSubagentPrompts(config);
-	const subagentsSrc = requireSubagentPrompts ? findTlhSubagentsDir(config) : "";
+	const requireSubagentPrompts = settingsFileRequiresTlhSubagentPrompts(config.supportFilePaths.DEFAULTS_FILE, {
+		noSettings: config.noSettings,
+	});
+	const subagentsSrc = requireSubagentPrompts
+		? findTlhSubagentsDirFromSources(config, {
+			localRepoDir: findLocalRepoDir(config) || "",
+			prompts: config.subagentPrompts,
+		})
+		: "";
 	const supportSubagentsDir = join(config.supportDir, "agents", "subagents");
 
 	if (config.dryRun) {
@@ -963,7 +955,9 @@ function installDefaultExtensions(config) {
 			"critical-sources",
 		], { captureStdout: true });
 	} catch (error) {
-		if (defaultExtensionsRequireCriticalInstall(config)) {
+		if (defaultExtensionsFileRequiresCriticalInstall(config.supportFilePaths.DEFAULT_EXTENSIONS_FILE, {
+			noSettings: config.noSettings,
+		})) {
 			throw new Error(`failed to read critical bundled default extension sources: ${error.message}`);
 		}
 		warn("installed default-extension helper does not support critical source queries; treating this ref as having no critical defaults.");

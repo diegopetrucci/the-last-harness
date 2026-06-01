@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
 
 import { PRIMARY_AGENT_SESSION_STATE_ENTRY } from "../extensions/the-last-harness-primary-agent.mjs";
+import { cleanupTempDir, createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
 const { registerTlhPrimaryAgentRuntime } = await jiti.import("../extensions/the-last-harness/primary-agent-runtime.ts");
@@ -77,39 +77,6 @@ function registerRuntimeHarness(options = {}) {
 	return { pi, runtime, toolCall };
 }
 
-function tempFixture() {
-	const dir = mkdtempSync(join(tmpdir(), "tlh-primary-runtime-test-"));
-	const home = join(dir, "home");
-	const agent = join(dir, "agent");
-	const cwd = join(dir, "workspace");
-	mkdirSync(home, { recursive: true });
-	mkdirSync(agent, { recursive: true });
-	mkdirSync(cwd, { recursive: true });
-	return { dir, home, agent, cwd };
-}
-
-async function withEnv(env, fn) {
-	const previous = new Map();
-	for (const key of Object.keys(env)) {
-		previous.set(key, process.env[key]);
-		if (env[key] === undefined) {
-			delete process.env[key];
-		} else {
-			process.env[key] = env[key];
-		}
-	}
-	try {
-		return await fn();
-	} finally {
-		for (const [key, value] of previous) {
-			if (value === undefined) {
-				delete process.env[key];
-			} else {
-				process.env[key] = value;
-			}
-		}
-	}
-}
 
 function writePrimaryConfig(agentDir, primaryAgent = {}) {
 	writeFileSync(join(agentDir, "settings.json"), `${JSON.stringify({ tlh: { primaryAgent } }, null, 2)}\n`);
@@ -274,7 +241,7 @@ test("/switch-primary-agent includes Rush completions, usage, and status strings
 });
 
 test("/switch-primary-agent default writes tlh.primaryAgent with a backup", async () => {
-	const fixture = tempFixture();
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true });
 	const initialSettings = `${JSON.stringify({ tlh: { primaryAgent: { selected: "architect" } } }, null, 2)}\n`;
 
 	try {
@@ -296,7 +263,28 @@ test("/switch-primary-agent default writes tlh.primaryAgent with a backup", asyn
 			assert.match(writeDefault.notifications.at(-1)?.message ?? "", /Updated TLH primary-agent persistent default/);
 		});
 	} finally {
-		rmSync(fixture.dir, { recursive: true, force: true });
+		cleanupTempDir(fixture);
+	}
+});
+
+test("/switch-primary-agent default refuses normal Pi settings", async () => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true });
+	const normalAgent = join(fixture.home, ".pi", "agent");
+
+	try {
+		await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: normalAgent }, async () => {
+			const { pi } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+			const command = pi.commands.get("switch-primary-agent");
+			assert.ok(command, "registers /switch-primary-agent");
+
+			const writeDefault = createCommandContext([], { cwd: fixture.cwd });
+			await command.handler("default rush", writeDefault.ctx);
+
+			assert.equal(writeDefault.notifications.at(-1)?.type, "error");
+			assert.match(writeDefault.notifications.at(-1)?.message ?? "", /isolated TLH profile|normal Pi config/);
+		});
+	} finally {
+		cleanupTempDir(fixture);
 	}
 });
 
@@ -328,7 +316,7 @@ test("Rush blocks developer delegation even inside nested subagent plans", async
 });
 
 test("primary runtime applies OpenAI Rush-like metadata defaults with no settings opt-in", async () => {
-	const fixture = tempFixture();
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true });
 	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
 
 	try {
@@ -348,12 +336,12 @@ test("primary runtime applies OpenAI Rush-like metadata defaults with no setting
 			assert.equal(pi.thinkingLevel, "off");
 		});
 	} finally {
-		rmSync(fixture.dir, { recursive: true, force: true });
+		cleanupTempDir(fixture);
 	}
 });
 
 test("primary runtime falls back to Anthropic Rush-like metadata defaults when only Anthropic is available", async () => {
-	const fixture = tempFixture();
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true });
 	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
 
 	try {
@@ -373,12 +361,12 @@ test("primary runtime falls back to Anthropic Rush-like metadata defaults when o
 			assert.equal(pi.thinkingLevel, "low");
 		});
 	} finally {
-		rmSync(fixture.dir, { recursive: true, force: true });
+		cleanupTempDir(fixture);
 	}
 });
 
 test("primary runtime respects explicit false settings over Rush-like metadata defaults", async () => {
-	const fixture = tempFixture();
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true });
 	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
 
 	try {
@@ -399,6 +387,6 @@ test("primary runtime respects explicit false settings over Rush-like metadata d
 			assert.equal(pi.thinkingLevel, "normal");
 		});
 	} finally {
-		rmSync(fixture.dir, { recursive: true, force: true });
+		cleanupTempDir(fixture);
 	}
 });

@@ -1,45 +1,14 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
 import { createJiti } from "jiti";
 
+import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
+
 const jiti = createJiti(import.meta.url);
 const { registerUsageCommand, shouldShowTlhUsageWeekly } = await jiti.import("../extensions/the-last-harness/usage-limits.ts");
-
-function tempFixture() {
-	const dir = mkdtempSync(join(tmpdir(), "tlh-usage-limits-test-"));
-	const home = join(dir, "home");
-	const agent = join(dir, "agent");
-	mkdirSync(home, { recursive: true });
-	mkdirSync(agent, { recursive: true });
-	return { dir, home, agent };
-}
-
-async function withEnv(env, fn) {
-	const previous = new Map();
-	for (const key of Object.keys(env)) {
-		previous.set(key, process.env[key]);
-		if (env[key] === undefined) {
-			delete process.env[key];
-		} else {
-			process.env[key] = env[key];
-		}
-	}
-	try {
-		return await fn();
-	} finally {
-		for (const [key, value] of previous) {
-			if (value === undefined) {
-				delete process.env[key];
-			} else {
-				process.env[key] = value;
-			}
-		}
-	}
-}
 
 function createPiHarness() {
 	const commands = new Map();
@@ -74,8 +43,8 @@ function registeredUsageCommand() {
 	return command;
 }
 
-test("usage command registers completions and reports weekly hidden by default", async () => {
-	const fixture = tempFixture();
+test("usage command registers completions and reports weekly hidden by default", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const command = registeredUsageCommand();
@@ -97,8 +66,8 @@ test("usage command registers completions and reports weekly hidden by default",
 	});
 });
 
-test("usage weekly preference writes isolated settings and backs up existing settings", async () => {
-	const fixture = tempFixture();
+test("usage weekly preference writes isolated settings and backs up existing settings", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
 	const settingsPath = join(fixture.agent, "settings.json");
 	const initialSettings = `${JSON.stringify({ tlh: { gnosis: { enabled: true } } }, null, 2)}\n`;
 	writeFileSync(settingsPath, initialSettings);
@@ -126,8 +95,8 @@ test("usage weekly preference writes isolated settings and backs up existing set
 	});
 });
 
-test("usage weekly on is idempotent across repeated invocations", async () => {
-	const fixture = tempFixture();
+test("usage weekly on is idempotent across repeated invocations", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
 	const settingsPath = join(fixture.agent, "settings.json");
 	writeFileSync(settingsPath, `${JSON.stringify({ tlh: { gnosis: { enabled: true } } }, null, 2)}\n`);
 
@@ -163,8 +132,8 @@ test("usage weekly on is idempotent across repeated invocations", async () => {
 	});
 });
 
-test("usage weekly off and toggle persist explicit preferences", async () => {
-	const offFixture = tempFixture();
+test("usage weekly off and toggle persist explicit preferences", async (t) => {
+	const offFixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
 	const offSettingsPath = join(offFixture.agent, "settings.json");
 	writeFileSync(offSettingsPath, `${JSON.stringify({ tlh: { usageLimits: { showWeekly: true } } }, null, 2)}\n`);
 
@@ -187,7 +156,7 @@ test("usage weekly off and toggle persist explicit preferences", async () => {
 		assert.match(notice?.message ?? "", /\/usage weekly on/);
 	});
 
-	const toggleFixture = tempFixture();
+	const toggleFixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
 	const toggleSettingsPath = join(toggleFixture.agent, "settings.json");
 
 	await withEnv({ HOME: toggleFixture.home, PI_CODING_AGENT_DIR: toggleFixture.agent }, async () => {
@@ -207,8 +176,8 @@ test("usage weekly off and toggle persist explicit preferences", async () => {
 	});
 });
 
-test("usage weekly writes refuse normal Pi settings", async () => {
-	const fixture = tempFixture();
+test("usage weekly writes refuse normal Pi settings", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
 	const normalAgent = join(fixture.home, ".pi", "agent");
 	mkdirSync(normalAgent, { recursive: true });
 

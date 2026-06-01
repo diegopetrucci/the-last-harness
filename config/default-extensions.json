@@ -62,11 +62,6 @@
     "description": "Open a local HTML dashboard explaining where the current session context is going."
   },
   {
-    "id": "confirm-destructive",
-    "source": "npm:@diegopetrucci/pi-confirm-destructive",
-    "description": "Confirm destructive shell/file operations before they run."
-  },
-  {
     "id": "rtk",
     "aliases": ["pi-rtk"],
     "replaces": ["npm:pi-rtk", "npm:@sherif-fanous/pi-rtk", "git:github.com/sherif-fanous/pi-rtk"],
