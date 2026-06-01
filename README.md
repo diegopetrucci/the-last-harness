@@ -12,7 +12,6 @@ If this resonates with you, welcome aboard:
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
 ```
 
-More install, update, uninstall, and undo details live in [`docs/install.md`](docs/install.md).
 
 ## The default TLH workflow: architect first
 
