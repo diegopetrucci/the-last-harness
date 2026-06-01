@@ -88,6 +88,7 @@ const MUTATING_PACKAGE_SUBCOMMANDS = new Map([
 	["yum", new Set(["install", "remove"])],
 ]);
 const SHELL_COMMAND_PREFIXES = new Set(["builtin", "command", "env", "exec", "noglob", "sudo", "time"]);
+const SHELL_CONTROL_COMMAND_PREFIXES = new Set(["!", "do", "elif", "else", "if", "then", "until", "while"]);
 const ENV_SHORT_OPTIONS_WITH_VALUES = new Set(["C", "P", "S", "u"]);
 const SHELL_PREFIX_OPTIONS_WITH_VALUES = new Map([
 	["builtin", new Set()],
@@ -496,6 +497,9 @@ function shellSegmentEnvSplitStringCommands(segment) {
 			index = skipShellCommandPrefix(words, index) - 1;
 			continue;
 		}
+		if (SHELL_CONTROL_COMMAND_PREFIXES.has(token)) {
+			continue;
+		}
 		if (token === "--" || token.startsWith("-")) {
 			continue;
 		}
@@ -574,6 +578,9 @@ function firstShellCommand(words) {
 			index = skipShellCommandPrefix(words, index) - 1;
 			continue;
 		}
+		if (SHELL_CONTROL_COMMAND_PREFIXES.has(token)) {
+			continue;
+		}
 		if (token === "--" || token.startsWith("-")) {
 			continue;
 		}
@@ -645,6 +652,9 @@ function hasMutatingShellWords(words) {
 		}
 		if (SHELL_COMMAND_PREFIXES.has(token)) {
 			index = skipShellCommandPrefix(words, index) - 1;
+			continue;
+		}
+		if (SHELL_CONTROL_COMMAND_PREFIXES.has(token)) {
 			continue;
 		}
 		if (token === "--" || token.startsWith("-")) {

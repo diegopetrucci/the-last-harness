@@ -93,6 +93,21 @@ test("bug-hunter plain bash rm is rejected", () => {
 	}), ["bug-hunter.read_only"]);
 });
 
+test("bug-hunter rejects mutating shell commands nested under control-flow reserved words", () => {
+	for (const command of [
+		"if true; then rm file; fi",
+		'for f in x; do rm "$f"; done',
+		"while true; do git reset --hard; done",
+	]) {
+		assert.deepEqual(violationCodes({
+			agent: "bug-hunter",
+			steps: [
+				{ type: "tool", tool: "bash", command },
+			],
+		}), ["bug-hunter.read_only"]);
+	}
+});
+
 test("bug-hunter rejects backgrounded mutating bash segments", () => {
 	for (const command of ["sleep 1 & rm -f secrets.txt", "true & git reset --hard"]) {
 		assert.deepEqual(violationCodes({
