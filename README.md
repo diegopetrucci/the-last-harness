@@ -6,7 +6,7 @@
 
 It is built around two simple ideas: you can outsource your thinking, but not your understanding ([cognitive debt](https://simonwillison.net/2026/Feb/15/cognitive-debt/)); and you should not be babysitting your agents.
 
-It installs into its own profile and does not overwrite your normal `~/.pi/agent` setup.
+If this resonates with you, welcome aboard:
 
 ```sh
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
