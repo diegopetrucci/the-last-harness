@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Removed
+
+- Removed the bundled `confirm-destructive` default extension. New installs no longer ship destructive-action confirmation prompts. Existing installs are unaffected by the upgrade — the package will remain in your isolated `~/.the-last-harness/agent/settings.json` `packages` array until you remove that line manually.
+
 ## [0.15.0] - 2026-06-01
 
 ### Added
