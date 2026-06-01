@@ -84,18 +84,16 @@ test("shared default-extension reader trims descriptions and can allow missing m
 	);
 });
 
-test("bundled manifest keeps security defaults plus quiet-tools-compatible rtk load order", () => {
+test("bundled manifest keeps quiet-tools-compatible rtk load order", () => {
 	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
 	const ids = bundled.map(({ id }) => id);
 	const rtk = bundled.find(({ id }) => id === "rtk");
-	const confirmDestructive = bundled.find(({ id }) => id === "confirm-destructive");
 	const dirtyRepoGuard = bundled.find(({ id }) => id === "dirty-repo-guard");
 
-	assert.ok(confirmDestructive, "bundled confirm-destructive default should exist");
-	assert.equal(confirmDestructive.source, "npm:@diegopetrucci/pi-confirm-destructive");
 	assert.ok(dirtyRepoGuard, "bundled dirty-repo-guard default should exist");
 	assert.equal(dirtyRepoGuard.source, "npm:@diegopetrucci/pi-dirty-repo-guard");
 	assert.equal(ids.includes("permission-gate"), false);
+	assert.equal(ids.includes("confirm-destructive"), false);
 	assert.ok(rtk, "bundled rtk default should exist");
 	assert.deepEqual(rtk.aliases, ["pi-rtk"]);
 	assert.deepEqual(rtk.replaces, [

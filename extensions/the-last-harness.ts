@@ -9,6 +9,7 @@ import { FooterGitCache } from "./the-last-harness/footer-git-cache.js";
 import { createTlhHeader } from "./the-last-harness/header.js";
 import { readTlhInstallNotice } from "./the-last-harness/install-state.js";
 import { scheduleTlhLaunchTelemetry } from "./the-last-harness/launch-telemetry.js";
+import { installTlhPackageUpdateNotificationOverride } from "./the-last-harness/package-update-notice.js";
 import { registerTlhPrimaryAgentRuntime } from "./the-last-harness/primary-agent-runtime.js";
 import { collectStartupResources } from "./the-last-harness/resources.js";
 import { createTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage.mjs";
@@ -22,6 +23,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		return;
 	}
 
+	installTlhPackageUpdateNotificationOverride();
 	registerEffortCommand(pi);
 	registerReviewCommand(pi);
 	registerTlhChangelogCommand(pi);
