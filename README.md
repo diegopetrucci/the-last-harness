@@ -71,7 +71,7 @@ Persistent primary-agent changes are written under `tlh.primaryAgent` in the iso
 ```text
 🤖 Generated with [The Last Harness](https://github.com/diegopetrucci/the-last-harness)
 
-Co-authored-by: The Last Harness <noreply@the-last-harness.invalid>
+Co-authored-by: The Last Harness <hi@thelastharness.com>
 ```
 
 Set `tlh.attribution.commit` to `false`, or run `/toggle-tlh-git-attribution`, to disable TLH commit attribution persistently. Run `/toggle-tlh-git-attribution` again to re-enable it. Deleting `tlh.attribution.commit` from `~/.the-last-harness/agent/settings.json` also returns the isolated profile to the built-in default footer. TLH does not change `git push`; attribution belongs in the commit message before you push.

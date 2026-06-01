@@ -54,6 +54,10 @@ function registeredToggleCommand() {
 }
 
 test("commit attribution helper resolves unset and boolean preference values", () => {
+	assert.equal(
+		TLH_DEFAULT_COMMIT_ATTRIBUTION,
+		"🤖 Generated with [The Last Harness](https://github.com/diegopetrucci/the-last-harness)\n\nCo-authored-by: The Last Harness <hi@thelastharness.com>",
+	);
 	assert.deepEqual(resolveTlhCommitAttribution(undefined), {
 		enabled: true,
 		footer: TLH_DEFAULT_COMMIT_ATTRIBUTION,
@@ -70,7 +74,10 @@ test("commit attribution helper resolves unset and boolean preference values", (
 test("commit attribution prompt helper only renders when enabled", () => {
 	assert.equal(buildTlhCommitAttributionPrompt({ enabled: false }), undefined);
 	assert.match(buildTlhCommitAttributionPrompt(resolveTlhCommitAttribution(undefined)) ?? "", /## TLH Git Commit Attribution/);
-	assert.match(buildTlhCommitAttributionPrompt(resolveTlhCommitAttribution(undefined)) ?? "", /Co-authored-by: The Last Harness/);
+	assert.match(
+		buildTlhCommitAttributionPrompt(resolveTlhCommitAttribution(undefined)) ?? "",
+		/Co-authored-by: The Last Harness <hi@thelastharness\.com>/,
+	);
 });
 
 test("git commit attribution guard blocks only obvious unattributed inline commit commands", () => {

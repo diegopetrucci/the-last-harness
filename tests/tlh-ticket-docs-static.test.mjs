@@ -76,11 +76,13 @@ test("README and changelog document boolean-only TLH commit attribution", () => 
 
 	assert.match(readme, /`\/toggle-tlh-git-attribution`/);
 	assert.match(readme, /`tlh\.attribution\.commit` is unset or `true`/);
+	assert.match(readme, /Co-authored-by: The Last Harness <hi@thelastharness\.com>/);
 	assert.match(readme, /Set `tlh\.attribution\.commit` to `false`/);
 	assert.match(readme, /Deleting `tlh\.attribution\.commit` from `~\/\.the-last-harness\/agent\/settings\.json`/);
 	assert.doesNotMatch(readme, /`\/attribution toggle`/);
 	assert.doesNotMatch(readme, /Set `tlh\.attribution\.commit` to `""`/);
 	assert.doesNotMatch(readme, /custom footer/i);
+	assert.doesNotMatch(readme, /noreply@the-last-harness\.invalid/);
 	assert.match(changelog, /`\/toggle-tlh-git-attribution`/);
 	assert.match(changelog, /boolean `tlh\.attribution\.commit` settings/);
 	assert.doesNotMatch(changelog, /`\/attribution toggle`/);

@@ -158,7 +158,7 @@ test("before_agent_start adds TLH commit attribution guidance only when enabled"
 		const { beforeAgentStart } = registerRuntimeHarness();
 		const enabledPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
 		assert.match(enabledPrompt.systemPrompt, /## TLH Git Commit Attribution/);
-		assert.match(enabledPrompt.systemPrompt, /Co-authored-by: The Last Harness/);
+		assert.match(enabledPrompt.systemPrompt, /Co-authored-by: The Last Harness <hi@thelastharness\.com>/);
 
 		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
 		const disabledPrompt = await beforeAgentStart(
