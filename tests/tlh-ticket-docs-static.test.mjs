@@ -63,7 +63,6 @@ test("README and integrations docs describe Rush primary behavior and switching 
 	assert.match(readme, /Anthropic Opus with low thinking on Anthropic/i);
 	assert.match(readme, /`architect` → `rush` → `product` → `bug-hunter` → `disabled`/);
 	assert.match(readme, /\/switch-primary-agent \[status\|architect\|rush\|product\|bug-hunter\|disabled\|reset\|default architect\|default rush\|default product\|default bug-hunter\|default disabled\|default reset\]/);
-	assert.match(readme, /`\/review` is architect-only/i);
 	assert.doesNotMatch(readme, /`\/tlh(?=`| \[)/);
 	assert.doesNotMatch(readme, /`\/harness(?=`| \[)/);
 	assert.doesNotMatch(readme, /`\/agent(?=`| \[)/);

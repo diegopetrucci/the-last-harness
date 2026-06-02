@@ -2,10 +2,17 @@
 
 [![CI](https://github.com/diegopetrucci/the-last-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/diegopetrucci/the-last-harness/actions/workflows/ci.yml)
 
-`tlh` (the last harness) is a highly opinionated — albeit still simple — version of [pi](https://github.com/earendil-works/pi). It's modelled after two core principles:
+`tlh` (The Last Harness) is an opinionated harness built on top of [Pi](https://github.com/earendil-works/pi).
 
-- _"you can outsource your thinking, but not your understanding"_: LLMs can, and should provide options, help out with discovery and exploration, filling the gaps in your understanding and technical knowledge — they should not, however, be used as a replacement for understanding. [Beware of cognitive debt](https://simonwillison.net/2026/Feb/15/cognitive-debt/).
-- you should not be babysitting your agents: if you need to manually call tools, run commands, and so on, the harness has failed you.
+Two core ideas drive it:
+- _"you can outsource your thinking, but not your understanding"_: LLMs can, and should, provide options, help out with discovery and exploration, filling the gaps in your understanding and technical knowledge — they should not, however, be used as a replacement for understanding. [Beware of cognitive debt](https://simonwillison.net/2026/Feb/15/cognitive-debt/).
+- _you should not be babysitting your agents_: if you need to manually call tools, run commands, and so on, the harness has failed you.
+
+It achieves this via a custom orchestration workflow — you only interface with an architect, whom you engage as a senior peer, and once you're satisfied with the discussion and plan, it takes over until everything is done. Work is pre-reviewed too, often multiple times, so that your time is not wasted in minutiae, freeing you to focus on the bigger picture.
+
+You're also not asked to manually run commands, manage context, or anything like that. This is built-in and done for you. Every further action that you take is because you _want_ to take it, not because you _have_ to. You should not be finding yourself thinking eg "oh, I forgot to trigger `/review`". Your time is worth more.
+
+`tlh` is also slow by default, and relatively token-expensive: it is designed to be used as a long-running, reliable, and predictable tool. You spend time preparing the work, and once it's off, it's off. No babysitting.
 
 If this resonates with you, welcome aboard:
 
@@ -13,164 +20,99 @@ If this resonates with you, welcome aboard:
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
 ```
 
-## Core features
+## The default TLH workflow: architect first
 
-A TLH primary agent is the role you talk to directly in the main session. The default primary is the **architect**, inspired by the architect-first workflow outlined in ["How I write software with LLMs"](https://www.stavros.io/posts/how-i-write-software-with-llms/): refine requirements and scope, understand codebase implications, turn approved plans into tickets, delegate implementation, request review, and report back when the work is done.
+Most TLH users stay with the **architect** primary agent.
 
-TLH also includes **Rush**, a selectable primary for small bounded implementation tasks. Rush edits directly, runs narrow validation, and skips the default architect `tk`/developer/review loop. It only asks before using `code-reviewer` when a review pass seems worth the risk/latency tradeoff, and `oracle` is an optional deeper second opinion rather than a default step. Provider defaults are GPT-5.5 with thinking off on OpenAI/OpenAI-Codex, and Anthropic Opus with low thinking on Anthropic.
+The architect is the default because TLH is optimized for a deliberate loop:
 
-TLH also includes a **product** primary agent for product strategy and decision support. It clarifies goals, frames tradeoffs, maintains product strategy docs, and shapes implementation-ready `tk` tickets for later architect/developer handoff. Product mode does not implement source changes, run implementation loops, or perform code review.
+1. clarify the request until the goal and constraints are explicit,
+2. inspect the repo and relevant context,
+3. propose a plan,
+4. wait for the exact word `approved`,
+5. create scoped `tk` tickets,
+6. delegate implementation and review to focused minor subagents,
+7. evaluate those results critically, and
+8. report back with judgment and accountability.
 
-TLH also includes a **bug-hunter** primary agent for read-only investigation and debugging. It analyzes bug reports, traces root causes, surveys the codebase for related patterns, and proposes candidate fixes — without modifying files, running destructive tools, or kicking off implementation loops. Bug-hunter is a peer to the architect, Rush, and product primaries: useful when you want to understand a problem before handing off to a write-capable primary.
+That last part matters: the architect does not disappear once work is delegated. It stays responsible for orchestration, pushes back on weak subagent output, decides what to do next, and remains the single point of accountability to the user.
 
-Primary agents are optional. Use `Shift+Tab` to cycle the current session through `architect` → `rush` → `product` → `bug-hunter` → `disabled`, or use `/switch-primary-agent` for explicit session and persistent-default controls. When primary agents are disabled, subagents remain available but TLH stops applying primary-agent persona/tool restrictions.
+### Minor subagents are focused child sessions
 
-### Subagents
+TLH subagents are fresh child sessions, not a giant shared swarm. They get the task and project context they need, not the whole primary conversation. In practice that means less context pollution, clearer responsibilities, and easier review of what each agent was asked to do.
 
-TLH subagents are focused child sessions used by the architect workflow: `repo-scout` for discovery, `web-scout` for web research, `developer` for implementation, `code-reviewer` for review, `diff-summarizer` for local diff orientation, and `librarian`/`oracle` for external research and second opinions.
+Common roles include `repo-scout` for discovery, `diff-summarizer` for change overviews, `developer` for implementation, `code-reviewer` for review, `librarian` for repo knowledge, `web-scout` for web research, and `oracle` for a deeper second opinion.
 
-They run in fresh child contexts: they get the task and project context, not the whole primary-agent conversation. They do not coordinate with each other as a swarm; they report back to the parent primary agent, which stays responsible for decisions and orchestration. TLH uses bundled per-role model defaults. If a child may need supervisor decisions mid-task, prefer async/background delegation; foreground children should return blockers in their final result instead of waiting on blocking supervisor contact.
+## Why this workflow is useful
 
-## Quality-of-life improvements to `pi`
+### Benefits
 
-- **Project memory**: Gnosis is required and installed automatically on supported platforms (linux/darwin × x64/arm64) so agents can record decisions, constraints, rejected alternatives, and lessons in repo-local memory. Unsupported platforms hard-fail at install.
-- **Ticketed execution**: TLH requires `tk` for dependency-tracked tickets, installing a managed command at `~/.the-last-harness/agent/bin/tk` when it needs to supply one. The architect hands one ticket at a time to implementation and review agents; product mode can shape product-approved tickets for later handoff; Rush is the small-task exception and edits directly instead of starting that default loop.
-- **Context management**: context is capped to 200k tokens to avoid the `dumb zone`, and `/context` lets you see what is eating up your context.
-- **Subscription usage footer**: OAuth subscription sessions on OpenAI/Codex and Anthropic show the current usage window in the footer; weekly usage is hidden by default and controlled with `/usage`.
-- **Inline bash snippets**: trusted `!{...}` snippets in your prompt are expanded through local bash before the agent sees them, useful for quick context like `!{git status --short}`.
-- **Repo toolkit helper**: TLH bundles a patched `pi-rtk` fork. Its repo-tooling features need an `rtk` binary on your `PATH`; use `/rtk` to check status, and `tlh defaults disable rtk` if you do not want the bundled default. TLH loads it in a `quiet-tools`-compatible order so collapsed bash rendering stays active without adding a persistent footer indicator.
-- **Web search**: TLH bundles Exa-backed web research for `web-scout`; setup and privacy notes live in [`docs/web-search.md`](docs/web-search.md).
-- **Dirty-repo guard**: TLH prompts before starting, switching, or forking sessions when the current git repo has uncommitted changes, so work-in-progress is harder to lose.
-- **Completion notifications**: TLH can notify you when an agent turn finishes and is waiting for input.
-- **Model niceties**: `/effort` makes it easier to switch thinking effort levels, `/fast` enables OpenAI Fast mode controls, and bundled Anthropic OAuth compatibility helps `/login anthropic` work with Claude Pro/Max subscriptions.
-- **Cleaner sessions**: tlh's UI only shows what is relevant to you _right now_ — tools, bash output, and incoming intercom cards are collapsed by default; footer details are trimmed. The upstream Pi startup warning about Anthropic subscription auth and extra-usage is also suppressed by default (`warnings.anthropicExtraUsage: false`), since tlh users have already opted into a third-party harness. TLH also hides upstream Pi automatic changelog/update notices in the isolated profile to reduce startup noise. To re-enable the Anthropic warning, set `"warnings": { "anthropicExtraUsage": true }` in `~/.the-last-harness/agent/settings.json`; existing user values are preserved by the conservative settings merge and will not be overridden by installer reruns.
-- **Conservative updates and isolation**: tlh runs independently from `pi`, and never overrides your settings across updates
+- **Better scoping before edits**: the default path favors understanding before action.
+- **Cleaner accountability**: one architect owns the loop even when multiple child sessions contribute.
+- **Durable decisions**: memory and tickets make important context easier to revisit later.
+- **Fresh execution contexts**: focused child sessions reduce drift from long, messy chats.
+- **Reviewable work**: implementation is broken into explicit, inspectable steps instead of one giant conversation blob.
 
-## Slash commands
+### Tradeoffs
 
-Common TLH commands:
+- **More process**: TLH is intentionally slower than “just start coding.”
+- **More opinionated**: if you dislike tickets, memory, or explicit approval gates, the defaults may feel heavy.
+- **Not ideal for every task**: tiny changes may not need the full architect loop.
+- **Extra tooling**: TLH expects supporting CLIs and repo-local artifacts that some users would rather avoid.
 
-- `Shift+Tab` — cycle the current session through `architect` → `rush` → `product` → `bug-hunter` → `disabled` primary-agent modes.
-- `/switch-primary-agent [status|architect|rush|product|bug-hunter|disabled|reset|default architect|default rush|default product|default bug-hunter|default disabled|default reset]` — inspect the active primary, switch this session, or write/reset the persistent default.
-- `/effort ...` — pick or set model reasoning effort. Available levels depend on the current model.
-- `/fast [on|off|auto|toggle|status]` — manage OpenAI Fast mode for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions.
-- `/usage [status|weekly on|weekly off|weekly toggle]` — inspect or change whether the footer shows weekly subscription usage.
-- `/changelog` — manually show the upstream Pi changelog when you want it; TLH hides the automatic upstream changelog/update notice in its isolated profile.
-- `/tlh-changelog` — show TLH release notes from the packaged `CHANGELOG.md`.
-- `/context [--no-open] [--keep] [--redact] [--full|--current]` — generate a local HTML breakdown of where the session context is going.
-- `/analyse-tlh-sessions` — open a bundled read-only prompt to review the past week of tlh sessions for notable issues.
+If you want a harness that stays out of your way, TLH may be too structured. If you want a harness that helps you avoid vague plans, lost context, and agent babysitting, that structure is the point.
 
-Persistent primary-agent changes are written under `tlh.primaryAgent` in the isolated TLH settings file at `~/.the-last-harness/agent/settings.json`, with a backup when an existing settings file is changed. Use `/switch-primary-agent default reset` to remove those persistent fields and return future sessions to the built-in `architect` default. Use `/switch-primary-agent reset` for the current session only.
+## Other primary agents
 
-`/usage weekly on|off|toggle` writes the weekly footer preference under `tlh.usageLimits.showWeekly` in the same isolated settings file; the default is hidden when unset.
+The architect is the default, but it is not the only mode.
 
-The subscription usage footer fetches usage with the OAuth bearer your session already uses from two undocumented vendor endpoints:
+- **Rush** is a selectable primary for small bounded implementation tasks. It edits directly, runs narrow validation, and skips the default architect `tk`/developer/review loop. It can still use `code-reviewer` when that extra pass is worth it, and `oracle` is an optional deeper second opinion rather than a default step. Provider defaults are GPT-5.5 with thinking off on OpenAI/OpenAI-Codex, and Anthropic Opus with low thinking on Anthropic.
+- **product** is for product framing, tradeoffs, strategy, and implementation-ready ticket shaping. It does not implement code.
+- **bug-hunter** is for read-only debugging and root-cause analysis before you decide how to fix something.
 
-- `https://chatgpt.com/backend-api/wham/usage` for `openai-codex` sessions.
-- `https://api.anthropic.com/api/oauth/usage` for `anthropic` OAuth sessions (currently requires the `oauth-2025-04-20` beta flag).
+Use `Shift+Tab` to cycle the current session through `architect` → `rush` → `product` → `bug-hunter` → `disabled`.
 
-These are unsupported, internal endpoints and may change or be revoked without notice. No additional credentials are introduced — TLH reuses the same OAuth bearer the session already holds. When these fetches fail, TLH silently hides the footer segment. The feature is active only for `openai-codex` and `anthropic` OAuth subscription sessions and is on by default; an explicit disable mechanism is out of scope for this release.
+Use `/switch-primary-agent [status|architect|rush|product|bug-hunter|disabled|reset|default architect|default rush|default product|default bug-hunter|default disabled|default reset]` when you want explicit control over the current session or the persistent default.
 
-Bundled extension commands are also available for power users: /context-cap, /quiet-tools, /rtk, /librarian-cache, /oracle-model, /triage-comments, /subagents-doctor, and Plannotator commands such as /plannotator-review and /plannotator-annotate.
+When primary agents are disabled, TLH stops applying those primary-agent workflow/persona rules, but the underlying subagent machinery still exists.
 
-Manage persistent opt-outs for non-critical defaults after install:
+## TLH is intentionally opinionated
 
-```sh
-tlh defaults list
-tlh defaults disable notify
-tlh defaults disable rtk
-tlh defaults enable notify
-```
+TLH is not just “Pi, but with a new prompt.” The harness bakes in workflow and UX opinions:
 
-Opt-outs are written to `~/.the-last-harness/agent/settings.json` and survive `tlh update`, `pi update --extensions`, and installer reruns. Installer settings merges preserve existing same-identity package sources by default, so non-critical same-identity source pin updates still need installer `--force`. Bundled defaults marked for replacement migration, including `rtk`, can still replace listed legacy/upstream sources during normal install, update, and rerun flows. The isolation-critical subagents/intercom defaults are protected: `tlh defaults disable` rejects `subagents`, `intercom`, and their legacy aliases; stale manual entries in `tlh.disabledDefaultExtensions` are ignored during source resolution and cleaned during settings merges. Old `pi-subagents`/`pi-intercom` replacements are migrated to the bundled TLH forks so architect delegation uses the isolated minor-agent prompts. Installer runs fail if these critical bundled packages cannot be installed or refreshed; fix the package install/checkout and rerun the installer rather than trying to disable them.
+- **Project memory is mandatory**: TLH requires Gnosis (`gn`) so decisions, constraints, rejected alternatives, and lessons can live in repo-local memory instead of disappearing into chat history.
+- **Ticketed execution is mandatory for architect/product flows**: TLH requires `tk` for dependency-tracked tickets and installs the managed command at `~/.the-last-harness/agent/bin/tk` when it needs to supply one. Rush is the main exception for very small direct-edit tasks.
+- **Context is capped on purpose**: TLH uses a 200k context cap, expects compaction instead of endless chat growth, and provides `/context` so you can inspect where your tokens are going.
+- **Fresh child contexts are the default**: child sessions start clean and focused rather than inheriting an entire messy parent transcript.
+- **Model defaults are role-aware**: TLH ships bundled per-role model/thinking defaults instead of expecting every user to tune everything manually.
+- **Safety and quiet-by-default UX matter**: destructive-action confirmations, quieter tool rendering, trimmed footer noise, usage-window visibility, notifications when turns finish, and dirty-repo prompts are part of the package.
+- **Useful integrations are already wired in**: web research and MCP support are part of the default story rather than an afterthought.
 
-### Integrations
+## What you get beyond the workflow
 
-[Gnosis](https://github.com/skorokithakis/gnosis) is a small `gn` CLI for recording project decisions, constraints, rejected alternatives, and lessons that are not obvious from code alone. TLH requires and installs Gnosis automatically on supported platforms: **linux and darwin on x64 and arm64**. Installs on unsupported platforms hard-fail.
+TLH also aims to make the day-to-day session experience calmer and safer:
 
-TLH also requires the `tk` ticket CLI for architect/product ticket workflows. If no valid configured or existing `tk` command is found, install and update flows install the pinned managed copy at `~/.the-last-harness/agent/bin/tk`.
+- isolated profile installation so your normal Pi setup stays separate,
+- quieter UI defaults so tools and bash output do not constantly fight for attention,
+- bundled web-search support for research-heavy work,
+- bundled MCP adapter support,
+- subscription usage footer controls,
+- completion notifications, and
+- conservative settings merges that preserve user-owned isolated configuration.
 
-When a valid `gn` binary is present, TLH appends these instructions to the system prompt:
+The README keeps the overview short on purpose. The detailed operational docs live elsewhere.
 
-```text
-At the start of any task, run `gn help plan` and follow its instructions.
-After finishing a task, run `gn help review`.
-```
+## Everything else, aka the docs dump
 
-Gnosis project data lives in repo-local `.gnosis` directories and ticket data lives in repo-local `.tickets` directories; TLH does not delete either. More integration details live in [`docs/integrations.md`](docs/integrations.md).
-
-### Web search
-
-TLH ships [`pi-web-access`](https://github.com/diegopetrucci/pi-web-access) (an Exa-only fork) as a non-critical default extension for `web-scout`.
-
-For configuration, EXA key precedence, privacy, opt-out, and manual migration from `~/.pi/web-search.json`, see [`docs/web-search.md`](docs/web-search.md). Durable web-search / web-scout decisions live in repo-local Gnosis entries `ywsuwh` and `gbmehw`; pinned fork/tag process notes live in [`docs/web-search-fork-release-cadence.md`](docs/web-search-fork-release-cadence.md).
-
-### MCP adapter
-
-TLH also ships the upstream `pi-mcp-adapter` as the non-critical bundled default `mcporter` for connecting TLH to MCP servers.
-
-For proxy-first usage, slash commands, config locations, OAuth setup, `directTools` caveats, and opt-out/undo guidance, see [`docs/mcp.md`](docs/mcp.md).
-
-### Launch telemetry
-
-Release builds with TelemetryDeck identifiers configured send at most one pseudonymous launch event when an interactive `tlh` process starts. The event contains a hashed random install ID, event type, TLH version, privacy-filtered model value, OS name/version, and OS architecture. It does not include prompts, cwd, command arguments, repo names, hostname, username, file contents, settings contents, full environment variables, extension/package lists, API keys, provider base URLs, auth state, headers, or account identifiers. TelemetryDeck also receives normal network metadata such as source IP address and request time.
-
-Opt out persistently by adding this to `~/.the-last-harness/agent/settings.json`:
-
-```json
-{
-  "tlh": {
-    "telemetry": {
-      "enabled": false
-    }
-  }
-}
-```
-
-That settings opt-out is preserved by `tlh update` and installer reruns.
-
-## Reviewing changes (/review)
-
-Run a code review on a chosen scope (uncommitted changes, a branch comparison, a single commit, a PR, or a folder snapshot) via an isolated `code-reviewer` subagent.
-
-Run `/review` with no arguments to open the interactive mode picker. This is the only supported command shape.
-
-`/review` is architect-only. If the active primary agent is Rush, product, bug-hunter, or disabled, switch back to architect with `/switch-primary-agent architect` (or `Shift+Tab`) and rerun `/review`.
-
-- Choose `uncommitted` to review staged + unstaged changes vs `HEAD`, plus untracked non-gitignored files.
-- Choose `branch` to get an editor prompt for the base branch. Leave it blank to review against `main`, or enter another base such as `feature/parent` for stacked branch reviews.
-- Choose `commit`, `pr`, or `folder` to get an editor prompt for the required SHA, PR number/URL, or paths.
-
-Typed shortcuts such as `/review uncommitted`, `/review branch feature/parent`, `/review pr 123`, `/review folder src/`, and `/review ... --extra "..."` are rejected with picker-only guidance rather than dispatched directly.
-
-`/review` requires the interactive TLH TUI. In no-TUI contexts, it fails with a clear picker-required message.
-
-### PR mode
-
-PR mode requires the [GitHub CLI](https://cli.github.com) installed and authenticated (`gh auth login`). Cross-repository PRs are not supported yet; fetch the branch locally and use `/review` with branch mode instead.
-
-If you choose PR mode while you are not already on the PR's head branch:
-
-- **Dirty working tree**: the command refuses and tells you to stash or commit first.
-- **Clean working tree**: the command shows a confirmation prompt before switching.
-
-If you confirm the switch, tlh uses `gh pr checkout <number>` and leaves you on the PR branch. Return to your prior branch with `git checkout -`.
-
-### Folder mode
-
-Folder mode collects a snapshot of files under the given paths. It includes tracked files plus untracked files that aren't gitignored — so newly added files show up even before a first commit. Binary files are skipped with a `[skipped binary: ...]` marker.
-
-### How the architect handles review results
-
-`/review` delegates to a fresh, isolated `code-reviewer` subagent — no chat history bleeds in from the current session. When the subagent returns, the architect critically evaluates the findings: it pushes back on weak or speculative observations, confirms strong ones, and presents a digested summary with its own judgment rather than a raw transcript.
-
-There is no `/end-review` command. After the summary is delivered, you are back in normal architect mode; follow-ups such as asking the architect to apply fixes go through the standard clarify → plan → tickets → developer loop.
-
-## Docs dump
-
-- Install, update, and uninstall guidance: [`docs/install.md`](docs/install.md)
+- Install, update, uninstall, paths, and undo steps: [`docs/install.md`](docs/install.md)
+- Gnosis, `tk`, and TLH workflow integrations: [`docs/integrations.md`](docs/integrations.md)
+- Web search setup, privacy, and opt-out: [`docs/web-search.md`](docs/web-search.md)
+- MCP usage and caveats: [`docs/mcp.md`](docs/mcp.md)
+- Launch telemetry and opt-out: [`docs/telemetry.md`](docs/telemetry.md)
 - Git commit attribution footer, setting, and toggle flow: [`docs/git-attribution.md`](docs/git-attribution.md)
-- Local testing and development commands [`docs/local-development.md`](docs/local-development.md).
+- Local testing and development: [`docs/local-development.md`](docs/local-development.md)
+- Release notes: [`CHANGELOG.md`](CHANGELOG.md)
+- Maintainer release process: [`docs/releasing.md`](docs/releasing.md)
 
 ## Prerequisites
 

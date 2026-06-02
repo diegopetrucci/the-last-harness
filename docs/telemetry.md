@@ -1,0 +1,52 @@
+# Launch telemetry
+
+Release builds with TelemetryDeck identifiers configured send at most one pseudonymous launch event when an interactive `tlh` process starts.
+
+## What is sent
+
+The event contains:
+
+- a hashed random install ID,
+- event type,
+- TLH version,
+- a privacy-filtered model value,
+- OS name and version,
+- OS architecture.
+
+TelemetryDeck also receives normal network metadata such as source IP address and request time.
+
+## What is not sent
+
+The event does **not** include:
+
+- prompts,
+- current working directory,
+- command arguments,
+- repo names,
+- hostname,
+- username,
+- file contents,
+- settings contents,
+- full environment variables,
+- extension or package lists,
+- API keys,
+- provider base URLs,
+- auth state,
+- headers,
+- account identifiers.
+
+## Opting out
+
+Opt out persistently by adding this to `~/.the-last-harness/agent/settings.json`:
+
+```json
+{
+  "tlh": {
+    "telemetry": {
+      "enabled": false
+    }
+  }
+}
+```
+
+That settings opt-out is preserved by `tlh update` and installer reruns.
