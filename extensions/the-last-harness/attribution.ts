@@ -10,6 +10,15 @@ const TOGGLE_TLH_GIT_ATTRIBUTION_COMMAND_HELP = "Usage: /toggle-tlh-git-attribut
 const TLH_GIT_COMMIT_ATTRIBUTION_PROMPT_HEADING = "## TLH Git Commit Attribution";
 const TLH_GIT_COMMIT_BLOCK_REASON = "Blocked TLH bash git commit because the commit message is missing the required TLH attribution footer.";
 const GIT_GLOBAL_OPTIONS_WITH_VALUES = new Set(["-C", "-c", "--config-env", "--git-dir", "--namespace", "--super-prefix", "--work-tree"]);
+const ENV_SHORT_OPTIONS_WITH_VALUES = new Set(["-C", "-P", "-a", "-u"]);
+const ENV_LONG_OPTIONS_WITH_VALUES = new Set(["--argv0", "--chdir", "--unset"]);
+const ENV_SHORT_OPTIONS_WITHOUT_VALUES = new Set(["-0", "-i", "-v"]);
+const ENV_LONG_OPTIONS_WITHOUT_VALUES = new Set(["--ignore-environment", "--null"]);
+const ENV_SHORT_SPLIT_STRING_OPTIONS = new Set(["-S"]);
+const ENV_LONG_SPLIT_STRING_OPTIONS = new Set(["--split-string"]);
+const SHELL_COMMAND_WRAPPERS = new Set(["bash", "sh"]);
+const SHELL_OPTIONS_WITH_VALUES = new Set(["-o", "-O", "--rcfile", "--init-file"]);
+const MAX_WRAPPED_SHELL_GIT_COMMIT_RECURSION_DEPTH = 4;
 
 type HereDocSpec = {
 	delimiter: string;
@@ -316,8 +325,178 @@ function stripLeadingShellCommandPrefixes(tokens: string[]): string[] {
 	return tokens.slice(startIndex);
 }
 
-function getGitCommitArguments(segment: string): string[] | undefined {
-	const tokens = stripLeadingShellCommandPrefixes(tokenizeShellWords(segment));
+function commandBasename(token: string): string {
+	const normalizedToken = token.toLowerCase();
+	const slashIndex = normalizedToken.lastIndexOf("/");
+	return slashIndex === -1 ? normalizedToken : normalizedToken.slice(slashIndex + 1);
+}
+
+function isSupportedEnvCommand(command: string): boolean {
+	return commandBasename(command) === "env";
+}
+
+function normalizeCaseInsensitiveLongOptionToken(token: string): string {
+	return token.startsWith("--") ? token.toLowerCase() : token;
+}
+
+type EnvLeadingOptionParseResult =
+	| { kind: "continue"; nextIndex: number }
+	| { kind: "missing-value" }
+	| { kind: "split-string"; effectiveTokens: string[] | undefined }
+	| { kind: "unknown-option" }
+	| { kind: "not-an-option" };
+
+function isSupportedEnvOptionWithoutValue(token: string): boolean {
+	const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
+	return ENV_SHORT_OPTIONS_WITHOUT_VALUES.has(token) || ENV_LONG_OPTIONS_WITHOUT_VALUES.has(normalizedToken);
+}
+
+function isSupportedEnvOptionWithValue(token: string): boolean {
+	const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
+	return ENV_SHORT_OPTIONS_WITH_VALUES.has(token) || ENV_LONG_OPTIONS_WITH_VALUES.has(normalizedToken);
+}
+
+function isSupportedEnvOptionWithAttachedValue(token: string): boolean {
+	const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
+	return normalizedToken.startsWith("--argv0=") || normalizedToken.startsWith("--chdir=") || normalizedToken.startsWith("--unset=");
+}
+
+function isEnvSplitStringOption(token: string): boolean {
+	const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
+	return ENV_SHORT_SPLIT_STRING_OPTIONS.has(token) || ENV_LONG_SPLIT_STRING_OPTIONS.has(normalizedToken);
+}
+
+function getAttachedEnvSplitStringCommand(token: string): string | undefined {
+	const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
+	if (normalizedToken.startsWith("--split-string=")) {
+		return token.slice(token.indexOf("=") + 1);
+	}
+	if (token.startsWith("-S") && token.length > 2) {
+		return token.slice(2);
+	}
+	return undefined;
+}
+
+function stripLeadingOptionTerminator(tokens: string[]): string[] {
+	return tokens[0] === "--" ? tokens.slice(1) : tokens;
+}
+
+function buildEnvSplitStringEffectiveTokens(payload: string, remainingTokens: string[]): string[] {
+	return stripLeadingOptionTerminator([...tokenizeShellWords(payload), ...remainingTokens]);
+}
+
+function getEnvSplitStringEffectiveTokens(tokens: string[], splitStringIndex: number): string[] | undefined {
+	const attachedPayload = getAttachedEnvSplitStringCommand(tokens[splitStringIndex] ?? "");
+	const payload = attachedPayload ?? tokens[splitStringIndex + 1];
+	if (payload === undefined) {
+		return undefined;
+	}
+	const remainingTokens = attachedPayload !== undefined ? tokens.slice(splitStringIndex + 1) : tokens.slice(splitStringIndex + 2);
+	return buildEnvSplitStringEffectiveTokens(payload, remainingTokens);
+}
+
+function getShortEnvLeadingOptionParseResult(tokens: string[], index: number): EnvLeadingOptionParseResult | undefined {
+	const token = tokens[index];
+	if (!token || token === "-" || !token.startsWith("-") || token.startsWith("--")) {
+		return undefined;
+	}
+
+	const shortOptions = token.slice(1);
+	for (let optionIndex = 0; optionIndex < shortOptions.length; optionIndex += 1) {
+		const option = `-${shortOptions[optionIndex]}`;
+		if (ENV_SHORT_OPTIONS_WITHOUT_VALUES.has(option)) {
+			continue;
+		}
+		if (ENV_SHORT_OPTIONS_WITH_VALUES.has(option)) {
+			const attachedValue = shortOptions.slice(optionIndex + 1);
+			if (attachedValue) {
+				return { kind: "continue", nextIndex: index + 1 };
+			}
+			return tokens[index + 1] === undefined ? { kind: "missing-value" } : { kind: "continue", nextIndex: index + 2 };
+		}
+		if (ENV_SHORT_SPLIT_STRING_OPTIONS.has(option)) {
+			const attachedPayload = shortOptions.slice(optionIndex + 1);
+			const payload = attachedPayload || tokens[index + 1];
+			if (payload === undefined) {
+				return { kind: "split-string", effectiveTokens: undefined };
+			}
+			const remainingTokens = attachedPayload ? tokens.slice(index + 1) : tokens.slice(index + 2);
+			return { kind: "split-string", effectiveTokens: buildEnvSplitStringEffectiveTokens(payload, remainingTokens) };
+		}
+		return { kind: "unknown-option" };
+	}
+
+	return { kind: "continue", nextIndex: index + 1 };
+}
+
+function getEnvLeadingOptionParseResult(tokens: string[], index: number): EnvLeadingOptionParseResult {
+	const token = tokens[index] ?? "";
+	if (isShellVariableAssignmentToken(token) || isSupportedEnvOptionWithoutValue(token)) {
+		return { kind: "continue", nextIndex: index + 1 };
+	}
+	if (isSupportedEnvOptionWithValue(token)) {
+		return tokens[index + 1] === undefined ? { kind: "missing-value" } : { kind: "continue", nextIndex: index + 2 };
+	}
+	if (isSupportedEnvOptionWithAttachedValue(token)) {
+		return { kind: "continue", nextIndex: index + 1 };
+	}
+	if (isEnvSplitStringOption(token) || getAttachedEnvSplitStringCommand(token) !== undefined) {
+		return { kind: "split-string", effectiveTokens: getEnvSplitStringEffectiveTokens(tokens, index) };
+	}
+	const shortOptionParseResult = getShortEnvLeadingOptionParseResult(tokens, index);
+	if (shortOptionParseResult) {
+		return shortOptionParseResult;
+	}
+	if (token.startsWith("-")) {
+		return { kind: "unknown-option" };
+	}
+	return { kind: "not-an-option" };
+}
+
+function unwrapLeadingEnvCommandTokens(tokens: string[]): string[] | undefined {
+	if (!isSupportedEnvCommand(tokens[0] ?? "")) {
+		return undefined;
+	}
+
+	let index = 1;
+	while (index < tokens.length) {
+		const token = tokens[index];
+		if (token === "--") {
+			index += 1;
+			break;
+		}
+		const parseResult = getEnvLeadingOptionParseResult(tokens, index);
+		if (parseResult.kind === "continue") {
+			index = parseResult.nextIndex;
+			continue;
+		}
+		if (parseResult.kind === "missing-value") {
+			return [];
+		}
+		if (parseResult.kind === "split-string" || parseResult.kind === "unknown-option") {
+			return undefined;
+		}
+		break;
+	}
+	return tokens.slice(index);
+}
+
+function normalizeShellCommandTokensFromTokens(tokens: string[]): string[] {
+	let normalizedTokens = stripLeadingShellCommandPrefixes(tokens);
+	while (true) {
+		const unwrappedTokens = unwrapLeadingEnvCommandTokens(normalizedTokens);
+		if (!unwrappedTokens) {
+			return normalizedTokens;
+		}
+		normalizedTokens = stripLeadingShellCommandPrefixes(unwrappedTokens);
+	}
+}
+
+function normalizeShellCommandTokens(segment: string): string[] {
+	return normalizeShellCommandTokensFromTokens(tokenizeShellWords(segment));
+}
+
+function getGitCommitArgumentsFromTokens(tokens: string[]): string[] | undefined {
 	if (tokens[0]?.toLowerCase() !== "git") {
 		return undefined;
 	}
@@ -344,14 +523,64 @@ function getGitCommitArguments(segment: string): string[] | undefined {
 	return undefined;
 }
 
+function getGitCommitArguments(segment: string): string[] | undefined {
+	return getGitCommitArgumentsFromTokens(normalizeShellCommandTokens(segment));
+}
+
+function shortGitCommitMessageOptionConsumesFollowingValue(token: string): boolean {
+	if (!token.startsWith("-") || token.startsWith("--")) {
+		return false;
+	}
+	const messageFlagIndex = token.slice(1).indexOf("m");
+	if (messageFlagIndex === -1) {
+		return false;
+	}
+	return token.slice(messageFlagIndex + 2).length === 0;
+}
+
+function gitCommitOptionConsumesFollowingValue(commitArguments: string[], index: number): boolean {
+	const token = commitArguments[index];
+	if (!token) {
+		return false;
+	}
+	const lowerToken = token.toLowerCase();
+	if (lowerToken === "-m" || lowerToken === "--message" || lowerToken === "-f" || lowerToken === "--file") {
+		return commitArguments[index + 1] !== undefined;
+	}
+	if (shortGitCommitMessageOptionConsumesFollowingValue(token)) {
+		return commitArguments[index + 1] !== undefined;
+	}
+	return false;
+}
+
+function splitGitCommitArgumentsAtPathspecTerminator(commitArguments: string[]): {
+	optionArguments: string[];
+	pathspecArguments: string[];
+} {
+	for (let index = 0; index < commitArguments.length; index += 1) {
+		if (gitCommitOptionConsumesFollowingValue(commitArguments, index)) {
+			index += 1;
+			continue;
+		}
+		if (commitArguments[index] === "--") {
+			return {
+				optionArguments: commitArguments.slice(0, index),
+				pathspecArguments: commitArguments.slice(index + 1),
+			};
+		}
+	}
+	return { optionArguments: commitArguments, pathspecArguments: [] };
+}
+
 function getInlineGitCommitMessageParts(commitArguments: string[]): string[] {
 	const messages: string[] = [];
+	const { optionArguments } = splitGitCommitArgumentsAtPathspecTerminator(commitArguments);
 
-	for (let index = 0; index < commitArguments.length; index += 1) {
-		const token = commitArguments[index];
+	for (let index = 0; index < optionArguments.length; index += 1) {
+		const token = optionArguments[index];
 		const lowerToken = token.toLowerCase();
 		if (lowerToken === "-m" || lowerToken === "--message") {
-			const value = commitArguments[index + 1];
+			const value = optionArguments[index + 1];
 			if (value !== undefined) {
 				messages.push(value);
 				index += 1;
@@ -373,7 +602,7 @@ function getInlineGitCommitMessageParts(commitArguments: string[]): string[] {
 				messages.push(attachedValue);
 				continue;
 			}
-			const value = commitArguments[index + 1];
+			const value = optionArguments[index + 1];
 			if (value !== undefined) {
 				messages.push(value);
 				index += 1;
@@ -390,11 +619,12 @@ function hasInlineGitCommitMessageArgument(commitArguments: string[]): boolean {
 
 function getInlineGitCommitFileArgumentValue(commitArguments: string[]): string | undefined {
 	let value: string | undefined;
-	for (let index = 0; index < commitArguments.length; index += 1) {
-		const token = commitArguments[index];
+	const { optionArguments } = splitGitCommitArgumentsAtPathspecTerminator(commitArguments);
+	for (let index = 0; index < optionArguments.length; index += 1) {
+		const token = optionArguments[index];
 		const lowerToken = token.toLowerCase();
 		if (lowerToken === "-f" || lowerToken === "--file") {
-			const nextValue = commitArguments[index + 1];
+			const nextValue = optionArguments[index + 1];
 			if (nextValue !== undefined) {
 				value = nextValue;
 				index += 1;
@@ -410,6 +640,10 @@ function getInlineGitCommitFileArgumentValue(commitArguments: string[]): string 
 		}
 	}
 	return value;
+}
+
+function hasInlineLikeGitCommitMessageOrFileArgument(commitArguments: string[]): boolean {
+	return hasInlineGitCommitMessageArgument(commitArguments) || hasInlineGitCommitFileArgument(commitArguments);
 }
 
 function getInlineGitCommitFileArgument(commitArguments: string[]): "stdin" | "process-substitution" | undefined {
@@ -753,25 +987,57 @@ function hasInlineGitCommitFileArgument(commitArguments: string[]): boolean {
 	return getInlineGitCommitFileArgument(commitArguments) !== undefined;
 }
 
-function isObviousInlineGitCommitCommand(segment: string): boolean {
-	const commitArguments = getGitCommitArguments(segment);
-	if (!commitArguments) {
-		return false;
-	}
-	return hasInlineGitCommitMessageArgument(commitArguments) || hasInlineGitCommitFileArgument(commitArguments);
+function isSupportedShellCommandWrapper(command: string): boolean {
+	return SHELL_COMMAND_WRAPPERS.has(commandBasename(command));
 }
 
-function isAttributedObviousInlineGitCommitSegment(segment: string, footer: string): boolean {
-	const commitArguments = getGitCommitArguments(segment);
-	if (!commitArguments) {
-		return false;
+function getWrappedShellCommandFromTokens(tokens: string[]): string | undefined {
+	const normalizedTokens = normalizeShellCommandTokensFromTokens(tokens);
+	if (normalizedTokens.length === 0 || !isSupportedShellCommandWrapper(normalizedTokens[0])) {
+		return undefined;
 	}
+
+	for (let index = 1; index < normalizedTokens.length; index += 1) {
+		const token = normalizedTokens[index];
+		const lowerToken = token.toLowerCase();
+		if (token === "-c" || /^-[A-Za-z]*c[A-Za-z]*$/.test(token)) {
+			const commandToken = normalizedTokens[index + 1];
+			return commandToken === "--" ? normalizedTokens[index + 2] : commandToken;
+		}
+		if (SHELL_OPTIONS_WITH_VALUES.has(lowerToken) || lowerToken === "+o") {
+			if (normalizedTokens[index + 1] === undefined) {
+				return undefined;
+			}
+			index += 1;
+			continue;
+		}
+		if (lowerToken.startsWith("--rcfile=") || lowerToken.startsWith("--init-file=")) {
+			continue;
+		}
+		if (/^\+[A-Za-z]+$/.test(token)) {
+			continue;
+		}
+		if (!token.startsWith("-")) {
+			return undefined;
+		}
+	}
+	return undefined;
+}
+
+function getWrappedShellCommand(segment: string): string | undefined {
+	return getWrappedShellCommandFromTokens(tokenizeShellWords(segment));
+}
+
+function areInlineGitCommitArgumentsAttributed(commitArguments: string[], footer: string, segment?: string): boolean {
 	const inlineMessages = getInlineGitCommitMessageParts(commitArguments);
 	if (inlineMessages.length > 0) {
 		return commitMessageEndsWithFooter(inlineMessages.join("\n\n"), footer);
 	}
 	const fileArgument = getInlineGitCommitFileArgument(commitArguments);
 	if (fileArgument === "stdin") {
+		if (!segment) {
+			return false;
+		}
 		const hereDocBody = extractHereDocBodies(segment).at(-1);
 		return hereDocBody !== undefined && commitMessageEndsWithFooter(normalizeTrailingLineEnding(hereDocBody), footer);
 	}
@@ -780,6 +1046,227 @@ function isAttributedObviousInlineGitCommitSegment(segment: string, footer: stri
 		return fileValue !== undefined && processSubstitutionIncludesTlhCommitAttributionFooter(fileValue, footer);
 	}
 	return false;
+}
+
+function buildTlhGitCommitAttributionBlockReason(footer: string): string {
+	return [TLH_GIT_COMMIT_BLOCK_REASON, "Retry with this exact footer at the end of the commit message:", footer].join("\n\n");
+}
+
+function hasObviousGitCommitInTokens(tokens: string[], depth = 0): boolean {
+	if (depth > MAX_WRAPPED_SHELL_GIT_COMMIT_RECURSION_DEPTH) {
+		return true;
+	}
+
+	const normalizedTokens = normalizeShellCommandTokensFromTokens(tokens);
+	const commitArguments = getGitCommitArgumentsFromTokens(normalizedTokens);
+	if (commitArguments) {
+		return hasInlineLikeGitCommitMessageOrFileArgument(commitArguments);
+	}
+
+	const wrappedCommand = getWrappedShellCommandFromTokens(normalizedTokens);
+	return wrappedCommand !== undefined && hasObviousGitCommitInCommand(wrappedCommand, depth + 1);
+}
+
+function hasObviousGitCommitInCommand(command: string, depth = 0): boolean {
+	if (depth > MAX_WRAPPED_SHELL_GIT_COMMIT_RECURSION_DEPTH) {
+		return true;
+	}
+
+	for (const { segment } of splitShellCommandSegments(command)) {
+		const trimmedSegment = segment.trim();
+		if (!trimmedSegment) {
+			continue;
+		}
+		if (hasObviousGitCommitInTokens(tokenizeShellWords(trimmedSegment), depth)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function getWrappedShellGitCommitAttributionBlockReasonFromTokens(
+	tokens: string[],
+	footer: string,
+	depth = 0,
+	failClosedOnCommitLike = false,
+	sourceSegment?: string,
+): string | undefined {
+	if (depth > MAX_WRAPPED_SHELL_GIT_COMMIT_RECURSION_DEPTH) {
+		return buildTlhGitCommitAttributionBlockReason(footer);
+	}
+
+	const normalizedTokens = normalizeShellCommandTokensFromTokens(tokens);
+	const commitArguments = getGitCommitArgumentsFromTokens(normalizedTokens);
+	if (commitArguments) {
+		if (hasInlineLikeGitCommitMessageOrFileArgument(commitArguments)) {
+			return areInlineGitCommitArgumentsAttributed(commitArguments, footer, sourceSegment)
+				? undefined
+				: buildTlhGitCommitAttributionBlockReason(footer);
+		}
+		return failClosedOnCommitLike ? buildTlhGitCommitAttributionBlockReason(footer) : undefined;
+	}
+
+	const wrappedCommand = getWrappedShellCommandFromTokens(normalizedTokens);
+	return wrappedCommand !== undefined
+		? getWrappedShellGitCommitAttributionBlockReason(wrappedCommand, footer, depth + 1, failClosedOnCommitLike, sourceSegment)
+		: undefined;
+}
+
+function getEnvContextGitCommitAttributionBlockReasonFromTokens(
+	tokens: string[],
+	footer: string,
+	sourceSegment: string,
+	depth = 0,
+	failClosedOnCommitLike = false,
+): string | undefined {
+	if (depth > MAX_WRAPPED_SHELL_GIT_COMMIT_RECURSION_DEPTH) {
+		return buildTlhGitCommitAttributionBlockReason(footer);
+	}
+
+	const envTokens = isSupportedEnvCommand(tokens[0] ?? "") ? tokens.slice(1) : tokens;
+	let index = 0;
+	while (index < envTokens.length) {
+		if (envTokens[index] === "--") {
+			index += 1;
+			break;
+		}
+		const parseResult = getEnvLeadingOptionParseResult(envTokens, index);
+		if (parseResult.kind === "continue") {
+			index = parseResult.nextIndex;
+			continue;
+		}
+		if (parseResult.kind === "missing-value") {
+			return undefined;
+		}
+		if (parseResult.kind === "split-string") {
+			return parseResult.effectiveTokens !== undefined
+				? getEnvContextGitCommitAttributionBlockReasonFromTokens(
+					parseResult.effectiveTokens,
+					footer,
+					sourceSegment,
+					depth + 1,
+					failClosedOnCommitLike,
+				)
+				: undefined;
+		}
+		if (parseResult.kind === "unknown-option") {
+			return getEnvContextGitCommitAttributionBlockReasonFromTokens(
+				stripLeadingOptionTerminator(envTokens.slice(index + 1)),
+				footer,
+				sourceSegment,
+				depth + 1,
+				true,
+			);
+		}
+		break;
+	}
+
+	return getWrappedShellGitCommitAttributionBlockReasonFromTokens(
+		envTokens.slice(index),
+		footer,
+		depth + 1,
+		failClosedOnCommitLike,
+		sourceSegment,
+	);
+}
+
+function getUnsupportedEnvGitCommitAttributionBlockReason(
+	segment: string,
+	footer: string,
+	depth = 0,
+	sourceSegment = segment,
+): string | undefined {
+	const tokens = stripLeadingShellCommandPrefixes(tokenizeShellWords(segment));
+	if (!isSupportedEnvCommand(tokens[0] ?? "")) {
+		return undefined;
+	}
+
+	let index = 1;
+	while (index < tokens.length) {
+		if (tokens[index] === "--") {
+			index += 1;
+			break;
+		}
+		const parseResult = getEnvLeadingOptionParseResult(tokens, index);
+		if (parseResult.kind === "continue") {
+			index = parseResult.nextIndex;
+			continue;
+		}
+		if (parseResult.kind === "missing-value") {
+			return undefined;
+		}
+		if (parseResult.kind === "split-string") {
+			return parseResult.effectiveTokens !== undefined
+				? getEnvContextGitCommitAttributionBlockReasonFromTokens(parseResult.effectiveTokens, footer, sourceSegment, depth + 1)
+				: undefined;
+		}
+		if (parseResult.kind === "unknown-option") {
+			return getEnvContextGitCommitAttributionBlockReasonFromTokens(
+				stripLeadingOptionTerminator(tokens.slice(index + 1)),
+				footer,
+				sourceSegment,
+				depth + 1,
+				true,
+			);
+		}
+		break;
+	}
+	return undefined;
+}
+
+function getWrappedShellGitCommitAttributionBlockReason(
+	command: string,
+	footer: string,
+	depth = 0,
+	failClosedOnCommitLike = false,
+	sourceSegment?: string,
+): string | undefined {
+	if (depth > MAX_WRAPPED_SHELL_GIT_COMMIT_RECURSION_DEPTH) {
+		return buildTlhGitCommitAttributionBlockReason(footer);
+	}
+
+	for (const { segment } of splitShellCommandSegments(command)) {
+		const trimmedSegment = segment.trim();
+		if (!trimmedSegment) {
+			continue;
+		}
+		const effectiveSourceSegment = sourceSegment ?? trimmedSegment;
+		const commitArguments = getGitCommitArguments(trimmedSegment);
+		const isObviousInlineGitCommit = commitArguments !== undefined && hasInlineLikeGitCommitMessageOrFileArgument(commitArguments);
+		if (isObviousInlineGitCommit) {
+			if (
+				areInlineGitCommitArgumentsAttributed(commitArguments, footer, trimmedSegment)
+				|| areInlineGitCommitArgumentsAttributed(commitArguments, footer, effectiveSourceSegment)
+			) {
+				continue;
+			}
+			return buildTlhGitCommitAttributionBlockReason(footer);
+		}
+		if (failClosedOnCommitLike && commitArguments) {
+			return buildTlhGitCommitAttributionBlockReason(footer);
+		}
+
+		const unsupportedEnvBlockReason = getUnsupportedEnvGitCommitAttributionBlockReason(trimmedSegment, footer, depth, effectiveSourceSegment);
+		if (unsupportedEnvBlockReason) {
+			return unsupportedEnvBlockReason;
+		}
+
+		const wrappedCommand = getWrappedShellCommand(trimmedSegment);
+		if (!wrappedCommand) {
+			continue;
+		}
+		const blockReason = getWrappedShellGitCommitAttributionBlockReason(
+			wrappedCommand,
+			footer,
+			depth + 1,
+			failClosedOnCommitLike,
+			effectiveSourceSegment,
+		);
+		if (blockReason) {
+			return blockReason;
+		}
+	}
+	return undefined;
 }
 
 export function buildTlhCommitAttributionPrompt(state: TlhCommitAttributionState): string | undefined {
@@ -797,19 +1284,7 @@ export function getTlhGitCommitAttributionBlockReason(command: string, state: Tl
 	if (!state.enabled || !state.footer) {
 		return undefined;
 	}
-	for (const { segment } of splitShellCommandSegments(command)) {
-		const trimmedSegment = segment.trim();
-		if (!isObviousInlineGitCommitCommand(trimmedSegment)) {
-			continue;
-		}
-		if (isAttributedObviousInlineGitCommitSegment(trimmedSegment, state.footer)) {
-			continue;
-		}
-		return [TLH_GIT_COMMIT_BLOCK_REASON, "Retry with this exact footer at the end of the commit message:", state.footer].join(
-			"\n\n",
-		);
-	}
-	return undefined;
+	return getWrappedShellGitCommitAttributionBlockReason(command, state.footer);
 }
 
 function validateTlhAttributionSettings(settings: unknown): asserts settings is TlhSettings {
