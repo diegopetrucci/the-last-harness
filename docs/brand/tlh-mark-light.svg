@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-labelledby="title desc">
+  <title id="title">The Last Harness mark, light</title>
+  <desc id="desc">A compact H-shaped harness mark with dark rails, an orange center bar, and a cyan tether line on a warm light rounded square.</desc>
+  <rect x="1" y="1" width="158" height="158" rx="24" fill="#fffdf8" stroke="#d7d1c5" stroke-width="2"/>
+  <path d="M48 40h24v72H48zM88 40h24v72H88z" fill="#171717"/>
+  <path d="M68 73h32v16H68z" fill="#f05a28"/>
+  <rect x="47" y="116.5" width="66" height="7" fill="#2bb8c5"/>
+</svg>

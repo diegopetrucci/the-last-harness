@@ -1,4 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { formatCompactTokenCount } from "./common.js";
 import type {
 	TlhSubscriptionUsageSnapshot,
 	TlhSubscriptionUsageSnapshotProvider,
@@ -6,34 +7,20 @@ import type {
 } from "./types.js";
 
 const TLH_SUBSCRIPTION_USAGE_PROVIDERS = new Set(["openai-codex", "anthropic"]);
-const HOUR_MS = 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
 export type TlhFooterSubscriptionUsageOptions = {
 	subscriptionUsage?: TlhSubscriptionUsageSnapshotProvider;
 	shouldShowWeekly?: () => boolean;
+	nowMs?: number;
 };
 
 export type TlhSubscriptionUsageFooterState = {
 	suppressCost: boolean;
 	segment?: string;
 };
-
-function formatUsageTokens(count: number): string {
-	if (count < 1000) {
-		return count.toString();
-	}
-	if (count < 10000) {
-		return `${(count / 1000).toFixed(1)}k`;
-	}
-	if (count < 1000000) {
-		return `${Math.round(count / 1000)}k`;
-	}
-	if (count < 10000000) {
-		return `${(count / 1000000).toFixed(1)}M`;
-	}
-	return `${Math.round(count / 1000000)}M`;
-}
 
 function finiteNumber(value: number | undefined): number | undefined {
 	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
@@ -46,7 +33,7 @@ function formatUsagePercent(percent: number): string {
 
 function formatUsageCount(count: number): string {
 	const normalized = Math.round(count * 10) / 10;
-	return formatUsageTokens(normalized);
+	return formatCompactTokenCount(normalized);
 }
 
 function formatUsageDuration(durationMs: number | undefined): string | undefined {
@@ -62,6 +49,40 @@ function formatUsageDuration(durationMs: number | undefined): string | undefined
 		return `${days}d`;
 	}
 	return undefined;
+}
+
+function formatResetCountdown(
+	resetsAt: string | undefined,
+	nowMs: number,
+	windowType: "session" | "weekly",
+): string | undefined {
+	if (!resetsAt) {
+		return undefined;
+	}
+	const resetMs = Date.parse(resetsAt);
+	if (!Number.isFinite(resetMs)) {
+		return undefined;
+	}
+	const deltaMs = resetMs - nowMs;
+	if (deltaMs <= 0) {
+		return undefined;
+	}
+	const totalMinutes = Math.floor(deltaMs / MINUTE_MS);
+	const totalHours = Math.floor(deltaMs / HOUR_MS);
+	const totalDays = Math.floor(deltaMs / DAY_MS);
+	if (windowType === "weekly" && totalDays >= 1) {
+		const remainingHours = Math.floor((deltaMs - totalDays * DAY_MS) / HOUR_MS);
+		return `${totalDays}d ${remainingHours}h`;
+	}
+	// Session-style format (also used as weekly fallback when delta < 1 day)
+	if (totalMinutes < 1) {
+		return "<1m";
+	}
+	if (totalHours < 1) {
+		return `${totalMinutes}m`;
+	}
+	const remainingMinutes = totalMinutes - totalHours * 60;
+	return `${totalHours}h${remainingMinutes}m`;
 }
 
 function normalizedUsageLabel(value: string | undefined): string {
@@ -95,6 +116,7 @@ function formatUsageWindow(
 	provider: string,
 	window: TlhSubscriptionUsageWindow | undefined,
 	windowType: "session" | "weekly",
+	nowMs: number,
 ): string | undefined {
 	if (!window) {
 		return undefined;
@@ -102,39 +124,47 @@ function formatUsageWindow(
 
 	const label = formatUsageWindowLabel(provider, window, windowType);
 	const percent = finiteNumber(window.percent);
+
+	let base: string | undefined;
 	if (percent !== undefined) {
-		return `${label} ${formatUsagePercent(percent)}% used`;
+		base = `${label} ${formatUsagePercent(percent)}% used`;
+	} else {
+		const limit = finiteNumber(window.limit);
+		let used = finiteNumber(window.used);
+		const remaining = finiteNumber(window.remaining);
+		if (used === undefined && limit !== undefined && remaining !== undefined) {
+			used = Math.max(0, limit - remaining);
+		}
+		if (used !== undefined && limit !== undefined && limit > 0) {
+			base = `${label} ${formatUsageCount(used)}/${formatUsageCount(limit)} used`;
+		}
 	}
 
-	const limit = finiteNumber(window.limit);
-	let used = finiteNumber(window.used);
-	const remaining = finiteNumber(window.remaining);
-	if (used === undefined && limit !== undefined && remaining !== undefined) {
-		used = Math.max(0, limit - remaining);
-	}
-	if (used !== undefined && limit !== undefined && limit > 0) {
-		return `${label} ${formatUsageCount(used)}/${formatUsageCount(limit)} used`;
+	if (!base) {
+		return undefined;
 	}
 
-	return undefined;
+	const countdown = formatResetCountdown(window.resetsAt, nowMs, windowType);
+	return countdown ? `${base}, resets in ${countdown}` : base;
 }
 
 export function formatTlhSubscriptionUsageFooterSegment(
 	snapshot: TlhSubscriptionUsageSnapshot | undefined,
-	options: { showWeekly?: boolean } = {},
+	options: { showWeekly?: boolean; nowMs?: number } = {},
 ): string | undefined {
 	if (!snapshot || !TLH_SUBSCRIPTION_USAGE_PROVIDERS.has(snapshot.provider)) {
 		return undefined;
 	}
 
-	const sessionSegment = formatUsageWindow(snapshot.provider, snapshot.windows?.session, "session");
+	const nowMs = options.nowMs ?? Date.now();
+	const sessionSegment = formatUsageWindow(snapshot.provider, snapshot.windows?.session, "session", nowMs);
 	if (!sessionSegment) {
 		return undefined;
 	}
 
 	const segments = [sessionSegment];
 	if (options.showWeekly) {
-		const weeklySegment = formatUsageWindow(snapshot.provider, snapshot.windows?.weekly, "weekly");
+		const weeklySegment = formatUsageWindow(snapshot.provider, snapshot.windows?.weekly, "weekly", nowMs);
 		if (weeklySegment) {
 			segments.push(weeklySegment);
 		}
@@ -204,6 +234,7 @@ export function getTlhSubscriptionUsageFooterState(
 	const segment = subscriptionEligible
 		? formatTlhSubscriptionUsageFooterSegment(subscriptionUsageSnapshot(ctx, provider, options.subscriptionUsage), {
 				showWeekly: shouldShowWeeklyUsage(options.shouldShowWeekly),
+				nowMs: options.nowMs,
 			})
 		: undefined;
 

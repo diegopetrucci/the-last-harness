@@ -174,6 +174,28 @@ test("footer includes Anthropic weekly usage only when the preference enables it
 	assert.match(sessionLine, /weekly 88\.9% used/);
 });
 
+test("footer context and subscription usage keep compact token formatting", () => {
+	const snapshot = {
+		provider: "openai-codex",
+		fetchedAt: NOW_MS,
+		windows: {
+			session: { key: "primary_window", label: "session", used: 1500, limit: 9999 },
+		},
+	};
+	const ctx = createCtx({
+		provider: "openai-codex",
+		contextUsage: { tokens: 1000, contextWindow: 9999, percent: 12.3 },
+	});
+	const usageOptions = {
+		subscriptionUsage: usageProvider(snapshot),
+		shouldShowWeekly: () => false,
+	};
+
+	assert.match(renderAgentLine(ctx, usageOptions), /12\.3%\/10\.0k/);
+	assert.equal(formatTlhSubscriptionUsageFooterSegment(snapshot), "session 1.5k/10.0k used");
+	assert.match(renderSessionStatsLine(ctx, usageOptions), /session 1\.5k\/10\.0k used/);
+});
+
 test("footer render reads cached usage snapshots without refreshing", () => {
 	let refreshCalls = 0;
 	const subscriptionUsage = {
@@ -424,4 +446,125 @@ test("line 3 renders subscription only when cost is suppressed and segment is pr
 	});
 	assert.match(sessionLine, /^5h session 42% used$/);
 	assert.doesNotMatch(sessionLine, /\$/);
+});
+
+// ---------------------------------------------------------------------------
+// NEW: reset countdown in subscription usage footer segment
+// ---------------------------------------------------------------------------
+
+// Helper: build a minimal Anthropic snapshot with explicit window fields.
+function anthropicSnapshotWithResets({ sessionResetsAt, weeklyResetsAt } = {}) {
+	return {
+		provider: "anthropic",
+		fetchedAt: NOW_MS,
+		windows: {
+			session: { key: "five_hour", label: "session", percent: 42, ...(sessionResetsAt ? { resetsAt: sessionResetsAt } : {}) },
+			weekly: { key: "seven_day", label: "weekly", percent: 88.9, ...(weeklyResetsAt ? { resetsAt: weeklyResetsAt } : {}) },
+		},
+	};
+}
+
+test("reset countdown: session 2h13m future appends ', resets in 2h13m'", () => {
+	// 2026-05-19T19:00:00Z + 2h13m = 2026-05-19T21:13:00Z
+	const snapshot = anthropicSnapshotWithResets({ sessionResetsAt: "2026-05-19T21:13:00.000Z" });
+	const result = formatTlhSubscriptionUsageFooterSegment(snapshot, { nowMs: NOW_MS });
+	assert.equal(result, "5h session 42% used, resets in 2h13m");
+});
+
+test("reset countdown: session 47m future appends ', resets in 47m'", () => {
+	// 2026-05-19T19:00:00Z + 47m = 2026-05-19T19:47:00Z
+	const snapshot = anthropicSnapshotWithResets({ sessionResetsAt: "2026-05-19T19:47:00.000Z" });
+	const result = formatTlhSubscriptionUsageFooterSegment(snapshot, { nowMs: NOW_MS });
+	assert.equal(result, "5h session 42% used, resets in 47m");
+});
+
+test("reset countdown: session 30s future appends ', resets in <1m'", () => {
+	// 2026-05-19T19:00:00Z + 30s = 2026-05-19T19:00:30Z
+	const snapshot = anthropicSnapshotWithResets({ sessionResetsAt: "2026-05-19T19:00:30.000Z" });
+	const result = formatTlhSubscriptionUsageFooterSegment(snapshot, { nowMs: NOW_MS });
+	assert.equal(result, "5h session 42% used, resets in <1m");
+});
+
+test("reset countdown: session resetsAt in the past produces no suffix", () => {
+	// 2026-05-19T18:00:00Z is 1h before NOW_MS
+	const snapshot = anthropicSnapshotWithResets({ sessionResetsAt: "2026-05-19T18:00:00.000Z" });
+	const result = formatTlhSubscriptionUsageFooterSegment(snapshot, { nowMs: NOW_MS });
+	assert.equal(result, "5h session 42% used");
+});
+
+test("reset countdown: session with no resetsAt produces no suffix", () => {
+	const snapshot = anthropicSnapshotWithResets();
+	const result = formatTlhSubscriptionUsageFooterSegment(snapshot, { nowMs: NOW_MS });
+	assert.equal(result, "5h session 42% used");
+});
+
+test("reset countdown: session with unparseable resetsAt produces no suffix", () => {
+	const snapshot = anthropicSnapshotWithResets({ sessionResetsAt: "not-a-date" });
+	const result = formatTlhSubscriptionUsageFooterSegment(snapshot, { nowMs: NOW_MS });
+	assert.equal(result, "5h session 42% used");
+});
+
+test("reset countdown: weekly 4d 6h future appends ', resets in 4d 6h'", () => {
+	// 2026-05-19T19:00:00Z + 4d + 6h = 2026-05-24T01:00:00Z
+	const snapshot = anthropicSnapshotWithResets({
+		sessionResetsAt: "2026-05-19T21:13:00.000Z",
+		weeklyResetsAt: "2026-05-24T01:00:00.000Z",
+	});
+	const result = formatTlhSubscriptionUsageFooterSegment(snapshot, { showWeekly: true, nowMs: NOW_MS });
+	assert.equal(result, "5h session 42% used, resets in 2h13m · weekly 88.9% used, resets in 4d 6h");
+});
+
+test("reset countdown: weekly <1d (5h) falls back to session-style format '5h0m'", () => {
+	// 2026-05-19T19:00:00Z + 5h = 2026-05-20T00:00:00Z
+	const snapshot = anthropicSnapshotWithResets({
+		weeklyResetsAt: "2026-05-20T00:00:00.000Z",
+	});
+	const result = formatTlhSubscriptionUsageFooterSegment(snapshot, { showWeekly: true, nowMs: NOW_MS });
+	assert.equal(result, "5h session 42% used · weekly 88.9% used, resets in 5h0m");
+});
+
+test("reset countdown: session exactly 60s future appends ', resets in 1m' (boundary <1m→Mm)", () => {
+	const resetsAt = new Date(NOW_MS + 60 * 1000).toISOString();
+	const snapshot = anthropicSnapshotWithResets({ sessionResetsAt: resetsAt });
+	const result = formatTlhSubscriptionUsageFooterSegment(snapshot, { nowMs: NOW_MS });
+	assert.equal(result, "5h session 42% used, resets in 1m");
+});
+
+test("reset countdown: session exactly 1h future appends ', resets in 1h0m' (boundary Mm→XhYm, trailing 0m)", () => {
+	const resetsAt = new Date(NOW_MS + 60 * 60 * 1000).toISOString();
+	const snapshot = anthropicSnapshotWithResets({ sessionResetsAt: resetsAt });
+	const result = formatTlhSubscriptionUsageFooterSegment(snapshot, { nowMs: NOW_MS });
+	assert.equal(result, "5h session 42% used, resets in 1h0m");
+});
+
+test("reset countdown: weekly exactly 24h future appends ', resets in 1d 0h' (Xd Yh boundary, remainingHours=0)", () => {
+	const weeklyResetsAt = new Date(NOW_MS + 24 * 60 * 60 * 1000).toISOString();
+	const snapshot = anthropicSnapshotWithResets({ weeklyResetsAt });
+	const result = formatTlhSubscriptionUsageFooterSegment(snapshot, { showWeekly: true, nowMs: NOW_MS });
+	assert.equal(result, "5h session 42% used · weekly 88.9% used, resets in 1d 0h");
+});
+
+test("reset countdown: weekly exactly 25h future appends ', resets in 1d 1h' (day count and remainder)", () => {
+	const weeklyResetsAt = new Date(NOW_MS + 25 * 60 * 60 * 1000).toISOString();
+	const snapshot = anthropicSnapshotWithResets({ weeklyResetsAt });
+	const result = formatTlhSubscriptionUsageFooterSegment(snapshot, { showWeekly: true, nowMs: NOW_MS });
+	assert.equal(result, "5h session 42% used · weekly 88.9% used, resets in 1d 1h");
+});
+
+test("reset countdown: session+weekly segment joiner is intact when both have countdowns", () => {
+	// Session: 2h13m future, weekly: 4d 6h future
+	// Expected: "5h session 42% used, resets in 2h13m · weekly 88.9% used, resets in 4d 6h"
+	// The single " · " between the two window segments is the inter-segment joiner.
+	const snapshot = anthropicSnapshotWithResets({
+		sessionResetsAt: "2026-05-19T21:13:00.000Z",
+		weeklyResetsAt: "2026-05-24T01:00:00.000Z",
+	});
+	const result = formatTlhSubscriptionUsageFooterSegment(snapshot, { showWeekly: true, nowMs: NOW_MS });
+	// Full string assertion
+	assert.equal(result, "5h session 42% used, resets in 2h13m · weekly 88.9% used, resets in 4d 6h");
+	// Splitting on " · " (the inter-segment joiner) yields exactly two window segments
+	const parts = result?.split(" · ");
+	assert.equal(parts?.length, 2);
+	assert.equal(parts?.[0], "5h session 42% used, resets in 2h13m");
+	assert.equal(parts?.[1], "weekly 88.9% used, resets in 4d 6h");
 });

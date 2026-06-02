@@ -108,6 +108,8 @@ The README keeps the overview short on purpose. The detailed operational docs li
 - Gnosis, `tk`, and TLH workflow integrations: [`docs/integrations.md`](docs/integrations.md)
 - Web search setup, privacy, and opt-out: [`docs/web-search.md`](docs/web-search.md)
 - MCP usage and caveats: [`docs/mcp.md`](docs/mcp.md)
+- Launch telemetry and opt-out: [`docs/telemetry.md`](docs/telemetry.md)
+- Git commit attribution footer, setting, and toggle flow: [`docs/git-attribution.md`](docs/git-attribution.md)
 - Local testing and development: [`docs/local-development.md`](docs/local-development.md)
 - Release notes: [`CHANGELOG.md`](CHANGELOG.md)
 - Maintainer release process: [`docs/releasing.md`](docs/releasing.md)

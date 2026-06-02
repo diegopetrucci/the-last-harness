@@ -6,13 +6,21 @@ import test from "node:test";
 
 import {
 	assertNotInNormalPiConfig,
+	assignOptionValue,
 	assignRequiredEqualsValue,
 	backupPathWithTimestamp,
 	backupTimestampSuffix,
+	defaultTlhAgentDir,
+	defaultTlhBinDir,
+	defaultTlhKeybindingsPath,
+	defaultTlhSettingsPath,
+	expandHomePath,
 	pathIsInNormalPiConfig,
 	readJsonFile,
+	readOptionValue,
 	renderShellWords,
 	requiredValue,
+	resolveTlhAgentDir,
 	shellQuote,
 	shellWord,
 } from "../scripts/lib/tlh-install-utils.mjs";
@@ -32,6 +40,37 @@ test("required CLI value helpers preserve installer option errors", () => {
 	assignRequiredEqualsValue(target, "key", "value", "--flag");
 	assert.deepEqual(target, { key: "value" });
 	assert.throws(() => assignRequiredEqualsValue(target, "key", "", "--flag"), /--flag requires a value/);
+});
+
+test("shared CLI option helpers parse split, equals, alias, and default path values", () => {
+	assert.deepEqual(readOptionValue(["--flag", "value"], 0, "--flag"), {
+		flag: "--flag",
+		value: "value",
+		nextIndex: 1,
+	});
+	assert.deepEqual(readOptionValue(["--flag=value"], 0, "--flag"), {
+		flag: "--flag",
+		value: "value",
+		nextIndex: 0,
+	});
+	assert.deepEqual(readOptionValue(["--defaults=manifest.json"], 0, ["--defaults", "--default-extensions"]), {
+		flag: "--defaults",
+		value: "manifest.json",
+		nextIndex: 0,
+	});
+	assert.throws(() => readOptionValue(["--flag="], 0, "--flag", { requireEqualsValue: true }), /--flag requires a value/);
+
+	const args = {};
+	assert.equal(assignOptionValue(args, "path", ["--path", "~/value"], 0, "--path"), 1);
+	assert.deepEqual(args, { path: "~/value" });
+
+	assert.equal(expandHomePath("~/agent", { homeDir: "/tmp/home" }), "/tmp/home/agent");
+	assert.equal(defaultTlhAgentDir({ PI_CODING_AGENT_DIR: "~/pi-agent", TLH_AGENT_DIR: "~/tlh-agent" }, { homeDir: "/tmp/home" }), "/tmp/home/pi-agent");
+	assert.equal(defaultTlhAgentDir({ PI_CODING_AGENT_DIR: "~/pi-agent", TLH_AGENT_DIR: "~/tlh-agent" }, { homeDir: "/tmp/home", preferTlhAgentDir: true }), "/tmp/home/tlh-agent");
+	assert.equal(resolveTlhAgentDir("~/custom-agent", { homeDir: "/tmp/home" }), "/tmp/home/custom-agent");
+	assert.equal(defaultTlhSettingsPath({ env: { TLH_AGENT_DIR: "~/tlh-agent" }, homeDir: "/tmp/home" }), "/tmp/home/tlh-agent/settings.json");
+	assert.equal(defaultTlhKeybindingsPath({ env: { PI_CODING_AGENT_DIR: "~/pi-agent" }, homeDir: "/tmp/home" }), "/tmp/home/pi-agent/keybindings.json");
+	assert.equal(defaultTlhBinDir({ TLH_BIN_DIR: "~/bin" }, { homeDir: "/tmp/home" }), "/tmp/home/bin");
 });
 
 test("readJsonFile handles BOM, empty files, missing fallbacks, and parse errors", (t) => {

@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -10,8 +9,9 @@ import {
 	parseReviewArgs,
 	registerReviewCommand,
 } from "../extensions/the-last-harness/review.ts";
+import { cleanupTempDir, createIsolatedProfileFixture, makeTempDir as makeSharedTempDir, withEnv } from "./test-fixture-helpers.mjs";
 
-const reviewEnvRoot = mkdtempSync(join(tmpdir(), "tlh-review-agent-env-"));
+const reviewEnvRoot = makeSharedTempDir("tlh-review-agent-env-");
 const reviewEnvHome = join(reviewEnvRoot, "home");
 const reviewEnvAgent = join(reviewEnvRoot, "agent");
 const previousReviewPiAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -21,7 +21,7 @@ mkdirSync(reviewEnvAgent, { recursive: true });
 process.env.PI_CODING_AGENT_DIR = reviewEnvAgent;
 process.env.HOME = reviewEnvHome;
 process.on("exit", () => {
-	rmSync(reviewEnvRoot, { force: true, recursive: true });
+	cleanupTempDir(reviewEnvRoot);
 	if (previousReviewPiAgentDir === undefined) {
 		delete process.env.PI_CODING_AGENT_DIR;
 	} else {
@@ -106,45 +106,11 @@ function createReviewHarness({ cwd, exec, hasUI = true, custom, editor, branchEn
 }
 
 function makeTempDir(t, prefix) {
-	const cwd = mkdtempSync(join(tmpdir(), prefix));
-	t.after(() => {
-		rmSync(cwd, { force: true, recursive: true });
-	});
-	return cwd;
+	return makeSharedTempDir(prefix, t);
 }
 
 function makePrimaryFixture(t, prefix) {
-	const dir = makeTempDir(t, prefix);
-	const home = join(dir, "home");
-	const agent = join(dir, "agent");
-	const cwd = join(dir, "workspace");
-	mkdirSync(home, { recursive: true });
-	mkdirSync(agent, { recursive: true });
-	mkdirSync(cwd, { recursive: true });
-	return { dir, home, agent, cwd };
-}
-
-async function withEnv(env, fn) {
-	const previous = new Map();
-	for (const key of Object.keys(env)) {
-		previous.set(key, process.env[key]);
-		if (env[key] === undefined) {
-			delete process.env[key];
-		} else {
-			process.env[key] = env[key];
-		}
-	}
-	try {
-		return await fn();
-	} finally {
-		for (const [key, value] of previous) {
-			if (value === undefined) {
-				delete process.env[key];
-			} else {
-				process.env[key] = value;
-			}
-		}
-	}
+	return createIsolatedProfileFixture(prefix, { cwd: true, test: t });
 }
 
 function assertRenderedPathLine(message, linePattern, expectedPath) {
@@ -1237,6 +1203,71 @@ test("/review pr uses gh pr checkout before diff when switching to the PR head",
 		harness.execCalls.findIndex(({ command, args }) => command === "gh" && args.join(" ") === "pr checkout 123") <
 			harness.execCalls.findIndex(({ command, args }) => command === "gh" && args.join(" ") === "pr diff 123"),
 		"should switch branches before gathering the PR diff",
+	);
+});
+
+test("/review pr reports the branch switch when gh pr diff fails after checkout", async (t) => {
+	const cwd = makeTempDir(t, "tlh-review-pr-diff-failure-");
+	const customResponses = ["pr", true];
+
+	const harness = createReviewHarness({
+		cwd,
+		custom: () => customResponses.shift(),
+		editor: () => "123",
+		exec: async (command, args) => {
+			if (command === "gh" && args.join(" ") === "--version") {
+				return { code: 0, stdout: "gh version 2.0.0\n", stderr: "" };
+			}
+			if (
+				command === "gh" &&
+				args.join(" ") ===
+					"pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
+			) {
+				return {
+					code: 0,
+					stdout: JSON.stringify({
+						number: 123,
+						headRefName: "feature/review",
+						baseRefName: "main",
+						isCrossRepository: false,
+					}),
+					stderr: "",
+				};
+			}
+			if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD") {
+				return { code: 0, stdout: "main\n", stderr: "" };
+			}
+			if (command === "git" && args.join(" ") === "status --porcelain") {
+				return { code: 0, stdout: "", stderr: "" };
+			}
+			if (command === "gh" && args.join(" ") === "pr checkout 123") {
+				return { code: 0, stdout: "", stderr: "" };
+			}
+			if (command === "gh" && args.join(" ") === "pr diff 123") {
+				return { code: 1, stdout: "", stderr: "GraphQL: something exploded\nmore detail" };
+			}
+			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
+		},
+	});
+
+	await harness.handler("", harness.ctx);
+
+	assert.equal(harness.sentMessages.length, 0);
+	assert.deepEqual(harness.notifications, [
+		{
+			message:
+				"gh pr diff failed for PR #123: GraphQL: something exploded\n/review already switched from 'main' to 'feature/review' before the failure. Use `git checkout -` to return to 'main'.",
+			level: "error",
+		},
+	]);
+	assert.ok(
+		harness.execCalls.findIndex(({ command, args }) => command === "gh" && args.join(" ") === "pr checkout 123") <
+			harness.execCalls.findIndex(({ command, args }) => command === "gh" && args.join(" ") === "pr diff 123"),
+		"should switch branches before the diff failure",
+	);
+	assert.equal(
+		harness.execCalls.some(({ command, args }) => command === "git" && args[0] === "checkout"),
+		false,
 	);
 });
 

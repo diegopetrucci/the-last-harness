@@ -62,11 +62,6 @@
     "description": "Open a local HTML dashboard explaining where the current session context is going."
   },
   {
-    "id": "confirm-destructive",
-    "source": "npm:@diegopetrucci/pi-confirm-destructive",
-    "description": "Confirm destructive shell/file operations before they run."
-  },
-  {
     "id": "rtk",
     "aliases": ["pi-rtk"],
     "replaces": ["npm:pi-rtk", "npm:@sherif-fanous/pi-rtk", "git:github.com/sherif-fanous/pi-rtk"],
@@ -97,7 +92,7 @@
     "replaces": ["npm:pi-subagents", "git:github.com/nicobailon/pi-subagents"],
     "migrateReplacements": true,
     "critical": true,
-    "source": "git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-2",
+    "source": "git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-3",
     "description": "Delegate work to isolated TLH-profile subagents."
   },
   {
@@ -106,7 +101,7 @@
     "replaces": ["npm:pi-intercom", "git:github.com/nicobailon/pi-intercom"],
     "migrateReplacements": true,
     "critical": true,
-    "source": "git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-3",
+    "source": "git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-5",
     "description": "Allow child subagents to escalate questions to the supervising session."
   }
 ]

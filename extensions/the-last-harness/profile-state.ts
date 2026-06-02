@@ -1,9 +1,9 @@
 import { closeSync, constants, lstatSync, mkdirSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { formatHomePath, isRecord, pathWithinOrEqual, readText, realpathForCompare } from "./common.js";
-import type { TlhInstallState, TlhStartupState } from "./types.js";
+import type { SettingsStorageLike, TlhInstallState, TlhStartupState } from "./types.js";
 
 export function isDefaultPiAgentDir(agentDir: string): boolean {
 	const home = process.env.HOME || process.env.USERPROFILE;
@@ -187,6 +187,54 @@ export function tlhSettingsPathForWrite(): string | undefined {
 		return undefined;
 	}
 	return join(agentDir, "settings.json");
+}
+
+function settingsBackupTimestamp(): string {
+	return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+function getSettingsStorageForWrite(cwd: string): SettingsStorageLike {
+	const manager = SettingsManager.create(cwd, getAgentDir()) as unknown as { storage?: SettingsStorageLike };
+	if (!manager.storage || typeof manager.storage.withLock !== "function") {
+		throw new Error("Pi settings storage is unavailable.");
+	}
+	return manager.storage;
+}
+
+export function withLockedTlhSettingsWrite<TResult extends { changed: boolean }>(
+	cwd: string,
+	outsideProfileError: string,
+	update: (current: string | undefined) => TResult & { nextContent?: string },
+): TResult & { settingsPath: string; backupPath?: string } {
+	const settingsPath = tlhSettingsPathForWrite();
+	if (!settingsPath) {
+		throw new Error(outsideProfileError);
+	}
+	assertSafeTlhSettingsPath(settingsPath);
+
+	let result: (TResult & { settingsPath: string; backupPath?: string }) | undefined;
+	getSettingsStorageForWrite(cwd).withLock("global", (current) => {
+		const outcome = update(current);
+		const { nextContent, ...baseResult } = outcome;
+		if (!baseResult.changed) {
+			result = { ...baseResult, settingsPath };
+			return undefined;
+		}
+		if (typeof nextContent !== "string") {
+			throw new Error("TLH settings write must provide replacement content when changed.");
+		}
+		const backupPath = current ? `${settingsPath}.bak-${settingsBackupTimestamp()}` : undefined;
+		if (backupPath) {
+			writeFileSync(backupPath, current, { encoding: "utf8", flag: "wx", mode: 0o600 });
+		}
+		result = backupPath ? { ...baseResult, settingsPath, backupPath } : { ...baseResult, settingsPath };
+		return nextContent;
+	});
+
+	if (!result) {
+		throw new Error("Pi settings storage did not return a write result.");
+	}
+	return result;
 }
 
 export function assertSafeTlhSettingsPath(settingsPath: string): void {

@@ -1,5 +1,3 @@
-import { writeFileSync } from "node:fs";
-
 import { SettingsManager, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import {
@@ -15,6 +13,11 @@ import {
 } from "../the-last-harness-primary-agent.mjs";
 import { createPrimaryToolState, filterAvailableTools } from "../the-last-harness-primary-tools.mjs";
 import { registerTlhStartupMode, validateSubagentToolInput } from "../the-last-harness-subagent-safety.mjs";
+import {
+	buildTlhCommitAttributionPrompt,
+	getTlhGitCommitAttributionBlockReason,
+	resolveTlhCommitAttribution,
+} from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME } from "./constants.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
@@ -26,10 +29,9 @@ import {
 	loadSubagentMetadata,
 } from "./prompts.js";
 import { activateTlhTicketRuntime } from "./tickets.js";
-import { assertSafeTlhSettingsPath, tlhSettingsPathForWrite } from "./profile-state.js";
+import { tlhSettingsPathForWrite, withLockedTlhSettingsWrite } from "./profile-state.js";
 import type {
 	AgentPrompt,
-	SettingsStorageLike,
 	SubagentMetadata,
 	TlhPrimaryAgentConfig,
 	TlhPrimaryAgentSelection,
@@ -85,27 +87,8 @@ function parseTlhSettingsContent(content: string | undefined): Record<string, un
 	return parsed;
 }
 
-function settingsBackupTimestamp(): string {
-	return new Date().toISOString().replace(/[:.]/g, "-");
-}
-
-function getSettingsStorageForWrite(cwd: string): SettingsStorageLike {
-	const manager = SettingsManager.create(cwd, getAgentDir()) as unknown as { storage?: SettingsStorageLike };
-	if (!manager.storage || typeof manager.storage.withLock !== "function") {
-		throw new Error("Pi settings storage is unavailable.");
-	}
-	return manager.storage;
-}
-
 function writeTlhPrimaryAgentDefault(cwd: string, selection: TlhPrimaryAgentSelection | undefined): TlhPrimaryAgentWriteResult {
-	const settingsPath = tlhSettingsPathForWrite();
-	if (!settingsPath) {
-		throw new Error("Refusing to write primary-agent settings outside the isolated TLH profile.");
-	}
-	assertSafeTlhSettingsPath(settingsPath);
-
-	let result: TlhPrimaryAgentWriteResult | undefined;
-	getSettingsStorageForWrite(cwd).withLock("global", (current) => {
+	return withLockedTlhSettingsWrite(cwd, "Refusing to write primary-agent settings outside the isolated TLH profile.", (current) => {
 		const settings = parseTlhSettingsContent(current);
 		const rawTlh = settings.tlh;
 		let tlh: Record<string, unknown>;
@@ -156,22 +139,14 @@ function writeTlhPrimaryAgentDefault(cwd: string, selection: TlhPrimaryAgentSele
 		}
 
 		if (!changed) {
-			result = { settingsPath, changed: false };
-			return undefined;
+			return { changed: false };
 		}
 
-		const backupPath = current ? `${settingsPath}.bak-${settingsBackupTimestamp()}` : undefined;
-		if (backupPath) {
-			writeFileSync(backupPath, current, { encoding: "utf8", flag: "wx", mode: 0o600 });
-		}
-		result = { settingsPath, backupPath, changed: true };
-		return `${JSON.stringify(settings, null, 2)}\n`;
+		return {
+			changed: true,
+			nextContent: `${JSON.stringify(settings, null, 2)}\n`,
+		};
 	});
-
-	if (!result) {
-		throw new Error("Pi settings storage did not return a write result.");
-	}
-	return result;
 }
 
 function primaryToolAllowlist(primary: AgentPrompt | undefined): string[] {
@@ -221,6 +196,26 @@ function subagentCallTargetsAgent(input: unknown, target: string): boolean {
 
 function rushDeveloperDelegationReason(): string {
 	return "TLH Rush may not delegate implementation to developer. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.";
+}
+
+function registerChildSubagentRuntime(pi: ExtensionAPI, buildChildPrompt: () => string): void {
+	pi.on("before_agent_start", async (event, ctx) => {
+		const commitAttributionState = resolveTlhCommitAttribution(getTlhGlobalSettings(ctx.cwd).tlh?.attribution);
+		return {
+			systemPrompt: [event.systemPrompt, buildChildPrompt(), buildTlhCommitAttributionPrompt(commitAttributionState)]
+				.filter(Boolean)
+				.join("\n\n"),
+		};
+	});
+
+	pi.on("tool_call", async (event, ctx) => {
+		if (event.toolName !== "bash") {
+			return undefined;
+		}
+		const commitAttributionState = resolveTlhCommitAttribution(getTlhGlobalSettings(ctx.cwd).tlh?.attribution);
+		const reason = getTlhGitCommitAttributionBlockReason(event.input.command, commitAttributionState);
+		return reason ? { block: true, reason } : undefined;
+	});
 }
 
 function createTlhPrimaryAgentRuntime(
@@ -555,6 +550,7 @@ function createTlhPrimaryAgentRuntime(
 
 		pi.on("before_agent_start", async (event, ctx) => {
 			const settings = getTlhGlobalSettings(ctx.cwd);
+			const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
 			syncPrimaryAgentState(ctx);
 			const selection = currentPrimaryAgentSelection();
 			const primaryEnabled = isEnabledPrimaryAgentSelection(selection);
@@ -563,6 +559,7 @@ function createTlhPrimaryAgentRuntime(
 			const prompts = [
 				event.systemPrompt,
 				buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled),
+				buildTlhCommitAttributionPrompt(commitAttributionState),
 			];
 			if (shouldAppendGnosisPrompt(ctx.cwd)) {
 				prompts.push(GNOSIS_PROMPT);
@@ -571,6 +568,11 @@ function createTlhPrimaryAgentRuntime(
 		});
 
 		pi.on("tool_call", async (event, ctx) => {
+			if (event.toolName === "bash") {
+				const commitAttributionState = resolveTlhCommitAttribution(getTlhGlobalSettings(ctx.cwd).tlh?.attribution);
+				const reason = getTlhGitCommitAttributionBlockReason(event.input.command, commitAttributionState);
+				return reason ? { block: true, reason } : undefined;
+			}
 			if (event.toolName !== "subagent") {
 				return undefined;
 			}
@@ -600,6 +602,9 @@ export function registerTlhPrimaryAgentRuntime(
 		registerTlhStartupMode(pi, {
 			env: options.env ?? process.env,
 			buildChildSubagentSystemPrompt: childPromptBuilder,
+			registerChild: () => {
+				registerChildSubagentRuntime(pi, childPromptBuilder);
+			},
 		}) === "child"
 	) {
 		return undefined;

@@ -84,18 +84,16 @@ test("shared default-extension reader trims descriptions and can allow missing m
 	);
 });
 
-test("bundled manifest keeps security defaults plus quiet-tools-compatible rtk load order", () => {
+test("bundled manifest keeps quiet-tools-compatible rtk load order", () => {
 	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
 	const ids = bundled.map(({ id }) => id);
 	const rtk = bundled.find(({ id }) => id === "rtk");
-	const confirmDestructive = bundled.find(({ id }) => id === "confirm-destructive");
 	const dirtyRepoGuard = bundled.find(({ id }) => id === "dirty-repo-guard");
 
-	assert.ok(confirmDestructive, "bundled confirm-destructive default should exist");
-	assert.equal(confirmDestructive.source, "npm:@diegopetrucci/pi-confirm-destructive");
 	assert.ok(dirtyRepoGuard, "bundled dirty-repo-guard default should exist");
 	assert.equal(dirtyRepoGuard.source, "npm:@diegopetrucci/pi-dirty-repo-guard");
 	assert.equal(ids.includes("permission-gate"), false);
+	assert.equal(ids.includes("confirm-destructive"), false);
 	assert.ok(rtk, "bundled rtk default should exist");
 	assert.deepEqual(rtk.aliases, ["pi-rtk"]);
 	assert.deepEqual(rtk.replaces, [
@@ -813,7 +811,7 @@ test("bundled manifest contains subagents and intercom entries with correct crit
 	const intercom = bundled.find(({ id }) => id === "intercom");
 
 	assert.ok(subagents, "bundled subagents entry should exist");
-	assert.equal(subagents.source, "git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-2");
+	assert.equal(subagents.source, "git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-3");
 	assert.equal(subagents.critical, true, "subagents must stay critical");
 	assert.deepEqual(subagents.aliases, ["pi-subagents"]);
 	assert.deepEqual(subagents.replaces, [
@@ -823,7 +821,7 @@ test("bundled manifest contains subagents and intercom entries with correct crit
 	assert.equal(subagents.migrateReplacements, true, "subagents replacements must stay enabled");
 
 	assert.ok(intercom, "bundled intercom entry should exist");
-	assert.equal(intercom.source, "git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-3");
+	assert.equal(intercom.source, "git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-5");
 	assert.equal(intercom.critical, true, "intercom must stay critical");
 	assert.deepEqual(intercom.aliases, ["pi-intercom"]);
 	assert.deepEqual(intercom.replaces, [
@@ -838,7 +836,7 @@ test("bundled manifest contains intercom entry with correct tag and critical fla
 	const intercom = bundled.find(({ id }) => id === "intercom");
 
 	assert.ok(intercom, "bundled intercom entry should exist");
-	assert.equal(intercom.source, "git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-3");
+	assert.equal(intercom.source, "git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-5");
 	assert.equal(intercom.critical, true, "intercom must stay critical");
 	assert.deepEqual(intercom.aliases, ["pi-intercom"]);
 	assert.deepEqual(intercom.replaces, [

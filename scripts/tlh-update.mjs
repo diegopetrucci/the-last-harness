@@ -1,16 +1,34 @@
 #!/usr/bin/env node
 import { accessSync, chmodSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 
-import { requiredValue } from "./lib/tlh-install-utils.mjs";
+import {
+	pathIsProtectedPiConfig,
+} from "./lib/tlh-install-paths.mjs";
+import {
+	assignOptionValue,
+	defaultTlhAgentDir,
+	defaultTlhBinDir,
+	expandHomePath,
+} from "./lib/tlh-install-utils.mjs";
 
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_WRAPPER_NAME = "tlh";
 const VALID_TRACKS = new Set(["latest-release", "pinned-tag", "ref", "custom"]);
 const DOWNLOAD_TIMEOUT_MS = 30_000;
+const PACKAGE_UPDATE_ARGS = ["update", "--extensions"];
+const PACKAGE_UPDATE_UNSUPPORTED_OPTIONS = [
+	["track", "--track"],
+	["ref", "--ref"],
+	["repo", "--repo"],
+	["packageSource", "--package-source"],
+	["force", "--force"],
+	["noSettings", "--no-settings"],
+	["noWrapper", "--no-wrapper"],
+];
 
 function usage() {
 	return `Usage: tlh update [options]
@@ -22,6 +40,7 @@ Options:
   --agent-dir DIR       Isolated profile dir (default: ~/.the-last-harness/agent)
   --bin-dir DIR         Wrapper install dir (default: ~/.local/bin)
   --wrapper-name NAME   Wrapper command name (default: tlh)
+  --extensions          Update isolated extensions/packages only via pi update --extensions
   --track TRACK         Override update track: latest-release, pinned-tag, ref, custom
   --ref REF             Override git ref/tag for pinned-tag or ref tracks
   --repo OWNER/REPO     Override GitHub repository
@@ -36,30 +55,18 @@ Options:
 `;
 }
 
-function expandHome(path) {
-	if (path === "~") return homedir();
-	if (path.startsWith("~/")) return join(homedir(), path.slice(2));
-	return path;
-}
-
-function defaultAgentDir() {
-	return process.env.TLH_AGENT_DIR || process.env.PI_CODING_AGENT_DIR || join(homedir(), ".the-last-harness", "agent");
-}
-
-function defaultBinDir() {
-	return process.env.TLH_BIN_DIR || join(homedir(), ".local", "bin");
-}
-
 function parseArgs(argv) {
 	const args = {
-		agentDir: defaultAgentDir(),
-		binDir: defaultBinDir(),
+		agentDir: defaultTlhAgentDir(process.env, { preferTlhAgentDir: true }),
+		binDir: defaultTlhBinDir(process.env),
 		wrapperName: process.env.TLH_WRAPPER_NAME || DEFAULT_WRAPPER_NAME,
 		repo: process.env.TLH_REPO,
 		track: undefined,
 		ref: undefined,
 		packageSource: process.env.TLH_PACKAGE_SOURCE,
+		explicitOptions: new Set(),
 		dryRun: false,
+		extensions: false,
 		force: false,
 		noSettings: false,
 		noWrapper: false,
@@ -76,18 +83,27 @@ function parseArgs(argv) {
 		}
 		if (arg === "--dry-run") {
 			args.dryRun = true;
+			args.explicitOptions.add("dryRun");
+			continue;
+		}
+		if (arg === "--extensions") {
+			args.extensions = true;
+			args.explicitOptions.add("extensions");
 			continue;
 		}
 		if (arg === "--force") {
 			args.force = true;
+			args.explicitOptions.add("force");
 			continue;
 		}
 		if (arg === "--no-settings") {
 			args.noSettings = true;
+			args.explicitOptions.add("noSettings");
 			continue;
 		}
 		if (arg === "--no-wrapper") {
 			args.noWrapper = true;
+			args.explicitOptions.add("noWrapper");
 			continue;
 		}
 		if (arg === "--quiet") {
@@ -100,67 +116,53 @@ function parseArgs(argv) {
 			args.quiet = false;
 			continue;
 		}
-		if (arg === "--agent-dir") {
-			args.agentDir = requiredValue(argv, ++i, arg);
+		const agentDirIndex = assignOptionValue(args, "agentDir", argv, i, "--agent-dir");
+		if (agentDirIndex !== undefined) {
+			args.explicitOptions.add("agentDir");
+			i = agentDirIndex;
 			continue;
 		}
-		if (arg === "--bin-dir") {
-			args.binDir = requiredValue(argv, ++i, arg);
+		const binDirIndex = assignOptionValue(args, "binDir", argv, i, "--bin-dir");
+		if (binDirIndex !== undefined) {
+			args.explicitOptions.add("binDir");
+			i = binDirIndex;
 			continue;
 		}
-		if (arg === "--wrapper-name") {
-			args.wrapperName = requiredValue(argv, ++i, arg);
+		const wrapperNameIndex = assignOptionValue(args, "wrapperName", argv, i, "--wrapper-name");
+		if (wrapperNameIndex !== undefined) {
+			args.explicitOptions.add("wrapperName");
+			i = wrapperNameIndex;
 			continue;
 		}
-		if (arg === "--track") {
-			args.track = requiredValue(argv, ++i, arg);
+		const trackIndex = assignOptionValue(args, "track", argv, i, "--track");
+		if (trackIndex !== undefined) {
+			args.explicitOptions.add("track");
+			i = trackIndex;
 			continue;
 		}
-		if (arg === "--ref") {
-			args.ref = requiredValue(argv, ++i, arg);
+		const refIndex = assignOptionValue(args, "ref", argv, i, "--ref");
+		if (refIndex !== undefined) {
+			args.explicitOptions.add("ref");
+			i = refIndex;
 			continue;
 		}
-		if (arg === "--repo") {
-			args.repo = requiredValue(argv, ++i, arg);
+		const repoIndex = assignOptionValue(args, "repo", argv, i, "--repo");
+		if (repoIndex !== undefined) {
+			args.explicitOptions.add("repo");
+			i = repoIndex;
 			continue;
 		}
-		if (arg === "--package-source") {
-			args.packageSource = requiredValue(argv, ++i, arg);
-			continue;
-		}
-		if (arg.startsWith("--agent-dir=")) {
-			args.agentDir = arg.slice("--agent-dir=".length);
-			continue;
-		}
-		if (arg.startsWith("--bin-dir=")) {
-			args.binDir = arg.slice("--bin-dir=".length);
-			continue;
-		}
-		if (arg.startsWith("--wrapper-name=")) {
-			args.wrapperName = arg.slice("--wrapper-name=".length);
-			continue;
-		}
-		if (arg.startsWith("--track=")) {
-			args.track = arg.slice("--track=".length);
-			continue;
-		}
-		if (arg.startsWith("--ref=")) {
-			args.ref = arg.slice("--ref=".length);
-			continue;
-		}
-		if (arg.startsWith("--repo=")) {
-			args.repo = arg.slice("--repo=".length);
-			continue;
-		}
-		if (arg.startsWith("--package-source=")) {
-			args.packageSource = arg.slice("--package-source=".length);
+		const packageSourceIndex = assignOptionValue(args, "packageSource", argv, i, "--package-source");
+		if (packageSourceIndex !== undefined) {
+			args.explicitOptions.add("packageSource");
+			i = packageSourceIndex;
 			continue;
 		}
 		throw new Error(`Unknown option for tlh update: ${arg}`);
 	}
 
-	args.agentDir = expandHome(args.agentDir);
-	args.binDir = expandHome(args.binDir);
+	args.agentDir = expandHomePath(args.agentDir);
+	args.binDir = expandHomePath(args.binDir);
 	return args;
 }
 
@@ -462,7 +464,8 @@ function buildInstallerArgs(plan, args, state) {
 	if (args.verbose) installerArgs.push("--verbose");
 	// Preserve piInstalledByTlh from the existing install-state so the update does not
 	// reinvent or clear a value that was set during the original install. When absent in the
-	// prior state (older installs), omit the flag so install-state.json stays field-free.
+	// prior state (older installs), omit the flag; the installer itself will still record true
+	// if this update run has to install Pi.
 	if (typeof state?.piInstalledByTlh === "boolean") {
 		installerArgs.push("--pi-installed-by-tlh", String(state.piInstalledByTlh));
 	}
@@ -486,6 +489,56 @@ function printDryRun(plan, installerArgs, env) {
 	if (env.TLH_PACKAGE_SOURCE) envParts.push(`TLH_PACKAGE_SOURCE=${shellQuote(env.TLH_PACKAGE_SOURCE)}`);
 	const prefix = envParts.length > 0 ? `${envParts.join(" ")} ` : "";
 	console.log(`Would run: ${prefix}bash <downloaded install.sh> ${installerArgs.map(shellQuote).join(" ")}`);
+}
+
+function assertPackageUpdateTargetSafe(agentDir) {
+	if (pathIsProtectedPiConfig(agentDir)) {
+		throw new Error(`refusing to run The Last Harness extension update against normal Pi config root: ${agentDir}`);
+	}
+}
+
+function assertPackageUpdateArgs(args) {
+	const unsupported = PACKAGE_UPDATE_UNSUPPORTED_OPTIONS
+		.filter(([key]) => args.explicitOptions.has(key))
+		.map(([, flag]) => flag);
+	if (unsupported.length > 0) {
+		throw new Error(`--extensions does not support ${unsupported.join(", ")}. Run plain tlh update for installer updates.`);
+	}
+}
+
+function printPackageUpdateDryRun(piCommand, args) {
+	console.log("The Last Harness extension update plan");
+	console.log(`Agent dir: ${args.agentDir}`);
+	console.log(`Would run: PI_CODING_AGENT_DIR=${shellQuote(args.agentDir)} ${shellQuote(piCommand)} ${PACKAGE_UPDATE_ARGS.map(shellQuote).join(" ")}`);
+}
+
+function runPackageUpdate(args) {
+	assertPackageUpdateTargetSafe(args.agentDir);
+	assertPackageUpdateArgs(args);
+	const sanitizedEnv = envWithSanitizedPath(process.env, args.agentDir);
+	const piCommand = resolveCommand("pi", sanitizedEnv);
+	if (args.dryRun) {
+		printPackageUpdateDryRun(piCommand, args);
+		return;
+	}
+	if (isTruthyEnv(process.env.PI_OFFLINE)) {
+		throw new Error("PI_OFFLINE is set; refusing to run a network update.");
+	}
+	if (!args.quiet) {
+		console.log("Updating The Last Harness isolated extensions...");
+		if (args.verbose) console.log(`Pi: ${piCommand}`);
+	}
+	const result = spawnSync(piCommand, PACKAGE_UPDATE_ARGS, {
+		stdio: "inherit",
+		env: {
+			...sanitizedEnv,
+			PI_CODING_AGENT_DIR: args.agentDir,
+		},
+	});
+	if (result.error) {
+		throw result.error;
+	}
+	process.exitCode = result.status ?? (result.signal ? 1 : 0);
 }
 
 async function downloadInstaller(url) {
@@ -514,6 +567,10 @@ async function main() {
 	const args = parseArgs(process.argv.slice(2));
 	if (args.help) {
 		process.stdout.write(usage());
+		return;
+	}
+	if (args.extensions) {
+		runPackageUpdate(args);
 		return;
 	}
 	if (args.track && !VALID_TRACKS.has(args.track)) {

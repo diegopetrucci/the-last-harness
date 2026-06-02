@@ -5,12 +5,13 @@ import process from "node:process";
 
 import {
 	assertNotInNormalPiConfig,
+	assignOptionValue,
 	renderShellWords,
-	requiredValue,
 	shellQuote,
 } from "./lib/tlh-install-utils.mjs";
 
 const DEFAULT_MARKER = "Managed by The Last Harness installer";
+const MIN_PI_VERSION = "0.76.0";
 
 function usage() {
 	return `Usage: tlh-wrapper.mjs [options]
@@ -59,36 +60,24 @@ function parseArgs(argv) {
 			args.quiet = true;
 			continue;
 		}
-		if (arg === "--agent-dir") {
-			args.agentDir = requiredValue(argv, ++index, arg);
+		const agentDirIndex = assignOptionValue(args, "agentDir", argv, index, "--agent-dir");
+		if (agentDirIndex !== undefined) {
+			index = agentDirIndex;
 			continue;
 		}
-		if (arg.startsWith("--agent-dir=")) {
-			args.agentDir = arg.slice("--agent-dir=".length);
+		const binDirIndex = assignOptionValue(args, "binDir", argv, index, "--bin-dir");
+		if (binDirIndex !== undefined) {
+			index = binDirIndex;
 			continue;
 		}
-		if (arg === "--bin-dir") {
-			args.binDir = requiredValue(argv, ++index, arg);
+		const wrapperNameIndex = assignOptionValue(args, "wrapperName", argv, index, "--wrapper-name");
+		if (wrapperNameIndex !== undefined) {
+			index = wrapperNameIndex;
 			continue;
 		}
-		if (arg.startsWith("--bin-dir=")) {
-			args.binDir = arg.slice("--bin-dir=".length);
-			continue;
-		}
-		if (arg === "--wrapper-name") {
-			args.wrapperName = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--wrapper-name=")) {
-			args.wrapperName = arg.slice("--wrapper-name=".length);
-			continue;
-		}
-		if (arg === "--package-root") {
-			args.packageRoot = requiredValue(argv, ++index, arg);
-			continue;
-		}
-		if (arg.startsWith("--package-root=")) {
-			args.packageRoot = arg.slice("--package-root=".length);
+		const packageRootIndex = assignOptionValue(args, "packageRoot", argv, index, "--package-root");
+		if (packageRootIndex !== undefined) {
+			index = packageRootIndex;
 			continue;
 		}
 		throw new Error(`Unknown option: ${arg}`);
@@ -150,6 +139,7 @@ function renderWrapper(args) {
 		`default_tlh_package_root=${shellQuote(args.packageRoot)}`,
 		`default_bin_dir=${shellQuote(args.binDir)}`,
 		`default_wrapper_name=${shellQuote(args.wrapperName)}`,
+		`default_min_pi_version=${shellQuote(MIN_PI_VERSION)}`,
 		'tlh_original_path="${PATH:-}"',
 		'tlh_managed_bin="${default_agent_dir}/bin"',
 		'tlh_wrapper_cwd_physical="$(pwd -P)"',
@@ -241,7 +231,91 @@ function renderWrapper(args) {
 		'  tlh_sanitized_path="${tlh_sanitized_path}${tlh_path_prefix}${tlh_path_entry}"',
 		'  tlh_path_prefix=":"',
 		'done',
-		'tlh_isolated_path="${tlh_managed_bin}${tlh_sanitized_path:+:${tlh_sanitized_path}}"',
+		'tlh_pi_version_meets_minimum() {',
+		'  local tlh_current="$1"',
+		'  local tlh_minimum="$2"',
+		'  local tlh_current_major tlh_current_minor tlh_current_patch',
+		'  local tlh_minimum_major tlh_minimum_minor tlh_minimum_patch',
+		'  if [[ ! "${tlh_current}" =~ ^v?([0-9]+)\\.([0-9]+)\\.([0-9]+)([-+][0-9A-Za-z.-]+)?$ ]]; then',
+		'    return 1',
+		'  fi',
+		'  tlh_current_major="${BASH_REMATCH[1]}"',
+		'  tlh_current_minor="${BASH_REMATCH[2]}"',
+		'  tlh_current_patch="${BASH_REMATCH[3]}"',
+		'  if [[ ! "${tlh_minimum}" =~ ^v?([0-9]+)\\.([0-9]+)\\.([0-9]+)([-+][0-9A-Za-z.-]+)?$ ]]; then',
+		'    return 1',
+		'  fi',
+		'  tlh_minimum_major="${BASH_REMATCH[1]}"',
+		'  tlh_minimum_minor="${BASH_REMATCH[2]}"',
+		'  tlh_minimum_patch="${BASH_REMATCH[3]}"',
+		'  if ((10#${tlh_current_major} > 10#${tlh_minimum_major})); then',
+		'    return 0',
+		'  fi',
+		'  if ((10#${tlh_current_major} < 10#${tlh_minimum_major})); then',
+		'    return 1',
+		'  fi',
+		'  if ((10#${tlh_current_minor} > 10#${tlh_minimum_minor})); then',
+		'    return 0',
+		'  fi',
+		'  if ((10#${tlh_current_minor} < 10#${tlh_minimum_minor})); then',
+		'    return 1',
+		'  fi',
+		'  if ((10#${tlh_current_patch} >= 10#${tlh_minimum_patch})); then',
+		'    return 0',
+		'  fi',
+		'  return 1',
+		'}',
+		'tlh_candidate_pi_is_supported() {',
+		'  local tlh_candidate_dir="$1"',
+		'  local tlh_candidate_pi="${tlh_candidate_dir}/pi"',
+		'  local tlh_version_output',
+		'  local tlh_version',
+		'  [[ -n "${tlh_candidate_dir}" && -x "${tlh_candidate_pi}" ]] || return 1',
+		'  if ! tlh_version_output="$(PATH="${tlh_sanitized_path}" "${tlh_candidate_pi}" --version 2>&1)"; then',
+		'    return 1',
+		'  fi',
+		'  if [[ ! "${tlh_version_output}" =~ ([0-9]+\\.[0-9]+\\.[0-9]+) ]]; then',
+		'    return 1',
+		'  fi',
+		'  tlh_version="${BASH_REMATCH[1]}"',
+		'  tlh_pi_version_meets_minimum "${tlh_version}" "${default_min_pi_version}"',
+		'}',
+		'tlh_managed_helper_path="${tlh_managed_bin}${tlh_sanitized_path:+:${tlh_sanitized_path}}"',
+		'tlh_pi_search_path=""',
+		'tlh_pi_search_path_resolved=0',
+		'tlh_resolve_pi_search_path() {',
+		'  local tlh_path_pi_cmd',
+		'  local tlh_path_pi_bin',
+		'  local tlh_path_pi_is_supported=0',
+		'  local tlh_home_dir',
+		'  local tlh_candidate_pi_bin',
+		'  local tlh_preferred_pi_bin=""',
+		'  if [[ "${tlh_pi_search_path_resolved}" == "1" ]]; then',
+		'    return',
+		'  fi',
+		'  tlh_pi_search_path="${tlh_sanitized_path}"',
+		'  tlh_path_pi_cmd="$(PATH="${tlh_sanitized_path}" type -P pi || true)"',
+		'  if [[ -n "${tlh_path_pi_cmd}" ]]; then',
+		'    tlh_path_pi_bin="${tlh_path_pi_cmd%/*}"',
+		'    if [[ "${tlh_path_pi_bin}" == "${tlh_path_pi_cmd}" ]]; then',
+		'      tlh_path_pi_bin="."',
+		'    fi',
+		'    if tlh_candidate_pi_is_supported "${tlh_path_pi_bin}"; then',
+		'      tlh_path_pi_is_supported=1',
+		'    fi',
+		'  fi',
+		'  tlh_home_dir="${HOME:-}"',
+		'  if [[ "${tlh_path_pi_is_supported}" != "1" && -n "${tlh_home_dir}" ]]; then',
+		'    tlh_candidate_pi_bin="${tlh_home_dir}/.local/bin"',
+		'    if tlh_candidate_pi_is_supported "${tlh_candidate_pi_bin}"; then',
+		'      tlh_preferred_pi_bin="${tlh_candidate_pi_bin}"',
+		'    fi',
+		'  fi',
+		'  if [[ -n "${tlh_preferred_pi_bin}" ]]; then',
+		'    tlh_pi_search_path="${tlh_preferred_pi_bin}${tlh_pi_search_path:+:${tlh_pi_search_path}}"',
+		'  fi',
+		'  tlh_pi_search_path_resolved=1',
+		'}',
 		'tlh_node_cmd=""',
 		'tlh_resolve_node() {',
 		'  if [[ -n "${tlh_node_cmd}" ]]; then',
@@ -283,7 +357,8 @@ function renderWrapper(args) {
 		"    exit 1",
 		"  fi",
 		'  tlh_resolve_node',
-		'  PATH="${tlh_sanitized_path}" exec "${tlh_node_cmd}" "${tlh_update_script}" --agent-dir "${default_agent_dir}" --bin-dir "${default_bin_dir}" --wrapper-name "${default_wrapper_name}" "$@"',
+		'  tlh_resolve_pi_search_path',
+		'  PATH="${tlh_pi_search_path}" exec "${tlh_node_cmd}" "${tlh_update_script}" --agent-dir "${default_agent_dir}" --bin-dir "${default_bin_dir}" --wrapper-name "${default_wrapper_name}" "$@"',
 		"fi",
 		"",
 		'if [[ "${1:-}" == "defaults" ]]; then',
@@ -330,10 +405,12 @@ function renderWrapper(args) {
 		"    exit 1",
 		"  fi",
 		'  tlh_resolve_node',
-		'  PATH="${tlh_isolated_path}" exec "${tlh_node_cmd}" "${tlh_tickets_script}" --settings "${default_agent_dir}/settings.json" --agent-dir "${default_agent_dir}" --wrapper-name "${default_wrapper_name}" "$@"',
+		'  PATH="${tlh_managed_helper_path}" exec "${tlh_node_cmd}" "${tlh_tickets_script}" --settings "${default_agent_dir}/settings.json" --agent-dir "${default_agent_dir}" --wrapper-name "${default_wrapper_name}" "$@"',
 		"fi",
 		"",
-		'pi_cmd="$(PATH="${tlh_sanitized_path}" type -P pi || true)"',
+		'tlh_resolve_pi_search_path',
+		'tlh_isolated_path="${tlh_managed_bin}${tlh_pi_search_path:+:${tlh_pi_search_path}}"',
+		'pi_cmd="$(PATH="${tlh_pi_search_path}" type -P pi || true)"',
 		'if [[ -z "${pi_cmd}" ]]; then',
 		"  printf 'error: pi command not found on PATH.\\n' >&2",
 		"  exit 1",
