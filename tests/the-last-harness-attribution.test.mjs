@@ -313,6 +313,24 @@ printf 'extra'
 	}
 });
 
+test("git commit attribution guard blocks qualified git commit paths", () => {
+	const enabled = resolveTlhCommitAttribution(undefined);
+	const disabled = resolveTlhCommitAttribution({ commit: false });
+	const unattributedQualifiedGitCommit = '/usr/bin/git commit -m "ship it"';
+	const unattributedEnvWrappedQualifiedGitCommit = 'env FOO=bar /usr/bin/git commit -m "ship it"';
+	const attributedQualifiedGitCommit = `/usr/bin/git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
+	const attributedEnvWrappedQualifiedGitCommit = `env FOO=bar /usr/bin/git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
+
+	for (const command of [unattributedQualifiedGitCommit, unattributedEnvWrappedQualifiedGitCommit]) {
+		assert.match(getTlhGitCommitAttributionBlockReason(command, enabled) ?? "", /missing the required TLH attribution footer/);
+		assert.equal(getTlhGitCommitAttributionBlockReason(command, disabled), undefined);
+	}
+	for (const command of [attributedQualifiedGitCommit, attributedEnvWrappedQualifiedGitCommit]) {
+		assert.equal(getTlhGitCommitAttributionBlockReason(command, enabled), undefined);
+		assert.equal(getTlhGitCommitAttributionBlockReason(command, disabled), undefined);
+	}
+});
+
 test("git commit attribution guard consumes separated message values before pathspec parsing", () => {
 	const enabled = resolveTlhCommitAttribution(undefined);
 	const disabled = resolveTlhCommitAttribution({ commit: false });

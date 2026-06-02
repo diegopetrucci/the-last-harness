@@ -497,7 +497,7 @@ function normalizeShellCommandTokens(segment: string): string[] {
 }
 
 function getGitCommitArgumentsFromTokens(tokens: string[]): string[] | undefined {
-	if (tokens[0]?.toLowerCase() !== "git") {
+	if (commandBasename(tokens[0] ?? "") !== "git") {
 		return undefined;
 	}
 
