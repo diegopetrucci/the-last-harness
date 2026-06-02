@@ -1,6 +1,7 @@
 # The last harness you'll ever need.
 
 [![CI](https://github.com/diegopetrucci/the-last-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/diegopetrucci/the-last-harness/actions/workflows/ci.yml)
+[![Node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933?logo=nodedotjs)](package.json)
 
 `tlh` (The Last Harness) is an opinionated harness built on top of [Pi](https://github.com/earendil-works/pi).
 
