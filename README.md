@@ -37,7 +37,6 @@ They run in fresh child contexts: they get the task and project context, not the
 - **Ticketed execution**: TLH requires `tk` for dependency-tracked tickets, installing a managed command at `~/.the-last-harness/agent/bin/tk` when it needs to supply one. The architect hands one ticket at a time to implementation and review agents; product mode can shape product-approved tickets for later handoff; Rush is the small-task exception and edits directly instead of starting that default loop.
 - **Context management**: context is capped to 200k tokens to avoid the `dumb zone`, and `/context` lets you see what is eating up your context.
 - **Subscription usage footer**: OAuth subscription sessions on OpenAI/Codex and Anthropic show the current usage window in the footer; weekly usage is hidden by default and controlled with `/usage`.
-- **Commit attribution**: when an agent creates a git commit through the bash tool, TLH defaults to a TLH-branded commit footer and lets you persistently disable or re-enable it from the isolated TLH profile.
 - **Inline bash snippets**: trusted `!{...}` snippets in your prompt are expanded through local bash before the agent sees them, useful for quick context like `!{git status --short}`.
 - **Repo toolkit helper**: TLH bundles a patched `pi-rtk` fork. Its repo-tooling features need an `rtk` binary on your `PATH`; use `/rtk` to check status, and `tlh defaults disable rtk` if you do not want the bundled default. TLH loads it in a `quiet-tools`-compatible order so collapsed bash rendering stays active without adding a persistent footer indicator.
 - **Web search**: TLH bundles Exa-backed web research for `web-scout`; setup and privacy notes live in [`docs/web-search.md`](docs/web-search.md).
@@ -56,7 +55,6 @@ Common TLH commands:
 - `/effort ...` — pick or set model reasoning effort. Available levels depend on the current model.
 - `/fast [on|off|auto|toggle|status]` — manage OpenAI Fast mode for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions.
 - `/usage [status|weekly on|weekly off|weekly toggle]` — inspect or change whether the footer shows weekly subscription usage.
-- `/toggle-tlh-git-attribution` — persistently disable or re-enable TLH commit attribution for agent-created git commits in the isolated TLH profile.
 - `/changelog` — manually show the upstream Pi changelog when you want it; TLH hides the automatic upstream changelog/update notice in its isolated profile.
 - `/tlh-changelog` — show TLH release notes from the packaged `CHANGELOG.md`.
 - `/context [--no-open] [--keep] [--redact] [--full|--current]` — generate a local HTML breakdown of where the session context is going.
@@ -65,16 +63,6 @@ Common TLH commands:
 Persistent primary-agent changes are written under `tlh.primaryAgent` in the isolated TLH settings file at `~/.the-last-harness/agent/settings.json`, with a backup when an existing settings file is changed. Use `/switch-primary-agent default reset` to remove those persistent fields and return future sessions to the built-in `architect` default. Use `/switch-primary-agent reset` for the current session only.
 
 `/usage weekly on|off|toggle` writes the weekly footer preference under `tlh.usageLimits.showWeekly` in the same isolated settings file; the default is hidden when unset.
-
-`/toggle-tlh-git-attribution` writes its preference under `tlh.attribution.commit` in that same isolated TLH settings file. When `tlh.attribution.commit` is unset or `true`, TLH uses this exact built-in footer for agent-created git commits made through the bash tool:
-
-```text
-🤖 Generated with [The Last Harness](https://github.com/diegopetrucci/the-last-harness)
-
-Co-authored-by: The Last Harness <hi@thelastharness.com>
-```
-
-Set `tlh.attribution.commit` to `false`, or run `/toggle-tlh-git-attribution`, to disable TLH commit attribution persistently. Run `/toggle-tlh-git-attribution` again to re-enable it. Deleting `tlh.attribution.commit` from `~/.the-last-harness/agent/settings.json` also returns the isolated profile to the built-in default footer. TLH does not change `git push`; attribution belongs in the commit message before you push.
 
 The subscription usage footer fetches usage with the OAuth bearer your session already uses from two undocumented vendor endpoints:
 
@@ -181,6 +169,7 @@ There is no `/end-review` command. After the summary is delivered, you are back 
 ## Docs dump
 
 - Install, update, and uninstall guidance: [`docs/install.md`](docs/install.md)
+- Git commit attribution footer, setting, and toggle flow: [`docs/git-attribution.md`](docs/git-attribution.md)
 - Local testing and development commands [`docs/local-development.md`](docs/local-development.md).
 
 ## Prerequisites
