@@ -12,7 +12,6 @@ If this resonates with you, welcome aboard:
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
 ```
 
-
 ## The default TLH workflow: architect first
 
 Most TLH users stay with the **architect** primary agent.
