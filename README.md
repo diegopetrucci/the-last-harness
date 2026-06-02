@@ -2,9 +2,17 @@
 
 [![CI](https://github.com/diegopetrucci/the-last-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/diegopetrucci/the-last-harness/actions/workflows/ci.yml)
 
-`tlh` (The Last Harness) is an isolated, opinionated harness around upstream [Pi](https://github.com/earendil-works/pi). It is built for people who want strong defaults, durable project memory, ticketed execution, and a primary agent that behaves more like a careful technical lead than a fast autocomplete.
+`tlh` (The Last Harness) is an opinionated harness built on top of [Pi](https://github.com/earendil-works/pi).
 
-It is built around two simple ideas: you can outsource your thinking, but not your understanding ([cognitive debt](https://simonwillison.net/2026/Feb/15/cognitive-debt/)); and you should not be babysitting your agents.
+Two core ideas drive it:
+- _"you can outsource your thinking, but not your understanding"_: LLMs can, and should, provide options, help out with discovery and exploration, filling the gaps in your understanding and technical knowledge — they should not, however, be used as a replacement for understanding. [Beware of cognitive debt](https://simonwillison.net/2026/Feb/15/cognitive-debt/).
+- _you should not be babysitting your agents_: if you need to manually call tools, run commands, and so on, the harness has failed you.
+
+It achieves this via a custom orchestration workflow — you only interface with an architect, whom you engage as a senior peer, and once you're satisfied with the discussion and plan, it takes over until everything is done. Work is pre-reviewed too, often multiple times, so that your time is not wasted in minutiae, freeing you to focus on the bigger picture.
+
+You're also not asked to manually run commands, manage context, or anything like that. This is built-in and done for you. Every further action that you take is because you _want_ to take it, not because you _have_ to. You should not be finding yourself thinking eg "oh, I forgot to trigger `/review`". Your time is worth more.
+
+`tlh` is also slow by default, and relatively token-expensive: it is designed to be used as a long-running, reliable, and predictable tool. You spend time preparing the work, and once it's off, it's off. No babysitting.
 
 If this resonates with you, welcome aboard:
 
