@@ -13,6 +13,7 @@ function readRepoFile(path) {
 const userFacingDocs = [
 	"README.md",
 	"CHANGELOG.md",
+	"docs/git-attribution.md",
 	"docs/install.md",
 	"docs/integrations.md",
 	"docs/local-development.md",
@@ -68,6 +69,30 @@ test("README and integrations docs describe Rush primary behavior and switching 
 	assert.doesNotMatch(readme, /`\/agent(?=`| \[)/);
 	assert.doesNotMatch(readme, /`\/architect(?=`| \[)/);
 	assert.match(integrations, /Rush keeps that tooling available but handles small bounded tasks with direct edits instead of the default `tk` loop/i);
+});
+
+test("git attribution docs carry the detailed behavior while README only points to them", () => {
+	const readme = readRepoFile("README.md");
+	const attributionDoc = readRepoFile("docs/git-attribution.md");
+	const changelog = readRepoFile("CHANGELOG.md");
+
+	assert.match(readme, /\[`docs\/git-attribution\.md`\]\(docs\/git-attribution\.md\)/);
+	assert.doesNotMatch(readme, /`\/toggle-tlh-git-attribution`/);
+	assert.doesNotMatch(readme, /`tlh\.attribution\.commit`/);
+	assert.doesNotMatch(readme, /Co-authored-by: The Last Harness <hi@thelastharness\.com>/);
+	assert.match(attributionDoc, /`\/toggle-tlh-git-attribution`/);
+	assert.match(attributionDoc, /`tlh\.attribution\.commit` is unset or `true`/);
+	assert.match(attributionDoc, /Co-authored-by: The Last Harness <hi@thelastharness\.com>/);
+	assert.match(attributionDoc, /Set `tlh\.attribution\.commit` to `false`/);
+	assert.match(attributionDoc, /Delete `tlh\.attribution\.commit`/);
+	assert.match(attributionDoc, /TLH does not change `git push`/);
+	assert.doesNotMatch(attributionDoc, /`\/attribution toggle`/);
+	assert.doesNotMatch(attributionDoc, /Set `tlh\.attribution\.commit` to `""`/);
+	assert.doesNotMatch(attributionDoc, /custom footer/i);
+	assert.doesNotMatch(attributionDoc, /noreply@the-last-harness\.invalid/);
+	assert.match(changelog, /`\/toggle-tlh-git-attribution`/);
+	assert.match(changelog, /boolean `tlh\.attribution\.commit` settings/);
+	assert.doesNotMatch(changelog, /`\/attribution toggle`/);
 });
 
 test("install docs describe separate pi removal with the TLH per-user npm prefix", () => {

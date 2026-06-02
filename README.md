@@ -169,6 +169,7 @@ There is no `/end-review` command. After the summary is delivered, you are back 
 ## Docs dump
 
 - Install, update, and uninstall guidance: [`docs/install.md`](docs/install.md)
+- Git commit attribution footer, setting, and toggle flow: [`docs/git-attribution.md`](docs/git-attribution.md)
 - Local testing and development commands [`docs/local-development.md`](docs/local-development.md).
 
 ## Prerequisites
