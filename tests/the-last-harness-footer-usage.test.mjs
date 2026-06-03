@@ -568,3 +568,64 @@ test("reset countdown: session+weekly segment joiner is intact when both have co
 	assert.equal(parts?.[0], "5h session 42% used, resets in 2h13m");
 	assert.equal(parts?.[1], "weekly 88.9% used, resets in 4d 6h");
 });
+
+// ---------------------------------------------------------------------------
+// NEW: per-segment color tests for line 2 (color-aware theme stub)
+// ---------------------------------------------------------------------------
+
+// Color-aware theme: wraps each segment in XML-style tags so assertions can
+// check which color each piece of text was rendered with.
+const colorTheme = {
+	fg: (color, text) => `<${color}>${text}</${color}>`,
+};
+// Use a generous width so truncateToWidth never truncates the color-tagged line.
+// The XML tags are counted as visible characters, so a standard 100-char width
+// would truncate the line before all segments are visible.
+const COLOR_WIDTH = 1000;
+
+test("line 2 (color-aware): architect name renders with dim, not accent", () => {
+	const ctx = createCtx({ provider: "anthropic" });
+	const footer = createTlhFooter(pi, ctx, colorTheme, () => "architect", createFooterData(), {});
+	const line = footer.render(COLOR_WIDTH)[1] ?? "";
+
+	// Name must appear inside <dim>, not <accent>
+	assert.match(line, /<dim>architect<\/dim>/);
+	assert.doesNotMatch(line, /<accent>architect<\/accent>/);
+	// Surrounding structure must also carry dim
+	assert.match(line, /<dim>agent: <\/dim>/);
+	assert.match(line, /<dim> \u2022 <\/dim>/);
+	assert.match(line, /<dim>claude-sonnet-4-20250514<\/dim>/);
+});
+
+test("line 2 (color-aware): rush name renders with accent, not dim", () => {
+	const ctx = createCtx({ provider: "anthropic" });
+	const footer = createTlhFooter(pi, ctx, colorTheme, () => "rush", createFooterData(), {});
+	const line = footer.render(COLOR_WIDTH)[1] ?? "";
+
+	// Name must appear inside <accent>
+	assert.match(line, /<accent>rush<\/accent>/);
+	assert.doesNotMatch(line, /<dim>rush<\/dim>/);
+	// Surrounding label and separators must remain dim
+	assert.match(line, /<dim>agent: <\/dim>/);
+	assert.match(line, /<dim> \u2022 <\/dim>/);
+	assert.match(line, /<dim>claude-sonnet-4-20250514<\/dim>/);
+});
+
+test("line 2 (color-aware): disabled renders name with accent", () => {
+	const ctx = createCtx({ provider: "anthropic" });
+	const footer = createTlhFooter(pi, ctx, colorTheme, () => "disabled", createFooterData(), {});
+	const line = footer.render(COLOR_WIDTH)[1] ?? "";
+
+	assert.match(line, /<accent>disabled<\/accent>/);
+	assert.doesNotMatch(line, /<dim>disabled<\/dim>/);
+});
+
+test("line 2 (color-aware): product and bug-hunter render name with accent", () => {
+	const ctx = createCtx({ provider: "anthropic" });
+
+	const productFooter = createTlhFooter(pi, ctx, colorTheme, () => "product", createFooterData(), {});
+	assert.match(productFooter.render(COLOR_WIDTH)[1] ?? "", /<accent>product<\/accent>/);
+
+	const bugFooter = createTlhFooter(pi, ctx, colorTheme, () => "bug-hunter", createFooterData(), {});
+	assert.match(bugFooter.render(COLOR_WIDTH)[1] ?? "", /<accent>bug-hunter<\/accent>/);
+});
