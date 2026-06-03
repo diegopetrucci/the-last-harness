@@ -110,7 +110,7 @@ You can add your own skills, prompts, extensions, and packages to TLH.
 User-level:
 - `~/.the-last-harness/agent/skills/`
 - `~/.the-last-harness/agent/prompts/`
-- `~/.the-last-harness/agent/extensions/`
+- `~/.the-last-harness/agent/extensions/` (or via `tlh install github-user/repo‘)
 - Install package-based resources into the same isolated profile with `tlh install <package-source>` (e.g., `tlh install github-user/repo` or see `tlh install --help`).
 - If you want a customization to apply only to one repo, prefer project-local `.pi/skills/`, `.pi/prompts/`, or `.pi/extensions/` there instead of your shared TLH profile.
 - After adding files or installing a package, run `/reload` in TLH (or restart it) so the new resources are picked up.
