@@ -11,6 +11,8 @@ import { installableSupportFiles } from "../scripts/lib/tlh-install-support-mani
 const repoRoot = resolve(import.meta.dirname, "..");
 const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
 const defaultsScript = join(repoRoot, "scripts", "tlh-defaults.mjs");
+const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
+const retiredPlannotatorPackage = "npm:@plannotator/pi-extension";
 
 function tempFixture() {
 	const dir = mkdtempSync(join(tmpdir(), "tlh-defaults-test-"));
@@ -662,6 +664,122 @@ test("tlh-defaults enable switches deferred pi-web-access replacements to the bu
 	const settings = readJson(fixture.settings);
 	assert.deepEqual(settings.packages, ["git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1"]);
 	assert.deepEqual(settings.tlh.disabledDefaultExtensions, []);
+	assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, ["git:github.com/diegopetrucci/pi-web-access"]);
+});
+
+for (const scenario of [
+	{
+		command: "disable",
+		initialSettings: {
+			packages: [harnessPackage, retiredPlannotatorPackage, "npm:@diegopetrucci/pi-notify"],
+		},
+		expectedPackages: [harnessPackage],
+		expectedDisabledDefaultExtensions: ["notify"],
+		expectedManagedPackageIdentities: [],
+	},
+	{
+		command: "enable",
+		initialSettings: {
+			packages: [harnessPackage, retiredPlannotatorPackage],
+			tlh: { disabledDefaultExtensions: ["notify"] },
+		},
+		expectedPackages: [harnessPackage, "npm:@diegopetrucci/pi-notify"],
+		expectedDisabledDefaultExtensions: [],
+		expectedManagedPackageIdentities: ["npm:@diegopetrucci/pi-notify"],
+	},
+]) {
+	test(`tlh-defaults ${scenario.command} preserves legacy retired default cleanup for merge`, () => {
+		const fixture = tempFixture();
+		writeFileSync(fixture.extensions, JSON.stringify([
+			{
+				id: "notify",
+				source: "npm:@diegopetrucci/pi-notify",
+			},
+		], null, 2));
+		writeFileSync(fixture.settings, JSON.stringify(scenario.initialSettings, null, 2));
+
+		runNode(defaultsScript, [
+			"--settings", fixture.settings,
+			"--defaults", fixture.extensions,
+			scenario.command, "notify",
+		]);
+
+		const afterDefaults = readJson(fixture.settings);
+		assert(afterDefaults.packages.includes(retiredPlannotatorPackage), "legacy retired package should still be present before merge cleanup");
+
+		const firstMergeOutput = runNode(mergeScript, [
+			fixture.defaults,
+			"--settings", fixture.settings,
+			"--default-extensions", fixture.extensions,
+		]);
+		assert.match(firstMergeOutput, /Will remove retired TLH default package: npm:@plannotator\/pi-extension/);
+
+		const afterFirstMerge = readJson(fixture.settings);
+		assert.deepEqual(afterFirstMerge.packages, scenario.expectedPackages);
+		assert.deepEqual(afterFirstMerge.tlh?.disabledDefaultExtensions ?? [], scenario.expectedDisabledDefaultExtensions);
+		assert.deepEqual(
+			afterFirstMerge.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [],
+			scenario.expectedManagedPackageIdentities,
+		);
+
+		const secondMergeOutput = runNode(mergeScript, [
+			fixture.defaults,
+			"--settings", fixture.settings,
+			"--default-extensions", fixture.extensions,
+		]);
+		assert.match(secondMergeOutput, /No settings changes needed\./);
+		assert.equal(secondMergeOutput.includes("retired TLH default package"), false, "retired cleanup should remain one-time");
+	});
+}
+
+test("tlh-defaults preserves pending retired default provenance across multiple mutations before merge", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "notify",
+			source: "npm:@diegopetrucci/pi-notify",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [harnessPackage, retiredPlannotatorPackage, "npm:@diegopetrucci/pi-notify"],
+	}, null, 2));
+
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"disable", "notify",
+	]);
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"enable", "notify",
+	]);
+
+	const afterDefaults = readJson(fixture.settings);
+	assert.deepEqual(afterDefaults.packages, [
+		harnessPackage,
+		retiredPlannotatorPackage,
+		"npm:@diegopetrucci/pi-notify",
+	]);
+	assert.deepEqual(afterDefaults.tlh?.disabledDefaultExtensions ?? [], []);
+	assert.deepEqual(afterDefaults.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [], [
+		"npm:@diegopetrucci/pi-notify",
+		"npm:@plannotator/pi-extension",
+	]);
+
+	const firstMergeOutput = runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", fixture.extensions,
+	]);
+	assert.match(firstMergeOutput, /Will remove retired TLH default package: npm:@plannotator\/pi-extension/);
+
+	const afterMerge = readJson(fixture.settings);
+	assert.deepEqual(afterMerge.packages, [
+		harnessPackage,
+		"npm:@diegopetrucci/pi-notify",
+	]);
+	assert.deepEqual(afterMerge.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [], ["npm:@diegopetrucci/pi-notify"]);
 });
 
 test("tlh-defaults disable anthropic-auth removes package and drops warnings.anthropicExtraUsage when it is the tlh default", () => {
@@ -686,6 +804,7 @@ test("tlh-defaults disable anthropic-auth removes package and drops warnings.ant
 	const settings = readJson(fixture.settings);
 	assert(!settings.packages.includes("npm:@gotgenes/pi-anthropic-auth"), "package should be removed");
 	assert.equal(settings.warnings, undefined, "warnings should be dropped when it becomes empty");
+	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, []);
 });
 
 test("tlh-defaults enable anthropic-auth restores warnings.anthropicExtraUsage when no warnings object is present", () => {
@@ -710,6 +829,7 @@ test("tlh-defaults enable anthropic-auth restores warnings.anthropicExtraUsage w
 	const settings = readJson(fixture.settings);
 	assert(settings.packages.includes("npm:@gotgenes/pi-anthropic-auth"), "package should be added");
 	assert.equal(settings.warnings?.anthropicExtraUsage, false, "warnings.anthropicExtraUsage should be set to false");
+	assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, ["npm:@gotgenes/pi-anthropic-auth"]);
 });
 
 test("tlh-defaults disable anthropic-auth preserves explicit warnings.anthropicExtraUsage: true set by the user", () => {

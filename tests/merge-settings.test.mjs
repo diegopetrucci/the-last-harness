@@ -236,12 +236,14 @@ test("merge removes the retired plannotator package from isolated settings and l
 	);
 
 	const output = runMerge(fixture, { quiet: false });
+	const settings = readJson(fixture.settings);
 
 	assert.match(output, /Will remove retired TLH default package: npm:@plannotator\/pi-extension/);
-	assert.deepEqual(readJson(fixture.settings).packages, [
+	assert.deepEqual(settings.packages, [
 		harnessPackage,
 		"npm:unrelated-package",
 	]);
+	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, []);
 });
 
 test("merge dry-run reports retired plannotator cleanup without writing settings", () => {
@@ -285,6 +287,7 @@ test("merge reruns preserve user-owned settings and stay idempotent", () => {
 	const firstSettings = readJson(fixture.settings);
 	assert.equal(firstSettings.theme, "custom-theme");
 	assert.deepEqual(firstSettings.tlh.disabledDefaultExtensions, ["notify"]);
+	assert.deepEqual(firstSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, []);
 	assert.equal(firstSettings.otherField, "preserved");
 	assert.equal(firstSettings.quietStartup, true);
 	assert.equal(firstSettings.collapseChangelog, true);
@@ -295,6 +298,47 @@ test("merge reruns preserve user-owned settings and stay idempotent", () => {
 	assert.match(secondOutput, /No settings changes needed\./);
 	assert.equal(readFileSync(fixture.settings, "utf8"), afterFirst);
 	assert.deepEqual(backupFiles(fixture.settings), backupsAfterFirst);
+});
+
+test("merge records provenance for managed default-extension package identities", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{ packages: [harnessPackage] },
+		[
+			{
+				id: "notify",
+				source: "npm:@diegopetrucci/pi-notify",
+			},
+		],
+	);
+
+	runMerge(fixture);
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.packages, [
+		harnessPackage,
+		"npm:@diegopetrucci/pi-notify",
+	]);
+	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, ["npm:@diegopetrucci/pi-notify"]);
+});
+
+test("merge does not remove a manually re-added retired default after provenance migration", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{ packages: [harnessPackage, retiredPlannotatorPackage] },
+	);
+
+	runMerge(fixture);
+	writeFileSync(fixture.settings, JSON.stringify({
+		...readJson(fixture.settings),
+		packages: [harnessPackage, retiredPlannotatorPackage],
+	}, null, 2));
+
+	runMerge(fixture);
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.packages, [harnessPackage, retiredPlannotatorPackage]);
+	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, []);
 });
 
 test("merge --force preserves tlh.telemetry.enabled=false while applying defaults", () => {
