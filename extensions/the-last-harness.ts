@@ -16,6 +16,7 @@ import { collectStartupResources } from "./the-last-harness/resources.js";
 import { createTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage.mjs";
 import { getTlhUsageLimitsConfig, registerUsageCommand, shouldShowTlhUsageWeekly } from "./the-last-harness/usage-limits.js";
 import { getTlhHeaderUpdate, maybeNotifyAvailableTlhUpdate } from "./the-last-harness/update-check.js";
+import { registerVersionCommand } from "./the-last-harness/version.js";
 import type { StartupResources, TlhUsageRefreshOptions } from "./the-last-harness/types.js";
 
 export default function theLastHarness(pi: ExtensionAPI) {
@@ -30,6 +31,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	registerReviewCommand(pi);
 	registerTlhChangelogCommand(pi);
 	registerUsageCommand(pi);
+	registerVersionCommand(pi);
 
 	const subscriptionUsageService = createTlhSubscriptionUsageService();
 	const requestFooterRenderByContext = new WeakMap<ExtensionContext, () => void>();
