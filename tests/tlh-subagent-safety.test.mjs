@@ -170,3 +170,25 @@ test("PI_SUBAGENT_CHILD=1 registers only child prompt behavior", async () => {
 	const result = await pi.events[0].handler({ systemPrompt: "base prompt" });
 	assert.deepEqual(result, { systemPrompt: "base prompt\n\nchild safety prompt" });
 });
+
+test("PI_SUBAGENT_CHILD=1 prefers an explicit child registrar over the prompt-only fallback", () => {
+	const pi = createPiHarness();
+	let childStartupCalled = false;
+
+	const mode = registerTlhStartupMode(pi, {
+		env: { [SUBAGENT_CHILD_ENV]: "1" },
+		buildChildSubagentSystemPrompt: () => {
+			throw new Error("fallback child prompt registrar should not run");
+		},
+		registerChild: () => {
+			childStartupCalled = true;
+			pi.on("tool_call", () => undefined);
+		},
+	});
+
+	assert.equal(mode, "child");
+	assert.equal(childStartupCalled, true);
+	assert.deepEqual(pi.events.map((event) => event.name), ["tool_call"]);
+	assert.deepEqual(pi.commands, []);
+	assert.deepEqual(pi.shortcuts, []);
+});

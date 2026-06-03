@@ -13,6 +13,11 @@ import {
 } from "../the-last-harness-primary-agent.mjs";
 import { createPrimaryToolState, filterAvailableTools } from "../the-last-harness-primary-tools.mjs";
 import { registerTlhStartupMode, validateSubagentToolInput } from "../the-last-harness-subagent-safety.mjs";
+import {
+	buildTlhCommitAttributionPrompt,
+	getTlhGitCommitAttributionBlockReason,
+	resolveTlhCommitAttribution,
+} from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME } from "./constants.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
@@ -191,6 +196,26 @@ function subagentCallTargetsAgent(input: unknown, target: string): boolean {
 
 function rushDeveloperDelegationReason(): string {
 	return "TLH Rush may not delegate implementation to developer. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.";
+}
+
+function registerChildSubagentRuntime(pi: ExtensionAPI, buildChildPrompt: () => string): void {
+	pi.on("before_agent_start", async (event, ctx) => {
+		const commitAttributionState = resolveTlhCommitAttribution(getTlhGlobalSettings(ctx.cwd).tlh?.attribution);
+		return {
+			systemPrompt: [event.systemPrompt, buildChildPrompt(), buildTlhCommitAttributionPrompt(commitAttributionState)]
+				.filter(Boolean)
+				.join("\n\n"),
+		};
+	});
+
+	pi.on("tool_call", async (event, ctx) => {
+		if (event.toolName !== "bash") {
+			return undefined;
+		}
+		const commitAttributionState = resolveTlhCommitAttribution(getTlhGlobalSettings(ctx.cwd).tlh?.attribution);
+		const reason = getTlhGitCommitAttributionBlockReason(event.input.command, commitAttributionState);
+		return reason ? { block: true, reason } : undefined;
+	});
 }
 
 function createTlhPrimaryAgentRuntime(
@@ -525,6 +550,7 @@ function createTlhPrimaryAgentRuntime(
 
 		pi.on("before_agent_start", async (event, ctx) => {
 			const settings = getTlhGlobalSettings(ctx.cwd);
+			const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
 			syncPrimaryAgentState(ctx);
 			const selection = currentPrimaryAgentSelection();
 			const primaryEnabled = isEnabledPrimaryAgentSelection(selection);
@@ -533,6 +559,7 @@ function createTlhPrimaryAgentRuntime(
 			const prompts = [
 				event.systemPrompt,
 				buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled),
+				buildTlhCommitAttributionPrompt(commitAttributionState),
 			];
 			if (shouldAppendGnosisPrompt(ctx.cwd)) {
 				prompts.push(GNOSIS_PROMPT);
@@ -541,6 +568,11 @@ function createTlhPrimaryAgentRuntime(
 		});
 
 		pi.on("tool_call", async (event, ctx) => {
+			if (event.toolName === "bash") {
+				const commitAttributionState = resolveTlhCommitAttribution(getTlhGlobalSettings(ctx.cwd).tlh?.attribution);
+				const reason = getTlhGitCommitAttributionBlockReason(event.input.command, commitAttributionState);
+				return reason ? { block: true, reason } : undefined;
+			}
 			if (event.toolName !== "subagent") {
 				return undefined;
 			}
@@ -570,6 +602,9 @@ export function registerTlhPrimaryAgentRuntime(
 		registerTlhStartupMode(pi, {
 			env: options.env ?? process.env,
 			buildChildSubagentSystemPrompt: childPromptBuilder,
+			registerChild: () => {
+				registerChildSubagentRuntime(pi, childPromptBuilder);
+			},
 		}) === "child"
 	) {
 		return undefined;

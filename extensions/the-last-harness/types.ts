@@ -12,6 +12,15 @@ export type TlhUsageLimitsConfig = {
 
 export type TlhUsageWeeklyAction = "on" | "off" | "toggle";
 
+export type TlhAttributionConfig = {
+	commit?: boolean;
+};
+
+export type TlhCommitAttributionState = {
+	enabled: boolean;
+	footer?: string;
+};
+
 export type TlhSubscriptionUsageProvider = "openai-codex" | "anthropic";
 
 export type TlhSubscriptionUsageWindow = {
@@ -48,6 +57,13 @@ export type TlhUsageLimitsWriteResult = {
 	settingsPath: string;
 	backupPath?: string;
 	changed: boolean;
+};
+
+export type TlhAttributionWriteResult = {
+	settingsPath: string;
+	backupPath?: string;
+	changed: boolean;
+	state: TlhCommitAttributionState;
 };
 
 export type TlhUpdateCheckConfig = {
@@ -87,6 +103,7 @@ export type TlhPrimaryAgentWriteResult = {
 export type TlhSettings = {
 	tlh?: {
 		usageLimits?: TlhUsageLimitsConfig;
+		attribution?: TlhAttributionConfig;
 		updateCheck?: TlhUpdateCheckConfig;
 		telemetry?: TlhTelemetryConfig;
 		tickets?: TlhTicketsConfig;

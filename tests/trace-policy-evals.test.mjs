@@ -219,6 +219,27 @@ test("bug-hunter rejects git apply and npm ci", () => {
 	}
 });
 
+test("bug-hunter rejects npm update and npm up while keeping npm test read-only", () => {
+	for (const command of ["npm update", "npm up"]) {
+		assert.deepEqual(violationCodes({
+			agent: "bug-hunter",
+			steps: [
+				{ type: "tool", tool: "bash", command },
+			],
+		}), ["bug-hunter.read_only"]);
+	}
+
+	const result = evaluateTracePolicy({
+		agent: "bug-hunter",
+		steps: [
+			{ type: "tool", tool: "bash", command: "npm test" },
+		],
+	});
+
+	assert.equal(result.ok, true);
+	assert.deepEqual(result.violations, []);
+});
+
 test("bug-hunter rejects actual tk create", () => {
 	assert.deepEqual(violationCodes({
 		agent: "bug-hunter",

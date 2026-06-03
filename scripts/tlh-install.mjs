@@ -9,7 +9,7 @@ import {
 	rmSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -524,11 +524,18 @@ function assertSupportedPiVersion(
 	verboseLog(config, `Pi version (${sourceDescription}): ${currentVersion}`);
 }
 
-function addToPathForCurrentInstall(config, binDir, reason) {
-	if (`:${config.env.PATH || ""}:`.includes(`:${binDir}:`)) return;
-	const currentPath = config.env.PATH || "";
-	config.env.PATH = currentPath ? `${binDir}:${currentPath}` : binDir;
-	warn(`${reason} Added it to PATH for this install; add it to your shell profile with: export PATH="${binDir}:$PATH"`);
+function preferBinDirOnPathForCurrentInstall(config, binDir, { addMessage, prependMessage }) {
+	const currentEntries = (config.env.PATH || "")
+		.split(delimiter)
+		.filter(Boolean);
+	if (currentEntries[0] === binDir) return;
+	const alreadyPresent = currentEntries.includes(binDir);
+	config.env.PATH = [binDir, ...currentEntries.filter((entry) => entry !== binDir)].join(delimiter);
+	if (alreadyPresent) {
+		warn(prependMessage);
+		return;
+	}
+	warn(`${addMessage} Added it to PATH for this install; add it to your shell profile with: export PATH="${binDir}:$PATH"`);
 }
 
 function piInstallPrefix(config) {
@@ -547,27 +554,44 @@ function installPiIfNeeded(config) {
 	const piBinDir = join(prefix, "bin");
 	const piBin = join(piBinDir, "pi");
 	const piPackageDir = perUserPiPackageDir(prefix);
+	let pathPiValidationError;
 
 	if (commandExists(config, "pi")) {
 		const result = spawnCapture(config, ["sh", "-c", "command -v -- pi"], { allowFailure: true });
 		verboseLog(config, `Pi is already installed: ${(result.stdout || "pi").trim() || "pi"}`);
-		assertSupportedPiVersion(config);
-		return false;
+		try {
+			assertSupportedPiVersion(config);
+			return false;
+		} catch (error) {
+			pathPiValidationError = error;
+			verboseLog(config, `Existing pi on PATH is not reusable: ${error instanceof Error ? error.message : String(error)}`);
+		}
 	}
 
 	if (existsSync(piBin)) {
 		verboseLog(config, `Pi is already installed: ${piBin}`);
-		assertSupportedPiVersion(config, {
-			piCommand: piBin,
-			sourceDescription: `existing per-user Pi runtime at ${piBin}`,
-			versionCommandDisplay: `${piBin} --version`,
-		});
+		try {
+			assertSupportedPiVersion(config, {
+				piCommand: piBin,
+				sourceDescription: `existing per-user Pi runtime at ${piBin}`,
+				versionCommandDisplay: `${piBin} --version`,
+			});
+		} catch (error) {
+			if (pathPiValidationError) throw pathPiValidationError;
+			throw error;
+		}
 		// Reuse the pre-existing per-user Pi runtime without claiming ownership.
-		// Add its bin dir to PATH for the remainder of this process so later `pi`
-		// commands resolve the same validated binary by name.
-		addToPathForCurrentInstall(config, piBinDir, `Existing Pi runtime ${piBin} is not on PATH.`);
+		// Prepend its bin dir to PATH for the remainder of this process so later `pi`
+		// commands resolve the same validated binary by name, even if an older Pi
+		// still appears earlier on the inherited PATH.
+		preferBinDirOnPathForCurrentInstall(config, piBinDir, {
+			addMessage: `Existing Pi runtime ${piBin} is not on PATH.`,
+			prependMessage: `Using validated per-user Pi runtime ${piBin} instead of the current PATH entry. Prepended ${piBinDir} to PATH for this install so downstream pi commands reuse that runtime; move it ahead of older Pi entries in your shell profile if needed.`,
+		});
 		return false;
 	}
+
+	if (pathPiValidationError) throw pathPiValidationError;
 
 	if (existsSync(piPackageDir)) {
 		throw new Error(`detected an existing per-user Pi npm package at ${piPackageDir}, but no runnable pi binary could be validated (${piBin} is missing and pi is not on PATH). The Last Harness will not reinstall over that package or mark it TLH-owned. Repair or remove the existing package, then rerun the installer. To repair it in place, run: npm install -g --ignore-scripts --prefix "${prefix}" ${PI_PACKAGE_NAME}`);
@@ -588,13 +612,14 @@ function installPiIfNeeded(config) {
 	if (!existsSync(piBin) && !onPath) {
 		throw new Error(`Pi install completed, but ${piBin} does not exist and pi is not on PATH`);
 	}
-	if (!onPath) {
-		// Pi was just installed to a per-user prefix that is not yet on PATH.
-		// Prepend the prefix bin dir to PATH for the remainder of this process
-		// so downstream steps (`pi install`, `pi update`, ...) can resolve the
-		// binary by name via spawnSync. config.env is the same reference as
-		// process.env, so this mutation propagates to every later spawn.
-		addToPathForCurrentInstall(config, piBinDir, `${piBin} installed but ${piBinDir} is not on PATH.`);
+	if (existsSync(piBin)) {
+		// Pi was installed to a per-user prefix. Prepend that prefix bin dir for the
+		// remainder of this process so downstream steps (`pi install`, `pi update`, ...)
+		// resolve the new runtime even if another Pi still appears earlier on PATH.
+		preferBinDirOnPathForCurrentInstall(config, piBinDir, {
+			addMessage: `${piBin} installed but ${piBinDir} is not on PATH.`,
+			prependMessage: `Using freshly installed Pi runtime ${piBin}. Prepended ${piBinDir} to PATH for this install so downstream pi commands reuse that runtime; move it ahead of older Pi entries in your shell profile if needed.`,
+		});
 	}
 	return true;
 }

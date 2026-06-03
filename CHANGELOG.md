@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Added TLH commit attribution for agent-created git commits: the isolated TLH profile now defaults to a TLH-branded commit footer, `/toggle-tlh-git-attribution` persistently disables or re-enables it by managing boolean `tlh.attribution.commit` settings, and git push behavior is unchanged.
+
 ### Removed
 
 - Removed the bundled `confirm-destructive` default extension. New installs no longer ship destructive-action confirmation prompts. Existing installs are unaffected by the upgrade — the package will remain in your isolated `~/.the-last-harness/agent/settings.json` `packages` array until you remove that line manually.

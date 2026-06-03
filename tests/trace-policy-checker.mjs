@@ -78,7 +78,7 @@ const MUTATING_PACKAGE_SUBCOMMANDS = new Map([
 	["bun", new Set(["add", "install", "remove", "rm", "uninstall", "update"])],
 	["cargo", new Set(["install", "uninstall"])],
 	["dnf", new Set(["install", "remove"])],
-	["npm", new Set(["add", "ci", "i", "install", "remove", "rm", "uninstall"])],
+	["npm", new Set(["add", "ci", "i", "install", "remove", "rm", "uninstall", "up", "update"])],
 	["pacman", new Set(["-r", "-s", "-u"])],
 	["pip", new Set(["install", "uninstall"])],
 	["pip3", new Set(["install", "uninstall"])],

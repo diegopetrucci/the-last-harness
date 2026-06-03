@@ -165,9 +165,13 @@ export function registerChildSubagentPrompt(pi, buildChildSubagentSystemPrompt) 
 	}));
 }
 
-export function registerTlhStartupMode(pi, { env = process.env, buildChildSubagentSystemPrompt, registerParent } = {}) {
+export function registerTlhStartupMode(pi, { env = process.env, buildChildSubagentSystemPrompt, registerChild, registerParent } = {}) {
 	if (env?.[SUBAGENT_CHILD_ENV] === "1") {
-		registerChildSubagentPrompt(pi, buildChildSubagentSystemPrompt);
+		if (typeof registerChild === "function") {
+			registerChild();
+		} else if (typeof buildChildSubagentSystemPrompt === "function") {
+			registerChildSubagentPrompt(pi, buildChildSubagentSystemPrompt);
+		}
 		return "child";
 	}
 
