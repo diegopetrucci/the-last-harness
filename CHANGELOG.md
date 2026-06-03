@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
+- Added `docs/commands.md`: a command reference listing all slash commands available in a TLH session, grouped into upstream Pi built-ins, TLH commands, and visible bundled extension commands, with a separate section for autocomplete-hidden bundled commands.
 - Added `/version` slash command that reports the installed TLH version and the upstream Pi runtime version in concise plain text.
 - Added TLH commit attribution for agent-created git commits: the isolated TLH profile now defaults to a TLH-branded commit footer, `/toggle-tlh-git-attribution` persistently disables or re-enables it by managing boolean `tlh.attribution.commit` settings, and git push behavior is unchanged.
 
