@@ -38,6 +38,12 @@ bash install.sh --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -
 
 Docs-only changes may use narrower validation, but inspect the rendered/content shape and review the diff before opening a PR.
 
+## Refresh the Understand Anything graph when needed
+
+If your change materially affects repository architecture, repository structure, or documented contributor workflows, refresh the tracked Understand Anything graph before opening a PR. From the repository root, start an interactive TLH or upstream Pi session, then enable the Understand Anything skill/extension in that session before running `/understand`. TLH does not expose `/understand` by default. Use `/understand --full` only when an incremental refresh is not enough.
+
+Review the resulting `.understand-anything/knowledge-graph.json`, `.understand-anything/meta.json`, `.understand-anything/fingerprints.json`, and `.understand-anything/intermediate/scan-result.json` changes before committing them. Only commit those generated updates when the graph refresh is warranted by the change; skip incidental churn for unrelated work.
+
 ## Repo-only eval workflows
 
 These workflows are contributor tooling for this repository only. They are not part of the packaged TLH install surface.
