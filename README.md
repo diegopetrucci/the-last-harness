@@ -112,7 +112,6 @@ User-level:
 - `~/.the-last-harness/agent/prompts/`
 - `~/.the-last-harness/agent/extensions/` (or via `tlh install github-user/repo‘)
 
-
 Repo settings:
 - `.pi/skills/`
 - `.pi/prompts/`
