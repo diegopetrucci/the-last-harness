@@ -5,11 +5,16 @@ import { fileURLToPath } from "node:url";
 import process from "node:process";
 
 import {
+	RETIRED_TLH_DEFAULT_PACKAGE_SOURCES,
 	disabledDefaultExtensionIds as disabledIdsFromSettings,
+	managedDefaultExtensionPackageIdentities,
 	packageIdentity,
 	packageSourceOf,
+	readDefaultExtensionProvenance,
 	readDefaultExtensions,
 	repairTargetedDefaultExtensionLoadOrder,
+	setDefaultExtensionProvenance,
+	withLegacyRetiredDefaultPackageIdentities,
 } from "./lib/default-extensions.mjs";
 import {
 	assertNotInNormalPiConfig,
@@ -22,6 +27,9 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const RETIRED_DEFAULT_PACKAGE_IDENTITIES = new Set(
+	RETIRED_TLH_DEFAULT_PACKAGE_SOURCES.map(packageIdentity).filter(Boolean),
+);
 
 function usage() {
 	return `Usage: tlh defaults <command>
@@ -360,6 +368,18 @@ function commandEnable(settings, defaultExtensions, id) {
 	return false;
 }
 
+function syncDefaultExtensionProvenance(settings, defaultExtensions) {
+	const disabledIds = disabledIdsFromSettings(settings, defaultExtensions);
+	const managedPackageIdentities = managedDefaultExtensionPackageIdentities(settings, defaultExtensions, disabledIds);
+	const nextManagedPackageIdentities = withLegacyRetiredDefaultPackageIdentities(settings, managedPackageIdentities);
+	for (const identity of readDefaultExtensionProvenance(settings).managedPackageIdentities) {
+		if (RETIRED_DEFAULT_PACKAGE_IDENTITIES.has(identity)) {
+			nextManagedPackageIdentities.add(identity);
+		}
+	}
+	setDefaultExtensionProvenance(settings, nextManagedPackageIdentities);
+}
+
 function main() {
 	const args = parseArgs(process.argv.slice(2));
 	if (args.help || !args.command) {
@@ -391,6 +411,7 @@ function main() {
 		if (!id || args.commandArgs.length !== 1) throw new Error("Usage: tlh defaults disable <id>");
 		const before = JSON.stringify(settings);
 		const warningChanged = commandDisable(settings, defaultExtensions, id);
+		syncDefaultExtensionProvenance(settings, defaultExtensions);
 		const changed = before !== JSON.stringify(settings);
 		const backupPath = changed ? writeSettings(settingsPath, settings, previousRaw) : undefined;
 		console.log(`${id} is disabled for the tlh profile.`);
@@ -405,6 +426,7 @@ function main() {
 		if (!id || args.commandArgs.length !== 1) throw new Error("Usage: tlh defaults enable <id>");
 		const before = JSON.stringify(settings);
 		const warningChanged = commandEnable(settings, defaultExtensions, id);
+		syncDefaultExtensionProvenance(settings, defaultExtensions);
 		const changed = before !== JSON.stringify(settings);
 		const backupPath = changed ? writeSettings(settingsPath, settings, previousRaw) : undefined;
 		console.log(`${id} is enabled for the tlh profile.`);
