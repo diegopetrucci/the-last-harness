@@ -65,6 +65,10 @@ function gitIdentity(source) {
 	return `git:${value.toLowerCase()}`;
 }
 
+export const RETIRED_TLH_DEFAULT_PACKAGE_SOURCES = Object.freeze([
+	"npm:@plannotator/pi-extension",
+]);
+
 const TARGETED_DEFAULT_EXTENSION_LOAD_ORDER = ["rtk", "quiet-tools"];
 
 export function packageSourceOf(entry) {
@@ -126,6 +130,25 @@ function rawDisabledDefaultExtensionIds(settings) {
 	return new Set(values.filter((value) => typeof value === "string" && value.trim()).map((value) => value.trim()));
 }
 
+function rawDefaultExtensionProvenance(settings) {
+	if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) {
+		return { exists: false, value: undefined };
+	}
+	const exists = Object.hasOwn(settings.tlh, "defaultExtensionProvenance");
+	const value = exists && isPlainObject(settings.tlh.defaultExtensionProvenance)
+		? settings.tlh.defaultExtensionProvenance
+		: undefined;
+	return { exists, value };
+}
+
+function normalizeManagedPackageIdentity(value) {
+	if (typeof value !== "string") return undefined;
+	const trimmed = value.trim();
+	if (!trimmed) return undefined;
+	if (trimmed.startsWith("local:")) return trimmed;
+	return packageIdentity(trimmed);
+}
+
 export function criticalDefaultExtensionOptOutIds(defaultExtensions) {
 	const ids = new Set();
 	for (const extension of defaultExtensions) {
@@ -153,6 +176,67 @@ export function disabledDefaultExtensionIds(settings, defaultExtensions = []) {
 
 export function defaultExtensionPackageIdentities(extension) {
 	return [extension.source, ...extension.replaces].map(packageIdentity).filter(Boolean);
+}
+
+export function readDefaultExtensionProvenance(settings) {
+	const { exists, value } = rawDefaultExtensionProvenance(settings);
+	const managedPackageIdentities = new Set(
+		Array.isArray(value?.managedPackageIdentities)
+			? value.managedPackageIdentities.map(normalizeManagedPackageIdentity).filter(Boolean)
+			: [],
+	);
+	return { exists, managedPackageIdentities };
+}
+
+export function setDefaultExtensionProvenance(settings, managedPackageIdentities) {
+	if (!isPlainObject(settings)) return false;
+	if (settings.tlh === undefined) {
+		settings.tlh = {};
+	}
+	if (!isPlainObject(settings.tlh)) return false;
+
+	const values = [...new Set([...managedPackageIdentities].map(normalizeManagedPackageIdentity).filter(Boolean))]
+		.sort((left, right) => left.localeCompare(right));
+	settings.tlh.defaultExtensionProvenance = { managedPackageIdentities: values };
+	return true;
+}
+
+export function withLegacyRetiredDefaultPackageIdentities(
+	settings,
+	managedPackageIdentities = new Set(),
+	retiredPackageSources = RETIRED_TLH_DEFAULT_PACKAGE_SOURCES,
+) {
+	const nextManagedPackageIdentities = new Set(managedPackageIdentities);
+	const { exists } = rawDefaultExtensionProvenance(settings);
+	if (exists || !isPlainObject(settings) || !Array.isArray(settings.packages)) {
+		return nextManagedPackageIdentities;
+	}
+
+	for (const source of retiredPackageSources) {
+		const identity = packageIdentity(source);
+		if (!identity) continue;
+		if (settings.packages.some((entry) => packageIdentity(entry) === identity)) {
+			nextManagedPackageIdentities.add(identity);
+		}
+	}
+
+	return nextManagedPackageIdentities;
+}
+
+export function managedDefaultExtensionPackageIdentities(settings, defaultExtensions, disabledIds = new Set()) {
+	const managedIdentities = new Set();
+	if (!isPlainObject(settings) || !Array.isArray(settings.packages)) return managedIdentities;
+
+	for (const extension of defaultExtensions) {
+		if (disabledIds.has(extension.id)) continue;
+		const identity = packageIdentity(extension.source);
+		if (!identity) continue;
+		if (settings.packages.some((entry) => packageIdentity(entry) === identity)) {
+			managedIdentities.add(identity);
+		}
+	}
+
+	return managedIdentities;
 }
 
 export function repairTargetedDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds = new Set()) {

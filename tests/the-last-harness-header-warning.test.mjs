@@ -15,13 +15,13 @@ function createResources() {
 	return {
 		context: ["AGENTS.md"],
 		skills: ["tlh-dev-hygiene"],
-		prompts: [],
-		extensions: [],
-		themes: [],
+		prompts: ["ship-it"],
+		extensions: ["the-last-harness"],
+		themes: ["the-last-harness"],
 	};
 }
 
-test("collapsed header renders the install-track warning above Context with only Warning highlighted", () => {
+test("collapsed header renders the install-track warning above Context and includes the resource toggle hint", () => {
 	const header = createTlhHeader(theme, createResources(), undefined, {
 		kind: "ref",
 		summary: "TLH follows a non-stable git ref.",
@@ -33,6 +33,7 @@ test("collapsed header renders the install-track warning above Context with only
 		"",
 		"<warning>Warning</warning><dim>: running TLH from main track</dim>",
 		"<dim>Context: AGENTS.md</dim>",
+		"<dim>Ctrl+Shift+E to show skills, prompts, extensions, themes</dim>",
 	]);
 });
 
@@ -52,5 +53,14 @@ test("expanded header keeps the install-track warning above Context before resou
 		"",
 		"<mdHeading>[Skills]</mdHeading>",
 		"<dim>  tlh-dev-hygiene</dim>",
+		"",
+		"<mdHeading>[Prompts]</mdHeading>",
+		"<dim>  ship-it</dim>",
+		"",
+		"<mdHeading>[Extensions]</mdHeading>",
+		"<dim>  the-last-harness</dim>",
+		"",
+		"<mdHeading>[Themes]</mdHeading>",
+		"<dim>  the-last-harness</dim>",
 	]);
 });

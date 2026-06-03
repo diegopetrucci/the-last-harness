@@ -103,6 +103,24 @@ TLH also aims to make the day-to-day session experience calmer and safer:
 
 The README keeps the overview short on purpose. The detailed operational docs live elsewhere.
 
+## Add your own skills, extensions, etc
+
+You can add your own skills, prompts, extensions, and packages to TLH.
+
+User-level:
+- `~/.the-last-harness/agent/skills/`
+- `~/.the-last-harness/agent/prompts/`
+- `~/.the-last-harness/agent/extensions/` (or via `tlh install github-user/repo‘)
+
+Repo settings:
+- `.pi/skills/`
+- `.pi/prompts/`
+- `.pi/extensions/`
+
+After adding files or installing a package, run `/reload` in TLH (or restart it) so the new resources are picked up.
+
+Normal `tlh update` runs are conservative: they preserve user-owned isolated-profile resources instead of overwriting them, and they still do not touch your normal Pi config.
+
 ## Everything else, aka the docs dump
 
 - Slash commands reference (built-ins, TLH commands, bundled extensions): [`docs/commands.md`](docs/commands.md)

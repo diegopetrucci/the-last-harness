@@ -77,6 +77,8 @@ Normal updates keep Gnosis and ticket integration enabled. They install or refre
 
 The updating process is intentionally conservative, and won't replace your custom extensions, themes, and so on. If you spot anything that was overridden, [please open an issue](https://github.com/diegopetrucci/the-last-harness/issues).
 
+TLH now records installer-owned bundled-extension provenance in the isolated settings at `tlh.defaultExtensionProvenance.managedPackageIdentities`. Older installs that do not have this metadata migrate it on the next installer run or `tlh update`: matching legacy bundled defaults are treated as TLH-managed once so retired defaults such as the old Plannotator package can still be cleaned up. After that metadata exists, retired-default cleanup only removes package identities still marked as TLH-managed, so a package you later re-add manually with the same source is left alone.
+
 Bundled default-extension opt-outs apply only to non-critical defaults. The TLH subagents/intercom defaults are protected because architect delegation and supervisor escalation depend on them: `tlh defaults disable` rejects those IDs and aliases, and stale manual critical opt-outs are ignored or cleaned. If a critical package install or checkout refresh fails, fix that install/checkout and rerun `tlh update` instead of disabling the default.
 
 At launch, TLH checks GitHub Releases in the background at most once per day and warns once when a newer release is available. It never auto-updates. Set `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `TLH_SKIP_UPDATE_CHECK=1`, or `"tlh": { "updateCheck": { "enabled": false } }` in the isolated settings to disable the check.
