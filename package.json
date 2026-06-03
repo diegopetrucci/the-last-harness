@@ -58,6 +58,11 @@
     "@earendil-works/pi-coding-agent": ">=0.76.0",
     "@earendil-works/pi-tui": ">=0.76.0"
   },
+  "dependencies": {
+    "@tailwindcss/browser": "^4.3.0",
+    "glimpseui": "^0.8.1",
+    "monaco-editor": "0.52.2"
+  },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.76.0",
     "@earendil-works/pi-tui": "^0.76.0",

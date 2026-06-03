@@ -61,10 +61,11 @@ function existingNestedExtensionEntrypoints(directoryName) {
 	);
 }
 
-test("package extension discovery exposes only the top-level TLH entrypoint", () => {
+test("package extension discovery exposes the TLH entrypoints", () => {
 	assert.deepEqual(packageJson.pi?.extensions, ["./extensions"]);
 	assert.deepEqual(existingNestedExtensionEntrypoints("the-last-harness"), []);
-	assert.deepEqual(discoverPiExtensionEntrypoints(extensionsDir), ["the-last-harness.ts"]);
+	assert.deepEqual(existingNestedExtensionEntrypoints("diff-review"), ["diff-review/index.ts"]);
+	assert.deepEqual(discoverPiExtensionEntrypoints(extensionsDir), ["diff-review/index.ts", "the-last-harness.ts"]);
 });
 
 test("before_agent_start reapplies primary defaults without a one-shot model gate", () => {
