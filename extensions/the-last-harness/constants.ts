@@ -22,6 +22,12 @@ export const DUMB_ZONE_LABEL = "DUMB ZONE";
 export const AUTOCOMPLETE_SOURCE_TAG_PATTERN = /(^|—\s*)\[(?:u|p|t)(?::(?:npm|git):[^\]]+)?\]\s*/g;
 export const PRIMARY_AGENT_CYCLE_SHORTCUT = "shift+tab";
 
+// Extension status IDs whose footer status entries are suppressed in the TLH footer.
+// The extensions remain bundled and functional; only their UI status line is hidden.
+export const FOOTER_HIDDEN_EXTENSION_STATUS_IDS: ReadonlySet<string> = new Set([
+	"context-cap",
+]);
+
 export const HARNESS_PROMPT = `
 ## The Last Harness Defaults
 
