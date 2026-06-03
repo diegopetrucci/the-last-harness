@@ -111,9 +111,16 @@ User-level:
 - `~/.the-last-harness/agent/skills/`
 - `~/.the-last-harness/agent/prompts/`
 - `~/.the-last-harness/agent/extensions/` (or via `tlh install github-user/repo‘)
-- If you want a customization to apply only to one repo, prefer project-local `.pi/skills/`, `.pi/prompts/`, or `.pi/extensions/` there instead of your shared TLH profile.
-- After adding files or installing a package, run `/reload` in TLH (or restart it) so the new resources are picked up.
-- Normal `tlh update` runs are conservative: they preserve user-owned isolated-profile resources instead of overwriting them, and they still do not touch your normal Pi config.
+
+
+Repo settings:
+- `.pi/skills/`
+- `.pi/prompts/`
+- `.pi/extensions/`
+
+After adding files or installing a package, run `/reload` in TLH (or restart it) so the new resources are picked up.
+
+Normal `tlh update` runs are conservative: they preserve user-owned isolated-profile resources instead of overwriting them, and they still do not touch your normal Pi config.
 
 ## Everything else, aka the docs dump
 
