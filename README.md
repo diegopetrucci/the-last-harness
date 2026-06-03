@@ -95,6 +95,7 @@ TLH also aims to make the day-to-day session experience calmer and safer:
 
 - isolated profile installation so your normal Pi setup stays separate,
 - quieter UI defaults so tools and bash output do not constantly fight for attention,
+- a first-party `/diff-review` command that opens a native review window and pastes submitted feedback back into the editor as a prompt,
 - bundled web-search support for research-heavy work,
 - bundled MCP adapter support,
 - subscription usage footer controls,
@@ -105,7 +106,7 @@ The README keeps the overview short on purpose. The detailed operational docs li
 
 ## Everything else, aka the docs dump
 
-- Slash commands reference (built-ins, TLH commands, bundled extensions): [`docs/commands.md`](docs/commands.md)
+- Slash commands reference (built-ins, TLH commands, `/diff-review`, bundled extensions): [`docs/commands.md`](docs/commands.md)
 - Install, update, uninstall, paths, and undo steps: [`docs/install.md`](docs/install.md)
 - Gnosis, `tk`, and TLH workflow integrations: [`docs/integrations.md`](docs/integrations.md)
 - Web search setup, privacy, and opt-out: [`docs/web-search.md`](docs/web-search.md)
