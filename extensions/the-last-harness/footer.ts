@@ -7,6 +7,7 @@ import {
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
 import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
+import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
 import { formatCompactTokenCount, formatHomePath, sanitizeStatusText } from "./common.js";
 import type { FooterGitCache } from "./footer-git-cache.js";
 import { composeTlhFooterFirstLine } from "./footer-first-line.js";
@@ -75,17 +76,26 @@ export function createTlhFooter(
 
 			// Line 2 (single flowing left-justified line):
 			//   agent: <primaryName> • [(provider)] <model|no-model> [• thinking] • context% [• DUMB ZONE]
+			// Each segment is explicitly themed to avoid ANSI foreground-reset bleed from nested
+			// theme.fg() calls. Non-default agent names are highlighted with the accent color.
 			const modelOrNoModel = model?.id ?? "no-model";
 			let modelPart: string = modelOrNoModel;
 			if ((footerData?.getAvailableProviderCount?.() ?? 1) > 1 && model) {
 				modelPart = `(${model.provider}) ${modelOrNoModel}`;
 			}
 
-			const line2Parts: string[] = [`agent: ${getPrimaryName()}`, modelPart];
+			const primaryName = getPrimaryName();
+			const dimSep = theme.fg("dim", " • ");
+			const nameSegment =
+				primaryName === DEFAULT_PRIMARY_AGENT
+					? theme.fg("dim", primaryName)
+					: theme.fg("accent", primaryName);
+
+			let agentLine2Str = theme.fg("dim", "agent: ") + nameSegment + dimSep + theme.fg("dim", modelPart);
 
 			if (model?.reasoning) {
 				const thinkingLevel = getCurrentThinkingLevel(pi);
-				line2Parts.push(thinkingLevel === "off" ? "thinking off" : thinkingLevel);
+				agentLine2Str += dimSep + theme.fg("dim", thinkingLevel === "off" ? "thinking off" : thinkingLevel);
 			}
 
 			const contextPercentDisplay =
@@ -96,15 +106,14 @@ export function createTlhFooter(
 			} else if (contextPercentValue > 70) {
 				contextPercentStr = theme.fg("warning", contextPercentDisplay);
 			} else {
-				contextPercentStr = contextPercentDisplay;
+				contextPercentStr = theme.fg("dim", contextPercentDisplay);
 			}
-			line2Parts.push(contextPercentStr);
+			agentLine2Str += dimSep + contextPercentStr;
 
-			let agentLine2Str = line2Parts.join(" • ");
 			if ((contextUsage?.tokens ?? 0) > DUMB_ZONE_THRESHOLD_TOKENS) {
-				agentLine2Str += `${theme.fg("dim", " • ")}${theme.fg("error", DUMB_ZONE_LABEL)}`;
+				agentLine2Str += dimSep + theme.fg("error", DUMB_ZONE_LABEL);
 			}
-			const agentLine2 = truncateToWidth(theme.fg("dim", agentLine2Str), width, theme.fg("dim", "..."));
+			const agentLine2 = truncateToWidth(agentLine2Str, width, theme.fg("dim", "..."));
 
 			// Line 3 (optional): [<cost> · ]<subscription usage segment>
 			// Omitted entirely when both parts are absent.
