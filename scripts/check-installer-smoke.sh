@@ -456,9 +456,10 @@ run_stage1_dry_run_smoke() {
   local stdout_file="${case_dir}/stdout.log"
   local stderr_file="${case_dir}/stderr.log"
   local combined_file="${case_dir}/combined.log"
+  local home_dir="${case_dir}/home"
   local node_cmd
   node_cmd="$(command -v node)"
-  mkdir -p "${fakebin}"
+  mkdir -p "${fakebin}" "${home_dir}"
   cat >"${fakebin}/sh" <<'EOF_FAKE_SH'
 #!/bin/sh
 exec /bin/sh "$@"
@@ -475,7 +476,7 @@ exit 98
 EOF_FAKE_GIT
   chmod +x "${fakebin}/sh" "${fakebin}/npm" "${fakebin}/git"
 
-  run_scrubbed_installer_env PATH="${fakebin}" TLH_SKIP_GNOSIS_INSTALL=1 "${node_cmd}" scripts/tlh-install.mjs --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}" TLH_SKIP_GNOSIS_INSTALL=1 "${node_cmd}" scripts/tlh-install.mjs --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
 
   assert_absent "${agent_dir}"
@@ -1023,15 +1024,16 @@ run_missing_required_helper_preflight_smoke() {
   local no_wrapper_agent_dir="${no_wrapper_case_dir}/agent"
   local no_wrapper_bin_dir="${no_wrapper_case_dir}/bin"
   local no_wrapper_fakebin="${no_wrapper_case_dir}/fakebin"
+  local no_wrapper_home="${no_wrapper_case_dir}/home"
   local no_wrapper_pi_sentinel="${no_wrapper_case_dir}/pi-invoked"
-  mkdir -p "${no_wrapper_case_dir}"
+  mkdir -p "${no_wrapper_case_dir}" "${no_wrapper_home}"
   make_legacy_support_curl "${no_wrapper_fakebin}"
   make_failing_pi "${no_wrapper_fakebin}"
   : >"${stdout_file}"
   : >"${stderr_file}"
 
   set +e
-  (cd "${no_wrapper_case_dir}" && run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 PATH="${no_wrapper_fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${ROOT_DIR}" LEGACY_SUPPORT_MODE="missing-wrapper-only" PI_SENTINEL="${no_wrapper_pi_sentinel}" TLH_RAW_BASE="https://example.invalid/no-wrapper-ref" bash -s -- --agent-dir "${no_wrapper_agent_dir}" --bin-dir "${no_wrapper_bin_dir}" --no-wrapper < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  (cd "${no_wrapper_case_dir}" && run_scrubbed_installer_env HOME="${no_wrapper_home}" TLH_SKIP_GNOSIS_INSTALL=1 PATH="${no_wrapper_fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${ROOT_DIR}" LEGACY_SUPPORT_MODE="missing-wrapper-only" PI_SENTINEL="${no_wrapper_pi_sentinel}" TLH_RAW_BASE="https://example.invalid/no-wrapper-ref" bash -s -- --agent-dir "${no_wrapper_agent_dir}" --bin-dir "${no_wrapper_bin_dir}" --no-wrapper < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
@@ -1239,7 +1241,7 @@ run_install_dry_run_pi_field_smoke() {
   local absent_stdout="${absent_dir}/stdout.log"
   local absent_stderr="${absent_dir}/stderr.log"
   local absent_combined="${absent_dir}/combined.log"
-  mkdir -p "${absent_fakebin}"
+  mkdir -p "${absent_fakebin}" "${absent_dir}/home"
   cat >"${absent_fakebin}/sh" <<'EOF_ABSENT_SH'
 #!/bin/sh
 exec /bin/sh "$@"
@@ -1256,7 +1258,7 @@ exit 98
 EOF_ABSENT_GIT
   chmod +x "${absent_fakebin}/sh" "${absent_fakebin}/npm" "${absent_fakebin}/git"
 
-  run_scrubbed_installer_env PATH="${absent_fakebin}" TLH_SKIP_GNOSIS_INSTALL=1 "${node_cmd}" scripts/tlh-install.mjs --dry-run --agent-dir "${absent_agent}" --bin-dir "${absent_bin}" >"${absent_stdout}" 2>"${absent_stderr}"
+  run_scrubbed_installer_env HOME="${absent_dir}/home" PATH="${absent_fakebin}" TLH_SKIP_GNOSIS_INSTALL=1 "${node_cmd}" scripts/tlh-install.mjs --dry-run --agent-dir "${absent_agent}" --bin-dir "${absent_bin}" >"${absent_stdout}" 2>"${absent_stderr}"
   combine_output "${absent_stdout}" "${absent_stderr}" "${absent_combined}"
   assert_contains "${absent_combined}" "(piInstalledByTlh: true)"
 
@@ -1268,7 +1270,7 @@ EOF_ABSENT_GIT
   local present_stdout="${present_dir}/stdout.log"
   local present_stderr="${present_dir}/stderr.log"
   local present_combined="${present_dir}/combined.log"
-  mkdir -p "${present_fakebin}"
+  mkdir -p "${present_fakebin}" "${present_dir}/home"
   cat >"${present_fakebin}/sh" <<'EOF_PRESENT_SH'
 #!/bin/sh
 exec /bin/sh "$@"
@@ -1286,7 +1288,7 @@ EOF_PRESENT_GIT
   chmod +x "${present_fakebin}/sh" "${present_fakebin}/npm" "${present_fakebin}/git"
   make_fake_present_pi "${present_fakebin}"
 
-  run_scrubbed_installer_env PATH="${present_fakebin}" TLH_SKIP_GNOSIS_INSTALL=1 "${node_cmd}" scripts/tlh-install.mjs --dry-run --agent-dir "${present_agent}" --bin-dir "${present_bin}" >"${present_stdout}" 2>"${present_stderr}"
+  run_scrubbed_installer_env HOME="${present_dir}/home" PATH="${present_fakebin}" TLH_SKIP_GNOSIS_INSTALL=1 "${node_cmd}" scripts/tlh-install.mjs --dry-run --agent-dir "${present_agent}" --bin-dir "${present_bin}" >"${present_stdout}" 2>"${present_stderr}"
   combine_output "${present_stdout}" "${present_stderr}" "${present_combined}"
   assert_contains "${present_combined}" "(piInstalledByTlh: false)"
 }
