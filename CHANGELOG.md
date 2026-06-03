@@ -4,6 +4,14 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- TLH now records bundled default-extension provenance in `tlh.defaultExtensionProvenance.managedPackageIdentities` so retired-default cleanup can distinguish TLH-managed packages from later manual re-adds. Older installs migrate this metadata on update; legacy Plannotator is still cleaned up once during that migration.
+
+### Removed
+
+- Removed Plannotator from the bundled default-extension manifest and TLH command reference. TLH updates/settings merges now remove the old `npm:@plannotator/pi-extension` package only when it is still tracked as a retired TLH-managed default; if you still want Plannotator after updating, manually re-add it.
+
 ## [0.16.0] - 2026-06-03
 
 ### Added

@@ -8,10 +8,15 @@ import {
 	criticalDefaultExtensionOptOutIds,
 	defaultExtensionPackageIdentities,
 	disabledDefaultExtensionIds,
+	managedDefaultExtensionPackageIdentities,
 	packageIdentity,
 	packageSourceOf,
+	readDefaultExtensionProvenance,
 	readDefaultExtensions,
+	RETIRED_TLH_DEFAULT_PACKAGE_SOURCES,
 	repairTargetedDefaultExtensionLoadOrder,
+	setDefaultExtensionProvenance,
+	withLegacyRetiredDefaultPackageIdentities,
 } from "./lib/default-extensions.mjs";
 import {
 	assertNotInNormalPiConfig,
@@ -293,6 +298,20 @@ function applyDisabledDefaultExtensions(settings, defaultExtensions, disabledIds
 	}
 }
 
+function applyRetiredTlhDefaultPackageCleanup(settings, changes, managedPackageIdentities) {
+	if (!Array.isArray(settings.packages)) return;
+
+	for (const source of RETIRED_TLH_DEFAULT_PACKAGE_SOURCES) {
+		const identity = packageIdentity(source);
+		if (!identity || !managedPackageIdentities.has(identity)) continue;
+		let removedSource;
+		while ((removedSource = removePackageByIdentity(settings, identity))) {
+			changes.push(`remove retired TLH default package: ${removedSource}`);
+		}
+		managedPackageIdentities.delete(identity);
+	}
+}
+
 function applyDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds, changes) {
 	const loadOrderRepair = repairTargetedDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds);
 	if (!loadOrderRepair) return;
@@ -321,6 +340,27 @@ function removeCriticalDisabledDefaultExtensionOptOuts(settings, defaultExtensio
 
 	settings.tlh.disabledDefaultExtensions = nextValues;
 	changes.push("remove invalid critical default extension opt-out");
+}
+
+function sameIdentitySets(left, right) {
+	if (left.size !== right.size) return false;
+	for (const value of left) {
+		if (!right.has(value)) return false;
+	}
+	return true;
+}
+
+function syncDefaultExtensionProvenance(settings, defaultExtensions, disabledIds, changes) {
+	const previous = readDefaultExtensionProvenance(settings);
+	const previousRaw = isPlainObject(settings) && isPlainObject(settings.tlh) && Object.hasOwn(settings.tlh, "defaultExtensionProvenance")
+		? JSON.stringify(settings.tlh.defaultExtensionProvenance)
+		: undefined;
+	const nextManagedIdentities = managedDefaultExtensionPackageIdentities(settings, defaultExtensions, disabledIds);
+	if (!setDefaultExtensionProvenance(settings, nextManagedIdentities)) return;
+	const nextRaw = JSON.stringify(settings.tlh.defaultExtensionProvenance);
+	if (previousRaw !== nextRaw || !previous.exists || !sameIdentitySets(previous.managedPackageIdentities, nextManagedIdentities)) {
+		changes.push("update TLH default extension provenance metadata");
+	}
 }
 
 function mergeSettings(existing, defaults, { force }) {
@@ -503,9 +543,15 @@ function main() {
 	applyReplacedDefaultExtensions(next, defaultExtensions, disabledIds, changes, { force: args.force });
 	applyDefaultExtensionPackageDedupes(next, defaultExtensions, disabledIds, changes, { force: args.force, sourceUpdatedIdentities });
 	applyDisabledDefaultExtensions(next, defaultExtensions, disabledIds, changes);
+	applyRetiredTlhDefaultPackageCleanup(
+		next,
+		changes,
+		withLegacyRetiredDefaultPackageIdentities(next, readDefaultExtensionProvenance(next).managedPackageIdentities),
+	);
 	applyDefaultExtensionLoadOrder(next, defaultExtensions, disabledIds, changes);
 	removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
 	scrubGnosisSettings(next, changes);
+	syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
 
 	log(args, `Pi settings: ${settingsPath}`);
 	if (changes.length === 0) {
