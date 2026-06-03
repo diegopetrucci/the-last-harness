@@ -103,7 +103,7 @@ TLH also aims to make the day-to-day session experience calmer and safer:
 
 The README keeps the overview short on purpose. The detailed operational docs live elsewhere.
 
-## Add your own TLH resources
+## Add your own skills, extensions, etc
 
 You can add your own skills, prompts, extensions, and packages to TLH without changing this repository or your normal `~/.pi/agent` profile.
 
