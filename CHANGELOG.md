@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-06-03
+
 ### Added
 
 - Added `docs/commands.md`: a command reference listing all slash commands available in a TLH session, grouped into upstream Pi built-ins, TLH commands, and visible bundled extension commands, with a separate section for autocomplete-hidden bundled commands.
