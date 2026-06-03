@@ -107,12 +107,6 @@ These commands are provided by bundled default extensions and are visible in TLH
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
 | `/oracle` | `pi-oracle` | Configure the Oracle default model and thinking level |
 | `/oracle-model` | `pi-oracle` | Show which model the oracle would use right now |
-| `/plannotator` | `plannotator` | Toggle plannotator planning mode |
-| `/plannotator-annotate` | `plannotator` | Open a markdown file or folder in the annotation UI |
-| `/plannotator-archive` | `plannotator` | Browse saved plan decisions |
-| `/plannotator-last` | `plannotator` | Annotate the last assistant message |
-| `/plannotator-review` | `plannotator` | Open an interactive code review for current changes or a PR URL |
-| `/plannotator-status` | `plannotator` | Show plannotator status |
 | `/quiet-tools` | `pi-quiet-tools` | Toggle one-line collapsed invocations for built-in tool rows |
 | `/rtk` | `pi-rtk` | Control pi-rtk shell-command rewriting |
 | `/subagents-doctor` | `pi-subagents` | Show subagent diagnostics |
@@ -141,7 +135,7 @@ Individual bundled extensions can be disabled without affecting the others. Use 
 
 ```sh
 tlh defaults list        # show installed defaults and opt-out status
-tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disable plannotator)
+tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disable oracle)
 tlh defaults enable <id>   # re-enable a disabled extension
 ```
 

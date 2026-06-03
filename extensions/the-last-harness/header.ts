@@ -1,6 +1,6 @@
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { TLH_NAME } from "./constants.js";
+import { TLH_HEADER_TOGGLE_SHORTCUT_LABEL, TLH_NAME } from "./constants.js";
 import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
 import type { StartupResources, TlhHeaderUpdate, TlhInstallNotice } from "./types.js";
 
@@ -9,6 +9,7 @@ export function createTlhHeader(
 	resources: StartupResources,
 	headerUpdate: TlhHeaderUpdate | undefined,
 	installNotice?: TlhInstallNotice,
+	options: { requestRender?: () => void } = {},
 ) {
 	let expanded = false;
 	const color = {
@@ -45,17 +46,28 @@ export function createTlhHeader(
 		return [truncateToWidth(color.dim(`Context: ${items.join(", ")}`), width, color.dim("..."))];
 	};
 
+	const collapsedHintLine = (width: number): string => truncateToWidth(
+		color.dim(`${TLH_HEADER_TOGGLE_SHORTCUT_LABEL} to show skills, prompts, extensions, themes`),
+		width,
+		color.dim("..."),
+	);
+
+	const headerDetails = (width: number): string[] => [
+		...installWarningLine(width),
+		...contextLine(resources.context, width),
+	];
+
 	const renderCollapsed = (width: number) => {
-		const lines = [logo];
-		const headerDetails = [...installWarningLine(width), ...contextLine(resources.context, width)];
-		if (headerDetails.length > 0) {
-			lines.push("", ...headerDetails);
-		}
+		const lines = [logo, "", ...headerDetails(width), collapsedHintLine(width)];
 		return lines;
 	};
 
 	const renderExpanded = (width: number) => {
-		const lines = renderCollapsed(width);
+		const lines = [logo];
+		const details = headerDetails(width);
+		if (details.length > 0) {
+			lines.push("", ...details);
+		}
 		const resourceSections = [
 			section("Skills", resources.skills),
 			section("Prompts", resources.prompts),
@@ -75,6 +87,10 @@ export function createTlhHeader(
 		},
 		setExpanded(nextExpanded: boolean) {
 			expanded = nextExpanded;
+		},
+		toggleExpanded() {
+			expanded = !expanded;
+			options.requestRender?.();
 		},
 		invalidate() {},
 	};
