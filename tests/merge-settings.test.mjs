@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -9,6 +9,7 @@ const repoRoot = resolve(import.meta.dirname, "..");
 const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
 const settingsDefaultsPath = join(repoRoot, "config", "settings.defaults.json");
 const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
+const retiredPlannotatorPackage = "npm:@plannotator/pi-extension";
 const changelogSentinel = "9999.0.0";
 
 function tempFixture(defaultsValue, settingsValue, extensionsValue = []) {
@@ -122,6 +123,30 @@ test("merge treats a missing default-extension manifest as empty", () => {
 	assert.deepEqual(readJson(fixture.settings).packages, [harnessPackage]);
 });
 
+test("merge refuses to mutate normal Pi config paths", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{ packages: [harnessPackage] },
+	);
+	const homeDir = join(dirname(fixture.settings), "home");
+	const protectedSettings = join(homeDir, ".pi", "agent", "settings.json");
+
+	const result = spawnSync(process.execPath, [
+		mergeScript,
+		fixture.defaults,
+		"--settings", protectedSettings,
+		"--default-extensions", fixture.extensions,
+	], {
+		cwd: repoRoot,
+		env: { ...process.env, HOME: homeDir },
+		encoding: "utf8",
+	});
+
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /Refusing to modify normal Pi config from The Last Harness installer/);
+	assert.equal(existsSync(join(homeDir, ".pi")), false);
+});
+
 test("merge treats normalized subagents.agentDirs paths as duplicates", () => {
 	const fixture = tempFixture(
 		{
@@ -196,6 +221,45 @@ test("merge leaves settings unchanged when tlh.gnosis is absent", () => {
 	assert.equal(Object.hasOwn(result.tlh ?? {}, "gnosis"), false, "gnosis key should not appear");
 	assert.deepEqual(result.tlh.disabledDefaultExtensions, ["some-ext"], "disabledDefaultExtensions unchanged");
 	assert.equal(result.otherField, "untouched", "unrelated fields unchanged");
+});
+
+test("merge removes the retired plannotator package from isolated settings and logs it", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				retiredPlannotatorPackage,
+				"npm:unrelated-package",
+			],
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+
+	assert.match(output, /Will remove retired TLH default package: npm:@plannotator\/pi-extension/);
+	assert.deepEqual(readJson(fixture.settings).packages, [
+		harnessPackage,
+		"npm:unrelated-package",
+	]);
+});
+
+test("merge dry-run reports retired plannotator cleanup without writing settings", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				{ source: retiredPlannotatorPackage, extensions: ["legacy-filter"] },
+			],
+		},
+	);
+	const before = readFileSync(fixture.settings, "utf8");
+
+	const output = runMerge(fixture, { dryRun: true, quiet: false });
+
+	assert.match(output, /Would remove retired TLH default package: npm:@plannotator\/pi-extension/);
+	assert.equal(readFileSync(fixture.settings, "utf8"), before);
 });
 
 test("merge reruns preserve user-owned settings and stay idempotent", () => {
