@@ -5,6 +5,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { createJiti } from "jiti";
 
 import { createTlhSubscriptionUsageService } from "../extensions/the-last-harness/subscription-usage.mjs";
+import { DEFAULT_PRIMARY_AGENT } from "../extensions/the-last-harness-primary-agent.mjs";
 
 const jiti = createJiti(import.meta.url);
 const { createTlhFooter, formatTlhSubscriptionUsageFooterSegment } = await jiti.import(
@@ -618,6 +619,16 @@ test("line 2 (color-aware): disabled renders name with accent", () => {
 
 	assert.match(line, /<accent>disabled<\/accent>/);
 	assert.doesNotMatch(line, /<dim>disabled<\/dim>/);
+});
+
+test("line 2 (color-aware): default primary agent renders name with dim, regardless of constant value", () => {
+	const ctx = createCtx({ provider: "anthropic" });
+	const footer = createTlhFooter(pi, ctx, colorTheme, () => DEFAULT_PRIMARY_AGENT, createFooterData(), {});
+	const line = footer.render(COLOR_WIDTH)[1] ?? "";
+
+	// Name must appear inside <dim>, not <accent>
+	assert.match(line, new RegExp(`<dim>${DEFAULT_PRIMARY_AGENT}</dim>`));
+	assert.doesNotMatch(line, new RegExp(`<accent>${DEFAULT_PRIMARY_AGENT}</accent>`));
 });
 
 test("line 2 (color-aware): product and bug-hunter render name with accent", () => {

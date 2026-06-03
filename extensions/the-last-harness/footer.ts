@@ -7,6 +7,7 @@ import {
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
 import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
+import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
 import { formatCompactTokenCount, formatHomePath, sanitizeStatusText } from "./common.js";
 import type { FooterGitCache } from "./footer-git-cache.js";
 import { composeTlhFooterFirstLine } from "./footer-first-line.js";
@@ -86,7 +87,7 @@ export function createTlhFooter(
 			const primaryName = getPrimaryName();
 			const dimSep = theme.fg("dim", " • ");
 			const nameSegment =
-				primaryName === "architect"
+				primaryName === DEFAULT_PRIMARY_AGENT
 					? theme.fg("dim", primaryName)
 					: theme.fg("accent", primaryName);
 
