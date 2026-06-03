@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Removed
+
+- Removed Plannotator from the bundled default-extension manifest and TLH command reference. TLH updates/settings merges now also remove existing `npm:@plannotator/pi-extension` entries from isolated profiles as a retired TLH default; if you still want Plannotator after updating, manually re-add it.
+
 ## [0.16.0] - 2026-06-03
 
 ### Added

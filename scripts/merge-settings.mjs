@@ -26,6 +26,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const DEFAULT_PACKAGE_SOURCE = "git:github.com/diegopetrucci/the-last-harness";
+const RETIRED_TLH_DEFAULT_PACKAGE_SOURCES = [
+	"npm:@plannotator/pi-extension",
+];
 const TLH_CHANGELOG_SENTINEL = "9999.0.0";
 const HARNESS_PACKAGE_IDENTITY = packageIdentity(DEFAULT_PACKAGE_SOURCE);
 
@@ -293,6 +296,18 @@ function applyDisabledDefaultExtensions(settings, defaultExtensions, disabledIds
 	}
 }
 
+function applyRetiredTlhDefaultPackageCleanup(settings, changes) {
+	if (!Array.isArray(settings.packages)) return;
+
+	for (const source of RETIRED_TLH_DEFAULT_PACKAGE_SOURCES) {
+		const identity = packageIdentity(source);
+		let removedSource;
+		while ((removedSource = removePackageByIdentity(settings, identity))) {
+			changes.push(`remove retired TLH default package: ${removedSource}`);
+		}
+	}
+}
+
 function applyDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds, changes) {
 	const loadOrderRepair = repairTargetedDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds);
 	if (!loadOrderRepair) return;
@@ -503,6 +518,7 @@ function main() {
 	applyReplacedDefaultExtensions(next, defaultExtensions, disabledIds, changes, { force: args.force });
 	applyDefaultExtensionPackageDedupes(next, defaultExtensions, disabledIds, changes, { force: args.force, sourceUpdatedIdentities });
 	applyDisabledDefaultExtensions(next, defaultExtensions, disabledIds, changes);
+	applyRetiredTlhDefaultPackageCleanup(next, changes);
 	applyDefaultExtensionLoadOrder(next, defaultExtensions, disabledIds, changes);
 	removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
 	scrubGnosisSettings(next, changes);
