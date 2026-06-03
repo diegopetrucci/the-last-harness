@@ -6,7 +6,7 @@ import {
 	type ReadonlyFooterDataProvider,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
-import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
+import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS, FOOTER_HIDDEN_EXTENSION_STATUS_IDS } from "./constants.js";
 import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
 import { formatCompactTokenCount, formatHomePath, sanitizeStatusText } from "./common.js";
 import type { FooterGitCache } from "./footer-git-cache.js";
@@ -140,13 +140,19 @@ export function createTlhFooter(
 			}
 
 			// Extension status line (conditional on registered extension statuses)
+			// Entries whose ID appears in FOOTER_HIDDEN_EXTENSION_STATUS_IDS are suppressed;
+			// those extensions remain active — only their status line entry is hidden.
 			const extensionStatuses = footerData?.getExtensionStatuses?.();
 			if (extensionStatuses && extensionStatuses.size > 0) {
-				const statusLine = Array.from(extensionStatuses.entries())
-					.sort(([a], [b]) => a.localeCompare(b))
-					.map(([, text]) => sanitizeStatusText(text))
-					.join(" ");
-				lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
+				const visibleStatuses = Array.from(extensionStatuses.entries())
+					.filter(([id]) => !FOOTER_HIDDEN_EXTENSION_STATUS_IDS.has(id))
+					.sort(([a], [b]) => a.localeCompare(b));
+				if (visibleStatuses.length > 0) {
+					const statusLine = visibleStatuses
+						.map(([, text]) => sanitizeStatusText(text))
+						.join(" ");
+					lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
+				}
 			}
 
 			return lines;
