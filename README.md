@@ -105,7 +105,7 @@ The README keeps the overview short on purpose. The detailed operational docs li
 
 ## Add your own skills, extensions, etc
 
-You can add your own skills, prompts, extensions, and packages to TLH without changing this repository or your normal `~/.pi/agent` profile.
+You can add your own skills, prompts, extensions, and packages to TLH.
 
 - Put user-owned resources in the isolated TLH profile under `~/.the-last-harness/agent/skills/`, `~/.the-last-harness/agent/prompts/`, and `~/.the-last-harness/agent/extensions/` (for example: `mkdir -p ~/.the-last-harness/agent/{skills,prompts,extensions}`).
 - Install package-based resources into the same isolated profile with `tlh install <package-source>`.
