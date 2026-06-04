@@ -422,3 +422,97 @@ test("merge defers bundled pi-web-access when an upstream package is already ins
 		"npm:pi-web-access",
 	]);
 });
+
+test("merge removes npm:@diegopetrucci/pi-context-cap package and emits a changes line", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				"npm:@diegopetrucci/pi-context-cap",
+				"npm:@diegopetrucci/pi-notify",
+			],
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+
+	const settings = readJson(fixture.settings);
+	assert.ok(!settings.packages.includes("npm:@diegopetrucci/pi-context-cap"), "pi-context-cap should be removed");
+	assert.ok(settings.packages.includes("npm:@diegopetrucci/pi-notify"), "unrelated packages should be preserved");
+	assert.match(output, /force-remove retired default extension package: npm:@diegopetrucci\/pi-context-cap/);
+});
+
+test("merge prunes context-cap from tlh.disabledDefaultExtensions and emits a changes line", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [harnessPackage],
+			tlh: { disabledDefaultExtensions: ["context-cap", "notify"] },
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["notify"], "context-cap should be pruned, other entries preserved");
+	assert.match(output, /remove stale context-cap opt-out from tlh\.disabledDefaultExtensions/);
+});
+
+test("merge prunes whitespace-padded context-cap entry from tlh.disabledDefaultExtensions", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [harnessPackage],
+			tlh: { disabledDefaultExtensions: [" context-cap ", "notify"] },
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["notify"], "whitespace-padded context-cap should be pruned");
+	assert.match(output, /remove stale context-cap opt-out from tlh\.disabledDefaultExtensions/);
+});
+
+test("merge is a no-op when settings have neither pi-context-cap nor context-cap opt-out", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [harnessPackage],
+			tlh: { disabledDefaultExtensions: ["notify"] },
+		},
+	);
+
+	runMerge(fixture);
+	const afterFirst = readFileSync(fixture.settings, "utf8");
+
+	const output = runMerge(fixture, { quiet: false });
+
+	assert.match(output, /No settings changes needed\./);
+	assert.equal(readFileSync(fixture.settings, "utf8"), afterFirst, "settings should be unchanged");
+});
+
+test("merge cleanup of pi-context-cap is idempotent after first run", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				"npm:@diegopetrucci/pi-context-cap",
+			],
+			tlh: { disabledDefaultExtensions: ["context-cap", "notify"] },
+		},
+	);
+
+	runMerge(fixture);
+
+	const afterFirst = readFileSync(fixture.settings, "utf8");
+	const firstSettings = readJson(fixture.settings);
+	assert.ok(!firstSettings.packages.includes("npm:@diegopetrucci/pi-context-cap"), "pi-context-cap removed on first run");
+	assert.deepEqual(firstSettings.tlh.disabledDefaultExtensions, ["notify"], "context-cap opt-out pruned on first run");
+
+	const secondOutput = runMerge(fixture, { quiet: false });
+	assert.match(secondOutput, /No settings changes needed\./);
+	assert.equal(readFileSync(fixture.settings, "utf8"), afterFirst, "settings unchanged on second run");
+});

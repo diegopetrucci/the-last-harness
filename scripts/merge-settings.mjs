@@ -320,6 +320,28 @@ function applyDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds
 	);
 }
 
+// Source of the retired upstream context-cap extension. Hardcoded because it
+// is no longer in the manifest and cannot be read dynamically.
+const RETIRED_CONTEXT_CAP_SOURCE = "npm:@diegopetrucci/pi-context-cap";
+const RETIRED_CONTEXT_CAP_IDENTITY = packageIdentity(RETIRED_CONTEXT_CAP_SOURCE);
+
+function purgeRetiredContextCapPackage(settings, changes) {
+	if (!RETIRED_CONTEXT_CAP_IDENTITY || !Array.isArray(settings.packages)) return;
+	while (removePackageByIdentity(settings, RETIRED_CONTEXT_CAP_IDENTITY)) {
+		changes.push(`force-remove retired default extension package: ${RETIRED_CONTEXT_CAP_SOURCE}`);
+	}
+}
+
+function pruneContextCapDisabledDefaultExtension(settings, changes) {
+	if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
+	const values = settings.tlh.disabledDefaultExtensions;
+	if (!Array.isArray(values)) return;
+	const nextValues = values.filter((value) => !(typeof value === "string" && value.trim() === "context-cap"));
+	if (nextValues.length === values.length) return;
+	settings.tlh.disabledDefaultExtensions = nextValues;
+	changes.push("remove stale context-cap opt-out from tlh.disabledDefaultExtensions");
+}
+
 function scrubGnosisSettings(settings, changes) {
 	if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
 	if (!Object.hasOwn(settings.tlh, "gnosis")) return;
@@ -551,6 +573,8 @@ function main() {
 	applyDefaultExtensionLoadOrder(next, defaultExtensions, disabledIds, changes);
 	removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
 	scrubGnosisSettings(next, changes);
+	purgeRetiredContextCapPackage(next, changes);
+	pruneContextCapDisabledDefaultExtension(next, changes);
 	syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
 
 	log(args, `Pi settings: ${settingsPath}`);

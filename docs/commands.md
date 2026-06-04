@@ -48,6 +48,7 @@ These commands are registered by the TLH extension bundled with this profile.
 | `/review` | Open an interactive code-review mode picker (requires the architect primary agent) |
 | `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
 | `/tlh-changelog` | Show TLH release notes from the packaged `CHANGELOG.md` |
+| `/toggle-context-cap` | Toggle the 200k effective context-window cap for auto-compaction |
 | `/toggle-tlh-git-attribution` | Toggle the TLH commit attribution footer for agent-created git commits |
 | `/usage` | Show or change TLH subscription usage-limit footer preferences |
 | `/version` | Show the installed TLH version and the upstream Pi runtime version |
@@ -100,7 +101,6 @@ These commands are provided by bundled default extensions and are visible in TLH
 | Command | Extension | Description |
 |---------|-----------|-------------|
 | `/context` | `pi-context-inspector` | Open a local HTML breakdown of where this session's context is going |
-| `/context-cap` | `pi-context-cap` | Toggle the 200k effective context-window cap for auto-compaction |
 | `/fast` | `pi-openai-fast` | Toggle OpenAI Codex Fast mode (ChatGPT-auth GPT-5.4/GPT-5.5 only) |
 | `/librarian-cache` | `pi-librarian` | Toggle the Librarian local-checkout cache for future librarian calls |
 | `/mcp` | `pi-mcp-adapter` | Show MCP server status |

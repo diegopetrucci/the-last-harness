@@ -47,11 +47,6 @@
     "description": "Send a notification when an agent turn finishes."
   },
   {
-    "id": "context-cap",
-    "source": "npm:@diegopetrucci/pi-context-cap",
-    "description": "Keep context usage under a configured cap."
-  },
-  {
     "id": "context-inspector",
     "source": "npm:@diegopetrucci/pi-context-inspector",
     "description": "Open a local HTML dashboard explaining where the current session context is going."
