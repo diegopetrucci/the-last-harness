@@ -1,7 +1,10 @@
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { registerAnnotateLastMessageCommand } from "./the-last-harness/annotate-last-message.js";
 import { registerToggleTlhGitAttributionCommand } from "./the-last-harness/attribution.js";
+import { TLH_HEADER_TOGGLE_SHORTCUT } from "./the-last-harness/constants.js";
 import { createTlhAutocompleteProvider } from "./the-last-harness/autocomplete.js";
+import { registerContextCap } from "./the-last-harness/context-cap.js";
 import { registerTlhChangelogCommand } from "./the-last-harness/changelog.js";
 import { registerEffortCommand } from "./the-last-harness/effort.js";
 import { registerReviewCommand } from "./the-last-harness/review.js";
@@ -20,6 +23,8 @@ import { registerVersionCommand } from "./the-last-harness/version.js";
 import type { StartupResources, TlhUsageRefreshOptions } from "./the-last-harness/types.js";
 
 export default function theLastHarness(pi: ExtensionAPI) {
+	registerContextCap(pi);
+
 	const primaryAgentRuntime = registerTlhPrimaryAgentRuntime(pi, { env: process.env });
 	if (!primaryAgentRuntime) {
 		return;
@@ -27,11 +32,22 @@ export default function theLastHarness(pi: ExtensionAPI) {
 
 	installTlhPackageUpdateNotificationOverride();
 	registerToggleTlhGitAttributionCommand(pi);
+	registerAnnotateLastMessageCommand(pi);
 	registerEffortCommand(pi);
 	registerReviewCommand(pi);
 	registerTlhChangelogCommand(pi);
 	registerUsageCommand(pi);
 	registerVersionCommand(pi);
+	let activeTlhHeader: ReturnType<typeof createTlhHeader> | undefined;
+	pi.registerShortcut(TLH_HEADER_TOGGLE_SHORTCUT, {
+		description: "Toggle TLH startup header resources",
+		handler: (ctx) => {
+			if (!ctx.hasUI) {
+				return;
+			}
+			activeTlhHeader?.toggleExpanded();
+		},
+	});
 
 	const subscriptionUsageService = createTlhSubscriptionUsageService();
 	const requestFooterRenderByContext = new WeakMap<ExtensionContext, () => void>();
@@ -110,7 +126,13 @@ export default function theLastHarness(pi: ExtensionAPI) {
 			});
 		}
 		if (typeof ctx.ui.setHeader === "function") {
-			ctx.ui.setHeader((_tui, theme) => createTlhHeader(theme, resources, headerUpdate, installNotice));
+			ctx.ui.setHeader((tui, theme) => {
+				const header = createTlhHeader(theme, resources, headerUpdate, installNotice, {
+					requestRender: () => tui.requestRender(),
+				});
+				activeTlhHeader = header;
+				return header;
+			});
 		}
 
 		refreshSubscriptionUsage(ctx);

@@ -5,11 +5,6 @@
     "description": "Consult a separate read-only reasoning process for second opinions."
   },
   {
-    "id": "plannotator",
-    "source": "npm:@plannotator/pi-extension",
-    "description": "Review plans interactively with annotations."
-  },
-  {
     "id": "openai-fast",
     "source": "npm:@diegopetrucci/pi-openai-fast",
     "description": "Enable optional OpenAI Codex Fast mode commands for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions."
@@ -50,11 +45,6 @@
     "id": "notify",
     "source": "npm:@diegopetrucci/pi-notify",
     "description": "Send a notification when an agent turn finishes."
-  },
-  {
-    "id": "context-cap",
-    "source": "npm:@diegopetrucci/pi-context-cap",
-    "description": "Keep context usage under a configured cap."
   },
   {
     "id": "context-inspector",
