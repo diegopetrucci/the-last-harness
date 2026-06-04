@@ -55,6 +55,45 @@ These commands are registered by the TLH extension bundled with this profile.
 
 ---
 
+## Packaged first-party extension commands
+
+These commands ship inside the TLH package itself rather than through separately managed default-extension installs.
+
+| Command | Extension | Description |
+|---------|-----------|-------------|
+| `/diff-review` | `diff-review` | Open a native diff-review window and paste submitted review feedback into the editor |
+
+### `/diff-review`
+
+`/diff-review` opens a native Glimpse review window for the current git repository.
+
+#### Requirements
+
+- Run it from inside a git repository.
+- It needs a desktop session that can open a local native window. Headless shells and SSH-only sessions will not work unless they can display that window locally.
+- TLH packages Monaco and Tailwind locally for this UI. `/diff-review` does **not** require CDN access or general internet access just to render the review window.
+- Like the rest of TLH, it stays inside the isolated TLH profile and does not read or write normal Pi config under `~/.pi/agent`.
+
+#### Behavior
+
+- Review branch diffs, individual commits (including working-tree changes), or the full file snapshot from one window.
+- Leave inline, file-level, and overall comments.
+- When you submit, TLH inserts a review-feedback prompt into the current editor buffer. It does not auto-apply code changes or mutate your normal Pi profile.
+
+#### Attribution
+
+TLH's first-party implementation adapts the MIT-licensed `@ryan_nookpi/pi-extension-diff-review` work and preserves inspiration credit to [`badlogic/pi-diff-review`](https://github.com/badlogic/pi-diff-review). For extension-local notes, see [`extensions/diff-review/README.md`](../extensions/diff-review/README.md).
+
+#### Troubleshooting and recovery
+
+- `Review failed: Not inside a git repository.` → change into a git repo and rerun `/diff-review`.
+- `No reviewable files found.` → make or fetch reviewable changes/commits, then rerun.
+- `Review failed: Glimpse host not found ...` → the local native window runtime is unavailable. Run `tlh update` (or reinstall TLH) to restore the packaged dependency, then rerun from a machine/session that can open native windows.
+- If the window says TLH could not load its packaged review assets, close it, run `tlh update`, and rerun `/diff-review`.
+- There is no separate `tlh defaults` toggle for `/diff-review` because it ships inside TLH itself. If you customize TLH packages manually, keep that change inside the isolated TLH profile rather than `~/.pi/agent`.
+
+---
+
 ## Bundled extension commands
 
 These commands are provided by bundled default extensions and are visible in TLH autocomplete. They are available when the relevant extension is installed and active.
@@ -68,12 +107,6 @@ These commands are provided by bundled default extensions and are visible in TLH
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
 | `/oracle` | `pi-oracle` | Configure the Oracle default model and thinking level |
 | `/oracle-model` | `pi-oracle` | Show which model the oracle would use right now |
-| `/plannotator` | `plannotator` | Toggle plannotator planning mode |
-| `/plannotator-annotate` | `plannotator` | Open a markdown file or folder in the annotation UI |
-| `/plannotator-archive` | `plannotator` | Browse saved plan decisions |
-| `/plannotator-last` | `plannotator` | Annotate the last assistant message |
-| `/plannotator-review` | `plannotator` | Open an interactive code review for current changes or a PR URL |
-| `/plannotator-status` | `plannotator` | Show plannotator status |
 | `/quiet-tools` | `pi-quiet-tools` | Toggle one-line collapsed invocations for built-in tool rows |
 | `/rtk` | `pi-rtk` | Control pi-rtk shell-command rewriting |
 | `/subagents-doctor` | `pi-subagents` | Show subagent diagnostics |
@@ -102,8 +135,8 @@ Individual bundled extensions can be disabled without affecting the others. Use 
 
 ```sh
 tlh defaults list        # show installed defaults and opt-out status
-tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disable plannotator)
+tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disable oracle)
 tlh defaults enable <id>   # re-enable a disabled extension
 ```
 
-Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded.
+Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions, not first-party packaged commands like `/diff-review`.

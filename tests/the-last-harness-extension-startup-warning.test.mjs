@@ -9,6 +9,8 @@ import { createJiti } from "jiti";
 const jiti = createJiti(import.meta.url);
 const { default: theLastHarness } = await jiti.import("../extensions/the-last-harness.ts");
 
+const TLH_HEADER_TOGGLE_SHORTCUT = "ctrl+shift+e";
+
 const theme = {
 	fg: (_color, text) => text,
 	bold: (text) => text,
@@ -35,13 +37,17 @@ const LATEST_STABLE_INSTALL_STATE = {
 
 function createPi() {
 	const handlers = new Map();
+	const shortcuts = new Map();
 	return {
 		handlers,
+		shortcuts,
 		on(event, handler) {
 			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
 		},
 		registerCommand() {},
-		registerShortcut() {},
+		registerShortcut(shortcut, options) {
+			shortcuts.set(shortcut, options);
+		},
 		appendEntry() {},
 		getAllTools: () => [],
 		getActiveTools: () => [],
@@ -126,6 +132,7 @@ async function runSessionStart({ reason, installState, hasUI = true }) {
 		theLastHarness(pi);
 		const notifications = [];
 		let headerFactory;
+		let requestRenderCalls = 0;
 		const ctx = createCtx({
 			cwd,
 			notifications,
@@ -141,8 +148,9 @@ async function runSessionStart({ reason, installState, hasUI = true }) {
 			await handler({ reason }, ctx);
 		}
 		await new Promise((resolve) => setImmediate(resolve));
-		const headerLines = headerFactory ? headerFactory({ requestRender() {} }, theme).render(200) : undefined;
-		return { notifications, headerLines };
+		const header = headerFactory ? headerFactory({ requestRender() { requestRenderCalls += 1; } }, theme) : undefined;
+		const headerLines = header?.render(200);
+		return { notifications, header, headerLines, shortcuts: pi.shortcuts, ctx, requestRenderCalls: () => requestRenderCalls };
 	} finally {
 		restoreEnv(previousEnv);
 		rmSync(tempDir, { recursive: true, force: true });
@@ -183,6 +191,33 @@ test("non-startup session reasons do not render the install-track warning in the
 			`expected no install-track warning in header for ${reason}`,
 		);
 	}
+});
+
+test("Ctrl+Shift+E toggles the TLH header without changing the default collapsed startup state", async () => {
+	const { header, headerLines, shortcuts, ctx, requestRenderCalls } = await runSessionStart({
+		reason: "startup",
+		installState: PINNED_TAG_INSTALL_STATE,
+	});
+
+	assert.ok(header);
+	assert.ok(headerLines);
+	assert.ok(headerLines.includes("Ctrl+Shift+E to show skills, prompts, extensions, themes"));
+
+	const shortcut = shortcuts.get(TLH_HEADER_TOGGLE_SHORTCUT);
+	assert.ok(shortcut, "expected TLH header toggle shortcut to be registered");
+
+	const shortcutCtx = { ...ctx };
+	assert.notStrictEqual(shortcutCtx, ctx);
+
+	await shortcut.handler(shortcutCtx);
+	const expandedLines = header.render(200);
+	assert.equal(expandedLines.includes("Ctrl+Shift+E to show skills, prompts, extensions, themes"), false);
+	assert.ok(expandedLines.includes("Warning: running TLH from v0.10.0 track"));
+	assert.equal(requestRenderCalls(), 1);
+
+	await shortcut.handler(shortcutCtx);
+	assert.ok(header.render(200).includes("Ctrl+Shift+E to show skills, prompts, extensions, themes"));
+	assert.equal(requestRenderCalls(), 2);
 });
 
 test("startup without UI does not show the install-track notice", async () => {
