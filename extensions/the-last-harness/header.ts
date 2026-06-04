@@ -41,8 +41,14 @@ export function createTlhHeader(
 			if (isFirstOnLine || visibleWidth(candidate) <= width - 2) {
 				currentLine = candidate;
 			} else {
-				// Non-final line: keep the trailing ", " separator so it reads naturally.
-				wrappedLines.push(color.dim(currentLine + ", "));
+				// Non-final line: append ", " separator if it fits, otherwise push bare.
+				// The isFirstOnLine force-accept can leave currentLine near or at `width`,
+				// so appending ", " would overflow the terminal width.
+				if (visibleWidth(currentLine + ", ") > width) {
+					wrappedLines.push(color.dim(currentLine));
+				} else {
+					wrappedLines.push(color.dim(currentLine + ", "));
+				}
 				currentLine = prefix + item;
 			}
 		}

@@ -79,6 +79,36 @@ test("no rendered line exceeds terminal width when items land exactly on width b
 	}
 });
 
+test("no rendered line exceeds terminal width when first item is near width", () => {
+	// Regression for the headroom-gap bug: the isFirstOnLine force-accept lets the
+	// first item occupy up to `width` columns. When the next item triggers the else
+	// branch, the unpatched code pushed currentLine + ", " which overflows width.
+	// Concrete failure: width=20, first item of 18 visible chars → currentLine is
+	// 20 chars → pushed as "  <18chars>, " = 22 chars (> 20).
+	const width = 20;
+	// Item itself is width-2 = 18 visible chars; prefix adds 2 → currentLine = width.
+	const nearWidthItem = "x".repeat(width - 2); // 18 chars
+	const resources = {
+		context: [],
+		skills: [],
+		prompts: [],
+		extensions: [nearWidthItem, "extra", "more"],
+		themes: [],
+	};
+	const header = createTlhHeader(plainTheme, resources, undefined);
+	header.setExpanded(true);
+
+	const lines = header.render(width);
+
+	for (const line of lines) {
+		const w = visibleWidth(line);
+		assert.ok(
+			w <= width,
+			`Line exceeded terminal width (${w} > ${width}): ${JSON.stringify(line)}`,
+		);
+	}
+});
+
 test("non-final wrapped lines end with ', ' and final line does not", () => {
 	const header = createTlhHeader(plainTheme, createResourcesWithManyExtensions(), undefined);
 	header.setExpanded(true);
