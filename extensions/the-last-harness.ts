@@ -2,6 +2,7 @@ import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-cod
 
 import { registerToggleTlhGitAttributionCommand } from "./the-last-harness/attribution.js";
 import { createTlhAutocompleteProvider } from "./the-last-harness/autocomplete.js";
+import { registerContextCap } from "./the-last-harness/context-cap.js";
 import { registerTlhChangelogCommand } from "./the-last-harness/changelog.js";
 import { registerEffortCommand } from "./the-last-harness/effort.js";
 import { registerReviewCommand } from "./the-last-harness/review.js";
@@ -32,6 +33,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	registerTlhChangelogCommand(pi);
 	registerUsageCommand(pi);
 	registerVersionCommand(pi);
+	registerContextCap(pi);
 
 	const subscriptionUsageService = createTlhSubscriptionUsageService();
 	const requestFooterRenderByContext = new WeakMap<ExtensionContext, () => void>();

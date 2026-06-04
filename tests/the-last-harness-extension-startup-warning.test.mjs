@@ -134,10 +134,12 @@ async function runSessionStart({ reason, installState, hasUI = true }) {
 				headerFactory = factory;
 			},
 		});
-		const sessionStartHandler = pi.handlers.get("session_start")?.[0];
-		assert.ok(sessionStartHandler, "session_start handler must be registered by the extension");
+		const sessionStartHandlers = pi.handlers.get("session_start") ?? [];
+		assert.ok(sessionStartHandlers.length > 0, "session_start handler must be registered by the extension");
 
-		await sessionStartHandler({ reason }, ctx);
+		for (const handler of sessionStartHandlers) {
+			await handler({ reason }, ctx);
+		}
 		await new Promise((resolve) => setImmediate(resolve));
 		const headerLines = headerFactory ? headerFactory({ requestRender() {} }, theme).render(200) : undefined;
 		return { notifications, headerLines };

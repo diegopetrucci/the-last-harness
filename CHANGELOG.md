@@ -4,6 +4,14 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Context cap is now a built-in TLH feature (no longer a bundled default extension). The bundled `@diegopetrucci/pi-context-cap` default extension has been removed and will be force-uninstalled from existing isolated profiles on the next `tlh` install or update. Previous `tlh.disabledDefaultExtensions: ["context-cap"]` opt-outs are intentionally **not** preserved — those entries are silently pruned on upgrade. To opt out of the cap again, run `/toggle-context-cap` or set `tlh.contextCap.disabled: true` in your isolated settings.
+
+### Added
+
+- Added `/toggle-context-cap` slash command: toggles the 200k effective context-window cap for auto-compaction.
+
 ## [0.16.0] - 2026-06-03
 
 ### Added
