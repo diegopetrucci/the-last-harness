@@ -4,6 +4,7 @@ import { registerAnnotateLastMessageCommand } from "./the-last-harness/annotate-
 import { registerToggleTlhGitAttributionCommand } from "./the-last-harness/attribution.js";
 import { TLH_HEADER_TOGGLE_SHORTCUT } from "./the-last-harness/constants.js";
 import { createTlhAutocompleteProvider } from "./the-last-harness/autocomplete.js";
+import { registerContextCap } from "./the-last-harness/context-cap.js";
 import { registerTlhChangelogCommand } from "./the-last-harness/changelog.js";
 import { registerEffortCommand } from "./the-last-harness/effort.js";
 import { registerReviewCommand } from "./the-last-harness/review.js";
@@ -22,6 +23,8 @@ import { registerVersionCommand } from "./the-last-harness/version.js";
 import type { StartupResources, TlhUsageRefreshOptions } from "./the-last-harness/types.js";
 
 export default function theLastHarness(pi: ExtensionAPI) {
+	registerContextCap(pi);
+
 	const primaryAgentRuntime = registerTlhPrimaryAgentRuntime(pi, { env: process.env });
 	if (!primaryAgentRuntime) {
 		return;
