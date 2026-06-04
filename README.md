@@ -80,6 +80,8 @@ The architect is the default, but it is not the only mode.
 
 Use `Shift+Tab` to cycle the current session through `architect` → `rush` → `product` → `bug-hunter` → `disabled`.
 
+Use `/switch-primary-agent [status|architect|rush|product|bug-hunter|disabled|reset|default architect|default rush|default product|default bug-hunter|default disabled|default reset]` for explicit switching, status, reset, and persistent default selection.
+
 When primary agents are disabled, TLH stops applying those primary-agent workflow/persona rules, but the underlying subagent machinery still exists.
 
 ## TLH is intentionally opinionated
