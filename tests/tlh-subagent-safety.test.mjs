@@ -3,13 +3,15 @@ import test from "node:test";
 
 import {
 	ALLOWED_SUBAGENTS,
+	PRIMARY_SUBAGENT_ALLOWLISTS,
 	SUBAGENT_CHILD_ENV,
+	allowedSubagentsForPrimary,
 	registerTlhStartupMode,
 	validateSubagentToolInput,
 } from "../extensions/the-last-harness-subagent-safety.mjs";
 
-function assertAllowed(input) {
-	assert.equal(validateSubagentToolInput(input), undefined);
+function assertAllowed(input, options) {
+	assert.equal(validateSubagentToolInput(input, options), undefined);
 }
 
 function createPiHarness() {
@@ -42,9 +44,18 @@ test("ALLOWED_SUBAGENTS exposes bundled minor agents", () => {
 	]);
 });
 
-test("validateSubagentToolInput allows validator as a permitted delegation target", () => {
+test("PRIMARY_SUBAGENT_ALLOWLISTS keeps documented primary delegation boundaries", () => {
+	assert.deepEqual(PRIMARY_SUBAGENT_ALLOWLISTS.architect, ALLOWED_SUBAGENTS);
+	assert.deepEqual(PRIMARY_SUBAGENT_ALLOWLISTS.product, ["repo-scout", "librarian"]);
+	assert.deepEqual(PRIMARY_SUBAGENT_ALLOWLISTS["bug-hunter"], ["repo-scout", "librarian", "oracle"]);
+	assert.deepEqual(PRIMARY_SUBAGENT_ALLOWLISTS.rush, ["repo-scout", "diff-summarizer", "librarian", "code-reviewer", "oracle"]);
+	assert.deepEqual(allowedSubagentsForPrimary("architect"), ALLOWED_SUBAGENTS);
+	assert.deepEqual(allowedSubagentsForPrimary("unknown"), ALLOWED_SUBAGENTS);
+});
+
+test("validateSubagentToolInput allows validator for architect while forcing safe defaults", () => {
 	const single = { agent: "validator", prompt: "run source-read-only validation for the completed ticket" };
-	assertAllowed(single);
+	assertAllowed(single, { primaryAgent: "architect" });
 	assert.equal(single.agentScope, "user");
 	assert.equal(single.context, "fresh");
 });
@@ -56,33 +67,43 @@ test("validateSubagentToolInput allows web-scout as a permitted delegation targe
 	assert.equal(single.context, "fresh");
 });
 
-test("validateSubagentToolInput allows approved execution and forces fresh user context", () => {
-	const single = { agent: "developer", prompt: "implement the ticket" };
-	assertAllowed(single);
-	assert.equal(single.agentScope, "user");
-	assert.equal(single.context, "fresh");
+test("validateSubagentToolInput enforces per-primary delegation allowlists", () => {
+	const productAllowed = { tasks: [{ agent: "repo-scout", prompt: "map the repo" }, { agent: "librarian", prompt: "research upstream docs" }] };
+	assertAllowed(productAllowed, { primaryAgent: "product" });
+	assert.equal(productAllowed.agentScope, "user");
+	assert.equal(productAllowed.context, "fresh");
+	assert.match(
+		validateSubagentToolInput({ agent: "validator", prompt: "validate it" }, { primaryAgent: "product" }),
+		/TLH product may delegate only to: repo-scout, librarian\. Disallowed target\(s\): validator\./,
+	);
+	assert.match(
+		validateSubagentToolInput({ agent: "developer", prompt: "implement it" }, { primaryAgent: "product" }),
+		/TLH product may delegate only to: repo-scout, librarian\. Disallowed target\(s\): developer\./,
+	);
+	assert.match(
+		validateSubagentToolInput({ agent: "code-reviewer", prompt: "review it" }, { primaryAgent: "product" }),
+		/TLH product may delegate only to: repo-scout, librarian\. Disallowed target\(s\): code-reviewer\./,
+	);
 
-	const batched = {
-		tasks: [
-			{ agent: "repo-scout", prompt: "map the repo" },
-			{ agent: "validator", prompt: "run source-read-only validation" },
-			{ agent: "librarian", prompt: "research upstream docs" },
-			{ agent: "code-reviewer", prompt: "review the diff", context: "fresh" },
-		],
-		chain: [
-			{ agent: "diff-summarizer", prompt: "summarize" },
-			{ agent: "oracle", prompt: "provide a second opinion", context: "fresh" },
-			{
-				parallel: [
-					{ agent: "developer", prompt: "fix one issue" },
-					{ agent: "repo-scout", prompt: "inspect one area", context: "fresh" },
-				],
-			},
-		],
+	const bugHunterAllowed = { tasks: [{ agent: "repo-scout", prompt: "inspect" }, { agent: "oracle", prompt: "double-check" }] };
+	assertAllowed(bugHunterAllowed, { primaryAgent: "bug-hunter" });
+	assert.match(
+		validateSubagentToolInput({ agent: "validator", prompt: "validate it" }, { primaryAgent: "bug-hunter" }),
+		/TLH bug-hunter may delegate only to: repo-scout, librarian, oracle\. Disallowed target\(s\): validator\./,
+	);
+
+	const rushAllowed = {
+		chain: [{ parallel: [{ agent: "code-reviewer", prompt: "review it", context: "fresh" }, { agent: "diff-summarizer", prompt: "summarize it" }] }],
 	};
-	assertAllowed(batched);
-	assert.equal(batched.agentScope, "user");
-	assert.equal(batched.context, "fresh");
+	assertAllowed(rushAllowed, { primaryAgent: "rush" });
+	assert.match(
+		validateSubagentToolInput({ agent: "validator", prompt: "validate it" }, { primaryAgent: "rush" }),
+		/TLH rush may delegate only to: repo-scout, diff-summarizer, librarian, code-reviewer, oracle\. Disallowed target\(s\): validator\./,
+	);
+	assert.match(
+		validateSubagentToolInput({ agent: "developer", prompt: "implement it" }, { primaryAgent: "rush" }),
+		/TLH rush may delegate only to: repo-scout, diff-summarizer, librarian, code-reviewer, oracle\. Disallowed target\(s\): developer\./,
+	);
 });
 
 test("validateSubagentToolInput allows approved management calls and forces user scope where needed", () => {

@@ -128,6 +128,25 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	}
 });
 
+test("primary prompts advertise only each primary's documented minor-agent set", () => {
+	const primaryAgents = loadPrimaryAgents();
+	const subagentMetadata = loadSubagentMetadata();
+	const architectPrompt = buildTlhSystemPrompt(primaryAgents.get("architect"), subagentMetadata, true);
+	const productPrompt = buildTlhSystemPrompt(primaryAgents.get("product"), subagentMetadata, true);
+	const bugHunterPrompt = buildTlhSystemPrompt(primaryAgents.get("bug-hunter"), subagentMetadata, true);
+	const rushPrompt = buildTlhSystemPrompt(primaryAgents.get("rush"), subagentMetadata, true);
+
+	assert.match(architectPrompt, /- validator: /);
+	assert.match(productPrompt, /- repo-scout: /);
+	assert.match(productPrompt, /- librarian: /);
+	assert.doesNotMatch(productPrompt, /- validator: |- developer: |- code-reviewer: /);
+	assert.match(bugHunterPrompt, /- oracle: /);
+	assert.doesNotMatch(bugHunterPrompt, /- validator: /);
+	assert.match(rushPrompt, /- code-reviewer: /);
+	assert.match(rushPrompt, /- diff-summarizer: /);
+	assert.doesNotMatch(rushPrompt, /- validator: |- developer: /);
+});
+
 test("child startup branch uses the mandatory-ticket child prompt", () => {
 	const registerBlock = sourceSection(
 		primaryRuntimeSource,
@@ -217,7 +236,7 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 	assert.match(toolCall, /applyProviderAwareSubagentModels\(event\.input, subagentsByName, ctx\.modelRegistry\.getAvailable\(\), ctx\.model\?\.provider\)/);
 	assert.match(toolCall, /const selection = currentPrimaryAgentSelection\(\)/);
 	assert.match(toolCall, /if \(selection === "rush" && subagentCallTargetsAgent\(event\.input, "developer"\)\)/);
-	assert.match(toolCall, /const reason = validateSubagentToolInput\(event\.input\)/);
+	assert.match(toolCall, /const reason = validateSubagentToolInput\(event\.input, \{ primaryAgent: selection \}\)/);
 	assert(
 		toolCall.indexOf('if (event.toolName === "bash")') < toolCall.indexOf("resolveTlhCommitAttribution"),
 		"parent tool_call should resolve attribution only inside the bash branch",

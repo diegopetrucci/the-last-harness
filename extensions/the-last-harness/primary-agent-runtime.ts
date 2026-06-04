@@ -585,7 +585,7 @@ function createTlhPrimaryAgentRuntime(
 			if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
 				return { block: true, reason: rushDeveloperDelegationReason() };
 			}
-			const reason = validateSubagentToolInput(event.input);
+			const reason = validateSubagentToolInput(event.input, { primaryAgent: selection });
 			return reason ? { block: true, reason } : undefined;
 		});
 	}

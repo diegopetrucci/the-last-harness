@@ -1048,13 +1048,13 @@ test("tool_call blocks non-progress printf process substitutions", async (t) => 
 	});
 });
 
-test("enabled primary mode allows approved delegation targets and forces safe top-level defaults", async () => {
+test("enabled architect mode allows validator and other approved delegation targets while forcing safe defaults", async () => {
 	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
 	const event = {
 		toolName: "subagent",
 		input: {
 			tasks: [{ agent: "repo-scout", prompt: "Map the repository" }],
-			chain: [{ parallel: [{ agent: "web-scout", prompt: "Research upstream release notes" }] }],
+			chain: [{ parallel: [{ agent: "web-scout", prompt: "Research upstream release notes" }, { agent: "validator", prompt: "Run source-read-only validation" }] }],
 		},
 	};
 	const ctx = createToolCallContext([
@@ -1086,6 +1086,44 @@ test("enabled primary mode blocks disallowed nested delegation targets after for
 	});
 	assert.equal(event.input.agentScope, "user");
 	assert.equal(event.input.context, "fresh");
+});
+
+test("enabled primary mode blocks delegations outside each primary allowlist", async () => {
+	const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+	for (const [selection, agent, reason] of [
+		["product", "validator", "TLH product may delegate only to: repo-scout, librarian. Disallowed target(s): validator."],
+		["product", "developer", "TLH product may delegate only to: repo-scout, librarian. Disallowed target(s): developer."],
+		["product", "code-reviewer", "TLH product may delegate only to: repo-scout, librarian. Disallowed target(s): code-reviewer."],
+		["bug-hunter", "validator", "TLH bug-hunter may delegate only to: repo-scout, librarian, oracle. Disallowed target(s): validator."],
+		["rush", "validator", "TLH rush may delegate only to: repo-scout, diff-summarizer, librarian, code-reviewer, oracle. Disallowed target(s): validator."],
+	]) {
+		const event = { toolName: "subagent", input: { agent, prompt: `Delegate to ${agent}` } };
+		const ctx = createToolCallContext([
+			{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: selection } },
+		]);
+
+		assert.deepEqual(await toolCall(event, ctx), { block: true, reason });
+		assert.equal(event.input.agentScope, "user");
+		assert.equal(event.input.context, "fresh");
+	}
+});
+
+test("enabled primary mode preserves each primary's documented allowed helpers", async () => {
+	const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+	for (const [selection, input] of [
+		["product", { tasks: [{ agent: "repo-scout", prompt: "Map the repo" }, { agent: "librarian", prompt: "Research upstream docs" }] }],
+		["bug-hunter", { tasks: [{ agent: "repo-scout", prompt: "Inspect the area" }, { agent: "oracle", prompt: "Second opinion" }] }],
+		["rush", { chain: [{ parallel: [{ agent: "code-reviewer", prompt: "Review the diff", context: "fresh" }, { agent: "diff-summarizer", prompt: "Summarize the diff" }] }] }],
+	]) {
+		const event = { toolName: "subagent", input: structuredClone(input) };
+		const ctx = createToolCallContext([
+			{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: selection } },
+		]);
+
+		assert.equal(await toolCall(event, ctx), undefined);
+		assert.equal(event.input.agentScope, "user");
+		assert.equal(event.input.context, "fresh");
+	}
 });
 
 test("enabled primary mode allows safe management calls and blocks non-user management scopes", async () => {

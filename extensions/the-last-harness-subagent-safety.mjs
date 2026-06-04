@@ -1,8 +1,15 @@
 export const ALLOWED_SUBAGENTS = Object.freeze(["developer", "validator", "code-reviewer", "repo-scout", "diff-summarizer", "librarian", "web-scout", "oracle"]);
+export const PRIMARY_SUBAGENT_ALLOWLISTS = Object.freeze({
+	architect: ALLOWED_SUBAGENTS,
+	product: Object.freeze(["repo-scout", "librarian"]),
+	"bug-hunter": Object.freeze(["repo-scout", "librarian", "oracle"]),
+	rush: Object.freeze(["repo-scout", "diff-summarizer", "librarian", "code-reviewer", "oracle"]),
+});
 export const SAFE_SUBAGENT_ACTIONS = Object.freeze(["list", "get", "status", "interrupt", "doctor"]);
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 
 const SAFE_SUBAGENT_ACTION_SET = new Set(SAFE_SUBAGENT_ACTIONS);
+const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 
 function isRecord(value) {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -10,6 +17,22 @@ function isRecord(value) {
 
 function stringField(value) {
 	return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function normalizePrimaryAgent(value) {
+	return typeof value === "string" ? value.trim().toLowerCase() : undefined;
+}
+
+export function allowedSubagentsForPrimary(primaryAgent) {
+	const normalizedPrimaryAgent = normalizePrimaryAgent(primaryAgent);
+	return normalizedPrimaryAgent && hasOwn(PRIMARY_SUBAGENT_ALLOWLISTS, normalizedPrimaryAgent)
+		? PRIMARY_SUBAGENT_ALLOWLISTS[normalizedPrimaryAgent]
+		: ALLOWED_SUBAGENTS;
+}
+
+function delegationPolicyLabel(primaryAgent) {
+	const normalizedPrimaryAgent = normalizePrimaryAgent(primaryAgent);
+	return normalizedPrimaryAgent && hasOwn(PRIMARY_SUBAGENT_ALLOWLISTS, normalizedPrimaryAgent) ? `TLH ${normalizedPrimaryAgent}` : "TLH primary agents";
 }
 
 function collectSubagentTargets(input) {
@@ -118,7 +141,7 @@ function validateNestedFreshSubagentContexts(input) {
 	return undefined;
 }
 
-export function validateSubagentToolInput(input) {
+export function validateSubagentToolInput(input, { primaryAgent } = {}) {
 	if (!isRecord(input)) {
 		return "TLH primary-agent subagent calls must use an object input.";
 	}
@@ -154,6 +177,12 @@ export function validateSubagentToolInput(input) {
 	const disallowed = targets.filter((agent) => !ALLOWED_SUBAGENTS.includes(agent));
 	if (disallowed.length > 0) {
 		return `TLH primary agents may delegate only to: ${ALLOWED_SUBAGENTS.join(", ")}. Disallowed target(s): ${disallowed.join(", ")}.`;
+	}
+
+	const primaryAllowedSubagents = allowedSubagentsForPrimary(primaryAgent);
+	const primaryDisallowed = targets.filter((agent) => !primaryAllowedSubagents.includes(agent));
+	if (primaryDisallowed.length > 0) {
+		return `${delegationPolicyLabel(primaryAgent)} may delegate only to: ${primaryAllowedSubagents.join(", ")}. Disallowed target(s): ${primaryDisallowed.join(", ")}.`;
 	}
 
 	return undefined;
