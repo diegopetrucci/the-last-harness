@@ -42,7 +42,14 @@ That last part matters: the architect does not disappear once work is delegated.
 
 TLH subagents are fresh child sessions, not a giant shared swarm. They get the task and project context they need, not the whole primary conversation. In practice that means less context pollution, clearer responsibilities, and easier review of what each agent was asked to do.
 
-Common roles include `repo-scout` for discovery, `diff-summarizer` for change overviews, `developer` for implementation, `validator` for source-read-only validation, `code-reviewer` for review, `librarian` for repo knowledge, `web-scout` for web research, and `oracle` for a deeper second opinion.
+- `repo-scout` for discovery
+- `diff-summarizer` for change overviews
+- `developer` for implementation
+- `validator` for source-read-only validation
+- `code-reviewer` for review
+- `librarian` for repo knowledge
+- `web-scout` for web research
+- `oracle` for a deeper second opinion.
 
 ## Why this workflow is useful
 
@@ -73,8 +80,6 @@ The architect is the default, but it is not the only mode.
 
 Use `Shift+Tab` to cycle the current session through `architect` → `rush` → `product` → `bug-hunter` → `disabled`.
 
-Use `/switch-primary-agent [status|architect|rush|product|bug-hunter|disabled|reset|default architect|default rush|default product|default bug-hunter|default disabled|default reset]` when you want explicit control over the current session or the persistent default.
-
 When primary agents are disabled, TLH stops applying those primary-agent workflow/persona rules, but the underlying subagent machinery still exists.
 
 ## TLH is intentionally opinionated
@@ -102,8 +107,6 @@ TLH also aims to make the day-to-day session experience calmer and safer:
 - subscription usage footer controls,
 - completion notifications, and
 - conservative settings merges that preserve user-owned isolated configuration.
-
-The README keeps the overview short on purpose. The detailed operational docs live elsewhere.
 
 ## Add your own skills, extensions, etc
 
