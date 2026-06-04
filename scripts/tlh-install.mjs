@@ -695,6 +695,34 @@ function installHarnessPackage(config) {
 	runIsolatedPi(config, ["pi", "update", config.packageSource]);
 }
 
+async function seedLibrarianConfig(config) {
+	if (config.noSettings) return;
+
+	const targetPath = join(config.agentDir, "extensions", "librarian.json");
+	if (existsSync(targetPath)) return;
+
+	if (!config.supportFilePaths.LIBRARIAN_DEFAULTS_FILE || !existsSync(config.supportFilePaths.LIBRARIAN_DEFAULTS_FILE)) {
+		const prepared = await ensureSupportFilesPrepared(config, supportFileIo());
+		if (!prepared) {
+			if (config.dryRun) {
+				log(config, `Would create isolated Librarian config when missing: ${targetPath}`);
+				return;
+			}
+			throw new Error(`Librarian defaults support file is unavailable for ref ${config.ref}`);
+		}
+	}
+	if (!config.supportFilePaths.LIBRARIAN_DEFAULTS_FILE || !existsSync(config.supportFilePaths.LIBRARIAN_DEFAULTS_FILE)) {
+		throw new Error(`required Librarian defaults support file not found for ref ${config.ref}: config/librarian.defaults.json`);
+	}
+
+	if (config.dryRun) {
+		printCommand(["cp", config.supportFilePaths.LIBRARIAN_DEFAULTS_FILE, targetPath]);
+		return;
+	}
+
+	copySafeProfileFile(config, config.supportFilePaths.LIBRARIAN_DEFAULTS_FILE, "extensions/librarian.json", "isolated Librarian config");
+}
+
 async function mergeSettings(config) {
 	if (config.noSettings) {
 		log(config, "Skipping settings/keybinding merge (--no-settings).");
@@ -1182,6 +1210,7 @@ async function runInstallFlow(config) {
 			: false;
 	installHarnessPackage(config);
 	await installSupportFilesToProfile(config);
+	await seedLibrarianConfig(config);
 	await mergeSettings(config);
 	await writeInstallState(config);
 	installDefaultExtensions(config);
@@ -1245,6 +1274,7 @@ export {
 	nodeVersionMeetsMinimum,
 	parseArgs,
 	run,
+	seedLibrarianConfig,
 	usage,
 	validateInputs,
 };
