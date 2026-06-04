@@ -75,14 +75,11 @@ export function createTlhFooter(
 			const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
 
 			// Line 2 (single flowing left-justified line):
-			//   agent: <primaryName> • [(provider)] <model|no-model> [• thinking] • context% [• DUMB ZONE]
+			//   agent: <primaryName> • <model|no-model> [• thinking] • context% [• DUMB ZONE]
 			// Each segment is explicitly themed to avoid ANSI foreground-reset bleed from nested
 			// theme.fg() calls. Non-default agent names are highlighted with the accent color.
 			const modelOrNoModel = model?.id ?? "no-model";
-			let modelPart: string = modelOrNoModel;
-			if ((footerData?.getAvailableProviderCount?.() ?? 1) > 1 && model) {
-				modelPart = `(${model.provider}) ${modelOrNoModel}`;
-			}
+			const modelPart: string = modelOrNoModel;
 
 			const primaryName = getPrimaryName();
 			const dimSep = theme.fg("dim", " • ");

@@ -378,9 +378,10 @@ test("line 2 shows model without provider prefix when single provider", () => {
 	assert.doesNotMatch(line, /\(anthropic\)/);
 });
 
-test("line 2 shows provider prefix when multiple providers available", () => {
+test("line 2 never shows provider prefix even when multiple providers are available", () => {
 	const line = renderAgentLine(createCtx({ provider: "anthropic" }), {}, WIDTH, createFooterData({ providerCount: 2 }));
-	assert.match(line, /^agent: architect • \(anthropic\) claude-sonnet-4-20250514 • /);
+	assert.match(line, /^agent: architect • claude-sonnet-4-20250514 • /);
+	assert.doesNotMatch(line, /\(anthropic\)/);
 });
 
 test("line 2 shows thinking level for reasoning models", () => {
