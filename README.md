@@ -125,7 +125,7 @@ Normal `tlh update` runs are conservative: they preserve user-owned isolated-pro
 
 ## Everything else, aka the docs dump
 
-- Slash commands reference (built-ins, TLH commands, `/annotate-last-message`, `/diff-review`, bundled extensions): [`docs/commands.md`](docs/commands.md)
+- Slash commands reference: [`docs/commands.md`](docs/commands.md)
 - Install, update, uninstall, paths, and undo steps: [`docs/install.md`](docs/install.md)
 - Gnosis, `tk`, and TLH workflow integrations: [`docs/integrations.md`](docs/integrations.md)
 - Web search setup, privacy, and opt-out: [`docs/web-search.md`](docs/web-search.md)
