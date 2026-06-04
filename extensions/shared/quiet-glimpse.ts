@@ -76,10 +76,12 @@ class QuietGlimpseWindowImpl extends EventEmitter implements QuietGlimpseWindow 
 		});
 
 		proc.on("error", (error) => this.emit("error", error));
-		proc.on("exit", (code) => {
+		proc.on("exit", (code, signal) => {
 			const stderr = this.#stderr.trim();
-			if (!this.#closed && code && stderr) {
-				this.emit("error", new Error(stderr));
+			const failed = signal != null || (code != null && code !== 0);
+			if (!this.#closed && failed) {
+				const message = stderr || `Glimpse process exited abnormally (code: ${code}, signal: ${signal}).`;
+				this.emit("error", new Error(message));
 			}
 			this.#markClosed();
 		});
