@@ -5,7 +5,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { readSystemClipboard, writeSystemClipboard } from "./clipboard.js";
 import { getCommitFiles, getReviewWindowData, isWorkingTreeCommitSha, loadReviewFileContents } from "./git.js";
 import { composeReviewPrompt } from "./prompt.js";
-import { openQuietGlimpse, type QuietGlimpseWindow } from "./quiet-glimpse.js";
+import { openQuietGlimpse, type QuietGlimpseWindow } from "../shared/quiet-glimpse.js";
 import type {
 	ReviewCancelPayload,
 	ReviewClipboardReadPayload,
