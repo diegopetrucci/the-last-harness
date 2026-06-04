@@ -7,6 +7,7 @@ import { readJsonFile } from "./tlh-install-utils.mjs";
 
 export const TLH_SUBAGENT_PROMPTS = Object.freeze([
 	"developer.md",
+	"validator.md",
 	"code-reviewer.md",
 	"repo-scout.md",
 	"diff-summarizer.md",

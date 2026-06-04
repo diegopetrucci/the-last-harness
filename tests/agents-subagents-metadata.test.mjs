@@ -51,6 +51,50 @@ test("web-scout tool budget uses a concrete fetch limit with no placeholder text
 	assert.doesNotMatch(body, /Fetch ≤ N top results/);
 });
 
+test("validator frontmatter has expected metadata fields", () => {
+	const { frontmatter: fm } = readAgentPrompt("subagents", "validator");
+
+	assert.equal(fm.name, "validator");
+	assert.equal(fm.description, "Runs source-read-only validation commands and reports exact outcomes.");
+	assert.deepEqual(splitCommaList(fm.tools), ["read", "grep", "find", "ls", "bash", "contact_supervisor"]);
+	assert.equal(fm.model, "anthropic/claude-haiku-4-5");
+	assert.deepEqual(splitCommaList(fm.tlhOpenaiModels), ["openai-codex/gpt-5.4-mini", "openai/gpt-5.4-mini"]);
+	assert.equal(fm.thinking, "high");
+	assert.equal(fm.systemPromptMode, "replace");
+	assert.equal(fm.inheritProjectContext, "true");
+	assert.equal(fm.inheritSkills, "false");
+	assert.equal(fm.defaultContext, "fresh");
+});
+
+test("validator body contains mandatory validation guardrails", () => {
+	const { body } = readAgentPrompt("subagents", "validator");
+
+	const guardrails = [
+		["VALIDATING.md first", /VALIDATING\.md[\s\S]*read it first/i],
+		["source-read-only", /source-read-only/i],
+		["autofix", /autofix/i],
+		["snapshots", /snapshot/i],
+		["installs", /install dependenc/i],
+		["watchers", /watchers?|watch mode/i],
+		["network approval", /network(?:-dependent)? commands?|network access/i],
+		["git status before/after", /git status before validation/i],
+		["failure triage", /failure triage/i],
+	];
+	for (const [keyword, pattern] of guardrails) {
+		assert.match(body, pattern, `body should contain mandatory validator guardrail keyword: ${keyword}`);
+	}
+});
+
+test("loadSubagentMetadata exposes validator with expected model, tlhOpenaiModels, and description", () => {
+	const subagents = loadSubagentMetadata();
+	const validator = subagents.find((agent) => agent.name === "validator");
+
+	assert.ok(validator, "validator should be present in loadSubagentMetadata()");
+	assert.equal(validator.model, "anthropic/claude-haiku-4-5");
+	assert.deepEqual(validator.tlhOpenaiModels, ["openai-codex/gpt-5.4-mini", "openai/gpt-5.4-mini"]);
+	assert.equal(validator.description, "Runs source-read-only validation commands and reports exact outcomes.");
+});
+
 test("loadSubagentMetadata exposes web-scout with expected model, tlhOpenaiModels, and description", () => {
 	const subagents = loadSubagentMetadata();
 	const webScout = subagents.find((agent) => agent.name === "web-scout");

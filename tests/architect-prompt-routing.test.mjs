@@ -5,6 +5,13 @@ import { readAgentPrompt } from "./agent-prompt-test-helpers.mjs";
 
 const { content: architectMd } = readAgentPrompt("primary", "architect");
 
+test("architect.md contains validator bullet in the subagent tools list", () => {
+	assert.match(
+		architectMd,
+		/- `validator`: run source-read-only validation commands and report exact commands, outcomes, skipped commands, git status before\/after, and failure triage\./,
+	);
+});
+
 test("architect.md contains web-scout bullet in the subagent tools list", () => {
 	assert.match(
 		architectMd,
@@ -30,6 +37,13 @@ test("architect.md excludes routine localized reversible directly testable work 
 	assert.match(
 		architectMd,
 		/Do not suggest the `oracle` for routine localized work that is reversible and directly testable\./,
+	);
+});
+
+test("architect.md routes final review through validator before code-reviewer", () => {
+	assert.match(
+		architectMd,
+		/1\. Delegate source-read-only validation to `validator` against the completed tickets and current worktree\.\n2\. Evaluate the validator report; delegate fixes to `developer` if needed\.\n3\. Delegate final review to `code-reviewer` against the full VCS diff, completed tickets, and validator findings\./,
 	);
 });
 

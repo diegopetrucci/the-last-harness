@@ -42,7 +42,7 @@ That last part matters: the architect does not disappear once work is delegated.
 
 TLH subagents are fresh child sessions, not a giant shared swarm. They get the task and project context they need, not the whole primary conversation. In practice that means less context pollution, clearer responsibilities, and easier review of what each agent was asked to do.
 
-Common roles include `repo-scout` for discovery, `diff-summarizer` for change overviews, `developer` for implementation, `code-reviewer` for review, `librarian` for repo knowledge, `web-scout` for web research, and `oracle` for a deeper second opinion.
+Common roles include `repo-scout` for discovery, `diff-summarizer` for change overviews, `developer` for implementation, `validator` for source-read-only validation, `code-reviewer` for review, `librarian` for repo knowledge, `web-scout` for web research, and `oracle` for a deeper second opinion.
 
 ## Why this workflow is useful
 

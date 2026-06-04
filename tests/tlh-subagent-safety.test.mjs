@@ -32,6 +32,7 @@ function createPiHarness() {
 test("ALLOWED_SUBAGENTS exposes bundled minor agents", () => {
 	assert.deepEqual(ALLOWED_SUBAGENTS, [
 		"developer",
+		"validator",
 		"code-reviewer",
 		"repo-scout",
 		"diff-summarizer",
@@ -39,6 +40,13 @@ test("ALLOWED_SUBAGENTS exposes bundled minor agents", () => {
 		"web-scout",
 		"oracle",
 	]);
+});
+
+test("validateSubagentToolInput allows validator as a permitted delegation target", () => {
+	const single = { agent: "validator", prompt: "run source-read-only validation for the completed ticket" };
+	assertAllowed(single);
+	assert.equal(single.agentScope, "user");
+	assert.equal(single.context, "fresh");
 });
 
 test("validateSubagentToolInput allows web-scout as a permitted delegation target", () => {
@@ -57,6 +65,7 @@ test("validateSubagentToolInput allows approved execution and forces fresh user 
 	const batched = {
 		tasks: [
 			{ agent: "repo-scout", prompt: "map the repo" },
+			{ agent: "validator", prompt: "run source-read-only validation" },
 			{ agent: "librarian", prompt: "research upstream docs" },
 			{ agent: "code-reviewer", prompt: "review the diff", context: "fresh" },
 		],

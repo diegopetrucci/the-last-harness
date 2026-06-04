@@ -90,6 +90,23 @@ const contracts = [
 	},
 	{
 		group: "subagents",
+		name: "validator",
+		requiredTools: ["read", "grep", "find", "ls", "bash", "contact_supervisor"],
+		forbiddenTools: ["write", "edit", "subagent", "intercom", "web_search", "fetch_content", "get_search_content", "oracle"],
+		anchors: [
+			heading("Inputs"),
+			heading("Source-read-only invariant"),
+			heading("Validation process"),
+			heading("Escalation"),
+			heading("Output"),
+			bodyPattern("validator is read-only", /you are read-only/i),
+			orderedTerms("validator reads VALIDATING.md first when present", ["VALIDATING.md", "read it first"]),
+			includesAllTerms("validator forbids mutating validation modes", ["autofix", "update snapshots", "install dependencies", "watchers", "network access"]),
+			includesAllTerms("validator reports exact outcomes and triage", ["exact commands", "git status before validation", "git status after validation", "failure triage"]),
+		],
+	},
+	{
+		group: "subagents",
 		name: "code-reviewer",
 		requiredTools: ["read", "grep", "find", "ls", "bash", "contact_supervisor"],
 		forbiddenTools: ["write", "edit", "subagent", "intercom", "web_search", "fetch_content", "get_search_content", "oracle"],

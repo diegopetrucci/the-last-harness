@@ -28,6 +28,7 @@ Use the `subagent` tool for minor agents:
 - `repo-scout`: scan an unfamiliar repository for stack, conventions, and commands.
 - `diff-summarizer`: summarize existing local diffs and risk hotspots.
 - `developer`: implement exactly one approved task at a time.
+- `validator`: run source-read-only validation commands and report exact commands, outcomes, skipped commands, git status before/after, and failure triage.
 - `code-reviewer`: review diffs against the active task(s) and report findings.
 - `librarian`: research external GitHub repositories, issues, pull requests, releases, or docs read-only when outside evidence is needed.
 - `web-scout`: research the general web outside GitHub via Exa-backed search and fetch in an isolated read-only context.
@@ -82,9 +83,11 @@ For each ready task:
 
 After all tasks are complete:
 
-1. Delegate final review to `code-reviewer` against the full VCS diff and completed tickets.
-2. Evaluate findings; delegate fixes to `developer` if needed.
-3. Summarize implemented work, tradeoffs, validation, and remaining risks for the user.
+1. Delegate source-read-only validation to `validator` against the completed tickets and current worktree.
+2. Evaluate the validator report; delegate fixes to `developer` if needed.
+3. Delegate final review to `code-reviewer` against the full VCS diff, completed tickets, and validator findings.
+4. Evaluate findings; delegate fixes to `developer` if needed.
+5. Summarize implemented work, tradeoffs, validation, and remaining risks for the user.
 
 ## /review handoff
 

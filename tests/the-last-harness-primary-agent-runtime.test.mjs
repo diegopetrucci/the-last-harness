@@ -1082,7 +1082,7 @@ test("enabled primary mode blocks disallowed nested delegation targets after for
 	assert.deepEqual(await toolCall(event, ctx), {
 		block: true,
 		reason:
-			"TLH primary agents may delegate only to: developer, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle. Disallowed target(s): planner.",
+			"TLH primary agents may delegate only to: developer, validator, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle. Disallowed target(s): planner.",
 	});
 	assert.equal(event.input.agentScope, "user");
 	assert.equal(event.input.context, "fresh");
