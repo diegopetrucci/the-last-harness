@@ -399,6 +399,72 @@ test("stage-1 prefers a supported per-user Pi runtime over a stale PATH Pi", (t)
 	assert.equal(state.piInstalledByTlh, false);
 });
 
+test("stage-1 per-user-fallback branch bakes piBin as default_pi_cmd even when stale pi is earlier on PATH", (t) => {
+	// AC #7: guard against the branch-awareness trap where a fresh `command -v pi` lookup
+	// before PATH is updated would capture the stale pi instead of piBin.
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const fakebin = join(root, "fakebin");
+	const stalePiDir = join(root, "stale-pi");
+	const perUserPiDir = join(homeDir, ".local", "bin");
+	const packageDir = join(root, "package-source");
+	const npmLog = join(root, "npm.log");
+	const stalePiLog = join(root, "stale-pi.log");
+	const perUserPiLog = join(root, "per-user-pi.log");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(binDir, { recursive: true });
+	mkdirSync(packageDir, { recursive: true });
+	writeFakeCommand(fakebin, "git", "exit 0");
+	writeFakeCommand(fakebin, "npm", `printf '%s\\n' "$*" >>"${npmLog}"`);
+	writeFakeTk(fakebin);
+	// Stale pi on PATH (returns 0.75.2 — below minimum): must come BEFORE perUserPiDir so
+	// that a naive `command -v pi` lookup in the per-user-fallback branch would return it.
+	writeFakePi(stalePiDir, [
+		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${stalePiLog}"`,
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.75.2\\n'; exit 0; fi",
+		"exit 0",
+	].join("\n"));
+	// Supported pi at ~/.local/bin/pi (returns 0.76.0): piBin that should be pinned.
+	writeLoggingPi(perUserPiDir, perUserPiLog);
+
+	const env = scrubInstallerEnv({
+		HOME: homeDir,
+		// stalePiDir is first on PATH; perUserPiDir is second — a stale `command -v pi`
+		// lookup would return stalePiDir/pi before PATH is updated by the installer.
+		PATH: [stalePiDir, perUserPiDir, safeInstallerPath(fakebin)].join(delimiter),
+		TLH_PACKAGE_SOURCE: packageDir,
+		TLH_SKIP_GNOSIS_INSTALL: "1",
+	});
+	const result = runInstaller([
+		"--agent-dir", agentDir,
+		"--bin-dir", binDir,
+		"--no-settings",
+	], env);
+	const output = `${result.stdout}\n${result.stderr}`;
+
+	assert.equal(result.status, 0, output);
+
+	// The wrapper must exist and must have default_pi_cmd set to the per-user pi path.
+	const wrapperFile = join(binDir, "tlh");
+	assert.ok(existsSync(wrapperFile), `wrapper should have been written: ${output}`);
+	const wrapperContent = readFileSync(wrapperFile, "utf8");
+	const piCmdMatch = wrapperContent.match(/^default_pi_cmd='([^']*)'$/m);
+	assert.ok(piCmdMatch, `expected default_pi_cmd line in wrapper:\n${wrapperContent.slice(0, 400)}`);
+	const defaultPiCmd = piCmdMatch[1];
+
+	// The pinned path MUST be the absolute per-user pi, NOT the stale one earlier on PATH.
+	// If the per-user-fallback branch were using a fresh `command -v pi` lookup before the
+	// PATH update (the bug), it would capture stalePiDir/pi and this assertion would fail.
+	const expectedPiPath = join(perUserPiDir, "pi");
+	assert.equal(defaultPiCmd, expectedPiPath, `default_pi_cmd should be per-user piBin, not stale PATH pi`);
+	assert.ok(isAbsolute(defaultPiCmd), `default_pi_cmd must be absolute: ${defaultPiCmd}`);
+	assert.doesNotMatch(defaultPiCmd, new RegExp(stalePiDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `default_pi_cmd must not point to stale pi dir`);
+});
+
 test("stage-1 refuses to reinstall over a broken per-user Pi npm package", (t) => {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");
