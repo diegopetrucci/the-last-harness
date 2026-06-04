@@ -24,12 +24,6 @@ export const PRIMARY_AGENT_CYCLE_SHORTCUT = "shift+tab";
 export const TLH_HEADER_TOGGLE_SHORTCUT = "ctrl+shift+e";
 export const TLH_HEADER_TOGGLE_SHORTCUT_LABEL = "Ctrl+Shift+E";
 
-// Extension status IDs whose footer status entries are suppressed in the TLH footer.
-// The extensions remain bundled and functional; only their UI status line is hidden.
-export const FOOTER_HIDDEN_EXTENSION_STATUS_IDS: ReadonlySet<string> = new Set([
-	"context-cap",
-]);
-
 export const HARNESS_PROMPT = `
 ## The Last Harness Defaults
 

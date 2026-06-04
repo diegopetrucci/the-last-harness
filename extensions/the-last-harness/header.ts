@@ -1,4 +1,4 @@
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { TLH_HEADER_TOGGLE_SHORTCUT_LABEL, TLH_NAME } from "./constants.js";
 import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
@@ -23,11 +23,39 @@ export function createTlhHeader(
 		? `${theme.bold(color.accent(TLH_NAME))}${color.dim(` v${headerUpdate.version}`)} ${color.accent(headerUpdate.releasesUrl)}`
 		: theme.bold(color.accent(TLH_NAME));
 
-	const section = (name: string, items: string[]): string[] => {
+	const section = (name: string, items: string[], width: number): string[] => {
 		if (items.length === 0) {
 			return [];
 		}
-		return [color.heading(`[${name}]`), color.dim(`  ${items.join(", ")}`)];
+		const heading = truncateToWidth(color.heading(`[${name}]`), width, color.dim("..."));
+
+		// Wrap items across multiple lines, splitting on ", " boundaries (never mid-item).
+		const prefix = "  ";
+		const wrappedLines: string[] = [];
+		let currentLine = prefix;
+
+		for (const item of items) {
+			const isFirstOnLine = currentLine === prefix;
+			const candidate = isFirstOnLine ? prefix + item : currentLine + ", " + item;
+
+			if (isFirstOnLine || visibleWidth(candidate) <= width - 2) {
+				currentLine = candidate;
+			} else {
+				// Non-final line: append ", " separator if it fits, otherwise push bare.
+				// The isFirstOnLine force-accept can leave currentLine near or at `width`,
+				// so appending ", " would overflow the terminal width.
+				if (visibleWidth(currentLine + ", ") > width) {
+					wrappedLines.push(color.dim(currentLine));
+				} else {
+					wrappedLines.push(color.dim(currentLine + ", "));
+				}
+				currentLine = prefix + item;
+			}
+		}
+		// Final line: no trailing ", ".
+		wrappedLines.push(color.dim(currentLine));
+
+		return [heading, ...wrappedLines];
 	};
 
 	const installWarningLine = (width: number): string[] => {
@@ -69,10 +97,10 @@ export function createTlhHeader(
 			lines.push("", ...details);
 		}
 		const resourceSections = [
-			section("Skills", resources.skills),
-			section("Prompts", resources.prompts),
-			section("Extensions", resources.extensions),
-			section("Themes", resources.themes),
+			section("Skills", resources.skills, width),
+			section("Prompts", resources.prompts, width),
+			section("Extensions", resources.extensions, width),
+			section("Themes", resources.themes, width),
 		].filter((resourceSection) => resourceSection.length > 0);
 
 		for (const resourceSection of resourceSections) {
