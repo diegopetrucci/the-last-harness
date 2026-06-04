@@ -1,5 +1,6 @@
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { registerAnnotateLastMessageCommand } from "./the-last-harness/annotate-last-message.js";
 import { registerToggleTlhGitAttributionCommand } from "./the-last-harness/attribution.js";
 import { TLH_HEADER_TOGGLE_SHORTCUT } from "./the-last-harness/constants.js";
 import { createTlhAutocompleteProvider } from "./the-last-harness/autocomplete.js";
@@ -28,6 +29,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 
 	installTlhPackageUpdateNotificationOverride();
 	registerToggleTlhGitAttributionCommand(pi);
+	registerAnnotateLastMessageCommand(pi);
 	registerEffortCommand(pi);
 	registerReviewCommand(pi);
 	registerTlhChangelogCommand(pi);

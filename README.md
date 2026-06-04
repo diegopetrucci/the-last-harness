@@ -95,6 +95,7 @@ TLH also aims to make the day-to-day session experience calmer and safer:
 
 - isolated profile installation so your normal Pi setup stays separate,
 - quieter UI defaults so tools and bash output do not constantly fight for attention,
+- a lightweight first-party `/annotate-last-message` command that opens a native annotation window for the latest assistant reply and turns submitted notes into agent feedback,
 - a first-party `/diff-review` command that opens a native review window and pastes submitted feedback back into the editor as a prompt,
 - bundled web-search support for research-heavy work,
 - bundled MCP adapter support,
@@ -124,7 +125,7 @@ Normal `tlh update` runs are conservative: they preserve user-owned isolated-pro
 
 ## Everything else, aka the docs dump
 
-- Slash commands reference: [`docs/commands.md`](docs/commands.md)
+- Slash commands reference (built-ins, TLH commands, `/annotate-last-message`, `/diff-review`, bundled extensions): [`docs/commands.md`](docs/commands.md)
 - Install, update, uninstall, paths, and undo steps: [`docs/install.md`](docs/install.md)
 - Gnosis, `tk`, and TLH workflow integrations: [`docs/integrations.md`](docs/integrations.md)
 - Web search setup, privacy, and opt-out: [`docs/web-search.md`](docs/web-search.md)

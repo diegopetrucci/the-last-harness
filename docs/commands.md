@@ -60,7 +60,42 @@ These commands ship inside the TLH package itself rather than through separately
 
 | Command | Extension | Description |
 |---------|-----------|-------------|
+| `/annotate-last-message` | `the-last-harness` | Open a native annotation window for the latest assistant message and paste submitted feedback into the editor |
 | `/diff-review` | `diff-review` | Open a native diff-review window and paste submitted review feedback into the editor |
+
+### `/annotate-last-message`
+
+`/annotate-last-message` opens a lightweight native Glimpse annotation window for the latest completed assistant message on the current session branch.
+
+#### Requirements
+
+- Run it from an interactive TLH session with editor access; it will not work in non-interactive/headless command contexts.
+- The current branch must already contain a completed assistant message with text. If the latest assistant turn is still running or has no text content, wait for a normal text reply before rerunning the command.
+- It needs a desktop session that can open a local native window. Headless shells and SSH-only sessions will not work unless they can display that window locally.
+- TLH packages the UI assets locally. `/annotate-last-message` does **not** require CDN access or general internet access just to render the annotation window.
+- Like the rest of TLH, it stays inside the isolated TLH profile and does not read or write normal Pi config under `~/.pi/agent`.
+
+#### Behavior
+
+- Finds the latest completed assistant message on the active session branch and shows it with line numbers plus section-level grouping.
+- Lets you leave overall, section, and inline comments in one lightweight first-party TLH window.
+- When you submit, TLH inserts a structured planning-oriented feedback prompt into the current editor buffer so you can send it back to the agent.
+- It does not auto-apply code changes or silently mutate prior messages.
+- Use `/annotate-last-message` directly when you want to annotate the latest assistant reply.
+
+#### Extension-local notes
+
+See [`extensions/the-last-harness/annotate-last-message/README.md`](../extensions/the-last-harness/annotate-last-message/README.md).
+
+#### Troubleshooting and recovery
+
+- `annotate-last-message requires interactive mode.` → run the command from the TLH TUI rather than a non-interactive command context.
+- `No assistant messages found on the current session branch.` → wait until the branch has an assistant reply, then rerun.
+- `Latest assistant message is incomplete (...)` → wait for the assistant turn to finish, then rerun.
+- `Latest assistant message has no text to annotate.` → rerun after a normal text reply; tool-only or empty assistant turns cannot be annotated.
+- `A last-message annotation window is already open.` → return to the existing window or close it before opening another.
+- `Annotation failed: Glimpse host not found ...` → the local native window runtime is unavailable. Run `tlh update` (or reinstall TLH) to restore the packaged dependency, then rerun from a machine/session that can open native windows.
+- There is no separate `tlh defaults` toggle for `/annotate-last-message` because it ships inside TLH itself.
 
 ### `/diff-review`
 
@@ -139,4 +174,4 @@ tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disa
 tlh defaults enable <id>   # re-enable a disabled extension
 ```
 
-Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions, not first-party packaged commands like `/diff-review`.
+Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions, not first-party packaged commands like `/annotate-last-message` or `/diff-review`.
