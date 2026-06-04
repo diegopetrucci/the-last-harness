@@ -44,20 +44,21 @@ Test the extension directly from this checkout without installing it:
 pi --no-extensions -e ./extensions/the-last-harness.ts
 ```
 
-Then run the effort picker in the interactive UI:
+Then run the thinking picker in the interactive UI (or the supported `/effort` alias):
 
 ```text
-/effort
+/thinking
 ```
 
-You can also test direct arguments and validation:
+You can also test direct arguments, validation, and the alias:
 
 ```text
-/effort off
+/thinking off
+/thinking low
+/thinking high
+/thinking xhigh
+/thinking nope
 /effort low
-/effort high
-/effort xhigh
-/effort nope
 ```
 
 ## Test with an isolated temporary profile
@@ -78,7 +79,7 @@ PI_CODING_AGENT_DIR="$tmp/agent" pi
 Then run:
 
 ```text
-/effort
+/thinking
 ```
 
 ## Test the defaults manager

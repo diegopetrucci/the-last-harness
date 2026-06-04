@@ -2,9 +2,9 @@
 
 This document lists slash commands available in an interactive TLH session, grouped by origin.
 
-Type any command name with a leading `/` in the TLH TUI to trigger it. Autocomplete surfaces most commands as you type; a small set of bundled commands is hidden from autocomplete but remains triggerable by typing — see [Hidden bundled commands](#hidden-bundled-commands) below.
+Type any command name with a leading `/` in the TLH TUI to trigger it. Autocomplete surfaces most commands as you type; a small set of upstream and bundled commands is hidden from autocomplete but remains triggerable by typing — see [Hidden autocomplete commands](#hidden-autocomplete-commands) below.
 
-> **Note:** autocomplete hiding is not an execution block. Any command listed under [Hidden bundled commands](#hidden-bundled-commands) can still be run by typing it in full.
+> **Note:** autocomplete hiding is not an execution block. Any command listed under [Hidden autocomplete commands](#hidden-autocomplete-commands) can still be run by typing it in full.
 
 ---
 
@@ -15,13 +15,13 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 | Command | Description |
 |---------|-------------|
 | `/changelog` | Show upstream Pi changelog entries — **hidden from TLH autocomplete**; use `/tlh-changelog` for TLH release notes |
-| `/clone` | Duplicate the current session at the current position |
+| `/clone` | Duplicate the current session at the current position — **hidden from TLH autocomplete** |
 | `/compact` | Manually compact the session context |
 | `/copy` | Copy the last agent message to the clipboard |
 | `/export` | Export the session (HTML by default; pass a `.html` or `.jsonl` path to specify format) |
 | `/fork` | Create a new fork from a previous user message |
 | `/hotkeys` | Show all keyboard shortcuts |
-| `/import` | Import and resume a session from a JSONL file |
+| `/import` | Import and resume a session from a JSONL file — **hidden from TLH autocomplete** |
 | `/login` | Configure provider authentication |
 | `/logout` | Remove provider authentication |
 | `/model` | Select the active model (opens a selector UI) |
@@ -44,7 +44,8 @@ These commands are registered by the TLH extension bundled with this profile.
 
 | Command | Description |
 |---------|-------------|
-| `/effort` | Pick the model reasoning effort or thinking level |
+| `/thinking` | Pick the model thinking level |
+| `/effort` | Supported alias for `/thinking` |
 | `/review` | Open an interactive code-review mode picker (requires the architect primary agent) |
 | `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
 | `/tlh-changelog` | Show TLH release notes from the packaged `CHANGELOG.md` |
@@ -141,8 +142,6 @@ These commands are provided by bundled default extensions and are visible in TLH
 | `/mcp` | `pi-mcp-adapter` | Show MCP server status |
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
 | `/oracle` | `pi-oracle` | Configure the Oracle default model and thinking level |
-| `/oracle-model` | `pi-oracle` | Show which model the oracle would use right now |
-| `/quiet-tools` | `pi-quiet-tools` | Toggle one-line collapsed invocations for built-in tool rows |
 | `/rtk` | `pi-rtk` | Control pi-rtk shell-command rewriting |
 | `/subagents-doctor` | `pi-subagents` | Show subagent diagnostics |
 | `/triage-comments` | `pi-triage-comments` | Collect pasted feedback or PR comments, then start a triage investigation |
@@ -161,9 +160,19 @@ Use the command explicitly to inspect or override the current mode:
 
 ---
 
-## Hidden bundled commands
+## Hidden autocomplete commands
 
-The following commands are registered by bundled extensions but are deliberately excluded from TLH autocomplete suggestions. They are still fully functional — type them in full to invoke them.
+These commands are registered and fully functional, but deliberately excluded from TLH autocomplete suggestions. Type them in full to invoke them.
+
+### Hidden upstream Pi built-ins
+
+| Command | Description |
+|---------|-------------|
+| `/changelog` | Show upstream Pi changelog entries; use `/tlh-changelog` for TLH release notes |
+| `/clone` | Duplicate the current session at the current position |
+| `/import` | Import and resume a session from a JSONL file |
+
+### Hidden bundled extension commands
 
 | Command | Extension | Description |
 |---------|-----------|-------------|
@@ -171,8 +180,8 @@ The following commands are registered by bundled extensions but are deliberately
 | `/fff-mode` | `pi-fff` | Show or set FFF mode (`tools-and-ui`, `tools-only`, `override`) |
 | `/fff-rescan` | `pi-fff` | Trigger FFF to rescan files |
 | `/intercom` | `pi-intercom` | Open the session intercom overlay (internal subagent communication) |
-
-The upstream `/changelog` command is also hidden from TLH autocomplete to reduce noise; use `/tlh-changelog` for TLH-specific release notes.
+| `/oracle-model` | `pi-oracle` | Show which model the oracle would use right now |
+| `/quiet-tools` | `pi-quiet-tools` | Toggle one-line collapsed invocations for built-in tool rows |
 
 ---
 
