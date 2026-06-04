@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- The footer no longer shows the model provider name; the provider prefix is always hidden.
 - Context cap is now a built-in TLH feature (no longer a bundled default extension). The bundled `@diegopetrucci/pi-context-cap` default extension has been removed and will be force-uninstalled from existing isolated profiles on the next `tlh` install or update. Previous `tlh.disabledDefaultExtensions: ["context-cap"]` opt-outs are intentionally **not** preserved — those entries are silently pruned on upgrade. To opt out of the cap again, run `/toggle-context-cap` or set `tlh.contextCap.disabled: true` in your isolated settings.
 - TLH now records bundled default-extension provenance in `tlh.defaultExtensionProvenance.managedPackageIdentities` so retired-default cleanup can distinguish TLH-managed packages from later manual re-adds. Older installs migrate this metadata on update; legacy Plannotator is still cleaned up once during that migration.
 
