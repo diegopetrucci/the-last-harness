@@ -11,7 +11,6 @@ function readRepoFile(path) {
 }
 
 const userFacingDocs = [
-	"README.md",
 	"CHANGELOG.md",
 	"docs/git-attribution.md",
 	"docs/install.md",
@@ -35,15 +34,13 @@ const legacyTicketGuidancePatterns = [
 	/tickets configure-install/i,
 ];
 
-test("user-facing ticket docs describe mandatory managed tk behavior", () => {
-	const readme = readRepoFile("README.md");
+test("install, integrations, and changelog docs describe mandatory managed tk behavior", () => {
 	const install = readRepoFile("docs/install.md");
 	const integrations = readRepoFile("docs/integrations.md");
 	const changelog = readRepoFile("CHANGELOG.md");
 
-	assert.match(readme, /TLH requires `tk`/);
-	assert.match(readme, /`~\/\.the-last-harness\/agent\/bin\/tk`/);
 	assert.match(install, /requires `tk` ticket integration/);
+	assert.match(install, /`~\/\.the-last-harness\/agent\/bin\/tk`/);
 	assert.match(install, /install fails with an actionable error/);
 	assert.match(install, /`tlh update` fails with an actionable error/);
 	assert.match(integrations, /requires the `tk` ticket CLI/);
@@ -51,34 +48,23 @@ test("user-facing ticket docs describe mandatory managed tk behavior", () => {
 	assert.match(changelog, /`tk` ticket integration is now mandatory/);
 });
 
-test("README and integrations docs describe Rush primary behavior and switching controls", () => {
-	const readme = readRepoFile("README.md");
+test("integrations docs describe Rush primary behavior and default tk-loop exception", () => {
 	const integrations = readRepoFile("docs/integrations.md");
 
-	assert.match(readme, /selectable primary for small bounded implementation tasks/i);
-	assert.match(readme, /skips the default architect `tk`\/developer\/review loop/i);
-	assert.match(readme, /`code-reviewer`/);
-	assert.match(readme, /`oracle` is an optional deeper second opinion/i);
-	assert.match(readme, /GPT-5\.5 with thinking off on OpenAI\/OpenAI-Codex/i);
-	assert.match(readme, /Anthropic Opus with low thinking on Anthropic/i);
-	assert.match(readme, /`architect` → `rush` → `product` → `bug-hunter` → `disabled`/);
-	assert.match(readme, /\/switch-primary-agent \[status\|architect\|rush\|product\|bug-hunter\|disabled\|reset\|default architect\|default rush\|default product\|default bug-hunter\|default disabled\|default reset\]/);
-	assert.doesNotMatch(readme, /`\/tlh(?=`| \[)/);
-	assert.doesNotMatch(readme, /`\/harness(?=`| \[)/);
-	assert.doesNotMatch(readme, /`\/agent(?=`| \[)/);
-	assert.doesNotMatch(readme, /`\/architect(?=`| \[)/);
-	assert.match(integrations, /Rush keeps that tooling available but handles small bounded tasks with direct edits instead of the default `tk` loop/i);
+	assert.match(
+		integrations,
+		/Rush keeps that tooling available but handles small bounded tasks with direct edits instead of the default `tk` loop/i,
+	);
+	assert.match(
+		integrations,
+		/does not start with the default ticket\/developer\/review loop, even though the managed `tk` command is still installed/i,
+	);
 });
 
-test("git attribution docs carry the detailed behavior while README only points to them", () => {
-	const readme = readRepoFile("README.md");
+test("git attribution docs carry the detailed behavior while changelog records the release", () => {
 	const attributionDoc = readRepoFile("docs/git-attribution.md");
 	const changelog = readRepoFile("CHANGELOG.md");
 
-	assert.match(readme, /\[`docs\/git-attribution\.md`\]\(docs\/git-attribution\.md\)/);
-	assert.doesNotMatch(readme, /`\/toggle-tlh-git-attribution`/);
-	assert.doesNotMatch(readme, /`tlh\.attribution\.commit`/);
-	assert.doesNotMatch(readme, /Co-authored-by: The Last Harness <hi@thelastharness\.com>/);
 	assert.match(attributionDoc, /`\/toggle-tlh-git-attribution`/);
 	assert.match(attributionDoc, /`tlh\.attribution\.commit` is unset or `true`/);
 	assert.match(attributionDoc, /Co-authored-by: The Last Harness <hi@thelastharness\.com>/);

@@ -377,10 +377,19 @@ test("support manifest includes stage-1 and installed helper library dependencie
 		tempPath: "lib/default-extensions.mjs",
 		installName: "lib/default-extensions.mjs",
 	});
+	assert.deepEqual(manifest.find((file) => file.variable === "LIBRARIAN_DEFAULTS_FILE"), {
+		variable: "LIBRARIAN_DEFAULTS_FILE",
+		requirement: "required",
+		relativePath: "config/librarian.defaults.json",
+		tempPath: "librarian.defaults.json",
+		installName: "librarian.defaults.json",
+	});
+	assert.equal(supportFileManifest({ noSettings: true }).some((file) => file.variable === "LIBRARIAN_DEFAULTS_FILE"), false);
 
 	const bootstrap = readFileSync(resolve(import.meta.dirname, "..", "install.sh"), "utf8");
 	assert.match(bootstrap, /^required\|scripts\/lib\/default-extensions\.mjs$/m);
 	assert.match(bootstrap, /^required\|scripts\/lib\/tlh-install-utils\.mjs$/m);
+	assert.match(bootstrap, /^required\|config\/librarian\.defaults\.json$/m);
 });
 
 test("settings defaults declare when bundled subagent prompts are required", (t) => {
