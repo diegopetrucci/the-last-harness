@@ -1913,3 +1913,190 @@ test("stage-1 canonicalizes relative target dirs before deriving wrapper and sta
 	assert.notEqual(state.agentDir, normalPiAgentIfLeftRelative);
 	assert.equal(existsSync(join(homeDir, ".pi")), false);
 });
+
+test("wrapper --pi-cmd fast path execs pinned binary without spawning a --version probe", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const agentBin = join(agentDir, "bin");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const pinnedPiDir = join(root, "pinned-pi");
+	const piCallLog = join(root, "pi-calls.log");
+	const piMainLog = join(root, "pi-main.txt");
+	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	// This pi logs ALL invocations (including --version probes) to piCallLog.
+	writeFakePi(pinnedPiDir, [
+		`printf '%s\\n' "$*" >>"${piCallLog}"`,
+		`if [[  "\${1:-}" == "--version" ]]; then printf '0.76.0\\n'; exit 0; fi`,
+		`{ printf 'cmd=%s\\n' "$0"; printf 'argv=%s\\n' "$*"; printf 'agent=%s\\n' "\${PI_CODING_AGENT_DIR:-}"; printf 'path=%s\\n' "\${PATH:-}"; } >"${piMainLog}"`,
+		"exit 0",
+	].join("\n"));
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+		"--pi-cmd",
+		join(pinnedPiDir, "pi"),
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const result = spawnSync(wrapper, ["chat"], {
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: [agentBin, process.env.PATH || ""].join(":"),
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+
+	// Verify the pinned pi was actually called with the right args.
+	const mainRecord = Object.fromEntries(readFileSync(piMainLog, "utf8").trim().split(/\r?\n/).map((line) => {
+		const separator = line.indexOf("=");
+		return [line.slice(0, separator), line.slice(separator + 1)];
+	}));
+	assert.equal(mainRecord.argv, "chat");
+	assert.equal(mainRecord.agent, agentDir);
+
+	// Perf assertion: no --version probe was made.
+	const allCalls = readFileSync(piCallLog, "utf8").trim().split(/\r?\n/).filter(Boolean);
+	assert.ok(!allCalls.some((call) => call.includes("--version")), `expected no --version call, got: ${allCalls.join(", ")}`);
+});
+
+test("wrapper --pi-cmd falls back to resolver when pinned path is non-executable", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const agentBin = join(agentDir, "bin");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const fallbackPiDir = join(root, "fallback-pi");
+	const piLog = join(root, "pi.txt");
+	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	writeVersionedWrapperPi(fallbackPiDir, piLog);
+
+	const missingPiCmd = join(root, "nonexistent", "pi");
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+		"--pi-cmd",
+		missingPiCmd,
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const result = spawnSync(wrapper, ["chat"], {
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: [fallbackPiDir, agentBin, process.env.PATH || ""].join(":"),
+			PI_WRAPPER_LOG: piLog,
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+
+	// Verify the resolver fallback ran and found the fallback pi.
+	const piRecord = Object.fromEntries(readFileSync(piLog, "utf8").trim().split(/\r?\n/).map((line) => {
+		const separator = line.indexOf("=");
+		return [line.slice(0, separator), line.slice(separator + 1)];
+	}));
+	assert.equal(piRecord.argv, "chat");
+	assert.equal(piRecord.agent, agentDir);
+	assert.equal(piRecord.cmd, join(fallbackPiDir, "pi"));
+});
+
+test("wrapper --pi-cmd fast path exports PATH as managed_bin:pinned_dir:sanitized_path", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const agentBin = join(agentDir, "bin");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const pinnedPiDir = join(root, "pinned-pi");
+	const stalePiDir = join(root, "stale-pi");
+	const piLog = join(root, "pi.txt");
+	const stalePiLog = join(root, "stale-pi.log");
+	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	// Pinned pi logs PATH so we can verify ordering.
+	writeFakePi(pinnedPiDir, [
+		`if [[ "\${1:-}" == "--version" ]]; then printf '0.76.0\\n'; exit 0; fi`,
+		`{ printf 'cmd=%s\\n' "$0"; printf 'argv=%s\\n' "$*"; printf 'agent=%s\\n' "\${PI_CODING_AGENT_DIR:-}"; printf 'path=%s\\n' "\${PATH:-}"; } >"${piLog}"`,
+		"exit 0",
+	].join("\n"));
+
+	// Stale pi should not be called and should not appear before pinned_dir.
+	writeFakePi(stalePiDir, [
+		`printf 'stale pi intercepted\\n' >"${stalePiLog}"`,
+		"exit 85",
+	].join("\n"));
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+		"--pi-cmd",
+		join(pinnedPiDir, "pi"),
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const result = spawnSync(wrapper, ["chat"], {
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: [stalePiDir, agentBin, process.env.PATH || ""].join(":"),
+			STALE_PI_LOG: stalePiLog,
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+
+	const piRecord = Object.fromEntries(readFileSync(piLog, "utf8").trim().split(/\r?\n/).map((line) => {
+		const separator = line.indexOf("=");
+		return [line.slice(0, separator), line.slice(separator + 1)];
+	}));
+	assert.equal(piRecord.argv, "chat");
+	assert.equal(piRecord.agent, agentDir);
+
+	// PATH must be: managed_bin : pinned_dir : sanitized_path (stale entries come after).
+	const piPathEntries = piRecord.path.split(":");
+	assert.equal(piPathEntries[0], agentBin, `expected managed_bin first; got ${piPathEntries.join(":")}`);
+	assert.equal(piPathEntries[1], pinnedPiDir, `expected pinned_dir second; got ${piPathEntries.join(":")}`);
+	const stalePiIndex = piPathEntries.indexOf(stalePiDir);
+	assert.ok(stalePiIndex === -1 || stalePiIndex > 1, `stale entry must not appear before pinned_dir; PATH: ${piPathEntries.join(":")}`);
+
+	// Verify stale pi was not invoked.
+	assert.equal(existsSync(stalePiLog), false);
+});

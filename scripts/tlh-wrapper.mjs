@@ -23,6 +23,7 @@ Options:
   --bin-dir DIR        Wrapper install dir
   --wrapper-name NAME  Wrapper command name
   --package-root DIR   Installed The Last Harness package checkout
+  --pi-cmd PATH        Absolute path to the pi binary to pin (optional)
   --dry-run            Print intended changes without writing
   --force              Allow overwriting an unmanaged existing wrapper
   --quiet              Suppress non-essential output
@@ -36,6 +37,7 @@ function parseArgs(argv) {
 		binDir: undefined,
 		wrapperName: undefined,
 		packageRoot: undefined,
+		piCmd: undefined,
 		dryRun: false,
 		force: false,
 		quiet: false,
@@ -80,6 +82,11 @@ function parseArgs(argv) {
 			index = packageRootIndex;
 			continue;
 		}
+		const piCmdIndex = assignOptionValue(args, "piCmd", argv, index, "--pi-cmd");
+		if (piCmdIndex !== undefined) {
+			index = piCmdIndex;
+			continue;
+		}
 		throw new Error(`Unknown option: ${arg}`);
 	}
 
@@ -103,6 +110,15 @@ function log(args, message) {
 
 function warn(message) {
 	console.error(`warning: ${message}`);
+}
+
+function normalizePiCmd(args) {
+	if (!args.piCmd) return "";
+	if (!args.piCmd.startsWith("/")) {
+		warn(`--pi-cmd value is not an absolute path (${args.piCmd}); treating as no pin`);
+		return "";
+	}
+	return args.piCmd;
 }
 
 function printCommand(commandArgs) {
@@ -140,6 +156,7 @@ function renderWrapper(args) {
 		`default_bin_dir=${shellQuote(args.binDir)}`,
 		`default_wrapper_name=${shellQuote(args.wrapperName)}`,
 		`default_min_pi_version=${shellQuote(MIN_PI_VERSION)}`,
+		`default_pi_cmd=${shellQuote(args.piCmd ?? "")}`,
 		'tlh_original_path="${PATH:-}"',
 		'tlh_managed_bin="${default_agent_dir}/bin"',
 		'tlh_wrapper_cwd_physical="$(pwd -P)"',
@@ -408,11 +425,17 @@ function renderWrapper(args) {
 		'  PATH="${tlh_managed_helper_path}" exec "${tlh_node_cmd}" "${tlh_tickets_script}" --settings "${default_agent_dir}/settings.json" --agent-dir "${default_agent_dir}" --wrapper-name "${default_wrapper_name}" "$@"',
 		"fi",
 		"",
+		'if [[ -n "${default_pi_cmd}" && -x "${default_pi_cmd}" ]]; then',
+		'  tlh_pinned_dir="${default_pi_cmd%/*}"',
+		'  if [[ "${tlh_pinned_dir}" == "${default_pi_cmd}" ]]; then tlh_pinned_dir="."; fi',
+		'  export PATH="${tlh_managed_bin}:${tlh_pinned_dir}${tlh_sanitized_path:+:${tlh_sanitized_path}}"',
+		'  exec "${default_pi_cmd}" "$@"',
+		'fi',
 		'tlh_resolve_pi_search_path',
 		'tlh_isolated_path="${tlh_managed_bin}${tlh_pi_search_path:+:${tlh_pi_search_path}}"',
 		'pi_cmd="$(PATH="${tlh_pi_search_path}" type -P pi || true)"',
 		'if [[ -z "${pi_cmd}" ]]; then',
-		"  printf 'error: pi command not found on PATH.\\n' >&2",
+		"  printf 'error: pi command not found on PATH; run `tlh update`.\\n' >&2",
 		"  exit 1",
 		"fi",
 		'if [[ "${pi_cmd}" != /* ]]; then',
@@ -470,6 +493,7 @@ function main() {
 		return;
 	}
 	validateArgs(args);
+	args.piCmd = normalizePiCmd(args);
 
 	const path = wrapperPath(args);
 	assertNotNormalPiPath(args.agentDir, "agent dir");
