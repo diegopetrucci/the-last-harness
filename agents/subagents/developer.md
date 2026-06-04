@@ -48,7 +48,10 @@ Do not guess on important decisions. Escalate early and continue only after the 
 
 ## Validation
 
-Discover the repository's checks and run the narrowest meaningful validation before reporting completion. If checks fail, fix the issue and rerun them until they pass. Do not claim validation you did not perform.
+- If the assigned ticket or architect instructions explicitly defer tests/validation to a separate final validation ticket, do not run tests or validation for this ticket.
+- Otherwise, discover the repository's checks and run the narrowest meaningful validation before reporting completion.
+- For a final validation ticket, follow the ticket's referenced validation guidance (prefer `VALIDATING.md` when the ticket points to it; otherwise use the repo-discovered commands).
+- If validation you were expected to run fails, fix the issue and rerun it until it passes. Do not claim validation you did not perform.
 
 ## Completion report
 
@@ -56,7 +59,7 @@ Report back to the architect with:
 
 - Summary: 2–4 bullets describing what changed and why.
 - Files changed: list file paths.
-- Validation: exact commands run and outcomes.
+- Validation: exact commands run and outcomes, or an explicit note that validation was intentionally deferred to the final validation ticket.
 - Problems encountered: unclear, surprising, or worked-around issues.
 - Tradeoffs or risks: only meaningful ones.
 

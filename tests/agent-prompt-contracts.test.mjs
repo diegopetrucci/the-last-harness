@@ -25,6 +25,14 @@ const contracts = [
 			orderedTerms("exact approved signoff gate", ["exact word", "approved"]),
 			orderedTerms("developer waits for approved tickets", ["do not launch", "developer", "until", "approves", "tickets"]),
 			includesAllTerms("high-risk oracle gating", ["high-stakes", "broad blast radius", "explicitly agrees"]),
+			bodyPattern(
+				"implementation tickets skip validation",
+				/implementation ticket.*do(?:es)? not require tests or validation.*final validation ticket/i,
+			),
+			bodyPattern(
+				"final validation ticket uses repository validation guidance",
+				/final validation ticket.*depends on all implementation tickets.*when .*VALIDATING\.md.*otherwise.*repo-discovered validation commands/i,
+			),
 		],
 	},
 	{
@@ -85,7 +93,19 @@ const contracts = [
 			orderedTerms("developer stops when the assigned ticket cannot be shown", ["tk show <id>", "fails", "report the blocker", "stop without editing files"]),
 			bodyPattern("developer uses contact_supervisor for blocking decisions", /contact_supervisor/i),
 			orderedTerms("developer fails closed on blocking supervisor ask failures", ["contact_supervisor", "unavailable", "fails", "times out", "report the blocker", "stop without editing files"]),
-			orderedTerms("developer runs narrow validation", ["narrowest meaningful validation"]),
+			bodyPattern(
+				"developer can defer validation for implementation tickets",
+				/(?:assigned ticket|architect instructions).*explicitly defer tests\/validation.*final validation ticket.*do not run tests or validation/i,
+			),
+			bodyPattern(
+				"developer still runs validation for final validation tickets",
+				/final validation ticket.*VALIDATING\.md.*otherwise.*repo-discovered commands/i,
+			),
+			bodyPattern(
+				"developer otherwise runs narrow validation",
+				/otherwise.*run the narrowest meaningful validation/i,
+			),
+			orderedTerms("developer reports exact validation commands or deferral", ["Validation:", "exact commands run and outcomes", "validation was intentionally deferred", "final validation ticket"]),
 		],
 	},
 	{

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { readAgentPrompt } from "./agent-prompt-test-helpers.mjs";
+import { bodyPattern, readAgentPrompt } from "./agent-prompt-test-helpers.mjs";
 
-const { content: architectMd } = readAgentPrompt("primary", "architect");
+const architect = readAgentPrompt("primary", "architect");
+const { content: architectMd } = architect;
 
 test("architect.md contains web-scout bullet in the subagent tools list", () => {
 	assert.match(
@@ -39,4 +40,22 @@ test("architect.md requires specific risk wording and explicit consent before us
 		/If you think the `oracle` could help, explain the specific risk or uncertainty and ask the user if they want you to use it\./,
 	);
 	assert.match(architectMd, /Never trigger the `oracle` unless the user explicitly agrees\./);
+});
+
+test("architect.md separates implementation tickets from final validation", () => {
+	assert.ok(
+		bodyPattern(
+			"implementation tickets skip validation",
+			/implementation ticket.*do(?:es)? not require tests or validation.*final validation ticket/i,
+		).test(architect),
+	);
+});
+
+test("architect.md makes the final validation ticket depend on implementation tickets and use VALIDATING.md when present", () => {
+	assert.ok(
+		bodyPattern(
+			"final validation ticket uses repository validation guidance",
+			/final validation ticket.*depends on all implementation tickets.*when .*VALIDATING\.md.*otherwise.*repo-discovered validation commands/i,
+		).test(architect),
+	);
 });
