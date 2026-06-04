@@ -21,6 +21,8 @@ import { registerVersionCommand } from "./the-last-harness/version.js";
 import type { StartupResources, TlhUsageRefreshOptions } from "./the-last-harness/types.js";
 
 export default function theLastHarness(pi: ExtensionAPI) {
+	registerContextCap(pi);
+
 	const primaryAgentRuntime = registerTlhPrimaryAgentRuntime(pi, { env: process.env });
 	if (!primaryAgentRuntime) {
 		return;
@@ -33,7 +35,6 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	registerTlhChangelogCommand(pi);
 	registerUsageCommand(pi);
 	registerVersionCommand(pi);
-	registerContextCap(pi);
 
 	const subscriptionUsageService = createTlhSubscriptionUsageService();
 	const requestFooterRenderByContext = new WeakMap<ExtensionContext, () => void>();

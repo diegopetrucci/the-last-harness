@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { createJiti } from "jiti";
@@ -363,4 +364,22 @@ test("context-cap module source never calls ctx.ui.setStatus", async () => {
 	const { fileURLToPath } = await import("node:url");
 	const src = readFs(fileURLToPath(new URL("../extensions/the-last-harness/context-cap.ts", import.meta.url)), "utf8");
 	assert.doesNotMatch(src, /setStatus/, "context-cap must never call ctx.ui.setStatus");
+});
+
+// ─── structural: registerContextCap must precede the child-mode early-return gate ─
+
+// This is a structural-not-behavioral check. It guards against reordering
+// regressions where registerContextCap(pi) is moved after the early-return
+// gate in theLastHarness, which would cause child subagent sessions to never
+// receive the 200k context cap (regression caught in PR #103).
+test("structural: registerContextCap(pi) appears before the early-return gate in theLastHarness (child-mode regression guard)", () => {
+	const src = readFileSync(fileURLToPath(new URL("../extensions/the-last-harness.ts", import.meta.url)), "utf8");
+	const capIndex = src.indexOf("registerContextCap(pi);");
+	const gateIndex = src.indexOf("if (!primaryAgentRuntime) {");
+	assert.ok(capIndex !== -1, "registerContextCap(pi) must appear in the theLastHarness extension entry point");
+	assert.ok(gateIndex !== -1, "early-return gate 'if (!primaryAgentRuntime)' must appear in theLastHarness");
+	assert.ok(
+		capIndex < gateIndex,
+		`registerContextCap(pi) must appear BEFORE the early-return gate so child subagent sessions receive the context cap. Found registerContextCap at index ${capIndex}, gate at ${gateIndex}.`,
+	);
 });
