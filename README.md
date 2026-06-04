@@ -139,4 +139,4 @@ Normal `tlh update` runs are conservative: they preserve user-owned isolated-pro
 
 Node.js >=22.19.0 must be available on your `PATH`.
 
-TLH uses upstream Pi >=0.76.0; if `pi` is missing, the installer automatically adds a compatible per-user copy under `~/.local`.
+TLH uses upstream Pi >=0.76.0; if `pi` is missing, the installer automatically adds a compatible per-user copy under `~/.local`. The minimum Pi version is enforced at install/update time, not on every launch. The `tlh` wrapper pins the absolute path to your `pi` binary at install time for a fast startup; if that binary is later moved or replaced out-of-band, the wrapper falls back to PATH discovery automatically. To repin the absolute path and re-validate the minimum version, run `tlh update`.
