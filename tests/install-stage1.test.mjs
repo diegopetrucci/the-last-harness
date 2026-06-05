@@ -13,6 +13,7 @@ import {
 	installDefaultExtensions,
 	nodeVersionMeetsMinimum,
 	parseArgs,
+	seedLibrarianConfig,
 	usage,
 } from "../scripts/tlh-install.mjs";
 import { validateInstallerTargets } from "../scripts/lib/tlh-install-paths.mjs";
@@ -121,6 +122,59 @@ function writeFakeNpmInstaller(fakebin, { npmLog, templatePiPath, installedPiPat
 		`cp "${templatePiPath}" "${installedPiPath}"`,
 		`chmod +x "${installedPiPath}"`,
 	].join("\n"));
+}
+
+function runStage1LocalPackageInstall(t, { dryRun = false, noSettings = false, force = false, existingLibrarianConfig } = {}) {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const fakebin = join(root, "fakebin");
+	const packageDir = join(root, "package-source");
+	const piLog = join(root, "pi.log");
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageDir, { recursive: true });
+	writeFakeTk(fakebin);
+	writeLoggingPi(fakebin, piLog);
+	if (existingLibrarianConfig !== undefined) {
+		mkdirSync(join(agentDir, "extensions"), { recursive: true });
+		writeFileSync(join(agentDir, "extensions", "librarian.json"), JSON.stringify(existingLibrarianConfig, null, 2));
+	}
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	const env = scrubInstallerEnv({
+		HOME: homeDir,
+		PATH: `${fakebin}:${process.env.PATH || ""}`,
+		TLH_PACKAGE_SOURCE: packageDir,
+		TLH_SKIP_GNOSIS_INSTALL: "1",
+	});
+	const args = ["--agent-dir", agentDir, "--bin-dir", binDir, "--no-wrapper"];
+	if (dryRun) args.unshift("--dry-run");
+	if (noSettings) args.push("--no-settings");
+	if (force) args.push("--force");
+	const result = runInstaller(args, env);
+	return { result, homeDir, agentDir, binDir, piLog };
+}
+
+function makeLibrarianSeedConfig(t, { dryRun = false, noSettings = false, existingLibrarianConfig } = {}) {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	mkdirSync(homeDir, { recursive: true });
+	if (existingLibrarianConfig !== undefined) {
+		mkdirSync(join(agentDir, "extensions"), { recursive: true });
+		writeFileSync(join(agentDir, "extensions", "librarian.json"), JSON.stringify(existingLibrarianConfig, null, 2));
+	}
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	const env = scrubInstallerEnv({ HOME: homeDir });
+	const args = ["--agent-dir", agentDir, "--bin-dir", binDir];
+	if (dryRun) args.unshift("--dry-run");
+	if (noSettings) args.push("--no-settings");
+	const config = buildInstallConfig(parseArgs(args, env), env);
+	config.supportFilePaths.LIBRARIAN_DEFAULTS_FILE = join(repoRoot, "config", "librarian.defaults.json");
+	return { config, homeDir, agentDir };
 }
 
 function makeDefaultExtensionInstallConfig(t, { defaultExtensions, settings, dryRun = false, fakePiBody = "exit 0", fakeGitBody = "" }) {
@@ -716,6 +770,43 @@ test("stage-1 --no-settings does not short-circuit Gnosis configure", (t) => {
 	assert.match(output, /Skipping settings\/keybinding merge \(--no-settings\)\./);
 	assert.match(output, /Skipping Gnosis integration \(TLH_SKIP_GNOSIS_INSTALL is set\)\./);
 	assert.doesNotMatch(output, /Skipping Gnosis integration \(--no-settings\)\./);
+});
+
+test("stage-1 seeds isolated Librarian config only when it is missing", async (t) => {
+	const { config, agentDir, homeDir } = makeLibrarianSeedConfig(t);
+
+	await seedLibrarianConfig(config);
+
+	assert.deepEqual(readJson(join(agentDir, "extensions", "librarian.json")), { cacheMode: "disabled" });
+	assert.equal(existsSync(join(homeDir, ".pi")), false);
+});
+
+test("stage-1 preserves existing isolated Librarian config even with --force", async (t) => {
+	const existingConfig = { cacheMode: "workspace", custom: true };
+	const { config, agentDir } = makeLibrarianSeedConfig(t, { existingLibrarianConfig: existingConfig });
+	config.force = true;
+
+	await seedLibrarianConfig(config);
+
+	assert.deepEqual(readJson(join(agentDir, "extensions", "librarian.json")), existingConfig);
+});
+
+test("stage-1 dry-run reports isolated Librarian config creation without writing it", (t) => {
+	const { result, agentDir } = runStage1LocalPackageInstall(t, { dryRun: true });
+	const output = `${result.stdout}\n${result.stderr}`;
+
+	assert.equal(result.status, 0, output);
+	assert.match(output, /cp .*librarian\.defaults\.json .*extensions\/librarian\.json/);
+	assert.equal(existsSync(join(agentDir, "extensions", "librarian.json")), false);
+});
+
+test("stage-1 --no-settings skips the isolated Librarian config default", (t) => {
+	const { result, agentDir } = runStage1LocalPackageInstall(t, { noSettings: true });
+	const output = `${result.stdout}\n${result.stderr}`;
+
+	assert.equal(result.status, 0, output);
+	assert.equal(existsSync(join(agentDir, "extensions", "librarian.json")), false);
+	assert.equal(existsSync(join(agentDir, "tlh", "librarian.defaults.json")), false);
 });
 
 test("stage-1 derives packageRoot from custom package source install dirs", (t) => {
