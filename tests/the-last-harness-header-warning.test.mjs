@@ -37,11 +37,27 @@ test("collapsed header renders the install-track warning above Context and inclu
 	]);
 });
 
+test("collapsed header renders the startup tip as a single dim line above the resource toggle hint", () => {
+	const header = createTlhHeader(theme, createResources(), undefined, undefined, {
+		startupTip: "Use /switch-primary-agent to pick architect, rush, product, bug-hunter, or disabled for this session.",
+	});
+
+	assert.deepEqual(header.render(200), [
+		"<bold><accent>tlh</accent></bold>",
+		"",
+		"<dim>Context: AGENTS.md</dim>",
+		"<dim>Tip: Use /switch-primary-agent to pick architect, rush, product, bug-hunter, or disabled for this session.</dim>",
+		"<dim>Ctrl+Shift+E to show skills, prompts, extensions, themes</dim>",
+	]);
+});
+
 test("expanded header keeps the install-track warning above Context before resource sections", () => {
 	const header = createTlhHeader(theme, createResources(), undefined, {
 		kind: "custom-package-source",
 		summary: "TLH uses a custom package source.",
 		detail: "../the-last-harness",
+	}, {
+		startupTip: "Use /usage to check TLH usage status or toggle the weekly usage window.",
 	});
 	header.setExpanded(true);
 
@@ -50,6 +66,7 @@ test("expanded header keeps the install-track warning above Context before resou
 		"",
 		"<warning>Warning</warning><dim>: running TLH from local track</dim>",
 		"<dim>Context: AGENTS.md</dim>",
+		"<dim>Tip: Use /usage to check TLH usage status or toggle the weekly usage window.</dim>",
 		"",
 		"<mdHeading>[Skills]</mdHeading>",
 		"<dim>  tlh-dev-hygiene</dim>",

@@ -4,6 +4,8 @@ This document lists slash commands available in an interactive TLH session, grou
 
 Type any command name with a leading `/` in the TLH TUI to trigger it. Autocomplete surfaces most commands as you type; a small set of upstream and bundled commands is hidden from autocomplete but remains triggerable by typing — see [Hidden autocomplete commands](#hidden-autocomplete-commands) below.
 
+On interactive startup, TLH may also show one quiet hand-curated random tip line for that process launch. Those tips are just lightweight discovery hints for real TLH commands and workflow affordances; they are launch-scoped and not LLM-generated.
+
 > **Note:** autocomplete hiding is not an execution block. Any command listed under [Hidden autocomplete commands](#hidden-autocomplete-commands) can still be run by typing it in full.
 
 ---

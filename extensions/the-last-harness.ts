@@ -16,6 +16,7 @@ import { scheduleTlhLaunchTelemetry } from "./the-last-harness/launch-telemetry.
 import { installTlhPackageUpdateNotificationOverride } from "./the-last-harness/package-update-notice.js";
 import { registerTlhPrimaryAgentRuntime } from "./the-last-harness/primary-agent-runtime.js";
 import { collectStartupResources } from "./the-last-harness/resources.js";
+import { getTlhStartupTip } from "./the-last-harness/startup-tip.js";
 import { createTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage.mjs";
 import { getTlhUsageLimitsConfig, registerUsageCommand, shouldShowTlhUsageWeekly } from "./the-last-harness/usage-limits.js";
 import { getTlhHeaderUpdate, maybeNotifyAvailableTlhUpdate } from "./the-last-harness/update-check.js";
@@ -109,6 +110,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 
 		const headerUpdate = getTlhHeaderUpdate();
 		const installNotice = event.reason === "startup" ? readTlhInstallNotice() : undefined;
+		const startupTip = event.reason === "startup" ? getTlhStartupTip() : undefined;
 
 		if (typeof ctx.ui.setFooter === "function") {
 			ctx.ui.setFooter((tui, theme, footerData) => {
@@ -129,6 +131,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 			ctx.ui.setHeader((tui, theme) => {
 				const header = createTlhHeader(theme, resources, headerUpdate, installNotice, {
 					requestRender: () => tui.requestRender(),
+					startupTip,
 				});
 				activeTlhHeader = header;
 				return header;

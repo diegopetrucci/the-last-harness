@@ -9,7 +9,7 @@ export function createTlhHeader(
 	resources: StartupResources,
 	headerUpdate: TlhHeaderUpdate | undefined,
 	installNotice?: TlhInstallNotice,
-	options: { requestRender?: () => void } = {},
+	options: { requestRender?: () => void; startupTip?: string } = {},
 ) {
 	let expanded = false;
 	const color = {
@@ -74,6 +74,13 @@ export function createTlhHeader(
 		return [truncateToWidth(color.dim(`Context: ${items.join(", ")}`), width, color.dim("..."))];
 	};
 
+	const startupTipLine = (width: number): string[] => {
+		if (!options.startupTip) {
+			return [];
+		}
+		return [truncateToWidth(color.dim(`Tip: ${options.startupTip}`), width, color.dim("..."))];
+	};
+
 	const collapsedHintLine = (width: number): string => truncateToWidth(
 		color.dim(`${TLH_HEADER_TOGGLE_SHORTCUT_LABEL} to show skills, prompts, extensions, themes`),
 		width,
@@ -83,6 +90,7 @@ export function createTlhHeader(
 	const headerDetails = (width: number): string[] => [
 		...installWarningLine(width),
 		...contextLine(resources.context, width),
+		...startupTipLine(width),
 	];
 
 	const renderCollapsed = (width: number) => {
