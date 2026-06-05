@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Bundled `pi-subagents` now pins `git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-5`.
 - The `tlh` wrapper now pins the absolute `pi` path at install/update time for faster launch; the minimum Pi version (>=0.76.0) is enforced at install/update time rather than on every `tlh` invocation. If the pinned binary is later moved away or removed, the wrapper falls back to PATH discovery automatically; if it is replaced in place with an unsupported version, run `tlh update` to re-validate and repin.
 - The footer no longer shows the model provider name; the provider prefix is always hidden.
 - Context cap is now a built-in TLH feature (no longer a bundled default extension). The bundled `@diegopetrucci/pi-context-cap` default extension has been removed and will be force-uninstalled from existing isolated profiles on the next `tlh` install or update. Previous `tlh.disabledDefaultExtensions: ["context-cap"]` opt-outs are intentionally **not** preserved — those entries are silently pruned on upgrade. To opt out of the cap again, run `/toggle-context-cap` or set `tlh.contextCap.disabled: true` in your isolated settings.
