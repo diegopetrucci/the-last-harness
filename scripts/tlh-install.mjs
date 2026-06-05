@@ -9,7 +9,7 @@ import {
 	rmSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -332,6 +332,7 @@ function buildInstallConfig(parsedArgs, env = process.env) {
 		supportFiles,
 		piInstalledByTlhOverride: parsedArgs.piInstalledByTlhOverride,
 		piInstalledByTlh: undefined,
+		piCmd: "",
 		supportFilePaths: Object.fromEntries(supportFiles.map((file) => [file.variable, ""])),
 		scriptPath,
 		scriptDir,
@@ -561,7 +562,9 @@ function installPiIfNeeded(config) {
 		verboseLog(config, `Pi is already installed: ${(result.stdout || "pi").trim() || "pi"}`);
 		try {
 			assertSupportedPiVersion(config);
-			return false;
+			if (config.dryRun) return { installed: false, piCmd: "" };
+			const rawCmd = (result.stdout || "").trim();
+			return { installed: false, piCmd: (rawCmd && isAbsolute(rawCmd)) ? rawCmd : "" };
 		} catch (error) {
 			pathPiValidationError = error;
 			verboseLog(config, `Existing pi on PATH is not reusable: ${error instanceof Error ? error.message : String(error)}`);
@@ -588,7 +591,10 @@ function installPiIfNeeded(config) {
 			addMessage: `Existing Pi runtime ${piBin} is not on PATH.`,
 			prependMessage: `Using validated per-user Pi runtime ${piBin} instead of the current PATH entry. Prepended ${piBinDir} to PATH for this install so downstream pi commands reuse that runtime; move it ahead of older Pi entries in your shell profile if needed.`,
 		});
-		return false;
+		// Pin piBin directly: do NOT do a fresh command -v lookup here because PATH has not yet
+		// been updated in the parent process and the stale earlier-PATH pi might still win.
+		if (config.dryRun) return { installed: false, piCmd: "" };
+		return { installed: false, piCmd: piBin };
 	}
 
 	if (pathPiValidationError) throw pathPiValidationError;
@@ -607,7 +613,7 @@ function installPiIfNeeded(config) {
 		prefix,
 		PI_PACKAGE_NAME,
 	]);
-	if (config.dryRun) return true;
+	if (config.dryRun) return { installed: true, piCmd: "" };
 	const onPath = commandExists(config, "pi");
 	if (!existsSync(piBin) && !onPath) {
 		throw new Error(`Pi install completed, but ${piBin} does not exist and pi is not on PATH`);
@@ -620,8 +626,12 @@ function installPiIfNeeded(config) {
 			addMessage: `${piBin} installed but ${piBinDir} is not on PATH.`,
 			prependMessage: `Using freshly installed Pi runtime ${piBin}. Prepended ${piBinDir} to PATH for this install so downstream pi commands reuse that runtime; move it ahead of older Pi entries in your shell profile if needed.`,
 		});
+		return { installed: true, piCmd: piBin };
 	}
-	return true;
+	// piBin does not exist but pi landed on PATH (uncommon); capture the path if it is absolute.
+	const pathResult = spawnCapture(config, ["sh", "-c", "command -v -- pi"], { allowFailure: true });
+	const rawPathCmd = (pathResult.stdout || "").trim();
+	return { installed: true, piCmd: (rawPathCmd && isAbsolute(rawPathCmd)) ? rawPathCmd : "" };
 }
 
 function backupExistingSettingsBeforePiInstall(config) {
@@ -1152,6 +1162,7 @@ async function writeWrapper(config) {
 		"--package-root",
 		config.packageRoot,
 	];
+	if (config.piCmd) args.push("--pi-cmd", config.piCmd);
 	if (config.dryRun) args.push("--dry-run");
 	if (config.force) args.push("--force");
 	if (config.quiet) args.push("--quiet");
@@ -1199,7 +1210,7 @@ async function runInstallFlow(config) {
 	requireCommand(config, "git");
 	await preflightRuntimeSupportFiles(config, supportFileIo());
 
-	const piInstalledByTlh = installPiIfNeeded(config);
+	const { installed: piInstalledByTlh, piCmd } = installPiIfNeeded(config);
 	// A runtime installed by this run is always TLH-owned, even if an update passed through a
 	// stale false/absent value from an older install-state. Otherwise preserve the explicit
 	// override when provided, and fall back to the observed result for fresh installs.
@@ -1208,6 +1219,7 @@ async function runInstallFlow(config) {
 		: config.piInstalledByTlhOverride !== undefined
 			? config.piInstalledByTlhOverride
 			: false;
+	config.piCmd = piCmd;
 	installHarnessPackage(config);
 	await installSupportFilesToProfile(config);
 	await seedLibrarianConfig(config);
