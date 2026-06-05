@@ -320,15 +320,23 @@ function applyDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds
 	);
 }
 
-// Source of the retired upstream context-cap extension. Hardcoded because it
-// is no longer in the manifest and cannot be read dynamically.
-const RETIRED_CONTEXT_CAP_SOURCE = "npm:@diegopetrucci/pi-context-cap";
-const RETIRED_CONTEXT_CAP_IDENTITY = packageIdentity(RETIRED_CONTEXT_CAP_SOURCE);
+// Sources of retired default extensions that TLH now removes unconditionally
+// from isolated settings because they should no longer stay installed after
+// install/update reruns.
+const FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES = Object.freeze([
+	"npm:@diegopetrucci/pi-context-cap",
+	"npm:@diegopetrucci/pi-permission-gate",
+	"npm:@diegopetrucci/pi-confirm-destructive",
+]);
 
-function purgeRetiredContextCapPackage(settings, changes) {
-	if (!RETIRED_CONTEXT_CAP_IDENTITY || !Array.isArray(settings.packages)) return;
-	while (removePackageByIdentity(settings, RETIRED_CONTEXT_CAP_IDENTITY)) {
-		changes.push(`force-remove retired default extension package: ${RETIRED_CONTEXT_CAP_SOURCE}`);
+function purgeForceRemovedRetiredDefaultExtensionPackages(settings, changes) {
+	if (!Array.isArray(settings.packages)) return;
+	for (const source of FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES) {
+		const identity = packageIdentity(source);
+		if (!identity) continue;
+		while (removePackageByIdentity(settings, identity)) {
+			changes.push(`force-remove retired default extension package: ${source}`);
+		}
 	}
 }
 
@@ -573,7 +581,7 @@ function main() {
 	applyDefaultExtensionLoadOrder(next, defaultExtensions, disabledIds, changes);
 	removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
 	scrubGnosisSettings(next, changes);
-	purgeRetiredContextCapPackage(next, changes);
+	purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
 	pruneContextCapDisabledDefaultExtension(next, changes);
 	syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
 

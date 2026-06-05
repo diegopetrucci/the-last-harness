@@ -453,6 +453,72 @@ test("stage-1 prefers a supported per-user Pi runtime over a stale PATH Pi", (t)
 	assert.equal(state.piInstalledByTlh, false);
 });
 
+test("stage-1 per-user-fallback branch bakes piBin as default_pi_cmd even when stale pi is earlier on PATH", (t) => {
+	// AC #7: guard against the branch-awareness trap where a fresh `command -v pi` lookup
+	// before PATH is updated would capture the stale pi instead of piBin.
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const fakebin = join(root, "fakebin");
+	const stalePiDir = join(root, "stale-pi");
+	const perUserPiDir = join(homeDir, ".local", "bin");
+	const packageDir = join(root, "package-source");
+	const npmLog = join(root, "npm.log");
+	const stalePiLog = join(root, "stale-pi.log");
+	const perUserPiLog = join(root, "per-user-pi.log");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(binDir, { recursive: true });
+	mkdirSync(packageDir, { recursive: true });
+	writeFakeCommand(fakebin, "git", "exit 0");
+	writeFakeCommand(fakebin, "npm", `printf '%s\\n' "$*" >>"${npmLog}"`);
+	writeFakeTk(fakebin);
+	// Stale pi on PATH (returns 0.75.2 — below minimum): must come BEFORE perUserPiDir so
+	// that a naive `command -v pi` lookup in the per-user-fallback branch would return it.
+	writeFakePi(stalePiDir, [
+		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${stalePiLog}"`,
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.75.2\\n'; exit 0; fi",
+		"exit 0",
+	].join("\n"));
+	// Supported pi at ~/.local/bin/pi (returns 0.76.0): piBin that should be pinned.
+	writeLoggingPi(perUserPiDir, perUserPiLog);
+
+	const env = scrubInstallerEnv({
+		HOME: homeDir,
+		// stalePiDir is first on PATH; perUserPiDir is second — a stale `command -v pi`
+		// lookup would return stalePiDir/pi before PATH is updated by the installer.
+		PATH: [stalePiDir, perUserPiDir, safeInstallerPath(fakebin)].join(delimiter),
+		TLH_PACKAGE_SOURCE: packageDir,
+		TLH_SKIP_GNOSIS_INSTALL: "1",
+	});
+	const result = runInstaller([
+		"--agent-dir", agentDir,
+		"--bin-dir", binDir,
+		"--no-settings",
+	], env);
+	const output = `${result.stdout}\n${result.stderr}`;
+
+	assert.equal(result.status, 0, output);
+
+	// The wrapper must exist and must have default_pi_cmd set to the per-user pi path.
+	const wrapperFile = join(binDir, "tlh");
+	assert.ok(existsSync(wrapperFile), `wrapper should have been written: ${output}`);
+	const wrapperContent = readFileSync(wrapperFile, "utf8");
+	const piCmdMatch = wrapperContent.match(/^default_pi_cmd='([^']*)'$/m);
+	assert.ok(piCmdMatch, `expected default_pi_cmd line in wrapper:\n${wrapperContent.slice(0, 400)}`);
+	const defaultPiCmd = piCmdMatch[1];
+
+	// The pinned path MUST be the absolute per-user pi, NOT the stale one earlier on PATH.
+	// If the per-user-fallback branch were using a fresh `command -v pi` lookup before the
+	// PATH update (the bug), it would capture stalePiDir/pi and this assertion would fail.
+	const expectedPiPath = join(perUserPiDir, "pi");
+	assert.equal(defaultPiCmd, expectedPiPath, `default_pi_cmd should be per-user piBin, not stale PATH pi`);
+	assert.ok(isAbsolute(defaultPiCmd), `default_pi_cmd must be absolute: ${defaultPiCmd}`);
+	assert.doesNotMatch(defaultPiCmd, new RegExp(stalePiDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `default_pi_cmd must not point to stale pi dir`);
+});
+
 test("stage-1 refuses to reinstall over a broken per-user Pi npm package", (t) => {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");
@@ -2003,4 +2069,340 @@ test("stage-1 canonicalizes relative target dirs before deriving wrapper and sta
 	assert.notEqual(state.agentDir, parsed.agentDirInput);
 	assert.notEqual(state.agentDir, normalPiAgentIfLeftRelative);
 	assert.equal(existsSync(join(homeDir, ".pi")), false);
+});
+
+test("wrapper --pi-cmd fast path execs pinned binary without spawning a --version probe", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const agentBin = join(agentDir, "bin");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const pinnedPiDir = join(root, "pinned-pi");
+	const piCallLog = join(root, "pi-calls.log");
+	const piMainLog = join(root, "pi-main.txt");
+	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	// This pi logs ALL invocations (including --version probes) to piCallLog.
+	writeFakePi(pinnedPiDir, [
+		`printf '%s\\n' "$*" >>"${piCallLog}"`,
+		`if [[  "\${1:-}" == "--version" ]]; then printf '0.76.0\\n'; exit 0; fi`,
+		`{ printf 'cmd=%s\\n' "$0"; printf 'argv=%s\\n' "$*"; printf 'agent=%s\\n' "\${PI_CODING_AGENT_DIR:-}"; printf 'path=%s\\n' "\${PATH:-}"; } >"${piMainLog}"`,
+		"exit 0",
+	].join("\n"));
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+		"--pi-cmd",
+		join(pinnedPiDir, "pi"),
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const result = spawnSync(wrapper, ["chat"], {
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: [agentBin, process.env.PATH || ""].join(":"),
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+
+	// Verify the pinned pi was actually called with the right args.
+	const mainRecord = Object.fromEntries(readFileSync(piMainLog, "utf8").trim().split(/\r?\n/).map((line) => {
+		const separator = line.indexOf("=");
+		return [line.slice(0, separator), line.slice(separator + 1)];
+	}));
+	assert.equal(mainRecord.argv, "chat");
+	assert.equal(mainRecord.agent, agentDir);
+
+	// Perf assertion: no --version probe was made.
+	const allCalls = readFileSync(piCallLog, "utf8").trim().split(/\r?\n/).filter(Boolean);
+	assert.ok(!allCalls.some((call) => call.includes("--version")), `expected no --version call, got: ${allCalls.join(", ")}`);
+});
+
+test("wrapper --pi-cmd falls back to resolver when pinned path is non-executable", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const agentBin = join(agentDir, "bin");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const fallbackPiDir = join(root, "fallback-pi");
+	const piLog = join(root, "pi.txt");
+	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	writeVersionedWrapperPi(fallbackPiDir, piLog);
+
+	const missingPiCmd = join(root, "nonexistent", "pi");
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+		"--pi-cmd",
+		missingPiCmd,
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const result = spawnSync(wrapper, ["chat"], {
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: [fallbackPiDir, agentBin, process.env.PATH || ""].join(":"),
+			PI_WRAPPER_LOG: piLog,
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+
+	// Verify the resolver fallback ran and found the fallback pi.
+	const piRecord = Object.fromEntries(readFileSync(piLog, "utf8").trim().split(/\r?\n/).map((line) => {
+		const separator = line.indexOf("=");
+		return [line.slice(0, separator), line.slice(separator + 1)];
+	}));
+	assert.equal(piRecord.argv, "chat");
+	assert.equal(piRecord.agent, agentDir);
+	assert.equal(piRecord.cmd, join(fallbackPiDir, "pi"));
+});
+
+test("wrapper --pi-cmd fast path exports PATH as managed_bin:pinned_dir:sanitized_path", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const agentBin = join(agentDir, "bin");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const pinnedPiDir = join(root, "pinned-pi");
+	const stalePiDir = join(root, "stale-pi");
+	const piLog = join(root, "pi.txt");
+	const stalePiLog = join(root, "stale-pi.log");
+	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	// Pinned pi logs PATH so we can verify ordering.
+	writeFakePi(pinnedPiDir, [
+		`if [[ "\${1:-}" == "--version" ]]; then printf '0.76.0\\n'; exit 0; fi`,
+		`{ printf 'cmd=%s\\n' "$0"; printf 'argv=%s\\n' "$*"; printf 'agent=%s\\n' "\${PI_CODING_AGENT_DIR:-}"; printf 'path=%s\\n' "\${PATH:-}"; } >"${piLog}"`,
+		"exit 0",
+	].join("\n"));
+
+	// Stale pi should not be called and should not appear before pinned_dir.
+	writeFakePi(stalePiDir, [
+		`printf 'stale pi intercepted\\n' >"${stalePiLog}"`,
+		"exit 85",
+	].join("\n"));
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+		"--pi-cmd",
+		join(pinnedPiDir, "pi"),
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const result = spawnSync(wrapper, ["chat"], {
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: [stalePiDir, agentBin, process.env.PATH || ""].join(":"),
+			STALE_PI_LOG: stalePiLog,
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+
+	const piRecord = Object.fromEntries(readFileSync(piLog, "utf8").trim().split(/\r?\n/).map((line) => {
+		const separator = line.indexOf("=");
+		return [line.slice(0, separator), line.slice(separator + 1)];
+	}));
+	assert.equal(piRecord.argv, "chat");
+	assert.equal(piRecord.agent, agentDir);
+
+	// PATH must be: managed_bin : pinned_dir : sanitized_path (stale entries come after).
+	const piPathEntries = piRecord.path.split(":");
+	assert.equal(piPathEntries[0], agentBin, `expected managed_bin first; got ${piPathEntries.join(":")}`);
+	assert.equal(piPathEntries[1], pinnedPiDir, `expected pinned_dir second; got ${piPathEntries.join(":")}`);
+	const stalePiIndex = piPathEntries.indexOf(stalePiDir);
+	assert.ok(stalePiIndex === -1 || stalePiIndex > 1, `stale entry must not appear before pinned_dir; PATH: ${piPathEntries.join(":")}`);
+
+	// Verify stale pi was not invoked.
+	assert.equal(existsSync(stalePiLog), false);
+});
+
+test("wrapper update --extensions helper prepends executable --pi-cmd directory before the sanitized PATH", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const agentBin = join(agentDir, "bin");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const pinnedPiDir = join(root, "pinned-pi");
+	const cwdDir = join(root, "cwd");
+	const updateLog = join(root, "update.json");
+	const nodeDir = dirname(process.execPath);
+	const bashPath = spawnSync("sh", ["-c", "command -v bash"], { encoding: "utf8" }).stdout.trim() || "/bin/bash";
+	const bashDir = dirname(bashPath);
+	mkdirSync(join(agentDir, "tlh"), { recursive: true });
+	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	mkdirSync(cwdDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	mkdirSync(pinnedPiDir, { recursive: true });
+	writeFileSync(join(pinnedPiDir, "pi"), "#!/bin/sh\nif [ \"${1:-}\" = \"--version\" ]; then printf '0.76.0\\n'; exit 0; fi\nprintf 'unexpected args: %s\\n' \"$*\" >&2\nexit 1\n", "utf8");
+	chmodSync(join(pinnedPiDir, "pi"), 0o755);
+	writeFileSync(join(agentDir, "tlh", "tlh-update.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst pi = spawnSync("pi", ["--version"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, pi: { status: pi.status, stdout: pi.stdout, stderr: pi.stderr, error: pi.error?.message } }));\nprocess.exit(pi.status ?? (pi.error ? 1 : 0));\n`, "utf8");
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+		"--pi-cmd",
+		join(pinnedPiDir, "pi"),
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const result = spawnSync(wrapper, ["update", "--extensions", "--dry-run"], {
+		cwd: cwdDir,
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: ["", ".", cwdDir, agentBin, nodeDir, bashDir].join(delimiter),
+			TLH_UPDATE_LOG: updateLog,
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+
+	const updateRecord = JSON.parse(readFileSync(updateLog, "utf8"));
+	assert.deepEqual(updateRecord.argv, [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--extensions",
+		"--dry-run",
+	]);
+	assert.equal(updateRecord.env.PI_CODING_AGENT_DIR, agentDir);
+	assert.equal(updateRecord.pi.status, 0, JSON.stringify(updateRecord));
+	assert.match(updateRecord.pi.stdout, /0\.76\.0/);
+
+	const updatePathEntries = updateRecord.env.PATH.split(delimiter);
+	assert.equal(updatePathEntries[0], pinnedPiDir, `expected pinned_dir first; got ${updatePathEntries.join(delimiter)}`);
+	assert.equal(updatePathEntries[1], nodeDir, `expected sanitized PATH to follow pinned_dir; got ${updatePathEntries.join(delimiter)}`);
+	assert.equal(updatePathEntries.includes(""), false);
+	assert.equal(updatePathEntries.includes("."), false);
+	assert.equal(updatePathEntries.includes(cwdDir), false);
+	assert.equal(updatePathEntries.includes(agentBin), false);
+});
+
+test("wrapper plain update helper does not prepend executable --pi-cmd directory", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const agentBin = join(agentDir, "bin");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const pinnedPiDir = join(root, "pinned-pi");
+	const cwdDir = join(root, "cwd");
+	const updateLog = join(root, "update.json");
+	const nodeDir = dirname(process.execPath);
+	const bashPath = spawnSync("sh", ["-c", "command -v bash"], { encoding: "utf8" }).stdout.trim() || "/bin/bash";
+	const bashDir = dirname(bashPath);
+	mkdirSync(join(agentDir, "tlh"), { recursive: true });
+	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	mkdirSync(cwdDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	mkdirSync(pinnedPiDir, { recursive: true });
+	writeFileSync(join(pinnedPiDir, "pi"), "#!/bin/sh\nprintf 'unexpected args: %s\\n' \"$*\" >&2\nexit 1\n", "utf8");
+	chmodSync(join(pinnedPiDir, "pi"), 0o755);
+	writeFileSync(join(agentDir, "tlh", "tlh-update.mjs"), `import { writeFileSync } from "node:fs";\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH } }));\n`, "utf8");
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+		"--pi-cmd",
+		join(pinnedPiDir, "pi"),
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const result = spawnSync(wrapper, ["update", "--dry-run"], {
+		cwd: cwdDir,
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: ["", ".", cwdDir, agentBin, nodeDir, bashDir].join(delimiter),
+			TLH_UPDATE_LOG: updateLog,
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+
+	const updateRecord = JSON.parse(readFileSync(updateLog, "utf8"));
+	assert.deepEqual(updateRecord.argv, [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--dry-run",
+	]);
+	assert.equal(updateRecord.env.PI_CODING_AGENT_DIR, agentDir);
+
+	const updatePathEntries = updateRecord.env.PATH.split(delimiter);
+	assert.equal(updatePathEntries[0], nodeDir, `expected sanitized PATH first; got ${updatePathEntries.join(delimiter)}`);
+	assert.equal(updatePathEntries.includes(pinnedPiDir), false, `did not expect pinned_dir in PATH: ${updatePathEntries.join(delimiter)}`);
+	assert.equal(updatePathEntries.includes(""), false);
+	assert.equal(updatePathEntries.includes("."), false);
+	assert.equal(updatePathEntries.includes(cwdDir), false);
+	assert.equal(updatePathEntries.includes(agentBin), false);
 });

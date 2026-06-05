@@ -1,7 +1,17 @@
 import type { AutocompleteItem, AutocompleteProvider, AutocompleteSuggestions } from "@earendil-works/pi-tui";
 import { AUTOCOMPLETE_SOURCE_TAG_PATTERN } from "./constants.js";
 
-const HIDDEN_BUNDLED_COMMANDS = new Set(["fff-health", "fff-rescan", "fff-mode", "intercom"]);
+const HIDDEN_SLASH_COMMANDS = new Set([
+	"changelog",
+	"clone",
+	"import",
+	"oracle-model",
+	"quiet-tools",
+	"fff-health",
+	"fff-rescan",
+	"fff-mode",
+	"intercom",
+]);
 
 function stripAutocompleteSourceTag(description: string | undefined): string | undefined {
 	if (!description) {
@@ -28,10 +38,7 @@ function transformSuggestions(
 	let changed = false;
 	const items: AutocompleteItem[] = [];
 	for (const item of suggestions.items) {
-		if (
-			options.filterSlashCommandSuggestions &&
-			(HIDDEN_BUNDLED_COMMANDS.has(item.value) || item.value === "changelog")
-		) {
+		if (options.filterSlashCommandSuggestions && HIDDEN_SLASH_COMMANDS.has(item.value)) {
 			changed = true;
 			continue;
 		}

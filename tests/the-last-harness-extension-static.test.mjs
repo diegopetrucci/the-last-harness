@@ -172,6 +172,15 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
 	assert.doesNotMatch(extensionSource, /async function applyPrimaryModel/);
 });
 
+test("thinking alias shares the effort command thinking-level behavior", () => {
+	assert.match(effortSource, /\["effort", "thinking"\] as const/);
+	assert.match(effortSource, /description: "Pick the model thinking level"/);
+	assert.match(effortSource, /Unknown thinking level/);
+	assert.match(effortSource, /Thinking level set to/);
+	assert.match(effortSource, /Available thinking levels/);
+	assert.match(effortSource, /Pick thinking level/);
+});
+
 test("extension delegates launch update and telemetry services to feature modules", () => {
 	const sessionStart = sourceSection(extensionSource, 'pi.on("session_start"', "\n\t});\n}");
 

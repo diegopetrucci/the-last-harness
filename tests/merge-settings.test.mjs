@@ -10,6 +10,8 @@ const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
 const settingsDefaultsPath = join(repoRoot, "config", "settings.defaults.json");
 const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
 const retiredPlannotatorPackage = "npm:@plannotator/pi-extension";
+const retiredPermissionGatePackage = "npm:@diegopetrucci/pi-permission-gate";
+const retiredConfirmDestructivePackage = "npm:@diegopetrucci/pi-confirm-destructive";
 const changelogSentinel = "9999.0.0";
 
 function tempFixture(defaultsValue, settingsValue, extensionsValue = []) {
@@ -423,6 +425,30 @@ test("merge defers bundled pi-web-access when an upstream package is already ins
 	]);
 });
 
+test("merge force-removes retired confirmation packages by identity while preserving unrelated packages", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				`${retiredPermissionGatePackage}@1.2.3`,
+				{ source: `${retiredConfirmDestructivePackage}@0.4.0`, extensions: ["legacy-filter"] },
+				"npm:@diegopetrucci/pi-notify",
+			],
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.packages, [
+		harnessPackage,
+		"npm:@diegopetrucci/pi-notify",
+	]);
+	assert.match(output, /force-remove retired default extension package: npm:@diegopetrucci\/pi-permission-gate/);
+	assert.match(output, /force-remove retired default extension package: npm:@diegopetrucci\/pi-confirm-destructive/);
+});
+
 test("merge removes npm:@diegopetrucci/pi-context-cap package and emits a changes line", () => {
 	const fixture = tempFixture(
 		{ packages: [] },
@@ -491,6 +517,29 @@ test("merge is a no-op when settings have neither pi-context-cap nor context-cap
 
 	assert.match(output, /No settings changes needed\./);
 	assert.equal(readFileSync(fixture.settings, "utf8"), afterFirst, "settings should be unchanged");
+});
+
+test("merge cleanup of retired confirmation packages is idempotent after first run", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				retiredPermissionGatePackage,
+				retiredConfirmDestructivePackage,
+			],
+		},
+	);
+
+	runMerge(fixture);
+
+	const afterFirst = readFileSync(fixture.settings, "utf8");
+	const firstSettings = readJson(fixture.settings);
+	assert.deepEqual(firstSettings.packages, [harnessPackage], "retired confirmation packages removed on first run");
+
+	const secondOutput = runMerge(fixture, { quiet: false });
+	assert.match(secondOutput, /No settings changes needed\./);
+	assert.equal(readFileSync(fixture.settings, "utf8"), afterFirst, "settings unchanged on second run");
 });
 
 test("merge cleanup of pi-context-cap is idempotent after first run", () => {
