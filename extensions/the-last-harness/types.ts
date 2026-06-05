@@ -100,6 +100,10 @@ export type TlhPrimaryAgentWriteResult = {
 	changed: boolean;
 };
 
+export type TlhContextCapConfig = {
+	disabled?: boolean;
+};
+
 export type TlhSettings = {
 	tlh?: {
 		usageLimits?: TlhUsageLimitsConfig;
@@ -108,6 +112,7 @@ export type TlhSettings = {
 		telemetry?: TlhTelemetryConfig;
 		tickets?: TlhTicketsConfig;
 		primaryAgent?: TlhPrimaryAgentConfig;
+		contextCap?: TlhContextCapConfig;
 	};
 };
 

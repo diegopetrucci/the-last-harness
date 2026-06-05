@@ -625,7 +625,20 @@ run_stdin_dry_run_smoke() {
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"
   assert_contains "${combined_file}" "Would fetch installer support files from"
+  assert_contains "${combined_file}" "Would create isolated Librarian config when missing: ${agent_dir}/extensions/librarian.json"
   assert_contains "${combined_file}" "Dry run only; no support files were downloaded."
+  assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
+  assert_not_contains "${combined_file}" "fake curl was invoked"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  (cd "${case_dir}" && run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 PATH="${fakebin}:${PATH}" bash -s -- --dry-run --no-settings --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  assert_absent "${agent_dir}"
+  assert_absent "${bin_dir}"
+  assert_contains "${combined_file}" "Would skip settings and keybinding defaults merge (--no-settings)."
+  assert_not_contains "${combined_file}" "Would create isolated Librarian config when missing:"
   assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   assert_not_contains "${combined_file}" "fake curl was invoked"
 

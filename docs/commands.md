@@ -2,9 +2,9 @@
 
 This document lists slash commands available in an interactive TLH session, grouped by origin.
 
-Type any command name with a leading `/` in the TLH TUI to trigger it. Autocomplete surfaces most commands as you type; a small set of bundled commands is hidden from autocomplete but remains triggerable by typing — see [Hidden bundled commands](#hidden-bundled-commands) below.
+Type any command name with a leading `/` in the TLH TUI to trigger it. Autocomplete surfaces most commands as you type; a small set of upstream and bundled commands is hidden from autocomplete but remains triggerable by typing — see [Hidden autocomplete commands](#hidden-autocomplete-commands) below.
 
-> **Note:** autocomplete hiding is not an execution block. Any command listed under [Hidden bundled commands](#hidden-bundled-commands) can still be run by typing it in full.
+> **Note:** autocomplete hiding is not an execution block. Any command listed under [Hidden autocomplete commands](#hidden-autocomplete-commands) can still be run by typing it in full.
 
 ---
 
@@ -15,13 +15,13 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 | Command | Description |
 |---------|-------------|
 | `/changelog` | Show upstream Pi changelog entries — **hidden from TLH autocomplete**; use `/tlh-changelog` for TLH release notes |
-| `/clone` | Duplicate the current session at the current position |
+| `/clone` | Duplicate the current session at the current position — **hidden from TLH autocomplete** |
 | `/compact` | Manually compact the session context |
 | `/copy` | Copy the last agent message to the clipboard |
 | `/export` | Export the session (HTML by default; pass a `.html` or `.jsonl` path to specify format) |
 | `/fork` | Create a new fork from a previous user message |
 | `/hotkeys` | Show all keyboard shortcuts |
-| `/import` | Import and resume a session from a JSONL file |
+| `/import` | Import and resume a session from a JSONL file — **hidden from TLH autocomplete** |
 | `/login` | Configure provider authentication |
 | `/logout` | Remove provider authentication |
 | `/model` | Select the active model (opens a selector UI) |
@@ -44,10 +44,12 @@ These commands are registered by the TLH extension bundled with this profile.
 
 | Command | Description |
 |---------|-------------|
-| `/effort` | Pick the model reasoning effort or thinking level |
+| `/thinking` | Pick the model thinking level |
+| `/effort` | Supported alias for `/thinking` |
 | `/review` | Open an interactive code-review mode picker (requires the architect primary agent) |
 | `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
 | `/tlh-changelog` | Show TLH release notes from the packaged `CHANGELOG.md` |
+| `/toggle-context-cap` | Toggle the 200k effective context-window cap for auto-compaction |
 | `/toggle-tlh-git-attribution` | Toggle the TLH commit attribution footer for agent-created git commits |
 | `/usage` | Show or change TLH subscription usage-limit footer preferences |
 | `/version` | Show the installed TLH version and the upstream Pi runtime version |
@@ -60,7 +62,42 @@ These commands ship inside the TLH package itself rather than through separately
 
 | Command | Extension | Description |
 |---------|-----------|-------------|
+| `/annotate-last-message` | `the-last-harness` | Open a native annotation window for the latest assistant message and paste submitted feedback into the editor |
 | `/diff-review` | `diff-review` | Open a native diff-review window and paste submitted review feedback into the editor |
+
+### `/annotate-last-message`
+
+`/annotate-last-message` opens a lightweight native Glimpse annotation window for the latest completed assistant message on the current session branch.
+
+#### Requirements
+
+- Run it from an interactive TLH session with editor access; it will not work in non-interactive/headless command contexts.
+- The current branch must already contain a completed assistant message with text. If the latest assistant turn is still running or has no text content, wait for a normal text reply before rerunning the command.
+- It needs a desktop session that can open a local native window. Headless shells and SSH-only sessions will not work unless they can display that window locally.
+- TLH packages the UI assets locally. `/annotate-last-message` does **not** require CDN access or general internet access just to render the annotation window.
+- Like the rest of TLH, it stays inside the isolated TLH profile and does not read or write normal Pi config under `~/.pi/agent`.
+
+#### Behavior
+
+- Finds the latest completed assistant message on the active session branch and shows it with line numbers plus section-level grouping.
+- Lets you leave overall, section, and inline comments in one lightweight first-party TLH window.
+- When you submit, TLH inserts a structured planning-oriented feedback prompt into the current editor buffer so you can send it back to the agent.
+- It does not auto-apply code changes or silently mutate prior messages.
+- Use `/annotate-last-message` directly when you want to annotate the latest assistant reply.
+
+#### Extension-local notes
+
+See [`extensions/the-last-harness/annotate-last-message/README.md`](../extensions/the-last-harness/annotate-last-message/README.md).
+
+#### Troubleshooting and recovery
+
+- `annotate-last-message requires interactive mode.` → run the command from the TLH TUI rather than a non-interactive command context.
+- `No assistant messages found on the current session branch.` → wait until the branch has an assistant reply, then rerun.
+- `Latest assistant message is incomplete (...)` → wait for the assistant turn to finish, then rerun.
+- `Latest assistant message has no text to annotate.` → rerun after a normal text reply; tool-only or empty assistant turns cannot be annotated.
+- `A last-message annotation window is already open.` → return to the existing window or close it before opening another.
+- `Annotation failed: Glimpse host not found ...` → the local native window runtime is unavailable. Run `tlh update` (or reinstall TLH) to restore the packaged dependency, then rerun from a machine/session that can open native windows.
+- There is no separate `tlh defaults` toggle for `/annotate-last-message` because it ships inside TLH itself.
 
 ### `/diff-review`
 
@@ -100,23 +137,42 @@ These commands are provided by bundled default extensions and are visible in TLH
 | Command | Extension | Description |
 |---------|-----------|-------------|
 | `/context` | `pi-context-inspector` | Open a local HTML breakdown of where this session's context is going |
-| `/context-cap` | `pi-context-cap` | Toggle the 200k effective context-window cap for auto-compaction |
 | `/fast` | `pi-openai-fast` | Toggle OpenAI Codex Fast mode (ChatGPT-auth GPT-5.4/GPT-5.5 only) |
-| `/librarian-cache` | `pi-librarian` | Toggle the Librarian local-checkout cache for future librarian calls |
+| `/librarian-cache` | `pi-librarian` | Show or change the Librarian local-checkout cache mode for future librarian calls |
 | `/mcp` | `pi-mcp-adapter` | Show MCP server status |
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
 | `/oracle` | `pi-oracle` | Configure the Oracle default model and thinking level |
-| `/oracle-model` | `pi-oracle` | Show which model the oracle would use right now |
-| `/quiet-tools` | `pi-quiet-tools` | Toggle one-line collapsed invocations for built-in tool rows |
 | `/rtk` | `pi-rtk` | Control pi-rtk shell-command rewriting |
 | `/subagents-doctor` | `pi-subagents` | Show subagent diagnostics |
 | `/triage-comments` | `pi-triage-comments` | Collect pasted feedback or PR comments, then start a triage investigation |
 
+### `/librarian-cache`
+
+TLH defaults the Librarian local-checkout cache to `off`.
+
+That preference lives in TLH's isolated profile — typically `${PI_CODING_AGENT_DIR}/extensions/librarian.json` — so changing it affects future TLH librarian calls without touching your normal Pi config under `~/.pi/agent`.
+
+Use the command explicitly to inspect or override the current mode:
+
+- `/librarian-cache status` — show the current cache mode
+- `/librarian-cache on` — enable local checkout caching
+- `/librarian-cache off` — disable local checkout caching again
+
 ---
 
-## Hidden bundled commands
+## Hidden autocomplete commands
 
-The following commands are registered by bundled extensions but are deliberately excluded from TLH autocomplete suggestions. They are still fully functional — type them in full to invoke them.
+These commands are registered and fully functional, but deliberately excluded from TLH autocomplete suggestions. Type them in full to invoke them.
+
+### Hidden upstream Pi built-ins
+
+| Command | Description |
+|---------|-------------|
+| `/changelog` | Show upstream Pi changelog entries; use `/tlh-changelog` for TLH release notes |
+| `/clone` | Duplicate the current session at the current position |
+| `/import` | Import and resume a session from a JSONL file |
+
+### Hidden bundled extension commands
 
 | Command | Extension | Description |
 |---------|-----------|-------------|
@@ -124,8 +180,8 @@ The following commands are registered by bundled extensions but are deliberately
 | `/fff-mode` | `pi-fff` | Show or set FFF mode (`tools-and-ui`, `tools-only`, `override`) |
 | `/fff-rescan` | `pi-fff` | Trigger FFF to rescan files |
 | `/intercom` | `pi-intercom` | Open the session intercom overlay (internal subagent communication) |
-
-The upstream `/changelog` command is also hidden from TLH autocomplete to reduce noise; use `/tlh-changelog` for TLH-specific release notes.
+| `/oracle-model` | `pi-oracle` | Show which model the oracle would use right now |
+| `/quiet-tools` | `pi-quiet-tools` | Toggle one-line collapsed invocations for built-in tool rows |
 
 ---
 
@@ -139,4 +195,4 @@ tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disa
 tlh defaults enable <id>   # re-enable a disabled extension
 ```
 
-Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions, not first-party packaged commands like `/diff-review`.
+Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions, not first-party packaged commands like `/annotate-last-message` or `/diff-review`.

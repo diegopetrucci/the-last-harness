@@ -6,7 +6,7 @@ import {
 	type ReadonlyFooterDataProvider,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
-import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS, FOOTER_HIDDEN_EXTENSION_STATUS_IDS } from "./constants.js";
+import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
 import { formatCompactTokenCount, formatHomePath, sanitizeStatusText } from "./common.js";
 import type { FooterGitCache } from "./footer-git-cache.js";
@@ -75,14 +75,11 @@ export function createTlhFooter(
 			const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
 
 			// Line 2 (single flowing left-justified line):
-			//   agent: <primaryName> • [(provider)] <model|no-model> [• thinking] • context% [• DUMB ZONE]
+			//   agent: <primaryName> • <model|no-model> [• thinking] • context% [• DUMB ZONE]
 			// Each segment is explicitly themed to avoid ANSI foreground-reset bleed from nested
 			// theme.fg() calls. Non-default agent names are highlighted with the accent color.
 			const modelOrNoModel = model?.id ?? "no-model";
-			let modelPart: string = modelOrNoModel;
-			if ((footerData?.getAvailableProviderCount?.() ?? 1) > 1 && model) {
-				modelPart = `(${model.provider}) ${modelOrNoModel}`;
-			}
+			const modelPart: string = modelOrNoModel;
 
 			const primaryName = getPrimaryName();
 			const dimSep = theme.fg("dim", " • ");
@@ -140,19 +137,14 @@ export function createTlhFooter(
 			}
 
 			// Extension status line (conditional on registered extension statuses)
-			// Entries whose ID appears in FOOTER_HIDDEN_EXTENSION_STATUS_IDS are suppressed;
-			// those extensions remain active — only their status line entry is hidden.
 			const extensionStatuses = footerData?.getExtensionStatuses?.();
 			if (extensionStatuses && extensionStatuses.size > 0) {
 				const visibleStatuses = Array.from(extensionStatuses.entries())
-					.filter(([id]) => !FOOTER_HIDDEN_EXTENSION_STATUS_IDS.has(id))
 					.sort(([a], [b]) => a.localeCompare(b));
-				if (visibleStatuses.length > 0) {
-					const statusLine = visibleStatuses
-						.map(([, text]) => sanitizeStatusText(text))
-						.join(" ");
-					lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
-				}
+				const statusLine = visibleStatuses
+					.map(([, text]) => sanitizeStatusText(text))
+					.join(" ");
+				lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
 			}
 
 			return lines;

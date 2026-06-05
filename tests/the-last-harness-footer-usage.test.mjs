@@ -11,9 +11,6 @@ const jiti = createJiti(import.meta.url);
 const { createTlhFooter, formatTlhSubscriptionUsageFooterSegment } = await jiti.import(
 	"../extensions/the-last-harness/footer.ts",
 );
-const { FOOTER_HIDDEN_EXTENSION_STATUS_IDS } = await jiti.import(
-	"../extensions/the-last-harness/constants.ts",
-);
 
 const NOW_MS = Date.parse("2026-05-19T19:00:00Z");
 const WIDTH = 100;
@@ -381,9 +378,10 @@ test("line 2 shows model without provider prefix when single provider", () => {
 	assert.doesNotMatch(line, /\(anthropic\)/);
 });
 
-test("line 2 shows provider prefix when multiple providers available", () => {
+test("line 2 never shows provider prefix even when multiple providers are available", () => {
 	const line = renderAgentLine(createCtx({ provider: "anthropic" }), {}, WIDTH, createFooterData({ providerCount: 2 }));
-	assert.match(line, /^agent: architect • \(anthropic\) claude-sonnet-4-20250514 • /);
+	assert.match(line, /^agent: architect • claude-sonnet-4-20250514 • /);
+	assert.doesNotMatch(line, /\(anthropic\)/);
 });
 
 test("line 2 shows thinking level for reasoning models", () => {
@@ -645,29 +643,8 @@ test("line 2 (color-aware): product and bug-hunter render name with accent", () 
 });
 
 // ---------------------------------------------------------------------------
-// NEW: context-cap footer status suppression
+// NEW: extension status line rendering
 // ---------------------------------------------------------------------------
-
-test("FOOTER_HIDDEN_EXTENSION_STATUS_IDS contains context-cap", () => {
-	assert.ok(
-		FOOTER_HIDDEN_EXTENSION_STATUS_IDS.has("context-cap"),
-		'context-cap must appear in FOOTER_HIDDEN_EXTENSION_STATUS_IDS',
-	);
-});
-
-test("extension status line is omitted when the only registered status is context-cap", () => {
-	// Context-cap is the sole extension status; after filtering the line must not appear.
-	const ctx = createCtx({ entries: [] });
-	const footerData = {
-		getGitBranch: () => undefined,
-		getAvailableProviderCount: () => 1,
-		getExtensionStatuses: () => new Map([["context-cap", "ctx cap 200k"]]),
-	};
-	const lines = renderFooterLines(ctx, {}, WIDTH, footerData);
-	// Only pwd (index 0) + agent line (index 1); no extension-status line.
-	assert.equal(lines.length, 2);
-	assert.ok(lines.every((l) => !l.includes("ctx cap")), "ctx cap text must not appear in any footer line");
-});
 
 test("non-context-cap extension statuses are still rendered in the footer", () => {
 	// An unrelated extension status must not be affected by the context-cap filter.
@@ -683,21 +660,3 @@ test("non-context-cap extension statuses are still rendered in the footer", () =
 	assert.match(lines[2] ?? "", /my-ext: active/);
 });
 
-test("context-cap status is filtered from a mixed map while other statuses are preserved", () => {
-	// Both context-cap and a second extension have statuses; only the second must appear.
-	const ctx = createCtx({ entries: [] });
-	const footerData = {
-		getGitBranch: () => undefined,
-		getAvailableProviderCount: () => 1,
-		getExtensionStatuses: () =>
-			new Map([
-				["context-cap", "ctx cap 200k"],
-				["my-ext", "my-ext: active"],
-			]),
-	};
-	const lines = renderFooterLines(ctx, {}, WIDTH, footerData);
-	// pwd + agent + extension-status line (context-cap entry removed)
-	assert.equal(lines.length, 3);
-	assert.ok(lines.every((l) => !l.includes("ctx cap")), "ctx cap text must not appear in any footer line");
-	assert.match(lines[2] ?? "", /my-ext: active/);
-});
