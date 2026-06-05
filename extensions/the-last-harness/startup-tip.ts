@@ -7,7 +7,7 @@ export const TLH_STARTUP_TIPS = [
 	"Use /switch-primary-agent to pick architect, rush, product, bug-hunter, or disabled for this session.",
 	"Press Shift+Tab to cycle TLH primary agents without leaving the keyboard.",
 	"Run /tlh-changelog to review what’s new in this TLH build.",
-	"Run /toggle-tlh-git-attribution to control TLH commit attribution.",
+	"At any point, you can ask the oracle for a second opinion.",
 ] as const;
 
 export function selectTlhStartupTip(random: () => number = Math.random): string | undefined {
