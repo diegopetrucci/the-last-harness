@@ -102,6 +102,8 @@ test("before_agent_start reapplies primary defaults without a one-shot model gat
 	assert.match(promptsSource, /preferCurrentOpenaiModel: parseBooleanValue\(frontmatter\.preferCurrentOpenaiModel\)/);
 	assert.match(promptsSource, /applyModel: parseBooleanValue\(frontmatter\.applyModel\)/);
 	assert.match(promptsSource, /applyThinking: parseBooleanValue\(frontmatter\.applyThinking\)/);
+	assert.match(promptsSource, /lockThinking: parseBooleanValue\(frontmatter\.lockThinking\)/);
+	assert.match(promptsSource, /minThinking: parseThinkingLevelValue\(frontmatter\.minThinking\)/);
 });
 
 test("before_agent_start activates ticket runtime without disabled-ticket prompt branching", () => {
@@ -129,6 +131,24 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	assert.equal(architect.preferCurrentOpenaiModel, undefined);
 	assert.equal(rush.applyModel, true);
 	assert.equal(rush.applyThinking, true);
+	assert.equal(rush.lockThinking, true);
+	assert.equal(architect.applyModel, true);
+	assert.equal(architect.applyThinking, true);
+	assert.equal(architect.minThinking, "medium");
+	assert.equal(architect.lockThinking, undefined);
+
+	const product = primaryAgents.get("product");
+	assert.ok(product, "product primary prompt should load");
+	assert.equal(product.applyModel, true);
+	assert.equal(product.applyThinking, true);
+	assert.equal(product.lockThinking, true);
+
+	const bugHunter = primaryAgents.get("bug-hunter");
+	assert.ok(bugHunter, "bug-hunter primary prompt should load");
+	assert.equal(bugHunter.applyModel, true);
+	assert.equal(bugHunter.applyThinking, true);
+	assert.equal(bugHunter.lockThinking, true);
+
 	assert.match(rush.systemPrompt, /Do not delegate implementation to `developer`/);
 	assert.deepEqual(
 		loadSubagentMetadata().find((agent) => agent.name === "developer")?.tlhOpenaiModels,

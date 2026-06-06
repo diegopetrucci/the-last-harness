@@ -8,6 +8,7 @@ tlhOpenaiThinking: off
 preferCurrentOpenaiModel: true
 applyModel: true
 applyThinking: true
+lockThinking: true
 tools: read, write, edit, grep, find, ls, bash, subagent, intercom
 systemPromptMode: append
 inheritProjectContext: true

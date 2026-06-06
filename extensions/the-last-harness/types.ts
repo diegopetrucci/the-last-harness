@@ -199,6 +199,8 @@ export type AgentPrompt = {
 	preferCurrentOpenaiModel?: boolean;
 	applyModel?: boolean;
 	applyThinking?: boolean;
+	lockThinking?: boolean;
+	minThinking?: ThinkingLevel;
 	tools: string[];
 	systemPrompt: string;
 	filePath: string;

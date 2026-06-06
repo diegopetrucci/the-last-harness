@@ -4,6 +4,9 @@ description: Investigates reported bugs, identifies root causes, and recommends 
 model: anthropic/claude-opus-4-7
 tlhOpenaiModels: openai-codex/gpt-5.5, openai/gpt-5.5
 thinking: high
+applyModel: true
+applyThinking: true
+lockThinking: true
 tools: read, grep, find, ls, bash, subagent, intercom
 systemPromptMode: append
 inheritProjectContext: true
