@@ -1323,3 +1323,117 @@ test("primary runtime respects explicit false settings over Rush-like metadata d
 		cleanupTempDir(fixture);
 	}
 });
+
+test("architect -> rush -> architect cycle restores architect's declared thinking", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const architectPrimary = createPrimaryPrompt("architect", {
+		model: "anthropic/claude-opus-4-7",
+		thinking: "high",
+		applyModel: true,
+		applyThinking: true,
+	});
+	const rushPrimary = createPrimaryPrompt("rush", {
+		model: "anthropic/claude-opus-4-7",
+		thinking: "low",
+		applyModel: true,
+		applyThinking: true,
+		lockThinking: true,
+	});
+	const primaryAgents = new Map([
+		["architect", architectPrimary],
+		["rush", rushPrimary],
+	]);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { pi, runtime } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		assert.ok(runtime, "runtime should register outside child sessions");
+
+		const makeCtx = (branch) => ({
+			cwd: fixture.cwd,
+			sessionManager: { getBranch: () => branch },
+			ui: { notify() {} },
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-7" }] },
+			model: { provider: "anthropic", id: "claude-opus-4-7" },
+		});
+
+		// Step 1: start with architect (default, no branch override)
+		await runtime.applySessionStart(makeCtx([]));
+		assert.equal(pi.thinkingLevel, "high", "architect starts at high thinking");
+
+		// Step 2: switch to rush
+		await runtime.applySessionStart(makeCtx([
+			{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
+		]));
+		assert.equal(pi.thinkingLevel, "low", "rush sets thinking to low");
+
+		// Step 3: switch back to architect — declared thinking must be restored
+		await runtime.applySessionStart(makeCtx([]));
+		assert.equal(pi.thinkingLevel, "high", "architect's declared thinking is restored after rush cycle");
+	});
+});
+
+test("locked primary (rush) overrides global applyThinking=false and applyModel=false", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const rushPrimary = createPrimaryPrompt("rush", {
+		model: "anthropic/claude-opus-4-7",
+		thinking: "low",
+		applyModel: true,
+		applyThinking: true,
+		lockThinking: true,
+	});
+	const primaryAgents = new Map([["rush", rushPrimary]]);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		// Global opt-outs that the lock should override
+		writePrimaryConfig(fixture.agent, { applyModel: false, applyThinking: false });
+
+		const { pi, runtime } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		assert.ok(runtime, "runtime should register outside child sessions");
+
+		// Use a different initial model so applyPrimaryModel actually calls setModel
+		await runtime.applySessionStart({
+			cwd: fixture.cwd,
+			sessionManager: { getBranch: () => [
+				{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
+			]},
+			ui: { notify() {} },
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-7" }] },
+			model: { provider: "anthropic", id: "claude-opus-4-6" },
+		});
+
+		// lockThinking: true forces both model and thinking regardless of global opt-outs
+		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-4-7" });
+		assert.equal(pi.thinkingLevel, "low");
+	});
+});
+
+test("non-locked primary (architect) honors global applyThinking=false override", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const architectPrimary = createPrimaryPrompt("architect", {
+		model: "anthropic/claude-opus-4-7",
+		thinking: "high",
+		applyModel: true,
+		applyThinking: true,
+		// no lockThinking
+	});
+	const primaryAgents = new Map([["architect", architectPrimary]]);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		// User opts out of thinking auto-apply for architect
+		writePrimaryConfig(fixture.agent, { applyThinking: false });
+
+		const { pi, runtime } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		assert.ok(runtime, "runtime should register outside child sessions");
+
+		await runtime.applySessionStart({
+			cwd: fixture.cwd,
+			sessionManager: { getBranch: () => [] },
+			ui: { notify() {} },
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-7" }] },
+			model: { provider: "anthropic", id: "claude-opus-4-7" },
+		});
+
+		// Global applyThinking: false is respected for non-locked primary
+		assert.equal(pi.thinkingLevel, "normal");
+	});
+});

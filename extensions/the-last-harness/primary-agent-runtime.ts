@@ -50,6 +50,7 @@ type TlhPrimaryAgentRuntimeOptions = {
 export type TlhPrimaryAgentRuntime = {
 	applySessionStart(ctx: ExtensionContext): Promise<void>;
 	currentPrimaryAgentLabel(): string;
+	activePrimaryAgentPrompt(): AgentPrompt | undefined;
 };
 
 function getTlhGlobalSettings(cwd: string): TlhSettings {
@@ -75,6 +76,10 @@ function resolvePrimaryAutoApplySetting(
 		return configured;
 	}
 	return primary[key] === true;
+}
+
+function shouldForceApplyForLock(primary: AgentPrompt): boolean {
+	return primary.lockThinking === true;
 }
 
 function parseTlhSettingsContent(content: string | undefined): Record<string, unknown> {
@@ -395,8 +400,9 @@ function createTlhPrimaryAgentRuntime(
 		applyPrimaryTools(ctx, primary);
 
 		const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
-		const shouldApplyModel = resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyModel");
-		const shouldApplyThinking = resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyThinking");
+		const forceApply = shouldForceApplyForLock(primary);
+		const shouldApplyModel = forceApply || resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyModel");
+		const shouldApplyThinking = forceApply || resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyThinking");
 		const primaryDefaults = selectProviderAwareAgentDefaults(primary, ctx.modelRegistry.getAvailable(), ctx.model?.provider);
 		const currentProviderDefaults = selectProviderAwareAgentDefaults(primary, [], ctx.model?.provider);
 		const activePrimaryModel = shouldApplyModel ? await applyPrimaryModel(ctx, primary, primaryDefaults.model) : undefined;
@@ -592,7 +598,7 @@ function createTlhPrimaryAgentRuntime(
 		});
 	}
 
-	return { applySessionStart, currentPrimaryAgentLabel, registerCommands, registerLifecycleHooks };
+	return { applySessionStart, currentPrimaryAgentLabel, activePrimaryAgentPrompt: activePrimaryAgent, registerCommands, registerLifecycleHooks };
 }
 
 export function registerTlhPrimaryAgentRuntime(

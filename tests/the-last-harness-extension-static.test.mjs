@@ -239,7 +239,7 @@ test("extension runs primary session_start work before UI startup in one handler
 
 	assert.match(sessionStart, /await primaryAgentRuntime\.applySessionStart\(ctx\);[\s\S]*if \(!ctx\.hasUI\)/);
 	assert.match(primaryRuntimeSource, /async function applySessionStart\(ctx: ExtensionContext\): Promise<void>/);
-	assert.match(primaryRuntimeSource, /return \{ applySessionStart, currentPrimaryAgentLabel, registerCommands, registerLifecycleHooks \};/);
+	assert.match(primaryRuntimeSource, /return \{ applySessionStart, currentPrimaryAgentLabel, activePrimaryAgentPrompt: activePrimaryAgent, registerCommands, registerLifecycleHooks \};/);
 	assert.doesNotMatch(lifecycleHooks, /pi\.on\("session_start"/);
 });
 
