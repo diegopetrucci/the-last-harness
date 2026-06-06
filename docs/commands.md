@@ -47,7 +47,7 @@ These commands are registered by the TLH extension bundled with this profile.
 | Command | Description |
 |---------|-------------|
 | `/thinking` | Pick the model thinking level |
-| `/effort` | Supported alias for `/thinking` |
+| `/effort` | Supported alias for `/thinking`; blocked for locked primaries (rush, product, bug-hunter), and architect enforces a medium floor |
 | `/experimental` | List or change TLH experimental features |
 | `/review` | Open an interactive code-review mode picker (requires the architect primary agent) |
 | `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
@@ -56,6 +56,10 @@ These commands are registered by the TLH extension bundled with this profile.
 | `/toggle-tlh-git-attribution` | Toggle the TLH commit attribution footer for agent-created git commits |
 | `/usage` | Show or change TLH subscription usage-limit footer preferences |
 | `/version` | Show the installed TLH version and the upstream Pi runtime version |
+
+### `/effort`
+
+`/effort` is blocked for **locked** primaries: rush, product, and bug-hunter each run at a fixed thinking level and return an error if you try to change it (`Thinking is locked at "<level>" for the <name> primary agent.`). **Architect** has a medium floor: `/effort off`, `/effort minimal`, and `/effort low` are rejected with `architect requires at least medium thinking.` The floor does not apply when the primary is disabled.
 
 ---
 

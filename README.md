@@ -77,6 +77,8 @@ The architect is the default, but it is not the only mode.
 - **product** is for product framing, tradeoffs, strategy, and implementation-ready ticket shaping. It does not implement code.
 - **bug-hunter** is for read-only debugging and root-cause analysis before you decide how to fix something.
 
+**Thinking levels are fixed for some primaries.** Rush, product, and bug-hunter each run at a locked thinking level — `/effort` is blocked while they are active. Architect requires at least medium thinking; `/effort` cannot drop it below that floor.
+
 Use `Shift+Tab` to cycle the current session through `architect` → `rush` → `product` → `bug-hunter` → `disabled`.
 
 When primary agents are disabled, TLH stops applying those primary-agent workflow/persona rules, but the underlying subagent machinery still exists.
