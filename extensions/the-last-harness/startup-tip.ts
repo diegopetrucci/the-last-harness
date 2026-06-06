@@ -4,7 +4,6 @@ export const TLH_STARTUP_TIPS = [
 	"Use /annotate-last-message to mark up the latest assistant reply before your next prompt.",
 	"Run /context to inspect where your context window is going before a long follow-up.",
 	"Use /usage to check TLH usage status or toggle the weekly usage window.",
-	"Use /switch-primary-agent to pick architect, rush, product, bug-hunter, or disabled for this session.",
 	"Press Shift+Tab to cycle TLH primary agents without leaving the keyboard.",
 	"Press Ctrl+Shift+E to show or hide skills, prompts, extensions, and themes in the TLH header.",
 	"Run /fork to branch from an earlier user message and explore an alternate path.",
