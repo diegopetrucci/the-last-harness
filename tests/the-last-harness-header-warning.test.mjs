@@ -37,7 +37,7 @@ test("collapsed header renders the install-track warning above Context and inclu
 	]);
 });
 
-test("collapsed header renders the startup tip as a single dim line above the resource toggle hint", () => {
+test("collapsed header renders the startup tip as the final header line with a lightly highlighted label", () => {
 	const header = createTlhHeader(theme, createResources(), undefined, undefined, {
 		startupTip: "Use /switch-primary-agent to pick architect, rush, product, bug-hunter, or disabled for this session.",
 	});
@@ -46,12 +46,12 @@ test("collapsed header renders the startup tip as a single dim line above the re
 		"<bold><accent>tlh</accent></bold>",
 		"",
 		"<dim>Context: AGENTS.md</dim>",
-		"<dim>Tip: Use /switch-primary-agent to pick architect, rush, product, bug-hunter, or disabled for this session.</dim>",
 		"<dim>Ctrl+Shift+E to show skills, prompts, extensions, themes</dim>",
+		"<muted>Tip</muted><dim>: Use /switch-primary-agent to pick architect, rush, product, bug-hunter, or disabled for this session.</dim>",
 	]);
 });
 
-test("expanded header keeps the install-track warning above Context before resource sections", () => {
+test("expanded header keeps the install-track warning above Context, then resource sections, then the startup tip", () => {
 	const header = createTlhHeader(theme, createResources(), undefined, {
 		kind: "custom-package-source",
 		summary: "TLH uses a custom package source.",
@@ -66,7 +66,6 @@ test("expanded header keeps the install-track warning above Context before resou
 		"",
 		"<warning>Warning</warning><dim>: running TLH from local track</dim>",
 		"<dim>Context: AGENTS.md</dim>",
-		"<dim>Tip: Use /usage to check TLH usage status or toggle the weekly usage window.</dim>",
 		"",
 		"<mdHeading>[Skills]</mdHeading>",
 		"<dim>  tlh-dev-hygiene</dim>",
@@ -79,5 +78,7 @@ test("expanded header keeps the install-track warning above Context before resou
 		"",
 		"<mdHeading>[Themes]</mdHeading>",
 		"<dim>  the-last-harness</dim>",
+		"",
+		"<muted>Tip</muted><dim>: Use /usage to check TLH usage status or toggle the weekly usage window.</dim>",
 	]);
 });

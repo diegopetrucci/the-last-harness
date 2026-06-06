@@ -15,6 +15,7 @@ export function createTlhHeader(
 	const color = {
 		heading: (text: string) => theme.fg("mdHeading", text),
 		dim: (text: string) => theme.fg("dim", text),
+		muted: (text: string) => theme.fg("muted", text),
 		accent: (text: string) => theme.fg("accent", text),
 		warning: (text: string) => theme.fg("warning", text),
 	};
@@ -78,7 +79,7 @@ export function createTlhHeader(
 		if (!options.startupTip) {
 			return [];
 		}
-		return [truncateToWidth(color.dim(`Tip: ${options.startupTip}`), width, color.dim("..."))];
+		return [truncateToWidth(`${color.muted("Tip")}${color.dim(`: ${options.startupTip}`)}`, width, color.dim("..."))];
 	};
 
 	const collapsedHintLine = (width: number): string => truncateToWidth(
@@ -90,11 +91,10 @@ export function createTlhHeader(
 	const headerDetails = (width: number): string[] => [
 		...installWarningLine(width),
 		...contextLine(resources.context, width),
-		...startupTipLine(width),
 	];
 
 	const renderCollapsed = (width: number) => {
-		const lines = [logo, "", ...headerDetails(width), collapsedHintLine(width)];
+		const lines = [logo, "", ...headerDetails(width), collapsedHintLine(width), ...startupTipLine(width)];
 		return lines;
 	};
 
@@ -113,6 +113,11 @@ export function createTlhHeader(
 
 		for (const resourceSection of resourceSections) {
 			lines.push("", ...resourceSection);
+		}
+
+		const startupTip = startupTipLine(width);
+		if (startupTip.length > 0) {
+			lines.push("", ...startupTip);
 		}
 		return lines;
 	};
