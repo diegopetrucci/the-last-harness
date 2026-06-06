@@ -31,6 +31,7 @@ test("TLH startup tips cover key TLH affordances with concise user-facing phrasi
 	assert.ok(TLH_STARTUP_TIPS.some((tip) => tip.includes("/switch-primary-agent")), "expected a primary-agent switching startup tip");
 	assert.ok(TLH_STARTUP_TIPS.some((tip) => tip.includes("Shift+Tab")), "expected a primary-agent cycling startup tip");
 	assert.ok(TLH_STARTUP_TIPS.some((tip) => tip.includes("Ctrl+Shift+E")), "expected a TLH header toggle startup tip");
+	assert.ok(TLH_STARTUP_TIPS.some((tip) => tip.includes("/fork")), "expected a /fork startup tip");
 	assert.ok(TLH_STARTUP_TIPS.some((tip) => tip.includes("/tree")), "expected a /tree startup tip");
 	assert.ok(TLH_STARTUP_TIPS.some((tip) => tip.includes("/name")), "expected a /name startup tip");
 	assert.ok(TLH_STARTUP_TIPS.some((tip) => tip.includes("/reload")), "expected a /reload startup tip");

@@ -7,6 +7,7 @@ export const TLH_STARTUP_TIPS = [
 	"Use /switch-primary-agent to pick architect, rush, product, bug-hunter, or disabled for this session.",
 	"Press Shift+Tab to cycle TLH primary agents without leaving the keyboard.",
 	"Press Ctrl+Shift+E to show or hide skills, prompts, extensions, and themes in the TLH header.",
+	"Run /fork to branch from an earlier user message and explore an alternate path.",
 	"Run /tree to navigate the session tree and jump between branches.",
 	"Use /name to give the current session a label you can spot later.",
 	"Use /reload to pick up new keybindings, extensions, skills, prompts, and themes.",

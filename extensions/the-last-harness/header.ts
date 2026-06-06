@@ -1,4 +1,4 @@
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { TLH_HEADER_TOGGLE_SHORTCUT_LABEL, TLH_NAME } from "./constants.js";
 import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
@@ -79,7 +79,23 @@ export function createTlhHeader(
 		if (!options.startupTip) {
 			return [];
 		}
-		return [truncateToWidth(`${color.muted("Tip")}${color.dim(`: ${options.startupTip}`)}`, width, color.dim("..."))];
+		if (width <= 0) {
+			return [""];
+		}
+
+		const label = "Tip";
+		const separator = ": ";
+		const prefixWidth = visibleWidth(`${label}${separator}`);
+		const fullTip = `${color.muted(label)}${color.dim(`${separator}${options.startupTip}`)}`;
+		if (width <= prefixWidth) {
+			return wrapTextWithAnsi(fullTip, width);
+		}
+
+		const bodyWidth = width - prefixWidth;
+		const continuationIndent = " ".repeat(prefixWidth);
+		return wrapTextWithAnsi(options.startupTip, bodyWidth).map((line, index) => index === 0
+			? `${color.muted(label)}${color.dim(`${separator}${line}`)}`
+			: color.dim(`${continuationIndent}${line}`));
 	};
 
 	const collapsedHintLine = (width: number): string => truncateToWidth(
