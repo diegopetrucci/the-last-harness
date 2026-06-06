@@ -5,7 +5,6 @@ export const TLH_STARTUP_TIPS = [
 	"Run /context to inspect where your context window is going before a long follow-up.",
 	"Use /usage to check TLH usage status or toggle the weekly usage window.",
 	"Press Shift+Tab to cycle TLH primary agents without leaving the keyboard.",
-	"Press Ctrl+Shift+E to show or hide skills, prompts, extensions, and themes in the TLH header.",
 	"Run /fork to branch from an earlier user message and explore an alternate path.",
 	"Run /tree to rewind to previous messages.",
 	"Use /name to give the current session a label you can spot later.",
