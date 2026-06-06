@@ -29,7 +29,7 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v
 curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --ref main --track ref
 ```
 
-These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH shows a header warning only for those installs. It appears above `Context:` and reads `Warning: running TLH from {name} track` (for example `Warning: running TLH from v0.6.0 track`, `Warning: running TLH from main track`, `Warning: running TLH from local track`, or `Warning: running TLH from unknown track`). Official latest-release installs stay silent.
+These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH shows a header warning only for those installs. It appears above `Context:` and reads `Warning: running TLH from {name} track` (for example `Warning: running TLH from v0.6.0 track`, `Warning: running TLH from main track`, `Warning: running TLH from local track`, or `Warning: running TLH from unknown track`). Official latest-release installs skip that warning, though interactive starts may still show a quiet startup tip.
 
 ## Installer options
 
