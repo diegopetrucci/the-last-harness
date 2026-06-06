@@ -11,6 +11,9 @@ const PI_EXTENSION_FILE_ENTRYPOINT_EXTENSIONS = new Set([".ts", ".js"]);
 const PI_EXTENSION_DIRECTORY_ENTRYPOINT_FILES = ["package.json", "index.ts", "index.js"];
 
 const extensionSource = readFileSync(new URL("../extensions/the-last-harness.ts", import.meta.url), "utf8");
+const annotateGitDiffSource = readFileSync(new URL("../extensions/annotate-git-diff/index.ts", import.meta.url), "utf8");
+const annotateGitDiffAppSource = readFileSync(new URL("../extensions/annotate-git-diff/web/app.js", import.meta.url), "utf8");
+const annotateGitDiffHtmlSource = readFileSync(new URL("../extensions/annotate-git-diff/web/index.html", import.meta.url), "utf8");
 const attributionSource = readFileSync(new URL("../extensions/the-last-harness/attribution.ts", import.meta.url), "utf8");
 const changelogSource = readFileSync(new URL("../extensions/the-last-harness/changelog.ts", import.meta.url), "utf8");
 const primaryRuntimeSource = readFileSync(new URL("../extensions/the-last-harness/primary-agent-runtime.ts", import.meta.url), "utf8");
@@ -65,8 +68,21 @@ function existingNestedExtensionEntrypoints(directoryName) {
 test("package extension discovery exposes the TLH entrypoints", () => {
 	assert.deepEqual(packageJson.pi?.extensions, ["./extensions"]);
 	assert.deepEqual(existingNestedExtensionEntrypoints("the-last-harness"), []);
-	assert.deepEqual(existingNestedExtensionEntrypoints("diff-review"), ["diff-review/index.ts"]);
-	assert.deepEqual(discoverPiExtensionEntrypoints(extensionsDir), ["diff-review/index.ts", "the-last-harness.ts"]);
+	assert.deepEqual(existingNestedExtensionEntrypoints("annotate-git-diff"), ["annotate-git-diff/index.ts"]);
+	assert.deepEqual(discoverPiExtensionEntrypoints(extensionsDir), ["annotate-git-diff/index.ts", "the-last-harness.ts"]);
+});
+
+test("annotate-git-diff source registers the renamed command without a legacy alias", () => {
+	assert.match(annotateGitDiffSource, /pi\.registerCommand\("annotate-git-diff"/);
+	assert.doesNotMatch(annotateGitDiffSource, /pi\.registerCommand\("diff-review"/);
+});
+
+test("annotate-git-diff user-facing source copy uses the renamed command", () => {
+	assert.match(annotateGitDiffSource, /title: "TLH annotate-git-diff"/);
+	assert.doesNotMatch(annotateGitDiffAppSource, /\/diff-review/);
+	assert.doesNotMatch(annotateGitDiffHtmlSource, /\/diff-review/);
+	assert.match(annotateGitDiffHtmlSource, /<title>TLH annotate-git-diff<\/title>/);
+	assert.match(annotateGitDiffHtmlSource, /<code>\/annotate-git-diff<\/code>/);
 });
 
 test("before_agent_start reapplies primary defaults without a one-shot model gate", () => {

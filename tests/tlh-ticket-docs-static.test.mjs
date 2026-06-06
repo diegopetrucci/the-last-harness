@@ -19,6 +19,13 @@ const userFacingDocs = [
 	"docs/releasing.md",
 ];
 
+const annotateGitDiffDocs = [
+	"README.md",
+	"docs/commands.md",
+	"extensions/annotate-git-diff/README.md",
+	"CHANGELOG.md",
+];
+
 const legacyTicketGuidancePatterns = [
 	/--with-tickets/,
 	/--without-tickets/,
@@ -99,4 +106,16 @@ test("user-facing docs and installer help do not advertise legacy ticket opt-out
 			assert.doesNotMatch(source, pattern, `${path} still matches ${pattern}`);
 		}
 	}
+});
+
+test("annotate-git-diff docs use the renamed command and extension names", () => {
+	for (const path of annotateGitDiffDocs) {
+		const source = readRepoFile(path);
+		assert.match(source, /annotate-git-diff/, `${path} should mention annotate-git-diff`);
+		assert.doesNotMatch(source, /\/diff-review/, `${path} still mentions /diff-review`);
+	}
+
+	const commandsDoc = readRepoFile("docs/commands.md");
+	assert.doesNotMatch(commandsDoc, /extensions\/diff-review\/README\.md/);
+	assert.match(commandsDoc, /`annotate-git-diff`/);
 });
