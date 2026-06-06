@@ -205,6 +205,13 @@ function removeDuplicatePackagesByIdentity(settings, identity) {
 	return removedSources;
 }
 
+function applyHarnessPackageDedupes(settings, ensuredSource, changes) {
+	if (!Array.isArray(settings.packages)) return;
+	for (const removedSource of removeDuplicatePackagesByIdentity(settings, HARNESS_PACKAGE_IDENTITY)) {
+		changes.push(`remove duplicate harness package: ${removedSource} (same identity as ${ensuredSource})`);
+	}
+}
+
 function applyReplacedDefaultExtensions(settings, defaultExtensions, disabledIds, changes, { force }) {
 	if (!Array.isArray(settings.packages)) return;
 
@@ -320,15 +327,23 @@ function applyDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds
 	);
 }
 
-// Source of the retired upstream context-cap extension. Hardcoded because it
-// is no longer in the manifest and cannot be read dynamically.
-const RETIRED_CONTEXT_CAP_SOURCE = "npm:@diegopetrucci/pi-context-cap";
-const RETIRED_CONTEXT_CAP_IDENTITY = packageIdentity(RETIRED_CONTEXT_CAP_SOURCE);
+// Sources of retired default extensions that TLH now removes unconditionally
+// from isolated settings because they should no longer stay installed after
+// install/update reruns.
+const FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES = Object.freeze([
+	"npm:@diegopetrucci/pi-context-cap",
+	"npm:@diegopetrucci/pi-permission-gate",
+	"npm:@diegopetrucci/pi-confirm-destructive",
+]);
 
-function purgeRetiredContextCapPackage(settings, changes) {
-	if (!RETIRED_CONTEXT_CAP_IDENTITY || !Array.isArray(settings.packages)) return;
-	while (removePackageByIdentity(settings, RETIRED_CONTEXT_CAP_IDENTITY)) {
-		changes.push(`force-remove retired default extension package: ${RETIRED_CONTEXT_CAP_SOURCE}`);
+function purgeForceRemovedRetiredDefaultExtensionPackages(settings, changes) {
+	if (!Array.isArray(settings.packages)) return;
+	for (const source of FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES) {
+		const identity = packageIdentity(source);
+		if (!identity) continue;
+		while (removePackageByIdentity(settings, identity)) {
+			changes.push(`force-remove retired default extension package: ${source}`);
+		}
 	}
 }
 
@@ -559,8 +574,10 @@ function main() {
 	const rawDefaults = readJsonFile(defaultsPath);
 	const defaultExtensions = readDefaultExtensions(defaultExtensionsPath, { allowMissing: true });
 	const disabledIds = disabledDefaultExtensionIds(existing, defaultExtensions);
+	const ensuredHarnessSource = args.packageSource || DEFAULT_PACKAGE_SOURCE;
 	const defaults = prepareDefaults(rawDefaults, args.packageSource, defaultExtensions, disabledIds, existing, { force: args.force });
 	const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
+	applyHarnessPackageDedupes(next, ensuredHarnessSource, changes);
 	const sourceUpdatedIdentities = applyDefaultExtensionSourceUpdates(next, defaultExtensions, disabledIds, changes, { force: args.force });
 	applyReplacedDefaultExtensions(next, defaultExtensions, disabledIds, changes, { force: args.force });
 	applyDefaultExtensionPackageDedupes(next, defaultExtensions, disabledIds, changes, { force: args.force, sourceUpdatedIdentities });
@@ -573,7 +590,7 @@ function main() {
 	applyDefaultExtensionLoadOrder(next, defaultExtensions, disabledIds, changes);
 	removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
 	scrubGnosisSettings(next, changes);
-	purgeRetiredContextCapPackage(next, changes);
+	purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
 	pruneContextCapDisabledDefaultExtension(next, changes);
 	syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
 

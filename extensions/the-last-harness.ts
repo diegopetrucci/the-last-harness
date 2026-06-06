@@ -7,6 +7,7 @@ import { createTlhAutocompleteProvider } from "./the-last-harness/autocomplete.j
 import { registerContextCap } from "./the-last-harness/context-cap.js";
 import { registerTlhChangelogCommand } from "./the-last-harness/changelog.js";
 import { registerEffortCommand } from "./the-last-harness/effort.js";
+import { registerExperimentalCommand } from "./the-last-harness/experimental.js";
 import { registerReviewCommand } from "./the-last-harness/review.js";
 import { createTlhFooter } from "./the-last-harness/footer.js";
 import { FooterGitCache } from "./the-last-harness/footer-git-cache.js";
@@ -34,6 +35,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	registerToggleTlhGitAttributionCommand(pi);
 	registerAnnotateLastMessageCommand(pi);
 	registerEffortCommand(pi);
+	registerExperimentalCommand(pi);
 	registerReviewCommand(pi);
 	registerTlhChangelogCommand(pi);
 	registerUsageCommand(pi);
