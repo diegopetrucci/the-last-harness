@@ -8,7 +8,6 @@ export const TLH_STARTUP_TIPS = [
 	"Run /fork to branch from an earlier user message and explore an alternate path.",
 	"Run /tree to rewind to previous messages.",
 	"Use /name to give the current session a label you can spot later.",
-	"Use /reload to pick up new keybindings, extensions, skills, prompts, and themes.",
 	"Prefix a shell command with ! to send its output into the chat, or !! to run it without adding the output to the model context.",
 	"Run /tlh-changelog to review what’s new in this TLH build.",
 	"At any point, you can ask the oracle for a second opinion.",
