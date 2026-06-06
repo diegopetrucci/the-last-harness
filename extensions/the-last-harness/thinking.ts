@@ -33,3 +33,7 @@ export function formatThinkingLevelOption(level: ThinkingLevel, currentLevel: Th
 export function parseThinkingLevelOption(option: string): ThinkingLevel | undefined {
 	return THINKING_LEVELS.find((level) => option.includes(` ${level} —`));
 }
+
+export function thinkingLevelAtLeast(level: ThinkingLevel, floor: ThinkingLevel): boolean {
+	return THINKING_LEVELS.indexOf(level) >= THINKING_LEVELS.indexOf(floor);
+}
