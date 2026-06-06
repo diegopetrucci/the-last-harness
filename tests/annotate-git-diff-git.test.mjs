@@ -8,12 +8,12 @@ import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
 const { __testing, getCommitFiles, getReviewWindowData, loadReviewFileContents } = await jiti.import(
-	"../extensions/diff-review/git.ts",
+	"../extensions/annotate-git-diff/git.ts",
 );
 const { parseStatusPorcelainZ, shouldNormalizeBranchChanges } = __testing;
 
 function tempFixture(t) {
-	const dir = mkdtempSync(join(tmpdir(), "tlh-diff-review-git-"));
+	const dir = mkdtempSync(join(tmpdir(), "tlh-annotate-git-diff-git-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
 	return dir;
 }
@@ -167,7 +167,7 @@ test("getCommitFiles returns an empty list for an invalid commit sha", async (t)
 });
 
 test("loadReviewFileContents returns empty contents when commit or branch context is missing", async () => {
-	const repoRoot = mkdtempSync(join(tmpdir(), "tlh-diff-review-contents-"));
+	const repoRoot = mkdtempSync(join(tmpdir(), "tlh-annotate-git-diff-contents-"));
 	try {
 		const file = {
 			id: "file-1",

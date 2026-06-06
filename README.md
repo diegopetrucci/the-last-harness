@@ -100,7 +100,7 @@ TLH also aims to make the day-to-day session experience calmer and safer:
 - isolated profile installation so your normal Pi setup stays separate,
 - quieter UI defaults so tools and bash output do not constantly fight for attention,
 - a lightweight first-party `/annotate-last-message` command that opens a native annotation window for the latest assistant reply and turns submitted notes into agent feedback,
-- a first-party `/diff-review` command that opens a native review window and pastes submitted feedback back into the editor as a prompt,
+- a first-party `/annotate-git-diff` command that opens a native review window and pastes submitted feedback back into the editor as a prompt,
 - bundled web-search support for research-heavy work,
 - bundled MCP adapter support,
 - subscription usage footer controls,
