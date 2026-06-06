@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-06-06
+
 ### Changed
 
 - Bundled `pi-subagents` now pins `git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-5`.
