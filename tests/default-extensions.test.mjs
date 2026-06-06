@@ -56,6 +56,13 @@ test("shared package identity keeps npm, git, and local source semantics", () =>
 	assert.equal(packageIdentity("https://github.com/TLH/helper.git#pin"), "git:github.com/tlh/helper");
 	assert.equal(packageIdentity("git@github.com:TLH/helper.git"), "git:github.com/tlh/helper");
 	assert.equal(packageIdentity("../local-helper@pin"), "local:../local-helper@pin");
+
+	const harnessIdentity = packageIdentity("git:github.com/diegopetrucci/the-last-harness");
+	assert.equal(packageIdentity("git:github.com/diegopetrucci/the-last-harness@tlh-v0.16.0"), harnessIdentity);
+	assert.equal(
+		packageIdentity("git:github.com/diegopetrucci/the-last-harness@feature/curated-startup-tips"),
+		harnessIdentity,
+	);
 });
 
 test("shared default-extension reader trims descriptions and can allow missing manifests", () => {
@@ -133,6 +140,7 @@ test("installed tlh-defaults helper can resolve its copied default-extension lib
 	const supportDir = join(fixture.dir, "agent", "tlh");
 	const copiedVariables = new Set([
 		"TLH_DEFAULTS_SCRIPT",
+		"TLH_INSTALL_PACKAGE_SOURCE_LIB",
 		"TLH_INSTALL_PATHS_LIB",
 		"TLH_INSTALL_UTILS_LIB",
 		"DEFAULT_EXTENSIONS_LIB",

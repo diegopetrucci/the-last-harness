@@ -9,6 +9,7 @@ const repoRoot = resolve(import.meta.dirname, "..");
 const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
 const settingsDefaultsPath = join(repoRoot, "config", "settings.defaults.json");
 const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
+const branchHarnessPackage = "git:github.com/diegopetrucci/the-last-harness@feature/curated-startup-tips";
 const retiredPlannotatorPackage = "npm:@plannotator/pi-extension";
 const retiredPermissionGatePackage = "npm:@diegopetrucci/pi-permission-gate";
 const retiredConfirmDestructivePackage = "npm:@diegopetrucci/pi-confirm-destructive";
@@ -25,13 +26,14 @@ function tempFixture(defaultsValue, settingsValue, extensionsValue = []) {
 	return { defaults, extensions, settings };
 }
 
-function runMerge(fixture, { dryRun = false, force = false, quiet = true } = {}) {
+function runMerge(fixture, { dryRun = false, force = false, quiet = true, packageSource = "" } = {}) {
 	const args = [
 		mergeScript,
 		fixture.defaults,
 		"--settings", fixture.settings,
 		"--default-extensions", fixture.extensions,
 	];
+	if (packageSource) args.push("--package-source", packageSource);
 	if (dryRun) args.push("--dry-run");
 	if (force) args.push("--force");
 	if (quiet) args.push("--quiet");
@@ -398,6 +400,62 @@ test("critical source updates dedupe stale same-identity filtered packages", () 
 	]);
 });
 
+test("merge replaces the harness package when a slash ref keeps the same git identity", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [harnessPackage],
+		},
+	);
+
+	runMerge(fixture, { packageSource: branchHarnessPackage });
+
+	assert.deepEqual(readJson(fixture.settings).packages, [branchHarnessPackage]);
+});
+
+test("merge dedupes duplicate harness entries when rerun with a branch package source", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				branchHarnessPackage,
+				harnessPackage,
+				"npm:unrelated-package@1.0.0",
+				"npm:unrelated-package",
+			],
+		},
+	);
+
+	runMerge(fixture, { packageSource: branchHarnessPackage });
+
+	assert.deepEqual(readJson(fixture.settings).packages, [
+		branchHarnessPackage,
+		"npm:unrelated-package@1.0.0",
+		"npm:unrelated-package",
+	]);
+});
+
+test("merge dedupes duplicate harness entries when rerun from main", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				branchHarnessPackage,
+				harnessPackage,
+				"npm:unrelated-package@1.0.0",
+				"npm:unrelated-package",
+			],
+		},
+	);
+
+	runMerge(fixture);
+
+	assert.deepEqual(readJson(fixture.settings).packages, [
+		harnessPackage,
+		"npm:unrelated-package@1.0.0",
+		"npm:unrelated-package",
+	]);
+});
 
 test("merge defers bundled pi-web-access when an upstream package is already installed", () => {
 	const fixture = tempFixture(
