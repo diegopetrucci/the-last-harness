@@ -501,7 +501,7 @@ async function getWorkingTreeSnapshotChanges(
 ): Promise<ChangedPath[]> {
 	const scriptLines = [
 		"set -euo pipefail",
-		'tmp_index=$(mktemp "/tmp/tlh-diff-review-index.XXXXXX")',
+		'tmp_index=$(mktemp "/tmp/tlh-annotate-git-diff-index.XXXXXX")',
 		"trap 'rm -f \"$tmp_index\"' EXIT",
 		'export GIT_INDEX_FILE="$tmp_index"',
 	];

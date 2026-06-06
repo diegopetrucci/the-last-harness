@@ -1,4 +1,4 @@
-// TLH first-party /diff-review extension.
+// TLH first-party /annotate-git-diff extension.
 // Adapted from @ryan_nookpi/pi-extension-diff-review (MIT), itself inspired by
 // badlogic/pi-diff-review. See ./README.md for attribution details.
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -107,7 +107,7 @@ export default function (pi: ExtensionAPI) {
 			const window = await openQuietGlimpse(html, {
 				width: 1680,
 				height: 1020,
-				title: "TLH diff review",
+				title: "TLH annotate-git-diff",
 			});
 			activeWindow = window;
 
@@ -391,7 +391,7 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	pi.registerCommand("diff-review", {
+	pi.registerCommand("annotate-git-diff", {
 		description: "Open a native review window with branch, per-commit, and all-files scopes",
 		handler: async (_args, ctx) => {
 			await reviewRepository(ctx);

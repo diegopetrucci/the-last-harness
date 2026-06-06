@@ -1,6 +1,6 @@
-# TLH diff review
+# TLH annotate-git-diff
 
-First-party `/diff-review` extension for The Last Harness.
+First-party `annotate-git-diff` extension and `/annotate-git-diff` command for The Last Harness.
 
 ## Attribution
 
@@ -8,7 +8,7 @@ This extension adapts the MIT-licensed `@ryan_nookpi/pi-extension-diff-review` i
 
 ## Requirements
 
-- Run `/diff-review` inside a git repository.
+- Run `/annotate-git-diff` inside a git repository.
 - The UI opens in a native [Glimpse](https://github.com/mariozechner/glimpse) window, so TLH needs a local desktop session that can display native windows.
 - Monaco and Tailwind assets are packaged locally with TLH. The review UI does not depend on CDN-hosted JavaScript or general internet access to render.
 - The command stays inside TLH's isolated profile and does not read or write normal Pi config under `~/.pi/agent`.
@@ -25,8 +25,8 @@ Submitting feedback does not auto-apply code changes. TLH appends a structured r
 
 ## Troubleshooting and recovery
 
-- `Review failed: Not inside a git repository.` → change into a git repo and rerun `/diff-review`.
-- `No reviewable files found.` → make or fetch reviewable changes, then rerun.
+- `Review failed: Not inside a git repository.` → change into a git repo and rerun `/annotate-git-diff`.
+- `No reviewable files found.` → make or fetch reviewable changes, then rerun `/annotate-git-diff`.
 - `Review failed: Glimpse host not found ...` → the local native window runtime is unavailable. Run `tlh update` (or reinstall TLH) to restore the packaged dependency, then rerun from a machine/session that can open native windows.
-- If the review window reports missing packaged assets, close it, run `tlh update`, and rerun `/diff-review`.
-- There is no separate `tlh defaults` toggle for `/diff-review` because it ships inside the TLH package itself.
+- If the review window reports missing packaged assets, close it, run `tlh update`, and rerun `/annotate-git-diff`.
+- There is no separate `tlh defaults` toggle for `/annotate-git-diff` because it ships inside the TLH package itself.

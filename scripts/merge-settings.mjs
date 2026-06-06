@@ -205,6 +205,13 @@ function removeDuplicatePackagesByIdentity(settings, identity) {
 	return removedSources;
 }
 
+function applyHarnessPackageDedupes(settings, ensuredSource, changes) {
+	if (!Array.isArray(settings.packages)) return;
+	for (const removedSource of removeDuplicatePackagesByIdentity(settings, HARNESS_PACKAGE_IDENTITY)) {
+		changes.push(`remove duplicate harness package: ${removedSource} (same identity as ${ensuredSource})`);
+	}
+}
+
 function applyReplacedDefaultExtensions(settings, defaultExtensions, disabledIds, changes, { force }) {
 	if (!Array.isArray(settings.packages)) return;
 
@@ -567,8 +574,10 @@ function main() {
 	const rawDefaults = readJsonFile(defaultsPath);
 	const defaultExtensions = readDefaultExtensions(defaultExtensionsPath, { allowMissing: true });
 	const disabledIds = disabledDefaultExtensionIds(existing, defaultExtensions);
+	const ensuredHarnessSource = args.packageSource || DEFAULT_PACKAGE_SOURCE;
 	const defaults = prepareDefaults(rawDefaults, args.packageSource, defaultExtensions, disabledIds, existing, { force: args.force });
 	const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
+	applyHarnessPackageDedupes(next, ensuredHarnessSource, changes);
 	const sourceUpdatedIdentities = applyDefaultExtensionSourceUpdates(next, defaultExtensions, disabledIds, changes, { force: args.force });
 	applyReplacedDefaultExtensions(next, defaultExtensions, disabledIds, changes, { force: args.force });
 	applyDefaultExtensionPackageDedupes(next, defaultExtensions, disabledIds, changes, { force: args.force, sourceUpdatedIdentities });

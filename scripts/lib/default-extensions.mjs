@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 
+import { parseGitSource } from "./tlh-install-package-source.mjs";
+
 function isPlainObject(value) {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -48,6 +50,9 @@ function npmIdentity(spec) {
 }
 
 function gitIdentity(source) {
+	const parsed = parseGitSource(source);
+	if (parsed) return `git:${parsed.host.toLowerCase()}/${parsed.path.toLowerCase()}`;
+
 	let value = source.trim();
 	if (value.startsWith("git:")) value = value.slice("git:".length).trim();
 	value = value.replace(/^https?:\/\//i, "");
@@ -58,9 +63,8 @@ function gitIdentity(source) {
 	value = value.replace(/\.git$/, "");
 	value = value.replace(/\.git(?=@)/, "");
 
-	const lastSlash = value.lastIndexOf("/");
-	const refAt = lastSlash === -1 ? -1 : value.indexOf("@", lastSlash + 1);
-	if (refAt !== -1) value = value.slice(0, refAt);
+	const firstAt = value.indexOf("@");
+	if (firstAt !== -1) value = value.slice(0, firstAt);
 
 	return `git:${value.toLowerCase()}`;
 }
