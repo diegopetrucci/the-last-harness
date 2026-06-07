@@ -2,7 +2,6 @@ import { SettingsManager, getAgentDir, type ExtensionContext } from "@earendil-w
 import {
 	TLH_LATEST_RELEASE_API_URL,
 	TLH_NAME,
-	TLH_PACKAGE_NAME,
 	TLH_RELEASES_URL,
 	TLH_UPDATE_CHECK_INTERVAL_MS,
 	TLH_UPDATE_CHECK_TIMEOUT_MS,
@@ -93,15 +92,15 @@ async function fetchLatestTlhRelease(currentVersion: string): Promise<TlhLatestR
 	return { version, tagName, releaseUrl };
 }
 
-function notifyTlhUpdate(ctx: ExtensionContext, currentVersion: string, latestRelease: TlhLatestRelease): void {
-	const currentLabel = `v${normalizeTlhVersion(currentVersion)}`;
+function notifyTlhUpdate(ctx: ExtensionContext, _currentVersion: string, latestRelease: TlhLatestRelease): void {
 	const latestLabel = latestRelease.tagName.startsWith("v") ? latestRelease.tagName : `v${latestRelease.version}`;
 	const installTrack = readTlhInstallState().track;
 	const updateCommand = installTrack === "pinned-tag" ? "tlh update --track latest-release" : "tlh update";
-	ctx.ui.notify(
-		`${TLH_PACKAGE_NAME} update available: ${latestLabel} installed: ${currentLabel}. Release notes: ${latestRelease.releaseUrl}. Update: ${updateCommand}`,
-		"warning",
-	);
+	const line1 = `The Last Harness update available. Run \`${updateCommand}\` to get on version ${latestLabel}.`;
+	const message = installTrack === "latest-release"
+		? `${line1}\nRelease notes: ${latestRelease.releaseUrl}`
+		: line1;
+	ctx.ui.notify(message, "warning");
 }
 
 function maybeNotifyCachedTlhUpdate(ctx: ExtensionContext, currentVersion: string, state: TlhStartupState): boolean {
