@@ -4,7 +4,7 @@ description: Clarifies requirements, manages implementation tasks, and orchestra
 model: anthropic/claude-opus-4-7
 tlhOpenaiModels: openai-codex/gpt-5.5, openai/gpt-5.5
 thinking: high
-tools: read, write, edit, grep, find, ls, bash, subagent, intercom
+tools: read, write, edit, grep, find, ls, bash, subagent, intercom, mcp
 systemPromptMode: append
 inheritProjectContext: true
 inheritSkills: false
