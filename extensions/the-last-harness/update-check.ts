@@ -15,6 +15,7 @@ import {
 } from "./profile-state.js";
 import type {
 	TlhHeaderUpdate,
+	TlhInstallState,
 	TlhLatestRelease,
 	TlhSettings,
 	TlhStartupState,
@@ -92,15 +93,40 @@ async function fetchLatestTlhRelease(currentVersion: string): Promise<TlhLatestR
 	return { version, tagName, releaseUrl };
 }
 
-function notifyTlhUpdate(ctx: ExtensionContext, _currentVersion: string, latestRelease: TlhLatestRelease): void {
+function normalizeInstallStateValue(value: unknown): string | undefined {
+	if (typeof value !== "string") {
+		return undefined;
+	}
+	const normalized = value.trim();
+	return normalized ? normalized : undefined;
+}
+
+export function buildTlhUpdateNotificationMessage(
+	latestRelease: TlhLatestRelease,
+	installState: TlhInstallState = readTlhInstallState(),
+): string {
 	const latestLabel = latestRelease.tagName.startsWith("v") ? latestRelease.tagName : `v${latestRelease.version}`;
-	const installTrack = readTlhInstallState().track;
-	const updateCommand = installTrack === "pinned-tag" ? "tlh update --track latest-release" : "tlh update";
-	const line1 = `The Last Harness update available. Run \`${updateCommand}\` to get on version ${latestLabel}.`;
-	const message = installTrack === "latest-release"
-		? `${line1}\nRelease notes: ${latestRelease.releaseUrl}`
-		: line1;
-	ctx.ui.notify(message, "warning");
+	const installTrack = normalizeInstallStateValue(installState.track);
+
+	if (installTrack === "latest-release") {
+		return `The Last Harness update available. Run \`tlh update\` to get on version ${latestLabel}.\nRelease notes: ${latestRelease.releaseUrl}`;
+	}
+	if (installTrack === "pinned-tag") {
+		return `The Last Harness update available. Run \`tlh update --track latest-release\` to get on version ${latestLabel}.`;
+	}
+	if (installTrack === "ref") {
+		const refLabel = normalizeInstallStateValue(installState.ref);
+		const currentInstall = refLabel ? `your \`${refLabel}\` install` : "your current ref install";
+		return `The Last Harness update available. Run \`tlh update\` to update ${currentInstall}, or \`tlh update --track latest-release\` to switch to version ${latestLabel}.`;
+	}
+	if (installTrack === "custom") {
+		return `The Last Harness update available. This install uses a custom update track, so plain \`tlh update\` is not enough to move to version ${latestLabel}. Re-run the appropriate installer command manually, or run \`tlh update\` with explicit update-target overrides such as \`--track\`, \`--ref\`, and \`--package-source\`.`;
+	}
+	return `The Last Harness update available. Run \`tlh update\` to get on version ${latestLabel}.`;
+}
+
+function notifyTlhUpdate(ctx: ExtensionContext, _currentVersion: string, latestRelease: TlhLatestRelease): void {
+	ctx.ui.notify(buildTlhUpdateNotificationMessage(latestRelease), "warning");
 }
 
 function maybeNotifyCachedTlhUpdate(ctx: ExtensionContext, currentVersion: string, state: TlhStartupState): boolean {
