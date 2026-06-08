@@ -23,6 +23,7 @@ import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME
 import { buildPrimaryExperimentalPrompt } from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import { applyProviderAwareSubagentModels, selectProviderAwareAgentDefaults } from "./model-defaults.js";
+import { isThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
 import {
 	buildChildSubagentSystemPrompt,
 	buildTlhSystemPrompt,
@@ -377,8 +378,19 @@ function createTlhPrimaryAgentRuntime(
 		return model;
 	}
 
-	function applyPrimaryThinking(thinking: AgentPrompt["thinking"]): void {
-		if (!thinking || pi.getThinkingLevel() === thinking) {
+	function currentThinkingSatisfiesPrimaryFloor(primary: AgentPrompt, currentThinking: string): boolean {
+		return primary.lockThinking !== true
+			&& primary.minThinking !== undefined
+			&& isThinkingLevel(currentThinking)
+			&& thinkingLevelAtLeast(currentThinking, primary.minThinking);
+	}
+
+	function applyPrimaryThinking(primary: AgentPrompt, thinking: AgentPrompt["thinking"]): void {
+		if (!thinking) {
+			return;
+		}
+		const currentThinking = pi.getThinkingLevel();
+		if (currentThinking === thinking || currentThinkingSatisfiesPrimaryFloor(primary, currentThinking)) {
 			return;
 		}
 		pi.setThinkingLevel(thinking);
@@ -407,7 +419,7 @@ function createTlhPrimaryAgentRuntime(
 		const currentProviderDefaults = selectProviderAwareAgentDefaults(primary, [], ctx.model?.provider);
 		const activePrimaryModel = shouldApplyModel ? await applyPrimaryModel(ctx, primary, primaryDefaults.model) : undefined;
 		if (shouldApplyThinking) {
-			applyPrimaryThinking(activePrimaryModel ? primaryDefaults.thinking : currentProviderDefaults.thinking);
+			applyPrimaryThinking(primary, activePrimaryModel ? primaryDefaults.thinking : currentProviderDefaults.thinking);
 		}
 	}
 

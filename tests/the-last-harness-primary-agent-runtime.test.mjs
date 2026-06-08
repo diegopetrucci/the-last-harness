@@ -1324,11 +1324,12 @@ test("primary runtime respects explicit false settings over Rush-like metadata d
 	}
 });
 
-test("architect -> rush -> architect cycle restores architect's declared thinking", async (t) => {
+test("architect before_agent_start preserves medium floor selection but restores declared default after rush", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const architectPrimary = createPrimaryPrompt("architect", {
 		model: "anthropic/claude-opus-4-7",
 		thinking: "high",
+		minThinking: "medium",
 		applyModel: true,
 		applyThinking: true,
 	});
@@ -1345,7 +1346,7 @@ test("architect -> rush -> architect cycle restores architect's declared thinkin
 	]);
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const { pi, runtime } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		const { pi, runtime, beforeAgentStart } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
 		assert.ok(runtime, "runtime should register outside child sessions");
 
 		const makeCtx = (branch) => ({
@@ -1356,19 +1357,21 @@ test("architect -> rush -> architect cycle restores architect's declared thinkin
 			model: { provider: "anthropic", id: "claude-opus-4-7" },
 		});
 
-		// Step 1: start with architect (default, no branch override)
 		await runtime.applySessionStart(makeCtx([]));
-		assert.equal(pi.thinkingLevel, "high", "architect starts at high thinking");
+		assert.equal(pi.thinkingLevel, "high", "architect starts at its declared default");
 
-		// Step 2: switch to rush
-		await runtime.applySessionStart(makeCtx([
-			{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
-		]));
-		assert.equal(pi.thinkingLevel, "low", "rush sets thinking to low");
+		pi.thinkingLevel = "medium";
+		await beforeAgentStart({ systemPrompt: "base prompt" }, makeCtx([]));
+		assert.equal(pi.thinkingLevel, "medium", "before_agent_start preserves a current level that satisfies architect's floor");
 
-		// Step 3: switch back to architect — declared thinking must be restored
-		await runtime.applySessionStart(makeCtx([]));
-		assert.equal(pi.thinkingLevel, "high", "architect's declared thinking is restored after rush cycle");
+		await beforeAgentStart(
+			{ systemPrompt: "base prompt" },
+			makeCtx([{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } }]),
+		);
+		assert.equal(pi.thinkingLevel, "low", "locked rush still forces low thinking");
+
+		await beforeAgentStart({ systemPrompt: "base prompt" }, makeCtx([]));
+		assert.equal(pi.thinkingLevel, "high", "architect restores its declared default after returning from rush");
 	});
 });
 

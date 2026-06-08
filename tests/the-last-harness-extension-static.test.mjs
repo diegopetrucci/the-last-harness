@@ -88,7 +88,12 @@ test("annotate-git-diff user-facing source copy uses the renamed command", () =>
 test("before_agent_start reapplies primary defaults without a one-shot model gate", () => {
 	const lifecycleHooks = sourceSection(primaryRuntimeSource, "function registerLifecycleHooks()", "\n\n\treturn { applySessionStart");
 	const beforeAgentStart = sourceSection(lifecycleHooks, 'pi.on("before_agent_start"', 'pi.on("tool_call"');
-	const applyPrimaryModel = sourceSection(primaryRuntimeSource, "async function applyPrimaryModel", "function applyPrimaryThinking");
+	const applyPrimaryModel = sourceSection(primaryRuntimeSource, "async function applyPrimaryModel", "function currentThinkingSatisfiesPrimaryFloor");
+	const currentThinkingSatisfiesPrimaryFloor = sourceSection(
+		primaryRuntimeSource,
+		"function currentThinkingSatisfiesPrimaryFloor",
+		"function applyPrimaryThinking",
+	);
 	const applyPrimaryThinking = sourceSection(primaryRuntimeSource, "function applyPrimaryThinking", "async function applyPrimaryDefaults");
 	const applyPrimaryDefaults = sourceSection(primaryRuntimeSource, "async function applyPrimaryDefaults", "async function applyPrimaryModeChange");
 
@@ -98,7 +103,10 @@ test("before_agent_start reapplies primary defaults without a one-shot model gat
 	assert.match(applyPrimaryDefaults, /resolvePrimaryAutoApplySetting\(primaryConfig, primary, "applyModel"\)/);
 	assert.match(applyPrimaryDefaults, /resolvePrimaryAutoApplySetting\(primaryConfig, primary, "applyThinking"\)/);
 	assert.match(applyPrimaryModel, /ctx\.model\?\.provider === model\.provider && ctx\.model\?\.id === model\.id/);
-	assert.match(applyPrimaryThinking, /pi\.getThinkingLevel\(\) === thinking/);
+	assert.match(currentThinkingSatisfiesPrimaryFloor, /thinkingLevelAtLeast\(currentThinking, primary\.minThinking\)/);
+	assert.match(applyPrimaryThinking, /const currentThinking = pi\.getThinkingLevel\(\);/);
+	assert.match(applyPrimaryThinking, /currentThinking === thinking/);
+	assert.match(applyPrimaryThinking, /currentThinkingSatisfiesPrimaryFloor\(primary, currentThinking\)/);
 	assert.match(promptsSource, /preferCurrentOpenaiModel: parseBooleanValue\(frontmatter\.preferCurrentOpenaiModel\)/);
 	assert.match(promptsSource, /applyModel: parseBooleanValue\(frontmatter\.applyModel\)/);
 	assert.match(promptsSource, /applyThinking: parseBooleanValue\(frontmatter\.applyThinking\)/);
