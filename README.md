@@ -115,7 +115,7 @@ You can add your own skills, prompts, extensions, and packages to TLH.
 User-level:
 - `~/.the-last-harness/agent/skills/`
 - `~/.the-last-harness/agent/prompts/`
-- `~/.the-last-harness/agent/extensions/` (or via `tlh install github-user/repo‘)
+- `~/.the-last-harness/agent/extensions/` (or via `tlh install github-user/repo`)
 
 Repo settings:
 - `.pi/skills/`
