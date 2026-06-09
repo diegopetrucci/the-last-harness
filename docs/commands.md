@@ -114,7 +114,7 @@ See [`extensions/the-last-harness/annotate-last-message/README.md`](../extension
 
 - Run it from inside a git repository.
 - It needs a desktop session that can open a local native window. Headless shells and SSH-only sessions will not work unless they can display that window locally.
-- TLH packages Monaco and Tailwind locally for this UI. Monaco editor assets are inlined directly into the review window's HTML at build time, so the window works from any WebView origin (including null-origin WebViews) without any file-system fetches at runtime. `/annotate-git-diff` does **not** require CDN access or general internet access just to render the review window.
+- TLH packages Monaco and Tailwind locally for this UI. Monaco editor, syntax-highlighting tokenizers, and the worker source are all inlined into the review window's HTML at build time, so the window works from any WebView origin (including null-origin WebViews) without runtime file-system fetches. `/annotate-git-diff` does **not** require CDN access or general internet access just to render the review window.
 - Like the rest of TLH, it stays inside the isolated TLH profile and does not read or write normal Pi config under `~/.pi/agent`.
 
 #### Behavior
@@ -132,7 +132,7 @@ TLH's first-party implementation adapts the MIT-licensed `@ryan_nookpi/pi-extens
 - `Review failed: Not inside a git repository.` → change into a git repo and rerun `/annotate-git-diff`.
 - `No reviewable files found.` → make or fetch reviewable changes/commits, then rerun `/annotate-git-diff`.
 - `Review failed: Glimpse host not found ...` → the local native window runtime is unavailable. Run `tlh update` (or reinstall TLH) to restore the packaged dependency, then rerun from a machine/session that can open native windows.
-- If the window says TLH could not load its packaged review assets, the `monaco-editor` package is missing or corrupt in your TLH install (assets are inlined at build time, not fetched at runtime). Reinstall TLH (or run `tlh update`) to restore the package, then rerun `/annotate-git-diff`. If the problem persists after reinstalling, please file an issue.
+- If the window says TLH could not load its packaged review assets, the `monaco-editor` package is missing or corrupt in your TLH install (Monaco editor, syntax-highlighting tokenizers, and the worker source are all inlined at build time, not fetched at runtime). Reinstall TLH (or run `tlh update`) to restore the package, then rerun `/annotate-git-diff`. If the problem persists after reinstalling, please file an issue.
 - There is no separate `tlh defaults` toggle for `/annotate-git-diff` because it ships inside TLH itself. If you customize TLH packages manually, keep that change inside the isolated TLH profile rather than `~/.pi/agent`.
 
 ---

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,6 +26,7 @@ interface ReviewUiAssets {
 	monacoEditorJs: string;
 	monacoEditorCss: string;
 	monacoWorkerJs: string;
+	monacoBasicLanguagesJs: string;
 	bootstrapError: string | null;
 }
 
@@ -41,12 +42,22 @@ function resolveReviewUiAssets(): ReviewUiAssets {
 		const monacoEditorJs = readFileSync(join(monacoBasePath, "editor", "editor.main.js"), "utf8");
 		const monacoEditorCss = readFileSync(join(monacoBasePath, "editor", "editor.main.css"), "utf8");
 		const monacoWorkerJs = readFileSync(join(monacoBasePath, "base", "worker", "workerMain.js"), "utf8");
+		const basicLanguagesDir = join(monacoBasePath, "basic-languages");
+		const basicLanguagesJs = readdirSync(basicLanguagesDir)
+			.sort()
+			.map((lang) => {
+				const filePath = join(basicLanguagesDir, lang, `${lang}.js`);
+				return existsSync(filePath) ? readFileSync(filePath, "utf8") : "";
+			})
+			.filter(Boolean)
+			.join("\n");
 		return {
 			tailwindBrowserJs,
 			monacoLoaderJs,
 			monacoEditorJs,
 			monacoEditorCss,
 			monacoWorkerJs,
+			monacoBasicLanguagesJs: basicLanguagesJs,
 			bootstrapError: null,
 		};
 	} catch (error) {
@@ -57,6 +68,7 @@ function resolveReviewUiAssets(): ReviewUiAssets {
 			monacoEditorJs: "",
 			monacoEditorCss: "",
 			monacoWorkerJs: "",
+			monacoBasicLanguagesJs: "",
 			bootstrapError: `Unable to load packaged review UI assets: ${message}`,
 		};
 	}
@@ -86,6 +98,7 @@ export function buildReviewHtml(data: ReviewWindowData): string {
 	html = safeReplace(html, "__INLINE_MONACO_EDITOR_CSS__", escapeInlineStyleSource(assets.monacoEditorCss));
 	html = safeReplace(html, "__INLINE_MONACO_WORKER_SOURCE_JSON__", escapeForInlineScript(JSON.stringify(assets.monacoWorkerJs)));
 	html = safeReplace(html, "__INLINE_MONACO_EDITOR_JS__", escapeInlineScriptSource(assets.monacoEditorJs));
+	html = safeReplace(html, "__INLINE_MONACO_BASIC_LANGUAGES_JS__", escapeInlineScriptSource(assets.monacoBasicLanguagesJs));
 	html = safeReplace(html, "__INLINE_JS__", appJs);
 	return html;
 }

@@ -114,6 +114,12 @@ test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs i
 	assert.doesNotMatch(html, /__INLINE_MONACO_EDITOR_JS__/);
 	assert.doesNotMatch(html, /__INLINE_MONACO_EDITOR_CSS__/);
 	assert.doesNotMatch(html, /__INLINE_MONACO_WORKER_SOURCE_JSON__/);
+	assert.doesNotMatch(html, /__INLINE_MONACO_BASIC_LANGUAGES_JS__/, "__INLINE_MONACO_BASIC_LANGUAGES_JS__ marker must be replaced");
+
+	// Basic-language tokenizers are inlined (representative sample).
+	assert.match(html, /define\("vs\/basic-languages\/typescript\/typescript"/, "TypeScript tokenizer must be inlined");
+	assert.match(html, /define\("vs\/basic-languages\/python\/python"/, "Python tokenizer must be inlined");
+	assert.match(html, /define\("vs\/basic-languages\/go\/go"/, "Go tokenizer must be inlined");
 
 	// The asset config must not expose monacoVsBaseUrl.
 	assert.doesNotMatch(html, /monacoVsBaseUrl/);
