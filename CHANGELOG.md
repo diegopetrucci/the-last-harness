@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Fixed the `/annotate-git-diff` review window failing to load Monaco in environments where the WebView could not load packaged editor files from disk (e.g. WKWebView with a null origin). Monaco editor assets are now inlined into the review window's HTML at build time, so the window works from any WebView origin without any file-system fetches at runtime.
 - Primary-agent thinking is now asserted on every primary switch. Previously, switching back to architect after a Rush session could leave thinking at Rush's low level instead of reapplying architect's default when Rush had left the session below architect's medium floor.
 
 ### Changed
