@@ -133,6 +133,12 @@ Before requesting review, check that:
 - docs and changelog updates are included when needed;
 - the diff contains no secrets, local paths, or unintended generated files.
 
+Every PR description should end with an `Install this branch` command using the branch name in both the raw URL and `--ref` value:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/<branch>/install.sh | bash -s -- --ref <branch> --track ref
+```
+
 CI runs on `pull_request` and on `push` to `main`. The CI job/status name is `Repository validation`, and current GitHub repository rulesets protect the default branch/main and require that status check before merge. Required-merge enforcement is controlled by repository rules and settings, not by this file.
 
 ## Releases

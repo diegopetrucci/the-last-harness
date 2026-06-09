@@ -8,6 +8,7 @@ import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
 const { default: theLastHarness } = await jiti.import("../extensions/the-last-harness.ts");
+const { TLH_STARTUP_TIPS } = await jiti.import("../extensions/the-last-harness/startup-tip.ts");
 
 const TLH_HEADER_TOGGLE_SHORTCUT = "ctrl+shift+e";
 
@@ -109,6 +110,10 @@ function writeProfileFixture(agentDir, installState) {
 	writeFileSync(join(agentDir, "tlh", "install-state.json"), `${JSON.stringify(installState, null, 2)}\n`);
 }
 
+function startupTipLine(headerLines) {
+	return headerLines?.find((line) => line.startsWith("Tip: "));
+}
+
 async function runSessionStart({ reason, installState, hasUI = true }) {
 	const tempDir = mkdtempSync(join(tmpdir(), "tlh-startup-warning-"));
 	const agentDir = join(tempDir, "agent");
@@ -173,6 +178,22 @@ test("interactive startup prefers the pinned ref label over a local package-sour
 	assert.ok(headerLines.includes("Warning: running TLH from v0.10.0 track"));
 });
 
+test("interactive startup renders one curated startup tip and reuses the same selection within the process", async () => {
+	const firstStartup = await runSessionStart({ reason: "startup", installState: LATEST_STABLE_INSTALL_STATE });
+	const secondStartup = await runSessionStart({ reason: "startup", installState: LATEST_STABLE_INSTALL_STATE });
+
+	const firstTipLine = startupTipLine(firstStartup.headerLines);
+	const secondTipLine = startupTipLine(secondStartup.headerLines);
+
+	assert.ok(firstTipLine, "expected a startup tip in the TLH startup header");
+	assert.ok(secondTipLine, "expected a startup tip in the TLH startup header");
+	assert.ok(
+		TLH_STARTUP_TIPS.some((tip) => firstTipLine === `Tip: ${tip}`),
+		"expected the startup tip to come from the curated TLH list",
+	);
+	assert.equal(firstTipLine, secondTipLine, "expected the startup tip selection to stay stable within one process");
+});
+
 test("interactive startup stays quiet for latest-stable installs", async () => {
 	const { notifications, headerLines } = await runSessionStart({ reason: "startup", installState: LATEST_STABLE_INSTALL_STATE });
 	assert.deepEqual(notifications, []);
@@ -180,8 +201,8 @@ test("interactive startup stays quiet for latest-stable installs", async () => {
 	assert.equal(headerLines.some((line) => line.startsWith("Warning:")), false);
 });
 
-test("non-startup session reasons do not render the install-track warning in the TLH header", async () => {
-	for (const reason of ["reload", "new", "resume", "fork"]) {
+test("non-startup session reasons do not render the install-track warning or startup tip in the TLH header", async () => {
+	for (const reason of ["reload", "new", "resume", "fork", "restore"]) {
 		const { notifications, headerLines } = await runSessionStart({ reason, installState: PINNED_TAG_INSTALL_STATE });
 		assert.deepEqual(notifications, [], `expected no install warning notification for ${reason}`);
 		assert.ok(headerLines, `expected TLH header for ${reason}`);
@@ -190,6 +211,7 @@ test("non-startup session reasons do not render the install-track warning in the
 			false,
 			`expected no install-track warning in header for ${reason}`,
 		);
+		assert.equal(startupTipLine(headerLines), undefined, `expected no startup tip in header for ${reason}`);
 	}
 });
 

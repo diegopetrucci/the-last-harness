@@ -4,6 +4,8 @@ This document lists slash commands available in an interactive TLH session, grou
 
 Type any command name with a leading `/` in the TLH TUI to trigger it. Autocomplete surfaces most commands as you type; a small set of upstream and bundled commands is hidden from autocomplete but remains triggerable by typing — see [Hidden autocomplete commands](#hidden-autocomplete-commands) below.
 
+On interactive startup, TLH may also show one quiet hand-curated random tip line for that process launch. Those tips are just lightweight discovery hints for real TLH commands and workflow affordances; they are launch-scoped and not LLM-generated.
+
 > **Note:** autocomplete hiding is not an execution block. Any command listed under [Hidden autocomplete commands](#hidden-autocomplete-commands) can still be run by typing it in full.
 
 ---
@@ -44,8 +46,9 @@ These commands are registered by the TLH extension bundled with this profile.
 
 | Command | Description |
 |---------|-------------|
-| `/thinking` | Pick the model thinking level |
-| `/effort` | Supported alias for `/thinking` |
+| `/thinking` | Pick the model thinking level, subject to the active primary-agent thinking constraints |
+| `/effort` | Supported alias for `/thinking`, subject to the same active primary-agent thinking constraints |
+| `/experimental` | List or change TLH experimental features |
 | `/review` | Open an interactive code-review mode picker (requires the architect primary agent) |
 | `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
 | `/tlh-changelog` | Show TLH release notes from the packaged `CHANGELOG.md` |
@@ -53,6 +56,10 @@ These commands are registered by the TLH extension bundled with this profile.
 | `/toggle-tlh-git-attribution` | Toggle the TLH commit attribution footer for agent-created git commits |
 | `/usage` | Show or change TLH subscription usage-limit footer preferences |
 | `/version` | Show the installed TLH version and the upstream Pi runtime version |
+
+### `/thinking` and `/effort`
+
+Both `/thinking` and `/effort` are subject to the active primary-agent thinking constraints. **Locked** primaries — rush, product, and bug-hunter — each run at a fixed thinking level and return an error if you try to change it (`Thinking is locked at "<level>" for the <name> primary agent.`). **Architect** enforces a medium floor: `/thinking off`, `/thinking minimal`, `/thinking low`, `/effort off`, `/effort minimal`, and `/effort low` are rejected with `architect requires at least medium thinking.` The floor does not apply when the primary is disabled.
 
 ---
 
@@ -63,7 +70,7 @@ These commands ship inside the TLH package itself rather than through separately
 | Command | Extension | Description |
 |---------|-----------|-------------|
 | `/annotate-last-message` | `the-last-harness` | Open a native annotation window for the latest assistant message and paste submitted feedback into the editor |
-| `/diff-review` | `diff-review` | Open a native diff-review window and paste submitted review feedback into the editor |
+| `/annotate-git-diff` | `annotate-git-diff` | Open a native git-diff review window and paste submitted review feedback into the editor |
 
 ### `/annotate-last-message`
 
@@ -99,15 +106,15 @@ See [`extensions/the-last-harness/annotate-last-message/README.md`](../extension
 - `Annotation failed: Glimpse host not found ...` → the local native window runtime is unavailable. Run `tlh update` (or reinstall TLH) to restore the packaged dependency, then rerun from a machine/session that can open native windows.
 - There is no separate `tlh defaults` toggle for `/annotate-last-message` because it ships inside TLH itself.
 
-### `/diff-review`
+### `/annotate-git-diff`
 
-`/diff-review` opens a native Glimpse review window for the current git repository.
+`/annotate-git-diff` opens a native Glimpse review window for the current git repository.
 
 #### Requirements
 
 - Run it from inside a git repository.
 - It needs a desktop session that can open a local native window. Headless shells and SSH-only sessions will not work unless they can display that window locally.
-- TLH packages Monaco and Tailwind locally for this UI. `/diff-review` does **not** require CDN access or general internet access just to render the review window.
+- TLH packages Monaco and Tailwind locally for this UI. Monaco editor, syntax-highlighting tokenizers, and the worker source are all inlined into the review window's HTML at build time, so the window works from any WebView origin (including null-origin WebViews) without runtime file-system fetches. `/annotate-git-diff` does **not** require CDN access or general internet access just to render the review window.
 - Like the rest of TLH, it stays inside the isolated TLH profile and does not read or write normal Pi config under `~/.pi/agent`.
 
 #### Behavior
@@ -118,15 +125,15 @@ See [`extensions/the-last-harness/annotate-last-message/README.md`](../extension
 
 #### Attribution
 
-TLH's first-party implementation adapts the MIT-licensed `@ryan_nookpi/pi-extension-diff-review` work and preserves inspiration credit to [`badlogic/pi-diff-review`](https://github.com/badlogic/pi-diff-review). For extension-local notes, see [`extensions/diff-review/README.md`](../extensions/diff-review/README.md).
+TLH's first-party implementation adapts the MIT-licensed `@ryan_nookpi/pi-extension-diff-review` work and preserves inspiration credit to [`badlogic/pi-diff-review`](https://github.com/badlogic/pi-diff-review). For extension-local notes, see [`extensions/annotate-git-diff/README.md`](../extensions/annotate-git-diff/README.md).
 
 #### Troubleshooting and recovery
 
-- `Review failed: Not inside a git repository.` → change into a git repo and rerun `/diff-review`.
-- `No reviewable files found.` → make or fetch reviewable changes/commits, then rerun.
+- `Review failed: Not inside a git repository.` → change into a git repo and rerun `/annotate-git-diff`.
+- `No reviewable files found.` → make or fetch reviewable changes/commits, then rerun `/annotate-git-diff`.
 - `Review failed: Glimpse host not found ...` → the local native window runtime is unavailable. Run `tlh update` (or reinstall TLH) to restore the packaged dependency, then rerun from a machine/session that can open native windows.
-- If the window says TLH could not load its packaged review assets, close it, run `tlh update`, and rerun `/diff-review`.
-- There is no separate `tlh defaults` toggle for `/diff-review` because it ships inside TLH itself. If you customize TLH packages manually, keep that change inside the isolated TLH profile rather than `~/.pi/agent`.
+- If the window says TLH could not load its packaged review assets, the `monaco-editor` package is missing or corrupt in your TLH install (Monaco editor, syntax-highlighting tokenizers, and the worker source are all inlined at build time, not fetched at runtime). Reinstall TLH (or run `tlh update`) to restore the package, then rerun `/annotate-git-diff`. If the problem persists after reinstalling, please file an issue.
+- There is no separate `tlh defaults` toggle for `/annotate-git-diff` because it ships inside TLH itself. If you customize TLH packages manually, keep that change inside the isolated TLH profile rather than `~/.pi/agent`.
 
 ---
 
@@ -195,4 +202,4 @@ tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disa
 tlh defaults enable <id>   # re-enable a disabled extension
 ```
 
-Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions, not first-party packaged commands like `/annotate-last-message` or `/diff-review`.
+Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions, not first-party packaged commands like `/annotate-last-message` or `/annotate-git-diff`.

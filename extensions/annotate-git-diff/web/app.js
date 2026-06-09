@@ -1,8 +1,8 @@
-/* global window, document, alert, requestAnimationFrame, ResizeObserver */
+/* global window, document, alert, requestAnimationFrame, ResizeObserver, Worker */
 
 let suppressAutoSubmitOnClose = false;
 
-const reviewData = JSON.parse(document.getElementById("diff-review-data").textContent || "{}");
+const reviewData = JSON.parse(document.getElementById("annotate-git-diff-data").textContent || "{}");
 const reviewAssetConfig = window.__reviewAssetConfig || {};
 if (!Array.isArray(reviewData.files)) reviewData.files = [];
 if (!Array.isArray(reviewData.commits)) reviewData.commits = [];
@@ -2028,41 +2028,12 @@ window.__reviewReceive = (message) => {
 	}
 };
 
-function resolveMonacoWorkerPath(vsBaseUrl, label) {
-	switch (label) {
-		case "json":
-			return `${vsBaseUrl}/language/json/jsonWorker.js`;
-		case "css":
-		case "scss":
-		case "less":
-			return `${vsBaseUrl}/language/css/cssWorker.js`;
-		case "html":
-		case "handlebars":
-		case "razor":
-			return `${vsBaseUrl}/language/html/htmlWorker.js`;
-		case "typescript":
-		case "javascript":
-			return `${vsBaseUrl}/language/typescript/tsWorker.js`;
-		default:
-			return `${vsBaseUrl}/base/worker/workerMain.js`;
-	}
-}
-
 function setupMonaco() {
 	if (reviewAssetConfig.bootstrapError) {
 		showAssetFailure(
 			"The review window could not finish loading.",
-			"TLH could not load its packaged review assets. Close this window and rerun /diff-review after reinstalling or updating TLH.",
+			"TLH could not load its packaged review assets. Close this window and rerun /annotate-git-diff after reinstalling or updating TLH.",
 			reviewAssetConfig.bootstrapError,
-		);
-		return;
-	}
-
-	const vsBaseUrl = typeof reviewAssetConfig.monacoVsBaseUrl === "string" ? reviewAssetConfig.monacoVsBaseUrl : "";
-	if (!vsBaseUrl) {
-		showAssetFailure(
-			"The review window could not finish loading.",
-			"TLH could not locate its packaged Monaco assets. Close this window and rerun /diff-review after reinstalling or updating TLH.",
 		);
 		return;
 	}
@@ -2070,37 +2041,41 @@ function setupMonaco() {
 	if (!window.require || typeof window.require.config !== "function") {
 		showAssetFailure(
 			"The review window could not finish loading.",
-			"TLH could not initialize the packaged Monaco loader. Close this window and rerun /diff-review.",
+			"TLH could not initialize the packaged Monaco loader. Close this window and rerun /annotate-git-diff.",
 		);
 		return;
 	}
 
-	const workerBaseUrl = vsBaseUrl.endsWith("/") ? vsBaseUrl : `${vsBaseUrl}/`;
-	const workerUrls = new Map();
+	const workerSource = typeof window.__reviewMonacoWorkerSource === "string" ? window.__reviewMonacoWorkerSource : "";
+	const noopWorkerBlob = new Blob(["self.onmessage = () => {};"], { type: "text/javascript" });
+	let editorWorkerBlobUrl = null;
+	let noopWorkerBlobUrl = null;
 	window.MonacoEnvironment = {
-		baseUrl: workerBaseUrl,
-		getWorkerUrl(_moduleId, label) {
-			const cacheKey = label || "default";
-			if (!workerUrls.has(cacheKey)) {
-				const workerSource = [
-					`self.MonacoEnvironment = { baseUrl: ${JSON.stringify(workerBaseUrl)} };`,
-					`importScripts(${JSON.stringify(resolveMonacoWorkerPath(vsBaseUrl, label))});`,
-				].join("\n");
-				workerUrls.set(
-					cacheKey,
-					URL.createObjectURL(new Blob([workerSource], { type: "text/javascript" })),
-				);
+		getWorker(_moduleId, label) {
+			if (label === "editorWorkerService" || !label || label === "default") {
+				if (!editorWorkerBlobUrl) {
+					editorWorkerBlobUrl = URL.createObjectURL(
+						new Blob([workerSource], { type: "text/javascript" }),
+					);
+				}
+				return new Worker(editorWorkerBlobUrl);
 			}
-			return workerUrls.get(cacheKey);
+			// Language-service workers (json/css/html/ts) are not needed for a read-only
+			// diff viewer. Return a no-op worker so Monaco never tries to load language
+			// worker scripts over file://.
+			if (!noopWorkerBlobUrl) {
+				noopWorkerBlobUrl = URL.createObjectURL(noopWorkerBlob);
+			}
+			return new Worker(noopWorkerBlobUrl);
 		},
 	};
 	window.addEventListener(
 		"unload",
 		() => {
-			for (const workerUrl of workerUrls.values()) {
-				URL.revokeObjectURL(workerUrl);
-			}
-			workerUrls.clear();
+			if (editorWorkerBlobUrl) URL.revokeObjectURL(editorWorkerBlobUrl);
+			if (noopWorkerBlobUrl) URL.revokeObjectURL(noopWorkerBlobUrl);
+			editorWorkerBlobUrl = null;
+			noopWorkerBlobUrl = null;
 		},
 		{ once: true },
 	);
@@ -2125,21 +2100,23 @@ function setupMonaco() {
 	};
 	const loadTimeoutId = setTimeout(() => {
 		settleFailure(
-			"TLH timed out while loading the packaged Monaco editor. Close this window and rerun /diff-review.",
+			"TLH timed out while loading the packaged Monaco editor. Close this window and rerun /annotate-git-diff.",
 			"Timed out waiting for Monaco to finish loading.",
 		);
 	}, 10000);
 
 	try {
+		// Disable the vs/css AMD plugin so Monaco does not try to inject <link> elements
+		// pointing to file:// URLs. Monaco's CSS is already inlined as a <style> block.
 		window.require.config({
-			paths: {
-				vs: vsBaseUrl,
+			config: {
+				"vs/css": { disabled: true },
 			},
 		});
 	} catch (error) {
 		clearTimeout(loadTimeoutId);
 		settleFailure(
-			"TLH could not configure the packaged Monaco editor. Close this window and rerun /diff-review.",
+			"TLH could not configure the packaged Monaco editor. Close this window and rerun /annotate-git-diff.",
 			error,
 		);
 		return;
@@ -2231,7 +2208,7 @@ function setupMonaco() {
 		(error) => {
 			clearTimeout(loadTimeoutId);
 			settleFailure(
-				"TLH could not load the packaged Monaco editor. Close this window and rerun /diff-review.",
+				"TLH could not load the packaged Monaco editor. Close this window and rerun /annotate-git-diff.",
 				error,
 			);
 		},

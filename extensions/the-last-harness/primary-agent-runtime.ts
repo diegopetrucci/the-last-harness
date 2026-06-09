@@ -20,8 +20,10 @@ import {
 } from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME } from "./constants.js";
+import { buildPrimaryExperimentalPrompt } from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import { applyProviderAwareSubagentModels, selectProviderAwareAgentDefaults } from "./model-defaults.js";
+import { isThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
 import {
 	buildChildSubagentSystemPrompt,
 	buildTlhSystemPrompt,
@@ -49,6 +51,7 @@ type TlhPrimaryAgentRuntimeOptions = {
 export type TlhPrimaryAgentRuntime = {
 	applySessionStart(ctx: ExtensionContext): Promise<void>;
 	currentPrimaryAgentLabel(): string;
+	activePrimaryAgentPrompt(): AgentPrompt | undefined;
 };
 
 function getTlhGlobalSettings(cwd: string): TlhSettings {
@@ -74,6 +77,10 @@ function resolvePrimaryAutoApplySetting(
 		return configured;
 	}
 	return primary[key] === true;
+}
+
+function shouldForceApplyForLock(primary: AgentPrompt): boolean {
+	return primary.lockThinking === true;
 }
 
 function parseTlhSettingsContent(content: string | undefined): Record<string, unknown> {
@@ -371,8 +378,19 @@ function createTlhPrimaryAgentRuntime(
 		return model;
 	}
 
-	function applyPrimaryThinking(thinking: AgentPrompt["thinking"]): void {
-		if (!thinking || pi.getThinkingLevel() === thinking) {
+	function currentThinkingSatisfiesPrimaryFloor(primary: AgentPrompt, currentThinking: string): boolean {
+		return primary.lockThinking !== true
+			&& primary.minThinking !== undefined
+			&& isThinkingLevel(currentThinking)
+			&& thinkingLevelAtLeast(currentThinking, primary.minThinking);
+	}
+
+	function applyPrimaryThinking(primary: AgentPrompt, thinking: AgentPrompt["thinking"]): void {
+		if (!thinking) {
+			return;
+		}
+		const currentThinking = pi.getThinkingLevel();
+		if (currentThinking === thinking || currentThinkingSatisfiesPrimaryFloor(primary, currentThinking)) {
 			return;
 		}
 		pi.setThinkingLevel(thinking);
@@ -394,13 +412,14 @@ function createTlhPrimaryAgentRuntime(
 		applyPrimaryTools(ctx, primary);
 
 		const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
-		const shouldApplyModel = resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyModel");
-		const shouldApplyThinking = resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyThinking");
+		const forceApply = shouldForceApplyForLock(primary);
+		const shouldApplyModel = forceApply || resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyModel");
+		const shouldApplyThinking = forceApply || resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyThinking");
 		const primaryDefaults = selectProviderAwareAgentDefaults(primary, ctx.modelRegistry.getAvailable(), ctx.model?.provider);
 		const currentProviderDefaults = selectProviderAwareAgentDefaults(primary, [], ctx.model?.provider);
 		const activePrimaryModel = shouldApplyModel ? await applyPrimaryModel(ctx, primary, primaryDefaults.model) : undefined;
 		if (shouldApplyThinking) {
-			applyPrimaryThinking(activePrimaryModel ? primaryDefaults.thinking : currentProviderDefaults.thinking);
+			applyPrimaryThinking(primary, activePrimaryModel ? primaryDefaults.thinking : currentProviderDefaults.thinking);
 		}
 	}
 
@@ -559,6 +578,7 @@ function createTlhPrimaryAgentRuntime(
 			const prompts = [
 				event.systemPrompt,
 				buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled),
+				buildPrimaryExperimentalPrompt(activePrimaryAgent(), settings.tlh?.experimental),
 				buildTlhCommitAttributionPrompt(commitAttributionState),
 			];
 			if (shouldAppendGnosisPrompt(ctx.cwd)) {
@@ -590,7 +610,7 @@ function createTlhPrimaryAgentRuntime(
 		});
 	}
 
-	return { applySessionStart, currentPrimaryAgentLabel, registerCommands, registerLifecycleHooks };
+	return { applySessionStart, currentPrimaryAgentLabel, activePrimaryAgentPrompt: activePrimaryAgent, registerCommands, registerLifecycleHooks };
 }
 
 export function registerTlhPrimaryAgentRuntime(

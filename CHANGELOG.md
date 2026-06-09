@@ -4,6 +4,31 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-06-09
+
+### Fixed
+
+- Fixed the `/annotate-git-diff` review window failing to load Monaco in environments where the WebView could not load packaged editor files from disk (e.g. WKWebView with a null origin). Monaco editor, syntax-highlighting tokenizers, and the worker source are all inlined into the review window's HTML at build time, so the window works from any WebView origin without runtime file-system fetches.
+- Primary-agent thinking is now asserted on every primary switch. Previously, switching back to architect after a Rush session could leave thinking at Rush's low level instead of reapplying architect's default when Rush had left the session below architect's medium floor.
+
+### Changed
+
+- Rush, product, and bug-hunter now run at fixed thinking levels. Attempting to change thinking under these primaries with `/thinking` or `/effort` returns a clear error: `Thinking is locked at "<level>" for the <name> primary agent.` The locked levels are: rush → low (off on OpenAI/OpenAI-Codex), product → high, bug-hunter → high.
+- Architect now enforces a minimum thinking floor of medium. `/thinking` and `/effort` cannot set architect thinking below medium. Any session currently running architect below medium will be bumped to architect's default thinking on the next primary apply (session start or primary switch).
+
+## [0.18.0] - 2026-06-08
+
+### Added
+
+- The Architect (the primary TLH subagent) can now use MCP tools via the `mcp` tool grant, enabling MCP-backed workflows from the architect role.
+
+### Changed
+
+- The TLH update-available notification has been reworded for clarity and is now install-track aware. The suggested command now matches the install track (`latest-release`, `pinned-tag`, `ref`, or `custom`); `custom`-track installs no longer receive a misleading plain `tlh update` suggestion.
+- Documentation refresh: `README.md`, `docs/commands.md`, and `docs/install.md` updated so the documented `tlh` command and update references match current behavior.
+
+## [0.17.0] - 2026-06-06
+
 ### Changed
 
 - Bundled `pi-subagents` now pins `git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-5`.
@@ -12,6 +37,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Context cap is now a built-in TLH feature (no longer a bundled default extension). The bundled `@diegopetrucci/pi-context-cap` default extension has been removed and will be force-uninstalled from existing isolated profiles on the next `tlh` install or update. Previous `tlh.disabledDefaultExtensions: ["context-cap"]` opt-outs are intentionally **not** preserved — those entries are silently pruned on upgrade. To opt out of the cap again, run `/toggle-context-cap` or set `tlh.contextCap.disabled: true` in your isolated settings.
 - TLH now records bundled default-extension provenance in `tlh.defaultExtensionProvenance.managedPackageIdentities` so retired-default cleanup can distinguish TLH-managed packages from later manual re-adds. Older installs migrate this metadata on update; legacy Plannotator is still cleaned up once during that migration.
 - `tlh` install/update now force-removes the retired bundled `permission-gate` and `confirm-destructive` confirmation packages from existing isolated TLH profiles. New installs already omit both packages, and this cleanup only touches the isolated TLH profile (for example `~/.the-last-harness/agent/settings.json`), not normal Pi config under `~/.pi/agent`.
+- Renamed the first-party git-diff review command/docs/UI copy to `/annotate-git-diff` and the packaged extension name to `annotate-git-diff`; historical attribution still references the upstream `pi-extension-diff-review` and `pi-diff-review` packages.
 
 ### Added
 

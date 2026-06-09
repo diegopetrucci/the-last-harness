@@ -3,7 +3,7 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const { composeReviewPrompt } = await jiti.import("../extensions/diff-review/prompt.ts");
+const { composeReviewPrompt } = await jiti.import("../extensions/annotate-git-diff/prompt.ts");
 
 test("composeReviewPrompt renders trimmed overall feedback across branch, commit, and all-files scopes", () => {
 	const files = [

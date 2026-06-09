@@ -9,6 +9,7 @@ import { cleanupTempDir, createIsolatedProfileFixture, withEnv } from "./test-fi
 
 const jiti = createJiti(import.meta.url);
 const { TLH_DEFAULT_COMMIT_ATTRIBUTION } = await jiti.import("../extensions/the-last-harness/attribution.ts");
+const { RUN_TESTS_LAST_FEATURE } = await jiti.import("../extensions/the-last-harness/experimental.ts");
 const { registerTlhPrimaryAgentRuntime } = await jiti.import("../extensions/the-last-harness/primary-agent-runtime.ts");
 
 function createPiHarness() {
@@ -166,6 +167,38 @@ test("before_agent_start adds TLH commit attribution guidance only when enabled"
 			createToolCallContext([], undefined, { cwd: fixture.cwd }),
 		);
 		assert.doesNotMatch(disabledPrompt.systemPrompt, /## TLH Git Commit Attribution/);
+	});
+});
+
+
+test("before_agent_start gates run-tests-last experimental guidance behind isolated TLH settings", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { beforeAgentStart } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const defaultPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /## TLH Experimental Feature: run-tests-last/);
+
+		for (const enabledFeatures of [true, [123]]) {
+			writeFileSync(
+				join(fixture.agent, "settings.json"),
+				`${JSON.stringify({ tlh: { experimental: { enabledFeatures } } }, null, 2)}\n`,
+			);
+			const malformedPrompt = await beforeAgentStart(
+				{ systemPrompt: "base prompt" },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /## TLH Experimental Feature: run-tests-last/);
+		}
+
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [RUN_TESTS_LAST_FEATURE] } } }, null, 2)}\n`,
+		);
+		const enabledPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		assert.match(enabledPrompt.systemPrompt, /## TLH Experimental Feature: run-tests-last/);
+		assert.match(enabledPrompt.systemPrompt, /separate final-validation ticket/i);
+		assert.match(enabledPrompt.systemPrompt, /Make any validation deferral explicit in the ticket text/i);
 	});
 });
 
@@ -1289,4 +1322,121 @@ test("primary runtime respects explicit false settings over Rush-like metadata d
 	} finally {
 		cleanupTempDir(fixture);
 	}
+});
+
+test("architect before_agent_start preserves medium floor selection but restores declared default after rush", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const architectPrimary = createPrimaryPrompt("architect", {
+		model: "anthropic/claude-opus-4-7",
+		thinking: "high",
+		minThinking: "medium",
+		applyModel: true,
+		applyThinking: true,
+	});
+	const rushPrimary = createPrimaryPrompt("rush", {
+		model: "anthropic/claude-opus-4-7",
+		thinking: "low",
+		applyModel: true,
+		applyThinking: true,
+		lockThinking: true,
+	});
+	const primaryAgents = new Map([
+		["architect", architectPrimary],
+		["rush", rushPrimary],
+	]);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { pi, runtime, beforeAgentStart } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		assert.ok(runtime, "runtime should register outside child sessions");
+
+		const makeCtx = (branch) => ({
+			cwd: fixture.cwd,
+			sessionManager: { getBranch: () => branch },
+			ui: { notify() {} },
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-7" }] },
+			model: { provider: "anthropic", id: "claude-opus-4-7" },
+		});
+
+		await runtime.applySessionStart(makeCtx([]));
+		assert.equal(pi.thinkingLevel, "high", "architect starts at its declared default");
+
+		pi.thinkingLevel = "medium";
+		await beforeAgentStart({ systemPrompt: "base prompt" }, makeCtx([]));
+		assert.equal(pi.thinkingLevel, "medium", "before_agent_start preserves a current level that satisfies architect's floor");
+
+		await beforeAgentStart(
+			{ systemPrompt: "base prompt" },
+			makeCtx([{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } }]),
+		);
+		assert.equal(pi.thinkingLevel, "low", "locked rush still forces low thinking");
+
+		await beforeAgentStart({ systemPrompt: "base prompt" }, makeCtx([]));
+		assert.equal(pi.thinkingLevel, "high", "architect restores its declared default after returning from rush");
+	});
+});
+
+test("locked primary (rush) overrides global applyThinking=false and applyModel=false", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const rushPrimary = createPrimaryPrompt("rush", {
+		model: "anthropic/claude-opus-4-7",
+		thinking: "low",
+		applyModel: true,
+		applyThinking: true,
+		lockThinking: true,
+	});
+	const primaryAgents = new Map([["rush", rushPrimary]]);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		// Global opt-outs that the lock should override
+		writePrimaryConfig(fixture.agent, { applyModel: false, applyThinking: false });
+
+		const { pi, runtime } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		assert.ok(runtime, "runtime should register outside child sessions");
+
+		// Use a different initial model so applyPrimaryModel actually calls setModel
+		await runtime.applySessionStart({
+			cwd: fixture.cwd,
+			sessionManager: { getBranch: () => [
+				{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
+			]},
+			ui: { notify() {} },
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-7" }] },
+			model: { provider: "anthropic", id: "claude-opus-4-6" },
+		});
+
+		// lockThinking: true forces both model and thinking regardless of global opt-outs
+		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-4-7" });
+		assert.equal(pi.thinkingLevel, "low");
+	});
+});
+
+test("non-locked primary (architect) honors global applyThinking=false override", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const architectPrimary = createPrimaryPrompt("architect", {
+		model: "anthropic/claude-opus-4-7",
+		thinking: "high",
+		applyModel: true,
+		applyThinking: true,
+		// no lockThinking
+	});
+	const primaryAgents = new Map([["architect", architectPrimary]]);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		// User opts out of thinking auto-apply for architect
+		writePrimaryConfig(fixture.agent, { applyThinking: false });
+
+		const { pi, runtime } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		assert.ok(runtime, "runtime should register outside child sessions");
+
+		await runtime.applySessionStart({
+			cwd: fixture.cwd,
+			sessionManager: { getBranch: () => [] },
+			ui: { notify() {} },
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-7" }] },
+			model: { provider: "anthropic", id: "claude-opus-4-7" },
+		});
+
+		// Global applyThinking: false is respected for non-locked primary
+		assert.equal(pi.thinkingLevel, "normal");
+	});
 });

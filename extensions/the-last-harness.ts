@@ -7,6 +7,7 @@ import { createTlhAutocompleteProvider } from "./the-last-harness/autocomplete.j
 import { registerContextCap } from "./the-last-harness/context-cap.js";
 import { registerTlhChangelogCommand } from "./the-last-harness/changelog.js";
 import { registerEffortCommand } from "./the-last-harness/effort.js";
+import { registerExperimentalCommand } from "./the-last-harness/experimental.js";
 import { registerReviewCommand } from "./the-last-harness/review.js";
 import { createTlhFooter } from "./the-last-harness/footer.js";
 import { FooterGitCache } from "./the-last-harness/footer-git-cache.js";
@@ -16,6 +17,7 @@ import { scheduleTlhLaunchTelemetry } from "./the-last-harness/launch-telemetry.
 import { installTlhPackageUpdateNotificationOverride } from "./the-last-harness/package-update-notice.js";
 import { registerTlhPrimaryAgentRuntime } from "./the-last-harness/primary-agent-runtime.js";
 import { collectStartupResources } from "./the-last-harness/resources.js";
+import { getTlhStartupTip } from "./the-last-harness/startup-tip.js";
 import { createTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage.mjs";
 import { getTlhUsageLimitsConfig, registerUsageCommand, shouldShowTlhUsageWeekly } from "./the-last-harness/usage-limits.js";
 import { getTlhHeaderUpdate, maybeNotifyAvailableTlhUpdate } from "./the-last-harness/update-check.js";
@@ -33,7 +35,8 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	installTlhPackageUpdateNotificationOverride();
 	registerToggleTlhGitAttributionCommand(pi);
 	registerAnnotateLastMessageCommand(pi);
-	registerEffortCommand(pi);
+	registerEffortCommand(pi, primaryAgentRuntime);
+	registerExperimentalCommand(pi);
 	registerReviewCommand(pi);
 	registerTlhChangelogCommand(pi);
 	registerUsageCommand(pi);
@@ -109,6 +112,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 
 		const headerUpdate = getTlhHeaderUpdate();
 		const installNotice = event.reason === "startup" ? readTlhInstallNotice() : undefined;
+		const startupTip = event.reason === "startup" ? getTlhStartupTip() : undefined;
 
 		if (typeof ctx.ui.setFooter === "function") {
 			ctx.ui.setFooter((tui, theme, footerData) => {
@@ -129,6 +133,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 			ctx.ui.setHeader((tui, theme) => {
 				const header = createTlhHeader(theme, resources, headerUpdate, installNotice, {
 					requestRender: () => tui.requestRender(),
+					startupTip,
 				});
 				activeTlhHeader = header;
 				return header;

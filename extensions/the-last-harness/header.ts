@@ -1,4 +1,4 @@
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { TLH_HEADER_TOGGLE_SHORTCUT_LABEL, TLH_NAME } from "./constants.js";
 import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
@@ -9,12 +9,13 @@ export function createTlhHeader(
 	resources: StartupResources,
 	headerUpdate: TlhHeaderUpdate | undefined,
 	installNotice?: TlhInstallNotice,
-	options: { requestRender?: () => void } = {},
+	options: { requestRender?: () => void; startupTip?: string } = {},
 ) {
 	let expanded = false;
 	const color = {
 		heading: (text: string) => theme.fg("mdHeading", text),
 		dim: (text: string) => theme.fg("dim", text),
+		muted: (text: string) => theme.fg("muted", text),
 		accent: (text: string) => theme.fg("accent", text),
 		warning: (text: string) => theme.fg("warning", text),
 	};
@@ -74,6 +75,29 @@ export function createTlhHeader(
 		return [truncateToWidth(color.dim(`Context: ${items.join(", ")}`), width, color.dim("..."))];
 	};
 
+	const startupTipLine = (width: number): string[] => {
+		if (!options.startupTip) {
+			return [];
+		}
+		if (width <= 0) {
+			return [""];
+		}
+
+		const label = "Tip";
+		const separator = ": ";
+		const prefixWidth = visibleWidth(`${label}${separator}`);
+		const fullTip = `${color.muted(label)}${color.dim(`${separator}${options.startupTip}`)}`;
+		if (width <= prefixWidth) {
+			return wrapTextWithAnsi(fullTip, width);
+		}
+
+		const bodyWidth = width - prefixWidth;
+		const continuationIndent = " ".repeat(prefixWidth);
+		return wrapTextWithAnsi(options.startupTip, bodyWidth).map((line, index) => index === 0
+			? `${color.muted(label)}${color.dim(`${separator}${line}`)}`
+			: color.dim(`${continuationIndent}${line}`));
+	};
+
 	const collapsedHintLine = (width: number): string => truncateToWidth(
 		color.dim(`${TLH_HEADER_TOGGLE_SHORTCUT_LABEL} to show skills, prompts, extensions, themes`),
 		width,
@@ -86,7 +110,7 @@ export function createTlhHeader(
 	];
 
 	const renderCollapsed = (width: number) => {
-		const lines = [logo, "", ...headerDetails(width), collapsedHintLine(width)];
+		const lines = [logo, "", ...headerDetails(width), collapsedHintLine(width), ...startupTipLine(width)];
 		return lines;
 	};
 
@@ -105,6 +129,11 @@ export function createTlhHeader(
 
 		for (const resourceSection of resourceSections) {
 			lines.push("", ...resourceSection);
+		}
+
+		const startupTip = startupTipLine(width);
+		if (startupTip.length > 0) {
+			lines.push("", ...startupTip);
 		}
 		return lines;
 	};

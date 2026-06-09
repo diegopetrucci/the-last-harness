@@ -77,6 +77,8 @@ The architect is the default, but it is not the only mode.
 - **product** is for product framing, tradeoffs, strategy, and implementation-ready ticket shaping. It does not implement code.
 - **bug-hunter** is for read-only debugging and root-cause analysis before you decide how to fix something.
 
+**Thinking levels are fixed for some primaries.** Rush, product, and bug-hunter each run at a locked thinking level — `/thinking` and `/effort` are blocked while they are active. Architect requires at least medium thinking; `/thinking` and `/effort` cannot drop it below that floor.
+
 Use `Shift+Tab` to cycle the current session through `architect` → `rush` → `product` → `bug-hunter` → `disabled`.
 
 When primary agents are disabled, TLH stops applying those primary-agent workflow/persona rules, but the underlying subagent machinery still exists.
@@ -99,8 +101,9 @@ TLH also aims to make the day-to-day session experience calmer and safer:
 
 - isolated profile installation so your normal Pi setup stays separate,
 - quieter UI defaults so tools and bash output do not constantly fight for attention,
+- at most one quiet hand-curated random startup tip per TLH launch, scoped to that launch only,
 - a lightweight first-party `/annotate-last-message` command that opens a native annotation window for the latest assistant reply and turns submitted notes into agent feedback,
-- a first-party `/diff-review` command that opens a native review window and pastes submitted feedback back into the editor as a prompt,
+- a first-party `/annotate-git-diff` command that opens a native review window and pastes submitted feedback back into the editor as a prompt,
 - bundled web-search support for research-heavy work,
 - bundled MCP adapter support,
 - subscription usage footer controls,
@@ -114,7 +117,7 @@ You can add your own skills, prompts, extensions, and packages to TLH.
 User-level:
 - `~/.the-last-harness/agent/skills/`
 - `~/.the-last-harness/agent/prompts/`
-- `~/.the-last-harness/agent/extensions/` (or via `tlh install github-user/repo‘)
+- `~/.the-last-harness/agent/extensions/` (or via `tlh install github-user/repo`)
 
 Repo settings:
 - `.pi/skills/`
@@ -142,4 +145,4 @@ Normal `tlh update` runs are conservative: they preserve user-owned isolated-pro
 
 Node.js >=22.19.0 must be available on your `PATH`.
 
-TLH uses upstream Pi >=0.76.0; if `pi` is missing, the installer automatically adds a compatible per-user copy under `~/.local`. The minimum Pi version is enforced at install/update time, not on every launch. The `tlh` wrapper pins the absolute path to your `pi` binary at install time for a fast startup; if that binary is later moved away or removed, the wrapper falls back to PATH discovery automatically. If it is replaced in place with an unsupported version, the wrapper will still exec it without revalidating — run `tlh update` to re-validate the minimum version and repin.
+TLH uses upstream Pi >=0.76.0; if `pi` is missing, the installer automatically adds a compatible per-user copy under `~/.local`.
