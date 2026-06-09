@@ -27,6 +27,7 @@ const jiti = createJiti(import.meta.url);
 const { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents, loadSubagentMetadata } = await jiti.import(
 	"../extensions/the-last-harness/prompts.ts",
 );
+const { buildReviewHtml } = await jiti.import("../extensions/annotate-git-diff/ui.ts");
 
 function sourceSection(source, startMarker, endMarker) {
 	const start = source.indexOf(startMarker);
@@ -83,6 +84,45 @@ test("annotate-git-diff user-facing source copy uses the renamed command", () =>
 	assert.doesNotMatch(annotateGitDiffHtmlSource, /\/diff-review/);
 	assert.match(annotateGitDiffHtmlSource, /<title>TLH annotate-git-diff<\/title>/);
 	assert.match(annotateGitDiffHtmlSource, /<code>\/annotate-git-diff<\/code>/);
+});
+
+test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs into node_modules", () => {
+	// buildReviewHtml must resolve and inline all Monaco assets so that the WKWebView
+	// null-origin restriction on file:// URLs is never triggered.
+	const html = buildReviewHtml({
+		repoRoot: "/test/repo",
+		files: [],
+		commits: [],
+		branchBaseRef: null,
+		branchMergeBaseSha: null,
+		repositoryHasHead: false,
+	});
+
+	// Regression guard: no file:// URL pointing into node_modules must appear in the built HTML.
+	assert.doesNotMatch(html, /file:\/\/[^\s'"]*node_modules/, "built HTML must not contain file:// URLs into node_modules");
+
+	// Monaco editor JS is inlined (editor.main.js contains 'vs/editor/edcore.main').
+	assert.match(html, /vs\/editor\/edcore\.main/, "editor.main.js content must be inlined");
+
+	// Monaco editor CSS is inlined (editor.main.css contains '.monaco-editor').
+	assert.match(html, /\.monaco-editor/, "editor.main.css content must be inlined");
+
+	// Monaco worker source is inlined (workerMain.js contains 'EditorSimpleWorker').
+	assert.match(html, /EditorSimpleWorker/, "workerMain.js content must be inlined");
+
+	// No unreplaced template markers.
+	assert.doesNotMatch(html, /__INLINE_MONACO_EDITOR_JS__/);
+	assert.doesNotMatch(html, /__INLINE_MONACO_EDITOR_CSS__/);
+	assert.doesNotMatch(html, /__INLINE_MONACO_WORKER_SOURCE_JSON__/);
+	assert.doesNotMatch(html, /__INLINE_MONACO_BASIC_LANGUAGES_JS__/, "__INLINE_MONACO_BASIC_LANGUAGES_JS__ marker must be replaced");
+
+	// Basic-language tokenizers are inlined (representative sample).
+	assert.match(html, /define\("vs\/basic-languages\/typescript\/typescript"/, "TypeScript tokenizer must be inlined");
+	assert.match(html, /define\("vs\/basic-languages\/python\/python"/, "Python tokenizer must be inlined");
+	assert.match(html, /define\("vs\/basic-languages\/go\/go"/, "Go tokenizer must be inlined");
+
+	// The asset config must not expose monacoVsBaseUrl.
+	assert.doesNotMatch(html, /monacoVsBaseUrl/);
 });
 
 test("before_agent_start reapplies primary defaults without a one-shot model gate", () => {

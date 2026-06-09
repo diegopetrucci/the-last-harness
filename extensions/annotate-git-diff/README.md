@@ -28,5 +28,5 @@ Submitting feedback does not auto-apply code changes. TLH appends a structured r
 - `Review failed: Not inside a git repository.` → change into a git repo and rerun `/annotate-git-diff`.
 - `No reviewable files found.` → make or fetch reviewable changes, then rerun `/annotate-git-diff`.
 - `Review failed: Glimpse host not found ...` → the local native window runtime is unavailable. Run `tlh update` (or reinstall TLH) to restore the packaged dependency, then rerun from a machine/session that can open native windows.
-- If the review window reports missing packaged assets, close it, run `tlh update`, and rerun `/annotate-git-diff`.
+- If the review window reports it could not load its packaged review assets, the `monaco-editor` package is missing or corrupt in your TLH install. Monaco editor, syntax-highlighting tokenizers, and the worker source are all inlined into the review window's HTML at build time — the UI does not fetch files from disk at runtime — so this failure means the package was absent when TLH built the window. Reinstall TLH (or run `tlh update`) to restore a corrupt install, then rerun `/annotate-git-diff`. If the problem persists after reinstalling, please file an issue.
 - There is no separate `tlh defaults` toggle for `/annotate-git-diff` because it ships inside the TLH package itself.
