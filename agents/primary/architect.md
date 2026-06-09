@@ -62,11 +62,12 @@ Before implementation:
 
 After approval:
 
-1. Create a small dependency tree of implementation tasks as `tk` tickets.
+1. Create a small dependency tree of `tk` tickets that breaks the work into reviewable slices.
 2. Use `tk create "<title>" -d "<description>" --acceptance "<criteria>"`; add `--design` only for non-obvious design notes.
-3. Use `tk dep <id> <depends-on-id>` to wire dependencies.
-4. Present the ticket tree to the user.
-5. Do not launch `developer` until the user approves the created tickets.
+3. Capture any ticket-specific validation expectations in the ticket when they differ from the repository's normal validation flow.
+4. Use `tk dep <id> <depends-on-id>` to wire dependencies.
+5. Present the ticket tree to the user.
+6. Do not launch `developer` until the user approves the created tickets.
 
 The approved `tk` tickets are the only implementation artifacts `developer` should rely on. Keep them concise, specific, and free of secrets or PII.
 
@@ -76,14 +77,15 @@ For each ready task:
 
 1. Use `tk ready` to pick the next dependency-unblocked ticket.
 2. Delegate one ticket to `developer` and instruct it to run `tk show <id>`.
-3. Evaluate the developer report against the ticket and overall plan.
-4. If needed, send focused corrections back to `developer`.
-5. Close the `tk` ticket only when its intent is met.
-6. Use `code-reviewer` checkpoints for high-risk changes.
+3. Call out any ticket-specific validation constraints or sequencing that the approved plan requires.
+4. Evaluate the developer report against the ticket and overall plan.
+5. If needed, send focused corrections back to `developer`.
+6. Close the `tk` ticket only when its intent is met.
+7. Use `code-reviewer` checkpoints for high-risk changes.
 
 ## Final review
 
-After all tasks are complete:
+After all planned tickets are complete:
 
 1. Delegate final review to `code-reviewer` against the full VCS diff and completed tickets.
 2. Evaluate findings; delegate fixes to `developer` if needed.

@@ -178,6 +178,8 @@ test("before_agent_start gates run-tests-last experimental guidance behind isola
 		const { beforeAgentStart } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
 		const defaultPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
 		assert.doesNotMatch(defaultPrompt.systemPrompt, /## TLH Experimental Feature: run-tests-last/);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /separate final-validation ticket/i);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /VALIDATING\.md.*otherwise use repo-discovered validation commands/i);
 
 		for (const enabledFeatures of [true, [123]]) {
 			writeFileSync(
@@ -189,6 +191,8 @@ test("before_agent_start gates run-tests-last experimental guidance behind isola
 				createToolCallContext([], undefined, { cwd: fixture.cwd }),
 			);
 			assert.doesNotMatch(malformedPrompt.systemPrompt, /## TLH Experimental Feature: run-tests-last/);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /separate final-validation ticket/i);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /VALIDATING\.md.*otherwise use repo-discovered validation commands/i);
 		}
 
 		writeFileSync(
@@ -198,6 +202,8 @@ test("before_agent_start gates run-tests-last experimental guidance behind isola
 		const enabledPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
 		assert.match(enabledPrompt.systemPrompt, /## TLH Experimental Feature: run-tests-last/);
 		assert.match(enabledPrompt.systemPrompt, /separate final-validation ticket/i);
+		assert.match(enabledPrompt.systemPrompt, /depends on all implementation tickets/i);
+		assert.match(enabledPrompt.systemPrompt, /VALIDATING\.md.*otherwise use repo-discovered validation commands/i);
 		assert.match(enabledPrompt.systemPrompt, /Make any validation deferral explicit in the ticket text/i);
 	});
 });

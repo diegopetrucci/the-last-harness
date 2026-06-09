@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { readAgentPrompt } from "./agent-prompt-test-helpers.mjs";
+import { bodyPattern, readAgentPrompt } from "./agent-prompt-test-helpers.mjs";
 
-const { content: architectMd } = readAgentPrompt("primary", "architect");
+const architect = readAgentPrompt("primary", "architect");
+const { content: architectMd, normalizedBody: architectNormalizedBody } = architect;
 
 test("architect.md contains web-scout bullet in the subagent tools list", () => {
 	assert.match(
@@ -39,4 +40,24 @@ test("architect.md requires specific risk wording and explicit consent before us
 		/If you think the `oracle` could help, explain the specific risk or uncertainty and ask the user if they want you to use it\./,
 	);
 	assert.match(architectMd, /Never trigger the `oracle` unless the user explicitly agrees\./);
+});
+
+test("architect.md keeps base validation planning ticket-specific", () => {
+	assert.ok(
+		bodyPattern(
+			"ticket-specific validation expectations",
+			/ticket-specific validation expectations.*differ from the repository's normal validation flow/i,
+		).test(architect),
+	);
+});
+
+test("architect.md leaves run-tests-last final-validation workflow out of the base prompt", () => {
+	assert.doesNotMatch(
+		architectNormalizedBody,
+		/implementation ticket.*do(?:es)? not require tests or validation.*final validation ticket/i,
+	);
+	assert.doesNotMatch(
+		architectNormalizedBody,
+		/final validation ticket.*depends on all implementation tickets.*when .*VALIDATING\.md.*otherwise.*repo-discovered validation commands/i,
+	);
 });
