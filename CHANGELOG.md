@@ -13,6 +13,17 @@ All notable changes to The Last Harness will be documented in this file.
 - Rush, product, and bug-hunter now run at fixed thinking levels. Attempting to change thinking under these primaries with `/thinking` or `/effort` returns a clear error: `Thinking is locked at "<level>" for the <name> primary agent.` The locked levels are: rush → low (off on OpenAI/OpenAI-Codex), product → high, bug-hunter → high.
 - Architect now enforces a minimum thinking floor of medium. `/thinking` and `/effort` cannot set architect thinking below medium. Any session currently running architect below medium will be bumped to architect's default thinking on the next primary apply (session start or primary switch).
 
+## [0.18.0] - 2026-06-08
+
+### Added
+
+- The Architect (the primary TLH subagent) can now use MCP tools via the `mcp` tool grant, enabling MCP-backed workflows from the architect role.
+
+### Changed
+
+- The TLH update-available notification has been reworded for clarity and is now install-track aware. The suggested command now matches the install track (`latest-release`, `pinned-tag`, `ref`, or `custom`); `custom`-track installs no longer receive a misleading plain `tlh update` suggestion.
+- Documentation refresh: `README.md`, `docs/commands.md`, and `docs/install.md` updated so the documented `tlh` command and update references match current behavior.
+
 ## [0.17.0] - 2026-06-06
 
 ### Changed
