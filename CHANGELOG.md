@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-06-09
+
 ### Fixed
 
 - Fixed the `/annotate-git-diff` review window failing to load Monaco in environments where the WebView could not load packaged editor files from disk (e.g. WKWebView with a null origin). Monaco editor, syntax-highlighting tokenizers, and the worker source are all inlined into the review window's HTML at build time, so the window works from any WebView origin without runtime file-system fetches.
