@@ -72,6 +72,8 @@ function parseAgentPrompt(filePath: string): AgentPrompt | undefined {
 		preferCurrentOpenaiModel: parseBooleanValue(frontmatter.preferCurrentOpenaiModel),
 		applyModel: parseBooleanValue(frontmatter.applyModel),
 		applyThinking: parseBooleanValue(frontmatter.applyThinking),
+		lockThinking: parseBooleanValue(frontmatter.lockThinking),
+		minThinking: parseThinkingLevelValue(frontmatter.minThinking),
 		tools: splitCommaList(frontmatter.tools),
 		systemPrompt: body,
 		filePath,

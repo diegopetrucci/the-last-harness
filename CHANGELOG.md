@@ -4,6 +4,15 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Primary-agent thinking is now asserted on every primary switch. Previously, switching back to architect after a Rush session could leave thinking at Rush's low level instead of reapplying architect's default when Rush had left the session below architect's medium floor.
+
+### Changed
+
+- Rush, product, and bug-hunter now run at fixed thinking levels. Attempting to change thinking under these primaries with `/thinking` or `/effort` returns a clear error: `Thinking is locked at "<level>" for the <name> primary agent.` The locked levels are: rush → low (off on OpenAI/OpenAI-Codex), product → high, bug-hunter → high.
+- Architect now enforces a minimum thinking floor of medium. `/thinking` and `/effort` cannot set architect thinking below medium. Any session currently running architect below medium will be bumped to architect's default thinking on the next primary apply (session start or primary switch).
+
 ## [0.18.0] - 2026-06-08
 
 ### Added

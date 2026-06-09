@@ -35,7 +35,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	installTlhPackageUpdateNotificationOverride();
 	registerToggleTlhGitAttributionCommand(pi);
 	registerAnnotateLastMessageCommand(pi);
-	registerEffortCommand(pi);
+	registerEffortCommand(pi, primaryAgentRuntime);
 	registerExperimentalCommand(pi);
 	registerReviewCommand(pi);
 	registerTlhChangelogCommand(pi);

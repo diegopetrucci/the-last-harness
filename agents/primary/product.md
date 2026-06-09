@@ -4,6 +4,9 @@ description: Guides product strategy, decisions, product docs, and implementatio
 model: anthropic/claude-opus-4-6
 tlhOpenaiModels: openai-codex/gpt-5.5, openai/gpt-5.5
 thinking: high
+applyModel: true
+applyThinking: true
+lockThinking: true
 tools: read, grep, find, ls, bash, write, edit, subagent, intercom
 systemPromptMode: append
 inheritProjectContext: true
