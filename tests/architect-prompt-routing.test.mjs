@@ -4,7 +4,7 @@ import test from "node:test";
 import { bodyPattern, readAgentPrompt } from "./agent-prompt-test-helpers.mjs";
 
 const architect = readAgentPrompt("primary", "architect");
-const { content: architectMd } = architect;
+const { content: architectMd, normalizedBody: architectNormalizedBody } = architect;
 
 test("architect.md contains web-scout bullet in the subagent tools list", () => {
 	assert.match(
@@ -42,20 +42,22 @@ test("architect.md requires specific risk wording and explicit consent before us
 	assert.match(architectMd, /Never trigger the `oracle` unless the user explicitly agrees\./);
 });
 
-test("architect.md separates implementation tickets from final validation", () => {
+test("architect.md keeps base validation planning ticket-specific", () => {
 	assert.ok(
 		bodyPattern(
-			"implementation tickets skip validation",
-			/implementation ticket.*do(?:es)? not require tests or validation.*final validation ticket/i,
+			"ticket-specific validation expectations",
+			/ticket-specific validation expectations.*differ from the repository's normal validation flow/i,
 		).test(architect),
 	);
 });
 
-test("architect.md makes the final validation ticket depend on implementation tickets and use VALIDATING.md when present", () => {
-	assert.ok(
-		bodyPattern(
-			"final validation ticket uses repository validation guidance",
-			/final validation ticket.*depends on all implementation tickets.*when .*VALIDATING\.md.*otherwise.*repo-discovered validation commands/i,
-		).test(architect),
+test("architect.md leaves run-tests-last final-validation workflow out of the base prompt", () => {
+	assert.doesNotMatch(
+		architectNormalizedBody,
+		/implementation ticket.*do(?:es)? not require tests or validation.*final validation ticket/i,
+	);
+	assert.doesNotMatch(
+		architectNormalizedBody,
+		/final validation ticket.*depends on all implementation tickets.*when .*VALIDATING\.md.*otherwise.*repo-discovered validation commands/i,
 	);
 });

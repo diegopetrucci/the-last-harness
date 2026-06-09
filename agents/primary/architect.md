@@ -62,13 +62,12 @@ Before implementation:
 
 After approval:
 
-1. Create a small dependency tree of `tk` tickets with implementation tickets separated from one final validation ticket.
+1. Create a small dependency tree of `tk` tickets that breaks the work into reviewable slices.
 2. Use `tk create "<title>" -d "<description>" --acceptance "<criteria>"`; add `--design` only for non-obvious design notes.
-3. In every implementation ticket, explicitly state that the ticket does not require tests or validation and that final validation happens in the separate final validation ticket.
-4. Create one final validation ticket that depends on all implementation tickets. When `VALIDATING.md` is present, use it as the reference for the validation ticket; otherwise reference the repo-discovered validation commands.
-5. Use `tk dep <id> <depends-on-id>` to wire dependencies.
-6. Present the ticket tree to the user.
-7. Do not launch `developer` until the user approves the created tickets.
+3. Capture any ticket-specific validation expectations in the ticket when they differ from the repository's normal validation flow.
+4. Use `tk dep <id> <depends-on-id>` to wire dependencies.
+5. Present the ticket tree to the user.
+6. Do not launch `developer` until the user approves the created tickets.
 
 The approved `tk` tickets are the only implementation artifacts `developer` should rely on. Keep them concise, specific, and free of secrets or PII.
 
@@ -78,7 +77,7 @@ For each ready task:
 
 1. Use `tk ready` to pick the next dependency-unblocked ticket.
 2. Delegate one ticket to `developer` and instruct it to run `tk show <id>`.
-3. For implementation tickets, do not ask `developer` to run tests or validation; keep that work reserved for the final validation ticket.
+3. Call out any ticket-specific validation constraints or sequencing that the approved plan requires.
 4. Evaluate the developer report against the ticket and overall plan.
 5. If needed, send focused corrections back to `developer`.
 6. Close the `tk` ticket only when its intent is met.
@@ -86,7 +85,7 @@ For each ready task:
 
 ## Final review
 
-After all implementation tickets and the final validation ticket are complete:
+After all planned tickets are complete:
 
 1. Delegate final review to `code-reviewer` against the full VCS diff and completed tickets.
 2. Evaluate findings; delegate fixes to `developer` if needed.

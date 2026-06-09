@@ -26,12 +26,8 @@ const contracts = [
 			orderedTerms("developer waits for approved tickets", ["do not launch", "developer", "until", "approves", "tickets"]),
 			includesAllTerms("high-risk oracle gating", ["high-stakes", "broad blast radius", "explicitly agrees"]),
 			bodyPattern(
-				"implementation tickets skip validation",
-				/implementation ticket.*do(?:es)? not require tests or validation.*final validation ticket/i,
-			),
-			bodyPattern(
-				"final validation ticket uses repository validation guidance",
-				/final validation ticket.*depends on all implementation tickets.*when .*VALIDATING\.md.*otherwise.*repo-discovered validation commands/i,
+				"architect captures only ticket-specific validation deviations",
+				/ticket-specific validation expectations.*differ from the repository's normal validation flow/i,
 			),
 		],
 	},
@@ -94,18 +90,14 @@ const contracts = [
 			bodyPattern("developer uses contact_supervisor for blocking decisions", /contact_supervisor/i),
 			orderedTerms("developer fails closed on blocking supervisor ask failures", ["contact_supervisor", "unavailable", "fails", "times out", "report the blocker", "stop without editing files"]),
 			bodyPattern(
-				"developer can defer validation for implementation tickets",
-				/(?:assigned ticket|architect instructions).*explicitly defer tests\/validation.*final validation ticket.*do not run tests or validation/i,
+				"developer defers validation only when the assigned ticket says otherwise",
+				/run the narrowest meaningful validation before reporting completion, unless the assigned ticket explicitly says otherwise/i,
 			),
 			bodyPattern(
-				"developer still runs validation for final validation tickets",
-				/final validation ticket.*VALIDATING\.md.*otherwise.*repo-discovered commands/i,
+				"developer follows assigned ticket validation scope",
+				/assigned ticket defines a specific validation scope.*follow the ticket instructions exactly/i,
 			),
-			bodyPattern(
-				"developer otherwise runs narrow validation",
-				/otherwise.*run the narrowest meaningful validation/i,
-			),
-			orderedTerms("developer reports exact validation commands or deferral", ["Validation:", "exact commands run and outcomes", "validation was intentionally deferred", "final validation ticket"]),
+			orderedTerms("developer reports exact validation commands or explicit ticket deferral", ["Validation:", "exact commands run and outcomes", "assigned ticket explicitly deferred validation"]),
 		],
 	},
 	{
@@ -170,3 +162,20 @@ for (const contract of contracts) {
 		assertPromptAnchors(agent, contract.anchors);
 	});
 }
+
+test("base architect prompt keeps run-tests-last validation workflow out of base prompts unless the experimental flag is enabled", () => {
+	const architect = readAgentPrompt("primary", "architect");
+	const { normalizedBody } = architect;
+	assert.doesNotMatch(normalizedBody, /implementation ticket.*do(?:es)? not require tests or validation.*final validation ticket/i);
+	assert.doesNotMatch(
+		normalizedBody,
+		/final validation ticket.*depends on all implementation tickets.*when .*VALIDATING\.md.*otherwise.*repo-discovered validation commands/i,
+	);
+});
+
+test("base developer prompt keeps run-tests-last validation workflow gated behind the experimental flag", () => {
+	const developer = readAgentPrompt("subagents", "developer");
+	const { normalizedBody } = developer;
+	assert.doesNotMatch(normalizedBody, /explicitly defer tests\/validation.*final validation ticket/i);
+	assert.doesNotMatch(normalizedBody, /final validation ticket.*VALIDATING\.md.*otherwise.*repo-discovered commands/i);
+});
