@@ -90,6 +90,30 @@ export const TRACE_POLICY_FIXTURES = [
 		},
 	},
 	{
+		name: "rush invalid if it delegates nested review work instead of web research",
+		valid: false,
+		expectedCodes: ["rush.subagent_allowlist"],
+		transcript: {
+			agent: "rush",
+			steps: [
+				{
+					type: "tool",
+					tool: "subagent",
+					input: {
+						chain: [
+							{
+								parallel: [
+									{ agent: "web-scout", prompt: "Look up an upstream API detail." },
+									{ agent: "code-reviewer", prompt: "Review my planned edit." },
+								],
+							},
+						],
+					},
+				},
+			],
+		},
+	},
+	{
 		name: "product valid when it stays inside docs and approved tickets",
 		valid: true,
 		transcript: {
@@ -137,6 +161,17 @@ export const TRACE_POLICY_FIXTURES = [
 		},
 	},
 	{
+		name: "product invalid if it delegates diff summarization",
+		valid: false,
+		expectedCodes: ["product.subagent_allowlist"],
+		transcript: {
+			agent: "product",
+			steps: [
+				{ type: "tool", tool: "subagent", input: { agent: "diff-summarizer", prompt: "Summarize the local diff." } },
+			],
+		},
+	},
+	{
 		name: "product invalid if docs traversal escapes the allowlist",
 		valid: false,
 		expectedCodes: ["product.write_boundary"],
@@ -168,6 +203,17 @@ export const TRACE_POLICY_FIXTURES = [
 			steps: [
 				{ type: "tool", tool: "read", path: "extensions/the-last-harness-subagent-safety.mjs" },
 				{ type: "tool", tool: "edit", path: "extensions/the-last-harness-subagent-safety.mjs" },
+			],
+		},
+	},
+	{
+		name: "bug-hunter invalid if it delegates implementation",
+		valid: false,
+		expectedCodes: ["bug-hunter.subagent_allowlist"],
+		transcript: {
+			agent: "bug-hunter",
+			steps: [
+				{ type: "tool", tool: "subagent", input: { agent: "developer", prompt: "Implement the fix." } },
 			],
 		},
 	},

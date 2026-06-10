@@ -309,6 +309,49 @@ test("reported product developer and code-reviewer delegations are rejected", ()
 	}), ["product.no_implementation_delegation"]);
 });
 
+test("trace policy enforces runtime per-primary subagent allowlists", () => {
+	assert.deepEqual(violationCodes({
+		agent: "architect",
+		steps: [
+			{ type: "tool", tool: "subagent", input: { agent: "bug-hunter", prompt: "Investigate it." } },
+		],
+	}), ["architect.subagent_allowlist"]);
+
+	assert.deepEqual(violationCodes({
+		agent: "rush",
+		steps: [
+			{
+				type: "tool",
+				tool: "subagent",
+				input: {
+					chain: [
+						{
+							parallel: [
+								{ agent: "web-scout", prompt: "Research a release note." },
+								{ agent: "code-reviewer", prompt: "Review the plan." },
+							],
+						},
+					],
+				},
+			},
+		],
+	}), ["rush.subagent_allowlist"]);
+
+	assert.deepEqual(violationCodes({
+		agent: "product",
+		steps: [
+			{ type: "tool", tool: "subagent", input: { agent: "diff-summarizer", prompt: "Summarize the diff." } },
+		],
+	}), ["product.subagent_allowlist"]);
+
+	assert.deepEqual(violationCodes({
+		agent: "bug-hunter",
+		steps: [
+			{ type: "tool", tool: "subagent", input: { agent: "developer", prompt: "Implement the fix." } },
+		],
+	}), ["bug-hunter.subagent_allowlist"]);
+});
+
 test("reported product docs traversal regression is rejected", () => {
 	assert.deepEqual(violationCodes({
 		agent: "product",

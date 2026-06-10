@@ -3,13 +3,15 @@ import test from "node:test";
 
 import {
 	ALLOWED_SUBAGENTS,
+	PRIMARY_SUBAGENT_ALLOWLISTS,
 	SUBAGENT_CHILD_ENV,
+	allowedSubagentsForPrimary,
 	registerTlhStartupMode,
 	validateSubagentToolInput,
 } from "../extensions/the-last-harness-subagent-safety.mjs";
 
-function assertAllowed(input) {
-	assert.equal(validateSubagentToolInput(input), undefined);
+function assertAllowed(input, primary) {
+	assert.equal(validateSubagentToolInput(input, primary), undefined);
 }
 
 function createPiHarness() {
@@ -29,7 +31,13 @@ function createPiHarness() {
 	};
 }
 
-test("ALLOWED_SUBAGENTS exposes bundled minor agents", () => {
+test("PRIMARY_SUBAGENT_ALLOWLISTS exposes the approved per-primary delegation policy", () => {
+	assert.deepEqual(PRIMARY_SUBAGENT_ALLOWLISTS, {
+		architect: ["developer", "code-reviewer", "repo-scout", "diff-summarizer", "librarian", "web-scout", "oracle"],
+		rush: ["web-scout"],
+		product: ["repo-scout", "librarian", "oracle", "web-scout"],
+		"bug-hunter": ["repo-scout", "librarian", "oracle"],
+	});
 	assert.deepEqual(ALLOWED_SUBAGENTS, [
 		"developer",
 		"code-reviewer",
@@ -39,22 +47,22 @@ test("ALLOWED_SUBAGENTS exposes bundled minor agents", () => {
 		"web-scout",
 		"oracle",
 	]);
+	assert.deepEqual(allowedSubagentsForPrimary("architect"), PRIMARY_SUBAGENT_ALLOWLISTS.architect);
+	assert.deepEqual(allowedSubagentsForPrimary("disabled"), ALLOWED_SUBAGENTS);
 });
 
-test("validateSubagentToolInput allows web-scout as a permitted delegation target", () => {
-	const single = { agent: "web-scout", prompt: "research the general web for upstream release notes" };
-	assertAllowed(single);
-	assert.equal(single.agentScope, "user");
-	assert.equal(single.context, "fresh");
-});
+test("validateSubagentToolInput allows approved primary-specific targets and forces fresh user context", () => {
+	const rushSingle = { agent: "web-scout", prompt: "research the general web for upstream release notes" };
+	assertAllowed(rushSingle, "rush");
+	assert.equal(rushSingle.agentScope, "user");
+	assert.equal(rushSingle.context, "fresh");
 
-test("validateSubagentToolInput allows approved execution and forces fresh user context", () => {
-	const single = { agent: "developer", prompt: "implement the ticket" };
-	assertAllowed(single);
-	assert.equal(single.agentScope, "user");
-	assert.equal(single.context, "fresh");
+	const architectSingle = { agent: "developer", prompt: "implement the ticket" };
+	assertAllowed(architectSingle, "architect");
+	assert.equal(architectSingle.agentScope, "user");
+	assert.equal(architectSingle.context, "fresh");
 
-	const batched = {
+	const architectBatched = {
 		tasks: [
 			{ agent: "repo-scout", prompt: "map the repo" },
 			{ agent: "librarian", prompt: "research upstream docs" },
@@ -71,9 +79,9 @@ test("validateSubagentToolInput allows approved execution and forces fresh user 
 			},
 		],
 	};
-	assertAllowed(batched);
-	assert.equal(batched.agentScope, "user");
-	assert.equal(batched.context, "fresh");
+	assertAllowed(architectBatched, "architect");
+	assert.equal(architectBatched.agentScope, "user");
+	assert.equal(architectBatched.context, "fresh");
 });
 
 test("validateSubagentToolInput allows approved management calls and forces user scope where needed", () => {
@@ -112,12 +120,24 @@ test("validateSubagentToolInput uses generic primary-agent wording", () => {
 	}
 });
 
-test("validateSubagentToolInput rejects disallowed agents", () => {
-	assert.match(validateSubagentToolInput({ agent: "architect" }), /Disallowed target\(s\): architect/);
-	assert.match(
-		validateSubagentToolInput({ tasks: [{ agent: "developer" }, { agent: "planner" }] }),
-		/Disallowed target\(s\): planner/,
+test("validateSubagentToolInput rejects disallowed agents with active-primary allowlists", () => {
+	assert.equal(
+		validateSubagentToolInput({ agent: "developer" }, "product"),
+		"TLH product may delegate only to: repo-scout, librarian, oracle, web-scout. Disallowed target(s): developer.",
 	);
+	assert.equal(
+		validateSubagentToolInput({ tasks: [{ agent: "web-scout" }, { agent: "developer" }] }, "rush"),
+		"TLH rush may delegate only to: web-scout. Disallowed target(s): developer.",
+	);
+	assert.equal(
+		validateSubagentToolInput({ chain: [{ agent: "developer" }] }, "bug-hunter"),
+		"TLH bug-hunter may delegate only to: repo-scout, librarian, oracle. Disallowed target(s): developer.",
+	);
+	assert.equal(
+		validateSubagentToolInput({ chain: [{ parallel: [{ agent: "repo-scout" }, { agent: "developer" }] }] }, "rush"),
+		"TLH rush may delegate only to: web-scout. Disallowed target(s): repo-scout, developer.",
+	);
+	assert.match(validateSubagentToolInput({ agent: "architect" }), /Disallowed target\(s\): architect/);
 	assert.match(
 		validateSubagentToolInput({ chain: [{ parallel: [{ agent: "repo-scout" }, { agent: "root" }] }] }),
 		/Disallowed target\(s\): root/,

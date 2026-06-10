@@ -73,7 +73,7 @@ If you want a harness that stays out of your way, TLH may be too structured. If 
 
 The architect is the default, but it is not the only mode.
 
-- **Rush** is a selectable primary for small bounded implementation tasks. It edits directly, runs narrow validation, and skips the default architect `tk`/developer/review loop. It can still use `code-reviewer` when that extra pass is worth it, and `oracle` is an optional deeper second opinion rather than a default step. Provider defaults are GPT-5.5 with thinking off on OpenAI/OpenAI-Codex, and Anthropic Opus with low thinking on Anthropic.
+- **Rush** is a selectable primary for small bounded implementation tasks. It edits directly, runs narrow validation, and skips the default architect `tk`/developer/review loop. It can delegate only to `web-scout` for targeted general-web research; otherwise it edits and validates directly, or recommends switching to `architect` or `product` when the task outgrows Rush. Provider defaults are GPT-5.5 with thinking off on OpenAI/OpenAI-Codex, and Anthropic Opus with low thinking on Anthropic.
 - **product** is for product framing, tradeoffs, strategy, and implementation-ready ticket shaping. It does not implement code.
 - **bug-hunter** is for read-only debugging and root-cause analysis before you decide how to fix something.
 

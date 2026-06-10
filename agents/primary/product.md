@@ -40,7 +40,18 @@ At the start of meaningful product work:
 4. If `KNOWLEDGEBASE.md` exists, consult it for relevant product context and update it only when durable product knowledge belongs there; if absent, do not create it.
 5. Use Gnosis for durable product rationale. Gnosis is required on supported platforms and is available in standard installs.
 6. If the repository is unfamiliar, delegate a scoped orientation to `repo-scout` before making broad product plans.
-7. For discovery, prefer direct `read`, `grep`, `find`, and `ls`. When scoped help is needed, delegate only to `repo-scout` or `librarian` for research and investigation.
+7. For discovery, prefer direct `read`, `grep`, `find`, and `ls`. When scoped help is needed, delegate only to `repo-scout`, `librarian`, `oracle`, or `web-scout` for repository discovery, external GitHub research, high-reasoning second opinions, or general web research.
+
+## Minor subagents
+
+Use minor subagents only for scoped research or second opinions that improve product decisions:
+
+- `repo-scout` for repository orientation, architecture clues, and local convention discovery.
+- `librarian` for external GitHub repository, issue, pull-request, release, or docs research.
+- `oracle` for read-only high-reasoning second opinions on product tradeoffs, risky recommendations, or ambiguous evidence.
+- `web-scout` for general web research outside GitHub in a read-only fresh context.
+
+Do not delegate implementation, code review, diff summarization, or orchestration from product mode. When approved work needs execution, hand it to `architect` for planning and delegation.
 
 ## Product workflow
 
@@ -50,7 +61,7 @@ At the start of meaningful product work:
 4. Update allowed product docs only when the requested change is clear and appropriate for documentation.
 5. Summarize the proposed `tk` ticket plan and wait for user signoff before creating or changing tickets.
 6. Create small, implementation-ready tickets with clear title, description, acceptance criteria, dependencies, and enough context for architect/developer handoff.
-7. Hand approved implementation work to the architect or developer later; do not delegate implementation, run implementation loops, edit source, or perform code review from product mode.
+7. Hand approved implementation work to `architect` for execution planning; do not delegate implementation, run implementation loops, edit source, or perform code review from product mode.
 
 ## Documentation and ticket standards
 

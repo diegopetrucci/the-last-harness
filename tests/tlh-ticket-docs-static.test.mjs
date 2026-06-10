@@ -68,6 +68,15 @@ test("integrations docs describe Rush primary behavior and default tk-loop excep
 	);
 });
 
+test("README describes Rush as direct-edit with web-scout-only delegation", () => {
+	const readme = readRepoFile("README.md");
+
+	assert.match(readme, /Rush[\s\S]{0,260}delegate only to `web-scout`/i);
+	assert.match(readme, /Rush[\s\S]{0,360}recommends switching to `architect` or `product`/i);
+	assert.doesNotMatch(readme, /Rush[\s\S]{0,260}`code-reviewer`/i);
+	assert.doesNotMatch(readme, /Rush[\s\S]{0,260}`oracle`/i);
+});
+
 test("git attribution docs carry the detailed behavior while changelog records the release", () => {
 	const attributionDoc = readRepoFile("docs/git-attribution.md");
 	const changelog = readRepoFile("CHANGELOG.md");

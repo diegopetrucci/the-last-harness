@@ -170,41 +170,6 @@ function primaryAgentOverrideLabel(selection: TlhPrimaryAgentSelection | undefin
 	return selection ?? "none";
 }
 
-function matchesSubagentName(value: unknown, target: string): boolean {
-	return typeof value === "string" && value.trim().toLowerCase() === target;
-}
-
-function subagentCallTargetsAgent(input: unknown, target: string): boolean {
-	if (!isRecord(input)) {
-		return false;
-	}
-	if (matchesSubagentName(input.agent, target)) {
-		return true;
-	}
-	if (Array.isArray(input.tasks) && input.tasks.some((task) => subagentCallTargetsAgent(task, target))) {
-		return true;
-	}
-	if (!Array.isArray(input.chain)) {
-		return false;
-	}
-	for (const step of input.chain) {
-		if (!isRecord(step)) {
-			continue;
-		}
-		if (matchesSubagentName(step.agent, target)) {
-			return true;
-		}
-		if (Array.isArray(step.parallel) && step.parallel.some((task) => subagentCallTargetsAgent(task, target))) {
-			return true;
-		}
-	}
-	return false;
-}
-
-function rushDeveloperDelegationReason(): string {
-	return "TLH Rush may not delegate implementation to developer. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.";
-}
-
 function registerChildSubagentRuntime(pi: ExtensionAPI, buildChildPrompt: () => string): void {
 	pi.on("before_agent_start", async (event, ctx) => {
 		const commitAttributionState = resolveTlhCommitAttribution(getTlhGlobalSettings(ctx.cwd).tlh?.attribution);
@@ -602,10 +567,7 @@ function createTlhPrimaryAgentRuntime(
 			if (!isEnabledPrimaryAgentSelection(selection)) {
 				return undefined;
 			}
-			if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
-				return { block: true, reason: rushDeveloperDelegationReason() };
-			}
-			const reason = validateSubagentToolInput(event.input);
+			const reason = validateSubagentToolInput(event.input, selection);
 			return reason ? { block: true, reason } : undefined;
 		});
 	}

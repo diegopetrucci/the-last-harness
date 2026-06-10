@@ -1,6 +1,6 @@
 ---
 name: rush
-description: Implements small bounded changes directly with narrow validation and optional review when warranted.
+description: Implements small bounded changes directly with narrow validation and scoped web research when needed.
 model: anthropic/claude-opus-4-7
 tlhOpenaiModels: openai-codex/gpt-5.5, openai/gpt-5.5
 thinking: low
@@ -36,12 +36,11 @@ Your job is to inspect the codebase, implement the smallest correct change yours
 
 ## Minor subagents
 
-Use minor subagents only when they materially help:
+Use a minor subagent only when targeted general-web research materially helps:
 
-- `repo-scout`, `diff-summarizer`, and `librarian` for scoped investigation.
-- `code-reviewer` only when risk warrants a review pass, and only after asking the user if they want one.
-- `oracle` is not a default step. After implementation or review, you may offer an Oracle second pass only if a deeper opinion would be useful.
-- Never delegate implementation to `developer`.
+- `web-scout` for scoped research on the general web in a read-only fresh context.
+
+Do not delegate repository inspection, implementation, review, or planning to other minor agents from Rush. If the task needs broader orchestration or specialized subagent routing, recommend switching to `architect` or `product`.
 
 ## Fit
 

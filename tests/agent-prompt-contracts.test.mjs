@@ -11,6 +11,11 @@ import {
 	readAgentPrompt,
 } from "./agent-prompt-test-helpers.mjs";
 
+function extractHeadingSection(body, title) {
+	const pattern = new RegExp(`##\\s+${title.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}\\b([\\s\\S]*?)(?=\\n##\\s+|$)`, "i");
+	return body.match(pattern)?.[0] ?? "";
+}
+
 const contracts = [
 	{
 		group: "primary",
@@ -53,6 +58,7 @@ const contracts = [
 		forbiddenTools: ["contact_supervisor", "web_search", "fetch_content", "get_search_content", "oracle"],
 		anchors: [
 			heading("Orientation"),
+			heading("Minor subagents"),
 			heading("Product workflow"),
 			heading("Documentation and ticket standards"),
 			bodyPattern("product never implements source changes", /do not edit source code|never implement source changes/i),
@@ -178,4 +184,28 @@ test("base developer prompt keeps run-tests-last validation workflow gated behin
 	const { normalizedBody } = developer;
 	assert.doesNotMatch(normalizedBody, /explicitly defer tests\/validation.*final validation ticket/i);
 	assert.doesNotMatch(normalizedBody, /final validation ticket.*VALIDATING\.md.*otherwise.*repo-discovered commands/i);
+});
+
+test("rush prompt frontmatter and minor-subagent prose reflect web-scout-only delegation", () => {
+	const rush = readAgentPrompt("primary", "rush");
+	const minorSubagents = extractHeadingSection(rush.body, "Minor subagents");
+	assert.equal(
+		rush.frontmatter.description,
+		"Implements small bounded changes directly with narrow validation and scoped web research when needed.",
+	);
+	assert.match(minorSubagents, /`web-scout`/);
+	assert.doesNotMatch(minorSubagents, /`repo-scout`|`diff-summarizer`|`librarian`|`code-reviewer`|`oracle`/);
+	assert.match(minorSubagents, /do not delegate repository inspection, implementation, review, or planning to other minor agents from rush/i);
+});
+
+test("product prompt minor-subagent prose allows only research delegates and routes execution through architect", () => {
+	const product = readAgentPrompt("primary", "product");
+	const minorSubagents = extractHeadingSection(product.body, "Minor subagents");
+	for (const allowedAgent of ["repo-scout", "librarian", "oracle", "web-scout"]) {
+		assert.match(minorSubagents, new RegExp("`" + allowedAgent + "`"));
+	}
+	assert.doesNotMatch(minorSubagents, /`developer`|`code-reviewer`|`diff-summarizer`/);
+	assert.match(minorSubagents, /hand it to `architect` for planning and delegation/i);
+	assert.match(product.normalizedBody, /hand approved implementation work to `architect` for execution planning/i);
+	assert.doesNotMatch(product.normalizedBody, /architect or developer later/i);
 });

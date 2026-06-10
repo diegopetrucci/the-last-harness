@@ -27,6 +27,7 @@ const jiti = createJiti(import.meta.url);
 const { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents, loadSubagentMetadata } = await jiti.import(
 	"../extensions/the-last-harness/prompts.ts",
 );
+const { PRIMARY_SUBAGENT_ALLOWLISTS } = await jiti.import("../extensions/the-last-harness-subagent-safety.mjs");
 const { buildReviewHtml } = await jiti.import("../extensions/annotate-git-diff/ui.ts");
 
 function sourceSection(source, startMarker, endMarker) {
@@ -213,6 +214,23 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	}
 });
 
+test("buildTlhSystemPrompt renders the allowed minor-agent section per active primary policy", () => {
+	const primaryAgents = loadPrimaryAgents();
+	const subagents = loadSubagentMetadata();
+	const knownSubagentNames = subagents.map((agent) => agent.name);
+
+	for (const [primaryName, allowedSubagents] of Object.entries(PRIMARY_SUBAGENT_ALLOWLISTS)) {
+		const prompt = buildTlhSystemPrompt(primaryAgents.get(primaryName), subagents, true);
+		assert.match(prompt, /## TLH Allowed Minor Subagents/);
+		for (const allowedSubagent of allowedSubagents) {
+			assert.match(prompt, new RegExp(`- ${allowedSubagent}:`));
+		}
+		for (const disallowedSubagent of knownSubagentNames.filter((name) => !allowedSubagents.includes(name))) {
+			assert.doesNotMatch(prompt, new RegExp(`- ${disallowedSubagent}:`));
+		}
+	}
+});
+
 test("child startup branch uses the mandatory-ticket child prompt", () => {
 	const registerBlock = sourceSection(
 		primaryRuntimeSource,
@@ -310,8 +328,7 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 	assert.match(toolCall, /getTlhGitCommitAttributionBlockReason\(event\.input\.command, commitAttributionState\)/);
 	assert.match(toolCall, /applyProviderAwareSubagentModels\(event\.input, subagentsByName, ctx\.modelRegistry\.getAvailable\(\), ctx\.model\?\.provider\)/);
 	assert.match(toolCall, /const selection = currentPrimaryAgentSelection\(\)/);
-	assert.match(toolCall, /if \(selection === "rush" && subagentCallTargetsAgent\(event\.input, "developer"\)\)/);
-	assert.match(toolCall, /const reason = validateSubagentToolInput\(event\.input\)/);
+	assert.match(toolCall, /const reason = validateSubagentToolInput\(event\.input, selection\)/);
 	assert(
 		toolCall.indexOf('if (event.toolName === "bash")') < toolCall.indexOf("resolveTlhCommitAttribution"),
 		"parent tool_call should resolve attribution only inside the bash branch",
@@ -321,8 +338,8 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 		"provider-aware subagent defaults should run before the disabled-primary guard",
 	);
 	assert(
-		toolCall.indexOf('selection === "rush"') < toolCall.indexOf("validateSubagentToolInput"),
-		"Rush developer guard should run before generic subagent validation",
+		toolCall.indexOf("currentPrimaryAgentSelection") < toolCall.indexOf("validateSubagentToolInput"),
+		"active primary selection should be passed into shared subagent validation",
 	);
 });
 

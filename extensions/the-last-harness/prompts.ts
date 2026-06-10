@@ -1,7 +1,7 @@
 import { join } from "node:path";
 
 import { SELECTABLE_PRIMARY_AGENTS } from "../the-last-harness-primary-agent.mjs";
-import { ALLOWED_SUBAGENTS } from "../the-last-harness-subagent-safety.mjs";
+import { allowedSubagentsForPrimary } from "../the-last-harness-subagent-safety.mjs";
 import { CHILD_SUBAGENT_PROMPT, HARNESS_PROMPT } from "./constants.js";
 import { readMarkdownFilesRecursive, readText } from "./common.js";
 import { packageRoot } from "./package-version.js";
@@ -101,8 +101,8 @@ export function loadSubagentMetadata(): SubagentMetadata[] {
 		.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function formatAllowedSubagents(subagents: SubagentMetadata[]): string {
-	const allowed = new Set(ALLOWED_SUBAGENTS);
+function formatAllowedSubagents(primary: AgentPrompt | undefined, subagents: SubagentMetadata[]): string {
+	const allowed = new Set(allowedSubagentsForPrimary(primary?.name));
 	const lines = subagents
 		.filter((agent) => allowed.has(agent.name))
 		.map((agent) => `- ${agent.name}: ${agent.description}`);
@@ -119,7 +119,7 @@ export function buildTlhSystemPrompt(
 ): string {
 	const prompts = [HARNESS_PROMPT.trim()];
 	if (primaryEnabled) {
-		prompts.push(primary?.systemPrompt.trim(), formatAllowedSubagents(subagents));
+		prompts.push(primary?.systemPrompt.trim(), formatAllowedSubagents(primary, subagents));
 	}
 	return prompts.filter(Boolean).join("\n\n");
 }

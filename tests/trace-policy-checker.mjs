@@ -1,5 +1,7 @@
 import { posix as pathPosix } from "node:path";
 
+import { PRIMARY_SUBAGENT_ALLOWLISTS } from "../extensions/the-last-harness-subagent-safety.mjs";
+
 function isRecord(value) {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -919,6 +921,29 @@ function subagentTargets(step) {
 	return collectSubagentTargets(isRecord(step.input) ? step.input : step);
 }
 
+function disallowedSubagentTargets(step, primary, exemptTargets = []) {
+	const allowedTargets = PRIMARY_SUBAGENT_ALLOWLISTS[primary];
+	if (!allowedTargets) {
+		return [];
+	}
+
+	const allowed = new Set(allowedTargets);
+	const exempt = new Set(exemptTargets);
+	return subagentTargets(step).filter((target) => !allowed.has(target) && !exempt.has(target));
+}
+
+function addSubagentAllowlistViolation(primary, index, disallowedTargets, addViolation) {
+	if (disallowedTargets.length === 0) {
+		return;
+	}
+
+	addViolation(
+		`${primary}.subagent_allowlist`,
+		index,
+		`${primary} may delegate only to: ${PRIMARY_SUBAGENT_ALLOWLISTS[primary].join(", ")}. Disallowed target(s): ${disallowedTargets.join(", ")}.`,
+	);
+}
+
 function isDisallowedProductPath(path) {
 	return !isAllowedNonSourcePath(path);
 }
@@ -982,6 +1007,7 @@ function evaluateArchitect(transcript, addViolation) {
 				"Architect may not delegate implementation to developer until the user approves the created tickets.",
 			);
 		}
+		addSubagentAllowlistViolation("architect", index, disallowedSubagentTargets(step, "architect"), addViolation);
 	}
 }
 
@@ -1003,6 +1029,7 @@ function evaluateRush(transcript, addViolation) {
 				"Rush may not delegate implementation to developer.",
 			);
 		}
+		addSubagentAllowlistViolation("rush", index, disallowedSubagentTargets(step, "rush", ["developer"]), addViolation);
 	}
 }
 
@@ -1048,6 +1075,7 @@ function evaluateProduct(transcript, addViolation) {
 				"Product may not delegate implementation or code review. Hand implementation work to architect later instead.",
 			);
 		}
+		addSubagentAllowlistViolation("product", index, disallowedSubagentTargets(step, "product", ["developer", "code-reviewer"]), addViolation);
 
 		if (isTkMutatingCommand(step) && !ticketsApproved) {
 			addViolation(
@@ -1068,6 +1096,7 @@ function evaluateBugHunter(transcript, addViolation) {
 				"Bug-hunter must stay read-only and may not modify files or run mutating shell commands.",
 			);
 		}
+		addSubagentAllowlistViolation("bug-hunter", index, disallowedSubagentTargets(step, "bug-hunter"), addViolation);
 	}
 }
 

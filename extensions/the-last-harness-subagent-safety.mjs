@@ -1,8 +1,15 @@
-export const ALLOWED_SUBAGENTS = Object.freeze(["developer", "code-reviewer", "repo-scout", "diff-summarizer", "librarian", "web-scout", "oracle"]);
+export const PRIMARY_SUBAGENT_ALLOWLISTS = Object.freeze({
+	architect: Object.freeze(["developer", "code-reviewer", "repo-scout", "diff-summarizer", "librarian", "web-scout", "oracle"]),
+	rush: Object.freeze(["web-scout"]),
+	product: Object.freeze(["repo-scout", "librarian", "oracle", "web-scout"]),
+	"bug-hunter": Object.freeze(["repo-scout", "librarian", "oracle"]),
+});
+export const ALLOWED_SUBAGENTS = Object.freeze([...new Set(Object.values(PRIMARY_SUBAGENT_ALLOWLISTS).flat())]);
 export const SAFE_SUBAGENT_ACTIONS = Object.freeze(["list", "get", "status", "interrupt", "doctor"]);
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 
 const SAFE_SUBAGENT_ACTION_SET = new Set(SAFE_SUBAGENT_ACTIONS);
+const PRIMARY_SUBAGENT_ALLOWLIST_KEYS = new Set(Object.keys(PRIMARY_SUBAGENT_ALLOWLISTS));
 
 function isRecord(value) {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -118,7 +125,17 @@ function validateNestedFreshSubagentContexts(input) {
 	return undefined;
 }
 
-export function validateSubagentToolInput(input) {
+export function allowedSubagentsForPrimary(primary) {
+	return typeof primary === "string" && Object.hasOwn(PRIMARY_SUBAGENT_ALLOWLISTS, primary)
+		? PRIMARY_SUBAGENT_ALLOWLISTS[primary]
+		: ALLOWED_SUBAGENTS;
+}
+
+function primaryLabelForDelegationMessage(primary) {
+	return typeof primary === "string" && PRIMARY_SUBAGENT_ALLOWLIST_KEYS.has(primary) ? primary : undefined;
+}
+
+export function validateSubagentToolInput(input, primary) {
 	if (!isRecord(input)) {
 		return "TLH primary-agent subagent calls must use an object input.";
 	}
@@ -146,14 +163,20 @@ export function validateSubagentToolInput(input) {
 		return nestedContextReason;
 	}
 
+	const allowedSubagents = allowedSubagentsForPrimary(primary);
+	const primaryLabel = primaryLabelForDelegationMessage(primary);
 	const targets = collectSubagentTargets(input);
 	if (targets.length === 0) {
-		return `TLH primary-agent subagent execution must target one of: ${ALLOWED_SUBAGENTS.join(", ")}.`;
+		return primaryLabel
+			? `TLH ${primaryLabel} subagent execution must target one of: ${allowedSubagents.join(", ")}.`
+			: `TLH primary-agent subagent execution must target one of: ${allowedSubagents.join(", ")}.`;
 	}
 
-	const disallowed = targets.filter((agent) => !ALLOWED_SUBAGENTS.includes(agent));
+	const disallowed = targets.filter((agent) => !allowedSubagents.includes(agent));
 	if (disallowed.length > 0) {
-		return `TLH primary agents may delegate only to: ${ALLOWED_SUBAGENTS.join(", ")}. Disallowed target(s): ${disallowed.join(", ")}.`;
+		return primaryLabel
+			? `TLH ${primaryLabel} may delegate only to: ${allowedSubagents.join(", ")}. Disallowed target(s): ${disallowed.join(", ")}.`
+			: `TLH primary agents may delegate only to: ${allowedSubagents.join(", ")}. Disallowed target(s): ${disallowed.join(", ")}.`;
 	}
 
 	return undefined;

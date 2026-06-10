@@ -1087,7 +1087,7 @@ test("tool_call blocks non-progress printf process substitutions", async (t) => 
 	});
 });
 
-test("enabled primary mode allows approved delegation targets and forces safe top-level defaults", async () => {
+test("architect primary mode allows approved delegation targets and forces safe top-level defaults", async () => {
 	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
 	const event = {
 		toolName: "subagent",
@@ -1105,7 +1105,19 @@ test("enabled primary mode allows approved delegation targets and forces safe to
 	assert.equal(event.input.context, "fresh");
 });
 
-test("enabled primary mode blocks disallowed nested delegation targets after forcing safe defaults", async () => {
+test("architect primary mode still allows developer delegation under shared validation", async () => {
+	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
+	const event = { toolName: "subagent", input: { agent: "developer", prompt: "Implement the fix" } };
+	const ctx = createToolCallContext([
+		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
+	]);
+
+	assert.equal(await toolCall(event, ctx), undefined);
+	assert.equal(event.input.agentScope, "user");
+	assert.equal(event.input.context, "fresh");
+});
+
+test("architect primary mode blocks disallowed nested delegation targets after forcing safe defaults", async () => {
 	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
 	const event = {
 		toolName: "subagent",
@@ -1121,7 +1133,7 @@ test("enabled primary mode blocks disallowed nested delegation targets after for
 	assert.deepEqual(await toolCall(event, ctx), {
 		block: true,
 		reason:
-			"TLH primary agents may delegate only to: developer, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle. Disallowed target(s): planner.",
+			"TLH architect may delegate only to: developer, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle. Disallowed target(s): planner.",
 	});
 	assert.equal(event.input.agentScope, "user");
 	assert.equal(event.input.context, "fresh");
@@ -1227,6 +1239,49 @@ test("/switch-primary-agent default refuses normal Pi settings", async () => {
 	}
 });
 
+test("product blocks developer delegation in tasks[] with the shared primary allowlist", async () => {
+	const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+	const event = {
+		toolName: "subagent",
+		input: {
+			tasks: [
+				{ agent: "repo-scout", prompt: "Inspect the repository" },
+				{ agent: "developer", prompt: "Implement the fix" },
+			],
+		},
+	};
+	const ctx = createToolCallContext([
+		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "product" } },
+	]);
+
+	assert.deepEqual(await toolCall(event, ctx), {
+		block: true,
+		reason: "TLH product may delegate only to: repo-scout, librarian, oracle, web-scout. Disallowed target(s): developer.",
+	});
+	assert.equal(event.input.agentScope, "user");
+	assert.equal(event.input.context, "fresh");
+});
+
+test("bug-hunter blocks developer delegation in chain steps with the shared primary allowlist", async () => {
+	const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+	const event = {
+		toolName: "subagent",
+		input: {
+			chain: [{ agent: "developer", prompt: "Implement the fix" }],
+		},
+	};
+	const ctx = createToolCallContext([
+		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "bug-hunter" } },
+	]);
+
+	assert.deepEqual(await toolCall(event, ctx), {
+		block: true,
+		reason: "TLH bug-hunter may delegate only to: repo-scout, librarian, oracle. Disallowed target(s): developer.",
+	});
+	assert.equal(event.input.agentScope, "user");
+	assert.equal(event.input.context, "fresh");
+});
+
 test("Rush blocks developer delegation even inside nested subagent plans", async () => {
 	const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
 	const event = {
@@ -1235,7 +1290,7 @@ test("Rush blocks developer delegation even inside nested subagent plans", async
 			chain: [
 				{
 					parallel: [
-						{ agent: "code-reviewer", prompt: "Review the diff" },
+						{ agent: "web-scout", prompt: "Research upstream release notes" },
 						{ agent: "developer", prompt: "Implement the fix" },
 					],
 				},
@@ -1249,9 +1304,10 @@ test("Rush blocks developer delegation even inside nested subagent plans", async
 	const result = await toolCall(event, ctx);
 	assert.deepEqual(result, {
 		block: true,
-		reason:
-			"TLH Rush may not delegate implementation to developer. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.",
+		reason: "TLH rush may delegate only to: web-scout. Disallowed target(s): developer.",
 	});
+	assert.equal(event.input.agentScope, "user");
+	assert.equal(event.input.context, "fresh");
 });
 
 test("primary runtime applies OpenAI Rush-like metadata defaults with no settings opt-in", async () => {
