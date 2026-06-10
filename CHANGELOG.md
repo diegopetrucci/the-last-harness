@@ -4,6 +4,14 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- TLH now requires upstream Pi >=0.79.1. Installer checks, wrapper defaults, package metadata, and current install/update docs all use the raised runtime floor.
+
+### Fixed
+
+- The TLH startup header now mirrors upstream Pi 0.79.1 project-trust behavior. It keeps `AGENTS.md` and `CLAUDE.md` visible as context even when trust is unresolved, hides trust-gated project `.pi` and `.agents/skills` resources until the project is trusted, and honors the nearest saved trust decision inherited from parent folders in the isolated TLH profile.
+
 ## [0.19.0] - 2026-06-09
 
 ### Fixed

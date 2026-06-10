@@ -351,7 +351,7 @@ make_fake_present_pi() {
   cat >"${fakebin}/pi" <<'EOF_FAKE_PRESENT_PI'
 #!/bin/sh
 if [ "${1:-}" = "--version" ]; then
-  printf '0.76.0\n'
+  printf '0.79.1\n'
   exit 0
 fi
 printf 'fake pi should only be invoked with --version during dry-run; got: %s\n' "$*" >&2
@@ -493,16 +493,34 @@ run_stage1_relative_path_canonicalization_smoke() {
   local case_dir="${TMP_ROOT}/stage1-relative-paths"
   local home_dir="${case_dir}/home"
   local cwd_dir="${case_dir}/workspace"
+  local fakebin="${case_dir}/fakebin"
   local stdout_file="${case_dir}/stdout.log"
   local stderr_file="${case_dir}/stderr.log"
   local combined_file="${case_dir}/combined.log"
   local run_dir
-  mkdir -p "${home_dir}" "${cwd_dir}"
+  mkdir -p "${home_dir}" "${cwd_dir}" "${fakebin}"
   run_dir="$(cd "${cwd_dir}" >/dev/null 2>&1 && pwd -P)"
+
+  cat >"${fakebin}/sh" <<'EOF_FAKE_RELATIVE_SH'
+#!/bin/sh
+exec /bin/sh "$@"
+EOF_FAKE_RELATIVE_SH
+  cat >"${fakebin}/npm" <<'EOF_FAKE_RELATIVE_NPM'
+#!/bin/sh
+printf 'fake npm should not run during dry-run\n' >&2
+exit 98
+EOF_FAKE_RELATIVE_NPM
+  cat >"${fakebin}/git" <<'EOF_FAKE_RELATIVE_GIT'
+#!/bin/sh
+printf 'fake git should not run during dry-run\n' >&2
+exit 98
+EOF_FAKE_RELATIVE_GIT
+  chmod +x "${fakebin}/sh" "${fakebin}/npm" "${fakebin}/git"
+  make_fake_present_pi "${fakebin}"
 
   (cd "${run_dir}" && \
     export PI_CODING_AGENT_DIR="${home_dir}/.pi/agent" TLH_AGENT_DIR="${home_dir}/.pi/agent" TLH_BIN_DIR="${home_dir}/.pi/agent" TLH_PACKAGE_SOURCE="~/poisoned-package" TLH_REPO="poisoned/repo" TLH_REF="poisoned-ref" TLH_UPDATE_TRACK="custom" && \
-    run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 HOME="${home_dir}" node "${ROOT_DIR}/scripts/tlh-install.mjs" --dry-run --agent-dir .pi/agent --bin-dir bin >"${stdout_file}" 2>"${stderr_file}")
+    run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 HOME="${home_dir}" PATH="${fakebin}:${PATH}" node "${ROOT_DIR}/scripts/tlh-install.mjs" --dry-run --agent-dir .pi/agent --bin-dir bin >"${stdout_file}" 2>"${stderr_file}")
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
 
   local agent_dir="${run_dir}/.pi/agent"
@@ -526,10 +544,12 @@ run_stage1_staged_cwd_isolation_smoke() {
   local stage_scripts_dir="${stage_root}/scripts"
   local agent_dir="${case_dir}/agent"
   local bin_dir="${case_dir}/bin"
+  local fakebin="${case_dir}/fakebin"
+  local home_dir="${case_dir}/home"
   local stdout_file="${case_dir}/stdout.log"
   local stderr_file="${case_dir}/stderr.log"
   local combined_file="${case_dir}/combined.log"
-  mkdir -p "${stage_scripts_dir}/lib"
+  mkdir -p "${stage_scripts_dir}/lib" "${fakebin}" "${home_dir}"
   cp scripts/tlh-install.mjs "${stage_scripts_dir}/tlh-install.mjs"
   cp scripts/lib/tlh-install-package-source.mjs "${stage_scripts_dir}/lib/tlh-install-package-source.mjs"
   cp scripts/lib/tlh-install-paths.mjs "${stage_scripts_dir}/lib/tlh-install-paths.mjs"
@@ -539,9 +559,26 @@ run_stage1_staged_cwd_isolation_smoke() {
   cp scripts/lib/tlh-install-support-files.mjs "${stage_scripts_dir}/lib/tlh-install-support-files.mjs"
   cp scripts/lib/tlh-install-support-manifest.mjs "${stage_scripts_dir}/lib/tlh-install-support-manifest.mjs"
 
+  cat >"${fakebin}/sh" <<'EOF_FAKE_STAGED_SH'
+#!/bin/sh
+exec /bin/sh "$@"
+EOF_FAKE_STAGED_SH
+  cat >"${fakebin}/npm" <<'EOF_FAKE_STAGED_NPM'
+#!/bin/sh
+printf 'fake npm should not run during dry-run\n' >&2
+exit 98
+EOF_FAKE_STAGED_NPM
+  cat >"${fakebin}/git" <<'EOF_FAKE_STAGED_GIT'
+#!/bin/sh
+printf 'fake git should not run during dry-run\n' >&2
+exit 98
+EOF_FAKE_STAGED_GIT
+  chmod +x "${fakebin}/sh" "${fakebin}/npm" "${fakebin}/git"
+  make_fake_present_pi "${fakebin}"
+
   local stage_script
   stage_script="$(cd "${stage_scripts_dir}" >/dev/null 2>&1 && pwd -P)/tlh-install.mjs"
-  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 node "${stage_script}" --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 HOME="${home_dir}" PATH="${fakebin}:${PATH}" node "${stage_script}" --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
 
   assert_absent "${agent_dir}"
@@ -556,12 +593,31 @@ run_local_dry_run_smoke() {
   local case_dir="${TMP_ROOT}/local-dry-run"
   local agent_dir="${case_dir}/agent"
   local bin_dir="${case_dir}/bin"
+  local fakebin="${case_dir}/fakebin"
+  local home_dir="${case_dir}/home"
   local stdout_file="${case_dir}/stdout.log"
   local stderr_file="${case_dir}/stderr.log"
   local combined_file="${case_dir}/combined.log"
-  mkdir -p "${case_dir}"
+  mkdir -p "${case_dir}" "${fakebin}" "${home_dir}"
 
-  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 bash install.sh --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  cat >"${fakebin}/sh" <<'EOF_FAKE_LOCAL_SH'
+#!/bin/sh
+exec /bin/sh "$@"
+EOF_FAKE_LOCAL_SH
+  cat >"${fakebin}/npm" <<'EOF_FAKE_LOCAL_NPM'
+#!/bin/sh
+printf 'fake npm should not run during dry-run\n' >&2
+exit 98
+EOF_FAKE_LOCAL_NPM
+  cat >"${fakebin}/git" <<'EOF_FAKE_LOCAL_GIT'
+#!/bin/sh
+printf 'fake git should not run during dry-run\n' >&2
+exit 98
+EOF_FAKE_LOCAL_GIT
+  chmod +x "${fakebin}/sh" "${fakebin}/npm" "${fakebin}/git"
+  make_fake_present_pi "${fakebin}"
+
+  run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" TLH_SKIP_GNOSIS_INSTALL=1 bash install.sh --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
 
   assert_absent "${agent_dir}"
@@ -1357,14 +1413,33 @@ EOF_STATE_WITHOUT_FIELD
 run_install_sh_pi_installed_by_tlh_passthrough_smoke() {
   log "Running install.sh --pi-installed-by-tlh passthrough smoke check..."
   local case_dir="${TMP_ROOT}/install-sh-pi-flag-passthrough"
+  local fakebin="${case_dir}/fakebin"
+  local home_dir="${case_dir}/home"
   local stdout_file="${case_dir}/stdout.log"
   local stderr_file="${case_dir}/stderr.log"
   local combined_file="${case_dir}/combined.log"
   local status=0
-  mkdir -p "${case_dir}"
+  mkdir -p "${case_dir}" "${fakebin}" "${home_dir}"
+
+  cat >"${fakebin}/sh" <<'EOF_FAKE_PASSTHROUGH_SH'
+#!/bin/sh
+exec /bin/sh "$@"
+EOF_FAKE_PASSTHROUGH_SH
+  cat >"${fakebin}/npm" <<'EOF_FAKE_PASSTHROUGH_NPM'
+#!/bin/sh
+printf 'fake npm should not run during dry-run\n' >&2
+exit 98
+EOF_FAKE_PASSTHROUGH_NPM
+  cat >"${fakebin}/git" <<'EOF_FAKE_PASSTHROUGH_GIT'
+#!/bin/sh
+printf 'fake git should not run during dry-run\n' >&2
+exit 98
+EOF_FAKE_PASSTHROUGH_GIT
+  chmod +x "${fakebin}/sh" "${fakebin}/npm" "${fakebin}/git"
+  make_fake_present_pi "${fakebin}"
 
   # ── space-separated form: stage-0 accepts, stage-1 validates → exit 0 ─────
-  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 bash install.sh \
+  run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" TLH_SKIP_GNOSIS_INSTALL=1 bash install.sh \
     --pi-installed-by-tlh true \
     --dry-run \
     --agent-dir "${case_dir}/space/agent" \
@@ -1375,7 +1450,7 @@ run_install_sh_pi_installed_by_tlh_passthrough_smoke() {
   # ── equals form: stage-0 accepts, stage-1 validates → exit 0 ──────────────
   : >"${stdout_file}"
   : >"${stderr_file}"
-  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 bash install.sh \
+  run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" TLH_SKIP_GNOSIS_INSTALL=1 bash install.sh \
     --pi-installed-by-tlh=true \
     --dry-run \
     --agent-dir "${case_dir}/eq/agent" \
@@ -1387,7 +1462,7 @@ run_install_sh_pi_installed_by_tlh_passthrough_smoke() {
   : >"${stdout_file}"
   : >"${stderr_file}"
   set +e
-  run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 bash install.sh \
+  run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" TLH_SKIP_GNOSIS_INSTALL=1 bash install.sh \
     --pi-installed-by-tlh maybe \
     --dry-run \
     --agent-dir "${case_dir}/bad/agent" \
