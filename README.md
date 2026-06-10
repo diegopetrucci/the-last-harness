@@ -124,7 +124,9 @@ Repo settings:
 - `.pi/prompts/`
 - `.pi/extensions/`
 
-After adding files or installing a package, run `/reload` in TLH (or restart it) so the new resources are picked up.
+With upstream Pi 0.79.0 and newer, repo-local inputs are loaded only after the project is trusted. That includes `AGENTS.md`, `.pi/settings.json`, `.pi/skills/`, `.pi/prompts/`, `.pi/extensions/`, `.pi/themes/`, and project-local packages. Interactive `tlh` sessions prompt for project trust when needed; use `/trust` to save a decision for future sessions. Saved trust decisions live in the isolated TLH profile, not normal `~/.pi/agent`. Non-interactive runs need a saved trust decision or `--approve`.
+
+After adding files, installing a package, or saving project trust, run `/reload` in TLH (or restart it) so the new resources are picked up.
 
 Normal `tlh update` runs are conservative: they preserve user-owned isolated-profile resources instead of overwriting them, and they still do not touch your normal Pi config.
 

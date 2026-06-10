@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- The TLH startup header now respects upstream Pi project trust when listing project-local context, skills, prompts, extensions, and themes. With Pi 0.79.0 and newer, unresolved project trust no longer causes the header to advertise `.pi` resources that Pi itself ignored.
+
 ## [0.19.0] - 2026-06-09
 
 ### Fixed
