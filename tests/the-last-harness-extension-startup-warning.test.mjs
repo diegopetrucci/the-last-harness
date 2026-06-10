@@ -58,7 +58,21 @@ function createPi() {
 	};
 }
 
-function createCtx({ cwd, notifications, hasUI = true, onSetHeader }) {
+function writeProjectSkill(cwd, name = "project-skill") {
+	mkdirSync(join(cwd, ".pi", "skills", name), { recursive: true });
+	writeFileSync(
+		join(cwd, ".pi", "skills", name, "SKILL.md"),
+		`---
+name: ${name}
+description: ${name}
+---
+${name} content
+`,
+		"utf8",
+	);
+}
+
+function createCtx({ cwd, notifications, hasUI = true, onSetHeader, projectTrusted }) {
 	return {
 		hasUI,
 		cwd,
@@ -88,6 +102,7 @@ function createCtx({ cwd, notifications, hasUI = true, onSetHeader }) {
 			getEditorText: () => "",
 		},
 		isIdle: () => true,
+		isProjectTrusted: () => projectTrusted,
 	};
 }
 
@@ -114,7 +129,7 @@ function startupTipLine(headerLines) {
 	return headerLines?.find((line) => line.startsWith("Tip: "));
 }
 
-async function runSessionStart({ reason, installState, hasUI = true }) {
+async function runSessionStart({ reason, installState, hasUI = true, projectTrusted, setupWorkspace }) {
 	const tempDir = mkdtempSync(join(tmpdir(), "tlh-startup-warning-"));
 	const agentDir = join(tempDir, "agent");
 	const cwd = join(tempDir, "workspace");
@@ -131,6 +146,7 @@ async function runSessionStart({ reason, installState, hasUI = true }) {
 		process.env.TLH_SKIP_UPDATE_CHECK = "1";
 		process.env.TLH_SKIP_TELEMETRY = "1";
 		mkdirSync(cwd, { recursive: true });
+		setupWorkspace?.(cwd);
 		writeProfileFixture(agentDir, installState);
 
 		const pi = createPi();
@@ -142,6 +158,7 @@ async function runSessionStart({ reason, installState, hasUI = true }) {
 			cwd,
 			notifications,
 			hasUI,
+			projectTrusted,
 			onSetHeader(factory) {
 				headerFactory = factory;
 			},
@@ -240,6 +257,23 @@ test("Ctrl+Shift+E toggles the TLH header without changing the default collapsed
 	await shortcut.handler(shortcutCtx);
 	assert.ok(header.render(200).includes("Ctrl+Shift+E to show skills, prompts, extensions, themes"));
 	assert.equal(requestRenderCalls(), 2);
+});
+
+test("startup resources use the active session trust decision", async () => {
+	const { header } = await runSessionStart({
+		reason: "restore",
+		installState: LATEST_STABLE_INSTALL_STATE,
+		projectTrusted: true,
+		setupWorkspace(cwd) {
+			writeProjectSkill(cwd);
+		},
+	});
+
+	assert.ok(header);
+	header.setExpanded(true);
+	const expandedLines = header.render(200);
+	assert.ok(expandedLines.includes("[Skills]"));
+	assert.ok(expandedLines.some((line) => line.includes("project-skill")));
 });
 
 test("startup without UI does not show the install-track notice", async () => {

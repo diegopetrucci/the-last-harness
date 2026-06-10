@@ -2,7 +2,7 @@
 
 ## Install
 
-Requires Node.js >=22.19.0 on `PATH`. TLH uses upstream Pi >=0.76.0. If `pi` is missing, the installer adds a compatible per-user copy under `~/.local` and hard-fails with an actionable error if that install cannot complete. If `pi` is present but older than 0.76.0, install stops with an upgrade error instead of changing that existing runtime automatically.
+Requires Node.js >=22.19.0 on `PATH`. TLH uses upstream Pi >=0.79.1. If `pi` is missing, the installer adds a compatible per-user copy under `~/.local` and hard-fails with an actionable error if that install cannot complete. If `pi` is present but older than 0.79.1, install stops with an upgrade error instead of changing that existing runtime automatically.
 
 Run the one-liner:
 

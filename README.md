@@ -124,7 +124,7 @@ Repo settings:
 - `.pi/prompts/`
 - `.pi/extensions/`
 
-With upstream Pi 0.79.0 and newer, repo-local inputs are loaded only after the project is trusted. That includes `AGENTS.md`, `.pi/settings.json`, `.pi/skills/`, `.pi/prompts/`, `.pi/extensions/`, `.pi/themes/`, and project-local packages. Interactive `tlh` sessions prompt for project trust when needed; use `/trust` to save a decision for future sessions. Saved trust decisions live in the isolated TLH profile, not normal `~/.pi/agent`. Non-interactive runs need a saved trust decision or `--approve`.
+With upstream Pi 0.79.1 and newer, `AGENTS.md` and `CLAUDE.md` still load as context even before project trust is resolved, but trust-gated repo-local resources wait until the project is trusted. That includes `.pi/settings.json`, `.pi/skills/`, `.pi/prompts/`, `.pi/extensions/`, `.pi/themes/`, project-local `.agents/skills/`, and project-local packages. Interactive `tlh` sessions prompt for project trust when needed; use `/trust` to save a decision for future sessions. Saved trust decisions live in the isolated TLH profile, not normal `~/.pi/agent`. Non-interactive runs need a saved trust decision or `--approve`.
 
 After adding files, installing a package, or saving project trust, run `/reload` in TLH (or restart it) so the new resources are picked up.
 
@@ -147,4 +147,4 @@ Normal `tlh update` runs are conservative: they preserve user-owned isolated-pro
 
 Node.js >=22.19.0 must be available on your `PATH`.
 
-TLH uses upstream Pi >=0.76.0; if `pi` is missing, the installer automatically adds a compatible per-user copy under `~/.local`.
+TLH uses upstream Pi >=0.79.1; if `pi` is missing, the installer automatically adds a compatible per-user copy under `~/.local`.

@@ -10,58 +10,106 @@ import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mj
 const jiti = createJiti(import.meta.url);
 const { collectStartupResources } = await jiti.import("../extensions/the-last-harness/resources.ts");
 
-function writeProjectResources(cwd) {
-	writeFileSync(join(cwd, "AGENTS.md"), "Project instructions", "utf8");
-	mkdirSync(join(cwd, ".pi", "skills", "project-skill"), { recursive: true });
+function writeSkill(baseDir, name, skillRoot = ".pi/skills") {
+	mkdirSync(join(baseDir, skillRoot, name), { recursive: true });
 	writeFileSync(
-		join(cwd, ".pi", "skills", "project-skill", "SKILL.md"),
+		join(baseDir, skillRoot, name, "SKILL.md"),
 		`---
-name: project-skill
-description: Project skill
+name: ${name}
+description: ${name}
 ---
-Project skill content
+${name} content
 `,
 		"utf8",
 	);
 }
 
-test("startup resources hide project-local inputs when Pi project trust is unresolved", async (t) => {
-	const fixture = createIsolatedProfileFixture("tlh-resources-untrusted-", { cwd: true, test: t });
-	writeProjectResources(fixture.cwd);
+function writeContextFile(baseDir, filename) {
+	writeFileSync(join(baseDir, filename), `${filename} instructions`, "utf8");
+}
+
+function writeTrust(agentDir, trustByPath) {
+	writeFileSync(join(agentDir, "trust.json"), `${JSON.stringify(trustByPath, null, 2)}\n`, "utf8");
+}
+
+test("startup resources hide project-local skills when trust is unresolved", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-resources-unresolved-", { cwd: true, test: t });
+	const childCwd = join(fixture.cwd, "project");
+	mkdirSync(childCwd, { recursive: true });
+	writeSkill(fixture.cwd, "ancestor-skill", ".agents/skills");
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const resources = await collectStartupResources(fixture.cwd, { piVersion: "0.79.0" });
+		const resources = await collectStartupResources(childCwd);
 
 		assert.deepEqual(resources.context, []);
 		assert.deepEqual(resources.skills, []);
 	});
 });
 
-test("startup resources show project-local inputs when Pi project trust is saved", async (t) => {
+test("startup resources show project-local inputs for an exact saved trust decision", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-resources-trusted-", { cwd: true, test: t });
-	writeProjectResources(fixture.cwd);
-	writeFileSync(
-		join(fixture.agent, "trust.json"),
-		`${JSON.stringify({ [realpathSync(fixture.cwd)]: true }, null, 2)}\n`,
-		"utf8",
-	);
+	writeContextFile(fixture.cwd, "AGENTS.md");
+	writeSkill(fixture.cwd, "project-skill");
+	writeTrust(fixture.agent, { [realpathSync(fixture.cwd)]: true });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const resources = await collectStartupResources(fixture.cwd, { piVersion: "0.79.0" });
+		const resources = await collectStartupResources(fixture.cwd);
 
 		assert.deepEqual(resources.context, ["AGENTS.md"]);
 		assert.deepEqual(resources.skills, ["project-skill"]);
 	});
 });
 
-test("startup resources keep project-local inputs for older Pi versions without project trust", async (t) => {
-	const fixture = createIsolatedProfileFixture("tlh-resources-pre-trust-", { cwd: true, test: t });
-	writeProjectResources(fixture.cwd);
+test("startup resources inherit the nearest parent saved trust decision", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-resources-parent-trust-", { cwd: true, test: t });
+	const childCwd = join(fixture.cwd, "project");
+	mkdirSync(childCwd, { recursive: true });
+	writeContextFile(childCwd, "AGENTS.md");
+	writeSkill(childCwd, "project-skill");
+	writeTrust(fixture.agent, {
+		[realpathSync(fixture.cwd)]: true,
+		[realpathSync(childCwd)]: null,
+	});
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const resources = await collectStartupResources(fixture.cwd, { piVersion: "0.78.1" });
+		const resources = await collectStartupResources(childCwd);
 
 		assert.deepEqual(resources.context, ["AGENTS.md"]);
 		assert.deepEqual(resources.skills, ["project-skill"]);
+	});
+});
+
+test("startup resources let a nearer false trust override a parent true", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-resources-child-false-", { cwd: true, test: t });
+	const childCwd = join(fixture.cwd, "project");
+	mkdirSync(childCwd, { recursive: true });
+	writeContextFile(childCwd, "AGENTS.md");
+	writeSkill(childCwd, "project-skill");
+	writeTrust(fixture.agent, {
+		[realpathSync(fixture.cwd)]: true,
+		[realpathSync(childCwd)]: false,
+	});
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const resources = await collectStartupResources(childCwd);
+
+		assert.deepEqual(resources.context, ["AGENTS.md"]);
+		assert.deepEqual(resources.skills, []);
+	});
+});
+
+test("startup resources keep AGENTS.md and CLAUDE.md context visible when trust is unresolved", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-resources-context-visible-", { cwd: true, test: t });
+	const childCwd = join(fixture.cwd, "project");
+	mkdirSync(childCwd, { recursive: true });
+	writeContextFile(fixture.cwd, "AGENTS.md");
+	writeContextFile(childCwd, "CLAUDE.md");
+	writeSkill(childCwd, "project-skill");
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const resources = await collectStartupResources(childCwd);
+
+		assert.deepEqual(resources.context, [join(fixture.cwd, "AGENTS.md"), "CLAUDE.md"]);
+		assert.deepEqual(resources.skills, []);
 	});
 });

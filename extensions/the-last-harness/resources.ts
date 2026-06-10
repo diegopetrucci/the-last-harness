@@ -4,21 +4,16 @@ import { basename, dirname, extname, join, resolve } from "node:path";
 import {
 	DefaultPackageManager,
 	SettingsManager,
-	VERSION,
 	getAgentDir,
 	loadProjectContextFiles,
 	type ResolvedResource,
 } from "@earendil-works/pi-coding-agent";
-import { formatPathFromCwd, pathWithinOrEqual, readText, realpathForCompare, uniqueSorted } from "./common.js";
+import { formatPathFromCwd, readText, realpathForCompare, uniqueSorted } from "./common.js";
 import { parseFrontmatterValue } from "./prompts.js";
 import type { StartupResources } from "./types.js";
 
-const PROJECT_TRUST_MIN_VERSION = "0.79.0";
-const PROJECT_CONTEXT_FILE_NAMES = ["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
-
 export type CollectStartupResourcesOptions = {
 	projectTrusted?: boolean;
-	piVersion?: string;
 };
 
 function packageSourceLabel(source: string | undefined): string | undefined {
@@ -65,27 +60,6 @@ function labelTheme(resource: ResolvedResource): string {
 	return basename(resource.path, extname(resource.path));
 }
 
-function parseVersion(version: string): [number, number, number] | undefined {
-	const match = version.trim().replace(/^v/, "").match(/^(\d+)\.(\d+)\.(\d+)/);
-	if (!match) {
-		return undefined;
-	}
-	return [Number(match[1]), Number(match[2]), Number(match[3])];
-}
-
-function versionAtLeast(version: string, minimum: string): boolean {
-	const parsed = parseVersion(version);
-	const min = parseVersion(minimum);
-	if (!parsed || !min) {
-		return false;
-	}
-	for (let i = 0; i < min.length; i++) {
-		if (parsed[i] > min[i]) return true;
-		if (parsed[i] < min[i]) return false;
-	}
-	return true;
-}
-
 function hasProjectTrustInputs(cwd: string): boolean {
 	let currentDir = resolve(cwd);
 	if (existsSync(join(currentDir, ".pi"))) {
@@ -93,11 +67,6 @@ function hasProjectTrustInputs(cwd: string): boolean {
 	}
 
 	while (true) {
-		for (const filename of PROJECT_CONTEXT_FILE_NAMES) {
-			if (existsSync(join(currentDir, filename))) {
-				return true;
-			}
-		}
 		if (existsSync(join(currentDir, ".agents", "skills"))) {
 			return true;
 		}
@@ -121,8 +90,21 @@ function readSavedProjectTrust(agentDir: string, cwd: string): boolean | undefin
 		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
 			return undefined;
 		}
-		const value = (parsed as Record<string, unknown>)[realpathForCompare(cwd)];
-		return typeof value === "boolean" ? value : undefined;
+
+		const trustByPath = parsed as Record<string, unknown>;
+		let currentDir = realpathForCompare(cwd);
+		while (true) {
+			const value = trustByPath[currentDir];
+			if (typeof value === "boolean") {
+				return value;
+			}
+
+			const parentDir = dirname(currentDir);
+			if (parentDir === currentDir) {
+				return undefined;
+			}
+			currentDir = parentDir;
+		}
 	} catch {
 		return undefined;
 	}
@@ -131,9 +113,6 @@ function readSavedProjectTrust(agentDir: string, cwd: string): boolean | undefin
 function resolveProjectTrusted(cwd: string, agentDir: string, options: CollectStartupResourcesOptions): boolean {
 	if (typeof options.projectTrusted === "boolean") {
 		return options.projectTrusted;
-	}
-	if (!versionAtLeast(options.piVersion ?? VERSION, PROJECT_TRUST_MIN_VERSION)) {
-		return true;
 	}
 	if (!hasProjectTrustInputs(cwd)) {
 		return true;
@@ -150,13 +129,12 @@ function createSettingsManager(cwd: string, agentDir: string, projectTrusted: bo
 	return create(cwd, agentDir, { projectTrusted });
 }
 
-function loadContextFiles(cwd: string, agentDir: string, projectTrusted: boolean): Array<{ path: string; content: string }> {
+function loadContextFiles(cwd: string, agentDir: string): Array<{ path: string; content: string }> {
 	const load = loadProjectContextFiles as unknown as (options: {
 		cwd: string;
 		agentDir: string;
-		projectTrusted?: boolean;
 	}) => Array<{ path: string; content: string }>;
-	return load({ cwd, agentDir, projectTrusted });
+	return load({ cwd, agentDir });
 }
 
 function filterVisibleResources(resources: ResolvedResource[], projectTrusted: boolean): ResolvedResource[] {
@@ -166,18 +144,6 @@ function filterVisibleResources(resources: ResolvedResource[], projectTrusted: b
 			existsSync(resource.path) &&
 			(projectTrusted || resource.metadata.scope !== "project"),
 	);
-}
-
-function filterVisibleContext(
-	contextFiles: Array<{ path: string; content: string }>,
-	agentDir: string,
-	projectTrusted: boolean,
-): Array<{ path: string; content: string }> {
-	if (projectTrusted) {
-		return contextFiles;
-	}
-	const resolvedAgentDir = realpathForCompare(agentDir);
-	return contextFiles.filter((contextFile) => pathWithinOrEqual(resolvedAgentDir, realpathForCompare(contextFile.path)));
 }
 
 export async function collectStartupResources(
@@ -192,9 +158,7 @@ export async function collectStartupResources(
 	const enabled = (resources: ResolvedResource[]) => filterVisibleResources(resources, projectTrusted);
 
 	return {
-		context: filterVisibleContext(loadContextFiles(cwd, agentDir, projectTrusted), agentDir, projectTrusted).map((contextFile) =>
-			formatPathFromCwd(cwd, contextFile.path),
-		),
+		context: loadContextFiles(cwd, agentDir).map((contextFile) => formatPathFromCwd(cwd, contextFile.path)),
 		skills: uniqueSorted(enabled(resolved.skills).map(labelSkill)),
 		prompts: uniqueSorted(enabled(resolved.prompts).map(labelPrompt)),
 		extensions: uniqueSorted(enabled(resolved.extensions).map(labelExtension)),
