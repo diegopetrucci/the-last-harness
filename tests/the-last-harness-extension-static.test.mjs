@@ -203,8 +203,12 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 		["openai-codex/gpt-5.4", "openai/gpt-5.4"],
 	);
 
-	const primaryPrompt = buildTlhSystemPrompt(rush, [], true);
+	const primaryPrompt = buildTlhSystemPrompt(rush, loadSubagentMetadata(), true);
 	const childPrompt = buildChildSubagentSystemPrompt();
+
+	assert.match(primaryPrompt, /## TLH Allowed Minor Subagents/);
+	assert.match(primaryPrompt, /omit `agentScope` or use `"user"`/);
+	assert.match(primaryPrompt, /TLH minor agents are isolated to the user scope/);
 
 	for (const prompt of [primaryPrompt, childPrompt]) {
 		assert.doesNotMatch(prompt, /## TLH Ticket Integration Disabled/);
