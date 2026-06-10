@@ -1,8 +1,21 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import test from "node:test";
 
 import {
@@ -19,6 +32,7 @@ import {
 	safeProfileFileTarget,
 	validateInstallerTargets,
 } from "../scripts/lib/tlh-install-paths.mjs";
+import { writeSafeProfileFile } from "../scripts/lib/tlh-safe-profile-write.mjs";
 import {
 	TLH_SUBAGENT_PROMPTS,
 	copyTlhSubagentPrompts,
@@ -203,6 +217,189 @@ test("safeProfileFileTarget rejects single-segment file targets", (t) => {
 	assert.equal(existsSync(join(agentDir, "settings.jso")), false);
 });
 
+test("writeSafeProfileFile writes root profile files with safe temp dirs and explicit modes", (t) => {
+	const root = tempFixture(t);
+	const agentDir = join(root, "agent");
+	const homeDir = join(root, "home");
+	const externalDir = join(root, "external");
+	const legacyTempPath = join(agentDir, `settings.json.tmp-${process.pid}`);
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(externalDir, { recursive: true });
+	symlinkSync(join(externalDir, "legacy-target.json"), legacyTempPath);
+
+	writeSafeProfileFile(
+		{ agentDir },
+		"settings.json",
+		"{\n  \"tlh\": true\n}\n",
+		"isolated settings",
+		{ homeDir, mode: 0o600 },
+	);
+
+	assert.equal(readFileSync(join(agentDir, "settings.json"), "utf8"), "{\n  \"tlh\": true\n}\n");
+	assert.equal(lstatSync(join(agentDir, "settings.json")).mode & 0o777, 0o600);
+	assert.equal(lstatSync(legacyTempPath).isSymbolicLink(), true);
+	assert.deepEqual(readdirSync(agentDir).filter((entry) => entry.startsWith(".settings.json.tmp.")), []);
+});
+
+
+test("writeSafeProfileFile preserves existing file mode when overwriting", (t) => {
+	const root = tempFixture(t);
+	const agentDir = join(root, "agent");
+	const homeDir = join(root, "home");
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	writeFileSync(join(agentDir, "settings.json"), "before\n", { mode: 0o640 });
+
+	writeSafeProfileFile({ agentDir }, "settings.json", "after\n", "isolated settings", { homeDir });
+
+	assert.equal(readFileSync(join(agentDir, "settings.json"), "utf8"), "after\n");
+	assert.equal(lstatSync(join(agentDir, "settings.json")).mode & 0o777, 0o640);
+});
+
+
+test("writeSafeProfileFile preserves resolved modes under restrictive umask", { concurrency: false }, (t) => {
+	const root = tempFixture(t);
+	const agentDir = join(root, "agent");
+	const homeDir = join(root, "home");
+	const explicitTarget = join(agentDir, "settings.json");
+	const preservedTarget = join(agentDir, "state.json");
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+
+	const previousUmask = process.umask(0o077);
+	t.after(() => {
+		process.umask(previousUmask);
+	});
+
+	writeSafeProfileFile(
+		{ agentDir },
+		"settings.json",
+		"{\n  \"tlh\": true\n}\n",
+		"isolated settings",
+		{ homeDir, mode: 0o640 },
+	);
+	assert.equal(lstatSync(explicitTarget).mode & 0o777, 0o640);
+
+	writeFileSync(preservedTarget, "before\n");
+	chmodSync(preservedTarget, 0o640);
+	writeSafeProfileFile({ agentDir }, "state.json", "after\n", "isolated state", { homeDir });
+	assert.equal(readFileSync(preservedTarget, "utf8"), "after\n");
+	assert.equal(lstatSync(preservedTarget).mode & 0o777, 0o640);
+});
+
+
+test("writeSafeProfileFile rejects protected normal Pi targets before creating them", (t) => {
+	const root = tempFixture(t);
+	const homeDir = join(root, "home");
+	const protectedAgentDir = join(homeDir, ".pi", "agent");
+	mkdirSync(homeDir, { recursive: true });
+
+	assert.throws(
+		() => writeSafeProfileFile({ agentDir: protectedAgentDir }, "settings.json", "{}\n", "isolated settings", { homeDir }),
+		/refusing to write isolated settings parent directory under normal Pi config root/,
+	);
+	assert.equal(existsSync(protectedAgentDir), false);
+	assert.equal(existsSync(join(homeDir, ".pi")), false);
+});
+
+
+test("writeSafeProfileFile rejects symlinked profile parents and final targets", (t) => {
+	const root = tempFixture(t);
+	const agentDir = join(root, "agent");
+	const linkedAgentDir = join(root, "linked-agent");
+	const homeDir = join(root, "home");
+	const externalDir = join(root, "external");
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(externalDir, { recursive: true });
+	symlinkSync(externalDir, linkedAgentDir, "dir");
+	symlinkSync(externalDir, join(agentDir, "nested"), "dir");
+
+	assert.throws(
+		() => writeSafeProfileFile({ agentDir: linkedAgentDir }, "settings.json", "{}\n", "isolated settings", { homeDir }),
+		/refusing to write isolated settings parent directory through symlinked TLH profile path/,
+	);
+	assert.throws(
+		() => writeSafeProfileFile({ agentDir }, "nested/settings.json", "{}\n", "isolated settings", { homeDir }),
+		/refusing to write isolated settings parent directory through symlinked TLH profile path/,
+	);
+	assert.equal(existsSync(join(externalDir, "settings.json")), false);
+
+	symlinkSync(join(externalDir, "settings.json"), join(agentDir, "settings.json"));
+	assert.throws(
+		() => writeSafeProfileFile({ agentDir }, "settings.json", "{}\n", "isolated settings", { homeDir }),
+		/refusing to replace symlinked isolated settings/,
+	);
+	assert.equal(existsSync(join(externalDir, "settings.json")), false);
+});
+
+
+test("writeSafeProfileFile skips cleanup when the helper temp dir path is recreated", (t) => {
+	const root = tempFixture(t);
+	const agentDir = join(root, "agent");
+	const homeDir = join(root, "home");
+	let recreatedTempDir = "";
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+
+	assert.throws(
+		() => writeSafeProfileFile(
+			{ agentDir },
+			"settings.json",
+			"{}\n",
+			"isolated settings",
+			{
+				homeDir,
+				beforeCommit({ tempDir }) {
+					recreatedTempDir = tempDir;
+					rmSync(tempDir, { recursive: true, force: true });
+					mkdirSync(tempDir, { recursive: true });
+					writeFileSync(join(tempDir, "sentinel.txt"), "keep\n");
+				},
+			},
+		),
+		/ENOENT|no such file or directory/i,
+	);
+	assert.equal(existsSync(join(agentDir, "settings.json")), false);
+	assert.equal(readFileSync(join(recreatedTempDir, "sentinel.txt"), "utf8"), "keep\n");
+});
+
+
+test("writeSafeProfileFile detects swapped parents and avoids unsafe cleanup", (t) => {
+	const root = tempFixture(t);
+	const agentDir = join(root, "agent");
+	const homeDir = join(root, "home");
+	const externalDir = join(root, "external");
+	let externalTempDir = "";
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(externalDir, { recursive: true });
+
+	assert.throws(
+		() => writeSafeProfileFile(
+			{ agentDir },
+			"tlh/install-state.json",
+			"{}\n",
+			"TLH install state",
+			{
+				homeDir,
+				beforeCommit({ parent, tempDir }) {
+					externalTempDir = join(externalDir, basename(tempDir));
+					rmSync(parent, { recursive: true, force: true });
+					symlinkSync(externalDir, parent, "dir");
+					mkdirSync(externalTempDir, { recursive: true });
+					writeFileSync(join(externalTempDir, "sentinel.txt"), "keep\n");
+				},
+			},
+		),
+		/symlinked TLH profile path/,
+	);
+	assert.equal(existsSync(join(externalDir, "install-state.json")), false);
+	assert.equal(readFileSync(join(externalTempDir, "sentinel.txt"), "utf8"), "keep\n");
+});
+
+
 test("ensureSafeProfileDir rejects protected profile roots before creating them", (t) => {
 	const root = tempFixture(t);
 	const homeDir = join(root, "home");
@@ -349,11 +546,12 @@ test("subagent prompt discovery honors source precedence and copies prompt files
 	}
 });
 
-test("support manifest includes stage-1 and installed helper library dependencies", () => {
+test("support manifests preserve current-ref packaging while keeping stage-0 bootstrap compatibility", () => {
 	const manifest = supportFileManifest();
 	const relativePaths = manifest.map((file) => file.relativePath);
 	assert.ok(relativePaths.includes("scripts/lib/tlh-install-git.mjs"));
 	assert.ok(relativePaths.includes("scripts/lib/tlh-install-support-files.mjs"));
+	assert.ok(relativePaths.includes("scripts/lib/tlh-safe-profile-write.mjs"));
 	assert.ok(relativePaths.includes("scripts/lib/tlh-install-utils.mjs"));
 	assert.deepEqual(manifest.find((file) => file.variable === "TLH_INSTALL_PATHS_LIB"), {
 		variable: "TLH_INSTALL_PATHS_LIB",
@@ -361,6 +559,13 @@ test("support manifest includes stage-1 and installed helper library dependencie
 		relativePath: "scripts/lib/tlh-install-paths.mjs",
 		tempPath: "lib/tlh-install-paths.mjs",
 		installName: "lib/tlh-install-paths.mjs",
+	});
+	assert.deepEqual(manifest.find((file) => file.variable === "TLH_SAFE_PROFILE_WRITE_LIB"), {
+		variable: "TLH_SAFE_PROFILE_WRITE_LIB",
+		requirement: "required",
+		relativePath: "scripts/lib/tlh-safe-profile-write.mjs",
+		tempPath: "lib/tlh-safe-profile-write.mjs",
+		installName: "lib/tlh-safe-profile-write.mjs",
 	});
 	assert.deepEqual(manifest.find((file) => file.variable === "TLH_INSTALL_UTILS_LIB"), {
 		variable: "TLH_INSTALL_UTILS_LIB",
@@ -388,6 +593,8 @@ test("support manifest includes stage-1 and installed helper library dependencie
 
 	const bootstrap = readFileSync(resolve(import.meta.dirname, "..", "install.sh"), "utf8");
 	assert.match(bootstrap, /^required\|scripts\/lib\/default-extensions\.mjs$/m);
+	assert.match(bootstrap, /^optional\|scripts\/lib\/tlh-safe-profile-write\.mjs$/m);
+	assert.doesNotMatch(bootstrap, /^required\|scripts\/lib\/tlh-safe-profile-write\.mjs$/m);
 	assert.match(bootstrap, /^required\|scripts\/lib\/tlh-install-utils\.mjs$/m);
 	assert.match(bootstrap, /^required\|config\/librarian\.defaults\.json$/m);
 });

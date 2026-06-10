@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import process from "node:process";
 
 import {
@@ -8,6 +7,7 @@ import {
 	assignOptionValue,
 	readOptionValue,
 } from "./lib/tlh-install-utils.mjs";
+import { writeSafeProfileFile } from "./lib/tlh-safe-profile-write.mjs";
 
 function usage() {
 	return `Usage: tlh-install-state.mjs [options]
@@ -185,6 +185,10 @@ function buildState(args) {
 	return state;
 }
 
+function stateRelativePath(args) {
+	return relative(resolve(args.agentDir), resolve(args.statePath)).split(sep).join("/");
+}
+
 function writeInstallState(args) {
 	if (args.dryRun) {
 		const piField = args.piInstalledByTlh !== undefined
@@ -195,15 +199,12 @@ function writeInstallState(args) {
 	}
 
 	const state = buildState(args);
-	const tmpPath = `${args.statePath}.tmp.${process.pid}`;
-	mkdirSync(dirname(args.statePath), { recursive: true });
-	try {
-		writeFileSync(tmpPath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
-		renameSync(tmpPath, args.statePath);
-	} catch (error) {
-		rmSync(tmpPath, { force: true });
-		throw error;
-	}
+	writeSafeProfileFile(
+		{ agentDir: args.agentDir },
+		stateRelativePath(args),
+		`${JSON.stringify(state, null, 2)}\n`,
+		"TLH install state",
+	);
 }
 
 function main() {

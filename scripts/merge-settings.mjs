@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { copyFileSync, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join, normalize, parse, resolve, sep } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, dirname, join, normalize, parse, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 
@@ -25,7 +25,9 @@ import {
 	defaultTlhSettingsPath,
 	expandHomePath,
 	readJsonFile,
+	readRegularFileForBackup,
 } from "./lib/tlh-install-utils.mjs";
+import { writeSafeProfileFile } from "./lib/tlh-safe-profile-write.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -537,20 +539,28 @@ function assertNotNormalPiSettings(settingsPath) {
 	);
 }
 
+function writeExistingProfileBackup(settingsPath, backupPath) {
+	const { content, mode } = readRegularFileForBackup(settingsPath, "Pi settings");
+	writeSafeProfileFile(
+		{ agentDir: dirname(settingsPath) },
+		basename(backupPath),
+		content,
+		"Pi settings backup",
+		{ mode },
+	);
+}
+
 function writeSettings(settingsPath, value, { dryRun, existed }) {
 	const formatted = `${JSON.stringify(value, null, 2)}\n`;
 	if (dryRun) return undefined;
 
-	mkdirSync(dirname(settingsPath), { recursive: true });
 	let backupPath;
 	if (existed) {
 		backupPath = backupPathFor(settingsPath);
-		copyFileSync(settingsPath, backupPath);
+		writeExistingProfileBackup(settingsPath, backupPath);
 	}
 
-	const tempPath = `${settingsPath}.tmp-${process.pid}`;
-	writeFileSync(tempPath, formatted, "utf8");
-	renameSync(tempPath, settingsPath);
+	writeSafeProfileFile({ agentDir: dirname(settingsPath) }, basename(settingsPath), formatted, "Pi settings");
 	return backupPath;
 }
 

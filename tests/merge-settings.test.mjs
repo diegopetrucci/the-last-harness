@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -54,6 +54,37 @@ function backupFiles(settingsPath) {
 		.sort();
 }
 
+function symlinkFile(target, path) {
+	if (process.platform === "win32") {
+		symlinkSync(target, path, "file");
+		return;
+	}
+	symlinkSync(target, path);
+}
+
+function writeSwapBackupSourceToSymlinkAfterOpenPreload(dir) {
+	const preload = join(dir, "swap-backup-source-to-symlink-after-open.mjs");
+	writeFileSync(preload, `import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+
+const originalOpenSync = fs.openSync;
+let sabotaged = false;
+fs.openSync = (path, flags, mode) => {
+	const pathString = String(path);
+	if (!sabotaged && pathString === process.env.TLH_TEST_SWAP_BACKUP_SOURCE_PATH) {
+		const fd = originalOpenSync(path, flags, mode);
+		sabotaged = true;
+		fs.unlinkSync(pathString);
+		fs.symlinkSync(process.env.TLH_TEST_SWAP_BACKUP_SOURCE_TARGET, pathString, "file");
+		return fd;
+	}
+	return originalOpenSync(path, flags, mode);
+};
+syncBuiltinESMExports();
+`);
+	return preload;
+}
+
 test("packaged defaults pin lastChangelogVersion to the changelog sentinel", () => {
 	assert.equal(readJson(settingsDefaultsPath).lastChangelogVersion, changelogSentinel);
 });
@@ -79,6 +110,81 @@ test("merge adds the changelog sentinel when isolated settings omit it", () => {
 	runMerge(fixture);
 
 	assert.equal(readJson(fixture.settings).lastChangelogVersion, changelogSentinel);
+});
+
+test("merge preserves settings and backup file modes when rewriting settings", () => {
+	const fixture = tempFixture(
+		{ packages: [], quietStartup: true },
+		{ packages: [harnessPackage] },
+	);
+	chmodSync(fixture.settings, 0o640);
+
+	runMerge(fixture);
+
+	assert.equal(lstatSync(fixture.settings).mode & 0o777, 0o640);
+	const backups = backupFiles(fixture.settings);
+	assert.equal(backups.length, 1);
+	assert.equal(lstatSync(join(dirname(fixture.settings), backups[0])).mode & 0o777, 0o640);
+});
+
+test("merge rejects symlinked settings targets before creating backups", () => {
+	const fixture = tempFixture(
+		{ packages: [], quietStartup: true },
+		{ packages: [harnessPackage] },
+	);
+	const externalDir = mkdtempSync(join(tmpdir(), "tlh-merge-settings-symlink-target-"));
+	const externalSettings = join(externalDir, "settings.json");
+	writeFileSync(externalSettings, JSON.stringify({ packages: [harnessPackage] }, null, 2));
+	rmSync(fixture.settings);
+	symlinkFile(externalSettings, fixture.settings);
+
+	const result = spawnSync(process.execPath, [
+		mergeScript,
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", fixture.extensions,
+	], {
+		cwd: repoRoot,
+		env: process.env,
+		encoding: "utf8",
+	});
+
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /symlinked Pi settings source/);
+	assert.deepEqual(backupFiles(fixture.settings), []);
+});
+
+test("merge rejects settings sources swapped to a symlink during backup read before creating backups", { skip: process.platform === "win32" }, () => {
+	const fixture = tempFixture(
+		{ packages: [], quietStartup: true },
+		{ packages: [harnessPackage] },
+	);
+	const externalDir = mkdtempSync(join(tmpdir(), "tlh-merge-settings-backup-source-swap-"));
+	const externalSettings = join(externalDir, "settings.json");
+	const externalSource = { packages: ["npm:attacker"] };
+	writeFileSync(externalSettings, JSON.stringify(externalSource, null, 2));
+	const preload = writeSwapBackupSourceToSymlinkAfterOpenPreload(dirname(fixture.settings));
+
+	const result = spawnSync(process.execPath, [
+		"--import", preload,
+		mergeScript,
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", fixture.extensions,
+	], {
+		cwd: repoRoot,
+		env: {
+			...process.env,
+			TLH_TEST_SWAP_BACKUP_SOURCE_PATH: fixture.settings,
+			TLH_TEST_SWAP_BACKUP_SOURCE_TARGET: externalSettings,
+		},
+		encoding: "utf8",
+	});
+
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /symlinked Pi settings source/);
+	assert.deepEqual(backupFiles(fixture.settings), []);
+	assert.deepEqual(readJson(externalSettings), externalSource);
 });
 
 test("merge migrates existing lastChangelogVersion to the changelog sentinel", () => {

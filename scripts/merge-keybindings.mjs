@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { copyFileSync, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
@@ -11,7 +11,9 @@ import {
 	defaultTlhKeybindingsPath,
 	expandHomePath,
 	readJsonFile,
+	readRegularFileForBackup,
 } from "./lib/tlh-install-utils.mjs";
+import { writeSafeProfileFile } from "./lib/tlh-safe-profile-write.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -128,20 +130,28 @@ function assertKeybindingsTarget(keybindingsPath) {
 	);
 }
 
+function writeExistingProfileBackup(keybindingsPath, backupPath) {
+	const { content, mode } = readRegularFileForBackup(keybindingsPath, "Pi keybindings");
+	writeSafeProfileFile(
+		{ agentDir: dirname(keybindingsPath) },
+		basename(backupPath),
+		content,
+		"Pi keybindings backup",
+		{ mode },
+	);
+}
+
 function writeKeybindings(keybindingsPath, value, { dryRun, existed }) {
 	const formatted = `${JSON.stringify(value, null, 2)}\n`;
 	if (dryRun) return undefined;
 
-	mkdirSync(dirname(keybindingsPath), { recursive: true });
 	let backupPath;
 	if (existed) {
 		backupPath = backupPathFor(keybindingsPath);
-		copyFileSync(keybindingsPath, backupPath);
+		writeExistingProfileBackup(keybindingsPath, backupPath);
 	}
 
-	const tempPath = `${keybindingsPath}.tmp-${process.pid}`;
-	writeFileSync(tempPath, formatted, "utf8");
-	renameSync(tempPath, keybindingsPath);
+	writeSafeProfileFile({ agentDir: dirname(keybindingsPath) }, basename(keybindingsPath), formatted, "Pi keybindings");
 	return backupPath;
 }
 
