@@ -109,7 +109,7 @@ function formatAllowedSubagents(primary: AgentPrompt | undefined, subagents: Sub
 	if (lines.length === 0) {
 		return "";
 	}
-	return `## TLH Allowed Minor Subagents\n\nYou may delegate only to these minor agents via the subagent tool:\n\n${lines.join("\n")}`;
+	return `## TLH Allowed Minor Subagents\n\nYou may delegate only to these minor agents via the subagent tool:\n\n${lines.join("\n")}\n\nFor subagent management \`action: "list"\`/\`"get"\` calls, omit \`agentScope\` or use \`"user"\`. TLH minor agents are isolated to the user scope.`;
 }
 
 export function buildTlhSystemPrompt(

@@ -74,10 +74,8 @@ If you want a harness that stays out of your way, TLH may be too structured. If 
 The architect is the default, but it is not the only mode.
 
 - **Rush** is a selectable primary for small bounded implementation tasks. It edits directly, runs narrow validation, and skips the default architect `tk`/developer/review loop. It can delegate only to `web-scout` for targeted general-web research; otherwise it edits and validates directly, or recommends switching to `architect` or `product` when the task outgrows Rush. Provider defaults are GPT-5.5 with thinking off on OpenAI/OpenAI-Codex, and Anthropic Opus with low thinking on Anthropic.
-- **product** is for product framing, tradeoffs, strategy, and implementation-ready ticket shaping. It does not implement code.
-- **bug-hunter** is for read-only debugging and root-cause analysis before you decide how to fix something.
-
-**Thinking levels are fixed for some primaries.** Rush, product, and bug-hunter each run at a locked thinking level — `/thinking` and `/effort` are blocked while they are active. Architect requires at least medium thinking; `/thinking` and `/effort` cannot drop it below that floor.
+- **Product** is for product framing, tradeoffs, strategy, and implementation-ready ticket shaping. It does not implement code.
+- **Bug-hunter** is for read-only debugging and root-cause analysis before you decide how to fix something.
 
 Use `Shift+Tab` to cycle the current session through `architect` → `rush` → `product` → `bug-hunter` → `disabled`.
 
@@ -101,7 +99,6 @@ TLH also aims to make the day-to-day session experience calmer and safer:
 
 - isolated profile installation so your normal Pi setup stays separate,
 - quieter UI defaults so tools and bash output do not constantly fight for attention,
-- at most one quiet hand-curated random startup tip per TLH launch, scoped to that launch only,
 - a lightweight first-party `/annotate-last-message` command that opens a native annotation window for the latest assistant reply and turns submitted notes into agent feedback,
 - a first-party `/annotate-git-diff` command that opens a native review window and pastes submitted feedback back into the editor as a prompt,
 - bundled web-search support for research-heavy work,
@@ -124,7 +121,9 @@ Repo settings:
 - `.pi/prompts/`
 - `.pi/extensions/`
 
-After adding files or installing a package, run `/reload` in TLH (or restart it) so the new resources are picked up.
+With upstream Pi 0.79.1 and newer, `AGENTS.md` and `CLAUDE.md` still load as context even before project trust is resolved, but trust-gated repo-local resources wait until the project is trusted. That includes `.pi/settings.json`, `.pi/skills/`, `.pi/prompts/`, `.pi/extensions/`, `.pi/themes/`, project-local `.agents/skills/`, and project-local packages. Interactive `tlh` sessions prompt for project trust when needed; use `/trust` to save a decision for future sessions. Saved trust decisions live in the isolated TLH profile, not normal `~/.pi/agent`. Non-interactive runs need a saved trust decision or `--approve`.
+
+After adding files, installing a package, or saving project trust, run `/reload` in TLH (or restart it) so the new resources are picked up.
 
 Normal `tlh update` runs are conservative: they preserve user-owned isolated-profile resources instead of overwriting them, and they still do not touch your normal Pi config.
 
@@ -145,4 +144,4 @@ Normal `tlh update` runs are conservative: they preserve user-owned isolated-pro
 
 Node.js >=22.19.0 must be available on your `PATH`.
 
-TLH uses upstream Pi >=0.76.0; if `pi` is missing, the installer automatically adds a compatible per-user copy under `~/.local`.
+TLH uses upstream Pi >=0.79.1; if `pi` is missing, the installer automatically adds a compatible per-user copy under `~/.local`.

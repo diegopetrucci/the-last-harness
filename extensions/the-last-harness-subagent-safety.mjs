@@ -55,14 +55,15 @@ function collectSubagentTargets(input) {
 	return [...new Set(targets)];
 }
 
-function forceUserAgentScope(input, mode) {
+function forceUserAgentScope(input, mode, { allowBoth = false } = {}) {
 	const rawScope = input.agentScope;
 	if (rawScope !== undefined) {
 		if (typeof rawScope !== "string") {
 			return `TLH primary-agent subagent ${mode} calls must use agentScope: "user" or omit agentScope.`;
 		}
 		const agentScope = rawScope.trim();
-		if (agentScope && agentScope !== "user") {
+		const scopeIsAllowed = !agentScope || agentScope === "user" || (allowBoth && agentScope === "both");
+		if (!scopeIsAllowed) {
 			return `TLH primary-agent subagent ${mode} calls may not use agentScope: "${agentScope}". TLH minor agents must run from the isolated user scope.`;
 		}
 	}
@@ -145,7 +146,7 @@ export function validateSubagentToolInput(input, primary) {
 		if (!SAFE_SUBAGENT_ACTION_SET.has(action)) {
 			return `TLH primary agents may not use subagent management action '${action}'. Allowed actions: ${SAFE_SUBAGENT_ACTIONS.join(", ")}.`;
 		}
-		return action === "list" || action === "get" ? forceUserAgentScope(input, action) : undefined;
+		return action === "list" || action === "get" ? forceUserAgentScope(input, action, { allowBoth: true }) : undefined;
 	}
 
 	const scopeReason = forceUserAgentScope(input, "execution");

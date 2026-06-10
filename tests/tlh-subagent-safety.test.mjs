@@ -93,6 +93,14 @@ test("validateSubagentToolInput allows approved management calls and forces user
 	assertAllowed(get);
 	assert.equal(get.agentScope, "user");
 
+	const listBoth = { action: "list", agentScope: "both" };
+	assertAllowed(listBoth);
+	assert.equal(listBoth.agentScope, "user");
+
+	const getBoth = { action: "get", agentScope: "both" };
+	assertAllowed(getBoth);
+	assert.equal(getBoth.agentScope, "user");
+
 	for (const action of ["status", "interrupt", "doctor"]) {
 		assertAllowed({ action });
 	}
@@ -101,10 +109,13 @@ test("validateSubagentToolInput allows approved management calls and forces user
 test("validateSubagentToolInput blocks unsafe actions and non-user scopes", () => {
 	assert.match(validateSubagentToolInput({ action: "resume" }), /may not use subagent management action 'resume'/);
 	assert.match(validateSubagentToolInput({ action: "delete" }), /may not use subagent management action 'delete'/);
+	assert.match(validateSubagentToolInput({ agent: "developer", agentScope: "both" }), /may not use agentScope: "both"/);
 	assert.match(validateSubagentToolInput({ agent: "developer", agentScope: "project" }), /may not use agentScope: "project"/);
 	assert.match(validateSubagentToolInput({ agent: "librarian", agentScope: "project" }), /may not use agentScope: "project"/);
 	assert.match(validateSubagentToolInput({ agent: "oracle", context: "resume" }), /may not use context: "resume"/);
+	assert.match(validateSubagentToolInput({ action: "list", agentScope: "project" }), /may not use agentScope: "project"/);
 	assert.match(validateSubagentToolInput({ action: "list", agentScope: "system" }), /may not use agentScope: "system"/);
+	assert.match(validateSubagentToolInput({ action: "get", agentScope: "invalid" }), /may not use agentScope: "invalid"/);
 });
 
 test("validateSubagentToolInput uses generic primary-agent wording", () => {

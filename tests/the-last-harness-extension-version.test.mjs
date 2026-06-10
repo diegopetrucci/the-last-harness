@@ -15,7 +15,7 @@ const versionSource = readFileSync(new URL("../extensions/the-last-harness/versi
 // --- formatVersionOutput ---
 
 test("formatVersionOutput includes tlh and pi labels", () => {
-	const output = formatVersionOutput("0.15.0", "0.76.0");
+	const output = formatVersionOutput("0.15.0", "0.79.1");
 	assert.match(output, /tlh/);
 	assert.match(output, /pi/);
 });
@@ -27,7 +27,7 @@ test("formatVersionOutput includes both provided version strings verbatim", () =
 });
 
 test("formatVersionOutput is concise plain text without markup", () => {
-	const output = formatVersionOutput("0.15.0", "0.76.0");
+	const output = formatVersionOutput("0.15.0", "0.79.1");
 	assert.equal(typeof output, "string");
 	assert.doesNotMatch(output, /[<>]/);  // no HTML-like markup
 	// Should be a single short line, not a multi-paragraph block
