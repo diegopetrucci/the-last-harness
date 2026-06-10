@@ -22,6 +22,10 @@ const contracts = [
 			heading("Planning and task tracking"),
 			heading("Implementation loop"),
 			bodyPattern("delegates implementation to developer", /do not directly edit source files/i),
+			bodyPattern(
+				"paused dispatch stays recoverable and non-authorizing",
+				/paused or interrupted developer\/subagent dispatch.*recoverable paused run.*not authorization to edit directly.*resume by run id\/index.*re-dispatch an approved ticket.*ask the user.*or stop.*doctor.*no active run.*stale or failed/i,
+			),
 			orderedTerms("exact approved signoff gate", ["exact word", "approved"]),
 			orderedTerms("developer waits for approved tickets", ["do not launch", "developer", "until", "approves", "tickets"]),
 			includesAllTerms("high-risk oracle gating", ["high-stakes", "broad blast radius", "explicitly agrees"]),
