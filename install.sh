@@ -372,7 +372,7 @@ required|scripts/tlh-install.mjs
 required|scripts/lib/tlh-install-support-manifest.mjs
 required|scripts/lib/tlh-install-package-source.mjs
 required|scripts/lib/tlh-install-paths.mjs
-optional|scripts/lib/tlh-safe-profile-write.mjs
+required|scripts/lib/tlh-safe-profile-write.mjs
 required|scripts/lib/tlh-install-utils.mjs
 required|scripts/lib/tlh-install-git.mjs
 required|scripts/lib/tlh-install-subagents.mjs

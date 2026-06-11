@@ -729,8 +729,8 @@ test("support manifests preserve current-ref packaging while keeping stage-0 boo
 
 	const bootstrap = readFileSync(resolve(import.meta.dirname, "..", "install.sh"), "utf8");
 	assert.match(bootstrap, /^required\|scripts\/lib\/default-extensions\.mjs$/m);
-	assert.match(bootstrap, /^optional\|scripts\/lib\/tlh-safe-profile-write\.mjs$/m);
-	assert.doesNotMatch(bootstrap, /^required\|scripts\/lib\/tlh-safe-profile-write\.mjs$/m);
+	assert.match(bootstrap, /^required\|scripts\/lib\/tlh-safe-profile-write\.mjs$/m);
+	assert.doesNotMatch(bootstrap, /^optional\|scripts\/lib\/tlh-safe-profile-write\.mjs$/m);
 	assert.match(bootstrap, /^required\|scripts\/lib\/tlh-install-utils\.mjs$/m);
 	assert.match(bootstrap, /^required\|config\/librarian\.defaults\.json$/m);
 });

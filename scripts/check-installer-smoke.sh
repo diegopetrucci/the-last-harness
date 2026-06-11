@@ -1191,7 +1191,7 @@ run_install_state_pi_field_smoke() {
   local case_dir="${TMP_ROOT}/install-state-pi-field"
   local agent_dir="${case_dir}/agent"
   local bin_dir="${case_dir}/bin"
-  local state_file="${case_dir}/state.json"
+  local state_file="${agent_dir}/tlh/install-state.json"
   local stdout_file="${case_dir}/stdout.log"
   local stderr_file="${case_dir}/stderr.log"
   local combined_file="${case_dir}/combined.log"
