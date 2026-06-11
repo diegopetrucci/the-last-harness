@@ -9,6 +9,7 @@ import {
 	readdirSync,
 	readFileSync,
 	realpathSync,
+	renameSync,
 	rmSync,
 	symlinkSync,
 	unlinkSync,
@@ -335,6 +336,107 @@ test("writeSafeProfileFile rejects symlinked profile parents and final targets",
 });
 
 
+test("writeSafeProfileFile rejects temp target symlink swaps before commit", (t) => {
+	const root = tempFixture(t);
+	const agentDir = join(root, "agent");
+	const homeDir = join(root, "home");
+	const externalDir = join(root, "external");
+	const target = join(agentDir, "settings.json");
+	const attackerTarget = join(externalDir, "attacker-settings.json");
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(externalDir, { recursive: true });
+	writeFileSync(target, "original\n", { mode: 0o600 });
+	writeFileSync(attackerTarget, "attacker\n");
+
+	assert.throws(
+		() => writeSafeProfileFile(
+			{ agentDir },
+			"settings.json",
+			"safe\n",
+			"isolated settings",
+			{
+				homeDir,
+				beforeCommit({ tempTarget }) {
+					unlinkSync(tempTarget);
+					symlinkSync(attackerTarget, tempTarget);
+				},
+			},
+		),
+		/refusing to commit unexpected temp file type/,
+	);
+	assert.equal(readFileSync(target, "utf8"), "original\n");
+	assert.equal(lstatSync(target).isSymbolicLink(), false);
+	assert.equal(readFileSync(attackerTarget, "utf8"), "attacker\n");
+});
+
+
+test("writeSafeProfileFile rejects temp dir swaps to attacker-controlled content", (t) => {
+	const root = tempFixture(t);
+	const agentDir = join(root, "agent");
+	const homeDir = join(root, "home");
+	const externalDir = join(root, "external");
+	const target = join(agentDir, "settings.json");
+	const externalTempTarget = join(externalDir, "settings.json");
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(externalDir, { recursive: true });
+	writeFileSync(target, "original\n", { mode: 0o600 });
+
+	assert.throws(
+		() => writeSafeProfileFile(
+			{ agentDir },
+			"settings.json",
+			"safe\n",
+			"isolated settings",
+			{
+				homeDir,
+				beforeCommit({ tempDir }) {
+					rmSync(tempDir, { recursive: true, force: true });
+					symlinkSync(externalDir, tempDir, "dir");
+					writeFileSync(externalTempTarget, "attacker\n");
+				},
+			},
+		),
+		/refusing to commit unexpected temp directory type/,
+	);
+	assert.equal(readFileSync(target, "utf8"), "original\n");
+	assert.equal(lstatSync(target).isSymbolicLink(), false);
+	assert.equal(readFileSync(externalTempTarget, "utf8"), "attacker\n");
+});
+
+
+test("writeSafeProfileFile preserves temp dirs with unexpected extra content during cleanup", (t) => {
+	const root = tempFixture(t);
+	const agentDir = join(root, "agent");
+	const homeDir = join(root, "home");
+	let tempDirWithSentinel = "";
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+
+	assert.throws(
+		() => writeSafeProfileFile(
+			{ agentDir },
+			"settings.json",
+			"{}\n",
+			"isolated settings",
+			{
+				homeDir,
+				beforeCommit({ tempDir }) {
+					tempDirWithSentinel = tempDir;
+					writeFileSync(join(tempDir, "sentinel.txt"), "keep\n");
+					throw new Error("stop before commit");
+				},
+			},
+		),
+		/stop before commit/,
+	);
+	assert.equal(existsSync(join(agentDir, "settings.json")), false);
+	assert.equal(existsSync(join(tempDirWithSentinel, "settings.json")), false);
+	assert.equal(readFileSync(join(tempDirWithSentinel, "sentinel.txt"), "utf8"), "keep\n");
+});
+
+
 test("writeSafeProfileFile skips cleanup when the helper temp dir path is recreated", (t) => {
 	const root = tempFixture(t);
 	const agentDir = join(root, "agent");
@@ -359,7 +461,7 @@ test("writeSafeProfileFile skips cleanup when the helper temp dir path is recrea
 				},
 			},
 		),
-		/ENOENT|no such file or directory/i,
+		/refusing to commit replaced temp directory/,
 	);
 	assert.equal(existsSync(join(agentDir, "settings.json")), false);
 	assert.equal(readFileSync(join(recreatedTempDir, "sentinel.txt"), "utf8"), "keep\n");
@@ -397,6 +499,40 @@ test("writeSafeProfileFile detects swapped parents and avoids unsafe cleanup", (
 	);
 	assert.equal(existsSync(join(externalDir, "install-state.json")), false);
 	assert.equal(readFileSync(join(externalTempDir, "sentinel.txt"), "utf8"), "keep\n");
+});
+
+
+test("writeSafeProfileFile preserves temp dirs when the profile root is moved aside and symlinked back", (t) => {
+	const root = tempFixture(t);
+	const agentDir = join(root, "agent");
+	const movedAgentDir = join(root, "moved-agent");
+	const homeDir = join(root, "home");
+	let movedTempDir = "";
+	let movedTempTarget = "";
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+
+	assert.throws(
+		() => writeSafeProfileFile(
+			{ agentDir },
+			"settings.json",
+			"safe\n",
+			"isolated settings",
+			{
+				homeDir,
+				beforeCommit({ tempDir }) {
+					movedTempDir = join(movedAgentDir, basename(tempDir));
+					movedTempTarget = join(movedTempDir, "settings.json");
+					renameSync(agentDir, movedAgentDir);
+					symlinkSync(movedAgentDir, agentDir, "dir");
+				},
+			},
+		),
+		/symlinked TLH profile path/,
+	);
+	assert.equal(lstatSync(agentDir).isSymbolicLink(), true);
+	assert.equal(readFileSync(movedTempTarget, "utf8"), "safe\n");
+	assert.equal(lstatSync(movedTempDir).isDirectory(), true);
 });
 
 
