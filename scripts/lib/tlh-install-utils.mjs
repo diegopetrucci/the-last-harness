@@ -2,128 +2,124 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
-
 import { pathWithinOrEqual, realpathForCompare } from "./tlh-install-paths.mjs";
-
 export function requiredValue(argv, index, flag) {
-	const value = argv[index];
-	if (!value || value.startsWith("-")) {
-		throw new Error(`${flag} requires a value`);
-	}
-	return value;
+    const value = argv[index];
+    if (!value || value.startsWith("-")) {
+        throw new Error(`${flag} requires a value`);
+    }
+    return value;
 }
-
 export function assignRequiredEqualsValue(target, key, value, flag) {
-	if (!value) throw new Error(`${flag} requires a value`);
-	target[key] = value;
+    if (!value)
+        throw new Error(`${flag} requires a value`);
+    target[key] = value;
 }
-
 export function readOptionValue(argv, index, flags, { requireEqualsValue = false } = {}) {
-	const arg = argv[index];
-	if (typeof arg !== "string") return undefined;
-	for (const flag of Array.isArray(flags) ? flags : [flags]) {
-		if (arg === flag) {
-			return { flag, value: requiredValue(argv, index + 1, arg), nextIndex: index + 1 };
-		}
-		const prefix = `${flag}=`;
-		if (!arg.startsWith(prefix)) continue;
-		const value = arg.slice(prefix.length);
-		if (requireEqualsValue && !value) throw new Error(`${flag} requires a value`);
-		return { flag, value, nextIndex: index };
-	}
-	return undefined;
+    const arg = argv[index];
+    if (typeof arg !== "string")
+        return undefined;
+    for (const flag of Array.isArray(flags) ? flags : [flags]) {
+        if (arg === flag) {
+            return { flag, value: requiredValue(argv, index + 1, arg), nextIndex: index + 1 };
+        }
+        const prefix = `${flag}=`;
+        if (!arg.startsWith(prefix))
+            continue;
+        const value = arg.slice(prefix.length);
+        if (requireEqualsValue && !value)
+            throw new Error(`${flag} requires a value`);
+        return { flag, value, nextIndex: index };
+    }
+    return undefined;
 }
-
 export function assignOptionValue(target, key, argv, index, flags, options = {}) {
-	const match = readOptionValue(argv, index, flags, options);
-	if (!match) return undefined;
-	target[key] = match.value;
-	return match.nextIndex;
+    const match = readOptionValue(argv, index, flags, options);
+    if (!match)
+        return undefined;
+    target[key] = match.value;
+    return match.nextIndex;
 }
-
 export function expandHomePath(path, { homeDir = homedir() } = {}) {
-	if (typeof path !== "string") return path;
-	if (path === "~") return homeDir;
-	if (path.startsWith("~/")) return join(homeDir, path.slice(2));
-	return path;
+    if (typeof path !== "string")
+        return path;
+    if (path === "~")
+        return homeDir;
+    if (path.startsWith("~/"))
+        return join(homeDir, path.slice(2));
+    return path;
 }
-
 function firstConfiguredValue(...values) {
-	for (const value of values) {
-		if (typeof value === "string" && value) return value;
-	}
-	return undefined;
+    for (const value of values) {
+        if (typeof value === "string" && value)
+            return value;
+    }
+    return undefined;
 }
-
 export function defaultTlhAgentDir(env = process.env, { homeDir = homedir(), preferTlhAgentDir = false } = {}) {
-	const configured = preferTlhAgentDir
-		? firstConfiguredValue(env.TLH_AGENT_DIR, env.PI_CODING_AGENT_DIR)
-		: firstConfiguredValue(env.PI_CODING_AGENT_DIR, env.TLH_AGENT_DIR);
-	return expandHomePath(configured || join(homeDir, ".the-last-harness", "agent"), { homeDir });
+    const configured = preferTlhAgentDir
+        ? firstConfiguredValue(env.TLH_AGENT_DIR, env.PI_CODING_AGENT_DIR)
+        : firstConfiguredValue(env.PI_CODING_AGENT_DIR, env.TLH_AGENT_DIR);
+    return expandHomePath(configured || join(homeDir, ".the-last-harness", "agent"), { homeDir }) || join(homeDir, ".the-last-harness", "agent");
 }
-
 export function resolveTlhAgentDir(agentDir, options = {}) {
-	return expandHomePath(agentDir || defaultTlhAgentDir(options.env, options), options);
+    return expandHomePath(agentDir || defaultTlhAgentDir(options.env, options), options) || defaultTlhAgentDir(options.env, options);
 }
-
-export function defaultTlhSettingsPath({ agentDir, env = process.env, homeDir = homedir(), preferTlhAgentDir = false } = {}) {
-	return join(resolveTlhAgentDir(agentDir, { env, homeDir, preferTlhAgentDir }), "settings.json");
+export function defaultTlhSettingsPath({ agentDir, env = process.env, homeDir = homedir(), preferTlhAgentDir = false, } = {}) {
+    return join(resolveTlhAgentDir(agentDir, { env, homeDir, preferTlhAgentDir }), "settings.json");
 }
-
-export function defaultTlhKeybindingsPath({ agentDir, env = process.env, homeDir = homedir(), preferTlhAgentDir = false } = {}) {
-	return join(resolveTlhAgentDir(agentDir, { env, homeDir, preferTlhAgentDir }), "keybindings.json");
+export function defaultTlhKeybindingsPath({ agentDir, env = process.env, homeDir = homedir(), preferTlhAgentDir = false, } = {}) {
+    return join(resolveTlhAgentDir(agentDir, { env, homeDir, preferTlhAgentDir }), "keybindings.json");
 }
-
 export function defaultTlhBinDir(env = process.env, { homeDir = homedir() } = {}) {
-	return expandHomePath(env.TLH_BIN_DIR || join(homeDir, ".local", "bin"), { homeDir });
+    return expandHomePath(env.TLH_BIN_DIR || join(homeDir, ".local", "bin"), { homeDir }) || join(homeDir, ".local", "bin");
 }
-
 export function readJsonFile(path, { missingValue, emptyValue = {} } = {}) {
-	if (!existsSync(path)) {
-		if (missingValue !== undefined) return missingValue;
-		throw new Error(`File does not exist: ${path}`);
-	}
-	const raw = readFileSync(path, "utf8").replace(/^\uFEFF/, "");
-	if (!raw.trim()) return emptyValue;
-	try {
-		return JSON.parse(raw);
-	} catch (error) {
-		throw new Error(`Invalid JSON in ${path}: ${error.message}`);
-	}
+    if (!existsSync(path)) {
+        if (missingValue !== undefined)
+            return missingValue;
+        throw new Error(`File does not exist: ${path}`);
+    }
+    const raw = readFileSync(path, "utf8").replace(/^\uFEFF/, "");
+    if (!raw.trim())
+        return emptyValue;
+    try {
+        return JSON.parse(raw);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Invalid JSON in ${path}: ${message}`);
+    }
 }
-
 export function shellQuote(value) {
-	return `'${String(value).replace(/'/g, `'\\''`)}'`;
+    return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
-
 export function shellWord(value) {
-	const text = String(value);
-	if (/^[A-Za-z0-9_/:.,@%+=-]+$/.test(text)) return text;
-	return shellQuote(text);
+    const text = String(value);
+    if (/^[A-Za-z0-9_/:.,@%+=-]+$/.test(text))
+        return text;
+    return shellQuote(text);
 }
-
 export function renderShellWords(values) {
-	return values.map(shellWord).join(" ");
+    return [...values].map(shellWord).join(" ");
 }
-
 export function backupTimestampSuffix(date = new Date(), { includeMilliseconds = true } = {}) {
-	const iso = date.toISOString();
-	if (includeMilliseconds) return iso.replace(/[:.]/g, "-");
-	return iso.replace(/\.\d{3}Z$/, "Z").replace(/:/g, "-");
+    const iso = date.toISOString();
+    if (includeMilliseconds)
+        return iso.replace(/[:.]/g, "-");
+    return iso.replace(/\.\d{3}Z$/, "Z").replace(/:/g, "-");
 }
-
 export function backupPathWithTimestamp(path, { marker = "", date = new Date(), includeMilliseconds = true } = {}) {
-	const markerText = marker ? `-${marker}` : "";
-	return `${path}.backup${markerText}-${backupTimestampSuffix(date, { includeMilliseconds })}`;
+    const markerText = marker ? `-${marker}` : "";
+    return `${path}.backup${markerText}-${backupTimestampSuffix(date, { includeMilliseconds })}`;
 }
-
 export function pathIsInNormalPiConfig(path, { homeDir = homedir(), alreadyNormalized = false } = {}) {
-	const normalPiRoot = realpathForCompare(join(homeDir, ".pi"));
-	const normalizedPath = alreadyNormalized ? path : realpathForCompare(path);
-	return pathWithinOrEqual(normalPiRoot, normalizedPath);
+    const normalPiRoot = realpathForCompare(join(homeDir, ".pi"));
+    const normalizedPath = alreadyNormalized ? path : realpathForCompare(path);
+    return pathWithinOrEqual(normalPiRoot, normalizedPath);
 }
-
 export function assertNotInNormalPiConfig(path, message, options = {}) {
-	if (!pathIsInNormalPiConfig(path, options)) return;
-	throw new Error(typeof message === "function" ? message(path) : message);
+    if (!pathIsInNormalPiConfig(path, options))
+        return;
+    throw new Error(typeof message === "function" ? message(path) : message);
 }

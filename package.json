@@ -22,9 +22,14 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "lint": "eslint \"scripts/**/*.{js,mjs,ts}\" \"tests/**/*.{js,mjs,ts}\" \"extensions/**/*.{js,mjs,ts}\"",
+    "build": "npm run build:runtime",
+    "build:runtime": "node scripts/runtime-typescript.mjs build",
+    "check:runtime": "node scripts/runtime-typescript.mjs check",
+    "lint": "eslint \"scripts/**/*.{js,mjs,ts,mts}\" \"tests/**/*.{js,mjs,ts,mts}\" \"extensions/**/*.{js,mjs,ts,mts}\"",
     "test": "node --test tests/*.test.mjs",
-    "validate": "bash scripts/check-installer-smoke.sh && npm test && npm run lint && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
+    "typecheck": "npm run typecheck:runtime",
+    "typecheck:runtime": "node scripts/runtime-typescript.mjs typecheck",
+    "validate": "npm run typecheck && npm run check:runtime && bash scripts/check-installer-smoke.sh && npm test && npm run lint && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
   },
   "files": [
     "agents",
@@ -67,6 +72,7 @@
     "@earendil-works/pi-coding-agent": "^0.79.1",
     "@earendil-works/pi-tui": "^0.79.1",
     "@eslint/js": "^9.39.4",
+    "@types/node": "^22.0.0",
     "eslint": "^9.39.4",
     "globals": "^14.0.0",
     "jiti": "^2.7.0",
