@@ -24,6 +24,11 @@ import { getTlhHeaderUpdate, maybeNotifyAvailableTlhUpdate } from "./the-last-ha
 import { registerVersionCommand } from "./the-last-harness/version.js";
 import type { StartupResources, TlhUsageRefreshOptions } from "./the-last-harness/types.js";
 
+function getActiveProjectTrustDecision(ctx: ExtensionContext): boolean | undefined {
+	const projectTrusted = (ctx as ExtensionContext & { isProjectTrusted?: () => unknown }).isProjectTrusted?.();
+	return typeof projectTrusted === "boolean" ? projectTrusted : undefined;
+}
+
 export default function theLastHarness(pi: ExtensionAPI) {
 	registerContextCap(pi);
 
@@ -105,7 +110,9 @@ export default function theLastHarness(pi: ExtensionAPI) {
 
 		let resources: StartupResources = { context: [], skills: [], prompts: [], extensions: [], themes: [] };
 		try {
-			resources = await collectStartupResources(ctx.cwd);
+			resources = await collectStartupResources(ctx.cwd, {
+				projectTrusted: getActiveProjectTrustDecision(ctx),
+			});
 		} catch {
 			// Keep startup resilient. The header can still render without resource details.
 		}
