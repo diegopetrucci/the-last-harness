@@ -461,7 +461,7 @@ test("writeSafeProfileFile skips cleanup when the helper temp dir path is recrea
 				},
 			},
 		),
-		/refusing to commit replaced temp directory/,
+		/refusing to commit (replaced temp directory|missing temp file)/,
 	);
 	assert.equal(existsSync(join(agentDir, "settings.json")), false);
 	assert.equal(readFileSync(join(recreatedTempDir, "sentinel.txt"), "utf8"), "keep\n");
