@@ -305,7 +305,7 @@ test("writeSafeProfileFile rejects protected normal Pi targets before creating t
 });
 
 
-test("writeSafeProfileFile rejects symlinked profile parents and final targets", (t) => {
+test("writeSafeProfileFile rejects symlinked profile roots, parents, and final targets", (t) => {
 	const root = tempFixture(t);
 	const agentDir = join(root, "agent");
 	const linkedAgentDir = join(root, "linked-agent");
@@ -322,10 +322,15 @@ test("writeSafeProfileFile rejects symlinked profile parents and final targets",
 		/refusing to write isolated settings parent directory through symlinked TLH profile path/,
 	);
 	assert.throws(
+		() => writeSafeProfileFile({ agentDir: linkedAgentDir }, "tlh/install-state.json", "{}\n", "install state", { homeDir }),
+		/refusing to write install state parent directory through symlinked TLH profile path/,
+	);
+	assert.throws(
 		() => writeSafeProfileFile({ agentDir }, "nested/settings.json", "{}\n", "isolated settings", { homeDir }),
 		/refusing to write isolated settings parent directory through symlinked TLH profile path/,
 	);
 	assert.equal(existsSync(join(externalDir, "settings.json")), false);
+	assert.equal(existsSync(join(externalDir, "tlh", "install-state.json")), false);
 
 	symlinkSync(join(externalDir, "settings.json"), join(agentDir, "settings.json"));
 	assert.throws(
