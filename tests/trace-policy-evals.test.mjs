@@ -352,6 +352,49 @@ test("trace policy enforces runtime per-primary subagent allowlists", () => {
 	}), ["bug-hunter.subagent_allowlist"]);
 });
 
+test("trace policy catches disallowed dynamic fanout template agents and allows approved ones", () => {
+	assert.deepEqual(violationCodes({
+		agent: "rush",
+		steps: [
+			{
+				type: "tool",
+				tool: "subagent",
+				input: {
+					chain: [
+						{
+							expand: "release notes",
+							parallel: { agent: "code-reviewer", prompt: "Review {item}." },
+							collect: "results",
+						},
+					],
+				},
+			},
+		],
+	}), ["rush.subagent_allowlist"]);
+
+	const allowedResult = evaluateTracePolicy({
+		agent: "rush",
+		steps: [
+			{
+				type: "tool",
+				tool: "subagent",
+				input: {
+					chain: [
+						{
+							expand: "release notes",
+							parallel: { agent: "web-scout", prompt: "Research {item}." },
+							collect: "results",
+						},
+					],
+				},
+			},
+		],
+	});
+
+	assert.equal(allowedResult.ok, true);
+	assert.deepEqual(allowedResult.violations, []);
+});
+
 test("reported product docs traversal regression is rejected", () => {
 	assert.deepEqual(violationCodes({
 		agent: "product",

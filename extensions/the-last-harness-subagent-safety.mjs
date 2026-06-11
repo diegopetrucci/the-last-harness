@@ -43,12 +43,17 @@ function collectSubagentTargets(input) {
 			if (!isRecord(step)) continue;
 			const agent = stringField(step.agent);
 			if (agent) targets.push(agent);
-			if (!Array.isArray(step.parallel)) continue;
-			for (const task of step.parallel) {
-				if (!isRecord(task)) continue;
-				const parallelAgent = stringField(task.agent);
-				if (parallelAgent) targets.push(parallelAgent);
+			if (Array.isArray(step.parallel)) {
+				for (const task of step.parallel) {
+					if (!isRecord(task)) continue;
+					const parallelAgent = stringField(task.agent);
+					if (parallelAgent) targets.push(parallelAgent);
+				}
+				continue;
 			}
+			if (!isRecord(step.parallel)) continue;
+			const parallelAgent = stringField(step.parallel.agent);
+			if (parallelAgent) targets.push(parallelAgent);
 		}
 	}
 
@@ -115,11 +120,17 @@ function validateNestedFreshSubagentContexts(input) {
 			const step = input.chain[chainIndex];
 			const stepReason = validateNestedFreshContext(step, `chain[${chainIndex}].context`);
 			if (stepReason) return stepReason;
-			if (!isRecord(step) || !Array.isArray(step.parallel)) continue;
-			for (let parallelIndex = 0; parallelIndex < step.parallel.length; parallelIndex += 1) {
-				const reason = validateNestedFreshContext(step.parallel[parallelIndex], `chain[${chainIndex}].parallel[${parallelIndex}].context`);
-				if (reason) return reason;
+			if (!isRecord(step)) continue;
+			if (Array.isArray(step.parallel)) {
+				for (let parallelIndex = 0; parallelIndex < step.parallel.length; parallelIndex += 1) {
+					const reason = validateNestedFreshContext(step.parallel[parallelIndex], `chain[${chainIndex}].parallel[${parallelIndex}].context`);
+					if (reason) return reason;
+				}
+				continue;
 			}
+			if (!isRecord(step.parallel)) continue;
+			const parallelReason = validateNestedFreshContext(step.parallel, `chain[${chainIndex}].parallel.context`);
+			if (parallelReason) return parallelReason;
 		}
 	}
 

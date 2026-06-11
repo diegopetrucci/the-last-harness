@@ -84,6 +84,22 @@ test("validateSubagentToolInput allows approved primary-specific targets and for
 	assert.equal(architectBatched.context, "fresh");
 });
 
+test("validateSubagentToolInput allows approved dynamic fanout template agents", () => {
+	const rushDynamicFanout = {
+		chain: [
+			{
+				expand: "release notes",
+				parallel: { agent: "web-scout", prompt: "Research {item}" },
+				collect: "summaries",
+			},
+		],
+	};
+
+	assertAllowed(rushDynamicFanout, "rush");
+	assert.equal(rushDynamicFanout.agentScope, "user");
+	assert.equal(rushDynamicFanout.context, "fresh");
+});
+
 test("validateSubagentToolInput allows approved management calls and forces user scope where needed", () => {
 	const list = { action: "list" };
 	assertAllowed(list);
@@ -155,6 +171,21 @@ test("validateSubagentToolInput rejects disallowed agents with active-primary al
 	);
 });
 
+test("validateSubagentToolInput rejects disallowed dynamic fanout template agents with active-primary allowlists", () => {
+	assert.equal(
+		validateSubagentToolInput({
+			chain: [
+				{
+					expand: "release notes",
+					parallel: { agent: "developer", prompt: "Implement {item}" },
+					collect: "results",
+				},
+			],
+		}, "rush"),
+		"TLH rush may delegate only to: web-scout. Disallowed target(s): developer.",
+	);
+});
+
 test("validateSubagentToolInput rejects non-fresh top-level and nested contexts", () => {
 	assert.match(validateSubagentToolInput({ agent: "developer", context: "resume" }), /may not use context: "resume"/);
 	assert.match(validateSubagentToolInput({ agent: "developer", context: 1 }), /must use context: "fresh"/);
@@ -170,6 +201,12 @@ test("validateSubagentToolInput rejects non-fresh top-level and nested contexts"
 	assert.match(
 		validateSubagentToolInput({ chain: [{ parallel: [{ agent: "developer", context: "resume" }] }] }),
 		/nested chain\[0\]\.parallel\[0\]\.context may not use context: "resume"/,
+	);
+	assert.match(
+		validateSubagentToolInput({
+			chain: [{ parallel: { agent: "web-scout", prompt: "Research {item}", context: "resume" } }],
+		}, "rush"),
+		/nested chain\[0\]\.parallel\.context may not use context: "resume"/,
 	);
 	assert.match(
 		validateSubagentToolInput({ tasks: [{ agent: "developer", context: "" }] }),

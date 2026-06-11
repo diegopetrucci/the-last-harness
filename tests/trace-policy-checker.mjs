@@ -900,10 +900,15 @@ function collectSubagentTargets(value) {
 		for (const step of value.chain) {
 			if (!isRecord(step)) continue;
 			push(step.agent);
-			if (!Array.isArray(step.parallel)) continue;
-			for (const task of step.parallel) {
-				if (!isRecord(task)) continue;
-				push(task.agent);
+			if (Array.isArray(step.parallel)) {
+				for (const task of step.parallel) {
+					if (!isRecord(task)) continue;
+					push(task.agent);
+				}
+				continue;
+			}
+			if (isRecord(step.parallel)) {
+				push(step.parallel.agent);
 			}
 		}
 	}
