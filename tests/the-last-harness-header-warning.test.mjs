@@ -48,8 +48,7 @@ test("collapsed header renders the install-track warning above Context and inclu
 		"<bold><accent>tlh</accent></bold>",
 		"",
 		"<warning>Warning</warning><dim>: running TLH from main track</dim>",
-		"<dim>Context: AGENTS.md</dim>",
-		"<dim>Ctrl+Shift+E to show skills, prompts, extensions, themes</dim>",
+		"<dim>Context: AGENTS.md. Press Ctrl+Shift+E to show loaded skills, prompts, and extensions</dim>",
 	]);
 });
 
@@ -61,8 +60,7 @@ test("collapsed header renders the startup tip as the final header line with a l
 	assert.deepEqual(header.render(200), [
 		"<bold><accent>tlh</accent></bold>",
 		"",
-		"<dim>Context: AGENTS.md</dim>",
-		"<dim>Ctrl+Shift+E to show skills, prompts, extensions, themes</dim>",
+		"<dim>Context: AGENTS.md. Press Ctrl+Shift+E to show loaded skills, prompts, and extensions</dim>",
 		"<muted>Tip</muted><dim>: Use /switch-primary-agent to pick architect, rush, product, bug-hunter, or disabled for this session.</dim>",
 	]);
 });
@@ -118,7 +116,11 @@ test("startup tips wrap without truncation and stay last in collapsed and expand
 
 	assert.deepEqual(collapsedTipBlock, expectedTipBlock);
 	assert.deepEqual(expandedTipBlock, expectedTipBlock);
-	assert.match(collapsedLines.at(-expectedTipBlock.length - 1) ?? "", /^Ctrl\+Shift\+E/u);
+	const collapsedNonTipLines = collapsedLines.slice(0, -expectedTipBlock.length);
+	assert.ok(
+		collapsedNonTipLines.some((line) => /^Press Ctrl\+Shift\+E/u.test(line)),
+		"collapsed header should contain the standalone Ctrl+Shift+E hint",
+	);
 	assert.equal(expandedLines.at(-expectedTipBlock.length - 1), "");
 	assert.equal(collapsedTipBlock.some((line) => line.includes("...")), false);
 	assert.equal(expandedTipBlock.some((line) => line.includes("...")), false);
