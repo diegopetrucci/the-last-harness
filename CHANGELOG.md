@@ -8,6 +8,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 - TLH now requires upstream Pi >=0.79.1. Installer checks, wrapper defaults, package metadata, and current install/update docs all use the raised runtime floor.
 - The compact (non-expanded) subagent view now hides the artifact-path line — press Ctrl+O for the expanded view that still shows it — and renders the current tool command (e.g. long `bash` invocations) in full, wrapped to terminal width and capped at 3 lines with `…` on overflow instead of mid-flag `...` truncation.
+- `code-reviewer` now prefers `openai-codex/gpt-5.5` by default when available, keeps `openai/gpt-5.5` as the OpenAI API fallback, and falls back to Anthropic Opus when running in Anthropic-only environments.
 
 ### Fixed
 
