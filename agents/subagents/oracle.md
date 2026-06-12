@@ -2,7 +2,7 @@
 name: oracle
 description: Provides read-only high-reasoning second opinions using the oracle extension tool.
 tools: oracle, read, grep, find, ls, contact_supervisor, bash
-model: anthropic/claude-opus-4-7
+model: anthropic/claude-opus-4-8
 tlhOpenaiModels: openai-codex/gpt-5.5, openai/gpt-5.5
 thinking: high
 systemPromptMode: replace

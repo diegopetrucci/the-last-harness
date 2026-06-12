@@ -108,7 +108,7 @@ function selectablePrimaryAgents() {
 
 function rushLikePrimary(name = "architect") {
 	return createPrimaryPrompt(name, {
-		model: "anthropic/claude-opus-4-7",
+		model: "anthropic/claude-opus-4-8",
 		tlhOpenaiModels: ["openai-codex/gpt-5.5", "openai/gpt-5.5"],
 		thinking: "low",
 		tlhOpenaiThinking: "off",
@@ -1298,11 +1298,11 @@ test("primary runtime falls back to Anthropic Rush-like metadata defaults when o
 				cwd: fixture.cwd,
 				sessionManager: { getBranch: () => [] },
 				ui: { notify() {} },
-				modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-7" }] },
+				modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-8" }] },
 				model: { provider: "openai-codex", id: "gpt-5.4" },
 			});
 
-			assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-4-7" });
+			assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-4-8" });
 			assert.equal(pi.thinkingLevel, "low");
 		});
 	} finally {
@@ -1339,14 +1339,14 @@ test("primary runtime respects explicit false settings over Rush-like metadata d
 test("architect before_agent_start preserves medium floor selection but restores declared default after rush", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const architectPrimary = createPrimaryPrompt("architect", {
-		model: "anthropic/claude-opus-4-7",
+		model: "anthropic/claude-opus-4-8",
 		thinking: "high",
 		minThinking: "medium",
 		applyModel: true,
 		applyThinking: true,
 	});
 	const rushPrimary = createPrimaryPrompt("rush", {
-		model: "anthropic/claude-opus-4-7",
+		model: "anthropic/claude-opus-4-8",
 		thinking: "low",
 		applyModel: true,
 		applyThinking: true,
@@ -1365,8 +1365,8 @@ test("architect before_agent_start preserves medium floor selection but restores
 			cwd: fixture.cwd,
 			sessionManager: { getBranch: () => branch },
 			ui: { notify() {} },
-			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-7" }] },
-			model: { provider: "anthropic", id: "claude-opus-4-7" },
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-8" }] },
+			model: { provider: "anthropic", id: "claude-opus-4-8" },
 		});
 
 		await runtime.applySessionStart(makeCtx([]));
@@ -1390,7 +1390,7 @@ test("architect before_agent_start preserves medium floor selection but restores
 test("locked primary (rush) overrides global applyThinking=false and applyModel=false", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const rushPrimary = createPrimaryPrompt("rush", {
-		model: "anthropic/claude-opus-4-7",
+		model: "anthropic/claude-opus-4-8",
 		thinking: "low",
 		applyModel: true,
 		applyThinking: true,
@@ -1412,12 +1412,12 @@ test("locked primary (rush) overrides global applyThinking=false and applyModel=
 				{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
 			]},
 			ui: { notify() {} },
-			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-7" }] },
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-8" }] },
 			model: { provider: "anthropic", id: "claude-opus-4-6" },
 		});
 
 		// lockThinking: true forces both model and thinking regardless of global opt-outs
-		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-4-7" });
+		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-4-8" });
 		assert.equal(pi.thinkingLevel, "low");
 	});
 });
@@ -1425,7 +1425,7 @@ test("locked primary (rush) overrides global applyThinking=false and applyModel=
 test("non-locked primary (architect) honors global applyThinking=false override", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const architectPrimary = createPrimaryPrompt("architect", {
-		model: "anthropic/claude-opus-4-7",
+		model: "anthropic/claude-opus-4-8",
 		thinking: "high",
 		applyModel: true,
 		applyThinking: true,
@@ -1444,8 +1444,8 @@ test("non-locked primary (architect) honors global applyThinking=false override"
 			cwd: fixture.cwd,
 			sessionManager: { getBranch: () => [] },
 			ui: { notify() {} },
-			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-7" }] },
-			model: { provider: "anthropic", id: "claude-opus-4-7" },
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-8" }] },
+			model: { provider: "anthropic", id: "claude-opus-4-8" },
 		});
 
 		// Global applyThinking: false is respected for non-locked primary
