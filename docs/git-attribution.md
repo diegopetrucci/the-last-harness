@@ -12,8 +12,6 @@ TLH reads `tlh.attribution.commit` from `~/.the-last-harness/agent/settings.json
 When attribution is enabled, agent-created bash `git commit` messages must end with this exact footer:
 
 ```text
-🤖 Generated with [The Last Harness](https://github.com/diegopetrucci/the-last-harness)
-
 Co-authored-by: The Last Harness <hi@thelastharness.com>
 ```
 

@@ -264,13 +264,10 @@ test("child mode keeps parent-only controls disabled while applying commit attri
 
 test("tool_call blocks obvious unattributed bash git commits only when attribution is enabled", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-	const [footerHeading, footerCoAuthor] = TLH_DEFAULT_COMMIT_ATTRIBUTION.split("\n\n");
 	const attributedHereDoc = `git commit -F - <<EOF\nsubject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}\nEOF`;
 	const wrappedAttributedHereDoc = `if true; then git commit -F - <<EOF\nsubject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}\nEOF\nfi`;
 	const attributedWrappedInlineMessage = `bash -lc 'git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"'`;
 	const attributedWrappedInlineMessageWithTerminator = `bash -lc -- 'git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"'`;
-	const attributedWrappedSplitMessage = `sh -c 'git commit -m "subject" -m "${footerHeading}" -m "${footerCoAuthor}"'`;
-	const attributedWrappedSplitMessageWithTerminator = `sh -c -- 'git commit -m "subject" -m "${footerHeading}" -m "${footerCoAuthor}"'`;
 	const attributedEnvInlineMessage = `env FOO=bar git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
 	const attributedQualifiedEnvInlineMessage = `/usr/bin/env FOO=bar git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
 	const attributedUnsetEnvInlineMessage = `env --unset=FOO git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
@@ -407,20 +404,6 @@ printf 'extra'
 		assert.equal(
 			await toolCall(
 				{ toolName: "bash", input: { command: attributedWrappedInlineMessageWithTerminator } },
-				createToolCallContext([], undefined, { cwd: fixture.cwd }),
-			),
-			undefined,
-		);
-		assert.equal(
-			await toolCall(
-				{ toolName: "bash", input: { command: attributedWrappedSplitMessage } },
-				createToolCallContext([], undefined, { cwd: fixture.cwd }),
-			),
-			undefined,
-		);
-		assert.equal(
-			await toolCall(
-				{ toolName: "bash", input: { command: attributedWrappedSplitMessageWithTerminator } },
 				createToolCallContext([], undefined, { cwd: fixture.cwd }),
 			),
 			undefined,

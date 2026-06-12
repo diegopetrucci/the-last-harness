@@ -56,7 +56,7 @@ function registeredToggleCommand() {
 test("commit attribution helper resolves unset and boolean preference values", () => {
 	assert.equal(
 		TLH_DEFAULT_COMMIT_ATTRIBUTION,
-		"🤖 Generated with [The Last Harness](https://github.com/diegopetrucci/the-last-harness)\n\nCo-authored-by: The Last Harness <hi@thelastharness.com>",
+		"Co-authored-by: The Last Harness <hi@thelastharness.com>",
 	);
 	assert.deepEqual(resolveTlhCommitAttribution(undefined), {
 		enabled: true,
@@ -83,13 +83,10 @@ test("commit attribution prompt helper only renders when enabled", () => {
 test("git commit attribution guard blocks only obvious unattributed inline commit commands", () => {
 	const enabled = resolveTlhCommitAttribution(undefined);
 	const disabled = resolveTlhCommitAttribution({ commit: false });
-	const [footerHeading, footerCoAuthor] = TLH_DEFAULT_COMMIT_ATTRIBUTION.split("\n\n");
 	const attributedHereDoc = `git commit -F - <<EOF\nsubject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}\nEOF`;
 	const wrappedAttributedHereDoc = `if true; then git commit -F - <<EOF\nsubject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}\nEOF\nfi`;
 	const attributedWrappedInlineMessage = `bash -lc 'git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"'`;
 	const attributedWrappedInlineMessageWithTerminator = `bash -lc -- 'git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"'`;
-	const attributedWrappedSplitMessage = `sh -c 'git commit -m "subject" -m "${footerHeading}" -m "${footerCoAuthor}"'`;
-	const attributedWrappedSplitMessageWithTerminator = `sh -c -- 'git commit -m "subject" -m "${footerHeading}" -m "${footerCoAuthor}"'`;
 	const attributedEnvInlineMessage = `env FOO=bar git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
 	const attributedQualifiedEnvInlineMessage = `/usr/bin/env FOO=bar git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
 	const attributedUnsetEnvInlineMessage = `env --unset=FOO git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
@@ -217,20 +214,11 @@ printf 'extra'
 		assert.match(getTlhGitCommitAttributionBlockReason(command, enabled) ?? "", /missing the required TLH attribution footer/);
 	}
 	assert.equal(
-		getTlhGitCommitAttributionBlockReason(
-			`git commit -m "subject" -m "${footerHeading}" -m "${footerCoAuthor}"`,
-			enabled,
-		),
-		undefined,
-	);
-	assert.equal(
 		getTlhGitCommitAttributionBlockReason(`git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`, enabled),
 		undefined,
 	);
 	assert.equal(getTlhGitCommitAttributionBlockReason(attributedWrappedInlineMessage, enabled), undefined);
 	assert.equal(getTlhGitCommitAttributionBlockReason(attributedWrappedInlineMessageWithTerminator, enabled), undefined);
-	assert.equal(getTlhGitCommitAttributionBlockReason(attributedWrappedSplitMessage, enabled), undefined);
-	assert.equal(getTlhGitCommitAttributionBlockReason(attributedWrappedSplitMessageWithTerminator, enabled), undefined);
 	assert.equal(getTlhGitCommitAttributionBlockReason(attributedEnvInlineMessage, enabled), undefined);
 	assert.equal(getTlhGitCommitAttributionBlockReason(attributedQualifiedEnvInlineMessage, enabled), undefined);
 	assert.equal(getTlhGitCommitAttributionBlockReason(attributedUnsetEnvInlineMessage, enabled), undefined);

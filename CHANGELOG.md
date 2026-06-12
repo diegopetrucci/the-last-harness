@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- The TLH git commit footer is now coauthor-only: `Co-authored-by: The Last Harness <hi@thelastharness.com>`. The decorative `🤖 Generated with …` heading line has been removed. GitHub and git log co-authorship attribution is unchanged.
 - TLH now requires upstream Pi >=0.79.1. Installer checks, wrapper defaults, package metadata, and current install/update docs all use the raised runtime floor.
 
 ### Fixed
