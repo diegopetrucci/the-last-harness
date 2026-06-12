@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
+import { tmpdir as systemTmpDir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,9 +10,21 @@ const VALID_MODES = new Set(["build", "check", "typecheck"]);
 
 const require = createRequire(import.meta.url);
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(__dirname, "..");
-const scriptsDir = join(repoRoot, "scripts");
-const tsconfigPath = join(repoRoot, "tsconfig.runtime-scripts.json");
+const defaultRepoRoot = resolve(__dirname, "..");
+
+function resolveOverridePath(value, fallback) {
+	return value ? resolve(value) : fallback;
+}
+
+function loadConfig() {
+	const repoRoot = realpathSync(resolveOverridePath(process.env.TLH_RUNTIME_TYPESCRIPT_REPO_ROOT, defaultRepoRoot));
+	return {
+		repoRoot,
+		scriptsDir: realpathSync(resolveOverridePath(process.env.TLH_RUNTIME_TYPESCRIPT_SCRIPTS_DIR, join(repoRoot, "scripts"))),
+		tsconfigPath: realpathSync(resolveOverridePath(process.env.TLH_RUNTIME_TYPESCRIPT_TSCONFIG, join(repoRoot, "tsconfig.runtime-scripts.json"))),
+		tempParentDir: realpathSync(resolveOverridePath(process.env.TLH_RUNTIME_TYPESCRIPT_TMPDIR, systemTmpDir())),
+	};
+}
 
 function usage() {
 	console.error("Usage: node scripts/runtime-typescript.mjs <build|check|typecheck>");
@@ -38,14 +50,14 @@ function runtimeOutputPathForSource(sourcePath) {
 	return `${sourcePath.slice(0, -4)}.mjs`;
 }
 
-function relativeRepoPath(path) {
+function relativeRepoPath(path, repoRoot) {
 	return relative(repoRoot, path);
 }
 
-function spawnTsc(args, stdio = "inherit") {
+function spawnTsc(config, args, stdio = "inherit") {
 	const tscEntrypoint = require.resolve("typescript/bin/tsc");
-	const result = spawnSync(process.execPath, [tscEntrypoint, "--project", tsconfigPath, ...args], {
-		cwd: repoRoot,
+	const result = spawnSync(process.execPath, [tscEntrypoint, "--project", config.tsconfigPath, ...args], {
+		cwd: config.repoRoot,
 		stdio,
 	});
 	if (result.error) {
@@ -54,21 +66,20 @@ function spawnTsc(args, stdio = "inherit") {
 	return result;
 }
 
-function exitWithTsc(args) {
-	const result = spawnTsc(args);
-	process.exit(result.status ?? 1);
+function runTsc(config, args) {
+	return spawnTsc(config, args).status ?? 1;
 }
 
 function formatPathList(paths) {
 	return paths.map((path) => `  - ${path}`).join("\n");
 }
 
-function checkFreshRuntimeOutputs(sources) {
-	const tempOutDir = mkdtempSync(join(tmpdir(), "tlh-runtime-typescript-"));
+function checkFreshRuntimeOutputs(config, sources) {
+	const tempOutDir = mkdtempSync(join(config.tempParentDir, "tlh-runtime-typescript-"));
 	try {
-		const result = spawnTsc(["--rootDir", ".", "--outDir", tempOutDir]);
-		if ((result.status ?? 1) !== 0) {
-			process.exit(result.status ?? 1);
+		const tscStatus = runTsc(config, ["--rootDir", ".", "--outDir", tempOutDir]);
+		if (tscStatus !== 0) {
+			return tscStatus;
 		}
 
 		const missingOutputs = [];
@@ -77,8 +88,8 @@ function checkFreshRuntimeOutputs(sources) {
 
 		for (const sourcePath of sources) {
 			const outputPath = runtimeOutputPathForSource(sourcePath);
-			const generatedOutputPath = join(tempOutDir, relative(repoRoot, outputPath));
-			const relativeOutputPath = relativeRepoPath(outputPath);
+			const generatedOutputPath = join(tempOutDir, relative(config.repoRoot, outputPath));
+			const relativeOutputPath = relativeRepoPath(outputPath, config.repoRoot);
 
 			if (!existsSync(generatedOutputPath)) {
 				missingGeneratedOutputs.push(relativeOutputPath);
@@ -108,32 +119,42 @@ function checkFreshRuntimeOutputs(sources) {
 				console.error(formatPathList(staleOutputs));
 			}
 			console.error("\nRun 'npm run build' to refresh scripts/**/*.mjs from scripts/**/*.mts.");
-			process.exit(1);
+			return 1;
 		}
+
+		return 0;
 	} finally {
 		rmSync(tempOutDir, { recursive: true, force: true });
 	}
 }
 
-const mode = process.argv[2];
-if (!VALID_MODES.has(mode)) {
-	usage();
-	process.exit(1);
+function main() {
+	const mode = process.argv[2];
+	if (!VALID_MODES.has(mode)) {
+		usage();
+		return 1;
+	}
+
+	const config = loadConfig();
+	const sources = listRuntimeTypescriptSources(config.scriptsDir);
+	if (sources.length === 0) {
+		console.log(`No runtime TypeScript sources found under scripts/**/*.mts; skipping ${mode}.`);
+		return 0;
+	}
+
+	if (mode === "typecheck") {
+		return runTsc(config, ["--noEmit"]);
+	}
+
+	if (mode === "build") {
+		return runTsc(config, []);
+	}
+
+	const status = checkFreshRuntimeOutputs(config, sources);
+	if (status === 0) {
+		console.log(`Runtime TypeScript generated outputs are fresh (${sources.length} files).`);
+	}
+	return status;
 }
 
-const sources = listRuntimeTypescriptSources(scriptsDir);
-if (sources.length === 0) {
-	console.log(`No runtime TypeScript sources found under scripts/**/*.mts; skipping ${mode}.`);
-	process.exit(0);
-}
-
-if (mode === "typecheck") {
-	exitWithTsc(["--noEmit"]);
-}
-
-if (mode === "build") {
-	exitWithTsc([]);
-}
-
-checkFreshRuntimeOutputs(sources);
-console.log(`Runtime TypeScript generated outputs are fresh (${sources.length} files).`);
+process.exit(main());

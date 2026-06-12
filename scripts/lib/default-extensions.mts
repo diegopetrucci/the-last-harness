@@ -235,9 +235,11 @@ export function readDefaultExtensionProvenance(settings: unknown): DefaultExtens
 }
 
 export function setDefaultExtensionProvenance(
-	settings: PlainObject,
+	settings: unknown,
 	managedPackageIdentities: Iterable<string>,
 ): boolean {
+	if (!isPlainObject(settings)) return false;
+
 	let tlh = settings.tlh;
 	if (tlh === undefined) {
 		tlh = {};

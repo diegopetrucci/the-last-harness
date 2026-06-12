@@ -198,6 +198,8 @@ export function readDefaultExtensionProvenance(settings) {
     return { exists, managedPackageIdentities };
 }
 export function setDefaultExtensionProvenance(settings, managedPackageIdentities) {
+    if (!isPlainObject(settings))
+        return false;
     let tlh = settings.tlh;
     if (tlh === undefined) {
         tlh = {};
