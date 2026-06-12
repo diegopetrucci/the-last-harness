@@ -121,7 +121,6 @@ Repo settings:
 - `.pi/prompts/`
 - `.pi/extensions/`
 
-With upstream Pi 0.79.1 and newer, `AGENTS.md` and `CLAUDE.md` still load as context even before project trust is resolved, but trust-gated repo-local resources wait until the project is trusted. That includes `.pi/settings.json`, `.pi/skills/`, `.pi/prompts/`, `.pi/extensions/`, `.pi/themes/`, project-local `.agents/skills/`, and project-local packages. Interactive `tlh` sessions prompt for project trust when needed; follow that prompt to save a decision for future sessions. Saved trust decisions live in the isolated TLH profile, not normal `~/.pi/agent`. Non-interactive runs need a saved trust decision before trust-gated repo-local resources are loaded.
 
 After adding files, installing a package, or saving project trust, run `/reload` in TLH (or restart it) so the new resources are picked up.
 
