@@ -12,20 +12,20 @@ const {
 const developer = {
 	name: "developer",
 	model: "anthropic/claude-sonnet-4-6",
-	tlhOpenaiModels: ["openai-codex/gpt-5.4", "openai/gpt-5.4"],
+	tlhOpenaiModels: ["openai-codex/gpt-5.4"],
 };
 
 const codeReviewer = {
 	name: "code-reviewer",
 	model: "openai-codex/gpt-5.5",
-	tlhOpenaiModels: ["openai-codex/gpt-5.5", "openai/gpt-5.5"],
+	tlhOpenaiModels: ["openai-codex/gpt-5.5"],
 	tlhAnthropicModels: ["anthropic/claude-opus-4-8"],
 };
 
 const rushLikePrimary = {
 	name: "rush",
 	model: "anthropic/claude-opus-4-8",
-	tlhOpenaiModels: ["openai-codex/gpt-5.5", "openai/gpt-5.5"],
+	tlhOpenaiModels: ["openai-codex/gpt-5.5"],
 	thinking: "low",
 	tlhOpenaiThinking: "off",
 	preferCurrentOpenaiModel: true,
@@ -73,40 +73,36 @@ test("provider-aware model resolver picks OpenAI Codex when Anthropic is unavail
 	assert.equal(input.model, "openai-codex/gpt-5.4");
 });
 
-test("provider-aware model resolver falls back to OpenAI API key provider", () => {
+test("provider-aware model resolver does not auto-inject OpenAI API models", () => {
 	const input = { agent: "code-reviewer", task: "Review the diff" };
-	assert.equal(applyProviderAwareSubagentModels(input, agents, openaiAvailable, "openai"), 1);
-	assert.equal(input.model, "openai/gpt-5.5");
+	assert.equal(selectProviderAwareAgentModelId(codeReviewer, openaiAvailable, "openai"), undefined);
+	assert.equal(applyProviderAwareSubagentModels(input, agents, openaiAvailable, "openai"), 0);
+	assert.equal(input.model, undefined);
 });
 
-test("provider-aware model resolver prefers the current OpenAI provider when both are available", () => {
+test("provider-aware model resolver keeps Codex defaults even when regular OpenAI models are also available", () => {
 	const available = [...codexAvailable, ...openaiAvailable];
-	assert.equal(selectProviderAwareAgentModelId(developer, available, "openai"), "openai/gpt-5.4");
+	assert.equal(selectProviderAwareAgentModelId(developer, available, "openai"), "openai-codex/gpt-5.4");
 	assert.equal(selectProviderAwareAgentModelId(developer, available, "openai-codex"), "openai-codex/gpt-5.4");
 });
 
-test("provider-aware primary defaults switch Rush-like thinking off for OpenAI providers", () => {
+test("provider-aware primary defaults switch Rush-like thinking off for bundled Codex models", () => {
 	assert.deepEqual(selectProviderAwareAgentDefaults(rushLikePrimary, codexAvailable, "openai-codex"), {
 		model: { provider: "openai-codex", id: "gpt-5.5" },
 		thinking: "off",
 	});
-	assert.deepEqual(selectProviderAwareAgentDefaults(rushLikePrimary, openaiAvailable, "openai"), {
-		model: { provider: "openai", id: "gpt-5.5" },
+	assert.deepEqual(selectProviderAwareAgentDefaults(rushLikePrimary, [...codexAvailable, ...openaiAvailable], "openai"), {
+		model: { provider: "openai-codex", id: "gpt-5.5" },
 		thinking: "off",
 	});
 });
 
-test("provider-aware primary defaults let Rush prefer the current OpenAI provider over an available Anthropic default", () => {
-	const mixedCodexAvailable = [...anthropicAvailable, ...codexAvailable];
+test("provider-aware primary defaults keep Anthropic when regular OpenAI is available without bundled Codex", () => {
 	const mixedOpenaiAvailable = [...anthropicAvailable, ...openaiAvailable];
 
-	assert.deepEqual(selectProviderAwareAgentDefaults(rushLikePrimary, mixedCodexAvailable, "openai-codex"), {
-		model: { provider: "openai-codex", id: "gpt-5.5" },
-		thinking: "off",
-	});
 	assert.deepEqual(selectProviderAwareAgentDefaults(rushLikePrimary, mixedOpenaiAvailable, "openai"), {
-		model: { provider: "openai", id: "gpt-5.5" },
-		thinking: "off",
+		model: { provider: "anthropic", id: "claude-opus-4-8" },
+		thinking: "low",
 	});
 });
 
@@ -160,7 +156,7 @@ test("tlhAnthropicModels: current-provider Anthropic candidate preferred on Anth
 	const agentWithBothFallbacks = {
 		name: "test-agent",
 		model: "openai/gpt-5.5",
-		tlhOpenaiModels: ["openai/gpt-5.5"],
+		tlhOpenaiModels: ["openai-codex/gpt-5.5"],
 		tlhAnthropicModels: ["anthropic/claude-opus-4-8", "anthropic/claude-sonnet-4-6"],
 	};
 	// currentProvider="anthropic": step-2 current-provider check picks first matching entry
@@ -199,10 +195,10 @@ test("tlhAnthropicModels: regression – agents with only tlhOpenaiModels are un
 	assert.equal(input.model, "openai-codex/gpt-5.4");
 });
 
-test("provider-aware subagent mutation preserves explicit model values", () => {
-	const input = { agent: "developer", task: "Implement the ticket", model: "google/gemini-3-pro" };
+test("provider-aware subagent mutation preserves explicit user-supplied model values", () => {
+	const input = { agent: "developer", task: "Implement the ticket", model: "openai/gpt-5.4" };
 	assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 0);
-	assert.equal(input.model, "google/gemini-3-pro");
+	assert.equal(input.model, "openai/gpt-5.4");
 });
 
 test("provider-aware subagent mutation handles parallel tasks", () => {

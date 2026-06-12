@@ -171,8 +171,8 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	const rush = primaryAgents.get("rush");
 	assert.ok(architect, "architect primary prompt should load");
 	assert.ok(rush, "Rush primary prompt should load");
-	assert.deepEqual(architect.tlhOpenaiModels, ["openai-codex/gpt-5.5", "openai/gpt-5.5"]);
-	assert.deepEqual(rush.tlhOpenaiModels, ["openai-codex/gpt-5.5", "openai/gpt-5.5"]);
+	assert.deepEqual(architect.tlhOpenaiModels, ["openai-codex/gpt-5.5"]);
+	assert.deepEqual(rush.tlhOpenaiModels, ["openai-codex/gpt-5.5"]);
 	assert.equal(rush.thinking, "low");
 	assert.equal(rush.tlhOpenaiThinking, "off");
 	assert.equal(rush.preferCurrentOpenaiModel, true);
@@ -200,7 +200,7 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	assert.match(rush.systemPrompt, /Do not delegate implementation to `developer`/);
 	assert.deepEqual(
 		loadSubagentMetadata().find((agent) => agent.name === "developer")?.tlhOpenaiModels,
-		["openai-codex/gpt-5.4", "openai/gpt-5.4"],
+		["openai-codex/gpt-5.4"],
 	);
 
 	const primaryPrompt = buildTlhSystemPrompt(rush, loadSubagentMetadata(), true);
