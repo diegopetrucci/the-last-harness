@@ -11,7 +11,7 @@ import {
 } from "./lib/tlh-install-utils.mjs";
 
 const DEFAULT_MARKER = "Managed by The Last Harness installer";
-const MIN_PI_VERSION = "0.76.0";
+const MIN_PI_VERSION = "0.79.1";
 
 function usage() {
 	return `Usage: tlh-wrapper.mjs [options]

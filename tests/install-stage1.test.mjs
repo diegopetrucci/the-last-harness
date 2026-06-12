@@ -99,7 +99,7 @@ function writeFakeTk(fakebin) {
 	writeFakeCommand(fakebin, "tk", "printf 'Usage: tk help\\nTicket CLI helper\\n'");
 }
 
-function writeLoggingPi(commandDir, logPath, version = "0.76.0") {
+function writeLoggingPi(commandDir, logPath, version = "0.79.1") {
 	writeFakePi(commandDir, [
 		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${logPath}"`,
 		`if [[ "\${1:-}" == "--version" ]]; then printf '${version}\\n'; exit 0; fi`,
@@ -107,7 +107,7 @@ function writeLoggingPi(commandDir, logPath, version = "0.76.0") {
 	].join("\n"));
 }
 
-function writeVersionedWrapperPi(commandDir, logPath, version = "0.76.0") {
+function writeVersionedWrapperPi(commandDir, logPath, version = "0.79.1") {
 	writeFakePi(commandDir, [
 		`if [[ "\${1:-}" == "--version" ]]; then printf '${version}\\n'; exit 0; fi`,
 		`{ printf 'cmd=%s\\n' "$0"; printf 'argv=%s\\n' "$*"; printf 'agent=%s\\n' "\${PI_CODING_AGENT_DIR:-}"; printf 'path=%s\\n' "\${PATH:-}"; } >"${logPath}"`,
@@ -262,7 +262,7 @@ test("stage-1 hard-fails existing Pi version probes that exit nonzero", (t) => {
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /unable to determine Pi version from existing pi on PATH/);
 	assert.match(result.stderr, /pi --version exited with 23/);
-	assert.match(result.stderr, /The Last Harness requires Pi >= 0\.76\.0/);
+	assert.match(result.stderr, /The Last Harness requires Pi >= 0\.79\.1/);
 	assert.match(result.stderr, /Verify that `pi --version` works, or upgrade with: npm install -g --ignore-scripts --prefix /);
 	assert.match(result.stderr, /Probe output: version probe failed/);
 });
@@ -284,7 +284,7 @@ test("stage-1 probes existing Pi version with the isolated agent dir", (t) => {
 		"\tprintf 'poisoned profile\\n' >&2",
 		"\texit 24",
 		"fi",
-		"printf '0.76.0\\n'",
+		"printf '0.79.1\\n'",
 	].join("\n"));
 	const env = scrubInstallerEnv({
 		HOME: homeDir,
@@ -319,8 +319,8 @@ test("stage-1 hard-fails existing Pi version probes with unparsable output", (t)
 	const result = runInstaller(["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], env);
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /unable to parse Pi version from existing pi on PATH: development build/);
-	assert.match(result.stderr, /The Last Harness requires Pi >= 0\.76\.0/);
-	assert.match(result.stderr, /Verify that `pi --version` prints a semantic version like 0\.76\.0, or upgrade with: npm install -g --ignore-scripts --prefix /);
+	assert.match(result.stderr, /The Last Harness requires Pi >= 0\.79\.1/);
+	assert.match(result.stderr, /Verify that `pi --version` prints a semantic version like 0\.79\.1, or upgrade with: npm install -g --ignore-scripts --prefix /);
 });
 
 test("stage-1 rejects existing Pi older than the TLH minimum", (t) => {
@@ -333,7 +333,7 @@ test("stage-1 rejects existing Pi older than the TLH minimum", (t) => {
 	mkdirSync(homeDir, { recursive: true });
 	mkdirSync(agentDir, { recursive: true });
 	mkdirSync(binDir, { recursive: true });
-	writeFakePi(fakebin, "printf '0.75.2\\n'");
+	writeFakePi(fakebin, "printf '0.79.0\\n'");
 	const env = scrubInstallerEnv({
 		HOME: homeDir,
 		PATH: `${fakebin}:${process.env.PATH || ""}`,
@@ -341,7 +341,7 @@ test("stage-1 rejects existing Pi older than the TLH minimum", (t) => {
 	});
 	const result = runInstaller(["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], env);
 	assert.notEqual(result.status, 0);
-	assert.match(result.stderr, /Pi >= 0\.76\.0 is required \(found 0\.75\.2\)\. Upgrade with: npm install -g --ignore-scripts --prefix /);
+	assert.match(result.stderr, /Pi >= 0\.79\.1 is required \(found 0\.79\.0\)\. Upgrade with: npm install -g --ignore-scripts --prefix /);
 });
 
 test("stage-1 reuses a per-user Pi runtime outside PATH without claiming ownership", (t) => {
@@ -416,7 +416,7 @@ test("stage-1 prefers a supported per-user Pi runtime over a stale PATH Pi", (t)
 	writeFakeTk(fakebin);
 	writeFakePi(stalePiDir, [
 		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${stalePiLog}"`,
-		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.75.2\\n'; exit 0; fi",
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.0\\n'; exit 0; fi",
 		"exit 0",
 	].join("\n"));
 	writeLoggingPi(perUserPiDir, perUserPiLog);
@@ -475,14 +475,14 @@ test("stage-1 per-user-fallback branch bakes piBin as default_pi_cmd even when s
 	writeFakeCommand(fakebin, "git", "exit 0");
 	writeFakeCommand(fakebin, "npm", `printf '%s\\n' "$*" >>"${npmLog}"`);
 	writeFakeTk(fakebin);
-	// Stale pi on PATH (returns 0.75.2 — below minimum): must come BEFORE perUserPiDir so
+	// Stale pi on PATH (returns 0.79.0 — below minimum): must come BEFORE perUserPiDir so
 	// that a naive `command -v pi` lookup in the per-user-fallback branch would return it.
 	writeFakePi(stalePiDir, [
 		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${stalePiLog}"`,
-		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.75.2\\n'; exit 0; fi",
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.0\\n'; exit 0; fi",
 		"exit 0",
 	].join("\n"));
-	// Supported pi at ~/.local/bin/pi (returns 0.76.0): piBin that should be pinned.
+	// Supported pi at ~/.local/bin/pi (returns 0.79.1): piBin that should be pinned.
 	writeLoggingPi(perUserPiDir, perUserPiLog);
 
 	const env = scrubInstallerEnv({
@@ -745,7 +745,7 @@ test("stage-1 --no-settings does not short-circuit Gnosis configure", (t) => {
 	const binDir = join(root, "bin");
 	const fakebin = join(root, "fakebin");
 	mkdirSync(homeDir, { recursive: true });
-	writeFakePi(fakebin, "if [[ \"${1:-}\" == \"--version\" ]]; then\n\tprintf '0.76.0\\n'\n\texit 0\nfi\nexit 0");
+	writeFakePi(fakebin, "if [[ \"${1:-}\" == \"--version\" ]]; then\n\tprintf '0.79.1\\n'\n\texit 0\nfi\nexit 0");
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
 	const result = spawnSync(process.execPath, [
@@ -1189,12 +1189,12 @@ test("wrapper prefers a validated per-user ~/.local/bin/pi over a stale PATH Pi"
 
 	writeFakePi(agentBin, "printf 'isolated pi intercepted\\n' >\"${ISOLATED_PI_LOG}\"\nexit 89");
 	writeFakePi(stalePiDir, [
-		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.75.2\\n'; exit 0; fi",
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.0\\n'; exit 0; fi",
 		"printf 'stale pi intercepted\\n' >\"${STALE_PI_LOG}\"",
 		"exit 85",
 	].join("\n"));
 	writeFakePi(perUserPiDir, [
-		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.76.0\\n'; exit 0; fi",
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.1\\n'; exit 0; fi",
 		"{ printf 'cmd=%s\\n' \"$0\"; printf 'argv=%s\\n' \"$*\"; printf 'agent=%s\\n' \"${PI_CODING_AGENT_DIR:-}\"; printf 'path=%s\\n' \"${PATH:-}\"; } >\"${PI_WRAPPER_LOG}\"",
 	].join("\n"));
 
@@ -1257,7 +1257,7 @@ test("wrapper keeps a supported PATH Pi ahead of a supported per-user ~/.local/b
 	writeFakePi(agentBin, "printf 'isolated pi intercepted\\n' >\"${ISOLATED_PI_LOG}\"\nexit 89");
 	writeVersionedWrapperPi(supportedPiDir, piLog);
 	writeFakePi(perUserPiDir, [
-		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.76.0\\n'; exit 0; fi",
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.1\\n'; exit 0; fi",
 		"printf 'per-user pi intercepted\\n' >\"${PER_USER_PI_LOG}\"",
 		"exit 84",
 	].join("\n"));
@@ -1320,7 +1320,7 @@ test("wrapper keeps sanitized PATH order when per-user ~/.local/bin/pi is stale"
 	writeFakePi(agentBin, "printf 'isolated pi intercepted\\n' >\"${ISOLATED_PI_LOG}\"\nexit 89");
 	writeVersionedWrapperPi(supportedPiDir, piLog);
 	writeFakePi(perUserPiDir, [
-		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.75.2\\n'; exit 0; fi",
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.0\\n'; exit 0; fi",
 		"printf 'stale pi intercepted\\n' >\"${STALE_PI_LOG}\"",
 		"exit 85",
 	].join("\n"));
@@ -2089,7 +2089,7 @@ test("wrapper --pi-cmd fast path execs pinned binary without spawning a --versio
 	// This pi logs ALL invocations (including --version probes) to piCallLog.
 	writeFakePi(pinnedPiDir, [
 		`printf '%s\\n' "$*" >>"${piCallLog}"`,
-		`if [[  "\${1:-}" == "--version" ]]; then printf '0.76.0\\n'; exit 0; fi`,
+		`if [[  "\${1:-}" == "--version" ]]; then printf '0.79.1\\n'; exit 0; fi`,
 		`{ printf 'cmd=%s\\n' "$0"; printf 'argv=%s\\n' "$*"; printf 'agent=%s\\n' "\${PI_CODING_AGENT_DIR:-}"; printf 'path=%s\\n' "\${PATH:-}"; } >"${piMainLog}"`,
 		"exit 0",
 	].join("\n"));
@@ -2203,7 +2203,7 @@ test("wrapper --pi-cmd fast path exports PATH as managed_bin:pinned_dir:sanitize
 
 	// Pinned pi logs PATH so we can verify ordering.
 	writeFakePi(pinnedPiDir, [
-		`if [[ "\${1:-}" == "--version" ]]; then printf '0.76.0\\n'; exit 0; fi`,
+		`if [[ "\${1:-}" == "--version" ]]; then printf '0.79.1\\n'; exit 0; fi`,
 		`{ printf 'cmd=%s\\n' "$0"; printf 'argv=%s\\n' "$*"; printf 'agent=%s\\n' "\${PI_CODING_AGENT_DIR:-}"; printf 'path=%s\\n' "\${PATH:-}"; } >"${piLog}"`,
 		"exit 0",
 	].join("\n"));
@@ -2279,7 +2279,7 @@ test("wrapper update --extensions helper prepends executable --pi-cmd directory 
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
 	mkdirSync(pinnedPiDir, { recursive: true });
-	writeFileSync(join(pinnedPiDir, "pi"), "#!/bin/sh\nif [ \"${1:-}\" = \"--version\" ]; then printf '0.76.0\\n'; exit 0; fi\nprintf 'unexpected args: %s\\n' \"$*\" >&2\nexit 1\n", "utf8");
+	writeFileSync(join(pinnedPiDir, "pi"), "#!/bin/sh\nif [ \"${1:-}\" = \"--version\" ]; then printf '0.79.1\\n'; exit 0; fi\nprintf 'unexpected args: %s\\n' \"$*\" >&2\nexit 1\n", "utf8");
 	chmodSync(join(pinnedPiDir, "pi"), 0o755);
 	writeFileSync(join(agentDir, "tlh", "tlh-update.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst pi = spawnSync("pi", ["--version"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, pi: { status: pi.status, stdout: pi.stdout, stderr: pi.stderr, error: pi.error?.message } }));\nprocess.exit(pi.status ?? (pi.error ? 1 : 0));\n`, "utf8");
 
@@ -2323,7 +2323,7 @@ test("wrapper update --extensions helper prepends executable --pi-cmd directory 
 	]);
 	assert.equal(updateRecord.env.PI_CODING_AGENT_DIR, agentDir);
 	assert.equal(updateRecord.pi.status, 0, JSON.stringify(updateRecord));
-	assert.match(updateRecord.pi.stdout, /0\.76\.0/);
+	assert.match(updateRecord.pi.stdout, /0\.79\.1/);
 
 	const updatePathEntries = updateRecord.env.PATH.split(delimiter);
 	assert.equal(updatePathEntries[0], pinnedPiDir, `expected pinned_dir first; got ${updatePathEntries.join(delimiter)}`);

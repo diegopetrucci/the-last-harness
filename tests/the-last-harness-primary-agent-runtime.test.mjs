@@ -1127,19 +1127,25 @@ test("enabled primary mode blocks disallowed nested delegation targets after for
 	assert.equal(event.input.context, "fresh");
 });
 
-test("enabled primary mode allows safe management calls and blocks non-user management scopes", async () => {
+test("enabled primary mode normalizes safe management list/get scopes and blocks non-user management scopes", async () => {
 	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
 	const ctx = createToolCallContext([
 		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
 	]);
 	const listEvent = { toolName: "subagent", input: { action: "list" } };
+	const listBothEvent = { toolName: "subagent", input: { action: "list", agentScope: "both" } };
 	const getEvent = { toolName: "subagent", input: { action: "get", agentScope: "" } };
+	const getBothEvent = { toolName: "subagent", input: { action: "get", agentScope: "both" } };
 	const blockedEvent = { toolName: "subagent", input: { action: "get", agentScope: "project" } };
 
 	assert.equal(await toolCall(listEvent, ctx), undefined);
 	assert.equal(listEvent.input.agentScope, "user");
+	assert.equal(await toolCall(listBothEvent, ctx), undefined);
+	assert.equal(listBothEvent.input.agentScope, "user");
 	assert.equal(await toolCall(getEvent, ctx), undefined);
 	assert.equal(getEvent.input.agentScope, "user");
+	assert.equal(await toolCall(getBothEvent, ctx), undefined);
+	assert.equal(getBothEvent.input.agentScope, "user");
 	assert.deepEqual(await toolCall(blockedEvent, ctx), {
 		block: true,
 		reason: 'TLH primary-agent subagent get calls may not use agentScope: "project". TLH minor agents must run from the isolated user scope.',

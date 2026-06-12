@@ -61,7 +61,7 @@ const DEFAULT_REF = "main";
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 // Keep in sync with TLH_MIN_NODE_VERSION and TLH_MIN_PI_VERSION in install.sh.
 const MIN_NODE_VERSION = "22.19.0";
-const MIN_PI_VERSION = "0.76.0";
+const MIN_PI_VERSION = "0.79.1";
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
 const DEFAULT_GNOSIS_VERSION = "latest";
 const DEFAULT_WRAPPER_NAME = "tlh";
@@ -501,7 +501,7 @@ function assertSupportedPiVersion(
 		versionCommandDisplay = "pi --version",
 	} = {},
 ) {
-	// `pi --version` prints a bare semver (e.g. "0.76.0") on stdout. Older builds may
+	// `pi --version` prints a bare semver (e.g. "0.79.1") on stdout. Older builds may
 	// differ, so we extract the first semver-shaped substring rather than match strictly.
 	const result = spawnCapture(config, [piCommand, "--version"], {
 		allowFailure: true,
