@@ -160,6 +160,7 @@ test("before_agent_start adds TLH commit attribution guidance only when enabled"
 		const enabledPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
 		assert.match(enabledPrompt.systemPrompt, /## TLH Git Commit Attribution/);
 		assert.match(enabledPrompt.systemPrompt, /Co-authored-by: The Last Harness <hi@thelastharness\.com>/);
+		assert.match(enabledPrompt.systemPrompt, /blank line/);
 
 		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
 		const disabledPrompt = await beforeAgentStart(
@@ -233,6 +234,7 @@ test("child mode keeps parent-only controls disabled while applying commit attri
 		);
 		assert.match(enabledPrompt.systemPrompt, /## TLH Git Commit Attribution/);
 		assert.match(enabledPrompt.systemPrompt, /Co-authored-by: The Last Harness <hi@thelastharness\.com>/);
+		assert.match(enabledPrompt.systemPrompt, /blank line/);
 
 		const blockedCommit = await toolCall(
 			{ toolName: "bash", input: { command: 'git commit -m "ship it"' } },
@@ -264,13 +266,10 @@ test("child mode keeps parent-only controls disabled while applying commit attri
 
 test("tool_call blocks obvious unattributed bash git commits only when attribution is enabled", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-	const [footerHeading, footerCoAuthor] = TLH_DEFAULT_COMMIT_ATTRIBUTION.split("\n\n");
 	const attributedHereDoc = `git commit -F - <<EOF\nsubject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}\nEOF`;
 	const wrappedAttributedHereDoc = `if true; then git commit -F - <<EOF\nsubject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}\nEOF\nfi`;
 	const attributedWrappedInlineMessage = `bash -lc 'git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"'`;
 	const attributedWrappedInlineMessageWithTerminator = `bash -lc -- 'git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"'`;
-	const attributedWrappedSplitMessage = `sh -c 'git commit -m "subject" -m "${footerHeading}" -m "${footerCoAuthor}"'`;
-	const attributedWrappedSplitMessageWithTerminator = `sh -c -- 'git commit -m "subject" -m "${footerHeading}" -m "${footerCoAuthor}"'`;
 	const attributedEnvInlineMessage = `env FOO=bar git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
 	const attributedQualifiedEnvInlineMessage = `/usr/bin/env FOO=bar git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
 	const attributedUnsetEnvInlineMessage = `env --unset=FOO git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
@@ -385,6 +384,7 @@ printf 'extra'
 			unattributedTrailingOutputProcessSubstitution,
 			unattributedWrongFileProcessSubstitution,
 			unattributedLastFileProcessSubstitution,
+			`git commit -m "subject\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`,
 		]) {
 			const blocked = await toolCall(
 				{ toolName: "bash", input: { command } },
@@ -393,6 +393,13 @@ printf 'extra'
 			assert.equal(blocked?.block, true);
 			assert.match(blocked?.reason ?? "", /TLH attribution footer/);
 		}
+		assert.equal(
+			await toolCall(
+				{ toolName: "bash", input: { command: `git commit -m "${TLH_DEFAULT_COMMIT_ATTRIBUTION}"` } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			),
+			undefined,
+		);
 		assert.equal(
 			await toolCall({ toolName: "bash", input: { command: attributedHereDoc } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
 			undefined,
@@ -407,20 +414,6 @@ printf 'extra'
 		assert.equal(
 			await toolCall(
 				{ toolName: "bash", input: { command: attributedWrappedInlineMessageWithTerminator } },
-				createToolCallContext([], undefined, { cwd: fixture.cwd }),
-			),
-			undefined,
-		);
-		assert.equal(
-			await toolCall(
-				{ toolName: "bash", input: { command: attributedWrappedSplitMessage } },
-				createToolCallContext([], undefined, { cwd: fixture.cwd }),
-			),
-			undefined,
-		);
-		assert.equal(
-			await toolCall(
-				{ toolName: "bash", input: { command: attributedWrappedSplitMessageWithTerminator } },
 				createToolCallContext([], undefined, { cwd: fixture.cwd }),
 			),
 			undefined,
