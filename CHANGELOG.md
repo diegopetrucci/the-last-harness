@@ -8,10 +8,13 @@ All notable changes to The Last Harness will be documented in this file.
 
 - The TLH git commit footer is now coauthor-only: `Co-authored-by: The Last Harness <hi@thelastharness.com>`. The decorative `🤖 Generated with …` heading line has been removed. GitHub and git log co-authorship attribution is unchanged.
 - TLH now requires upstream Pi >=0.79.1. Installer checks, wrapper defaults, package metadata, and current install/update docs all use the raised runtime floor.
+- The compact (non-expanded) subagent view now hides the artifact-path line — press Ctrl+O for the expanded view that still shows it — and renders the current tool command (e.g. long `bash` invocations) in full, wrapped to terminal width and capped at 3 lines with `…` on overflow instead of mid-flag `...` truncation.
+- `code-reviewer` now prefers `openai-codex/gpt-5.5` by default when available, keeps `openai/gpt-5.5` as the OpenAI API fallback, and falls back to Anthropic Opus when running in Anthropic-only environments.
 
 ### Fixed
 
 - The TLH startup header now mirrors upstream Pi 0.79.1 project-trust behavior. It keeps `AGENTS.md` and `CLAUDE.md` visible as context even when trust is unresolved, hides trust-gated project `.pi` and `.agents/skills` resources until the project is trusted, and honors the nearest saved trust decision inherited from parent folders in the isolated TLH profile.
+- Bundled the updated `pi-subagents` tag with the observability fix for non-zero child exits and SIGTERM-like failures.
 
 ## [0.19.0] - 2026-06-09
 

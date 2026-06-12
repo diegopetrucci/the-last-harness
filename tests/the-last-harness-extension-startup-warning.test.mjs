@@ -240,7 +240,7 @@ test("Ctrl+Shift+E toggles the TLH header without changing the default collapsed
 
 	assert.ok(header);
 	assert.ok(headerLines);
-	assert.ok(headerLines.includes("Ctrl+Shift+E to show skills, prompts, extensions, themes"));
+	assert.ok(headerLines.includes("Press Ctrl+Shift+E to show loaded skills, prompts, and extensions"));
 
 	const shortcut = shortcuts.get(TLH_HEADER_TOGGLE_SHORTCUT);
 	assert.ok(shortcut, "expected TLH header toggle shortcut to be registered");
@@ -250,12 +250,12 @@ test("Ctrl+Shift+E toggles the TLH header without changing the default collapsed
 
 	await shortcut.handler(shortcutCtx);
 	const expandedLines = header.render(200);
-	assert.equal(expandedLines.includes("Ctrl+Shift+E to show skills, prompts, extensions, themes"), false);
+	assert.equal(expandedLines.includes("Press Ctrl+Shift+E to show loaded skills, prompts, and extensions"), false);
 	assert.ok(expandedLines.includes("Warning: running TLH from v0.10.0 track"));
 	assert.equal(requestRenderCalls(), 1);
 
 	await shortcut.handler(shortcutCtx);
-	assert.ok(header.render(200).includes("Ctrl+Shift+E to show skills, prompts, extensions, themes"));
+	assert.ok(header.render(200).includes("Press Ctrl+Shift+E to show loaded skills, prompts, and extensions"));
 	assert.equal(requestRenderCalls(), 2);
 });
 
