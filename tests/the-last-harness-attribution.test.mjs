@@ -78,6 +78,10 @@ test("commit attribution prompt helper only renders when enabled", () => {
 		buildTlhCommitAttributionPrompt(resolveTlhCommitAttribution(undefined)) ?? "",
 		/Co-authored-by: The Last Harness <hi@thelastharness\.com>/,
 	);
+	assert.match(
+		buildTlhCommitAttributionPrompt(resolveTlhCommitAttribution(undefined)) ?? "",
+		/blank line/,
+	);
 });
 
 test("git commit attribution guard blocks only obvious unattributed inline commit commands", () => {
@@ -210,11 +214,16 @@ printf 'extra'
 		unattributedTrailingOutputProcessSubstitution,
 		unattributedWrongFileProcessSubstitution,
 		unattributedLastFileProcessSubstitution,
+		`git commit -m "subject\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`,
 	]) {
 		assert.match(getTlhGitCommitAttributionBlockReason(command, enabled) ?? "", /missing the required TLH attribution footer/);
 	}
 	assert.equal(
 		getTlhGitCommitAttributionBlockReason(`git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`, enabled),
+		undefined,
+	);
+	assert.equal(
+		getTlhGitCommitAttributionBlockReason(`git commit -m "${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`, enabled),
 		undefined,
 	);
 	assert.equal(getTlhGitCommitAttributionBlockReason(attributedWrappedInlineMessage, enabled), undefined);

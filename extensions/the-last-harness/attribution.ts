@@ -56,7 +56,11 @@ export function resolveTlhCommitAttribution(config: TlhAttributionConfig | undef
 }
 
 function commitMessageEndsWithFooter(message: string, footer: string): boolean {
-	return message.trimEnd().endsWith(footer);
+	const trimmed = message.trimEnd();
+	if (trimmed === footer) {
+		return true;
+	}
+	return trimmed.endsWith(`\n\n${footer}`) || trimmed.endsWith(`\r\n\r\n${footer}`);
 }
 
 function readHereDocSpec(command: string, startIndex: number): { spec: HereDocSpec; endIndex: number } | undefined {
@@ -1275,7 +1279,7 @@ export function buildTlhCommitAttributionPrompt(state: TlhCommitAttributionState
 	}
 	return [
 		TLH_GIT_COMMIT_ATTRIBUTION_PROMPT_HEADING,
-		"If you create a git commit with the bash tool, end the commit message with this exact TLH footer:",
+		"If you create a git commit with the bash tool, end the commit message with a blank line followed by this exact TLH footer:",
 		`\`\`\`text\n${state.footer}\n\`\`\``,
 	].join("\n\n");
 }

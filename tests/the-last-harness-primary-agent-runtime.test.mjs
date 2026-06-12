@@ -160,6 +160,7 @@ test("before_agent_start adds TLH commit attribution guidance only when enabled"
 		const enabledPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
 		assert.match(enabledPrompt.systemPrompt, /## TLH Git Commit Attribution/);
 		assert.match(enabledPrompt.systemPrompt, /Co-authored-by: The Last Harness <hi@thelastharness\.com>/);
+		assert.match(enabledPrompt.systemPrompt, /blank line/);
 
 		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
 		const disabledPrompt = await beforeAgentStart(
@@ -233,6 +234,7 @@ test("child mode keeps parent-only controls disabled while applying commit attri
 		);
 		assert.match(enabledPrompt.systemPrompt, /## TLH Git Commit Attribution/);
 		assert.match(enabledPrompt.systemPrompt, /Co-authored-by: The Last Harness <hi@thelastharness\.com>/);
+		assert.match(enabledPrompt.systemPrompt, /blank line/);
 
 		const blockedCommit = await toolCall(
 			{ toolName: "bash", input: { command: 'git commit -m "ship it"' } },
@@ -382,6 +384,7 @@ printf 'extra'
 			unattributedTrailingOutputProcessSubstitution,
 			unattributedWrongFileProcessSubstitution,
 			unattributedLastFileProcessSubstitution,
+			`git commit -m "subject\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`,
 		]) {
 			const blocked = await toolCall(
 				{ toolName: "bash", input: { command } },
@@ -390,6 +393,13 @@ printf 'extra'
 			assert.equal(blocked?.block, true);
 			assert.match(blocked?.reason ?? "", /TLH attribution footer/);
 		}
+		assert.equal(
+			await toolCall(
+				{ toolName: "bash", input: { command: `git commit -m "${TLH_DEFAULT_COMMIT_ATTRIBUTION}"` } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			),
+			undefined,
+		);
 		assert.equal(
 			await toolCall({ toolName: "bash", input: { command: attributedHereDoc } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
 			undefined,
