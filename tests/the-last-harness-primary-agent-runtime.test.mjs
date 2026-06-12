@@ -109,7 +109,7 @@ function selectablePrimaryAgents() {
 function rushLikePrimary(name = "architect") {
 	return createPrimaryPrompt(name, {
 		model: "anthropic/claude-opus-4-8",
-		tlhOpenaiModels: ["openai-codex/gpt-5.5", "openai/gpt-5.5"],
+		tlhOpenaiModels: ["openai-codex/gpt-5.5"],
 		thinking: "low",
 		tlhOpenaiThinking: "off",
 		applyModel: true,

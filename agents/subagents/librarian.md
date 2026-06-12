@@ -3,7 +3,7 @@ name: librarian
 description: Researches external GitHub repositories and project history using the librarian extension tool.
 tools: librarian, read, grep, find, ls
 model: anthropic/claude-haiku-4-5
-tlhOpenaiModels: openai-codex/gpt-5.4-mini, openai/gpt-5.4-mini
+tlhOpenaiModels: openai-codex/gpt-5.4-mini
 thinking: high
 systemPromptMode: replace
 inheritProjectContext: true
