@@ -119,3 +119,16 @@ test("annotate-git-diff docs use the renamed command and extension names", () =>
 	assert.doesNotMatch(commandsDoc, /extensions\/diff-review\/README\.md/);
 	assert.match(commandsDoc, /`annotate-git-diff`/);
 });
+
+test("README and changelog describe code-reviewer opposite-provider policy", () => {
+	const readme = readRepoFile("README.md");
+	const changelog = readRepoFile("CHANGELOG.md");
+
+	assert.match(readme, /`code-reviewer` intentionally prefers an available opposite provider/i);
+	assert.match(readme, /Anthropic sessions[\s\S]{0,180}OpenAI Codex subscription provider[\s\S]{0,80}available/i);
+	assert.match(readme, /OpenAI\/OpenAI-Codex sessions[\s\S]{0,120}Anthropic review[\s\S]{0,80}available/i);
+	assert.match(readme, /OpenAI API access[\s\S]{0,160}does not force `code-reviewer` onto unavailable Codex-only defaults/i);
+	assert.match(changelog, /`code-reviewer` now prefers an available opposite provider/i);
+	assert.match(changelog, /OpenAI API-only setups are not forced onto unavailable Codex-only defaults/i);
+	assert.doesNotMatch(changelog, /`code-reviewer` now defaults to `openai-codex\/gpt-5\.5`/);
+});

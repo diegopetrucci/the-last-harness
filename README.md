@@ -50,6 +50,8 @@ TLH subagents are fresh child sessions, not a giant shared swarm. They get the t
 - `web-scout` for web research
 - `oracle` for a deeper second opinion.
 
+For review independence, `code-reviewer` intentionally prefers an available opposite provider. Anthropic sessions try to use the OpenAI Codex subscription provider for review when it is available, while OpenAI/OpenAI-Codex sessions try Anthropic review when it is available. If you only have regular OpenAI API access and not the Codex subscription provider, TLH does not force `code-reviewer` onto unavailable Codex-only defaults.
+
 ## Why this workflow is useful
 
 ### Benefits

@@ -198,6 +198,7 @@ export type AgentPrompt = {
 	thinking?: ThinkingLevel;
 	tlhOpenaiThinking?: ThinkingLevel;
 	preferCurrentOpenaiModel?: boolean;
+	preferOppositeProvider?: boolean;
 	applyModel?: boolean;
 	applyThinking?: boolean;
 	lockThinking?: boolean;
@@ -213,6 +214,7 @@ export type SubagentMetadata = {
 	model?: string;
 	tlhOpenaiModels?: string[];
 	tlhAnthropicModels?: string[];
+	preferOppositeProvider?: boolean;
 };
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
