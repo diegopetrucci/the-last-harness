@@ -80,3 +80,4 @@ git diff --cached
 - The `tlh-dev-hygiene` checklist is for TLH repository contributors only; it is not part of the packaged end-user tlh workflow.
 - After finishing a task, run `gn help review`.
 - This project uses a CLI ticket system for task management. Run `tk help` when you need to use it.
+- If the human links you a PR comments, or pastes you one, do not take it at face value — instead, investigate if valid and report back first. Do not start fixing it immediately.
