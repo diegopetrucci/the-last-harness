@@ -17,9 +17,25 @@ const developer = {
 
 const codeReviewer = {
 	name: "code-reviewer",
+	tlhOpenaiModels: ["openai-codex/gpt-5.5"],
+	tlhAnthropicModels: ["anthropic/claude-opus-4-8"],
+	preferOppositeProvider: true,
+};
+
+const anthropicParentPrefersCodexReviewer = {
+	name: "anthropic-parent-prefers-codex-reviewer",
+	model: "anthropic/claude-opus-4-8",
+	tlhOpenaiModels: ["openai-codex/gpt-5.5"],
+	tlhAnthropicModels: ["anthropic/claude-opus-4-8"],
+	preferOppositeProvider: true,
+};
+
+const openaiParentPrefersAnthropicReviewer = {
+	name: "openai-parent-prefers-anthropic-reviewer",
 	model: "openai-codex/gpt-5.5",
 	tlhOpenaiModels: ["openai-codex/gpt-5.5"],
 	tlhAnthropicModels: ["anthropic/claude-opus-4-8"],
+	preferOppositeProvider: true,
 };
 
 const rushLikePrimary = {
@@ -84,6 +100,47 @@ test("provider-aware model resolver keeps Codex defaults even when regular OpenA
 	const available = [...codexAvailable, ...openaiAvailable];
 	assert.equal(selectProviderAwareAgentModelId(developer, available, "openai"), "openai-codex/gpt-5.4");
 	assert.equal(selectProviderAwareAgentModelId(developer, available, "openai-codex"), "openai-codex/gpt-5.4");
+});
+
+test("provider-aware opposite-provider preference picks Codex for opted-in Anthropic-session reviewers", () => {
+	const available = [...anthropicAvailable, ...codexAvailable];
+	const agents = new Map([[anthropicParentPrefersCodexReviewer.name, anthropicParentPrefersCodexReviewer]]);
+
+	assert.equal(
+		selectProviderAwareAgentModelId(anthropicParentPrefersCodexReviewer, available, "anthropic"),
+		"openai-codex/gpt-5.5",
+	);
+
+	const input = { agent: anthropicParentPrefersCodexReviewer.name, task: "Review the diff" };
+	assert.equal(applyProviderAwareSubagentModels(input, agents, available, "anthropic"), 1);
+	assert.equal(input.model, "openai-codex/gpt-5.5");
+});
+
+test("provider-aware opposite-provider preference picks Anthropic for opted-in OpenAI-family reviewers", () => {
+	const available = [...anthropicAvailable, ...codexAvailable];
+	const agents = new Map([[openaiParentPrefersAnthropicReviewer.name, openaiParentPrefersAnthropicReviewer]]);
+
+	assert.equal(
+		selectProviderAwareAgentModelId(openaiParentPrefersAnthropicReviewer, available, "openai"),
+		"anthropic/claude-opus-4-8",
+	);
+	assert.equal(
+		selectProviderAwareAgentModelId(openaiParentPrefersAnthropicReviewer, available, "openai-codex"),
+		"anthropic/claude-opus-4-8",
+	);
+
+	const input = { agent: openaiParentPrefersAnthropicReviewer.name, task: "Review the diff" };
+	assert.equal(applyProviderAwareSubagentModels(input, agents, available, "openai-codex"), 1);
+	assert.equal(input.model, "anthropic/claude-opus-4-8");
+});
+
+test("provider-aware opposite-provider preference does not inject regular OpenAI API models for opted-in Anthropic sessions", () => {
+	const agents = new Map([[anthropicParentPrefersCodexReviewer.name, anthropicParentPrefersCodexReviewer]]);
+	const input = { agent: anthropicParentPrefersCodexReviewer.name, task: "Review the diff" };
+
+	assert.equal(selectProviderAwareAgentModelId(anthropicParentPrefersCodexReviewer, openaiAvailable, "anthropic"), undefined);
+	assert.equal(applyProviderAwareSubagentModels(input, agents, openaiAvailable, "anthropic"), 0);
+	assert.equal(input.model, undefined);
 });
 
 test("provider-aware primary defaults switch Rush-like thinking off for bundled Codex models", () => {
@@ -229,8 +286,8 @@ test("provider-aware subagent mutation handles chain sequential and parallel ste
 		],
 	};
 
-	assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 1);
+	assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 2);
 	assert.equal(input.chain[0].model, "openai-codex/gpt-5.4");
-	assert.equal(input.chain[1].parallel[0].model, undefined); // code-reviewer default already matches; no injection needed
+	assert.equal(input.chain[1].parallel[0].model, "openai-codex/gpt-5.5");
 	assert.equal(input.chain[1].parallel[1].model, "openai/gpt-5.4");
 });

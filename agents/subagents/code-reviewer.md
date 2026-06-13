@@ -2,9 +2,9 @@
 name: code-reviewer
 description: Reviews diffs against assigned tasks for correctness, security, and maintainability.
 tools: read, grep, find, ls, bash, contact_supervisor
-model: openai-codex/gpt-5.5
 tlhOpenaiModels: openai-codex/gpt-5.5
 tlhAnthropicModels: anthropic/claude-opus-4-8
+preferOppositeProvider: true
 thinking: high
 systemPromptMode: replace
 inheritProjectContext: true

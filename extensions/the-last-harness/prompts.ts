@@ -71,6 +71,7 @@ function parseAgentPrompt(filePath: string): AgentPrompt | undefined {
 		thinking: parseThinkingLevelValue(frontmatter.thinking),
 		tlhOpenaiThinking: parseThinkingLevelValue(frontmatter.tlhOpenaiThinking),
 		preferCurrentOpenaiModel: parseBooleanValue(frontmatter.preferCurrentOpenaiModel),
+		preferOppositeProvider: parseBooleanValue(frontmatter.preferOppositeProvider),
 		applyModel: parseBooleanValue(frontmatter.applyModel),
 		applyThinking: parseBooleanValue(frontmatter.applyThinking),
 		lockThinking: parseBooleanValue(frontmatter.lockThinking),
@@ -99,6 +100,7 @@ export function loadSubagentMetadata(): SubagentMetadata[] {
 			model: agent.model,
 			tlhOpenaiModels: agent.tlhOpenaiModels,
 			tlhAnthropicModels: agent.tlhAnthropicModels,
+			preferOppositeProvider: agent.preferOppositeProvider,
 		}))
 		.sort((a, b) => a.name.localeCompare(b.name));
 }
