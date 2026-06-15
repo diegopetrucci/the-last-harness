@@ -319,6 +319,7 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 	assert.match(toolCall, /getTlhGitCommitAttributionBlockReason\(event\.input\.command, commitAttributionState\)/);
 	assert.match(toolCall, /applyProviderAwareSubagentModels\(event\.input, subagentsByName, ctx\.modelRegistry\.getAvailable\(\), ctx\.model\?\.provider\)/);
 	assert.match(toolCall, /const selection = currentPrimaryAgentSelection\(\)/);
+	assert.match(toolCall, /if \(selection === "rush" && isSubagentResumeAction\(event\.input\)\)/);
 	assert.match(toolCall, /if \(selection === "rush" && subagentCallTargetsAgent\(event\.input, "developer"\)\)/);
 	assert.match(toolCall, /const reason = validateSubagentToolInput\(event\.input\)/);
 	assert(
@@ -330,7 +331,11 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 		"provider-aware subagent defaults should run before the disabled-primary guard",
 	);
 	assert(
-		toolCall.indexOf('selection === "rush"') < toolCall.indexOf("validateSubagentToolInput"),
+		toolCall.indexOf("isSubagentResumeAction") < toolCall.indexOf("validateSubagentToolInput"),
+		"Rush resume guard should run before generic subagent validation",
+	);
+	assert(
+		toolCall.indexOf("subagentCallTargetsAgent") < toolCall.indexOf("validateSubagentToolInput"),
 		"Rush developer guard should run before generic subagent validation",
 	);
 });

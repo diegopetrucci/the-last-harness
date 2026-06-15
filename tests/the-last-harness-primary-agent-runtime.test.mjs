@@ -1170,6 +1170,24 @@ test("enabled primary mode normalizes safe management list/get/resume inputs and
 	});
 });
 
+test("Rush blocks subagent resume with a Rush-specific reason", async () => {
+	const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+	const event = {
+		toolName: "subagent",
+		input: { action: "resume", id: "run-123", message: "Continue the approved ticket.", agentScope: "", context: "" },
+	};
+	const ctx = createToolCallContext([
+		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
+	]);
+
+	const result = await toolCall(event, ctx);
+	assert.deepEqual(result, {
+		block: true,
+		reason:
+			"TLH Rush may not use subagent action=resume because resuming by run id or index can continue a prior developer subagent without an explicit safe target. Rush must edit directly or start a new allowed subagent with an explicit agent target.",
+	});
+});
+
 test("/switch-primary-agent includes Rush completions, usage, and status strings", async () => {
 	const { pi } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
 	const command = pi.commands.get("switch-primary-agent");
