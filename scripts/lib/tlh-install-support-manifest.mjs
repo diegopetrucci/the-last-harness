@@ -31,6 +31,13 @@ const BASE_SUPPORT_FILES = Object.freeze([
 		installName: "lib/tlh-install-paths.mjs",
 	},
 	{
+		variable: "TLH_SAFE_PROFILE_WRITE_LIB",
+		requirement: REQUIRED,
+		relativePath: "scripts/lib/tlh-safe-profile-write.mjs",
+		tempPath: "lib/tlh-safe-profile-write.mjs",
+		installName: "lib/tlh-safe-profile-write.mjs",
+	},
+	{
 		variable: "TLH_INSTALL_UTILS_LIB",
 		requirement: REQUIRED,
 		relativePath: "scripts/lib/tlh-install-utils.mjs",
