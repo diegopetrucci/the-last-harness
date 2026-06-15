@@ -113,7 +113,7 @@ function formatAllowedSubagents(subagents: SubagentMetadata[]): string {
 	if (lines.length === 0) {
 		return "";
 	}
-	return `## TLH Allowed Minor Subagents\n\nYou may delegate only to these minor agents via the subagent tool:\n\n${lines.join("\n")}\n\nFor subagent management \`action: "list"\`/\`"get"\` calls, omit \`agentScope\` or use \`"user"\`. TLH minor agents are isolated to the user scope.`;
+	return `## TLH Allowed Minor Subagents\n\nYou may delegate only to these minor agents via the subagent tool:\n\n${lines.join("\n")}\n\nFor subagent management \`action: "list"\`/\`"get"\`/\`"resume"\` calls, omit \`agentScope\` or use \`"user"\`. For \`action: "resume"\`, also omit \`context\` or use \`"fresh"\`. TLH minor agents are isolated to the user scope.`;
 }
 
 export function buildTlhSystemPrompt(

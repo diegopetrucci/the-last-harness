@@ -76,7 +76,7 @@ test("validateSubagentToolInput allows approved execution and forces fresh user 
 	assert.equal(batched.context, "fresh");
 });
 
-test("validateSubagentToolInput allows approved management calls and forces user scope where needed", () => {
+test("validateSubagentToolInput allows approved management calls and normalizes safe resume controls", () => {
 	const list = { action: "list" };
 	assertAllowed(list);
 	assert.equal(list.agentScope, "user");
@@ -93,13 +93,22 @@ test("validateSubagentToolInput allows approved management calls and forces user
 	assertAllowed(getBoth);
 	assert.equal(getBoth.agentScope, "user");
 
+	const resume = { action: "resume", id: "run-123", message: "Continue with the approved ticket.", agentScope: "", context: "" };
+	assertAllowed(resume);
+	assert.equal(resume.agentScope, "user");
+	assert.equal(resume.context, "fresh");
+
+	const resumeBoth = { action: "resume", id: "run-456", message: "Continue with the approved ticket.", agentScope: "both" };
+	assertAllowed(resumeBoth);
+	assert.equal(resumeBoth.agentScope, "user");
+	assert.equal(resumeBoth.context, "fresh");
+
 	for (const action of ["status", "interrupt", "doctor"]) {
 		assertAllowed({ action });
 	}
 });
 
-test("validateSubagentToolInput blocks unsafe actions and non-user scopes", () => {
-	assert.match(validateSubagentToolInput({ action: "resume" }), /may not use subagent management action 'resume'/);
+test("validateSubagentToolInput blocks unsafe actions, unsafe resume inputs, and non-user scopes", () => {
 	assert.match(validateSubagentToolInput({ action: "delete" }), /may not use subagent management action 'delete'/);
 	assert.match(validateSubagentToolInput({ agent: "developer", agentScope: "both" }), /may not use agentScope: "both"/);
 	assert.match(validateSubagentToolInput({ agent: "developer", agentScope: "project" }), /may not use agentScope: "project"/);
@@ -108,12 +117,17 @@ test("validateSubagentToolInput blocks unsafe actions and non-user scopes", () =
 	assert.match(validateSubagentToolInput({ action: "list", agentScope: "project" }), /may not use agentScope: "project"/);
 	assert.match(validateSubagentToolInput({ action: "list", agentScope: "system" }), /may not use agentScope: "system"/);
 	assert.match(validateSubagentToolInput({ action: "get", agentScope: "invalid" }), /may not use agentScope: "invalid"/);
+	assert.match(validateSubagentToolInput({ action: "resume", agentScope: "project" }), /resume calls may not use agentScope: "project"/);
+	assert.match(validateSubagentToolInput({ action: "resume", agentScope: "system" }), /resume calls may not use agentScope: "system"/);
+	assert.match(validateSubagentToolInput({ action: "resume", agentScope: "invalid" }), /resume calls may not use agentScope: "invalid"/);
+	assert.match(validateSubagentToolInput({ action: "resume", context: "resume" }), /subagent resume may not use context: "resume"/);
+	assert.match(validateSubagentToolInput({ action: "resume", context: 1 }), /subagent resume must use context: "fresh"/);
 });
 
 test("validateSubagentToolInput uses generic primary-agent wording", () => {
 	const reasons = [
 		validateSubagentToolInput(null),
-		validateSubagentToolInput({ action: "resume" }),
+		validateSubagentToolInput({ action: "delete" }),
 		validateSubagentToolInput({ agent: "developer", context: "resume" }),
 	].filter(Boolean);
 
@@ -138,6 +152,8 @@ test("validateSubagentToolInput rejects disallowed agents", () => {
 test("validateSubagentToolInput rejects non-fresh top-level and nested contexts", () => {
 	assert.match(validateSubagentToolInput({ agent: "developer", context: "resume" }), /may not use context: "resume"/);
 	assert.match(validateSubagentToolInput({ agent: "developer", context: 1 }), /must use context: "fresh"/);
+	assert.match(validateSubagentToolInput({ action: "resume", context: "resume" }), /subagent resume may not use context: "resume"/);
+	assert.match(validateSubagentToolInput({ action: "resume", context: 1 }), /subagent resume must use context: "fresh"/);
 
 	assert.match(
 		validateSubagentToolInput({ tasks: [{ agent: "developer", context: "resume" }] }),
