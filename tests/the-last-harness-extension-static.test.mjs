@@ -210,7 +210,9 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	const childPrompt = buildChildSubagentSystemPrompt();
 
 	assert.match(primaryPrompt, /## TLH Allowed Minor Subagents/);
+	assert.match(primaryPrompt, /action: "list"`\/`"get"`\/`"resume"/);
 	assert.match(primaryPrompt, /omit `agentScope` or use `"user"`/);
+	assert.match(primaryPrompt, /action: "resume".*omit `context` or use `"fresh"`/);
 	assert.match(primaryPrompt, /TLH minor agents are isolated to the user scope/);
 
 	for (const prompt of [primaryPrompt, childPrompt]) {
@@ -317,6 +319,7 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 	assert.match(toolCall, /getTlhGitCommitAttributionBlockReason\(event\.input\.command, commitAttributionState\)/);
 	assert.match(toolCall, /applyProviderAwareSubagentModels\(event\.input, subagentsByName, ctx\.modelRegistry\.getAvailable\(\), ctx\.model\?\.provider\)/);
 	assert.match(toolCall, /const selection = currentPrimaryAgentSelection\(\)/);
+	assert.match(toolCall, /if \(selection === "rush" && isSubagentResumeAction\(event\.input\)\)/);
 	assert.match(toolCall, /if \(selection === "rush" && subagentCallTargetsAgent\(event\.input, "developer"\)\)/);
 	assert.match(toolCall, /const reason = validateSubagentToolInput\(event\.input\)/);
 	assert(
@@ -328,7 +331,11 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 		"provider-aware subagent defaults should run before the disabled-primary guard",
 	);
 	assert(
-		toolCall.indexOf('selection === "rush"') < toolCall.indexOf("validateSubagentToolInput"),
+		toolCall.indexOf("isSubagentResumeAction") < toolCall.indexOf("validateSubagentToolInput"),
+		"Rush resume guard should run before generic subagent validation",
+	);
+	assert(
+		toolCall.indexOf("subagentCallTargetsAgent") < toolCall.indexOf("validateSubagentToolInput"),
 		"Rush developer guard should run before generic subagent validation",
 	);
 });
