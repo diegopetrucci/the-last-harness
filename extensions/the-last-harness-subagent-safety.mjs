@@ -1,5 +1,5 @@
 export const ALLOWED_SUBAGENTS = Object.freeze(["developer", "code-reviewer", "repo-scout", "diff-summarizer", "librarian", "web-scout", "oracle"]);
-export const SAFE_SUBAGENT_ACTIONS = Object.freeze(["list", "get", "status", "interrupt", "doctor"]);
+export const SAFE_SUBAGENT_ACTIONS = Object.freeze(["list", "get", "status", "interrupt", "doctor", "resume"]);
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 
 const SAFE_SUBAGENT_ACTION_SET = new Set(SAFE_SUBAGENT_ACTIONS);
@@ -65,15 +65,15 @@ function forceUserAgentScope(input, mode, { allowBoth = false } = {}) {
 	return undefined;
 }
 
-function forceFreshSubagentContext(input) {
+function forceFreshSubagentContext(input, mode = "execution") {
 	const rawContext = input.context;
 	if (rawContext !== undefined) {
 		if (typeof rawContext !== "string") {
-			return `TLH primary-agent subagent execution must use context: "fresh" or omit context.`;
+			return `TLH primary-agent subagent ${mode} must use context: "fresh" or omit context.`;
 		}
 		const context = rawContext.trim();
 		if (context && context !== "fresh") {
-			return `TLH primary-agent subagent execution may not use context: "${context}". TLH child sessions must start fresh so parent primary-agent/Gnosis context is not leaked.`;
+			return `TLH primary-agent subagent ${mode} may not use context: "${context}". TLH child sessions must start fresh so parent primary-agent/Gnosis context is not leaked.`;
 		}
 	}
 
@@ -129,7 +129,17 @@ export function validateSubagentToolInput(input) {
 		if (!SAFE_SUBAGENT_ACTION_SET.has(action)) {
 			return `TLH primary agents may not use subagent management action '${action}'. Allowed actions: ${SAFE_SUBAGENT_ACTIONS.join(", ")}.`;
 		}
-		return action === "list" || action === "get" ? forceUserAgentScope(input, action, { allowBoth: true }) : undefined;
+		if (action === "list" || action === "get") {
+			return forceUserAgentScope(input, action, { allowBoth: true });
+		}
+		if (action === "resume") {
+			const scopeReason = forceUserAgentScope(input, action, { allowBoth: true });
+			if (scopeReason) {
+				return scopeReason;
+			}
+			return forceFreshSubagentContext(input, action);
+		}
+		return undefined;
 	}
 
 	const scopeReason = forceUserAgentScope(input, "execution");

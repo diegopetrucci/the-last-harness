@@ -210,7 +210,9 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	const childPrompt = buildChildSubagentSystemPrompt();
 
 	assert.match(primaryPrompt, /## TLH Allowed Minor Subagents/);
+	assert.match(primaryPrompt, /action: "list"`\/`"get"`\/`"resume"/);
 	assert.match(primaryPrompt, /omit `agentScope` or use `"user"`/);
+	assert.match(primaryPrompt, /action: "resume".*omit `context` or use `"fresh"`/);
 	assert.match(primaryPrompt, /TLH minor agents are isolated to the user scope/);
 
 	for (const prompt of [primaryPrompt, childPrompt]) {
