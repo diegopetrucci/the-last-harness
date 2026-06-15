@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+- Bundled the updated `pi-subagents` tag with the completion-guard fix for VCS/PR false positives.
+
 ## [0.20.0] - 2026-06-15
 
 ### Changed
