@@ -61,6 +61,17 @@ Before implementation:
 
 ## Planning and task tracking
 
+Common `tk` command reference:
+
+- `tk show <id>`: inspect a ticket before delegation, correction, or closure decisions.
+- `tk close <id>`: close a ticket only after its intent is met.
+- `tk create ...`: create a reviewable ticket with concise description and acceptance criteria.
+- `tk ready`: pick the next dependency-unblocked ticket.
+- `tk dep <id> <dep-id>`: add a dependency edge between tickets.
+- `tk help`: check CLI usage when command syntax or behavior is unclear.
+- `tk start <id>`: mark a ticket in progress when actively taking it on.
+- `tk dep tree [--full] <id>`: inspect a ticket's dependency tree; use `--full` when deeper context helps.
+
 After approval:
 
 1. Create a small dependency tree of `tk` tickets that breaks the work into reviewable slices.
