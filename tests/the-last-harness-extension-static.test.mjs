@@ -18,7 +18,6 @@ const attributionSource = readFileSync(new URL("../extensions/the-last-harness/a
 const changelogSource = readFileSync(new URL("../extensions/the-last-harness/changelog.ts", import.meta.url), "utf8");
 const primaryRuntimeSource = readFileSync(new URL("../extensions/the-last-harness/primary-agent-runtime.ts", import.meta.url), "utf8");
 const effortSource = readFileSync(new URL("../extensions/the-last-harness/effort.ts", import.meta.url), "utf8");
-const experimentalSource = readFileSync(new URL("../extensions/the-last-harness/experimental.ts", import.meta.url), "utf8");
 const promptsSource = readFileSync(new URL("../extensions/the-last-harness/prompts.ts", import.meta.url), "utf8");
 const usageLimitsSource = readFileSync(new URL("../extensions/the-last-harness/usage-limits.ts", import.meta.url), "utf8");
 const profileStateSource = readFileSync(new URL("../extensions/the-last-harness/profile-state.ts", import.meta.url), "utf8");
@@ -378,24 +377,17 @@ test("extension wires TLH changelog command and release-notes rendering", () => 
 	assert.match(changelogSource, /pi\.sendMessage\(\{/);
 });
 
-test("extension wires TLH experimental, attribution, and usage commands to isolated TLH settings", () => {
+test("extension wires attribution and usage commands to isolated TLH settings without the retired experimental command", () => {
 	const lockedWriteHelper = sourceSection(
 		profileStateSource,
 		"export function withLockedTlhSettingsWrite",
 		"export function assertSafeTlhSettingsPath",
 	);
 
-	assert.match(extensionSource, /registerExperimentalCommand\(pi\)/);
-	assert.match(experimentalSource, /pi\.registerCommand\("experimental"/);
-	assert.match(experimentalSource, /run-tests-last/);
-	assert.match(
-		experimentalSource,
-		/withLockedTlhSettingsWrite\(cwd, "Refusing to write experimental settings outside the isolated TLH profile\./,
-	);
-	assert.doesNotMatch(experimentalSource, /tlhSettingsPathForWrite\(\)/);
-	assert.doesNotMatch(experimentalSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
-	assert.match(experimentalSource, /settings\.tlh\.experimental\.enabledFeatures = nextEnabledFeatures/);
-	assert.match(typesSource, /enabledFeatures\?: string\[];/);
+	assert.doesNotMatch(extensionSource, /registerExperimentalCommand\(pi\)/);
+	assert.doesNotMatch(extensionSource, /from "\.\/the-last-harness\/experimental\.js"/);
+	assert.doesNotMatch(typesSource, /experimental\?:/);
+	assert.doesNotMatch(typesSource, /enabledFeatures\?: string\[];/);
 	assert.doesNotMatch(extensionSource, /registerTlhCommitAttributionRuntime\(pi\)/);
 	assert.match(extensionSource, /registerToggleTlhGitAttributionCommand\(pi\)/);
 	assert.match(attributionSource, /from "\.\/profile-state\.js"/);
