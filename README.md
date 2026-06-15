@@ -50,6 +50,8 @@ TLH subagents are fresh child sessions, not a giant shared swarm. They get the t
 - `web-scout` for web research
 - `oracle` for a deeper second opinion.
 
+For review independence, `code-reviewer` intentionally prefers an available opposite provider. Anthropic sessions try to use the OpenAI Codex subscription provider for review when it is available, while OpenAI/OpenAI-Codex sessions try Anthropic review when it is available. If you only have regular OpenAI API access and not the Codex subscription provider, TLH does not force `code-reviewer` onto unavailable Codex-only defaults.
+
 ## Why this workflow is useful
 
 ### Benefits
@@ -73,7 +75,7 @@ If you want a harness that stays out of your way, TLH may be too structured. If 
 
 The architect is the default, but it is not the only mode.
 
-- **Rush** is a selectable primary for small bounded implementation tasks. It edits directly, runs narrow validation, and skips the default architect `tk`/developer/review loop. It can still use `code-reviewer` when that extra pass is worth it, and `oracle` is an optional deeper second opinion rather than a default step. Provider defaults are GPT-5.5 with thinking off on OpenAI/OpenAI-Codex, and Anthropic Opus with low thinking on Anthropic.
+- **Rush** is a selectable primary for small bounded implementation tasks. It edits directly, runs narrow validation, and skips the default architect `tk`/developer/review loop. It can still use `code-reviewer` when that extra pass is worth it, and `oracle` is an optional deeper second opinion rather than a default step. Provider defaults are GPT-5.5 with thinking off on the OpenAI Codex subscription provider, and Anthropic Opus with low thinking on Anthropic.
 - **Product** is for product framing, tradeoffs, strategy, and implementation-ready ticket shaping. It does not implement code.
 - **Bug-hunter** is for read-only debugging and root-cause analysis before you decide how to fix something.
 
@@ -121,7 +123,6 @@ Repo settings:
 - `.pi/prompts/`
 - `.pi/extensions/`
 
-With upstream Pi 0.79.1 and newer, `AGENTS.md` and `CLAUDE.md` still load as context even before project trust is resolved, but trust-gated repo-local resources wait until the project is trusted. That includes `.pi/settings.json`, `.pi/skills/`, `.pi/prompts/`, `.pi/extensions/`, `.pi/themes/`, project-local `.agents/skills/`, and project-local packages. Interactive `tlh` sessions prompt for project trust when needed; use `/trust` to save a decision for future sessions. Saved trust decisions live in the isolated TLH profile, not normal `~/.pi/agent`. Non-interactive runs need a saved trust decision or `--approve`.
 
 After adding files, installing a package, or saving project trust, run `/reload` in TLH (or restart it) so the new resources are picked up.
 

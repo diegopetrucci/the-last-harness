@@ -108,8 +108,8 @@ function selectablePrimaryAgents() {
 
 function rushLikePrimary(name = "architect") {
 	return createPrimaryPrompt(name, {
-		model: "anthropic/claude-opus-4-7",
-		tlhOpenaiModels: ["openai-codex/gpt-5.5", "openai/gpt-5.5"],
+		model: "anthropic/claude-opus-4-8",
+		tlhOpenaiModels: ["openai-codex/gpt-5.5"],
 		thinking: "low",
 		tlhOpenaiThinking: "off",
 		applyModel: true,
@@ -160,6 +160,7 @@ test("before_agent_start adds TLH commit attribution guidance only when enabled"
 		const enabledPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
 		assert.match(enabledPrompt.systemPrompt, /## TLH Git Commit Attribution/);
 		assert.match(enabledPrompt.systemPrompt, /Co-authored-by: The Last Harness <hi@thelastharness\.com>/);
+		assert.match(enabledPrompt.systemPrompt, /blank line/);
 
 		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
 		const disabledPrompt = await beforeAgentStart(
@@ -233,6 +234,7 @@ test("child mode keeps parent-only controls disabled while applying commit attri
 		);
 		assert.match(enabledPrompt.systemPrompt, /## TLH Git Commit Attribution/);
 		assert.match(enabledPrompt.systemPrompt, /Co-authored-by: The Last Harness <hi@thelastharness\.com>/);
+		assert.match(enabledPrompt.systemPrompt, /blank line/);
 
 		const blockedCommit = await toolCall(
 			{ toolName: "bash", input: { command: 'git commit -m "ship it"' } },
@@ -264,13 +266,10 @@ test("child mode keeps parent-only controls disabled while applying commit attri
 
 test("tool_call blocks obvious unattributed bash git commits only when attribution is enabled", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-	const [footerHeading, footerCoAuthor] = TLH_DEFAULT_COMMIT_ATTRIBUTION.split("\n\n");
 	const attributedHereDoc = `git commit -F - <<EOF\nsubject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}\nEOF`;
 	const wrappedAttributedHereDoc = `if true; then git commit -F - <<EOF\nsubject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}\nEOF\nfi`;
 	const attributedWrappedInlineMessage = `bash -lc 'git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"'`;
 	const attributedWrappedInlineMessageWithTerminator = `bash -lc -- 'git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"'`;
-	const attributedWrappedSplitMessage = `sh -c 'git commit -m "subject" -m "${footerHeading}" -m "${footerCoAuthor}"'`;
-	const attributedWrappedSplitMessageWithTerminator = `sh -c -- 'git commit -m "subject" -m "${footerHeading}" -m "${footerCoAuthor}"'`;
 	const attributedEnvInlineMessage = `env FOO=bar git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
 	const attributedQualifiedEnvInlineMessage = `/usr/bin/env FOO=bar git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
 	const attributedUnsetEnvInlineMessage = `env --unset=FOO git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
@@ -385,6 +384,7 @@ printf 'extra'
 			unattributedTrailingOutputProcessSubstitution,
 			unattributedWrongFileProcessSubstitution,
 			unattributedLastFileProcessSubstitution,
+			`git commit -m "subject\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`,
 		]) {
 			const blocked = await toolCall(
 				{ toolName: "bash", input: { command } },
@@ -393,6 +393,13 @@ printf 'extra'
 			assert.equal(blocked?.block, true);
 			assert.match(blocked?.reason ?? "", /TLH attribution footer/);
 		}
+		assert.equal(
+			await toolCall(
+				{ toolName: "bash", input: { command: `git commit -m "${TLH_DEFAULT_COMMIT_ATTRIBUTION}"` } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			),
+			undefined,
+		);
 		assert.equal(
 			await toolCall({ toolName: "bash", input: { command: attributedHereDoc } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
 			undefined,
@@ -407,20 +414,6 @@ printf 'extra'
 		assert.equal(
 			await toolCall(
 				{ toolName: "bash", input: { command: attributedWrappedInlineMessageWithTerminator } },
-				createToolCallContext([], undefined, { cwd: fixture.cwd }),
-			),
-			undefined,
-		);
-		assert.equal(
-			await toolCall(
-				{ toolName: "bash", input: { command: attributedWrappedSplitMessage } },
-				createToolCallContext([], undefined, { cwd: fixture.cwd }),
-			),
-			undefined,
-		);
-		assert.equal(
-			await toolCall(
-				{ toolName: "bash", input: { command: attributedWrappedSplitMessageWithTerminator } },
 				createToolCallContext([], undefined, { cwd: fixture.cwd }),
 			),
 			undefined,
@@ -1298,11 +1291,11 @@ test("primary runtime falls back to Anthropic Rush-like metadata defaults when o
 				cwd: fixture.cwd,
 				sessionManager: { getBranch: () => [] },
 				ui: { notify() {} },
-				modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-7" }] },
+				modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-8" }] },
 				model: { provider: "openai-codex", id: "gpt-5.4" },
 			});
 
-			assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-4-7" });
+			assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-4-8" });
 			assert.equal(pi.thinkingLevel, "low");
 		});
 	} finally {
@@ -1339,14 +1332,14 @@ test("primary runtime respects explicit false settings over Rush-like metadata d
 test("architect before_agent_start preserves medium floor selection but restores declared default after rush", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const architectPrimary = createPrimaryPrompt("architect", {
-		model: "anthropic/claude-opus-4-7",
+		model: "anthropic/claude-opus-4-8",
 		thinking: "high",
 		minThinking: "medium",
 		applyModel: true,
 		applyThinking: true,
 	});
 	const rushPrimary = createPrimaryPrompt("rush", {
-		model: "anthropic/claude-opus-4-7",
+		model: "anthropic/claude-opus-4-8",
 		thinking: "low",
 		applyModel: true,
 		applyThinking: true,
@@ -1365,8 +1358,8 @@ test("architect before_agent_start preserves medium floor selection but restores
 			cwd: fixture.cwd,
 			sessionManager: { getBranch: () => branch },
 			ui: { notify() {} },
-			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-7" }] },
-			model: { provider: "anthropic", id: "claude-opus-4-7" },
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-8" }] },
+			model: { provider: "anthropic", id: "claude-opus-4-8" },
 		});
 
 		await runtime.applySessionStart(makeCtx([]));
@@ -1390,7 +1383,7 @@ test("architect before_agent_start preserves medium floor selection but restores
 test("locked primary (rush) overrides global applyThinking=false and applyModel=false", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const rushPrimary = createPrimaryPrompt("rush", {
-		model: "anthropic/claude-opus-4-7",
+		model: "anthropic/claude-opus-4-8",
 		thinking: "low",
 		applyModel: true,
 		applyThinking: true,
@@ -1412,12 +1405,12 @@ test("locked primary (rush) overrides global applyThinking=false and applyModel=
 				{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
 			]},
 			ui: { notify() {} },
-			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-7" }] },
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-8" }] },
 			model: { provider: "anthropic", id: "claude-opus-4-6" },
 		});
 
 		// lockThinking: true forces both model and thinking regardless of global opt-outs
-		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-4-7" });
+		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-4-8" });
 		assert.equal(pi.thinkingLevel, "low");
 	});
 });
@@ -1425,7 +1418,7 @@ test("locked primary (rush) overrides global applyThinking=false and applyModel=
 test("non-locked primary (architect) honors global applyThinking=false override", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const architectPrimary = createPrimaryPrompt("architect", {
-		model: "anthropic/claude-opus-4-7",
+		model: "anthropic/claude-opus-4-8",
 		thinking: "high",
 		applyModel: true,
 		applyThinking: true,
@@ -1444,8 +1437,8 @@ test("non-locked primary (architect) honors global applyThinking=false override"
 			cwd: fixture.cwd,
 			sessionManager: { getBranch: () => [] },
 			ui: { notify() {} },
-			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-7" }] },
-			model: { provider: "anthropic", id: "claude-opus-4-7" },
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-8" }] },
+			model: { provider: "anthropic", id: "claude-opus-4-8" },
 		});
 
 		// Global applyThinking: false is respected for non-locked primary

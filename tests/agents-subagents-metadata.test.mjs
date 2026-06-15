@@ -17,7 +17,7 @@ test("web-scout frontmatter has expected metadata fields", () => {
 		["web_search", "fetch_content", "get_search_content", "read", "grep", "find", "ls", "contact_supervisor"],
 	);
 	assert.equal(fm.model, "anthropic/claude-haiku-4-5");
-	assert.deepEqual(splitCommaList(fm.tlhOpenaiModels), ["openai-codex/gpt-5.4-mini", "openai/gpt-5.4-mini"]);
+	assert.deepEqual(splitCommaList(fm.tlhOpenaiModels), ["openai-codex/gpt-5.4-mini"]);
 	assert.equal(fm.thinking, "high");
 	assert.equal(fm.systemPromptMode, "replace");
 	assert.equal(fm.inheritProjectContext, "true");
@@ -57,9 +57,28 @@ test("loadSubagentMetadata exposes web-scout with expected model, tlhOpenaiModel
 
 	assert.ok(webScout, "web-scout should be present in loadSubagentMetadata()");
 	assert.equal(webScout.model, "anthropic/claude-haiku-4-5");
-	assert.deepEqual(webScout.tlhOpenaiModels, ["openai-codex/gpt-5.4-mini", "openai/gpt-5.4-mini"]);
+	assert.deepEqual(webScout.tlhOpenaiModels, ["openai-codex/gpt-5.4-mini"]);
+	assert.ok("preferOppositeProvider" in webScout);
+	assert.equal(webScout.preferOppositeProvider, undefined);
 	assert.equal(
 		webScout.description,
 		"Performs Exa-backed web research and URL fetch in an isolated read-only context.",
 	);
+});
+
+test("code-reviewer metadata prefers the opposite provider without an authoritative default model", () => {
+	const { frontmatter: fm } = readAgentPrompt("subagents", "code-reviewer");
+	const subagents = loadSubagentMetadata();
+	const codeReviewer = subagents.find((agent) => agent.name === "code-reviewer");
+
+	assert.equal(fm.model, undefined);
+	assert.equal(fm.preferOppositeProvider, "true");
+	assert.deepEqual(splitCommaList(fm.tlhOpenaiModels), ["openai-codex/gpt-5.5"]);
+	assert.deepEqual(splitCommaList(fm.tlhAnthropicModels), ["anthropic/claude-opus-4-8"]);
+
+	assert.ok(codeReviewer, "code-reviewer should be present in loadSubagentMetadata()");
+	assert.equal(codeReviewer.model, undefined);
+	assert.deepEqual(codeReviewer.tlhOpenaiModels, ["openai-codex/gpt-5.5"]);
+	assert.deepEqual(codeReviewer.tlhAnthropicModels, ["anthropic/claude-opus-4-8"]);
+	assert.equal(codeReviewer.preferOppositeProvider, true);
 });

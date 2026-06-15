@@ -4,14 +4,20 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-06-15
+
 ### Changed
 
+- The TLH git commit footer is now coauthor-only: `Co-authored-by: The Last Harness <hi@thelastharness.com>`. The decorative `🤖 Generated with …` heading line has been removed. GitHub and git log co-authorship attribution is unchanged. The attribution guard now requires a blank line before the coauthor trailer (or a footer-only message) to match git trailer parsing rules; commit messages with only a single newline before the trailer are rejected.
 - TLH now requires upstream Pi >=0.79.1. Installer checks, wrapper defaults, package metadata, and current install/update docs all use the raised runtime floor.
-- Bundled pi-subagents fork pin bumped to `tlh-v0.26.0-7`. The compact (non-expanded) subagent view now hides the artifact-path line — press Ctrl+O for the expanded view that still shows it — and renders the current tool command (e.g. long `bash` invocations) in full, wrapped to terminal width and capped at 3 lines with `…` on overflow instead of mid-flag `...` truncation.
+- The compact (non-expanded) subagent view now hides the artifact-path line — press Ctrl+O for the expanded view that still shows it — and renders the current tool command (e.g. long `bash` invocations) in full, wrapped to terminal width and capped at 3 lines with `…` on overflow instead of mid-flag `...` truncation.
+- `code-reviewer` now prefers an available opposite provider for review independence: Anthropic sessions try the OpenAI Codex subscription provider when it is available, OpenAI/OpenAI-Codex sessions try Anthropic Opus when it is available, and OpenAI API-only setups are not forced onto unavailable Codex-only defaults.
 
 ### Fixed
 
 - The TLH startup header now mirrors upstream Pi 0.79.1 project-trust behavior. It keeps `AGENTS.md` and `CLAUDE.md` visible as context even when trust is unresolved, hides trust-gated project `.pi` and `.agents/skills` resources until the project is trusted, and honors the nearest saved trust decision inherited from parent folders in the isolated TLH profile.
+- Bundled the updated `pi-subagents` tag with the observability fix for non-zero child exits and SIGTERM-like failures.
+- Bundled `pi-subagents` now cleans up run-owned background processes when terminal child runs finish, while soft pause and resume remain non-destructive.
 
 ## [0.19.0] - 2026-06-09
 
@@ -22,7 +28,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
-- Rush, product, and bug-hunter now run at fixed thinking levels. Attempting to change thinking under these primaries with `/thinking` or `/effort` returns a clear error: `Thinking is locked at "<level>" for the <name> primary agent.` The locked levels are: rush → low (off on OpenAI/OpenAI-Codex), product → high, bug-hunter → high.
+- Rush, product, and bug-hunter now run at fixed thinking levels. Attempting to change thinking under these primaries with `/thinking` or `/effort` returns a clear error: `Thinking is locked at "<level>" for the <name> primary agent.` The locked levels are: rush → low (off on the OpenAI Codex subscription provider), product → high, bug-hunter → high.
 - Architect now enforces a minimum thinking floor of medium. `/thinking` and `/effort` cannot set architect thinking below medium. Any session currently running architect below medium will be bumped to architect's default thinking on the next primary apply (session start or primary switch).
 
 ## [0.18.0] - 2026-06-08

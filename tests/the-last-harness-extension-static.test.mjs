@@ -148,6 +148,9 @@ test("before_agent_start reapplies primary defaults without a one-shot model gat
 	assert.match(applyPrimaryThinking, /currentThinking === thinking/);
 	assert.match(applyPrimaryThinking, /currentThinkingSatisfiesPrimaryFloor\(primary, currentThinking\)/);
 	assert.match(promptsSource, /preferCurrentOpenaiModel: parseBooleanValue\(frontmatter\.preferCurrentOpenaiModel\)/);
+	assert.match(promptsSource, /preferOppositeProvider: parseBooleanValue\(frontmatter\.preferOppositeProvider\)/);
+	assert.match(promptsSource, /preferOppositeProvider: agent\.preferOppositeProvider/);
+	assert.match(typesSource, /preferOppositeProvider\?: boolean;/);
 	assert.match(promptsSource, /applyModel: parseBooleanValue\(frontmatter\.applyModel\)/);
 	assert.match(promptsSource, /applyThinking: parseBooleanValue\(frontmatter\.applyThinking\)/);
 	assert.match(promptsSource, /lockThinking: parseBooleanValue\(frontmatter\.lockThinking\)/);
@@ -171,8 +174,8 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	const rush = primaryAgents.get("rush");
 	assert.ok(architect, "architect primary prompt should load");
 	assert.ok(rush, "Rush primary prompt should load");
-	assert.deepEqual(architect.tlhOpenaiModels, ["openai-codex/gpt-5.5", "openai/gpt-5.5"]);
-	assert.deepEqual(rush.tlhOpenaiModels, ["openai-codex/gpt-5.5", "openai/gpt-5.5"]);
+	assert.deepEqual(architect.tlhOpenaiModels, ["openai-codex/gpt-5.5"]);
+	assert.deepEqual(rush.tlhOpenaiModels, ["openai-codex/gpt-5.5"]);
 	assert.equal(rush.thinking, "low");
 	assert.equal(rush.tlhOpenaiThinking, "off");
 	assert.equal(rush.preferCurrentOpenaiModel, true);
@@ -200,7 +203,7 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	assert.match(rush.systemPrompt, /Do not delegate implementation to `developer`/);
 	assert.deepEqual(
 		loadSubagentMetadata().find((agent) => agent.name === "developer")?.tlhOpenaiModels,
-		["openai-codex/gpt-5.4", "openai/gpt-5.4"],
+		["openai-codex/gpt-5.4"],
 	);
 
 	const primaryPrompt = buildTlhSystemPrompt(rush, loadSubagentMetadata(), true);

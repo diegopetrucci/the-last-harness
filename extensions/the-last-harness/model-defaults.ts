@@ -9,9 +9,11 @@ export type AgentModelDefaults = {
 	name: string;
 	model?: string;
 	tlhOpenaiModels?: string[];
+	tlhAnthropicModels?: string[];
 	thinking?: ThinkingLevel;
 	tlhOpenaiThinking?: ThinkingLevel;
 	preferCurrentOpenaiModel?: boolean;
+	preferOppositeProvider?: boolean;
 };
 
 export type ProviderAwareAgentDefaults<T extends ProviderModelReference = ProviderModelReference> = {
@@ -20,6 +22,7 @@ export type ProviderAwareAgentDefaults<T extends ProviderModelReference = Provid
 };
 
 const OPENAI_PROVIDERS = new Set(["openai-codex", "openai"]);
+const ANTHROPIC_PROVIDERS = new Set(["anthropic"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -39,6 +42,10 @@ export function formatProviderModelReference(model: ProviderModelReference): str
 
 function isOpenaiProvider(provider: string | undefined): boolean {
 	return Boolean(provider && OPENAI_PROVIDERS.has(provider));
+}
+
+function isAnthropicProvider(provider: string | undefined): boolean {
+	return Boolean(provider && ANTHROPIC_PROVIDERS.has(provider));
 }
 
 export function findAvailableProviderModel<T extends ProviderModelReference>(
@@ -63,6 +70,28 @@ function availableOpenaiCandidate<T extends ProviderModelReference>(
 	return findAvailableProviderModel(availableModels, candidate);
 }
 
+function availableCodexCandidate<T extends ProviderModelReference>(
+	availableModels: readonly T[],
+	candidate: string | undefined,
+): T | undefined {
+	const parsed = parseProviderModelReference(candidate);
+	if (!parsed || parsed.provider !== "openai-codex") {
+		return undefined;
+	}
+	return findAvailableProviderModel(availableModels, candidate);
+}
+
+function availableAnthropicCandidate<T extends ProviderModelReference>(
+	availableModels: readonly T[],
+	candidate: string | undefined,
+): T | undefined {
+	const parsed = parseProviderModelReference(candidate);
+	if (!parsed || !isAnthropicProvider(parsed.provider)) {
+		return undefined;
+	}
+	return findAvailableProviderModel(availableModels, candidate);
+}
+
 function currentProviderOpenaiCandidate<T extends ProviderModelReference>(
 	agent: AgentModelDefaults | undefined,
 	availableModels: readonly T[],
@@ -77,7 +106,52 @@ function currentProviderOpenaiCandidate<T extends ProviderModelReference>(
 	return availableOpenaiCandidate(availableModels, currentProviderCandidate);
 }
 
-export function selectProviderAwareAgentModel<T extends ProviderModelReference>(
+function currentProviderAnthropicCandidate<T extends ProviderModelReference>(
+	agent: AgentModelDefaults | undefined,
+	availableModels: readonly T[],
+	currentProvider?: string,
+): T | undefined {
+	if (!isAnthropicProvider(currentProvider)) {
+		return undefined;
+	}
+	const currentProviderCandidate = agent?.tlhAnthropicModels?.find(
+		(candidate) => parseProviderModelReference(candidate)?.provider === currentProvider,
+	);
+	return availableAnthropicCandidate(availableModels, currentProviderCandidate);
+}
+
+function selectOppositeProviderPreferredAgentModel<T extends ProviderModelReference>(
+	agent: AgentModelDefaults | undefined,
+	availableModels: readonly T[],
+	currentProvider?: string,
+): T | undefined {
+	if (!agent?.preferOppositeProvider) {
+		return undefined;
+	}
+
+	if (isAnthropicProvider(currentProvider)) {
+		for (const candidate of agent.tlhOpenaiModels ?? []) {
+			const model = availableCodexCandidate(availableModels, candidate);
+			if (model) {
+				return model;
+			}
+		}
+		return undefined;
+	}
+
+	if (isOpenaiProvider(currentProvider)) {
+		for (const candidate of agent.tlhAnthropicModels ?? []) {
+			const model = availableAnthropicCandidate(availableModels, candidate);
+			if (model) {
+				return model;
+			}
+		}
+	}
+
+	return undefined;
+}
+
+function selectStandardProviderAwareAgentModel<T extends ProviderModelReference>(
 	agent: AgentModelDefaults | undefined,
 	availableModels: readonly T[],
 	currentProvider?: string,
@@ -91,7 +165,9 @@ export function selectProviderAwareAgentModel<T extends ProviderModelReference>(
 		return defaultModel;
 	}
 
-	const currentProviderModel = currentProviderOpenaiCandidate(agent, availableModels, currentProvider);
+	const currentProviderModel =
+		currentProviderOpenaiCandidate(agent, availableModels, currentProvider)
+		?? currentProviderAnthropicCandidate(agent, availableModels, currentProvider);
 	if (currentProviderModel) {
 		return currentProviderModel;
 	}
@@ -103,7 +179,23 @@ export function selectProviderAwareAgentModel<T extends ProviderModelReference>(
 		}
 	}
 
+	for (const candidate of agent.tlhAnthropicModels ?? []) {
+		const model = availableAnthropicCandidate(availableModels, candidate);
+		if (model) {
+			return model;
+		}
+	}
+
 	return undefined;
+}
+
+export function selectProviderAwareAgentModel<T extends ProviderModelReference>(
+	agent: AgentModelDefaults | undefined,
+	availableModels: readonly T[],
+	currentProvider?: string,
+): T | undefined {
+	return selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider)
+		?? selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider);
 }
 
 export function selectProviderAwareAgentDefaults<T extends ProviderModelReference>(
@@ -111,10 +203,12 @@ export function selectProviderAwareAgentDefaults<T extends ProviderModelReferenc
 	availableModels: readonly T[],
 	currentProvider?: string,
 ): ProviderAwareAgentDefaults<T> {
-	const model = agent?.preferCurrentOpenaiModel
+	const oppositeProviderModel = selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider);
+	const standardModel = agent?.preferCurrentOpenaiModel
 		? currentProviderOpenaiCandidate(agent, availableModels, currentProvider)
-			?? selectProviderAwareAgentModel(agent, availableModels, currentProvider)
-		: selectProviderAwareAgentModel(agent, availableModels, currentProvider);
+			?? selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider)
+		: selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider);
+	const model = oppositeProviderModel ?? standardModel;
 	const thinking = isOpenaiProvider(model?.provider ?? currentProvider) && agent?.tlhOpenaiThinking
 		? agent.tlhOpenaiThinking
 		: agent?.thinking;
