@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-06-15
+
 ### Changed
 
 - The TLH git commit footer is now coauthor-only: `Co-authored-by: The Last Harness <hi@thelastharness.com>`. The decorative `🤖 Generated with …` heading line has been removed. GitHub and git log co-authorship attribution is unchanged. The attribution guard now requires a blank line before the coauthor trailer (or a footer-only message) to match git trailer parsing rules; commit messages with only a single newline before the trailer are rejected.
