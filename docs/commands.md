@@ -48,6 +48,7 @@ These commands are registered by the TLH extension bundled with this profile.
 |---------|-------------|
 | `/thinking` | Pick the model thinking level, subject to the active primary-agent thinking constraints |
 | `/effort` | Supported alias for `/thinking`, subject to the same active primary-agent thinking constraints |
+| `/experimental` | List or change TLH experimental features (currently no feature flags are registered) |
 | `/review` | Open an interactive code-review mode picker (requires the architect primary agent) |
 | `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
 | `/tlh-changelog` | Show TLH release notes from the packaged `CHANGELOG.md` |
@@ -59,6 +60,10 @@ These commands are registered by the TLH extension bundled with this profile.
 ### `/thinking` and `/effort`
 
 Both `/thinking` and `/effort` are subject to the active primary-agent thinking constraints. **Locked** primaries — rush, product, and bug-hunter — each run at a fixed thinking level and return an error if you try to change it (`Thinking is locked at "<level>" for the <name> primary agent.`). **Architect** enforces a medium floor: `/thinking off`, `/thinking minimal`, `/thinking low`, `/effort off`, `/effort minimal`, and `/effort low` are rejected with `architect requires at least medium thinking.` The floor does not apply when the primary is disabled.
+
+### `/experimental`
+
+`/experimental` keeps TLH's feature-flag command surface available for future use. Right now it reports that no TLH experimental features are registered, and stale `tlh.experimental` settings do not re-enable retired behavior.
 
 ---
 

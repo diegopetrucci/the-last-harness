@@ -87,6 +87,12 @@ export type TlhPrimaryAgentConfig = {
 	applyThinking?: boolean;
 };
 
+export type TlhExperimentalFeatureId = string;
+
+export type TlhExperimentalConfig = {
+	enabledFeatures?: string[];
+};
+
 export type TlhPrimaryAgentSelection = "architect" | "rush" | "product" | "bug-hunter" | "disabled";
 
 export type TlhPrimaryAgentSessionState = {
@@ -112,6 +118,7 @@ export type TlhSettings = {
 		telemetry?: TlhTelemetryConfig;
 		tickets?: TlhTicketsConfig;
 		primaryAgent?: TlhPrimaryAgentConfig;
+		experimental?: TlhExperimentalConfig;
 		contextCap?: TlhContextCapConfig;
 	};
 };
