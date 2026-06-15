@@ -67,6 +67,8 @@ function createCtx(options) {
 		getContextUsage: () => ({ tokens: 1000, contextWindow: 200000, percent: 12.3 }),
 		ui: {
 			addAutocompleteProvider() {},
+			setEditorComponent() {},
+			getEditorComponent: () => undefined,
 			setFooter(factory) {
 				factory({ requestRender: options.requestRender }, theme, footerData);
 			},

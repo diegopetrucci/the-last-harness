@@ -4,6 +4,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+- TLH now uses queue-first active-turn editor defaults in its isolated profile: while the agent is active, Enter queues follow-ups by default, Alt/Option+Enter steers or interjects, and Enter still submits normally once the agent is idle again.
 - Bundled the updated `pi-subagents` tag with the completion-guard fix for VCS/PR false positives.
 
 ## [0.20.0] - 2026-06-15

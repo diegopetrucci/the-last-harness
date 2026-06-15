@@ -89,7 +89,10 @@ function clone(value) {
 	return JSON.parse(JSON.stringify(value));
 }
 
-const legacyKeybindingOwners = new Map([["app.thinking.cycle", ["cycleThinkingLevel"]]]);
+const legacyKeybindingOwners = new Map([
+	["app.message.followUp", ["followUp"]],
+	["app.thinking.cycle", ["cycleThinkingLevel"]],
+]);
 
 function hasExistingKeybindingOwner(keybindings, key) {
 	if (Object.hasOwn(keybindings, key)) return true;

@@ -41,8 +41,11 @@ function symlinkFile(target, path) {
 	symlinkSync(target, path);
 }
 
-test("packaged keybinding defaults disable app.thinking.cycle", () => {
-	assert.deepEqual(readJson(keybindingDefaults), { "app.thinking.cycle": [] });
+test("packaged keybinding defaults swap active-turn follow-up to Enter and disable app.thinking.cycle", () => {
+	assert.deepEqual(readJson(keybindingDefaults), {
+		"app.message.followUp": "enter",
+		"app.thinking.cycle": [],
+	});
 });
 
 test("merge sets missing defaults, preserves existing keys, and backs up existing keybindings", () => {
@@ -55,6 +58,7 @@ test("merge sets missing defaults, preserves existing keys, and backs up existin
 	assert.equal(output, "");
 	assert.deepEqual(readJson(fixture.keybindings), {
 		"app.open": ["ctrl+o"],
+		"app.message.followUp": "enter",
 		"app.thinking.cycle": [],
 	});
 	const backups = backupFiles(fixture.agentDir);
@@ -93,9 +97,12 @@ test("merge rejects symlinked keybindings targets before creating backups", () =
 	assert.deepEqual(backupFiles(fixture.agentDir), []);
 });
 
-test("merge keeps a user-owned value for an existing default key", () => {
+test("merge keeps user-owned values for existing default keys", () => {
 	const fixture = tempFixture();
-	const original = { "app.thinking.cycle": ["shift+tab"] };
+	const original = {
+		"app.message.followUp": ["ctrl+j"],
+		"app.thinking.cycle": ["shift+tab"],
+	};
 	writeFileSync(fixture.keybindings, JSON.stringify(original, null, 2));
 
 	const output = runMerge(["--quiet"], fixture.agentDir);
@@ -113,6 +120,26 @@ test("merge treats legacy cycleThinkingLevel as user-owned app.thinking.cycle", 
 	const output = runMerge(["--quiet"], fixture.agentDir);
 
 	assert.equal(output, "");
+	assert.deepEqual(readJson(fixture.keybindings), {
+		...original,
+		"app.message.followUp": "enter",
+	});
+	const backups = backupFiles(fixture.agentDir);
+	assert.equal(backups.length, 1);
+	assert.deepEqual(readJson(join(fixture.agentDir, backups[0])), original);
+});
+
+test("merge treats legacy followUp as user-owned app.message.followUp", () => {
+	const fixture = tempFixture();
+	const original = {
+		followUp: ["ctrl+j"],
+		cycleThinkingLevel: ["ctrl+shift+t"],
+	};
+	writeFileSync(fixture.keybindings, JSON.stringify(original, null, 2));
+
+	const output = runMerge(["--quiet"], fixture.agentDir);
+
+	assert.equal(output, "");
 	assert.deepEqual(readJson(fixture.keybindings), original);
 	assert.deepEqual(backupFiles(fixture.agentDir), []);
 });
@@ -122,6 +149,7 @@ test("dry-run reports changes without writing keybindings", () => {
 
 	const output = runMerge(["--dry-run"], fixture.agentDir);
 
+	assert.match(output, /Would set app\.message\.followUp/);
 	assert.match(output, /Would set app\.thinking\.cycle/);
 	assert.match(output, /Dry run only/);
 	assert.equal(existsSync(fixture.keybindings), false);

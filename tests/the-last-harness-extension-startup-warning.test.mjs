@@ -92,6 +92,8 @@ function createCtx({ cwd, notifications, hasUI = true, onSetHeader, projectTrust
 		getContextUsage: () => undefined,
 		ui: {
 			addAutocompleteProvider() {},
+			setEditorComponent() {},
+			getEditorComponent: () => undefined,
 			setFooter() {},
 			setHeader(factory) {
 				onSetHeader?.(factory);

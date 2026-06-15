@@ -1,12 +1,12 @@
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { getKeybindings, truncateToWidth } from "@earendil-works/pi-tui";
 import {
-	keyText,
 	type ExtensionAPI,
 	type ExtensionContext,
 	type ReadonlyFooterDataProvider,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
 import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
+import { getTlhActiveTurnHintKeys } from "./active-turn-controls.js";
 import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
 import { formatCompactTokenCount, formatHomePath, sanitizeStatusText } from "./common.js";
 import type { FooterGitCache } from "./footer-git-cache.js";
@@ -129,11 +129,13 @@ export function createTlhFooter(
 			// Hint line (conditional on pending editor text during an active turn)
 			const editorText = ctx.ui.getEditorText();
 			if (editorText.length > 0 && !ctx.isIdle()) {
-				const steerKey = keyText("tui.input.submit") || "enter";
-				const queueKey = keyText("app.message.followUp") || "alt+enter";
+				const { queueKey, steerKey, swapped } = getTlhActiveTurnHintKeys(getKeybindings());
 				const steeringHint = `${theme.fg("dim", steerKey)}${theme.fg("muted", " steer")}`;
 				const queueHint = `${theme.fg("dim", queueKey)}${theme.fg("muted", " queue follow-up")}`;
-				lines.push(truncateToWidth(`${steeringHint}${theme.fg("muted", " · ")}${queueHint}`, width, theme.fg("dim", "...")));
+				const hintText = swapped
+					? `${queueHint}${theme.fg("muted", " · ")}${steeringHint}`
+					: `${steeringHint}${theme.fg("muted", " · ")}${queueHint}`;
+				lines.push(truncateToWidth(hintText, width, theme.fg("dim", "...")));
 			}
 
 			// Extension status line (conditional on registered extension statuses)
