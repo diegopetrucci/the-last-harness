@@ -174,6 +174,10 @@ function matchesSubagentName(value: unknown, target: string): boolean {
 	return typeof value === "string" && value.trim().toLowerCase() === target;
 }
 
+function isSubagentResumeAction(input: unknown): boolean {
+	return isRecord(input) && matchesSubagentName(input.action, "resume");
+}
+
 function subagentCallTargetsAgent(input: unknown, target: string): boolean {
 	if (!isRecord(input)) {
 		return false;
@@ -199,6 +203,10 @@ function subagentCallTargetsAgent(input: unknown, target: string): boolean {
 		}
 	}
 	return false;
+}
+
+function rushResumeDelegationReason(): string {
+	return "TLH Rush may not use subagent action=resume because resuming by run id or index can continue a prior developer subagent without an explicit safe target. Rush must edit directly or start a new allowed subagent with an explicit agent target.";
 }
 
 function rushDeveloperDelegationReason(): string {
@@ -612,6 +620,9 @@ function createTlhPrimaryAgentRuntime(
 			const selection = currentPrimaryAgentSelection();
 			if (!isEnabledPrimaryAgentSelection(selection)) {
 				return undefined;
+			}
+			if (selection === "rush" && isSubagentResumeAction(event.input)) {
+				return { block: true, reason: rushResumeDelegationReason() };
 			}
 			if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
 				return { block: true, reason: rushDeveloperDelegationReason() };

@@ -28,3 +28,5 @@ For installer tests, prefer temporary `--agent-dir` and `--bin-dir` values. Do n
 ## Final validation guidance
 
 Final validation should use this document as the reference for which repository checks to run.
+
+After pushing changes that rely on CI or GitHub Actions, monitor the relevant checks until they are green. Do not stop at `git push`; investigate and fix CI failures before considering the work complete.

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -37,6 +37,20 @@ function readJson(path) {
 
 function packageSourceOf(entry) {
 	return typeof entry === "string" ? entry : entry?.source;
+}
+
+function backupFiles(settingsPath) {
+	return readdirSync(dirname(settingsPath))
+		.filter((name) => name.startsWith("settings.json.backup-tlh-defaults-"))
+		.sort();
+}
+
+function symlinkFile(target, path) {
+	if (process.platform === "win32") {
+		symlinkSync(target, path, "file");
+		return;
+	}
+	symlinkSync(target, path);
 }
 
 const disablingExtensionFilterCases = [
@@ -142,6 +156,7 @@ test("installed tlh-defaults helper can resolve its copied default-extension lib
 		"TLH_DEFAULTS_SCRIPT",
 		"TLH_INSTALL_PACKAGE_SOURCE_LIB",
 		"TLH_INSTALL_PATHS_LIB",
+		"TLH_SAFE_PROFILE_WRITE_LIB",
 		"TLH_INSTALL_UTILS_LIB",
 		"DEFAULT_EXTENSIONS_LIB",
 		"DEFAULT_EXTENSIONS_FILE",
@@ -379,6 +394,58 @@ test("tlh-defaults enable cleans stale critical opt-outs while preserving non-cr
 	const settings = readJson(fixture.settings);
 	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["helper"]);
 	assert.deepEqual(settings.packages, ["npm:subagents"]);
+});
+
+test("tlh-defaults preserves settings and backup file modes when rewriting settings", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "helper",
+			source: "npm:helper",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({ packages: ["npm:helper"] }, null, 2));
+	chmodSync(fixture.settings, 0o640);
+
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"disable", "helper",
+	]);
+
+	assert.equal(lstatSync(fixture.settings).mode & 0o777, 0o640);
+	const backups = backupFiles(fixture.settings);
+	assert.equal(backups.length, 1);
+	assert.equal(lstatSync(join(dirname(fixture.settings), backups[0])).mode & 0o777, 0o640);
+});
+
+test("tlh-defaults rejects symlinked settings targets before creating backups", () => {
+	const fixture = tempFixture();
+	const externalDir = mkdtempSync(join(tmpdir(), "tlh-defaults-symlink-target-"));
+	const externalSettings = join(externalDir, "settings.json");
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "helper",
+			source: "npm:helper",
+		},
+	], null, 2));
+	writeFileSync(externalSettings, JSON.stringify({ packages: ["npm:helper"] }, null, 2));
+	symlinkFile(externalSettings, fixture.settings);
+
+	const result = spawnSync(process.execPath, [
+		defaultsScript,
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"disable", "helper",
+	], {
+		cwd: repoRoot,
+		env: process.env,
+		encoding: "utf8",
+	});
+
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /symlinked TLH defaults settings source/);
+	assert.deepEqual(backupFiles(fixture.settings), []);
 });
 
 test("tlh-defaults enable repairs targeted default extension load order for rtk", () => {
@@ -939,7 +1006,7 @@ test("bundled manifest contains subagents and intercom entries with correct crit
 	const intercom = bundled.find(({ id }) => id === "intercom");
 
 	assert.ok(subagents, "bundled subagents entry should exist");
-	assert.equal(subagents.source, "git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-9");
+	assert.equal(subagents.source, "git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-10");
 	assert.equal(subagents.critical, true, "subagents must stay critical");
 	assert.deepEqual(subagents.aliases, ["pi-subagents"]);
 	assert.deepEqual(subagents.replaces, [

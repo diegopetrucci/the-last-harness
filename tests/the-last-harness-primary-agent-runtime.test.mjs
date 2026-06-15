@@ -1225,7 +1225,7 @@ test("enabled primary mode blocks disallowed nested delegation targets after for
 	assert.equal(event.input.context, "fresh");
 });
 
-test("enabled primary mode normalizes safe management list/get scopes and blocks non-user management scopes", async () => {
+test("enabled primary mode normalizes safe management list/get/resume inputs and blocks unsafe resume context or non-user scopes", async () => {
 	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
 	const ctx = createToolCallContext([
 		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
@@ -1234,7 +1234,17 @@ test("enabled primary mode normalizes safe management list/get scopes and blocks
 	const listBothEvent = { toolName: "subagent", input: { action: "list", agentScope: "both" } };
 	const getEvent = { toolName: "subagent", input: { action: "get", agentScope: "" } };
 	const getBothEvent = { toolName: "subagent", input: { action: "get", agentScope: "both" } };
-	const blockedEvent = { toolName: "subagent", input: { action: "get", agentScope: "project" } };
+	const resumeEvent = {
+		toolName: "subagent",
+		input: { action: "resume", id: "run-123", message: "Continue the approved ticket.", agentScope: "", context: "" },
+	};
+	const resumeBothEvent = {
+		toolName: "subagent",
+		input: { action: "resume", id: "run-456", message: "Continue the approved ticket.", agentScope: "both" },
+	};
+	const blockedGetEvent = { toolName: "subagent", input: { action: "get", agentScope: "project" } };
+	const blockedResumeScopeEvent = { toolName: "subagent", input: { action: "resume", id: "run-123", agentScope: "system" } };
+	const blockedResumeContextEvent = { toolName: "subagent", input: { action: "resume", id: "run-123", context: "resume" } };
 
 	assert.equal(await toolCall(listEvent, ctx), undefined);
 	assert.equal(listEvent.input.agentScope, "user");
@@ -1244,9 +1254,42 @@ test("enabled primary mode normalizes safe management list/get scopes and blocks
 	assert.equal(getEvent.input.agentScope, "user");
 	assert.equal(await toolCall(getBothEvent, ctx), undefined);
 	assert.equal(getBothEvent.input.agentScope, "user");
-	assert.deepEqual(await toolCall(blockedEvent, ctx), {
+	assert.equal(await toolCall(resumeEvent, ctx), undefined);
+	assert.equal(resumeEvent.input.agentScope, "user");
+	assert.equal(resumeEvent.input.context, "fresh");
+	assert.equal(await toolCall(resumeBothEvent, ctx), undefined);
+	assert.equal(resumeBothEvent.input.agentScope, "user");
+	assert.equal(resumeBothEvent.input.context, "fresh");
+	assert.deepEqual(await toolCall(blockedGetEvent, ctx), {
 		block: true,
 		reason: 'TLH primary-agent subagent get calls may not use agentScope: "project". TLH minor agents must run from the isolated user scope.',
+	});
+	assert.deepEqual(await toolCall(blockedResumeScopeEvent, ctx), {
+		block: true,
+		reason: 'TLH primary-agent subagent resume calls may not use agentScope: "system". TLH minor agents must run from the isolated user scope.',
+	});
+	assert.deepEqual(await toolCall(blockedResumeContextEvent, ctx), {
+		block: true,
+		reason:
+			'TLH primary-agent subagent resume may not use context: "resume". TLH child sessions must start fresh so parent primary-agent/Gnosis context is not leaked.',
+	});
+});
+
+test("Rush blocks subagent resume with a Rush-specific reason", async () => {
+	const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+	const event = {
+		toolName: "subagent",
+		input: { action: "resume", id: "run-123", message: "Continue the approved ticket.", agentScope: "", context: "" },
+	};
+	const ctx = createToolCallContext([
+		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
+	]);
+
+	const result = await toolCall(event, ctx);
+	assert.deepEqual(result, {
+		block: true,
+		reason:
+			"TLH Rush may not use subagent action=resume because resuming by run id or index can continue a prior developer subagent without an explicit safe target. Rush must edit directly or start a new allowed subagent with an explicit agent target.",
 	});
 });
 

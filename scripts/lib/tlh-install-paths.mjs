@@ -98,6 +98,9 @@ export function assertProfilePathWithinAgent(config, path, label = "TLH profile 
 
 export function ensureSafeProfileDir(config, relativePath, label = "TLH profile directory", options = {}) {
 	validateProfileRelativePath(relativePath, label);
+	if (isSymlink(config.agentDir)) {
+		throw new Error(`refusing to write ${label} through symlinked TLH profile path: ${config.agentDir}`);
+	}
 	const root = realpathForCompare(config.agentDir);
 	assertProfilePathWithinAgent(config, root, label, options);
 	if (existsSync(root) && !lstatSync(root).isDirectory()) {
