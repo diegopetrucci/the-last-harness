@@ -9,7 +9,6 @@ import { cleanupTempDir, createIsolatedProfileFixture, withEnv } from "./test-fi
 
 const jiti = createJiti(import.meta.url);
 const { TLH_DEFAULT_COMMIT_ATTRIBUTION } = await jiti.import("../extensions/the-last-harness/attribution.ts");
-const { RUN_TESTS_LAST_FEATURE } = await jiti.import("../extensions/the-last-harness/experimental.ts");
 const { registerTlhPrimaryAgentRuntime } = await jiti.import("../extensions/the-last-harness/primary-agent-runtime.ts");
 
 function createPiHarness() {
@@ -172,40 +171,27 @@ test("before_agent_start adds TLH commit attribution guidance only when enabled"
 });
 
 
-test("before_agent_start gates run-tests-last experimental guidance behind isolated TLH settings", async (t) => {
+test("before_agent_start includes permanent architect final-validation guidance and ignores stale tlh.experimental settings", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const { beforeAgentStart } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { beforeAgentStart } = registerRuntimeHarness();
+		const assertValidationWorkflow = (systemPrompt) => {
+			assert.match(systemPrompt, /final-validation ticket.*depends on all implementation tickets/i);
+			assert.match(systemPrompt, /implementation-ticket validation narrow and ticket-scoped/i);
+			assert.match(systemPrompt, /VALIDATING\.md.*otherwise use repo-discovered validation commands/i);
+			assert.match(systemPrompt, /Make any validation deferral explicit in the ticket text/i);
+			assert.doesNotMatch(systemPrompt, /## TLH Experimental Feature:/);
+		};
+
 		const defaultPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
-		assert.doesNotMatch(defaultPrompt.systemPrompt, /## TLH Experimental Feature: run-tests-last/);
-		assert.doesNotMatch(defaultPrompt.systemPrompt, /separate final-validation ticket/i);
-		assert.doesNotMatch(defaultPrompt.systemPrompt, /VALIDATING\.md.*otherwise use repo-discovered validation commands/i);
+		assertValidationWorkflow(defaultPrompt.systemPrompt);
 
-		for (const enabledFeatures of [true, [123]]) {
-			writeFileSync(
-				join(fixture.agent, "settings.json"),
-				`${JSON.stringify({ tlh: { experimental: { enabledFeatures } } }, null, 2)}\n`,
-			);
-			const malformedPrompt = await beforeAgentStart(
-				{ systemPrompt: "base prompt" },
-				createToolCallContext([], undefined, { cwd: fixture.cwd }),
-			);
-			assert.doesNotMatch(malformedPrompt.systemPrompt, /## TLH Experimental Feature: run-tests-last/);
-			assert.doesNotMatch(malformedPrompt.systemPrompt, /separate final-validation ticket/i);
-			assert.doesNotMatch(malformedPrompt.systemPrompt, /VALIDATING\.md.*otherwise use repo-discovered validation commands/i);
+		for (const experimental of [{ enabledFeatures: true }, { enabledFeatures: [123] }, { enabledFeatures: [] }, { enabledFeatures: ["legacy-flag"] }]) {
+			writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { experimental } }, null, 2)}\n`);
+			const prompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+			assertValidationWorkflow(prompt.systemPrompt);
 		}
-
-		writeFileSync(
-			join(fixture.agent, "settings.json"),
-			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [RUN_TESTS_LAST_FEATURE] } } }, null, 2)}\n`,
-		);
-		const enabledPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
-		assert.match(enabledPrompt.systemPrompt, /## TLH Experimental Feature: run-tests-last/);
-		assert.match(enabledPrompt.systemPrompt, /separate final-validation ticket/i);
-		assert.match(enabledPrompt.systemPrompt, /depends on all implementation tickets/i);
-		assert.match(enabledPrompt.systemPrompt, /VALIDATING\.md.*otherwise use repo-discovered validation commands/i);
-		assert.match(enabledPrompt.systemPrompt, /Make any validation deferral explicit in the ticket text/i);
 	});
 });
 

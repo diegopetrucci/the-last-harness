@@ -20,7 +20,6 @@ import {
 } from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME } from "./constants.js";
-import { buildPrimaryExperimentalPrompt } from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import { applyProviderAwareSubagentModels, selectProviderAwareAgentDefaults } from "./model-defaults.js";
 import { isThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
@@ -586,7 +585,6 @@ function createTlhPrimaryAgentRuntime(
 			const prompts = [
 				event.systemPrompt,
 				buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled),
-				buildPrimaryExperimentalPrompt(activePrimaryAgent(), settings.tlh?.experimental),
 				buildTlhCommitAttributionPrompt(commitAttributionState),
 			];
 			if (shouldAppendGnosisPrompt(ctx.cwd)) {

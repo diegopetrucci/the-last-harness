@@ -51,13 +51,9 @@ test("architect.md keeps base validation planning ticket-specific", () => {
 	);
 });
 
-test("architect.md leaves run-tests-last final-validation workflow out of the base prompt", () => {
-	assert.doesNotMatch(
-		architectNormalizedBody,
-		/implementation ticket.*do(?:es)? not require tests or validation.*final validation ticket/i,
-	);
-	assert.doesNotMatch(
-		architectNormalizedBody,
-		/final validation ticket.*depends on all implementation tickets.*when .*VALIDATING\.md.*otherwise.*repo-discovered validation commands/i,
-	);
+test("architect.md permanently includes the final-validation-ticket workflow", () => {
+	assert.match(architectNormalizedBody, /final-validation ticket.*depends on all implementation tickets/i);
+	assert.match(architectNormalizedBody, /implementation-ticket validation narrow and ticket-scoped/i);
+	assert.match(architectNormalizedBody, /when [`']?VALIDATING\.md[`']? is present.*otherwise use repo-discovered validation commands/i);
+	assert.match(architectNormalizedBody, /make any validation deferral explicit in the ticket text/i);
 });
