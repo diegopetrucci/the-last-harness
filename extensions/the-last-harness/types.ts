@@ -85,6 +85,7 @@ export type TlhPrimaryAgentConfig = {
 	selected?: string;
 	applyModel?: boolean;
 	applyThinking?: boolean;
+	modelOverrides?: Record<string, string>;
 };
 
 export type TlhExperimentalFeatureId = string;

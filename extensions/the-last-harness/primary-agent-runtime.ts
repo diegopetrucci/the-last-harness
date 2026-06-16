@@ -93,6 +93,71 @@ function parseTlhSettingsContent(content: string | undefined): Record<string, un
 	return parsed;
 }
 
+function writeTlhPrimaryAgentModelOverride(
+	cwd: string,
+	primary: TlhPrimaryAgentSelection,
+	modelKey: string | undefined,
+): TlhPrimaryAgentWriteResult {
+	return withLockedTlhSettingsWrite(cwd, "Refusing to write model-override settings outside the isolated TLH profile.", (current) => {
+		const settings = parseTlhSettingsContent(current);
+		const rawTlh = settings.tlh;
+		let tlh: Record<string, unknown>;
+		if (rawTlh === undefined) {
+			tlh = {};
+			settings.tlh = tlh;
+		} else if (isRecord(rawTlh)) {
+			tlh = rawTlh;
+		} else {
+			throw new Error("settings.tlh must be an object to update model-override settings.");
+		}
+
+		const rawPrimaryAgent = tlh.primaryAgent;
+		let primaryAgent: Record<string, unknown>;
+		if (rawPrimaryAgent === undefined) {
+			primaryAgent = {};
+			tlh.primaryAgent = primaryAgent;
+		} else if (isRecord(rawPrimaryAgent)) {
+			primaryAgent = rawPrimaryAgent;
+		} else {
+			throw new Error("settings.tlh.primaryAgent must be an object to update model-override settings.");
+		}
+
+		const rawModelOverrides = primaryAgent.modelOverrides;
+		let modelOverrides: Record<string, unknown>;
+		if (rawModelOverrides === undefined) {
+			modelOverrides = {};
+			primaryAgent.modelOverrides = modelOverrides;
+		} else if (isRecord(rawModelOverrides)) {
+			modelOverrides = rawModelOverrides;
+		} else {
+			throw new Error("settings.tlh.primaryAgent.modelOverrides must be an object.");
+		}
+
+		const existingOverride = modelOverrides[primary];
+		if (modelKey === undefined) {
+			if (!Object.prototype.hasOwnProperty.call(modelOverrides, primary)) {
+				return { changed: false };
+			}
+			delete modelOverrides[primary];
+		} else {
+			if (existingOverride === modelKey) {
+				return { changed: false };
+			}
+			modelOverrides[primary] = modelKey;
+		}
+
+		// Clean up empty modelOverrides object
+		if (Object.keys(modelOverrides).length === 0) {
+			delete primaryAgent.modelOverrides;
+		}
+
+		return {
+			changed: true,
+			nextContent: `${JSON.stringify(settings, null, 2)}\n`,
+		};
+	});
+}
+
 function writeTlhPrimaryAgentDefault(cwd: string, selection: TlhPrimaryAgentSelection | undefined): TlhPrimaryAgentWriteResult {
 	return withLockedTlhSettingsWrite(cwd, "Refusing to write primary-agent settings outside the isolated TLH profile.", (current) => {
 		const settings = parseTlhSettingsContent(current);
@@ -311,11 +376,18 @@ function createTlhPrimaryAgentRuntime(
 		const effective = currentPrimaryAgentSelection();
 		const settingsPath = tlhSettingsPathForWrite();
 		const settingsLabel = settingsPath ? formatHomePath(settingsPath) : "unavailable outside isolated TLH profile";
+		const activePrimary = effective !== DISABLED_PRIMARY_AGENT ? primaryAgents.get(effective) : undefined;
+		const rawModelOverrides = primaryConfig?.modelOverrides as unknown;
+		const modelOverride =
+			activePrimary && !shouldForceApplyForLock(activePrimary) && isRecord(rawModelOverrides) && typeof rawModelOverrides[effective] === "string"
+				? rawModelOverrides[effective]
+				: "none";
 		return [
 			`${TLH_PACKAGE_NAME} (${TLH_NAME}) is active.`,
 			`Primary agent: ${primaryAgentLabel(effective)}.`,
 			`Session override: ${primaryAgentOverrideLabel(override)}.`,
 			`Persistent default: ${primaryAgentDefaultLabel(primaryConfig)}.`,
+			`Model override: ${modelOverride}.`,
 			`Settings: ${settingsLabel}.`,
 		].join("\n");
 	}
@@ -364,6 +436,8 @@ function createTlhPrimaryAgentRuntime(
 		}
 	}
 
+	let tlhApplyingModel = false;
+
 	async function applyPrimaryModel(
 		ctx: ExtensionContext,
 		primary: AgentPrompt,
@@ -377,7 +451,13 @@ function createTlhPrimaryAgentRuntime(
 		if (ctx.model?.provider === model.provider && ctx.model?.id === model.id) {
 			return model;
 		}
-		const success = await pi.setModel(model);
+		tlhApplyingModel = true;
+		let success: boolean;
+		try {
+			success = await pi.setModel(model);
+		} finally {
+			tlhApplyingModel = false;
+		}
 		if (!success) {
 			warnOnce(ctx, `primary-model-unavailable-${primary.name}`, `TLH could not switch to primary agent model: ${model.provider}/${model.id}`);
 			return undefined;
@@ -422,9 +502,26 @@ function createTlhPrimaryAgentRuntime(
 		const forceApply = shouldForceApplyForLock(primary);
 		const shouldApplyModel = forceApply || resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyModel");
 		const shouldApplyThinking = forceApply || resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyThinking");
-		const primaryDefaults = selectProviderAwareAgentDefaults(primary, ctx.modelRegistry.getAvailable(), ctx.model?.provider);
+		const availableModels = ctx.modelRegistry.getAvailable();
+		const primaryDefaults = selectProviderAwareAgentDefaults(primary, availableModels, ctx.model?.provider);
 		const currentProviderDefaults = selectProviderAwareAgentDefaults(primary, [], ctx.model?.provider);
-		const activePrimaryModel = shouldApplyModel ? await applyPrimaryModel(ctx, primary, primaryDefaults.model) : undefined;
+
+		// Resolve model: stored override (if still available in registry) takes precedence over frontmatter default
+		let resolvedModel = primaryDefaults.model;
+		if (!forceApply) {
+			const storedOverride = primaryConfig?.modelOverrides?.[selection];
+			if (storedOverride) {
+				const overrideRef = availableModels.find(
+					(m) => `${m.provider}/${m.id}` === storedOverride,
+				);
+				if (overrideRef) {
+					resolvedModel = overrideRef;
+				}
+				// If override is unavailable, fall through to primaryDefaults.model (no error)
+			}
+		}
+
+		const activePrimaryModel = shouldApplyModel ? await applyPrimaryModel(ctx, primary, resolvedModel) : undefined;
 		if (shouldApplyThinking) {
 			applyPrimaryThinking(primary, activePrimaryModel ? primaryDefaults.thinking : currentProviderDefaults.thinking);
 		}
@@ -465,6 +562,7 @@ function createTlhPrimaryAgentRuntime(
 			{ value: "bug-hunter", description: "Use the bug-hunter primary agent for this session" },
 			{ value: "disabled", description: "Disable TLH primary agents for this session" },
 			{ value: "reset", description: "Clear the session primary-agent override" },
+			{ value: "model reset", description: "Clear the active primary's persisted model override" },
 			{ value: "default architect", description: "Persistently select architect for future sessions" },
 			{ value: "default rush", description: "Persistently select Rush for future sessions" },
 			{ value: "default product", description: "Persistently select product for future sessions" },
@@ -501,6 +599,45 @@ function createTlhPrimaryAgentRuntime(
 					setSessionPrimaryAgentOverride(undefined);
 					await applyPrimaryModeChange(ctx);
 					ctx.ui.notify(`Cleared TLH primary-agent session override. Primary agent: ${currentPrimaryAgentLabel()}.`, "info");
+					return;
+				}
+
+				if (command === "model") {
+					if (parts.length !== 2 || value !== "reset") {
+						ctx.ui.notify("Usage: /switch-primary-agent model reset", "error");
+						return;
+					}
+					const selection = currentPrimaryAgentSelection();
+					if (selection === DISABLED_PRIMARY_AGENT) {
+						ctx.ui.notify(
+							"Cannot clear model override: primary agents are disabled. Enable a primary agent first with /switch-primary-agent <agent>.",
+							"error",
+						);
+						return;
+					}
+					const primary = activePrimaryAgent();
+					const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
+					const rawModelOverrides = primaryConfig?.modelOverrides as unknown;
+					const hasStoredOverride = isRecord(rawModelOverrides) && Object.prototype.hasOwnProperty.call(rawModelOverrides, selection);
+					if (primary && shouldForceApplyForLock(primary) && !hasStoredOverride) {
+						ctx.ui.notify(
+							`No model override to clear: ${primaryAgentLabel(selection)} uses fixed model defaults and does not persist overrides.`,
+							"info",
+						);
+						return;
+					}
+					try {
+						const result = writeTlhPrimaryAgentModelOverride(ctx.cwd, selection, undefined);
+						await applyPrimaryModeChange(ctx);
+						const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
+						const message = primary && shouldForceApplyForLock(primary)
+							? `Cleared stale ignored model override for ${primaryAgentLabel(selection)}. Primary agent: ${currentPrimaryAgentLabel()} uses fixed model defaults.${backupLabel}`
+							: `${result.changed ? "Cleared" : "No override to clear for"} model override for ${primaryAgentLabel(selection)}. Primary agent: ${currentPrimaryAgentLabel()}.${backupLabel}`;
+						ctx.ui.notify(message, "info");
+					} catch (error) {
+						const message = error instanceof Error ? error.message : String(error);
+						ctx.ui.notify(`Could not clear model override: ${message}`, "error");
+					}
 					return;
 				}
 
@@ -547,7 +684,7 @@ function createTlhPrimaryAgentRuntime(
 					return;
 				}
 
-				ctx.ui.notify("Usage: /switch-primary-agent [status|architect|rush|product|bug-hunter|disabled|reset|default architect|default rush|default product|default bug-hunter|default disabled|default reset]", "error");
+				ctx.ui.notify("Usage: /switch-primary-agent [status|architect|rush|product|bug-hunter|disabled|reset|model reset|default architect|default rush|default product|default bug-hunter|default disabled|default reset]", "error");
 			},
 		});
 
@@ -565,6 +702,41 @@ function createTlhPrimaryAgentRuntime(
 	}
 
 	function registerLifecycleHooks(): void {
+		pi.on("model_select", async (event, ctx) => {
+			// Ignore events emitted by TLH's own applyPrimaryModel to avoid a feedback loop.
+			if (tlhApplyingModel) {
+				return;
+			}
+			// Only handle user-initiated model selections (source "set" is emitted by /model and pi.setModel alike).
+			if (event.source !== "set") {
+				return;
+			}
+			syncPrimaryAgentState(ctx);
+			const selection = currentPrimaryAgentSelection();
+			if (!isEnabledPrimaryAgentSelection(selection)) {
+				return;
+			}
+			const primary = activePrimaryAgent();
+			if (!primary) {
+				return;
+			}
+			// Locked primaries (e.g. rush) keep their fixed provider defaults and do not persist user model overrides.
+			if (shouldForceApplyForLock(primary)) {
+				return;
+			}
+			const chosenKey = `${event.model.provider}/${event.model.id}`;
+			// Determine the primary's bundled default model to know whether to clear the override.
+			const primaryDefaults = selectProviderAwareAgentDefaults(primary, ctx.modelRegistry.getAvailable(), event.model.provider);
+			const bundledKey = primaryDefaults.model ? `${primaryDefaults.model.provider}/${primaryDefaults.model.id}` : undefined;
+			// If user picked the bundled default, clear the override; otherwise record it.
+			const nextOverride = chosenKey === bundledKey ? undefined : chosenKey;
+			try {
+				writeTlhPrimaryAgentModelOverride(ctx.cwd, selection, nextOverride);
+			} catch {
+				// Best-effort: model override persistence is non-blocking.
+			}
+		});
+
 		pi.on("session_tree", async (_event, ctx) => {
 			syncPrimaryAgentState(ctx);
 			await applyPrimaryDefaults(ctx);

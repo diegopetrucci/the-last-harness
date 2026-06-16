@@ -140,7 +140,8 @@ test("before_agent_start reapplies primary defaults without a one-shot model gat
 
 	assert.doesNotMatch(primaryRuntimeSource, /primaryModelAttempted/);
 	assert.match(beforeAgentStart, /await applyPrimaryDefaults\(ctx\);/);
-	assert.match(applyPrimaryDefaults, /selectProviderAwareAgentDefaults\(primary, ctx\.modelRegistry\.getAvailable\(\), ctx\.model\?\.provider\)/);
+	assert.match(applyPrimaryDefaults, /ctx\.modelRegistry\.getAvailable\(\)/);
+	assert.match(applyPrimaryDefaults, /selectProviderAwareAgentDefaults\(primary, availableModels, ctx\.model\?\.provider\)/);
 	assert.match(applyPrimaryDefaults, /resolvePrimaryAutoApplySetting\(primaryConfig, primary, "applyModel"\)/);
 	assert.match(applyPrimaryDefaults, /resolvePrimaryAutoApplySetting\(primaryConfig, primary, "applyThinking"\)/);
 	assert.match(applyPrimaryModel, /ctx\.model\?\.provider === model\.provider && ctx\.model\?\.id === model\.id/);
