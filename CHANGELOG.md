@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+- Active non-locked primary agents now respect user `/model` choices and persist them per primary under `tlh.primaryAgent.modelOverrides.<primary>`; reset with `/switch-primary-agent model reset`. Locked primaries such as Rush keep fixed defaults.
+- `code-reviewer` continues to prefer the opposite available provider for review independence, without forcing unavailable Codex-only defaults.
 - Bundled the updated `pi-subagents` tag with the completion-guard fix for VCS/PR false positives.
 
 ## [0.20.0] - 2026-06-15
