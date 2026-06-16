@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -7,10 +7,12 @@ import { createJiti } from "jiti";
 
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
+const RETIRED_RUN_TESTS_LAST_FEATURE = "run-tests-last";
+const LEGACY_UNKNOWN_FEATURE = "legacy-flag";
 const jiti = createJiti(import.meta.url);
 const {
 	DELTA_FOLLOW_UP_REVIEWS_FEATURE,
-	RUN_TESTS_LAST_FEATURE,
+	buildPrimaryExperimentalPrompt,
 	getTlhExperimentalConfig,
 	isTlhExperimentalFeatureEnabled,
 	registerExperimentalCommand,
@@ -44,24 +46,23 @@ function createCommandContext(cwd) {
 function registeredExperimentalCommand() {
 	const pi = createPiHarness();
 	registerExperimentalCommand(pi);
-	assert.equal(pi.commands.has("experiments"), false);
 	const command = pi.commands.get("experimental");
 	assert.ok(command, "registers /experimental");
 	return command;
 }
 
-test("experimental command registers completions and lists default-off feature state", async (t) => {
+test("experimental command registers the delta follow-up review flag and lists it as default-off", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const command = registeredExperimentalCommand();
 		assert.deepEqual(
 			(await command.getArgumentCompletions("enable ")).map((completion) => completion.value),
-			[`enable ${RUN_TESTS_LAST_FEATURE}`, `enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`],
+			[`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`],
 		);
 		assert.deepEqual(
 			(await command.getArgumentCompletions("status ")).map((completion) => completion.value),
-			["status", `status ${RUN_TESTS_LAST_FEATURE}`, `status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`],
+			["status", `status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`],
 		);
 		assert.equal(await command.getArgumentCompletions("unknown"), null);
 
@@ -70,43 +71,58 @@ test("experimental command registers completions and lists default-off feature s
 
 		assert.equal(notifications.at(-1)?.type, "info");
 		assert.match(notifications.at(-1)?.message ?? "", /TLH experimental features:/);
+		assert.match(notifications.at(-1)?.message ?? "", /delta-follow-up-reviews/);
 		assert.match(notifications.at(-1)?.message ?? "", /disabled \(default\)/);
-		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable run-tests-last/);
 		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable delta-follow-up-reviews/);
+		assert.doesNotMatch(notifications.at(-1)?.message ?? "", /run-tests-last/);
 	});
 });
 
-test("experimental read paths fail closed on malformed enabledFeatures while writes still validate clearly", async (t) => {
-	for (const { enabledFeatures, expectedError } of [
-		{ enabledFeatures: true, expectedError: /must be an array if present/ },
-		{ enabledFeatures: [123], expectedError: /must contain only strings/ },
-	]) {
+test("experimental stale settings fail closed and do not rebuild retired run-tests-last guidance", async (t) => {
+	for (const enabledFeatures of [true, [123], [RETIRED_RUN_TESTS_LAST_FEATURE]]) {
 		const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
 		const settingsPath = join(fixture.agent, "settings.json");
-		const malformedSettings = `${JSON.stringify({ tlh: { experimental: { enabledFeatures } } }, null, 2)}\n`;
-		writeFileSync(settingsPath, malformedSettings);
+		const malformedOrStaleSettings = `${JSON.stringify({ tlh: { experimental: { enabledFeatures } } }, null, 2)}\n`;
+		writeFileSync(settingsPath, malformedOrStaleSettings);
 
 		await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 			const command = registeredExperimentalCommand();
-
-			assert.equal(isTlhExperimentalFeatureEnabled(getTlhExperimentalConfig(fixture.dir), RUN_TESTS_LAST_FEATURE), false);
+			assert.equal(
+				isTlhExperimentalFeatureEnabled(getTlhExperimentalConfig(fixture.dir), RETIRED_RUN_TESTS_LAST_FEATURE),
+				false,
+			);
+			assert.equal(
+				buildPrimaryExperimentalPrompt({ name: "architect" }, getTlhExperimentalConfig(fixture.dir)),
+				undefined,
+			);
 
 			let { ctx, notifications } = createCommandContext(fixture.dir);
 			await command.handler("", ctx);
 			assert.equal(notifications.at(-1)?.type, "info");
+			assert.match(notifications.at(-1)?.message ?? "", /delta-follow-up-reviews/);
 			assert.match(notifications.at(-1)?.message ?? "", /disabled \(default\)/);
+			assert.doesNotMatch(notifications.at(-1)?.message ?? "", /run-tests-last/);
 
 			({ ctx, notifications } = createCommandContext(fixture.dir));
-			await command.handler(`status ${RUN_TESTS_LAST_FEATURE}`, ctx);
+			await command.handler(`status ${RETIRED_RUN_TESTS_LAST_FEATURE}`, ctx);
 			assert.equal(notifications.at(-1)?.type, "info");
-			assert.match(notifications.at(-1)?.message ?? "", /disabled \(default\)/);
+			assert.match(notifications.at(-1)?.message ?? "", /unknown tlh experimental feature/i);
+			assert.match(notifications.at(-1)?.message ?? "", /run-tests-last/);
+			assert.match(notifications.at(-1)?.message ?? "", /delta-follow-up-reviews/);
 
-			({ ctx, notifications } = createCommandContext(fixture.dir));
-			await command.handler(`enable ${RUN_TESTS_LAST_FEATURE}`, ctx);
-			assert.equal(notifications.at(-1)?.type, "error");
-			assert.match(notifications.at(-1)?.message ?? "", /Could not update TLH experimental feature run-tests-last:/);
-			assert.match(notifications.at(-1)?.message ?? "", expectedError);
-			assert.equal(readFileSync(settingsPath, "utf8"), malformedSettings);
+			for (const action of ["enable", "disable", "toggle"]) {
+				({ ctx, notifications } = createCommandContext(fixture.dir));
+				await command.handler(`${action} ${RETIRED_RUN_TESTS_LAST_FEATURE}`, ctx);
+				assert.equal(notifications.at(-1)?.type, "error");
+				assert.match(
+					notifications.at(-1)?.message ?? "",
+					new RegExp(`Could not update TLH experimental feature ${RETIRED_RUN_TESTS_LAST_FEATURE}:`, "i"),
+				);
+				assert.match(notifications.at(-1)?.message ?? "", /unknown tlh experimental feature/i);
+			}
+
+			assert.equal(readFileSync(settingsPath, "utf8"), malformedOrStaleSettings);
+			assert.equal(buildPrimaryExperimentalPrompt({ name: "developer" }, getTlhExperimentalConfig(fixture.dir)), undefined);
 		});
 	}
 });
@@ -115,7 +131,7 @@ test("experimental enable is idempotent, preserves settings, and does not clobbe
 	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
 	const settingsPath = join(fixture.agent, "settings.json");
 	const initialSettings = `${JSON.stringify(
-		{ tlh: { primaryAgent: { selected: "architect" }, experimental: { enabledFeatures: [RUN_TESTS_LAST_FEATURE] } } },
+		{ tlh: { primaryAgent: { selected: "architect" }, experimental: { enabledFeatures: [LEGACY_UNKNOWN_FEATURE] } } },
 		null,
 		2,
 	)}\n`;
@@ -129,9 +145,9 @@ test("experimental enable is idempotent, preserves settings, and does not clobbe
 
 		const writtenAfterFirst = JSON.parse(readFileSync(settingsPath, "utf8"));
 		assert.deepEqual(writtenAfterFirst.tlh.primaryAgent, { selected: "architect" });
-		assert.deepEqual(writtenAfterFirst.tlh.experimental.enabledFeatures, [DELTA_FOLLOW_UP_REVIEWS_FEATURE, RUN_TESTS_LAST_FEATURE]);
-		assert.equal(isTlhExperimentalFeatureEnabled(getTlhExperimentalConfig(fixture.dir), RUN_TESTS_LAST_FEATURE), true);
+		assert.deepEqual(writtenAfterFirst.tlh.experimental.enabledFeatures, [DELTA_FOLLOW_UP_REVIEWS_FEATURE, LEGACY_UNKNOWN_FEATURE]);
 		assert.equal(isTlhExperimentalFeatureEnabled(getTlhExperimentalConfig(fixture.dir), DELTA_FOLLOW_UP_REVIEWS_FEATURE), true);
+		assert.equal(isTlhExperimentalFeatureEnabled(getTlhExperimentalConfig(fixture.dir), RETIRED_RUN_TESTS_LAST_FEATURE), false);
 
 		const backupsAfterFirst = readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.bak-"));
 		assert.equal(backupsAfterFirst.length, 1);
@@ -156,33 +172,53 @@ test("experimental disable and normal-Pi refusal follow isolated settings rules"
 	const disableSettingsPath = join(disableFixture.agent, "settings.json");
 	writeFileSync(
 		disableSettingsPath,
-		`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [RUN_TESTS_LAST_FEATURE] } } }, null, 2)}\n`,
+		`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [DELTA_FOLLOW_UP_REVIEWS_FEATURE] } } }, null, 2)}\n`,
 	);
 
 	await withEnv({ HOME: disableFixture.home, PI_CODING_AGENT_DIR: disableFixture.agent }, async () => {
 		const command = registeredExperimentalCommand();
 		const { ctx, notifications } = createCommandContext(disableFixture.dir);
 
-		await command.handler(`disable ${RUN_TESTS_LAST_FEATURE}`, ctx);
+		await command.handler(`disable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, ctx);
 
 		const written = JSON.parse(readFileSync(disableSettingsPath, "utf8"));
 		assert.deepEqual(written.tlh.experimental.enabledFeatures, []);
 		assert.match(notifications.at(-1)?.message ?? "", /It is now disabled/);
-		assert.match(notifications.at(-1)?.message ?? "", /Undo with \/experimental enable run-tests-last/);
+		assert.match(notifications.at(-1)?.message ?? "", /Undo with \/experimental enable delta-follow-up-reviews/);
 	});
 
 	const normalFixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
 	const normalAgent = join(normalFixture.home, ".pi", "agent");
-	mkdirSync(normalAgent, { recursive: true });
 
 	await withEnv({ HOME: normalFixture.home, PI_CODING_AGENT_DIR: normalAgent }, async () => {
 		const command = registeredExperimentalCommand();
 		const { ctx, notifications } = createCommandContext(normalFixture.dir);
 
-		await command.handler(`enable ${RUN_TESTS_LAST_FEATURE}`, ctx);
+		await command.handler(`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, ctx);
 
 		assert.equal(existsSync(join(normalAgent, "settings.json")), false);
 		assert.equal(notifications.at(-1)?.type, "error");
 		assert.match(notifications.at(-1)?.message ?? "", /isolated TLH profile|normal Pi config/);
+	});
+});
+
+test("experimental retired flag actions do not create settings or backups on a fresh profile", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
+	const settingsPath = join(fixture.agent, "settings.json");
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const command = registeredExperimentalCommand();
+		const { ctx, notifications } = createCommandContext(fixture.dir);
+
+		await command.handler(`enable ${RETIRED_RUN_TESTS_LAST_FEATURE}`, ctx);
+
+		assert.equal(existsSync(settingsPath), false);
+		assert.deepEqual(
+			readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.bak-")),
+			[],
+		);
+		assert.equal(notifications.at(-1)?.type, "error");
+		assert.match(notifications.at(-1)?.message ?? "", /unknown tlh experimental feature/i);
+		assert.match(notifications.at(-1)?.message ?? "", /delta-follow-up-reviews/);
 	});
 });

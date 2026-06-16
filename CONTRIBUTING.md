@@ -30,6 +30,12 @@ Main repository validation:
 npm run validate
 ```
 
+That path inherits the default quiet `npm test` dot reporter. If you need the full Node test reporter while diagnosing a failure, rerun tests with:
+
+```sh
+npm run test:verbose
+```
+
 For installer-specific checks, use temporary paths, for example:
 
 ```sh

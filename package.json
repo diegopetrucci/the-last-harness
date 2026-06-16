@@ -23,7 +23,8 @@
   },
   "scripts": {
     "lint": "eslint \"scripts/**/*.{js,mjs,ts}\" \"tests/**/*.{js,mjs,ts}\" \"extensions/**/*.{js,mjs,ts}\"",
-    "test": "node --test tests/*.test.mjs",
+    "test": "node --test --test-reporter=dot tests/*.test.mjs",
+    "test:verbose": "node --test tests/*.test.mjs",
     "validate": "bash scripts/check-installer-smoke.sh && npm test && npm run lint && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
   },
   "files": [
