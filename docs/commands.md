@@ -48,7 +48,7 @@ These commands are registered by the TLH extension bundled with this profile.
 |---------|-------------|
 | `/thinking` | Pick the model thinking level, subject to the active primary-agent thinking constraints |
 | `/effort` | Supported alias for `/thinking`, subject to the same active primary-agent thinking constraints |
-| `/experimental` | List or change TLH experimental features (currently no feature flags are registered) |
+| `/experimental` | List or change TLH experimental features (`delta-follow-up-reviews` is currently registered) |
 | `/review` | Open an interactive code-review mode picker (requires the architect primary agent) |
 | `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
 | `/tlh-changelog` | Show TLH release notes from the packaged `CHANGELOG.md` |
@@ -64,7 +64,7 @@ Both `/thinking` and `/effort` are subject to the active primary-agent thinking 
 
 ### `/experimental`
 
-`/experimental` keeps TLH's feature-flag command surface available for future use. Right now it reports that no TLH experimental features are registered, and stale `tlh.experimental` settings do not re-enable retired behavior.
+`/experimental` currently registers `delta-follow-up-reviews`, an opt-in flag that adds architect and `code-reviewer` guidance for delta-scoped follow-up reviews after fixes. The flag is disabled by default. Stale `run-tests-last` values in `tlh.experimental.enabledFeatures` do not re-enable retired behavior.
 
 ### `/tokens`
 

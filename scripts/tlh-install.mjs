@@ -307,10 +307,12 @@ function buildInstallConfig(parsedArgs, env = process.env) {
 	const supportFiles = supportFileManifest({ noSettings: parsedArgs.noSettings });
 	const defaultPackageRoot = join(agentDir, "git", "github.com", parsedArgs.repo);
 	const homeDir = env.HOME || homedir();
-	const packageRoot = packageSourceInstallDir(packageSource, {
+	const resolvedPackageRoot = packageSourceInstallDir(packageSource, {
 		agentDir,
 		homeDir,
-	}) || defaultPackageRoot;
+	});
+	const packageRoot = resolvedPackageRoot || defaultPackageRoot;
+	const packageHelperRoot = resolvedPackageRoot || (packageSourceIsDefault ? defaultPackageRoot : "");
 
 	return {
 		...parsedArgs,
@@ -324,6 +326,7 @@ function buildInstallConfig(parsedArgs, env = process.env) {
 		statePath: join(agentDir, "tlh", "install-state.json"),
 		wrapperPath,
 		packageRoot,
+		packageHelperRoot,
 		packageSource,
 		packageSourceIsDefault,
 		rawBase: parsedArgs.rawBaseInput || `https://raw.githubusercontent.com/${parsedArgs.repo}/${parsedArgs.ref}`,
@@ -1159,8 +1162,7 @@ async function writeWrapper(config) {
 		config.binDir,
 		"--wrapper-name",
 		config.wrapperName,
-		"--package-root",
-		config.packageRoot,
+		`--package-root=${config.packageHelperRoot}`,
 	];
 	if (config.piCmd) args.push("--pi-cmd", config.piCmd);
 	if (config.dryRun) args.push("--dry-run");

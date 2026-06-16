@@ -120,12 +120,13 @@ test("annotate-git-diff docs use the renamed command and extension names", () =>
 	assert.match(commandsDoc, /`annotate-git-diff`/);
 });
 
-test("commands docs keep /experimental registered without advertising retired run-tests-last guidance", () => {
+test("commands docs keep /experimental registered with delta-follow-up-reviews and without reviving run-tests-last guidance", () => {
 	const commandsDoc = readRepoFile("docs/commands.md");
 
 	assert.match(commandsDoc, /`\/experimental`/);
-	assert.match(commandsDoc, /currently no feature flags are registered/i);
-	assert.doesNotMatch(commandsDoc, /run-tests-last/);
+	assert.match(commandsDoc, /delta-follow-up-reviews/);
+	assert.match(commandsDoc, /disabled by default/i);
+	assert.match(commandsDoc, /stale `run-tests-last` values/i);
 });
 
 test("README and changelog describe code-reviewer opposite-provider policy", () => {

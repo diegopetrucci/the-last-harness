@@ -57,3 +57,22 @@ test("architect.md permanently includes the final-validation-ticket workflow", (
 	assert.match(architectNormalizedBody, /when [`']?VALIDATING\.md[`']? is present.*otherwise use repo-discovered validation commands/i);
 	assert.match(architectNormalizedBody, /make any validation deferral explicit in the ticket text/i);
 });
+
+test("architect.md keeps delta follow-up review guidance out of the base prompt", () => {
+	assert.doesNotMatch(
+		architectMd,
+		/default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint instead of rereading the full branch diff\./,
+	);
+	assert.doesNotMatch(
+		architectMd,
+		/pass the prior findings plus the exact delta baseline, git range or checkpoint, or explicit changed-file list to review\./,
+	);
+	assert.doesNotMatch(
+		architectMd,
+		/Keep or expand to targeted wider review or full re-review for installer or other destructive-path changes, trust-boundary changes, auth or execution changes, unresolved reviewer disagreement, or whenever the delta cannot be validated safely without wider context\./,
+	);
+});
+
+test("architect.md keeps ordinary final review on the full VCS diff", () => {
+	assert.match(architectMd, /Delegate final review to `code-reviewer` against the full VCS diff and completed tickets\./);
+});
