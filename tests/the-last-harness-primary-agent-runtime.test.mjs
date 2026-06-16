@@ -9,6 +9,7 @@ import { cleanupTempDir, createIsolatedProfileFixture, withEnv } from "./test-fi
 
 const jiti = createJiti(import.meta.url);
 const { TLH_DEFAULT_COMMIT_ATTRIBUTION } = await jiti.import("../extensions/the-last-harness/attribution.ts");
+const { DELTA_FOLLOW_UP_REVIEWS_FEATURE } = await jiti.import("../extensions/the-last-harness/experimental.ts");
 const { registerTlhPrimaryAgentRuntime } = await jiti.import("../extensions/the-last-harness/primary-agent-runtime.ts");
 
 function createPiHarness() {
@@ -205,6 +206,44 @@ test("before_agent_start includes permanent architect final-validation guidance 
 	});
 });
 
+test("before_agent_start gates delta follow-up review guidance behind isolated TLH settings for architect", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { beforeAgentStart } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const defaultPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint/i);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /prior findings.*git range or checkpoint.*changed-file list/i);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /targeted wider review or full re-review/i);
+
+		for (const enabledFeatures of [true, [123]]) {
+			writeFileSync(
+				join(fixture.agent, "settings.json"),
+				`${JSON.stringify({ tlh: { experimental: { enabledFeatures } } }, null, 2)}\n`,
+			);
+			const malformedPrompt = await beforeAgentStart(
+				{ systemPrompt: "base prompt" },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint/i);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /targeted wider review or full re-review/i);
+		}
+
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [DELTA_FOLLOW_UP_REVIEWS_FEATURE] } } }, null, 2)}\n`,
+		);
+		const enabledPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		assert.match(enabledPrompt.systemPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
+		assert.match(enabledPrompt.systemPrompt, /default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint/i);
+		assert.match(enabledPrompt.systemPrompt, /prior findings.*git range or checkpoint.*changed-file list/i);
+		assert.match(enabledPrompt.systemPrompt, /targeted wider review or full re-review/i);
+	});
+});
+
+
 test("child mode keeps parent-only controls disabled while applying commit attribution prompt and bash guard", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
@@ -257,6 +296,71 @@ test("child mode keeps parent-only controls disabled while applying commit attri
 			),
 			undefined,
 		);
+	});
+});
+
+test("child mode gates delta follow-up review guidance to enabled code-reviewer sessions", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const codeReviewerPi = createPiHarness();
+		registerTlhPrimaryAgentRuntime(codeReviewerPi, {
+			env: { PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_CHILD_AGENT: "code-reviewer" },
+		});
+		const codeReviewerBeforeAgentStart = codeReviewerPi.events.find((event) => event.name === "before_agent_start")?.handler;
+		assert.equal(typeof codeReviewerBeforeAgentStart, "function");
+
+		const defaultPrompt = await codeReviewerBeforeAgentStart(
+			{ systemPrompt: "base prompt" },
+			createToolCallContext([], undefined, { cwd: fixture.cwd }),
+		);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /expect prior findings plus an exact delta baseline/i);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /default to the requested delta and prior findings/i);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /requested delta cannot be validated safely without wider context/i);
+
+		for (const enabledFeatures of [true, [123]]) {
+			writeFileSync(
+				join(fixture.agent, "settings.json"),
+				`${JSON.stringify({ tlh: { experimental: { enabledFeatures } } }, null, 2)}\n`,
+			);
+			const malformedPrompt = await codeReviewerBeforeAgentStart(
+				{ systemPrompt: "base prompt" },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /expect prior findings plus an exact delta baseline/i);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /default to the requested delta and prior findings/i);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /requested delta cannot be validated safely without wider context/i);
+		}
+
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [DELTA_FOLLOW_UP_REVIEWS_FEATURE] } } }, null, 2)}\n`,
+		);
+		const enabledPrompt = await codeReviewerBeforeAgentStart(
+			{ systemPrompt: "base prompt" },
+			createToolCallContext([], undefined, { cwd: fixture.cwd }),
+		);
+		assert.match(enabledPrompt.systemPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
+		assert.match(enabledPrompt.systemPrompt, /expect prior findings plus an exact delta baseline/i);
+		assert.match(enabledPrompt.systemPrompt, /default to the requested delta and prior findings/i);
+		assert.match(enabledPrompt.systemPrompt, /requested delta cannot be validated safely without wider context/i);
+
+		const developerPi = createPiHarness();
+		registerTlhPrimaryAgentRuntime(developerPi, {
+			env: { PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_CHILD_AGENT: "developer" },
+		});
+		const developerBeforeAgentStart = developerPi.events.find((event) => event.name === "before_agent_start")?.handler;
+		assert.equal(typeof developerBeforeAgentStart, "function");
+		const developerPrompt = await developerBeforeAgentStart(
+			{ systemPrompt: "base prompt" },
+			createToolCallContext([], undefined, { cwd: fixture.cwd }),
+		);
+		assert.doesNotMatch(developerPrompt.systemPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
+		assert.doesNotMatch(developerPrompt.systemPrompt, /expect prior findings plus an exact delta baseline/i);
+		assert.doesNotMatch(developerPrompt.systemPrompt, /default to the requested delta and prior findings/i);
+		assert.doesNotMatch(developerPrompt.systemPrompt, /requested delta cannot be validated safely without wider context/i);
 	});
 });
 

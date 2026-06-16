@@ -115,6 +115,11 @@ function writeVersionedWrapperPi(commandDir, logPath, version = "0.79.1") {
 	].join("\n"));
 }
 
+function writeWrapperHelperLogger(scriptPath, logEnvVar, source) {
+	mkdirSync(dirname(scriptPath), { recursive: true });
+	writeFileSync(scriptPath, `import { writeFileSync } from "node:fs";\nwriteFileSync(process.env.${logEnvVar}, JSON.stringify({ source: ${JSON.stringify(source)}, argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH } }));\n`, "utf8");
+}
+
 function writeFakeNpmInstaller(fakebin, { npmLog, templatePiPath, installedPiPath }) {
 	writeFakeCommand(fakebin, "npm", [
 		`printf '%s\\n' "$*" >>"${npmLog}"`,
@@ -124,7 +129,13 @@ function writeFakeNpmInstaller(fakebin, { npmLog, templatePiPath, installedPiPat
 	].join("\n"));
 }
 
-function runStage1LocalPackageInstall(t, { dryRun = false, noSettings = false, force = false, existingLibrarianConfig } = {}) {
+function runStage1LocalPackageInstall(t, {
+	dryRun = false,
+	noSettings = false,
+	force = false,
+	existingLibrarianConfig,
+	existingSupportFiles,
+} = {}) {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");
 	const agentDir = join(root, "agent");
@@ -139,6 +150,13 @@ function runStage1LocalPackageInstall(t, { dryRun = false, noSettings = false, f
 	if (existingLibrarianConfig !== undefined) {
 		mkdirSync(join(agentDir, "extensions"), { recursive: true });
 		writeFileSync(join(agentDir, "extensions", "librarian.json"), JSON.stringify(existingLibrarianConfig, null, 2));
+	}
+	if (existingSupportFiles) {
+		for (const [relativePath, content] of Object.entries(existingSupportFiles)) {
+			const target = join(agentDir, "tlh", relativePath);
+			mkdirSync(dirname(target), { recursive: true });
+			writeFileSync(target, content);
+		}
 	}
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
@@ -800,6 +818,51 @@ test("stage-1 dry-run reports isolated Librarian config creation without writing
 	assert.equal(existsSync(join(agentDir, "extensions", "librarian.json")), false);
 });
 
+test("stage-1 copies only runtime/recovery TLH support files into the isolated profile", (t) => {
+	const { result, agentDir } = runStage1LocalPackageInstall(t, { noSettings: true });
+	const output = `${result.stdout}\n${result.stderr}`;
+	const supportDir = join(agentDir, "tlh");
+
+	assert.equal(result.status, 0, output);
+	for (const relativePath of [
+		"tlh-defaults.mjs",
+		"tlh-tickets.mjs",
+		"tlh-update.mjs",
+		"default-extensions.json",
+		"lib/default-extensions.mjs",
+		"lib/tlh-install-package-source.mjs",
+		"lib/tlh-install-paths.mjs",
+		"lib/tlh-install-utils.mjs",
+		"lib/tlh-safe-profile-write.mjs",
+	]) {
+		assert.equal(existsSync(join(supportDir, relativePath)), true, relativePath);
+	}
+	for (const relativePath of [
+		"tlh-gnosis.mjs",
+		"tlh-wrapper.mjs",
+		"tlh-install-state.mjs",
+		"librarian.defaults.json",
+	]) {
+		assert.equal(existsSync(join(supportDir, relativePath)), false, relativePath);
+	}
+});
+
+test("stage-1 leaves existing install-only TLH support files untouched during install", (t) => {
+	const existingSupportFiles = {
+		"tlh-gnosis.mjs": "legacy gnosis helper\n",
+		"tlh-wrapper.mjs": "legacy wrapper helper\n",
+		"tlh-install-state.mjs": "legacy install-state helper\n",
+		"librarian.defaults.json": "{\n  \"legacy\": true\n}\n",
+	};
+	const { result, agentDir } = runStage1LocalPackageInstall(t, { existingSupportFiles, noSettings: true });
+	const output = `${result.stdout}\n${result.stderr}`;
+
+	assert.equal(result.status, 0, output);
+	for (const [relativePath, content] of Object.entries(existingSupportFiles)) {
+		assert.equal(readFileSync(join(agentDir, "tlh", relativePath), "utf8"), content, relativePath);
+	}
+});
+
 test("stage-1 --no-settings skips the isolated Librarian config default", (t) => {
 	const { result, agentDir } = runStage1LocalPackageInstall(t, { noSettings: true });
 	const output = `${result.stdout}\n${result.stderr}`;
@@ -833,6 +896,7 @@ test("stage-1 derives packageRoot from custom package source install dirs", (t) 
 	assert.equal(gitConfig.packageSourceIsDefault, false);
 	assert.equal(gitConfig.updateTrack, "custom");
 	assert.equal(gitConfig.packageRoot, join(agentDir, "git", "github.com", "custom", "pkg"));
+	assert.equal(gitConfig.packageHelperRoot, gitConfig.packageRoot);
 
 	runHelper("scripts/tlh-wrapper.mjs", [
 		"--agent-dir",
@@ -842,22 +906,115 @@ test("stage-1 derives packageRoot from custom package source install dirs", (t) 
 		"--wrapper-name",
 		gitConfig.wrapperName,
 		"--package-root",
-		gitConfig.packageRoot,
+		gitConfig.packageHelperRoot,
 	], { homeDir });
 	const wrapper = readFileSync(gitConfig.wrapperPath, "utf8");
-	assert.ok(wrapper.split(/\r?\n/).includes(`default_tlh_package_root='${gitConfig.packageRoot}'`));
+	assert.ok(wrapper.split(/\r?\n/).includes(`default_tlh_package_root='${gitConfig.packageHelperRoot}'`));
 
 	const relativeLocalConfig = configFor("../local-package");
 	assert.equal(relativeLocalConfig.packageRoot, resolve(agentDir, "../local-package"));
+	assert.equal(relativeLocalConfig.packageHelperRoot, relativeLocalConfig.packageRoot);
 
 	const homeLocalConfig = configFor("~/local-package");
 	assert.equal(homeLocalConfig.packageRoot, join(homeDir, "local-package"));
+	assert.equal(homeLocalConfig.packageHelperRoot, homeLocalConfig.packageRoot);
 
 	const unsupportedConfig = configFor("github:owner/repo");
 	assert.equal(
 		unsupportedConfig.packageRoot,
 		join(agentDir, "git", "github.com", "diegopetrucci", "the-last-harness"),
 	);
+	assert.equal(unsupportedConfig.packageHelperRoot, "");
+});
+
+test("wrapper skips stale fallback package helpers for unlocatable custom sources", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const updateLog = join(root, "update.json");
+	const defaultsLog = join(root, "defaults.json");
+	const ticketsLog = join(root, "tickets.json");
+	mkdirSync(join(agentDir, "tlh"), { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	const env = scrubInstallerEnv({
+		HOME: homeDir,
+		TLH_PACKAGE_SOURCE: "github:owner/repo",
+	}, {
+		...process.env,
+		PI_CODING_AGENT_DIR: join(homeDir, ".pi", "agent"),
+		TLH_AGENT_DIR: join(homeDir, ".pi", "agent"),
+		TLH_REPO: "poisoned/repo",
+		TLH_REF: "poisoned-ref",
+	});
+	const config = buildInstallConfig(parseArgs(["--agent-dir", agentDir, "--bin-dir", binDir], env), env);
+
+	writeWrapperHelperLogger(join(config.packageRoot, "scripts", "tlh-update.mjs"), "TLH_UPDATE_LOG", "stale-package");
+	writeWrapperHelperLogger(join(config.packageRoot, "scripts", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "stale-package");
+	writeWrapperHelperLogger(join(config.packageRoot, "scripts", "tlh-tickets.mjs"), "TLH_TICKETS_LOG", "stale-package");
+	mkdirSync(join(config.packageRoot, "config"), { recursive: true });
+	writeFileSync(join(config.packageRoot, "config", "default-extensions.json"), "[\n  \"stale-package\"\n]\n", "utf8");
+	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-update.mjs"), "TLH_UPDATE_LOG", "profile");
+	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "profile");
+	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-tickets.mjs"), "TLH_TICKETS_LOG", "profile");
+	writeFileSync(join(agentDir, "tlh", "default-extensions.json"), "[\n  \"profile\"\n]\n", "utf8");
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		config.agentDir,
+		"--bin-dir",
+		config.binDir,
+		"--wrapper-name",
+		config.wrapperName,
+		`--package-root=${config.packageHelperRoot}`,
+	], { homeDir });
+	const wrapper = readFileSync(config.wrapperPath, "utf8");
+	assert.ok(wrapper.split(/\r?\n/).includes("default_tlh_package_root=''"));
+
+	const wrapperEnv = scrubInstallerEnv({
+		HOME: homeDir,
+		PATH: process.env.PATH || "",
+		TLH_UPDATE_LOG: updateLog,
+		TLH_DEFAULTS_LOG: defaultsLog,
+		TLH_TICKETS_LOG: ticketsLog,
+	});
+	const wrapperPath = join(binDir, config.wrapperName);
+
+	const updateResult = spawnSync(wrapperPath, ["update", "--dry-run"], {
+		env: wrapperEnv,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	assert.equal(updateResult.status, 0, updateResult.stderr);
+	const updateRecord = JSON.parse(readFileSync(updateLog, "utf8"));
+	assert.equal(updateRecord.source, "profile");
+
+	const defaultsResult = spawnSync(wrapperPath, ["defaults", "list"], {
+		env: wrapperEnv,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	assert.equal(defaultsResult.status, 0, defaultsResult.stderr);
+	const defaultsRecord = JSON.parse(readFileSync(defaultsLog, "utf8"));
+	assert.equal(defaultsRecord.source, "profile");
+	assert.deepEqual(defaultsRecord.argv, [
+		"--settings",
+		join(agentDir, "settings.json"),
+		"--defaults",
+		join(agentDir, "tlh", "default-extensions.json"),
+		"list",
+	]);
+
+	const ticketsResult = spawnSync(wrapperPath, ["tickets", "status"], {
+		env: wrapperEnv,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	assert.equal(ticketsResult.status, 0, ticketsResult.stderr);
+	const ticketsRecord = JSON.parse(readFileSync(ticketsLog, "utf8"));
+	assert.equal(ticketsRecord.source, "profile");
 });
 
 test("wrapper uses original node for helpers while exposing isolated bin only for tickets and pi", (t) => {
@@ -1102,6 +1259,170 @@ exit 64`);
 	assert.equal(ticketsRecord.tk.status, 0);
 	assert.equal(ticketsRecord.tk.stdout, "isolated tk help");
 	assert.equal(existsSync(piProbeLog), false);
+});
+
+test("wrapper prefers package checkout helpers over profile copies", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const updateLog = join(root, "update.json");
+	const defaultsLog = join(root, "defaults.json");
+	const ticketsLog = join(root, "tickets.json");
+	mkdirSync(join(agentDir, "tlh"), { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(join(packageRoot, "scripts"), { recursive: true });
+	mkdirSync(join(packageRoot, "config"), { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	writeWrapperHelperLogger(join(packageRoot, "scripts", "tlh-update.mjs"), "TLH_UPDATE_LOG", "package");
+	writeWrapperHelperLogger(join(packageRoot, "scripts", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "package");
+	writeWrapperHelperLogger(join(packageRoot, "scripts", "tlh-tickets.mjs"), "TLH_TICKETS_LOG", "package");
+	writeFileSync(join(packageRoot, "config", "default-extensions.json"), "[\n  \"package\"\n]\n", "utf8");
+	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-update.mjs"), "TLH_UPDATE_LOG", "profile");
+	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "profile");
+	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-tickets.mjs"), "TLH_TICKETS_LOG", "profile");
+	writeFileSync(join(agentDir, "tlh", "default-extensions.json"), "[\n  \"profile\"\n]\n", "utf8");
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const wrapperEnv = scrubInstallerEnv({
+		HOME: homeDir,
+		PATH: process.env.PATH || "",
+		TLH_UPDATE_LOG: updateLog,
+		TLH_DEFAULTS_LOG: defaultsLog,
+		TLH_TICKETS_LOG: ticketsLog,
+	});
+
+	const updateResult = spawnSync(wrapper, ["update", "--dry-run"], {
+		env: wrapperEnv,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	assert.equal(updateResult.status, 0, updateResult.stderr);
+	const updateRecord = JSON.parse(readFileSync(updateLog, "utf8"));
+	assert.equal(updateRecord.source, "package");
+	assert.deepEqual(updateRecord.argv, ["--agent-dir", agentDir, "--bin-dir", binDir, "--wrapper-name", "tlh", "--dry-run"]);
+
+	const defaultsResult = spawnSync(wrapper, ["defaults", "list"], {
+		env: wrapperEnv,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	assert.equal(defaultsResult.status, 0, defaultsResult.stderr);
+	const defaultsRecord = JSON.parse(readFileSync(defaultsLog, "utf8"));
+	assert.equal(defaultsRecord.source, "package");
+	assert.deepEqual(defaultsRecord.argv, [
+		"--settings",
+		join(agentDir, "settings.json"),
+		"--defaults",
+		join(packageRoot, "config", "default-extensions.json"),
+		"list",
+	]);
+
+	const ticketsResult = spawnSync(wrapper, ["tickets", "status"], {
+		env: wrapperEnv,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	assert.equal(ticketsResult.status, 0, ticketsResult.stderr);
+	const ticketsRecord = JSON.parse(readFileSync(ticketsLog, "utf8"));
+	assert.equal(ticketsRecord.source, "package");
+	assert.deepEqual(ticketsRecord.argv, [
+		"--settings",
+		join(agentDir, "settings.json"),
+		"--agent-dir",
+		agentDir,
+		"--wrapper-name",
+		"tlh",
+		"status",
+	]);
+});
+
+test("wrapper falls back to profile helpers and keeps defaults script+manifest paired", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const updateLog = join(root, "update.json");
+	const defaultsLog = join(root, "defaults.json");
+	const ticketsLog = join(root, "tickets.json");
+	mkdirSync(join(agentDir, "tlh"), { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(join(packageRoot, "scripts"), { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-update.mjs"), "TLH_UPDATE_LOG", "profile");
+	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "profile");
+	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-tickets.mjs"), "TLH_TICKETS_LOG", "profile");
+	writeFileSync(join(agentDir, "tlh", "default-extensions.json"), "[\n  \"profile\"\n]\n", "utf8");
+	writeWrapperHelperLogger(join(packageRoot, "scripts", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "package");
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const wrapperEnv = scrubInstallerEnv({
+		HOME: homeDir,
+		PATH: process.env.PATH || "",
+		TLH_UPDATE_LOG: updateLog,
+		TLH_DEFAULTS_LOG: defaultsLog,
+		TLH_TICKETS_LOG: ticketsLog,
+	});
+
+	const updateResult = spawnSync(wrapper, ["update", "--dry-run"], {
+		env: wrapperEnv,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	assert.equal(updateResult.status, 0, updateResult.stderr);
+	const updateRecord = JSON.parse(readFileSync(updateLog, "utf8"));
+	assert.equal(updateRecord.source, "profile");
+
+	const defaultsResult = spawnSync(wrapper, ["defaults", "list"], {
+		env: wrapperEnv,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	assert.equal(defaultsResult.status, 0, defaultsResult.stderr);
+	const defaultsRecord = JSON.parse(readFileSync(defaultsLog, "utf8"));
+	assert.equal(defaultsRecord.source, "profile");
+	assert.deepEqual(defaultsRecord.argv, [
+		"--settings",
+		join(agentDir, "settings.json"),
+		"--defaults",
+		join(agentDir, "tlh", "default-extensions.json"),
+		"list",
+	]);
+
+	const ticketsResult = spawnSync(wrapper, ["tickets", "status"], {
+		env: wrapperEnv,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	assert.equal(ticketsResult.status, 0, ticketsResult.stderr);
+	const ticketsRecord = JSON.parse(readFileSync(ticketsLog, "utf8"));
+	assert.equal(ticketsRecord.source, "profile");
 });
 
 test("wrapper resolves pi to an absolute command path before exposing isolated bin", (t) => {

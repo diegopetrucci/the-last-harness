@@ -176,9 +176,27 @@ test("base architect prompt permanently includes the final-validation-ticket wor
 	assert.match(normalizedBody, /make any validation deferral explicit in the ticket text/i);
 });
 
+test("base architect prompt keeps delta follow-up review guidance behind the experimental flag", () => {
+	const architect = readAgentPrompt("primary", "architect");
+	const { normalizedBody } = architect;
+	assert.doesNotMatch(normalizedBody, /default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint/i);
+	assert.doesNotMatch(normalizedBody, /prior findings.*git range or checkpoint.*changed-file list/i);
+	assert.match(normalizedBody, /delegate final review to `code-reviewer` against the full vcs diff/i);
+});
+
 test("base developer prompt does not inherit the architect final-validation workflow", () => {
 	const developer = readAgentPrompt("subagents", "developer");
 	const { normalizedBody } = developer;
 	assert.doesNotMatch(normalizedBody, /explicitly defer tests\/validation.*final validation ticket/i);
 	assert.doesNotMatch(normalizedBody, /final validation ticket.*VALIDATING\.md.*otherwise.*repo-discovered commands/i);
+});
+
+test("base code-reviewer prompt keeps delta follow-up review guidance behind the experimental flag", () => {
+	const reviewer = readAgentPrompt("subagents", "code-reviewer");
+	const { normalizedBody } = reviewer;
+	assert.doesNotMatch(normalizedBody, /follow-up review delta/i);
+	assert.doesNotMatch(normalizedBody, /expect prior findings plus an exact delta baseline/i);
+	assert.doesNotMatch(normalizedBody, /default to the requested delta and prior findings/i);
+	assert.doesNotMatch(normalizedBody, /requested delta cannot be validated safely without wider context/i);
+	assert.match(normalizedBody, /the vcs diff\./i);
 });
