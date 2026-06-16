@@ -72,7 +72,9 @@ Follow these steps the next time a tag is rolled:
    - Bump `config/default-extensions.json` entry for `pi-web-access` (`source`) to the new tag.
    - Update `tests/default-extensions.test.mjs` to pin the new tag string.
 
-9. Run `npm run validate` in the TLH repo and fix any fallout.
+9. Run `npm run validate` in the TLH repo and fix any fallout. That TLH-repo validation flow uses
+   the quiet `npm test` dot reporter for passing runs; if you need the full Node test reporter while
+   diagnosing TLH-side failures, rerun `npm run test:verbose` in the TLH repo.
 
 ## Notes
 

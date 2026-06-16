@@ -10,7 +10,13 @@ Run the aggregate validation script, which covers the installer smoke checks, te
 npm run validate
 ```
 
-This default validation path stays deterministic and repo-local.
+This default validation path stays deterministic and repo-local. Its `npm test` step uses the quiet dot reporter for passing runs.
+
+When you need the full Node test reporter for diagnostics, rerun:
+
+```sh
+npm run test:verbose
+```
 
 ## Refresh the Understand Anything graph
 

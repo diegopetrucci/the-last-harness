@@ -10,7 +10,21 @@ Before considering changes ready, run:
 npm run validate
 ```
 
-This is the standard full validation flow for this repository.
+This is the standard full validation flow for this repository. Its test phase uses the quiet `npm test` dot reporter so passing runs stay concise.
+
+## Test output modes
+
+Use the default test command for normal local checks:
+
+```sh
+npm test
+```
+
+If you need the full Node test reporter while diagnosing a failure, rerun with:
+
+```sh
+npm run test:verbose
+```
 
 ## Useful targeted checks
 
