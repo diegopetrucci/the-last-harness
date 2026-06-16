@@ -41,7 +41,10 @@ import {
 	missingTlhSubagentPrompts,
 	settingsRequireTlhSubagentPrompts,
 } from "../scripts/lib/tlh-install-subagents.mjs";
-import { supportFileManifest } from "../scripts/lib/tlh-install-support-manifest.mjs";
+import {
+	installableSupportFiles,
+	supportFileManifest,
+} from "../scripts/lib/tlh-install-support-manifest.mjs";
 
 function tempFixture(t, prefix = "tlh-install-lib-test-") {
 	const dir = mkdtempSync(join(tmpdir(), prefix));
@@ -716,6 +719,7 @@ test("support manifests preserve current-ref packaging while keeping stage-0 boo
 		installName: "lib/tlh-install-utils.mjs",
 	});
 	assert.equal(manifest.find((file) => file.variable === "TLH_GNOSIS_SCRIPT")?.requirement, "required");
+	assert.equal(manifest.find((file) => file.variable === "TLH_GNOSIS_SCRIPT")?.installName, "");
 	assert.deepEqual(manifest.find((file) => file.variable === "DEFAULT_EXTENSIONS_LIB"), {
 		variable: "DEFAULT_EXTENSIONS_LIB",
 		requirement: "required",
@@ -728,15 +732,42 @@ test("support manifests preserve current-ref packaging while keeping stage-0 boo
 		requirement: "required",
 		relativePath: "config/librarian.defaults.json",
 		tempPath: "librarian.defaults.json",
-		installName: "librarian.defaults.json",
+		installName: "",
 	});
+	assert.equal(manifest.find((file) => file.variable === "TLH_WRAPPER_SCRIPT")?.installName, "");
+	assert.equal(manifest.find((file) => file.variable === "TLH_INSTALL_STATE_SCRIPT")?.installName, "");
 	assert.equal(supportFileManifest({ noSettings: true }).some((file) => file.variable === "LIBRARIAN_DEFAULTS_FILE"), false);
+
+	const installableVariables = new Set(installableSupportFiles().map((file) => file.variable));
+	for (const variable of [
+		"TLH_DEFAULTS_SCRIPT",
+		"TLH_TICKETS_SCRIPT",
+		"TLH_UPDATE_SCRIPT",
+		"TLH_INSTALL_PACKAGE_SOURCE_LIB",
+		"TLH_INSTALL_PATHS_LIB",
+		"TLH_SAFE_PROFILE_WRITE_LIB",
+		"TLH_INSTALL_UTILS_LIB",
+		"DEFAULT_EXTENSIONS_LIB",
+	]) {
+		assert.equal(installableVariables.has(variable), true, variable);
+	}
+	for (const variable of [
+		"TLH_GNOSIS_SCRIPT",
+		"TLH_WRAPPER_SCRIPT",
+		"TLH_INSTALL_STATE_SCRIPT",
+		"LIBRARIAN_DEFAULTS_FILE",
+	]) {
+		assert.equal(installableVariables.has(variable), false, variable);
+	}
 
 	const bootstrap = readFileSync(resolve(import.meta.dirname, "..", "install.sh"), "utf8");
 	assert.match(bootstrap, /^required\|scripts\/lib\/default-extensions\.mjs$/m);
 	assert.match(bootstrap, /^required\|scripts\/lib\/tlh-safe-profile-write\.mjs$/m);
 	assert.doesNotMatch(bootstrap, /^optional\|scripts\/lib\/tlh-safe-profile-write\.mjs$/m);
 	assert.match(bootstrap, /^required\|scripts\/lib\/tlh-install-utils\.mjs$/m);
+	assert.match(bootstrap, /^required\|scripts\/tlh-gnosis\.mjs$/m);
+	assert.match(bootstrap, /^optional\|scripts\/tlh-wrapper\.mjs$/m);
+	assert.match(bootstrap, /^optional\|scripts\/tlh-install-state\.mjs$/m);
 	assert.match(bootstrap, /^required\|config\/librarian\.defaults\.json$/m);
 });
 

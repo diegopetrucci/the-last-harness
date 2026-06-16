@@ -91,7 +91,7 @@ const BASE_SUPPORT_FILES = Object.freeze([
 		requirement: REQUIRED,
 		relativePath: "scripts/tlh-gnosis.mjs",
 		tempPath: "tlh-gnosis.mjs",
-		installName: "tlh-gnosis.mjs",
+		installName: "",
 	},
 	{
 		variable: "TLH_TICKETS_SCRIPT",
@@ -112,14 +112,14 @@ const BASE_SUPPORT_FILES = Object.freeze([
 		requirement: OPTIONAL,
 		relativePath: "scripts/tlh-wrapper.mjs",
 		tempPath: "tlh-wrapper.mjs",
-		installName: "tlh-wrapper.mjs",
+		installName: "",
 	},
 	{
 		variable: "TLH_INSTALL_STATE_SCRIPT",
 		requirement: OPTIONAL,
 		relativePath: "scripts/tlh-install-state.mjs",
 		tempPath: "tlh-install-state.mjs",
-		installName: "tlh-install-state.mjs",
+		installName: "",
 	},
 	{
 		variable: "DEFAULTS_FILE",
@@ -143,7 +143,7 @@ const SETTINGS_SUPPORT_FILES = Object.freeze([
 		requirement: REQUIRED,
 		relativePath: "config/librarian.defaults.json",
 		tempPath: "librarian.defaults.json",
-		installName: "librarian.defaults.json",
+		installName: "",
 	},
 	{
 		variable: "KEYBINDINGS_MERGE_SCRIPT",
