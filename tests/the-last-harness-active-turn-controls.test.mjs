@@ -160,6 +160,22 @@ test("idle Enter defers to empty-editor app.exit before bypassing follow-up", as
 	});
 });
 
+test("idle Alt+Enter preserves upstream newline insertion when TLH defaults swap follow-up to Enter", async () => {
+	await withKeybindings({ "app.message.followUp": "enter" }, async (keybindings) => {
+		const editor = createEditor(keybindings, () => true);
+		let submitted;
+		editor.onSubmit = (text) => {
+			submitted = text;
+		};
+		editor.setText("/review --help");
+
+		editor.handleInput("\x1b\r");
+
+		assert.equal(submitted, undefined);
+		assert.equal(editor.getText(), "/review --help\n");
+	});
+});
+
 test("active-turn editor routes Alt+Enter through the normal submit path when TLH defaults swap follow-up to Enter", async () => {
 	await withKeybindings({ "app.message.followUp": "enter" }, async (keybindings) => {
 		const editor = createEditor(keybindings);
@@ -178,6 +194,9 @@ test("active-turn editor routes Alt+Enter through the normal submit path when TL
 
 test("active-turn steering defers to extension shortcuts before Alt+Enter submit", async () => {
 	await withKeybindings({ "app.message.followUp": "enter" }, async (keybindings) => {
+		assert.equal(shouldRouteAltEnterToSubmit(keybindings, false, "\x1b\r"), true);
+		assert.equal(shouldRouteAltEnterToSubmit(keybindings, true, "\x1b\r"), false);
+
 		const editor = createEditor(keybindings);
 		let shortcutCalls = 0;
 		let submitted;
@@ -222,5 +241,5 @@ test("active-turn steering override stays disabled when a user owns a different 
 	const keybindings = new KeybindingsManager(KEYBINDINGS, { "app.message.followUp": "ctrl+j" });
 
 	assert.equal(usesSwappedTlhActiveTurnControls(keybindings), false);
-	assert.equal(shouldRouteAltEnterToSubmit(keybindings, "\x1b\r"), false);
+	assert.equal(shouldRouteAltEnterToSubmit(keybindings, false, "\x1b\r"), false);
 });

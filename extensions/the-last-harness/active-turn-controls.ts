@@ -59,8 +59,12 @@ function shouldUseIdleEnterSubmitPath(
 	);
 }
 
-export function shouldRouteAltEnterToSubmit(keybindings: Pick<KeybindingsManager, "getKeys">, data: string) {
-	return usesSwappedTlhActiveTurnControls(keybindings) && matchesKey(data, TLH_ACTIVE_TURN_STEER_KEY);
+export function shouldRouteAltEnterToSubmit(
+	keybindings: Pick<KeybindingsManager, "getKeys">,
+	isIdle: boolean,
+	data: string,
+) {
+	return !isIdle && usesSwappedTlhActiveTurnControls(keybindings) && matchesKey(data, TLH_ACTIVE_TURN_STEER_KEY);
 }
 
 export class TlhActiveTurnEditor extends CustomEditor {
@@ -154,7 +158,7 @@ export class TlhActiveTurnEditor extends CustomEditor {
 			return;
 		}
 
-		if (!shouldRouteAltEnterToSubmit(this.tlhKeybindings, data)) {
+		if (!shouldRouteAltEnterToSubmit(this.tlhKeybindings, this.tlhIsIdle(), data)) {
 			super.handleInput(data);
 			return;
 		}
