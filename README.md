@@ -23,6 +23,8 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/dow
 
 ## The default TLH workflow: architect first
 
+![Illustration of the TLH architect-first workflow: a request passes through approval, tk tickets, scout/build/review child sessions, and returns a judged result.](assets/main-tlh-workflow-illustrations/01-main-tlh-workflow.png)
+
 Most TLH users stay with the **architect** primary agent.
 
 The architect is the default because TLH is optimized for a deliberate loop:
