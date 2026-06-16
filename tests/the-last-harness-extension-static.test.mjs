@@ -20,6 +20,7 @@ const experimentalSource = readFileSync(new URL("../extensions/the-last-harness/
 const primaryRuntimeSource = readFileSync(new URL("../extensions/the-last-harness/primary-agent-runtime.ts", import.meta.url), "utf8");
 const effortSource = readFileSync(new URL("../extensions/the-last-harness/effort.ts", import.meta.url), "utf8");
 const promptsSource = readFileSync(new URL("../extensions/the-last-harness/prompts.ts", import.meta.url), "utf8");
+const tokensSource = readFileSync(new URL("../extensions/the-last-harness/tokens.ts", import.meta.url), "utf8");
 const usageLimitsSource = readFileSync(new URL("../extensions/the-last-harness/usage-limits.ts", import.meta.url), "utf8");
 const profileStateSource = readFileSync(new URL("../extensions/the-last-harness/profile-state.ts", import.meta.url), "utf8");
 const typesSource = readFileSync(new URL("../extensions/the-last-harness/types.ts", import.meta.url), "utf8");
@@ -247,6 +248,7 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
 	assert.match(extensionSource, /from "\.\/the-last-harness\/resources\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/subscription-usage\.mjs"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/types\.js"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/tokens\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/usage-limits\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/constants\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/gnosis\.js"/);
@@ -416,6 +418,9 @@ test("extension keeps TLH experimental command wiring while retiring the run-tes
 	assert.match(attributionSource, /settings\.tlh\.attribution = \{ commit: nextEnabled \}/);
 	assert.match(attributionSource, /typeof commit !== "boolean"/);
 	assert.match(typesSource, /commit\?: boolean;/);
+	assert.match(extensionSource, /registerTokensCommand\(pi\)/);
+	assert.match(tokensSource, /pi\.registerCommand\("tokens"/);
+	assert.match(tokensSource, /Usage: \/tokens/);
 	assert.match(extensionSource, /registerUsageCommand\(pi\)/);
 	assert.match(usageLimitsSource, /from "\.\/profile-state\.js"/);
 	assert.match(usageLimitsSource, /pi\.registerCommand\("usage"/);

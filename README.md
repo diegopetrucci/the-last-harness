@@ -103,6 +103,7 @@ TLH also aims to make the day-to-day session experience calmer and safer:
 - quieter UI defaults so tools and bash output do not constantly fight for attention,
 - a lightweight first-party `/annotate-last-message` command that opens a native annotation window for the latest assistant reply and turns submitted notes into agent feedback,
 - a first-party `/annotate-git-diff` command that opens a native review window and pastes submitted feedback back into the editor as a prompt,
+- a first-party `/tokens` command that generates a local HTML token-spend report for the current session from sanitized session analysis,
 - bundled web-search support for research-heavy work,
 - bundled MCP adapter support,
 - subscription usage footer controls,
