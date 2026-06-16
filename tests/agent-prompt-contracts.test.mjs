@@ -167,17 +167,16 @@ for (const contract of contracts) {
 	});
 }
 
-test("base architect prompt keeps run-tests-last validation workflow out of base prompts unless the experimental flag is enabled", () => {
+test("base architect prompt permanently includes the final-validation-ticket workflow", () => {
 	const architect = readAgentPrompt("primary", "architect");
 	const { normalizedBody } = architect;
-	assert.doesNotMatch(normalizedBody, /implementation ticket.*do(?:es)? not require tests or validation.*final validation ticket/i);
-	assert.doesNotMatch(
-		normalizedBody,
-		/final validation ticket.*depends on all implementation tickets.*when .*VALIDATING\.md.*otherwise.*repo-discovered validation commands/i,
-	);
+	assert.match(normalizedBody, /final-validation ticket.*depends on all implementation tickets/i);
+	assert.match(normalizedBody, /implementation-ticket validation narrow and ticket-scoped/i);
+	assert.match(normalizedBody, /when [`']?VALIDATING\.md[`']? is present.*otherwise use repo-discovered validation commands/i);
+	assert.match(normalizedBody, /make any validation deferral explicit in the ticket text/i);
 });
 
-test("base developer prompt keeps run-tests-last validation workflow gated behind the experimental flag", () => {
+test("base developer prompt does not inherit the architect final-validation workflow", () => {
 	const developer = readAgentPrompt("subagents", "developer");
 	const { normalizedBody } = developer;
 	assert.doesNotMatch(normalizedBody, /explicitly defer tests\/validation.*final validation ticket/i);

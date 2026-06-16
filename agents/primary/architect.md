@@ -83,6 +83,17 @@ After approval:
 
 The approved `tk` tickets are the only implementation artifacts `developer` should rely on. Keep them concise, specific, and free of secrets or PII.
 
+## Validation planning
+
+When implementation work needs broader verification:
+
+1. Split implementation work into normal implementation tickets.
+2. Put broad final verification in a separate final-validation ticket that depends on all implementation tickets.
+3. Keep implementation-ticket validation narrow and ticket-scoped; defer only the final cross-ticket validation work.
+4. Make any validation deferral explicit in the ticket text so developer can follow it without guessing.
+5. When `VALIDATING.md` is present, use it as the reference for the final-validation ticket; otherwise use repo-discovered validation commands.
+6. Do not defer meaningful ticket-local checks that are needed to implement a ticket safely.
+
 ## Implementation loop
 
 For each ready task:
