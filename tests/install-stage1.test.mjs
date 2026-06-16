@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
@@ -818,12 +818,13 @@ test("stage-1 dry-run reports isolated Librarian config creation without writing
 	assert.equal(existsSync(join(agentDir, "extensions", "librarian.json")), false);
 });
 
-test("stage-1 copies only runtime/recovery TLH support files into the isolated profile", (t) => {
+test("stage-1 copies only the profile recovery launcher into the isolated profile", (t) => {
 	const { result, agentDir } = runStage1LocalPackageInstall(t, { noSettings: true });
 	const output = `${result.stdout}\n${result.stderr}`;
 	const supportDir = join(agentDir, "tlh");
 
 	assert.equal(result.status, 0, output);
+	assert.equal(existsSync(join(supportDir, "recover-update.mjs")), true, "recover-update.mjs");
 	for (const relativePath of [
 		"tlh-defaults.mjs",
 		"tlh-tickets.mjs",
@@ -834,10 +835,6 @@ test("stage-1 copies only runtime/recovery TLH support files into the isolated p
 		"lib/tlh-install-paths.mjs",
 		"lib/tlh-install-utils.mjs",
 		"lib/tlh-safe-profile-write.mjs",
-	]) {
-		assert.equal(existsSync(join(supportDir, relativePath)), true, relativePath);
-	}
-	for (const relativePath of [
 		"tlh-gnosis.mjs",
 		"tlh-wrapper.mjs",
 		"tlh-install-state.mjs",
@@ -956,10 +953,11 @@ test("wrapper skips stale fallback package helpers for unlocatable custom source
 	writeWrapperHelperLogger(join(config.packageRoot, "scripts", "tlh-tickets.mjs"), "TLH_TICKETS_LOG", "stale-package");
 	mkdirSync(join(config.packageRoot, "config"), { recursive: true });
 	writeFileSync(join(config.packageRoot, "config", "default-extensions.json"), "[\n  \"stale-package\"\n]\n", "utf8");
-	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-update.mjs"), "TLH_UPDATE_LOG", "profile");
-	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "profile");
-	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-tickets.mjs"), "TLH_TICKETS_LOG", "profile");
-	writeFileSync(join(agentDir, "tlh", "default-extensions.json"), "[\n  \"profile\"\n]\n", "utf8");
+	writeWrapperHelperLogger(join(agentDir, "tlh", "recover-update.mjs"), "TLH_UPDATE_LOG", "recovery");
+	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-update.mjs"), "TLH_UPDATE_LOG", "legacy-profile");
+	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "legacy-profile");
+	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-tickets.mjs"), "TLH_TICKETS_LOG", "legacy-profile");
+	writeFileSync(join(agentDir, "tlh", "default-extensions.json"), "[\n  \"legacy-profile\"\n]\n", "utf8");
 
 	runHelper("scripts/tlh-wrapper.mjs", [
 		"--agent-dir",
@@ -989,32 +987,27 @@ test("wrapper skips stale fallback package helpers for unlocatable custom source
 	});
 	assert.equal(updateResult.status, 0, updateResult.stderr);
 	const updateRecord = JSON.parse(readFileSync(updateLog, "utf8"));
-	assert.equal(updateRecord.source, "profile");
+	assert.equal(updateRecord.source, "recovery");
 
 	const defaultsResult = spawnSync(wrapperPath, ["defaults", "list"], {
 		env: wrapperEnv,
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 	});
-	assert.equal(defaultsResult.status, 0, defaultsResult.stderr);
-	const defaultsRecord = JSON.parse(readFileSync(defaultsLog, "utf8"));
-	assert.equal(defaultsRecord.source, "profile");
-	assert.deepEqual(defaultsRecord.argv, [
-		"--settings",
-		join(agentDir, "settings.json"),
-		"--defaults",
-		join(agentDir, "tlh", "default-extensions.json"),
-		"list",
-	]);
+	assert.equal(defaultsResult.status, 1);
+	assert.match(defaultsResult.stderr, /tlh defaults package support files are missing or corrupt; run `tlh update` to recover\./);
+	assert.doesNotMatch(defaultsResult.stderr, /ERR_MODULE_NOT_FOUND/);
+	assert.equal(existsSync(defaultsLog), false);
 
 	const ticketsResult = spawnSync(wrapperPath, ["tickets", "status"], {
 		env: wrapperEnv,
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 	});
-	assert.equal(ticketsResult.status, 0, ticketsResult.stderr);
-	const ticketsRecord = JSON.parse(readFileSync(ticketsLog, "utf8"));
-	assert.equal(ticketsRecord.source, "profile");
+	assert.equal(ticketsResult.status, 1);
+	assert.match(ticketsResult.stderr, /tlh tickets package support files are missing or corrupt; run `tlh update` to recover\./);
+	assert.doesNotMatch(ticketsResult.stderr, /ERR_MODULE_NOT_FOUND/);
+	assert.equal(existsSync(ticketsLog), false);
 });
 
 test("wrapper uses original node for helpers while exposing isolated bin only for tickets and pi", (t) => {
@@ -1038,7 +1031,7 @@ test("wrapper uses original node for helpers while exposing isolated bin only fo
 	mkdirSync(join(agentDir, "tlh"), { recursive: true });
 	mkdirSync(agentBin, { recursive: true });
 	mkdirSync(homeDir, { recursive: true });
-	mkdirSync(packageRoot, { recursive: true });
+	mkdirSync(join(packageRoot, "scripts"), { recursive: true });
 	mkdirSync(cwdDir, { recursive: true });
 	if (process.platform !== "win32") {
 		symlinkSync(agentBin, agentBinLink, "dir");
@@ -1051,8 +1044,8 @@ test("wrapper uses original node for helpers while exposing isolated bin only fo
 	writeFakeCommand(agentBin, "pi", "printf 'isolated pi intercepted\\n' >\"${ISOLATED_PI_LOG}\"\nexit 89");
 	writeFakeCommand(cwdDir, "node", "printf 'current-dir node intercepted\\n' >\"${CURRENT_NODE_LOG}\"\nexit 87");
 	writeFakeCommand(cwdDir, "pi", "printf 'current-dir pi intercepted\\n' >\"${CURRENT_PI_LOG}\"\nexit 86");
-	writeFileSync(join(agentDir, "tlh", "tlh-update.mjs"), `import { writeFileSync } from "node:fs";\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH } }));\n`, "utf8");
-	writeFileSync(join(agentDir, "tlh", "tlh-tickets.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst tk = spawnSync("tk", ["help"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_TICKETS_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, tk: { status: tk.status, stdout: (tk.stdout || "").trim(), stderr: (tk.stderr || "").trim(), error: tk.error?.message } }));\nprocess.exit(tk.status ?? (tk.error ? 1 : 0));\n`, "utf8");
+	writeWrapperHelperLogger(join(agentDir, "tlh", "recover-update.mjs"), "TLH_UPDATE_LOG", "recovery");
+	writeFileSync(join(packageRoot, "scripts", "tlh-tickets.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst tk = spawnSync("tk", ["help"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_TICKETS_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, tk: { status: tk.status, stdout: (tk.stdout || "").trim(), stderr: (tk.stderr || "").trim(), error: tk.error?.message } }));\nprocess.exit(tk.status ?? (tk.error ? 1 : 0));\n`, "utf8");
 	writeVersionedWrapperPi(fakebin, piLog);
 
 	runHelper("scripts/tlh-wrapper.mjs", [
@@ -1186,7 +1179,8 @@ test("wrapper defaults and tickets helpers do not invoke PATH pi", (t) => {
 	mkdirSync(join(agentDir, "tlh"), { recursive: true });
 	mkdirSync(agentBin, { recursive: true });
 	mkdirSync(homeDir, { recursive: true });
-	mkdirSync(packageRoot, { recursive: true });
+	mkdirSync(join(packageRoot, "scripts"), { recursive: true });
+	mkdirSync(join(packageRoot, "config"), { recursive: true });
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
 	writeFakePi(agentBin, `printf 'managed:%s\n' "$*" >>"${piProbeLog}"
@@ -1194,9 +1188,9 @@ exit 63`);
 	writeFakeCommand(agentBin, "tk", "if [[ \"${1:-}\" == \"help\" ]]; then printf 'isolated tk help\\n'; exit 0; fi\nexit 1");
 	writeFakePi(fakebin, `printf 'path:%s\n' "$*" >>"${piProbeLog}"
 exit 64`);
-	writeFileSync(join(agentDir, "tlh", "tlh-defaults.mjs"), `import { writeFileSync } from "node:fs";\nwriteFileSync(process.env.TLH_DEFAULTS_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH } }));\n`, "utf8");
-	writeFileSync(join(agentDir, "tlh", "default-extensions.json"), "[]\n", "utf8");
-	writeFileSync(join(agentDir, "tlh", "tlh-tickets.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst tk = spawnSync("tk", ["help"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_TICKETS_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, tk: { status: tk.status, stdout: (tk.stdout || "").trim(), stderr: (tk.stderr || "").trim(), error: tk.error?.message } }));\nprocess.exit(tk.status ?? (tk.error ? 1 : 0));\n`, "utf8");
+	writeWrapperHelperLogger(join(packageRoot, "scripts", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "package");
+	writeFileSync(join(packageRoot, "config", "default-extensions.json"), "[]\n", "utf8");
+	writeFileSync(join(packageRoot, "scripts", "tlh-tickets.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst tk = spawnSync("tk", ["help"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_TICKETS_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, tk: { status: tk.status, stdout: (tk.stdout || "").trim(), stderr: (tk.stderr || "").trim(), error: tk.error?.message } }));\nprocess.exit(tk.status ?? (tk.error ? 1 : 0));\n`, "utf8");
 
 	runHelper("scripts/tlh-wrapper.mjs", [
 		"--agent-dir",
@@ -1228,7 +1222,7 @@ exit 64`);
 		"--settings",
 		join(agentDir, "settings.json"),
 		"--defaults",
-		join(agentDir, "tlh", "default-extensions.json"),
+		join(packageRoot, "config", "default-extensions.json"),
 		"list",
 	]);
 	assert.equal(defaultsRecord.env.PI_CODING_AGENT_DIR, agentDir);
@@ -1350,25 +1344,28 @@ test("wrapper prefers package checkout helpers over profile copies", (t) => {
 	]);
 });
 
-test("wrapper falls back to profile helpers and keeps defaults script+manifest paired", (t) => {
+test("wrapper ignores stale profile defaults/tickets helpers when package helper transitive imports are corrupt", (t) => {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");
 	const agentDir = join(root, "agent");
 	const binDir = join(root, "bin");
 	const packageRoot = join(root, "package");
-	const updateLog = join(root, "update.json");
 	const defaultsLog = join(root, "defaults.json");
 	const ticketsLog = join(root, "tickets.json");
 	mkdirSync(join(agentDir, "tlh"), { recursive: true });
 	mkdirSync(homeDir, { recursive: true });
-	mkdirSync(join(packageRoot, "scripts"), { recursive: true });
+	mkdirSync(join(packageRoot, "scripts", "lib"), { recursive: true });
+	mkdirSync(join(packageRoot, "config"), { recursive: true });
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
-	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-update.mjs"), "TLH_UPDATE_LOG", "profile");
-	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "profile");
-	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-tickets.mjs"), "TLH_TICKETS_LOG", "profile");
-	writeFileSync(join(agentDir, "tlh", "default-extensions.json"), "[\n  \"profile\"\n]\n", "utf8");
-	writeWrapperHelperLogger(join(packageRoot, "scripts", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "package");
+	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "legacy-profile");
+	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-tickets.mjs"), "TLH_TICKETS_LOG", "legacy-profile");
+	writeFileSync(join(agentDir, "tlh", "default-extensions.json"), "[\n  \"legacy-profile\"\n]\n", "utf8");
+	writeFileSync(join(packageRoot, "scripts", "tlh-defaults.mjs"), 'import "./lib/defaults-hop.mjs";\n', "utf8");
+	writeFileSync(join(packageRoot, "scripts", "lib", "defaults-hop.mjs"), 'import "./missing-defaults-lib.mjs";\n', "utf8");
+	writeFileSync(join(packageRoot, "config", "default-extensions.json"), "[]\n", "utf8");
+	writeFileSync(join(packageRoot, "scripts", "tlh-tickets.mjs"), 'import "./lib/tickets-hop.mjs";\n', "utf8");
+	writeFileSync(join(packageRoot, "scripts", "lib", "tickets-hop.mjs"), 'import "./missing-tickets-lib.mjs";\n', "utf8");
 
 	runHelper("scripts/tlh-wrapper.mjs", [
 		"--agent-dir",
@@ -1385,44 +1382,158 @@ test("wrapper falls back to profile helpers and keeps defaults script+manifest p
 	const wrapperEnv = scrubInstallerEnv({
 		HOME: homeDir,
 		PATH: process.env.PATH || "",
-		TLH_UPDATE_LOG: updateLog,
 		TLH_DEFAULTS_LOG: defaultsLog,
 		TLH_TICKETS_LOG: ticketsLog,
 	});
-
-	const updateResult = spawnSync(wrapper, ["update", "--dry-run"], {
-		env: wrapperEnv,
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "pipe"],
-	});
-	assert.equal(updateResult.status, 0, updateResult.stderr);
-	const updateRecord = JSON.parse(readFileSync(updateLog, "utf8"));
-	assert.equal(updateRecord.source, "profile");
 
 	const defaultsResult = spawnSync(wrapper, ["defaults", "list"], {
 		env: wrapperEnv,
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 	});
-	assert.equal(defaultsResult.status, 0, defaultsResult.stderr);
-	const defaultsRecord = JSON.parse(readFileSync(defaultsLog, "utf8"));
-	assert.equal(defaultsRecord.source, "profile");
-	assert.deepEqual(defaultsRecord.argv, [
-		"--settings",
-		join(agentDir, "settings.json"),
-		"--defaults",
-		join(agentDir, "tlh", "default-extensions.json"),
-		"list",
-	]);
+	assert.equal(defaultsResult.status, 1);
+	assert.match(defaultsResult.stderr, /tlh defaults package support files are missing or corrupt; run `tlh update` to recover\./);
+	assert.doesNotMatch(defaultsResult.stderr, /ERR_MODULE_NOT_FOUND/);
+	assert.equal(existsSync(defaultsLog), false);
 
 	const ticketsResult = spawnSync(wrapper, ["tickets", "status"], {
 		env: wrapperEnv,
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 	});
-	assert.equal(ticketsResult.status, 0, ticketsResult.stderr);
-	const ticketsRecord = JSON.parse(readFileSync(ticketsLog, "utf8"));
-	assert.equal(ticketsRecord.source, "profile");
+	assert.equal(ticketsResult.status, 1);
+	assert.match(ticketsResult.stderr, /tlh tickets package support files are missing or corrupt; run `tlh update` to recover\./);
+	assert.doesNotMatch(ticketsResult.stderr, /ERR_MODULE_NOT_FOUND/);
+	assert.equal(existsSync(ticketsLog), false);
+});
+
+test("wrapper falls back to the profile recovery updater when package update helper transitive imports are missing", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const legacyUpdateLog = join(root, "legacy-update.log");
+	mkdirSync(join(agentDir, "tlh"), { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(join(packageRoot, "scripts", "lib"), { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify({
+		schemaVersion: 1,
+		repo: "diegopetrucci/the-last-harness",
+		track: "latest-release",
+		packageSource: "git:github.com/diegopetrucci/the-last-harness@main",
+		packageSourceIsDefault: true,
+	}, null, 2));
+	writeFileSync(join(packageRoot, "scripts", "tlh-update.mjs"), 'import "./lib/update-hop.mjs";\n', "utf8");
+	writeFileSync(join(packageRoot, "scripts", "lib", "update-hop.mjs"), 'import "./missing-update-hop.mjs";\n', "utf8");
+	copyFileSync(join(repoRoot, "scripts", "tlh-recover-update.mjs"), join(agentDir, "tlh", "recover-update.mjs"));
+	writeFileSync(join(agentDir, "tlh", "tlh-update.mjs"), `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(legacyUpdateLog)}, "legacy profile update should not run\\n");\nprocess.exit(91);\n`, "utf8");
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const result = spawnSync(wrapper, ["update", "--dry-run"], {
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: process.env.PATH || "",
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+	assert.match(result.stdout, /The Last Harness update plan/);
+	assert.match(result.stdout, /releases\/latest\/download\/install\.sh/);
+	assert.equal(result.stderr, "");
+	assert.equal(existsSync(legacyUpdateLog), false);
+});
+
+test("wrapper uses the profile recovery updater before legacy profile update helpers", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const safeBin = join(root, "safe-bin");
+	const fetchPreload = join(root, "stub-recovery-fetch.mjs");
+	const bashLog = join(root, "bash.log");
+	const legacyUpdateLog = join(root, "legacy-update.log");
+	const bashPath = spawnSync("sh", ["-c", "command -v bash"], { encoding: "utf8" }).stdout.trim() || "/bin/bash";
+	mkdirSync(join(agentDir, "tlh"), { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	mkdirSync(safeBin, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify({
+		schemaVersion: 1,
+		repo: "diegopetrucci/the-last-harness",
+		track: "ref",
+		ref: "main",
+		packageSource: "git:github.com/diegopetrucci/the-last-harness@main",
+		packageSourceIsDefault: true,
+	}, null, 2));
+	copyFileSync(join(repoRoot, "scripts", "tlh-recover-update.mjs"), join(agentDir, "tlh", "recover-update.mjs"));
+	writeFileSync(join(agentDir, "tlh", "tlh-update.mjs"), `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(legacyUpdateLog)}, "legacy profile update should not run\\n");\nprocess.exit(91);\n`, "utf8");
+	writeFileSync(join(safeBin, "bash"), [
+		"#!/bin/sh",
+		"marker=$(grep -F 'recovery stub marker' \"$1\" || true)",
+		"{ printf 'cmd=%s\\n' \"$0\"; printf 'argv=%s\\n' \"$*\"; printf 'marker=%s\\n' \"${marker}\"; printf 'repo=%s\\n' \"${TLH_REPO:-}\"; printf 'source=%s\\n' \"${TLH_PACKAGE_SOURCE:-}\"; printf 'agent=%s\\n' \"${PI_CODING_AGENT_DIR:-}\"; printf 'path=%s\\n' \"${PATH:-}\"; } >\"${BASH_LOG}\"",
+	].join("\n"), "utf8");
+	chmodSync(join(safeBin, "bash"), 0o755);
+	writeFileSync(fetchPreload, `globalThis.fetch = async () => ({\n\tok: true,\n\tstatus: 200,\n\tstatusText: "OK",\n\ttext: async () => "#!/usr/bin/env bash\\n# recovery stub marker\\nexit 0\\n",\n});\n`, "utf8");
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const result = spawnSync(bashPath, [wrapper, "update", "--quiet"], {
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: `${safeBin}:${process.env.PATH || ""}`,
+			NODE_OPTIONS: `--import=${fetchPreload}`,
+			BASH_LOG: bashLog,
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+	assert.equal(existsSync(legacyUpdateLog), false);
+	const bashRecord = Object.fromEntries(readFileSync(bashLog, "utf8").trim().split(/\r?\n/).map((line) => {
+		const separator = line.indexOf("=");
+		return [line.slice(0, separator), line.slice(separator + 1)];
+	}));
+	assert.equal(bashRecord.cmd, join(safeBin, "bash"));
+	assert.match(bashRecord.argv, new RegExp(`--agent-dir ${agentDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+	assert.match(bashRecord.argv, new RegExp(`--bin-dir ${binDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+	assert.match(bashRecord.argv, /--wrapper-name tlh/);
+	assert.match(bashRecord.argv, /--track ref/);
+	assert.match(bashRecord.argv, /--ref main/);
+	assert.match(bashRecord.argv, /--quiet/);
+	assert.equal(bashRecord.marker, "# recovery stub marker");
+	assert.equal(bashRecord.repo, "diegopetrucci/the-last-harness");
+	assert.equal(bashRecord.source, "");
+	assert.equal(bashRecord.agent, agentDir);
 });
 
 test("wrapper resolves pi to an absolute command path before exposing isolated bin", (t) => {
@@ -1956,6 +2067,54 @@ test("tlh update --extensions refuses to target normal Pi config via explicit or
 		assert.doesNotMatch(result.stderr, /required command not found on sanitized PATH: pi/);
 	}
 	assert.equal(existsSync(join(homeDir, ".pi")), false);
+});
+
+test("tlh recovery update refuses to target normal Pi config before reading install-state", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const protectedAgentDir = join(homeDir, ".pi", "agent");
+	mkdirSync(join(protectedAgentDir, "tlh"), { recursive: true });
+	writeFileSync(join(protectedAgentDir, "tlh", "install-state.json"), "{ not valid json\n", "utf8");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	const scenarios = [
+		{
+			name: "explicit --agent-dir",
+			args: ["--agent-dir", protectedAgentDir],
+			env: {},
+		},
+		{
+			name: "PI_CODING_AGENT_DIR fallback",
+			args: [],
+			env: { PI_CODING_AGENT_DIR: protectedAgentDir },
+		},
+		{
+			name: "TLH_AGENT_DIR override",
+			args: [],
+			env: { TLH_AGENT_DIR: protectedAgentDir },
+		},
+	];
+
+	for (const scenario of scenarios) {
+		const result = spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-recover-update.mjs"), "--dry-run", ...scenario.args], {
+			cwd: repoRoot,
+			env: scrubInstallerEnv({
+				HOME: homeDir,
+				PATH: "",
+				...scenario.env,
+			}),
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+
+		assert.notEqual(result.status, 0, `expected ${scenario.name} to be rejected`);
+		assert.equal(result.stdout, "");
+		assert.match(result.stderr, /refusing to recover The Last Harness update against normal Pi config root/);
+		assert.ok(result.stderr.includes(protectedAgentDir), `${scenario.name} stderr should mention the protected agent dir`);
+		assert.doesNotMatch(result.stderr, /could not read .*install-state\.json/);
+		assert.doesNotMatch(result.stderr, /does not contain usable The Last Harness update metadata/);
+		assert.doesNotMatch(result.stderr, /Could not determine update track/);
+	}
 });
 
 test("tlh update --extensions resolves pi on the sanitized PATH and targets the isolated agent dir", (t) => {
@@ -2602,7 +2761,7 @@ test("wrapper update --extensions helper prepends executable --pi-cmd directory 
 	mkdirSync(pinnedPiDir, { recursive: true });
 	writeFileSync(join(pinnedPiDir, "pi"), "#!/bin/sh\nif [ \"${1:-}\" = \"--version\" ]; then printf '0.79.1\\n'; exit 0; fi\nprintf 'unexpected args: %s\\n' \"$*\" >&2\nexit 1\n", "utf8");
 	chmodSync(join(pinnedPiDir, "pi"), 0o755);
-	writeFileSync(join(agentDir, "tlh", "tlh-update.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst pi = spawnSync("pi", ["--version"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, pi: { status: pi.status, stdout: pi.stdout, stderr: pi.stderr, error: pi.error?.message } }));\nprocess.exit(pi.status ?? (pi.error ? 1 : 0));\n`, "utf8");
+	writeFileSync(join(agentDir, "tlh", "recover-update.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst pi = spawnSync("pi", ["--version"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, pi: { status: pi.status, stdout: pi.stdout, stderr: pi.stderr, error: pi.error?.message } }));\nprocess.exit(pi.status ?? (pi.error ? 1 : 0));\n`, "utf8");
 
 	runHelper("scripts/tlh-wrapper.mjs", [
 		"--agent-dir",
@@ -2678,7 +2837,7 @@ test("wrapper plain update helper does not prepend executable --pi-cmd directory
 	mkdirSync(pinnedPiDir, { recursive: true });
 	writeFileSync(join(pinnedPiDir, "pi"), "#!/bin/sh\nprintf 'unexpected args: %s\\n' \"$*\" >&2\nexit 1\n", "utf8");
 	chmodSync(join(pinnedPiDir, "pi"), 0o755);
-	writeFileSync(join(agentDir, "tlh", "tlh-update.mjs"), `import { writeFileSync } from "node:fs";\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH } }));\n`, "utf8");
+	writeFileSync(join(agentDir, "tlh", "recover-update.mjs"), `import { writeFileSync } from "node:fs";\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH } }));\n`, "utf8");
 
 	runHelper("scripts/tlh-wrapper.mjs", [
 		"--agent-dir",

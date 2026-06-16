@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -149,10 +149,10 @@ test("tlh-defaults errors when the default-extension manifest is missing", () =>
 	assert.match(result.stderr, /File does not exist:/);
 });
 
-test("installed tlh-defaults helper can resolve its copied default-extension library", () => {
-	const fixture = tempFixture();
-	const supportDir = join(fixture.dir, "agent", "tlh");
-	const copiedVariables = new Set([
+test("installable support files no longer include the legacy defaults helper tree", () => {
+	const installableVariables = new Set(installableSupportFiles().map((file) => file.variable));
+
+	for (const variable of [
 		"TLH_DEFAULTS_SCRIPT",
 		"TLH_INSTALL_PACKAGE_SOURCE_LIB",
 		"TLH_INSTALL_PATHS_LIB",
@@ -160,27 +160,10 @@ test("installed tlh-defaults helper can resolve its copied default-extension lib
 		"TLH_INSTALL_UTILS_LIB",
 		"DEFAULT_EXTENSIONS_LIB",
 		"DEFAULT_EXTENSIONS_FILE",
-	]);
-
-	for (const file of installableSupportFiles().filter((entry) => copiedVariables.has(entry.variable))) {
-		const target = join(supportDir, file.installName);
-		mkdirSync(dirname(target), { recursive: true });
-		copyFileSync(join(repoRoot, file.relativePath), target);
+	]) {
+		assert.equal(installableVariables.has(variable), false, variable);
 	}
-	writeFileSync(fixture.settings, JSON.stringify({ packages: [] }, null, 2));
-
-	const result = spawnSync(process.execPath, [
-		join(supportDir, "tlh-defaults.mjs"),
-		"--settings", fixture.settings,
-		"--defaults", join(supportDir, "default-extensions.json"),
-		"sources",
-	], {
-		cwd: fixture.dir,
-		env: process.env,
-		encoding: "utf8",
-	});
-
-	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+	assert.equal(installableVariables.has("TLH_RECOVER_UPDATE_SCRIPT"), true);
 });
 
 test("merge ignores and cleans stale/manual critical opt-outs while preserving non-critical opt-outs", () => {
