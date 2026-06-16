@@ -9,7 +9,7 @@ import { registerTlhChangelogCommand } from "./the-last-harness/changelog.js";
 import { registerEffortCommand } from "./the-last-harness/effort.js";
 import { registerExperimentalCommand } from "./the-last-harness/experimental.js";
 import { registerReviewCommand } from "./the-last-harness/review.js";
-import { TlhActiveTurnEditor } from "./the-last-harness/active-turn-controls.js";
+import { createTlhActiveTurnEditorFactory } from "./the-last-harness/active-turn-controls.js";
 import { createTlhFooter } from "./the-last-harness/footer.js";
 import { FooterGitCache } from "./the-last-harness/footer-git-cache.js";
 import { createTlhHeader } from "./the-last-harness/header.js";
@@ -108,7 +108,8 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		}
 
 		ctx.ui.addAutocompleteProvider(createTlhAutocompleteProvider);
-		ctx.ui.setEditorComponent((tui, theme, keybindings) => new TlhActiveTurnEditor(tui, theme, keybindings, () => ctx.isIdle()));
+		const previousEditorFactory = ctx.ui.getEditorComponent?.();
+		ctx.ui.setEditorComponent(createTlhActiveTurnEditorFactory(previousEditorFactory, () => ctx.isIdle()));
 
 		let resources: StartupResources = { context: [], skills: [], prompts: [], extensions: [], themes: [] };
 		try {

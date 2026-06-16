@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { CustomEditor } from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager, getKeybindings, setKeybindings } from "@earendil-works/pi-tui";
 import { KEYBINDINGS } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js";
 import { createJiti } from "jiti";
@@ -9,6 +10,7 @@ const jiti = createJiti(import.meta.url);
 const { createTlhFooter } = await jiti.import("../extensions/the-last-harness/footer.ts");
 const {
 	TlhActiveTurnEditor,
+	createTlhActiveTurnEditorFactory,
 	shouldRouteAltEnterToSubmit,
 	usesSwappedTlhActiveTurnControls,
 } = await jiti.import("../extensions/the-last-harness/active-turn-controls.ts");
@@ -67,6 +69,51 @@ async function withKeybindings(config, fn) {
 
 function createEditor(keybindings, isIdle = () => false) {
 	return new TlhActiveTurnEditor({ requestRender() {} }, editorTheme, keybindings, isIdle);
+}
+
+class ExistingEditor extends CustomEditor {
+	handleInput(data) {
+		if (data === "!") {
+			this.insertTextAtCursor(" [custom]");
+			return;
+		}
+
+		super.handleInput(data);
+	}
+}
+
+class PlainEditorComponent {
+	constructor() {
+		this.text = "";
+		this.handledInputs = [];
+	}
+
+	render() {
+		return [];
+	}
+
+	invalidate() {}
+
+	getText() {
+		return this.text;
+	}
+
+	setText(text) {
+		this.text = text;
+		this.onChange?.(text);
+	}
+
+	handleInput(data) {
+		this.handledInputs.push(data);
+		if (data === "\r") {
+			this.setText(`${this.getText()} [enter]`);
+			return;
+		}
+
+		if (data === "\x1b\r") {
+			this.setText(`${this.getText()} [alt-enter]`);
+		}
+	}
 }
 
 function createSlashAutocompleteProvider() {
@@ -189,6 +236,66 @@ test("active-turn editor routes Alt+Enter through the normal submit path when TL
 
 		assert.equal(submitted, "/review --help");
 		assert.equal(editor.getText(), "");
+	});
+});
+
+test("existing editor factories are preserved while TLH active-turn routing is composed on top", async () => {
+	await withKeybindings({ "app.message.followUp": "enter" }, async (keybindings) => {
+		const factory = createTlhActiveTurnEditorFactory(
+			(tui, theme, kb) => new ExistingEditor(tui, theme, kb),
+			() => false,
+		);
+		const editor = factory({ requestRender() {} }, editorTheme, keybindings);
+		let followUpCalls = 0;
+		let submitted;
+		editor.onSubmit = (text) => {
+			submitted = text;
+		};
+		editor.onAction("app.message.followUp", () => {
+			followUpCalls += 1;
+			const text = (editor.getExpandedText?.() ?? editor.getText()).trim();
+			if (!text) {
+				return;
+			}
+			editor.setText("");
+			editor.onSubmit?.(text);
+		});
+		editor.setText("Keep going");
+
+		assert.equal(editor instanceof ExistingEditor, true);
+
+		editor.handleInput("!");
+		assert.equal(editor.getText(), "Keep going [custom]");
+
+		editor.handleInput("\r");
+		assert.equal(followUpCalls, 1);
+		assert.equal(submitted, "Keep going [custom]");
+		assert.equal(editor.getText(), "");
+
+		editor.setText("/review --help");
+		editor.handleInput("\x1b\r");
+		assert.equal(submitted, "/review --help");
+		assert.equal(editor.getText(), "");
+	});
+});
+
+test("plain editor components keep their own handleInput behavior under TLH composition", async () => {
+	await withKeybindings({ "app.message.followUp": "enter" }, async (keybindings) => {
+		let idle = true;
+		const factory = createTlhActiveTurnEditorFactory(() => new PlainEditorComponent(), () => idle);
+		const editor = factory({ requestRender() {} }, editorTheme, keybindings);
+
+		assert.equal(editor instanceof PlainEditorComponent, true);
+
+		editor.setText("Keep going");
+		assert.doesNotThrow(() => editor.handleInput("\r"));
+		assert.deepEqual(editor.handledInputs, ["\r"]);
+		assert.equal(editor.getText(), "Keep going [enter]");
+
+		idle = false;
+		assert.doesNotThrow(() => editor.handleInput("\x1b\r"));
+		assert.deepEqual(editor.handledInputs, ["\r", "\x1b\r"]);
+		assert.equal(editor.getText(), "Keep going [enter] [alt-enter]");
 	});
 });
 

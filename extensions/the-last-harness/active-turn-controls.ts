@@ -1,5 +1,5 @@
-import { CustomEditor, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
-import { Editor, matchesKey, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
+import { CustomEditor, type EditorFactory, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
+import { Editor, matchesKey, type EditorComponent, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
 
 const TLH_ACTIVE_TURN_QUEUE_KEY = "enter";
 const TLH_ACTIVE_TURN_STEER_KEY = "alt+enter";
@@ -65,6 +65,169 @@ export function shouldRouteAltEnterToSubmit(
 	data: string,
 ) {
 	return !isIdle && usesSwappedTlhActiveTurnControls(keybindings) && matchesKey(data, TLH_ACTIVE_TURN_STEER_KEY);
+}
+
+type TlhComposableEditor = EditorComponent & {
+	actionHandlers?: Map<string, () => void>;
+	onEscape?: () => void;
+	onCtrlD?: () => void;
+	onPasteImage?: () => void;
+	onExtensionShortcut?: (data: string) => boolean;
+	isShowingAutocomplete?: () => boolean;
+};
+
+function hasActionHandlers(editor: TlhComposableEditor): editor is TlhComposableEditor & { actionHandlers: Map<string, () => void> } {
+	return editor.actionHandlers instanceof Map;
+}
+
+function isShowingAutocomplete(editor: TlhComposableEditor): boolean {
+	return editor.isShowingAutocomplete?.() ?? false;
+}
+
+function hasIdleEnterAppActionBeforeFollowUp(
+	editor: TlhComposableEditor,
+	keybindings: Pick<KeybindingsManager, "matches">,
+	data: string,
+): boolean {
+	if (keybindings.matches(data, "app.clipboard.pasteImage")) {
+		return true;
+	}
+
+	if (keybindings.matches(data, "app.interrupt") && !isShowingAutocomplete(editor)) {
+		return true;
+	}
+
+	if (keybindings.matches(data, "app.exit") && editor.getText().length === 0) {
+		return true;
+	}
+
+	if (!hasActionHandlers(editor)) {
+		return false;
+	}
+
+	for (const action of editor.actionHandlers.keys()) {
+		if (action === "app.interrupt" || action === "app.exit") {
+			continue;
+		}
+
+		if (action === "app.message.followUp") {
+			break;
+		}
+
+		if (keybindings.matches(data, action)) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+function isUpstreamEditor(editor: EditorComponent): editor is TlhComposableEditor & Editor {
+	const candidate = editor as Partial<Editor> & {
+		state?: { lines?: unknown; cursorLine?: unknown; cursorCol?: unknown };
+	};
+
+	return (
+		typeof candidate.submitValue === "function" &&
+		typeof candidate.addNewLine === "function" &&
+		typeof candidate.handleBackspace === "function" &&
+		typeof candidate.isShowingAutocomplete === "function" &&
+		typeof candidate.requestAutocomplete === "function" &&
+		Array.isArray(candidate.state?.lines) &&
+		typeof candidate.state?.cursorLine === "number" &&
+		typeof candidate.state?.cursorCol === "number"
+	);
+}
+
+function handleComposedEditorPriorityInput(
+	editor: TlhComposableEditor,
+	keybindings: Pick<KeybindingsManager, "matches">,
+	data: string,
+): boolean {
+	if (editor.onExtensionShortcut?.(data)) {
+		return true;
+	}
+
+	if (keybindings.matches(data, "app.clipboard.pasteImage")) {
+		editor.onPasteImage?.();
+		return true;
+	}
+
+	if (keybindings.matches(data, "app.interrupt")) {
+		if (!isShowingAutocomplete(editor)) {
+			const handler = editor.onEscape ?? (hasActionHandlers(editor) ? editor.actionHandlers.get("app.interrupt") : undefined);
+			if (handler) {
+				handler();
+				return true;
+			}
+		}
+		Editor.prototype.handleInput.call(editor, data);
+		return true;
+	}
+
+	if (keybindings.matches(data, "app.exit")) {
+		if (editor.getText().length === 0) {
+			const handler = editor.onCtrlD ?? (hasActionHandlers(editor) ? editor.actionHandlers.get("app.exit") : undefined);
+			handler?.();
+			return true;
+		}
+		Editor.prototype.handleInput.call(editor, data);
+		return true;
+	}
+
+	if (!hasActionHandlers(editor)) {
+		return false;
+	}
+
+	for (const [action, handler] of editor.actionHandlers) {
+		if (action !== "app.interrupt" && action !== "app.exit" && keybindings.matches(data, action)) {
+			handler();
+			return true;
+		}
+	}
+
+	return false;
+}
+
+export function createTlhActiveTurnEditorFactory(
+	previousEditorFactory: EditorFactory | undefined,
+	isIdle: () => boolean,
+): EditorFactory {
+	return (tui, theme, keybindings) => {
+		if (!previousEditorFactory) {
+			return new TlhActiveTurnEditor(tui, theme, keybindings, isIdle);
+		}
+
+		const previousEditor = previousEditorFactory(tui, theme, keybindings);
+		if (!isUpstreamEditor(previousEditor)) {
+			return previousEditor;
+		}
+
+		const previousHandleInput = previousEditor.handleInput.bind(previousEditor);
+
+		previousEditor.handleInput = (data: string) => {
+			if (
+				shouldUseIdleEnterSubmitPath(keybindings, isIdle, data) &&
+				!hasIdleEnterAppActionBeforeFollowUp(previousEditor, keybindings, data)
+			) {
+				Editor.prototype.handleInput.call(previousEditor, data);
+				return;
+			}
+
+			if (!shouldRouteAltEnterToSubmit(keybindings, isIdle(), data)) {
+				previousHandleInput(data);
+				return;
+			}
+
+			if (handleComposedEditorPriorityInput(previousEditor, keybindings, data)) {
+				return;
+			}
+
+			Editor.prototype.handleInput.call(previousEditor, "\r");
+		};
+
+		return previousEditor;
+	};
 }
 
 export class TlhActiveTurnEditor extends CustomEditor {
