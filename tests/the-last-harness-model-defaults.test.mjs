@@ -143,6 +143,22 @@ test("provider-aware opposite-provider preference does not inject regular OpenAI
 	assert.equal(input.model, undefined);
 });
 
+test("provider-aware subagent mutation gives code-reviewer the opposite available provider", () => {
+	const available = [...anthropicAvailable, ...codexAvailable];
+
+	const anthropicInput = { agent: "code-reviewer" };
+	assert.equal(applyProviderAwareSubagentModels(anthropicInput, agents, available, "anthropic"), 1);
+	assert.equal(anthropicInput.model, "openai-codex/gpt-5.5");
+
+	const codexInput = { agent: "code-reviewer" };
+	assert.equal(applyProviderAwareSubagentModels(codexInput, agents, available, "openai-codex"), 1);
+	assert.equal(codexInput.model, "anthropic/claude-opus-4-8");
+
+	const noOppositeInput = { agent: "code-reviewer" };
+	assert.equal(applyProviderAwareSubagentModels(noOppositeInput, agents, openaiAvailable, "anthropic"), 0);
+	assert.equal(Object.hasOwn(noOppositeInput, "model"), false);
+});
+
 test("provider-aware primary defaults switch Rush-like thinking off for bundled Codex models", () => {
 	assert.deepEqual(selectProviderAwareAgentDefaults(rushLikePrimary, codexAvailable, "openai-codex"), {
 		model: { provider: "openai-codex", id: "gpt-5.5" },

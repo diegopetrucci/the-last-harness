@@ -85,9 +85,10 @@ export type TlhPrimaryAgentConfig = {
 	selected?: string;
 	applyModel?: boolean;
 	applyThinking?: boolean;
+	modelOverrides?: Record<string, string>;
 };
 
-export type TlhExperimentalFeatureId = "run-tests-last";
+export type TlhExperimentalFeatureId = string;
 
 export type TlhExperimentalConfig = {
 	enabledFeatures?: string[];

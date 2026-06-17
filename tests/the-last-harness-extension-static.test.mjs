@@ -16,10 +16,11 @@ const annotateGitDiffAppSource = readFileSync(new URL("../extensions/annotate-gi
 const annotateGitDiffHtmlSource = readFileSync(new URL("../extensions/annotate-git-diff/web/index.html", import.meta.url), "utf8");
 const attributionSource = readFileSync(new URL("../extensions/the-last-harness/attribution.ts", import.meta.url), "utf8");
 const changelogSource = readFileSync(new URL("../extensions/the-last-harness/changelog.ts", import.meta.url), "utf8");
+const experimentalSource = readFileSync(new URL("../extensions/the-last-harness/experimental.ts", import.meta.url), "utf8");
 const primaryRuntimeSource = readFileSync(new URL("../extensions/the-last-harness/primary-agent-runtime.ts", import.meta.url), "utf8");
 const effortSource = readFileSync(new URL("../extensions/the-last-harness/effort.ts", import.meta.url), "utf8");
-const experimentalSource = readFileSync(new URL("../extensions/the-last-harness/experimental.ts", import.meta.url), "utf8");
 const promptsSource = readFileSync(new URL("../extensions/the-last-harness/prompts.ts", import.meta.url), "utf8");
+const tokensSource = readFileSync(new URL("../extensions/the-last-harness/tokens.ts", import.meta.url), "utf8");
 const usageLimitsSource = readFileSync(new URL("../extensions/the-last-harness/usage-limits.ts", import.meta.url), "utf8");
 const profileStateSource = readFileSync(new URL("../extensions/the-last-harness/profile-state.ts", import.meta.url), "utf8");
 const typesSource = readFileSync(new URL("../extensions/the-last-harness/types.ts", import.meta.url), "utf8");
@@ -139,7 +140,8 @@ test("before_agent_start reapplies primary defaults without a one-shot model gat
 
 	assert.doesNotMatch(primaryRuntimeSource, /primaryModelAttempted/);
 	assert.match(beforeAgentStart, /await applyPrimaryDefaults\(ctx\);/);
-	assert.match(applyPrimaryDefaults, /selectProviderAwareAgentDefaults\(primary, ctx\.modelRegistry\.getAvailable\(\), ctx\.model\?\.provider\)/);
+	assert.match(applyPrimaryDefaults, /ctx\.modelRegistry\.getAvailable\(\)/);
+	assert.match(applyPrimaryDefaults, /selectProviderAwareAgentDefaults\(primary, availableModels, ctx\.model\?\.provider\)/);
 	assert.match(applyPrimaryDefaults, /resolvePrimaryAutoApplySetting\(primaryConfig, primary, "applyModel"\)/);
 	assert.match(applyPrimaryDefaults, /resolvePrimaryAutoApplySetting\(primaryConfig, primary, "applyThinking"\)/);
 	assert.match(applyPrimaryModel, /ctx\.model\?\.provider === model\.provider && ctx\.model\?\.id === model\.id/);
@@ -247,6 +249,7 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
 	assert.match(extensionSource, /from "\.\/the-last-harness\/resources\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/subscription-usage\.mjs"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/types\.js"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/tokens\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/usage-limits\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/constants\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/gnosis\.js"/);
@@ -349,12 +352,15 @@ test("child runtime wires commit attribution prompt and bash guard without prima
 	);
 
 	assert.match(childRuntime, /pi\.on\("before_agent_start"/);
+	assert.match(childRuntime, /const childAgentName = env\.PI_SUBAGENT_CHILD_AGENT;/);
+	assert.match(childRuntime, /buildChildExperimentalPrompt\(childAgentName, settings\.tlh\?\.experimental\)/);
 	assert.match(childRuntime, /buildTlhCommitAttributionPrompt\(commitAttributionState\)/);
 	assert.match(childRuntime, /pi\.on\("tool_call"/);
 	assert.match(childRuntime, /if \(event\.toolName !== "bash"\)/);
 	assert.match(childRuntime, /getTlhGitCommitAttributionBlockReason\(event\.input\.command, commitAttributionState\)/);
+	assert.match(registerBlock, /const env = options\.env \?\? process\.env;/);
 	assert.match(registerBlock, /registerChild: \(\) => \{/);
-	assert.match(registerBlock, /registerChildSubagentRuntime\(pi, childPromptBuilder\);/);
+	assert.match(registerBlock, /registerChildSubagentRuntime\(pi, childPromptBuilder, env\);/);
 });
 
 test("extension wires subscription usage to lifecycle refreshes and footer", () => {
@@ -378,7 +384,7 @@ test("extension wires TLH changelog command and release-notes rendering", () => 
 	assert.match(changelogSource, /pi\.sendMessage\(\{/);
 });
 
-test("extension wires TLH experimental, attribution, and usage commands to isolated TLH settings", () => {
+test("extension keeps TLH experimental command wiring with delta-follow-up-reviews as the registered flag", () => {
 	const lockedWriteHelper = sourceSection(
 		profileStateSource,
 		"export function withLockedTlhSettingsWrite",
@@ -386,8 +392,10 @@ test("extension wires TLH experimental, attribution, and usage commands to isola
 	);
 
 	assert.match(extensionSource, /registerExperimentalCommand\(pi\)/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/experimental\.js"/);
 	assert.match(experimentalSource, /pi\.registerCommand\("experimental"/);
-	assert.match(experimentalSource, /run-tests-last/);
+	assert.match(experimentalSource, /delta-follow-up-reviews/);
+	assert.doesNotMatch(experimentalSource, /run-tests-last/);
 	assert.match(
 		experimentalSource,
 		/withLockedTlhSettingsWrite\(cwd, "Refusing to write experimental settings outside the isolated TLH profile\./,
@@ -395,7 +403,11 @@ test("extension wires TLH experimental, attribution, and usage commands to isola
 	assert.doesNotMatch(experimentalSource, /tlhSettingsPathForWrite\(\)/);
 	assert.doesNotMatch(experimentalSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
 	assert.match(experimentalSource, /settings\.tlh\.experimental\.enabledFeatures = nextEnabledFeatures/);
+	assert.match(typesSource, /experimental\?: TlhExperimentalConfig;/);
 	assert.match(typesSource, /enabledFeatures\?: string\[];/);
+	assert.match(typesSource, /export type TlhExperimentalFeatureId = string;/);
+	assert.match(primaryRuntimeSource, /from "\.\/experimental\.js"/);
+	assert.match(primaryRuntimeSource, /buildPrimaryExperimentalPrompt\(activePrimaryAgent\(\), settings\.tlh\?\.experimental\)/);
 	assert.doesNotMatch(extensionSource, /registerTlhCommitAttributionRuntime\(pi\)/);
 	assert.match(extensionSource, /registerToggleTlhGitAttributionCommand\(pi\)/);
 	assert.match(attributionSource, /from "\.\/profile-state\.js"/);
@@ -416,6 +428,9 @@ test("extension wires TLH experimental, attribution, and usage commands to isola
 	assert.match(attributionSource, /settings\.tlh\.attribution = \{ commit: nextEnabled \}/);
 	assert.match(attributionSource, /typeof commit !== "boolean"/);
 	assert.match(typesSource, /commit\?: boolean;/);
+	assert.match(extensionSource, /registerTokensCommand\(pi\)/);
+	assert.match(tokensSource, /pi\.registerCommand\("tokens"/);
+	assert.match(tokensSource, /Usage: \/tokens/);
 	assert.match(extensionSource, /registerUsageCommand\(pi\)/);
 	assert.match(usageLimitsSource, /from "\.\/profile-state\.js"/);
 	assert.match(usageLimitsSource, /pi\.registerCommand\("usage"/);

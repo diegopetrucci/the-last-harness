@@ -30,6 +30,12 @@ Main repository validation:
 npm run validate
 ```
 
+That path inherits the default quiet `npm test` dot reporter. If you need the full Node test reporter while diagnosing a failure, rerun tests with:
+
+```sh
+npm run test:verbose
+```
+
 For installer-specific checks, use temporary paths, for example:
 
 ```sh
@@ -138,6 +144,17 @@ Every PR description should end with an `Install this branch` command using the 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/<branch>/install.sh | bash -s -- --ref <branch> --track ref
 ```
+
+**Pin PRs** — PRs that update a `config/default-extensions.json` fork tag (e.g. `tlh-vX.Y.Z-N`) — are manually authored. Use a consistent title and body:
+
+- **Title:** `Pin <component> to <tag> (<brief note>)` — for example: `Pin pi-subagents to tlh-v0.26.0-11 (forked review-independence fix)`
+- **Body checklist:**
+  - What the new fork tag/pin includes
+  - Link to the merged fork PR
+  - Before → after pin (e.g. `tlh-vX.Y.Z-M` → `tlh-vX.Y.Z-N`)
+  - Validation: `npm run validate` result
+
+The `Install this branch` command above applies to pin PRs too.
 
 CI runs on `pull_request` and on `push` to `main`. The CI job/status name is `Repository validation`, and current GitHub repository rulesets protect the default branch/main and require that status check before merge. Required-merge enforcement is controlled by repository rules and settings, not by this file.
 
