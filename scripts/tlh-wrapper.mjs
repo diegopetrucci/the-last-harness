@@ -176,6 +176,8 @@ function renderWrapper(args) {
 		'  IFS="/"',
 		'  read -r -a tlh_parts <<< "${tlh_path}"',
 		'  IFS="${tlh_old_ifs}"',
+		// bash 3.2-safe empty-array guard: ${arr[@]+"${arr[@]}"} avoids 'set -u'
+		// "unbound variable" when the array is empty; "${arr[@]}" alone crashes on bash 3.2.
 		'  for tlh_part in ${tlh_parts[@]+"${tlh_parts[@]}"}; do',
 		'    if [[ -z "${tlh_part}" || "${tlh_part}" == "." ]]; then',
 		'      continue',
@@ -395,6 +397,7 @@ function renderWrapper(args) {
 		'    tlh_current_script="${tlh_pending_scripts[${tlh_pending_index}]}"',
 		'    tlh_pending_index=$((tlh_pending_index + 1))',
 		'    tlh_already_checked=0',
+		// bash 3.2-safe empty-array guard (see comment near tlh_parts loop above)
 		'    for tlh_checked_script in ${tlh_checked_scripts[@]+"${tlh_checked_scripts[@]}"}; do',
 		'      if [[ "${tlh_checked_script}" == "${tlh_current_script}" ]]; then',
 		'        tlh_already_checked=1',
@@ -427,6 +430,7 @@ function renderWrapper(args) {
 		'      tlh_import_target="$(tlh_js_import_target_path "${tlh_current_script}" "${tlh_import_spec}")"',
 		'      [[ -f "${tlh_import_target}" ]] || return 1',
 		'      tlh_already_pending=0',
+		// bash 3.2-safe empty-array guard (see comment near tlh_parts loop above)
 		'      for tlh_pending_script in ${tlh_pending_scripts[@]+"${tlh_pending_scripts[@]}"}; do',
 		'        if [[ "${tlh_pending_script}" == "${tlh_import_target}" ]]; then',
 		'          tlh_already_pending=1',
