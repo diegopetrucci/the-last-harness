@@ -963,11 +963,11 @@ test("bundled manifest contains mcporter entry and tlh-defaults accepts its alia
 	const mcporter = bundled.find(({ id }) => id === "mcporter");
 
 	assert.ok(mcporter, "bundled mcporter entry should exist");
-	assert.equal(mcporter.source, "npm:pi-mcp-adapter");
+	assert.equal(mcporter.source, "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1");
 	assert.equal(mcporter.critical, false, "mcporter must not be critical");
 	assert.deepEqual(mcporter.aliases, ["pi-mcp-adapter", "mcp-adapter"]);
-	assert.deepEqual(mcporter.replaces, []);
-	assert.equal(mcporter.migrateReplacements, false, "mcporter replacements must stay disabled by default");
+	assert.deepEqual(mcporter.replaces, ["npm:pi-mcp-adapter"]);
+	assert.equal(mcporter.migrateReplacements, true, "mcporter migrates off the upstream npm source");
 
 	const fixture = tempFixture();
 	writeFileSync(fixture.settings, JSON.stringify({ packages: ["npm:pi-mcp-adapter"] }, null, 2));

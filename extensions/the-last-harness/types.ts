@@ -111,6 +111,13 @@ export type TlhContextCapConfig = {
 	disabled?: boolean;
 };
 
+export type TlhModelVisibilityConfig = {
+	disabled?: boolean;
+	hidden?: string[];
+	visible?: string[];
+	unhide?: string[];
+};
+
 export type TlhSettings = {
 	tlh?: {
 		usageLimits?: TlhUsageLimitsConfig;
@@ -121,6 +128,7 @@ export type TlhSettings = {
 		primaryAgent?: TlhPrimaryAgentConfig;
 		experimental?: TlhExperimentalConfig;
 		contextCap?: TlhContextCapConfig;
+		modelVisibility?: TlhModelVisibilityConfig;
 	};
 };
 

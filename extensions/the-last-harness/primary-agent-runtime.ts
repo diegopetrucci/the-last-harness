@@ -23,6 +23,7 @@ import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME
 import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import { applyProviderAwareSubagentModels, selectProviderAwareAgentDefaults } from "./model-defaults.js";
+import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { isThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
 import {
 	buildChildSubagentSystemPrompt,
@@ -514,7 +515,7 @@ function createTlhPrimaryAgentRuntime(
 		const forceApply = shouldForceApplyForLock(primary);
 		const shouldApplyModel = forceApply || resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyModel");
 		const shouldApplyThinking = forceApply || resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyThinking");
-		const availableModels = ctx.modelRegistry.getAvailable();
+		const availableModels = getUnfilteredAvailableModels(ctx.modelRegistry);
 		const primaryDefaults = selectProviderAwareAgentDefaults(primary, availableModels, ctx.model?.provider);
 		const currentProviderDefaults = selectProviderAwareAgentDefaults(primary, [], ctx.model?.provider);
 
@@ -738,7 +739,7 @@ function createTlhPrimaryAgentRuntime(
 			}
 			const chosenKey = `${event.model.provider}/${event.model.id}`;
 			// Determine the primary's bundled default model to know whether to clear the override.
-			const primaryDefaults = selectProviderAwareAgentDefaults(primary, ctx.modelRegistry.getAvailable(), event.model.provider);
+			const primaryDefaults = selectProviderAwareAgentDefaults(primary, getUnfilteredAvailableModels(ctx.modelRegistry), event.model.provider);
 			const bundledKey = primaryDefaults.model ? `${primaryDefaults.model.provider}/${primaryDefaults.model.id}` : undefined;
 			// If user picked the bundled default, clear the override; otherwise record it.
 			const nextOverride = chosenKey === bundledKey ? undefined : chosenKey;
@@ -787,7 +788,7 @@ function createTlhPrimaryAgentRuntime(
 			if (event.toolName !== "subagent") {
 				return undefined;
 			}
-			applyProviderAwareSubagentModels(event.input, subagentsByName, ctx.modelRegistry.getAvailable(), ctx.model?.provider);
+			applyProviderAwareSubagentModels(event.input, subagentsByName, getUnfilteredAvailableModels(ctx.modelRegistry), ctx.model?.provider);
 			syncPrimaryAgentState(ctx);
 			const selection = currentPrimaryAgentSelection();
 			if (!isEnabledPrimaryAgentSelection(selection)) {

@@ -14,6 +14,7 @@ import { FooterGitCache } from "./the-last-harness/footer-git-cache.js";
 import { createTlhHeader } from "./the-last-harness/header.js";
 import { readTlhInstallNotice } from "./the-last-harness/install-state.js";
 import { scheduleTlhLaunchTelemetry } from "./the-last-harness/launch-telemetry.js";
+import { installTlhModelVisibilityFilter } from "./the-last-harness/model-visibility.js";
 import { installTlhPackageUpdateNotificationOverride } from "./the-last-harness/package-update-notice.js";
 import { registerTlhPrimaryAgentRuntime } from "./the-last-harness/primary-agent-runtime.js";
 import { collectStartupResources } from "./the-last-harness/resources.js";
@@ -31,6 +32,7 @@ function getActiveProjectTrustDecision(ctx: ExtensionContext): boolean | undefin
 }
 
 export default function theLastHarness(pi: ExtensionAPI) {
+	installTlhModelVisibilityFilter();
 	registerContextCap(pi);
 
 	const primaryAgentRuntime = registerTlhPrimaryAgentRuntime(pi, { env: process.env });

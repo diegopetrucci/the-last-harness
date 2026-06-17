@@ -166,6 +166,7 @@ export function buildTokensReportHtml(analysis: TlhSessionUsageAnalysis, options
 				renderMetricCard("Tool errors", formatInteger(analysis.tools.totalErrors), `${formatErrorRate(analysis.tools.totalErrors, analysis.tools.totalResults)} result error rate`),
 				renderMetricCard("MCP calls", formatInteger(analysis.tools.mcpCalls), `${formatInteger(analysis.tools.mcpProxyCalls)} proxy • ${formatInteger(analysis.tools.mcpDirectCalls)} direct`),
 				renderMetricCard("Source precision", analysis.tools.precision, "Estimated from tool names and current catalog"),
+				renderMetricCard("MCP est. tokens", formatInteger(analysis.tools.mcpApproxTokens), `${formatInteger(analysis.tools.totalToolApproxTokens)} all-tools est.`),
 				"</div>",
 				renderToolSourceTable(analysis.tools.bySource),
 				renderToolTable(analysis.tools.byTool),
@@ -300,11 +301,12 @@ function renderToolSourceTable(sources: TlhToolSourceUsage[]): string {
 	return [
 		"<h3>Tool sources</h3>",
 		renderTable(
-			["Source", "Kind", "Calls", "Tools", "Scope", "Origin"],
+			["Source", "Kind", "Calls", "Est. tokens", "Tools", "Scope", "Origin"],
 			sources.map((bucket) => [
 				bucket.source.label,
 				bucket.source.kind,
 				formatInteger(bucket.callCount),
+				formatInteger(bucket.approxTokens),
 				bucket.tools.join(", "),
 				bucket.source.scope ?? "—",
 				bucket.source.origin ?? "—",
@@ -318,7 +320,7 @@ function renderToolTable(tools: TlhToolUsage[]): string {
 	return [
 		"<h3>Tools</h3>",
 		renderTable(
-			["Tool", "Source", "Calls", "Results", "Errors", "MCP"],
+			["Tool", "Source", "Calls", "Results", "Errors", "MCP", "Est. tokens"],
 			tools.map((tool) => [
 				tool.toolName,
 				tool.source.label,
@@ -326,6 +328,7 @@ function renderToolTable(tools: TlhToolUsage[]): string {
 				formatInteger(tool.resultCount),
 				formatInteger(tool.errorCount),
 				tool.mcp ? "yes" : "no",
+				formatInteger(tool.approxTokens),
 			]),
 			"No tool calls recorded.",
 		),

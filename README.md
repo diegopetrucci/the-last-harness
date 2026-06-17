@@ -87,6 +87,32 @@ Use `Shift+Tab` to cycle the current session through `architect` → `rush` → 
 
 TLH applies bundled model/thinking defaults per primary agent. For active non-locked primaries, user `/model` choices are respected and persisted per primary under `tlh.primaryAgent.modelOverrides.<primary>`; reset the current primary's override with `/switch-primary-agent model reset`. Locked primaries such as Rush keep their fixed defaults. For review independence, `code-reviewer` prefers the opposite available provider: Anthropic primaries try OpenAI Codex for review, and OpenAI/OpenAI-Codex primaries try Anthropic.
 
+#### Hidden model defaults in the TLH profile
+
+TLH also ships with a bundled hidden-model filter for selected legacy Anthropic models. Those bundled defaults are built into TLH itself (currently in `extensions/the-last-harness/model-visibility.ts`); they are not written into `settings.json` as default JSON. Any `tlh.modelVisibility` entries you add under the TLH isolated profile at `~/.the-last-harness/agent/settings.json` are user overrides/additional customization only. TLH does not modify your normal `~/.pi/agent/settings.json` for this, and it does not delete auth or model definitions.
+
+For example, you can add an extra hidden pattern of your own and explicitly unhide one model that TLH normally hides by default:
+
+```json
+{
+  "tlh": {
+    "modelVisibility": {
+      "hidden": ["anthropic/claude-sonnet-4-*"],
+      "visible": ["anthropic/claude-opus-4-6"]
+    }
+  }
+}
+```
+
+- `tlh.modelVisibility.disabled: true` turns the filter off entirely.
+- `tlh.modelVisibility.hidden` adds your own hidden exact matches or glob patterns. You can use either bare model IDs such as `claude-opus-4-*` or canonical `provider/model` entries such as `anthropic/claude-opus-4-*`.
+- `tlh.modelVisibility.visible` lets specific models stay visible even if they match a bundled default or one of your hidden patterns.
+- `tlh.modelVisibility.unhide` is accepted as an alias for `visible`.
+
+Hidden models are removed from browsing/listing surfaces such as the `/model` picker and `tlh --list-models`, but the underlying auth/model definitions remain intact and exact direct selection by canonical `provider/model` still works. For example, a hidden model can still be selected directly with `/model anthropic/claude-opus-4-6`.
+
+To undo the behavior, either set `tlh.modelVisibility.disabled` to `true`, remove your own `hidden` overrides from `~/.the-last-harness/agent/settings.json`, or add the models you want back under `tlh.modelVisibility.visible`/`unhide`.
+
 When primary agents are disabled, TLH stops applying those primary-agent workflow/persona rules, but the underlying subagent machinery still exists.
 
 ## TLH is intentionally opinionated
