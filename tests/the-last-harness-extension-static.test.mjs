@@ -140,7 +140,7 @@ test("before_agent_start reapplies primary defaults without a one-shot model gat
 
 	assert.doesNotMatch(primaryRuntimeSource, /primaryModelAttempted/);
 	assert.match(beforeAgentStart, /await applyPrimaryDefaults\(ctx\);/);
-	assert.match(applyPrimaryDefaults, /ctx\.modelRegistry\.getAvailable\(\)/);
+	assert.match(applyPrimaryDefaults, /getUnfilteredAvailableModels\(ctx\.modelRegistry\)/);
 	assert.match(applyPrimaryDefaults, /selectProviderAwareAgentDefaults\(primary, availableModels, ctx\.model\?\.provider\)/);
 	assert.match(applyPrimaryDefaults, /resolvePrimaryAutoApplySetting\(primaryConfig, primary, "applyModel"\)/);
 	assert.match(applyPrimaryDefaults, /resolvePrimaryAutoApplySetting\(primaryConfig, primary, "applyThinking"\)/);
@@ -244,6 +244,7 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
 	assert.doesNotMatch(extensionSource, /from "\.\/the-last-harness\/gnosis\.js"/);
 	assert.doesNotMatch(extensionSource, /registerGnosisCommand/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/header\.js"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/model-visibility\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/package-update-notice\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/primary-agent-runtime\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/resources\.js"/);
@@ -282,6 +283,7 @@ test("extension delegates launch update and telemetry services to feature module
 	const sessionStart = sourceSection(extensionSource, 'pi.on("session_start"', "\n\t});\n}");
 
 	assert.match(extensionSource, /from "\.\/the-last-harness\/launch-telemetry\.js"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/model-visibility\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/update-check\.js"/);
 	assert.match(sessionStart, /scheduleTlhLaunchTelemetry\(ctx\)/);
 	assert.match(sessionStart, /maybeNotifyAvailableTlhUpdate\(ctx\)/);
@@ -289,7 +291,8 @@ test("extension delegates launch update and telemetry services to feature module
 	assert.doesNotMatch(extensionSource, /function fetchLatestTlhRelease/);
 });
 
-test("extension installs the TLH package-update startup notice override during activation", () => {
+test("extension installs TLH model-visibility and package-update overrides during activation", () => {
+	assert.match(extensionSource, /installTlhModelVisibilityFilter\(\)/);
 	assert.match(extensionSource, /installTlhPackageUpdateNotificationOverride\(\)/);
 });
 
@@ -320,7 +323,7 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 	assert.doesNotMatch(primaryRuntimeSource, /pi\.registerCommand\("harness"/);
 	assert.match(toolCall, /if \(event\.toolName === "bash"\) \{[\s\S]*resolveTlhCommitAttribution\(getTlhGlobalSettings\(ctx\.cwd\)\.tlh\?\.attribution\)/);
 	assert.match(toolCall, /getTlhGitCommitAttributionBlockReason\(event\.input\.command, commitAttributionState\)/);
-	assert.match(toolCall, /applyProviderAwareSubagentModels\(event\.input, subagentsByName, ctx\.modelRegistry\.getAvailable\(\), ctx\.model\?\.provider\)/);
+	assert.match(toolCall, /applyProviderAwareSubagentModels\(event\.input, subagentsByName, getUnfilteredAvailableModels\(ctx\.modelRegistry\), ctx\.model\?\.provider\)/);
 	assert.match(toolCall, /const selection = currentPrimaryAgentSelection\(\)/);
 	assert.match(toolCall, /if \(selection === "rush" && isSubagentResumeAction\(event\.input\)\)/);
 	assert.match(toolCall, /if \(selection === "rush" && subagentCallTargetsAgent\(event\.input, "developer"\)\)/);
