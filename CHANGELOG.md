@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Switched the bundled `mcporter` default extension from `npm:pi-mcp-adapter` to a TLH fork pinned to `git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1`. The fork's only behavior change is the MCP status-bar footer: it now uses the dim style (matching the other footer lines) and lists actively-connected server names after the count when one or more servers are connected (e.g. `MCP: 1/1 servers, atlassian`).
+
 ## [0.21.0] - 2026-06-16
 
 - Active non-locked primary agents now respect user `/model` choices and persist them per primary under `tlh.primaryAgent.modelOverrides.<primary>`; reset with `/switch-primary-agent model reset`. Locked primaries such as Rush keep fixed defaults.
