@@ -702,30 +702,37 @@ test("support manifests preserve current-ref packaging while keeping stage-0 boo
 		requirement: "required",
 		relativePath: "scripts/lib/tlh-install-paths.mjs",
 		tempPath: "lib/tlh-install-paths.mjs",
-		installName: "lib/tlh-install-paths.mjs",
+		installName: "",
 	});
 	assert.deepEqual(manifest.find((file) => file.variable === "TLH_SAFE_PROFILE_WRITE_LIB"), {
 		variable: "TLH_SAFE_PROFILE_WRITE_LIB",
 		requirement: "required",
 		relativePath: "scripts/lib/tlh-safe-profile-write.mjs",
 		tempPath: "lib/tlh-safe-profile-write.mjs",
-		installName: "lib/tlh-safe-profile-write.mjs",
+		installName: "",
 	});
 	assert.deepEqual(manifest.find((file) => file.variable === "TLH_INSTALL_UTILS_LIB"), {
 		variable: "TLH_INSTALL_UTILS_LIB",
 		requirement: "required",
 		relativePath: "scripts/lib/tlh-install-utils.mjs",
 		tempPath: "lib/tlh-install-utils.mjs",
-		installName: "lib/tlh-install-utils.mjs",
+		installName: "",
 	});
 	assert.equal(manifest.find((file) => file.variable === "TLH_GNOSIS_SCRIPT")?.requirement, "required");
 	assert.equal(manifest.find((file) => file.variable === "TLH_GNOSIS_SCRIPT")?.installName, "");
+	assert.deepEqual(manifest.find((file) => file.variable === "TLH_RECOVER_UPDATE_SCRIPT"), {
+		variable: "TLH_RECOVER_UPDATE_SCRIPT",
+		requirement: "required",
+		relativePath: "scripts/tlh-recover-update.mjs",
+		tempPath: "tlh-recover-update.mjs",
+		installName: "recover-update.mjs",
+	});
 	assert.deepEqual(manifest.find((file) => file.variable === "DEFAULT_EXTENSIONS_LIB"), {
 		variable: "DEFAULT_EXTENSIONS_LIB",
 		requirement: "required",
 		relativePath: "scripts/lib/default-extensions.mjs",
 		tempPath: "lib/default-extensions.mjs",
-		installName: "lib/default-extensions.mjs",
+		installName: "",
 	});
 	assert.deepEqual(manifest.find((file) => file.variable === "LIBRARIAN_DEFAULTS_FILE"), {
 		variable: "LIBRARIAN_DEFAULTS_FILE",
@@ -740,6 +747,11 @@ test("support manifests preserve current-ref packaging while keeping stage-0 boo
 
 	const installableVariables = new Set(installableSupportFiles().map((file) => file.variable));
 	for (const variable of [
+		"TLH_RECOVER_UPDATE_SCRIPT",
+	]) {
+		assert.equal(installableVariables.has(variable), true, variable);
+	}
+	for (const variable of [
 		"TLH_DEFAULTS_SCRIPT",
 		"TLH_TICKETS_SCRIPT",
 		"TLH_UPDATE_SCRIPT",
@@ -748,10 +760,6 @@ test("support manifests preserve current-ref packaging while keeping stage-0 boo
 		"TLH_SAFE_PROFILE_WRITE_LIB",
 		"TLH_INSTALL_UTILS_LIB",
 		"DEFAULT_EXTENSIONS_LIB",
-	]) {
-		assert.equal(installableVariables.has(variable), true, variable);
-	}
-	for (const variable of [
 		"TLH_GNOSIS_SCRIPT",
 		"TLH_WRAPPER_SCRIPT",
 		"TLH_INSTALL_STATE_SCRIPT",
@@ -766,6 +774,7 @@ test("support manifests preserve current-ref packaging while keeping stage-0 boo
 	assert.doesNotMatch(bootstrap, /^optional\|scripts\/lib\/tlh-safe-profile-write\.mjs$/m);
 	assert.match(bootstrap, /^required\|scripts\/lib\/tlh-install-utils\.mjs$/m);
 	assert.match(bootstrap, /^required\|scripts\/tlh-gnosis\.mjs$/m);
+	assert.match(bootstrap, /^required\|scripts\/tlh-recover-update\.mjs$/m);
 	assert.match(bootstrap, /^optional\|scripts\/tlh-wrapper\.mjs$/m);
 	assert.match(bootstrap, /^optional\|scripts\/tlh-install-state\.mjs$/m);
 	assert.match(bootstrap, /^required\|config\/librarian\.defaults\.json$/m);
