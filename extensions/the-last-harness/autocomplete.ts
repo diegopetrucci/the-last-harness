@@ -69,6 +69,7 @@ function transformSuggestions(
 
 export function createTlhAutocompleteProvider(current: AutocompleteProvider): AutocompleteProvider {
 	return {
+		...(current.triggerCharacters ? { triggerCharacters: current.triggerCharacters } : {}),
 		async getSuggestions(
 			lines: string[],
 			cursorLine: number,

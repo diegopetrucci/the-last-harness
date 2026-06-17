@@ -79,3 +79,24 @@ test("autocomplete returns null when filtering removes every slash-command sugge
 
 	assert.equal(result, null);
 });
+
+test("wrapper forwards triggerCharacters when the underlying provider declares them", () => {
+	const underlying = {
+		triggerCharacters: ["#", "$"],
+		async getSuggestions() {
+			return { items: [] };
+		},
+		applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+			return { lines, cursorLine, cursorCol, item, prefix };
+		},
+	};
+	const wrapper = createTlhAutocompleteProvider(underlying);
+
+	assert.deepEqual(wrapper.triggerCharacters, ["#", "$"]);
+});
+
+test("wrapper has no triggerCharacters property when the underlying provider omits it", () => {
+	const wrapper = createTlhAutocompleteProvider(createProvider({ items: [] }));
+
+	assert.ok(!("triggerCharacters" in wrapper), "wrapper must not have an own triggerCharacters key");
+});
