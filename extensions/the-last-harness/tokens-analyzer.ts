@@ -1,6 +1,8 @@
 import type { ReadonlySessionManager, SessionEntry, ToolInfo } from "@earendil-works/pi-coding-agent";
 
 const BUILT_IN_TOOL_NAMES = new Set(["bash", "read", "edit", "write", "grep", "find", "ls"]);
+/** Approximate characters per token used for tool-payload size estimates. */
+const CHARS_PER_TOKEN = 4;
 const SKIP_DISCOVERY_KEYS = new Set([
 	"content",
 	"messages",
@@ -71,6 +73,8 @@ export type TlhToolUsage = {
 	callCount: number;
 	resultCount: number;
 	errorCount: number;
+	/** Estimated tokens consumed by this tool's call arguments plus result content. */
+	approxTokens: number;
 	mcp: boolean;
 	source: TlhToolSourceEstimate;
 };
@@ -78,6 +82,8 @@ export type TlhToolUsage = {
 export type TlhToolSourceUsage = {
 	source: TlhToolSourceEstimate;
 	callCount: number;
+	/** Estimated tokens consumed by all tools in this source group. */
+	approxTokens: number;
 	tools: string[];
 };
 
@@ -169,6 +175,10 @@ export type TlhSessionUsageAnalysis = {
 		mcpCalls: number;
 		mcpProxyCalls: number;
 		mcpDirectCalls: number;
+		/** Estimated tokens across all MCP tool calls and results combined. */
+		mcpApproxTokens: number;
+		/** Estimated tokens across all tool calls and results combined. */
+		totalToolApproxTokens: number;
 		byTool: TlhToolUsage[];
 		bySource: TlhToolSourceUsage[];
 	};
@@ -244,7 +254,7 @@ export function analyzeSessionEntries(
 	const subagentTotals = createUsageTotals();
 	const modelUsage = new Map<string, TlhModelUsage>();
 	const toolUsage = new Map<string, TlhToolUsage>();
-	const toolSourceUsage = new Map<string, { source: TlhToolSourceEstimate; callCount: number; tools: Set<string> }>();
+	const toolSourceUsage = new Map<string, { source: TlhToolSourceEstimate; callCount: number; approxTokens: number; tools: Set<string> }>();
 	const subagentRuns = new Map<string, TlhDiscoveredSubagentRun>();
 	const sessionRefs = new Map<string, TlhSanitizedReference>();
 	const artifactRefs = new Map<string, TlhSanitizedReference>();
@@ -337,18 +347,23 @@ export function analyzeSessionEntries(
 						callCount: 0,
 						resultCount: 0,
 						errorCount: 0,
+						approxTokens: 0,
 						mcp: source.kind === "mcp-proxy" || source.kind === "mcp-direct",
 						source,
 					};
 					existing.callCount += 1;
+					const argApproxTokens = Math.ceil(safeArgChars(block.arguments) / CHARS_PER_TOKEN);
+					existing.approxTokens += argApproxTokens;
 					toolUsage.set(block.name, existing);
 
 					const sourceBucket = toolSourceUsage.get(source.key) ?? {
 						source,
 						callCount: 0,
+						approxTokens: 0,
 						tools: new Set<string>(),
 					};
 					sourceBucket.callCount += 1;
+					sourceBucket.approxTokens += argApproxTokens;
 					sourceBucket.tools.add(block.name);
 					toolSourceUsage.set(source.key, sourceBucket);
 
@@ -389,6 +404,7 @@ export function analyzeSessionEntries(
 				callCount: 0,
 				resultCount: 0,
 				errorCount: 0,
+				approxTokens: 0,
 				mcp: source.kind === "mcp-proxy" || source.kind === "mcp-direct",
 				source,
 			};
@@ -396,7 +412,13 @@ export function analyzeSessionEntries(
 			if (message.isError) {
 				existing.errorCount += 1;
 			}
+			const resultApproxTokens = Math.ceil(resultContentChars(message.content) / CHARS_PER_TOKEN);
+			existing.approxTokens += resultApproxTokens;
 			toolUsage.set(message.toolName, existing);
+			const resultSourceBucket = toolSourceUsage.get(source.key);
+			if (resultSourceBucket) {
+				resultSourceBucket.approxTokens += resultApproxTokens;
+			}
 		}
 
 		const discoveries = collectStructuredDiscoveries(message, {
@@ -479,12 +501,15 @@ export function analyzeSessionEntries(
 			mcpProxyCalls,
 			mcpDirectCalls,
 			byTool: [...toolUsage.values()].sort(
-				(left, right) => right.callCount - left.callCount || right.resultCount - left.resultCount || left.toolName.localeCompare(right.toolName),
+				(left, right) => right.approxTokens - left.approxTokens || right.callCount - left.callCount || right.resultCount - left.resultCount || left.toolName.localeCompare(right.toolName),
 			),
+			mcpApproxTokens: [...toolUsage.values()].reduce((sum, tool) => (tool.mcp ? sum + tool.approxTokens : sum), 0),
+			totalToolApproxTokens: [...toolUsage.values()].reduce((sum, tool) => sum + tool.approxTokens, 0),
 			bySource: [...toolSourceUsage.values()]
 				.map((bucket) => ({
 					source: bucket.source,
 					callCount: bucket.callCount,
+					approxTokens: bucket.approxTokens,
 					tools: [...bucket.tools].sort((left, right) => left.localeCompare(right)),
 				}))
 				.sort((left, right) => right.callCount - left.callCount || left.source.label.localeCompare(right.source.label)),
@@ -509,6 +534,7 @@ export function analyzeSessionEntries(
 		caveats: [
 			"Primary assistant token and cost totals use provider-reported assistant usage exactly where the session recorded it.",
 			"Tool, MCP, and source attribution are estimates derived from tool names and the current tool catalog.",
+			"Tool I/O token counts are estimated from payload size (~4 chars/token), are not provider-reported, and reflect model-visible tool arguments and result content rather than turn-level token attribution.",
 			"Subagent usage appears only when structured session data exposed it; missing discoveries do not prove zero subagent spend.",
 			"Artifact and session references are sanitized and do not expose absolute local paths.",
 		],
@@ -1121,4 +1147,37 @@ function splitProviderModel(value: string): { provider?: string; modelId: string
 		provider: value.slice(0, slashIndex),
 		modelId: value.slice(slashIndex + 1),
 	};
+}
+
+/**
+ * Serialize tool-call arguments to JSON and return the character length.
+ * Returns 0 if arguments are absent or not serializable.
+ * Only the character count is used — raw payload text is never stored.
+ */
+function safeArgChars(args: unknown): number {
+	if (args == null) {
+		return 0;
+	}
+	try {
+		return JSON.stringify(args).length;
+	} catch {
+		return 0;
+	}
+}
+
+/**
+ * Sum the character length of all text items in a tool-result content array.
+ * Image and other non-text items are excluded — only derived counts are used.
+ */
+function resultContentChars(content: unknown): number {
+	if (!Array.isArray(content)) {
+		return 0;
+	}
+	let total = 0;
+	for (const item of content) {
+		if (isRecord(item) && item.type === "text" && typeof item.text === "string") {
+			total += item.text.length;
+		}
+	}
+	return total;
 }
