@@ -22,7 +22,9 @@
   {
     "id": "mcporter",
     "aliases": ["pi-mcp-adapter", "mcp-adapter"],
-    "source": "npm:pi-mcp-adapter",
+    "replaces": ["npm:pi-mcp-adapter"],
+    "migrateReplacements": true,
+    "source": "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1",
     "description": "Connect tlh to MCP servers with the upstream adapter."
   },
   {
