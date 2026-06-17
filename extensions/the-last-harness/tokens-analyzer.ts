@@ -501,11 +501,11 @@ export function analyzeSessionEntries(
 			mcpProxyCalls,
 			mcpDirectCalls,
 			byTool: [...toolUsage.values()].sort(
-				(left, right) => right.callCount - left.callCount || right.resultCount - left.resultCount || left.toolName.localeCompare(right.toolName),
+				(left, right) => right.approxTokens - left.approxTokens || right.callCount - left.callCount || right.resultCount - left.resultCount || left.toolName.localeCompare(right.toolName),
 			),
 			mcpApproxTokens: [...toolUsage.values()].reduce((sum, tool) => (tool.mcp ? sum + tool.approxTokens : sum), 0),
-		totalToolApproxTokens: [...toolUsage.values()].reduce((sum, tool) => sum + tool.approxTokens, 0),
-		bySource: [...toolSourceUsage.values()]
+			totalToolApproxTokens: [...toolUsage.values()].reduce((sum, tool) => sum + tool.approxTokens, 0),
+			bySource: [...toolSourceUsage.values()]
 				.map((bucket) => ({
 					source: bucket.source,
 					callCount: bucket.callCount,
