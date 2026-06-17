@@ -8,6 +8,7 @@ import { makeTempDir } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
 const { buildTokensReportHtml, registerTokensCommand } = await jiti.import("../extensions/the-last-harness/tokens.ts");
+const { analyzeSessionEntries } = await jiti.import("../extensions/the-last-harness/tokens-analyzer.ts");
 
 function usage({ input, output, cacheRead = 0, cacheWrite = 0, cost, turns = 0, assistantMessages = 0 }) {
 	return {
@@ -275,8 +276,10 @@ test("buildTokensReportHtml escapes dynamic content while preserving required re
 				mcpCalls: 0,
 				mcpProxyCalls: 0,
 				mcpDirectCalls: 0,
-				byTool: [{ toolName: "tool<script>", callCount: 1, resultCount: 1, errorCount: 0, mcp: false, source: { key: "source", label: "Extension <unsafe>", kind: "extension", source: "pkg<unsafe>", estimated: true } }],
-				bySource: [{ source: { key: "source", label: "Extension <unsafe>", kind: "extension", source: "pkg<unsafe>", estimated: true }, callCount: 1, tools: ["tool<script>"] }],
+				mcpApproxTokens: 0,
+				totalToolApproxTokens: 100,
+				byTool: [{ toolName: "tool<script>", callCount: 1, resultCount: 1, errorCount: 0, approxTokens: 100, mcp: false, source: { key: "source", label: "Extension <unsafe>", kind: "extension", source: "pkg<unsafe>", estimated: true } }],
+				bySource: [{ source: { key: "source", label: "Extension <unsafe>", kind: "extension", source: "pkg<unsafe>", estimated: true }, callCount: 1, approxTokens: 100, tools: ["tool<script>"] }],
 			},
 			subagents: {
 				precision: "discoverable-only",
@@ -308,4 +311,90 @@ test("buildTokensReportHtml escapes dynamic content while preserving required re
 	assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
 	assert.doesNotMatch(html, /developer<img>/);
 	assert.doesNotMatch(html, /run-1\/output<script>\.md/);
+});
+
+test("analyzeSessionEntries computes non-zero approxTokens for tool calls and results", () => {
+	const entries = [
+		userEntry("u1", null, "2026-06-17T10:00:00Z", "user message"),
+		assistantEntry("a1", "u1", "2026-06-17T10:00:05Z", {
+			stopReason: "tool_use",
+			content: [
+				{ type: "toolCall", id: "call-bash-1", name: "bash", arguments: { command: "echo hello world" } },
+				{ type: "toolCall", id: "call-mcp-1", name: "mcp", arguments: { server: "search", query: "example query text" } },
+			],
+			usage: usage({ input: 100, output: 10, cost: 0.2 }),
+		}),
+		toolResultEntry("tr1", "a1", "2026-06-17T10:00:06Z", "bash", {}, false, "hello world"),
+		toolResultEntry("tr2", "a1", "2026-06-17T10:00:07Z", "mcp", {}, false, "search result content here"),
+		assistantEntry("a2", "tr2", "2026-06-17T10:00:10Z", {
+			text: "Done.",
+			usage: usage({ input: 50, output: 5, cost: 0.1 }),
+		}),
+	];
+	const toolCatalog = [
+		{ name: "bash", sourceInfo: { source: "built-in", path: "core/bash.ts", scope: "user", origin: "top-level" } },
+		{ name: "mcp", sourceInfo: { source: "npm:pi-mcp-adapter", path: "extensions/mcp.mjs", scope: "user", origin: "package" } },
+	];
+	const analysis = analyzeSessionEntries(entries, { toolCatalog });
+
+	// Per-tool approxTokens should be non-zero when there are calls and results
+	const bashTool = analysis.tools.byTool.find((t) => t.toolName === "bash");
+	assert.ok(bashTool, "bash tool present in byTool");
+	assert.ok(bashTool.approxTokens > 0, "bash tool has non-zero approxTokens");
+
+	const mcpTool = analysis.tools.byTool.find((t) => t.toolName === "mcp");
+	assert.ok(mcpTool, "mcp tool present in byTool");
+	assert.ok(mcpTool.approxTokens > 0, "mcp tool has non-zero approxTokens");
+
+	// Per-source approxTokens should be non-zero
+	const mcpSource = analysis.tools.bySource.find((s) => s.source.kind === "mcp-proxy");
+	assert.ok(mcpSource, "mcp-proxy source present in bySource");
+	assert.ok(mcpSource.approxTokens > 0, "mcp-proxy source has non-zero approxTokens");
+
+	// Aggregate totals should be non-zero
+	assert.ok(analysis.tools.mcpApproxTokens > 0, "mcpApproxTokens is non-zero");
+	assert.ok(analysis.tools.totalToolApproxTokens > 0, "totalToolApproxTokens is non-zero");
+
+	// MCP total should equal the mcp tool's approxTokens only
+	assert.equal(analysis.tools.mcpApproxTokens, mcpTool.approxTokens, "mcpApproxTokens matches mcp tool approxTokens");
+
+	// Total should be sum of all tools
+	const expectedTotal = analysis.tools.byTool.reduce((sum, t) => sum + t.approxTokens, 0);
+	assert.equal(analysis.tools.totalToolApproxTokens, expectedTotal, "totalToolApproxTokens is sum of all per-tool approxTokens");
+});
+
+test("buildTokensReportHtml renders MCP est. tokens card and Est. tokens columns in Tools/MCP section", () => {
+	const entries = [
+		userEntry("u1", null, "2026-06-17T10:00:00Z", "user message"),
+		assistantEntry("a1", "u1", "2026-06-17T10:00:05Z", {
+			stopReason: "tool_use",
+			content: [
+				{ type: "toolCall", id: "call-mcp-1", name: "mcp", arguments: { server: "search", query: "example" } },
+			],
+			usage: usage({ input: 80, output: 10, cost: 0.18 }),
+		}),
+		toolResultEntry("tr1", "a1", "2026-06-17T10:00:06Z", "mcp", {}, false, "result content"),
+		assistantEntry("a2", "tr1", "2026-06-17T10:00:10Z", {
+			text: "Done.",
+			usage: usage({ input: 40, output: 5, cost: 0.08 }),
+		}),
+	];
+	const toolCatalog = [
+		{ name: "mcp", sourceInfo: { source: "npm:pi-mcp-adapter", path: "extensions/mcp.mjs", scope: "user", origin: "package" } },
+	];
+	const analysis = analyzeSessionEntries(entries, { toolCatalog });
+	const html = buildTokensReportHtml(analysis, { generatedAt: "2026-06-17T10:01:00Z" });
+
+	// MCP est. tokens metric card should appear
+	assert.match(html, /MCP est\. tokens/);
+	// Detail line with all-tools estimate
+	assert.match(html, /all-tools est\./);
+
+	// Est. tokens column header should appear in both tables (Tools and Tool sources)
+	const estTokensMatches = [...html.matchAll(/Est\. tokens/g)];
+	assert.ok(estTokensMatches.length >= 2, `Expected at least 2 "Est. tokens" column headers, found ${estTokensMatches.length}`);
+
+	// The tool estimates caveat should appear
+	assert.match(html, /~4 chars\/token/);
+	assert.match(html, /not provider-reported/);
 });
