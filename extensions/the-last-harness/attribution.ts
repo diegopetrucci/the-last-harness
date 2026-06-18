@@ -1224,6 +1224,7 @@ function getWrappedShellGitCommitAttributionBlockReason(
 	depth = 0,
 	failClosedOnCommitLike = false,
 	sourceSegment?: string,
+	fixtureState: EphemeralFixtureState = createEphemeralFixtureState(),
 ): string | undefined {
 	if (depth > MAX_WRAPPED_SHELL_GIT_COMMIT_RECURSION_DEPTH) {
 		return buildTlhGitCommitAttributionBlockReason(footer);
@@ -1234,10 +1235,18 @@ function getWrappedShellGitCommitAttributionBlockReason(
 		if (!trimmedSegment) {
 			continue;
 		}
+
+		// Update CWD-aware fixture state before evaluating this segment.
+		updateEphemeralFixtureState(trimmedSegment, fixtureState);
+
 		const effectiveSourceSegment = sourceSegment ?? trimmedSegment;
 		const commitArguments = getGitCommitArguments(trimmedSegment);
 		const isObviousInlineGitCommit = commitArguments !== undefined && hasInlineLikeGitCommitMessageOrFileArgument(commitArguments);
 		if (isObviousInlineGitCommit) {
+			// Exempt commits that provably target an ephemeral temp fixture.
+			if (isCommitSegmentEphemeralExempt(trimmedSegment, fixtureState)) {
+				continue;
+			}
 			if (
 				areInlineGitCommitArgumentsAttributed(commitArguments, footer, trimmedSegment)
 				|| areInlineGitCommitArgumentsAttributed(commitArguments, footer, effectiveSourceSegment)
@@ -1259,18 +1268,231 @@ function getWrappedShellGitCommitAttributionBlockReason(
 		if (!wrappedCommand) {
 			continue;
 		}
+		// Recurse with FRESH state: each wrapped-shell level gets independent context.
 		const blockReason = getWrappedShellGitCommitAttributionBlockReason(
 			wrappedCommand,
 			footer,
 			depth + 1,
 			failClosedOnCommitLike,
 			effectiveSourceSegment,
+			createEphemeralFixtureState(),
 		);
 		if (blockReason) {
 			return blockReason;
 		}
 	}
 	return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Ephemeral-fixture exemption helpers (CWD-aware, per-commit)
+// ---------------------------------------------------------------------------
+
+/**
+ * Recognised temp-dir root prefixes (literal paths and env-var references).
+ * A path "under" one of these roots satisfies the temp-dir signal.
+ */
+const TEMP_DIR_LITERAL_PREFIXES = [
+	"/tmp/",
+	"/private/tmp/",
+	"/var/folders/",
+	"/private/var/folders/",
+];
+const TEMP_DIR_EXACT_ROOTS = new Set(["/tmp", "/private/tmp"]);
+/** Shell variable references that expand to a temp root (as produced by the tokenizer). */
+const TEMP_ENV_VAR_REFS = new Set(["$TMPDIR", "${TMPDIR}", "$TMP", "${TMP}"]);
+
+/** Returns true when `path` is, or is under, a recognised temp root. */
+function pathIsUnderTempRoot(path: string): boolean {
+	if (TEMP_DIR_EXACT_ROOTS.has(path)) {
+		return true;
+	}
+	if (TEMP_DIR_LITERAL_PREFIXES.some((prefix) => path.startsWith(prefix))) {
+		return true;
+	}
+	for (const ref of TEMP_ENV_VAR_REFS) {
+		if (path === ref || path.startsWith(`${ref}/`)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
+ * If `token` is a bare shell variable reference (`$var` or `${var}`),
+ * returns the variable name; otherwise returns undefined.
+ */
+function extractShellVarName(token: string): string | undefined {
+	const match = /^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/.exec(token);
+	return match?.[1];
+}
+
+/**
+ * Returns true when `segment` contains a `git init` invocation
+ * (after stripping leading env/shell prefixes).
+ */
+function segmentHasGitInit(segment: string): boolean {
+	const tokens = normalizeShellCommandTokens(segment);
+	if (commandBasename(tokens[0] ?? "") !== "git") {
+		return false;
+	}
+	for (let index = 1; index < tokens.length; index += 1) {
+		const token = tokens[index];
+		if (token.toLowerCase() === "init") {
+			return true;
+		}
+		if (!token.startsWith("-")) {
+			return false;
+		}
+		if (GIT_GLOBAL_OPTIONS_WITH_VALUES.has(token)) {
+			index += 1;
+			continue;
+		}
+		if (token.startsWith("-C") || token.startsWith("-c")) {
+			continue;
+		}
+		if (
+			["--config-env", "--git-dir", "--namespace", "--super-prefix", "--work-tree"].some((option) =>
+				token.startsWith(`${option}=`),
+			)
+		) {
+			continue;
+		}
+	}
+	return false;
+}
+
+/**
+ * Extracts the `-C <path>` working-directory override from a git command's
+ * token list.  Returns the path value if present; undefined otherwise.
+ */
+function getGitDashCPath(tokens: string[]): string | undefined {
+	if (commandBasename(tokens[0] ?? "") !== "git") {
+		return undefined;
+	}
+	for (let index = 1; index < tokens.length; index += 1) {
+		const token = tokens[index];
+		if (token === "-C") {
+			return tokens[index + 1];
+		}
+		if (token.startsWith("-C") && token.length > 2) {
+			return token.slice(2);
+		}
+		if (!token.startsWith("-")) {
+			break; // reached the git subcommand — -C must precede it
+		}
+		// Skip the value of other global options so we don't mistake it for -C's value.
+		if (GIT_GLOBAL_OPTIONS_WITH_VALUES.has(token) && token !== "-C") {
+			index += 1;
+		}
+	}
+	return undefined;
+}
+
+/**
+ * CWD-aware state maintained while walking the segments of a command chain.
+ * A fresh instance must be created at each wrapped-command boundary so that
+ * inner shells (e.g. `bash -c '...'`) are evaluated independently.
+ */
+interface EphemeralFixtureState {
+	/** Variables assigned from `mktemp` output in earlier segments. */
+	mktempVars: Set<string>;
+	/** True when a preceding `cd` moved into a recognised temp root. */
+	inTempContext: boolean;
+	/**
+	 * True after a `git init` that ran while `inTempContext`, OR after a
+	 * `git -C <temp-path> init` that explicitly targeted a temp path.
+	 */
+	sawGitInitInTemp: boolean;
+	/**
+	 * Explicit temp paths (from `git -C <path> init`) that have been
+	 * initialised as git repos in this chain.
+	 */
+	tempInitPaths: Set<string>;
+}
+
+function createEphemeralFixtureState(): EphemeralFixtureState {
+	return {
+		mktempVars: new Set(),
+		inTempContext: false,
+		sawGitInitInTemp: false,
+		tempInitPaths: new Set(),
+	};
+}
+
+/**
+ * Updates `state` based on what `segment` does (cd, git init, mktemp
+ * assignments).  Must be called for every segment in order so that each
+ * subsequent segment sees the correct accumulated context.
+ */
+function updateEphemeralFixtureState(segment: string, state: EphemeralFixtureState): void {
+	// 1. Collect `var=$(mktemp ...)` assignments visible as tokens in this segment.
+	for (const token of tokenizeShellWords(segment)) {
+		if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) {
+			continue;
+		}
+		const eqIndex = token.indexOf("=");
+		const value = token.slice(eqIndex + 1);
+		if (/\$\(mktemp\b/.test(value) || /`mktemp\b/.test(value)) {
+			state.mktempVars.add(token.slice(0, eqIndex));
+		}
+	}
+
+	const tokens = normalizeShellCommandTokens(segment);
+	const cmd = commandBasename(tokens[0] ?? "");
+
+	// 2. Handle `cd` — update inTempContext.
+	//    Fail-safe: an unknown or non-temp target clears the flag.
+	if (cmd === "cd" && tokens.length >= 2) {
+		const target = tokens[1];
+		if (
+			pathIsUnderTempRoot(target)
+			|| /\$\(mktemp\b/.test(target)
+			|| /`mktemp\b/.test(target)
+		) {
+			state.inTempContext = true;
+		} else {
+			const varName = extractShellVarName(target);
+			state.inTempContext = varName !== undefined && state.mktempVars.has(varName);
+		}
+		return;
+	}
+
+	// 3. Handle `git init` — update sawGitInitInTemp / tempInitPaths.
+	if (cmd === "git" && segmentHasGitInit(segment)) {
+		const dashCPath = getGitDashCPath(tokens);
+		if (dashCPath !== undefined) {
+			const varName = extractShellVarName(dashCPath);
+			const isTemp =
+				pathIsUnderTempRoot(dashCPath)
+				|| (varName !== undefined && state.mktempVars.has(varName));
+			if (isTemp) {
+				state.sawGitInitInTemp = true;
+				state.tempInitPaths.add(dashCPath);
+			}
+		} else if (state.inTempContext) {
+			// `git init` with no explicit path — runs in the current (temp) CWD.
+			state.sawGitInitInTemp = true;
+		}
+	}
+}
+
+/**
+ * Returns true when `segment` is a `git commit` that is proven to target an
+ * ephemeral temp fixture at its position in the segment walk.
+ *
+ * Condition 1: the CWD-walk shows we are currently inside a temp directory
+ *   that had `git init` run in it.
+ * Condition 2: the commit itself uses `git -C <path>` where `<path>` was
+ *   explicitly git-initialised as a temp fixture earlier in the same chain.
+ */
+function isCommitSegmentEphemeralExempt(segment: string, state: EphemeralFixtureState): boolean {
+	if (state.inTempContext && state.sawGitInitInTemp) {
+		return true;
+	}
+	const tokens = normalizeShellCommandTokens(segment);
+	const dashCPath = getGitDashCPath(tokens);
+	return dashCPath !== undefined && state.tempInitPaths.has(dashCPath);
 }
 
 export function buildTlhCommitAttributionPrompt(state: TlhCommitAttributionState): string | undefined {
@@ -1288,6 +1510,7 @@ export function getTlhGitCommitAttributionBlockReason(command: string, state: Tl
 	if (!state.enabled || !state.footer) {
 		return undefined;
 	}
+	// Per-commit CWD-aware exemption is applied inside getWrappedShellGitCommitAttributionBlockReason.
 	return getWrappedShellGitCommitAttributionBlockReason(command, state.footer);
 }
 

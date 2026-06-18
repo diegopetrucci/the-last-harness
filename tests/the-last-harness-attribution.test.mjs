@@ -723,6 +723,154 @@ test("toggle attribution command rewrites attribution settings to boolean-only c
 	});
 });
 
+// ---------------------------------------------------------------------------
+// Ephemeral-fixture exemption — four acceptance criteria (tlhmf-7hco)
+// ---------------------------------------------------------------------------
+
+test("ephemeral-fixture exemption: git commit inside mktemp+git-init chain is NOT blocked (AC1)", () => {
+	const enabled = resolveTlhCommitAttribution(undefined);
+
+	// Primary use-case: variable assigned from mktemp, then cd + git init + git commit.
+	const primaryChain = `tmp=$(mktemp -d) && cd "$tmp" && git init -q && git add . && git commit -m init`;
+	assert.equal(getTlhGitCommitAttributionBlockReason(primaryChain, enabled), undefined);
+
+	// Multiline variant (newline-separated segments).
+	const multiline = `tmp=$(mktemp -d)\ncd "$tmp"\ngit init -q\ngit commit -m init`;
+	assert.equal(getTlhGitCommitAttributionBlockReason(multiline, enabled), undefined);
+
+	// mktemp as a standalone command (not assigned).
+	const standaloneMktemp = `mktemp -d && cd /tmp/fixture && git init && git commit -m init`;
+	assert.equal(getTlhGitCommitAttributionBlockReason(standaloneMktemp, enabled), undefined);
+
+	// git -C pointing to a temp root alongside git init.
+	const gitCInit = `git -C /tmp/fixture init && git -C /tmp/fixture commit -m init`;
+	assert.equal(getTlhGitCommitAttributionBlockReason(gitCInit, enabled), undefined);
+
+	// mktemp as a command substitution in cd.
+	const cdSubstitution = `cd $(mktemp -d) && git init -q && git commit -m init`;
+	assert.equal(getTlhGitCommitAttributionBlockReason(cdSubstitution, enabled), undefined);
+
+	// $TMPDIR-based cd alongside git init.
+	const tmpdirChain = `cd "$TMPDIR/fixture" && git init -q && git commit -m init`;
+	assert.equal(getTlhGitCommitAttributionBlockReason(tmpdirChain, enabled), undefined);
+});
+
+test("ephemeral-fixture exemption: normal real-repo commit missing footer is STILL blocked (AC2)", () => {
+	const enabled = resolveTlhCommitAttribution(undefined);
+
+	// Plain commit with no footer, no git init, no temp context.
+	assert.match(
+		getTlhGitCommitAttributionBlockReason('git commit -m "ship it"', enabled) ?? "",
+		/missing the required TLH attribution footer/,
+	);
+
+	// Footer present → not blocked (ensure exemption doesn't break the happy path).
+	assert.equal(
+		getTlhGitCommitAttributionBlockReason(`git commit -m "ship it\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`, enabled),
+		undefined,
+	);
+});
+
+test("ephemeral-fixture exemption: git init + commit in NON-temp path is STILL blocked (AC3)", () => {
+	const enabled = resolveTlhCommitAttribution(undefined);
+
+	// git init in the current dir (no temp root) must not bypass the guard.
+	assert.match(
+		getTlhGitCommitAttributionBlockReason('git init && git commit -m "initial commit"', enabled) ?? "",
+		/missing the required TLH attribution footer/,
+	);
+
+	// git init in a named but non-temp path.
+	assert.match(
+		getTlhGitCommitAttributionBlockReason('cd /home/user/project && git init && git commit -m "init"', enabled) ?? "",
+		/missing the required TLH attribution footer/,
+	);
+
+	// git init in a relative path that isn't a temp root.
+	assert.match(
+		getTlhGitCommitAttributionBlockReason('cd ./testfixture && git init && git commit -m "init"', enabled) ?? "",
+		/missing the required TLH attribution footer/,
+	);
+});
+
+test("ephemeral-fixture exemption: cd into temp path WITHOUT git init is STILL blocked (AC4)", () => {
+	const enabled = resolveTlhCommitAttribution(undefined);
+
+	// Has a temp-dir context but no git init → still blocked.
+	assert.match(
+		getTlhGitCommitAttributionBlockReason('cd /tmp/mydir && git commit -m "ship it"', enabled) ?? "",
+		/missing the required TLH attribution footer/,
+	);
+
+	// mktemp invocation without git init → still blocked.
+	assert.match(
+		getTlhGitCommitAttributionBlockReason('tmp=$(mktemp -d) && cd "$tmp" && git commit -m "ship it"', enabled) ?? "",
+		/missing the required TLH attribution footer/,
+	);
+
+	// $TMPDIR cd without git init → still blocked.
+	assert.match(
+		getTlhGitCommitAttributionBlockReason('cd "$TMPDIR/fixture" && git commit -m "ship it"', enabled) ?? "",
+		/missing the required TLH attribution footer/,
+	);
+});
+
+// ---------------------------------------------------------------------------
+// Regression tests: CWD-aware exemption correctness (tlhmf-7hco review)
+// ---------------------------------------------------------------------------
+
+test("CWD-aware exemption: git -C /tmp init then bare git commit is STILL blocked", () => {
+	const enabled = resolveTlhCommitAttribution(undefined);
+
+	// The commit does not use -C and inTempContext is false → must be blocked.
+	assert.match(
+		getTlhGitCommitAttributionBlockReason(
+			'git -C /tmp/fixture init && git commit -m "real"',
+			enabled,
+		) ?? "",
+		/missing the required TLH attribution footer/,
+	);
+});
+
+test("CWD-aware exemption: cd back to real repo before commit is STILL blocked", () => {
+	const enabled = resolveTlhCommitAttribution(undefined);
+
+	// After cd /real/repo, inTempContext becomes false → commit must be blocked.
+	assert.match(
+		getTlhGitCommitAttributionBlockReason(
+			'tmp=$(mktemp -d) && cd "$tmp" && git init && cd /real/repo && git commit -m "real"',
+			enabled,
+		) ?? "",
+		/missing the required TLH attribution footer/,
+	);
+});
+
+test("CWD-aware exemption: git -C /tmp init and git -C /tmp commit is exempt", () => {
+	const enabled = resolveTlhCommitAttribution(undefined);
+
+	// Commit explicitly targets the same temp path that was git-initialized → exempt.
+	assert.equal(
+		getTlhGitCommitAttributionBlockReason(
+			"git -C /tmp/fixture init && git -C /tmp/fixture commit -m init",
+			enabled,
+		),
+		undefined,
+	);
+});
+
+test("CWD-aware exemption: fixture inside bash -lc wrapper is exempt (Issue 2)", () => {
+	const enabled = resolveTlhCommitAttribution(undefined);
+
+	// The wrapped shell gets its own fresh context; inner fixture chain must be exempt.
+	assert.equal(
+		getTlhGitCommitAttributionBlockReason(
+			"bash -lc 'tmp=$(mktemp -d) && cd \"$tmp\" && git init -q && git commit -m init'",
+			enabled,
+		),
+		undefined,
+	);
+});
+
 test("toggle attribution command rejects non-boolean persisted values", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-attribution-test-", { test: t });
 	const settingsPath = join(fixture.agent, "settings.json");
