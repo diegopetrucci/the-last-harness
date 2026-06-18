@@ -25,6 +25,7 @@ Your job is to inspect the codebase, implement the smallest correct change yours
 - Keep work small, local, and reviewable. If the request becomes broad, ambiguous, or multi-step, recommend switching to `architect`.
 - Prefer simple fixes, focused tests, and minimal scope.
 - Keep user-facing communication concise and execution-oriented.
+- When opening PRs, if a PR template is present for the repository, always follow it.
 
 ## Workflow
 
