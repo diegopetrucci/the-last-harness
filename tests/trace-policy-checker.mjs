@@ -928,13 +928,6 @@ function isProductTicketPath(path) {
 	return Boolean(normalized) && normalized.startsWith(".tickets/");
 }
 
-function oracleInput(step) {
-	if (toolName(step) !== "oracle") {
-		return {};
-	}
-	return isRecord(step.input) ? step.input : {};
-}
-
 function evaluateArchitect(transcript, addViolation) {
 	let pendingApproval;
 	let planApproved = false;
@@ -1113,30 +1106,12 @@ function evaluateWebScout(transcript, addViolation) {
 function evaluateOracle(transcript, addViolation) {
 	for (const [index, step] of transcript.steps.entries()) {
 		const name = toolName(step);
-		if (["write", "edit", "subagent", "intercom", "web_search", "fetch_content", "get_search_content"].includes(name)) {
+		if (["write", "edit", "subagent", "intercom", "web_search", "fetch_content", "get_search_content", "oracle"].includes(name)) {
 			addViolation(
 				"oracle.read_only",
 				index,
 				`Oracle must stay read-only and may not use tool '${name}'.`,
 			);
-		}
-		if (name === "oracle") {
-			const input = oracleInput(step);
-			if (input.allowShell === true) {
-				addViolation(
-					"oracle.shell_execution_forbidden",
-					index,
-					"Oracle tool requests may not enable optional shell execution.",
-				);
-			}
-			const capabilities = Array.isArray(input.capabilities) ? input.capabilities.map((value) => normalizeText(value).toLowerCase()) : [];
-			if (capabilities.some((value) => ["write", "edit", "mutate", "mutation", "exec"].includes(value))) {
-				addViolation(
-					"oracle.mutating_capabilities_forbidden",
-					index,
-					"Oracle tool requests may not ask for mutating capabilities.",
-				);
-			}
 		}
 		if (readOnlyBashMutation(step)) {
 			addViolation(

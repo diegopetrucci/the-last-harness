@@ -336,6 +336,7 @@ const FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES = Object.freeze([
 	"npm:@diegopetrucci/pi-context-cap",
 	"npm:@diegopetrucci/pi-permission-gate",
 	"npm:@diegopetrucci/pi-confirm-destructive",
+	"npm:@diegopetrucci/pi-oracle",
 ]);
 
 function purgeForceRemovedRetiredDefaultExtensionPackages(settings, changes) {
@@ -357,6 +358,16 @@ function pruneContextCapDisabledDefaultExtension(settings, changes) {
 	if (nextValues.length === values.length) return;
 	settings.tlh.disabledDefaultExtensions = nextValues;
 	changes.push("remove stale context-cap opt-out from tlh.disabledDefaultExtensions");
+}
+
+function pruneOracleDisabledDefaultExtension(settings, changes) {
+	if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
+	const values = settings.tlh.disabledDefaultExtensions;
+	if (!Array.isArray(values)) return;
+	const nextValues = values.filter((value) => !(typeof value === "string" && value.trim() === "oracle"));
+	if (nextValues.length === values.length) return;
+	settings.tlh.disabledDefaultExtensions = nextValues;
+	changes.push("remove stale oracle opt-out from tlh.disabledDefaultExtensions");
 }
 
 function scrubGnosisSettings(settings, changes) {
@@ -602,6 +613,7 @@ function main() {
 	scrubGnosisSettings(next, changes);
 	purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
 	pruneContextCapDisabledDefaultExtension(next, changes);
+	pruneOracleDisabledDefaultExtension(next, changes);
 	syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
 
 	log(args, `Pi settings: ${settingsPath}`);
