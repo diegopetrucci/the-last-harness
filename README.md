@@ -48,7 +48,7 @@ TLH subagents are fresh child sessions, not a giant shared swarm. They get the t
 - `diff-summarizer` for change overviews
 - `developer` for implementation
 - `code-reviewer` for review
-- `librarian` for repo knowledge
+- `librarian` for read-only GitHub repository research (uses `gh` CLI and `git`)
 - `web-scout` for web research
 - `oracle` for a deeper second opinion.
 
@@ -179,3 +179,5 @@ Normal `tlh update` runs are conservative: they preserve user-owned isolated-pro
 Node.js >=22.19.0 must be available on your `PATH`.
 
 TLH uses upstream Pi >=0.79.1; if `pi` is missing, the installer automatically adds a compatible per-user copy under `~/.local`.
+
+**`gh` CLI (for `librarian` GitHub research):** The `librarian` subagent performs read-only GitHub research using the `gh` CLI and `git`. Install `gh` from <https://cli.github.com/> and authenticate with `gh auth login` before using librarian. Run `gh auth status` to confirm. Without an authenticated `gh`, librarian reports what it could not verify rather than silently failing.

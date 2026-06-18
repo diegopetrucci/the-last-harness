@@ -391,7 +391,6 @@ required|config/default-extensions.json
 EOF_SUPPORT_FILES
   if [[ "${NO_SETTINGS}" != "true" ]]; then
     cat <<'EOF_SETTINGS_SUPPORT_FILES'
-required|config/librarian.defaults.json
 required|scripts/merge-keybindings.mjs
 required|config/keybindings.defaults.json
 EOF_SETTINGS_SUPPORT_FILES
@@ -565,12 +564,11 @@ run_stage1() {
 }
 
 dry_run_without_stage1() {
-  local agent_dir bin_dir settings_path keybindings_path librarian_config_path package_source
+  local agent_dir bin_dir settings_path keybindings_path package_source
   agent_dir="$(normalize_path_for_stage0 "${AGENT_DIR_INPUT}")"
   bin_dir="$(normalize_path_for_stage0 "${BIN_DIR_INPUT}")"
   settings_path="${agent_dir}/settings.json"
   keybindings_path="${agent_dir}/keybindings.json"
-  librarian_config_path="${agent_dir}/extensions/librarian.json"
   package_source="${TLH_PACKAGE_SOURCE:-git:github.com/${REPO}@${REF}}"
 
   log "The Last Harness installer"
@@ -586,7 +584,6 @@ dry_run_without_stage1() {
   else
     log "Would merge settings defaults into: ${settings_path}"
     log "Would merge keybinding defaults into: ${keybindings_path}"
-    log "Would create isolated Librarian config when missing: ${librarian_config_path}"
     log "Would install bundled default extension packages after settings merge."
   fi
   log "Would fetch Gnosis integration support files."

@@ -734,16 +734,8 @@ test("support manifests preserve current-ref packaging while keeping stage-0 boo
 		tempPath: "lib/default-extensions.mjs",
 		installName: "",
 	});
-	assert.deepEqual(manifest.find((file) => file.variable === "LIBRARIAN_DEFAULTS_FILE"), {
-		variable: "LIBRARIAN_DEFAULTS_FILE",
-		requirement: "required",
-		relativePath: "config/librarian.defaults.json",
-		tempPath: "librarian.defaults.json",
-		installName: "",
-	});
 	assert.equal(manifest.find((file) => file.variable === "TLH_WRAPPER_SCRIPT")?.installName, "");
 	assert.equal(manifest.find((file) => file.variable === "TLH_INSTALL_STATE_SCRIPT")?.installName, "");
-	assert.equal(supportFileManifest({ noSettings: true }).some((file) => file.variable === "LIBRARIAN_DEFAULTS_FILE"), false);
 
 	const installableVariables = new Set(installableSupportFiles().map((file) => file.variable));
 	for (const variable of [
@@ -763,7 +755,6 @@ test("support manifests preserve current-ref packaging while keeping stage-0 boo
 		"TLH_GNOSIS_SCRIPT",
 		"TLH_WRAPPER_SCRIPT",
 		"TLH_INSTALL_STATE_SCRIPT",
-		"LIBRARIAN_DEFAULTS_FILE",
 	]) {
 		assert.equal(installableVariables.has(variable), false, variable);
 	}
@@ -777,7 +768,6 @@ test("support manifests preserve current-ref packaging while keeping stage-0 boo
 	assert.match(bootstrap, /^required\|scripts\/tlh-recover-update\.mjs$/m);
 	assert.match(bootstrap, /^optional\|scripts\/tlh-wrapper\.mjs$/m);
 	assert.match(bootstrap, /^optional\|scripts\/tlh-install-state\.mjs$/m);
-	assert.match(bootstrap, /^required\|config\/librarian\.defaults\.json$/m);
 });
 
 test("settings defaults declare when bundled subagent prompts are required", (t) => {

@@ -139,6 +139,23 @@ const contracts = [
 	},
 	{
 		group: "subagents",
+		name: "librarian",
+		requiredTools: ["read", "grep", "find", "ls", "bash", "contact_supervisor"],
+		forbiddenTools: ["write", "edit", "subagent", "intercom", "web_search", "fetch_content", "get_search_content", "oracle", "librarian"],
+		anchors: [
+			heading("Tool use"),
+			heading("Research process"),
+			heading("Output"),
+			heading("gh availability"),
+			bodyPattern("librarian is read-only", /you are read-only/i),
+			bodyPattern("librarian uses bash for gh/git research", /gh|git.*bash|bash.*gh|bash.*git/i),
+			bodyPattern("librarian forbids mutating commands", /never run|never modify files|non-mutating/i),
+			bodyPattern("librarian handles gh-missing gracefully", /gh.*missing|gh.*unauthenticated|install.*gh|authenticate.*gh/i),
+			bodyPattern("librarian cites concrete evidence", /commit sha|issue.*pull request|line range/i),
+		],
+	},
+	{
+		group: "subagents",
 		name: "oracle",
 		requiredTools: ["oracle", "read", "grep", "find", "ls", "contact_supervisor", "bash"],
 		forbiddenTools: ["write", "edit", "subagent", "intercom", "web_search", "fetch_content", "get_search_content"],
