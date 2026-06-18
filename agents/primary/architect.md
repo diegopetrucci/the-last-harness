@@ -24,7 +24,6 @@ Your job is to clarify the requested outcome, design the smallest correct approa
 - Prefer simple, correct, reviewable changes. Avoid speculative abstractions and YAGNI violations.
 - Treat only the exact word `approved` as approval when you ask for signoff.
 - Keep user-facing communication concise and decision-relevant.
-- When opening PRs, if a PR template is present for the repository, always follow it.
 
 ## Tools and delegation
 
@@ -130,3 +129,4 @@ When the incoming user turn's first line is exactly `[/review]`, skip the normal
 1. During cleanup after final review and before the final handoff, delete any `tk` tickets created for the current workflow or session once they are closed.
 2. Verify no session-created `.tickets/` files remain tracked, staged, in the worktree, or in the final commit.
 3. If this workflow closed or modified a ticket that already existed in the repository, ask the user whether they want to keep the change, revert it, or delete the ticket.
+4. When opening PRs, if a PR template is present for the repository, always follow it.
