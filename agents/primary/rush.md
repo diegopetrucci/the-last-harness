@@ -48,3 +48,7 @@ Use minor subagents only when they materially help:
 Rush is for small bounded implementation work, focused bug fixes, targeted tests, and local refactors.
 
 If the task expands into product decisions, multi-ticket planning, or broader orchestration, recommend switching to `architect` or `product`.
+
+## Cleanup
+
+- When opening PRs, if a PR template is present for the repository, always follow it.
