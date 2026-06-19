@@ -22,8 +22,15 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoNodeModulesBin = join(repoRoot, "node_modules", ".bin");
 const TLH_MIN_PI_VERSION = "0.79.1";
 const TLH_PINNED_PI_VERSION = "0.79.7";
+
+function escapeRegExp(value) {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 const TLH_PI_PACKAGE_SPEC = `@earendil-works/pi-coding-agent@${TLH_PINNED_PI_VERSION}`;
-const TLH_PI_PACKAGE_SPEC_PATTERN = TLH_PI_PACKAGE_SPEC.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const TLH_MIN_PI_VERSION_PATTERN = escapeRegExp(TLH_MIN_PI_VERSION);
+const TLH_PINNED_PI_VERSION_PATTERN = escapeRegExp(TLH_PINNED_PI_VERSION);
+const TLH_PI_PACKAGE_SPEC_PATTERN = escapeRegExp(TLH_PI_PACKAGE_SPEC);
 
 function pathWithoutRepoNodeModulesBin(pathValue = process.env.PATH || "") {
 	return pathValue.split(delimiter).filter((entry) => entry && resolve(entry) !== repoNodeModulesBin).join(delimiter);
@@ -284,7 +291,7 @@ test("stage-1 hard-fails existing Pi version probes that exit nonzero", (t) => {
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /unable to determine Pi version from existing pi on PATH/);
 	assert.match(result.stderr, /pi --version exited with 23/);
-	assert.match(result.stderr, new RegExp(`The Last Harness requires Pi >= ${TLH_MIN_PI_VERSION.replace(/\./g, "\\.")} and <= ${TLH_PINNED_PI_VERSION.replace(/\./g, "\\.")}`));
+	assert.match(result.stderr, new RegExp(`The Last Harness requires Pi >= ${TLH_MIN_PI_VERSION_PATTERN} and <= ${TLH_PINNED_PI_VERSION_PATTERN}`));
 	assert.match(result.stderr, /Verify that `pi --version` works/);
 	assert.match(result.stderr, new RegExp(`Install the pinned TLH runtime with: npm install -g --ignore-scripts --prefix .* ${TLH_PI_PACKAGE_SPEC_PATTERN}`));
 	assert.match(result.stderr, /Probe output: version probe failed/);
@@ -342,7 +349,7 @@ test("stage-1 hard-fails existing Pi version probes with unparsable output", (t)
 	const result = runInstaller(["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], env);
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /unable to parse Pi version from existing pi on PATH: development build/);
-	assert.match(result.stderr, new RegExp(`The Last Harness requires Pi >= ${TLH_MIN_PI_VERSION.replace(/\./g, "\\.")} and <= ${TLH_PINNED_PI_VERSION.replace(/\./g, "\\.")}`));
+	assert.match(result.stderr, new RegExp(`The Last Harness requires Pi >= ${TLH_MIN_PI_VERSION_PATTERN} and <= ${TLH_PINNED_PI_VERSION_PATTERN}`));
 	assert.match(result.stderr, /Verify that `pi --version` prints a semantic version like 0\.79\.1/);
 	assert.match(result.stderr, new RegExp(`Install the pinned TLH runtime with: npm install -g --ignore-scripts --prefix .* ${TLH_PI_PACKAGE_SPEC_PATTERN}`));
 });
@@ -365,7 +372,7 @@ test("stage-1 rejects existing Pi older than the TLH minimum", (t) => {
 	});
 	const result = runInstaller(["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], env);
 	assert.notEqual(result.status, 0);
-	assert.match(result.stderr, new RegExp(`Pi >= ${TLH_MIN_PI_VERSION.replace(/\./g, "\\.")} and <= ${TLH_PINNED_PI_VERSION.replace(/\./g, "\\.")} is required \\(found 0\\.79\\.0\\)\\. Install the pinned TLH runtime with: npm install -g --ignore-scripts --prefix .* ${TLH_PI_PACKAGE_SPEC_PATTERN}`));
+	assert.match(result.stderr, new RegExp(`Pi >= ${TLH_MIN_PI_VERSION_PATTERN} and <= ${TLH_PINNED_PI_VERSION_PATTERN} is required \\(found 0\\.79\\.0\\)\\. Install the pinned TLH runtime with: npm install -g --ignore-scripts --prefix .* ${TLH_PI_PACKAGE_SPEC_PATTERN}`));
 });
 
 test("stage-1 rejects existing Pi newer than the TLH pin", (t) => {
@@ -386,7 +393,7 @@ test("stage-1 rejects existing Pi newer than the TLH pin", (t) => {
 	});
 	const result = runInstaller(["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], env);
 	assert.notEqual(result.status, 0);
-	assert.match(result.stderr, new RegExp(`Pi >= ${TLH_MIN_PI_VERSION.replace(/\./g, "\\.")} and <= ${TLH_PINNED_PI_VERSION.replace(/\./g, "\\.")} is required \\(found 0\\.79\\.8\\)\\. Install the pinned TLH runtime with: npm install -g --ignore-scripts --prefix .* ${TLH_PI_PACKAGE_SPEC_PATTERN}`));
+	assert.match(result.stderr, new RegExp(`Pi >= ${TLH_MIN_PI_VERSION_PATTERN} and <= ${TLH_PINNED_PI_VERSION_PATTERN} is required \\(found 0\\.79\\.8\\)\\. Install the pinned TLH runtime with: npm install -g --ignore-scripts --prefix .* ${TLH_PI_PACKAGE_SPEC_PATTERN}`));
 });
 
 test("stage-1 reuses a per-user Pi runtime outside PATH without claiming ownership", (t) => {
