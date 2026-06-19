@@ -3,9 +3,10 @@ set -euo pipefail
 
 REPO="${TLH_REPO:-diegopetrucci/the-last-harness}"
 REF="${TLH_REF:-main}"
-# Keep in sync with MIN_NODE_VERSION and MIN_PI_VERSION in scripts/tlh-install.mjs.
+# Keep in sync with MIN_NODE_VERSION, MIN_PI_VERSION, and PINNED_PI_VERSION in scripts/tlh-install.mjs.
 TLH_MIN_NODE_VERSION="22.19.0"
 TLH_MIN_PI_VERSION="0.79.1"
+TLH_PINNED_PI_VERSION="0.79.7"
 
 DRY_RUN=false
 NO_SETTINGS=false
@@ -30,8 +31,8 @@ config under ~/.pi/agent is not modified.
 
 Requirements:
   Node.js >= ${TLH_MIN_NODE_VERSION} on PATH
-  Upstream Pi >= ${TLH_MIN_PI_VERSION} (installed per-user under ~/.local when missing;
-  install failures stop with an actionable error; older versions stop with an upgrade error)
+  Upstream Pi >= ${TLH_MIN_PI_VERSION} and <= ${TLH_PINNED_PI_VERSION} (installed per-user under ~/.local when missing;
+  install failures stop with an actionable error; incompatible versions stop with pinned repair guidance)
 USAGE
   cat <<'USAGE'
 

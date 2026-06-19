@@ -178,4 +178,4 @@ Normal `tlh update` runs are conservative: they preserve user-owned isolated-pro
 
 Node.js >=22.19.0 must be available on your `PATH`.
 
-TLH uses upstream Pi >=0.79.1; if `pi` is missing, the installer automatically adds a compatible per-user copy under `~/.local`.
+TLH currently supports upstream Pi 0.79.1 through 0.79.7. While the upstream 0.79.8 breakage is active, TLH-managed installs stay temporarily pinned to Pi 0.79.7; if `pi` is missing, the installer automatically adds that compatible per-user copy under `~/.local`.
