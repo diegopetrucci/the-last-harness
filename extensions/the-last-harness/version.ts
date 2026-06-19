@@ -13,7 +13,7 @@ export function formatVersionOutput(tlhVersion: string, piVersion: string): stri
 export function registerVersionCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("version", {
 		description: "Show the installed TLH and Pi runtime versions",
-		handler: (_args, ctx) => {
+		handler: async (_args, ctx) => {
 			const tlhVersion = getTlhVersion();
 			const piVersion = VERSION;
 			ctx.ui.notify(formatVersionOutput(tlhVersion, piVersion), "info");

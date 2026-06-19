@@ -49,6 +49,20 @@ type TlhPrimaryAgentRuntimeOptions = {
 	subagentMetadata?: SubagentMetadata[];
 };
 
+type ActiveModel = NonNullable<ExtensionContext["model"]>;
+
+type TlhStartupModeOptions = {
+	env?: Record<string, string | undefined>;
+	buildChildSubagentSystemPrompt?: () => string;
+	registerChild?: () => void;
+	registerParent?: () => void;
+};
+
+const registerTlhStartupModeTyped = registerTlhStartupMode as (
+	pi: ExtensionAPI,
+	options?: TlhStartupModeOptions,
+) => "child" | "parent";
+
 export type TlhPrimaryAgentRuntime = {
 	applySessionStart(ctx: ExtensionContext): Promise<void>;
 	currentPrimaryAgentLabel(): string;
@@ -304,6 +318,9 @@ function registerChildSubagentRuntime(
 		if (event.toolName !== "bash") {
 			return undefined;
 		}
+		if (typeof event.input.command !== "string") {
+			return undefined;
+		}
 		const commitAttributionState = resolveTlhCommitAttribution(getTlhGlobalSettings(ctx.cwd).tlh?.attribution);
 		const reason = getTlhGitCommitAttributionBlockReason(event.input.command, commitAttributionState);
 		return reason ? { block: true, reason } : undefined;
@@ -454,8 +471,8 @@ function createTlhPrimaryAgentRuntime(
 	async function applyPrimaryModel(
 		ctx: ExtensionContext,
 		primary: AgentPrompt,
-		model: { provider: string; id: string } | undefined,
-	): Promise<{ provider: string; id: string } | undefined> {
+		model: ActiveModel | undefined,
+	): Promise<ActiveModel | undefined> {
 		if (!model) {
 			const candidates = [primary.model, ...(primary.tlhOpenaiModels ?? [])].filter(Boolean).join(", ");
 			warnOnce(ctx, `missing-primary-model-${primary.name}`, `TLH primary agent models are not available for configured providers: ${candidates}`);
@@ -781,6 +798,9 @@ function createTlhPrimaryAgentRuntime(
 
 		pi.on("tool_call", async (event, ctx) => {
 			if (event.toolName === "bash") {
+				if (typeof event.input.command !== "string") {
+					return undefined;
+				}
 				const commitAttributionState = resolveTlhCommitAttribution(getTlhGlobalSettings(ctx.cwd).tlh?.attribution);
 				const reason = getTlhGitCommitAttributionBlockReason(event.input.command, commitAttributionState);
 				return reason ? { block: true, reason } : undefined;
@@ -815,7 +835,7 @@ export function registerTlhPrimaryAgentRuntime(
 	const env = options.env ?? process.env;
 	const childPromptBuilder = (): string => buildChildSubagentSystemPrompt();
 	if (
-		registerTlhStartupMode(pi, {
+		registerTlhStartupModeTyped(pi, {
 			env,
 			buildChildSubagentSystemPrompt: childPromptBuilder,
 			registerChild: () => {

@@ -295,7 +295,8 @@ export function registerExperimentalCommand(pi: ExtensionAPI): void {
 			}
 
 			if (command.type === "list" || command.type === "status") {
-				ctx.ui.notify(formatExperimentalStatusMessage(getTlhExperimentalConfig(ctx.cwd), command.featureId), "info");
+				const featureId = command.type === "status" ? command.featureId : undefined;
+				ctx.ui.notify(formatExperimentalStatusMessage(getTlhExperimentalConfig(ctx.cwd), featureId), "info");
 				return;
 			}
 

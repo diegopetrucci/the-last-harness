@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import type { ExtensionAPI, ReadonlySessionManager } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { formatHomePath } from "./common.js";
 import {
@@ -47,6 +47,8 @@ type OpenCommand = {
 	command: string;
 	args: string[];
 };
+
+type TokensReportSessionManager = Pick<ExtensionContext["sessionManager"], "getSessionDir" | "getSessionFile">;
 
 export function registerTokensCommand(pi: ExtensionAPI, dependencies: TokensCommandDependencies = {}): void {
 	const openReport = dependencies.openReport ?? openLocalReport;
@@ -411,7 +413,7 @@ function renderTable(headers: string[], rows: string[][], emptyMessage: string):
 	].join("");
 }
 
-function writeLocalTokensReport(sessionManager: ReadonlySessionManager, html: string): LocalTokensReport {
+function writeLocalTokensReport(sessionManager: TokensReportSessionManager, html: string): LocalTokensReport {
 	const reportDirectory = createPrivateReportDirectory(preferredReportParent(sessionManager));
 	const reportPath = join(reportDirectory, REPORT_FILE_NAME);
 	writeFileSync(reportPath, html, { encoding: "utf8", flag: "wx", mode: 0o600 });
@@ -419,7 +421,7 @@ function writeLocalTokensReport(sessionManager: ReadonlySessionManager, html: st
 	return { path: reportPath, directory: reportDirectory };
 }
 
-function preferredReportParent(sessionManager: ReadonlySessionManager): string | undefined {
+function preferredReportParent(sessionManager: TokensReportSessionManager): string | undefined {
 	const sessionFile = sessionManager.getSessionFile();
 	if (sessionFile) {
 		const parent = dirname(sessionFile);

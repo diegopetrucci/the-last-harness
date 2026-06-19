@@ -201,18 +201,18 @@ function getSettingsStorageForWrite(cwd: string): SettingsStorageLike {
 	return manager.storage;
 }
 
-export function withLockedTlhSettingsWrite<TResult extends { changed: boolean }>(
+export function withLockedTlhSettingsWrite<TResult extends { changed: boolean; nextContent?: string | undefined }>(
 	cwd: string,
 	outsideProfileError: string,
-	update: (current: string | undefined) => TResult & { nextContent?: string },
-): TResult & { settingsPath: string; backupPath?: string } {
+	update: (current: string | undefined) => TResult,
+): Omit<TResult, "nextContent"> & { settingsPath: string; backupPath?: string } {
 	const settingsPath = tlhSettingsPathForWrite();
 	if (!settingsPath) {
 		throw new Error(outsideProfileError);
 	}
 	assertSafeTlhSettingsPath(settingsPath);
 
-	let result: (TResult & { settingsPath: string; backupPath?: string }) | undefined;
+	let result: (Omit<TResult, "nextContent"> & { settingsPath: string; backupPath?: string }) | undefined;
 	getSettingsStorageForWrite(cwd).withLock("global", (current) => {
 		const outcome = update(current);
 		const { nextContent, ...baseResult } = outcome;
