@@ -4,6 +4,12 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-06-18
+
+### Fixed
+
+- Fixed the tracked package-lock release metadata inconsistency that shipped in 0.22.0.
+
 ## [0.22.0] - 2026-06-18
 
 ### Changed
