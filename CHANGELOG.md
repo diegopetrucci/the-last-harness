@@ -4,6 +4,18 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.22.2] - 2026-06-19
+
+### Changed
+
+- Temporarily pinned TLH package metadata, peer-compatibility guidance, and install/update docs to upstream Pi 0.79.7 while the upstream 0.79.8 breakage is active.
+
+## [0.22.1] - 2026-06-18
+
+### Fixed
+
+- Fixed the tracked package-lock release metadata inconsistency that shipped in 0.22.0.
+
 ## [0.22.0] - 2026-06-18
 
 ### Changed

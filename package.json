@@ -1,6 +1,6 @@
 {
   "name": "the-last-harness",
-  "version": "0.22.0",
+  "version": "0.22.2",
   "description": "The Last Harness Pi package",
   "license": "MIT",
   "type": "module",
@@ -22,10 +22,11 @@
     "node": ">=22.19.0"
   },
   "scripts": {
+    "check:package-versions": "node scripts/check-package-versions.mjs",
     "lint": "eslint \"scripts/**/*.{js,mjs,ts}\" \"tests/**/*.{js,mjs,ts}\" \"extensions/**/*.{js,mjs,ts}\"",
     "test": "node --test --test-reporter=dot tests/*.test.mjs",
     "test:verbose": "node --test tests/*.test.mjs",
-    "validate": "bash scripts/check-installer-smoke.sh && npm test && npm run lint && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
+    "validate": "npm run check:package-versions && bash scripts/check-installer-smoke.sh && npm test && npm run lint && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
   },
   "files": [
     "agents",
@@ -56,8 +57,8 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.79.1",
-    "@earendil-works/pi-tui": ">=0.79.1"
+    "@earendil-works/pi-coding-agent": ">=0.79.1 <=0.79.7",
+    "@earendil-works/pi-tui": ">=0.79.1 <=0.79.7"
   },
   "dependencies": {
     "@tailwindcss/browser": "^4.3.0",
@@ -65,8 +66,8 @@
     "monaco-editor": "0.52.2"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.79.1",
-    "@earendil-works/pi-tui": "^0.79.1",
+    "@earendil-works/pi-coding-agent": "0.79.7",
+    "@earendil-works/pi-tui": "0.79.7",
     "@eslint/js": "^9.39.4",
     "eslint": "^9.39.4",
     "globals": "^14.0.0",

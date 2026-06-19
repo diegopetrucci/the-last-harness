@@ -2,7 +2,7 @@
 
 ## Install
 
-Requires Node.js >=22.19.0 on `PATH`. TLH uses upstream Pi >=0.79.1. If `pi` is missing, the installer adds a compatible per-user copy under `~/.local` and hard-fails with an actionable error if that install cannot complete. If `pi` is present but older than 0.79.1, install stops with an upgrade error instead of changing that existing runtime automatically.
+Requires Node.js >=22.19.0 on `PATH`. TLH currently supports upstream Pi 0.79.1 through 0.79.7. While the upstream 0.79.8 breakage is active, TLH-managed installs stay temporarily pinned to Pi 0.79.7. If `pi` is missing, the installer adds that compatible per-user copy under `~/.local` and hard-fails with an actionable error if that install cannot complete. If `pi` is present but older than 0.79.1 or newer than 0.79.7, install stops with version guidance instead of changing that existing runtime automatically.
 
 Run the one-liner:
 
@@ -57,7 +57,7 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v
 
 You can just run `tlh update`.
 
-This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. If you are updating from an older install without `tlh update`, rerun the latest-release installer once.
+This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. While the upstream 0.79.8 breakage is active, `tlh update` also repairs TLH-managed per-user Pi runtimes back to the temporary 0.79.7 pin when needed. If you are updating from an older install without `tlh update`, rerun the latest-release installer once.
 
 If TLH starts with the notice ``TLH extension updates are available. Run `tlh update --extensions` to update them.``, that notice refers to isolated extension/package updates only. `tlh update --extensions` runs the upstream package refresh against the TLH profile without changing installer-managed checkout state, wrapper files, or update-track metadata. Installer-track and installer-owned options such as `--track`, `--ref`, `--repo`, `--package-source`, `--force`, `--no-settings`, and `--no-wrapper` require plain `tlh update` instead.
 
