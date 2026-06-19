@@ -79,6 +79,7 @@ test("check-package-versions passes with pinned dependency exceptions and ignore
 			eslint: "9.39.4",
 			aliased: "npm:helper@1.2.3",
 			githubHelper: "github:example/github-helper#v1.2.3",
+			githubExplicitTagHelper: "github:example/github-explicit-tag-helper#refs/tags/v1.2.3",
 			releaseHelper: "https://github.com/example/release-helper/releases/download/v1.2.3/release-helper-1.2.3.tgz",
 			archiveTagHelper: "https://github.com/example/archive-tag-helper/archive/refs/tags/v1.2.3.tar.gz",
 			workspaceHelper: "workspace:*",
@@ -96,6 +97,7 @@ test("check-package-versions passes with pinned dependency exceptions and ignore
 		defaultExtensions: [
 			{ id: "helper", source: "npm:helper@1.2.3" },
 			{ id: "forked-helper", source: "git:github.com/example/helper@tlh-v1.2.3" },
+			{ id: "forked-helper-explicit-tag", source: "git:github.com/example/helper-explicit-tag@refs/tags/v1.2.3" },
 		],
 	});
 
@@ -144,19 +146,24 @@ test("check-package-versions rejects loose dependencies and devDependencies", ()
 	assert.doesNotMatch(result.stderr, /peerDependencies/);
 });
 
-test("check-package-versions rejects floating git/github/http/ssh package sources", () => {
+test("check-package-versions rejects floating and branch-like git/github/http/ssh package refs", () => {
 	const fixture = tempFixture({
 		packageVersion: "1.2.3",
 		dependencies: {
 			gitHelper: "git+https://github.com/example/git-helper.git",
 			githubHelper: "github:example/github-helper",
+			githubDevelopHelper: "github:example/github-develop-helper#develop",
+			githubExplicitTagMainHelper: "github:example/github-explicit-tag-main-helper#refs/tags/main",
+			gitFeatureHelper: "git+https://github.com/example/git-feature-helper.git#feature/foo",
 			httpArchiveBranchHelper: "https://github.com/example/http-archive-branch-helper/archive/refs/heads/main.tar.gz",
 		},
 		devDependencies: {
 			httpHelper: "https://github.com/example/http-helper/releases/latest/download/http-helper.tgz",
+			httpReleaseHelper: "https://github.com/example/http-release-helper/releases/download/release-2026/http-release-helper.tgz",
 			httpTarballBranchHelper: "https://github.com/example/http-tarball-branch-helper/tarball/refs/heads/main",
-			httpZipballBranchHelper: "https://github.com/example/http-zipball-branch-helper/zipball/refs/heads/main",
-			sshHelper: "ssh://git@github.com/example/ssh-helper.git#main",
+			httpZipballTagBranchHelper: "https://github.com/example/http-zipball-tag-branch-helper/zipball/refs/tags/feature/foo",
+			httpZipballBranchHelper: "https://github.com/example/http-zipball-branch-helper/zipball/HEAD",
+			sshHelper: "ssh://git@github.com/example/ssh-helper.git#heads/main",
 		},
 	});
 
@@ -165,11 +172,16 @@ test("check-package-versions rejects floating git/github/http/ssh package source
 	assert.equal(result.status, 1);
 	assert.match(result.stderr, /package\.json#dependencies\.gitHelper must use an exact version or pinned non-registry source, found "git\+https:\/\/github\.com\/example\/git-helper\.git"/);
 	assert.match(result.stderr, /package\.json#dependencies\.githubHelper must use an exact version or pinned non-registry source, found "github:example\/github-helper"/);
+	assert.match(result.stderr, /package\.json#dependencies\.githubDevelopHelper must use an exact version or pinned non-registry source, found "github:example\/github-develop-helper#develop"/);
+	assert.match(result.stderr, /package\.json#dependencies\.githubExplicitTagMainHelper must use an exact version or pinned non-registry source, found "github:example\/github-explicit-tag-main-helper#refs\/tags\/main"/);
+	assert.match(result.stderr, /package\.json#dependencies\.gitFeatureHelper must use an exact version or pinned non-registry source, found "git\+https:\/\/github\.com\/example\/git-feature-helper\.git#feature\/foo"/);
 	assert.match(result.stderr, /package\.json#dependencies\.httpArchiveBranchHelper must use an exact version or pinned non-registry source, found "https:\/\/github\.com\/example\/http-archive-branch-helper\/archive\/refs\/heads\/main\.tar\.gz"/);
 	assert.match(result.stderr, /package\.json#devDependencies\.httpHelper must use an exact version or pinned non-registry source, found "https:\/\/github\.com\/example\/http-helper\/releases\/latest\/download\/http-helper\.tgz"/);
+	assert.match(result.stderr, /package\.json#devDependencies\.httpReleaseHelper must use an exact version or pinned non-registry source, found "https:\/\/github\.com\/example\/http-release-helper\/releases\/download\/release-2026\/http-release-helper\.tgz"/);
 	assert.match(result.stderr, /package\.json#devDependencies\.httpTarballBranchHelper must use an exact version or pinned non-registry source, found "https:\/\/github\.com\/example\/http-tarball-branch-helper\/tarball\/refs\/heads\/main"/);
-	assert.match(result.stderr, /package\.json#devDependencies\.httpZipballBranchHelper must use an exact version or pinned non-registry source, found "https:\/\/github\.com\/example\/http-zipball-branch-helper\/zipball\/refs\/heads\/main"/);
-	assert.match(result.stderr, /package\.json#devDependencies\.sshHelper must use an exact version or pinned non-registry source, found "ssh:\/\/git@github\.com\/example\/ssh-helper\.git#main"/);
+	assert.match(result.stderr, /package\.json#devDependencies\.httpZipballTagBranchHelper must use an exact version or pinned non-registry source, found "https:\/\/github\.com\/example\/http-zipball-tag-branch-helper\/zipball\/refs\/tags\/feature\/foo"/);
+	assert.match(result.stderr, /package\.json#devDependencies\.httpZipballBranchHelper must use an exact version or pinned non-registry source, found "https:\/\/github\.com\/example\/http-zipball-branch-helper\/zipball\/HEAD"/);
+	assert.match(result.stderr, /package\.json#devDependencies\.sshHelper must use an exact version or pinned non-registry source, found "ssh:\/\/git@github\.com\/example\/ssh-helper\.git#heads\/main"/);
 });
 
 test("check-package-versions rejects unversioned bundled npm defaults", () => {
@@ -198,6 +210,30 @@ test("check-package-versions rejects bundled git defaults without refs", () => {
 
 	assert.equal(result.status, 1);
 	assert.match(result.stderr, /default-extensions\.json#forked-helper\.source must pin git defaults to an explicit ref, found "git:github\.com\/example\/helper"/);
+});
+
+test("check-package-versions rejects bundled git defaults pinned to branch-like refs", () => {
+	const fixture = tempFixture({
+		packageVersion: "1.2.3",
+		defaultExtensions: [
+			{ id: "forked-helper-main", source: "git:github.com/example/helper-main@main" },
+			{ id: "forked-helper-develop", source: "git:github.com/example/helper-develop@develop" },
+			{ id: "forked-helper-explicit-tag-main", source: "git:github.com/example/helper-explicit-tag-main@refs/tags/main" },
+			{ id: "forked-helper-feature", source: "git:github.com/example/helper-feature@feature/foo" },
+			{ id: "forked-helper-explicit-tag-feature", source: "git:github.com/example/helper-explicit-tag-feature@refs/tags/feature/foo" },
+			{ id: "forked-helper-release", source: "git:github.com/example/helper-release@release-2026" },
+		],
+	});
+
+	const result = runCheckPackageVersions(fixture);
+
+	assert.equal(result.status, 1);
+	assert.match(result.stderr, /default-extensions\.json#forked-helper-main\.source must pin git defaults to a tag- or commit-like ref, found "git:github\.com\/example\/helper-main@main"/);
+	assert.match(result.stderr, /default-extensions\.json#forked-helper-develop\.source must pin git defaults to a tag- or commit-like ref, found "git:github\.com\/example\/helper-develop@develop"/);
+	assert.match(result.stderr, /default-extensions\.json#forked-helper-explicit-tag-main\.source must pin git defaults to a tag- or commit-like ref, found "git:github\.com\/example\/helper-explicit-tag-main@refs\/tags\/main"/);
+	assert.match(result.stderr, /default-extensions\.json#forked-helper-feature\.source must pin git defaults to a tag- or commit-like ref, found "git:github\.com\/example\/helper-feature@feature\/foo"/);
+	assert.match(result.stderr, /default-extensions\.json#forked-helper-explicit-tag-feature\.source must pin git defaults to a tag- or commit-like ref, found "git:github\.com\/example\/helper-explicit-tag-feature@refs\/tags\/feature\/foo"/);
+	assert.match(result.stderr, /default-extensions\.json#forked-helper-release\.source must pin git defaults to a tag- or commit-like ref, found "git:github\.com\/example\/helper-release@release-2026"/);
 });
 
 test("check-package-versions rejects latest as the managed Gnosis default", () => {

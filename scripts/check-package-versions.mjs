@@ -8,7 +8,9 @@ import { requiredValue } from "./lib/tlh-install-utils.mjs";
 
 const EXACT_VERSION_RE = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const VERSION_TOKEN_RE = /(?:^|[^0-9A-Za-z])((?:v?(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?))(?=$|[^0-9A-Za-z])/;
-const FLOATING_GIT_REF_RE = /^(?:head|latest|main|master|trunk)$/i;
+const COMMIT_SHA_GIT_REF_RE = /^[0-9a-f]{7,40}$/i;
+const FLOATING_GIT_REF_RE = /^(?:head|latest|main|master|trunk|develop)$/i;
+const BRANCH_LIKE_GIT_REF_RE = /^(?:feature|features|release|releases|hotfix|bugfix|fix|feat|chore|develop|dev)(?:$|[/-])/i;
 const DEFAULT_GNOSIS_SCRIPT_PATHS = Object.freeze([
 	"scripts/tlh-gnosis.mjs",
 	"scripts/tlh-install.mjs",
@@ -212,14 +214,19 @@ function stripArchiveExtension(value) {
 }
 
 function isPinnedGitRef(ref) {
-	const trimmed = String(ref ?? "").trim().replace(/^refs\/tags\//i, "");
+	const trimmed = String(ref ?? "").trim();
 	if (!trimmed) return false;
 	if (/^semver:/i.test(trimmed)) {
 		return isPinnedExactVersion(trimmed.slice("semver:".length).trim());
 	}
+	if (/^refs\/tags\//i.test(trimmed)) {
+		return isPinnedGitRef(trimmed.slice("refs/tags/".length));
+	}
 	if (/^refs\/heads\//i.test(trimmed) || /^heads\//i.test(trimmed)) return false;
-	if (FLOATING_GIT_REF_RE.test(trimmed)) return false;
-	return true;
+	if (COMMIT_SHA_GIT_REF_RE.test(trimmed)) return true;
+	if (trimmed.includes("/")) return false;
+	if (FLOATING_GIT_REF_RE.test(trimmed) || BRANCH_LIKE_GIT_REF_RE.test(trimmed)) return false;
+	return Boolean(extractExactVersionToken(trimmed));
 }
 
 function isPinnedGitLikeDependencySpec(spec) {
@@ -326,8 +333,13 @@ function validateDefaultExtensionPins(defaultExtensionsPath, problems) {
 		}
 
 		const gitSource = parseGitSource(extension.source);
-		if (gitSource && !gitSource.ref) {
+		if (!gitSource) continue;
+		if (!gitSource.ref) {
 			problems.push(`${label} must pin git defaults to an explicit ref, found ${JSON.stringify(extension.source)}`);
+			continue;
+		}
+		if (!isPinnedGitRef(gitSource.ref)) {
+			problems.push(`${label} must pin git defaults to a tag- or commit-like ref, found ${JSON.stringify(extension.source)}`);
 		}
 	}
 }

@@ -698,6 +698,25 @@ test("tlh-defaults sources emit bundled pinned npm sources for existing unpinned
 	assert.deepEqual(sources, ["npm:@diegopetrucci/pi-oracle@0.1.12"]);
 });
 
+test("tlh-defaults sources emit the bundled npm pin when the installed managed package has an older same-identity pin", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "oracle",
+			source: "npm:@diegopetrucci/pi-oracle@0.1.13",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: ["npm:@diegopetrucci/pi-oracle@0.1.12"],
+	}, null, 2));
+
+	const sources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "sources"])
+		.trim()
+		.split("\n")
+		.filter(Boolean);
+	assert.deepEqual(sources, ["npm:@diegopetrucci/pi-oracle@0.1.13"]);
+});
+
 test("tlh-defaults sources still respect disabled and deferred defaults while pinning managed npm defaults", () => {
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
