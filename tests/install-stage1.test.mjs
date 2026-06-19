@@ -20,6 +20,10 @@ import { validateInstallerTargets } from "../scripts/lib/tlh-install-paths.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoNodeModulesBin = join(repoRoot, "node_modules", ".bin");
+const TLH_MIN_PI_VERSION = "0.79.1";
+const TLH_PINNED_PI_VERSION = "0.79.7";
+const TLH_PI_PACKAGE_SPEC = `@earendil-works/pi-coding-agent@${TLH_PINNED_PI_VERSION}`;
+const TLH_PI_PACKAGE_SPEC_PATTERN = TLH_PI_PACKAGE_SPEC.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function pathWithoutRepoNodeModulesBin(pathValue = process.env.PATH || "") {
 	return pathValue.split(delimiter).filter((entry) => entry && resolve(entry) !== repoNodeModulesBin).join(delimiter);
@@ -280,8 +284,9 @@ test("stage-1 hard-fails existing Pi version probes that exit nonzero", (t) => {
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /unable to determine Pi version from existing pi on PATH/);
 	assert.match(result.stderr, /pi --version exited with 23/);
-	assert.match(result.stderr, /The Last Harness requires Pi >= 0\.79\.1/);
-	assert.match(result.stderr, /Verify that `pi --version` works, or upgrade with: npm install -g --ignore-scripts --prefix /);
+	assert.match(result.stderr, new RegExp(`The Last Harness requires Pi >= ${TLH_MIN_PI_VERSION.replace(/\./g, "\\.")} and <= ${TLH_PINNED_PI_VERSION.replace(/\./g, "\\.")}`));
+	assert.match(result.stderr, /Verify that `pi --version` works/);
+	assert.match(result.stderr, new RegExp(`Install the pinned TLH runtime with: npm install -g --ignore-scripts --prefix .* ${TLH_PI_PACKAGE_SPEC_PATTERN}`));
 	assert.match(result.stderr, /Probe output: version probe failed/);
 });
 
@@ -337,8 +342,9 @@ test("stage-1 hard-fails existing Pi version probes with unparsable output", (t)
 	const result = runInstaller(["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], env);
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /unable to parse Pi version from existing pi on PATH: development build/);
-	assert.match(result.stderr, /The Last Harness requires Pi >= 0\.79\.1/);
-	assert.match(result.stderr, /Verify that `pi --version` prints a semantic version like 0\.79\.1, or upgrade with: npm install -g --ignore-scripts --prefix /);
+	assert.match(result.stderr, new RegExp(`The Last Harness requires Pi >= ${TLH_MIN_PI_VERSION.replace(/\./g, "\\.")} and <= ${TLH_PINNED_PI_VERSION.replace(/\./g, "\\.")}`));
+	assert.match(result.stderr, /Verify that `pi --version` prints a semantic version like 0\.79\.1/);
+	assert.match(result.stderr, new RegExp(`Install the pinned TLH runtime with: npm install -g --ignore-scripts --prefix .* ${TLH_PI_PACKAGE_SPEC_PATTERN}`));
 });
 
 test("stage-1 rejects existing Pi older than the TLH minimum", (t) => {
@@ -359,7 +365,28 @@ test("stage-1 rejects existing Pi older than the TLH minimum", (t) => {
 	});
 	const result = runInstaller(["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], env);
 	assert.notEqual(result.status, 0);
-	assert.match(result.stderr, /Pi >= 0\.79\.1 is required \(found 0\.79\.0\)\. Upgrade with: npm install -g --ignore-scripts --prefix /);
+	assert.match(result.stderr, new RegExp(`Pi >= ${TLH_MIN_PI_VERSION.replace(/\./g, "\\.")} and <= ${TLH_PINNED_PI_VERSION.replace(/\./g, "\\.")} is required \\(found 0\\.79\\.0\\)\\. Install the pinned TLH runtime with: npm install -g --ignore-scripts --prefix .* ${TLH_PI_PACKAGE_SPEC_PATTERN}`));
+});
+
+test("stage-1 rejects existing Pi newer than the TLH pin", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const fakebin = join(root, "fakebin");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(binDir, { recursive: true });
+	writeFakePi(fakebin, "printf '0.79.8\\n'");
+	const env = scrubInstallerEnv({
+		HOME: homeDir,
+		PATH: `${fakebin}:${process.env.PATH || ""}`,
+		TLH_SKIP_GNOSIS_INSTALL: "1",
+	});
+	const result = runInstaller(["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], env);
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, new RegExp(`Pi >= ${TLH_MIN_PI_VERSION.replace(/\./g, "\\.")} and <= ${TLH_PINNED_PI_VERSION.replace(/\./g, "\\.")} is required \\(found 0\\.79\\.8\\)\\. Install the pinned TLH runtime with: npm install -g --ignore-scripts --prefix .* ${TLH_PI_PACKAGE_SPEC_PATTERN}`));
 });
 
 test("stage-1 reuses a per-user Pi runtime outside PATH without claiming ownership", (t) => {
@@ -576,8 +603,211 @@ test("stage-1 refuses to reinstall over a broken per-user Pi npm package", (t) =
 	assert.match(output, /no runnable pi binary could be validated/);
 	assert.match(output, /The Last Harness will not reinstall over that package or mark it TLH-owned/);
 	assert.match(output, /Repair or remove the existing package, then rerun the installer/);
-	assert.match(output, /npm install -g --ignore-scripts --prefix /);
+	assert.match(output, new RegExp(`npm install -g --ignore-scripts --prefix .* ${TLH_PI_PACKAGE_SPEC_PATTERN}`));
 	assert.equal(existsSync(join(agentDir, "tlh", "install-state.json")), false, output);
+});
+
+test("stage-1 repairs a TLH-owned per-user Pi runtime back to the pinned version", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const fakebin = join(root, "fakebin");
+	const packageDir = join(root, "package-source");
+	const npmLog = join(root, "npm.log");
+	const stalePiLog = join(root, "stale-pi.log");
+	const repairedPiLog = join(root, "repaired-pi.log");
+	const templateDir = join(root, "pi-template");
+	const perUserPiDir = join(homeDir, ".local", "bin");
+	const installedPiPath = join(perUserPiDir, "pi");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(binDir, { recursive: true });
+	mkdirSync(packageDir, { recursive: true });
+	mkdirSync(join(agentDir, "tlh"), { recursive: true });
+	writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify({
+		schemaVersion: 1,
+		repo: "diegopetrucci/the-last-harness",
+		track: "ref",
+		ref: "main",
+		packageSource: packageDir,
+		packageSourceIsDefault: false,
+		piInstalledByTlh: true,
+	}, null, 2));
+	writeFakeCommand(fakebin, "git", "exit 0");
+	writeFakeTk(fakebin);
+	writeFakePi(perUserPiDir, [
+		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${stalePiLog}"`,
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.8\\n'; exit 0; fi",
+		"exit 0",
+	].join("\n"));
+	writeLoggingPi(templateDir, repairedPiLog, TLH_PINNED_PI_VERSION);
+	writeFakeNpmInstaller(fakebin, {
+		npmLog,
+		templatePiPath: join(templateDir, "pi"),
+		installedPiPath,
+	});
+
+	const env = scrubInstallerEnv({
+		HOME: homeDir,
+		PATH: safeInstallerPath(fakebin),
+		TLH_PACKAGE_SOURCE: packageDir,
+		TLH_SKIP_GNOSIS_INSTALL: "1",
+	});
+	const result = runInstaller([
+		"--agent-dir", agentDir,
+		"--bin-dir", binDir,
+		"--no-settings",
+		"--no-wrapper",
+	], env);
+	const output = `${result.stdout}\n${result.stderr}`;
+
+	assert.equal(result.status, 0, output);
+	assert.match(output, /Repairing TLH-managed Pi runtime to pinned 0\.79\.7/);
+	assert.deepEqual(readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [
+		`install -g --ignore-scripts --prefix ${join(homeDir, ".local")} ${TLH_PI_PACKAGE_SPEC}`,
+	]);
+	assert.deepEqual(readPiLogRecords(stalePiLog).map((record) => record.command), ["--version"]);
+	assert.deepEqual(readPiLogRecords(repairedPiLog).map((record) => record.command), [
+		`install ${packageDir}`,
+		`update ${packageDir}`,
+	]);
+	const state = readJson(join(agentDir, "tlh", "install-state.json"));
+	assert.equal(state.piInstalledByTlh, true);
+});
+
+test("stage-1 repairs a TLH-owned per-user Pi runtime even when PATH already has a supported Pi", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const fakebin = join(root, "fakebin");
+	const supportedPiDir = join(root, "supported-pi");
+	const packageDir = join(root, "package-source");
+	const npmLog = join(root, "npm.log");
+	const pathPiLog = join(root, "path-pi.log");
+	const stalePiLog = join(root, "stale-pi.log");
+	const repairedPiLog = join(root, "repaired-pi.log");
+	const templateDir = join(root, "pi-template");
+	const perUserPiDir = join(homeDir, ".local", "bin");
+	const installedPiPath = join(perUserPiDir, "pi");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(binDir, { recursive: true });
+	mkdirSync(packageDir, { recursive: true });
+	mkdirSync(join(agentDir, "tlh"), { recursive: true });
+	writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify({
+		schemaVersion: 1,
+		repo: "diegopetrucci/the-last-harness",
+		track: "ref",
+		ref: "main",
+		packageSource: packageDir,
+		packageSourceIsDefault: false,
+		piInstalledByTlh: true,
+	}, null, 2));
+	writeFakeCommand(fakebin, "git", "exit 0");
+	writeFakeTk(fakebin);
+	writeFakePi(supportedPiDir, [
+		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${pathPiLog}"`,
+		`if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_MIN_PI_VERSION}\\n'; exit 0; fi`,
+		"exit 0",
+	].join("\n"));
+	writeFakePi(perUserPiDir, [
+		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${stalePiLog}"`,
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.8\\n'; exit 0; fi",
+		"exit 0",
+	].join("\n"));
+	writeLoggingPi(templateDir, repairedPiLog, TLH_PINNED_PI_VERSION);
+	writeFakeNpmInstaller(fakebin, {
+		npmLog,
+		templatePiPath: join(templateDir, "pi"),
+		installedPiPath,
+	});
+
+	const env = scrubInstallerEnv({
+		HOME: homeDir,
+		PATH: [supportedPiDir, safeInstallerPath(fakebin)].join(delimiter),
+		TLH_PACKAGE_SOURCE: packageDir,
+		TLH_SKIP_GNOSIS_INSTALL: "1",
+	});
+	const result = runInstaller([
+		"--agent-dir", agentDir,
+		"--bin-dir", binDir,
+		"--no-settings",
+		"--no-wrapper",
+	], env);
+	const output = `${result.stdout}\n${result.stderr}`;
+
+	assert.equal(result.status, 0, output);
+	assert.match(output, /Repairing TLH-managed Pi runtime to pinned 0\.79\.7/);
+	assert.deepEqual(readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [
+		`install -g --ignore-scripts --prefix ${join(homeDir, ".local")} ${TLH_PI_PACKAGE_SPEC}`,
+	]);
+	assert.deepEqual(readPiLogRecords(pathPiLog).map((record) => record.command), ["--version"]);
+	assert.deepEqual(readPiLogRecords(stalePiLog).map((record) => record.command), ["--version"]);
+	assert.deepEqual(readPiLogRecords(repairedPiLog).map((record) => record.command), [
+		`install ${packageDir}`,
+		`update ${packageDir}`,
+	]);
+	const state = readJson(join(agentDir, "tlh", "install-state.json"));
+	assert.equal(state.piInstalledByTlh, true);
+});
+
+test("stage-1 preserves piInstalledByTlh=true when rerunning with a supported TLH-owned per-user Pi runtime", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const fakebin = join(root, "fakebin");
+	const packageDir = join(root, "package-source");
+	const npmLog = join(root, "npm.log");
+	const piLog = join(root, "pi.log");
+	const perUserPiDir = join(homeDir, ".local", "bin");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(binDir, { recursive: true });
+	mkdirSync(packageDir, { recursive: true });
+	mkdirSync(join(agentDir, "tlh"), { recursive: true });
+	writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify({
+		schemaVersion: 1,
+		repo: "diegopetrucci/the-last-harness",
+		track: "ref",
+		ref: "main",
+		packageSource: packageDir,
+		packageSourceIsDefault: false,
+		piInstalledByTlh: true,
+	}, null, 2));
+	writeFakeCommand(fakebin, "git", "exit 0");
+	writeFakeCommand(fakebin, "npm", `printf '%s\\n' "$*" >>"${npmLog}"\nexit 97`);
+	writeFakeTk(fakebin);
+	writeLoggingPi(perUserPiDir, piLog, TLH_PINNED_PI_VERSION);
+
+	const env = scrubInstallerEnv({
+		HOME: homeDir,
+		PATH: safeInstallerPath(fakebin),
+		TLH_PACKAGE_SOURCE: packageDir,
+		TLH_SKIP_GNOSIS_INSTALL: "1",
+	});
+	const result = runInstaller([
+		"--agent-dir", agentDir,
+		"--bin-dir", binDir,
+		"--no-settings",
+		"--no-wrapper",
+	], env);
+	const output = `${result.stdout}\n${result.stderr}`;
+
+	assert.equal(result.status, 0, output);
+	assert.equal(existsSync(npmLog), false, output);
+	assert.deepEqual(readPiLogRecords(piLog).map((record) => record.command), [
+		"--version",
+		`install ${packageDir}`,
+		`update ${packageDir}`,
+	]);
+	const state = readJson(join(agentDir, "tlh", "install-state.json"));
+	assert.equal(state.piInstalledByTlh, true);
 });
 
 test("stage-1 records piInstalledByTlh=true when an update installs Pi", (t) => {
@@ -627,7 +857,7 @@ test("stage-1 records piInstalledByTlh=true when an update installs Pi", (t) => 
 		writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify(scenario.state, null, 2));
 		writeFakeCommand(fakebin, "git", "exit 0");
 		writeFakeTk(fakebin);
-		writeLoggingPi(templateDir, piLog);
+		writeLoggingPi(templateDir, piLog, TLH_PINNED_PI_VERSION);
 		writeFakeNpmInstaller(fakebin, {
 			npmLog,
 			templatePiPath: join(templateDir, "pi"),
@@ -651,7 +881,7 @@ test("stage-1 records piInstalledByTlh=true when an update installs Pi", (t) => 
 
 		assert.equal(result.status, 0, `${scenario.name}\n${output}`);
 		assert.deepEqual(readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [
-			`install -g --ignore-scripts --prefix ${join(homeDir, ".local")} @earendil-works/pi-coding-agent`,
+			`install -g --ignore-scripts --prefix ${join(homeDir, ".local")} ${TLH_PI_PACKAGE_SPEC}`,
 		], scenario.name);
 		const state = readJson(join(agentDir, "tlh", "install-state.json"));
 		assert.equal(state.piInstalledByTlh, true, scenario.name);
@@ -700,6 +930,7 @@ test("installer helpers no longer support the removed --no-pi-install opt-out", 
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	assert.equal(stage0Help.status, 0, stage0Help.stderr);
+	assert.match(stage0Help.stdout, /Upstream Pi >= 0\.79\.1 and <= 0\.79\.7/);
 	assert.match(stage0Help.stdout, /installed per-user under ~\/\.local when missing;/);
 	assert.doesNotMatch(stage0Help.stdout, /--no-pi-install/);
 
@@ -714,6 +945,7 @@ test("installer helpers no longer support the removed --no-pi-install opt-out", 
 	assert.equal(stage0RemovedFlag.stdout, "");
 
 	assert.throws(() => parseArgs(["--no-pi-install"]), /unknown option: --no-pi-install/);
+	assert.match(usage(), /Upstream Pi >= 0\.79\.1 and <= 0\.79\.7/);
 	assert.doesNotMatch(usage(), /--no-pi-install/);
 
 	const updateHelp = spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-update.mjs"), "--help"], {
@@ -1602,7 +1834,7 @@ test("wrapper resolves pi to an absolute command path before exposing isolated b
 });
 
 
-test("wrapper prefers a validated per-user ~/.local/bin/pi over a stale PATH Pi", (t) => {
+test("wrapper prefers a validated per-user ~/.local/bin/pi over a 0.79.8 PATH Pi", (t) => {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");
 	const agentDir = join(root, "agent");
@@ -1621,7 +1853,7 @@ test("wrapper prefers a validated per-user ~/.local/bin/pi over a stale PATH Pi"
 
 	writeFakePi(agentBin, "printf 'isolated pi intercepted\\n' >\"${ISOLATED_PI_LOG}\"\nexit 89");
 	writeFakePi(stalePiDir, [
-		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.0\\n'; exit 0; fi",
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.8\\n'; exit 0; fi",
 		"printf 'stale pi intercepted\\n' >\"${STALE_PI_LOG}\"",
 		"exit 85",
 	].join("\n"));
@@ -1664,7 +1896,59 @@ test("wrapper prefers a validated per-user ~/.local/bin/pi over a stale PATH Pi"
 	assert.equal(piRecord.argv, "chat --version");
 	assert.equal(piRecord.agent, agentDir);
 	const piPathEntries = piRecord.path.split(":");
-	assert.deepEqual(piPathEntries.slice(0, 3), [agentBin, perUserPiDir, stalePiDir]);
+	assert.deepEqual(piPathEntries.slice(0, 3), [agentBin, stalePiDir, perUserPiDir]);
+	assert.equal(existsSync(stalePiLog), false);
+	assert.equal(existsSync(isolatedPiLog), false);
+});
+
+test("wrapper rejects a 0.79.8 PATH Pi when no supported fallback runtime exists", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const agentBin = join(agentDir, "bin");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const fakebin = join(root, "fakebin");
+	const unsupportedPiDir = join(root, "unsupported-pi");
+	const stalePiLog = join(root, "stale-pi.log");
+	const isolatedPiLog = join(root, "isolated-pi.log");
+	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	writeFakePi(agentBin, "printf 'isolated pi intercepted\\n' >\"${ISOLATED_PI_LOG}\"\nexit 89");
+	writeFakePi(unsupportedPiDir, [
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.8\\n'; exit 0; fi",
+		"printf 'stale pi intercepted\\n' >\"${STALE_PI_LOG}\"",
+		"exit 85",
+	].join("\n"));
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const result = spawnSync(wrapper, ["chat"], {
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: [unsupportedPiDir, agentBin, safeInstallerPath(fakebin)].join(":"),
+			STALE_PI_LOG: stalePiLog,
+			ISOLATED_PI_LOG: isolatedPiLog,
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	assert.equal(result.status, 1, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+	assert.match(result.stderr, /supported pi command not found on PATH; run `tlh update`\./);
 	assert.equal(existsSync(stalePiLog), false);
 	assert.equal(existsSync(isolatedPiLog), false);
 });
@@ -1732,7 +2016,7 @@ test("wrapper keeps a supported PATH Pi ahead of a supported per-user ~/.local/b
 	assert.equal(existsSync(isolatedPiLog), false);
 });
 
-test("wrapper keeps sanitized PATH order when per-user ~/.local/bin/pi is stale", (t) => {
+test("wrapper keeps sanitized PATH order when per-user ~/.local/bin/pi is 0.79.8", (t) => {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");
 	const agentDir = join(root, "agent");
@@ -1752,7 +2036,7 @@ test("wrapper keeps sanitized PATH order when per-user ~/.local/bin/pi is stale"
 	writeFakePi(agentBin, "printf 'isolated pi intercepted\\n' >\"${ISOLATED_PI_LOG}\"\nexit 89");
 	writeVersionedWrapperPi(supportedPiDir, piLog);
 	writeFakePi(perUserPiDir, [
-		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.0\\n'; exit 0; fi",
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.8\\n'; exit 0; fi",
 		"printf 'stale pi intercepted\\n' >\"${STALE_PI_LOG}\"",
 		"exit 85",
 	].join("\n"));
@@ -1867,7 +2151,10 @@ function setupTicketsEnabledWrapperFixture(t) {
 	mkdirSync(cwdDir, { recursive: true });
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
-	writeFakePi(fakebin, "printf 'path=%s\\n' \"${PATH:-}\" >\"${PI_WRAPPER_LOG}\"");
+	writeFakePi(fakebin, [
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.7\\n'; exit 0; fi",
+		"printf 'path=%s\\n' \"${PATH:-}\" >\"${PI_WRAPPER_LOG}\"",
+	].join("\n"));
 
 	runHelper("scripts/tlh-wrapper.mjs", [
 		"--agent-dir",
@@ -2551,7 +2838,7 @@ test("stage-1 canonicalizes relative target dirs before deriving wrapper and sta
 	assert.equal(existsSync(join(homeDir, ".pi")), false);
 });
 
-test("wrapper --pi-cmd fast path execs pinned binary without spawning a --version probe", (t) => {
+test("wrapper --pi-cmd validates the pinned binary before fast-path exec", (t) => {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");
 	const agentDir = join(root, "agent");
@@ -2566,7 +2853,6 @@ test("wrapper --pi-cmd fast path execs pinned binary without spawning a --versio
 	mkdirSync(packageRoot, { recursive: true });
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
-	// This pi logs ALL invocations (including --version probes) to piCallLog.
 	writeFakePi(pinnedPiDir, [
 		`printf '%s\\n' "$*" >>"${piCallLog}"`,
 		`if [[  "\${1:-}" == "--version" ]]; then printf '0.79.1\\n'; exit 0; fi`,
@@ -2599,7 +2885,6 @@ test("wrapper --pi-cmd fast path execs pinned binary without spawning a --versio
 
 	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
 
-	// Verify the pinned pi was actually called with the right args.
 	const mainRecord = Object.fromEntries(readFileSync(piMainLog, "utf8").trim().split(/\r?\n/).map((line) => {
 		const separator = line.indexOf("=");
 		return [line.slice(0, separator), line.slice(separator + 1)];
@@ -2607,9 +2892,8 @@ test("wrapper --pi-cmd fast path execs pinned binary without spawning a --versio
 	assert.equal(mainRecord.argv, "chat");
 	assert.equal(mainRecord.agent, agentDir);
 
-	// Perf assertion: no --version probe was made.
 	const allCalls = readFileSync(piCallLog, "utf8").trim().split(/\r?\n/).filter(Boolean);
-	assert.ok(!allCalls.some((call) => call.includes("--version")), `expected no --version call, got: ${allCalls.join(", ")}`);
+	assert.deepEqual(allCalls, ["--version", "chat"]);
 });
 
 test("wrapper --pi-cmd falls back to resolver when pinned path is non-executable", (t) => {
@@ -2663,6 +2947,124 @@ test("wrapper --pi-cmd falls back to resolver when pinned path is non-executable
 	assert.equal(piRecord.argv, "chat");
 	assert.equal(piRecord.agent, agentDir);
 	assert.equal(piRecord.cmd, join(fallbackPiDir, "pi"));
+});
+
+test("wrapper --pi-cmd falls back to the supported runtime resolver when the pinned runtime is 0.79.8", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const agentBin = join(agentDir, "bin");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const pinnedPiDir = join(root, "pinned-pi");
+	const fallbackPiDir = join(root, "fallback-pi");
+	const pinnedPiCallLog = join(root, "pinned-pi-calls.log");
+	const pinnedPiMainLog = join(root, "pinned-pi-main.log");
+	const piLog = join(root, "pi.txt");
+	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	writeFakePi(pinnedPiDir, [
+		`printf '%s\\n' "$*" >>"${pinnedPiCallLog}"`,
+		`if [[ "\${1:-}" == "--version" ]]; then printf '0.79.8\\n'; exit 0; fi`,
+		`printf 'unexpected pinned exec: %s\\n' "$*" >"${pinnedPiMainLog}"`,
+		"exit 85",
+	].join("\n"));
+	writeVersionedWrapperPi(fallbackPiDir, piLog);
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+		"--pi-cmd",
+		join(pinnedPiDir, "pi"),
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const result = spawnSync(wrapper, ["chat"], {
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: [fallbackPiDir, agentBin, process.env.PATH || ""].join(":"),
+			PI_WRAPPER_LOG: piLog,
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+	const pinnedCalls = readFileSync(pinnedPiCallLog, "utf8").trim().split(/\r?\n/).filter(Boolean);
+	assert.deepEqual(pinnedCalls, ["--version"]);
+	assert.equal(existsSync(pinnedPiMainLog), false);
+
+	const piRecord = Object.fromEntries(readFileSync(piLog, "utf8").trim().split(/\r?\n/).map((line) => {
+		const separator = line.indexOf("=");
+		return [line.slice(0, separator), line.slice(separator + 1)];
+	}));
+	assert.equal(piRecord.argv, "chat");
+	assert.equal(piRecord.agent, agentDir);
+	assert.equal(piRecord.cmd, join(fallbackPiDir, "pi"));
+	const piPathEntries = piRecord.path.split(":");
+	assert.deepEqual(piPathEntries.slice(0, 2), [agentBin, fallbackPiDir]);
+	assert.equal(piPathEntries.includes(pinnedPiDir), false);
+});
+
+test("wrapper --pi-cmd rejects a pinned 0.79.8 runtime when no supported fallback exists", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const agentBin = join(agentDir, "bin");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const pinnedPiDir = join(root, "pinned-pi");
+	const pinnedPiCallLog = join(root, "pinned-pi-calls.log");
+	const pinnedPiMainLog = join(root, "pinned-pi-main.log");
+	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	writeFakePi(pinnedPiDir, [
+		`printf '%s\\n' "$*" >>"${pinnedPiCallLog}"`,
+		`if [[ "\${1:-}" == "--version" ]]; then printf '0.79.8\\n'; exit 0; fi`,
+		`printf 'unexpected pinned exec: %s\\n' "$*" >"${pinnedPiMainLog}"`,
+		"exit 85",
+	].join("\n"));
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+		"--pi-cmd",
+		join(pinnedPiDir, "pi"),
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const result = spawnSync(wrapper, ["chat"], {
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: [agentBin, safeInstallerPath(join(root, "fakebin"))].join(":"),
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	assert.equal(result.status, 1, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+	assert.match(result.stderr, /supported pi command not found on PATH; run `tlh update`\./);
+	const pinnedCalls = readFileSync(pinnedPiCallLog, "utf8").trim().split(/\r?\n/).filter(Boolean);
+	assert.deepEqual(pinnedCalls, ["--version"]);
+	assert.equal(existsSync(pinnedPiMainLog), false);
 });
 
 test("wrapper --pi-cmd fast path exports PATH as managed_bin:pinned_dir:sanitized_path", (t) => {
@@ -2812,6 +3214,149 @@ test("wrapper update --extensions helper prepends executable --pi-cmd directory 
 	assert.equal(updatePathEntries.includes("."), false);
 	assert.equal(updatePathEntries.includes(cwdDir), false);
 	assert.equal(updatePathEntries.includes(agentBin), false);
+});
+
+test("wrapper update --extensions helper skips an unsupported pinned 0.79.8 runtime", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const agentBin = join(agentDir, "bin");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const pinnedPiDir = join(root, "pinned-pi");
+	const fallbackPiDir = join(root, "fallback-pi");
+	const cwdDir = join(root, "cwd");
+	const updateLog = join(root, "update.json");
+	const pinnedPiCallLog = join(root, "pinned-pi-calls.log");
+	const nodeDir = dirname(process.execPath);
+	const bashPath = spawnSync("sh", ["-c", "command -v bash"], { encoding: "utf8" }).stdout.trim() || "/bin/bash";
+	const bashDir = dirname(bashPath);
+	mkdirSync(join(agentDir, "tlh"), { recursive: true });
+	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	mkdirSync(cwdDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	writeFakePi(pinnedPiDir, [
+		`printf '%s\\n' "$*" >>"${pinnedPiCallLog}"`,
+		`if [[ "\${1:-}" == "--version" ]]; then printf '0.79.8\\n'; exit 0; fi`,
+		"exit 85",
+	].join("\n"));
+	writeFakePi(fallbackPiDir, `if [[ "\${1:-}" == "--version" ]]; then printf '0.79.1\\n'; exit 0; fi\nexit 85`);
+	writeFileSync(join(agentDir, "tlh", "recover-update.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst pi = spawnSync("pi", ["--version"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, pi: { status: pi.status, stdout: pi.stdout, stderr: pi.stderr, error: pi.error?.message } }));\nprocess.exit(pi.status ?? (pi.error ? 1 : 0));\n`, "utf8");
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+		"--pi-cmd",
+		join(pinnedPiDir, "pi"),
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const result = spawnSync(wrapper, ["update", "--extensions", "--dry-run"], {
+		cwd: cwdDir,
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: ["", ".", cwdDir, agentBin, fallbackPiDir, nodeDir, bashDir].join(delimiter),
+			TLH_UPDATE_LOG: updateLog,
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+	const pinnedCalls = readFileSync(pinnedPiCallLog, "utf8").trim().split(/\r?\n/).filter(Boolean);
+	assert.deepEqual(pinnedCalls, ["--version"]);
+
+	const updateRecord = JSON.parse(readFileSync(updateLog, "utf8"));
+	assert.deepEqual(updateRecord.argv, [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--extensions",
+		"--dry-run",
+	]);
+	assert.equal(updateRecord.env.PI_CODING_AGENT_DIR, agentDir);
+	assert.equal(updateRecord.pi.status, 0, JSON.stringify(updateRecord));
+	assert.match(updateRecord.pi.stdout, /0\.79\.1/);
+
+	const updatePathEntries = updateRecord.env.PATH.split(delimiter);
+	assert.equal(updatePathEntries[0], fallbackPiDir, `expected supported fallback first; got ${updatePathEntries.join(delimiter)}`);
+	assert.equal(updatePathEntries[1], nodeDir, `expected sanitized PATH to follow fallback; got ${updatePathEntries.join(delimiter)}`);
+	assert.equal(updatePathEntries.includes(pinnedPiDir), false, `did not expect unsupported pinned_dir in PATH: ${updatePathEntries.join(delimiter)}`);
+	assert.equal(updatePathEntries.includes(""), false);
+	assert.equal(updatePathEntries.includes("."), false);
+	assert.equal(updatePathEntries.includes(cwdDir), false);
+	assert.equal(updatePathEntries.includes(agentBin), false);
+});
+
+test("wrapper update --extensions helper rejects an unsupported 0.79.8 PATH runtime when no supported fallback exists", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const agentBin = join(agentDir, "bin");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const unsupportedPiDir = join(root, "unsupported-pi");
+	const cwdDir = join(root, "cwd");
+	const updateLog = join(root, "update.json");
+	const unsupportedPiCallLog = join(root, "unsupported-pi-calls.log");
+	const nodeDir = dirname(process.execPath);
+	const bashPath = spawnSync("sh", ["-c", "command -v bash"], { encoding: "utf8" }).stdout.trim() || "/bin/bash";
+	const bashDir = dirname(bashPath);
+	mkdirSync(join(agentDir, "tlh"), { recursive: true });
+	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	mkdirSync(cwdDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	writeFakePi(unsupportedPiDir, [
+		`printf '%s\\n' "$*" >>"${unsupportedPiCallLog}"`,
+		`if [[ "\${1:-}" == "--version" ]]; then printf '0.79.8\\n'; exit 0; fi`,
+		"exit 85",
+	].join("\n"));
+	writeFileSync(join(agentDir, "tlh", "recover-update.mjs"), `import { writeFileSync } from "node:fs";\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH } }));\n`, "utf8");
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--package-root",
+		packageRoot,
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const result = spawnSync(wrapper, ["update", "--extensions", "--dry-run"], {
+		cwd: cwdDir,
+		env: scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: ["", ".", cwdDir, agentBin, unsupportedPiDir, nodeDir, bashDir].join(delimiter),
+			TLH_UPDATE_LOG: updateLog,
+		}),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	assert.equal(result.status, 1, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+	assert.match(result.stderr, /supported pi command not found on PATH; run `tlh update`\./);
+	assert.equal(existsSync(updateLog), false);
+	const unsupportedCalls = readFileSync(unsupportedPiCallLog, "utf8").trim().split(/\r?\n/).filter(Boolean);
+	assert.ok(unsupportedCalls.length >= 1, `expected at least one version probe; got ${unsupportedCalls.join(", ")}`);
+	assert.deepEqual([...new Set(unsupportedCalls)], ["--version"]);
 });
 
 test("wrapper plain update helper does not prepend executable --pi-cmd directory", (t) => {
