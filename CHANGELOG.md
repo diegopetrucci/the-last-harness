@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- TLH now suppresses the upstream Pi “Update Available — Run `pi update`” launch banner. Because TLH pins Pi to a supported version window, the upstream update prompt is misleading noise — `tlh update` is the correct update path. TLH’s own update notifications are unaffected.
+
 ## [0.22.2] - 2026-06-19
 
 ### Changed
