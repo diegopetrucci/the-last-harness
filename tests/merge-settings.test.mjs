@@ -476,6 +476,33 @@ test("merge --force preserves tlh.telemetry.enabled=false while applying default
 	assert.equal(settings.tlh.telemetry.enabled, false, "telemetry opt-out must survive forced reruns");
 });
 
+test("merge migrates existing unpinned managed npm default package sources to bundled pinned sources without --force", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				"npm:@diegopetrucci/pi-oracle",
+			],
+		},
+		[
+			{
+				id: "oracle",
+				source: "npm:@diegopetrucci/pi-oracle@0.1.12",
+			},
+		],
+	);
+
+	runMerge(fixture);
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.packages, [
+		harnessPackage,
+		"npm:@diegopetrucci/pi-oracle@0.1.12",
+	]);
+	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, ["npm:@diegopetrucci/pi-oracle"]);
+});
+
 test("critical source updates dedupe stale same-identity filtered packages", () => {
 	const criticalSource = "git:github.com/example/pi-critical@v2";
 	const fixture = tempFixture(

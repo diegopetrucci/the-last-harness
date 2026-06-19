@@ -1,22 +1,22 @@
 [
   {
     "id": "oracle",
-    "source": "npm:@diegopetrucci/pi-oracle",
+    "source": "npm:@diegopetrucci/pi-oracle@0.1.12",
     "description": "Consult a separate read-only reasoning process for second opinions."
   },
   {
     "id": "openai-fast",
-    "source": "npm:@diegopetrucci/pi-openai-fast",
+    "source": "npm:@diegopetrucci/pi-openai-fast@0.1.4",
     "description": "Enable optional OpenAI Codex Fast mode commands for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions."
   },
   {
     "id": "anthropic-auth",
-    "source": "npm:@gotgenes/pi-anthropic-auth",
+    "source": "npm:@gotgenes/pi-anthropic-auth@0.6.2",
     "description": "Improve compatibility with Anthropic Claude Pro/Max OAuth while preserving normal API-key behavior."
   },
   {
     "id": "librarian",
-    "source": "npm:@diegopetrucci/pi-librarian",
+    "source": "npm:@diegopetrucci/pi-librarian@0.1.5",
     "description": "Research GitHub repositories and optionally cache local checkouts."
   },
   {
@@ -35,22 +35,22 @@
   },
   {
     "id": "fff",
-    "source": "npm:@ff-labs/pi-fff",
+    "source": "npm:@ff-labs/pi-fff@0.9.5",
     "description": "FFF-powered fuzzy file and content search."
   },
   {
     "id": "inline-bash",
-    "source": "npm:@diegopetrucci/pi-inline-bash",
+    "source": "npm:@diegopetrucci/pi-inline-bash@0.1.2",
     "description": "Expand inline bash commands in user prompts."
   },
   {
     "id": "notify",
-    "source": "npm:@diegopetrucci/pi-notify",
+    "source": "npm:@diegopetrucci/pi-notify@0.1.5",
     "description": "Send a notification when an agent turn finishes."
   },
   {
     "id": "context-inspector",
-    "source": "npm:@diegopetrucci/pi-context-inspector",
+    "source": "npm:@diegopetrucci/pi-context-inspector@0.1.2",
     "description": "Open a local HTML dashboard explaining where the current session context is going."
   },
   {
@@ -65,17 +65,17 @@
     "id": "quiet-tools",
     "aliases": ["compact-bash"],
     "replaces": ["npm:@diegopetrucci/pi-compact-bash"],
-    "source": "npm:@diegopetrucci/pi-quiet-tools",
+    "source": "npm:@diegopetrucci/pi-quiet-tools@0.1.3",
     "description": "Compact collapsed built-in tool output in the TUI without changing model-visible results."
   },
   {
     "id": "dirty-repo-guard",
-    "source": "npm:@diegopetrucci/pi-dirty-repo-guard",
+    "source": "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.2",
     "description": "Prompt before session changes when the current git repo has uncommitted changes."
   },
   {
     "id": "triage-comments",
-    "source": "npm:@diegopetrucci/pi-triage-comments",
+    "source": "npm:@diegopetrucci/pi-triage-comments@0.1.3",
     "description": "Add /triage-comments and a read-only triage_comments subagent tool for review-comment triage."
   },
   {
