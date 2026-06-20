@@ -580,7 +580,7 @@ function createTlhPrimaryAgentRuntime(
 
 	function parsePrimaryAgentSelection(value: string | undefined): TlhPrimaryAgentSelection | undefined {
 		const normalized = value?.trim().toLowerCase();
-		return PRIMARY_AGENT_CYCLE.includes(normalized) ? (normalized as TlhPrimaryAgentSelection) : undefined;
+		return normalized !== undefined && PRIMARY_AGENT_CYCLE.includes(normalized) ? (normalized as TlhPrimaryAgentSelection) : undefined;
 	}
 
 	function switchPrimaryAgentCommandCompletions(prefix: string) {

@@ -224,7 +224,7 @@ export function withLockedTlhSettingsWrite<TResult extends { changed: boolean; n
 			throw new Error("TLH settings write must provide replacement content when changed.");
 		}
 		const backupPath = current ? `${settingsPath}.bak-${settingsBackupTimestamp()}` : undefined;
-		if (backupPath) {
+		if (backupPath && current !== undefined) {
 			writeFileSync(backupPath, current, { encoding: "utf8", flag: "wx", mode: 0o600 });
 		}
 		result = backupPath ? { ...baseResult, settingsPath, backupPath } : { ...baseResult, settingsPath };
