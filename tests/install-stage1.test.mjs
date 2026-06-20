@@ -3145,3 +3145,105 @@ test("uninstall.sh does not remove legacy ~/.local/bin/pi without --force-includ
 	// Legacy pi must have been removed.
 	assert.equal(existsSync(join(legacyBin, "pi")), false, "legacy pi should have been removed with --force-include-pi");
 });
+
+test("stage-1 refuses to install into a runtime prefix containing a foreign top-level entry", (t) => {
+	const scenarios = [
+		{ label: "normal file", foreignName: "userdata.txt", dryRun: false },
+		{ label: "dotfile", foreignName: "..userdata", dryRun: false },
+		{ label: "normal file (dry-run)", foreignName: "userdata.txt", dryRun: true },
+	];
+
+	for (const scenario of scenarios) {
+		const root = makeTempDir(`tlh-install-runtime-guard-${scenario.label.replace(/[^a-z0-9]+/g, "-")}-`);
+		const homeDir = join(root, "home");
+		const agentDir = join(root, "agent");
+		const binDir = join(root, "bin");
+		const fakebin = join(root, "fakebin");
+		const packageDir = join(root, "package-source");
+		const templateDir = join(root, "pi-template");
+		const npmLog = join(root, "npm.log");
+		const piLog = join(root, "pi.log");
+		const runtimeDir = join(root, "runtime"); // sibling of agentDir per runtimePrefix(config)
+		t.after(() => rmSync(root, { recursive: true, force: true }));
+
+		mkdirSync(homeDir, { recursive: true });
+		mkdirSync(packageDir, { recursive: true });
+		// Pre-seed the runtime prefix with a foreign top-level entry.
+		mkdirSync(runtimeDir, { recursive: true });
+		const foreignPath = join(runtimeDir, scenario.foreignName);
+		writeFileSync(foreignPath, "user content\n");
+
+		writeFakeTk(fakebin);
+		writeLoggingPi(templateDir, piLog, TLH_PINNED_PI_VERSION);
+		writeFakeNpmInstaller(fakebin, {
+			npmLog,
+			templatePiPath: join(templateDir, "pi"),
+			installedPiPath: join(runtimeDir, "bin", "pi"),
+		});
+
+		const env = scrubInstallerEnv({
+			HOME: homeDir,
+			PATH: `${fakebin}:${process.env.PATH || ""}`,
+			TLH_PACKAGE_SOURCE: packageDir,
+			TLH_SKIP_GNOSIS_INSTALL: "1",
+		});
+		const args = ["--agent-dir", agentDir, "--bin-dir", binDir, "--no-wrapper", "--no-settings"];
+		if (scenario.dryRun) args.unshift("--dry-run");
+		const result = runInstaller(args, env);
+		const output = `${result.stdout}\n${result.stderr}`;
+
+		// Must fail — guard surfaces even in dry-run.
+		assert.notEqual(result.status, 0, `${scenario.label}: expected failure but installer succeeded\n${output}`);
+		// Error message must be actionable.
+		assert.match(output, /not a recognisable TLH pi runtime/, `${scenario.label}: error must name the problem`);
+		assert.match(output, /--agent-dir/, `${scenario.label}: error must mention --agent-dir`);
+		// Foreign file must be left untouched.
+		assert.equal(existsSync(foreignPath), true, `${scenario.label}: foreign file must still exist after refused install`);
+		assert.equal(readFileSync(foreignPath, "utf8"), "user content\n", `${scenario.label}: foreign file content must be unchanged`);
+		// npm must not have been invoked.
+		assert.equal(existsSync(npmLog), false, `${scenario.label}: npm must not be invoked when guard refuses`);
+	}
+});
+
+test("stage-1 installs normally when runtime prefix exists but is empty", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const fakebin = join(root, "fakebin");
+	const packageDir = join(root, "package-source");
+	const templateDir = join(root, "pi-template");
+	const npmLog = join(root, "npm.log");
+	const piLog = join(root, "pi.log");
+	const runtimeDir = join(root, "runtime");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageDir, { recursive: true });
+	// Pre-create the runtime prefix as an empty directory.
+	mkdirSync(runtimeDir, { recursive: true });
+
+	writeFakeTk(fakebin);
+	writeLoggingPi(templateDir, piLog, TLH_PINNED_PI_VERSION);
+	writeFakeNpmInstaller(fakebin, {
+		npmLog,
+		templatePiPath: join(templateDir, "pi"),
+		installedPiPath: join(runtimeDir, "bin", "pi"),
+	});
+
+	const env = scrubInstallerEnv({
+		HOME: homeDir,
+		PATH: `${fakebin}:${process.env.PATH || ""}`,
+		TLH_PACKAGE_SOURCE: packageDir,
+		TLH_SKIP_GNOSIS_INSTALL: "1",
+	});
+	const result = runInstaller(
+		["--agent-dir", agentDir, "--bin-dir", binDir, "--no-wrapper", "--no-settings"],
+		env,
+	);
+	const output = `${result.stdout}\n${result.stderr}`;
+
+	assert.equal(result.status, 0, `install into empty runtime prefix failed:\n${output}`);
+	// npm must have been called to install pi.
+	assert.equal(existsSync(npmLog), true, "npm was not called for empty runtime prefix");
+});

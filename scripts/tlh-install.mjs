@@ -4,6 +4,7 @@ import {
 	copyFileSync,
 	existsSync,
 	mkdirSync,
+	readdirSync,
 	readFileSync,
 	realpathSync,
 	rmSync,
@@ -69,6 +70,11 @@ const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
 const DEFAULT_GNOSIS_VERSION = "0.5.3";
 const DEFAULT_WRAPPER_NAME = "tlh";
 const VALID_UPDATE_TRACKS = new Set(["latest-release", "pinned-tag", "ref", "custom"]);
+// npm 11.x --prefix layout; empirically confirmed: npm 11.16.0 +
+// @earendil-works/pi-coding-agent@0.79.7.  Mirrors the exclusivity invariant
+// in uninstall.sh: the only top-level entries a TLH-owned runtime prefix may
+// contain are those created by npm install -g --ignore-scripts --prefix.
+const RUNTIME_OWNED_TOPLEVEL = new Set(["bin", "lib", "node-compile-cache"]);
 const COMMAND_MAX_BUFFER = 20 * 1024 * 1024;
 
 function parseNodeVersion(version) {
@@ -601,7 +607,23 @@ function absolutePiCmd(config) {
 	return config.piCmd || join(runtimePrefix(config), "bin", "pi");
 }
 
+function assertRuntimePrefixOwnedOrEmpty(config) {
+	const prefix = piInstallPrefix(config);
+	if (!existsSync(prefix)) return; // absent → OK to install
+	const entries = readdirSync(prefix); // never returns '.' or '..'; includes dotfiles
+	if (entries.length === 0) return; // empty → OK to install
+	const foreign = entries.find((entry) => !RUNTIME_OWNED_TOPLEVEL.has(entry));
+	if (foreign === undefined) return; // every entry is npm-managed → OK (fresh, reuse, or repair path)
+	throw new Error(
+		`Runtime prefix ${prefix} is not a recognisable TLH pi runtime: ` +
+		`unexpected top-level entry "${foreign}". ` +
+		`--agent-dir likely points somewhere whose sibling "runtime" directory is not TLH-owned. ` +
+		`Choose a dedicated or default profile directory (e.g. ~/.the-last-harness/agent).`,
+	);
+}
+
 function installPiIfNeeded(config) {
+	assertRuntimePrefixOwnedOrEmpty(config);
 	const prefix = piInstallPrefix(config);
 	const piBinDir = join(prefix, "bin");
 	const piBin = join(piBinDir, "pi");
