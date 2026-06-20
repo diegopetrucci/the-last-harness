@@ -92,9 +92,8 @@ test("install docs describe separate pi removal with the TLH per-user npm prefix
 
 	assert.match(
 		install,
-		/Separately-installed pi binary[\s\S]{0,240}npm uninstall -g --prefix "\$HOME\/\.local" @earendil-works\/pi-coding-agent/,
+		/Separately-installed pi[\s\S]{0,300}npm uninstall -g --ignore-scripts --prefix "\$HOME\/\.local" @earendil-works\/pi-coding-agent/,
 	);
-	assert.match(install, /owned by a different npm prefix, uninstall it from that same prefix instead/i);
 });
 
 test("user-facing docs and installer help do not advertise legacy ticket opt-outs", () => {
