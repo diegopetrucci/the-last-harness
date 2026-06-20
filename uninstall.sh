@@ -14,9 +14,8 @@ FORCE_INCLUDE_PI=false
 KEEP_PI=false
 QUIET=false
 VERBOSE=false
-PI_NPM_PREFIX="${HOME}/.local"
 PI_PACKAGE_NAME="@earendil-works/pi-coding-agent"
-PI_UNINSTALL_DISPLAY="npm uninstall -g --prefix \"${PI_NPM_PREFIX}\" ${PI_PACKAGE_NAME}"
+PINNED_PI_VERSION="0.79.7"
 TLH_WRAPPER_MARKER_LINE="# Managed by The Last Harness installer"
 
 # ── output helpers ─────────────────────────────────────────────────────────────
@@ -407,9 +406,12 @@ Normal Pi config at ~/.pi/agent is never touched by this script.
 
 Options:
   --dry-run              Print planned actions without performing any removals.
-  --force-include-pi     Remove pi via npm even when install-state says
+  --force-include-pi     Remove pi/runtime even when install-state says
                            piInstalledByTlh=false or the field is absent.
-  --keep-pi              Skip pi removal even when install-state says
+                           For legacy ~/.local pi: required to perform removal;
+                           without this flag the pi is never auto-removed to
+                           protect user-owned installations.
+  --keep-pi              Skip pi/runtime removal even when install-state says
                            piInstalledByTlh=true.
   --agent-dir DIR        Override isolated agent dir (default: ~/.the-last-harness/agent).
                            Only the agent dir is removed; parent dir is cleaned up only if empty.
@@ -508,6 +510,8 @@ PROFILE_ROOT_COMPARE="$(realpath_for_compare "${PROFILE_ROOT}")"
 BIN_DIR="$(realpath_for_compare "${BIN_DIR_INPUT}")"
 WRAPPER_PATH="${BIN_DIR}/${WRAPPER_NAME}"
 INSTALL_STATE="$(tlh_ownership_marker_path "${AGENT_DIR}")"
+RUNTIME_DIR="${PROFILE_ROOT}/runtime"
+RUNTIME_BIN="${RUNTIME_DIR}/bin/pi"
 
 # ── safety guard: refuse any path under normal Pi config (~/.pi) ───────────────
 # Runs before wrapper-name character validation so that traversal via ".." in
@@ -593,12 +597,15 @@ fi
 
 # ── parse install-state; compute pi-removal decision ──────────────────────────
 #
-# Decision matrix:
-#   --keep-pi                             → skip pi (regardless of state)
-#   --force-include-pi                    → remove pi (regardless of state)
-#   state absent OR file missing          → skip pi
-#   piInstalledByTlh = true               → remove pi
-#   piInstalledByTlh = false              → skip pi
+# piInstalledByTlh=true now means TLH owns the PRIVATE runtime at
+# PROFILE_ROOT/runtime, NOT a global package at ~/.local.
+#
+# Decision matrix (trigger — what to remove is resolved below):
+#   --keep-pi                             → skip pi/runtime (regardless of state)
+#   --force-include-pi                    → remove pi/runtime (regardless of state)
+#   state absent OR file missing          → skip pi/runtime
+#   piInstalledByTlh = true               → remove pi/runtime
+#   piInstalledByTlh = false              → skip pi/runtime
 
 PI_STATE="$(read_pi_installed_by_tlh "${INSTALL_STATE}")"
 
@@ -618,6 +625,42 @@ else
     PI_SKIP_REASON="install-state: piInstalledByTlh=false"
   else
     PI_SKIP_REASON="install-state absent or piInstalledByTlh field missing"
+  fi
+fi
+
+# ── disambiguate what pi/runtime removal means (new-model vs legacy) ───────────
+#
+#  private runtime present  → rm -rf RUNTIME_DIR (always safe; TLH-exclusive dir)
+#  legacy ~/.local/bin/pi   → npm uninstall (ONLY with --force-include-pi; never auto)
+#  neither exists           → no-op (skip with reason)
+#
+# Safety invariant: never delete ~/.local/bin/pi without --force-include-pi.
+# The uninstall script cannot snapshot pre-install state and therefore cannot
+# know whether ~/.local/bin/pi belongs to TLH or the user.  It is always kept
+# unless the operator explicitly passes --force-include-pi.
+
+PI_REMOVE_MODE="none"   # "runtime" | "legacy" | "none"
+PI_UNINSTALL_DISPLAY=""
+
+if [[ "${REMOVE_PI}" == "true" ]]; then
+  if [[ -d "${RUNTIME_DIR}" ]]; then
+    PI_REMOVE_MODE="runtime"
+    PI_UNINSTALL_DISPLAY="rm -rf \"${RUNTIME_DIR}\""
+  elif [[ -f "${HOME}/.local/bin/pi" ]]; then
+    if [[ "${FORCE_INCLUDE_PI}" == "true" ]]; then
+      PI_REMOVE_MODE="legacy"
+      PI_UNINSTALL_DISPLAY="npm uninstall -g --ignore-scripts --prefix \"${HOME}/.local\" ${PI_PACKAGE_NAME}"
+    else
+      # Never auto-remove legacy ~/.local/bin/pi — the uninstall script cannot snapshot
+      # pre-install state and therefore cannot determine whether this binary belongs to
+      # TLH or to the user.  Require --force-include-pi for any legacy removal.
+      REMOVE_PI=false
+      PI_SKIP_REASON="legacy ~/.local/bin/pi was not removed automatically (pass --force-include-pi to remove it). To remove manually: npm uninstall -g --ignore-scripts --prefix \"${HOME}/.local\" ${PI_PACKAGE_NAME}"
+    fi
+  else
+    # Neither the private runtime nor a legacy ~/.local pi is present.
+    REMOVE_PI=false
+    PI_SKIP_REASON="no pi installation found (neither private runtime at ${RUNTIME_DIR} nor legacy ~/.local/bin/pi)"
   fi
 fi
 
@@ -671,16 +714,26 @@ fi
 
 if [[ "${REMOVE_PI}" == "true" ]]; then
   STEP=$(( STEP + 1 ))
-  if [[ "${DRY_RUN}" == "true" ]]; then
-    say "  ${STEP}. would npm uninstall pi: ${PI_UNINSTALL_DISPLAY}"
+  if [[ "${PI_REMOVE_MODE}" == "runtime" ]]; then
+    if [[ "${DRY_RUN}" == "true" ]]; then
+      say "  ${STEP}. would remove private runtime: rm -rf ${RUNTIME_DIR}"
+      say "             and rmdir ${PROFILE_ROOT} if empty"
+    else
+      say "  ${STEP}. Remove private runtime: ${RUNTIME_DIR}"
+      say "             (parent ${PROFILE_ROOT} removed only if empty)"
+    fi
   else
-    say "  ${STEP}. Remove pi (npm):     ${PI_UNINSTALL_DISPLAY}"
+    if [[ "${DRY_RUN}" == "true" ]]; then
+      say "  ${STEP}. would remove legacy pi (npm): ${PI_UNINSTALL_DISPLAY}"
+    else
+      say "  ${STEP}. Remove legacy pi (npm): ${PI_UNINSTALL_DISPLAY}"
+    fi
   fi
 else
   if [[ "${DRY_RUN}" == "true" ]]; then
-    say "     would skip pi removal (${PI_SKIP_REASON})"
+    say "     would skip pi/runtime removal (${PI_SKIP_REASON})"
   else
-    say "     Skip pi removal (${PI_SKIP_REASON})"
+    say "     Skip pi/runtime removal (${PI_SKIP_REASON})"
   fi
 fi
 
@@ -717,12 +770,21 @@ if [[ "${AGENT_DIR_EXISTS}" == "true" ]]; then
 fi
 
 if [[ "${REMOVE_PI}" == "true" ]]; then
-  if ! command -v npm >/dev/null 2>&1; then
-    warn "npm not found on PATH; pi must be removed manually."
-    warn "To remove pi: ${PI_UNINSTALL_DISPLAY}"
-  else
-    log "Removing pi via npm..."
-    removal_run npm uninstall -g --prefix "${PI_NPM_PREFIX}" "${PI_PACKAGE_NAME}"
+  if [[ "${PI_REMOVE_MODE}" == "runtime" ]]; then
+    log "Removing private runtime: ${RUNTIME_DIR}"
+    removal_run rm -rf "${RUNTIME_DIR}"
+    if [[ "${VERBOSE}" == "true" ]]; then
+      say "  + rmdir ${PROFILE_ROOT}"
+    fi
+    rmdir "${PROFILE_ROOT}" 2>/dev/null || true
+  elif [[ "${PI_REMOVE_MODE}" == "legacy" ]]; then
+    if ! command -v npm >/dev/null 2>&1; then
+      warn "npm not found on PATH; legacy pi must be removed manually."
+      warn "To remove: ${PI_UNINSTALL_DISPLAY}"
+    else
+      log "Removing legacy pi from ~/.local via npm..."
+      removal_run npm uninstall -g --ignore-scripts --prefix "${HOME}/.local" "${PI_PACKAGE_NAME}"
+    fi
   fi
 fi
 

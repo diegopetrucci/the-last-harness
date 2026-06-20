@@ -2,7 +2,7 @@
 
 ## Install
 
-Requires Node.js >=22.19.0 on `PATH`. TLH currently supports upstream Pi 0.79.1 through 0.79.7. While the upstream 0.79.8 breakage is active, TLH-managed installs stay temporarily pinned to Pi 0.79.7. If `pi` is missing, the installer adds that compatible per-user copy under `~/.local` and hard-fails with an actionable error if that install cannot complete. If `pi` is present but older than 0.79.1 or newer than 0.79.7, install stops with version guidance instead of changing that existing runtime automatically.
+Requires Node.js >=22.19.0 on `PATH`. TLH always installs its own pinned Pi 0.79.7 into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. Install or repair failures stop with an actionable error.
 
 Run the one-liner:
 
@@ -57,7 +57,7 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v
 
 You can just run `tlh update`.
 
-This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. While the upstream 0.79.8 breakage is active, `tlh update` also repairs TLH-managed per-user Pi runtimes back to the temporary 0.79.7 pin when needed. If you are updating from an older install without `tlh update`, rerun the latest-release installer once.
+This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. While the upstream 0.79.8 breakage is active, `tlh update` also repairs the private Pi runtime at `~/.the-last-harness/runtime` back to the pinned 0.79.7 when needed. If you are updating from an older install without `tlh update`, rerun the latest-release installer once.
 
 If TLH starts with the notice ``TLH extension updates are available. Run `tlh update --extensions` to update them.``, that notice refers to isolated extension/package updates only. `tlh update --extensions` runs the upstream package refresh against the TLH profile without changing installer-managed checkout state, wrapper files, or update-track metadata. Installer-track and installer-owned options such as `--track`, `--ref`, `--repo`, `--package-source`, `--force`, `--no-settings`, and `--no-wrapper` require plain `tlh update` instead.
 
@@ -99,7 +99,7 @@ Run the one-liner from the release asset:
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/uninstall.sh | bash -s --
 ```
 
-The script removes the isolated agent dir under `~/.the-last-harness` (and the now-empty parent dir, if any), the `tlh` wrapper, and (when install-state indicates it) the TLH-installed per-user Pi package. Normal Pi config at `~/.pi/agent` is never touched.
+The script removes the isolated agent dir under `~/.the-last-harness/agent`, the `tlh` wrapper, and the private Pi runtime at `~/.the-last-harness/runtime` when install-state says `piInstalledByTlh=true` or `--force-include-pi` is passed. A legacy TLH-installed pi at `~/.local` is removed only when `--force-include-pi` is explicitly passed; without that flag the uninstaller leaves it in place and prints a manual-removal hint. The parent dir `~/.the-last-harness` is removed only when empty after the agent dir is gone. Normal Pi config at `~/.pi/agent` is never touched.
 
 ### Uninstaller flags
 
@@ -108,8 +108,8 @@ The uninstaller prints its plan and then proceeds immediately — there is no co
 | Flag | Description |
 |---|---|
 | `--dry-run` | Print planned actions without performing any removals. |
-| `--force-include-pi` | Remove pi via npm even when install-state says `piInstalledByTlh=false` or the field is absent. |
-| `--keep-pi` | Skip pi removal even when install-state says `piInstalledByTlh=true`. |
+| `--force-include-pi` | Force runtime/pi removal regardless of install-state. When the private runtime (`~/.the-last-harness/runtime`) is present, removes it; when it is absent and a legacy `~/.local/bin/pi` exists, removes that instead. This flag is **required** to remove a legacy `~/.local` pi — without it the uninstaller never auto-removes it, to protect user-owned installations. |
+| `--keep-pi` | Skip runtime and pi removal even when install-state says `piInstalledByTlh=true`. |
 | `--agent-dir DIR` | Override isolated agent dir (default: `~/.the-last-harness/agent`). Only the agent dir is removed; the parent dir is cleaned up only if empty. |
 | `--bin-dir DIR` | Override wrapper install dir (default: `~/.local/bin`). |
 | `--wrapper-name NAME` | Override wrapper command basename (default: `tlh`). |
@@ -121,22 +121,24 @@ The uninstaller prints its plan and then proceeds immediately — there is no co
 
 ### Pi removal decision
 
-At install time, TLH records `piInstalledByTlh` in `~/.the-last-harness/agent/tlh/install-state.json`. The uninstaller uses this field to decide whether to remove the TLH-installed per-user Pi package, so a shared or pre-existing pi install is not accidentally removed. This field was added in this release; older installs that lack it default to leaving pi in place.
+TLH records `piInstalledByTlh` in `~/.the-last-harness/agent/tlh/install-state.json` to track whether it owns the private Pi runtime. The uninstaller uses this field to decide whether to remove the private runtime at `~/.the-last-harness/runtime`. A legacy `~/.local` pi is never removed automatically — it is removed only when `--force-include-pi` is explicitly passed, because the uninstaller cannot determine whether that binary was installed by TLH or by the user. Older installs that lack this field default to leaving everything in place.
 
-| Condition | pi removal |
+| Condition | Effect |
 |---|---|
-| `piInstalledByTlh = true` | removed via npm |
+| `piInstalledByTlh = true` | private runtime (`~/.the-last-harness/runtime`) removed (`rm -rf`); legacy `~/.local` pi is **not** removed unless `--force-include-pi` is also passed |
 | `piInstalledByTlh = false` | kept |
 | field absent (older install) | kept |
-| `--force-include-pi` flag | removed (overrides state) |
-| `--keep-pi` flag | kept (overrides state) |
+| `--force-include-pi` flag | removes private runtime if present; otherwise removes legacy `~/.local/bin/pi` if present (overrides install-state) |
+| `--keep-pi` flag | keeps everything — skips runtime and pi removal (overrides install-state) |
 
 ### What stays behind
 
 The uninstaller never auto-removes:
 
 - **`~/.pi`** — Pi's own user config directory. To remove it manually: `rm -rf ~/.pi`
-- **Separately-installed pi binary** — if pi was installed before or independently of TLH, it is left in place. To remove TLH's per-user install: `npm uninstall -g --prefix "$HOME/.local" @earendil-works/pi-coding-agent`. If your `pi` command is owned by a different npm prefix, uninstall it from that same prefix instead.
+- **Private TLH Pi runtime (when kept)** — if you pass `--keep-pi`, or install-state is `false`/absent, the runtime at `~/.the-last-harness/runtime` is left in place; remove it manually: `rm -rf ~/.the-last-harness/runtime`.
+- **Separately-installed pi** — any `pi` you installed independently of TLH is left in place and never touched by tlh.
+- **Legacy TLH-owned pi at `~/.local`** — the uninstaller never auto-removes this (to protect user-owned installations). To remove it, pass `--force-include-pi` to the uninstaller, or remove manually: `npm uninstall -g --ignore-scripts --prefix "$HOME/.local" @earendil-works/pi-coding-agent`.
 - **Repo-local `.gnosis/` and `.tickets/` data** — per-repository and managed separately. To remove from a repo: `rm -rf .gnosis .tickets`
 
 ### Manual removal
@@ -148,14 +150,12 @@ rm -f ~/.local/bin/tlh
 rm -rf ~/.the-last-harness
 ```
 
-This also removes the managed `tk` copy under the TLH profile if one was installed. To also remove the TLH-installed per-user Pi package (only if you installed it solely for The Last Harness):
+This removes the isolated agent dir, the private Pi runtime at `~/.the-last-harness/runtime`, and the managed `tk` copy under the TLH profile. To also remove a TLH-managed legacy pi at `~/.local` (from an older install, only if TLH originally installed it):
 
 ```sh
-npm uninstall -g --prefix "$HOME/.local" @earendil-works/pi-coding-agent
+npm uninstall -g --ignore-scripts --prefix "$HOME/.local" @earendil-works/pi-coding-agent
 ```
-
-TLH installs Pi per-user under `~/.local` (the binary lives at `~/.local/bin/pi`). If you previously installed Pi globally with sudo from older instructions, use `sudo npm uninstall -g @earendil-works/pi-coding-agent` instead.
 
 ## Security note
 
-The one-line installer and `tlh update` run shell commands on your machine, may install the upstream Pi npm package per-user under `~/.local` and bundled default extensions, install managed Gnosis and `tk` binaries into the isolated TLH profile when needed, create an isolated Pi profile, and write a wrapper command. Managed `tk` is copied from the pinned `wedow/ticket` source tarball (`v0.3.2`) only after SHA-256 verification; TLH does not install `tk` globally or through Homebrew. Review `install.sh` and the stage-1 helper it fetches (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.
+The one-line installer and `tlh update` run shell commands on your machine, install the upstream Pi npm package per-user into a private runtime at `~/.the-last-harness/runtime` and bundled default extensions, install managed Gnosis and `tk` binaries into the isolated TLH profile when needed, create an isolated Pi profile, and write a wrapper command. Managed `tk` is copied from the pinned `wedow/ticket` source tarball (`v0.3.2`) only after SHA-256 verification; TLH does not install `tk` globally or through Homebrew. Review `install.sh` and the stage-1 helper it fetches (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.

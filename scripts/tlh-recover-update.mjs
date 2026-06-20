@@ -478,7 +478,9 @@ function runPackageUpdate(args) {
 	assertPackageUpdateTargetSafe(args.agentDir);
 	assertPackageUpdateArgs(args);
 	const sanitizedEnv = envWithSanitizedPath(process.env, args.agentDir);
-	const piCommand = resolveCommand("pi", sanitizedEnv);
+	// Always use the absolute private TLH runtime pi binary rather than resolving
+	// "pi" by name from PATH — identical logic to runtimePrefix() in tlh-install.mjs.
+	const piCommand = join(dirname(args.agentDir), "runtime", "bin", "pi");
 	if (args.dryRun) {
 		printPackageUpdateDryRun(piCommand, args);
 		return;

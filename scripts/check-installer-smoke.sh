@@ -345,6 +345,17 @@ EOF_FAKE_PI
   chmod +x "${fakebin}/pi"
 }
 
+make_failing_npm() {
+  local fakebin="$1"
+  mkdir -p "${fakebin}"
+  cat >"${fakebin}/npm" <<'EOF_FAKE_NPM'
+#!/usr/bin/env bash
+printf 'fake npm: private runtime install blocked for smoke test\n' >&2
+exit 1
+EOF_FAKE_NPM
+  chmod +x "${fakebin}/npm"
+}
+
 make_fake_present_pi() {
   local fakebin="$1"
   mkdir -p "${fakebin}"
@@ -734,7 +745,8 @@ run_stdin_dry_run_smoke() {
   assert_contains "${combined_file}" "Isolated profile: ${relative_agent_dir}"
   assert_contains "${combined_file}" "Would merge settings defaults into: ${relative_agent_dir}/settings.json"
   assert_contains "${combined_file}" "Would merge keybinding defaults into: ${relative_agent_dir}/keybindings.json"
-  assert_contains "${combined_file}" "Start with: PI_CODING_AGENT_DIR=\"${relative_agent_dir}\" pi"
+  assert_contains "${combined_file}" "Start with: tlh"
+  assert_not_contains "${combined_file}" "Start with: PI_CODING_AGENT_DIR="
   assert_contains "${combined_file}" "Wrapper path would be: ${relative_bin_dir}/tlh"
   assert_not_contains "${combined_file}" 'PI_CODING_AGENT_DIR=".pi/agent"'
   assert_not_contains "${combined_file}" "Isolated profile: .pi/agent"
@@ -1094,15 +1106,17 @@ run_missing_required_helper_preflight_smoke() {
   local no_wrapper_bin_dir="${no_wrapper_case_dir}/bin"
   local no_wrapper_fakebin="${no_wrapper_case_dir}/fakebin"
   local no_wrapper_home="${no_wrapper_case_dir}/home"
-  local no_wrapper_pi_sentinel="${no_wrapper_case_dir}/pi-invoked"
   mkdir -p "${no_wrapper_case_dir}" "${no_wrapper_home}"
   make_legacy_support_curl "${no_wrapper_fakebin}"
-  make_failing_pi "${no_wrapper_fakebin}"
+  # Under the private-runtime model, the installer ignores PATH pi and uses npm to
+  # install its own runtime. Seed a fake failing npm to exercise the preflight-passes-
+  # but-runtime-install-fails path without making real network requests.
+  make_failing_npm "${no_wrapper_fakebin}"
   : >"${stdout_file}"
   : >"${stderr_file}"
 
   set +e
-  (cd "${no_wrapper_case_dir}" && run_scrubbed_installer_env HOME="${no_wrapper_home}" TLH_SKIP_GNOSIS_INSTALL=1 PATH="${no_wrapper_fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${ROOT_DIR}" LEGACY_SUPPORT_MODE="missing-wrapper-only" PI_SENTINEL="${no_wrapper_pi_sentinel}" TLH_RAW_BASE="https://example.invalid/no-wrapper-ref" bash -s -- --agent-dir "${no_wrapper_agent_dir}" --bin-dir "${no_wrapper_bin_dir}" --no-wrapper < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  (cd "${no_wrapper_case_dir}" && run_scrubbed_installer_env HOME="${no_wrapper_home}" TLH_SKIP_GNOSIS_INSTALL=1 PATH="${no_wrapper_fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${ROOT_DIR}" LEGACY_SUPPORT_MODE="missing-wrapper-only" TLH_RAW_BASE="https://example.invalid/no-wrapper-ref" bash -s -- --agent-dir "${no_wrapper_agent_dir}" --bin-dir "${no_wrapper_bin_dir}" --no-wrapper < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
@@ -1112,11 +1126,8 @@ run_missing_required_helper_preflight_smoke() {
     fail "missing wrapper --no-wrapper preflight smoke unexpectedly succeeded"
   fi
   assert_not_contains "${combined_file}" "required installer support files not found for ref"
-  assert_contains "${combined_file}" "fake pi was invoked"
-  if [[ ! -f "${no_wrapper_pi_sentinel}" ]]; then
-    cat "${combined_file}" >&2
-    fail "expected fake pi to be invoked after --no-wrapper preflight passed"
-  fi
+  # Confirm the install step was reached (preflight passed) and the runtime provision failed.
+  assert_contains "${combined_file}" "Installing TLH private Pi runtime to"
 }
 
 run_wrapper_install_state_normal_pi_guard_smoke() {
@@ -1331,15 +1342,21 @@ EOF_ABSENT_GIT
   combine_output "${absent_stdout}" "${absent_stderr}" "${absent_combined}"
   assert_contains "${absent_combined}" "(piInstalledByTlh: true)"
 
-  # ── pi present: TLH did NOT install pi → piInstalledByTlh: false ──────────
+  # ── pi present: private runtime binary already exists → piInstalledByTlh: false ──
+  # In the private runtime model, TLH ignores pi on PATH and always uses its own
+  # runtime at <agentDir>/../runtime/bin/pi. Seeding that path simulates a run where
+  # the runtime is already there; the installer skips install → installed: false.
+  # With no prior state file, piInstalledByTlhPreference is undefined, so
+  # config.piInstalledByTlh falls back to false.
   local present_dir="${case_dir}/pi-present"
   local present_agent="${present_dir}/agent"
   local present_bin="${present_dir}/bin"
   local present_fakebin="${present_dir}/fakebin"
+  local present_runtime_bin="${present_dir}/runtime/bin"
   local present_stdout="${present_dir}/stdout.log"
   local present_stderr="${present_dir}/stderr.log"
   local present_combined="${present_dir}/combined.log"
-  mkdir -p "${present_fakebin}" "${present_dir}/home"
+  mkdir -p "${present_fakebin}" "${present_dir}/home" "${present_runtime_bin}"
   cat >"${present_fakebin}/sh" <<'EOF_PRESENT_SH'
 #!/bin/sh
 exec /bin/sh "$@"
@@ -1355,7 +1372,13 @@ printf 'fake git should not run during dry-run\n' >&2
 exit 98
 EOF_PRESENT_GIT
   chmod +x "${present_fakebin}/sh" "${present_fakebin}/npm" "${present_fakebin}/git"
-  make_fake_present_pi "${present_fakebin}"
+  # Seed a valid private runtime pi (pinned version) at the expected location.
+  cat >"${present_runtime_bin}/pi" <<'EOF_PRESENT_RUNTIME_PI'
+#!/bin/sh
+if [ "${1:-}" = "--version" ]; then printf '0.79.7\n'; exit 0; fi
+printf 'fake private runtime pi invoked unexpectedly\n' >&2; exit 98
+EOF_PRESENT_RUNTIME_PI
+  chmod +x "${present_runtime_bin}/pi"
 
   run_scrubbed_installer_env HOME="${present_dir}/home" PATH="${present_fakebin}" TLH_SKIP_GNOSIS_INSTALL=1 "${node_cmd}" scripts/tlh-install.mjs --dry-run --agent-dir "${present_agent}" --bin-dir "${present_bin}" >"${present_stdout}" 2>"${present_stderr}"
   combine_output "${present_stdout}" "${present_stderr}" "${present_combined}"
@@ -1486,9 +1509,10 @@ run_uninstall_dry_run_pi_smoke() {
   local combined_file="${case_dir}/combined.log"
   mkdir -p "${case_dir}"
 
-  # ── piInstalledByTlh:true → plan shows npm uninstall ──────────────────────
+  # ── piInstalledByTlh:true → plan shows private runtime removal ───────────
   local true_agent="${case_dir}/pi-true/agent"
-  mkdir -p "${true_agent}/tlh"
+  local true_runtime="${case_dir}/pi-true/runtime"
+  mkdir -p "${true_agent}/tlh" "${true_runtime}"
   cat >"${true_agent}/tlh/install-state.json" <<'EOF_UNINSTALL_STATE_TRUE'
 {
   "schemaVersion": 1,
@@ -1499,7 +1523,7 @@ EOF_UNINSTALL_STATE_TRUE
 
   bash uninstall.sh --dry-run --agent-dir "${true_agent}" --bin-dir "${case_dir}/bin-true" >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
-  assert_contains "${combined_file}" "would npm uninstall pi: npm uninstall -g --prefix \"${HOME}/.local\" @earendil-works/pi-coding-agent"
+  assert_contains "${combined_file}" "would remove private runtime: rm -rf ${true_runtime}"
 
   # ── piInstalledByTlh:false → plan shows skip ──────────────────────────────
   local false_agent="${case_dir}/pi-false/agent"
@@ -1516,7 +1540,7 @@ EOF_UNINSTALL_STATE_FALSE
   : >"${stderr_file}"
   bash uninstall.sh --dry-run --agent-dir "${false_agent}" --bin-dir "${case_dir}/bin-false" >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
-  assert_contains "${combined_file}" "would skip pi removal (install-state: piInstalledByTlh=false)"
+  assert_contains "${combined_file}" "would skip pi/runtime removal (install-state: piInstalledByTlh=false)"
 
   # ── install-state field missing → plan shows skip ────────────────────────
   local absent_agent="${case_dir}/pi-absent/agent"
@@ -1532,7 +1556,7 @@ EOF_UNINSTALL_STATE_ABSENT
   : >"${stderr_file}"
   bash uninstall.sh --dry-run --agent-dir "${absent_agent}" --bin-dir "${case_dir}/bin-absent" >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
-  assert_contains "${combined_file}" "would skip pi removal (install-state absent or piInstalledByTlh field missing)"
+  assert_contains "${combined_file}" "would skip pi/runtime removal (install-state absent or piInstalledByTlh field missing)"
 }
 
 run_uninstall_flag_override_smoke() {
@@ -1544,9 +1568,10 @@ run_uninstall_flag_override_smoke() {
   local status=0
   mkdir -p "${case_dir}"
 
-  # ── --force-include-pi overrides piInstalledByTlh=false → removes pi ──────
+  # ── --force-include-pi overrides piInstalledByTlh=false → removes pi/runtime ────
   local force_agent="${case_dir}/force-include/agent"
-  mkdir -p "${force_agent}/tlh"
+  local force_runtime="${case_dir}/force-include/runtime"
+  mkdir -p "${force_agent}/tlh" "${force_runtime}"
   cat >"${force_agent}/tlh/install-state.json" <<'EOF_FORCE_STATE'
 {
   "schemaVersion": 1,
@@ -1557,7 +1582,7 @@ EOF_FORCE_STATE
 
   bash uninstall.sh --dry-run --force-include-pi --agent-dir "${force_agent}" --bin-dir "${case_dir}/bin-force" >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
-  assert_contains "${combined_file}" "would npm uninstall pi: npm uninstall -g --prefix \"${HOME}/.local\" @earendil-works/pi-coding-agent"
+  assert_contains "${combined_file}" "would remove private runtime: rm -rf ${force_runtime}"
 
   # ── --keep-pi overrides piInstalledByTlh=true → skips pi ─────────────────
   local keep_agent="${case_dir}/keep-pi/agent"
@@ -1574,7 +1599,7 @@ EOF_KEEP_STATE
   : >"${stderr_file}"
   bash uninstall.sh --dry-run --keep-pi --agent-dir "${keep_agent}" --bin-dir "${case_dir}/bin-keep" >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
-  assert_contains "${combined_file}" "would skip pi removal (--keep-pi flag)"
+  assert_contains "${combined_file}" "would skip pi/runtime removal (--keep-pi flag)"
 
   # ── both flags together → exit 2 with conflict message ───────────────────
   local conflict_agent="${case_dir}/conflict/agent"
