@@ -995,6 +995,24 @@ test("stage-1 infers update track unless env or CLI overrides", (t) => {
 	assert.equal(configFor(["--track", "ref"], { TLH_REF: "v1.2.3", TLH_UPDATE_TRACK: "latest-release" }).updateTrack, "ref");
 });
 
+test("stage-1 defaults managed Gnosis to the pinned release and still honors env overrides", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	mkdirSync(homeDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	const configFor = (overrides = {}) => {
+		const env = scrubInstallerEnv({ HOME: homeDir, ...overrides });
+		return buildInstallConfig(parseArgs(["--agent-dir", agentDir, "--bin-dir", binDir], env), env);
+	};
+
+	assert.equal(configFor().gnosisVersion, "0.5.3");
+	assert.equal(configFor({ TLH_GNOSIS_VERSION: "latest" }).gnosisVersion, "latest");
+	assert.equal(configFor({ TLH_GNOSIS_VERSION: "0.5.2" }).gnosisVersion, "0.5.2");
+});
+
 test("stage-1 --no-settings does not short-circuit Gnosis configure", (t) => {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");

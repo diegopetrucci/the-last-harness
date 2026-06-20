@@ -327,7 +327,7 @@ function commandSources(settings, defaultExtensions, { criticalOnly = false } = 
 			continue;
 		}
 		if (!isDefaultDisabled(settings, extension, defaultExtensions) && !isDefaultSourceDeferred(settings, extension)) {
-			console.log(findPackageSource(settings, extension.source) || extension.source);
+			console.log(extension.source);
 		}
 	}
 }

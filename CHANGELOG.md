@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Bundled installer-managed runtime dependencies outside `package.json` are now explicitly pinned too: bundled npm default extensions in `config/default-extensions.json` use concrete versions, existing TLH git-fork defaults stay tag-pinned, and managed Gnosis now defaults to the pinned `v0.5.3` release instead of resolving `latest` unless you override it.
 - TLH now suppresses the upstream Pi “Update Available — Run `pi update`” launch banner. Because TLH pins Pi to a supported version window, the upstream update prompt is misleading noise — `tlh update` is the correct update path. TLH’s own update notifications are unaffected.
 
 ## [0.22.2] - 2026-06-19

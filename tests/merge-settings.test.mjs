@@ -476,6 +476,106 @@ test("merge --force preserves tlh.telemetry.enabled=false while applying default
 	assert.equal(settings.tlh.telemetry.enabled, false, "telemetry opt-out must survive forced reruns");
 });
 
+test("merge migrates existing unpinned managed npm default package sources to bundled pinned sources without --force", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				"npm:@diegopetrucci/pi-oracle",
+			],
+		},
+		[
+			{
+				id: "oracle",
+				source: "npm:@diegopetrucci/pi-oracle@0.1.12",
+			},
+		],
+	);
+
+	runMerge(fixture);
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.packages, [
+		harnessPackage,
+		"npm:@diegopetrucci/pi-oracle@0.1.12",
+	]);
+	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, ["npm:@diegopetrucci/pi-oracle"]);
+});
+
+test("merge updates managed pinned npm default package sources when the bundled manifest pin changes", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				"npm:@diegopetrucci/pi-oracle@0.1.12",
+			],
+			tlh: {
+				defaultExtensionProvenance: {
+					managedPackageIdentities: ["npm:@diegopetrucci/pi-oracle"],
+				},
+			},
+		},
+		[
+			{
+				id: "oracle",
+				source: "npm:@diegopetrucci/pi-oracle@0.1.13",
+			},
+		],
+	);
+
+	runMerge(fixture);
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.packages, [
+		harnessPackage,
+		"npm:@diegopetrucci/pi-oracle@0.1.13",
+	]);
+	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, ["npm:@diegopetrucci/pi-oracle"]);
+});
+
+test("merge preserves older pinned npm package sources without managed default provenance", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				"npm:@diegopetrucci/pi-oracle@0.1.12",
+			],
+		},
+		[
+			{
+				id: "oracle",
+				source: "npm:@diegopetrucci/pi-oracle@0.1.13",
+			},
+		],
+	);
+
+	const firstOutput = runMerge(fixture, { quiet: false });
+	const afterFirst = readJson(fixture.settings);
+	const afterFirstRaw = readFileSync(fixture.settings, "utf8");
+
+	assert.doesNotMatch(firstOutput, /update default extension package source/);
+	assert.deepEqual(afterFirst.packages, [
+		harnessPackage,
+		"npm:@diegopetrucci/pi-oracle@0.1.12",
+	]);
+	assert.deepEqual(afterFirst.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [], []);
+
+	const secondOutput = runMerge(fixture, { quiet: false });
+	const afterSecond = readJson(fixture.settings);
+
+	assert.match(secondOutput, /No settings changes needed\./);
+	assert.doesNotMatch(secondOutput, /update default extension package source/);
+	assert.equal(readFileSync(fixture.settings, "utf8"), afterFirstRaw);
+	assert.deepEqual(afterSecond.packages, [
+		harnessPackage,
+		"npm:@diegopetrucci/pi-oracle@0.1.12",
+	]);
+	assert.deepEqual(afterSecond.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [], []);
+});
+
 test("critical source updates dedupe stale same-identity filtered packages", () => {
 	const criticalSource = "git:github.com/example/pi-critical@v2";
 	const fixture = tempFixture(
