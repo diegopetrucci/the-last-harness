@@ -198,6 +198,20 @@ test("check-package-versions rejects unversioned bundled npm defaults", () => {
 	assert.match(result.stderr, /default-extensions\.json#helper\.source must pin npm defaults to an exact version, found "npm:helper"/);
 });
 
+test("check-package-versions rejects bundled default sources that are neither npm nor git", () => {
+	const fixture = tempFixture({
+		packageVersion: "1.2.3",
+		defaultExtensions: [
+			{ id: "local-helper", source: "./extensions/local-helper" },
+		],
+	});
+
+	const result = runCheckPackageVersions(fixture);
+
+	assert.equal(result.status, 1);
+	assert.match(result.stderr, /default-extensions\.json#local-helper\.source must use a pinned npm or git source, found "\.\/extensions\/local-helper"/);
+});
+
 test("check-package-versions rejects bundled git defaults without refs", () => {
 	const fixture = tempFixture({
 		packageVersion: "1.2.3",

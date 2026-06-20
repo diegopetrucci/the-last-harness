@@ -333,7 +333,10 @@ function validateDefaultExtensionPins(defaultExtensionsPath, problems) {
 		}
 
 		const gitSource = parseGitSource(extension.source);
-		if (!gitSource) continue;
+		if (!gitSource) {
+			problems.push(`${label} must use a pinned npm or git source, found ${JSON.stringify(extension.source)}`);
+			continue;
+		}
 		if (!gitSource.ref) {
 			problems.push(`${label} must pin git defaults to an explicit ref, found ${JSON.stringify(extension.source)}`);
 			continue;
