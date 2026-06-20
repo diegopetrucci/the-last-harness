@@ -31,8 +31,8 @@ config under ~/.pi/agent is not modified.
 
 Requirements:
   Node.js >= ${TLH_MIN_NODE_VERSION} on PATH
-  Upstream Pi >= ${TLH_MIN_PI_VERSION} and <= ${TLH_PINNED_PI_VERSION} (installed per-user under ~/.local when missing;
-  install failures stop with an actionable error; incompatible versions stop with pinned repair guidance)
+  Upstream Pi ${TLH_PINNED_PI_VERSION} (installed into a private TLH runtime at ~/.the-last-harness/runtime;
+  a global pi is never used or modified; install or repair failures stop with an actionable error)
 USAGE
   cat <<'USAGE'
 
@@ -598,11 +598,12 @@ dry_run_without_stage1() {
   log "Dry run only; no support files were downloaded."
   log ""
   log "Done. The Last Harness dry run completed without downloads or writes."
-  log "Start with: PI_CODING_AGENT_DIR=\"${agent_dir}\" pi"
   if [[ "${NO_WRAPPER}" == "true" ]]; then
     log "Wrapper creation would be skipped (--no-wrapper)."
+    log "Start with: PI_CODING_AGENT_DIR=\"${agent_dir}\" \"${agent_dir%/*}/runtime/bin/pi\""
   else
     log "Wrapper path would be: ${bin_dir}/${WRAPPER_NAME}"
+    log "Start with: ${WRAPPER_NAME}"
   fi
   log "Normal Pi config was not modified: ~/.pi/agent"
 }
