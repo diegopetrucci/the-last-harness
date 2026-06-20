@@ -147,10 +147,20 @@ function runStage1LocalPackageInstall(t, {
 	const fakebin = join(root, "fakebin");
 	const packageDir = join(root, "package-source");
 	const piLog = join(root, "pi.log");
+	const templateDir = join(root, "pi-template");
+	const npmLog = join(root, "npm.log");
 	mkdirSync(homeDir, { recursive: true });
 	mkdirSync(packageDir, { recursive: true });
 	writeFakeTk(fakebin);
 	writeLoggingPi(fakebin, piLog);
+	// Fake npm so installPiIfNeeded never hits the network. The fake npm copies a
+	// template pi (reporting the pinned version) into the private runtime path.
+	writeLoggingPi(templateDir, piLog, TLH_PINNED_PI_VERSION);
+	writeFakeNpmInstaller(fakebin, {
+		npmLog,
+		templatePiPath: join(templateDir, "pi"),
+		installedPiPath: join(dirname(agentDir), "runtime", "bin", "pi"),
+	});
 	if (existingLibrarianConfig !== undefined) {
 		mkdirSync(join(agentDir, "extensions"), { recursive: true });
 		writeFileSync(join(agentDir, "extensions", "librarian.json"), JSON.stringify(existingLibrarianConfig, null, 2));

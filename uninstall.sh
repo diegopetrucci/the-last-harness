@@ -630,22 +630,81 @@ fi
 
 # ── disambiguate what pi/runtime removal means (new-model vs legacy) ───────────
 #
-#  private runtime present  → rm -rf RUNTIME_DIR (always safe; TLH-exclusive dir)
-#  legacy ~/.local/bin/pi   → npm uninstall (ONLY with --force-include-pi; never auto)
-#  neither exists           → no-op (skip with reason)
+#  private runtime present with TLH layout  → rm -rf RUNTIME_DIR (verified TLH-owned)
+#  private runtime present, no TLH layout   → skip with warning (may be unrelated dir)
+#  legacy ~/.local/bin/pi                   → npm uninstall (ONLY with --force-include-pi; never auto)
+#  neither exists                           → no-op (skip with reason)
 #
 # Safety invariant: never delete ~/.local/bin/pi without --force-include-pi.
 # The uninstall script cannot snapshot pre-install state and therefore cannot
 # know whether ~/.local/bin/pi belongs to TLH or the user.  It is always kept
 # unless the operator explicitly passes --force-include-pi.
+#
+# Ownership invariant for RUNTIME_DIR: only rm -rf the private runtime when it
+# carries the layout produced by: npm install -g --ignore-scripts --prefix <prefix>
+# That places the launcher at <prefix>/bin/pi and the package directory at
+# <prefix>/lib/node_modules/@earendil-works/pi-coding-agent. A pre-existing
+# unrelated 'runtime' sibling under a custom --agent-dir parent would not have
+# this layout, so its absence is a safe signal that the dir is not TLH-owned.
+#
+# Exclusivity invariant for RUNTIME_DIR: even when the positive layout check
+# passes, we additionally require that ALL top-level entries in RUNTIME_DIR are
+# members of the npm-managed set {bin, lib, node-compile-cache}.  npm 11.x
+# with --prefix creates exactly these three directories; no dotfiles at top
+# level (confirmed: npm 11.16.0 + @earendil-works/pi-coding-agent@0.79.7).
+# Any unexpected entry signals co-located user content — skip removal (fail-safe).
 
 PI_REMOVE_MODE="none"   # "runtime" | "legacy" | "none"
 PI_UNINSTALL_DISPLAY=""
 
 if [[ "${REMOVE_PI}" == "true" ]]; then
   if [[ -d "${RUNTIME_DIR}" ]]; then
-    PI_REMOVE_MODE="runtime"
-    PI_UNINSTALL_DISPLAY="rm -rf \"${RUNTIME_DIR}\""
+    # Ownership check before removal: verify the TLH pi layout is present.
+    # npm install -g --ignore-scripts --prefix <RUNTIME_DIR> PI_PACKAGE_NAME
+    # places the launcher at <RUNTIME_DIR>/bin/pi and the package directory at
+    # <RUNTIME_DIR>/lib/node_modules/@earendil-works/pi-coding-agent.
+    # Both must exist; an unrelated sibling 'runtime' dir would not have them.
+    if [[ -f "${RUNTIME_BIN}" && -d "${RUNTIME_DIR}/lib/node_modules/${PI_PACKAGE_NAME}" ]]; then
+      # Positive layout check passed.  Now verify the exclusivity invariant:
+      # all top-level entries must be in the npm-managed set {bin, lib, node-compile-cache}.
+      # Use shopt dotglob+nullglob so a single '*' matches ALL real entries —
+      # including '.foo' and '..foo' filenames — while never matching '.' or '..'.
+      # Save and restore prior shopt state so we don't leak options into the rest
+      # of the script; `eval "${_prev_shopt_state}"` is safe because shopt -p
+      # output is always of the form 'shopt -s|-u <name>'.
+      _prev_shopt_state="$(shopt -p dotglob nullglob || true)"
+      shopt -s dotglob nullglob
+      _runtime_exclusive=true
+      _runtime_unexpected_entry=""
+      for _runtime_entry in "${RUNTIME_DIR}"/*; do
+        [[ -e "${_runtime_entry}" || -L "${_runtime_entry}" ]] || continue
+        _runtime_basename="${_runtime_entry##*/}"
+        case "${_runtime_basename}" in
+          bin|lib|node-compile-cache) ;;
+          *)
+            _runtime_exclusive=false
+            _runtime_unexpected_entry="${_runtime_entry}"
+            break
+            ;;
+        esac
+      done
+      eval "${_prev_shopt_state}"   # restore dotglob+nullglob to their prior state
+      if [[ "${_runtime_exclusive}" == "true" ]]; then
+        PI_REMOVE_MODE="runtime"
+        PI_UNINSTALL_DISPLAY="rm -rf \"${RUNTIME_DIR}\""
+      else
+        # Exclusivity check failed: unexpected entry found alongside TLH pi layout.
+        # Do NOT rm -rf: protect co-located user files.
+        REMOVE_PI=false
+        PI_SKIP_REASON="${RUNTIME_DIR} contains unexpected top-level entries alongside the TLH pi layout (e.g. ${_runtime_unexpected_entry}); not removing to protect co-located files. To remove TLH pi manually: rm -rf \"${RUNTIME_DIR}\""
+      fi
+    else
+      # RUNTIME_DIR exists but is missing the expected TLH pi layout.  It may be
+      # a pre-existing unrelated directory whose parent happens to be the parent
+      # of a custom --agent-dir.  Skip removal to prevent data loss.
+      REMOVE_PI=false
+      PI_SKIP_REASON="${RUNTIME_DIR} exists but is not a recognisable TLH pi runtime (expected ${RUNTIME_BIN} and ${RUNTIME_DIR}/lib/node_modules/${PI_PACKAGE_NAME}). To remove manually if TLH-owned: rm -rf \"${RUNTIME_DIR}\""
+    fi
   elif [[ -f "${HOME}/.local/bin/pi" ]]; then
     if [[ "${FORCE_INCLUDE_PI}" == "true" ]]; then
       PI_REMOVE_MODE="legacy"
