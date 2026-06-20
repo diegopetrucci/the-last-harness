@@ -2,12 +2,13 @@
 
 All notable changes to The Last Harness will be documented in this file.
 
-## [Unreleased]
+## [0.23.0] - 2026-06-20
 
 ### Changed
 
+- TLH now runs a self-contained pinned Pi runtime at `~/.the-last-harness/runtime`, exec'd by absolute path and isolated from any global `~/.local` Pi install. The installer and uninstaller never auto-remove `~/.local/bin/pi`; the uninstaller removes the private runtime when it is TLH-owned, and only touches a `~/.local` Pi under the explicit `--force-include-pi` flag.
 - Bundled installer-managed runtime dependencies outside `package.json` are now explicitly pinned too: bundled npm default extensions in `config/default-extensions.json` use concrete versions, existing TLH git-fork defaults stay tag-pinned, and managed Gnosis now defaults to the pinned `v0.5.3` release instead of resolving `latest` unless you override it.
-- TLH now suppresses the upstream Pi “Update Available — Run `pi update`” launch banner. Because TLH pins Pi to a supported version window, the upstream update prompt is misleading noise — `tlh update` is the correct update path. TLH’s own update notifications are unaffected.
+- TLH now suppresses the upstream Pi "Update Available — Run `pi update`" launch banner. Because TLH pins Pi to a supported version window, the upstream update prompt is misleading noise — `tlh update` is the correct update path. TLH's own update notifications are unaffected.
 
 ## [0.22.2] - 2026-06-19
 
@@ -37,9 +38,9 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
-- The TLH git commit footer is now coauthor-only: `Co-authored-by: The Last Harness <hi@thelastharness.com>`. The decorative `🤖 Generated with …` heading line has been removed. GitHub and git log co-authorship attribution is unchanged. The attribution guard now requires a blank line before the coauthor trailer (or a footer-only message) to match git trailer parsing rules; commit messages with only a single newline before the trailer are rejected.
+- The TLH git commit footer is now coauthor-only: `Co-authored-by: The Last Harness <hi@thelastharness.com>`. The decorative `🤖 Generated with ...` heading line has been removed. GitHub and git log co-authorship attribution is unchanged. The attribution guard now requires a blank line before the coauthor trailer (or a footer-only message) to match git trailer parsing rules; commit messages with only a single newline before the trailer are rejected.
 - TLH now requires upstream Pi >=0.79.1. Installer checks, wrapper defaults, package metadata, and current install/update docs all use the raised runtime floor.
-- The compact (non-expanded) subagent view now hides the artifact-path line — press Ctrl+O for the expanded view that still shows it — and renders the current tool command (e.g. long `bash` invocations) in full, wrapped to terminal width and capped at 3 lines with `…` on overflow instead of mid-flag `...` truncation.
+- The compact (non-expanded) subagent view now hides the artifact-path line - press Ctrl+O for the expanded view that still shows it - and renders the current tool command (e.g. long `bash` invocations) in full, wrapped to terminal width and capped at 3 lines with `...` on overflow instead of mid-flag `...` truncation.
 - `code-reviewer` now prefers an available opposite provider for review independence: Anthropic sessions try the OpenAI Codex subscription provider when it is available, OpenAI/OpenAI-Codex sessions try Anthropic Opus when it is available, and OpenAI API-only setups are not forced onto unavailable Codex-only defaults.
 
 ### Fixed
@@ -78,7 +79,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Bundled `pi-subagents` now pins `git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-5`.
 - The `tlh` wrapper now pins the absolute `pi` path at install/update time for faster launch; the minimum Pi version (>=0.76.0) is enforced at install/update time rather than on every `tlh` invocation. If the pinned binary is later moved away or removed, the wrapper falls back to PATH discovery automatically; if it is replaced in place with an unsupported version, run `tlh update` to re-validate and repin.
 - The footer no longer shows the model provider name; the provider prefix is always hidden.
-- Context cap is now a built-in TLH feature (no longer a bundled default extension). The bundled `@diegopetrucci/pi-context-cap` default extension has been removed and will be force-uninstalled from existing isolated profiles on the next `tlh` install or update. Previous `tlh.disabledDefaultExtensions: ["context-cap"]` opt-outs are intentionally **not** preserved — those entries are silently pruned on upgrade. To opt out of the cap again, run `/toggle-context-cap` or set `tlh.contextCap.disabled: true` in your isolated settings.
+- Context cap is now a built-in TLH feature (no longer a bundled default extension). The bundled `@diegopetrucci/pi-context-cap` default extension has been removed and will be force-uninstalled from existing isolated profiles on the next `tlh` install or update. Previous `tlh.disabledDefaultExtensions: ["context-cap"]` opt-outs are intentionally **not** preserved - those entries are silently pruned on upgrade. To opt out of the cap again, run `/toggle-context-cap` or set `tlh.contextCap.disabled: true` in your isolated settings.
 - TLH now records bundled default-extension provenance in `tlh.defaultExtensionProvenance.managedPackageIdentities` so retired-default cleanup can distinguish TLH-managed packages from later manual re-adds. Older installs migrate this metadata on update; legacy Plannotator is still cleaned up once during that migration.
 - `tlh` install/update now force-removes the retired bundled `permission-gate` and `confirm-destructive` confirmation packages from existing isolated TLH profiles. New installs already omit both packages, and this cleanup only touches the isolated TLH profile (for example `~/.the-last-harness/agent/settings.json`), not normal Pi config under `~/.pi/agent`.
 - Renamed the first-party git-diff review command/docs/UI copy to `/annotate-git-diff` and the packaged extension name to `annotate-git-diff`; historical attribution still references the upstream `pi-extension-diff-review` and `pi-diff-review` packages.
@@ -166,7 +167,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Bundled TLH `pi-rtk` default now points at the no-footer fork tag, preserving `/rtk` repo-tooling behavior without adding a persistent footer indicator.
 - Bundled `pi-web-access` now defers to existing upstream/manual `pi-web-access` installs during normal merges and updates, avoiding duplicate `web_search`/`fetch_content`/`get_search_content` providers unless you explicitly switch to the TLH fork.
 - Bundled critical `pi-subagents` now pins `git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-1`, matching the merged fork tag and the reduced bundled slash-command surface (`/subagents-doctor` only).
-- Footer restructured into three logical lines: working directory/git (unchanged), a single flowing `agent: … • model • thinking • context` line, and an optional session-stats line showing cost and/or subscription usage. Empty lines are omitted entirely.
+- Footer restructured into three logical lines: working directory/git (unchanged), a single flowing `agent: ... • model • thinking • context` line, and an optional session-stats line showing cost and/or subscription usage. Empty lines are omitted entirely.
 - Subscription usage session label now reads e.g. `5h session 27% used` (was `5h 27% used`).
 - Removed the `/tlh`, `/harness`, `/agent`, and `/architect` TLH slash commands. Use `/switch-primary-agent` for explicit primary-agent status/default controls, or `Shift+Tab` to cycle the active primary.
 - Non-stable-install track warning is now rendered in the TLH header instead of as a standalone launch notice, and the launch notice copy was simplified.
