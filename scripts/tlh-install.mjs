@@ -66,7 +66,7 @@ const MIN_NODE_VERSION = "22.19.0";
 const MIN_PI_VERSION = "0.79.1";
 const MAX_PI_VERSION = PINNED_PI_VERSION;
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
-const DEFAULT_GNOSIS_VERSION = "latest";
+const DEFAULT_GNOSIS_VERSION = "0.5.3";
 const DEFAULT_WRAPPER_NAME = "tlh";
 const VALID_UPDATE_TRACKS = new Set(["latest-release", "pinned-tag", "ref", "custom"]);
 const COMMAND_MAX_BUFFER = 20 * 1024 * 1024;
@@ -148,7 +148,7 @@ Environment overrides:
   TLH_UPDATE_TRACK     Update track for future tlh update
   TLH_PACKAGE_SOURCE   Package source passed to \`pi install\`
   TLH_RAW_BASE         Base URL for installer support files
-  TLH_GNOSIS_VERSION   Gnosis version to install (default: latest)
+  TLH_GNOSIS_VERSION   Gnosis version to install (default: 0.5.3)
   TLH_GNOSIS_REPO      Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
 `;
 }
