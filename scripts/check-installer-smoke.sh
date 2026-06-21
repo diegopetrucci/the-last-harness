@@ -131,16 +131,30 @@ EOF_MANAGED_WRAPPER
   chmod +x "${wrapper_path}"
 }
 
+write_runtime_ownership_marker() {
+  # Write a valid .tlh-runtime-owned marker into an existing runtime dir.
+  # runtimeAbsPath is derived via pwd -P so macOS /var -> /private/var resolves
+  # correctly and matches what Node.js realpathSync returns in tlh-install.mjs.
+  local runtime_dir="$1"
+  local _marker_abs
+  _marker_abs="$(cd "${runtime_dir}" >/dev/null 2>&1 && pwd -P)"
+  printf '{"schemaVersion":1,"packageName":"@earendil-works/pi-coding-agent","runtimeAbsPath":"%s","origin":"created"}' \
+    "${_marker_abs}" >"${runtime_dir}/.tlh-runtime-owned"
+}
+
 write_tlh_pi_runtime() {
   # Seed the TLH pi runtime layout produced by:
   #   npm install -g --ignore-scripts --prefix <runtime_dir> @earendil-works/pi-coding-agent
   # Presence of both runtime_dir/bin/pi and
   # runtime_dir/lib/node_modules/@earendil-works/pi-coding-agent is the ownership
   # predicate checked by the uninstaller before rm -rf.
+  # A valid .tlh-runtime-owned marker is also written so the installer's and
+  # uninstaller's ownership gates both pass.
   local runtime_dir="$1"
   mkdir -p "${runtime_dir}/bin" "${runtime_dir}/lib/node_modules/@earendil-works/pi-coding-agent"
   printf '#!/bin/sh\n' >"${runtime_dir}/bin/pi"
   chmod +x "${runtime_dir}/bin/pi"
+  write_runtime_ownership_marker "${runtime_dir}"
 }
 
 assert_pi_commands_isolated() {
@@ -1384,6 +1398,10 @@ printf 'fake git should not run during dry-run\n' >&2
 exit 98
 EOF_PRESENT_GIT
   chmod +x "${present_fakebin}/sh" "${present_fakebin}/npm" "${present_fakebin}/git"
+  # Write a valid ownership marker for the pre-seeded runtime so the installer's
+  # assertRuntimePrefixOwnedOrEmpty gate passes and the reuse path runs.
+  # runtimeAbsPath uses pwd -P so macOS /var -> /private/var matches Node.js realpathSync.
+  write_runtime_ownership_marker "${present_dir}/runtime"
   # Seed a valid private runtime pi (pinned version) at the expected location.
   cat >"${present_runtime_bin}/pi" <<'EOF_PRESENT_RUNTIME_PI'
 #!/bin/sh

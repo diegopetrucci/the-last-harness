@@ -16,6 +16,7 @@ QUIET=false
 VERBOSE=false
 PI_PACKAGE_NAME="@earendil-works/pi-coding-agent"
 PINNED_PI_VERSION="0.79.7"
+RUNTIME_MARKER_FILENAME=".tlh-runtime-owned"
 TLH_WRAPPER_MARKER_LINE="# Managed by The Last Harness installer"
 
 # ── output helpers ─────────────────────────────────────────────────────────────
@@ -630,45 +631,89 @@ fi
 
 # ── disambiguate what pi/runtime removal means (new-model vs legacy) ───────────
 #
-#  private runtime present with TLH layout  → rm -rf RUNTIME_DIR (verified TLH-owned)
-#  private runtime present, no TLH layout   → skip with warning (may be unrelated dir)
-#  legacy ~/.local/bin/pi                   → npm uninstall (ONLY with --force-include-pi; never auto)
-#  neither exists                           → no-op (skip with reason)
+#  private runtime — TLH-owned (valid marker + layout)  → rm -rf RUNTIME_DIR
+#  private runtime — unowned / shared / symlinked       → skip with conditional hint
+#  legacy ~/.local/bin/pi                               → npm uninstall (--force-include-pi only)
+#  neither exists                                       → no-op (skip with reason)
 #
 # Safety invariant: never delete ~/.local/bin/pi without --force-include-pi.
 # The uninstall script cannot snapshot pre-install state and therefore cannot
 # know whether ~/.local/bin/pi belongs to TLH or the user.  It is always kept
 # unless the operator explicitly passes --force-include-pi.
 #
-# Ownership invariant for RUNTIME_DIR: only rm -rf the private runtime when it
-# carries the layout produced by: npm install -g --ignore-scripts --prefix <prefix>
-# That places the launcher at <prefix>/bin/pi and the package directory at
-# <prefix>/lib/node_modules/@earendil-works/pi-coding-agent. A pre-existing
-# unrelated 'runtime' sibling under a custom --agent-dir parent would not have
-# this layout, so its absence is a safe signal that the dir is not TLH-owned.
+# Ownership gate for RUNTIME_DIR (ALL must hold to rm -rf):
+#   1. Valid RUNTIME_MARKER_FILENAME marker: parseable JSON, schemaVersion=1,
+#      packageName match, origin in {created, migrated}.  Fail-closed: any
+#      missing / malformed / symlinked / unreadable / schema-mismatched state
+#      → treat as no valid claim → SKIP.
+#   2. Recorded runtimeAbsPath equals realpath of RUNTIME_DIR.  Defends
+#      against marker-copied-into-foreign-dir and relocation.
+#   3. Neither RUNTIME_DIR nor the marker file is a symlink.
+#   4. Positive pi layout present: bin/pi and lib/node_modules/<PI_PACKAGE_NAME>.
 #
-# Exclusivity invariant for RUNTIME_DIR: even when the positive layout check
-# passes, we additionally require that ALL top-level entries in RUNTIME_DIR are
-# members of the npm-managed set {bin, lib, node-compile-cache}.  npm 11.x
-# with --prefix creates exactly these three directories; no dotfiles at top
-# level (confirmed: npm 11.16.0 + @earendil-works/pi-coding-agent@0.79.7).
-# Any unexpected entry signals co-located user content — skip removal (fail-safe).
+# Exclusivity check (advisory defense-in-depth, DEMOTED from gate to tripwire):
+#   Run after all four gate conditions pass.  Unexpected top-level entries can
+#   only DOWNGRADE to SKIP — never upgrade a failed gate to delete.
+#   RUNTIME_MARKER_FILENAME is in the allow-list so a properly marked runtime
+#   is not wrongly tripped by the marker dotfile.
 
 PI_REMOVE_MODE="none"   # "runtime" | "legacy" | "none"
 PI_UNINSTALL_DISPLAY=""
 
 if [[ "${REMOVE_PI}" == "true" ]]; then
   if [[ -d "${RUNTIME_DIR}" ]]; then
-    # Ownership check before removal: verify the TLH pi layout is present.
-    # npm install -g --ignore-scripts --prefix <RUNTIME_DIR> PI_PACKAGE_NAME
-    # places the launcher at <RUNTIME_DIR>/bin/pi and the package directory at
-    # <RUNTIME_DIR>/lib/node_modules/@earendil-works/pi-coding-agent.
-    # Both must exist; an unrelated sibling 'runtime' dir would not have them.
-    if [[ -f "${RUNTIME_BIN}" && -d "${RUNTIME_DIR}/lib/node_modules/${PI_PACKAGE_NAME}" ]]; then
-      # Positive layout check passed.  Now verify the exclusivity invariant:
-      # all top-level entries must be in the npm-managed set {bin, lib, node-compile-cache}.
+    # ── ownership gate ────────────────────────────────────────────────────────
+    _runtime_marker_file="${RUNTIME_DIR}/${RUNTIME_MARKER_FILENAME}"
+    _runtime_marker_valid=false
+    _runtime_gate_skip_reason=""
+
+    if [[ -L "${RUNTIME_DIR}" ]]; then
+      _runtime_gate_skip_reason="${RUNTIME_DIR} is a symlink; cannot verify TLH ownership"
+    elif [[ -L "${_runtime_marker_file}" ]]; then
+      _runtime_gate_skip_reason="ownership marker ${_runtime_marker_file} is a symlink; cannot verify TLH ownership"
+    elif [[ ! -f "${_runtime_marker_file}" ]]; then
+      _runtime_gate_skip_reason="no TLH ownership marker found at ${_runtime_marker_file}; ${RUNTIME_DIR} may not be TLH-owned"
+    else
+      # Parse marker JSON (fail-closed; no jq, no node — uninstaller is self-contained).
+      # JSON.stringify() produces compact single-line output; each field is extracted by
+      # a BRE sed pattern.  An empty result for any field means absent/malformed → SKIP.
+      _marker_raw="$(cat "${_runtime_marker_file}" 2>/dev/null || true)"
+      _mver="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"schemaVersion"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)"
+      _mpkg="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"packageName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+      _mpath="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"runtimeAbsPath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+      _morigin="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"origin"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+
+      if [[ "${_mver}" != "1" ]]; then
+        _runtime_gate_skip_reason="ownership marker at ${_runtime_marker_file} has invalid or missing schemaVersion (expected 1, got '${_mver}')"
+      elif [[ "${_mpkg}" != "${PI_PACKAGE_NAME}" ]]; then
+        _runtime_gate_skip_reason="ownership marker at ${_runtime_marker_file} packageName mismatch (expected '${PI_PACKAGE_NAME}', got '${_mpkg}')"
+      elif [[ "${_morigin}" != "created" && "${_morigin}" != "migrated" ]]; then
+        _runtime_gate_skip_reason="ownership marker at ${_runtime_marker_file} has unrecognised origin '${_morigin}' (expected created or migrated)"
+      elif [[ -z "${_mpath}" ]]; then
+        _runtime_gate_skip_reason="ownership marker at ${_runtime_marker_file} has empty runtimeAbsPath"
+      else
+        _runtime_real="$(realpath_for_compare "${RUNTIME_DIR}")"
+        if [[ "${_mpath}" != "${_runtime_real}" ]]; then
+          _runtime_gate_skip_reason="ownership marker runtimeAbsPath '${_mpath}' does not match realpath '${_runtime_real}' of ${RUNTIME_DIR}"
+        else
+          _runtime_marker_valid=true
+        fi
+      fi
+    fi
+
+    if [[ "${_runtime_marker_valid}" != "true" ]]; then
+      # Ownership gate failed — SKIP with conditional manual-removal hint.
+      REMOVE_PI=false
+      PI_SKIP_REASON="${_runtime_gate_skip_reason}. If this is TLH's private runtime and you no longer need its contents, run: rm -rf \"${RUNTIME_DIR}\"; otherwise leave it"
+    elif [[ ! -f "${RUNTIME_BIN}" || ! -d "${RUNTIME_DIR}/lib/node_modules/${PI_PACKAGE_NAME}" ]]; then
+      # Marker valid but positive pi layout absent.
+      REMOVE_PI=false
+      PI_SKIP_REASON="${RUNTIME_DIR} has a valid TLH ownership marker but the expected pi layout is missing (expected ${RUNTIME_BIN} and ${RUNTIME_DIR}/lib/node_modules/${PI_PACKAGE_NAME}). If this is TLH's private runtime and you no longer need its contents, run: rm -rf \"${RUNTIME_DIR}\"; otherwise leave it"
+    else
+      # All four gate conditions passed.  Exclusivity check (advisory only):
+      # unexpected top-level entries can DOWNGRADE to SKIP, never upgrade to delete.
       # Use shopt dotglob+nullglob so a single '*' matches ALL real entries —
-      # including '.foo' and '..foo' filenames — while never matching '.' or '..'.
+      # including dotfiles — while never matching '.' or '..'.
       # Save and restore prior shopt state so we don't leak options into the rest
       # of the script; `eval "${_prev_shopt_state}"` is safe because shopt -p
       # output is always of the form 'shopt -s|-u <name>'.
@@ -680,7 +725,7 @@ if [[ "${REMOVE_PI}" == "true" ]]; then
         [[ -e "${_runtime_entry}" || -L "${_runtime_entry}" ]] || continue
         _runtime_basename="${_runtime_entry##*/}"
         case "${_runtime_basename}" in
-          bin|lib|node-compile-cache) ;;
+          bin|lib|node-compile-cache|"${RUNTIME_MARKER_FILENAME}") ;;
           *)
             _runtime_exclusive=false
             _runtime_unexpected_entry="${_runtime_entry}"
@@ -693,17 +738,11 @@ if [[ "${REMOVE_PI}" == "true" ]]; then
         PI_REMOVE_MODE="runtime"
         PI_UNINSTALL_DISPLAY="rm -rf \"${RUNTIME_DIR}\""
       else
-        # Exclusivity check failed: unexpected entry found alongside TLH pi layout.
-        # Do NOT rm -rf: protect co-located user files.
+        # Exclusivity tripwire fired (advisory): unexpected entry found.
+        # Downgrade to SKIP to protect co-located files.
         REMOVE_PI=false
-        PI_SKIP_REASON="${RUNTIME_DIR} contains unexpected top-level entries alongside the TLH pi layout (e.g. ${_runtime_unexpected_entry}); not removing to protect co-located files. To remove TLH pi manually: rm -rf \"${RUNTIME_DIR}\""
+        PI_SKIP_REASON="${RUNTIME_DIR} contains unexpected top-level entries alongside the TLH pi layout (e.g. ${_runtime_unexpected_entry}); not removing to protect co-located files. If this is TLH's private runtime and you no longer need its contents, run: rm -rf \"${RUNTIME_DIR}\"; otherwise leave it"
       fi
-    else
-      # RUNTIME_DIR exists but is missing the expected TLH pi layout.  It may be
-      # a pre-existing unrelated directory whose parent happens to be the parent
-      # of a custom --agent-dir.  Skip removal to prevent data loss.
-      REMOVE_PI=false
-      PI_SKIP_REASON="${RUNTIME_DIR} exists but is not a recognisable TLH pi runtime (expected ${RUNTIME_BIN} and ${RUNTIME_DIR}/lib/node_modules/${PI_PACKAGE_NAME}). To remove manually if TLH-owned: rm -rf \"${RUNTIME_DIR}\""
     fi
   elif [[ -f "${HOME}/.local/bin/pi" ]]; then
     if [[ "${FORCE_INCLUDE_PI}" == "true" ]]; then
