@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
 	copyFileSync,
@@ -624,10 +625,13 @@ function writeRuntimeMarker(config, prefix, origin) {
 		runtimeAbsPath: realPrefix,
 		origin,
 	});
-	// Atomic write: temp file in the same directory, then rename.
-	const tempFile = `${markerFile}.tmp`;
+	// Atomic write: unique temp file in the same directory, then rename.
+	// randomUUID() avoids a predictable path; flag "wx" (O_CREAT|O_EXCL) refuses
+	// to follow or overwrite any pre-existing file or symlink, closing the TOCTOU
+	// symlink-follow window on the temp path.
+	const tempFile = join(dirname(markerFile), `.tlh-runtime-owned.${randomUUID()}.tmp`);
 	try {
-		writeFileSync(tempFile, markerContent, "utf8");
+		writeFileSync(tempFile, markerContent, { encoding: "utf8", flag: "wx", mode: 0o600 });
 		renameSync(tempFile, markerFile);
 	} catch (error) {
 		rmSync(tempFile, { force: true });

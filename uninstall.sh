@@ -708,14 +708,18 @@ if [[ -d "${RUNTIME_DIR}" && "${KEEP_PI}" != "true" ]]; then
     fi
   fi
 
+  # Build a safely shell-quoted removal hint once; printf '%q' handles any
+  # special characters in RUNTIME_DIR (spaces, quotes, $, backticks, etc.).
+  _runtime_rm_hint="$(printf 'rm -rf -- %q' "${RUNTIME_DIR}")"
+
   if [[ "${_runtime_marker_valid}" != "true" ]]; then
     # Ownership gate failed — SKIP with conditional manual-removal hint.
     REMOVE_PI=false
-    PI_SKIP_REASON="${_runtime_gate_skip_reason}. If this is TLH's private runtime and you no longer need its contents, run: rm -rf \"${RUNTIME_DIR}\"; otherwise leave it"
+    PI_SKIP_REASON="${_runtime_gate_skip_reason}. If this is TLH's private runtime and you no longer need its contents, run: ${_runtime_rm_hint}; otherwise leave it"
   elif [[ ! -f "${RUNTIME_BIN}" || ! -d "${RUNTIME_DIR}/lib/node_modules/${PI_PACKAGE_NAME}" ]]; then
     # Marker valid but positive pi layout absent.
     REMOVE_PI=false
-    PI_SKIP_REASON="${RUNTIME_DIR} has a valid TLH ownership marker but the expected pi layout is missing (expected ${RUNTIME_BIN} and ${RUNTIME_DIR}/lib/node_modules/${PI_PACKAGE_NAME}). If this is TLH's private runtime and you no longer need its contents, run: rm -rf \"${RUNTIME_DIR}\"; otherwise leave it"
+    PI_SKIP_REASON="${RUNTIME_DIR} has a valid TLH ownership marker but the expected pi layout is missing (expected ${RUNTIME_BIN} and ${RUNTIME_DIR}/lib/node_modules/${PI_PACKAGE_NAME}). If this is TLH's private runtime and you no longer need its contents, run: ${_runtime_rm_hint}; otherwise leave it"
   else
     # All four gate conditions passed.  Exclusivity check (advisory only):
     # unexpected top-level entries can DOWNGRADE to SKIP, never upgrade to delete.
@@ -750,7 +754,7 @@ if [[ -d "${RUNTIME_DIR}" && "${KEEP_PI}" != "true" ]]; then
       # Exclusivity tripwire fired (advisory): unexpected entry found.
       # Downgrade to SKIP to protect co-located files.
       REMOVE_PI=false
-      PI_SKIP_REASON="${RUNTIME_DIR} contains unexpected top-level entries alongside the TLH pi layout (e.g. ${_runtime_unexpected_entry}); not removing to protect co-located files. If this is TLH's private runtime and you no longer need its contents, run: rm -rf \"${RUNTIME_DIR}\"; otherwise leave it"
+      PI_SKIP_REASON="${RUNTIME_DIR} contains unexpected top-level entries alongside the TLH pi layout (e.g. ${_runtime_unexpected_entry}); not removing to protect co-located files. If this is TLH's private runtime and you no longer need its contents, run: ${_runtime_rm_hint}; otherwise leave it"
     fi
   fi
 elif [[ "${REMOVE_PI}" == "true" ]]; then
