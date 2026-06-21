@@ -1,15 +1,19 @@
 #!/usr/bin/env node
+import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
 	copyFileSync,
 	existsSync,
 	mkdirSync,
+	readdirSync,
 	readFileSync,
 	realpathSync,
+	renameSync,
 	rmSync,
+	writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -66,9 +70,34 @@ const MIN_NODE_VERSION = "22.19.0";
 const MIN_PI_VERSION = "0.79.1";
 const MAX_PI_VERSION = PINNED_PI_VERSION;
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
-const DEFAULT_GNOSIS_VERSION = "latest";
+const DEFAULT_GNOSIS_VERSION = "0.5.3";
 const DEFAULT_WRAPPER_NAME = "tlh";
 const VALID_UPDATE_TRACKS = new Set(["latest-release", "pinned-tag", "ref", "custom"]);
+// Ownership marker file written into the runtime prefix by TLH on every
+// successful provision/repair/reuse.  Authoritative ownership carrier; written
+// ONLY under a pristine/empty prefix (origin='created') or provenance-gated
+// migration (origin='migrated').  Uninstall tooling must check this file before
+// removing the runtime prefix.
+//
+// Marker contract (for uninstall.sh and tooling to mirror):
+//   File   : <runtime>/.tlh-runtime-owned
+//   Format : JSON { schemaVersion, packageName, runtimeAbsPath, origin }
+//   schemaVersion  : 1
+//   packageName    : "@earendil-works/pi-coding-agent"
+//   runtimeAbsPath : realpath of the runtime prefix at write time
+//   origin         : "created" (prefix was pristine/empty)
+//                  | "migrated" (provenance-gated: piInstalledByTlh=true in install-state)
+const RUNTIME_MARKER_FILENAME = ".tlh-runtime-owned";
+const RUNTIME_MARKER_SCHEMA_VERSION = 1;
+// npm 11.x --prefix layout; empirically confirmed: npm 11.16.0 +
+// @earendil-works/pi-coding-agent@0.79.7.  Mirrors the advisory exclusivity
+// tripwire in uninstall.sh (demoted from gate): the only top-level entries a
+// TLH-owned runtime prefix should contain are those created by
+// npm install -g --ignore-scripts --prefix, plus the TLH runtime ownership
+// marker.  Authoritative ownership is carried by the marker file
+// (.tlh-runtime-owned), not by directory shape; this set is used only as an
+// advisory defense-in-depth check that can downgrade a removal to a skip.
+const RUNTIME_OWNED_TOPLEVEL = new Set(["bin", "lib", "node-compile-cache", RUNTIME_MARKER_FILENAME]);
 const COMMAND_MAX_BUFFER = 20 * 1024 * 1024;
 
 function parseNodeVersion(version) {
@@ -121,8 +150,8 @@ an isolated Pi profile and installer-owned helper commands.
 
 Requirements:
   Node.js >= ${MIN_NODE_VERSION} on PATH
-  Upstream Pi >= ${MIN_PI_VERSION} and <= ${MAX_PI_VERSION} (installed per-user under ~/.local when missing;
-  install failures stop with an actionable error; incompatible versions stop with pinned repair guidance)
+  Upstream Pi ${PINNED_PI_VERSION} (installed per-user into a private TLH runtime prefix,
+  default: ~/.the-last-harness/runtime; install or repair failures stop with an actionable error)
 
 Options:
   --dry-run                  Print actions and settings/keybinding changes without writing
@@ -148,7 +177,7 @@ Environment overrides:
   TLH_UPDATE_TRACK     Update track for future tlh update
   TLH_PACKAGE_SOURCE   Package source passed to \`pi install\`
   TLH_RAW_BASE         Base URL for installer support files
-  TLH_GNOSIS_VERSION   Gnosis version to install (default: latest)
+  TLH_GNOSIS_VERSION   Gnosis version to install (default: 0.5.3)
   TLH_GNOSIS_REPO      Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
 `;
 }
@@ -533,6 +562,83 @@ function readPiInstalledByTlhPreference(config) {
 	}
 }
 
+function runtimeMarkerPath(prefix) {
+	return join(prefix, RUNTIME_MARKER_FILENAME);
+}
+
+/**
+ * Read and validate the TLH runtime ownership marker.  Fail-closed: returns
+ * null for a missing, symlinked, malformed, schema-mismatched, or unreadable
+ * marker — any of those states means no valid ownership claim.
+ */
+function readRuntimeMarker(prefix) {
+	const markerFile = runtimeMarkerPath(prefix);
+	try {
+		if (!existsSync(markerFile)) return null;
+		if (isSymlink(markerFile)) return null; // symlinked marker → no valid claim
+		const data = JSON.parse(readFileSync(markerFile, "utf8"));
+		if (typeof data !== "object" || data === null) return null;
+		if (data.schemaVersion !== RUNTIME_MARKER_SCHEMA_VERSION) return null;
+		if (data.packageName !== PI_PACKAGE_NAME) return null;
+		if (typeof data.runtimeAbsPath !== "string" || !data.runtimeAbsPath) return null;
+		if (data.origin !== "created" && data.origin !== "migrated") return null;
+		return data;
+	} catch {
+		return null; // fail-closed: any parse or read error → no valid claim
+	}
+}
+
+function isRuntimeMarkerPathMatched(marker, prefix) {
+	try {
+		const realPrefix = realpathSync(prefix);
+		return marker.runtimeAbsPath === realPrefix;
+	} catch {
+		return false; // fail-closed
+	}
+}
+
+/**
+ * Write (or refresh) the TLH runtime ownership marker atomically using a
+ * temp-file + rename.  Refuses to write through a symlinked runtime directory
+ * or a symlinked marker path.
+ */
+function writeRuntimeMarker(config, prefix, origin) {
+	const markerFile = runtimeMarkerPath(prefix);
+	if (config.dryRun) {
+		verboseLog(config, `Would write runtime ownership marker: ${markerFile}`);
+		return;
+	}
+	if (isSymlink(prefix)) {
+		throw new Error(
+			`refusing to write TLH runtime ownership marker through symlinked runtime directory: ${prefix}`,
+		);
+	}
+	if (isSymlink(markerFile)) {
+		throw new Error(
+			`refusing to write TLH runtime ownership marker through symlinked marker path: ${markerFile}`,
+		);
+	}
+	const realPrefix = realpathSync(prefix);
+	const markerContent = JSON.stringify({
+		schemaVersion: RUNTIME_MARKER_SCHEMA_VERSION,
+		packageName: PI_PACKAGE_NAME,
+		runtimeAbsPath: realPrefix,
+		origin,
+	});
+	// Atomic write: unique temp file in the same directory, then rename.
+	// randomUUID() avoids a predictable path; flag "wx" (O_CREAT|O_EXCL) refuses
+	// to follow or overwrite any pre-existing file or symlink, closing the TOCTOU
+	// symlink-follow window on the temp path.
+	const tempFile = join(dirname(markerFile), `.tlh-runtime-owned.${randomUUID()}.tmp`);
+	try {
+		writeFileSync(tempFile, markerContent, { encoding: "utf8", flag: "wx", mode: 0o600 });
+		renameSync(tempFile, markerFile);
+	} catch (error) {
+		rmSync(tempFile, { force: true });
+		throw error;
+	}
+}
+
 function assertSupportedPiVersion(
 	config,
 	{
@@ -579,108 +685,123 @@ function preferBinDirOnPathForCurrentInstall(config, binDir, { addMessage, prepe
 	warn(`${addMessage} Added it to PATH for this install; add it to your shell profile with: export PATH="${binDir}:$PATH"`);
 }
 
-function piInstallPrefix(config) {
-	// Install Pi per-user under ~/.local so `pi` lands at ~/.local/bin/pi
-	// without requiring sudo. Matches Pi's own docs guidance and is consistent
-	// with the default TLH bin dir (~/.local/bin).
-	return join(config.homeDir, ".local");
+function runtimePrefix(config) {
+	// Private TLH runtime prefix: sibling of agent/ under ~/.the-last-harness/.
+	// The pinned pi binary lives at <runtimePrefix>/bin/pi.
+	// Invariant: always derived from the agent dir's parent so the runtime stays
+	// co-located with the isolated profile regardless of --agent-dir customisation.
+	return join(dirname(config.agentDir), "runtime");
 }
 
-function perUserPiPackageDir(prefix) {
-	return join(prefix, "lib", "node_modules", ...PI_PACKAGE_NAME.split("/"));
+function piInstallPrefix(config) {
+	// Always install the pinned pi into the private TLH runtime prefix (no ~/.local).
+	// Per-user, no sudo: npm install -g --ignore-scripts --prefix <runtimePrefix>.
+	return runtimePrefix(config);
+}
+
+function absolutePiCmd(config) {
+	// Return the absolute path to the private runtime pi binary.
+	// config.piCmd is populated by installPiIfNeeded in non-dry-run; in dry-run it
+	// is "" so we fall back to deriving the intended path from runtimePrefix for
+	// sensible display output without breaking the dry-run flow.
+	return config.piCmd || join(runtimePrefix(config), "bin", "pi");
+}
+
+/**
+ * Assert that the private runtime prefix is either absent/empty (safe for a
+ * fresh install) or affirmatively TLH-owned via the ownership marker.  Throws
+ * on symlinked prefix, or on a non-empty prefix with no valid marker and no
+ * recorded provenance (the shared-prefix data-loss scenario).
+ *
+ * Returns { origin } that must be forwarded to writeRuntimeMarker after
+ * a successful provision/repair/reuse.
+ */
+function assertRuntimePrefixOwnedOrEmpty(config) {
+	const prefix = piInstallPrefix(config);
+	// Refuse symlinked runtime directory up-front — a symlink could resolve to a
+	// shared or foreign prefix that happens to look like the TLH layout.
+	if (isSymlink(prefix)) {
+		throw new Error(
+			`TLH runtime prefix is a symlink: ${prefix}. ` +
+			`The runtime directory must not be a symlink. ` +
+			`Remove the symlink or choose a dedicated profile directory (e.g. ~/.the-last-harness/agent).`,
+		);
+	}
+	if (!existsSync(prefix)) return { origin: "created" }; // absent → fresh install
+	const entries = readdirSync(prefix); // never returns '.' or '..'; includes dotfiles
+	if (entries.length === 0) return { origin: "created" }; // empty → fresh install
+
+	// Check for an affirmative ownership marker.
+	const marker = readRuntimeMarker(prefix);
+	if (marker && isRuntimeMarkerPathMatched(marker, prefix)) {
+		// Valid marker whose recorded path matches the actual prefix → TLH owns this.
+		return { origin: marker.origin };
+	}
+
+	// No valid marker. Check install-state provenance as a one-time migration gate.
+	const piInstalledByTlhPreference = readPiInstalledByTlhPreference(config);
+	if (piInstalledByTlhPreference === true) {
+		// Provenance-gated migration: TLH installed this runtime before the ownership
+		// marker was introduced.  Accept and emit origin='migrated' so the caller
+		// writes the marker, making future runs marker-gated.
+		verboseLog(config, `Migrating TLH runtime ownership: writing marker for pre-existing TLH-installed runtime at ${prefix}`);
+		return { origin: "migrated" };
+	}
+
+	// Non-empty, no valid marker, no provenance → refuse.  This is the P1
+	// shared-prefix data-loss scenario: a foreign npm --prefix directory that
+	// happens to sit next to a non-default --agent-dir.
+	throw new Error(
+		`TLH runtime prefix ${prefix} is not TLH-owned: ` +
+		`no ownership marker (${RUNTIME_MARKER_FILENAME}) was found and no TLH install ` +
+		`provenance is recorded. A non-default --agent-dir may point at a profile whose ` +
+		`sibling "runtime" directory belongs to a different installation. ` +
+		`Choose a dedicated or default profile directory (e.g. ~/.the-last-harness/agent), ` +
+		`or remove ${prefix} if it is safe to do so.`,
+	);
 }
 
 function installPiIfNeeded(config) {
+	const { origin } = assertRuntimePrefixOwnedOrEmpty(config);
 	const prefix = piInstallPrefix(config);
 	const piBinDir = join(prefix, "bin");
 	const piBin = join(piBinDir, "pi");
-	const piPackageDir = perUserPiPackageDir(prefix);
-	const tlhOwnsPerUserPi = readPiInstalledByTlhPreference(config) === true;
-	let pathPiValidationError;
-	let pathPiCmd = "";
-	let pathPiValidated = false;
-	let perUserPiValidationError;
-	let repairTlhManagedRuntime = false;
 
-	if (commandExists(config, "pi")) {
-		const result = spawnCapture(config, ["sh", "-c", "command -v -- pi"], { allowFailure: true });
-		verboseLog(config, `Pi is already installed: ${(result.stdout || "pi").trim() || "pi"}`);
-		try {
-			assertSupportedPiVersion(config);
-			const rawCmd = (result.stdout || "").trim();
-			pathPiValidated = true;
-			pathPiCmd = (rawCmd && isAbsolute(rawCmd)) ? rawCmd : "";
-			if (!tlhOwnsPerUserPi) {
-				if (config.dryRun) return { installed: false, piCmd: "" };
-				return { installed: false, piCmd: pathPiCmd };
-			}
-			verboseLog(config, `TLH owns the per-user Pi runtime; validating ${piBin} before reusing the current PATH Pi.`);
-		} catch (error) {
-			pathPiValidationError = error;
-			verboseLog(config, `Existing pi on PATH is not reusable: ${error instanceof Error ? error.message : String(error)}`);
-		}
-	}
-
+	// Always ensure the private TLH runtime exists and is the pinned version.
+	// Never borrow a global or PATH pi; never fall through to ~/.local.
 	if (existsSync(piBin)) {
-		verboseLog(config, `Pi is already installed: ${piBin}`);
+		let needsRepair = false;
 		try {
 			assertSupportedPiVersion(config, {
 				piCommand: piBin,
-				sourceDescription: `existing per-user Pi runtime at ${piBin}`,
+				sourceDescription: `TLH private runtime at ${piBin}`,
 				versionCommandDisplay: `${piBin} --version`,
 			});
-			// Reuse the pre-existing per-user Pi runtime without claiming ownership.
-			// Prepend its bin dir to PATH for the remainder of this process so later `pi`
-			// commands resolve the same validated binary by name, even if an older Pi
-			// still appears earlier on the inherited PATH.
+			verboseLog(config, `TLH private Pi runtime is valid: ${piBin}`);
+			// Prepend the private runtime's bin dir to PATH for the remainder of this
+			// process so downstream pi commands resolve the validated private binary.
 			preferBinDirOnPathForCurrentInstall(config, piBinDir, {
-				addMessage: `Existing Pi runtime ${piBin} is not on PATH.`,
-				prependMessage: `Using validated per-user Pi runtime ${piBin} instead of the current PATH entry. Prepended ${piBinDir} to PATH for this install so downstream pi commands reuse that runtime; move it ahead of older Pi entries in your shell profile if needed.`,
+				addMessage: `TLH private Pi runtime ${piBin} is not on PATH.`,
+				prependMessage: `Using TLH private Pi runtime ${piBin}. Prepended ${piBinDir} to PATH for this install.`,
 			});
-			// Pin piBin directly: do NOT do a fresh command -v lookup here because PATH has not yet
-			// been updated in the parent process and the stale earlier-PATH pi might still win.
+		} catch (error) {
+			// Private runtime exists but is the wrong version — repair it.
+			needsRepair = true;
+			verboseLog(config, `TLH private Pi runtime needs repair: ${error instanceof Error ? error.message : String(error)}`);
+			log(config, `Repairing TLH private Pi runtime to pinned ${PINNED_PI_VERSION} at ${prefix} (per-user, no sudo)...`);
+		}
+		if (!needsRepair) {
+			// Ensure/refresh the ownership marker on reuse so existing users gain it
+			// on their next run (marker was introduced after initial deployments).
+			writeRuntimeMarker(config, prefix, origin);
 			if (config.dryRun) return { installed: false, piCmd: "" };
 			return { installed: false, piCmd: piBin };
-		} catch (error) {
-			perUserPiValidationError = error;
-			if (tlhOwnsPerUserPi) {
-				repairTlhManagedRuntime = true;
-				verboseLog(config, `TLH-owned per-user Pi runtime needs repair or downgrade: ${error instanceof Error ? error.message : String(error)}`);
-			}
 		}
-	}
-
-	if (!existsSync(piBin) && existsSync(piPackageDir)) {
-		if (tlhOwnsPerUserPi) {
-			repairTlhManagedRuntime = true;
-			verboseLog(config, `TLH-owned per-user Pi package at ${piPackageDir} has no runnable pi binary; reinstalling pinned runtime.`);
-		} else {
-			throw new Error(`detected an existing per-user Pi npm package at ${piPackageDir}, but no runnable pi binary could be validated (${piBin} is missing and pi is not on PATH). The Last Harness will not reinstall over that package or mark it TLH-owned. Repair or remove the existing package, then rerun the installer. To repair it in place, run: ${pinnedPiInstallCommand(config)}`);
-		}
-	}
-
-	if (!existsSync(piBin) && !existsSync(piPackageDir) && tlhOwnsPerUserPi) {
-		repairTlhManagedRuntime = true;
-		verboseLog(config, `TLH-owned per-user Pi runtime is missing; reinstalling pinned runtime to ${prefix}.`);
-	}
-
-	if (repairTlhManagedRuntime) {
-		log(config, `Repairing TLH-managed Pi runtime to pinned ${PINNED_PI_VERSION} at ${prefix} (per-user, no sudo)...`);
-	} else if (pathPiValidated) {
-		if (config.dryRun) return { installed: false, piCmd: "" };
-		return { installed: false, piCmd: pathPiCmd };
-	} else if (pathPiValidationError) {
-		throw pathPiValidationError;
-	} else if (perUserPiValidationError) {
-		throw perUserPiValidationError;
 	} else {
-		log(config, `Installing Pi runtime to ${prefix} (per-user, no sudo)...`);
+		log(config, `Installing TLH private Pi runtime to ${prefix} (per-user, no sudo)...`);
 	}
-	if (!repairTlhManagedRuntime) {
-		verboseLog(config, `Installing pinned Pi package spec: ${PI_PACKAGE_SPEC}`);
-	} else {
-		verboseLog(config, `Repairing pinned Pi package spec: ${PI_PACKAGE_SPEC}`);
-	}
+
+	verboseLog(config, `Installing pinned Pi package spec: ${PI_PACKAGE_SPEC}`);
 	runCommand(config, [
 		"npm",
 		"install",
@@ -690,25 +811,30 @@ function installPiIfNeeded(config) {
 		prefix,
 		PI_PACKAGE_SPEC,
 	]);
-	if (config.dryRun) return { installed: true, piCmd: "" };
-	const onPath = commandExists(config, "pi");
-	if (!existsSync(piBin) && !onPath) {
-		throw new Error(`Pi install completed, but ${piBin} does not exist and pi is not on PATH`);
+	if (config.dryRun) {
+		// Log marker intent in dry-run; the prefix may not exist yet.
+		writeRuntimeMarker(config, prefix, origin);
+		return { installed: true, piCmd: "" };
 	}
-	if (existsSync(piBin)) {
-		// Pi was installed to a per-user prefix. Prepend that prefix bin dir for the
-		// remainder of this process so downstream steps (`pi install`, `pi update`, ...)
-		// resolve the new runtime even if another Pi still appears earlier on PATH.
-		preferBinDirOnPathForCurrentInstall(config, piBinDir, {
-			addMessage: `${piBin} installed but ${piBinDir} is not on PATH.`,
-			prependMessage: `Using freshly installed Pi runtime ${piBin}. Prepended ${piBinDir} to PATH for this install so downstream pi commands reuse that runtime; move it ahead of older Pi entries in your shell profile if needed.`,
-		});
-		return { installed: true, piCmd: piBin };
+	if (!existsSync(piBin)) {
+		throw new Error(`Pi install completed, but ${piBin} does not exist`);
 	}
-	// piBin does not exist but pi landed on PATH (uncommon); capture the path if it is absolute.
-	const pathResult = spawnCapture(config, ["sh", "-c", "command -v -- pi"], { allowFailure: true });
-	const rawPathCmd = (pathResult.stdout || "").trim();
-	return { installed: true, piCmd: (rawPathCmd && isAbsolute(rawPathCmd)) ? rawPathCmd : "" };
+	// Validate the freshly installed binary before proceeding — a broken or wrong-version
+	// npm install must throw here, before any legacy cleanup runs.
+	assertSupportedPiVersion(config, {
+		piCommand: piBin,
+		sourceDescription: `freshly installed TLH private runtime at ${piBin}`,
+		versionCommandDisplay: `${piBin} --version`,
+	});
+	// Prepend the private runtime's bin dir for the remainder of this process so
+	// downstream steps (pi install, pi update, …) resolve the new binary.
+	preferBinDirOnPathForCurrentInstall(config, piBinDir, {
+		addMessage: `${piBin} installed but ${piBinDir} is not on PATH.`,
+		prependMessage: `Using TLH private Pi runtime ${piBin}. Prepended ${piBinDir} to PATH for this install.`,
+	});
+	// Write the ownership marker after full successful install+validation.
+	writeRuntimeMarker(config, prefix, origin);
+	return { installed: true, piCmd: piBin };
 }
 
 function backupExistingSettingsBeforePiInstall(config) {
@@ -765,7 +891,7 @@ function installHarnessPackage(config) {
 	verboseLog(config, `Package source: ${config.packageSource}`);
 	const installSource = gitSourceInstallSource(config.packageSource, { agentDir: config.agentDir });
 	assertGitSourceTargetSafe(config, config.packageSource, "The Last Harness package checkout", gitCheckoutIo());
-	runIsolatedPi(config, ["pi", "install", installSource]);
+	runIsolatedPi(config, [absolutePiCmd(config), "install", installSource]);
 	refreshHarnessPackageCheckout(config);
 
 	if (config.packageSourceIsDefault) return;
@@ -776,10 +902,10 @@ function installHarnessPackage(config) {
 		return;
 	}
 	if (config.dryRun) {
-		log(config, `Would refresh custom package source if it is already installed: PI_CODING_AGENT_DIR=${config.agentDir} pi update ${config.packageSource}`);
+		log(config, `Would refresh custom package source if it is already installed: PI_CODING_AGENT_DIR=${config.agentDir} ${absolutePiCmd(config)} update ${config.packageSource}`);
 		return;
 	}
-	runIsolatedPi(config, ["pi", "update", config.packageSource]);
+	runIsolatedPi(config, [absolutePiCmd(config), "update", config.packageSource]);
 }
 
 async function seedLibrarianConfig(config) {
@@ -1017,7 +1143,7 @@ function installCriticalDefaultExtension(config, source) {
 	const installSource = gitSourceInstallSource(source, { agentDir: config.agentDir });
 	assertGitSourceTargetSafe(config, source, "critical default extension package checkout", gitCheckoutIo());
 	try {
-		runIsolatedPi(config, ["pi", "install", installSource]);
+		runIsolatedPi(config, [absolutePiCmd(config), "install", installSource]);
 	} catch {
 		throw new Error(`critical default extension package install failed: ${source}. Fix the package install and rerun the installer; this isolation-critical default cannot be disabled.`);
 	}
@@ -1029,7 +1155,7 @@ function installCriticalDefaultExtension(config, source) {
 function updateDefaultExtensionSourceBestEffort(config, source) {
 	verboseLog(config, `Installing bundled default extension package: ${source}`);
 	try {
-		runIsolatedPi(config, ["pi", "update", source]);
+		runIsolatedPi(config, [absolutePiCmd(config), "update", source]);
 		return true;
 	} catch {
 		warn(`default extension package update failed; continuing: ${source}`);
@@ -1055,7 +1181,7 @@ function updateNonCriticalDefaultExtensions(config, sources) {
 	}
 
 	try {
-		runIsolatedPi(config, ["pi", "update", "--extensions"]);
+		runIsolatedPi(config, [absolutePiCmd(config), "update", "--extensions"]);
 	} catch {
 		warn(`settings-wide extension refresh from merged settings failed; falling back to per-source updates for only ${fallbackDescription}`);
 		return updateDefaultExtensionSourcesBestEffort(config, sources);
@@ -1261,11 +1387,11 @@ function printSummary(config) {
 			log(config, `Start with: ${config.wrapperName}`);
 		} else {
 			warn(`${config.binDir} is not on PATH. Add it with: export PATH="${config.binDir}:$PATH"`);
-			log(config, `Start with: PI_CODING_AGENT_DIR="${config.agentDir}" pi`);
+			log(config, `Start with: ${config.wrapperName}`);
 		}
 		detailLog(config, `Wrapper: ${config.wrapperPath}`);
 	} else {
-		log(config, `Start with: PI_CODING_AGENT_DIR="${config.agentDir}" pi`);
+		log(config, `Start with: PI_CODING_AGENT_DIR="${config.agentDir}" "${dirname(config.agentDir)}/runtime/bin/pi"`);
 	}
 	detailLog(config, `Settings: ${config.settingsPath}`);
 	if (config.gnosisSummary) detailLog(config, config.gnosisSummary);
@@ -1361,6 +1487,8 @@ if (isMainModule()) {
 
 export {
 	MIN_NODE_VERSION,
+	RUNTIME_MARKER_FILENAME,
+	RUNTIME_OWNED_TOPLEVEL,
 	assertSupportedNodeRuntime,
 	buildInstallConfig,
 	expandPath,

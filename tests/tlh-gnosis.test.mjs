@@ -60,6 +60,47 @@ function sha256File(path) {
 	return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
+test("install-managed dry-run uses the pinned default Gnosis release", () => {
+	const fixture = tempFixture();
+
+	const result = runGnosis([
+		"--agent-dir", fixture.agent,
+		"--target", join(fixture.agent, "bin", "gn"),
+		"--dry-run",
+		"install-managed",
+	], { env: { HOME: fixture.home } });
+
+	assert.equal(result.status, 0, result.stderr);
+	assert.match(result.stderr, /Would download Gnosis 0\.5\.3 from https:\/\/github\.com\/skorokithakis\/gnosis/);
+	assert.equal(result.stdout.trim(), join(fixture.agent, "bin", "gn"));
+});
+
+test("install-managed dry-run still honors TLH_GNOSIS_VERSION and CLI overrides", () => {
+	const fixture = tempFixture();
+	const target = join(fixture.agent, "bin", "gn");
+
+	const envOverride = runGnosis([
+		"--agent-dir", fixture.agent,
+		"--target", target,
+		"--dry-run",
+		"install-managed",
+	], {
+		env: { HOME: fixture.home, TLH_GNOSIS_VERSION: "latest" },
+	});
+	assert.equal(envOverride.status, 0, envOverride.stderr);
+	assert.match(envOverride.stderr, /Would download latest compatible release from https:\/\/github\.com\/skorokithakis\/gnosis/);
+
+	const cliOverride = runGnosis([
+		"--agent-dir", fixture.agent,
+		"--target", target,
+		"--gnosis-version", "0.5.2",
+		"--dry-run",
+		"install-managed",
+	], { env: { HOME: fixture.home, TLH_GNOSIS_VERSION: "latest" } });
+	assert.equal(cliOverride.status, 0, cliOverride.stderr);
+	assert.match(cliOverride.stderr, /Would download Gnosis 0\.5\.2 from https:\/\/github\.com\/skorokithakis\/gnosis/);
+});
+
 test("install-managed rejects agent bin symlink before network or writes", () => {
 	const fixture = tempFixture();
 	symlinkDirectory(fixture.external, join(fixture.agent, "bin"));

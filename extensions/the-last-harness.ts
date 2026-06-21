@@ -15,6 +15,7 @@ import { createTlhHeader } from "./the-last-harness/header.js";
 import { readTlhInstallNotice } from "./the-last-harness/install-state.js";
 import { scheduleTlhLaunchTelemetry } from "./the-last-harness/launch-telemetry.js";
 import { installTlhModelVisibilityFilter } from "./the-last-harness/model-visibility.js";
+import { installTlhNewVersionNotificationOverride } from "./the-last-harness/new-version-notice.js";
 import { installTlhPackageUpdateNotificationOverride } from "./the-last-harness/package-update-notice.js";
 import { registerTlhPrimaryAgentRuntime } from "./the-last-harness/primary-agent-runtime.js";
 import { collectStartupResources } from "./the-last-harness/resources.js";
@@ -41,6 +42,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	}
 
 	installTlhPackageUpdateNotificationOverride();
+	installTlhNewVersionNotificationOverride();
 	registerToggleTlhGitAttributionCommand(pi);
 	registerAnnotateLastMessageCommand(pi);
 	registerEffortCommand(pi, primaryAgentRuntime);
