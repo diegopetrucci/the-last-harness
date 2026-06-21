@@ -99,7 +99,7 @@ Run the one-liner from the release asset:
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/uninstall.sh | bash -s --
 ```
 
-The script removes the isolated agent dir under `~/.the-last-harness/agent`, the `tlh` wrapper, and the private Pi runtime at `~/.the-last-harness/runtime` when install-state says `piInstalledByTlh=true` or `--force-include-pi` is passed. A legacy TLH-installed pi at `~/.local` is removed only when `--force-include-pi` is explicitly passed; without that flag the uninstaller leaves it in place and prints a manual-removal hint. The parent dir `~/.the-last-harness` is removed only when empty after the agent dir is gone. Normal Pi config at `~/.pi/agent` is never touched.
+The script removes the isolated agent dir under `~/.the-last-harness/agent`, the `tlh` wrapper, and the private Pi runtime at `~/.the-last-harness/runtime` when a valid ownership marker (`.tlh-runtime-owned` inside the runtime directory) is present. An unmarked or pre-marker runtime is skipped and a manual-removal hint is printed instead. A legacy TLH-installed pi at `~/.local` is removed only when `--force-include-pi` is explicitly passed; without that flag the uninstaller leaves it in place and prints a manual-removal hint. The parent dir `~/.the-last-harness` is removed only when empty after the agent dir is gone. Normal Pi config at `~/.pi/agent` is never touched.
 
 ### Uninstaller flags
 
@@ -108,7 +108,7 @@ The uninstaller prints its plan and then proceeds immediately — there is no co
 | Flag | Description |
 |---|---|
 | `--dry-run` | Print planned actions without performing any removals. |
-| `--force-include-pi` | Force runtime/pi removal regardless of install-state. When the private runtime (`~/.the-last-harness/runtime`) is present, removes it; when it is absent and a legacy `~/.local/bin/pi` exists, removes that instead. This flag is **required** to remove a legacy `~/.local` pi — without it the uninstaller never auto-removes it, to protect user-owned installations. |
+| `--force-include-pi` | Removes the private runtime when a valid ownership marker is present; if the runtime is unmarked, it is still skipped with a manual-removal hint. When the private runtime is absent and a legacy `~/.local/bin/pi` exists, removes that instead. This flag is **required** to remove a legacy `~/.local` pi — without it the uninstaller never auto-removes it, to protect user-owned installations. |
 | `--keep-pi` | Skip runtime and pi removal even when install-state says `piInstalledByTlh=true`. |
 | `--agent-dir DIR` | Override isolated agent dir (default: `~/.the-last-harness/agent`). Only the agent dir is removed; the parent dir is cleaned up only if empty. |
 | `--bin-dir DIR` | Override wrapper install dir (default: `~/.local/bin`). |
@@ -121,22 +121,21 @@ The uninstaller prints its plan and then proceeds immediately — there is no co
 
 ### Pi removal decision
 
-TLH records `piInstalledByTlh` in `~/.the-last-harness/agent/tlh/install-state.json` to track whether it owns the private Pi runtime. The uninstaller uses this field to decide whether to remove the private runtime at `~/.the-last-harness/runtime`. A legacy `~/.local` pi is never removed automatically — it is removed only when `--force-include-pi` is explicitly passed, because the uninstaller cannot determine whether that binary was installed by TLH or by the user. Older installs that lack this field default to leaving everything in place.
+TLH records ownership of the private Pi runtime via a marker file (`.tlh-runtime-owned`) written inside `~/.the-last-harness/runtime` at install time. The uninstaller validates this marker (fail-closed: verifies the recorded runtime path matches the resolved directory, the directory is not a symlink, and a positive Pi layout is present) before removing the runtime. Install-state `piInstalledByTlh=true` alone is no longer sufficient — without a valid marker, the runtime is skipped and a manual-removal hint is printed. Older installs without the marker gain it automatically on the next `tlh update` or installer rerun; after that, uninstall can auto-remove as normal. A legacy `~/.local` pi is never removed automatically — it is removed only when `--force-include-pi` is explicitly passed, because the uninstaller cannot determine whether that binary was installed by TLH or by the user.
 
 | Condition | Effect |
 |---|---|
-| `piInstalledByTlh = true` | private runtime (`~/.the-last-harness/runtime`) removed (`rm -rf`); legacy `~/.local` pi is **not** removed unless `--force-include-pi` is also passed |
-| `piInstalledByTlh = false` | kept |
-| field absent (older install) | kept |
-| `--force-include-pi` flag | removes private runtime if present; otherwise removes legacy `~/.local/bin/pi` if present (overrides install-state) |
-| `--keep-pi` flag | keeps everything — skips runtime and pi removal (overrides install-state) |
+| valid `.tlh-runtime-owned` marker present | private runtime (`~/.the-last-harness/runtime`) removed (`rm -rf`); legacy `~/.local` pi is **not** removed unless `--force-include-pi` is also passed |
+| marker absent or invalid (unmarked or pre-marker runtime) | private runtime **skipped** — manual-removal hint printed; `piInstalledByTlh=true` alone does not override this |
+| `--force-include-pi` flag | removes private runtime when a valid marker is present; runtime skipped with a hint if unmarked; removes legacy `~/.local/bin/pi` if present and private runtime is absent |
+| `--keep-pi` flag | keeps everything — skips runtime and pi removal |
 
 ### What stays behind
 
 The uninstaller never auto-removes:
 
 - **`~/.pi`** — Pi's own user config directory. To remove it manually: `rm -rf ~/.pi`
-- **Private TLH Pi runtime (when kept)** — if you pass `--keep-pi`, or install-state is `false`/absent, the runtime at `~/.the-last-harness/runtime` is left in place; remove it manually: `rm -rf ~/.the-last-harness/runtime`.
+- **Private TLH Pi runtime (when kept)** — if you pass `--keep-pi`, if the runtime has no valid ownership marker (unmarked or pre-marker install), or if install-state is `false`/absent, the runtime at `~/.the-last-harness/runtime` is left in place; remove it manually: `rm -rf ~/.the-last-harness/runtime`.
 - **Separately-installed pi** — any `pi` you installed independently of TLH is left in place and never touched by tlh.
 - **Legacy TLH-owned pi at `~/.local`** — the uninstaller never auto-removes this (to protect user-owned installations). To remove it, pass `--force-include-pi` to the uninstaller, or remove manually: `npm uninstall -g --ignore-scripts --prefix "$HOME/.local" @earendil-works/pi-coding-agent`.
 - **Repo-local `.gnosis/` and `.tickets/` data** — per-repository and managed separately. To remove from a repo: `rm -rf .gnosis .tickets`

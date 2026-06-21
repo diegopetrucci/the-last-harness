@@ -131,16 +131,30 @@ EOF_MANAGED_WRAPPER
   chmod +x "${wrapper_path}"
 }
 
+write_runtime_ownership_marker() {
+  # Write a valid .tlh-runtime-owned marker into an existing runtime dir.
+  # runtimeAbsPath is derived via pwd -P so macOS /var -> /private/var resolves
+  # correctly and matches what Node.js realpathSync returns in tlh-install.mjs.
+  local runtime_dir="$1"
+  local _marker_abs
+  _marker_abs="$(cd "${runtime_dir}" >/dev/null 2>&1 && pwd -P)"
+  printf '{"schemaVersion":1,"packageName":"@earendil-works/pi-coding-agent","runtimeAbsPath":"%s","origin":"created"}' \
+    "${_marker_abs}" >"${runtime_dir}/.tlh-runtime-owned"
+}
+
 write_tlh_pi_runtime() {
   # Seed the TLH pi runtime layout produced by:
   #   npm install -g --ignore-scripts --prefix <runtime_dir> @earendil-works/pi-coding-agent
   # Presence of both runtime_dir/bin/pi and
   # runtime_dir/lib/node_modules/@earendil-works/pi-coding-agent is the ownership
   # predicate checked by the uninstaller before rm -rf.
+  # A valid .tlh-runtime-owned marker is also written so the installer's and
+  # uninstaller's ownership gates both pass.
   local runtime_dir="$1"
   mkdir -p "${runtime_dir}/bin" "${runtime_dir}/lib/node_modules/@earendil-works/pi-coding-agent"
   printf '#!/bin/sh\n' >"${runtime_dir}/bin/pi"
   chmod +x "${runtime_dir}/bin/pi"
+  write_runtime_ownership_marker "${runtime_dir}"
 }
 
 assert_pi_commands_isolated() {
@@ -1384,6 +1398,10 @@ printf 'fake git should not run during dry-run\n' >&2
 exit 98
 EOF_PRESENT_GIT
   chmod +x "${present_fakebin}/sh" "${present_fakebin}/npm" "${present_fakebin}/git"
+  # Write a valid ownership marker for the pre-seeded runtime so the installer's
+  # assertRuntimePrefixOwnedOrEmpty gate passes and the reuse path runs.
+  # runtimeAbsPath uses pwd -P so macOS /var -> /private/var matches Node.js realpathSync.
+  write_runtime_ownership_marker "${present_dir}/runtime"
   # Seed a valid private runtime pi (pinned version) at the expected location.
   cat >"${present_runtime_bin}/pi" <<'EOF_PRESENT_RUNTIME_PI'
 #!/bin/sh
@@ -1582,11 +1600,13 @@ run_uninstall_flag_override_smoke() {
   local status=0
   mkdir -p "${case_dir}"
 
-  # ── --force-include-pi overrides piInstalledByTlh=false → removes pi/runtime ────
+  # ── valid-marker runtime with piInstalledByTlh=false and --force-include-pi ────
+  # The marker is now authoritative; --force-include-pi is redundant for a marked
+  # runtime but must not conflict.  Runtime removal is planned in both cases.
   local force_agent="${case_dir}/force-include/agent"
   local force_runtime="${case_dir}/force-include/runtime"
   mkdir -p "${force_agent}/tlh"
-  # Seed the TLH pi layout so the ownership check passes.
+  # Seed the TLH pi layout so the ownership gate passes.
   write_tlh_pi_runtime "${force_runtime}"
   cat >"${force_agent}/tlh/install-state.json" <<'EOF_FORCE_STATE'
 {
@@ -2191,6 +2211,57 @@ EOF_SIBLING_UNINSTALL_STATE
   assert_present "${profile_root}"
 }
 
+run_uninstall_marker_authoritative_smoke() {
+  log "Running uninstall.sh marker-authoritative removal smoke check..."
+  # Regression (tlht-bfkx): a valid-marker runtime must be removed even when
+  # piInstalledByTlh=false and --force-include-pi is NOT passed.  The ownership
+  # marker is the authoritative signal; install-state is non-gating for the
+  # marked private-runtime path.
+  local case_dir="${TMP_ROOT}/uninstall-marker-authoritative"
+  local profile_root="${case_dir}/profile"
+  local agent_dir="${profile_root}/agent"
+  local runtime_dir="${profile_root}/runtime"
+  local bin_dir="${case_dir}/bin"
+  local wrapper_path
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  assert_safe_uninstall_smoke_paths "${agent_dir}" "${bin_dir}"
+  mkdir -p "${bin_dir}"
+  # piInstalledByTlh=false: install-state does NOT authorize removal.
+  write_tlh_install_state "${agent_dir}" false
+  # Valid-marker runtime: write_tlh_pi_runtime seeds bin/pi, lib/node_modules, and marker.
+  write_tlh_pi_runtime "${runtime_dir}"
+  wrapper_path="$(cd "${bin_dir}" >/dev/null 2>&1 && pwd -P)/tlh"
+  write_managed_wrapper "${wrapper_path}"
+
+  # ── dry-run: plan must show private runtime removal (no --force-include-pi) ────
+  bash uninstall.sh --dry-run --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would remove private runtime: rm -rf ${runtime_dir}"
+  assert_not_contains "${combined_file}" "would skip pi/runtime removal"
+  # dry-run must not actually remove the runtime
+  assert_present "${runtime_dir}"
+
+  # ── real run: runtime, agent dir, and wrapper are removed ───────────────────
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  bash uninstall.sh --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -ne 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "marker-authoritative uninstall smoke exited with non-zero status: ${status}"
+  fi
+  assert_absent "${runtime_dir}"
+  assert_absent "${agent_dir}"
+  assert_absent "${wrapper_path}"
+  assert_absent "${profile_root}"
+}
+
 run_static_checks
 run_support_manifest_smoke
 run_install_state_pi_field_smoke
@@ -2205,6 +2276,7 @@ run_uninstall_home_alias_guard_smoke
 run_uninstall_symlinked_agent_dir_smoke
 run_uninstall_missing_marker_smoke
 run_uninstall_valid_marked_removal_smoke
+run_uninstall_marker_authoritative_smoke
 run_uninstall_wrapper_ownership_smoke
 run_uninstall_dangling_profile_wrapper_symlink_smoke
 run_uninstall_unrelated_wrapper_symlink_smoke
