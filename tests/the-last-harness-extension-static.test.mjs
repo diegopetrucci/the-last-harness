@@ -450,7 +450,8 @@ test("extension keeps TLH experimental command wiring with delta-follow-up-revie
 	assert.doesNotMatch(usageLimitsSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
 	assert.match(lockedWriteHelper, /const settingsPath = tlhSettingsPathForWrite\(\);/);
 	assert.match(lockedWriteHelper, /assertSafeTlhSettingsPath\(settingsPath\);/);
-	assert.match(lockedWriteHelper, /const backupPath = current \? `\$\{settingsPath\}\.bak-\$\{settingsBackupTimestamp\(\)\}` : undefined;/);
+	assert.match(lockedWriteHelper, /if \(current\) \{/);
+	assert.match(lockedWriteHelper, /const backupPath = `\$\{settingsPath\}\.bak-\$\{settingsBackupTimestamp\(\)\}`;/);
 	assert.match(lockedWriteHelper, /writeFileSync\(backupPath, current, \{ encoding: "utf8", flag: "wx", mode: 0o600 \}\);/);
 	assert.match(usageLimitsSource, /settings\.tlh\.usageLimits\.showWeekly = showWeekly/);
 	assert.match(usageLimitsSource, /showWeekly === true/);

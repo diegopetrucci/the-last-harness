@@ -51,18 +51,6 @@ type TlhPrimaryAgentRuntimeOptions = {
 
 type ActiveModel = NonNullable<ExtensionContext["model"]>;
 
-type TlhStartupModeOptions = {
-	env?: Record<string, string | undefined>;
-	buildChildSubagentSystemPrompt?: () => string;
-	registerChild?: () => void;
-	registerParent?: () => void;
-};
-
-const registerTlhStartupModeTyped = registerTlhStartupMode as (
-	pi: ExtensionAPI,
-	options?: TlhStartupModeOptions,
-) => "child" | "parent";
-
 export type TlhPrimaryAgentRuntime = {
 	applySessionStart(ctx: ExtensionContext): Promise<void>;
 	currentPrimaryAgentLabel(): string;
@@ -318,6 +306,8 @@ function registerChildSubagentRuntime(
 		if (event.toolName !== "bash") {
 			return undefined;
 		}
+		// `toolName` narrows the branch, but not the shared mutable `input` payload.
+		// Keep a runtime guard so direct/custom tool-call objects cannot pass a non-string command.
 		if (typeof event.input.command !== "string") {
 			return undefined;
 		}
@@ -798,6 +788,8 @@ function createTlhPrimaryAgentRuntime(
 
 		pi.on("tool_call", async (event, ctx) => {
 			if (event.toolName === "bash") {
+				// `toolName` narrows this branch, but not the shared mutable `input` payload.
+				// Keep a runtime guard so direct/custom tool-call objects cannot pass a non-string command.
 				if (typeof event.input.command !== "string") {
 					return undefined;
 				}
@@ -835,7 +827,7 @@ export function registerTlhPrimaryAgentRuntime(
 	const env = options.env ?? process.env;
 	const childPromptBuilder = (): string => buildChildSubagentSystemPrompt();
 	if (
-		registerTlhStartupModeTyped(pi, {
+		registerTlhStartupMode(pi, {
 			env,
 			buildChildSubagentSystemPrompt: childPromptBuilder,
 			registerChild: () => {

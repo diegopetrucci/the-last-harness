@@ -1,3 +1,13 @@
+/** @typedef {import("@earendil-works/pi-coding-agent").ExtensionAPI} ExtensionAPI */
+
+/**
+ * @typedef {object} TlhStartupModeOptions
+ * @property {Record<string, string | undefined>=} env
+ * @property {(() => string)=} buildChildSubagentSystemPrompt
+ * @property {(() => void)=} registerChild
+ * @property {(() => void)=} registerParent
+ */
+
 export const ALLOWED_SUBAGENTS = Object.freeze(["developer", "code-reviewer", "repo-scout", "diff-summarizer", "librarian", "web-scout", "oracle"]);
 export const SAFE_SUBAGENT_ACTIONS = Object.freeze(["list", "get", "status", "interrupt", "doctor", "resume"]);
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
@@ -170,13 +180,23 @@ export function validateSubagentToolInput(input) {
 	return undefined;
 }
 
+/**
+ * @param {ExtensionAPI} pi
+ * @param {() => string} buildChildSubagentSystemPrompt
+ */
 export function registerChildSubagentPrompt(pi, buildChildSubagentSystemPrompt) {
 	pi.on("before_agent_start", async (event) => ({
 		systemPrompt: [event.systemPrompt, buildChildSubagentSystemPrompt()].filter(Boolean).join("\n\n"),
 	}));
 }
 
-export function registerTlhStartupMode(pi, { env = process.env, buildChildSubagentSystemPrompt, registerChild, registerParent } = {}) {
+/**
+ * @param {ExtensionAPI} pi
+ * @param {TlhStartupModeOptions} [options={}]
+ * @returns {"child" | "parent"}
+ */
+export function registerTlhStartupMode(pi, options = {}) {
+	const { env = process.env, buildChildSubagentSystemPrompt, registerChild, registerParent } = options;
 	if (env?.[SUBAGENT_CHILD_ENV] === "1") {
 		if (typeof registerChild === "function") {
 			registerChild();
