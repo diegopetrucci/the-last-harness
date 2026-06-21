@@ -601,12 +601,17 @@ fi
 # piInstalledByTlh=true now means TLH owns the PRIVATE runtime at
 # PROFILE_ROOT/runtime, NOT a global package at ~/.local.
 #
-# Decision matrix (trigger — what to remove is resolved below):
+# Decision matrix (REMOVE_PI initial value; ownership gate may override below):
 #   --keep-pi                             → skip pi/runtime (regardless of state)
-#   --force-include-pi                    → remove pi/runtime (regardless of state)
-#   state absent OR file missing          → skip pi/runtime
-#   piInstalledByTlh = true               → remove pi/runtime
-#   piInstalledByTlh = false              → skip pi/runtime
+#   --force-include-pi                    → REMOVE_PI=true (affects legacy path only;
+#                                           private runtime removal requires a valid marker)
+#   state absent OR file missing          → REMOVE_PI=false
+#   piInstalledByTlh = true               → REMOVE_PI=true
+#   piInstalledByTlh = false              → REMOVE_PI=false
+#
+# For private runtime (RUNTIME_DIR): the ownership gate below is authoritative.
+# A valid path-matched marker authorizes removal even when REMOVE_PI=false.
+# An unmarked/invalid runtime skips regardless of REMOVE_PI or --force-include-pi.
 
 PI_STATE="$(read_pi_installed_by_tlh "${INSTALL_STATE}")"
 
@@ -660,91 +665,98 @@ fi
 PI_REMOVE_MODE="none"   # "runtime" | "legacy" | "none"
 PI_UNINSTALL_DISPLAY=""
 
-if [[ "${REMOVE_PI}" == "true" ]]; then
-  if [[ -d "${RUNTIME_DIR}" ]]; then
-    # ── ownership gate ────────────────────────────────────────────────────────
-    _runtime_marker_file="${RUNTIME_DIR}/${RUNTIME_MARKER_FILENAME}"
-    _runtime_marker_valid=false
-    _runtime_gate_skip_reason=""
+if [[ -d "${RUNTIME_DIR}" && "${KEEP_PI}" != "true" ]]; then
+  # ── ownership gate ──────────────────────────────────────────────────────────
+  # Evaluated regardless of REMOVE_PI / install-state (piInstalledByTlh).
+  # The marker is the authoritative ownership signal; install-state is
+  # non-gating for the marked private-runtime path.
+  _runtime_marker_file="${RUNTIME_DIR}/${RUNTIME_MARKER_FILENAME}"
+  _runtime_marker_valid=false
+  _runtime_gate_skip_reason=""
 
-    if [[ -L "${RUNTIME_DIR}" ]]; then
-      _runtime_gate_skip_reason="${RUNTIME_DIR} is a symlink; cannot verify TLH ownership"
-    elif [[ -L "${_runtime_marker_file}" ]]; then
-      _runtime_gate_skip_reason="ownership marker ${_runtime_marker_file} is a symlink; cannot verify TLH ownership"
-    elif [[ ! -f "${_runtime_marker_file}" ]]; then
-      _runtime_gate_skip_reason="no TLH ownership marker found at ${_runtime_marker_file}; ${RUNTIME_DIR} may not be TLH-owned"
+  if [[ -L "${RUNTIME_DIR}" ]]; then
+    _runtime_gate_skip_reason="${RUNTIME_DIR} is a symlink; cannot verify TLH ownership"
+  elif [[ -L "${_runtime_marker_file}" ]]; then
+    _runtime_gate_skip_reason="ownership marker ${_runtime_marker_file} is a symlink; cannot verify TLH ownership"
+  elif [[ ! -f "${_runtime_marker_file}" ]]; then
+    _runtime_gate_skip_reason="no TLH ownership marker found at ${_runtime_marker_file}; ${RUNTIME_DIR} may not be TLH-owned"
+  else
+    # Parse marker JSON (fail-closed; no jq, no node — uninstaller is self-contained).
+    # JSON.stringify() produces compact single-line output; each field is extracted by
+    # a BRE sed pattern.  An empty result for any field means absent/malformed → SKIP.
+    _marker_raw="$(cat "${_runtime_marker_file}" 2>/dev/null || true)"
+    _mver="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"schemaVersion"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)"
+    _mpkg="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"packageName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    _mpath="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"runtimeAbsPath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    _morigin="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"origin"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+
+    if [[ "${_mver}" != "1" ]]; then
+      _runtime_gate_skip_reason="ownership marker at ${_runtime_marker_file} has invalid or missing schemaVersion (expected 1, got '${_mver}')"
+    elif [[ "${_mpkg}" != "${PI_PACKAGE_NAME}" ]]; then
+      _runtime_gate_skip_reason="ownership marker at ${_runtime_marker_file} packageName mismatch (expected '${PI_PACKAGE_NAME}', got '${_mpkg}')"
+    elif [[ "${_morigin}" != "created" && "${_morigin}" != "migrated" ]]; then
+      _runtime_gate_skip_reason="ownership marker at ${_runtime_marker_file} has unrecognised origin '${_morigin}' (expected created or migrated)"
+    elif [[ -z "${_mpath}" ]]; then
+      _runtime_gate_skip_reason="ownership marker at ${_runtime_marker_file} has empty runtimeAbsPath"
     else
-      # Parse marker JSON (fail-closed; no jq, no node — uninstaller is self-contained).
-      # JSON.stringify() produces compact single-line output; each field is extracted by
-      # a BRE sed pattern.  An empty result for any field means absent/malformed → SKIP.
-      _marker_raw="$(cat "${_runtime_marker_file}" 2>/dev/null || true)"
-      _mver="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"schemaVersion"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)"
-      _mpkg="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"packageName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-      _mpath="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"runtimeAbsPath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-      _morigin="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"origin"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-
-      if [[ "${_mver}" != "1" ]]; then
-        _runtime_gate_skip_reason="ownership marker at ${_runtime_marker_file} has invalid or missing schemaVersion (expected 1, got '${_mver}')"
-      elif [[ "${_mpkg}" != "${PI_PACKAGE_NAME}" ]]; then
-        _runtime_gate_skip_reason="ownership marker at ${_runtime_marker_file} packageName mismatch (expected '${PI_PACKAGE_NAME}', got '${_mpkg}')"
-      elif [[ "${_morigin}" != "created" && "${_morigin}" != "migrated" ]]; then
-        _runtime_gate_skip_reason="ownership marker at ${_runtime_marker_file} has unrecognised origin '${_morigin}' (expected created or migrated)"
-      elif [[ -z "${_mpath}" ]]; then
-        _runtime_gate_skip_reason="ownership marker at ${_runtime_marker_file} has empty runtimeAbsPath"
+      _runtime_real="$(realpath_for_compare "${RUNTIME_DIR}")"
+      if [[ "${_mpath}" != "${_runtime_real}" ]]; then
+        _runtime_gate_skip_reason="ownership marker runtimeAbsPath '${_mpath}' does not match realpath '${_runtime_real}' of ${RUNTIME_DIR}"
       else
-        _runtime_real="$(realpath_for_compare "${RUNTIME_DIR}")"
-        if [[ "${_mpath}" != "${_runtime_real}" ]]; then
-          _runtime_gate_skip_reason="ownership marker runtimeAbsPath '${_mpath}' does not match realpath '${_runtime_real}' of ${RUNTIME_DIR}"
-        else
-          _runtime_marker_valid=true
-        fi
+        _runtime_marker_valid=true
       fi
     fi
+  fi
 
-    if [[ "${_runtime_marker_valid}" != "true" ]]; then
-      # Ownership gate failed — SKIP with conditional manual-removal hint.
-      REMOVE_PI=false
-      PI_SKIP_REASON="${_runtime_gate_skip_reason}. If this is TLH's private runtime and you no longer need its contents, run: rm -rf \"${RUNTIME_DIR}\"; otherwise leave it"
-    elif [[ ! -f "${RUNTIME_BIN}" || ! -d "${RUNTIME_DIR}/lib/node_modules/${PI_PACKAGE_NAME}" ]]; then
-      # Marker valid but positive pi layout absent.
-      REMOVE_PI=false
-      PI_SKIP_REASON="${RUNTIME_DIR} has a valid TLH ownership marker but the expected pi layout is missing (expected ${RUNTIME_BIN} and ${RUNTIME_DIR}/lib/node_modules/${PI_PACKAGE_NAME}). If this is TLH's private runtime and you no longer need its contents, run: rm -rf \"${RUNTIME_DIR}\"; otherwise leave it"
+  if [[ "${_runtime_marker_valid}" != "true" ]]; then
+    # Ownership gate failed — SKIP with conditional manual-removal hint.
+    REMOVE_PI=false
+    PI_SKIP_REASON="${_runtime_gate_skip_reason}. If this is TLH's private runtime and you no longer need its contents, run: rm -rf \"${RUNTIME_DIR}\"; otherwise leave it"
+  elif [[ ! -f "${RUNTIME_BIN}" || ! -d "${RUNTIME_DIR}/lib/node_modules/${PI_PACKAGE_NAME}" ]]; then
+    # Marker valid but positive pi layout absent.
+    REMOVE_PI=false
+    PI_SKIP_REASON="${RUNTIME_DIR} has a valid TLH ownership marker but the expected pi layout is missing (expected ${RUNTIME_BIN} and ${RUNTIME_DIR}/lib/node_modules/${PI_PACKAGE_NAME}). If this is TLH's private runtime and you no longer need its contents, run: rm -rf \"${RUNTIME_DIR}\"; otherwise leave it"
+  else
+    # All four gate conditions passed.  Exclusivity check (advisory only):
+    # unexpected top-level entries can DOWNGRADE to SKIP, never upgrade to delete.
+    # Use shopt dotglob+nullglob so a single '*' matches ALL real entries —
+    # including dotfiles — while never matching '.' or '..'.
+    # Save and restore prior shopt state so we don't leak options into the rest
+    # of the script; `eval "${_prev_shopt_state}"` is safe because shopt -p
+    # output is always of the form 'shopt -s|-u <name>'.
+    _prev_shopt_state="$(shopt -p dotglob nullglob || true)"
+    shopt -s dotglob nullglob
+    _runtime_exclusive=true
+    _runtime_unexpected_entry=""
+    for _runtime_entry in "${RUNTIME_DIR}"/*; do
+      [[ -e "${_runtime_entry}" || -L "${_runtime_entry}" ]] || continue
+      _runtime_basename="${_runtime_entry##*/}"
+      case "${_runtime_basename}" in
+        bin|lib|node-compile-cache|"${RUNTIME_MARKER_FILENAME}") ;;
+        *)
+          _runtime_exclusive=false
+          _runtime_unexpected_entry="${_runtime_entry}"
+          break
+          ;;
+      esac
+    done
+    eval "${_prev_shopt_state}"   # restore dotglob+nullglob to their prior state
+    if [[ "${_runtime_exclusive}" == "true" ]]; then
+      # Marker is authoritative: authorize removal regardless of install-state.
+      REMOVE_PI=true
+      PI_REMOVE_MODE="runtime"
+      PI_UNINSTALL_DISPLAY="rm -rf \"${RUNTIME_DIR}\""
     else
-      # All four gate conditions passed.  Exclusivity check (advisory only):
-      # unexpected top-level entries can DOWNGRADE to SKIP, never upgrade to delete.
-      # Use shopt dotglob+nullglob so a single '*' matches ALL real entries —
-      # including dotfiles — while never matching '.' or '..'.
-      # Save and restore prior shopt state so we don't leak options into the rest
-      # of the script; `eval "${_prev_shopt_state}"` is safe because shopt -p
-      # output is always of the form 'shopt -s|-u <name>'.
-      _prev_shopt_state="$(shopt -p dotglob nullglob || true)"
-      shopt -s dotglob nullglob
-      _runtime_exclusive=true
-      _runtime_unexpected_entry=""
-      for _runtime_entry in "${RUNTIME_DIR}"/*; do
-        [[ -e "${_runtime_entry}" || -L "${_runtime_entry}" ]] || continue
-        _runtime_basename="${_runtime_entry##*/}"
-        case "${_runtime_basename}" in
-          bin|lib|node-compile-cache|"${RUNTIME_MARKER_FILENAME}") ;;
-          *)
-            _runtime_exclusive=false
-            _runtime_unexpected_entry="${_runtime_entry}"
-            break
-            ;;
-        esac
-      done
-      eval "${_prev_shopt_state}"   # restore dotglob+nullglob to their prior state
-      if [[ "${_runtime_exclusive}" == "true" ]]; then
-        PI_REMOVE_MODE="runtime"
-        PI_UNINSTALL_DISPLAY="rm -rf \"${RUNTIME_DIR}\""
-      else
-        # Exclusivity tripwire fired (advisory): unexpected entry found.
-        # Downgrade to SKIP to protect co-located files.
-        REMOVE_PI=false
-        PI_SKIP_REASON="${RUNTIME_DIR} contains unexpected top-level entries alongside the TLH pi layout (e.g. ${_runtime_unexpected_entry}); not removing to protect co-located files. If this is TLH's private runtime and you no longer need its contents, run: rm -rf \"${RUNTIME_DIR}\"; otherwise leave it"
-      fi
+      # Exclusivity tripwire fired (advisory): unexpected entry found.
+      # Downgrade to SKIP to protect co-located files.
+      REMOVE_PI=false
+      PI_SKIP_REASON="${RUNTIME_DIR} contains unexpected top-level entries alongside the TLH pi layout (e.g. ${_runtime_unexpected_entry}); not removing to protect co-located files. If this is TLH's private runtime and you no longer need its contents, run: rm -rf \"${RUNTIME_DIR}\"; otherwise leave it"
     fi
-  elif [[ -f "${HOME}/.local/bin/pi" ]]; then
+  fi
+elif [[ "${REMOVE_PI}" == "true" ]]; then
+  # No private runtime at RUNTIME_DIR; fall through to legacy ~/.local/bin/pi
+  # or absent-pi handling.
+  if [[ -f "${HOME}/.local/bin/pi" ]]; then
     if [[ "${FORCE_INCLUDE_PI}" == "true" ]]; then
       PI_REMOVE_MODE="legacy"
       PI_UNINSTALL_DISPLAY="npm uninstall -g --ignore-scripts --prefix \"${HOME}/.local\" ${PI_PACKAGE_NAME}"
