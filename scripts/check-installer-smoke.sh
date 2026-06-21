@@ -131,30 +131,26 @@ EOF_MANAGED_WRAPPER
   chmod +x "${wrapper_path}"
 }
 
-write_runtime_ownership_marker() {
-  # Write a valid .tlh-runtime-owned marker into an existing runtime dir.
-  # runtimeAbsPath is derived via pwd -P so macOS /var -> /private/var resolves
-  # correctly and matches what Node.js realpathSync returns in tlh-install.mjs.
-  local runtime_dir="$1"
-  local _marker_abs
-  _marker_abs="$(cd "${runtime_dir}" >/dev/null 2>&1 && pwd -P)"
-  printf '{"schemaVersion":1,"packageName":"@earendil-works/pi-coding-agent","runtimeAbsPath":"%s","origin":"created"}' \
-    "${_marker_abs}" >"${runtime_dir}/.tlh-runtime-owned"
-}
-
 write_tlh_pi_runtime() {
   # Seed the TLH pi runtime layout produced by:
   #   npm install -g --ignore-scripts --prefix <runtime_dir> @earendil-works/pi-coding-agent
   # Presence of both runtime_dir/bin/pi and
-  # runtime_dir/lib/node_modules/@earendil-works/pi-coding-agent is the ownership
-  # predicate checked by the uninstaller before rm -rf.
-  # A valid .tlh-runtime-owned marker is also written so the installer's and
-  # uninstaller's ownership gates both pass.
+  # runtime_dir/lib/node_modules/@earendil-works/pi-coding-agent is the base
+  # ownership/layout predicate checked by the uninstaller.
   local runtime_dir="$1"
   mkdir -p "${runtime_dir}/bin" "${runtime_dir}/lib/node_modules/@earendil-works/pi-coding-agent"
   printf '#!/bin/sh\n' >"${runtime_dir}/bin/pi"
   chmod +x "${runtime_dir}/bin/pi"
-  write_runtime_ownership_marker "${runtime_dir}"
+}
+
+write_tlh_runtime_marker() {
+  local runtime_dir="$1"
+  local origin="$2"
+  local marker_abs
+
+  marker_abs="$(cd "${runtime_dir}" >/dev/null 2>&1 && pwd -P)"
+  printf '{"schemaVersion":1,"packageName":"@earendil-works/pi-coding-agent","runtimeAbsPath":"%s","origin":"%s"}' \
+    "${marker_abs}" "${origin}" >"${runtime_dir}/.tlh-runtime-owned"
 }
 
 assert_pi_commands_isolated() {
@@ -1401,7 +1397,7 @@ EOF_PRESENT_GIT
   # Write a valid ownership marker for the pre-seeded runtime so the installer's
   # assertRuntimePrefixOwnedOrEmpty gate passes and the reuse path runs.
   # runtimeAbsPath uses pwd -P so macOS /var -> /private/var matches Node.js realpathSync.
-  write_runtime_ownership_marker "${present_dir}/runtime"
+  write_tlh_runtime_marker "${present_dir}/runtime" created
   # Seed a valid private runtime pi (pinned version) at the expected location.
   cat >"${present_runtime_bin}/pi" <<'EOF_PRESENT_RUNTIME_PI'
 #!/bin/sh
@@ -1539,12 +1535,12 @@ run_uninstall_dry_run_pi_smoke() {
   local combined_file="${case_dir}/combined.log"
   mkdir -p "${case_dir}"
 
-  # ── piInstalledByTlh:true → plan shows private runtime removal ───────────
+  # ── piInstalledByTlh:true + origin=created marker → rm -rf plan ──────────
   local true_agent="${case_dir}/pi-true/agent"
   local true_runtime="${case_dir}/pi-true/runtime"
   mkdir -p "${true_agent}/tlh"
-  # Seed the TLH pi layout so the ownership check passes.
   write_tlh_pi_runtime "${true_runtime}"
+  write_tlh_runtime_marker "${true_runtime}" created
   cat >"${true_agent}/tlh/install-state.json" <<'EOF_UNINSTALL_STATE_TRUE'
 {
   "schemaVersion": 1,
@@ -1556,6 +1552,69 @@ EOF_UNINSTALL_STATE_TRUE
   bash uninstall.sh --dry-run --agent-dir "${true_agent}" --bin-dir "${case_dir}/bin-true" >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
   assert_contains "${combined_file}" "would remove private runtime: rm -rf ${true_runtime}"
+
+  # ── piInstalledByTlh:true + origin=migrated marker → npm uninstall plan ──
+  local migrated_agent="${case_dir}/pi-migrated/agent"
+  local migrated_runtime="${case_dir}/pi-migrated/runtime"
+  mkdir -p "${migrated_agent}/tlh"
+  write_tlh_pi_runtime "${migrated_runtime}"
+  write_tlh_runtime_marker "${migrated_runtime}" migrated
+  cat >"${migrated_agent}/tlh/install-state.json" <<'EOF_UNINSTALL_STATE_MIGRATED'
+{
+  "schemaVersion": 1,
+  "repo": "diegopetrucci/the-last-harness",
+  "piInstalledByTlh": true
+}
+EOF_UNINSTALL_STATE_MIGRATED
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${migrated_agent}" --bin-dir "${case_dir}/bin-migrated" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would remove migrated TLH pi from shared runtime (npm): npm uninstall -g --ignore-scripts --prefix \"${migrated_runtime}\" @earendil-works/pi-coding-agent"
+  assert_not_contains "${combined_file}" "would remove private runtime: rm -rf ${migrated_runtime}"
+
+  # ── piInstalledByTlh:true + unmarked runtime → plan shows skip ────────────
+  local unmarked_agent="${case_dir}/pi-unmarked/agent"
+  local unmarked_runtime="${case_dir}/pi-unmarked/runtime"
+  mkdir -p "${unmarked_agent}/tlh"
+  write_tlh_pi_runtime "${unmarked_runtime}"
+  cat >"${unmarked_agent}/tlh/install-state.json" <<'EOF_UNINSTALL_STATE_UNMARKED'
+{
+  "schemaVersion": 1,
+  "repo": "diegopetrucci/the-last-harness",
+  "piInstalledByTlh": true
+}
+EOF_UNINSTALL_STATE_UNMARKED
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${unmarked_agent}" --bin-dir "${case_dir}/bin-unmarked" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_contains "${combined_file}" "${unmarked_runtime} looks like a TLH pi runtime but has no valid TLH runtime ownership marker"
+
+  # ── origin=migrated marker overrides piInstalledByTlh:false → npm uninstall plan ──
+  local migrated_false_agent="${case_dir}/pi-migrated-false/agent"
+  local migrated_false_runtime="${case_dir}/pi-migrated-false/runtime"
+  mkdir -p "${migrated_false_agent}/tlh"
+  write_tlh_pi_runtime "${migrated_false_runtime}"
+  write_tlh_runtime_marker "${migrated_false_runtime}" migrated
+  cat >"${migrated_false_agent}/tlh/install-state.json" <<'EOF_UNINSTALL_STATE_MIGRATED_FALSE'
+{
+  "schemaVersion": 1,
+  "repo": "diegopetrucci/the-last-harness",
+  "piInstalledByTlh": false
+}
+EOF_UNINSTALL_STATE_MIGRATED_FALSE
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${migrated_false_agent}" --bin-dir "${case_dir}/bin-migrated-false" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would remove migrated TLH pi from shared runtime (npm): npm uninstall -g --ignore-scripts --prefix \"${migrated_false_runtime}\" @earendil-works/pi-coding-agent"
+  assert_not_contains "${combined_file}" "would skip pi/runtime removal (install-state: piInstalledByTlh=false)"
+  assert_not_contains "${combined_file}" "would remove private runtime: rm -rf ${migrated_false_runtime}"
 
   # ── piInstalledByTlh:false → plan shows skip ──────────────────────────────
   local false_agent="${case_dir}/pi-false/agent"
@@ -1606,8 +1665,9 @@ run_uninstall_flag_override_smoke() {
   local force_agent="${case_dir}/force-include/agent"
   local force_runtime="${case_dir}/force-include/runtime"
   mkdir -p "${force_agent}/tlh"
-  # Seed the TLH pi layout so the ownership gate passes.
+  # Seed the TLH pi layout and origin=created marker so the runtime-removal path is eligible.
   write_tlh_pi_runtime "${force_runtime}"
+  write_tlh_runtime_marker "${force_runtime}" created
   cat >"${force_agent}/tlh/install-state.json" <<'EOF_FORCE_STATE'
 {
   "schemaVersion": 1,
@@ -2085,15 +2145,17 @@ run_uninstall_runtime_ownership_smoke() {
   assert_present "${unrelated_runtime}/not-tlh.txt"
   assert_present "${unrelated_runtime}"
 
-  # ── Case 2: TLH-owned runtime (proper layout) → IS removed ────────────────
-  # piInstalledByTlh=true AND RUNTIME_DIR has the expected TLH pi layout.
-  # The uninstaller must plan and execute removal.
+  # ── Case 2: TLH-created runtime (proper layout + marker) → IS removed ─────
+  # piInstalledByTlh=true, the runtime has the expected TLH pi layout, and the
+  # origin=created ownership marker is present. The uninstaller must plan and
+  # execute removal.
   local owned_dir="${case_dir}/owned"
   local owned_agent="${owned_dir}/agent"
   local owned_runtime="${owned_dir}/runtime"
   assert_safe_uninstall_smoke_paths "${owned_agent}" "${case_dir}/bin-owned"
   write_tlh_install_state "${owned_agent}" true
   write_tlh_pi_runtime "${owned_runtime}"
+  write_tlh_runtime_marker "${owned_runtime}" created
 
   # dry-run: plan must show removal.
   : >"${stdout_file}"
@@ -2119,6 +2181,7 @@ run_uninstall_runtime_ownership_smoke() {
   assert_safe_uninstall_smoke_paths "${mixed_agent}" "${case_dir}/bin-mixed"
   write_tlh_install_state "${mixed_agent}" true
   write_tlh_pi_runtime "${mixed_runtime}"
+  write_tlh_runtime_marker "${mixed_runtime}" created
   # Seed the co-located sentinel alongside the TLH pi layout.
   printf 'user co-located data — must survive\n' >"${mixed_sentinel}"
 
@@ -2150,6 +2213,7 @@ run_uninstall_runtime_ownership_smoke() {
   assert_safe_uninstall_smoke_paths "${dotdot_agent}" "${case_dir}/bin-dotdot"
   write_tlh_install_state "${dotdot_agent}" true
   write_tlh_pi_runtime "${dotdot_runtime}"
+  write_tlh_runtime_marker "${dotdot_runtime}" created
   # Seed a '..userdata' sentinel alongside the TLH pi layout.
   printf 'user dotdot-named data — must survive\n' >"${dotdot_sentinel}"
 
@@ -2169,6 +2233,53 @@ run_uninstall_runtime_ownership_smoke() {
   assert_absent "${dotdot_agent}"
   assert_present "${dotdot_sentinel}"
   assert_present "${dotdot_runtime}"
+
+  # ── Case 5: migrated runtime → surgical uninstall clears marker only ───────
+  # origin=migrated must preserve the shared prefix and foreign packages while
+  # clearing TLH's ownership marker after npm uninstall succeeds.
+  local migrated_dir="${case_dir}/migrated"
+  local migrated_agent="${migrated_dir}/agent"
+  local migrated_runtime="${migrated_dir}/runtime"
+  local migrated_fakebin="${migrated_dir}/fakebin"
+  local migrated_npm_log="${migrated_dir}/npm.log"
+  local foreign_package_dir="${migrated_runtime}/lib/node_modules/foreign-package"
+  local foreign_package_file="${foreign_package_dir}/package.json"
+  assert_safe_uninstall_smoke_paths "${migrated_agent}" "${case_dir}/bin-migrated"
+  write_tlh_install_state "${migrated_agent}" true
+  write_tlh_pi_runtime "${migrated_runtime}"
+  write_tlh_runtime_marker "${migrated_runtime}" migrated
+  mkdir -p "${migrated_fakebin}" "${foreign_package_dir}"
+  printf '{"name":"foreign-package"}\n' >"${foreign_package_file}"
+  cat >"${migrated_fakebin}/npm" <<EOF_MIGRATED_NPM
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "\$*" >"${migrated_npm_log}"
+if [[ "\$#" -ne 6 || "\$1" != "uninstall" || "\$2" != "-g" || "\$3" != "--ignore-scripts" || "\$4" != "--prefix" || "\$5" != "${migrated_runtime}" || "\$6" != "@earendil-works/pi-coding-agent" ]]; then
+  printf 'unexpected npm args: %s\n' "\$*" >&2
+  exit 97
+fi
+rm -rf "${migrated_runtime}/lib/node_modules/@earendil-works/pi-coding-agent"
+rm -f "${migrated_runtime}/bin/pi"
+EOF_MIGRATED_NPM
+  chmod +x "${migrated_fakebin}/npm"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  PATH="${migrated_fakebin}:${PATH}" bash uninstall.sh --agent-dir "${migrated_agent}" --bin-dir "${case_dir}/bin-migrated" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -ne 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "migrated runtime uninstall smoke exited with non-zero status: ${status}"
+  fi
+  assert_contains "${migrated_npm_log}" "uninstall -g --ignore-scripts --prefix ${migrated_runtime} @earendil-works/pi-coding-agent"
+  assert_absent "${migrated_runtime}/.tlh-runtime-owned"
+  assert_absent "${migrated_runtime}/lib/node_modules/@earendil-works/pi-coding-agent"
+  assert_absent "${migrated_runtime}/bin/pi"
+  assert_present "${foreign_package_file}"
+  assert_present "${migrated_runtime}"
 }
 
 run_uninstall_sibling_preservation_smoke() {
@@ -2231,8 +2342,9 @@ run_uninstall_marker_authoritative_smoke() {
   mkdir -p "${bin_dir}"
   # piInstalledByTlh=false: install-state does NOT authorize removal.
   write_tlh_install_state "${agent_dir}" false
-  # Valid-marker runtime: write_tlh_pi_runtime seeds bin/pi, lib/node_modules, and marker.
+  # Valid-marker runtime: seed bin/pi, lib/node_modules, and the ownership marker.
   write_tlh_pi_runtime "${runtime_dir}"
+  write_tlh_runtime_marker "${runtime_dir}" created
   wrapper_path="$(cd "${bin_dir}" >/dev/null 2>&1 && pwd -P)/tlh"
   write_managed_wrapper "${wrapper_path}"
 
