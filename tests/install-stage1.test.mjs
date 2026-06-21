@@ -3148,6 +3148,87 @@ test("uninstall.sh does not remove legacy ~/.local/bin/pi without --force-includ
 	assert.equal(existsSync(join(legacyBin, "pi")), false, "legacy pi should have been removed with --force-include-pi");
 });
 
+test("uninstall.sh regression (tlht-h7vq): migrated runtime marker preserves nested foreign packages during surgical uninstall", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const profileRoot = join(root, "profile");
+	const agentDir = join(profileRoot, "agent");
+	const runtimeDir = join(profileRoot, "runtime");
+	const binDir = join(root, "bin");
+	const fakeNpmDir = join(root, "fakenpm");
+	const npmLog = join(root, "npm.log");
+	const markerPath = join(runtimeDir, ".tlh-runtime-owned");
+	const tlhPackageDir = join(runtimeDir, "lib", "node_modules", "@earendil-works", "pi-coding-agent");
+	const foreignPackageDir = join(runtimeDir, "lib", "node_modules", "foreign-package");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(join(agentDir, "tlh"), { recursive: true });
+	mkdirSync(join(runtimeDir, "bin"), { recursive: true });
+	mkdirSync(tlhPackageDir, { recursive: true });
+	mkdirSync(foreignPackageDir, { recursive: true });
+	mkdirSync(binDir, { recursive: true });
+	writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify({
+		schemaVersion: 1,
+		repo: "diegopetrucci/the-last-harness",
+		piInstalledByTlh: true,
+	}, null, 2));
+	writeFileSync(join(runtimeDir, "bin", "pi"), "#!/bin/sh\n", "utf8");
+	chmodSync(join(runtimeDir, "bin", "pi"), 0o755);
+	writeFileSync(markerPath, JSON.stringify({
+		schemaVersion: 1,
+		packageName: "@earendil-works/pi-coding-agent",
+		runtimeAbsPath: realpathSync(runtimeDir),
+		origin: "migrated",
+	}), "utf8");
+	writeFileSync(join(tlhPackageDir, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent" }, null, 2));
+	writeFileSync(join(foreignPackageDir, "package.json"), JSON.stringify({ name: "foreign-package" }, null, 2));
+
+	const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const dryResult = spawnSync("bash", [join(repoRoot, "uninstall.sh"), "--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], {
+		cwd: repoRoot,
+		env: scrubInstallerEnv({ HOME: homeDir }),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	const dryOutput = `${dryResult.stdout}\n${dryResult.stderr}`;
+
+	assert.equal(dryResult.status, 0, `dry-run failed:\n${dryOutput}`);
+	assert.match(
+		dryOutput,
+		new RegExp(`would remove migrated TLH pi from shared runtime \\(npm\\): npm uninstall -g --ignore-scripts --prefix "${escapeRegex(runtimeDir)}" @earendil-works/pi-coding-agent`),
+	);
+	assert.doesNotMatch(dryOutput, new RegExp(`would remove private runtime: rm -rf ${escapeRegex(runtimeDir)}`));
+	assert.equal(existsSync(foreignPackageDir), true, "dry-run must not remove nested foreign package");
+
+	writeFakeCommand(fakeNpmDir, "npm", [
+		`printf '%s\\n' "$*" >>"${npmLog}"`,
+		`if [[ "$1" != "uninstall" ]]; then printf 'unexpected npm command: %s\\n' "$*" >&2; exit 98; fi`,
+		`rm -f "${join(runtimeDir, "bin", "pi")}"`,
+		`rm -rf "${tlhPackageDir}"`,
+	].join("\n"));
+
+	const realResult = spawnSync("bash", [join(repoRoot, "uninstall.sh"), "--agent-dir", agentDir, "--bin-dir", binDir], {
+		cwd: repoRoot,
+		env: scrubInstallerEnv({ HOME: homeDir, PATH: `${fakeNpmDir}:${process.env.PATH || ""}` }),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	const realOutput = `${realResult.stdout}\n${realResult.stderr}`;
+
+	assert.equal(realResult.status, 0, `real uninstall failed:\n${realOutput}`);
+	assert.deepEqual(readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [
+		`uninstall -g --ignore-scripts --prefix ${runtimeDir} @earendil-works/pi-coding-agent`,
+	]);
+	assert.equal(existsSync(agentDir), false, "agent dir should be removed after uninstall");
+	assert.equal(existsSync(join(runtimeDir, "bin", "pi")), false, "TLH runtime launcher should be removed surgically");
+	assert.equal(existsSync(tlhPackageDir), false, "TLH runtime package should be removed surgically");
+	assert.equal(existsSync(markerPath), false, "migrated runtime ownership marker should be cleared after uninstall");
+	assert.equal(existsSync(foreignPackageDir), true, "nested foreign package must survive migrated runtime uninstall");
+	assert.equal(readFileSync(join(foreignPackageDir, "package.json"), "utf8"), JSON.stringify({ name: "foreign-package" }, null, 2));
+	assert.equal(existsSync(runtimeDir), true, "shared runtime prefix must survive migrated runtime uninstall");
+});
+
 test("stage-1 refuses to install into a runtime prefix containing a foreign top-level entry", (t) => {
 	const scenarios = [
 		{ label: "normal file", foreignName: "userdata.txt", dryRun: false },
