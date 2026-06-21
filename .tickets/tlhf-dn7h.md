@@ -2,7 +2,6 @@
 id: tlhf-dn7h
 status: open
 deps: []
-links: [tlhf-z53p]
 created: 2026-05-28T05:45:05Z
 type: task
 priority: 1
@@ -11,7 +10,7 @@ tags: [token-optimization, subagents, prompt]
 ---
 # Reduce redundant review and oracle fan-out
 
-Tighten TLH orchestration guidance to reduce redundant review/oracle fan-out while preserving safety. Investigation tlhf-obvs found classified child review/oracle spend was $15.176 (74.2% of classified child spend), with conservative reducible overlap of about $4.5 (22%) from repeated full-branch rereads and duplicate oracle/reviewer scopes. The goal is not to reduce high-risk installer or trust-boundary safety review; it is to avoid multiple agents reviewing the same full diff without disjoint scope. Follow-up delta-only review behavior was split to tlhf-z53p.
+Tighten TLH orchestration guidance to reduce redundant review/oracle fan-out while preserving safety. Investigation tlhf-obvs found classified child review/oracle spend was $15.176 (74.2% of classified child spend), with conservative reducible overlap of about $4.5 (22%) from repeated full-branch rereads and duplicate oracle/reviewer scopes. The goal is not to reduce high-risk installer or trust-boundary safety review; it is to avoid multiple agents reviewing the same full diff without disjoint scope. Follow-up delta-only review behavior was split out separately.
 
 ## Design
 
@@ -23,4 +22,3 @@ Likely touchpoints: agents/primary/architect.md and any packaged primary-agent g
 - Oracle use is reserved for trust-boundary, destructive-path, auth/execution, unresolved disagreement, or durable uncertainty cases, with one oracle per branch by default.
 - Guidance preserves one final whole-branch review for high-risk installer/destructive-path work when warranted.
 - Guidance discourages multiple reviewers/oracles over the same full `main...HEAD` diff unless scopes are explicitly disjoint.
-
