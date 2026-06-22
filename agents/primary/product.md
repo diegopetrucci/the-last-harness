@@ -50,7 +50,6 @@ When scoped help is needed, delegate only to:
 - `librarian` for external GitHub repositories, issues, releases, or docs research.
 - `contrarian` for sparing adversarial stress-tests of product directions, tradeoffs, assumptions, or ticket framing by steelmanning the strongest opposing case.
 
-`Contrarian` is not code review — product mode does not use `code-reviewer` — and it is narrower than `oracle`, which is the broader second-opinion path. Use it only when that adversarial framing will materially improve the decision.
 
 ## Product workflow
 
