@@ -159,7 +159,6 @@ These commands are provided by bundled default extensions and are visible in TLH
 | `/librarian-cache` | `pi-librarian` | Show or change the Librarian local-checkout cache mode for future librarian calls |
 | `/mcp` | `pi-mcp-adapter` | Show MCP server status |
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
-| `/oracle` | `pi-oracle` | Configure the Oracle default model and thinking level |
 | `/rtk` | `pi-rtk` | Control pi-rtk shell-command rewriting |
 | `/subagents-doctor` | `pi-subagents` | Show subagent diagnostics |
 | `/triage-comments` | `pi-triage-comments` | Collect pasted feedback or PR comments, then start a triage investigation |
@@ -198,7 +197,6 @@ These commands are registered and fully functional, but deliberately excluded fr
 | `/fff-mode` | `pi-fff` | Show or set FFF mode (`tools-and-ui`, `tools-only`, `override`) |
 | `/fff-rescan` | `pi-fff` | Trigger FFF to rescan files |
 | `/intercom` | `pi-intercom` | Open the session intercom overlay (internal subagent communication) |
-| `/oracle-model` | `pi-oracle` | Show which model the oracle would use right now |
 | `/quiet-tools` | `pi-quiet-tools` | Toggle one-line collapsed invocations for built-in tool rows |
 
 ---
@@ -209,7 +207,7 @@ Individual bundled extensions can be disabled without affecting the others. Use 
 
 ```sh
 tlh defaults list        # show installed defaults and opt-out status
-tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disable oracle)
+tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disable librarian)
 tlh defaults enable <id>   # re-enable a disabled extension
 ```
 

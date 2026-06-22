@@ -13,6 +13,7 @@ const branchHarnessPackage = "git:github.com/diegopetrucci/the-last-harness@feat
 const retiredPlannotatorPackage = "npm:@plannotator/pi-extension";
 const retiredPermissionGatePackage = "npm:@diegopetrucci/pi-permission-gate";
 const retiredConfirmDestructivePackage = "npm:@diegopetrucci/pi-confirm-destructive";
+const retiredOraclePackage = "npm:@diegopetrucci/pi-oracle";
 const changelogSentinel = "9999.0.0";
 
 function tempFixture(defaultsValue, settingsValue, extensionsValue = []) {
@@ -482,13 +483,13 @@ test("merge migrates existing unpinned managed npm default package sources to bu
 		{
 			packages: [
 				harnessPackage,
-				"npm:@diegopetrucci/pi-oracle",
+				"npm:@diegopetrucci/pi-notify",
 			],
 		},
 		[
 			{
-				id: "oracle",
-				source: "npm:@diegopetrucci/pi-oracle@0.1.12",
+				id: "notify",
+				source: "npm:@diegopetrucci/pi-notify@0.1.5",
 			},
 		],
 	);
@@ -498,9 +499,9 @@ test("merge migrates existing unpinned managed npm default package sources to bu
 	const settings = readJson(fixture.settings);
 	assert.deepEqual(settings.packages, [
 		harnessPackage,
-		"npm:@diegopetrucci/pi-oracle@0.1.12",
+		"npm:@diegopetrucci/pi-notify@0.1.5",
 	]);
-	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, ["npm:@diegopetrucci/pi-oracle"]);
+	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, ["npm:@diegopetrucci/pi-notify"]);
 });
 
 test("merge updates managed pinned npm default package sources when the bundled manifest pin changes", () => {
@@ -509,18 +510,18 @@ test("merge updates managed pinned npm default package sources when the bundled 
 		{
 			packages: [
 				harnessPackage,
-				"npm:@diegopetrucci/pi-oracle@0.1.12",
+				"npm:@diegopetrucci/pi-notify@0.1.5",
 			],
 			tlh: {
 				defaultExtensionProvenance: {
-					managedPackageIdentities: ["npm:@diegopetrucci/pi-oracle"],
+					managedPackageIdentities: ["npm:@diegopetrucci/pi-notify"],
 				},
 			},
 		},
 		[
 			{
-				id: "oracle",
-				source: "npm:@diegopetrucci/pi-oracle@0.1.13",
+				id: "notify",
+				source: "npm:@diegopetrucci/pi-notify@0.1.6",
 			},
 		],
 	);
@@ -530,9 +531,9 @@ test("merge updates managed pinned npm default package sources when the bundled 
 	const settings = readJson(fixture.settings);
 	assert.deepEqual(settings.packages, [
 		harnessPackage,
-		"npm:@diegopetrucci/pi-oracle@0.1.13",
+		"npm:@diegopetrucci/pi-notify@0.1.6",
 	]);
-	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, ["npm:@diegopetrucci/pi-oracle"]);
+	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, ["npm:@diegopetrucci/pi-notify"]);
 });
 
 test("merge preserves older pinned npm package sources without managed default provenance", () => {
@@ -541,13 +542,13 @@ test("merge preserves older pinned npm package sources without managed default p
 		{
 			packages: [
 				harnessPackage,
-				"npm:@diegopetrucci/pi-oracle@0.1.12",
+				"npm:@diegopetrucci/pi-notify@0.1.5",
 			],
 		},
 		[
 			{
-				id: "oracle",
-				source: "npm:@diegopetrucci/pi-oracle@0.1.13",
+				id: "notify",
+				source: "npm:@diegopetrucci/pi-notify@0.1.6",
 			},
 		],
 	);
@@ -559,7 +560,7 @@ test("merge preserves older pinned npm package sources without managed default p
 	assert.doesNotMatch(firstOutput, /update default extension package source/);
 	assert.deepEqual(afterFirst.packages, [
 		harnessPackage,
-		"npm:@diegopetrucci/pi-oracle@0.1.12",
+		"npm:@diegopetrucci/pi-notify@0.1.5",
 	]);
 	assert.deepEqual(afterFirst.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [], []);
 
@@ -571,7 +572,7 @@ test("merge preserves older pinned npm package sources without managed default p
 	assert.equal(readFileSync(fixture.settings, "utf8"), afterFirstRaw);
 	assert.deepEqual(afterSecond.packages, [
 		harnessPackage,
-		"npm:@diegopetrucci/pi-oracle@0.1.12",
+		"npm:@diegopetrucci/pi-notify@0.1.5",
 	]);
 	assert.deepEqual(afterSecond.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [], []);
 });
@@ -800,6 +801,85 @@ test("merge cleanup of retired confirmation packages is idempotent after first r
 	const afterFirst = readFileSync(fixture.settings, "utf8");
 	const firstSettings = readJson(fixture.settings);
 	assert.deepEqual(firstSettings.packages, [harnessPackage], "retired confirmation packages removed on first run");
+
+	const secondOutput = runMerge(fixture, { quiet: false });
+	assert.match(secondOutput, /No settings changes needed\./);
+	assert.equal(readFileSync(fixture.settings, "utf8"), afterFirst, "settings unchanged on second run");
+});
+
+test("merge force-removes pi-oracle package while preserving unrelated packages", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				`${retiredOraclePackage}@2.1.0`,
+				{ source: `${retiredOraclePackage}@1.0.0`, extensions: ["legacy-filter"] },
+				"npm:@diegopetrucci/pi-notify",
+			],
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.packages, [
+		harnessPackage,
+		"npm:@diegopetrucci/pi-notify",
+	]);
+	assert.match(output, /force-remove retired default extension package: npm:@diegopetrucci\/pi-oracle/);
+});
+
+test("merge prunes oracle from tlh.disabledDefaultExtensions and emits a changes line", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [harnessPackage],
+			tlh: { disabledDefaultExtensions: ["oracle", "notify"] },
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["notify"], "oracle should be pruned, other entries preserved");
+	assert.match(output, /remove stale oracle opt-out from tlh\.disabledDefaultExtensions/);
+});
+
+test("merge prunes whitespace-padded oracle entry from tlh.disabledDefaultExtensions", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [harnessPackage],
+			tlh: { disabledDefaultExtensions: [" oracle ", "notify"] },
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["notify"], "whitespace-padded oracle should be pruned");
+	assert.match(output, /remove stale oracle opt-out from tlh\.disabledDefaultExtensions/);
+});
+
+test("merge cleanup of pi-oracle is idempotent after first run", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				retiredOraclePackage,
+			],
+			tlh: { disabledDefaultExtensions: ["oracle", "notify"] },
+		},
+	);
+
+	runMerge(fixture);
+
+	const afterFirst = readFileSync(fixture.settings, "utf8");
+	const firstSettings = readJson(fixture.settings);
+	assert.ok(!firstSettings.packages.includes(retiredOraclePackage), "pi-oracle removed on first run");
+	assert.deepEqual(firstSettings.tlh.disabledDefaultExtensions, ["notify"], "oracle opt-out pruned on first run");
 
 	const secondOutput = runMerge(fixture, { quiet: false });
 	assert.match(secondOutput, /No settings changes needed\./);

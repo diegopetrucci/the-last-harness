@@ -14,7 +14,6 @@ const defaultsScript = join(repoRoot, "scripts", "tlh-defaults.mjs");
 const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
 const retiredPlannotatorPackage = "npm:@plannotator/pi-extension";
 const expectedBundledNpmSources = new Map([
-	["oracle", "npm:@diegopetrucci/pi-oracle@0.1.12"],
 	["openai-fast", "npm:@diegopetrucci/pi-openai-fast@0.1.4"],
 	["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth@0.6.2"],
 	["librarian", "npm:@diegopetrucci/pi-librarian@0.1.5"],
@@ -265,10 +264,6 @@ test("merge reorders only targeted default extensions so unrelated defaults stay
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
 		{
-			id: "oracle",
-			source: "npm:@diegopetrucci/pi-oracle",
-		},
-		{
 			id: "rtk",
 			aliases: ["pi-rtk"],
 			replaces: ["npm:pi-rtk", "npm:@sherif-fanous/pi-rtk", "git:github.com/sherif-fanous/pi-rtk"],
@@ -285,7 +280,6 @@ test("merge reorders only targeted default extensions so unrelated defaults stay
 		packages: [
 			"npm:before",
 			"npm:@diegopetrucci/pi-compact-bash",
-			"npm:@diegopetrucci/pi-oracle",
 			"npm:@sherif-fanous/pi-rtk",
 			"npm:after",
 		],
@@ -301,7 +295,6 @@ test("merge reorders only targeted default extensions so unrelated defaults stay
 	assert.deepEqual(readJson(fixture.settings).packages, [
 		"npm:before",
 		"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
-		"npm:@diegopetrucci/pi-oracle",
 		"npm:after",
 		"git:github.com/diegopetrucci/the-last-harness",
 		"npm:@diegopetrucci/pi-compact-bash",
@@ -457,10 +450,6 @@ test("tlh-defaults enable repairs targeted default extension load order for rtk"
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
 		{
-			id: "oracle",
-			source: "npm:@diegopetrucci/pi-oracle",
-		},
-		{
 			id: "rtk",
 			aliases: ["pi-rtk"],
 			replaces: ["npm:pi-rtk", "npm:@sherif-fanous/pi-rtk", "git:github.com/sherif-fanous/pi-rtk"],
@@ -476,7 +465,6 @@ test("tlh-defaults enable repairs targeted default extension load order for rtk"
 	writeFileSync(fixture.settings, JSON.stringify({
 		packages: [
 			"npm:before",
-			"npm:@diegopetrucci/pi-oracle",
 			"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
 			"npm:@diegopetrucci/pi-compact-bash",
 		],
@@ -496,7 +484,6 @@ test("tlh-defaults enable repairs targeted default extension load order for rtk"
 	const settings = readJson(fixture.settings);
 	assert.deepEqual(settings.packages, [
 		"npm:before",
-		"npm:@diegopetrucci/pi-oracle",
 		"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
 		"npm:@diegopetrucci/pi-compact-bash",
 	]);

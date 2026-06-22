@@ -2,6 +2,12 @@
 
 All notable changes to The Last Harness will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- Replaced the bundled `pi-oracle` extension (`npm:@diegopetrucci/pi-oracle`) with a first-party oracle subagent that performs direct high-reasoning read-only analysis. The subagent uses the opposite-provider model pattern (mirroring `code-reviewer`) with high thinking, so it reasons independently from the primary session. No external extension is required.
+
 ## [0.24.0] - 2026-06-22
 
 ### Changed

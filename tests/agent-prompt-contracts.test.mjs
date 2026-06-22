@@ -140,16 +140,15 @@ const contracts = [
 	{
 		group: "subagents",
 		name: "oracle",
-		requiredTools: ["oracle", "read", "grep", "find", "ls", "contact_supervisor", "bash"],
-		forbiddenTools: ["write", "edit", "subagent", "intercom", "web_search", "fetch_content", "get_search_content"],
+		requiredTools: ["read", "grep", "find", "ls", "contact_supervisor", "bash"],
+		forbiddenTools: ["write", "edit", "subagent", "intercom", "web_search", "fetch_content", "get_search_content", "oracle"],
 		anchors: [
-			heading("Tool use"),
+			heading("Inputs"),
 			heading("Analysis process"),
 			heading("Output"),
 			bodyPattern("oracle stays read-only", /read-only|never modify files/i),
-			bodyPattern("oracle uses oracle tool", /use the existing [`']?oracle[`']? extension tool|use the [`']?oracle[`']? tool/i),
-			orderedTerms("oracle validates tool output against local evidence", ["Ask the `oracle` tool", "Evaluate the oracle response against local evidence"]),
-			includesAllTerms("oracle forbids mutating shell options", ["optional shell execution", "mutating capabilities"]),
+			orderedTerms("oracle gathers evidence then applies direct analysis", ["Gather", "Apply", "analysis"]),
+			bodyPattern("oracle distinguishes confirmed findings from unknowns", /confirmed findings|unresolved unknowns/i),
 		],
 	},
 ];
