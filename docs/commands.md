@@ -48,7 +48,7 @@ These commands are registered by the TLH extension bundled with this profile.
 |---------|-------------|
 | `/thinking` | Pick the model thinking level, subject to the active primary-agent thinking constraints |
 | `/effort` | Supported alias for `/thinking`, subject to the same active primary-agent thinking constraints |
-| `/experimental` | List or change TLH experimental features (`delta-follow-up-reviews` is currently registered) |
+| `/experimental` | List or change TLH experimental features (`contrarian` and `delta-follow-up-reviews` are currently registered) |
 | `/review` | Open an interactive code-review mode picker (requires the architect primary agent) |
 | `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
 | `/tlh-changelog` | Show TLH release notes from the packaged `CHANGELOG.md` |
@@ -64,7 +64,7 @@ Both `/thinking` and `/effort` are subject to the active primary-agent thinking 
 
 ### `/experimental`
 
-`/experimental` currently registers `delta-follow-up-reviews`, an opt-in flag that adds architect and `code-reviewer` guidance for delta-scoped follow-up reviews after fixes. The flag is disabled by default. Stale `run-tests-last` values in `tlh.experimental.enabledFeatures` do not re-enable retired behavior.
+`/experimental` currently registers `contrarian` and `delta-follow-up-reviews`. `contrarian` bundles the adversarial `contrarian` minor agent but keeps it disabled by default; enable it with `/experimental enable contrarian` and disable it with `/experimental disable contrarian`. It is intended mainly for sparing pre-ticket planning stress-tests when a proposed change genuinely warrants an adversarial brief, not the routine `code-reviewer` diff pass and not the broader `oracle` second-opinion path. `delta-follow-up-reviews` is an opt-in flag that adds architect and `code-reviewer` guidance for delta-scoped follow-up reviews after fixes. Both flags are disabled by default. Stale `run-tests-last` values in `tlh.experimental.enabledFeatures` do not re-enable retired behavior.
 
 ### `/tokens`
 

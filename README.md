@@ -51,11 +51,11 @@ TLH subagents are fresh child sessions, not a giant shared swarm. They get the t
 - `librarian` for repo knowledge
 - `web-scout` for web research
 - `oracle` for a deeper second opinion
-- `contrarian` for sparing adversarial stress-tests.
+- `contrarian` as a bundled experimental subagent for sparing adversarial stress-tests; it stays default-off until you run `/experimental enable contrarian`.
 
-Use `contrarian` sparingly, usually before ticket creation, when a proposed change has meaningful uncertainty, tradeoffs, blast radius, a hard-to-undo direction, or debatable assumptions and you want a named specific risk or strongest opposing case steelmanned. It is not the normal diff reviewer — `code-reviewer` reviews changes against tasks — and it is different from `oracle`, which is the broader second-opinion path rather than an opposition brief.
+If you enable `contrarian`, use it sparingly, usually before ticket creation, when a proposed change has meaningful uncertainty, tradeoffs, blast radius, a hard-to-undo direction, or debatable assumptions and you want a named specific risk or strongest opposing case steelmanned. It is not the normal diff reviewer — `code-reviewer` reviews changes against tasks — and it is different from `oracle`, which is the broader second-opinion path rather than an opposition brief. Disable it again with `/experimental disable contrarian`.
 
-For review independence, `code-reviewer` intentionally prefers an available opposite provider. `oracle` and `contrarian` use the same opposite-provider pattern for independent second opinions and adversarial challenge passes. Anthropic sessions try to use the OpenAI Codex subscription provider for these subagents when it is available, while OpenAI/OpenAI-Codex sessions try Anthropic. If you only have regular OpenAI API access and not the Codex subscription provider, TLH does not force `code-reviewer` onto unavailable Codex-only defaults, and the same fallback applies to `oracle` and `contrarian`.
+For review independence, `code-reviewer` intentionally prefers an available opposite provider. `oracle` uses the same opposite-provider pattern for independent second opinions, and enabled `contrarian` uses it for adversarial challenge passes. Anthropic sessions try to use the OpenAI Codex subscription provider for these subagents when it is available, while OpenAI/OpenAI-Codex sessions try Anthropic. If you only have regular OpenAI API access and not the Codex subscription provider, TLH does not force `code-reviewer` onto unavailable Codex-only defaults, and the same fallback applies to `oracle` and enabled `contrarian`.
 
 ## Why this workflow is useful
 
@@ -88,7 +88,7 @@ Use `Shift+Tab` to cycle the current session through `architect` → `rush` → 
 
 ### Model and thinking defaults
 
-TLH applies bundled model/thinking defaults per primary agent. For active non-locked primaries, user `/model` choices are respected and persisted per primary under `tlh.primaryAgent.modelOverrides.<primary>`; reset the current primary's override with `/switch-primary-agent model reset`. Locked primaries such as Rush keep their fixed defaults. For independent review and challenge passes, `code-reviewer`, `oracle`, and `contrarian` prefer the opposite available provider: Anthropic primaries try OpenAI Codex for those subagents, and OpenAI/OpenAI-Codex primaries try Anthropic. `contrarian` keeps that same independence pattern for sparing adversarial stress-tests rather than as a routine review step.
+TLH applies bundled model/thinking defaults per primary agent. For active non-locked primaries, user `/model` choices are respected and persisted per primary under `tlh.primaryAgent.modelOverrides.<primary>`; reset the current primary's override with `/switch-primary-agent model reset`. Locked primaries such as Rush keep their fixed defaults. For independent review and second-opinion passes, `code-reviewer` and `oracle` prefer the opposite available provider: Anthropic primaries try OpenAI Codex for those subagents, and OpenAI/OpenAI-Codex primaries try Anthropic. When enabled, `contrarian` uses that same independence pattern for sparing adversarial stress-tests rather than as a routine review step.
 
 #### Hidden model defaults in the TLH profile
 

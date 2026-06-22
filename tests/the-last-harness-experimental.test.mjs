@@ -12,6 +12,7 @@ const LEGACY_UNKNOWN_FEATURE = "legacy-flag";
 const jiti = createJiti(import.meta.url);
 const {
 	DELTA_FOLLOW_UP_REVIEWS_FEATURE,
+	TLH_CONTRARIAN_FEATURE,
 	buildPrimaryExperimentalPrompt,
 	getTlhExperimentalConfig,
 	isTlhExperimentalFeatureEnabled,
@@ -51,18 +52,18 @@ function registeredExperimentalCommand() {
 	return command;
 }
 
-test("experimental command registers the delta follow-up review flag and lists it as default-off", async (t) => {
+test("experimental command registers contrarian and delta follow-up review flags as default-off", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const command = registeredExperimentalCommand();
 		assert.deepEqual(
 			(await command.getArgumentCompletions("enable ")).map((completion) => completion.value),
-			[`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`],
+			[`enable ${TLH_CONTRARIAN_FEATURE}`, `enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`],
 		);
 		assert.deepEqual(
 			(await command.getArgumentCompletions("status ")).map((completion) => completion.value),
-			["status", `status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`],
+			["status", `status ${TLH_CONTRARIAN_FEATURE}`, `status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`],
 		);
 		assert.equal(await command.getArgumentCompletions("unknown"), null);
 
@@ -71,10 +72,69 @@ test("experimental command registers the delta follow-up review flag and lists i
 
 		assert.equal(notifications.at(-1)?.type, "info");
 		assert.match(notifications.at(-1)?.message ?? "", /TLH experimental features:/);
+		assert.match(notifications.at(-1)?.message ?? "", /contrarian/);
 		assert.match(notifications.at(-1)?.message ?? "", /delta-follow-up-reviews/);
 		assert.match(notifications.at(-1)?.message ?? "", /disabled \(default\)/);
+		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable contrarian/);
 		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable delta-follow-up-reviews/);
 		assert.doesNotMatch(notifications.at(-1)?.message ?? "", /run-tests-last/);
+	});
+});
+
+test("contrarian experimental prompt injection stays default-off and becomes primary-specific when enabled", () => {
+	assert.equal(buildPrimaryExperimentalPrompt({ name: "architect" }, undefined), undefined);
+	assert.equal(buildPrimaryExperimentalPrompt({ name: "rush" }, undefined), undefined);
+
+	const enabledConfig = { enabledFeatures: [TLH_CONTRARIAN_FEATURE] };
+	assert.match(buildPrimaryExperimentalPrompt({ name: "architect" }, enabledConfig) ?? "", /## TLH Experimental Feature: contrarian/);
+	assert.match(buildPrimaryExperimentalPrompt({ name: "architect" }, enabledConfig) ?? "", /Pre-ticket planning is the primary useful moment for `contrarian`/);
+	assert.match(buildPrimaryExperimentalPrompt({ name: "rush" }, enabledConfig) ?? "", /TLH experiment enables the `contrarian` minor agent for TLH Rush/);
+	assert.match(buildPrimaryExperimentalPrompt({ name: "product" }, enabledConfig) ?? "", /product directions, tradeoffs, assumptions, or ticket framing/);
+	assert.match(buildPrimaryExperimentalPrompt({ name: "bug-hunter" }, enabledConfig) ?? "", /stress-test bug hypotheses or review conclusions/);
+	assert.equal(buildPrimaryExperimentalPrompt({ name: "developer" }, enabledConfig), undefined);
+});
+
+test("experimental helpers normalize mixed-case string enabledFeatures but fail closed for mixed arrays", async (t) => {
+	const enabledFixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
+	writeFileSync(
+		join(enabledFixture.agent, "settings.json"),
+		`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [" Contrarian "] } } }, null, 2)}\n`,
+	);
+
+	await withEnv({ HOME: enabledFixture.home, PI_CODING_AGENT_DIR: enabledFixture.agent }, async () => {
+		const command = registeredExperimentalCommand();
+		const config = getTlhExperimentalConfig(enabledFixture.dir);
+		assert.equal(isTlhExperimentalFeatureEnabled(config, TLH_CONTRARIAN_FEATURE), true);
+		assert.match(buildPrimaryExperimentalPrompt({ name: "architect" }, config) ?? "", /## TLH Experimental Feature: contrarian/);
+
+		let { ctx, notifications } = createCommandContext(enabledFixture.dir);
+		await command.handler("", ctx);
+		assert.match(notifications.at(-1)?.message ?? "", /- contrarian: enabled\./);
+
+		({ ctx, notifications } = createCommandContext(enabledFixture.dir));
+		await command.handler(`status ${TLH_CONTRARIAN_FEATURE}`, ctx);
+		assert.match(notifications.at(-1)?.message ?? "", /- contrarian: enabled\./);
+	});
+
+	const malformedFixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
+	writeFileSync(
+		join(malformedFixture.agent, "settings.json"),
+		`${JSON.stringify({ tlh: { experimental: { enabledFeatures: ["Contrarian", 123] } } }, null, 2)}\n`,
+	);
+
+	await withEnv({ HOME: malformedFixture.home, PI_CODING_AGENT_DIR: malformedFixture.agent }, async () => {
+		const command = registeredExperimentalCommand();
+		const config = getTlhExperimentalConfig(malformedFixture.dir);
+		assert.equal(isTlhExperimentalFeatureEnabled(config, TLH_CONTRARIAN_FEATURE), false);
+		assert.equal(buildPrimaryExperimentalPrompt({ name: "architect" }, config), undefined);
+
+		let { ctx, notifications } = createCommandContext(malformedFixture.dir);
+		await command.handler("", ctx);
+		assert.match(notifications.at(-1)?.message ?? "", /- contrarian: disabled \(default\)\./);
+
+		({ ctx, notifications } = createCommandContext(malformedFixture.dir));
+		await command.handler(`status ${TLH_CONTRARIAN_FEATURE}`, ctx);
+		assert.match(notifications.at(-1)?.message ?? "", /- contrarian: disabled \(default\)\./);
 	});
 });
 

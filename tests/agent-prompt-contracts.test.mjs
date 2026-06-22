@@ -23,14 +23,6 @@ const contracts = [
 			heading("Implementation loop"),
 			bodyPattern("delegates implementation to developer", /do not directly edit source files/i),
 			bodyPattern(
-				"architect scopes contrarian as a sparing challenge pass distinct from review and oracle",
-				/contrarian.*not the normal diff reviewer.*code-reviewer.*narrower than [`']?oracle[`']?|do not use [`']?contrarian[`']? as the normal diff reviewer.*routine localized work.*use it sparingly/i,
-			),
-			includesAllTerms(
-				"architect keeps contrarian focused on named pre-ticket risks",
-				["Pre-ticket planning", "primary useful moment", "specific risk", "strongest opposing case"],
-			),
-			bodyPattern(
 				"paused dispatch stays recoverable and non-authorizing",
 				/paused or interrupted developer\/subagent dispatch.*recoverable paused run.*not authorization to edit directly.*resume by run id\/index.*re-dispatch an approved ticket.*ask the user.*or stop.*doctor.*no active run.*stale or failed/i,
 			),
@@ -53,10 +45,6 @@ const contracts = [
 			heading("Minor subagents"),
 			heading("Fit"),
 			bodyPattern("Rush edits directly", /edit code directly/i),
-			bodyPattern(
-				"Rush keeps contrarian as a sparing non-review challenge pass",
-				/contrarian.*not the normal diff reviewer.*unlike [`']?oracle[`']?.*use it sparingly/i,
-			),
 			bodyPattern("Rush never delegates implementation to developer", /do not delegate implementation to [`']?developer[`']?/i),
 			orderedTerms("tickets are optional by default", ["do not create or require", "tk", "by default"]),
 			bodyPattern("broad work escalates to architect or product", /recommend switching to [`']?architect[`']?|recommend [`']?architect[`']? or [`']?product[`']?/i),
@@ -73,10 +61,6 @@ const contracts = [
 			heading("Product workflow"),
 			heading("Documentation and ticket standards"),
 			bodyPattern("product never implements source changes", /do not edit source code|never implement source changes/i),
-			bodyPattern(
-				"product scopes contrarian to sparing product stress-tests",
-				/contrarian.*product directions.*tradeoffs.*ticket framing.*not code review.*code-reviewer.*narrower than [`']?oracle[`']?/i,
-			),
 			orderedTerms("writable outputs stay constrained", ["Writable outputs are limited to", "docs/PRODUCT_STRATEGY.md", "`tk` tickets", "AGENTS.md"]),
 			orderedTerms("tickets require user signoff", ["user signoff", "tickets"]),
 			bodyPattern("product avoids implementation loops and review", /do not delegate implementation, run implementation loops, edit source, or perform code review/i),
@@ -92,10 +76,6 @@ const contracts = [
 			heading("Investigation process"),
 			heading("Final report"),
 			bodyPattern("bug hunter is read-only", /you are read-only|do not modify files/i),
-			bodyPattern(
-				"bug hunter scopes contrarian to sparing bug-hypothesis stress-tests",
-				/contrarian.*bug hypotheses.*strongest opposing case.*does not replace [`']?code-reviewer[`']?.*[`']?oracle[`']?/i,
-			),
 			orderedTerms("ticket ids are source of truth", ["tk show <id>", "source of truth"]),
 			includesAllTerms("final report includes investigation outputs", ["Root cause", "Evidence", "Suggested fix", "Impact assessment"]),
 		],
@@ -216,6 +196,13 @@ test("base architect prompt keeps delta follow-up review guidance behind the exp
 	assert.doesNotMatch(normalizedBody, /default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint/i);
 	assert.doesNotMatch(normalizedBody, /prior findings.*git range or checkpoint.*changed-file list/i);
 	assert.match(normalizedBody, /delegate final review to `code-reviewer` against the full vcs diff/i);
+});
+
+test("base primary prompts keep contrarian guidance behind the experimental flag", () => {
+	for (const name of ["architect", "rush", "product", "bug-hunter"]) {
+		const { normalizedBody } = readAgentPrompt("primary", name);
+		assert.doesNotMatch(normalizedBody, /contrarian/i, `${name} should not advertise contrarian in the base prompt`);
+	}
 });
 
 test("base developer prompt does not inherit the architect final-validation workflow", () => {

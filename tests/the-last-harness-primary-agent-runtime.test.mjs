@@ -9,7 +9,7 @@ import { cleanupTempDir, createIsolatedProfileFixture, withEnv } from "./test-fi
 
 const jiti = createJiti(import.meta.url);
 const { TLH_DEFAULT_COMMIT_ATTRIBUTION } = await jiti.import("../extensions/the-last-harness/attribution.ts");
-const { DELTA_FOLLOW_UP_REVIEWS_FEATURE } = await jiti.import("../extensions/the-last-harness/experimental.ts");
+const { DELTA_FOLLOW_UP_REVIEWS_FEATURE, TLH_CONTRARIAN_FEATURE } = await jiti.import("../extensions/the-last-harness/experimental.ts");
 const { registerTlhPrimaryAgentRuntime } = await jiti.import("../extensions/the-last-harness/primary-agent-runtime.ts");
 
 function createPiHarness() {
@@ -106,6 +106,16 @@ function selectablePrimaryAgents() {
 	]);
 }
 
+function contrarianMetadata() {
+	return {
+		name: "contrarian",
+		description: "Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case.",
+		tlhOpenaiModels: ["openai-codex/gpt-5.5"],
+		tlhAnthropicModels: ["anthropic/claude-opus-4-8"],
+		preferOppositeProvider: true,
+	};
+}
+
 function rushLikePrimary(name = "architect") {
 	return createPrimaryPrompt(name, {
 		model: "anthropic/claude-opus-4-8",
@@ -143,6 +153,68 @@ test("disabled primary mode still injects provider-aware subagent models", async
 	assert.equal(event.input.model, "openai-codex/gpt-5.4");
 	assert.equal(event.input.agentScope, undefined);
 	assert.equal(event.input.context, "resume");
+});
+
+test("disabled primary mode keeps malformed mixed experimental arrays fail-closed, but still honors mixed-case contrarian enables without re-enabling primary-mode safety mutations", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const subagentMetadata = [contrarianMetadata()];
+	const branchEntries = [{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "disabled" } }];
+	const ctx = createToolCallContext(branchEntries, undefined, {
+		cwd: fixture.cwd,
+		modelRegistry: {
+			getAvailable: () => [
+				{ provider: "openai-codex", id: "gpt-5.4" },
+				{ provider: "anthropic", id: "claude-opus-4-8" },
+			],
+		},
+		model: { provider: "openai-codex", id: "gpt-5.4" },
+	});
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata });
+		const blockedEvent = {
+			toolName: "subagent",
+			input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "project", context: "resume" },
+		};
+		assert.deepEqual(await toolCall(blockedEvent, ctx), {
+			block: true,
+			reason:
+				"TLH contrarian is an experimental minor agent and is currently disabled. Enable it with /experimental enable contrarian in the isolated TLH profile before delegating to contrarian.",
+		});
+		assert.equal(blockedEvent.input.model, "anthropic/claude-opus-4-8");
+		assert.equal(blockedEvent.input.agentScope, "project");
+		assert.equal(blockedEvent.input.context, "resume");
+
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: ["Contrarian", 123] } } }, null, 2)}\n`,
+		);
+		const malformedEvent = {
+			toolName: "subagent",
+			input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "project", context: "resume" },
+		};
+		assert.deepEqual(await toolCall(malformedEvent, ctx), {
+			block: true,
+			reason:
+				"TLH contrarian is an experimental minor agent and is currently disabled. Enable it with /experimental enable contrarian in the isolated TLH profile before delegating to contrarian.",
+		});
+		assert.equal(malformedEvent.input.model, "anthropic/claude-opus-4-8");
+		assert.equal(malformedEvent.input.agentScope, "project");
+		assert.equal(malformedEvent.input.context, "resume");
+
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: ["Contrarian"] } } }, null, 2)}\n`,
+		);
+		const enabledEvent = {
+			toolName: "subagent",
+			input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "project", context: "resume" },
+		};
+		assert.equal(await toolCall(enabledEvent, ctx), undefined);
+		assert.equal(enabledEvent.input.model, "anthropic/claude-opus-4-8");
+		assert.equal(enabledEvent.input.agentScope, "project");
+		assert.equal(enabledEvent.input.context, "resume");
+	});
 });
 
 test("enabled primary mode validates subagent input after injecting provider-aware models", async () => {
@@ -240,6 +312,40 @@ test("before_agent_start gates delta follow-up review guidance behind isolated T
 		assert.match(enabledPrompt.systemPrompt, /default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint/i);
 		assert.match(enabledPrompt.systemPrompt, /prior findings.*git range or checkpoint.*changed-file list/i);
 		assert.match(enabledPrompt.systemPrompt, /targeted wider review or full re-review/i);
+	});
+});
+
+test("before_agent_start keeps contrarian guidance and allowed minor-agent entries behind isolated TLH settings", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const subagentMetadata = [
+		{ name: "developer", description: "Implements exactly one approved task at a time." },
+		contrarianMetadata(),
+	];
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { beforeAgentStart } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata });
+		const defaultPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /## TLH Experimental Feature: contrarian/);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /\bcontrarian\b/i);
+		assert.match(defaultPrompt.systemPrompt, /developer: Implements exactly one approved task at a time\./i);
+
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: ["Contrarian", 123] } } }, null, 2)}\n`,
+		);
+		const malformedPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		assert.doesNotMatch(malformedPrompt.systemPrompt, /## TLH Experimental Feature: contrarian/);
+		assert.doesNotMatch(malformedPrompt.systemPrompt, /\bcontrarian\b/i);
+		assert.match(malformedPrompt.systemPrompt, /developer: Implements exactly one approved task at a time\./i);
+
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [TLH_CONTRARIAN_FEATURE] } } }, null, 2)}\n`,
+		);
+		const enabledPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		assert.match(enabledPrompt.systemPrompt, /## TLH Experimental Feature: contrarian/);
+		assert.match(enabledPrompt.systemPrompt, /Use `contrarian` sparingly when you need an adversarial challenge pass on reasoning or direction\./);
+		assert.match(enabledPrompt.systemPrompt, /- contrarian: Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case\./i);
 	});
 });
 
@@ -1198,6 +1304,45 @@ test("enabled primary mode allows approved delegation targets and forces safe to
 	assert.equal(event.input.context, "fresh");
 });
 
+test("enabled primary mode blocks contrarian until the experiment is enabled and still applies provider-aware models", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const subagentMetadata = [contrarianMetadata()];
+	const branchEntries = [{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }];
+	const blockedCtx = createToolCallContext(branchEntries, undefined, {
+		cwd: fixture.cwd,
+		modelRegistry: {
+			getAvailable: () => [
+				{ provider: "openai-codex", id: "gpt-5.4" },
+				{ provider: "anthropic", id: "claude-opus-4-8" },
+			],
+		},
+		model: { provider: "openai-codex", id: "gpt-5.4" },
+	});
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata });
+		const blockedEvent = { toolName: "subagent", input: { agent: "contrarian", prompt: "stress-test this plan" } };
+		assert.deepEqual(await toolCall(blockedEvent, blockedCtx), {
+			block: true,
+			reason:
+				"TLH contrarian is an experimental minor agent and is currently disabled. Enable it with /experimental enable contrarian in the isolated TLH profile before delegating to contrarian.",
+		});
+		assert.equal(blockedEvent.input.model, "anthropic/claude-opus-4-8");
+		assert.equal(blockedEvent.input.agentScope, "user");
+		assert.equal(blockedEvent.input.context, "fresh");
+
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [TLH_CONTRARIAN_FEATURE] } } }, null, 2)}\n`,
+		);
+		const allowedEvent = { toolName: "subagent", input: { agent: "contrarian", prompt: "stress-test this plan" } };
+		assert.equal(await toolCall(allowedEvent, blockedCtx), undefined);
+		assert.equal(allowedEvent.input.model, "anthropic/claude-opus-4-8");
+		assert.equal(allowedEvent.input.agentScope, "user");
+		assert.equal(allowedEvent.input.context, "fresh");
+	});
+});
+
 test("enabled primary mode blocks disallowed nested delegation targets after forcing safe defaults", async () => {
 	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
 	const event = {
@@ -1214,7 +1359,7 @@ test("enabled primary mode blocks disallowed nested delegation targets after for
 	assert.deepEqual(await toolCall(event, ctx), {
 		block: true,
 		reason:
-			"TLH primary agents may delegate only to: developer, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle, contrarian. Disallowed target(s): planner.",
+			"TLH primary agents may delegate only to: developer, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle. Disallowed target(s): planner.",
 	});
 	assert.equal(event.input.agentScope, "user");
 	assert.equal(event.input.context, "fresh");

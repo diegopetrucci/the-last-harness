@@ -3,7 +3,9 @@ import test from "node:test";
 
 import {
 	ALLOWED_SUBAGENTS,
+	CONTRARIAN_EXPERIMENTAL_FEATURE,
 	SUBAGENT_CHILD_ENV,
+	allowedSubagentsForExperimentalConfig,
 	registerTlhStartupMode,
 	validateSubagentToolInput,
 } from "../extensions/the-last-harness-subagent-safety.mjs";
@@ -52,6 +54,43 @@ test("validateSubagentToolInput allows bundled read-only delegation targets", ()
 	assertAllowed(contrarian);
 	assert.equal(contrarian.agentScope, "user");
 	assert.equal(contrarian.context, "fresh");
+});
+
+
+test("experimental allowlist normalizes mixed-case string flags but keeps malformed mixed arrays fail-closed", () => {
+	assert.deepEqual(allowedSubagentsForExperimentalConfig(undefined), ALLOWED_SUBAGENTS.filter((agent) => agent !== "contrarian"));
+	assert.deepEqual(
+		allowedSubagentsForExperimentalConfig({ enabledFeatures: [" Contrarian "] }),
+		ALLOWED_SUBAGENTS,
+	);
+	assert.deepEqual(
+		allowedSubagentsForExperimentalConfig({ enabledFeatures: ["Contrarian", 123] }),
+		ALLOWED_SUBAGENTS.filter((agent) => agent !== "contrarian"),
+	);
+
+	const blocked = validateSubagentToolInput(
+		{ agent: "contrarian", prompt: "stress-test this plan" },
+		{ allowedSubagents: allowedSubagentsForExperimentalConfig(undefined) },
+	);
+	assert.match(blocked, /experimental minor agent/i);
+	assert.match(blocked, /\/experimental enable contrarian/);
+
+	const malformedBlocked = validateSubagentToolInput(
+		{ agent: "contrarian", prompt: "stress-test this plan" },
+		{ allowedSubagents: allowedSubagentsForExperimentalConfig({ enabledFeatures: ["Contrarian", 123] }) },
+	);
+	assert.match(malformedBlocked, /experimental minor agent/i);
+	assert.match(malformedBlocked, /\/experimental enable contrarian/);
+
+	const enabled = { agent: "contrarian", prompt: "stress-test this plan" };
+	assert.equal(
+		validateSubagentToolInput(enabled, {
+			allowedSubagents: allowedSubagentsForExperimentalConfig({ enabledFeatures: [CONTRARIAN_EXPERIMENTAL_FEATURE] }),
+		}),
+		undefined,
+	);
+	assert.equal(enabled.agentScope, "user");
+	assert.equal(enabled.context, "fresh");
 });
 
 test("validateSubagentToolInput allows approved execution and forces fresh user context", () => {

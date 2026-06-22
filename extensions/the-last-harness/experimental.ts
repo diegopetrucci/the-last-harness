@@ -1,9 +1,16 @@
 import { SettingsManager, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import {
+	CONTRARIAN_EXPERIMENTAL_FEATURE,
+	normalizeEnabledExperimentalFeatures,
+	normalizeExperimentalFeatureId,
+	readEnabledExperimentalFeatures,
+} from "../the-last-harness-subagent-safety.mjs";
 import { formatHomePath, isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
 import type { AgentPrompt, TlhExperimentalConfig, TlhExperimentalFeatureId, TlhSettings } from "./types.js";
 
+export const TLH_CONTRARIAN_FEATURE: TlhExperimentalFeatureId = CONTRARIAN_EXPERIMENTAL_FEATURE;
 export const DELTA_FOLLOW_UP_REVIEWS_FEATURE: TlhExperimentalFeatureId = "delta-follow-up-reviews";
 
 const EXPERIMENTAL_COMMAND_HELP = [
@@ -35,10 +42,51 @@ For follow-up review after fixes:
 3. You may read adjacent code or other targeted context when needed for safety or correctness, and should widen to targeted or full re-review for installer or other destructive-path changes, trust-boundary changes, auth or execution changes, unresolved reviewer disagreement, or whenever the requested delta cannot be validated safely without wider context.
 `;
 
+const CONTRARIAN_ARCHITECT_PROMPT = `
+## TLH Experimental Feature: contrarian
+
+This TLH experiment enables the \`contrarian\` minor agent for the architect primary agent.
+
+Additional minor agent:
+- \`contrarian\`: adversarially stress-test plans, designs, assumptions, product directions, bug hypotheses, or review conclusions by steelmanning the strongest opposing case.
+
+Use \`contrarian\` sparingly when you need an adversarial challenge pass on reasoning or direction. It is not the normal diff reviewer — \`code-reviewer\` owns review against tasks and diffs — and it is narrower than \`oracle\`, which provides a broader high-reasoning second opinion.
+
+Pre-ticket planning is the primary useful moment for \`contrarian\`. Apply a similarly sparing bar to \`contrarian\` as to \`oracle\`: consider it before ticket creation only when a proposed change has meaningful uncertainty, tradeoffs, blast radius, a hard-to-undo direction, or debatable assumptions, and name the specific risk or strongest opposing case you want stress-tested. Unlike \`oracle\`, \`contrarian\` should focus on the strongest credible opposition brief rather than a broad second opinion. Do not use \`contrarian\` as the normal diff reviewer or as an automatic step for routine localized work; use it sparingly.
+`;
+
+const CONTRARIAN_RUSH_PROMPT = `
+## TLH Experimental Feature: contrarian
+
+This TLH experiment enables the \`contrarian\` minor agent for TLH Rush.
+
+Additional minor agent:
+- \`contrarian\` only when a plan, bug hypothesis, or review conclusion needs an adversarial stress-test. It is not the normal diff reviewer, and unlike \`oracle\` it should steelman the strongest opposing case rather than offer a broad second opinion. Use it sparingly rather than as a routine extra pass.
+`;
+
+const CONTRARIAN_PRODUCT_PROMPT = `
+## TLH Experimental Feature: contrarian
+
+This TLH experiment enables the \`contrarian\` minor agent for the product primary agent.
+
+Additional minor agent:
+- \`contrarian\` for sparing adversarial stress-tests of product directions, tradeoffs, assumptions, or ticket framing by steelmanning the strongest opposing case. It is not code review — \`code-reviewer\` reviews diffs against tasks — and it is narrower than \`oracle\`, which is the broader second-opinion path.
+`;
+
+const CONTRARIAN_BUG_HUNTER_PROMPT = `
+## TLH Experimental Feature: contrarian
+
+This TLH experiment enables the \`contrarian\` minor agent for the bug-hunter primary agent.
+
+Additional minor agent:
+- \`contrarian\`: adversarially stress-test bug hypotheses or review conclusions by steelmanning the strongest opposing case. Use it sparingly when you need to challenge your diagnosis; it does not replace \`code-reviewer\`, which reviews code changes, or \`oracle\`, which gives a broader second opinion.
+`;
+
 type TlhExperimentalFeature = {
 	id: TlhExperimentalFeatureId;
 	description: string;
 	primaryAgentPrompt?: string;
+	primaryAgentPrompts?: Partial<Record<string, string>>;
 	codeReviewerPrompt?: string;
 };
 
@@ -56,9 +104,21 @@ type TlhExperimentalWriteResult = {
 
 const TLH_EXPERIMENTAL_FEATURES: TlhExperimentalFeature[] = [
 	{
+		id: TLH_CONTRARIAN_FEATURE,
+		description: "Enables the contrarian minor agent and primary-agent guidance for sparing adversarial challenge passes.",
+		primaryAgentPrompts: {
+			architect: CONTRARIAN_ARCHITECT_PROMPT.trim(),
+			rush: CONTRARIAN_RUSH_PROMPT.trim(),
+			product: CONTRARIAN_PRODUCT_PROMPT.trim(),
+			"bug-hunter": CONTRARIAN_BUG_HUNTER_PROMPT.trim(),
+		},
+	},
+	{
 		id: DELTA_FOLLOW_UP_REVIEWS_FEATURE,
 		description: "Architect and code-reviewer guidance to scope follow-up reviews to a requested delta after fixes.",
-		primaryAgentPrompt: DELTA_FOLLOW_UP_REVIEWS_ARCHITECT_PROMPT.trim(),
+		primaryAgentPrompts: {
+			architect: DELTA_FOLLOW_UP_REVIEWS_ARCHITECT_PROMPT.trim(),
+		},
 		codeReviewerPrompt: DELTA_FOLLOW_UP_REVIEWS_CODE_REVIEWER_PROMPT.trim(),
 	},
 ];
@@ -123,25 +183,15 @@ function ensureMutableExperimentalSettings(settings: TlhSettings): asserts setti
 }
 
 function normalizeEnabledFeatures(enabledFeatures: string[] | undefined): string[] {
-	return [...new Set((enabledFeatures ?? []).map((feature) => feature.trim()).filter(Boolean))].sort();
+	return normalizeEnabledExperimentalFeatures(enabledFeatures) as string[];
 }
 
 function readEnabledFeatures(config: unknown): string[] {
-	if (!isRecord(config)) {
-		return [];
-	}
-	const { enabledFeatures } = config;
-	if (enabledFeatures === undefined) {
-		return [];
-	}
-	if (!Array.isArray(enabledFeatures) || enabledFeatures.some((feature) => typeof feature !== "string")) {
-		return [];
-	}
-	return normalizeEnabledFeatures(enabledFeatures);
+	return readEnabledExperimentalFeatures(config) as string[];
 }
 
 function getExperimentalFeature(featureId: string): TlhExperimentalFeature | undefined {
-	const normalized = featureId.trim().toLowerCase();
+	const normalized = normalizeExperimentalFeatureId(featureId) as string | undefined;
 	return normalized ? TLH_EXPERIMENTAL_FEATURES_BY_ID.get(normalized) : undefined;
 }
 
@@ -151,6 +201,12 @@ function enabledExperimentalPrompts(
 ): string[] {
 	return TLH_EXPERIMENTAL_FEATURES.filter((feature) => isTlhExperimentalFeatureEnabled(config, feature.id))
 		.map((feature) => feature[promptKey])
+		.filter((prompt): prompt is string => Boolean(prompt));
+}
+
+function enabledPrimaryExperimentalPrompts(primary: AgentPrompt, config: TlhExperimentalConfig | undefined): string[] {
+	return TLH_EXPERIMENTAL_FEATURES.filter((feature) => isTlhExperimentalFeatureEnabled(config, feature.id))
+		.map((feature) => feature.primaryAgentPrompts?.[primary.name] ?? feature.primaryAgentPrompt)
 		.filter((prompt): prompt is string => Boolean(prompt));
 }
 
@@ -267,10 +323,10 @@ export function buildPrimaryExperimentalPrompt(
 	primary: AgentPrompt | undefined,
 	config: TlhExperimentalConfig | undefined,
 ): string | undefined {
-	if (primary?.name !== "architect") {
+	if (!primary) {
 		return undefined;
 	}
-	return enabledExperimentalPrompts(config, "primaryAgentPrompt").join("\n\n") || undefined;
+	return enabledPrimaryExperimentalPrompts(primary, config).join("\n\n") || undefined;
 }
 
 export function buildChildExperimentalPrompt(
