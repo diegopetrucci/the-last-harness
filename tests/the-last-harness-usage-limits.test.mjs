@@ -132,6 +132,28 @@ test("usage weekly on is idempotent across repeated invocations", async (t) => {
 	});
 });
 
+test("usage weekly on skips backups for empty existing settings files", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
+	const settingsPath = join(fixture.agent, "settings.json");
+	writeFileSync(settingsPath, "");
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const command = registeredUsageCommand();
+		const { ctx, notifications } = createCommandContext(fixture.dir);
+
+		await command.handler("weekly on", ctx);
+
+		const written = JSON.parse(readFileSync(settingsPath, "utf8"));
+		assert.equal(written.tlh.usageLimits.showWeekly, true);
+		assert.deepEqual(
+			readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.bak-")),
+			[],
+			"empty-string settings content must not produce a backup",
+		);
+		assert.doesNotMatch(notifications.at(-1)?.message ?? "", /Backup:/);
+	});
+});
+
 test("usage weekly off and toggle persist explicit preferences", async (t) => {
 	const offFixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
 	const offSettingsPath = join(offFixture.agent, "settings.json");

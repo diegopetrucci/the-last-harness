@@ -49,6 +49,8 @@ type TlhPrimaryAgentRuntimeOptions = {
 	subagentMetadata?: SubagentMetadata[];
 };
 
+type ActiveModel = NonNullable<ExtensionContext["model"]>;
+
 export type TlhPrimaryAgentRuntime = {
 	applySessionStart(ctx: ExtensionContext): Promise<void>;
 	currentPrimaryAgentLabel(): string;
@@ -304,6 +306,11 @@ function registerChildSubagentRuntime(
 		if (event.toolName !== "bash") {
 			return undefined;
 		}
+		// `toolName` narrows the branch, but not the shared mutable `input` payload.
+		// Keep a runtime guard so direct/custom tool-call objects cannot pass a non-string command.
+		if (typeof event.input.command !== "string") {
+			return undefined;
+		}
 		const commitAttributionState = resolveTlhCommitAttribution(getTlhGlobalSettings(ctx.cwd).tlh?.attribution);
 		const reason = getTlhGitCommitAttributionBlockReason(event.input.command, commitAttributionState);
 		return reason ? { block: true, reason } : undefined;
@@ -454,8 +461,8 @@ function createTlhPrimaryAgentRuntime(
 	async function applyPrimaryModel(
 		ctx: ExtensionContext,
 		primary: AgentPrompt,
-		model: { provider: string; id: string } | undefined,
-	): Promise<{ provider: string; id: string } | undefined> {
+		model: ActiveModel | undefined,
+	): Promise<ActiveModel | undefined> {
 		if (!model) {
 			const candidates = [primary.model, ...(primary.tlhOpenaiModels ?? [])].filter(Boolean).join(", ");
 			warnOnce(ctx, `missing-primary-model-${primary.name}`, `TLH primary agent models are not available for configured providers: ${candidates}`);
@@ -563,7 +570,7 @@ function createTlhPrimaryAgentRuntime(
 
 	function parsePrimaryAgentSelection(value: string | undefined): TlhPrimaryAgentSelection | undefined {
 		const normalized = value?.trim().toLowerCase();
-		return PRIMARY_AGENT_CYCLE.includes(normalized) ? (normalized as TlhPrimaryAgentSelection) : undefined;
+		return normalized !== undefined && PRIMARY_AGENT_CYCLE.includes(normalized) ? (normalized as TlhPrimaryAgentSelection) : undefined;
 	}
 
 	function switchPrimaryAgentCommandCompletions(prefix: string) {
@@ -781,6 +788,11 @@ function createTlhPrimaryAgentRuntime(
 
 		pi.on("tool_call", async (event, ctx) => {
 			if (event.toolName === "bash") {
+				// `toolName` narrows this branch, but not the shared mutable `input` payload.
+				// Keep a runtime guard so direct/custom tool-call objects cannot pass a non-string command.
+				if (typeof event.input.command !== "string") {
+					return undefined;
+				}
 				const commitAttributionState = resolveTlhCommitAttribution(getTlhGlobalSettings(ctx.cwd).tlh?.attribution);
 				const reason = getTlhGitCommitAttributionBlockReason(event.input.command, commitAttributionState);
 				return reason ? { block: true, reason } : undefined;

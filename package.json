@@ -24,9 +24,10 @@
   "scripts": {
     "check:package-versions": "node scripts/check-package-versions.mjs",
     "lint": "eslint \"scripts/**/*.{js,mjs,ts}\" \"tests/**/*.{js,mjs,ts}\" \"extensions/**/*.{js,mjs,ts}\"",
+    "typecheck": "tsc --noEmit",
     "test": "node --test --test-reporter=dot tests/*.test.mjs",
     "test:verbose": "node --test tests/*.test.mjs",
-    "validate": "npm run check:package-versions && bash scripts/check-installer-smoke.sh && npm test && npm run lint && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
+    "validate": "npm run check:package-versions && bash scripts/check-installer-smoke.sh && npm run typecheck && npm test && npm run lint && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
   },
   "files": [
     "agents",
@@ -69,6 +70,7 @@
     "@earendil-works/pi-coding-agent": "0.79.7",
     "@earendil-works/pi-tui": "0.79.7",
     "@eslint/js": "9.39.4",
+    "@types/node": "22.19.21",
     "eslint": "9.39.4",
     "globals": "14.0.0",
     "jiti": "2.7.0",

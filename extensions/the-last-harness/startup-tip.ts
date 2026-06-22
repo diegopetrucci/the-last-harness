@@ -16,12 +16,13 @@ export const TLH_STARTUP_TIPS = [
 ] as const;
 
 export function selectTlhStartupTip(random: () => number = Math.random): string | undefined {
-	if (TLH_STARTUP_TIPS.length === 0) {
+	const tips: readonly string[] = TLH_STARTUP_TIPS;
+	if (tips.length === 0) {
 		return undefined;
 	}
 
-	const index = Math.min(TLH_STARTUP_TIPS.length - 1, Math.floor(random() * TLH_STARTUP_TIPS.length));
-	return TLH_STARTUP_TIPS[index];
+	const index = Math.min(tips.length - 1, Math.floor(random() * tips.length));
+	return tips[index];
 }
 
 const processStartupTip = selectTlhStartupTip();
