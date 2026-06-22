@@ -7,8 +7,6 @@ All notable changes to The Last Harness will be documented in this file.
 ### Changed
 
 - Replaced the bundled `pi-oracle` extension (`npm:@diegopetrucci/pi-oracle`) with a first-party oracle subagent that performs direct high-reasoning read-only analysis. The subagent uses the opposite-provider model pattern (mirroring `code-reviewer`) with high thinking, so it reasons independently from the primary session. No external extension is required.
-- Removed the `/oracle-model` slash command, which was provided by `pi-oracle` and has no equivalent in the subagent-only design.
-- Existing installs have `npm:@diegopetrucci/pi-oracle` force-removed and any stale `oracle` opt-out pruned from `tlh.disabledDefaultExtensions` automatically on the next `tlh update` run.
 
 ## [0.24.0] - 2026-06-22
 
