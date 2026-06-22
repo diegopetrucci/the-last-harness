@@ -261,11 +261,6 @@ function hasExplicitModel(target: Record<string, unknown>): boolean {
 	return Object.hasOwn(target, "model") && target.model !== undefined;
 }
 
-function hasExplicitFallbackField(target: Record<string, unknown>): boolean {
-	return (Object.hasOwn(target, "fallbackModels") && target.fallbackModels !== undefined)
-		|| (Object.hasOwn(target, "modelFallbackNotice") && target.modelFallbackNotice !== undefined);
-}
-
 function agentNameForTarget(target: Record<string, unknown>): string | undefined {
 	return typeof target.agent === "string" ? target.agent : undefined;
 }
@@ -277,7 +272,7 @@ function applyModelToRunnableTarget(
 	currentProvider: string | undefined,
 	currentModel: ProviderModelReference | undefined,
 ): number {
-	if (!isRecord(target) || hasExplicitModel(target) || hasExplicitFallbackField(target)) {
+	if (!isRecord(target) || hasExplicitModel(target)) {
 		return 0;
 	}
 
@@ -294,8 +289,12 @@ function applyModelToRunnableTarget(
 		const fallbackModel = selectOppositeProviderFallbackModel(agent, availableModels, currentProvider, currentModel);
 		const fallbackModelId = fallbackModel ? formatProviderModelReference(fallbackModel) : undefined;
 		if (fallbackModelId && fallbackModelId !== selectedModel) {
-			target.fallbackModels = [fallbackModelId];
-			target.modelFallbackNotice = OPPOSITE_PROVIDER_FALLBACK_NOTICE;
+			if (!Object.hasOwn(target, "fallbackModels") || target.fallbackModels === undefined) {
+				target.fallbackModels = [fallbackModelId];
+			}
+			if (!Object.hasOwn(target, "modelFallbackNotice") || target.modelFallbackNotice === undefined) {
+				target.modelFallbackNotice = OPPOSITE_PROVIDER_FALLBACK_NOTICE;
+			}
 		}
 		return 1;
 	}

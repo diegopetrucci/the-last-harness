@@ -330,16 +330,30 @@ test("provider-aware subagent mutation preserves explicit user-supplied model va
 	assert.equal(input.model, "openai/gpt-5.4");
 });
 
-test("provider-aware subagent mutation preserves explicit fallback overrides", () => {
+test("provider-aware subagent mutation injects model but preserves caller-supplied fallback fields", () => {
 	const available = [...anthropicAvailable, ...codexAvailable];
 
+	// Caller supplies fallbackModels but no model → opposite-provider model is injected,
+	// caller-provided fallbackModels kept, TLH auto-adds modelFallbackNotice.
 	const withFallbackModels = { agent: "code-reviewer", fallbackModels: ["custom/provider-model"] };
-	assert.equal(applyProviderAwareSubagentModels(withFallbackModels, agents, available, "anthropic"), 0);
-	assert.deepEqual(withFallbackModels, { agent: "code-reviewer", fallbackModels: ["custom/provider-model"] });
+	assert.equal(applyProviderAwareSubagentModels(withFallbackModels, agents, available, "anthropic"), 1);
+	assert.equal(withFallbackModels.model, "openai-codex/gpt-5.5");
+	assert.deepEqual(withFallbackModels.fallbackModels, ["custom/provider-model"]);
+	assert.equal(withFallbackModels.modelFallbackNotice, reducedIndependenceNotice);
 
+	// Caller supplies modelFallbackNotice but no model → opposite-provider model is injected,
+	// TLH auto-adds fallbackModels, caller-provided modelFallbackNotice kept.
 	const withFallbackNotice = { agent: "oracle", modelFallbackNotice: "custom fallback notice" };
-	assert.equal(applyProviderAwareSubagentModels(withFallbackNotice, agents, available, "openai-codex"), 0);
-	assert.deepEqual(withFallbackNotice, { agent: "oracle", modelFallbackNotice: "custom fallback notice" });
+	assert.equal(applyProviderAwareSubagentModels(withFallbackNotice, agents, available, "openai-codex"), 1);
+	assert.equal(withFallbackNotice.model, "anthropic/claude-opus-4-8");
+	assert.deepEqual(withFallbackNotice.fallbackModels, ["openai-codex/gpt-5.5"]);
+	assert.equal(withFallbackNotice.modelFallbackNotice, "custom fallback notice");
+
+	// Explicit model still prevents all injection regardless of other fallback fields.
+	const withExplicitModel = { agent: "code-reviewer", model: "anthropic/claude-opus-4-8", fallbackModels: ["my/fallback"] };
+	assert.equal(applyProviderAwareSubagentModels(withExplicitModel, agents, available, "anthropic"), 0);
+	assert.equal(withExplicitModel.model, "anthropic/claude-opus-4-8");
+	assert.deepEqual(withExplicitModel.fallbackModels, ["my/fallback"]);
 });
 
 test("provider-aware subagent mutation handles parallel tasks", () => {
