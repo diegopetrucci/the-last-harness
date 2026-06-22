@@ -2969,6 +2969,85 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
 	);
 });
 
+test("stage-1 installPiIfNeeded: prerelease pi version does not satisfy the exact pin", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const fakebin = join(root, "fakebin");
+	const packageDir = join(root, "package-source");
+	const runtimeDir = join(root, "runtime");
+	const runtimeBinDir = join(runtimeDir, "bin");
+	const installedPiPath = join(runtimeBinDir, "pi");
+	const templateDir = join(root, "pi-template");
+	const legacyBin = join(homeDir, ".local", "bin");
+	const legacyPiPath = join(legacyBin, "pi");
+	const npmLog = join(root, "npm.log");
+	const installStateDir = join(agentDir, "tlh");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(binDir, { recursive: true });
+	mkdirSync(fakebin, { recursive: true });
+	mkdirSync(packageDir, { recursive: true });
+	mkdirSync(templateDir, { recursive: true });
+	mkdirSync(runtimeBinDir, { recursive: true });
+	mkdirSync(legacyBin, { recursive: true });
+	mkdirSync(installStateDir, { recursive: true });
+	writeFileSync(join(installStateDir, "install-state.json"), JSON.stringify({
+		schemaVersion: 1,
+		repo: "diegopetrucci/the-last-harness",
+		track: "ref",
+		ref: "main",
+		packageSource: packageDir,
+		packageSourceIsDefault: false,
+		piInstalledByTlh: true,
+	}, null, 2));
+
+	writeFakePi(legacyBin, `if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_PINNED_PI_VERSION}\\n'; exit 0; fi\nexit 0`);
+
+	// Template pi reports the pinned triplet with a prerelease suffix. Exact pin
+	// enforcement must still reject it.
+	writeFakePi(templateDir, "if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.9-beta.1\\n'; exit 0; fi\nexit 0");
+
+	writeFakeNpmInstaller(fakebin, {
+		npmLog,
+		templatePiPath: join(templateDir, "pi"),
+		installedPiPath,
+	});
+	writeFakeCommand(fakebin, "git", "exit 0");
+	writeFakeTk(fakebin);
+
+	const env = scrubInstallerEnv({
+		HOME: homeDir,
+		PATH: safeInstallerPath(fakebin),
+		TLH_PACKAGE_SOURCE: packageDir,
+		TLH_SKIP_GNOSIS_INSTALL: "1",
+	});
+	const result = runInstaller([
+		"--agent-dir", agentDir,
+		"--bin-dir", binDir,
+		"--no-settings",
+		"--no-wrapper",
+		"--pi-installed-by-tlh", "true",
+	], env);
+	const output = `${result.stdout}\n${result.stderr}`;
+
+	assert.notEqual(result.status, 0, `expected installer to fail on prerelease pi, got exit 0:\n${output}`);
+	assert.match(output, /0\.79\.9-beta\.1/, "error output should mention the prerelease version");
+	assert.equal(existsSync(legacyPiPath), true, "user-owned ~/.local/bin/pi was removed despite installer throwing");
+
+	const npmLinesC = existsSync(npmLog)
+		? readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean)
+		: [];
+	assert.equal(
+		npmLinesC.filter((line) => line.startsWith("uninstall ")).length,
+		0,
+		`npm uninstall must not have been called; npm log: ${npmLinesC.join(", ")}`,
+	);
+});
+
 // Regression (tlht-5php, blocker): piInstalledByTlh=true, private runtime ABSENT at start,
 // user-owned ~/.local/bin/pi@0.79.9 present.  The installer must provision the private
 // runtime and succeed — without removing or executing ~/.local/bin/pi.

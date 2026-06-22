@@ -656,11 +656,11 @@ function detectPiVersion(
 		const probeDetails = output ? ` Probe output: ${output}` : "";
 		throw new Error(`unable to determine Pi version from ${sourceDescription} (${versionCommandDisplay} exited with ${status}). The Last Harness requires ${requiredVersionDescription}. Verify that \`${versionCommandDisplay}\` works, or ${installGuidance}.${probeDetails}`);
 	}
-	const match = output.match(/\d+\.\d+\.\d+/);
+	const match = output.match(/\bv?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)\b/);
 	if (!match) {
 		throw new Error(`unable to parse Pi version from ${sourceDescription}: ${output || "<empty>"}. The Last Harness requires ${requiredVersionDescription}. Verify that \`${versionCommandDisplay}\` prints a semantic version like ${MIN_PI_VERSION}, or ${installGuidance}.`);
 	}
-	const currentVersion = match[0];
+	const currentVersion = match[1];
 	verboseLog(config, `Pi version (${sourceDescription}): ${currentVersion}`);
 	return currentVersion;
 }
@@ -680,7 +680,7 @@ function assertPinnedPiVersion(
 		requiredVersionDescription: `Pi ${PINNED_PI_VERSION}`,
 	});
 	const installGuidance = pinnedPiInstallGuidance(config);
-	if (compareVersionTriplets(currentVersion, PINNED_PI_VERSION) !== 0) {
+	if (currentVersion !== PINNED_PI_VERSION) {
 		throw new Error(`Pi ${PINNED_PI_VERSION} is required for ${sourceDescription} (found ${currentVersion}). ${installGuidance}`);
 	}
 }
