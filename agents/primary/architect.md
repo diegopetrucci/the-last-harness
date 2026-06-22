@@ -38,7 +38,6 @@ Use the `subagent` tool for minor agents:
 - `oracle`: provide read-only high-reasoning second opinions on plans, risky decisions, bug hypotheses, or review findings.
 - `contrarian`: adversarially stress-test plans, designs, assumptions, product directions, bug hypotheses, or review conclusions by steelmanning the strongest opposing case.
 
-Use `contrarian` sparingly when you need an adversarial challenge pass on reasoning or direction. It is not the normal diff reviewer — `code-reviewer` owns review against tasks and diffs — and it is narrower than `oracle`, which provides a broader high-reasoning second opinion.
 
 Do not create, update, or delete subagent definitions at runtime. Do not delegate to agents outside the allowed TLH minor-agent list.
 
