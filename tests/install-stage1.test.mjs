@@ -2330,7 +2330,6 @@ test("wrapper --pi-cmd validates the pinned binary before fast-path exec", (t) =
 
 	writeFakePi(pinnedPiDir, [
 		`printf '%s\\n' "$*" >>"${piCallLog}"`,
-		`if [[  "\${1:-}" == "--version" ]]; then printf '0.79.1\\n'; exit 0; fi`,
 		`{ printf 'cmd=%s\\n' "$0"; printf 'argv=%s\\n' "$*"; printf 'agent=%s\\n' "\${PI_CODING_AGENT_DIR:-}"; printf 'path=%s\\n' "\${PATH:-}"; } >"${piMainLog}"`,
 		"exit 0",
 	].join("\n"));
@@ -2368,7 +2367,7 @@ test("wrapper --pi-cmd validates the pinned binary before fast-path exec", (t) =
 	assert.equal(mainRecord.agent, agentDir);
 
 	const allCalls = readFileSync(piCallLog, "utf8").trim().split(/\r?\n/).filter(Boolean);
-	assert.deepEqual(allCalls, ["--version", "chat"]);
+	assert.deepEqual(allCalls, ["chat"]);
 });
 test("wrapper --pi-cmd hard-fails when the pinned path is non-executable", (t) => {
 	const root = makeTempDir();
@@ -2413,113 +2412,6 @@ test("wrapper --pi-cmd hard-fails when the pinned path is non-executable", (t) =
 	assert.match(result.stderr, /private pi runtime not found at/);
 	assert.equal(existsSync(piLog), false);
 });
-
-test("wrapper --pi-cmd soft-warns when the pinned runtime is 0.79.8 and still exec's it", (t) => {
-	const root = makeTempDir();
-	const homeDir = join(root, "home");
-	const agentDir = join(root, "agent");
-	const agentBin = join(agentDir, "bin");
-	const binDir = join(root, "bin");
-	const packageRoot = join(root, "package");
-	const pinnedPiDir = join(root, "pinned-pi");
-	const pinnedPiCallLog = join(root, "pinned-pi-calls.log");
-	mkdirSync(agentBin, { recursive: true });
-	mkdirSync(homeDir, { recursive: true });
-	mkdirSync(packageRoot, { recursive: true });
-	t.after(() => rmSync(root, { recursive: true, force: true }));
-
-	writeFakePi(pinnedPiDir, [
-		`printf '%s\\n' "$*" >>"${pinnedPiCallLog}"`,
-		`if [[ "\${1:-}" == "--version" ]]; then printf '0.79.8\\n'; exit 0; fi`,
-		// Non-version invocation exits with a recognizable code.
-		"exit 85",
-	].join("\n"));
-
-	runHelper("scripts/tlh-wrapper.mjs", [
-		"--agent-dir",
-		agentDir,
-		"--bin-dir",
-		binDir,
-		"--wrapper-name",
-		"tlh",
-		"--package-root",
-		packageRoot,
-		"--pi-cmd",
-		join(pinnedPiDir, "pi"),
-	], { homeDir });
-
-	const wrapper = join(binDir, "tlh");
-	const result = spawnSync(wrapper, ["chat"], {
-		env: scrubInstallerEnv({
-			HOME: homeDir,
-			PATH: [agentBin, process.env.PATH || ""].join(":"),
-		}),
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "pipe"],
-	});
-
-	// 0.79.8 >= minimum (0.79.1) → soft-warn only, pinned pi is still exec'd.
-	assert.match(result.stderr, /private pi version 0\.79\.8 differs from the expected 0\.79\.7/);
-	assert.equal(result.status, 85);
-	const pinnedCalls = readFileSync(pinnedPiCallLog, "utf8").trim().split(/\r?\n/).filter(Boolean);
-	// Wrapper called --version probe + exec'd "chat".
-	assert.ok(pinnedCalls.includes("--version"), `expected --version probe; got ${pinnedCalls.join(",")}`);
-	assert.ok(pinnedCalls.includes("chat"), `expected chat to be exec'd; got ${pinnedCalls.join(",")}`);
-});
-
-test("wrapper --pi-cmd soft-warns on a 0.79.8 pinned runtime even when no fallback exists", (t) => {
-	const root = makeTempDir();
-	const homeDir = join(root, "home");
-	const agentDir = join(root, "agent");
-	const agentBin = join(agentDir, "bin");
-	const binDir = join(root, "bin");
-	const packageRoot = join(root, "package");
-	const pinnedPiDir = join(root, "pinned-pi");
-	const pinnedPiCallLog = join(root, "pinned-pi-calls.log");
-	mkdirSync(agentBin, { recursive: true });
-	mkdirSync(homeDir, { recursive: true });
-	mkdirSync(packageRoot, { recursive: true });
-	t.after(() => rmSync(root, { recursive: true, force: true }));
-
-	writeFakePi(pinnedPiDir, [
-		`printf '%s\\n' "$*" >>"${pinnedPiCallLog}"`,
-		`if [[ "\${1:-}" == "--version" ]]; then printf '0.79.8\\n'; exit 0; fi`,
-		"exit 85",
-	].join("\n"));
-
-	runHelper("scripts/tlh-wrapper.mjs", [
-		"--agent-dir",
-		agentDir,
-		"--bin-dir",
-		binDir,
-		"--wrapper-name",
-		"tlh",
-		"--package-root",
-		packageRoot,
-		"--pi-cmd",
-		join(pinnedPiDir, "pi"),
-	], { homeDir });
-
-	const wrapper = join(binDir, "tlh");
-	const result = spawnSync(wrapper, ["chat"], {
-		env: scrubInstallerEnv({
-			HOME: homeDir,
-			PATH: [agentBin, safeInstallerPath(join(root, "fakebin"))].join(":"),
-		}),
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "pipe"],
-	});
-
-	// No PATH fallback exists, but 0.79.8 >= min → soft-warn + exec (not hard-fail).
-	assert.match(result.stderr, /private pi version 0\.79\.8 differs from the expected 0\.79\.7/);
-	assert.equal(result.status, 85);
-	const pinnedCalls = readFileSync(pinnedPiCallLog, "utf8").trim().split(/\r?\n/).filter(Boolean);
-	assert.ok(pinnedCalls.includes("--version"), `expected --version probe; got ${pinnedCalls.join(",")}`);
-	assert.ok(pinnedCalls.includes("chat"), `expected chat to be exec'd; got ${pinnedCalls.join(",")}`);
-});
-
-
-
 test("wrapper --pi-cmd fast path exports PATH as managed_bin:pinned_dir:sanitized_path", (t) => {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");
@@ -2538,7 +2430,6 @@ test("wrapper --pi-cmd fast path exports PATH as managed_bin:pinned_dir:sanitize
 
 	// Pinned pi logs PATH so we can verify ordering.
 	writeFakePi(pinnedPiDir, [
-		`if [[ "\${1:-}" == "--version" ]]; then printf '0.79.1\\n'; exit 0; fi`,
 		`{ printf 'cmd=%s\\n' "$0"; printf 'argv=%s\\n' "$*"; printf 'agent=%s\\n' "\${PI_CODING_AGENT_DIR:-}"; printf 'path=%s\\n' "\${PATH:-}"; } >"${piLog}"`,
 		"exit 0",
 	].join("\n"));
