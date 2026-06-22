@@ -2,6 +2,17 @@
 
 All notable changes to The Last Harness will be documented in this file.
 
+## [0.24.0] - 2026-06-22
+
+### Changed
+
+- Removed the per-launch `pi --version` probe from the `tlh` wrapper. The version check ran on every invocation to validate the pinned runtime; it is now replaced with a lighter-weight check, making `tlh` start faster.
+
+### Fixed
+
+- Fixed uninstall safety for runtimes that were migrated from a legacy TLH install: a `migrated`-origin ownership marker now causes `tlh uninstall` to use a surgical `npm uninstall` rather than `rm -rf`, so any packages co-located in a shared prefix are preserved.
+- Tightened private-runtime ownership gating: the installer and uninstaller now require an affirmative `.tlh-runtime-owned` marker (with schema-version, package name, and a realpath-matched path) before treating a runtime prefix as TLH-owned. An unmarked or path-mismatched prefix is refused at install time and skipped at uninstall time, with a manual-removal hint printed instead. Existing installs receive the marker automatically on the next `tlh update` or installer rerun.
+
 ## [0.23.0] - 2026-06-20
 
 ### Changed
