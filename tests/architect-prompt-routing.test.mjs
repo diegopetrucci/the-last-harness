@@ -60,10 +60,14 @@ test("architect.md requires specific risk wording and explicit consent before us
 	assert.match(architectMd, /Never trigger the `oracle` unless the user explicitly agrees\./);
 });
 
-test("architect.md scopes contrarian to non-routine planning challenge passes", () => {
+test("architect.md scopes contrarian to sparing pre-ticket planning challenge passes", () => {
 	assert.match(
 		architectMd,
-		/Consider `contrarian` when a plan, design, assumption, product direction, bug hypothesis, or review conclusion would benefit from steelmanning the strongest opposing case\./,
+		/Pre-ticket planning is the primary useful moment for `contrarian`\./,
+	);
+	assert.match(
+		architectMd,
+		/Apply a similarly sparing bar to `contrarian` as to `oracle`: consider it before ticket creation only when a proposed change has meaningful uncertainty, tradeoffs, blast radius, a hard-to-undo direction, or debatable assumptions, and name the specific risk or strongest opposing case you want stress-tested\./,
 	);
 	assert.match(
 		architectMd,

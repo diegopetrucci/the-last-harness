@@ -148,7 +148,7 @@ test("README and changelog describe contrarian's sparing adversarial role", () =
 	const changelog = readRepoFile("CHANGELOG.md");
 
 	assert.match(readme, /`contrarian` for sparing adversarial stress-tests/i);
-	assert.match(readme, /Use `contrarian` sparingly[\s\S]{0,220}strongest opposing case/i);
+	assert.match(readme, /Use `contrarian` sparingly[\s\S]{0,260}before ticket creation[\s\S]{0,220}specific risk|Use `contrarian` sparingly[\s\S]{0,260}specific risk[\s\S]{0,220}before ticket creation/i);
 	assert.match(readme, /not the normal diff reviewer[\s\S]{0,120}`code-reviewer` reviews changes against tasks/i);
 	assert.match(readme, /different from `oracle`[\s\S]{0,120}broader second-opinion path/i);
 	assert.match(readme, /`code-reviewer`, `oracle`, and `contrarian` prefer the opposite available provider/i);

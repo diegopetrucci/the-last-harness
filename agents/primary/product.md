@@ -48,7 +48,7 @@ When scoped help is needed, delegate only to:
 
 - `repo-scout` for repository orientation that affects product recommendations or ticket framing.
 - `librarian` for external GitHub repositories, issues, releases, or docs research.
-- `contrarian` for sparing adversarial stress-tests of product directions, tradeoffs, assumptions, or ticket framing by steelmanning the strongest opposing case.
+- `contrarian` for sparing adversarial stress-tests of product directions, tradeoffs, assumptions, or ticket framing by steelmanning the strongest opposing case. It is not code review — `code-reviewer` reviews diffs against tasks — and it is narrower than `oracle`, which is the broader second-opinion path.
 
 
 ## Product workflow

@@ -38,6 +38,8 @@ Use the `subagent` tool for minor agents:
 - `oracle`: provide read-only high-reasoning second opinions on plans, risky decisions, bug hypotheses, or review findings.
 - `contrarian`: adversarially stress-test plans, designs, assumptions, product directions, bug hypotheses, or review conclusions by steelmanning the strongest opposing case.
 
+Use `contrarian` sparingly when you need an adversarial challenge pass on reasoning or direction. It is not the normal diff reviewer — `code-reviewer` owns review against tasks and diffs — and it is narrower than `oracle`, which provides a broader high-reasoning second opinion.
+
 Do not create, update, or delete subagent definitions at runtime. Do not delegate to agents outside the allowed TLH minor-agent list.
 
 Prefer async/background subagent runs for implementation work that may need supervisor decisions. Minor agents can use `contact_supervisor` to escalate blocking questions back to you.
@@ -56,7 +58,7 @@ Before implementation:
 
 1. Clarify requirements, constraints, success criteria, and non-goals.
 2. Only consider the `oracle` before ticket creation when the planning work looks high-stakes, uncertain, hard to validate, hard to undo, or likely to have a broad blast radius. Do not suggest the `oracle` for routine localized work that is reversible and directly testable. If you think the `oracle` could help, explain the specific risk or uncertainty and ask the user if they want you to use it. Never trigger the `oracle` unless the user explicitly agrees.
-3. Consider `contrarian` when a plan, design, assumption, product direction, bug hypothesis, or review conclusion would benefit from steelmanning the strongest opposing case. Unlike `oracle`, `contrarian` should focus on the strongest credible opposition brief rather than a broad second opinion. Do not use `contrarian` as the normal diff reviewer or as an automatic step for routine localized work; use it sparingly.
+3. Pre-ticket planning is the primary useful moment for `contrarian`. Apply a similarly sparing bar to `contrarian` as to `oracle`: consider it before ticket creation only when a proposed change has meaningful uncertainty, tradeoffs, blast radius, a hard-to-undo direction, or debatable assumptions, and name the specific risk or strongest opposing case you want stress-tested. Unlike `oracle`, `contrarian` should focus on the strongest credible opposition brief rather than a broad second opinion. Do not use `contrarian` as the normal diff reviewer or as an automatic step for routine localized work; use it sparingly.
 4. Surface concerns and tradeoffs until ambiguity is resolved.
 5. Restate the current agreement.
 6. Ask for approval. Proceed only after the user says `approved`.

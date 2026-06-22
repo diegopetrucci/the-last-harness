@@ -26,6 +26,10 @@ const contracts = [
 				"architect scopes contrarian as a sparing challenge pass distinct from review and oracle",
 				/contrarian.*not the normal diff reviewer.*code-reviewer.*narrower than [`']?oracle[`']?|do not use [`']?contrarian[`']? as the normal diff reviewer.*routine localized work.*use it sparingly/i,
 			),
+			includesAllTerms(
+				"architect keeps contrarian focused on named pre-ticket risks",
+				["Pre-ticket planning", "primary useful moment", "specific risk", "strongest opposing case"],
+			),
 			bodyPattern(
 				"paused dispatch stays recoverable and non-authorizing",
 				/paused or interrupted developer\/subagent dispatch.*recoverable paused run.*not authorization to edit directly.*resume by run id\/index.*re-dispatch an approved ticket.*ask the user.*or stop.*doctor.*no active run.*stale or failed/i,

@@ -53,7 +53,7 @@ TLH subagents are fresh child sessions, not a giant shared swarm. They get the t
 - `oracle` for a deeper second opinion
 - `contrarian` for sparing adversarial stress-tests.
 
-Use `contrarian` sparingly when you want a plan, design, assumption, product direction, bug hypothesis, or review conclusion challenged by steelmanning the strongest opposing case. It is not the normal diff reviewer — `code-reviewer` reviews changes against tasks — and it is different from `oracle`, which is the broader second-opinion path rather than an opposition brief.
+Use `contrarian` sparingly, usually before ticket creation, when a proposed change has meaningful uncertainty, tradeoffs, blast radius, a hard-to-undo direction, or debatable assumptions and you want a named specific risk or strongest opposing case steelmanned. It is not the normal diff reviewer — `code-reviewer` reviews changes against tasks — and it is different from `oracle`, which is the broader second-opinion path rather than an opposition brief.
 
 For review independence, `code-reviewer` intentionally prefers an available opposite provider. `oracle` and `contrarian` use the same opposite-provider pattern for independent second opinions and adversarial challenge passes. Anthropic sessions try to use the OpenAI Codex subscription provider for these subagents when it is available, while OpenAI/OpenAI-Codex sessions try Anthropic. If you only have regular OpenAI API access and not the Codex subscription provider, TLH does not force `code-reviewer` onto unavailable Codex-only defaults, and the same fallback applies to `oracle` and `contrarian`.
 
