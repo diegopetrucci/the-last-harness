@@ -129,6 +129,23 @@ function packageIdentityExists(packages, identity) {
 	return Boolean(identity) && packages.some((entry) => packageIdentity(entry) === identity);
 }
 
+function isPinnedNpmSource(source) {
+	return typeof source === "string" && source.trim().startsWith("npm:") && packageIdentity(source) !== source.trim();
+}
+
+function isUnpinnedNpmSource(source) {
+	return typeof source === "string" && source.trim().startsWith("npm:") && packageIdentity(source) === source.trim();
+}
+
+function shouldMigrateManagedDefaultExtensionSource(currentSource, extension, { force, managedPackageIdentities = new Set() }) {
+	if (force || extension.critical === true) return true;
+	const identity = packageIdentity(extension.source);
+	if (!identity || packageIdentity(currentSource) !== identity) return false;
+	if (!isPinnedNpmSource(extension.source)) return false;
+	if (isUnpinnedNpmSource(currentSource)) return true;
+	return managedPackageIdentities.has(identity);
+}
+
 function shouldMigrateDefaultExtensionReplacements(extension, { force }) {
 	return force || extension.migrateReplacements === true;
 }
@@ -246,12 +263,11 @@ function applyDefaultExtensionPackageDedupes(settings, defaultExtensions, disabl
 	}
 }
 
-function applyDefaultExtensionSourceUpdates(settings, defaultExtensions, disabledIds, changes, { force }) {
+function applyDefaultExtensionSourceUpdates(settings, defaultExtensions, disabledIds, changes, { force, managedPackageIdentities = new Set() }) {
 	const updatedIdentities = new Set();
 	if (!Array.isArray(settings.packages)) return updatedIdentities;
 
 	for (const extension of defaultExtensions) {
-		if (!force && extension.critical !== true) continue;
 		if (disabledIds.has(extension.id)) continue;
 		const identity = packageIdentity(extension.source);
 		if (!identity) continue;
@@ -261,6 +277,7 @@ function applyDefaultExtensionSourceUpdates(settings, defaultExtensions, disable
 		const current = settings.packages[index];
 		const currentSource = packageSourceOf(current);
 		if (!currentSource) continue;
+		if (!shouldMigrateManagedDefaultExtensionSource(currentSource, extension, { force, managedPackageIdentities })) continue;
 
 		const sourceNeedsUpdate = currentSource !== extension.source;
 		const removesCriticalExtensionFilter = extension.critical === true
@@ -599,7 +616,11 @@ function main() {
 	const defaults = prepareDefaults(rawDefaults, args.packageSource, defaultExtensions, disabledIds, existing, { force: args.force });
 	const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
 	applyHarnessPackageDedupes(next, ensuredHarnessSource, changes);
-	const sourceUpdatedIdentities = applyDefaultExtensionSourceUpdates(next, defaultExtensions, disabledIds, changes, { force: args.force });
+	const managedDefaultExtensionProvenance = readDefaultExtensionProvenance(next).managedPackageIdentities;
+	const sourceUpdatedIdentities = applyDefaultExtensionSourceUpdates(next, defaultExtensions, disabledIds, changes, {
+		force: args.force,
+		managedPackageIdentities: managedDefaultExtensionProvenance,
+	});
 	applyReplacedDefaultExtensions(next, defaultExtensions, disabledIds, changes, { force: args.force });
 	applyDefaultExtensionPackageDedupes(next, defaultExtensions, disabledIds, changes, { force: args.force, sourceUpdatedIdentities });
 	applyDisabledDefaultExtensions(next, defaultExtensions, disabledIds, changes);

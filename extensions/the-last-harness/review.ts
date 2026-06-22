@@ -417,8 +417,8 @@ async function gatherUncommitted(pi: ExtensionAPI, cmdCtx: ExtensionCommandConte
 	}
 
 	const repoRootResult = await resolveRepoRoot(pi, cwd, "the untracked file scan");
-	if (!repoRootResult.ok) {
-		return repoRootResult;
+	if (repoRootResult.ok === false) {
+		return { ok: false, message: repoRootResult.message };
 	}
 
 	// Include untracked, non-gitignored files so the reviewer can see newly added content.
@@ -453,7 +453,7 @@ async function gatherBranch(
 
 	// Reject flag-like values before passing anything to git.
 	const baseCheck = rejectFlagLike(effectiveBase, "base");
-	if (!baseCheck.ok) {
+	if (baseCheck.ok === false) {
 		return { ok: false, message: baseCheck.message };
 	}
 
@@ -522,7 +522,7 @@ async function gatherCommit(
 
 	// Reject flag-like values before passing to git
 	const shaCheck = rejectFlagLike(sha, "sha");
-	if (!shaCheck.ok) {
+	if (shaCheck.ok === false) {
 		return { ok: false, message: shaCheck.message };
 	}
 
@@ -865,7 +865,7 @@ async function gatherPr(
 
 	// 2. Reject flag-like nOrUrl
 	const nOrUrlCheck = rejectFlagLike(nOrUrl, "pr");
-	if (!nOrUrlCheck.ok) {
+	if (nOrUrlCheck.ok === false) {
 		return { ok: false, message: nOrUrlCheck.message };
 	}
 
@@ -1037,7 +1037,7 @@ async function dispatchReviewMode(
 	}
 
 	// --- Uniform error handling ---
-	if (!result.ok) {
+	if (result.ok === false) {
 		cmdCtx.ui.notify(result.message, "error");
 		return;
 	}
@@ -1077,7 +1077,7 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
 			const argv = tokenizeArgs(args);
 			const parsed = parseReviewArgs(argv);
 
-			if (!parsed.pickerRequested) {
+			if (parsed.pickerRequested === false) {
 				ctx.ui.notify(parsed.message, "error");
 				return;
 			}

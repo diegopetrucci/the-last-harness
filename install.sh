@@ -3,9 +3,10 @@ set -euo pipefail
 
 REPO="${TLH_REPO:-diegopetrucci/the-last-harness}"
 REF="${TLH_REF:-main}"
-# Keep in sync with MIN_NODE_VERSION and MIN_PI_VERSION in scripts/tlh-install.mjs.
+# Keep in sync with MIN_NODE_VERSION, MIN_PI_VERSION, and PINNED_PI_VERSION in scripts/tlh-install.mjs.
 TLH_MIN_NODE_VERSION="22.19.0"
 TLH_MIN_PI_VERSION="0.79.1"
+TLH_PINNED_PI_VERSION="0.79.7"
 
 DRY_RUN=false
 NO_SETTINGS=false
@@ -30,8 +31,8 @@ config under ~/.pi/agent is not modified.
 
 Requirements:
   Node.js >= ${TLH_MIN_NODE_VERSION} on PATH
-  Upstream Pi >= ${TLH_MIN_PI_VERSION} (installed per-user under ~/.local when missing;
-  install failures stop with an actionable error; older versions stop with an upgrade error)
+  Upstream Pi ${TLH_PINNED_PI_VERSION} (installed into a private TLH runtime at ~/.the-last-harness/runtime;
+  a global pi is never used or modified; install or repair failures stop with an actionable error)
 USAGE
   cat <<'USAGE'
 
@@ -58,7 +59,7 @@ Environment overrides:
   TLH_UPDATE_TRACK     Update track for future tlh update
   TLH_PACKAGE_SOURCE   Package source passed to `pi install`
   TLH_RAW_BASE         Base URL for installer support files
-  TLH_GNOSIS_VERSION   Gnosis version to install (default: latest)
+  TLH_GNOSIS_VERSION   Gnosis version to install (default: 0.5.3)
   TLH_GNOSIS_REPO      Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
 
 Examples:
@@ -597,11 +598,12 @@ dry_run_without_stage1() {
   log "Dry run only; no support files were downloaded."
   log ""
   log "Done. The Last Harness dry run completed without downloads or writes."
-  log "Start with: PI_CODING_AGENT_DIR=\"${agent_dir}\" pi"
   if [[ "${NO_WRAPPER}" == "true" ]]; then
     log "Wrapper creation would be skipped (--no-wrapper)."
+    log "Start with: PI_CODING_AGENT_DIR=\"${agent_dir}\" \"${agent_dir%/*}/runtime/bin/pi\""
   else
     log "Wrapper path would be: ${bin_dir}/${WRAPPER_NAME}"
+    log "Start with: ${WRAPPER_NAME}"
   fi
   log "Normal Pi config was not modified: ~/.pi/agent"
 }

@@ -245,6 +245,7 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
 	assert.doesNotMatch(extensionSource, /registerGnosisCommand/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/header\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/model-visibility\.js"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/new-version-notice\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/package-update-notice\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/primary-agent-runtime\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/resources\.js"/);
@@ -291,9 +292,10 @@ test("extension delegates launch update and telemetry services to feature module
 	assert.doesNotMatch(extensionSource, /function fetchLatestTlhRelease/);
 });
 
-test("extension installs TLH model-visibility and package-update overrides during activation", () => {
+test("extension installs TLH model-visibility, package-update, and new-version-notice overrides during activation", () => {
 	assert.match(extensionSource, /installTlhModelVisibilityFilter\(\)/);
 	assert.match(extensionSource, /installTlhPackageUpdateNotificationOverride\(\)/);
+	assert.match(extensionSource, /installTlhNewVersionNotificationOverride\(\)/);
 });
 
 test("extension runs primary session_start work before UI startup in one handler", () => {
@@ -448,7 +450,8 @@ test("extension keeps TLH experimental command wiring with delta-follow-up-revie
 	assert.doesNotMatch(usageLimitsSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
 	assert.match(lockedWriteHelper, /const settingsPath = tlhSettingsPathForWrite\(\);/);
 	assert.match(lockedWriteHelper, /assertSafeTlhSettingsPath\(settingsPath\);/);
-	assert.match(lockedWriteHelper, /const backupPath = current \? `\$\{settingsPath\}\.bak-\$\{settingsBackupTimestamp\(\)\}` : undefined;/);
+	assert.match(lockedWriteHelper, /if \(current\) \{/);
+	assert.match(lockedWriteHelper, /const backupPath = `\$\{settingsPath\}\.bak-\$\{settingsBackupTimestamp\(\)\}`;/);
 	assert.match(lockedWriteHelper, /writeFileSync\(backupPath, current, \{ encoding: "utf8", flag: "wx", mode: 0o600 \}\);/);
 	assert.match(usageLimitsSource, /settings\.tlh\.usageLimits\.showWeekly = showWeekly/);
 	assert.match(usageLimitsSource, /showWeekly === true/);

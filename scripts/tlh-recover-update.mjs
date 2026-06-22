@@ -24,7 +24,7 @@ function usage() {
 	return `Usage: tlh update [options]
 
 Run The Last Harness update recovery flow for the current isolated profile.
-Missing upstream Pi is installed per-user under ~/.local by the installer when needed.
+Upstream Pi is installed into a private TLH runtime at ~/.the-last-harness/runtime by the installer when needed.
 
 Options:
   --agent-dir DIR       Isolated profile dir (default: ~/.the-last-harness/agent)
@@ -478,10 +478,15 @@ function runPackageUpdate(args) {
 	assertPackageUpdateTargetSafe(args.agentDir);
 	assertPackageUpdateArgs(args);
 	const sanitizedEnv = envWithSanitizedPath(process.env, args.agentDir);
-	const piCommand = resolveCommand("pi", sanitizedEnv);
+	// Always use the absolute private TLH runtime pi binary rather than resolving
+	// "pi" by name from PATH — identical logic to runtimePrefix() in tlh-install.mjs.
+	const piCommand = join(dirname(args.agentDir), "runtime", "bin", "pi");
 	if (args.dryRun) {
 		printPackageUpdateDryRun(piCommand, args);
 		return;
+	}
+	if (!existsSync(piCommand)) {
+		throw new Error(`The Last Harness private runtime pi not found at ${piCommand}. Run \`tlh update\` (without --extensions) to repair the private runtime.`);
 	}
 	if (isTruthyEnv(process.env.PI_OFFLINE)) {
 		throw new Error("PI_OFFLINE is set; refusing to run a network update.");

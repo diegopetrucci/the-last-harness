@@ -86,7 +86,7 @@ export function loadPrimaryAgents(): Map<TlhPrimaryAgentSelection, AgentPrompt> 
 	const selectable = new Set(SELECTABLE_PRIMARY_AGENTS);
 	const agents = readMarkdownFilesRecursive(join(packageRoot(), "agents", "primary"))
 		.map((filePath) => parseAgentPrompt(filePath))
-		.filter((agent): agent is AgentPrompt => Boolean(agent) && selectable.has(agent.name));
+		.filter((agent): agent is AgentPrompt => agent !== undefined && selectable.has(agent.name));
 	return new Map(agents.map((agent) => [agent.name as TlhPrimaryAgentSelection, agent]));
 }
 
@@ -123,7 +123,10 @@ export function buildTlhSystemPrompt(
 ): string {
 	const prompts = [HARNESS_PROMPT.trim()];
 	if (primaryEnabled) {
-		prompts.push(primary?.systemPrompt.trim(), formatAllowedSubagents(subagents));
+		if (primary) {
+			prompts.push(primary.systemPrompt.trim());
+		}
+		prompts.push(formatAllowedSubagents(subagents));
 	}
 	return prompts.filter(Boolean).join("\n\n");
 }
