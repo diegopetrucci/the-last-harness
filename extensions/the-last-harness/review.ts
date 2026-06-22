@@ -733,16 +733,16 @@ async function gatherFolder(
 	}
 
 	const cwd = cmdCtx.cwd;
-	const absPaths = paths.map((p) => resolve(cwd, p));
+	const pathEntries = paths.map((inputPath) => ({ inputPath, absPath: resolve(cwd, inputPath) }));
 
 	// Validate all paths exist before doing any work
-	for (let i = 0; i < absPaths.length; i++) {
+	for (const { inputPath, absPath } of pathEntries) {
 		try {
-			await lstat(absPaths[i]);
+			await lstat(absPath);
 		} catch {
 			return {
 				ok: false,
-				message: `Path does not exist: ${paths[i]}`,
+				message: `Path does not exist: ${inputPath}`,
 			};
 		}
 	}
@@ -756,8 +756,7 @@ async function gatherFolder(
 
 	const parts: string[] = [];
 
-	for (let i = 0; i < absPaths.length; i++) {
-		const absPath = absPaths[i];
+	for (const { inputPath, absPath } of pathEntries) {
 		const pathStat = await lstat(absPath);
 		let filePaths: string[];
 
@@ -776,7 +775,7 @@ async function gatherFolder(
 			} else {
 				return {
 					ok: false,
-					message: `git ls-files failed for folder path '${paths[i]}': ${lsResult.stderr.trim()}`,
+					message: `git ls-files failed for folder path '${inputPath}': ${lsResult.stderr.trim()}`,
 				};
 			}
 		} else {

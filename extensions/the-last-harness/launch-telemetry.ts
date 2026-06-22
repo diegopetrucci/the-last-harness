@@ -173,7 +173,9 @@ function unknownIfEmpty(value: string | undefined): string {
 function majorMinorVersion(version: string): string {
 	const match = version.trim().match(/^(\d+)(?:\.(\d+))?/);
 	if (!match) return unknownIfEmpty(version);
-	return match[2] ? `${match[1]}.${match[2]}` : match[1];
+	const [, major, minor] = match;
+	if (!major) return unknownIfEmpty(version);
+	return minor ? `${major}.${minor}` : major;
 }
 
 function parseOsRelease(content: string | undefined): Record<string, string> {
@@ -181,11 +183,13 @@ function parseOsRelease(content: string | undefined): Record<string, string> {
 	for (const line of (content || "").split(/\r?\n/)) {
 		const match = line.match(/^([A-Z][A-Z0-9_]+)=(.*)$/);
 		if (!match) continue;
-		let value = match[2].trim();
+		const [, fieldName, rawValue] = match;
+		if (!fieldName || rawValue === undefined) continue;
+		let value = rawValue.trim();
 		if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
 			value = value.slice(1, -1);
 		}
-		fields[match[1]] = value.replace(/\\(["'`$\\])/g, "$1");
+		fields[fieldName] = value.replace(/\\(["'`$\\])/g, "$1");
 	}
 	return fields;
 }

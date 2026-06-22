@@ -23,7 +23,11 @@ function parseFrontmatter(content: string): { frontmatter: Record<string, string
 		if (!match) {
 			continue;
 		}
-		frontmatter[match[1]] = match[2].trim().replace(/^["']|["']$/g, "");
+		const [, key, value] = match;
+		if (!key || value === undefined) {
+			continue;
+		}
+		frontmatter[key] = value.trim().replace(/^["']|["']$/g, "");
 	}
 
 	return { frontmatter, body: content.slice(content.indexOf("\n", end + 1) + 1).trim() };
@@ -147,10 +151,14 @@ export function parseFrontmatterValue(content: string | undefined, key: string):
 	const frontmatter = content.slice(3, end).split(/\r?\n/);
 	for (const line of frontmatter) {
 		const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
-		if (!match || match[1] !== key) {
+		if (!match) {
 			continue;
 		}
-		return match[2].trim().replace(/^["']|["']$/g, "") || undefined;
+		const [, fieldKey, value] = match;
+		if (fieldKey !== key || value === undefined) {
+			continue;
+		}
+		return value.trim().replace(/^["']|["']$/g, "") || undefined;
 	}
 	return undefined;
 }

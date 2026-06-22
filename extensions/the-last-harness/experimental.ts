@@ -170,14 +170,15 @@ export function isTlhExperimentalFeatureEnabled(config: unknown, featureId: TlhE
 
 function parseExperimentalSlashAction(args: string): TlhExperimentalSlashAction | undefined {
 	const parts = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
-	if (parts.length === 0 || parts[0] === "list") {
+	const [action, featureId] = parts;
+	if (parts.length === 0 || action === "list") {
 		return parts.length === 0 || parts.length === 1 ? { type: "list" } : undefined;
 	}
-	if (parts[0] === "status") {
-		return parts.length <= 2 ? { type: "status", featureId: parts[1] } : undefined;
+	if (action === "status") {
+		return parts.length <= 2 ? { type: "status", featureId } : undefined;
 	}
-	if (parts.length === 2 && (parts[0] === "enable" || parts[0] === "disable" || parts[0] === "toggle")) {
-		return { type: parts[0], featureId: parts[1] };
+	if (featureId && parts.length === 2 && (action === "enable" || action === "disable" || action === "toggle")) {
+		return { type: action, featureId };
 	}
 	return undefined;
 }

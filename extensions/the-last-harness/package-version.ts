@@ -31,11 +31,15 @@ function parseTlhVersion(version: string): ParsedTlhVersion | undefined {
 	if (!match) {
 		return undefined;
 	}
+	const [, major, minor, patch, prerelease] = match;
+	if (!major || !minor || !patch) {
+		return undefined;
+	}
 	return {
-		major: Number.parseInt(match[1], 10),
-		minor: Number.parseInt(match[2], 10),
-		patch: Number.parseInt(match[3], 10),
-		prerelease: match[4],
+		major: Number.parseInt(major, 10),
+		minor: Number.parseInt(minor, 10),
+		patch: Number.parseInt(patch, 10),
+		prerelease,
 	};
 }
 

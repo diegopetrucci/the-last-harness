@@ -52,8 +52,7 @@ function buildSections(lines: string[]): LastAssistantMessageSection[] {
 		startIndex = null;
 	};
 
-	for (let index = 0; index < lines.length; index += 1) {
-		const line = lines[index];
+	for (const [index, line] of lines.entries()) {
 		if (line.trim().length === 0) {
 			flushSection(index - 1);
 			continue;
@@ -70,7 +69,7 @@ function buildSections(lines: string[]): LastAssistantMessageSection[] {
 export function findLastAssistantMessage(branch: SessionEntry[]): LastAssistantMessageLookupResult {
 	for (let index = branch.length - 1; index >= 0; index -= 1) {
 		const entry = branch[index];
-		if (entry.type !== "message") {
+		if (!entry || entry.type !== "message") {
 			continue;
 		}
 		const extracted = assistantMessageText(entry);

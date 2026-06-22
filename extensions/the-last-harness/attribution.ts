@@ -89,7 +89,7 @@ function readHereDocSpec(command: string, startIndex: number): { spec: HereDocSp
 	}
 
 	const delimiterStart = index;
-	while (index < command.length && !/[\s;&|<>]/.test(command[index])) {
+	while (index < command.length && !/[\s;&|<>]/.test(command.charAt(index))) {
 		index += 1;
 	}
 	const delimiter = command.slice(delimiterStart, index);
@@ -241,7 +241,7 @@ function tokenizeShellWords(command: string): string[] {
 	let escaped = false;
 
 	for (let index = 0; index < command.length; index += 1) {
-		const character = command[index];
+		const character = command.charAt(index);
 		if (escaped) {
 			current += character;
 			escaped = false;
@@ -315,6 +315,9 @@ function stripLeadingShellCommandPrefixes(tokens: string[]): string[] {
 	let startIndex = 0;
 	while (startIndex < tokens.length) {
 		const token = tokens[startIndex];
+		if (token === undefined) {
+			break;
+		}
 		const lowerToken = token.toLowerCase();
 		if (["!", "if", "then", "else", "do", "command"].includes(lowerToken)) {
 			startIndex += 1;
@@ -507,6 +510,9 @@ function getGitCommitArgumentsFromTokens(tokens: string[]): string[] | undefined
 
 	for (let index = 1; index < tokens.length; index += 1) {
 		const token = tokens[index];
+		if (token === undefined) {
+			continue;
+		}
 		if (token.toLowerCase() === "commit") {
 			return tokens.slice(index + 1);
 		}
@@ -582,6 +588,9 @@ function getInlineGitCommitMessageParts(commitArguments: string[]): string[] {
 
 	for (let index = 0; index < optionArguments.length; index += 1) {
 		const token = optionArguments[index];
+		if (token === undefined) {
+			continue;
+		}
 		const lowerToken = token.toLowerCase();
 		if (lowerToken === "-m" || lowerToken === "--message") {
 			const value = optionArguments[index + 1];
@@ -626,6 +635,9 @@ function getInlineGitCommitFileArgumentValue(commitArguments: string[]): string 
 	const { optionArguments } = splitGitCommitArgumentsAtPathspecTerminator(commitArguments);
 	for (let index = 0; index < optionArguments.length; index += 1) {
 		const token = optionArguments[index];
+		if (token === undefined) {
+			continue;
+		}
 		const lowerToken = token.toLowerCase();
 		if (lowerToken === "-f" || lowerToken === "--file") {
 			const nextValue = optionArguments[index + 1];
@@ -997,12 +1009,16 @@ function isSupportedShellCommandWrapper(command: string): boolean {
 
 function getWrappedShellCommandFromTokens(tokens: string[]): string | undefined {
 	const normalizedTokens = normalizeShellCommandTokensFromTokens(tokens);
-	if (normalizedTokens.length === 0 || !isSupportedShellCommandWrapper(normalizedTokens[0])) {
+	const firstToken = normalizedTokens[0];
+	if (!firstToken || !isSupportedShellCommandWrapper(firstToken)) {
 		return undefined;
 	}
 
 	for (let index = 1; index < normalizedTokens.length; index += 1) {
 		const token = normalizedTokens[index];
+		if (token === undefined) {
+			continue;
+		}
 		const lowerToken = token.toLowerCase();
 		if (token === "-c" || /^-[A-Za-z]*c[A-Za-z]*$/.test(token)) {
 			const commandToken = normalizedTokens[index + 1];

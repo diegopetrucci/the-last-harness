@@ -272,8 +272,8 @@ function inspectWorkingTreePath(repoRoot: string, path: string): WorkingTreeEntr
 
 	const parts = relativePath.split(/[\\/]+/).filter(Boolean);
 	let currentPath = repoBase;
-	for (let index = 0; index < parts.length; index += 1) {
-		currentPath = resolve(currentPath, parts[index]);
+	for (const [index, part] of parts.entries()) {
+		currentPath = resolve(currentPath, part);
 		let stat;
 		try {
 			stat = lstatSync(currentPath);
