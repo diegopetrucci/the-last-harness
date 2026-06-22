@@ -800,7 +800,7 @@ function createTlhPrimaryAgentRuntime(
 			if (event.toolName !== "subagent") {
 				return undefined;
 			}
-			applyProviderAwareSubagentModels(event.input, subagentsByName, getUnfilteredAvailableModels(ctx.modelRegistry), ctx.model?.provider);
+			applyProviderAwareSubagentModels(event.input, subagentsByName, getUnfilteredAvailableModels(ctx.modelRegistry), ctx.model?.provider, ctx.model);
 			syncPrimaryAgentState(ctx);
 			const selection = currentPrimaryAgentSelection();
 			if (!isEnabledPrimaryAgentSelection(selection)) {

@@ -7,6 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Changed
 
 - Replaced the bundled `pi-oracle` extension (`npm:@diegopetrucci/pi-oracle`) with a first-party oracle subagent that performs direct high-reasoning read-only analysis. The subagent uses the opposite-provider model pattern (mirroring `code-reviewer`) with high thinking, so it reasons independently from the primary session. No external extension is required.
+- Updated the bundled `pi-subagents` pin and TLH provider-aware review defaults: when TLH injects an opposite-provider model for `code-reviewer` or `oracle`, it now also supplies a same/current-provider fallback plus a warning notice that review independence is reduced if the fallback is used.
 
 ## [0.24.0] - 2026-06-22
 
