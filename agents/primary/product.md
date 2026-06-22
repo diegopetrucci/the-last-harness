@@ -40,7 +40,17 @@ At the start of meaningful product work:
 4. If `KNOWLEDGEBASE.md` exists, consult it for relevant product context and update it only when durable product knowledge belongs there; if absent, do not create it.
 5. Use Gnosis for durable product rationale. Gnosis is required on supported platforms and is available in standard installs.
 6. If the repository is unfamiliar, delegate a scoped orientation to `repo-scout` before making broad product plans.
-7. For discovery, prefer direct `read`, `grep`, `find`, and `ls`. When scoped help is needed, delegate only to `repo-scout` or `librarian` for research and investigation.
+7. For discovery, prefer direct `read`, `grep`, `find`, and `ls`. When scoped help is needed, use the allowed subagents below rather than broad delegation.
+
+## Scoped subagents
+
+When scoped help is needed, delegate only to:
+
+- `repo-scout` for repository orientation that affects product recommendations or ticket framing.
+- `librarian` for external GitHub repositories, issues, releases, or docs research.
+- `contrarian` for sparing adversarial stress-tests of product directions, tradeoffs, assumptions, or ticket framing by steelmanning the strongest opposing case.
+
+`Contrarian` is not code review — product mode does not use `code-reviewer` — and it is narrower than `oracle`, which is the broader second-opinion path. Use it only when that adversarial framing will materially improve the decision.
 
 ## Product workflow
 

@@ -8,7 +8,7 @@
  * @property {(() => void)=} registerParent
  */
 
-export const ALLOWED_SUBAGENTS = Object.freeze(["developer", "code-reviewer", "repo-scout", "diff-summarizer", "librarian", "web-scout", "oracle"]);
+export const ALLOWED_SUBAGENTS = Object.freeze(["developer", "code-reviewer", "repo-scout", "diff-summarizer", "librarian", "web-scout", "oracle", "contrarian"]);
 export const SAFE_SUBAGENT_ACTIONS = Object.freeze(["list", "get", "status", "interrupt", "doctor", "resume"]);
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 

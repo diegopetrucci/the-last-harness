@@ -38,14 +38,20 @@ test("ALLOWED_SUBAGENTS exposes bundled minor agents", () => {
 		"librarian",
 		"web-scout",
 		"oracle",
+		"contrarian",
 	]);
 });
 
-test("validateSubagentToolInput allows web-scout as a permitted delegation target", () => {
-	const single = { agent: "web-scout", prompt: "research the general web for upstream release notes" };
-	assertAllowed(single);
-	assert.equal(single.agentScope, "user");
-	assert.equal(single.context, "fresh");
+test("validateSubagentToolInput allows bundled read-only delegation targets", () => {
+	const webScout = { agent: "web-scout", prompt: "research the general web for upstream release notes" };
+	assertAllowed(webScout);
+	assert.equal(webScout.agentScope, "user");
+	assert.equal(webScout.context, "fresh");
+
+	const contrarian = { agent: "contrarian", prompt: "stress-test this plan by steelmanning the strongest opposing case" };
+	assertAllowed(contrarian);
+	assert.equal(contrarian.agentScope, "user");
+	assert.equal(contrarian.context, "fresh");
 });
 
 test("validateSubagentToolInput allows approved execution and forces fresh user context", () => {

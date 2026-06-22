@@ -133,10 +133,25 @@ test("README and changelog describe code-reviewer opposite-provider policy", () 
 	const changelog = readRepoFile("CHANGELOG.md");
 
 	assert.match(readme, /`code-reviewer` intentionally prefers an available opposite provider/i);
+	assert.match(readme, /`oracle` and `contrarian` use the same opposite-provider pattern/i);
 	assert.match(readme, /Anthropic sessions[\s\S]{0,180}OpenAI Codex subscription provider[\s\S]{0,80}available/i);
-	assert.match(readme, /OpenAI\/OpenAI-Codex sessions[\s\S]{0,120}Anthropic review[\s\S]{0,80}available/i);
-	assert.match(readme, /OpenAI API access[\s\S]{0,160}does not force `code-reviewer` onto unavailable Codex-only defaults/i);
+	assert.match(readme, /OpenAI\/OpenAI-Codex sessions[\s\S]{0,120}Anthropic/i);
+	assert.match(readme, /OpenAI API access[\s\S]{0,200}does not force `code-reviewer` onto unavailable Codex-only defaults[\s\S]{0,120}`oracle` and `contrarian`/i);
 	assert.match(changelog, /`code-reviewer` now prefers an available opposite provider/i);
 	assert.match(changelog, /OpenAI API-only setups are not forced onto unavailable Codex-only defaults/i);
 	assert.doesNotMatch(changelog, /`code-reviewer` now defaults to `openai-codex\/gpt-5\.5`/);
+});
+
+
+test("README and changelog describe contrarian's sparing adversarial role", () => {
+	const readme = readRepoFile("README.md");
+	const changelog = readRepoFile("CHANGELOG.md");
+
+	assert.match(readme, /`contrarian` for sparing adversarial stress-tests/i);
+	assert.match(readme, /Use `contrarian` sparingly[\s\S]{0,220}strongest opposing case/i);
+	assert.match(readme, /not the normal diff reviewer[\s\S]{0,120}`code-reviewer` reviews changes against tasks/i);
+	assert.match(readme, /different from `oracle`[\s\S]{0,120}broader second-opinion path/i);
+	assert.match(readme, /`code-reviewer`, `oracle`, and `contrarian` prefer the opposite available provider/i);
+	assert.match(changelog, /bundles a first-party `contrarian` subagent/i);
+	assert.match(changelog, /not the routine `code-reviewer` diff pass and not a replacement for the broader `oracle` second opinion/i);
 });

@@ -595,11 +595,11 @@ test("declared Node minimum stays aligned across installer metadata", () => {
 	assert.ok(releaseWorkflow.includes(`node-version: '${MIN_NODE_VERSION}'`));
 });
 
-test("stage-0 installer allowlist explicitly includes web-scout.md", () => {
+test("stage-0 installer allowlist explicitly includes contrarian.md and web-scout.md", () => {
 	const installSh = readFileSync(join(repoRoot, "install.sh"), "utf8");
 	assert.match(
 		installSh,
-		/^TLH_SUBAGENT_PROMPTS=\(developer\.md code-reviewer\.md repo-scout\.md diff-summarizer\.md librarian\.md oracle\.md web-scout\.md\)$/m,
+		/^TLH_SUBAGENT_PROMPTS=\(developer\.md code-reviewer\.md repo-scout\.md diff-summarizer\.md librarian\.md oracle\.md contrarian\.md web-scout\.md\)$/m,
 	);
 });
 

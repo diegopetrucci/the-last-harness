@@ -683,7 +683,17 @@ test("subagent prompt discovery honors source precedence and copies prompt files
 
 	const installedDir = copyTlhSubagentPrompts(defaultConfig, localPrompts);
 	assert.equal(installedDir, join(realpathSync.native(agentDir), "tlh", "agents", "subagents"));
-	assert.equal(TLH_SUBAGENT_PROMPTS.includes("web-scout.md"), true);
+	assert.deepEqual(TLH_SUBAGENT_PROMPTS, [
+		"developer.md",
+		"code-reviewer.md",
+		"repo-scout.md",
+		"diff-summarizer.md",
+		"librarian.md",
+		"oracle.md",
+		"contrarian.md",
+		"web-scout.md",
+	]);
+	assert.equal(readFileSync(join(installedDir, "contrarian.md"), "utf8"), "local:contrarian.md\n");
 	assert.equal(readFileSync(join(installedDir, "web-scout.md"), "utf8"), "local:web-scout.md\n");
 	for (const prompt of TLH_SUBAGENT_PROMPTS) {
 		assert.equal(readFileSync(join(installedDir, prompt), "utf8"), `local:${prompt}\n`);

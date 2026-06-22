@@ -20,6 +20,24 @@ test("architect.md lists librarian and web-scout as allowed minor agents with di
 	);
 });
 
+test("architect.md contains contrarian guidance in the subagent tools list", () => {
+	assert.match(
+		architectMd,
+		/- `contrarian`: adversarially stress-test plans, designs, assumptions, product directions, bug hypotheses, or review conclusions by steelmanning the strongest opposing case\./,
+	);
+});
+
+test("architect.md distinguishes contrarian from code-reviewer and oracle", () => {
+	assert.match(
+		architectMd,
+		/Use `contrarian` sparingly when you need an adversarial challenge pass on reasoning or direction\./,
+	);
+	assert.match(
+		architectMd,
+		/It is not the normal diff reviewer — `code-reviewer` owns review against tasks and diffs — and it is narrower than `oracle`, which provides a broader high-reasoning second opinion\./,
+	);
+});
+
 test("architect.md limits pre-ticket oracle suggestions to higher-risk planning work", () => {
 	assert.match(
 		architectMd,
@@ -40,6 +58,21 @@ test("architect.md requires specific risk wording and explicit consent before us
 		/If you think the `oracle` could help, explain the specific risk or uncertainty and ask the user if they want you to use it\./,
 	);
 	assert.match(architectMd, /Never trigger the `oracle` unless the user explicitly agrees\./);
+});
+
+test("architect.md scopes contrarian to non-routine planning challenge passes", () => {
+	assert.match(
+		architectMd,
+		/Consider `contrarian` when a plan, design, assumption, product direction, bug hypothesis, or review conclusion would benefit from steelmanning the strongest opposing case\./,
+	);
+	assert.match(
+		architectMd,
+		/Unlike `oracle`, `contrarian` should focus on the strongest credible opposition brief rather than a broad second opinion\./,
+	);
+	assert.match(
+		architectMd,
+		/Do not use `contrarian` as the normal diff reviewer or as an automatic step for routine localized work; use it sparingly\./,
+	);
 });
 
 test("architect.md keeps base validation planning ticket-specific", () => {

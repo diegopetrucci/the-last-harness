@@ -50,9 +50,12 @@ TLH subagents are fresh child sessions, not a giant shared swarm. They get the t
 - `code-reviewer` for review
 - `librarian` for repo knowledge
 - `web-scout` for web research
-- `oracle` for a deeper second opinion.
+- `oracle` for a deeper second opinion
+- `contrarian` for sparing adversarial stress-tests.
 
-For review independence, `code-reviewer` intentionally prefers an available opposite provider. Anthropic sessions try to use the OpenAI Codex subscription provider for review when it is available, while OpenAI/OpenAI-Codex sessions try Anthropic review when it is available. If you only have regular OpenAI API access and not the Codex subscription provider, TLH does not force `code-reviewer` onto unavailable Codex-only defaults.
+Use `contrarian` sparingly when you want a plan, design, assumption, product direction, bug hypothesis, or review conclusion challenged by steelmanning the strongest opposing case. It is not the normal diff reviewer — `code-reviewer` reviews changes against tasks — and it is different from `oracle`, which is the broader second-opinion path rather than an opposition brief.
+
+For review independence, `code-reviewer` intentionally prefers an available opposite provider. `oracle` and `contrarian` use the same opposite-provider pattern for independent second opinions and adversarial challenge passes. Anthropic sessions try to use the OpenAI Codex subscription provider for these subagents when it is available, while OpenAI/OpenAI-Codex sessions try Anthropic. If you only have regular OpenAI API access and not the Codex subscription provider, TLH does not force `code-reviewer` onto unavailable Codex-only defaults, and the same fallback applies to `oracle` and `contrarian`.
 
 ## Why this workflow is useful
 
@@ -85,7 +88,7 @@ Use `Shift+Tab` to cycle the current session through `architect` → `rush` → 
 
 ### Model and thinking defaults
 
-TLH applies bundled model/thinking defaults per primary agent. For active non-locked primaries, user `/model` choices are respected and persisted per primary under `tlh.primaryAgent.modelOverrides.<primary>`; reset the current primary's override with `/switch-primary-agent model reset`. Locked primaries such as Rush keep their fixed defaults. For review independence, `code-reviewer` prefers the opposite available provider: Anthropic primaries try OpenAI Codex for review, and OpenAI/OpenAI-Codex primaries try Anthropic.
+TLH applies bundled model/thinking defaults per primary agent. For active non-locked primaries, user `/model` choices are respected and persisted per primary under `tlh.primaryAgent.modelOverrides.<primary>`; reset the current primary's override with `/switch-primary-agent model reset`. Locked primaries such as Rush keep their fixed defaults. For independent review and challenge passes, `code-reviewer`, `oracle`, and `contrarian` prefer the opposite available provider: Anthropic primaries try OpenAI Codex for those subagents, and OpenAI/OpenAI-Codex primaries try Anthropic. `contrarian` keeps that same independence pattern for sparing adversarial stress-tests rather than as a routine review step.
 
 #### Hidden model defaults in the TLH profile
 
