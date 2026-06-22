@@ -13,7 +13,7 @@ import {
 const DEFAULT_MARKER = "Managed by The Last Harness installer";
 const MIN_PI_VERSION = "0.79.1";
 // Keep in sync with TLH_PINNED_PI_VERSION in install.sh and PINNED_PI_VERSION in tlh-install.mjs.
-const PINNED_PI_VERSION = "0.79.7";
+const PINNED_PI_VERSION = "0.79.9";
 
 function usage() {
 	return `Usage: tlh-wrapper.mjs [options]

@@ -92,7 +92,7 @@ test("check-package-versions passes with pinned dependency exceptions and ignore
 			sshHelper: "git+ssh://git@github.com/example/ssh-helper.git#abcdef1234567",
 		},
 		peerDependencies: {
-			"@earendil-works/pi-coding-agent": ">=0.79.1 <=0.79.7",
+			"@earendil-works/pi-coding-agent": ">=0.79.1 <=0.79.9",
 		},
 		defaultExtensions: [
 			{ id: "helper", source: "npm:helper@1.2.3" },

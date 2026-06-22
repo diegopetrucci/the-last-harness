@@ -14,7 +14,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
-- Temporarily pinned TLH package metadata, peer-compatibility guidance, and install/update docs to upstream Pi 0.79.7 while the upstream 0.79.8 breakage is active.
+- Temporarily pinned TLH package metadata, peer-compatibility guidance, and install/update docs to upstream Pi 0.79.7 while the then-current upstream 0.79.8 breakage was active.
 
 ## [0.22.1] - 2026-06-18
 

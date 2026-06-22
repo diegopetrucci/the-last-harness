@@ -23,7 +23,7 @@ import { validateInstallerTargets } from "../scripts/lib/tlh-install-paths.mjs";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoNodeModulesBin = join(repoRoot, "node_modules", ".bin");
 const TLH_MIN_PI_VERSION = "0.79.1";
-const TLH_PINNED_PI_VERSION = "0.79.7";
+const TLH_PINNED_PI_VERSION = "0.79.9";
 
 const TLH_PI_PACKAGE_SPEC = `@earendil-works/pi-coding-agent@${TLH_PINNED_PI_VERSION}`;
 
@@ -280,7 +280,7 @@ test("stage-1 enforces the TLH Node runtime minimum", () => {
 	);
 });
 
-test("stage-1 repairs the TLH private Pi runtime to the pinned version when it has a wrong version", (t) => {
+test("stage-1 repairs the TLH private Pi runtime to the pinned version when it is wrong but still in the supported range", (t) => {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");
 	const agentDir = join(root, "agent");
@@ -311,7 +311,9 @@ test("stage-1 repairs the TLH private Pi runtime to the pinned version when it h
 	}, null, 2));
 	writeFakeCommand(fakebin, "git", "exit 0");
 	writeFakeTk(fakebin);
-	// Seed a stale private runtime binary at the expected path (version 0.79.8 is above pin).
+	// Seed a stale private runtime binary at the expected path (0.79.8 is supported
+	// for wrapper compatibility checks, but TLH's private runtime must repair to the
+	// exact pinned 0.79.9 version).
 	writeFakePi(runtimeBinDir, [
 		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${stalePiCallLog}"`,
 		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.8\\n'; exit 0; fi",
@@ -339,7 +341,7 @@ test("stage-1 repairs the TLH private Pi runtime to the pinned version when it h
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	assert.equal(result.status, 0, output);
-	assert.match(output, /Repairing TLH private Pi runtime to pinned 0\.79\.7/);
+	assert.match(output, /Repairing TLH private Pi runtime to pinned 0\.79\.9/);
 	assert.deepEqual(readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [
 		`install -g --ignore-scripts --prefix ${runtimeDir} ${TLH_PI_PACKAGE_SPEC}`,
 	]);
@@ -394,10 +396,10 @@ test("stage-1 repairs the TLH private Pi runtime even when a supported Pi exists
 		`if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_MIN_PI_VERSION}\\n'; exit 0; fi`,
 		"exit 0",
 	].join("\n"));
-	// Stale private runtime at 0.79.8 (above pin) triggers repair.
+	// Stale private runtime at 0.80.0 (above the supported max) triggers repair.
 	writeFakePi(runtimeBinDir, [
 		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${stalePiCallLog}"`,
-		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.8\\n'; exit 0; fi",
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.80.0\\n'; exit 0; fi",
 		"exit 0",
 	].join("\n"));
 	writeLoggingPi(templateDir, repairedPiLog, TLH_PINNED_PI_VERSION);
@@ -422,7 +424,7 @@ test("stage-1 repairs the TLH private Pi runtime even when a supported Pi exists
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	assert.equal(result.status, 0, output);
-	assert.match(output, /Repairing TLH private Pi runtime to pinned 0\.79\.7/);
+	assert.match(output, /Repairing TLH private Pi runtime to pinned 0\.79\.9/);
 	assert.deepEqual(readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [
 		`install -g --ignore-scripts --prefix ${runtimeDir} ${TLH_PI_PACKAGE_SPEC}`,
 	]);
@@ -623,7 +625,7 @@ test("installer helpers no longer support the removed --no-pi-install opt-out", 
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	assert.equal(stage0Help.status, 0, stage0Help.stderr);
-	assert.match(stage0Help.stdout, /Upstream Pi 0\.79\.7/);
+	assert.match(stage0Help.stdout, /Upstream Pi 0\.79\.9/);
 	assert.match(stage0Help.stdout, /installed into a private TLH runtime/);
 	assert.doesNotMatch(stage0Help.stdout, /--no-pi-install/);
 
@@ -638,7 +640,7 @@ test("installer helpers no longer support the removed --no-pi-install opt-out", 
 	assert.equal(stage0RemovedFlag.stdout, "");
 
 	assert.throws(() => parseArgs(["--no-pi-install"]), /unknown option: --no-pi-install/);
-	assert.match(usage(), /Upstream Pi 0\.79\.7/);
+	assert.match(usage(), /Upstream Pi 0\.79\.9/);
 	assert.doesNotMatch(usage(), /--no-pi-install/);
 
 	const updateHelp = spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-update.mjs"), "--help"], {
@@ -1630,7 +1632,7 @@ function setupTicketsEnabledWrapperFixture(t) {
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
 	writeFakePi(fakebin, [
-		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.7\\n'; exit 0; fi",
+		`if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_PINNED_PI_VERSION}\\n'; exit 0; fi`,
 		"printf 'path=%s\\n' \"${PATH:-}\" >\"${PI_WRAPPER_LOG}\"",
 	].join("\n"));
 
@@ -2459,7 +2461,7 @@ test("wrapper --pi-cmd soft-warns when the pinned runtime is 0.79.8 and still ex
 	});
 
 	// 0.79.8 >= minimum (0.79.1) → soft-warn only, pinned pi is still exec'd.
-	assert.match(result.stderr, /private pi version 0\.79\.8 differs from the expected 0\.79\.7/);
+	assert.match(result.stderr, /private pi version 0\.79\.8 differs from the expected 0\.79\.9/);
 	assert.equal(result.status, 85);
 	const pinnedCalls = readFileSync(pinnedPiCallLog, "utf8").trim().split(/\r?\n/).filter(Boolean);
 	// Wrapper called --version probe + exec'd "chat".
@@ -2511,7 +2513,7 @@ test("wrapper --pi-cmd soft-warns on a 0.79.8 pinned runtime even when no fallba
 	});
 
 	// No PATH fallback exists, but 0.79.8 >= min → soft-warn + exec (not hard-fail).
-	assert.match(result.stderr, /private pi version 0\.79\.8 differs from the expected 0\.79\.7/);
+	assert.match(result.stderr, /private pi version 0\.79\.8 differs from the expected 0\.79\.9/);
 	assert.equal(result.status, 85);
 	const pinnedCalls = readFileSync(pinnedPiCallLog, "utf8").trim().split(/\r?\n/).filter(Boolean);
 	assert.ok(pinnedCalls.includes("--version"), `expected --version probe; got ${pinnedCalls.join(",")}`);
@@ -2922,8 +2924,8 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
 	// Legacy pi at ~/.local/bin/pi — must NOT be removed when install fails.
 	writeFakePi(legacyBin, `if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_PINNED_PI_VERSION}\\n'; exit 0; fi\nexit 0`);
 
-	// Template pi with WRONG version (0.79.8 > MAX 0.79.7) — simulates a broken npm install.
-	writeFakePi(templateDir, "if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.8\\n'; exit 0; fi\nexit 0");
+	// Template pi with WRONG version (0.80.0 > supported max 0.79.9) — simulates a broken npm install.
+	writeFakePi(templateDir, "if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.80.0\\n'; exit 0; fi\nexit 0");
 
 	// Fake npm: always installs the wrong-version template pi.
 	writeFakeNpmInstaller(fakebin, {
@@ -2951,7 +2953,7 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
 
 	// Installer must fail: freshly installed pi has wrong version.
 	assert.notEqual(result.status, 0, `expected installer to fail on wrong-version pi, got exit 0:\n${output}`);
-	assert.match(output, /0\.79\.8/, "error output should mention the wrong version");
+	assert.match(output, /0\.80\.0/, "error output should mention the wrong version");
 
 	// ~/.local/bin/pi must NOT have been removed (install threw before any cleanup could run).
 	assert.equal(existsSync(legacyPiPath), true, "user-owned ~/.local/bin/pi was removed despite installer throwing");
@@ -2968,7 +2970,7 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
 });
 
 // Regression (tlht-5php, blocker): piInstalledByTlh=true, private runtime ABSENT at start,
-// user-owned ~/.local/bin/pi@0.79.7 present.  The installer must provision the private
+// user-owned ~/.local/bin/pi@0.79.9 present.  The installer must provision the private
 // runtime and succeed — without removing or executing ~/.local/bin/pi.
 test("stage-1 regression (tlht-5php): installer never removes or execs user-owned ~/.local/bin/pi when piInstalledByTlh=true and private runtime is absent", (t) => {
 	const root = makeTempDir();
@@ -3004,7 +3006,7 @@ test("stage-1 regression (tlht-5php): installer never removes or execs user-owne
 		piInstalledByTlh: true,
 	}, null, 2));
 
-	// User-owned ~/.local/bin/pi@0.79.7 — must NOT be removed or invoked by the installer.
+	// User-owned ~/.local/bin/pi@0.79.9 — must NOT be removed or invoked by the installer.
 	writeFakePi(legacyBin, [
 		`printf '%s\\n' "$*" >>"${legacyPiInvocationLog}"`,
 		`if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_PINNED_PI_VERSION}\\n'; exit 0; fi`,
@@ -3094,7 +3096,7 @@ test("uninstall.sh does not remove legacy ~/.local/bin/pi without --force-includ
 	}, null, 2));
 
 	// User-owned legacy pi at ~/.local/bin/pi.
-	writeFileSync(join(legacyBin, "pi"), "#!/bin/sh\nprintf '0.79.7\\n'\n", "utf8");
+	writeFileSync(join(legacyBin, "pi"), `#!/bin/sh\nprintf '${TLH_PINNED_PI_VERSION}\\n'\n`, "utf8");
 	chmodSync(join(legacyBin, "pi"), 0o755);
 
 	// ── (d1) dry-run without --force-include-pi: hint printed, pi NOT removed ──
