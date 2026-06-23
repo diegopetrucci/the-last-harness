@@ -50,3 +50,12 @@ Opt out persistently by adding this to `~/.the-last-harness/agent/settings.json`
 ```
 
 That settings opt-out is preserved by `tlh update` and installer reruns.
+
+For a single run, set one of:
+
+- `PI_OFFLINE=1`
+- `TLH_SKIP_TELEMETRY=1`
+- `TLH_TELEMETRY_DISABLED=1`
+- `PI_TELEMETRY=0`
+
+To reset only the pseudonymous install ID, remove `~/.the-last-harness/agent/tlh/telemetry-state.json`.
