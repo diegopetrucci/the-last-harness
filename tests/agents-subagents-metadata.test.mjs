@@ -82,3 +82,25 @@ test("code-reviewer metadata prefers the opposite provider without an authoritat
 	assert.deepEqual(codeReviewer.tlhAnthropicModels, ["anthropic/claude-opus-4-8"]);
 	assert.equal(codeReviewer.preferOppositeProvider, true);
 });
+
+test("contrarian metadata prefers the opposite provider without an authoritative default model", () => {
+	const { frontmatter: fm } = readAgentPrompt("subagents", "contrarian");
+	const subagents = loadSubagentMetadata();
+	const contrarian = subagents.find((agent) => agent.name === "contrarian");
+
+	assert.equal(fm.model, undefined);
+	assert.equal(fm.preferOppositeProvider, "true");
+	assert.equal(fm.defaultContext, "fresh");
+	assert.deepEqual(splitCommaList(fm.tlhOpenaiModels), ["openai-codex/gpt-5.5"]);
+	assert.deepEqual(splitCommaList(fm.tlhAnthropicModels), ["anthropic/claude-opus-4-8"]);
+
+	assert.ok(contrarian, "contrarian should be present in loadSubagentMetadata()");
+	assert.equal(contrarian.model, undefined);
+	assert.equal(
+		contrarian.description,
+		"Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case.",
+	);
+	assert.deepEqual(contrarian.tlhOpenaiModels, ["openai-codex/gpt-5.5"]);
+	assert.deepEqual(contrarian.tlhAnthropicModels, ["anthropic/claude-opus-4-8"]);
+	assert.equal(contrarian.preferOppositeProvider, true);
+});

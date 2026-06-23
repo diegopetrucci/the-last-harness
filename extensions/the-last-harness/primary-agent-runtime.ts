@@ -12,7 +12,7 @@ import {
 	resolvePrimaryAgentConfig,
 } from "../the-last-harness-primary-agent.mjs";
 import { createPrimaryToolState, filterAvailableTools } from "../the-last-harness-primary-tools.mjs";
-import { registerTlhStartupMode, validateSubagentToolInput } from "../the-last-harness-subagent-safety.mjs";
+import { allowedSubagentsForExperimentalConfig, registerTlhStartupMode, validateSubagentToolInput } from "../the-last-harness-subagent-safety.mjs";
 import {
 	buildTlhCommitAttributionPrompt,
 	getTlhGitCommitAttributionBlockReason,
@@ -776,7 +776,7 @@ function createTlhPrimaryAgentRuntime(
 			await applyPrimaryDefaults(ctx);
 			const prompts = [
 				event.systemPrompt,
-				buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled),
+				buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled, settings.tlh?.experimental),
 				buildPrimaryExperimentalPrompt(activePrimaryAgent(), settings.tlh?.experimental),
 				buildTlhCommitAttributionPrompt(commitAttributionState),
 			];
@@ -803,8 +803,21 @@ function createTlhPrimaryAgentRuntime(
 			applyProviderAwareSubagentModels(event.input, subagentsByName, getUnfilteredAvailableModels(ctx.modelRegistry), ctx.model?.provider, ctx.model);
 			syncPrimaryAgentState(ctx);
 			const selection = currentPrimaryAgentSelection();
+			const allowedSubagents = allowedSubagentsForExperimentalConfig(getTlhGlobalSettings(ctx.cwd).tlh?.experimental);
 			if (!isEnabledPrimaryAgentSelection(selection)) {
-				return undefined;
+				if (subagentCallTargetsAgent(event.input, "contrarian")) {
+					const contrarianReason = validateSubagentToolInput({ agent: "contrarian" }, { allowedSubagents });
+					if (contrarianReason) {
+						return { block: true, reason: contrarianReason };
+					}
+					const disabledReason = validateSubagentToolInput(event.input, { allowedSubagents });
+					return disabledReason ? { block: true, reason: disabledReason } : undefined;
+				}
+				if (!isSubagentResumeAction(event.input)) {
+					return undefined;
+				}
+				const disabledReason = validateSubagentToolInput(event.input, { allowedSubagents });
+				return disabledReason ? { block: true, reason: disabledReason } : undefined;
 			}
 			if (selection === "rush" && isSubagentResumeAction(event.input)) {
 				return { block: true, reason: rushResumeDelegationReason() };
@@ -812,7 +825,7 @@ function createTlhPrimaryAgentRuntime(
 			if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
 				return { block: true, reason: rushDeveloperDelegationReason() };
 			}
-			const reason = validateSubagentToolInput(event.input);
+			const reason = validateSubagentToolInput(event.input, { allowedSubagents });
 			return reason ? { block: true, reason } : undefined;
 		});
 	}

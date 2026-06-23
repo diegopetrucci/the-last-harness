@@ -1,12 +1,12 @@
 import { join } from "node:path";
 
 import { SELECTABLE_PRIMARY_AGENTS } from "../the-last-harness-primary-agent.mjs";
-import { ALLOWED_SUBAGENTS } from "../the-last-harness-subagent-safety.mjs";
+import { allowedSubagentsForExperimentalConfig } from "../the-last-harness-subagent-safety.mjs";
 import { CHILD_SUBAGENT_PROMPT, HARNESS_PROMPT } from "./constants.js";
 import { readMarkdownFilesRecursive, readText } from "./common.js";
 import { packageRoot } from "./package-version.js";
 import { isThinkingLevel } from "./thinking.js";
-import type { AgentPrompt, SubagentMetadata, ThinkingLevel, TlhPrimaryAgentSelection } from "./types.js";
+import type { AgentPrompt, SubagentMetadata, ThinkingLevel, TlhExperimentalConfig, TlhPrimaryAgentSelection } from "./types.js";
 
 function parseFrontmatter(content: string): { frontmatter: Record<string, string>; body: string } {
 	if (!content.startsWith("---")) {
@@ -105,8 +105,8 @@ export function loadSubagentMetadata(): SubagentMetadata[] {
 		.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function formatAllowedSubagents(subagents: SubagentMetadata[]): string {
-	const allowed = new Set(ALLOWED_SUBAGENTS);
+function formatAllowedSubagents(subagents: SubagentMetadata[], experimentalConfig: TlhExperimentalConfig | undefined): string {
+	const allowed = new Set(allowedSubagentsForExperimentalConfig(experimentalConfig));
 	const lines = subagents
 		.filter((agent) => allowed.has(agent.name))
 		.map((agent) => `- ${agent.name}: ${agent.description}`);
@@ -120,13 +120,14 @@ export function buildTlhSystemPrompt(
 	primary: AgentPrompt | undefined,
 	subagents: SubagentMetadata[],
 	primaryEnabled: boolean,
+	experimentalConfig?: TlhExperimentalConfig,
 ): string {
 	const prompts = [HARNESS_PROMPT.trim()];
 	if (primaryEnabled) {
 		if (primary) {
 			prompts.push(primary.systemPrompt.trim());
 		}
-		prompts.push(formatAllowedSubagents(subagents));
+		prompts.push(formatAllowedSubagents(subagents, experimentalConfig));
 	}
 	return prompts.filter(Boolean).join("\n\n");
 }

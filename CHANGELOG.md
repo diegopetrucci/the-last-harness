@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- TLH now bundles a first-party experimental `contrarian` subagent, kept default-off behind `/experimental enable contrarian`, with opt-in guidance across TLH experimental primary-agent prompts and README docs. When enabled, `contrarian` is intended mainly for sparing pre-ticket adversarial stress-tests of plans, assumptions, product directions, bug hypotheses, and review conclusions — not the routine `code-reviewer` diff pass and not a replacement for the broader `oracle` second opinion.
+
 ### Changed
 
 - Replaced the bundled `pi-oracle` extension (`npm:@diegopetrucci/pi-oracle`) with a first-party oracle subagent that performs direct high-reasoning read-only analysis. The subagent uses the opposite-provider model pattern (mirroring `code-reviewer`) with high thinking, so it reasons independently from the primary session. No external extension is required.
