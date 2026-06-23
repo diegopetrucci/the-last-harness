@@ -127,7 +127,7 @@ TLH is not just “Pi, but with a new prompt.” The harness bakes in workflow a
 - **Context is capped on purpose**: TLH uses a 200k context cap, expects compaction instead of endless chat growth, and provides `/context` so you can inspect where your tokens are going.
 - **Fresh child contexts are the default**: child sessions start clean and focused rather than inheriting an entire messy parent transcript.
 - **Model defaults are role-aware**: TLH ships bundled per-role model/thinking defaults instead of expecting every user to tune everything manually.
-- **Safety and quiet-by-default UX matter**: destructive-action confirmations, quieter tool rendering, trimmed footer noise, usage-window visibility, notifications when turns finish, and dirty-repo prompts are part of the package.
+- **Safety and quiet-by-default UX matter**: isolated-profile guards, quieter tool rendering, trimmed footer noise, usage-window visibility, notifications when turns finish, and dirty-repo prompts are part of the package.
 - **Useful integrations are already wired in**: web research and MCP support are part of the default story rather than an afterthought.
 
 ## What you get beyond the workflow

@@ -11,5 +11,11 @@ npm-debug.log*
 !.pi/skills/harness-setup/
 .pi/skills/harness-setup/*
 !.pi/skills/harness-setup/SKILL.md
+!.pi/skills/hunk-review/
+.pi/skills/hunk-review/*
+!.pi/skills/hunk-review/SKILL.md
+!.pi/prompts/
+.pi/prompts/*
+!.pi/prompts/hunk-review.md
 *.tmp
 PLAN.md
