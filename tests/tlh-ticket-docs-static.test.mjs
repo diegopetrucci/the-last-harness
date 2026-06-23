@@ -132,15 +132,18 @@ test("commands docs describe contrarian and delta-follow-up-reviews as default-o
 	assert.doesNotMatch(commandsDoc, /contrarian-subagent/);
 });
 
-test("README and changelog describe code-reviewer opposite-provider policy", () => {
+test("README and changelog describe review opposite-provider fallback policy", () => {
 	const readme = readRepoFile("README.md");
 	const changelog = readRepoFile("CHANGELOG.md");
 
-	assert.match(readme, /`code-reviewer` intentionally prefers an available opposite provider/i);
-	assert.match(readme, /`oracle` uses the same opposite-provider pattern[\s\S]{0,80}enabled `contrarian` uses it/i);
+	assert.match(readme, /`code-reviewer` and `oracle` intentionally prefer an available opposite provider/i);
+	assert.match(readme, /Enabled `contrarian` uses that same opposite-provider pattern/i);
 	assert.match(readme, /Anthropic sessions[\s\S]{0,180}OpenAI Codex subscription provider[\s\S]{0,80}available/i);
 	assert.match(readme, /OpenAI\/OpenAI-Codex sessions[\s\S]{0,120}Anthropic/i);
-	assert.match(readme, /OpenAI API access[\s\S]{0,200}does not force `code-reviewer` onto unavailable Codex-only defaults[\s\S]{0,120}`oracle` and enabled `contrarian`/i);
+	assert.match(readme, /same\/current-provider fallback[\s\S]{0,160}review independence is reduced/i);
+	assert.match(readme, /OpenAI API access[\s\S]{0,220}does not force `code-reviewer`, `oracle`, or enabled `contrarian` onto unavailable Codex-only defaults/i);
+	assert.match(changelog, /opposite-provider model[\s\S]{0,120}`code-reviewer` or `oracle`/i);
+	assert.match(changelog, /same\/current-provider fallback[\s\S]{0,160}review independence is reduced/i);
 	assert.match(changelog, /`code-reviewer` now prefers an available opposite provider/i);
 	assert.match(changelog, /OpenAI API-only setups are not forced onto unavailable Codex-only defaults/i);
 	assert.doesNotMatch(changelog, /`code-reviewer` now defaults to `openai-codex\/gpt-5\.5`/);
