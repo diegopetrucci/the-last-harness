@@ -73,6 +73,12 @@ function contrarianExperimentalDisabledReason() {
 	return "TLH contrarian is an experimental minor agent and is currently disabled. Enable it with /experimental enable contrarian in the isolated TLH profile before delegating to contrarian.";
 }
 
+function contrarianResumeBlockedReason({ opaque = false } = {}) {
+	return opaque
+		? `${contrarianExperimentalDisabledReason()} TLH primary-agent subagent action=resume is blocked unless TLH can prove the resumed run is not contrarian.`
+		: `${contrarianExperimentalDisabledReason()} TLH primary-agent subagent action=resume may not continue a prior contrarian run while the experiment is disabled.`;
+}
+
 function collectSubagentTargets(input) {
 	if (!isRecord(input)) {
 		return [];
@@ -180,6 +186,24 @@ function validateNestedFreshSubagentContexts(input) {
 	return undefined;
 }
 
+// Resume-by-id/index is target-opaque. Trusted callers may pass options.resumeTargetAgent
+// after resolving the stored run target; otherwise fail closed while contrarian is disabled.
+function validateResumeTarget(allowedSubagentSet, options = {}) {
+	if (allowedSubagentSet.has("contrarian")) {
+		return undefined;
+	}
+
+	const resumeTargetAgent = normalizeAllowedSubagent(options.resumeTargetAgent);
+	if (!resumeTargetAgent) {
+		return contrarianResumeBlockedReason({ opaque: true });
+	}
+	if (resumeTargetAgent === "contrarian") {
+		return contrarianResumeBlockedReason();
+	}
+
+	return undefined;
+}
+
 export function validateSubagentToolInput(input, options = {}) {
 	const allowedSubagents = normalizeAllowedSubagents(options.allowedSubagents);
 	const allowedSubagentSet = new Set(allowedSubagents);
@@ -201,7 +225,11 @@ export function validateSubagentToolInput(input, options = {}) {
 			if (scopeReason) {
 				return scopeReason;
 			}
-			return forceFreshSubagentContext(input, action);
+			const contextReason = forceFreshSubagentContext(input, action);
+			if (contextReason) {
+				return contextReason;
+			}
+			return validateResumeTarget(allowedSubagentSet, options);
 		}
 		return undefined;
 	}

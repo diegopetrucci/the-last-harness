@@ -153,7 +153,7 @@ test("validateSubagentToolInput allows approved execution and forces fresh user 
 	assert.equal(batched.context, "fresh");
 });
 
-test("validateSubagentToolInput allows approved management calls and normalizes safe resume controls", () => {
+test("validateSubagentToolInput allows approved management calls and keeps enabled resume normalization", () => {
 	const list = { action: "list" };
 	assertAllowed(list);
 	assert.equal(list.agentScope, "user");
@@ -171,12 +171,16 @@ test("validateSubagentToolInput allows approved management calls and normalizes 
 	assert.equal(getBoth.agentScope, "user");
 
 	const resume = { action: "resume", id: "run-123", message: "Continue with the approved ticket.", agentScope: "", context: "" };
-	assertAllowed(resume);
+	assertAllowed(resume, {
+		allowedSubagents: allowedSubagentsForExperimentalConfig({ enabledFeatures: [CONTRARIAN_EXPERIMENTAL_FEATURE] }),
+	});
 	assert.equal(resume.agentScope, "user");
 	assert.equal(resume.context, "fresh");
 
 	const resumeBoth = { action: "resume", id: "run-456", message: "Continue with the approved ticket.", agentScope: "both" };
-	assertAllowed(resumeBoth);
+	assertAllowed(resumeBoth, {
+		allowedSubagents: allowedSubagentsForExperimentalConfig({ enabledFeatures: [CONTRARIAN_EXPERIMENTAL_FEATURE] }),
+	});
 	assert.equal(resumeBoth.agentScope, "user");
 	assert.equal(resumeBoth.context, "fresh");
 
@@ -185,7 +189,7 @@ test("validateSubagentToolInput allows approved management calls and normalizes 
 	}
 });
 
-test("validateSubagentToolInput blocks unsafe actions, unsafe resume inputs, and non-user scopes", () => {
+test("validateSubagentToolInput blocks opaque disabled-contrarian resume and unsafe scopes/contexts", () => {
 	assert.match(validateSubagentToolInput({ action: "delete" }), /may not use subagent management action 'delete'/);
 	assert.match(validateSubagentToolInput({ agent: "developer", agentScope: "both" }), /may not use agentScope: "both"/);
 	assert.match(validateSubagentToolInput({ agent: "developer", agentScope: "project" }), /may not use agentScope: "project"/);
@@ -199,6 +203,25 @@ test("validateSubagentToolInput blocks unsafe actions, unsafe resume inputs, and
 	assert.match(validateSubagentToolInput({ action: "resume", agentScope: "invalid" }), /resume calls may not use agentScope: "invalid"/);
 	assert.match(validateSubagentToolInput({ action: "resume", context: "resume" }), /subagent resume may not use context: "resume"/);
 	assert.match(validateSubagentToolInput({ action: "resume", context: 1 }), /subagent resume must use context: "fresh"/);
+
+	const opaqueResume = { action: "resume", id: "run-123", message: "Continue with the approved ticket.", agentScope: "", context: "" };
+	const opaqueReason = validateSubagentToolInput(opaqueResume);
+	assert.match(opaqueReason, /experimental minor agent/i);
+	assert.match(opaqueReason, /action=resume is blocked unless TLH can prove the resumed run is not contrarian/i);
+	assert.equal(opaqueResume.agentScope, "user");
+	assert.equal(opaqueResume.context, "fresh");
+
+	const blockedContrarianResume = { action: "resume", id: "run-456", message: "Continue with the approved ticket." };
+	const blockedContrarianReason = validateSubagentToolInput(blockedContrarianResume, { resumeTargetAgent: " contrarian " });
+	assert.match(blockedContrarianReason, /experimental minor agent/i);
+	assert.match(blockedContrarianReason, /may not continue a prior contrarian run/i);
+	assert.equal(blockedContrarianResume.agentScope, "user");
+	assert.equal(blockedContrarianResume.context, "fresh");
+
+	const allowedDeveloperResume = { action: "resume", id: "run-789", message: "Continue with the approved ticket." };
+	assertAllowed(allowedDeveloperResume, { resumeTargetAgent: " Developer " });
+	assert.equal(allowedDeveloperResume.agentScope, "user");
+	assert.equal(allowedDeveloperResume.context, "fresh");
 });
 
 test("validateSubagentToolInput uses generic primary-agent wording", () => {
