@@ -58,8 +58,8 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.79.1 <=0.79.7",
-    "@earendil-works/pi-tui": ">=0.79.1 <=0.79.7"
+    "@earendil-works/pi-coding-agent": ">=0.79.1 <=0.79.10",
+    "@earendil-works/pi-tui": ">=0.79.1 <=0.79.10"
   },
   "dependencies": {
     "@tailwindcss/browser": "4.3.0",
@@ -68,7 +68,7 @@
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.79.10",
-    "@earendil-works/pi-tui": "0.79.7",
+    "@earendil-works/pi-tui": "0.79.10",
     "@eslint/js": "9.39.4",
     "@types/node": "22.19.21",
     "eslint": "9.39.4",
