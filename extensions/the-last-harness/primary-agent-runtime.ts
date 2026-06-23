@@ -805,10 +805,15 @@ function createTlhPrimaryAgentRuntime(
 			const selection = currentPrimaryAgentSelection();
 			const allowedSubagents = allowedSubagentsForExperimentalConfig(getTlhGlobalSettings(ctx.cwd).tlh?.experimental);
 			if (!isEnabledPrimaryAgentSelection(selection)) {
-				const contrarianReason = subagentCallTargetsAgent(event.input, "contrarian")
-					? validateSubagentToolInput({ agent: "contrarian" }, { allowedSubagents })
-					: undefined;
-				return contrarianReason ? { block: true, reason: contrarianReason } : undefined;
+				if (!subagentCallTargetsAgent(event.input, "contrarian")) {
+					return undefined;
+				}
+				const contrarianReason = validateSubagentToolInput({ agent: "contrarian" }, { allowedSubagents });
+				if (contrarianReason) {
+					return { block: true, reason: contrarianReason };
+				}
+				const disabledReason = validateSubagentToolInput(event.input, { allowedSubagents });
+				return disabledReason ? { block: true, reason: disabledReason } : undefined;
 			}
 			if (selection === "rush" && isSubagentResumeAction(event.input)) {
 				return { block: true, reason: rushResumeDelegationReason() };

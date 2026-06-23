@@ -14,6 +14,7 @@ export const SAFE_SUBAGENT_ACTIONS = Object.freeze(["list", "get", "status", "in
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 
 const DEFAULT_ALLOWED_SUBAGENTS = Object.freeze(ALLOWED_SUBAGENTS.filter((agent) => agent !== "contrarian"));
+const ALLOWED_SUBAGENTS_BY_ID = new Map(ALLOWED_SUBAGENTS.map((agent) => [agent.toLowerCase(), agent]));
 
 const SAFE_SUBAGENT_ACTION_SET = new Set(SAFE_SUBAGENT_ACTIONS);
 
@@ -54,13 +55,18 @@ export function allowedSubagentsForExperimentalConfig(config) {
 	return isExperimentalFeatureEnabled(config, CONTRARIAN_EXPERIMENTAL_FEATURE) ? ALLOWED_SUBAGENTS : DEFAULT_ALLOWED_SUBAGENTS;
 }
 
+function normalizeAllowedSubagent(agent) {
+	const normalizedAgent = stringField(agent)?.toLowerCase();
+	return normalizedAgent ? ALLOWED_SUBAGENTS_BY_ID.get(normalizedAgent) : undefined;
+}
+
 function normalizeAllowedSubagents(allowedSubagents) {
 	if (!Array.isArray(allowedSubagents)) {
-		return ALLOWED_SUBAGENTS;
+		return DEFAULT_ALLOWED_SUBAGENTS;
 	}
 
-	const normalized = [...new Set(allowedSubagents.map((agent) => stringField(agent)).filter(Boolean))];
-	return normalized.length > 0 ? normalized : ALLOWED_SUBAGENTS;
+	const normalized = [...new Set(allowedSubagents.map((agent) => normalizeAllowedSubagent(agent)).filter(Boolean))];
+	return normalized.length > 0 ? normalized : DEFAULT_ALLOWED_SUBAGENTS;
 }
 
 function contrarianExperimentalDisabledReason() {

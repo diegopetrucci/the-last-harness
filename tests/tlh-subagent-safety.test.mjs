@@ -10,8 +10,8 @@ import {
 	validateSubagentToolInput,
 } from "../extensions/the-last-harness-subagent-safety.mjs";
 
-function assertAllowed(input) {
-	assert.equal(validateSubagentToolInput(input), undefined);
+function assertAllowed(input, options) {
+	assert.equal(validateSubagentToolInput(input, options), undefined);
 }
 
 function createPiHarness() {
@@ -51,11 +51,12 @@ test("validateSubagentToolInput allows bundled read-only delegation targets", ()
 	assert.equal(webScout.context, "fresh");
 
 	const contrarian = { agent: "contrarian", prompt: "stress-test this plan by steelmanning the strongest opposing case" };
-	assertAllowed(contrarian);
+	assertAllowed(contrarian, {
+		allowedSubagents: allowedSubagentsForExperimentalConfig({ enabledFeatures: [CONTRARIAN_EXPERIMENTAL_FEATURE] }),
+	});
 	assert.equal(contrarian.agentScope, "user");
 	assert.equal(contrarian.context, "fresh");
 });
-
 
 test("experimental allowlist normalizes mixed-case string flags but keeps malformed mixed arrays fail-closed", () => {
 	assert.deepEqual(allowedSubagentsForExperimentalConfig(undefined), ALLOWED_SUBAGENTS.filter((agent) => agent !== "contrarian"));
@@ -67,6 +68,10 @@ test("experimental allowlist normalizes mixed-case string flags but keeps malfor
 		allowedSubagentsForExperimentalConfig({ enabledFeatures: ["Contrarian", 123] }),
 		ALLOWED_SUBAGENTS.filter((agent) => agent !== "contrarian"),
 	);
+
+	const defaultBlocked = validateSubagentToolInput({ agent: "contrarian", prompt: "stress-test this plan" });
+	assert.match(defaultBlocked, /experimental minor agent/i);
+	assert.match(defaultBlocked, /\/experimental enable contrarian/);
 
 	const blocked = validateSubagentToolInput(
 		{ agent: "contrarian", prompt: "stress-test this plan" },
@@ -91,6 +96,33 @@ test("experimental allowlist normalizes mixed-case string flags but keeps malfor
 	);
 	assert.equal(enabled.agentScope, "user");
 	assert.equal(enabled.context, "fresh");
+});
+
+
+test("custom allowlists are bounded to canonical bundled subagents", () => {
+	const customEnabled = { agent: "contrarian", prompt: "stress-test this plan" };
+	assertAllowed(customEnabled, { allowedSubagents: [" Developer ", " CONTRARIAN ", "root"] });
+	assert.equal(customEnabled.agentScope, "user");
+	assert.equal(customEnabled.context, "fresh");
+
+	assert.match(
+		validateSubagentToolInput({ agent: "root", prompt: "do something unsafe" }, { allowedSubagents: ["developer", "root"] }),
+		/Disallowed target\(s\): root/,
+	);
+
+	const emptyFallbackBlocked = validateSubagentToolInput(
+		{ agent: "contrarian", prompt: "stress-test this plan" },
+		{ allowedSubagents: [] },
+	);
+	assert.match(emptyFallbackBlocked, /experimental minor agent/i);
+	assert.match(emptyFallbackBlocked, /\/experimental enable contrarian/);
+
+	const fallbackBlocked = validateSubagentToolInput(
+		{ agent: "contrarian", prompt: "stress-test this plan" },
+		{ allowedSubagents: ["root", "system", ""] },
+	);
+	assert.match(fallbackBlocked, /experimental minor agent/i);
+	assert.match(fallbackBlocked, /\/experimental enable contrarian/);
 });
 
 test("validateSubagentToolInput allows approved execution and forces fresh user context", () => {

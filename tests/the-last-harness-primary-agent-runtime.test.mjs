@@ -155,7 +155,7 @@ test("disabled primary mode still injects provider-aware subagent models", async
 	assert.equal(event.input.context, "resume");
 });
 
-test("disabled primary mode keeps malformed mixed experimental arrays fail-closed, but still honors mixed-case contrarian enables without re-enabling primary-mode safety mutations", async (t) => {
+test("disabled primary mode keeps malformed mixed experimental arrays fail-closed, preserves the contrarian disabled message, and validates enabled contrarian inputs", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const subagentMetadata = [contrarianMetadata()];
 	const branchEntries = [{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "disabled" } }];
@@ -210,10 +210,36 @@ test("disabled primary mode keeps malformed mixed experimental arrays fail-close
 			toolName: "subagent",
 			input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "project", context: "resume" },
 		};
-		assert.equal(await toolCall(enabledEvent, ctx), undefined);
+		assert.deepEqual(await toolCall(enabledEvent, ctx), {
+			block: true,
+			reason:
+				'TLH primary-agent subagent execution calls may not use agentScope: "project". TLH minor agents must run from the isolated user scope.',
+		});
 		assert.equal(enabledEvent.input.model, "anthropic/claude-opus-4-8");
 		assert.equal(enabledEvent.input.agentScope, "project");
 		assert.equal(enabledEvent.input.context, "resume");
+
+		const enabledContextEvent = {
+			toolName: "subagent",
+			input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "user", context: "resume" },
+		};
+		assert.deepEqual(await toolCall(enabledContextEvent, ctx), {
+			block: true,
+			reason:
+				'TLH primary-agent subagent execution may not use context: "resume". TLH child sessions must start fresh so parent primary-agent/Gnosis context is not leaked.',
+		});
+		assert.equal(enabledContextEvent.input.model, "anthropic/claude-opus-4-8");
+		assert.equal(enabledContextEvent.input.agentScope, "user");
+		assert.equal(enabledContextEvent.input.context, "resume");
+
+		const safeEnabledEvent = {
+			toolName: "subagent",
+			input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "user", context: "fresh" },
+		};
+		assert.equal(await toolCall(safeEnabledEvent, ctx), undefined);
+		assert.equal(safeEnabledEvent.input.model, "anthropic/claude-opus-4-8");
+		assert.equal(safeEnabledEvent.input.agentScope, "user");
+		assert.equal(safeEnabledEvent.input.context, "fresh");
 	});
 });
 
