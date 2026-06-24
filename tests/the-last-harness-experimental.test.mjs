@@ -11,6 +11,7 @@ const RETIRED_RUN_TESTS_LAST_FEATURE = "run-tests-last";
 const LEGACY_UNKNOWN_FEATURE = "legacy-flag";
 const jiti = createJiti(import.meta.url);
 const {
+	CI_FAILURE_INVESTIGATION_FEATURE,
 	DELTA_FOLLOW_UP_REVIEWS_FEATURE,
 	TLH_CONTRARIAN_FEATURE,
 	buildPrimaryExperimentalPrompt,
@@ -52,18 +53,27 @@ function registeredExperimentalCommand() {
 	return command;
 }
 
-test("experimental command registers contrarian and delta follow-up review flags as default-off", async (t) => {
+test("experimental command registers contrarian, delta follow-up review, and architect-only ci failure investigation flags as default-off", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const command = registeredExperimentalCommand();
 		assert.deepEqual(
 			(await command.getArgumentCompletions("enable ")).map((completion) => completion.value),
-			[`enable ${TLH_CONTRARIAN_FEATURE}`, `enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`],
+			[
+				`enable ${TLH_CONTRARIAN_FEATURE}`,
+				`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
+				`enable ${CI_FAILURE_INVESTIGATION_FEATURE}`,
+			],
 		);
 		assert.deepEqual(
 			(await command.getArgumentCompletions("status ")).map((completion) => completion.value),
-			["status", `status ${TLH_CONTRARIAN_FEATURE}`, `status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`],
+			[
+				"status",
+				`status ${TLH_CONTRARIAN_FEATURE}`,
+				`status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
+				`status ${CI_FAILURE_INVESTIGATION_FEATURE}`,
+			],
 		);
 		assert.equal(await command.getArgumentCompletions("unknown"), null);
 
@@ -77,6 +87,9 @@ test("experimental command registers contrarian and delta follow-up review flags
 		assert.match(notifications.at(-1)?.message ?? "", /disabled \(default\)/);
 		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable contrarian/);
 		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable delta-follow-up-reviews/);
+		assert.match(notifications.at(-1)?.message ?? "", /ci-failure-investigation/);
+		assert.match(notifications.at(-1)?.message ?? "", /architect-only guidance/i);
+		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable ci-failure-investigation/);
 		assert.doesNotMatch(notifications.at(-1)?.message ?? "", /run-tests-last/);
 	});
 });
@@ -91,6 +104,23 @@ test("contrarian experimental prompt injection stays default-off and becomes pri
 	assert.match(buildPrimaryExperimentalPrompt({ name: "rush" }, enabledConfig) ?? "", /TLH experiment enables the `contrarian` minor agent for TLH Rush/);
 	assert.match(buildPrimaryExperimentalPrompt({ name: "product" }, enabledConfig) ?? "", /product directions, tradeoffs, assumptions, or ticket framing/);
 	assert.match(buildPrimaryExperimentalPrompt({ name: "bug-hunter" }, enabledConfig) ?? "", /stress-test bug hypotheses or review conclusions/);
+	assert.equal(buildPrimaryExperimentalPrompt({ name: "developer" }, enabledConfig), undefined);
+});
+
+test("ci failure investigation prompt injection stays default-off and only enables architect read-only investigation guidance", () => {
+	assert.equal(buildPrimaryExperimentalPrompt({ name: "architect" }, undefined), undefined);
+	assert.equal(buildPrimaryExperimentalPrompt({ name: "rush" }, undefined), undefined);
+
+	const enabledConfig = { enabledFeatures: [CI_FAILURE_INVESTIGATION_FEATURE] };
+	assert.match(buildPrimaryExperimentalPrompt({ name: "architect" }, enabledConfig) ?? "", /## TLH Experimental Feature: ci-failure-investigation/);
+	assert.match(buildPrimaryExperimentalPrompt({ name: "architect" }, enabledConfig) ?? "", /overrides the default post-PR monitor-and-ask-only step/i);
+	assert.match(buildPrimaryExperimentalPrompt({ name: "architect" }, enabledConfig) ?? "", /You may do a read-only investigation before asking the user whether to proceed/i);
+	assert.match(buildPrimaryExperimentalPrompt({ name: "architect" }, enabledConfig) ?? "", /Do not edit files, commit, push, rerun jobs, change the PR/i);
+	assert.match(buildPrimaryExperimentalPrompt({ name: "architect" }, enabledConfig) ?? "", /edits, commits, pushes, reruns, PR changes, or other follow-up changes/i);
+	assert.match(buildPrimaryExperimentalPrompt({ name: "architect" }, enabledConfig) ?? "", /ask for explicit user approval/i);
+	assert.equal(buildPrimaryExperimentalPrompt({ name: "rush" }, enabledConfig), undefined);
+	assert.equal(buildPrimaryExperimentalPrompt({ name: "product" }, enabledConfig), undefined);
+	assert.equal(buildPrimaryExperimentalPrompt({ name: "bug-hunter" }, enabledConfig), undefined);
 	assert.equal(buildPrimaryExperimentalPrompt({ name: "developer" }, enabledConfig), undefined);
 });
 

@@ -402,7 +402,7 @@ test("extension wires TLH changelog command and release-notes rendering", () => 
 	assert.match(changelogSource, /pi\.sendMessage\(\{/);
 });
 
-test("extension keeps TLH experimental command wiring with delta-follow-up-reviews as the registered flag", () => {
+test("extension keeps TLH experimental command wiring with registered ci and review feature flags", () => {
 	const lockedWriteHelper = sourceSection(
 		profileStateSource,
 		"export function withLockedTlhSettingsWrite",
@@ -413,6 +413,7 @@ test("extension keeps TLH experimental command wiring with delta-follow-up-revie
 	assert.match(extensionSource, /from "\.\/the-last-harness\/experimental\.js"/);
 	assert.match(experimentalSource, /pi\.registerCommand\("experimental"/);
 	assert.match(experimentalSource, /delta-follow-up-reviews/);
+	assert.match(experimentalSource, /ci-failure-investigation/);
 	assert.doesNotMatch(experimentalSource, /run-tests-last/);
 	assert.match(
 		experimentalSource,

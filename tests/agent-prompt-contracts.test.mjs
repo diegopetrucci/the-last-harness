@@ -33,6 +33,7 @@ const contracts = [
 				"architect captures only ticket-specific validation deviations",
 				/ticket-specific validation expectations.*differ from the repository's normal validation flow/i,
 			),
+			orderedTerms("architect monitors CI after opening PRs without autonomous follow-up", ["After opening a PR", "monitor CI/status checks", "If any fail", "ask the user whether to proceed", "Do not investigate", "unless the user explicitly asks"]),
 		],
 	},
 	{
@@ -48,6 +49,7 @@ const contracts = [
 			bodyPattern("Rush never delegates implementation to developer", /do not delegate implementation to [`']?developer[`']?/i),
 			orderedTerms("tickets are optional by default", ["do not create or require", "tk", "by default"]),
 			bodyPattern("broad work escalates to architect or product", /recommend switching to [`']?architect[`']?|recommend [`']?architect[`']? or [`']?product[`']?/i),
+			orderedTerms("Rush monitors CI after opening PRs without autonomous follow-up", ["After opening a PR", "monitor CI/status checks", "If any fail", "ask the user whether to proceed", "Do not investigate", "unless the user explicitly asks"]),
 		],
 	},
 	{
@@ -202,6 +204,17 @@ test("base primary prompts keep contrarian guidance behind the experimental flag
 	for (const name of ["architect", "rush", "product", "bug-hunter"]) {
 		const { normalizedBody } = readAgentPrompt("primary", name);
 		assert.doesNotMatch(normalizedBody, /contrarian/i, `${name} should not advertise contrarian in the base prompt`);
+	}
+});
+
+test("base architect and rush prompts keep ci failure investigation guidance behind the experimental flag", () => {
+	for (const name of ["architect", "rush"]) {
+		const { normalizedBody } = readAgentPrompt("primary", name);
+		assert.doesNotMatch(normalizedBody, /read-only investigation before asking the user whether to proceed/i);
+		assert.doesNotMatch(normalizedBody, /inspect failed checks, logs, workflow\/config files, diffs/i);
+		assert.doesNotMatch(normalizedBody, /rerun jobs, change the pr, or take any other follow-up action during this investigation/i);
+		assert.match(normalizedBody, /after opening a pr, monitor ci\/status checks/i);
+		assert.match(normalizedBody, /do not investigate .* unless the user explicitly asks/i);
 	}
 });
 
