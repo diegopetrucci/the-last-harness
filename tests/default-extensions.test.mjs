@@ -14,16 +14,16 @@ const defaultsScript = join(repoRoot, "scripts", "tlh-defaults.mjs");
 const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
 const retiredPlannotatorPackage = "npm:@plannotator/pi-extension";
 const expectedBundledNpmSources = new Map([
-	["openai-fast", "npm:@diegopetrucci/pi-openai-fast@0.1.4"],
-	["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth@0.6.2"],
-	["librarian", "npm:@diegopetrucci/pi-librarian@0.1.5"],
-	["fff", "npm:@ff-labs/pi-fff@0.9.5"],
-	["inline-bash", "npm:@diegopetrucci/pi-inline-bash@0.1.2"],
-	["notify", "npm:@diegopetrucci/pi-notify@0.1.5"],
-	["context-inspector", "npm:@diegopetrucci/pi-context-inspector@0.1.2"],
-	["quiet-tools", "npm:@diegopetrucci/pi-quiet-tools@0.1.3"],
-	["dirty-repo-guard", "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.2"],
-	["triage-comments", "npm:@diegopetrucci/pi-triage-comments@0.1.3"],
+	["openai-fast", "npm:@diegopetrucci/pi-openai-fast@0.1.6"],
+	["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth@0.6.3"],
+	["librarian", "npm:@diegopetrucci/pi-librarian@0.1.7"],
+	["fff", "npm:@ff-labs/pi-fff@0.9.6"],
+	["inline-bash", "npm:@diegopetrucci/pi-inline-bash@0.1.3"],
+	["notify", "npm:@diegopetrucci/pi-notify@0.1.7"],
+	["context-inspector", "npm:@diegopetrucci/pi-context-inspector@0.1.3"],
+	["quiet-tools", "npm:@diegopetrucci/pi-quiet-tools@0.1.4"],
+	["dirty-repo-guard", "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.3"],
+	["triage-comments", "npm:@diegopetrucci/pi-triage-comments@0.1.4"],
 ]);
 
 function tempFixture() {

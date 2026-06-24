@@ -271,8 +271,8 @@ function parseGitHubPackageSource(source) {
 	if (value.startsWith("git:")) value = value.slice("git:".length).trim();
 	if (value.startsWith("git+")) value = value.slice("git+".length);
 
-	let host = "";
-	let repoPathWithRef = "";
+	let host;
+	let repoPathWithRef;
 	const scpLike = value.match(/^git@([^:]+):(.+)$/);
 	if (scpLike) {
 		host = scpLike[1] || "";

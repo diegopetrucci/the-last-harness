@@ -63,11 +63,11 @@ import {
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
-const PINNED_PI_VERSION = "0.79.7";
+const PINNED_PI_VERSION = "0.80.2";
 const PI_PACKAGE_SPEC = `${PI_PACKAGE_NAME}@${PINNED_PI_VERSION}`;
 // Keep in sync with TLH_MIN_NODE_VERSION, TLH_MIN_PI_VERSION, and TLH_PINNED_PI_VERSION in install.sh.
 const MIN_NODE_VERSION = "22.19.0";
-const MIN_PI_VERSION = "0.79.1";
+const MIN_PI_VERSION = "0.80.1";
 const MAX_PI_VERSION = PINNED_PI_VERSION;
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
 const DEFAULT_GNOSIS_VERSION = "0.5.3";
@@ -90,7 +90,7 @@ const VALID_UPDATE_TRACKS = new Set(["latest-release", "pinned-tag", "ref", "cus
 const RUNTIME_MARKER_FILENAME = ".tlh-runtime-owned";
 const RUNTIME_MARKER_SCHEMA_VERSION = 1;
 // npm 11.x --prefix layout; empirically confirmed: npm 11.16.0 +
-// @earendil-works/pi-coding-agent@0.79.7.  Mirrors the advisory exclusivity
+// @earendil-works/pi-coding-agent@0.80.2.  Mirrors the advisory exclusivity
 // tripwire in uninstall.sh (demoted from gate): the only top-level entries a
 // TLH-owned runtime prefix should contain are those created by
 // npm install -g --ignore-scripts --prefix, plus the TLH runtime ownership
@@ -647,7 +647,7 @@ function assertSupportedPiVersion(
 		versionCommandDisplay = "pi --version",
 	} = {},
 ) {
-	// `pi --version` prints a bare semver (e.g. "0.79.1") on stdout. Older builds may
+	// `pi --version` prints a bare semver (e.g. "0.80.1") on stdout. Older builds may
 	// differ, so we extract the first semver-shaped substring rather than match strictly.
 	const result = spawnCapture(config, [piCommand, "--version"], {
 		allowFailure: true,
@@ -1214,7 +1214,8 @@ function installDefaultExtensions(config) {
 			"sources",
 		], { captureStdout: true });
 	} catch (error) {
-		throw new Error(`failed to read bundled default extension sources: ${error.message}`);
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`failed to read bundled default extension sources: ${message}`, { cause: error });
 	}
 	try {
 		criticalSourcesOutput = runNodeScript(config, config.supportFilePaths.TLH_DEFAULTS_SCRIPT, [
@@ -1228,7 +1229,8 @@ function installDefaultExtensions(config) {
 		if (defaultExtensionsFileRequiresCriticalInstall(config.supportFilePaths.DEFAULT_EXTENSIONS_FILE, {
 			noSettings: config.noSettings,
 		})) {
-			throw new Error(`failed to read critical bundled default extension sources: ${error.message}`);
+			const message = error instanceof Error ? error.message : String(error);
+			throw new Error(`failed to read critical bundled default extension sources: ${message}`, { cause: error });
 		}
 		warn("installed default-extension helper does not support critical source queries; treating this ref as having no critical defaults.");
 		criticalSourcesOutput = "";
@@ -1282,7 +1284,7 @@ function configureGnosis(config) {
 		config.gnosisSummary = runNodeScript(config, config.supportFilePaths.TLH_GNOSIS_SCRIPT, args, { captureStdout: true }).trimEnd();
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`failed to configure Gnosis integration: ${message}`);
+		throw new Error(`failed to configure Gnosis integration: ${message}`, { cause: error });
 	}
 }
 
