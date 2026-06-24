@@ -57,6 +57,7 @@ const contracts = [
 		forbiddenTools: ["contact_supervisor", "web_search", "fetch_content", "get_search_content", "oracle"],
 		anchors: [
 			heading("Orientation"),
+			heading("Scoped subagents"),
 			heading("Product workflow"),
 			heading("Documentation and ticket standards"),
 			bodyPattern("product never implements source changes", /do not edit source code|never implement source changes/i),
@@ -157,16 +158,29 @@ const contracts = [
 	{
 		group: "subagents",
 		name: "oracle",
-		requiredTools: ["oracle", "read", "grep", "find", "ls", "contact_supervisor", "bash"],
-		forbiddenTools: ["write", "edit", "subagent", "intercom", "web_search", "fetch_content", "get_search_content"],
+		requiredTools: ["read", "grep", "find", "ls", "contact_supervisor", "bash"],
+		forbiddenTools: ["write", "edit", "subagent", "intercom", "web_search", "fetch_content", "get_search_content", "oracle"],
 		anchors: [
-			heading("Tool use"),
+			heading("Inputs"),
 			heading("Analysis process"),
 			heading("Output"),
 			bodyPattern("oracle stays read-only", /read-only|never modify files/i),
-			bodyPattern("oracle uses oracle tool", /use the existing [`']?oracle[`']? extension tool|use the [`']?oracle[`']? tool/i),
-			orderedTerms("oracle validates tool output against local evidence", ["Ask the `oracle` tool", "Evaluate the oracle response against local evidence"]),
-			includesAllTerms("oracle forbids mutating shell options", ["optional shell execution", "mutating capabilities"]),
+			orderedTerms("oracle gathers evidence then applies direct analysis", ["Gather", "Apply", "analysis"]),
+			bodyPattern("oracle distinguishes confirmed findings from unknowns", /confirmed findings|unresolved unknowns/i),
+		],
+	},
+	{
+		group: "subagents",
+		name: "contrarian",
+		requiredTools: ["read", "grep", "find", "ls", "contact_supervisor", "bash"],
+		forbiddenTools: ["write", "edit", "subagent", "intercom", "web_search", "fetch_content", "get_search_content", "oracle"],
+		anchors: [
+			heading("Inputs"),
+			heading("Analysis process"),
+			heading("Output"),
+			bodyPattern("contrarian stays read-only", /read-only|never modify files/i),
+			orderedTerms("contrarian steelmans the strongest opposing case", ["Steelman", "strongest credible opposing position"]),
+			bodyPattern("contrarian separates confirmed and unresolved objections", /confirmed objections|unresolved unknowns/i),
 		],
 	},
 ];
@@ -199,6 +213,13 @@ test("base architect prompt keeps delta follow-up review guidance behind the exp
 	assert.doesNotMatch(normalizedBody, /default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint/i);
 	assert.doesNotMatch(normalizedBody, /prior findings.*git range or checkpoint.*changed-file list/i);
 	assert.match(normalizedBody, /delegate final review to `code-reviewer` against the full vcs diff/i);
+});
+
+test("base primary prompts keep contrarian guidance behind the experimental flag", () => {
+	for (const name of ["architect", "rush", "product", "bug-hunter"]) {
+		const { normalizedBody } = readAgentPrompt("primary", name);
+		assert.doesNotMatch(normalizedBody, /contrarian/i, `${name} should not advertise contrarian in the base prompt`);
+	}
 });
 
 test("base developer prompt does not inherit the architect final-validation workflow", () => {

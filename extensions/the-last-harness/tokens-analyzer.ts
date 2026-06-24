@@ -1,4 +1,4 @@
-import type { ReadonlySessionManager, SessionEntry, ToolInfo } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, SessionEntry, ToolInfo } from "@earendil-works/pi-coding-agent";
 
 const BUILT_IN_TOOL_NAMES = new Set(["bash", "read", "edit", "write", "grep", "find", "ls"]);
 /** Approximate characters per token used for tool-payload size estimates. */
@@ -22,6 +22,8 @@ const PREFERRED_SUBAGENT_CHILD_KEYS = ["results", "steps"] as const;
 const MAX_DISCOVERY_DEPTH = 8;
 const MAX_DISCOVERY_ARRAY_ITEMS = 64;
 const MAX_DISCOVERY_OBJECTS = 512;
+
+type TokensAnalysisSessionManager = Pick<ExtensionContext["sessionManager"], "getEntries" | "getHeader" | "getLeafId" | "getSessionName">;
 
 export type TlhUsageTotals = {
 	inputTokens: number;
@@ -214,7 +216,7 @@ type StructuredDiscoveries = {
 };
 
 export function analyzeCurrentSessionUsage(
-	sessionManager: Pick<ReadonlySessionManager, "getEntries" | "getHeader" | "getLeafId" | "getSessionName">,
+	sessionManager: TokensAnalysisSessionManager,
 	toolCatalog: readonly TlhToolCatalogEntry[] = [],
 ): TlhSessionUsageAnalysis {
 	const header = sessionManager.getHeader();

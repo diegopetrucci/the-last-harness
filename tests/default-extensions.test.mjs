@@ -13,6 +13,17 @@ const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
 const defaultsScript = join(repoRoot, "scripts", "tlh-defaults.mjs");
 const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
 const retiredPlannotatorPackage = "npm:@plannotator/pi-extension";
+const expectedBundledNpmSources = new Map([
+	["openai-fast", "npm:@diegopetrucci/pi-openai-fast@0.1.4"],
+	["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth@0.6.2"],
+	["fff", "npm:@ff-labs/pi-fff@0.9.5"],
+	["inline-bash", "npm:@diegopetrucci/pi-inline-bash@0.1.2"],
+	["notify", "npm:@diegopetrucci/pi-notify@0.1.5"],
+	["context-inspector", "npm:@diegopetrucci/pi-context-inspector@0.1.2"],
+	["quiet-tools", "npm:@diegopetrucci/pi-quiet-tools@0.1.3"],
+	["dirty-repo-guard", "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.2"],
+	["triage-comments", "npm:@diegopetrucci/pi-triage-comments@0.1.3"],
+]);
 
 function tempFixture() {
 	const dir = mkdtempSync(join(tmpdir(), "tlh-defaults-test-"));
@@ -114,9 +125,10 @@ test("bundled manifest keeps quiet-tools-compatible rtk load order", () => {
 	const dirtyRepoGuard = bundled.find(({ id }) => id === "dirty-repo-guard");
 
 	assert.ok(dirtyRepoGuard, "bundled dirty-repo-guard default should exist");
-	assert.equal(dirtyRepoGuard.source, "npm:@diegopetrucci/pi-dirty-repo-guard");
+	assert.equal(dirtyRepoGuard.source, expectedBundledNpmSources.get("dirty-repo-guard"));
 	assert.equal(ids.includes("permission-gate"), false);
 	assert.equal(ids.includes("confirm-destructive"), false);
+	assert.equal(ids.includes("librarian"), false);
 	assert.ok(rtk, "bundled rtk default should exist");
 	assert.deepEqual(rtk.aliases, ["pi-rtk"]);
 	assert.deepEqual(rtk.replaces, [
@@ -128,6 +140,15 @@ test("bundled manifest keeps quiet-tools-compatible rtk load order", () => {
 	assert.equal(rtk.critical, false);
 	assert.equal(rtk.source, "git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5");
 	assert(ids.indexOf("rtk") < ids.indexOf("quiet-tools"), "quiet-tools should load after rtk");
+});
+
+test("bundled manifest pins every managed npm default to an explicit version", () => {
+	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
+	const bundledById = new Map(bundled.map((extension) => [extension.id, extension]));
+
+	for (const [id, source] of expectedBundledNpmSources) {
+		assert.equal(bundledById.get(id)?.source, source, `${id} should stay pinned to ${source}`);
+	}
 });
 
 test("tlh-defaults errors when the default-extension manifest is missing", () => {
@@ -243,10 +264,6 @@ test("merge reorders only targeted default extensions so unrelated defaults stay
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
 		{
-			id: "oracle",
-			source: "npm:@diegopetrucci/pi-oracle",
-		},
-		{
 			id: "rtk",
 			aliases: ["pi-rtk"],
 			replaces: ["npm:pi-rtk", "npm:@sherif-fanous/pi-rtk", "git:github.com/sherif-fanous/pi-rtk"],
@@ -263,7 +280,6 @@ test("merge reorders only targeted default extensions so unrelated defaults stay
 		packages: [
 			"npm:before",
 			"npm:@diegopetrucci/pi-compact-bash",
-			"npm:@diegopetrucci/pi-oracle",
 			"npm:@sherif-fanous/pi-rtk",
 			"npm:after",
 		],
@@ -279,7 +295,6 @@ test("merge reorders only targeted default extensions so unrelated defaults stay
 	assert.deepEqual(readJson(fixture.settings).packages, [
 		"npm:before",
 		"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
-		"npm:@diegopetrucci/pi-oracle",
 		"npm:after",
 		"git:github.com/diegopetrucci/the-last-harness",
 		"npm:@diegopetrucci/pi-compact-bash",
@@ -435,10 +450,6 @@ test("tlh-defaults enable repairs targeted default extension load order for rtk"
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
 		{
-			id: "oracle",
-			source: "npm:@diegopetrucci/pi-oracle",
-		},
-		{
 			id: "rtk",
 			aliases: ["pi-rtk"],
 			replaces: ["npm:pi-rtk", "npm:@sherif-fanous/pi-rtk", "git:github.com/sherif-fanous/pi-rtk"],
@@ -454,7 +465,6 @@ test("tlh-defaults enable repairs targeted default extension load order for rtk"
 	writeFileSync(fixture.settings, JSON.stringify({
 		packages: [
 			"npm:before",
-			"npm:@diegopetrucci/pi-oracle",
 			"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
 			"npm:@diegopetrucci/pi-compact-bash",
 		],
@@ -474,7 +484,6 @@ test("tlh-defaults enable repairs targeted default extension load order for rtk"
 	const settings = readJson(fixture.settings);
 	assert.deepEqual(settings.packages, [
 		"npm:before",
-		"npm:@diegopetrucci/pi-oracle",
 		"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
 		"npm:@diegopetrucci/pi-compact-bash",
 	]);
@@ -655,6 +664,77 @@ test("tlh-defaults keeps non-critical allowlisted package entrypoints enabled", 
 		.split("\n")
 		.filter(Boolean);
 	assert.deepEqual(sources, ["npm:helper"]);
+});
+
+test("tlh-defaults sources emit bundled pinned npm sources for existing unpinned managed defaults", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "oracle",
+			source: "npm:@diegopetrucci/pi-oracle@0.1.12",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: ["npm:@diegopetrucci/pi-oracle"],
+	}, null, 2));
+
+	const sources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "sources"])
+		.trim()
+		.split("\n")
+		.filter(Boolean);
+	assert.deepEqual(sources, ["npm:@diegopetrucci/pi-oracle@0.1.12"]);
+});
+
+test("tlh-defaults sources emit the bundled npm pin when the installed managed package has an older same-identity pin", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "oracle",
+			source: "npm:@diegopetrucci/pi-oracle@0.1.13",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: ["npm:@diegopetrucci/pi-oracle@0.1.12"],
+	}, null, 2));
+
+	const sources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "sources"])
+		.trim()
+		.split("\n")
+		.filter(Boolean);
+	assert.deepEqual(sources, ["npm:@diegopetrucci/pi-oracle@0.1.13"]);
+});
+
+test("tlh-defaults sources still respect disabled and deferred defaults while pinning managed npm defaults", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "oracle",
+			source: "npm:@diegopetrucci/pi-oracle@0.1.12",
+		},
+		{
+			id: "notify",
+			source: "npm:@diegopetrucci/pi-notify@0.1.5",
+		},
+		{
+			id: "pi-web-access",
+			replaces: ["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access"],
+			source: "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [
+			"npm:@diegopetrucci/pi-oracle",
+			"npm:@diegopetrucci/pi-notify",
+			"npm:pi-web-access",
+		],
+		tlh: { disabledDefaultExtensions: ["notify"] },
+	}, null, 2));
+
+	const sources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "sources"])
+		.trim()
+		.split("\n")
+		.filter(Boolean);
+	assert.deepEqual(sources, ["npm:@diegopetrucci/pi-oracle@0.1.12"]);
 });
 
 test("tlh-defaults sources defers non-migrating replacements and ignores stale/manual critical opt-outs", () => {
@@ -989,7 +1069,7 @@ test("bundled manifest contains subagents and intercom entries with correct crit
 	const intercom = bundled.find(({ id }) => id === "intercom");
 
 	assert.ok(subagents, "bundled subagents entry should exist");
-	assert.equal(subagents.source, "git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-11");
+	assert.equal(subagents.source, "git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-13");
 	assert.equal(subagents.critical, true, "subagents must stay critical");
 	assert.deepEqual(subagents.aliases, ["pi-subagents"]);
 	assert.deepEqual(subagents.replaces, [

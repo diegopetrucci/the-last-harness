@@ -5,7 +5,6 @@ const HIDDEN_SLASH_COMMANDS = new Set([
 	"changelog",
 	"clone",
 	"import",
-	"oracle-model",
 	"quiet-tools",
 	"fff-health",
 	"fff-rescan",

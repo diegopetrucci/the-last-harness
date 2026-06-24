@@ -28,6 +28,7 @@ const jiti = createJiti(import.meta.url);
 const { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents, loadSubagentMetadata } = await jiti.import(
 	"../extensions/the-last-harness/prompts.ts",
 );
+const { TLH_CONTRARIAN_FEATURE } = await jiti.import("../extensions/the-last-harness/experimental.ts");
 const { buildReviewHtml } = await jiti.import("../extensions/annotate-git-diff/ui.ts");
 
 function sourceSection(source, startMarker, endMarker) {
@@ -167,7 +168,7 @@ test("before_agent_start activates ticket runtime without disabled-ticket prompt
 	assert.match(beforeAgentStart, /const settings = getTlhGlobalSettings\(ctx\.cwd\);/);
 	assert.doesNotMatch(beforeAgentStart, /ticketIntegrationEnabled/);
 	assert.match(beforeAgentStart, /activateTlhTicketRuntime\(settings, getAgentDir\(\)\);/);
-	assert.match(beforeAgentStart, /buildTlhSystemPrompt\(activePrimaryAgent\(\), subagentMetadata, primaryEnabled\)/);
+	assert.match(beforeAgentStart, /buildTlhSystemPrompt\(activePrimaryAgent\(\), subagentMetadata, primaryEnabled, settings\.tlh\?\.experimental\)/);
 });
 
 test("primary and child prompts do not include disabled-ticket fallback guidance", () => {
@@ -209,6 +210,9 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	);
 
 	const primaryPrompt = buildTlhSystemPrompt(rush, loadSubagentMetadata(), true);
+	const experimentalPrimaryPrompt = buildTlhSystemPrompt(rush, loadSubagentMetadata(), true, {
+		enabledFeatures: [TLH_CONTRARIAN_FEATURE],
+	});
 	const childPrompt = buildChildSubagentSystemPrompt();
 
 	assert.match(primaryPrompt, /## TLH Allowed Minor Subagents/);
@@ -216,6 +220,8 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	assert.match(primaryPrompt, /omit `agentScope` or use `"user"`/);
 	assert.match(primaryPrompt, /action: "resume".*omit `context` or use `"fresh"`/);
 	assert.match(primaryPrompt, /TLH minor agents are isolated to the user scope/);
+	assert.doesNotMatch(primaryPrompt, /- contrarian:/i);
+	assert.match(experimentalPrimaryPrompt, /- contrarian:/i);
 
 	for (const prompt of [primaryPrompt, childPrompt]) {
 		assert.doesNotMatch(prompt, /## TLH Ticket Integration Disabled/);
@@ -245,6 +251,7 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
 	assert.doesNotMatch(extensionSource, /registerGnosisCommand/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/header\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/model-visibility\.js"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/new-version-notice\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/package-update-notice\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/primary-agent-runtime\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/resources\.js"/);
@@ -291,9 +298,10 @@ test("extension delegates launch update and telemetry services to feature module
 	assert.doesNotMatch(extensionSource, /function fetchLatestTlhRelease/);
 });
 
-test("extension installs TLH model-visibility and package-update overrides during activation", () => {
+test("extension installs TLH model-visibility, package-update, and new-version-notice overrides during activation", () => {
 	assert.match(extensionSource, /installTlhModelVisibilityFilter\(\)/);
 	assert.match(extensionSource, /installTlhPackageUpdateNotificationOverride\(\)/);
+	assert.match(extensionSource, /installTlhNewVersionNotificationOverride\(\)/);
 });
 
 test("extension runs primary session_start work before UI startup in one handler", () => {
@@ -323,11 +331,16 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 	assert.doesNotMatch(primaryRuntimeSource, /pi\.registerCommand\("harness"/);
 	assert.match(toolCall, /if \(event\.toolName === "bash"\) \{[\s\S]*resolveTlhCommitAttribution\(getTlhGlobalSettings\(ctx\.cwd\)\.tlh\?\.attribution\)/);
 	assert.match(toolCall, /getTlhGitCommitAttributionBlockReason\(event\.input\.command, commitAttributionState\)/);
-	assert.match(toolCall, /applyProviderAwareSubagentModels\(event\.input, subagentsByName, getUnfilteredAvailableModels\(ctx\.modelRegistry\), ctx\.model\?\.provider\)/);
+	assert.match(toolCall, /applyProviderAwareSubagentModels\(event\.input, subagentsByName, getUnfilteredAvailableModels\(ctx\.modelRegistry\), ctx\.model\?\.provider, ctx\.model\)/);
 	assert.match(toolCall, /const selection = currentPrimaryAgentSelection\(\)/);
+	assert.match(toolCall, /const allowedSubagents = allowedSubagentsForExperimentalConfig\(getTlhGlobalSettings\(ctx\.cwd\)\.tlh\?\.experimental\)/);
+	assert.match(
+		toolCall,
+		/if \(!isEnabledPrimaryAgentSelection\(selection\)\) \{[\s\S]*subagentCallTargetsAgent\(event\.input, "contrarian"\)[\s\S]*validateSubagentToolInput\(\{ agent: "contrarian" \}, \{ allowedSubagents \}\)[\s\S]*const disabledReason = validateSubagentToolInput\(event\.input, \{ allowedSubagents \}\)/,
+	);
 	assert.match(toolCall, /if \(selection === "rush" && isSubagentResumeAction\(event\.input\)\)/);
 	assert.match(toolCall, /if \(selection === "rush" && subagentCallTargetsAgent\(event\.input, "developer"\)\)/);
-	assert.match(toolCall, /const reason = validateSubagentToolInput\(event\.input\)/);
+	assert.match(toolCall, /const reason = validateSubagentToolInput\(event\.input, \{ allowedSubagents \}\)/);
 	assert(
 		toolCall.indexOf('if (event.toolName === "bash")') < toolCall.indexOf("resolveTlhCommitAttribution"),
 		"parent tool_call should resolve attribution only inside the bash branch",
@@ -336,12 +349,13 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 		toolCall.indexOf("applyProviderAwareSubagentModels") < toolCall.indexOf("!isEnabledPrimaryAgentSelection(selection)"),
 		"provider-aware subagent defaults should run before the disabled-primary guard",
 	);
+	const genericValidationIndex = toolCall.indexOf("const reason = validateSubagentToolInput(event.input, { allowedSubagents })");
 	assert(
-		toolCall.indexOf("isSubagentResumeAction") < toolCall.indexOf("validateSubagentToolInput"),
+		toolCall.indexOf("isSubagentResumeAction") < genericValidationIndex,
 		"Rush resume guard should run before generic subagent validation",
 	);
 	assert(
-		toolCall.indexOf("subagentCallTargetsAgent") < toolCall.indexOf("validateSubagentToolInput"),
+		toolCall.lastIndexOf('subagentCallTargetsAgent(event.input, "developer")') < genericValidationIndex,
 		"Rush developer guard should run before generic subagent validation",
 	);
 });
@@ -448,7 +462,8 @@ test("extension keeps TLH experimental command wiring with delta-follow-up-revie
 	assert.doesNotMatch(usageLimitsSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
 	assert.match(lockedWriteHelper, /const settingsPath = tlhSettingsPathForWrite\(\);/);
 	assert.match(lockedWriteHelper, /assertSafeTlhSettingsPath\(settingsPath\);/);
-	assert.match(lockedWriteHelper, /const backupPath = current \? `\$\{settingsPath\}\.bak-\$\{settingsBackupTimestamp\(\)\}` : undefined;/);
+	assert.match(lockedWriteHelper, /if \(current\) \{/);
+	assert.match(lockedWriteHelper, /const backupPath = `\$\{settingsPath\}\.bak-\$\{settingsBackupTimestamp\(\)\}`;/);
 	assert.match(lockedWriteHelper, /writeFileSync\(backupPath, current, \{ encoding: "utf8", flag: "wx", mode: 0o600 \}\);/);
 	assert.match(usageLimitsSource, /settings\.tlh\.usageLimits\.showWeekly = showWeekly/);
 	assert.match(usageLimitsSource, /showWeekly === true/);

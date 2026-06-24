@@ -48,7 +48,7 @@ These commands are registered by the TLH extension bundled with this profile.
 |---------|-------------|
 | `/thinking` | Pick the model thinking level, subject to the active primary-agent thinking constraints |
 | `/effort` | Supported alias for `/thinking`, subject to the same active primary-agent thinking constraints |
-| `/experimental` | List or change TLH experimental features (`delta-follow-up-reviews` is currently registered) |
+| `/experimental` | List or change TLH experimental features (`contrarian` and `delta-follow-up-reviews` are currently registered) |
 | `/review` | Open an interactive code-review mode picker (requires the architect primary agent) |
 | `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
 | `/tlh-changelog` | Show TLH release notes from the packaged `CHANGELOG.md` |
@@ -64,7 +64,7 @@ Both `/thinking` and `/effort` are subject to the active primary-agent thinking 
 
 ### `/experimental`
 
-`/experimental` currently registers `delta-follow-up-reviews`, an opt-in flag that adds architect and `code-reviewer` guidance for delta-scoped follow-up reviews after fixes. The flag is disabled by default. Stale `run-tests-last` values in `tlh.experimental.enabledFeatures` do not re-enable retired behavior.
+`/experimental` currently registers `contrarian` and `delta-follow-up-reviews`. `contrarian` bundles the adversarial `contrarian` minor agent but keeps it disabled by default; enable it with `/experimental enable contrarian` and disable it with `/experimental disable contrarian`. It is intended mainly for sparing pre-ticket planning stress-tests when a proposed change genuinely warrants an adversarial brief, not the routine `code-reviewer` diff pass and not the broader `oracle` second-opinion path. `delta-follow-up-reviews` is an opt-in flag that adds architect and `code-reviewer` guidance for delta-scoped follow-up reviews after fixes. Both flags are disabled by default. Stale `run-tests-last` values in `tlh.experimental.enabledFeatures` do not re-enable retired behavior.
 
 ### `/tokens`
 
@@ -158,7 +158,6 @@ These commands are provided by bundled default extensions and are visible in TLH
 | `/fast` | `pi-openai-fast` | Toggle OpenAI Codex Fast mode (ChatGPT-auth GPT-5.4/GPT-5.5 only) |
 | `/mcp` | `pi-mcp-adapter` | Show MCP server status |
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
-| `/oracle` | `pi-oracle` | Configure the Oracle default model and thinking level |
 | `/rtk` | `pi-rtk` | Control pi-rtk shell-command rewriting |
 | `/subagents-doctor` | `pi-subagents` | Show subagent diagnostics |
 | `/triage-comments` | `pi-triage-comments` | Collect pasted feedback or PR comments, then start a triage investigation |
@@ -185,7 +184,6 @@ These commands are registered and fully functional, but deliberately excluded fr
 | `/fff-mode` | `pi-fff` | Show or set FFF mode (`tools-and-ui`, `tools-only`, `override`) |
 | `/fff-rescan` | `pi-fff` | Trigger FFF to rescan files |
 | `/intercom` | `pi-intercom` | Open the session intercom overlay (internal subagent communication) |
-| `/oracle-model` | `pi-oracle` | Show which model the oracle would use right now |
 | `/quiet-tools` | `pi-quiet-tools` | Toggle one-line collapsed invocations for built-in tool rows |
 
 ---
@@ -196,7 +194,7 @@ Individual bundled extensions can be disabled without affecting the others. Use 
 
 ```sh
 tlh defaults list        # show installed defaults and opt-out status
-tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disable oracle)
+tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disable fff)
 tlh defaults enable <id>   # re-enable a disabled extension
 ```
 

@@ -3,13 +3,15 @@ import test from "node:test";
 
 import {
 	ALLOWED_SUBAGENTS,
+	CONTRARIAN_EXPERIMENTAL_FEATURE,
 	SUBAGENT_CHILD_ENV,
+	allowedSubagentsForExperimentalConfig,
 	registerTlhStartupMode,
 	validateSubagentToolInput,
 } from "../extensions/the-last-harness-subagent-safety.mjs";
 
-function assertAllowed(input) {
-	assert.equal(validateSubagentToolInput(input), undefined);
+function assertAllowed(input, options) {
+	assert.equal(validateSubagentToolInput(input, options), undefined);
 }
 
 function createPiHarness() {
@@ -38,14 +40,89 @@ test("ALLOWED_SUBAGENTS exposes bundled minor agents", () => {
 		"librarian",
 		"web-scout",
 		"oracle",
+		"contrarian",
 	]);
 });
 
-test("validateSubagentToolInput allows web-scout as a permitted delegation target", () => {
-	const single = { agent: "web-scout", prompt: "research the general web for upstream release notes" };
-	assertAllowed(single);
-	assert.equal(single.agentScope, "user");
-	assert.equal(single.context, "fresh");
+test("validateSubagentToolInput allows bundled read-only delegation targets", () => {
+	const webScout = { agent: "web-scout", prompt: "research the general web for upstream release notes" };
+	assertAllowed(webScout);
+	assert.equal(webScout.agentScope, "user");
+	assert.equal(webScout.context, "fresh");
+
+	const contrarian = { agent: "contrarian", prompt: "stress-test this plan by steelmanning the strongest opposing case" };
+	assertAllowed(contrarian, {
+		allowedSubagents: allowedSubagentsForExperimentalConfig({ enabledFeatures: [CONTRARIAN_EXPERIMENTAL_FEATURE] }),
+	});
+	assert.equal(contrarian.agentScope, "user");
+	assert.equal(contrarian.context, "fresh");
+});
+
+test("experimental allowlist normalizes mixed-case string flags but keeps malformed mixed arrays fail-closed", () => {
+	assert.deepEqual(allowedSubagentsForExperimentalConfig(undefined), ALLOWED_SUBAGENTS.filter((agent) => agent !== "contrarian"));
+	assert.deepEqual(
+		allowedSubagentsForExperimentalConfig({ enabledFeatures: [" Contrarian "] }),
+		ALLOWED_SUBAGENTS,
+	);
+	assert.deepEqual(
+		allowedSubagentsForExperimentalConfig({ enabledFeatures: ["Contrarian", 123] }),
+		ALLOWED_SUBAGENTS.filter((agent) => agent !== "contrarian"),
+	);
+
+	const defaultBlocked = validateSubagentToolInput({ agent: "contrarian", prompt: "stress-test this plan" });
+	assert.match(defaultBlocked, /experimental minor agent/i);
+	assert.match(defaultBlocked, /\/experimental enable contrarian/);
+
+	const blocked = validateSubagentToolInput(
+		{ agent: "contrarian", prompt: "stress-test this plan" },
+		{ allowedSubagents: allowedSubagentsForExperimentalConfig(undefined) },
+	);
+	assert.match(blocked, /experimental minor agent/i);
+	assert.match(blocked, /\/experimental enable contrarian/);
+
+	const malformedBlocked = validateSubagentToolInput(
+		{ agent: "contrarian", prompt: "stress-test this plan" },
+		{ allowedSubagents: allowedSubagentsForExperimentalConfig({ enabledFeatures: ["Contrarian", 123] }) },
+	);
+	assert.match(malformedBlocked, /experimental minor agent/i);
+	assert.match(malformedBlocked, /\/experimental enable contrarian/);
+
+	const enabled = { agent: "contrarian", prompt: "stress-test this plan" };
+	assert.equal(
+		validateSubagentToolInput(enabled, {
+			allowedSubagents: allowedSubagentsForExperimentalConfig({ enabledFeatures: [CONTRARIAN_EXPERIMENTAL_FEATURE] }),
+		}),
+		undefined,
+	);
+	assert.equal(enabled.agentScope, "user");
+	assert.equal(enabled.context, "fresh");
+});
+
+
+test("custom allowlists are bounded to canonical bundled subagents", () => {
+	const customEnabled = { agent: "contrarian", prompt: "stress-test this plan" };
+	assertAllowed(customEnabled, { allowedSubagents: [" Developer ", " CONTRARIAN ", "root"] });
+	assert.equal(customEnabled.agentScope, "user");
+	assert.equal(customEnabled.context, "fresh");
+
+	assert.match(
+		validateSubagentToolInput({ agent: "root", prompt: "do something unsafe" }, { allowedSubagents: ["developer", "root"] }),
+		/Disallowed target\(s\): root/,
+	);
+
+	const emptyFallbackBlocked = validateSubagentToolInput(
+		{ agent: "contrarian", prompt: "stress-test this plan" },
+		{ allowedSubagents: [] },
+	);
+	assert.match(emptyFallbackBlocked, /experimental minor agent/i);
+	assert.match(emptyFallbackBlocked, /\/experimental enable contrarian/);
+
+	const fallbackBlocked = validateSubagentToolInput(
+		{ agent: "contrarian", prompt: "stress-test this plan" },
+		{ allowedSubagents: ["root", "system", ""] },
+	);
+	assert.match(fallbackBlocked, /experimental minor agent/i);
+	assert.match(fallbackBlocked, /\/experimental enable contrarian/);
 });
 
 test("validateSubagentToolInput allows approved execution and forces fresh user context", () => {
@@ -76,7 +153,7 @@ test("validateSubagentToolInput allows approved execution and forces fresh user 
 	assert.equal(batched.context, "fresh");
 });
 
-test("validateSubagentToolInput allows approved management calls and normalizes safe resume controls", () => {
+test("validateSubagentToolInput allows approved management calls and keeps enabled resume normalization", () => {
 	const list = { action: "list" };
 	assertAllowed(list);
 	assert.equal(list.agentScope, "user");
@@ -94,12 +171,16 @@ test("validateSubagentToolInput allows approved management calls and normalizes 
 	assert.equal(getBoth.agentScope, "user");
 
 	const resume = { action: "resume", id: "run-123", message: "Continue with the approved ticket.", agentScope: "", context: "" };
-	assertAllowed(resume);
+	assertAllowed(resume, {
+		allowedSubagents: allowedSubagentsForExperimentalConfig({ enabledFeatures: [CONTRARIAN_EXPERIMENTAL_FEATURE] }),
+	});
 	assert.equal(resume.agentScope, "user");
 	assert.equal(resume.context, "fresh");
 
 	const resumeBoth = { action: "resume", id: "run-456", message: "Continue with the approved ticket.", agentScope: "both" };
-	assertAllowed(resumeBoth);
+	assertAllowed(resumeBoth, {
+		allowedSubagents: allowedSubagentsForExperimentalConfig({ enabledFeatures: [CONTRARIAN_EXPERIMENTAL_FEATURE] }),
+	});
 	assert.equal(resumeBoth.agentScope, "user");
 	assert.equal(resumeBoth.context, "fresh");
 
@@ -108,7 +189,7 @@ test("validateSubagentToolInput allows approved management calls and normalizes 
 	}
 });
 
-test("validateSubagentToolInput blocks unsafe actions, unsafe resume inputs, and non-user scopes", () => {
+test("validateSubagentToolInput allows opaque disabled-contrarian resume and blocks unsafe scopes/contexts", () => {
 	assert.match(validateSubagentToolInput({ action: "delete" }), /may not use subagent management action 'delete'/);
 	assert.match(validateSubagentToolInput({ agent: "developer", agentScope: "both" }), /may not use agentScope: "both"/);
 	assert.match(validateSubagentToolInput({ agent: "developer", agentScope: "project" }), /may not use agentScope: "project"/);
@@ -122,6 +203,23 @@ test("validateSubagentToolInput blocks unsafe actions, unsafe resume inputs, and
 	assert.match(validateSubagentToolInput({ action: "resume", agentScope: "invalid" }), /resume calls may not use agentScope: "invalid"/);
 	assert.match(validateSubagentToolInput({ action: "resume", context: "resume" }), /subagent resume may not use context: "resume"/);
 	assert.match(validateSubagentToolInput({ action: "resume", context: 1 }), /subagent resume must use context: "fresh"/);
+
+	const opaqueResume = { action: "resume", id: "run-123", message: "Continue with the approved ticket.", agentScope: "", context: "" };
+	assertAllowed(opaqueResume);
+	assert.equal(opaqueResume.agentScope, "user");
+	assert.equal(opaqueResume.context, "fresh");
+
+	const blockedContrarianResume = { action: "resume", id: "run-456", message: "Continue with the approved ticket." };
+	const blockedContrarianReason = validateSubagentToolInput(blockedContrarianResume, { resumeTargetAgent: " contrarian " });
+	assert.match(blockedContrarianReason, /experimental minor agent/i);
+	assert.match(blockedContrarianReason, /may not continue a prior contrarian run/i);
+	assert.equal(blockedContrarianResume.agentScope, "user");
+	assert.equal(blockedContrarianResume.context, "fresh");
+
+	const allowedDeveloperResume = { action: "resume", id: "run-789", message: "Continue with the approved ticket." };
+	assertAllowed(allowedDeveloperResume, { resumeTargetAgent: " Developer " });
+	assert.equal(allowedDeveloperResume.agentScope, "user");
+	assert.equal(allowedDeveloperResume.context, "fresh");
 });
 
 test("validateSubagentToolInput uses generic primary-agent wording", () => {

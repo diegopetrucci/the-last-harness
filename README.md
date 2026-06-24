@@ -50,9 +50,12 @@ TLH subagents are fresh child sessions, not a giant shared swarm. They get the t
 - `code-reviewer` for review
 - `librarian` for read-only GitHub repository research (uses `gh` CLI and `git`)
 - `web-scout` for web research
-- `oracle` for a deeper second opinion.
+- `oracle` for a deeper second opinion
+- `contrarian` as a bundled experimental subagent for sparing adversarial stress-tests; it stays default-off until you run `/experimental enable contrarian`.
 
-For review independence, `code-reviewer` intentionally prefers an available opposite provider. Anthropic sessions try to use the OpenAI Codex subscription provider for review when it is available, while OpenAI/OpenAI-Codex sessions try Anthropic review when it is available. If you only have regular OpenAI API access and not the Codex subscription provider, TLH does not force `code-reviewer` onto unavailable Codex-only defaults.
+If you enable `contrarian`, use it sparingly, usually before ticket creation, when a proposed change has meaningful uncertainty, tradeoffs, blast radius, a hard-to-undo direction, or debatable assumptions and you want a named specific risk or strongest opposing case steelmanned. It is not the normal diff reviewer — `code-reviewer` reviews changes against tasks — and it is different from `oracle`, which is the broader second-opinion path rather than an opposition brief. Disable it again with `/experimental disable contrarian`.
+
+For review independence, `code-reviewer` and `oracle` intentionally prefer an available opposite provider. Enabled `contrarian` uses that same opposite-provider pattern for adversarial challenge passes. Anthropic sessions try to use the OpenAI Codex subscription provider for these subagents when it is available, while OpenAI/OpenAI-Codex sessions try Anthropic. When TLH injects one of those opposite-provider subagent models, it also supplies a same/current-provider fallback candidate for retryable model failures; if that fallback is used, the subagent output includes a notice that review independence is reduced. If you only have regular OpenAI API access and not the Codex subscription provider, TLH does not force `code-reviewer`, `oracle`, or enabled `contrarian` onto unavailable Codex-only defaults.
 
 ## Why this workflow is useful
 
@@ -85,7 +88,7 @@ Use `Shift+Tab` to cycle the current session through `architect` → `rush` → 
 
 ### Model and thinking defaults
 
-TLH applies bundled model/thinking defaults per primary agent. For active non-locked primaries, user `/model` choices are respected and persisted per primary under `tlh.primaryAgent.modelOverrides.<primary>`; reset the current primary's override with `/switch-primary-agent model reset`. Locked primaries such as Rush keep their fixed defaults. For review independence, `code-reviewer` prefers the opposite available provider: Anthropic primaries try OpenAI Codex for review, and OpenAI/OpenAI-Codex primaries try Anthropic.
+TLH applies bundled model/thinking defaults per primary agent. For active non-locked primaries, user `/model` choices are respected and persisted per primary under `tlh.primaryAgent.modelOverrides.<primary>`; reset the current primary's override with `/switch-primary-agent model reset`. Locked primaries such as Rush keep their fixed defaults. For review independence, `code-reviewer` and `oracle` prefer the opposite available provider: Anthropic primaries try OpenAI Codex for review, and OpenAI/OpenAI-Codex primaries try Anthropic. TLH adds a dynamic same/current-provider fallback only when it injects that opposite-provider review model; a displayed fallback notice means the run completed with reduced review independence. When enabled, `contrarian` uses that same independence pattern for sparing adversarial stress-tests rather than as a routine review step.
 
 #### Hidden model defaults in the TLH profile
 
@@ -124,7 +127,7 @@ TLH is not just “Pi, but with a new prompt.” The harness bakes in workflow a
 - **Context is capped on purpose**: TLH uses a 200k context cap, expects compaction instead of endless chat growth, and provides `/context` so you can inspect where your tokens are going.
 - **Fresh child contexts are the default**: child sessions start clean and focused rather than inheriting an entire messy parent transcript.
 - **Model defaults are role-aware**: TLH ships bundled per-role model/thinking defaults instead of expecting every user to tune everything manually.
-- **Safety and quiet-by-default UX matter**: destructive-action confirmations, quieter tool rendering, trimmed footer noise, usage-window visibility, notifications when turns finish, and dirty-repo prompts are part of the package.
+- **Safety and quiet-by-default UX matter**: isolated-profile guards, quieter tool rendering, trimmed footer noise, usage-window visibility, notifications when turns finish, and dirty-repo prompts are part of the package.
 - **Useful integrations are already wired in**: web research and MCP support are part of the default story rather than an afterthought.
 
 ## What you get beyond the workflow
@@ -178,6 +181,10 @@ Normal `tlh update` runs are conservative: they preserve user-owned isolated-pro
 
 Node.js >=22.19.0 must be available on your `PATH`.
 
-TLH uses upstream Pi >=0.79.1; if `pi` is missing, the installer automatically adds a compatible per-user copy under `~/.local`.
+TLH runs its own pinned Pi 0.79.7 from a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. The installer always provisions the private runtime automatically (per-user, no sudo) and hard-fails with an actionable error if it cannot.
+
+The installer writes an ownership marker (`.tlh-runtime-owned`) into the runtime prefix on every successful install or repair. Ownership is determined by this marker, not by directory shape alone — `npm install --prefix` produces an identical `bin/lib` layout regardless of who ran it, so shape alone is not a reliable signal. Accordingly, the installer refuses a non-empty unmarked runtime prefix that has no recorded TLH provenance; this matters most when using a non-default `--agent-dir` whose sibling `runtime/` directory could belong to a separate installation. Older TLH installs from before the marker was introduced gain it automatically on the next `tlh update` or installer rerun — no action required.
+
+TLH runs its own private runtime and never removes or modifies anything under `~/.local`. Any `pi` you installed yourself (or that a separate tool installed) is left entirely alone. The uninstaller removes the private runtime only when a valid ownership marker is present; a pre-marker or unmarked runtime is skipped and the uninstaller prints a `rm -rf <dir>` command you can run manually if you want to clean it up. To remove the private runtime manually: `rm -rf ~/.the-last-harness/runtime`. If you previously installed pi into `~/.local` and want to remove it yourself: `npm uninstall -g --ignore-scripts --prefix ~/.local @earendil-works/pi-coding-agent` (optional, user-initiated only).
 
 **`gh` CLI (for `librarian` GitHub research):** The `librarian` subagent performs read-only GitHub research using the `gh` CLI and `git`. Install `gh` from <https://cli.github.com/> and authenticate with `gh auth login` before using librarian. Run `gh auth status` to confirm. Without an authenticated `gh`, librarian reports what it could not verify rather than silently failing.

@@ -236,7 +236,7 @@ export function managedDefaultExtensionPackageIdentities(settings, defaultExtens
 		if (disabledIds.has(extension.id)) continue;
 		const identity = packageIdentity(extension.source);
 		if (!identity) continue;
-		if (settings.packages.some((entry) => packageIdentity(entry) === identity)) {
+		if (settings.packages.some((entry) => packageSourceOf(entry) === extension.source)) {
 			managedIdentities.add(identity);
 		}
 	}

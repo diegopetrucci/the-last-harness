@@ -23,6 +23,8 @@ export type ProviderAwareAgentDefaults<T extends ProviderModelReference = Provid
 
 const OPENAI_PROVIDERS = new Set(["openai-codex", "openai"]);
 const ANTHROPIC_PROVIDERS = new Set(["anthropic"]);
+const OPPOSITE_PROVIDER_FALLBACK_NOTICE =
+	"TLH fell back to a same-provider review model; review independence is reduced.";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -56,7 +58,17 @@ export function findAvailableProviderModel<T extends ProviderModelReference>(
 	if (!parsed) {
 		return undefined;
 	}
-	return availableModels.find((entry) => entry.provider === parsed.provider && entry.id === parsed.id);
+	return findAvailableProviderModelReference(availableModels, parsed);
+}
+
+function findAvailableProviderModelReference<T extends ProviderModelReference>(
+	availableModels: readonly T[],
+	model: ProviderModelReference | undefined,
+): T | undefined {
+	if (!model) {
+		return undefined;
+	}
+	return availableModels.find((entry) => entry.provider === model.provider && entry.id === model.id);
 }
 
 function availableOpenaiCandidate<T extends ProviderModelReference>(
@@ -151,6 +163,27 @@ function selectOppositeProviderPreferredAgentModel<T extends ProviderModelRefere
 	return undefined;
 }
 
+function selectOppositeProviderFallbackModel<T extends ProviderModelReference>(
+	agent: AgentModelDefaults | undefined,
+	availableModels: readonly T[],
+	currentProvider: string | undefined,
+	currentModel: ProviderModelReference | undefined,
+): T | undefined {
+	if (!agent?.preferOppositeProvider) {
+		return undefined;
+	}
+
+	if (currentModel?.provider === currentProvider) {
+		const availableCurrentModel = findAvailableProviderModelReference(availableModels, currentModel);
+		if (availableCurrentModel) {
+			return availableCurrentModel;
+		}
+	}
+
+	return currentProviderOpenaiCandidate(agent, availableModels, currentProvider)
+		?? currentProviderAnthropicCandidate(agent, availableModels, currentProvider);
+}
+
 function selectStandardProviderAwareAgentModel<T extends ProviderModelReference>(
 	agent: AgentModelDefaults | undefined,
 	availableModels: readonly T[],
@@ -237,6 +270,7 @@ function applyModelToRunnableTarget(
 	agents: ReadonlyMap<string, AgentModelDefaults>,
 	availableModels: readonly ProviderModelReference[],
 	currentProvider: string | undefined,
+	currentModel: ProviderModelReference | undefined,
 ): number {
 	if (!isRecord(target) || hasExplicitModel(target)) {
 		return 0;
@@ -244,7 +278,29 @@ function applyModelToRunnableTarget(
 
 	const agentName = agentNameForTarget(target);
 	const agent = agentName ? agents.get(agentName) : undefined;
-	const selectedModel = selectProviderAwareAgentModelId(agent, availableModels, currentProvider);
+	const oppositeProviderModel = selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider);
+	if (oppositeProviderModel) {
+		const selectedModel = formatProviderModelReference(oppositeProviderModel);
+		if (selectedModel === agent?.model) {
+			return 0;
+		}
+
+		target.model = selectedModel;
+		const fallbackModel = selectOppositeProviderFallbackModel(agent, availableModels, currentProvider, currentModel);
+		const fallbackModelId = fallbackModel ? formatProviderModelReference(fallbackModel) : undefined;
+		if (fallbackModelId && fallbackModelId !== selectedModel) {
+			if (!Object.hasOwn(target, "fallbackModels") || target.fallbackModels === undefined) {
+				target.fallbackModels = [fallbackModelId];
+			}
+			if (!Object.hasOwn(target, "modelFallbackNotice") || target.modelFallbackNotice === undefined) {
+				target.modelFallbackNotice = OPPOSITE_PROVIDER_FALLBACK_NOTICE;
+			}
+		}
+		return 1;
+	}
+
+	const standardModel = selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider);
+	const selectedModel = standardModel ? formatProviderModelReference(standardModel) : undefined;
 	if (!selectedModel || selectedModel === agent?.model) {
 		return 0;
 	}
@@ -258,16 +314,17 @@ export function applyProviderAwareSubagentModels(
 	agents: ReadonlyMap<string, AgentModelDefaults>,
 	availableModels: readonly ProviderModelReference[],
 	currentProvider?: string,
+	currentModel?: ProviderModelReference,
 ): number {
 	if (!isRecord(input)) {
 		return 0;
 	}
 
-	let mutations = applyModelToRunnableTarget(input, agents, availableModels, currentProvider);
+	let mutations = applyModelToRunnableTarget(input, agents, availableModels, currentProvider, currentModel);
 
 	if (Array.isArray(input.tasks)) {
 		for (const task of input.tasks) {
-			mutations += applyModelToRunnableTarget(task, agents, availableModels, currentProvider);
+			mutations += applyModelToRunnableTarget(task, agents, availableModels, currentProvider, currentModel);
 		}
 	}
 
@@ -278,11 +335,11 @@ export function applyProviderAwareSubagentModels(
 			}
 			if (Array.isArray(step.parallel)) {
 				for (const task of step.parallel) {
-					mutations += applyModelToRunnableTarget(task, agents, availableModels, currentProvider);
+					mutations += applyModelToRunnableTarget(task, agents, availableModels, currentProvider, currentModel);
 				}
 				continue;
 			}
-			mutations += applyModelToRunnableTarget(step, agents, availableModels, currentProvider);
+			mutations += applyModelToRunnableTarget(step, agents, availableModels, currentProvider, currentModel);
 		}
 	}
 

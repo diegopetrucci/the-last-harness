@@ -20,6 +20,24 @@ test("architect.md lists librarian and web-scout as allowed minor agents with di
 	);
 });
 
+test("architect.md keeps contrarian guidance out of the base subagent tools list", () => {
+	assert.doesNotMatch(
+		architectMd,
+		/- `contrarian`: adversarially stress-test plans, designs, assumptions, product directions, bug hypotheses, or review conclusions by steelmanning the strongest opposing case\./,
+	);
+});
+
+test("architect.md keeps contrarian-specific routing behind the experimental flag", () => {
+	assert.doesNotMatch(
+		architectMd,
+		/Use `contrarian` sparingly when you need an adversarial challenge pass on reasoning or direction\./,
+	);
+	assert.doesNotMatch(
+		architectMd,
+		/It is not the normal diff reviewer — `code-reviewer` owns review against tasks and diffs — and it is narrower than `oracle`, which provides a broader high-reasoning second opinion\./,
+	);
+});
+
 test("architect.md limits pre-ticket oracle suggestions to higher-risk planning work", () => {
 	assert.match(
 		architectMd,
@@ -40,6 +58,25 @@ test("architect.md requires specific risk wording and explicit consent before us
 		/If you think the `oracle` could help, explain the specific risk or uncertainty and ask the user if they want you to use it\./,
 	);
 	assert.match(architectMd, /Never trigger the `oracle` unless the user explicitly agrees\./);
+});
+
+test("architect.md keeps contrarian pre-ticket planning guidance behind the experimental flag", () => {
+	assert.doesNotMatch(
+		architectMd,
+		/Pre-ticket planning is the primary useful moment for `contrarian`\./,
+	);
+	assert.doesNotMatch(
+		architectMd,
+		/Apply a similarly sparing bar to `contrarian` as to `oracle`: consider it before ticket creation only when a proposed change has meaningful uncertainty, tradeoffs, blast radius, a hard-to-undo direction, or debatable assumptions, and name the specific risk or strongest opposing case you want stress-tested\./,
+	);
+	assert.doesNotMatch(
+		architectMd,
+		/Unlike `oracle`, `contrarian` should focus on the strongest credible opposition brief rather than a broad second opinion\./,
+	);
+	assert.doesNotMatch(
+		architectMd,
+		/Do not use `contrarian` as the normal diff reviewer or as an automatic step for routine localized work; use it sparingly\./,
+	);
 });
 
 test("architect.md keeps base validation planning ticket-specific", () => {

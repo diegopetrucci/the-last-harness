@@ -12,7 +12,7 @@ import {
 	resolvePrimaryAgentConfig,
 } from "../the-last-harness-primary-agent.mjs";
 import { createPrimaryToolState, filterAvailableTools } from "../the-last-harness-primary-tools.mjs";
-import { registerTlhStartupMode, validateSubagentToolInput } from "../the-last-harness-subagent-safety.mjs";
+import { allowedSubagentsForExperimentalConfig, registerTlhStartupMode, validateSubagentToolInput } from "../the-last-harness-subagent-safety.mjs";
 import {
 	buildTlhCommitAttributionPrompt,
 	getTlhGitCommitAttributionBlockReason,
@@ -48,6 +48,8 @@ type TlhPrimaryAgentRuntimeOptions = {
 	primaryAgents?: Map<TlhPrimaryAgentSelection, AgentPrompt>;
 	subagentMetadata?: SubagentMetadata[];
 };
+
+type ActiveModel = NonNullable<ExtensionContext["model"]>;
 
 export type TlhPrimaryAgentRuntime = {
 	applySessionStart(ctx: ExtensionContext): Promise<void>;
@@ -304,6 +306,11 @@ function registerChildSubagentRuntime(
 		if (event.toolName !== "bash") {
 			return undefined;
 		}
+		// `toolName` narrows the branch, but not the shared mutable `input` payload.
+		// Keep a runtime guard so direct/custom tool-call objects cannot pass a non-string command.
+		if (typeof event.input.command !== "string") {
+			return undefined;
+		}
 		const commitAttributionState = resolveTlhCommitAttribution(getTlhGlobalSettings(ctx.cwd).tlh?.attribution);
 		const reason = getTlhGitCommitAttributionBlockReason(event.input.command, commitAttributionState);
 		return reason ? { block: true, reason } : undefined;
@@ -454,8 +461,8 @@ function createTlhPrimaryAgentRuntime(
 	async function applyPrimaryModel(
 		ctx: ExtensionContext,
 		primary: AgentPrompt,
-		model: { provider: string; id: string } | undefined,
-	): Promise<{ provider: string; id: string } | undefined> {
+		model: ActiveModel | undefined,
+	): Promise<ActiveModel | undefined> {
 		if (!model) {
 			const candidates = [primary.model, ...(primary.tlhOpenaiModels ?? [])].filter(Boolean).join(", ");
 			warnOnce(ctx, `missing-primary-model-${primary.name}`, `TLH primary agent models are not available for configured providers: ${candidates}`);
@@ -563,7 +570,7 @@ function createTlhPrimaryAgentRuntime(
 
 	function parsePrimaryAgentSelection(value: string | undefined): TlhPrimaryAgentSelection | undefined {
 		const normalized = value?.trim().toLowerCase();
-		return PRIMARY_AGENT_CYCLE.includes(normalized) ? (normalized as TlhPrimaryAgentSelection) : undefined;
+		return normalized !== undefined && PRIMARY_AGENT_CYCLE.includes(normalized) ? (normalized as TlhPrimaryAgentSelection) : undefined;
 	}
 
 	function switchPrimaryAgentCommandCompletions(prefix: string) {
@@ -769,7 +776,7 @@ function createTlhPrimaryAgentRuntime(
 			await applyPrimaryDefaults(ctx);
 			const prompts = [
 				event.systemPrompt,
-				buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled),
+				buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled, settings.tlh?.experimental),
 				buildPrimaryExperimentalPrompt(activePrimaryAgent(), settings.tlh?.experimental),
 				buildTlhCommitAttributionPrompt(commitAttributionState),
 			];
@@ -781,6 +788,11 @@ function createTlhPrimaryAgentRuntime(
 
 		pi.on("tool_call", async (event, ctx) => {
 			if (event.toolName === "bash") {
+				// `toolName` narrows this branch, but not the shared mutable `input` payload.
+				// Keep a runtime guard so direct/custom tool-call objects cannot pass a non-string command.
+				if (typeof event.input.command !== "string") {
+					return undefined;
+				}
 				const commitAttributionState = resolveTlhCommitAttribution(getTlhGlobalSettings(ctx.cwd).tlh?.attribution);
 				const reason = getTlhGitCommitAttributionBlockReason(event.input.command, commitAttributionState);
 				return reason ? { block: true, reason } : undefined;
@@ -788,11 +800,24 @@ function createTlhPrimaryAgentRuntime(
 			if (event.toolName !== "subagent") {
 				return undefined;
 			}
-			applyProviderAwareSubagentModels(event.input, subagentsByName, getUnfilteredAvailableModels(ctx.modelRegistry), ctx.model?.provider);
+			applyProviderAwareSubagentModels(event.input, subagentsByName, getUnfilteredAvailableModels(ctx.modelRegistry), ctx.model?.provider, ctx.model);
 			syncPrimaryAgentState(ctx);
 			const selection = currentPrimaryAgentSelection();
+			const allowedSubagents = allowedSubagentsForExperimentalConfig(getTlhGlobalSettings(ctx.cwd).tlh?.experimental);
 			if (!isEnabledPrimaryAgentSelection(selection)) {
-				return undefined;
+				if (subagentCallTargetsAgent(event.input, "contrarian")) {
+					const contrarianReason = validateSubagentToolInput({ agent: "contrarian" }, { allowedSubagents });
+					if (contrarianReason) {
+						return { block: true, reason: contrarianReason };
+					}
+					const disabledReason = validateSubagentToolInput(event.input, { allowedSubagents });
+					return disabledReason ? { block: true, reason: disabledReason } : undefined;
+				}
+				if (!isSubagentResumeAction(event.input)) {
+					return undefined;
+				}
+				const disabledReason = validateSubagentToolInput(event.input, { allowedSubagents });
+				return disabledReason ? { block: true, reason: disabledReason } : undefined;
 			}
 			if (selection === "rush" && isSubagentResumeAction(event.input)) {
 				return { block: true, reason: rushResumeDelegationReason() };
@@ -800,7 +825,7 @@ function createTlhPrimaryAgentRuntime(
 			if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
 				return { block: true, reason: rushDeveloperDelegationReason() };
 			}
-			const reason = validateSubagentToolInput(event.input);
+			const reason = validateSubagentToolInput(event.input, { allowedSubagents });
 			return reason ? { block: true, reason } : undefined;
 		});
 	}
