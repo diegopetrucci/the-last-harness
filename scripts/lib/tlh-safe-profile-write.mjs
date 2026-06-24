@@ -64,7 +64,7 @@ function tempDirIdentity(tempDir, action = "clean up") {
 		stats = lstatSync(tempDir);
 	} catch (error) {
 		if (error?.code === "ENOENT") {
-			throw new Error(`refusing to ${action} missing temp directory: ${tempDir}`);
+			throw new Error(`refusing to ${action} missing temp directory: ${tempDir}`, { cause: error });
 		}
 		throw error;
 	}
@@ -80,7 +80,7 @@ function tempFileIdentity(tempTarget, action = "commit") {
 		stats = lstatSync(tempTarget);
 	} catch (error) {
 		if (error?.code === "ENOENT") {
-			throw new Error(`refusing to ${action} missing temp file: ${tempTarget}`);
+			throw new Error(`refusing to ${action} missing temp file: ${tempTarget}`, { cause: error });
 		}
 		throw error;
 	}

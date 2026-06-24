@@ -1188,7 +1188,6 @@ function getUnsupportedEnvGitCommitAttributionBlockReason(
 	let index = 1;
 	while (index < tokens.length) {
 		if (tokens[index] === "--") {
-			index += 1;
 			break;
 		}
 		const parseResult = getEnvLeadingOptionParseResult(tokens, index);

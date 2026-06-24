@@ -38,7 +38,7 @@ test("disabled primary mode does not overwrite active tools changed after primar
 	const primaryToolState = createPrimaryToolState();
 	let activeTools = ["bash", "edit"];
 
-	activeTools = primaryToolState.apply(["read", "grep"], activeTools);
+	primaryToolState.apply(["read", "grep"], activeTools);
 	activeTools = ["bash"];
 
 	const restoredTools = primaryToolState.restoreIfAppropriate(activeTools, availableTools);

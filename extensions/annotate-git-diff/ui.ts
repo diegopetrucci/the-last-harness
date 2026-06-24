@@ -34,6 +34,51 @@ function safeReadResolvedAsset(specifier: string): string {
 	return readFileSync(require.resolve(specifier), "utf8");
 }
 
+function resolveMonacoEditorWorkerJs(monacoBasePath: string): string {
+	const legacyWorkerPath = join(monacoBasePath, "base", "worker", "workerMain.js");
+	if (existsSync(legacyWorkerPath)) {
+		return readFileSync(legacyWorkerPath, "utf8");
+	}
+
+	const assetsDir = join(monacoBasePath, "assets");
+	if (existsSync(assetsDir)) {
+		const editorWorkerAsset = readdirSync(assetsDir)
+			.sort()
+			.find((entry) => /^editor\.worker-.*\.js$/.test(entry));
+		if (editorWorkerAsset) {
+			return readFileSync(join(assetsDir, editorWorkerAsset), "utf8");
+		}
+	}
+
+	throw new Error(`Unable to locate Monaco editor worker under ${monacoBasePath}`);
+}
+
+function resolveMonacoRuntimeJs(monacoBasePath: string): string {
+	const excludedFiles = new Set([
+		join(monacoBasePath, "loader.js"),
+		join(monacoBasePath, "editor", "editor.main.js"),
+	]);
+	const scripts: string[] = [];
+
+	const visit = (dir: string): void => {
+		for (const entry of readdirSync(dir, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+			const entryPath = join(dir, entry.name);
+			if (entry.isDirectory()) {
+				if (entry.name === "assets") continue;
+				visit(entryPath);
+				continue;
+			}
+			if (!entry.isFile() || !entry.name.endsWith(".js") || excludedFiles.has(entryPath)) {
+				continue;
+			}
+			scripts.push(readFileSync(entryPath, "utf8"));
+		}
+	};
+
+	visit(monacoBasePath);
+	return scripts.join("\n");
+}
+
 function resolveReviewUiAssets(): ReviewUiAssets {
 	try {
 		const tailwindBrowserJs = safeReadResolvedAsset("@tailwindcss/browser");
@@ -41,23 +86,15 @@ function resolveReviewUiAssets(): ReviewUiAssets {
 		const monacoLoaderJs = readFileSync(join(monacoBasePath, "loader.js"), "utf8");
 		const monacoEditorJs = readFileSync(join(monacoBasePath, "editor", "editor.main.js"), "utf8");
 		const monacoEditorCss = readFileSync(join(monacoBasePath, "editor", "editor.main.css"), "utf8");
-		const monacoWorkerJs = readFileSync(join(monacoBasePath, "base", "worker", "workerMain.js"), "utf8");
-		const basicLanguagesDir = join(monacoBasePath, "basic-languages");
-		const basicLanguagesJs = readdirSync(basicLanguagesDir)
-			.sort()
-			.map((lang) => {
-				const filePath = join(basicLanguagesDir, lang, `${lang}.js`);
-				return existsSync(filePath) ? readFileSync(filePath, "utf8") : "";
-			})
-			.filter(Boolean)
-			.join("\n");
+		const monacoWorkerJs = resolveMonacoEditorWorkerJs(monacoBasePath);
+		const monacoRuntimeJs = resolveMonacoRuntimeJs(monacoBasePath);
 		return {
 			tailwindBrowserJs,
 			monacoLoaderJs,
 			monacoEditorJs,
 			monacoEditorCss,
 			monacoWorkerJs,
-			monacoBasicLanguagesJs: basicLanguagesJs,
+			monacoBasicLanguagesJs: monacoRuntimeJs,
 			bootstrapError: null,
 		};
 	} catch (error) {
