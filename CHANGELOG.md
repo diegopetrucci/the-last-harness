@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-06-24
+
 ### Added
 
 - TLH now bundles a first-party experimental `contrarian` subagent, kept default-off behind `/experimental enable contrarian`, with opt-in guidance across TLH experimental primary-agent prompts and README docs. When enabled, `contrarian` is intended mainly for sparing pre-ticket adversarial stress-tests of plans, assumptions, product directions, bug hypotheses, and review conclusions — not the routine `code-reviewer` diff pass and not a replacement for the broader `oracle` second opinion.
