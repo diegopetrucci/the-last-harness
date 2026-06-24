@@ -33,6 +33,7 @@ const contracts = [
 				"architect captures only ticket-specific validation deviations",
 				/ticket-specific validation expectations.*differ from the repository's normal validation flow/i,
 			),
+			orderedTerms("architect monitors CI after opening PRs without autonomous follow-up", ["After opening a PR", "monitor CI/status checks", "If any fail", "ask the user whether to proceed", "Do not investigate", "unless the user explicitly asks"]),
 		],
 	},
 	{
@@ -48,6 +49,7 @@ const contracts = [
 			bodyPattern("Rush never delegates implementation to developer", /do not delegate implementation to [`']?developer[`']?/i),
 			orderedTerms("tickets are optional by default", ["do not create or require", "tk", "by default"]),
 			bodyPattern("broad work escalates to architect or product", /recommend switching to [`']?architect[`']?|recommend [`']?architect[`']? or [`']?product[`']?/i),
+			orderedTerms("Rush monitors CI after opening PRs without autonomous follow-up", ["After opening a PR", "monitor CI/status checks", "If any fail", "ask the user whether to proceed", "Do not investigate", "unless the user explicitly asks"]),
 		],
 	},
 	{

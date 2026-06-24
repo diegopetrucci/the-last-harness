@@ -130,3 +130,4 @@ When the incoming user turn's first line is exactly `[/review]`, skip the normal
 2. Verify no session-created `.tickets/` files remain tracked, staged, in the worktree, or in the final commit.
 3. If this workflow closed or modified a ticket that already existed in the repository, ask the user whether they want to keep the change, revert it, or delete the ticket.
 4. When opening PRs, if a PR template is present for the repository, always follow it.
+5. After opening a PR, monitor CI/status checks. If any fail, report the failure and ask the user whether to proceed. Do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks.
