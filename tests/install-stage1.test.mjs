@@ -27,6 +27,10 @@ const TLH_PINNED_PI_VERSION = "0.80.2";
 
 const TLH_PI_PACKAGE_SPEC = `@earendil-works/pi-coding-agent@${TLH_PINNED_PI_VERSION}`;
 
+function escapeRegExp(value) {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function pathWithoutRepoNodeModulesBin(pathValue = process.env.PATH || "") {
 	return pathValue.split(delimiter).filter((entry) => entry && resolve(entry) !== repoNodeModulesBin).join(delimiter);
 }
@@ -339,7 +343,7 @@ test("stage-1 repairs the TLH private Pi runtime to the pinned version when it h
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	assert.equal(result.status, 0, output);
-	assert.match(output, new RegExp(`Repairing TLH private Pi runtime to pinned ${TLH_PINNED_PI_VERSION.replace(/\./g, "\\.")}`));
+	assert.match(output, new RegExp(`Repairing TLH private Pi runtime to pinned ${escapeRegExp(TLH_PINNED_PI_VERSION)}`));
 	assert.deepEqual(readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [
 		`install -g --ignore-scripts --prefix ${runtimeDir} ${TLH_PI_PACKAGE_SPEC}`,
 	]);
@@ -422,7 +426,7 @@ test("stage-1 repairs the TLH private Pi runtime even when a supported Pi exists
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	assert.equal(result.status, 0, output);
-	assert.match(output, new RegExp(`Repairing TLH private Pi runtime to pinned ${TLH_PINNED_PI_VERSION.replace(/\./g, "\\.")}`));
+	assert.match(output, new RegExp(`Repairing TLH private Pi runtime to pinned ${escapeRegExp(TLH_PINNED_PI_VERSION)}`));
 	assert.deepEqual(readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [
 		`install -g --ignore-scripts --prefix ${runtimeDir} ${TLH_PI_PACKAGE_SPEC}`,
 	]);
@@ -623,7 +627,7 @@ test("installer helpers no longer support the removed --no-pi-install opt-out", 
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	assert.equal(stage0Help.status, 0, stage0Help.stderr);
-	assert.match(stage0Help.stdout, new RegExp(`Upstream Pi ${TLH_PINNED_PI_VERSION.replace(/\./g, "\\.")}`));
+	assert.match(stage0Help.stdout, new RegExp(`Upstream Pi ${escapeRegExp(TLH_PINNED_PI_VERSION)}`));
 	assert.match(stage0Help.stdout, /installed into a private TLH runtime/);
 	assert.doesNotMatch(stage0Help.stdout, /--no-pi-install/);
 
@@ -638,7 +642,7 @@ test("installer helpers no longer support the removed --no-pi-install opt-out", 
 	assert.equal(stage0RemovedFlag.stdout, "");
 
 	assert.throws(() => parseArgs(["--no-pi-install"]), /unknown option: --no-pi-install/);
-	assert.match(usage(), new RegExp(`Upstream Pi ${TLH_PINNED_PI_VERSION.replace(/\./g, "\\.")}`));
+	assert.match(usage(), new RegExp(`Upstream Pi ${escapeRegExp(TLH_PINNED_PI_VERSION)}`));
 	assert.doesNotMatch(usage(), /--no-pi-install/);
 
 	const updateHelp = spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-update.mjs"), "--help"], {
@@ -2549,7 +2553,7 @@ test("wrapper update --extensions helper prepends executable --pi-cmd directory 
 	]);
 	assert.equal(updateRecord.env.PI_CODING_AGENT_DIR, agentDir);
 	assert.equal(updateRecord.pi.status, 0, JSON.stringify(updateRecord));
-	assert.match(updateRecord.pi.stdout, new RegExp(TLH_MIN_PI_VERSION.replace(/\./g, "\\.")));
+	assert.match(updateRecord.pi.stdout, new RegExp(escapeRegExp(TLH_MIN_PI_VERSION)));
 
 	const updatePathEntries = updateRecord.env.PATH.split(delimiter);
 	assert.equal(updatePathEntries[0], pinnedPiDir, `expected pinned_dir first; got ${updatePathEntries.join(delimiter)}`);
@@ -3075,7 +3079,6 @@ test("uninstall.sh regression (tlht-h7vq): migrated runtime marker preserves nes
 	writeFileSync(join(tlhPackageDir, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent" }, null, 2));
 	writeFileSync(join(foreignPackageDir, "package.json"), JSON.stringify({ name: "foreign-package" }, null, 2));
 
-	const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 	const dryResult = spawnSync("bash", [join(repoRoot, "uninstall.sh"), "--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], {
 		cwd: repoRoot,
 		env: scrubInstallerEnv({ HOME: homeDir }),
@@ -3087,9 +3090,9 @@ test("uninstall.sh regression (tlht-h7vq): migrated runtime marker preserves nes
 	assert.equal(dryResult.status, 0, `dry-run failed:\n${dryOutput}`);
 	assert.match(
 		dryOutput,
-		new RegExp(`would remove migrated TLH pi from shared runtime \\(npm\\): npm uninstall -g --ignore-scripts --prefix "${escapeRegex(runtimeDir)}" @earendil-works/pi-coding-agent`),
+		new RegExp(`would remove migrated TLH pi from shared runtime \\(npm\\): npm uninstall -g --ignore-scripts --prefix "${escapeRegExp(runtimeDir)}" @earendil-works/pi-coding-agent`),
 	);
-	assert.doesNotMatch(dryOutput, new RegExp(`would remove private runtime: rm -rf ${escapeRegex(runtimeDir)}`));
+	assert.doesNotMatch(dryOutput, new RegExp(`would remove private runtime: rm -rf ${escapeRegExp(runtimeDir)}`));
 	assert.equal(existsSync(foreignPackageDir), true, "dry-run must not remove nested foreign package");
 
 	writeFakeCommand(fakeNpmDir, "npm", [
