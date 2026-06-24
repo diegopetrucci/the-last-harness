@@ -73,10 +73,8 @@ function contrarianExperimentalDisabledReason() {
 	return "TLH contrarian is an experimental minor agent and is currently disabled. Enable it with /experimental enable contrarian in the isolated TLH profile before delegating to contrarian.";
 }
 
-function contrarianResumeBlockedReason({ opaque = false } = {}) {
-	return opaque
-		? `${contrarianExperimentalDisabledReason()} TLH primary-agent subagent action=resume is blocked unless TLH can prove the resumed run is not contrarian.`
-		: `${contrarianExperimentalDisabledReason()} TLH primary-agent subagent action=resume may not continue a prior contrarian run while the experiment is disabled.`;
+function contrarianResumeBlockedReason() {
+	return `${contrarianExperimentalDisabledReason()} TLH primary-agent subagent action=resume may not continue a prior contrarian run while the experiment is disabled.`;
 }
 
 function collectSubagentTargets(input) {
@@ -186,17 +184,14 @@ function validateNestedFreshSubagentContexts(input) {
 	return undefined;
 }
 
-// Resume-by-id/index is target-opaque. Trusted callers may pass options.resumeTargetAgent
-// after resolving the stored run target; otherwise fail closed while contrarian is disabled.
+// Resume-by-id/index is target-opaque. Allow opaque resumes by default;
+// trusted callers may pass options.resumeTargetAgent to block known contrarian resumes.
 function validateResumeTarget(allowedSubagentSet, options = {}) {
 	if (allowedSubagentSet.has("contrarian")) {
 		return undefined;
 	}
 
 	const resumeTargetAgent = normalizeAllowedSubagent(options.resumeTargetAgent);
-	if (!resumeTargetAgent) {
-		return contrarianResumeBlockedReason({ opaque: true });
-	}
 	if (resumeTargetAgent === "contrarian") {
 		return contrarianResumeBlockedReason();
 	}

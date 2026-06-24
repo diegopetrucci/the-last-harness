@@ -243,24 +243,20 @@ test("disabled primary mode keeps malformed mixed experimental arrays fail-close
 	});
 });
 
-test("disabled primary mode blocks opaque resume unless contrarian is enabled", async (t) => {
+test("disabled primary mode allows opaque resume while contrarian is disabled", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const branchEntries = [{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "disabled" } }];
 	const ctx = createToolCallContext(branchEntries, undefined, { cwd: fixture.cwd });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
-		const blockedResumeEvent = {
+		const opaqueResumeEvent = {
 			toolName: "subagent",
 			input: { action: "resume", id: "run-123", message: "Continue the approved ticket.", agentScope: "", context: "" },
 		};
-		assert.deepEqual(await toolCall(blockedResumeEvent, ctx), {
-			block: true,
-			reason:
-				"TLH contrarian is an experimental minor agent and is currently disabled. Enable it with /experimental enable contrarian in the isolated TLH profile before delegating to contrarian. TLH primary-agent subagent action=resume is blocked unless TLH can prove the resumed run is not contrarian.",
-		});
-		assert.equal(blockedResumeEvent.input.agentScope, "user");
-		assert.equal(blockedResumeEvent.input.context, "fresh");
+		assert.equal(await toolCall(opaqueResumeEvent, ctx), undefined);
+		assert.equal(opaqueResumeEvent.input.agentScope, "user");
+		assert.equal(opaqueResumeEvent.input.context, "fresh");
 
 		writeFileSync(
 			join(fixture.agent, "settings.json"),
@@ -1424,7 +1420,7 @@ test("enabled primary mode blocks disallowed nested delegation targets after for
 	assert.equal(event.input.context, "fresh");
 });
 
-test("enabled primary mode normalizes safe management list/get inputs and blocks opaque or unsafe resume calls", async () => {
+test("enabled primary mode normalizes safe management list/get/resume inputs and blocks unsafe resume calls", async () => {
 	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
 	const ctx = createToolCallContext([
 		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
@@ -1453,18 +1449,10 @@ test("enabled primary mode normalizes safe management list/get inputs and blocks
 	assert.equal(getEvent.input.agentScope, "user");
 	assert.equal(await toolCall(getBothEvent, ctx), undefined);
 	assert.equal(getBothEvent.input.agentScope, "user");
-	assert.deepEqual(await toolCall(resumeEvent, ctx), {
-		block: true,
-		reason:
-			"TLH contrarian is an experimental minor agent and is currently disabled. Enable it with /experimental enable contrarian in the isolated TLH profile before delegating to contrarian. TLH primary-agent subagent action=resume is blocked unless TLH can prove the resumed run is not contrarian.",
-	});
+	assert.equal(await toolCall(resumeEvent, ctx), undefined);
 	assert.equal(resumeEvent.input.agentScope, "user");
 	assert.equal(resumeEvent.input.context, "fresh");
-	assert.deepEqual(await toolCall(resumeBothEvent, ctx), {
-		block: true,
-		reason:
-			"TLH contrarian is an experimental minor agent and is currently disabled. Enable it with /experimental enable contrarian in the isolated TLH profile before delegating to contrarian. TLH primary-agent subagent action=resume is blocked unless TLH can prove the resumed run is not contrarian.",
-	});
+	assert.equal(await toolCall(resumeBothEvent, ctx), undefined);
 	assert.equal(resumeBothEvent.input.agentScope, "user");
 	assert.equal(resumeBothEvent.input.context, "fresh");
 	assert.deepEqual(await toolCall(blockedGetEvent, ctx), {
