@@ -79,7 +79,7 @@
     "replaces": ["npm:pi-subagents", "git:github.com/nicobailon/pi-subagents"],
     "migrateReplacements": true,
     "critical": true,
-    "source": "git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-12",
+    "source": "git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-13",
     "description": "Delegate work to isolated TLH-profile subagents."
   },
   {

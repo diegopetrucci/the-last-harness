@@ -189,7 +189,7 @@ test("validateSubagentToolInput allows approved management calls and keeps enabl
 	}
 });
 
-test("validateSubagentToolInput blocks opaque disabled-contrarian resume and unsafe scopes/contexts", () => {
+test("validateSubagentToolInput allows opaque disabled-contrarian resume and blocks unsafe scopes/contexts", () => {
 	assert.match(validateSubagentToolInput({ action: "delete" }), /may not use subagent management action 'delete'/);
 	assert.match(validateSubagentToolInput({ agent: "developer", agentScope: "both" }), /may not use agentScope: "both"/);
 	assert.match(validateSubagentToolInput({ agent: "developer", agentScope: "project" }), /may not use agentScope: "project"/);
@@ -205,9 +205,7 @@ test("validateSubagentToolInput blocks opaque disabled-contrarian resume and uns
 	assert.match(validateSubagentToolInput({ action: "resume", context: 1 }), /subagent resume must use context: "fresh"/);
 
 	const opaqueResume = { action: "resume", id: "run-123", message: "Continue with the approved ticket.", agentScope: "", context: "" };
-	const opaqueReason = validateSubagentToolInput(opaqueResume);
-	assert.match(opaqueReason, /experimental minor agent/i);
-	assert.match(opaqueReason, /action=resume is blocked unless TLH can prove the resumed run is not contrarian/i);
+	assertAllowed(opaqueResume);
 	assert.equal(opaqueResume.agentScope, "user");
 	assert.equal(opaqueResume.context, "fresh");
 
