@@ -12,6 +12,7 @@ import type { AgentPrompt, TlhExperimentalConfig, TlhExperimentalFeatureId, TlhS
 
 export const TLH_CONTRARIAN_FEATURE: TlhExperimentalFeatureId = CONTRARIAN_EXPERIMENTAL_FEATURE;
 export const DELTA_FOLLOW_UP_REVIEWS_FEATURE: TlhExperimentalFeatureId = "delta-follow-up-reviews";
+export const CI_FAILURE_INVESTIGATION_FEATURE: TlhExperimentalFeatureId = "ci-failure-investigation";
 
 const EXPERIMENTAL_COMMAND_HELP = [
 	"Usage: /experimental [list|status [feature]|enable <feature>|disable <feature>|toggle <feature>]",
@@ -82,6 +83,22 @@ Additional minor agent:
 - \`contrarian\`: adversarially stress-test bug hypotheses or review conclusions by steelmanning the strongest opposing case. Use it sparingly when you need to challenge your diagnosis; it does not replace \`code-reviewer\`, which reviews code changes, or \`oracle\`, which gives a broader second opinion.
 `;
 
+const CI_FAILURE_INVESTIGATION_ARCHITECT_PROMPT = `
+## TLH Experimental Feature: ci-failure-investigation
+
+This TLH experiment is enabled for the architect primary agent.
+
+This experiment overrides the default post-PR monitor-and-ask-only step for this specific case.
+
+After TLH opens a PR and CI/status checks fail:
+
+1. You may do a read-only investigation before asking the user whether to proceed.
+2. Keep that investigation read-only: inspect failed checks, logs, workflow/config files, diffs, and relevant code or tests as needed to understand the failure.
+3. Do not edit files, commit, push, rerun jobs, change the PR, or take any other follow-up action during this investigation.
+4. After the investigation, summarize the failure and likely cause, then ask the user whether to proceed.
+5. Before any edits, commits, pushes, reruns, PR changes, or other follow-up changes, ask for explicit user approval.
+`;
+
 type TlhExperimentalFeature = {
 	id: TlhExperimentalFeatureId;
 	description: string;
@@ -120,6 +137,13 @@ const TLH_EXPERIMENTAL_FEATURES: TlhExperimentalFeature[] = [
 			architect: DELTA_FOLLOW_UP_REVIEWS_ARCHITECT_PROMPT.trim(),
 		},
 		codeReviewerPrompt: DELTA_FOLLOW_UP_REVIEWS_CODE_REVIEWER_PROMPT.trim(),
+	},
+	{
+		id: CI_FAILURE_INVESTIGATION_FEATURE,
+		description: "Architect-only guidance to perform read-only PR CI/status-check investigation before asking whether to proceed.",
+		primaryAgentPrompts: {
+			architect: CI_FAILURE_INVESTIGATION_ARCHITECT_PROMPT.trim(),
+		},
 	},
 ];
 

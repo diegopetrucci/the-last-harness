@@ -119,14 +119,17 @@ test("annotate-git-diff docs use the renamed command and extension names", () =>
 	assert.match(commandsDoc, /`annotate-git-diff`/);
 });
 
-test("commands docs describe contrarian and delta-follow-up-reviews as default-off /experimental flags", () => {
+test("commands docs describe contrarian, delta-follow-up-reviews, and architect-only ci-failure-investigation as default-off /experimental flags", () => {
 	const commandsDoc = readRepoFile("docs/commands.md");
 
 	assert.match(commandsDoc, /`\/experimental`/);
 	assert.match(commandsDoc, /contrarian/);
 	assert.match(commandsDoc, /delta-follow-up-reviews/);
+	assert.match(commandsDoc, /ci-failure-investigation/);
+	assert.match(commandsDoc, /architect primary agent do read-only failed ci\/status-check investigation/i);
 	assert.match(commandsDoc, /\/experimental enable contrarian/);
 	assert.match(commandsDoc, /\/experimental disable contrarian/);
+	assert.match(commandsDoc, /before any edits, commits, pushes, reruns, pr changes, or other follow-up changes/i);
 	assert.match(commandsDoc, /disabled by default/i);
 	assert.match(commandsDoc, /stale `run-tests-last` values/i);
 	assert.doesNotMatch(commandsDoc, /contrarian-subagent/);

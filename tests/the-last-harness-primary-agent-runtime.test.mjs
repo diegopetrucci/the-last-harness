@@ -9,7 +9,9 @@ import { cleanupTempDir, createIsolatedProfileFixture, withEnv } from "./test-fi
 
 const jiti = createJiti(import.meta.url);
 const { TLH_DEFAULT_COMMIT_ATTRIBUTION } = await jiti.import("../extensions/the-last-harness/attribution.ts");
-const { DELTA_FOLLOW_UP_REVIEWS_FEATURE, TLH_CONTRARIAN_FEATURE } = await jiti.import("../extensions/the-last-harness/experimental.ts");
+const { CI_FAILURE_INVESTIGATION_FEATURE, DELTA_FOLLOW_UP_REVIEWS_FEATURE, TLH_CONTRARIAN_FEATURE } = await jiti.import(
+	"../extensions/the-last-harness/experimental.ts",
+);
 const { registerTlhPrimaryAgentRuntime } = await jiti.import("../extensions/the-last-harness/primary-agent-runtime.ts");
 
 function createPiHarness() {
@@ -367,6 +369,60 @@ test("before_agent_start gates delta follow-up review guidance behind isolated T
 		assert.match(enabledPrompt.systemPrompt, /default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint/i);
 		assert.match(enabledPrompt.systemPrompt, /prior findings.*git range or checkpoint.*changed-file list/i);
 		assert.match(enabledPrompt.systemPrompt, /targeted wider review or full re-review/i);
+	});
+});
+
+test("before_agent_start gates ci failure investigation guidance behind isolated TLH settings for architect only", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { beforeAgentStart } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const defaultPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /## TLH Experimental Feature: ci-failure-investigation/);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /read-only investigation before asking the user whether to proceed/i);
+
+		for (const enabledFeatures of [true, [123]]) {
+			writeFileSync(
+				join(fixture.agent, "settings.json"),
+				`${JSON.stringify({ tlh: { experimental: { enabledFeatures } } }, null, 2)}\n`,
+			);
+			const malformedPrompt = await beforeAgentStart(
+				{ systemPrompt: "base prompt" },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /## TLH Experimental Feature: ci-failure-investigation/);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /read-only investigation before asking the user whether to proceed/i);
+		}
+
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [CI_FAILURE_INVESTIGATION_FEATURE] } } }, null, 2)}\n`,
+		);
+		const architectPrompt = await beforeAgentStart(
+			{ systemPrompt: "base prompt" },
+			createToolCallContext([], undefined, { cwd: fixture.cwd }),
+		);
+		assert.match(architectPrompt.systemPrompt, /## TLH Experimental Feature: ci-failure-investigation/);
+		assert.match(architectPrompt.systemPrompt, /This TLH experiment is enabled for the architect primary agent/i);
+		assert.match(architectPrompt.systemPrompt, /overrides the default post-PR monitor-and-ask-only step/i);
+		assert.match(architectPrompt.systemPrompt, /read-only investigation before asking the user whether to proceed/i);
+		assert.match(architectPrompt.systemPrompt, /Do not edit files, commit, push, rerun jobs, change the PR/i);
+		assert.match(architectPrompt.systemPrompt, /edits, commits, pushes, reruns, PR changes, or other follow-up changes/i);
+		assert.match(architectPrompt.systemPrompt, /ask for explicit user approval/i);
+
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify(
+				{ tlh: { primaryAgent: { selected: "rush" }, experimental: { enabledFeatures: [CI_FAILURE_INVESTIGATION_FEATURE] } } },
+				null,
+				2,
+			)}\n`,
+		);
+		const rushPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		assert.doesNotMatch(rushPrompt.systemPrompt, /## TLH Experimental Feature: ci-failure-investigation/);
+		assert.doesNotMatch(rushPrompt.systemPrompt, /This TLH experiment is enabled for TLH Rush/i);
+		assert.doesNotMatch(rushPrompt.systemPrompt, /read-only investigation before asking the user whether to proceed/i);
+		assert.doesNotMatch(rushPrompt.systemPrompt, /summarize the failure and likely cause, then ask the user whether to proceed/i);
 	});
 });
 

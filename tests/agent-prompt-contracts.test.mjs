@@ -207,6 +207,17 @@ test("base primary prompts keep contrarian guidance behind the experimental flag
 	}
 });
 
+test("base architect and rush prompts keep ci failure investigation guidance behind the experimental flag", () => {
+	for (const name of ["architect", "rush"]) {
+		const { normalizedBody } = readAgentPrompt("primary", name);
+		assert.doesNotMatch(normalizedBody, /read-only investigation before asking the user whether to proceed/i);
+		assert.doesNotMatch(normalizedBody, /inspect failed checks, logs, workflow\/config files, diffs/i);
+		assert.doesNotMatch(normalizedBody, /rerun jobs, change the pr, or take any other follow-up action during this investigation/i);
+		assert.match(normalizedBody, /after opening a pr, monitor ci\/status checks/i);
+		assert.match(normalizedBody, /do not investigate .* unless the user explicitly asks/i);
+	}
+});
+
 test("base developer prompt does not inherit the architect final-validation workflow", () => {
 	const developer = readAgentPrompt("subagents", "developer");
 	const { normalizedBody } = developer;
