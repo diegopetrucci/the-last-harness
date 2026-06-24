@@ -759,22 +759,22 @@ function extractShellRedirectionTarget(command) {
 				continue;
 			}
 
-			let target = "";
-			if (candidate[cursor] === "'" || candidate[cursor] === '"') {
-				const quote = candidate[cursor];
-				cursor += 1;
-				const start = cursor;
-				while (cursor < candidate.length && candidate[cursor] !== quote) {
+			const target = (() => {
+				if (candidate[cursor] === "'" || candidate[cursor] === '"') {
+					const quote = candidate[cursor];
 					cursor += 1;
+					const start = cursor;
+					while (cursor < candidate.length && candidate[cursor] !== quote) {
+						cursor += 1;
+					}
+					return candidate.slice(start, cursor);
 				}
-				target = candidate.slice(start, cursor);
-			} else {
 				const start = cursor;
 				while (cursor < candidate.length && !/[\s;&|]/.test(candidate[cursor])) {
 					cursor += 1;
 				}
-				target = candidate.slice(start, cursor);
-			}
+				return candidate.slice(start, cursor);
+			})();
 
 			const normalizedTarget = normalizeText(target);
 			if (!normalizedTarget || isSafeShellSink(normalizedTarget)) {
