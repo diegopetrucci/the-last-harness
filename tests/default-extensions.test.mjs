@@ -16,7 +16,6 @@ const retiredPlannotatorPackage = "npm:@plannotator/pi-extension";
 const expectedBundledNpmSources = new Map([
 	["openai-fast", "npm:@diegopetrucci/pi-openai-fast@0.1.6"],
 	["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth@0.6.3"],
-	["librarian", "npm:@diegopetrucci/pi-librarian@0.1.7"],
 	["fff", "npm:@ff-labs/pi-fff@0.9.6"],
 	["inline-bash", "npm:@diegopetrucci/pi-inline-bash@0.1.3"],
 	["notify", "npm:@diegopetrucci/pi-notify@0.1.7"],
@@ -129,6 +128,7 @@ test("bundled manifest keeps quiet-tools-compatible rtk load order", () => {
 	assert.equal(dirtyRepoGuard.source, expectedBundledNpmSources.get("dirty-repo-guard"));
 	assert.equal(ids.includes("permission-gate"), false);
 	assert.equal(ids.includes("confirm-destructive"), false);
+	assert.equal(ids.includes("librarian"), false);
 	assert.ok(rtk, "bundled rtk default should exist");
 	assert.deepEqual(rtk.aliases, ["pi-rtk"]);
 	assert.deepEqual(rtk.replaces, [

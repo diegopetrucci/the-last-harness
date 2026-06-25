@@ -1454,26 +1454,32 @@ test("enabled primary mode blocks contrarian until the experiment is enabled and
 	});
 });
 
-test("enabled primary mode blocks disallowed nested delegation targets after forcing safe defaults", async () => {
-	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
-	const event = {
-		toolName: "subagent",
-		input: {
-			tasks: [{ agent: "repo-scout", prompt: "Inspect the repo" }],
-			chain: [{ parallel: [{ agent: "planner", prompt: "Plan the work" }] }],
-		},
-	};
-	const ctx = createToolCallContext([
-		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
-	]);
+test("enabled primary mode blocks disallowed nested delegation targets after forcing safe defaults", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const ctx = createToolCallContext(
+		[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
+		undefined,
+		{ cwd: fixture.cwd },
+	);
 
-	assert.deepEqual(await toolCall(event, ctx), {
-		block: true,
-		reason:
-			"TLH primary agents may delegate only to: developer, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle. Disallowed target(s): planner.",
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
+		const event = {
+			toolName: "subagent",
+			input: {
+				tasks: [{ agent: "repo-scout", prompt: "Inspect the repo" }],
+				chain: [{ parallel: [{ agent: "planner", prompt: "Plan the work" }] }],
+			},
+		};
+
+		assert.deepEqual(await toolCall(event, ctx), {
+			block: true,
+			reason:
+				"TLH primary agents may delegate only to: developer, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle. Disallowed target(s): planner.",
+		});
+		assert.equal(event.input.agentScope, "user");
+		assert.equal(event.input.context, "fresh");
 	});
-	assert.equal(event.input.agentScope, "user");
-	assert.equal(event.input.context, "fresh");
 });
 
 test("enabled primary mode normalizes safe management list/get/resume inputs and blocks unsafe resume calls", async () => {

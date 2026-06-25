@@ -28,4 +28,3 @@ Tracked as a follow-up to PR #176 (runtime ownership marker). Linked context: gn
 ## Acceptance Criteria
 
 A migrated/legacy runtime that is actually a shared npm prefix is NOT subject to rm -rf of co-located packages on 'tlh uninstall'. Chosen approach (A/B/C) implemented with tests proving a shared prefix's foreign package survives uninstall of a migrated runtime. npm run validate passes.
-

@@ -15,4 +15,3 @@ Follow-up from tlh-ntag investigation. Enable noUncheckedIndexedAccess only afte
 ## Acceptance Criteria
 
 noUncheckedIndexedAccess is evaluated independently from strict mode; indexed-access errors are fixed without broad non-null assertion sweeps; npm run typecheck -- --noUncheckedIndexedAccess true passes; npm run validate passes before enabling the flag in tsconfig.
-
