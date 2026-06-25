@@ -10,7 +10,7 @@ Before considering changes ready, run:
 npm run validate
 ```
 
-This is the standard full validation flow for this repository. It includes the runtime TypeScript typecheck and generated-output freshness check before the installer smoke checks, tests, lint, and package dry-run. Its default `npm test` phase uses the quiet dot reporter so passing runs stay concise.
+This is the standard full validation flow for this repository. It includes the main TypeScript `tsc --noEmit` check, the runtime `.mts` typecheck, and the generated-output freshness check before the installer smoke checks, tests, lint, and package dry-run. Its default `npm test` phase uses the quiet dot reporter so passing runs stay concise.
 
 ## Test output modes
 
@@ -37,7 +37,7 @@ bash install.sh --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -
 bash -s -- --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -d)" < install.sh
 ```
 
-For runtime `.mts` changes under `scripts/`, use `npm run check:runtime` to confirm the generated `.mjs` files are fresh without mutating the worktree, and `npm run build` only when you intentionally want to refresh those generated outputs.
+For runtime `.mts` changes under `scripts/`, use `npm run typecheck:runtime` for the focused runtime-only typecheck, `npm run check:runtime` to confirm the generated `.mjs` files are fresh without mutating the worktree, and `npm run build` only when you intentionally want to refresh those generated outputs.
 
 For installer tests, prefer temporary `--agent-dir` and `--bin-dir` values. Do not run a real install into home directories unless explicitly requested.
 

@@ -81,17 +81,19 @@ function assertNoTemporaryCheckOutputs(tempDir) {
 test("runtime TypeScript package scripts stay wired into validation before tests and pack", () => {
 	const pkg = readPackageJson();
 	assert.equal(pkg.scripts.build, "npm run build:runtime");
-	assert.equal(pkg.scripts.typecheck, "npm run typecheck:runtime");
+	assert.equal(pkg.scripts.typecheck, "tsc --noEmit");
 	assert.equal(pkg.scripts["build:runtime"], "node scripts/runtime-typescript.mjs build");
 	assert.equal(pkg.scripts["check:runtime"], "node scripts/runtime-typescript.mjs check");
 	assert.equal(pkg.scripts["typecheck:runtime"], "node scripts/runtime-typescript.mjs typecheck");
 
 	const validate = pkg.scripts.validate;
 	assert.match(validate, /npm run typecheck/);
+	assert.match(validate, /npm run typecheck:runtime/);
 	assert.match(validate, /npm run check:runtime/);
 	assert.match(validate, /npm test/);
 	assert.match(validate, /npm pack --dry-run/);
-	assert.ok(validate.indexOf("npm run typecheck") < validate.indexOf("npm test"));
+	assert.ok(validate.indexOf("npm run typecheck") < validate.indexOf("npm run typecheck:runtime"));
+	assert.ok(validate.indexOf("npm run typecheck:runtime") < validate.indexOf("npm run check:runtime"));
 	assert.ok(validate.indexOf("npm run check:runtime") < validate.indexOf("npm test"));
 	assert.ok(validate.indexOf("npm run check:runtime") < validate.indexOf("npm pack --dry-run"));
 });

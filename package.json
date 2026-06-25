@@ -29,9 +29,9 @@
     "lint": "eslint \"scripts/**/*.{js,mjs,ts,mts}\" \"tests/**/*.{js,mjs,ts,mts}\" \"extensions/**/*.{js,mjs,ts,mts}\"",
     "test": "node --test --test-reporter=dot tests/*.test.mjs",
     "test:verbose": "node --test tests/*.test.mjs",
-    "typecheck": "npm run typecheck:runtime",
+    "typecheck": "tsc --noEmit",
     "typecheck:runtime": "node scripts/runtime-typescript.mjs typecheck",
-    "validate": "npm run check:package-versions && npm run typecheck && npm run check:runtime && bash scripts/check-installer-smoke.sh && npm test && npm run lint && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
+    "validate": "npm run check:package-versions && npm run typecheck && npm run typecheck:runtime && npm run check:runtime && bash scripts/check-installer-smoke.sh && npm test && npm run lint && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
   },
   "files": [
     "agents",
