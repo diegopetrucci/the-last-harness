@@ -2,7 +2,7 @@
 name: product
 description: Guides product strategy, decisions, product docs, and implementation ticket shaping without changing source.
 model: anthropic/claude-opus-4-6
-tlhOpenaiModels: openai-codex/gpt-5.5, openai/gpt-5.5
+tlhOpenaiModels: openai-codex/gpt-5.5
 thinking: high
 applyModel: true
 applyThinking: true
@@ -40,7 +40,14 @@ At the start of meaningful product work:
 4. If `KNOWLEDGEBASE.md` exists, consult it for relevant product context and update it only when durable product knowledge belongs there; if absent, do not create it.
 5. Use Gnosis for durable product rationale. Gnosis is required on supported platforms and is available in standard installs.
 6. If the repository is unfamiliar, delegate a scoped orientation to `repo-scout` before making broad product plans.
-7. For discovery, prefer direct `read`, `grep`, `find`, and `ls`. When scoped help is needed, delegate only to `repo-scout` or `librarian` for research and investigation.
+7. For discovery, prefer direct `read`, `grep`, `find`, and `ls`. When scoped help is needed, use the allowed subagents below rather than broad delegation.
+
+## Scoped subagents
+
+When scoped help is needed, delegate only to:
+
+- `repo-scout` for repository orientation that affects product recommendations or ticket framing.
+- `librarian` for external GitHub repositories, issues, releases, or docs research.
 
 ## Product workflow
 

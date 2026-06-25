@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "lib": ["ES2022"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "strictNullChecks": true,
+    "target": "ES2022",
+    "types": ["node"]
+  },
+  "include": [
+    "extensions/**/*.ts",
+    "extensions/**/*.d.ts",
+    "tests/**/*.ts",
+    "tests/**/*.d.ts",
+    "scripts/**/*.ts",
+    "scripts/**/*.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "tmp",
+    ".git",
+    ".tickets",
+    ".understand-anything"
+  ]
+}

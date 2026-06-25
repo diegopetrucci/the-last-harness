@@ -5,7 +5,6 @@ const HIDDEN_SLASH_COMMANDS = new Set([
 	"changelog",
 	"clone",
 	"import",
-	"oracle-model",
 	"quiet-tools",
 	"fff-health",
 	"fff-rescan",
@@ -69,6 +68,7 @@ function transformSuggestions(
 
 export function createTlhAutocompleteProvider(current: AutocompleteProvider): AutocompleteProvider {
 	return {
+		...(current.triggerCharacters ? { triggerCharacters: current.triggerCharacters } : {}),
 		async getSuggestions(
 			lines: string[],
 			cursorLine: number,

@@ -69,8 +69,8 @@ function rushPrimary() {
 	return {
 		name: "rush",
 		description: "Rush primary",
-		model: "anthropic/claude-opus-4-7",
-		tlhOpenaiModels: ["openai-codex/gpt-5.5", "openai/gpt-5.5"],
+		model: "anthropic/claude-opus-4-8",
+		tlhOpenaiModels: ["openai-codex/gpt-5.5"],
 		thinking: "low",
 		tlhOpenaiThinking: "off",
 		preferCurrentOpenaiModel: true,
@@ -98,7 +98,7 @@ function bugHunterPrimary() {
 	return {
 		name: "bug-hunter",
 		description: "Bug-hunter primary",
-		model: "anthropic/claude-opus-4-7",
+		model: "anthropic/claude-opus-4-8",
 		thinking: "high",
 		lockThinking: true,
 		tools: [],
@@ -111,7 +111,7 @@ function architectPrimary() {
 	return {
 		name: "architect",
 		description: "Architect primary",
-		model: "anthropic/claude-opus-4-7",
+		model: "anthropic/claude-opus-4-8",
 		thinking: "high",
 		minThinking: "medium",
 		tools: [],
@@ -122,7 +122,7 @@ function architectPrimary() {
 
 /** A reasoning model whose thinkingLevelMap supports xhigh. */
 function reasoningModel(provider = "anthropic") {
-	return { provider, id: "claude-opus-4-7", reasoning: true, thinkingLevelMap: { xhigh: "max" } };
+	return { provider, id: "claude-opus-4-8", reasoning: true, thinkingLevelMap: { xhigh: "max" } };
 }
 
 // ---------------------------------------------------------------------------

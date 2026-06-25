@@ -10,6 +10,7 @@ const TLH_SUBAGENT_PROMPTS = Object.freeze([
     "diff-summarizer.md",
     "librarian.md",
     "oracle.md",
+    "contrarian.md",
     "web-scout.md",
 ]);
 function isPlainObject(value) {

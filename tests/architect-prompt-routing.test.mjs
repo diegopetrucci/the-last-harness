@@ -20,6 +20,24 @@ test("architect.md lists librarian and web-scout as allowed minor agents with di
 	);
 });
 
+test("architect.md keeps contrarian guidance out of the base subagent tools list", () => {
+	assert.doesNotMatch(
+		architectMd,
+		/- `contrarian`: adversarially stress-test plans, designs, assumptions, product directions, bug hypotheses, or review conclusions by steelmanning the strongest opposing case\./,
+	);
+});
+
+test("architect.md keeps contrarian-specific routing behind the experimental flag", () => {
+	assert.doesNotMatch(
+		architectMd,
+		/Use `contrarian` sparingly when you need an adversarial challenge pass on reasoning or direction\./,
+	);
+	assert.doesNotMatch(
+		architectMd,
+		/It is not the normal diff reviewer — `code-reviewer` owns review against tasks and diffs — and it is narrower than `oracle`, which provides a broader high-reasoning second opinion\./,
+	);
+});
+
 test("architect.md limits pre-ticket oracle suggestions to higher-risk planning work", () => {
 	assert.match(
 		architectMd,
@@ -42,6 +60,25 @@ test("architect.md requires specific risk wording and explicit consent before us
 	assert.match(architectMd, /Never trigger the `oracle` unless the user explicitly agrees\./);
 });
 
+test("architect.md keeps contrarian pre-ticket planning guidance behind the experimental flag", () => {
+	assert.doesNotMatch(
+		architectMd,
+		/Pre-ticket planning is the primary useful moment for `contrarian`\./,
+	);
+	assert.doesNotMatch(
+		architectMd,
+		/Apply a similarly sparing bar to `contrarian` as to `oracle`: consider it before ticket creation only when a proposed change has meaningful uncertainty, tradeoffs, blast radius, a hard-to-undo direction, or debatable assumptions, and name the specific risk or strongest opposing case you want stress-tested\./,
+	);
+	assert.doesNotMatch(
+		architectMd,
+		/Unlike `oracle`, `contrarian` should focus on the strongest credible opposition brief rather than a broad second opinion\./,
+	);
+	assert.doesNotMatch(
+		architectMd,
+		/Do not use `contrarian` as the normal diff reviewer or as an automatic step for routine localized work; use it sparingly\./,
+	);
+});
+
 test("architect.md keeps base validation planning ticket-specific", () => {
 	assert.ok(
 		bodyPattern(
@@ -51,13 +88,28 @@ test("architect.md keeps base validation planning ticket-specific", () => {
 	);
 });
 
-test("architect.md leaves run-tests-last final-validation workflow out of the base prompt", () => {
+test("architect.md permanently includes the final-validation-ticket workflow", () => {
+	assert.match(architectNormalizedBody, /final-validation ticket.*depends on all implementation tickets/i);
+	assert.match(architectNormalizedBody, /implementation-ticket validation narrow and ticket-scoped/i);
+	assert.match(architectNormalizedBody, /when [`']?VALIDATING\.md[`']? is present.*otherwise use repo-discovered validation commands/i);
+	assert.match(architectNormalizedBody, /make any validation deferral explicit in the ticket text/i);
+});
+
+test("architect.md keeps delta follow-up review guidance out of the base prompt", () => {
 	assert.doesNotMatch(
-		architectNormalizedBody,
-		/implementation ticket.*do(?:es)? not require tests or validation.*final validation ticket/i,
+		architectMd,
+		/default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint instead of rereading the full branch diff\./,
 	);
 	assert.doesNotMatch(
-		architectNormalizedBody,
-		/final validation ticket.*depends on all implementation tickets.*when .*VALIDATING\.md.*otherwise.*repo-discovered validation commands/i,
+		architectMd,
+		/pass the prior findings plus the exact delta baseline, git range or checkpoint, or explicit changed-file list to review\./,
 	);
+	assert.doesNotMatch(
+		architectMd,
+		/Keep or expand to targeted wider review or full re-review for installer or other destructive-path changes, trust-boundary changes, auth or execution changes, unresolved reviewer disagreement, or whenever the delta cannot be validated safely without wider context\./,
+	);
+});
+
+test("architect.md keeps ordinary final review on the full VCS diff", () => {
+	assert.match(architectMd, /Delegate final review to `code-reviewer` against the full VCS diff and completed tickets\./);
 });

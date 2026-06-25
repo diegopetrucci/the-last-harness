@@ -85,9 +85,10 @@ export type TlhPrimaryAgentConfig = {
 	selected?: string;
 	applyModel?: boolean;
 	applyThinking?: boolean;
+	modelOverrides?: Record<string, string>;
 };
 
-export type TlhExperimentalFeatureId = "run-tests-last";
+export type TlhExperimentalFeatureId = string;
 
 export type TlhExperimentalConfig = {
 	enabledFeatures?: string[];
@@ -110,6 +111,13 @@ export type TlhContextCapConfig = {
 	disabled?: boolean;
 };
 
+export type TlhModelVisibilityConfig = {
+	disabled?: boolean;
+	hidden?: string[];
+	visible?: string[];
+	unhide?: string[];
+};
+
 export type TlhSettings = {
 	tlh?: {
 		usageLimits?: TlhUsageLimitsConfig;
@@ -120,6 +128,7 @@ export type TlhSettings = {
 		primaryAgent?: TlhPrimaryAgentConfig;
 		experimental?: TlhExperimentalConfig;
 		contextCap?: TlhContextCapConfig;
+		modelVisibility?: TlhModelVisibilityConfig;
 	};
 };
 
@@ -194,9 +203,11 @@ export type AgentPrompt = {
 	description: string;
 	model?: string;
 	tlhOpenaiModels?: string[];
+	tlhAnthropicModels?: string[];
 	thinking?: ThinkingLevel;
 	tlhOpenaiThinking?: ThinkingLevel;
 	preferCurrentOpenaiModel?: boolean;
+	preferOppositeProvider?: boolean;
 	applyModel?: boolean;
 	applyThinking?: boolean;
 	lockThinking?: boolean;
@@ -211,6 +222,8 @@ export type SubagentMetadata = {
 	description: string;
 	model?: string;
 	tlhOpenaiModels?: string[];
+	tlhAnthropicModels?: string[];
+	preferOppositeProvider?: boolean;
 };
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";

@@ -9,7 +9,9 @@ import { cleanupTempDir, createIsolatedProfileFixture, withEnv } from "./test-fi
 
 const jiti = createJiti(import.meta.url);
 const { TLH_DEFAULT_COMMIT_ATTRIBUTION } = await jiti.import("../extensions/the-last-harness/attribution.ts");
-const { RUN_TESTS_LAST_FEATURE } = await jiti.import("../extensions/the-last-harness/experimental.ts");
+const { CI_FAILURE_INVESTIGATION_FEATURE, DELTA_FOLLOW_UP_REVIEWS_FEATURE, TLH_CONTRARIAN_FEATURE } = await jiti.import(
+	"../extensions/the-last-harness/experimental.ts",
+);
 const { registerTlhPrimaryAgentRuntime } = await jiti.import("../extensions/the-last-harness/primary-agent-runtime.ts");
 
 function createPiHarness() {
@@ -106,14 +108,34 @@ function selectablePrimaryAgents() {
 	]);
 }
 
+function contrarianMetadata() {
+	return {
+		name: "contrarian",
+		description: "Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case.",
+		tlhOpenaiModels: ["openai-codex/gpt-5.5"],
+		tlhAnthropicModels: ["anthropic/claude-opus-4-8"],
+		preferOppositeProvider: true,
+	};
+}
+
 function rushLikePrimary(name = "architect") {
 	return createPrimaryPrompt(name, {
-		model: "anthropic/claude-opus-4-7",
-		tlhOpenaiModels: ["openai-codex/gpt-5.5", "openai/gpt-5.5"],
+		model: "anthropic/claude-opus-4-8",
+		tlhOpenaiModels: ["openai-codex/gpt-5.5"],
 		thinking: "low",
 		tlhOpenaiThinking: "off",
 		applyModel: true,
 		applyThinking: true,
+	});
+}
+
+function lockedRushPrimary() {
+	return createPrimaryPrompt("rush", {
+		model: "anthropic/claude-opus-4-8",
+		thinking: "low",
+		applyModel: true,
+		applyThinking: true,
+		lockThinking: true,
 	});
 }
 
@@ -133,6 +155,123 @@ test("disabled primary mode still injects provider-aware subagent models", async
 	assert.equal(event.input.model, "openai-codex/gpt-5.4");
 	assert.equal(event.input.agentScope, undefined);
 	assert.equal(event.input.context, "resume");
+});
+
+test("disabled primary mode keeps malformed mixed experimental arrays fail-closed, preserves the contrarian disabled message, and validates enabled contrarian inputs", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const subagentMetadata = [contrarianMetadata()];
+	const branchEntries = [{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "disabled" } }];
+	const ctx = createToolCallContext(branchEntries, undefined, {
+		cwd: fixture.cwd,
+		modelRegistry: {
+			getAvailable: () => [
+				{ provider: "openai-codex", id: "gpt-5.4" },
+				{ provider: "anthropic", id: "claude-opus-4-8" },
+			],
+		},
+		model: { provider: "openai-codex", id: "gpt-5.4" },
+	});
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata });
+		const blockedEvent = {
+			toolName: "subagent",
+			input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "project", context: "resume" },
+		};
+		assert.deepEqual(await toolCall(blockedEvent, ctx), {
+			block: true,
+			reason:
+				"TLH contrarian is an experimental minor agent and is currently disabled. Enable it with /experimental enable contrarian in the isolated TLH profile before delegating to contrarian.",
+		});
+		assert.equal(blockedEvent.input.model, "anthropic/claude-opus-4-8");
+		assert.equal(blockedEvent.input.agentScope, "project");
+		assert.equal(blockedEvent.input.context, "resume");
+
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: ["Contrarian", 123] } } }, null, 2)}\n`,
+		);
+		const malformedEvent = {
+			toolName: "subagent",
+			input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "project", context: "resume" },
+		};
+		assert.deepEqual(await toolCall(malformedEvent, ctx), {
+			block: true,
+			reason:
+				"TLH contrarian is an experimental minor agent and is currently disabled. Enable it with /experimental enable contrarian in the isolated TLH profile before delegating to contrarian.",
+		});
+		assert.equal(malformedEvent.input.model, "anthropic/claude-opus-4-8");
+		assert.equal(malformedEvent.input.agentScope, "project");
+		assert.equal(malformedEvent.input.context, "resume");
+
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: ["Contrarian"] } } }, null, 2)}\n`,
+		);
+		const enabledEvent = {
+			toolName: "subagent",
+			input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "project", context: "resume" },
+		};
+		assert.deepEqual(await toolCall(enabledEvent, ctx), {
+			block: true,
+			reason:
+				'TLH primary-agent subagent execution calls may not use agentScope: "project". TLH minor agents must run from the isolated user scope.',
+		});
+		assert.equal(enabledEvent.input.model, "anthropic/claude-opus-4-8");
+		assert.equal(enabledEvent.input.agentScope, "project");
+		assert.equal(enabledEvent.input.context, "resume");
+
+		const enabledContextEvent = {
+			toolName: "subagent",
+			input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "user", context: "resume" },
+		};
+		assert.deepEqual(await toolCall(enabledContextEvent, ctx), {
+			block: true,
+			reason:
+				'TLH primary-agent subagent execution may not use context: "resume". TLH child sessions must start fresh so parent primary-agent/Gnosis context is not leaked.',
+		});
+		assert.equal(enabledContextEvent.input.model, "anthropic/claude-opus-4-8");
+		assert.equal(enabledContextEvent.input.agentScope, "user");
+		assert.equal(enabledContextEvent.input.context, "resume");
+
+		const safeEnabledEvent = {
+			toolName: "subagent",
+			input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "user", context: "fresh" },
+		};
+		assert.equal(await toolCall(safeEnabledEvent, ctx), undefined);
+		assert.equal(safeEnabledEvent.input.model, "anthropic/claude-opus-4-8");
+		assert.equal(safeEnabledEvent.input.agentScope, "user");
+		assert.equal(safeEnabledEvent.input.context, "fresh");
+	});
+});
+
+test("disabled primary mode allows opaque resume while contrarian is disabled", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const branchEntries = [{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "disabled" } }];
+	const ctx = createToolCallContext(branchEntries, undefined, { cwd: fixture.cwd });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const opaqueResumeEvent = {
+			toolName: "subagent",
+			input: { action: "resume", id: "run-123", message: "Continue the approved ticket.", agentScope: "", context: "" },
+		};
+		assert.equal(await toolCall(opaqueResumeEvent, ctx), undefined);
+		assert.equal(opaqueResumeEvent.input.agentScope, "user");
+		assert.equal(opaqueResumeEvent.input.context, "fresh");
+
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [TLH_CONTRARIAN_FEATURE] } } }, null, 2)}\n`,
+		);
+		const allowedResumeEvent = {
+			toolName: "subagent",
+			input: { action: "resume", id: "run-456", message: "Continue the approved ticket.", agentScope: "both" },
+		};
+		assert.equal(await toolCall(allowedResumeEvent, ctx), undefined);
+		assert.equal(allowedResumeEvent.input.agentScope, "user");
+		assert.equal(allowedResumeEvent.input.context, "fresh");
+	});
 });
 
 test("enabled primary mode validates subagent input after injecting provider-aware models", async () => {
@@ -160,6 +299,7 @@ test("before_agent_start adds TLH commit attribution guidance only when enabled"
 		const enabledPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
 		assert.match(enabledPrompt.systemPrompt, /## TLH Git Commit Attribution/);
 		assert.match(enabledPrompt.systemPrompt, /Co-authored-by: The Last Harness <hi@thelastharness\.com>/);
+		assert.match(enabledPrompt.systemPrompt, /blank line/);
 
 		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
 		const disabledPrompt = await beforeAgentStart(
@@ -171,15 +311,40 @@ test("before_agent_start adds TLH commit attribution guidance only when enabled"
 });
 
 
-test("before_agent_start gates run-tests-last experimental guidance behind isolated TLH settings", async (t) => {
+test("before_agent_start includes permanent architect final-validation guidance and ignores stale tlh.experimental settings", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { beforeAgentStart } = registerRuntimeHarness();
+		const assertValidationWorkflow = (systemPrompt) => {
+			assert.match(systemPrompt, /final-validation ticket.*depends on all implementation tickets/i);
+			assert.match(systemPrompt, /implementation-ticket validation narrow and ticket-scoped/i);
+			assert.match(systemPrompt, /VALIDATING\.md.*otherwise use repo-discovered validation commands/i);
+			assert.match(systemPrompt, /Make any validation deferral explicit in the ticket text/i);
+			assert.doesNotMatch(systemPrompt, /## TLH Experimental Feature:/);
+		};
+
+		const defaultPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		assertValidationWorkflow(defaultPrompt.systemPrompt);
+
+		for (const experimental of [{ enabledFeatures: true }, { enabledFeatures: [123] }, { enabledFeatures: [] }, { enabledFeatures: ["legacy-flag"] }]) {
+			writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { experimental } }, null, 2)}\n`);
+			const prompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+			assertValidationWorkflow(prompt.systemPrompt);
+		}
+	});
+});
+
+test("before_agent_start gates delta follow-up review guidance behind isolated TLH settings for architect", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const { beforeAgentStart } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
 		const defaultPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
-		assert.doesNotMatch(defaultPrompt.systemPrompt, /## TLH Experimental Feature: run-tests-last/);
-		assert.doesNotMatch(defaultPrompt.systemPrompt, /separate final-validation ticket/i);
-		assert.doesNotMatch(defaultPrompt.systemPrompt, /VALIDATING\.md.*otherwise use repo-discovered validation commands/i);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint/i);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /prior findings.*git range or checkpoint.*changed-file list/i);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /targeted wider review or full re-review/i);
 
 		for (const enabledFeatures of [true, [123]]) {
 			writeFileSync(
@@ -190,23 +355,111 @@ test("before_agent_start gates run-tests-last experimental guidance behind isola
 				{ systemPrompt: "base prompt" },
 				createToolCallContext([], undefined, { cwd: fixture.cwd }),
 			);
-			assert.doesNotMatch(malformedPrompt.systemPrompt, /## TLH Experimental Feature: run-tests-last/);
-			assert.doesNotMatch(malformedPrompt.systemPrompt, /separate final-validation ticket/i);
-			assert.doesNotMatch(malformedPrompt.systemPrompt, /VALIDATING\.md.*otherwise use repo-discovered validation commands/i);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint/i);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /targeted wider review or full re-review/i);
 		}
 
 		writeFileSync(
 			join(fixture.agent, "settings.json"),
-			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [RUN_TESTS_LAST_FEATURE] } } }, null, 2)}\n`,
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [DELTA_FOLLOW_UP_REVIEWS_FEATURE] } } }, null, 2)}\n`,
 		);
 		const enabledPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
-		assert.match(enabledPrompt.systemPrompt, /## TLH Experimental Feature: run-tests-last/);
-		assert.match(enabledPrompt.systemPrompt, /separate final-validation ticket/i);
-		assert.match(enabledPrompt.systemPrompt, /depends on all implementation tickets/i);
-		assert.match(enabledPrompt.systemPrompt, /VALIDATING\.md.*otherwise use repo-discovered validation commands/i);
-		assert.match(enabledPrompt.systemPrompt, /Make any validation deferral explicit in the ticket text/i);
+		assert.match(enabledPrompt.systemPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
+		assert.match(enabledPrompt.systemPrompt, /default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint/i);
+		assert.match(enabledPrompt.systemPrompt, /prior findings.*git range or checkpoint.*changed-file list/i);
+		assert.match(enabledPrompt.systemPrompt, /targeted wider review or full re-review/i);
 	});
 });
+
+test("before_agent_start gates ci failure investigation guidance behind isolated TLH settings for architect only", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { beforeAgentStart } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const defaultPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /## TLH Experimental Feature: ci-failure-investigation/);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /read-only investigation before asking the user whether to proceed/i);
+
+		for (const enabledFeatures of [true, [123]]) {
+			writeFileSync(
+				join(fixture.agent, "settings.json"),
+				`${JSON.stringify({ tlh: { experimental: { enabledFeatures } } }, null, 2)}\n`,
+			);
+			const malformedPrompt = await beforeAgentStart(
+				{ systemPrompt: "base prompt" },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /## TLH Experimental Feature: ci-failure-investigation/);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /read-only investigation before asking the user whether to proceed/i);
+		}
+
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [CI_FAILURE_INVESTIGATION_FEATURE] } } }, null, 2)}\n`,
+		);
+		const architectPrompt = await beforeAgentStart(
+			{ systemPrompt: "base prompt" },
+			createToolCallContext([], undefined, { cwd: fixture.cwd }),
+		);
+		assert.match(architectPrompt.systemPrompt, /## TLH Experimental Feature: ci-failure-investigation/);
+		assert.match(architectPrompt.systemPrompt, /This TLH experiment is enabled for the architect primary agent/i);
+		assert.match(architectPrompt.systemPrompt, /overrides the default post-PR monitor-and-ask-only step/i);
+		assert.match(architectPrompt.systemPrompt, /read-only investigation before asking the user whether to proceed/i);
+		assert.match(architectPrompt.systemPrompt, /Do not edit files, commit, push, rerun jobs, change the PR/i);
+		assert.match(architectPrompt.systemPrompt, /edits, commits, pushes, reruns, PR changes, or other follow-up changes/i);
+		assert.match(architectPrompt.systemPrompt, /ask for explicit user approval/i);
+
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify(
+				{ tlh: { primaryAgent: { selected: "rush" }, experimental: { enabledFeatures: [CI_FAILURE_INVESTIGATION_FEATURE] } } },
+				null,
+				2,
+			)}\n`,
+		);
+		const rushPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		assert.doesNotMatch(rushPrompt.systemPrompt, /## TLH Experimental Feature: ci-failure-investigation/);
+		assert.doesNotMatch(rushPrompt.systemPrompt, /This TLH experiment is enabled for TLH Rush/i);
+		assert.doesNotMatch(rushPrompt.systemPrompt, /read-only investigation before asking the user whether to proceed/i);
+		assert.doesNotMatch(rushPrompt.systemPrompt, /summarize the failure and likely cause, then ask the user whether to proceed/i);
+	});
+});
+
+test("before_agent_start keeps contrarian guidance and allowed minor-agent entries behind isolated TLH settings", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const subagentMetadata = [
+		{ name: "developer", description: "Implements exactly one approved task at a time." },
+		contrarianMetadata(),
+	];
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { beforeAgentStart } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata });
+		const defaultPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /## TLH Experimental Feature: contrarian/);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /\bcontrarian\b/i);
+		assert.match(defaultPrompt.systemPrompt, /developer: Implements exactly one approved task at a time\./i);
+
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: ["Contrarian", 123] } } }, null, 2)}\n`,
+		);
+		const malformedPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		assert.doesNotMatch(malformedPrompt.systemPrompt, /## TLH Experimental Feature: contrarian/);
+		assert.doesNotMatch(malformedPrompt.systemPrompt, /\bcontrarian\b/i);
+		assert.match(malformedPrompt.systemPrompt, /developer: Implements exactly one approved task at a time\./i);
+
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [TLH_CONTRARIAN_FEATURE] } } }, null, 2)}\n`,
+		);
+		const enabledPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		assert.match(enabledPrompt.systemPrompt, /## TLH Experimental Feature: contrarian/);
+		assert.match(enabledPrompt.systemPrompt, /Use `contrarian` sparingly when you need an adversarial challenge pass on reasoning or direction\./);
+		assert.match(enabledPrompt.systemPrompt, /- contrarian: Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case\./i);
+	});
+});
+
 
 test("child mode keeps parent-only controls disabled while applying commit attribution prompt and bash guard", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
@@ -233,6 +486,7 @@ test("child mode keeps parent-only controls disabled while applying commit attri
 		);
 		assert.match(enabledPrompt.systemPrompt, /## TLH Git Commit Attribution/);
 		assert.match(enabledPrompt.systemPrompt, /Co-authored-by: The Last Harness <hi@thelastharness\.com>/);
+		assert.match(enabledPrompt.systemPrompt, /blank line/);
 
 		const blockedCommit = await toolCall(
 			{ toolName: "bash", input: { command: 'git commit -m "ship it"' } },
@@ -262,15 +516,77 @@ test("child mode keeps parent-only controls disabled while applying commit attri
 	});
 });
 
+test("child mode gates delta follow-up review guidance to enabled code-reviewer sessions", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const codeReviewerPi = createPiHarness();
+		registerTlhPrimaryAgentRuntime(codeReviewerPi, {
+			env: { PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_CHILD_AGENT: "code-reviewer" },
+		});
+		const codeReviewerBeforeAgentStart = codeReviewerPi.events.find((event) => event.name === "before_agent_start")?.handler;
+		assert.equal(typeof codeReviewerBeforeAgentStart, "function");
+
+		const defaultPrompt = await codeReviewerBeforeAgentStart(
+			{ systemPrompt: "base prompt" },
+			createToolCallContext([], undefined, { cwd: fixture.cwd }),
+		);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /expect prior findings plus an exact delta baseline/i);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /default to the requested delta and prior findings/i);
+		assert.doesNotMatch(defaultPrompt.systemPrompt, /requested delta cannot be validated safely without wider context/i);
+
+		for (const enabledFeatures of [true, [123]]) {
+			writeFileSync(
+				join(fixture.agent, "settings.json"),
+				`${JSON.stringify({ tlh: { experimental: { enabledFeatures } } }, null, 2)}\n`,
+			);
+			const malformedPrompt = await codeReviewerBeforeAgentStart(
+				{ systemPrompt: "base prompt" },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /expect prior findings plus an exact delta baseline/i);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /default to the requested delta and prior findings/i);
+			assert.doesNotMatch(malformedPrompt.systemPrompt, /requested delta cannot be validated safely without wider context/i);
+		}
+
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [DELTA_FOLLOW_UP_REVIEWS_FEATURE] } } }, null, 2)}\n`,
+		);
+		const enabledPrompt = await codeReviewerBeforeAgentStart(
+			{ systemPrompt: "base prompt" },
+			createToolCallContext([], undefined, { cwd: fixture.cwd }),
+		);
+		assert.match(enabledPrompt.systemPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
+		assert.match(enabledPrompt.systemPrompt, /expect prior findings plus an exact delta baseline/i);
+		assert.match(enabledPrompt.systemPrompt, /default to the requested delta and prior findings/i);
+		assert.match(enabledPrompt.systemPrompt, /requested delta cannot be validated safely without wider context/i);
+
+		const developerPi = createPiHarness();
+		registerTlhPrimaryAgentRuntime(developerPi, {
+			env: { PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_CHILD_AGENT: "developer" },
+		});
+		const developerBeforeAgentStart = developerPi.events.find((event) => event.name === "before_agent_start")?.handler;
+		assert.equal(typeof developerBeforeAgentStart, "function");
+		const developerPrompt = await developerBeforeAgentStart(
+			{ systemPrompt: "base prompt" },
+			createToolCallContext([], undefined, { cwd: fixture.cwd }),
+		);
+		assert.doesNotMatch(developerPrompt.systemPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
+		assert.doesNotMatch(developerPrompt.systemPrompt, /expect prior findings plus an exact delta baseline/i);
+		assert.doesNotMatch(developerPrompt.systemPrompt, /default to the requested delta and prior findings/i);
+		assert.doesNotMatch(developerPrompt.systemPrompt, /requested delta cannot be validated safely without wider context/i);
+	});
+});
+
 test("tool_call blocks obvious unattributed bash git commits only when attribution is enabled", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-	const [footerHeading, footerCoAuthor] = TLH_DEFAULT_COMMIT_ATTRIBUTION.split("\n\n");
 	const attributedHereDoc = `git commit -F - <<EOF\nsubject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}\nEOF`;
 	const wrappedAttributedHereDoc = `if true; then git commit -F - <<EOF\nsubject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}\nEOF\nfi`;
 	const attributedWrappedInlineMessage = `bash -lc 'git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"'`;
 	const attributedWrappedInlineMessageWithTerminator = `bash -lc -- 'git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"'`;
-	const attributedWrappedSplitMessage = `sh -c 'git commit -m "subject" -m "${footerHeading}" -m "${footerCoAuthor}"'`;
-	const attributedWrappedSplitMessageWithTerminator = `sh -c -- 'git commit -m "subject" -m "${footerHeading}" -m "${footerCoAuthor}"'`;
 	const attributedEnvInlineMessage = `env FOO=bar git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
 	const attributedQualifiedEnvInlineMessage = `/usr/bin/env FOO=bar git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
 	const attributedUnsetEnvInlineMessage = `env --unset=FOO git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
@@ -385,6 +701,7 @@ printf 'extra'
 			unattributedTrailingOutputProcessSubstitution,
 			unattributedWrongFileProcessSubstitution,
 			unattributedLastFileProcessSubstitution,
+			`git commit -m "subject\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`,
 		]) {
 			const blocked = await toolCall(
 				{ toolName: "bash", input: { command } },
@@ -393,6 +710,13 @@ printf 'extra'
 			assert.equal(blocked?.block, true);
 			assert.match(blocked?.reason ?? "", /TLH attribution footer/);
 		}
+		assert.equal(
+			await toolCall(
+				{ toolName: "bash", input: { command: `git commit -m "${TLH_DEFAULT_COMMIT_ATTRIBUTION}"` } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			),
+			undefined,
+		);
 		assert.equal(
 			await toolCall({ toolName: "bash", input: { command: attributedHereDoc } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
 			undefined,
@@ -407,20 +731,6 @@ printf 'extra'
 		assert.equal(
 			await toolCall(
 				{ toolName: "bash", input: { command: attributedWrappedInlineMessageWithTerminator } },
-				createToolCallContext([], undefined, { cwd: fixture.cwd }),
-			),
-			undefined,
-		);
-		assert.equal(
-			await toolCall(
-				{ toolName: "bash", input: { command: attributedWrappedSplitMessage } },
-				createToolCallContext([], undefined, { cwd: fixture.cwd }),
-			),
-			undefined,
-		);
-		assert.equal(
-			await toolCall(
-				{ toolName: "bash", input: { command: attributedWrappedSplitMessageWithTerminator } },
 				createToolCallContext([], undefined, { cwd: fixture.cwd }),
 			),
 			undefined,
@@ -1105,6 +1415,45 @@ test("enabled primary mode allows approved delegation targets and forces safe to
 	assert.equal(event.input.context, "fresh");
 });
 
+test("enabled primary mode blocks contrarian until the experiment is enabled and still applies provider-aware models", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const subagentMetadata = [contrarianMetadata()];
+	const branchEntries = [{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }];
+	const blockedCtx = createToolCallContext(branchEntries, undefined, {
+		cwd: fixture.cwd,
+		modelRegistry: {
+			getAvailable: () => [
+				{ provider: "openai-codex", id: "gpt-5.4" },
+				{ provider: "anthropic", id: "claude-opus-4-8" },
+			],
+		},
+		model: { provider: "openai-codex", id: "gpt-5.4" },
+	});
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata });
+		const blockedEvent = { toolName: "subagent", input: { agent: "contrarian", prompt: "stress-test this plan" } };
+		assert.deepEqual(await toolCall(blockedEvent, blockedCtx), {
+			block: true,
+			reason:
+				"TLH contrarian is an experimental minor agent and is currently disabled. Enable it with /experimental enable contrarian in the isolated TLH profile before delegating to contrarian.",
+		});
+		assert.equal(blockedEvent.input.model, "anthropic/claude-opus-4-8");
+		assert.equal(blockedEvent.input.agentScope, "user");
+		assert.equal(blockedEvent.input.context, "fresh");
+
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [TLH_CONTRARIAN_FEATURE] } } }, null, 2)}\n`,
+		);
+		const allowedEvent = { toolName: "subagent", input: { agent: "contrarian", prompt: "stress-test this plan" } };
+		assert.equal(await toolCall(allowedEvent, blockedCtx), undefined);
+		assert.equal(allowedEvent.input.model, "anthropic/claude-opus-4-8");
+		assert.equal(allowedEvent.input.agentScope, "user");
+		assert.equal(allowedEvent.input.context, "fresh");
+	});
+});
+
 test("enabled primary mode blocks disallowed nested delegation targets after forcing safe defaults", async () => {
 	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
 	const event = {
@@ -1127,7 +1476,7 @@ test("enabled primary mode blocks disallowed nested delegation targets after for
 	assert.equal(event.input.context, "fresh");
 });
 
-test("enabled primary mode normalizes safe management list/get scopes and blocks non-user management scopes", async () => {
+test("enabled primary mode normalizes safe management list/get/resume inputs and blocks unsafe resume calls", async () => {
 	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
 	const ctx = createToolCallContext([
 		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
@@ -1136,7 +1485,17 @@ test("enabled primary mode normalizes safe management list/get scopes and blocks
 	const listBothEvent = { toolName: "subagent", input: { action: "list", agentScope: "both" } };
 	const getEvent = { toolName: "subagent", input: { action: "get", agentScope: "" } };
 	const getBothEvent = { toolName: "subagent", input: { action: "get", agentScope: "both" } };
-	const blockedEvent = { toolName: "subagent", input: { action: "get", agentScope: "project" } };
+	const resumeEvent = {
+		toolName: "subagent",
+		input: { action: "resume", id: "run-123", message: "Continue the approved ticket.", agentScope: "", context: "" },
+	};
+	const resumeBothEvent = {
+		toolName: "subagent",
+		input: { action: "resume", id: "run-456", message: "Continue the approved ticket.", agentScope: "both" },
+	};
+	const blockedGetEvent = { toolName: "subagent", input: { action: "get", agentScope: "project" } };
+	const blockedResumeScopeEvent = { toolName: "subagent", input: { action: "resume", id: "run-123", agentScope: "system" } };
+	const blockedResumeContextEvent = { toolName: "subagent", input: { action: "resume", id: "run-123", context: "resume" } };
 
 	assert.equal(await toolCall(listEvent, ctx), undefined);
 	assert.equal(listEvent.input.agentScope, "user");
@@ -1146,9 +1505,42 @@ test("enabled primary mode normalizes safe management list/get scopes and blocks
 	assert.equal(getEvent.input.agentScope, "user");
 	assert.equal(await toolCall(getBothEvent, ctx), undefined);
 	assert.equal(getBothEvent.input.agentScope, "user");
-	assert.deepEqual(await toolCall(blockedEvent, ctx), {
+	assert.equal(await toolCall(resumeEvent, ctx), undefined);
+	assert.equal(resumeEvent.input.agentScope, "user");
+	assert.equal(resumeEvent.input.context, "fresh");
+	assert.equal(await toolCall(resumeBothEvent, ctx), undefined);
+	assert.equal(resumeBothEvent.input.agentScope, "user");
+	assert.equal(resumeBothEvent.input.context, "fresh");
+	assert.deepEqual(await toolCall(blockedGetEvent, ctx), {
 		block: true,
 		reason: 'TLH primary-agent subagent get calls may not use agentScope: "project". TLH minor agents must run from the isolated user scope.',
+	});
+	assert.deepEqual(await toolCall(blockedResumeScopeEvent, ctx), {
+		block: true,
+		reason: 'TLH primary-agent subagent resume calls may not use agentScope: "system". TLH minor agents must run from the isolated user scope.',
+	});
+	assert.deepEqual(await toolCall(blockedResumeContextEvent, ctx), {
+		block: true,
+		reason:
+			'TLH primary-agent subagent resume may not use context: "resume". TLH child sessions must start fresh so parent primary-agent/Gnosis context is not leaked.',
+	});
+});
+
+test("Rush blocks subagent resume with a Rush-specific reason", async () => {
+	const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+	const event = {
+		toolName: "subagent",
+		input: { action: "resume", id: "run-123", message: "Continue the approved ticket.", agentScope: "", context: "" },
+	};
+	const ctx = createToolCallContext([
+		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
+	]);
+
+	const result = await toolCall(event, ctx);
+	assert.deepEqual(result, {
+		block: true,
+		reason:
+			"TLH Rush may not use subagent action=resume because resuming by run id or index can continue a prior developer subagent without an explicit safe target. Rush must edit directly or start a new allowed subagent with an explicit agent target.",
 	});
 });
 
@@ -1169,6 +1561,10 @@ test("/switch-primary-agent includes Rush completions, usage, and status strings
 		(await command.getArgumentCompletions("default r")).map((completion) => completion.value),
 		["default rush", "default reset"],
 	);
+	assert.deepEqual(
+		(await command.getArgumentCompletions("model r")).map((completion) => completion.value),
+		["model reset"],
+	);
 
 	const usage = createCommandContext();
 	await command.handler("rush extra", usage.ctx);
@@ -1183,6 +1579,122 @@ test("/switch-primary-agent includes Rush completions, usage, and status strings
 	await command.handler("status", status.ctx);
 	assert.equal(status.notifications.at(-1)?.type, "info");
 	assert.match(status.notifications.at(-1)?.message ?? "", /Primary agent: rush\./);
+});
+
+test("/switch-primary-agent model reset clears the active primary model override", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
+	const initialSettings = `${JSON.stringify({
+		tlh: { primaryAgent: { modelOverrides: { architect: "openai-codex/gpt-5.5" } } },
+	}, null, 2)}\n`;
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(join(fixture.agent, "settings.json"), initialSettings);
+		const { pi } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		const command = pi.commands.get("switch-primary-agent");
+		assert.ok(command, "registers /switch-primary-agent");
+
+		const reset = createCommandContext([], {
+			cwd: fixture.cwd,
+			modelRegistry: {
+				getAvailable: () => [
+					{ provider: "openai-codex", id: "gpt-5.5" },
+					{ provider: "anthropic", id: "claude-opus-4-8" },
+				],
+			},
+			model: { provider: "openai-codex", id: "gpt-5.4" },
+		});
+		await command.handler("model reset", reset.ctx);
+
+		const written = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
+		assert.equal(written.tlh.primaryAgent.modelOverrides, undefined);
+		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-4-8" });
+		assert.equal(reset.notifications.at(-1)?.type, "info");
+		assert.match(reset.notifications.at(-1)?.message ?? "", /Cleared model override for architect/);
+	});
+});
+
+test("/switch-primary-agent status reports model override or none", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const absentFixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writePrimaryConfig(fixture.agent, { modelOverrides: { architect: "anthropic/claude-opus-4-8" } });
+		const { pi } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		const command = pi.commands.get("switch-primary-agent");
+		assert.ok(command, "registers /switch-primary-agent");
+
+		const status = createCommandContext([], { cwd: fixture.cwd });
+		await command.handler("status", status.ctx);
+
+		assert.equal(status.notifications.at(-1)?.type, "info");
+		assert.match(status.notifications.at(-1)?.message ?? "", /Model override: anthropic\/claude-opus-4-8\./);
+	});
+
+	await withEnv({ HOME: absentFixture.home, PI_CODING_AGENT_DIR: absentFixture.agent }, async () => {
+		const { pi } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		const command = pi.commands.get("switch-primary-agent");
+		assert.ok(command, "registers /switch-primary-agent");
+
+		const status = createCommandContext([], { cwd: absentFixture.cwd });
+		await command.handler("status", status.ctx);
+
+		assert.equal(status.notifications.at(-1)?.type, "info");
+		assert.match(status.notifications.at(-1)?.message ?? "", /Model override: none\./);
+	});
+});
+
+test("/switch-primary-agent status hides stale overrides for locked primaries", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const primaryAgents = new Map([["rush", lockedRushPrimary()]]);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writePrimaryConfig(fixture.agent, { modelOverrides: { rush: "anthropic/claude-sonnet-4-6" } });
+		const { pi } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		const command = pi.commands.get("switch-primary-agent");
+		assert.ok(command, "registers /switch-primary-agent");
+
+		const status = createCommandContext([
+			{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
+		], { cwd: fixture.cwd });
+		await command.handler("status", status.ctx);
+
+		assert.equal(status.notifications.at(-1)?.type, "info");
+		assert.match(status.notifications.at(-1)?.message ?? "", /Primary agent: rush\./);
+		assert.match(status.notifications.at(-1)?.message ?? "", /Model override: none\./);
+		assert.doesNotMatch(status.notifications.at(-1)?.message ?? "", /claude-sonnet-4-6/);
+	});
+});
+
+test("/switch-primary-agent model reset clears a stale locked-primary model override", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const primaryAgents = new Map([["rush", lockedRushPrimary()]]);
+	const initialSettings = `${JSON.stringify({
+		tlh: { primaryAgent: { modelOverrides: { rush: "anthropic/claude-sonnet-4-6" } } },
+	}, null, 2)}\n`;
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(join(fixture.agent, "settings.json"), initialSettings);
+		const { pi } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		const command = pi.commands.get("switch-primary-agent");
+		assert.ok(command, "registers /switch-primary-agent");
+
+		const reset = createCommandContext([
+			{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
+		], {
+			cwd: fixture.cwd,
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-8" }] },
+			model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+		});
+		await command.handler("model reset", reset.ctx);
+
+		const written = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
+		assert.equal(written.tlh.primaryAgent.modelOverrides, undefined);
+		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-4-8" });
+		assert.equal(reset.notifications.at(-1)?.type, "info");
+		assert.match(reset.notifications.at(-1)?.message ?? "", /Cleared stale ignored model override for rush/);
+	});
 });
 
 test("/switch-primary-agent default writes tlh.primaryAgent with a backup", async () => {
@@ -1298,11 +1810,11 @@ test("primary runtime falls back to Anthropic Rush-like metadata defaults when o
 				cwd: fixture.cwd,
 				sessionManager: { getBranch: () => [] },
 				ui: { notify() {} },
-				modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-7" }] },
+				modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-8" }] },
 				model: { provider: "openai-codex", id: "gpt-5.4" },
 			});
 
-			assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-4-7" });
+			assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-4-8" });
 			assert.equal(pi.thinkingLevel, "low");
 		});
 	} finally {
@@ -1339,14 +1851,14 @@ test("primary runtime respects explicit false settings over Rush-like metadata d
 test("architect before_agent_start preserves medium floor selection but restores declared default after rush", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const architectPrimary = createPrimaryPrompt("architect", {
-		model: "anthropic/claude-opus-4-7",
+		model: "anthropic/claude-opus-4-8",
 		thinking: "high",
 		minThinking: "medium",
 		applyModel: true,
 		applyThinking: true,
 	});
 	const rushPrimary = createPrimaryPrompt("rush", {
-		model: "anthropic/claude-opus-4-7",
+		model: "anthropic/claude-opus-4-8",
 		thinking: "low",
 		applyModel: true,
 		applyThinking: true,
@@ -1365,8 +1877,8 @@ test("architect before_agent_start preserves medium floor selection but restores
 			cwd: fixture.cwd,
 			sessionManager: { getBranch: () => branch },
 			ui: { notify() {} },
-			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-7" }] },
-			model: { provider: "anthropic", id: "claude-opus-4-7" },
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-8" }] },
+			model: { provider: "anthropic", id: "claude-opus-4-8" },
 		});
 
 		await runtime.applySessionStart(makeCtx([]));
@@ -1390,7 +1902,7 @@ test("architect before_agent_start preserves medium floor selection but restores
 test("locked primary (rush) overrides global applyThinking=false and applyModel=false", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const rushPrimary = createPrimaryPrompt("rush", {
-		model: "anthropic/claude-opus-4-7",
+		model: "anthropic/claude-opus-4-8",
 		thinking: "low",
 		applyModel: true,
 		applyThinking: true,
@@ -1412,12 +1924,12 @@ test("locked primary (rush) overrides global applyThinking=false and applyModel=
 				{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
 			]},
 			ui: { notify() {} },
-			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-7" }] },
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-8" }] },
 			model: { provider: "anthropic", id: "claude-opus-4-6" },
 		});
 
 		// lockThinking: true forces both model and thinking regardless of global opt-outs
-		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-4-7" });
+		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-4-8" });
 		assert.equal(pi.thinkingLevel, "low");
 	});
 });
@@ -1425,7 +1937,7 @@ test("locked primary (rush) overrides global applyThinking=false and applyModel=
 test("non-locked primary (architect) honors global applyThinking=false override", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const architectPrimary = createPrimaryPrompt("architect", {
-		model: "anthropic/claude-opus-4-7",
+		model: "anthropic/claude-opus-4-8",
 		thinking: "high",
 		applyModel: true,
 		applyThinking: true,
@@ -1444,11 +1956,257 @@ test("non-locked primary (architect) honors global applyThinking=false override"
 			cwd: fixture.cwd,
 			sessionManager: { getBranch: () => [] },
 			ui: { notify() {} },
-			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-7" }] },
-			model: { provider: "anthropic", id: "claude-opus-4-7" },
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-8" }] },
+			model: { provider: "anthropic", id: "claude-opus-4-8" },
 		});
 
 		// Global applyThinking: false is respected for non-locked primary
 		assert.equal(pi.thinkingLevel, "normal");
+	});
+});
+
+// --- tlh-3mb3: per-primary model override tests ---
+
+function createPiHarnessWithFiringModelSelect(getCtx) {
+	const pi = createPiHarness();
+	const modelSelectHandlers = [];
+	const origOn = pi.on.bind(pi);
+	pi.on = function (name, handler) {
+		origOn(name, handler);
+		if (name === "model_select") {
+			modelSelectHandlers.push(handler);
+		}
+	};
+	pi.setModel = async function (model) {
+		const previousModel = this.model;
+		this.model = model;
+		const ctx = getCtx();
+		if (ctx) {
+			for (const h of modelSelectHandlers) {
+				await h({ type: "model_select", model, previousModel, source: "set" }, ctx);
+			}
+		}
+		return true;
+	};
+	return pi;
+}
+
+test("model override resolution: stored override is applied when the model is in the registry", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
+	// Bundled default for rushLikePrimary on Anthropic is anthropic/claude-opus-4-8.
+	// Store a different available Anthropic model so override precedence is observable.
+	const initialSettings = JSON.stringify({
+		tlh: { primaryAgent: { modelOverrides: { architect: "anthropic/claude-sonnet-4-6" } } },
+	}, null, 2) + "\n";
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(join(fixture.agent, "settings.json"), initialSettings);
+		const { pi, runtime } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		assert.ok(runtime);
+
+		await runtime.applySessionStart({
+			cwd: fixture.cwd,
+			sessionManager: { getBranch: () => [] },
+			ui: { notify() {} },
+			modelRegistry: {
+				getAvailable: () => [
+					{ provider: "anthropic", id: "claude-opus-4-8" },
+					{ provider: "anthropic", id: "claude-sonnet-4-6" },
+				],
+			},
+			model: { provider: "anthropic", id: "claude-haiku-4-5" },
+		});
+
+		// Override should win over the bundled anthropic/claude-opus-4-8 default.
+		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-sonnet-4-6" });
+	});
+});
+
+test("model override resolution: falls back to bundled default when override model is unavailable", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
+	const initialSettings = JSON.stringify({
+		tlh: { primaryAgent: { modelOverrides: { architect: "openai-codex/gpt-5.5" } } },
+	}, null, 2) + "\n";
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(join(fixture.agent, "settings.json"), initialSettings);
+		const { pi, runtime } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		assert.ok(runtime);
+
+		await runtime.applySessionStart({
+			cwd: fixture.cwd,
+			sessionManager: { getBranch: () => [] },
+			ui: { notify() {} },
+			// Override model (openai-codex/gpt-5.5) is NOT in the registry
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-8" }] },
+			model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+		});
+
+		// Falls back to bundled Anthropic default
+		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-4-8" });
+	});
+});
+
+test("model_select listener writes override to settings when user picks a non-default model", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
+	// rushLikePrimary has model: "anthropic/claude-opus-4-8".
+	// The user picks a different Anthropic model that is NOT the bundled default for the architect primary.
+	// Available: both claude-opus-4-8 (bundled default) and claude-sonnet-4-6 (non-default).
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { pi } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		const modelSelectHandler = pi.events.find((e) => e.name === "model_select")?.handler;
+		assert.ok(modelSelectHandler, "model_select handler must be registered");
+
+		// User picks a non-default model: anthropic/claude-sonnet-4-6
+		const overrideModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
+		const ctx = {
+			cwd: fixture.cwd,
+			sessionManager: { getBranch: () => [] },
+			ui: { notify() {} },
+			// Registry includes the bundled default (claude-opus-4-8) and the override target (claude-sonnet-4-6)
+			modelRegistry: {
+				getAvailable: () => [
+					{ provider: "anthropic", id: "claude-opus-4-8" },
+					{ provider: "anthropic", id: "claude-sonnet-4-6" },
+				],
+			},
+			model: overrideModel,
+		};
+		// bundledKey for provider "anthropic" with rushLikePrimary: "anthropic/claude-opus-4-8" (the primary's .model field)
+		// chosenKey: "anthropic/claude-sonnet-4-6" → different → should write override
+		await modelSelectHandler(
+			{ type: "model_select", model: overrideModel, previousModel: undefined, source: "set" },
+			ctx,
+		);
+
+		const written = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
+		assert.equal(written.tlh.primaryAgent.modelOverrides.architect, "anthropic/claude-sonnet-4-6");
+	});
+});
+
+test("model_select listener clears override when user reselects the primary's bundled default model", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
+	const initialSettings = JSON.stringify({
+		tlh: { primaryAgent: { modelOverrides: { architect: "openai-codex/gpt-5.5" } } },
+	}, null, 2) + "\n";
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(join(fixture.agent, "settings.json"), initialSettings);
+		const { pi } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		const modelSelectHandler = pi.events.find((e) => e.name === "model_select")?.handler;
+		assert.ok(modelSelectHandler, "model_select handler must be registered");
+
+		// rushLikePrimary with only anthropic available: bundled default is anthropic/claude-opus-4-8
+		const bundledDefaultModel = { provider: "anthropic", id: "claude-opus-4-8" };
+		const ctx = {
+			cwd: fixture.cwd,
+			sessionManager: { getBranch: () => [] },
+			ui: { notify() {} },
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-8" }] },
+			model: bundledDefaultModel,
+		};
+		await modelSelectHandler(
+			{ type: "model_select", model: bundledDefaultModel, previousModel: undefined, source: "set" },
+			ctx,
+		);
+
+		const written = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
+		// Override for architect should be cleared
+		assert.equal(written.tlh?.primaryAgent?.modelOverrides?.architect, undefined);
+	});
+});
+
+test("locked primary does not write model override when model_select fires for a non-default user model", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	// rush has lockThinking: true → shouldForceApplyForLock returns true → listener must skip override.
+	const lockedRush = createPrimaryPrompt("rush", {
+		model: "anthropic/claude-opus-4-8",
+		tlhOpenaiModels: ["openai-codex/gpt-5.5"],
+		thinking: "low",
+		applyModel: true,
+		applyThinking: true,
+		lockThinking: true,
+	});
+	const primaryAgents = new Map([["rush", lockedRush]]);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { pi } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		const modelSelectHandler = pi.events.find((e) => e.name === "model_select")?.handler;
+		assert.ok(modelSelectHandler, "model_select handler must be registered");
+
+		const nonDefaultModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
+		const ctx = {
+			cwd: fixture.cwd,
+			sessionManager: {
+				getBranch: () => [
+					{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
+				],
+			},
+			ui: { notify() {} },
+			modelRegistry: {
+				getAvailable: () => [
+					{ provider: "anthropic", id: "claude-opus-4-8" },
+					{ provider: "anthropic", id: "claude-sonnet-4-6" },
+				],
+			},
+			model: nonDefaultModel,
+		};
+		await modelSelectHandler(
+			{ type: "model_select", model: nonDefaultModel, previousModel: undefined, source: "set" },
+			ctx,
+		);
+
+		// settings.json must NOT have been written — locked primaries never persist overrides
+		let settings;
+		try {
+			settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
+		} catch {
+			settings = null;
+		}
+		assert.equal(
+			settings?.tlh?.primaryAgent?.modelOverrides?.rush,
+			undefined,
+			"locked primary (rush) must not record a model override",
+		);
+	});
+});
+
+test("echo guard: TLH's own applyPrimaryModel does not record a model override", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
+	let capturedCtx = null;
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const pi = createPiHarnessWithFiringModelSelect(() => capturedCtx);
+		const runtime = registerTlhPrimaryAgentRuntime(pi, { env: {}, primaryAgents, subagentMetadata: [] });
+		assert.ok(runtime);
+
+		const applyCtx = {
+			cwd: fixture.cwd,
+			sessionManager: { getBranch: () => [] },
+			ui: { notify() {} },
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-8" }] },
+			model: { provider: "anthropic", id: "claude-sonnet-4-6" }, // different from bundled default
+		};
+		capturedCtx = applyCtx;
+
+		// This will call pi.setModel which fires model_select with source="set".
+		// The echo guard (tlhApplyingModel=true) must suppress writing the override.
+		await runtime.applySessionStart(applyCtx);
+
+		// settings.json should NOT have been written (no override)
+		let settings;
+		try {
+			settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
+		} catch {
+			settings = null;
+		}
+		const overrides = settings?.tlh?.primaryAgent?.modelOverrides;
+		assert.equal(overrides?.architect, undefined, "TLH's own setModel must not record a model override");
 	});
 });

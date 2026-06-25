@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
@@ -89,6 +89,61 @@ export function readJsonFile(path, { missingValue, emptyValue = {} } = {}) {
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         throw new Error(`Invalid JSON in ${path}: ${message}`);
+    }
+}
+function throwSymlinkedBackupSource(path, label) {
+    throw new Error(`refusing to back up symlinked ${label} source: ${path}`);
+}
+function throwNonRegularBackupSource(path, label) {
+    throw new Error(`refusing to back up non-regular ${label} source: ${path}`);
+}
+function validateBackupSourcePathStats(stats, path, label) {
+    if (stats.isSymbolicLink())
+        throwSymlinkedBackupSource(path, label);
+    if (!stats.isFile())
+        throwNonRegularBackupSource(path, label);
+}
+function backupSourceIdentity(stats) {
+    return { dev: stats.dev, ino: stats.ino };
+}
+function sameBackupSourceIdentity(left, right) {
+    return left.dev === right.dev && left.ino === right.ino;
+}
+export function readRegularFileForBackup(path, label) {
+    const openFlags = constants.O_RDONLY | (typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0);
+    let fd;
+    try {
+        try {
+            fd = openSync(path, openFlags);
+        }
+        catch (error) {
+            if (error?.code === "ELOOP")
+                throwSymlinkedBackupSource(path, label);
+            try {
+                validateBackupSourcePathStats(lstatSync(path), path, label);
+            }
+            catch (pathError) {
+                if (pathError?.code !== "ENOENT")
+                    throw pathError;
+            }
+            throw error;
+        }
+        const openedStats = fstatSync(fd);
+        if (!openedStats.isFile())
+            throwNonRegularBackupSource(path, label);
+        const pathStats = lstatSync(path);
+        validateBackupSourcePathStats(pathStats, path, label);
+        if (!sameBackupSourceIdentity(backupSourceIdentity(openedStats), backupSourceIdentity(pathStats))) {
+            throw new Error(`refusing to back up changed ${label} source during read: ${path}`);
+        }
+        return {
+            content: readFileSync(fd),
+            mode: openedStats.mode & 0o777,
+        };
+    }
+    finally {
+        if (fd !== undefined)
+            closeSync(fd);
     }
 }
 export function shellQuote(value) {

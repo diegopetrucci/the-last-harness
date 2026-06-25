@@ -33,6 +33,7 @@ const contracts = [
 				"architect captures only ticket-specific validation deviations",
 				/ticket-specific validation expectations.*differ from the repository's normal validation flow/i,
 			),
+			orderedTerms("architect monitors CI after opening PRs without autonomous follow-up", ["After opening a PR", "monitor CI/status checks", "If any fail", "ask the user whether to proceed", "Do not investigate", "unless the user explicitly asks"]),
 		],
 	},
 	{
@@ -48,6 +49,7 @@ const contracts = [
 			bodyPattern("Rush never delegates implementation to developer", /do not delegate implementation to [`']?developer[`']?/i),
 			orderedTerms("tickets are optional by default", ["do not create or require", "tk", "by default"]),
 			bodyPattern("broad work escalates to architect or product", /recommend switching to [`']?architect[`']?|recommend [`']?architect[`']? or [`']?product[`']?/i),
+			orderedTerms("Rush monitors CI after opening PRs without autonomous follow-up", ["After opening a PR", "monitor CI/status checks", "If any fail", "ask the user whether to proceed", "Do not investigate", "unless the user explicitly asks"]),
 		],
 	},
 	{
@@ -57,6 +59,7 @@ const contracts = [
 		forbiddenTools: ["contact_supervisor", "web_search", "fetch_content", "get_search_content", "oracle"],
 		anchors: [
 			heading("Orientation"),
+			heading("Scoped subagents"),
 			heading("Product workflow"),
 			heading("Documentation and ticket standards"),
 			bodyPattern("product never implements source changes", /do not edit source code|never implement source changes/i),
@@ -140,16 +143,29 @@ const contracts = [
 	{
 		group: "subagents",
 		name: "oracle",
-		requiredTools: ["oracle", "read", "grep", "find", "ls", "contact_supervisor", "bash"],
-		forbiddenTools: ["write", "edit", "subagent", "intercom", "web_search", "fetch_content", "get_search_content"],
+		requiredTools: ["read", "grep", "find", "ls", "contact_supervisor", "bash"],
+		forbiddenTools: ["write", "edit", "subagent", "intercom", "web_search", "fetch_content", "get_search_content", "oracle"],
 		anchors: [
-			heading("Tool use"),
+			heading("Inputs"),
 			heading("Analysis process"),
 			heading("Output"),
 			bodyPattern("oracle stays read-only", /read-only|never modify files/i),
-			bodyPattern("oracle uses oracle tool", /use the existing [`']?oracle[`']? extension tool|use the [`']?oracle[`']? tool/i),
-			orderedTerms("oracle validates tool output against local evidence", ["Ask the `oracle` tool", "Evaluate the oracle response against local evidence"]),
-			includesAllTerms("oracle forbids mutating shell options", ["optional shell execution", "mutating capabilities"]),
+			orderedTerms("oracle gathers evidence then applies direct analysis", ["Gather", "Apply", "analysis"]),
+			bodyPattern("oracle distinguishes confirmed findings from unknowns", /confirmed findings|unresolved unknowns/i),
+		],
+	},
+	{
+		group: "subagents",
+		name: "contrarian",
+		requiredTools: ["read", "grep", "find", "ls", "contact_supervisor", "bash"],
+		forbiddenTools: ["write", "edit", "subagent", "intercom", "web_search", "fetch_content", "get_search_content", "oracle"],
+		anchors: [
+			heading("Inputs"),
+			heading("Analysis process"),
+			heading("Output"),
+			bodyPattern("contrarian stays read-only", /read-only|never modify files/i),
+			orderedTerms("contrarian steelmans the strongest opposing case", ["Steelman", "strongest credible opposing position"]),
+			bodyPattern("contrarian separates confirmed and unresolved objections", /confirmed objections|unresolved unknowns/i),
 		],
 	},
 ];
@@ -167,19 +183,54 @@ for (const contract of contracts) {
 	});
 }
 
-test("base architect prompt keeps run-tests-last validation workflow out of base prompts unless the experimental flag is enabled", () => {
+test("base architect prompt permanently includes the final-validation-ticket workflow", () => {
 	const architect = readAgentPrompt("primary", "architect");
 	const { normalizedBody } = architect;
-	assert.doesNotMatch(normalizedBody, /implementation ticket.*do(?:es)? not require tests or validation.*final validation ticket/i);
-	assert.doesNotMatch(
-		normalizedBody,
-		/final validation ticket.*depends on all implementation tickets.*when .*VALIDATING\.md.*otherwise.*repo-discovered validation commands/i,
-	);
+	assert.match(normalizedBody, /final-validation ticket.*depends on all implementation tickets/i);
+	assert.match(normalizedBody, /implementation-ticket validation narrow and ticket-scoped/i);
+	assert.match(normalizedBody, /when [`']?VALIDATING\.md[`']? is present.*otherwise use repo-discovered validation commands/i);
+	assert.match(normalizedBody, /make any validation deferral explicit in the ticket text/i);
 });
 
-test("base developer prompt keeps run-tests-last validation workflow gated behind the experimental flag", () => {
+test("base architect prompt keeps delta follow-up review guidance behind the experimental flag", () => {
+	const architect = readAgentPrompt("primary", "architect");
+	const { normalizedBody } = architect;
+	assert.doesNotMatch(normalizedBody, /default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint/i);
+	assert.doesNotMatch(normalizedBody, /prior findings.*git range or checkpoint.*changed-file list/i);
+	assert.match(normalizedBody, /delegate final review to `code-reviewer` against the full vcs diff/i);
+});
+
+test("base primary prompts keep contrarian guidance behind the experimental flag", () => {
+	for (const name of ["architect", "rush", "product", "bug-hunter"]) {
+		const { normalizedBody } = readAgentPrompt("primary", name);
+		assert.doesNotMatch(normalizedBody, /contrarian/i, `${name} should not advertise contrarian in the base prompt`);
+	}
+});
+
+test("base architect and rush prompts keep ci failure investigation guidance behind the experimental flag", () => {
+	for (const name of ["architect", "rush"]) {
+		const { normalizedBody } = readAgentPrompt("primary", name);
+		assert.doesNotMatch(normalizedBody, /read-only investigation before asking the user whether to proceed/i);
+		assert.doesNotMatch(normalizedBody, /inspect failed checks, logs, workflow\/config files, diffs/i);
+		assert.doesNotMatch(normalizedBody, /rerun jobs, change the pr, or take any other follow-up action during this investigation/i);
+		assert.match(normalizedBody, /after opening a pr, monitor ci\/status checks/i);
+		assert.match(normalizedBody, /do not investigate .* unless the user explicitly asks/i);
+	}
+});
+
+test("base developer prompt does not inherit the architect final-validation workflow", () => {
 	const developer = readAgentPrompt("subagents", "developer");
 	const { normalizedBody } = developer;
 	assert.doesNotMatch(normalizedBody, /explicitly defer tests\/validation.*final validation ticket/i);
 	assert.doesNotMatch(normalizedBody, /final validation ticket.*VALIDATING\.md.*otherwise.*repo-discovered commands/i);
+});
+
+test("base code-reviewer prompt keeps delta follow-up review guidance behind the experimental flag", () => {
+	const reviewer = readAgentPrompt("subagents", "code-reviewer");
+	const { normalizedBody } = reviewer;
+	assert.doesNotMatch(normalizedBody, /follow-up review delta/i);
+	assert.doesNotMatch(normalizedBody, /expect prior findings plus an exact delta baseline/i);
+	assert.doesNotMatch(normalizedBody, /default to the requested delta and prior findings/i);
+	assert.doesNotMatch(normalizedBody, /requested delta cannot be validated safely without wider context/i);
+	assert.match(normalizedBody, /the vcs diff\./i);
 });

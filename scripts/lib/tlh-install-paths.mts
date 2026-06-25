@@ -138,6 +138,9 @@ export function ensureSafeProfileDir(
 	options: InstallerPathOptions = {},
 ): string {
 	validateProfileRelativePath(relativePath, label);
+	if (isSymlink(config.agentDir)) {
+		throw new Error(`refusing to write ${label} through symlinked TLH profile path: ${config.agentDir}`);
+	}
 	const root = realpathForCompare(config.agentDir);
 	assertProfilePathWithinAgent(config, root, label, options);
 	if (existsSync(root) && !lstatSync(root).isDirectory()) {

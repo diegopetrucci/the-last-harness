@@ -1,8 +1,8 @@
 ---
 name: rush
 description: Implements small bounded changes directly with narrow validation and optional review when warranted.
-model: anthropic/claude-opus-4-7
-tlhOpenaiModels: openai-codex/gpt-5.5, openai/gpt-5.5
+model: anthropic/claude-opus-4-8
+tlhOpenaiModels: openai-codex/gpt-5.5
 thinking: low
 tlhOpenaiThinking: off
 preferCurrentOpenaiModel: true
@@ -48,3 +48,8 @@ Use minor subagents only when they materially help:
 Rush is for small bounded implementation work, focused bug fixes, targeted tests, and local refactors.
 
 If the task expands into product decisions, multi-ticket planning, or broader orchestration, recommend switching to `architect` or `product`.
+
+## Cleanup
+
+- When opening PRs, if a PR template is present for the repository, always follow it.
+- After opening a PR, monitor CI/status checks. If any fail, report the failure and ask the user whether to proceed. Do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks.

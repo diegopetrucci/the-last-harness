@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -17,6 +17,18 @@ const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
 const defaultsScript = join(repoRoot, "scripts", "tlh-defaults.mjs");
 const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
 const retiredPlannotatorPackage = "npm:@plannotator/pi-extension";
+const expectedBundledNpmSources = new Map([
+	["openai-fast", "npm:@diegopetrucci/pi-openai-fast@0.1.6"],
+	["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth@0.6.3"],
+	["librarian", "npm:@diegopetrucci/pi-librarian@0.1.7"],
+	["fff", "npm:@ff-labs/pi-fff@0.9.6"],
+	["inline-bash", "npm:@diegopetrucci/pi-inline-bash@0.1.3"],
+	["notify", "npm:@diegopetrucci/pi-notify@0.1.7"],
+	["context-inspector", "npm:@diegopetrucci/pi-context-inspector@0.1.3"],
+	["quiet-tools", "npm:@diegopetrucci/pi-quiet-tools@0.1.4"],
+	["dirty-repo-guard", "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.3"],
+	["triage-comments", "npm:@diegopetrucci/pi-triage-comments@0.1.4"],
+]);
 
 function tempFixture() {
 	const dir = mkdtempSync(join(tmpdir(), "tlh-defaults-test-"));
@@ -41,6 +53,20 @@ function readJson(path) {
 
 function packageSourceOf(entry) {
 	return typeof entry === "string" ? entry : entry?.source;
+}
+
+function backupFiles(settingsPath) {
+	return readdirSync(dirname(settingsPath))
+		.filter((name) => name.startsWith("settings.json.backup-tlh-defaults-"))
+		.sort();
+}
+
+function symlinkFile(target, path) {
+	if (process.platform === "win32") {
+		symlinkSync(target, path, "file");
+		return;
+	}
+	symlinkSync(target, path);
 }
 
 const disablingExtensionFilterCases = [
@@ -122,7 +148,7 @@ test("bundled manifest keeps quiet-tools-compatible rtk load order", () => {
 	const dirtyRepoGuard = bundled.find(({ id }) => id === "dirty-repo-guard");
 
 	assert.ok(dirtyRepoGuard, "bundled dirty-repo-guard default should exist");
-	assert.equal(dirtyRepoGuard.source, "npm:@diegopetrucci/pi-dirty-repo-guard");
+	assert.equal(dirtyRepoGuard.source, expectedBundledNpmSources.get("dirty-repo-guard"));
 	assert.equal(ids.includes("permission-gate"), false);
 	assert.equal(ids.includes("confirm-destructive"), false);
 	assert.ok(rtk, "bundled rtk default should exist");
@@ -136,6 +162,15 @@ test("bundled manifest keeps quiet-tools-compatible rtk load order", () => {
 	assert.equal(rtk.critical, false);
 	assert.equal(rtk.source, "git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5");
 	assert(ids.indexOf("rtk") < ids.indexOf("quiet-tools"), "quiet-tools should load after rtk");
+});
+
+test("bundled manifest pins every managed npm default to an explicit version", () => {
+	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
+	const bundledById = new Map(bundled.map((extension) => [extension.id, extension]));
+
+	for (const [id, source] of expectedBundledNpmSources) {
+		assert.equal(bundledById.get(id)?.source, source, `${id} should stay pinned to ${source}`);
+	}
 });
 
 test("tlh-defaults errors when the default-extension manifest is missing", () => {
@@ -157,37 +192,21 @@ test("tlh-defaults errors when the default-extension manifest is missing", () =>
 	assert.match(result.stderr, /File does not exist:/);
 });
 
-test("installed tlh-defaults helper can resolve its copied default-extension library", () => {
-	const fixture = tempFixture();
-	const supportDir = join(fixture.dir, "agent", "tlh");
-	const copiedVariables = new Set([
+test("installable support files no longer include the legacy defaults helper tree", () => {
+	const installableVariables = new Set(installableSupportFiles().map((file) => file.variable));
+
+	for (const variable of [
 		"TLH_DEFAULTS_SCRIPT",
 		"TLH_INSTALL_PACKAGE_SOURCE_LIB",
 		"TLH_INSTALL_PATHS_LIB",
+		"TLH_SAFE_PROFILE_WRITE_LIB",
 		"TLH_INSTALL_UTILS_LIB",
 		"DEFAULT_EXTENSIONS_LIB",
 		"DEFAULT_EXTENSIONS_FILE",
-	]);
-
-	for (const file of installableSupportFiles().filter((entry) => copiedVariables.has(entry.variable))) {
-		const target = join(supportDir, file.installName);
-		mkdirSync(dirname(target), { recursive: true });
-		copyFileSync(join(repoRoot, file.relativePath), target);
+	]) {
+		assert.equal(installableVariables.has(variable), false, variable);
 	}
-	writeFileSync(fixture.settings, JSON.stringify({ packages: [] }, null, 2));
-
-	const result = spawnSync(process.execPath, [
-		join(supportDir, "tlh-defaults.mjs"),
-		"--settings", fixture.settings,
-		"--defaults", join(supportDir, "default-extensions.json"),
-		"sources",
-	], {
-		cwd: fixture.dir,
-		env: process.env,
-		encoding: "utf8",
-	});
-
-	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+	assert.equal(installableVariables.has("TLH_RECOVER_UPDATE_SCRIPT"), true);
 });
 
 test("merge ignores and cleans stale/manual critical opt-outs while preserving non-critical opt-outs", () => {
@@ -267,10 +286,6 @@ test("merge reorders only targeted default extensions so unrelated defaults stay
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
 		{
-			id: "oracle",
-			source: "npm:@diegopetrucci/pi-oracle",
-		},
-		{
 			id: "rtk",
 			aliases: ["pi-rtk"],
 			replaces: ["npm:pi-rtk", "npm:@sherif-fanous/pi-rtk", "git:github.com/sherif-fanous/pi-rtk"],
@@ -287,7 +302,6 @@ test("merge reorders only targeted default extensions so unrelated defaults stay
 		packages: [
 			"npm:before",
 			"npm:@diegopetrucci/pi-compact-bash",
-			"npm:@diegopetrucci/pi-oracle",
 			"npm:@sherif-fanous/pi-rtk",
 			"npm:after",
 		],
@@ -303,7 +317,6 @@ test("merge reorders only targeted default extensions so unrelated defaults stay
 	assert.deepEqual(readJson(fixture.settings).packages, [
 		"npm:before",
 		"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
-		"npm:@diegopetrucci/pi-oracle",
 		"npm:after",
 		"git:github.com/diegopetrucci/the-last-harness",
 		"npm:@diegopetrucci/pi-compact-bash",
@@ -403,13 +416,61 @@ test("tlh-defaults enable cleans stale critical opt-outs while preserving non-cr
 	assert.deepEqual(settings.packages, ["npm:subagents"]);
 });
 
-test("tlh-defaults enable repairs targeted default extension load order for rtk", () => {
+test("tlh-defaults preserves settings and backup file modes when rewriting settings", () => {
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
 		{
-			id: "oracle",
-			source: "npm:@diegopetrucci/pi-oracle",
+			id: "helper",
+			source: "npm:helper",
 		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({ packages: ["npm:helper"] }, null, 2));
+	chmodSync(fixture.settings, 0o640);
+
+	runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"disable", "helper",
+	]);
+
+	assert.equal(lstatSync(fixture.settings).mode & 0o777, 0o640);
+	const backups = backupFiles(fixture.settings);
+	assert.equal(backups.length, 1);
+	assert.equal(lstatSync(join(dirname(fixture.settings), backups[0])).mode & 0o777, 0o640);
+});
+
+test("tlh-defaults rejects symlinked settings targets before creating backups", () => {
+	const fixture = tempFixture();
+	const externalDir = mkdtempSync(join(tmpdir(), "tlh-defaults-symlink-target-"));
+	const externalSettings = join(externalDir, "settings.json");
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "helper",
+			source: "npm:helper",
+		},
+	], null, 2));
+	writeFileSync(externalSettings, JSON.stringify({ packages: ["npm:helper"] }, null, 2));
+	symlinkFile(externalSettings, fixture.settings);
+
+	const result = spawnSync(process.execPath, [
+		defaultsScript,
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"disable", "helper",
+	], {
+		cwd: repoRoot,
+		env: process.env,
+		encoding: "utf8",
+	});
+
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /symlinked TLH defaults settings source/);
+	assert.deepEqual(backupFiles(fixture.settings), []);
+});
+
+test("tlh-defaults enable repairs targeted default extension load order for rtk", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
 		{
 			id: "rtk",
 			aliases: ["pi-rtk"],
@@ -426,7 +487,6 @@ test("tlh-defaults enable repairs targeted default extension load order for rtk"
 	writeFileSync(fixture.settings, JSON.stringify({
 		packages: [
 			"npm:before",
-			"npm:@diegopetrucci/pi-oracle",
 			"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
 			"npm:@diegopetrucci/pi-compact-bash",
 		],
@@ -446,7 +506,6 @@ test("tlh-defaults enable repairs targeted default extension load order for rtk"
 	const settings = readJson(fixture.settings);
 	assert.deepEqual(settings.packages, [
 		"npm:before",
-		"npm:@diegopetrucci/pi-oracle",
 		"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
 		"npm:@diegopetrucci/pi-compact-bash",
 	]);
@@ -627,6 +686,77 @@ test("tlh-defaults keeps non-critical allowlisted package entrypoints enabled", 
 		.split("\n")
 		.filter(Boolean);
 	assert.deepEqual(sources, ["npm:helper"]);
+});
+
+test("tlh-defaults sources emit bundled pinned npm sources for existing unpinned managed defaults", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "oracle",
+			source: "npm:@diegopetrucci/pi-oracle@0.1.12",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: ["npm:@diegopetrucci/pi-oracle"],
+	}, null, 2));
+
+	const sources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "sources"])
+		.trim()
+		.split("\n")
+		.filter(Boolean);
+	assert.deepEqual(sources, ["npm:@diegopetrucci/pi-oracle@0.1.12"]);
+});
+
+test("tlh-defaults sources emit the bundled npm pin when the installed managed package has an older same-identity pin", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "oracle",
+			source: "npm:@diegopetrucci/pi-oracle@0.1.13",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: ["npm:@diegopetrucci/pi-oracle@0.1.12"],
+	}, null, 2));
+
+	const sources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "sources"])
+		.trim()
+		.split("\n")
+		.filter(Boolean);
+	assert.deepEqual(sources, ["npm:@diegopetrucci/pi-oracle@0.1.13"]);
+});
+
+test("tlh-defaults sources still respect disabled and deferred defaults while pinning managed npm defaults", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "oracle",
+			source: "npm:@diegopetrucci/pi-oracle@0.1.12",
+		},
+		{
+			id: "notify",
+			source: "npm:@diegopetrucci/pi-notify@0.1.5",
+		},
+		{
+			id: "pi-web-access",
+			replaces: ["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access"],
+			source: "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [
+			"npm:@diegopetrucci/pi-oracle",
+			"npm:@diegopetrucci/pi-notify",
+			"npm:pi-web-access",
+		],
+		tlh: { disabledDefaultExtensions: ["notify"] },
+	}, null, 2));
+
+	const sources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "sources"])
+		.trim()
+		.split("\n")
+		.filter(Boolean);
+	assert.deepEqual(sources, ["npm:@diegopetrucci/pi-oracle@0.1.12"]);
 });
 
 test("tlh-defaults sources defers non-migrating replacements and ignores stale/manual critical opt-outs", () => {
@@ -935,11 +1065,11 @@ test("bundled manifest contains mcporter entry and tlh-defaults accepts its alia
 	const mcporter = bundled.find(({ id }) => id === "mcporter");
 
 	assert.ok(mcporter, "bundled mcporter entry should exist");
-	assert.equal(mcporter.source, "npm:pi-mcp-adapter");
+	assert.equal(mcporter.source, "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1");
 	assert.equal(mcporter.critical, false, "mcporter must not be critical");
 	assert.deepEqual(mcporter.aliases, ["pi-mcp-adapter", "mcp-adapter"]);
-	assert.deepEqual(mcporter.replaces, []);
-	assert.equal(mcporter.migrateReplacements, false, "mcporter replacements must stay disabled by default");
+	assert.deepEqual(mcporter.replaces, ["npm:pi-mcp-adapter"]);
+	assert.equal(mcporter.migrateReplacements, true, "mcporter migrates off the upstream npm source");
 
 	const fixture = tempFixture();
 	writeFileSync(fixture.settings, JSON.stringify({ packages: ["npm:pi-mcp-adapter"] }, null, 2));
@@ -961,7 +1091,7 @@ test("bundled manifest contains subagents and intercom entries with correct crit
 	const intercom = bundled.find(({ id }) => id === "intercom");
 
 	assert.ok(subagents, "bundled subagents entry should exist");
-	assert.equal(subagents.source, "git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-7");
+	assert.equal(subagents.source, "git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-13");
 	assert.equal(subagents.critical, true, "subagents must stay critical");
 	assert.deepEqual(subagents.aliases, ["pi-subagents"]);
 	assert.deepEqual(subagents.replaces, [

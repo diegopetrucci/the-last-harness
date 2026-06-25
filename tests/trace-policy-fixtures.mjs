@@ -198,24 +198,25 @@ export const TRACE_POLICY_FIXTURES = [
 		},
 	},
 	{
-		name: "oracle valid with read-only oracle tool usage",
+		name: "oracle valid with direct read-only analysis",
 		valid: true,
 		transcript: {
 			agent: "oracle",
 			steps: [
 				{ type: "tool", tool: "read", path: "tests/trace-policy-checker.mjs" },
-				{ type: "tool", tool: "oracle", input: { question: "Is the trace checker too broad?", allowShell: false, capabilities: ["read"] } },
+				{ type: "tool", tool: "grep", path: "tests", pattern: "evaluateOracle" },
+				{ type: "tool", tool: "bash", argv: ["git", "diff", "--no-color", "HEAD~1"] },
 			],
 		},
 	},
 	{
-		name: "oracle invalid if it enables optional shell execution",
+		name: "oracle invalid if it uses the oracle extension tool",
 		valid: false,
-		expectedCodes: ["oracle.shell_execution_forbidden"],
+		expectedCodes: ["oracle.read_only"],
 		transcript: {
 			agent: "oracle",
 			steps: [
-				{ type: "tool", tool: "oracle", input: { question: "Apply the fix", allowShell: true, capabilities: ["read"] } },
+				{ type: "tool", tool: "oracle", input: { question: "Is the trace checker too broad?" } },
 			],
 		},
 	},

@@ -2,7 +2,7 @@
 
 ## Install
 
-Requires Node.js >=22.19.0 on `PATH`. TLH uses upstream Pi >=0.79.1. If `pi` is missing, the installer adds a compatible per-user copy under `~/.local` and hard-fails with an actionable error if that install cannot complete. If `pi` is present but older than 0.79.1, install stops with an upgrade error instead of changing that existing runtime automatically.
+Requires Node.js >=22.19.0 on `PATH`. TLH always installs its own pinned Pi 0.80.2 into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. Install or repair failures stop with an actionable error.
 
 Run the one-liner:
 
@@ -10,7 +10,7 @@ Run the one-liner:
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
 ```
 
-On supported platforms (linux/darwin × x64/arm64), it installs [Gnosis](https://github.com/skorokithakis/gnosis) automatically. Installs on unsupported platforms hard-fail. TLH also requires `tk` ticket integration; if no valid configured/existing `tk` is found, TLH installs a managed copy at `~/.the-last-harness/agent/bin/tk`. If TLH cannot validate or install `tk`, install fails with an actionable error instead of creating an incomplete workflow. Once the installation is finished, start `tlh` by running… you guessed it, `tlh`.
+On supported platforms (linux/darwin × x64/arm64), it installs [Gnosis](https://github.com/skorokithakis/gnosis) automatically. TLH currently pins the managed default to Gnosis `v0.5.3`; installer-owned `TLH_GNOSIS_VERSION` or helper `--gnosis-version` overrides can still point at another release (including `latest`) when needed. Installs on unsupported platforms hard-fail. TLH also requires `tk` ticket integration; if no valid configured/existing `tk` is found, TLH installs a managed copy at `~/.the-last-harness/agent/bin/tk`. If TLH cannot validate or install `tk`, install fails with an actionable error instead of creating an incomplete workflow. Once the installation is finished, start `tlh` by running… you guessed it, `tlh`.
 
 Note: if you already have `pi` installed, `tlh` does not replace it — you can keep both, as it uses its own isolated config in `~/.the-last-harness/` and never mutates normal `~/.pi/agent` settings.
 
@@ -57,7 +57,7 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v
 
 You can just run `tlh update`.
 
-This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. If you are updating from an older install without `tlh update`, rerun the latest-release installer once.
+This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. `tlh update` also repairs the private Pi runtime at `~/.the-last-harness/runtime` back to the pinned 0.80.2 when needed. If you are updating from an older install without `tlh update`, rerun the latest-release installer once.
 
 If TLH starts with the notice ``TLH extension updates are available. Run `tlh update --extensions` to update them.``, that notice refers to isolated extension/package updates only. `tlh update --extensions` runs the upstream package refresh against the TLH profile without changing installer-managed checkout state, wrapper files, or update-track metadata. Installer-track and installer-owned options such as `--track`, `--ref`, `--repo`, `--package-source`, `--force`, `--no-settings`, and `--no-wrapper` require plain `tlh update` instead.
 
@@ -89,7 +89,7 @@ Release builds with TelemetryDeck identifiers configured also send at most one p
 
 To opt out persistently, set `"tlh": { "telemetry": { "enabled": false } }` in `~/.the-last-harness/agent/settings.json`. This opt-out is user-owned and survives `tlh update` and installer reruns. Per-run opt-outs are `PI_OFFLINE=1`, `TLH_SKIP_TELEMETRY=1`, `TLH_TELEMETRY_DISABLED=1`, or `PI_TELEMETRY=0`. To reset only the pseudonymous install ID, remove `~/.the-last-harness/agent/tlh/telemetry-state.json`.
 
-Plain `tlh update` also refreshes bundled default extension packages; it refreshes pinned critical defaults safely before updating other enabled defaults.
+Plain `tlh update` also refreshes bundled default extension packages. Bundled npm defaults are installer-pinned to explicit versions from `config/default-extensions.json`, while TLH git-fork defaults stay pinned to their tagged refs; TLH only changes those managed versions when a TLH release updates the bundle. Updates still refresh pinned critical defaults safely before updating other enabled defaults.
 
 ## Uninstall
 
@@ -99,7 +99,7 @@ Run the one-liner from the release asset:
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/uninstall.sh | bash -s --
 ```
 
-The script removes the isolated agent dir under `~/.the-last-harness` (and the now-empty parent dir, if any), the `tlh` wrapper, and (when install-state indicates it) the TLH-installed per-user Pi package. Normal Pi config at `~/.pi/agent` is never touched.
+The script removes the isolated agent dir under `~/.the-last-harness/agent`, the `tlh` wrapper, and the private Pi runtime at `~/.the-last-harness/runtime` when a valid ownership marker (`.tlh-runtime-owned` inside the runtime directory) is present. An unmarked or pre-marker runtime is skipped and a manual-removal hint is printed instead. A legacy TLH-installed pi at `~/.local` is removed only when `--force-include-pi` is explicitly passed; without that flag the uninstaller leaves it in place and prints a manual-removal hint. The parent dir `~/.the-last-harness` is removed only when empty after the agent dir is gone. Normal Pi config at `~/.pi/agent` is never touched.
 
 ### Uninstaller flags
 
@@ -108,8 +108,8 @@ The uninstaller prints its plan and then proceeds immediately — there is no co
 | Flag | Description |
 |---|---|
 | `--dry-run` | Print planned actions without performing any removals. |
-| `--force-include-pi` | Remove pi via npm even when install-state says `piInstalledByTlh=false` or the field is absent. |
-| `--keep-pi` | Skip pi removal even when install-state says `piInstalledByTlh=true`. |
+| `--force-include-pi` | Removes the private runtime when a valid ownership marker is present; if the runtime is unmarked, it is still skipped with a manual-removal hint. When the private runtime is absent and a legacy `~/.local/bin/pi` exists, removes that instead. This flag is **required** to remove a legacy `~/.local` pi — without it the uninstaller never auto-removes it, to protect user-owned installations. |
+| `--keep-pi` | Skip runtime and pi removal even when install-state says `piInstalledByTlh=true`. |
 | `--agent-dir DIR` | Override isolated agent dir (default: `~/.the-last-harness/agent`). Only the agent dir is removed; the parent dir is cleaned up only if empty. |
 | `--bin-dir DIR` | Override wrapper install dir (default: `~/.local/bin`). |
 | `--wrapper-name NAME` | Override wrapper command basename (default: `tlh`). |
@@ -121,22 +121,23 @@ The uninstaller prints its plan and then proceeds immediately — there is no co
 
 ### Pi removal decision
 
-At install time, TLH records `piInstalledByTlh` in `~/.the-last-harness/agent/tlh/install-state.json`. The uninstaller uses this field to decide whether to remove the TLH-installed per-user Pi package, so a shared or pre-existing pi install is not accidentally removed. This field was added in this release; older installs that lack it default to leaving pi in place.
+TLH records ownership of the private Pi runtime via a marker file (`.tlh-runtime-owned`) written inside `~/.the-last-harness/runtime` at install time. The uninstaller validates this marker (fail-closed: verifies the recorded runtime path matches the resolved directory, the directory is not a symlink, and a positive Pi layout is present) before removing the runtime. Install-state `piInstalledByTlh=true` alone is no longer sufficient — without a valid marker, the runtime is skipped and a manual-removal hint is printed. Older installs without the marker gain it automatically on the next `tlh update` or installer rerun; after that, uninstall can auto-remove as normal. A legacy `~/.local` pi is never removed automatically — it is removed only when `--force-include-pi` is explicitly passed, because the uninstaller cannot determine whether that binary was installed by TLH or by the user.
 
-| Condition | pi removal |
+| Condition | Effect |
 |---|---|
-| `piInstalledByTlh = true` | removed via npm |
-| `piInstalledByTlh = false` | kept |
-| field absent (older install) | kept |
-| `--force-include-pi` flag | removed (overrides state) |
-| `--keep-pi` flag | kept (overrides state) |
+| valid `.tlh-runtime-owned` marker present | private runtime (`~/.the-last-harness/runtime`) removed (`rm -rf`); legacy `~/.local` pi is **not** removed unless `--force-include-pi` is also passed |
+| marker absent or invalid (unmarked or pre-marker runtime) | private runtime **skipped** — manual-removal hint printed; `piInstalledByTlh=true` alone does not override this |
+| `--force-include-pi` flag | removes private runtime when a valid marker is present; runtime skipped with a hint if unmarked; removes legacy `~/.local/bin/pi` if present and private runtime is absent |
+| `--keep-pi` flag | keeps everything — skips runtime and pi removal |
 
 ### What stays behind
 
 The uninstaller never auto-removes:
 
 - **`~/.pi`** — Pi's own user config directory. To remove it manually: `rm -rf ~/.pi`
-- **Separately-installed pi binary** — if pi was installed before or independently of TLH, it is left in place. To remove TLH's per-user install: `npm uninstall -g --prefix "$HOME/.local" @earendil-works/pi-coding-agent`. If your `pi` command is owned by a different npm prefix, uninstall it from that same prefix instead.
+- **Private TLH Pi runtime (when kept)** — if you pass `--keep-pi`, if the runtime has no valid ownership marker (unmarked or pre-marker install), or if install-state is `false`/absent, the runtime at `~/.the-last-harness/runtime` is left in place; remove it manually: `rm -rf ~/.the-last-harness/runtime`.
+- **Separately-installed pi** — any `pi` you installed independently of TLH is left in place and never touched by tlh.
+- **Legacy TLH-owned pi at `~/.local`** — the uninstaller never auto-removes this (to protect user-owned installations). To remove it, pass `--force-include-pi` to the uninstaller, or remove manually: `npm uninstall -g --ignore-scripts --prefix "$HOME/.local" @earendil-works/pi-coding-agent`.
 - **Repo-local `.gnosis/` and `.tickets/` data** — per-repository and managed separately. To remove from a repo: `rm -rf .gnosis .tickets`
 
 ### Manual removal
@@ -148,14 +149,12 @@ rm -f ~/.local/bin/tlh
 rm -rf ~/.the-last-harness
 ```
 
-This also removes the managed `tk` copy under the TLH profile if one was installed. To also remove the TLH-installed per-user Pi package (only if you installed it solely for The Last Harness):
+This removes the isolated agent dir, the private Pi runtime at `~/.the-last-harness/runtime`, and the managed `tk` copy under the TLH profile. To also remove a TLH-managed legacy pi at `~/.local` (from an older install, only if TLH originally installed it):
 
 ```sh
-npm uninstall -g --prefix "$HOME/.local" @earendil-works/pi-coding-agent
+npm uninstall -g --ignore-scripts --prefix "$HOME/.local" @earendil-works/pi-coding-agent
 ```
-
-TLH installs Pi per-user under `~/.local` (the binary lives at `~/.local/bin/pi`). If you previously installed Pi globally with sudo from older instructions, use `sudo npm uninstall -g @earendil-works/pi-coding-agent` instead.
 
 ## Security note
 
-The one-line installer and `tlh update` run shell commands on your machine, may install the upstream Pi npm package per-user under `~/.local` and bundled default extensions, install managed Gnosis and `tk` binaries into the isolated TLH profile when needed, create an isolated Pi profile, and write a wrapper command. Managed `tk` is copied from the pinned `wedow/ticket` source tarball (`v0.3.2`) only after SHA-256 verification; TLH does not install `tk` globally or through Homebrew. Review `install.sh` and the stage-1 helper it fetches (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.
+The one-line installer and `tlh update` run shell commands on your machine, install the upstream Pi npm package per-user into a private runtime at `~/.the-last-harness/runtime` and bundled default extensions, install managed Gnosis and `tk` binaries into the isolated TLH profile when needed, create an isolated Pi profile, and write a wrapper command. Managed bundled npm extension sources are pinned to explicit versions in `config/default-extensions.json`; managed Gnosis defaults to the pinned `v0.5.3` release unless you override it. Managed `tk` is copied from the pinned `wedow/ticket` source tarball (`v0.3.2`) only after SHA-256 verification; TLH does not install `tk` globally or through Homebrew. Review `install.sh` and the stage-1 helper it fetches (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.

@@ -92,9 +92,8 @@ test("install docs describe separate pi removal with the TLH per-user npm prefix
 
 	assert.match(
 		install,
-		/Separately-installed pi binary[\s\S]{0,240}npm uninstall -g --prefix "\$HOME\/\.local" @earendil-works\/pi-coding-agent/,
+		/Separately-installed pi[\s\S]{0,300}npm uninstall -g --ignore-scripts --prefix "\$HOME\/\.local" @earendil-works\/pi-coding-agent/,
 	);
-	assert.match(install, /owned by a different npm prefix, uninstall it from that same prefix instead/i);
 });
 
 test("user-facing docs and installer help do not advertise legacy ticket opt-outs", () => {
@@ -118,4 +117,57 @@ test("annotate-git-diff docs use the renamed command and extension names", () =>
 	const commandsDoc = readRepoFile("docs/commands.md");
 	assert.doesNotMatch(commandsDoc, /extensions\/diff-review\/README\.md/);
 	assert.match(commandsDoc, /`annotate-git-diff`/);
+});
+
+test("commands docs describe contrarian, delta-follow-up-reviews, and architect-only ci-failure-investigation as default-off /experimental flags", () => {
+	const commandsDoc = readRepoFile("docs/commands.md");
+
+	assert.match(commandsDoc, /`\/experimental`/);
+	assert.match(commandsDoc, /contrarian/);
+	assert.match(commandsDoc, /delta-follow-up-reviews/);
+	assert.match(commandsDoc, /ci-failure-investigation/);
+	assert.match(commandsDoc, /architect primary agent do read-only failed ci\/status-check investigation/i);
+	assert.match(commandsDoc, /\/experimental enable contrarian/);
+	assert.match(commandsDoc, /\/experimental disable contrarian/);
+	assert.match(commandsDoc, /before any edits, commits, pushes, reruns, pr changes, or other follow-up changes/i);
+	assert.match(commandsDoc, /disabled by default/i);
+	assert.match(commandsDoc, /stale `run-tests-last` values/i);
+	assert.doesNotMatch(commandsDoc, /contrarian-subagent/);
+});
+
+test("README and changelog describe review opposite-provider fallback policy", () => {
+	const readme = readRepoFile("README.md");
+	const changelog = readRepoFile("CHANGELOG.md");
+
+	assert.match(readme, /`code-reviewer` and `oracle` intentionally prefer an available opposite provider/i);
+	assert.match(readme, /Enabled `contrarian` uses that same opposite-provider pattern/i);
+	assert.match(readme, /Anthropic sessions[\s\S]{0,180}OpenAI Codex subscription provider[\s\S]{0,80}available/i);
+	assert.match(readme, /OpenAI\/OpenAI-Codex sessions[\s\S]{0,120}Anthropic/i);
+	assert.match(readme, /same\/current-provider fallback[\s\S]{0,160}review independence is reduced/i);
+	assert.match(readme, /OpenAI API access[\s\S]{0,220}does not force `code-reviewer`, `oracle`, or enabled `contrarian` onto unavailable Codex-only defaults/i);
+	assert.match(changelog, /opposite-provider model[\s\S]{0,120}`code-reviewer` or `oracle`/i);
+	assert.match(changelog, /same\/current-provider fallback[\s\S]{0,160}review independence is reduced/i);
+	assert.match(changelog, /`code-reviewer` now prefers an available opposite provider/i);
+	assert.match(changelog, /OpenAI API-only setups are not forced onto unavailable Codex-only defaults/i);
+	assert.doesNotMatch(changelog, /`code-reviewer` now defaults to `openai-codex\/gpt-5\.5`/);
+});
+
+
+test("README and changelog describe contrarian's experimental sparing adversarial role", () => {
+	const readme = readRepoFile("README.md");
+	const changelog = readRepoFile("CHANGELOG.md");
+
+	assert.match(readme, /bundled experimental subagent[\s\S]{0,80}`contrarian`|`contrarian` as a bundled experimental subagent/i);
+	assert.match(readme, /default-off[\s\S]{0,80}\/experimental enable contrarian|\/experimental enable contrarian/i);
+	assert.match(readme, /\/experimental disable contrarian/i);
+	assert.match(readme, /If you enable `contrarian`[\s\S]{0,260}before ticket creation[\s\S]{0,220}specific risk|If you enable `contrarian`[\s\S]{0,260}specific risk[\s\S]{0,220}before ticket creation/i);
+	assert.match(readme, /not the normal diff reviewer[\s\S]{0,120}`code-reviewer` reviews changes against tasks/i);
+	assert.match(readme, /different from `oracle`[\s\S]{0,120}broader second-opinion path/i);
+	assert.match(readme, /When enabled, `contrarian` uses that same independence pattern/i);
+	assert.doesNotMatch(readme, /contrarian-subagent/);
+	assert.match(changelog, /bundles a first-party experimental `contrarian` subagent/i);
+	assert.match(changelog, /default-off behind `\/experimental enable contrarian`/i);
+	assert.match(changelog, /intended mainly for sparing pre-ticket adversarial stress-tests/i);
+	assert.match(changelog, /not the routine `code-reviewer` diff pass and not a replacement for the broader `oracle` second opinion/i);
+	assert.doesNotMatch(changelog, /contrarian-subagent/);
 });

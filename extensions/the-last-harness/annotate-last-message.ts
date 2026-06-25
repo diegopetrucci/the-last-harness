@@ -48,7 +48,7 @@ export function registerAnnotateLastMessageCommand(pi: ExtensionAPI): void {
 		}
 
 		const messageResult = findLastAssistantMessage(ctx.sessionManager.getBranch());
-		if (!messageResult.ok) {
+		if (messageResult.ok === false) {
 			ctx.ui.notify(messageResult.message, "error");
 			return;
 		}

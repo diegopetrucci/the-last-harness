@@ -4,7 +4,7 @@ TLH includes managed integrations for project memory and ticketed workflows. Gno
 
 ## Gnosis integration
 
-[Gnosis](https://github.com/skorokithakis/gnosis) is a small `gn` CLI for recording project decisions, constraints, rejected alternatives, and lessons that are not obvious from code alone. On supported platforms (linux/darwin × x64/arm64), TLH installs it automatically because `tlh` works better when agents can consult and update repo-local project memory. Installs and updates on unsupported platforms hard-fail.
+[Gnosis](https://github.com/skorokithakis/gnosis) is a small `gn` CLI for recording project decisions, constraints, rejected alternatives, and lessons that are not obvious from code alone. On supported platforms (linux/darwin × x64/arm64), TLH installs it automatically because `tlh` works better when agents can consult and update repo-local project memory. TLH currently pins the managed default to Gnosis `v0.5.3`, while installer-owned `TLH_GNOSIS_VERSION` and helper `--gnosis-version` overrides still let maintainers point at a different release or `latest` when needed. Installs and updates on unsupported platforms hard-fail.
 
 When a valid Gnosis `gn` binary is present, TLH appends these instructions to the system prompt:
 

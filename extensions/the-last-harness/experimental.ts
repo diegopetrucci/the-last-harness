@@ -1,42 +1,116 @@
 import { SettingsManager, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import {
+	CONTRARIAN_EXPERIMENTAL_FEATURE,
+	normalizeEnabledExperimentalFeatures,
+	normalizeExperimentalFeatureId,
+	readEnabledExperimentalFeatures,
+} from "../the-last-harness-subagent-safety.mjs";
 import { formatHomePath, isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
 import type { AgentPrompt, TlhExperimentalConfig, TlhExperimentalFeatureId, TlhSettings } from "./types.js";
 
-export const RUN_TESTS_LAST_FEATURE: TlhExperimentalFeatureId = "run-tests-last";
+export const TLH_CONTRARIAN_FEATURE: TlhExperimentalFeatureId = CONTRARIAN_EXPERIMENTAL_FEATURE;
+export const DELTA_FOLLOW_UP_REVIEWS_FEATURE: TlhExperimentalFeatureId = "delta-follow-up-reviews";
+export const CI_FAILURE_INVESTIGATION_FEATURE: TlhExperimentalFeatureId = "ci-failure-investigation";
 
 const EXPERIMENTAL_COMMAND_HELP = [
 	"Usage: /experimental [list|status [feature]|enable <feature>|disable <feature>|toggle <feature>]",
 	"With no argument, /experimental lists TLH experimental features.",
 ].join(" ");
 
-const RUN_TESTS_LAST_PROMPT = `
-## TLH Experimental Feature: run-tests-last
+const DELTA_FOLLOW_UP_REVIEWS_ARCHITECT_PROMPT = `
+## TLH Experimental Feature: delta-follow-up-reviews
 
 This TLH experiment is enabled for the architect primary agent.
 
-When implementation work needs broader verification, prefer this workflow:
+When a \`code-reviewer\` finding leads to a developer fix round:
 
-1. Split implementation work into normal implementation tickets.
-2. Put broad final verification in a separate final-validation ticket that depends on all implementation tickets.
-3. Keep implementation-ticket validation narrow and ticket-scoped; defer only the final cross-ticket validation work.
-4. Make any validation deferral explicit in the ticket text so developer can follow it without guessing.
-5. When \`VALIDATING.md\` is present, use it as the reference for the final-validation ticket; otherwise use repo-discovered validation commands.
-6. Do not defer meaningful ticket-local checks that are needed to implement a ticket safely.
+1. Default the follow-up \`code-reviewer\` request to the delta since the last reviewed checkpoint instead of rereading the full branch diff.
+2. In every follow-up review request, pass the prior findings plus the exact delta baseline, git range or checkpoint, or explicit changed-file list to review.
+3. Keep or expand to targeted wider review or full re-review for installer or other destructive-path changes, trust-boundary changes, auth or execution changes, unresolved reviewer disagreement, or whenever the delta cannot be validated safely without wider context.
+`;
+
+const DELTA_FOLLOW_UP_REVIEWS_CODE_REVIEWER_PROMPT = `
+## TLH Experimental Feature: delta-follow-up-reviews
+
+This TLH experiment is enabled for the \`code-reviewer\` child agent.
+
+For follow-up review after fixes:
+
+1. Expect prior findings plus an exact delta baseline, git range or checkpoint, or explicit changed-file list from the delegating primary agent. Do not assume every follow-up review includes the full branch diff.
+2. Default to the requested delta and prior findings: verify the reported fixes, check touched areas for regressions, and avoid rereading the full branch diff unless wider context is needed.
+3. You may read adjacent code or other targeted context when needed for safety or correctness, and should widen to targeted or full re-review for installer or other destructive-path changes, trust-boundary changes, auth or execution changes, unresolved reviewer disagreement, or whenever the requested delta cannot be validated safely without wider context.
+`;
+
+const CONTRARIAN_ARCHITECT_PROMPT = `
+## TLH Experimental Feature: contrarian
+
+This TLH experiment enables the \`contrarian\` minor agent for the architect primary agent.
+
+Additional minor agent:
+- \`contrarian\`: adversarially stress-test plans, designs, assumptions, product directions, bug hypotheses, or review conclusions by steelmanning the strongest opposing case.
+
+Use \`contrarian\` sparingly when you need an adversarial challenge pass on reasoning or direction. It is not the normal diff reviewer — \`code-reviewer\` owns review against tasks and diffs — and it is narrower than \`oracle\`, which provides a broader high-reasoning second opinion.
+
+Pre-ticket planning is the primary useful moment for \`contrarian\`. Apply a similarly sparing bar to \`contrarian\` as to \`oracle\`: consider it before ticket creation only when a proposed change has meaningful uncertainty, tradeoffs, blast radius, a hard-to-undo direction, or debatable assumptions, and name the specific risk or strongest opposing case you want stress-tested. Unlike \`oracle\`, \`contrarian\` should focus on the strongest credible opposition brief rather than a broad second opinion. Do not use \`contrarian\` as the normal diff reviewer or as an automatic step for routine localized work; use it sparingly.
+`;
+
+const CONTRARIAN_RUSH_PROMPT = `
+## TLH Experimental Feature: contrarian
+
+This TLH experiment enables the \`contrarian\` minor agent for TLH Rush.
+
+Additional minor agent:
+- \`contrarian\` only when a plan, bug hypothesis, or review conclusion needs an adversarial stress-test. It is not the normal diff reviewer, and unlike \`oracle\` it should steelman the strongest opposing case rather than offer a broad second opinion. Use it sparingly rather than as a routine extra pass.
+`;
+
+const CONTRARIAN_PRODUCT_PROMPT = `
+## TLH Experimental Feature: contrarian
+
+This TLH experiment enables the \`contrarian\` minor agent for the product primary agent.
+
+Additional minor agent:
+- \`contrarian\` for sparing adversarial stress-tests of product directions, tradeoffs, assumptions, or ticket framing by steelmanning the strongest opposing case. It is not code review — \`code-reviewer\` reviews diffs against tasks — and it is narrower than \`oracle\`, which is the broader second-opinion path.
+`;
+
+const CONTRARIAN_BUG_HUNTER_PROMPT = `
+## TLH Experimental Feature: contrarian
+
+This TLH experiment enables the \`contrarian\` minor agent for the bug-hunter primary agent.
+
+Additional minor agent:
+- \`contrarian\`: adversarially stress-test bug hypotheses or review conclusions by steelmanning the strongest opposing case. Use it sparingly when you need to challenge your diagnosis; it does not replace \`code-reviewer\`, which reviews code changes, or \`oracle\`, which gives a broader second opinion.
+`;
+
+const CI_FAILURE_INVESTIGATION_ARCHITECT_PROMPT = `
+## TLH Experimental Feature: ci-failure-investigation
+
+This TLH experiment is enabled for the architect primary agent.
+
+This experiment overrides the default post-PR monitor-and-ask-only step for this specific case.
+
+After TLH opens a PR and CI/status checks fail:
+
+1. You may do a read-only investigation before asking the user whether to proceed.
+2. Keep that investigation read-only: inspect failed checks, logs, workflow/config files, diffs, and relevant code or tests as needed to understand the failure.
+3. Do not edit files, commit, push, rerun jobs, change the PR, or take any other follow-up action during this investigation.
+4. After the investigation, summarize the failure and likely cause, then ask the user whether to proceed.
+5. Before any edits, commits, pushes, reruns, PR changes, or other follow-up changes, ask for explicit user approval.
 `;
 
 type TlhExperimentalFeature = {
 	id: TlhExperimentalFeatureId;
-	title: string;
 	description: string;
 	primaryAgentPrompt?: string;
+	primaryAgentPrompts?: Partial<Record<string, string>>;
+	codeReviewerPrompt?: string;
 };
 
 type TlhExperimentalSlashAction =
 	| { type: "list" }
-	| { type: "status"; featureId?: TlhExperimentalFeatureId }
-	| { type: "enable" | "disable" | "toggle"; featureId: TlhExperimentalFeatureId };
+	| { type: "status"; featureId?: string }
+	| { type: "enable" | "disable" | "toggle"; featureId: string };
 
 type TlhExperimentalWriteResult = {
 	changed: boolean;
@@ -47,17 +121,51 @@ type TlhExperimentalWriteResult = {
 
 const TLH_EXPERIMENTAL_FEATURES: TlhExperimentalFeature[] = [
 	{
-		id: RUN_TESTS_LAST_FEATURE,
-		title: "Run tests last",
-		description: "Architect guidance to keep implementation-ticket validation narrow and defer broad verification to a final validation ticket.",
-		primaryAgentPrompt: RUN_TESTS_LAST_PROMPT.trim(),
+		id: TLH_CONTRARIAN_FEATURE,
+		description: "Enables the contrarian minor agent and primary-agent guidance for sparing adversarial challenge passes.",
+		primaryAgentPrompts: {
+			architect: CONTRARIAN_ARCHITECT_PROMPT.trim(),
+			rush: CONTRARIAN_RUSH_PROMPT.trim(),
+			product: CONTRARIAN_PRODUCT_PROMPT.trim(),
+			"bug-hunter": CONTRARIAN_BUG_HUNTER_PROMPT.trim(),
+		},
+	},
+	{
+		id: DELTA_FOLLOW_UP_REVIEWS_FEATURE,
+		description: "Architect and code-reviewer guidance to scope follow-up reviews to a requested delta after fixes.",
+		primaryAgentPrompts: {
+			architect: DELTA_FOLLOW_UP_REVIEWS_ARCHITECT_PROMPT.trim(),
+		},
+		codeReviewerPrompt: DELTA_FOLLOW_UP_REVIEWS_CODE_REVIEWER_PROMPT.trim(),
+	},
+	{
+		id: CI_FAILURE_INVESTIGATION_FEATURE,
+		description: "Architect-only guidance to perform read-only PR CI/status-check investigation before asking whether to proceed.",
+		primaryAgentPrompts: {
+			architect: CI_FAILURE_INVESTIGATION_ARCHITECT_PROMPT.trim(),
+		},
 	},
 ];
 
 const TLH_EXPERIMENTAL_FEATURES_BY_ID = new Map(TLH_EXPERIMENTAL_FEATURES.map((feature) => [feature.id, feature]));
 
+function hasRegisteredExperimentalFeatures(): boolean {
+	return TLH_EXPERIMENTAL_FEATURES.length > 0;
+}
+
 function availableExperimentalFeatureList(): string {
-	return TLH_EXPERIMENTAL_FEATURES.map((feature) => feature.id).join(", ");
+	return hasRegisteredExperimentalFeatures() ? TLH_EXPERIMENTAL_FEATURES.map((feature) => feature.id).join(", ") : "none currently registered";
+}
+
+function noExperimentalFeaturesMessage(): string {
+	return "TLH experimental features: none currently registered. Future TLH feature flags will appear here when available.";
+}
+
+function unknownExperimentalFeatureMessage(featureId: string): string {
+	const base = `Unknown TLH experimental feature "${featureId}".`;
+	return hasRegisteredExperimentalFeatures()
+		? `${base} Available: ${availableExperimentalFeatureList()}.`
+		: `${base} ${noExperimentalFeaturesMessage()}`;
 }
 
 function validateTlhExperimentalSettings(settings: unknown): asserts settings is TlhSettings {
@@ -99,21 +207,31 @@ function ensureMutableExperimentalSettings(settings: TlhSettings): asserts setti
 }
 
 function normalizeEnabledFeatures(enabledFeatures: string[] | undefined): string[] {
-	return [...new Set((enabledFeatures ?? []).map((feature) => feature.trim()).filter(Boolean))].sort();
+	return normalizeEnabledExperimentalFeatures(enabledFeatures) as string[];
 }
 
 function readEnabledFeatures(config: unknown): string[] {
-	if (!isRecord(config)) {
-		return [];
-	}
-	const { enabledFeatures } = config;
-	if (enabledFeatures === undefined) {
-		return [];
-	}
-	if (!Array.isArray(enabledFeatures) || enabledFeatures.some((feature) => typeof feature !== "string")) {
-		return [];
-	}
-	return normalizeEnabledFeatures(enabledFeatures);
+	return readEnabledExperimentalFeatures(config) as string[];
+}
+
+function getExperimentalFeature(featureId: string): TlhExperimentalFeature | undefined {
+	const normalized = normalizeExperimentalFeatureId(featureId) as string | undefined;
+	return normalized ? TLH_EXPERIMENTAL_FEATURES_BY_ID.get(normalized) : undefined;
+}
+
+function enabledExperimentalPrompts(
+	config: TlhExperimentalConfig | undefined,
+	promptKey: "primaryAgentPrompt" | "codeReviewerPrompt",
+): string[] {
+	return TLH_EXPERIMENTAL_FEATURES.filter((feature) => isTlhExperimentalFeatureEnabled(config, feature.id))
+		.map((feature) => feature[promptKey])
+		.filter((prompt): prompt is string => Boolean(prompt));
+}
+
+function enabledPrimaryExperimentalPrompts(primary: AgentPrompt, config: TlhExperimentalConfig | undefined): string[] {
+	return TLH_EXPERIMENTAL_FEATURES.filter((feature) => isTlhExperimentalFeatureEnabled(config, feature.id))
+		.map((feature) => feature.primaryAgentPrompts?.[primary.name] ?? feature.primaryAgentPrompt)
+		.filter((prompt): prompt is string => Boolean(prompt));
 }
 
 export function getTlhExperimentalConfig(cwd: string): TlhExperimentalConfig | undefined {
@@ -126,14 +244,8 @@ export function getTlhExperimentalConfig(cwd: string): TlhExperimentalConfig | u
 }
 
 export function isTlhExperimentalFeatureEnabled(config: unknown, featureId: TlhExperimentalFeatureId): boolean {
-	return readEnabledFeatures(config).includes(featureId);
-}
-
-function resolveExperimentalFeatureId(value: string | undefined): TlhExperimentalFeatureId | undefined {
-	const normalized = value?.trim().toLowerCase();
-	return TLH_EXPERIMENTAL_FEATURES_BY_ID.has(normalized as TlhExperimentalFeatureId)
-		? (normalized as TlhExperimentalFeatureId)
-		: undefined;
+	const feature = getExperimentalFeature(featureId);
+	return feature ? readEnabledFeatures(config).includes(feature.id) : false;
 }
 
 function parseExperimentalSlashAction(args: string): TlhExperimentalSlashAction | undefined {
@@ -142,21 +254,10 @@ function parseExperimentalSlashAction(args: string): TlhExperimentalSlashAction 
 		return parts.length === 0 || parts.length === 1 ? { type: "list" } : undefined;
 	}
 	if (parts[0] === "status") {
-		if (parts.length === 1) {
-			return { type: "status" };
-		}
-		if (parts.length === 2) {
-			const featureId = resolveExperimentalFeatureId(parts[1]);
-			return featureId ? { type: "status", featureId } : undefined;
-		}
-		return undefined;
+		return parts.length <= 2 ? { type: "status", featureId: parts[1] } : undefined;
 	}
 	if (parts.length === 2 && (parts[0] === "enable" || parts[0] === "disable" || parts[0] === "toggle")) {
-		const featureId = resolveExperimentalFeatureId(parts[1]);
-		if (!featureId) {
-			return undefined;
-		}
-		return { type: parts[0], featureId };
+		return { type: parts[0], featureId: parts[1] };
 	}
 	return undefined;
 }
@@ -187,15 +288,21 @@ function formatExperimentalFeatureStatus(feature: TlhExperimentalFeature, enable
 	return `- ${feature.id}: ${enabledLabel}. ${feature.description} ${nextStep}`;
 }
 
-function formatExperimentalStatusMessage(config: TlhExperimentalConfig | undefined, featureId?: TlhExperimentalFeatureId): string {
+function formatExperimentalStatusMessage(config: TlhExperimentalConfig | undefined, featureId?: string): string {
 	if (featureId) {
-		const feature = TLH_EXPERIMENTAL_FEATURES_BY_ID.get(featureId);
+		const feature = getExperimentalFeature(featureId);
 		if (!feature) {
-			return `Unknown TLH experimental feature "${featureId}".`;
+			return unknownExperimentalFeatureMessage(featureId);
 		}
 		return formatExperimentalFeatureStatus(feature, isTlhExperimentalFeatureEnabled(config, feature.id));
 	}
-	return ["TLH experimental features:", ...TLH_EXPERIMENTAL_FEATURES.map((feature) => formatExperimentalFeatureStatus(feature, isTlhExperimentalFeatureEnabled(config, feature.id)))].join("\n");
+	if (!hasRegisteredExperimentalFeatures()) {
+		return noExperimentalFeaturesMessage();
+	}
+	return [
+		"TLH experimental features:",
+		...TLH_EXPERIMENTAL_FEATURES.map((feature) => formatExperimentalFeatureStatus(feature, isTlhExperimentalFeatureEnabled(config, feature.id))),
+	].join("\n");
 }
 
 function nextEnabledState(currentEnabled: boolean, action: "enable" | "disable" | "toggle"): boolean {
@@ -206,21 +313,25 @@ function nextEnabledState(currentEnabled: boolean, action: "enable" | "disable" 
 
 function writeExperimentalFeaturePreference(
 	cwd: string,
-	featureId: TlhExperimentalFeatureId,
+	featureId: string,
 	action: "enable" | "disable" | "toggle",
 ): TlhExperimentalWriteResult {
+	const feature = getExperimentalFeature(featureId);
+	if (!feature) {
+		throw new Error(unknownExperimentalFeatureMessage(featureId));
+	}
 	return withLockedTlhSettingsWrite(cwd, "Refusing to write experimental settings outside the isolated TLH profile.", (current) => {
 		const settings = parseTlhSettingsContent(current);
 		const currentEnabledFeatures = normalizeEnabledFeatures(settings.tlh?.experimental?.enabledFeatures);
-		const currentEnabled = currentEnabledFeatures.includes(featureId);
+		const currentEnabled = currentEnabledFeatures.includes(feature.id);
 		const enabled = nextEnabledState(currentEnabled, action);
 		if (enabled === currentEnabled) {
 			return { changed: false, enabled };
 		}
 
 		const nextEnabledFeatures = enabled
-			? normalizeEnabledFeatures([...currentEnabledFeatures, featureId])
-			: currentEnabledFeatures.filter((currentFeatureId) => currentFeatureId !== featureId);
+			? normalizeEnabledFeatures([...currentEnabledFeatures, feature.id])
+			: currentEnabledFeatures.filter((currentFeatureId) => currentFeatureId !== feature.id);
 
 		ensureMutableExperimentalSettings(settings);
 		settings.tlh.experimental.enabledFeatures = nextEnabledFeatures;
@@ -236,13 +347,20 @@ export function buildPrimaryExperimentalPrompt(
 	primary: AgentPrompt | undefined,
 	config: TlhExperimentalConfig | undefined,
 ): string | undefined {
-	if (primary?.name !== "architect") {
+	if (!primary) {
 		return undefined;
 	}
-	return TLH_EXPERIMENTAL_FEATURES.filter((feature) => isTlhExperimentalFeatureEnabled(config, feature.id))
-		.map((feature) => feature.primaryAgentPrompt)
-		.filter(Boolean)
-		.join("\n\n") || undefined;
+	return enabledPrimaryExperimentalPrompts(primary, config).join("\n\n") || undefined;
+}
+
+export function buildChildExperimentalPrompt(
+	childAgentName: string | undefined,
+	config: TlhExperimentalConfig | undefined,
+): string | undefined {
+	if (childAgentName?.trim().toLowerCase() !== "code-reviewer") {
+		return undefined;
+	}
+	return enabledExperimentalPrompts(config, "codeReviewerPrompt").join("\n\n") || undefined;
 }
 
 export function registerExperimentalCommand(pi: ExtensionAPI): void {
@@ -257,7 +375,8 @@ export function registerExperimentalCommand(pi: ExtensionAPI): void {
 			}
 
 			if (command.type === "list" || command.type === "status") {
-				ctx.ui.notify(formatExperimentalStatusMessage(getTlhExperimentalConfig(ctx.cwd), command.featureId), "info");
+				const featureId = command.type === "status" ? command.featureId : undefined;
+				ctx.ui.notify(formatExperimentalStatusMessage(getTlhExperimentalConfig(ctx.cwd), featureId), "info");
 				return;
 			}
 

@@ -14,9 +14,9 @@ FORCE_INCLUDE_PI=false
 KEEP_PI=false
 QUIET=false
 VERBOSE=false
-PI_NPM_PREFIX="${HOME}/.local"
 PI_PACKAGE_NAME="@earendil-works/pi-coding-agent"
-PI_UNINSTALL_DISPLAY="npm uninstall -g --prefix \"${PI_NPM_PREFIX}\" ${PI_PACKAGE_NAME}"
+PINNED_PI_VERSION="0.80.2"
+RUNTIME_MARKER_FILENAME=".tlh-runtime-owned"
 TLH_WRAPPER_MARKER_LINE="# Managed by The Last Harness installer"
 
 # ── output helpers ─────────────────────────────────────────────────────────────
@@ -407,9 +407,12 @@ Normal Pi config at ~/.pi/agent is never touched by this script.
 
 Options:
   --dry-run              Print planned actions without performing any removals.
-  --force-include-pi     Remove pi via npm even when install-state says
+  --force-include-pi     Remove pi/runtime even when install-state says
                            piInstalledByTlh=false or the field is absent.
-  --keep-pi              Skip pi removal even when install-state says
+                           For legacy ~/.local pi: required to perform removal;
+                           without this flag the pi is never auto-removed to
+                           protect user-owned installations.
+  --keep-pi              Skip pi/runtime removal even when install-state says
                            piInstalledByTlh=true.
   --agent-dir DIR        Override isolated agent dir (default: ~/.the-last-harness/agent).
                            Only the agent dir is removed; parent dir is cleaned up only if empty.
@@ -508,6 +511,8 @@ PROFILE_ROOT_COMPARE="$(realpath_for_compare "${PROFILE_ROOT}")"
 BIN_DIR="$(realpath_for_compare "${BIN_DIR_INPUT}")"
 WRAPPER_PATH="${BIN_DIR}/${WRAPPER_NAME}"
 INSTALL_STATE="$(tlh_ownership_marker_path "${AGENT_DIR}")"
+RUNTIME_DIR="${PROFILE_ROOT}/runtime"
+RUNTIME_BIN="${RUNTIME_DIR}/bin/pi"
 
 # ── safety guard: refuse any path under normal Pi config (~/.pi) ───────────────
 # Runs before wrapper-name character validation so that traversal via ".." in
@@ -593,12 +598,20 @@ fi
 
 # ── parse install-state; compute pi-removal decision ──────────────────────────
 #
-# Decision matrix:
-#   --keep-pi                             → skip pi (regardless of state)
-#   --force-include-pi                    → remove pi (regardless of state)
-#   state absent OR file missing          → skip pi
-#   piInstalledByTlh = true               → remove pi
-#   piInstalledByTlh = false              → skip pi
+# piInstalledByTlh=true now means TLH owns the PRIVATE runtime at
+# PROFILE_ROOT/runtime, NOT a global package at ~/.local.
+#
+# Decision matrix (REMOVE_PI initial value; ownership gate may override below):
+#   --keep-pi                             → skip pi/runtime (regardless of state)
+#   --force-include-pi                    → REMOVE_PI=true (affects legacy path only;
+#                                           private runtime removal requires a valid marker)
+#   state absent OR file missing          → REMOVE_PI=false
+#   piInstalledByTlh = true               → REMOVE_PI=true
+#   piInstalledByTlh = false              → REMOVE_PI=false
+#
+# For private runtime (RUNTIME_DIR): the ownership gate below is authoritative.
+# A valid path-matched marker authorizes removal even when REMOVE_PI=false.
+# An unmarked/invalid runtime skips regardless of REMOVE_PI or --force-include-pi.
 
 PI_STATE="$(read_pi_installed_by_tlh "${INSTALL_STATE}")"
 
@@ -618,6 +631,146 @@ else
     PI_SKIP_REASON="install-state: piInstalledByTlh=false"
   else
     PI_SKIP_REASON="install-state absent or piInstalledByTlh field missing"
+  fi
+fi
+
+# ── disambiguate what pi/runtime removal means (new-model vs legacy) ───────────
+#
+#  private runtime + valid origin=created marker  → rm -rf RUNTIME_DIR (after layout/tripwire checks)
+#  private runtime + valid origin=migrated marker → npm uninstall -g --prefix RUNTIME_DIR (preserve shared prefix)
+#  private runtime + missing/invalid marker       → skip with conditional hint
+#  legacy ~/.local/bin/pi                         → npm uninstall -g (ONLY with --force-include-pi; never auto)
+#  neither exists                                 → no-op (skip with reason)
+#
+# Safety invariant: never delete ~/.local/bin/pi without --force-include-pi.
+# The uninstall script cannot snapshot pre-install state and therefore cannot
+# know whether ~/.local/bin/pi belongs to TLH or the user.  It is always kept
+# unless the operator explicitly passes --force-include-pi.
+#
+# Ownership gate for RUNTIME_DIR:
+#   1. Valid RUNTIME_MARKER_FILENAME marker: parseable JSON, schemaVersion=1,
+#      packageName match, origin in {created, migrated}. Fail-closed: any
+#      missing / malformed / symlinked / unreadable / schema-mismatched state
+#      → treat as no valid claim → SKIP.
+#   2. Recorded runtimeAbsPath equals realpath of RUNTIME_DIR. Defends against
+#      marker-copied-into-foreign-dir and relocation.
+#   3. Neither RUNTIME_DIR nor the marker file is a symlink.
+#   4. Positive pi layout present: bin/pi and lib/node_modules/<PI_PACKAGE_NAME>.
+#
+# origin=created means TLH created the prefix exclusively, so rm -rf remains
+# eligible — but ONLY after the existing top-level tripwire passes. origin=migrated
+# means TLH adopted an existing prefix, so uninstall must be surgical:
+# npm uninstall -g --ignore-scripts --prefix <prefix> ${PI_PACKAGE_NAME}.
+
+PI_REMOVE_MODE="none"   # "runtime" | "runtime-package" | "legacy" | "none"
+PI_UNINSTALL_DISPLAY=""
+
+if [[ -d "${RUNTIME_DIR}" && "${KEEP_PI}" != "true" ]]; then
+  # ── ownership gate ──────────────────────────────────────────────────────────
+  # Evaluated regardless of REMOVE_PI / install-state (piInstalledByTlh).
+  # The marker is the authoritative ownership signal; install-state is
+  # non-gating for the marked private-runtime path.
+  _runtime_marker_file="${RUNTIME_DIR}/${RUNTIME_MARKER_FILENAME}"
+  _runtime_marker_valid=false
+  _runtime_gate_skip_reason=""
+  _runtime_marker_origin=""
+
+  if [[ -L "${RUNTIME_DIR}" ]]; then
+    _runtime_gate_skip_reason="${RUNTIME_DIR} is a symlink; cannot verify TLH ownership"
+  elif [[ -L "${_runtime_marker_file}" ]]; then
+    _runtime_gate_skip_reason="ownership marker ${_runtime_marker_file} is a symlink; cannot verify TLH ownership"
+  elif [[ ! -f "${_runtime_marker_file}" ]]; then
+    _runtime_gate_skip_reason="${RUNTIME_DIR} looks like a TLH pi runtime but has no valid TLH runtime ownership marker at ${_runtime_marker_file}. Not removing to protect co-located files"
+  else
+    # Parse marker JSON (fail-closed; no jq, no node — uninstaller is self-contained).
+    # JSON.stringify() produces compact single-line output; each field is extracted by
+    # a BRE sed pattern. An empty result for any field means absent/malformed → SKIP.
+    _marker_raw="$(cat "${_runtime_marker_file}" 2>/dev/null || true)"
+    _mver="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"schemaVersion"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)"
+    _mpkg="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"packageName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    _mpath="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"runtimeAbsPath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    _morigin="$(printf '%s\n' "${_marker_raw}" | sed -n 's/.*"origin"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+
+    if [[ "${_mver}" != "1" ]]; then
+      _runtime_gate_skip_reason="${RUNTIME_DIR} looks like a TLH pi runtime but its ownership marker is invalid: ${_runtime_marker_file} (expected schemaVersion 1, got '${_mver}')"
+    elif [[ "${_mpkg}" != "${PI_PACKAGE_NAME}" ]]; then
+      _runtime_gate_skip_reason="${RUNTIME_DIR} looks like a TLH pi runtime but its ownership marker is invalid: ${_runtime_marker_file} (expected packageName '${PI_PACKAGE_NAME}', got '${_mpkg}')"
+    elif [[ "${_morigin}" != "created" && "${_morigin}" != "migrated" ]]; then
+      _runtime_gate_skip_reason="${RUNTIME_DIR} looks like a TLH pi runtime but its ownership marker is invalid: ${_runtime_marker_file} (unrecognised origin '${_morigin}')"
+    elif [[ -z "${_mpath}" ]]; then
+      _runtime_gate_skip_reason="${RUNTIME_DIR} looks like a TLH pi runtime but its ownership marker is invalid: ${_runtime_marker_file} (empty runtimeAbsPath)"
+    else
+      _runtime_real="$(realpath_for_compare "${RUNTIME_DIR}")"
+      if [[ "${_mpath}" != "${_runtime_real}" ]]; then
+        _runtime_gate_skip_reason="ownership marker runtimeAbsPath '${_mpath}' does not match realpath '${_runtime_real}' of ${RUNTIME_DIR}"
+      else
+        _runtime_marker_valid=true
+        _runtime_marker_origin="${_morigin}"
+      fi
+    fi
+  fi
+
+  # Build a safely shell-quoted removal hint once; printf '%q' handles any
+  # special characters in RUNTIME_DIR (spaces, quotes, $, backticks, etc.).
+  _runtime_rm_hint="$(printf 'rm -rf -- %q' "${RUNTIME_DIR}")"
+
+  if [[ "${_runtime_marker_valid}" != "true" ]]; then
+    # Ownership gate failed — SKIP with conditional manual-removal hint.
+    REMOVE_PI=false
+    PI_SKIP_REASON="${_runtime_gate_skip_reason}. If this is TLH's private runtime and you no longer need its contents, run: ${_runtime_rm_hint}; otherwise leave it"
+  elif [[ ! -f "${RUNTIME_BIN}" || ! -d "${RUNTIME_DIR}/lib/node_modules/${PI_PACKAGE_NAME}" ]]; then
+    # Marker valid but positive pi layout absent.
+    REMOVE_PI=false
+    PI_SKIP_REASON="${RUNTIME_DIR} has a valid TLH ownership marker but the expected pi layout is missing (expected ${RUNTIME_BIN} and ${RUNTIME_DIR}/lib/node_modules/${PI_PACKAGE_NAME}). If this is TLH's private runtime and you no longer need its contents, run: ${_runtime_rm_hint}; otherwise leave it"
+  elif [[ "${_runtime_marker_origin}" == "migrated" ]]; then
+    # Marker is authoritative: origin=migrated always removes surgically,
+    # regardless of install-state or co-located packages.
+    REMOVE_PI=true
+    PI_REMOVE_MODE="runtime-package"
+    PI_UNINSTALL_DISPLAY="npm uninstall -g --ignore-scripts --prefix \"${RUNTIME_DIR}\" ${PI_PACKAGE_NAME}"
+  else
+    # origin=created: exclusivity check remains an advisory tripwire before rm -rf.
+    # unexpected top-level entries can DOWNGRADE to SKIP, never upgrade to delete.
+    _prev_shopt_state="$(shopt -p dotglob nullglob || true)"
+    shopt -s dotglob nullglob
+    _runtime_exclusive=true
+    _runtime_unexpected_entry=""
+    for _runtime_entry in "${RUNTIME_DIR}"/*; do
+      [[ -e "${_runtime_entry}" || -L "${_runtime_entry}" ]] || continue
+      _runtime_basename="${_runtime_entry##*/}"
+      case "${_runtime_basename}" in
+        bin|lib|node-compile-cache|"${RUNTIME_MARKER_FILENAME}") ;;
+        *)
+          _runtime_exclusive=false
+          _runtime_unexpected_entry="${_runtime_entry}"
+          break
+          ;;
+      esac
+    done
+    eval "${_prev_shopt_state}"
+    if [[ "${_runtime_exclusive}" == "true" ]]; then
+      REMOVE_PI=true
+      PI_REMOVE_MODE="runtime"
+      PI_UNINSTALL_DISPLAY="rm -rf \"${RUNTIME_DIR}\""
+    else
+      REMOVE_PI=false
+      PI_SKIP_REASON="${RUNTIME_DIR} contains unexpected top-level entries alongside the TLH pi layout (e.g. ${_runtime_unexpected_entry}); not removing to protect co-located files. If this is TLH's private runtime and you no longer need its contents, run: ${_runtime_rm_hint}; otherwise leave it"
+    fi
+  fi
+elif [[ "${REMOVE_PI}" == "true" ]]; then
+  # No private runtime at RUNTIME_DIR; fall through to legacy ~/.local/bin/pi
+  # or absent-pi handling.
+  if [[ -f "${HOME}/.local/bin/pi" ]]; then
+    if [[ "${FORCE_INCLUDE_PI}" == "true" ]]; then
+      PI_REMOVE_MODE="legacy"
+      PI_UNINSTALL_DISPLAY="npm uninstall -g --ignore-scripts --prefix \"${HOME}/.local\" ${PI_PACKAGE_NAME}"
+    else
+      REMOVE_PI=false
+      PI_SKIP_REASON="legacy ~/.local/bin/pi was not removed automatically (pass --force-include-pi to remove it). To remove manually: npm uninstall -g --ignore-scripts --prefix \"${HOME}/.local\" ${PI_PACKAGE_NAME}"
+    fi
+  else
+    REMOVE_PI=false
+    PI_SKIP_REASON="no pi installation found (neither private runtime at ${RUNTIME_DIR} nor legacy ~/.local/bin/pi)"
   fi
 fi
 
@@ -671,16 +824,34 @@ fi
 
 if [[ "${REMOVE_PI}" == "true" ]]; then
   STEP=$(( STEP + 1 ))
-  if [[ "${DRY_RUN}" == "true" ]]; then
-    say "  ${STEP}. would npm uninstall pi: ${PI_UNINSTALL_DISPLAY}"
+  if [[ "${PI_REMOVE_MODE}" == "runtime" ]]; then
+    if [[ "${DRY_RUN}" == "true" ]]; then
+      say "  ${STEP}. would remove private runtime: rm -rf ${RUNTIME_DIR}"
+      say "             and rmdir ${PROFILE_ROOT} if empty"
+    else
+      say "  ${STEP}. Remove private runtime: ${RUNTIME_DIR}"
+      say "             (parent ${PROFILE_ROOT} removed only if empty)"
+    fi
   else
-    say "  ${STEP}. Remove pi (npm):     ${PI_UNINSTALL_DISPLAY}"
+    if [[ "${DRY_RUN}" == "true" ]]; then
+      if [[ "${PI_REMOVE_MODE}" == "runtime-package" ]]; then
+        say "  ${STEP}. would remove migrated TLH pi from shared runtime (npm): ${PI_UNINSTALL_DISPLAY}"
+      else
+        say "  ${STEP}. would remove legacy pi (npm): ${PI_UNINSTALL_DISPLAY}"
+      fi
+    else
+      if [[ "${PI_REMOVE_MODE}" == "runtime-package" ]]; then
+        say "  ${STEP}. Remove migrated TLH pi from shared runtime (npm): ${PI_UNINSTALL_DISPLAY}"
+      else
+        say "  ${STEP}. Remove legacy pi (npm): ${PI_UNINSTALL_DISPLAY}"
+      fi
+    fi
   fi
 else
   if [[ "${DRY_RUN}" == "true" ]]; then
-    say "     would skip pi removal (${PI_SKIP_REASON})"
+    say "     would skip pi/runtime removal (${PI_SKIP_REASON})"
   else
-    say "     Skip pi removal (${PI_SKIP_REASON})"
+    say "     Skip pi/runtime removal (${PI_SKIP_REASON})"
   fi
 fi
 
@@ -717,12 +888,31 @@ if [[ "${AGENT_DIR_EXISTS}" == "true" ]]; then
 fi
 
 if [[ "${REMOVE_PI}" == "true" ]]; then
-  if ! command -v npm >/dev/null 2>&1; then
-    warn "npm not found on PATH; pi must be removed manually."
-    warn "To remove pi: ${PI_UNINSTALL_DISPLAY}"
-  else
-    log "Removing pi via npm..."
-    removal_run npm uninstall -g --prefix "${PI_NPM_PREFIX}" "${PI_PACKAGE_NAME}"
+  if [[ "${PI_REMOVE_MODE}" == "runtime" ]]; then
+    log "Removing private runtime: ${RUNTIME_DIR}"
+    removal_run rm -rf "${RUNTIME_DIR}"
+    if [[ "${VERBOSE}" == "true" ]]; then
+      say "  + rmdir ${PROFILE_ROOT}"
+    fi
+    rmdir "${PROFILE_ROOT}" 2>/dev/null || true
+  elif [[ "${PI_REMOVE_MODE}" == "runtime-package" ]]; then
+    if ! command -v npm >/dev/null 2>&1; then
+      warn "npm not found on PATH; migrated TLH runtime package must be removed manually."
+      warn "To remove: ${PI_UNINSTALL_DISPLAY}"
+    else
+      log "Removing migrated TLH pi from shared runtime via npm..."
+      removal_run npm uninstall -g --ignore-scripts --prefix "${RUNTIME_DIR}" "${PI_PACKAGE_NAME}"
+      log "Clearing migrated TLH runtime ownership marker: ${RUNTIME_DIR}/${RUNTIME_MARKER_FILENAME}"
+      removal_run rm -f "${RUNTIME_DIR}/${RUNTIME_MARKER_FILENAME}"
+    fi
+  elif [[ "${PI_REMOVE_MODE}" == "legacy" ]]; then
+    if ! command -v npm >/dev/null 2>&1; then
+      warn "npm not found on PATH; legacy pi must be removed manually."
+      warn "To remove: ${PI_UNINSTALL_DISPLAY}"
+    else
+      log "Removing legacy pi from ~/.local via npm..."
+      removal_run npm uninstall -g --ignore-scripts --prefix "${HOME}/.local" "${PI_PACKAGE_NAME}"
+    fi
   fi
 fi
 

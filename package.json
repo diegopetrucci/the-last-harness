@@ -1,6 +1,6 @@
 {
   "name": "the-last-harness",
-  "version": "0.19.0",
+  "version": "0.26.0",
   "description": "The Last Harness Pi package",
   "license": "MIT",
   "type": "module",
@@ -24,12 +24,14 @@
   "scripts": {
     "build": "npm run build:runtime",
     "build:runtime": "node scripts/runtime-typescript.mjs build",
+    "check:package-versions": "node scripts/check-package-versions.mjs",
     "check:runtime": "node scripts/runtime-typescript.mjs check",
     "lint": "eslint \"scripts/**/*.{js,mjs,ts,mts}\" \"tests/**/*.{js,mjs,ts,mts}\" \"extensions/**/*.{js,mjs,ts,mts}\"",
-    "test": "node --test tests/*.test.mjs",
+    "test": "node --test --test-reporter=dot tests/*.test.mjs",
+    "test:verbose": "node --test tests/*.test.mjs",
     "typecheck": "npm run typecheck:runtime",
     "typecheck:runtime": "node scripts/runtime-typescript.mjs typecheck",
-    "validate": "npm run typecheck && npm run check:runtime && bash scripts/check-installer-smoke.sh && npm test && npm run lint && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
+    "validate": "npm run check:package-versions && npm run typecheck && npm run check:runtime && bash scripts/check-installer-smoke.sh && npm test && npm run lint && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
   },
   "files": [
     "agents",
@@ -60,23 +62,23 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.79.1",
-    "@earendil-works/pi-tui": ">=0.79.1"
+    "@earendil-works/pi-coding-agent": ">=0.80.1 <=0.80.2",
+    "@earendil-works/pi-tui": ">=0.80.1 <=0.80.2"
   },
   "dependencies": {
-    "@tailwindcss/browser": "^4.3.0",
-    "glimpseui": "^0.8.1",
-    "monaco-editor": "0.52.2"
+    "@tailwindcss/browser": "4.3.1",
+    "glimpseui": "0.8.1",
+    "monaco-editor": "0.55.1"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.79.1",
-    "@earendil-works/pi-tui": "^0.79.1",
-    "@eslint/js": "^9.39.4",
-    "@types/node": "^22.0.0",
-    "eslint": "^9.39.4",
-    "globals": "^14.0.0",
-    "jiti": "^2.7.0",
-    "typescript": "~6.0.3",
-    "typescript-eslint": "^8.59.4"
+    "@earendil-works/pi-coding-agent": "0.80.2",
+    "@earendil-works/pi-tui": "0.80.2",
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.0.0",
+    "eslint": "10.5.0",
+    "globals": "17.7.0",
+    "jiti": "2.7.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.62.0"
   }
 }

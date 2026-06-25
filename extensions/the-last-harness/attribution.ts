@@ -4,7 +4,7 @@ import { formatHomePath, isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
 import type { TlhAttributionConfig, TlhAttributionWriteResult, TlhCommitAttributionState, TlhSettings } from "./types.js";
 
-export const TLH_DEFAULT_COMMIT_ATTRIBUTION = `🤖 Generated with [The Last Harness](https://github.com/diegopetrucci/the-last-harness)\n\nCo-authored-by: The Last Harness <hi@thelastharness.com>`;
+export const TLH_DEFAULT_COMMIT_ATTRIBUTION = `Co-authored-by: The Last Harness <hi@thelastharness.com>`;
 
 const TOGGLE_TLH_GIT_ATTRIBUTION_COMMAND_HELP = "Usage: /toggle-tlh-git-attribution";
 const TLH_GIT_COMMIT_ATTRIBUTION_PROMPT_HEADING = "## TLH Git Commit Attribution";
@@ -56,7 +56,11 @@ export function resolveTlhCommitAttribution(config: TlhAttributionConfig | undef
 }
 
 function commitMessageEndsWithFooter(message: string, footer: string): boolean {
-	return message.trimEnd().endsWith(footer);
+	const trimmed = message.trimEnd();
+	if (trimmed === footer) {
+		return true;
+	}
+	return trimmed.endsWith(`\n\n${footer}`) || trimmed.endsWith(`\r\n\r\n${footer}`);
 }
 
 function readHereDocSpec(command: string, startIndex: number): { spec: HereDocSpec; endIndex: number } | undefined {
@@ -1184,7 +1188,6 @@ function getUnsupportedEnvGitCommitAttributionBlockReason(
 	let index = 1;
 	while (index < tokens.length) {
 		if (tokens[index] === "--") {
-			index += 1;
 			break;
 		}
 		const parseResult = getEnvLeadingOptionParseResult(tokens, index);
@@ -1275,7 +1278,7 @@ export function buildTlhCommitAttributionPrompt(state: TlhCommitAttributionState
 	}
 	return [
 		TLH_GIT_COMMIT_ATTRIBUTION_PROMPT_HEADING,
-		"If you create a git commit with the bash tool, end the commit message with this exact TLH footer:",
+		"If you create a git commit with the bash tool, end the commit message with a blank line followed by this exact TLH footer:",
 		`\`\`\`text\n${state.footer}\n\`\`\``,
 	].join("\n\n");
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { copyFileSync, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join, normalize, parse, resolve, sep } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, dirname, join, normalize, parse, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 
@@ -25,7 +25,9 @@ import {
 	defaultTlhSettingsPath,
 	expandHomePath,
 	readJsonFile,
+	readRegularFileForBackup,
 } from "./lib/tlh-install-utils.mjs";
+import { writeSafeProfileFile } from "./lib/tlh-safe-profile-write.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -125,6 +127,23 @@ function clone(value) {
 
 function packageIdentityExists(packages, identity) {
 	return Boolean(identity) && packages.some((entry) => packageIdentity(entry) === identity);
+}
+
+function isPinnedNpmSource(source) {
+	return typeof source === "string" && source.trim().startsWith("npm:") && packageIdentity(source) !== source.trim();
+}
+
+function isUnpinnedNpmSource(source) {
+	return typeof source === "string" && source.trim().startsWith("npm:") && packageIdentity(source) === source.trim();
+}
+
+function shouldMigrateManagedDefaultExtensionSource(currentSource, extension, { force, managedPackageIdentities = new Set() }) {
+	if (force || extension.critical === true) return true;
+	const identity = packageIdentity(extension.source);
+	if (!identity || packageIdentity(currentSource) !== identity) return false;
+	if (!isPinnedNpmSource(extension.source)) return false;
+	if (isUnpinnedNpmSource(currentSource)) return true;
+	return managedPackageIdentities.has(identity);
 }
 
 function shouldMigrateDefaultExtensionReplacements(extension, { force }) {
@@ -244,12 +263,11 @@ function applyDefaultExtensionPackageDedupes(settings, defaultExtensions, disabl
 	}
 }
 
-function applyDefaultExtensionSourceUpdates(settings, defaultExtensions, disabledIds, changes, { force }) {
+function applyDefaultExtensionSourceUpdates(settings, defaultExtensions, disabledIds, changes, { force, managedPackageIdentities = new Set() }) {
 	const updatedIdentities = new Set();
 	if (!Array.isArray(settings.packages)) return updatedIdentities;
 
 	for (const extension of defaultExtensions) {
-		if (!force && extension.critical !== true) continue;
 		if (disabledIds.has(extension.id)) continue;
 		const identity = packageIdentity(extension.source);
 		if (!identity) continue;
@@ -259,6 +277,7 @@ function applyDefaultExtensionSourceUpdates(settings, defaultExtensions, disable
 		const current = settings.packages[index];
 		const currentSource = packageSourceOf(current);
 		if (!currentSource) continue;
+		if (!shouldMigrateManagedDefaultExtensionSource(currentSource, extension, { force, managedPackageIdentities })) continue;
 
 		const sourceNeedsUpdate = currentSource !== extension.source;
 		const removesCriticalExtensionFilter = extension.critical === true
@@ -334,6 +353,7 @@ const FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES = Object.freeze([
 	"npm:@diegopetrucci/pi-context-cap",
 	"npm:@diegopetrucci/pi-permission-gate",
 	"npm:@diegopetrucci/pi-confirm-destructive",
+	"npm:@diegopetrucci/pi-oracle",
 ]);
 
 function purgeForceRemovedRetiredDefaultExtensionPackages(settings, changes) {
@@ -355,6 +375,16 @@ function pruneContextCapDisabledDefaultExtension(settings, changes) {
 	if (nextValues.length === values.length) return;
 	settings.tlh.disabledDefaultExtensions = nextValues;
 	changes.push("remove stale context-cap opt-out from tlh.disabledDefaultExtensions");
+}
+
+function pruneOracleDisabledDefaultExtension(settings, changes) {
+	if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
+	const values = settings.tlh.disabledDefaultExtensions;
+	if (!Array.isArray(values)) return;
+	const nextValues = values.filter((value) => !(typeof value === "string" && value.trim() === "oracle"));
+	if (nextValues.length === values.length) return;
+	settings.tlh.disabledDefaultExtensions = nextValues;
+	changes.push("remove stale oracle opt-out from tlh.disabledDefaultExtensions");
 }
 
 function scrubGnosisSettings(settings, changes) {
@@ -537,20 +567,28 @@ function assertNotNormalPiSettings(settingsPath) {
 	);
 }
 
+function writeExistingProfileBackup(settingsPath, backupPath) {
+	const { content, mode } = readRegularFileForBackup(settingsPath, "Pi settings");
+	writeSafeProfileFile(
+		{ agentDir: dirname(settingsPath) },
+		basename(backupPath),
+		content,
+		"Pi settings backup",
+		{ mode },
+	);
+}
+
 function writeSettings(settingsPath, value, { dryRun, existed }) {
 	const formatted = `${JSON.stringify(value, null, 2)}\n`;
 	if (dryRun) return undefined;
 
-	mkdirSync(dirname(settingsPath), { recursive: true });
 	let backupPath;
 	if (existed) {
 		backupPath = backupPathFor(settingsPath);
-		copyFileSync(settingsPath, backupPath);
+		writeExistingProfileBackup(settingsPath, backupPath);
 	}
 
-	const tempPath = `${settingsPath}.tmp-${process.pid}`;
-	writeFileSync(tempPath, formatted, "utf8");
-	renameSync(tempPath, settingsPath);
+	writeSafeProfileFile({ agentDir: dirname(settingsPath) }, basename(settingsPath), formatted, "Pi settings");
 	return backupPath;
 }
 
@@ -578,7 +616,11 @@ function main() {
 	const defaults = prepareDefaults(rawDefaults, args.packageSource, defaultExtensions, disabledIds, existing, { force: args.force });
 	const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
 	applyHarnessPackageDedupes(next, ensuredHarnessSource, changes);
-	const sourceUpdatedIdentities = applyDefaultExtensionSourceUpdates(next, defaultExtensions, disabledIds, changes, { force: args.force });
+	const managedDefaultExtensionProvenance = readDefaultExtensionProvenance(next).managedPackageIdentities;
+	const sourceUpdatedIdentities = applyDefaultExtensionSourceUpdates(next, defaultExtensions, disabledIds, changes, {
+		force: args.force,
+		managedPackageIdentities: managedDefaultExtensionProvenance,
+	});
 	applyReplacedDefaultExtensions(next, defaultExtensions, disabledIds, changes, { force: args.force });
 	applyDefaultExtensionPackageDedupes(next, defaultExtensions, disabledIds, changes, { force: args.force, sourceUpdatedIdentities });
 	applyDisabledDefaultExtensions(next, defaultExtensions, disabledIds, changes);
@@ -592,6 +634,7 @@ function main() {
 	scrubGnosisSettings(next, changes);
 	purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
 	pruneContextCapDisabledDefaultExtension(next, changes);
+	pruneOracleDisabledDefaultExtension(next, changes);
 	syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
 
 	log(args, `Pi settings: ${settingsPath}`);

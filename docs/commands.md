@@ -48,10 +48,11 @@ These commands are registered by the TLH extension bundled with this profile.
 |---------|-------------|
 | `/thinking` | Pick the model thinking level, subject to the active primary-agent thinking constraints |
 | `/effort` | Supported alias for `/thinking`, subject to the same active primary-agent thinking constraints |
-| `/experimental` | List or change TLH experimental features |
+| `/experimental` | List or change TLH experimental features (`contrarian`, `delta-follow-up-reviews`, and `ci-failure-investigation` are currently registered) |
 | `/review` | Open an interactive code-review mode picker (requires the architect primary agent) |
 | `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
 | `/tlh-changelog` | Show TLH release notes from the packaged `CHANGELOG.md` |
+| `/tokens` | Generate and open a single no-flags local HTML token-spend report for the current session |
 | `/toggle-context-cap` | Toggle the 200k effective context-window cap for auto-compaction |
 | `/toggle-tlh-git-attribution` | Toggle the TLH commit attribution footer for agent-created git commits |
 | `/usage` | Show or change TLH subscription usage-limit footer preferences |
@@ -60,6 +61,16 @@ These commands are registered by the TLH extension bundled with this profile.
 ### `/thinking` and `/effort`
 
 Both `/thinking` and `/effort` are subject to the active primary-agent thinking constraints. **Locked** primaries — rush, product, and bug-hunter — each run at a fixed thinking level and return an error if you try to change it (`Thinking is locked at "<level>" for the <name> primary agent.`). **Architect** enforces a medium floor: `/thinking off`, `/thinking minimal`, `/thinking low`, `/effort off`, `/effort minimal`, and `/effort low` are rejected with `architect requires at least medium thinking.` The floor does not apply when the primary is disabled.
+
+### `/experimental`
+
+`/experimental` currently registers `contrarian`, `delta-follow-up-reviews`, and `ci-failure-investigation`. `contrarian` bundles the adversarial `contrarian` minor agent but keeps it disabled by default; enable it with `/experimental enable contrarian` and disable it with `/experimental disable contrarian`. It is intended mainly for sparing pre-ticket planning stress-tests when a proposed change genuinely warrants an adversarial brief, not the routine `code-reviewer` diff pass and not the broader `oracle` second-opinion path. `delta-follow-up-reviews` is an opt-in flag that adds architect and `code-reviewer` guidance for delta-scoped follow-up reviews after fixes. `ci-failure-investigation` is an opt-in flag that lets the architect primary agent do read-only failed CI/status-check investigation after TLH opens a PR, then summarize and ask whether to proceed before any edits, commits, pushes, reruns, PR changes, or other follow-up changes. All three flags are disabled by default. Stale `run-tests-last` values in `tlh.experimental.enabledFeatures` do not re-enable retired behavior.
+
+### `/tokens`
+
+`/tokens` takes no flags or subcommands. Run it as `/tokens` to generate one local HTML token-spend report for the current session and open it on your machine.
+
+The report is built from sanitized session analysis only. It omits raw transcript text, raw tool arguments, and raw tool-result payloads, and TLH tells you where the private local report directory lives so you can delete it when you no longer need the report.
 
 ---
 
@@ -148,7 +159,6 @@ These commands are provided by bundled default extensions and are visible in TLH
 | `/librarian-cache` | `pi-librarian` | Show or change the Librarian local-checkout cache mode for future librarian calls |
 | `/mcp` | `pi-mcp-adapter` | Show MCP server status |
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
-| `/oracle` | `pi-oracle` | Configure the Oracle default model and thinking level |
 | `/rtk` | `pi-rtk` | Control pi-rtk shell-command rewriting |
 | `/subagents-doctor` | `pi-subagents` | Show subagent diagnostics |
 | `/triage-comments` | `pi-triage-comments` | Collect pasted feedback or PR comments, then start a triage investigation |
@@ -187,7 +197,6 @@ These commands are registered and fully functional, but deliberately excluded fr
 | `/fff-mode` | `pi-fff` | Show or set FFF mode (`tools-and-ui`, `tools-only`, `override`) |
 | `/fff-rescan` | `pi-fff` | Trigger FFF to rescan files |
 | `/intercom` | `pi-intercom` | Open the session intercom overlay (internal subagent communication) |
-| `/oracle-model` | `pi-oracle` | Show which model the oracle would use right now |
 | `/quiet-tools` | `pi-quiet-tools` | Toggle one-line collapsed invocations for built-in tool rows |
 
 ---
@@ -198,7 +207,7 @@ Individual bundled extensions can be disabled without affecting the others. Use 
 
 ```sh
 tlh defaults list        # show installed defaults and opt-out status
-tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disable oracle)
+tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disable librarian)
 tlh defaults enable <id>   # re-enable a disabled extension
 ```
 

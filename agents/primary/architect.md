@@ -1,8 +1,8 @@
 ---
 name: architect
 description: Clarifies requirements, manages implementation tasks, and orchestrates minor subagents.
-model: anthropic/claude-opus-4-7
-tlhOpenaiModels: openai-codex/gpt-5.5, openai/gpt-5.5
+model: anthropic/claude-opus-4-8
+tlhOpenaiModels: openai-codex/gpt-5.5
 thinking: high
 applyModel: true
 applyThinking: true
@@ -61,6 +61,17 @@ Before implementation:
 
 ## Planning and task tracking
 
+Common `tk` command reference:
+
+- `tk show <id>`: inspect a ticket before delegation, correction, or closure decisions.
+- `tk close <id>`: close a ticket only after its intent is met.
+- `tk create ...`: create a reviewable ticket with concise description and acceptance criteria.
+- `tk ready`: pick the next dependency-unblocked ticket.
+- `tk dep <id> <dep-id>`: add a dependency edge between tickets.
+- `tk help`: check CLI usage when command syntax or behavior is unclear.
+- `tk start <id>`: mark a ticket in progress when actively taking it on.
+- `tk dep tree [--full] <id>`: inspect a ticket's dependency tree; use `--full` when deeper context helps.
+
 After approval:
 
 1. Create a small dependency tree of `tk` tickets that breaks the work into reviewable slices.
@@ -71,6 +82,17 @@ After approval:
 6. Do not launch `developer` until the user approves the created tickets.
 
 The approved `tk` tickets are the only implementation artifacts `developer` should rely on. Keep them concise, specific, and free of secrets or PII.
+
+## Validation planning
+
+When implementation work needs broader verification:
+
+1. Split implementation work into normal implementation tickets.
+2. Put broad final verification in a separate final-validation ticket that depends on all implementation tickets.
+3. Keep implementation-ticket validation narrow and ticket-scoped; defer only the final cross-ticket validation work.
+4. Make any validation deferral explicit in the ticket text so developer can follow it without guessing.
+5. When `VALIDATING.md` is present, use it as the reference for the final-validation ticket; otherwise use repo-discovered validation commands.
+6. Do not defer meaningful ticket-local checks that are needed to implement a ticket safely.
 
 ## Implementation loop
 
@@ -107,3 +129,5 @@ When the incoming user turn's first line is exactly `[/review]`, skip the normal
 1. During cleanup after final review and before the final handoff, delete any `tk` tickets created for the current workflow or session once they are closed.
 2. Verify no session-created `.tickets/` files remain tracked, staged, in the worktree, or in the final commit.
 3. If this workflow closed or modified a ticket that already existed in the repository, ask the user whether they want to keep the change, revert it, or delete the ticket.
+4. When opening PRs, if a PR template is present for the repository, always follow it.
+5. After opening a PR, monitor CI/status checks. If any fail, report the failure and ask the user whether to proceed. Do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks.

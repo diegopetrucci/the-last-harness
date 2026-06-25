@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 
@@ -23,7 +23,9 @@ import {
 	defaultTlhSettingsPath,
 	expandHomePath,
 	readJsonFile,
+	readRegularFileForBackup,
 } from "./lib/tlh-install-utils.mjs";
+import { writeSafeProfileFile } from "./lib/tlh-safe-profile-write.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -271,20 +273,28 @@ function assertNotNormalPiSettings(settingsPath) {
 	);
 }
 
+function writeExistingProfileBackup(settingsPath, backupPath) {
+	const { content, mode } = readRegularFileForBackup(settingsPath, "TLH defaults settings");
+	writeSafeProfileFile(
+		{ agentDir: dirname(settingsPath) },
+		basename(backupPath),
+		content,
+		"TLH defaults settings backup",
+		{ mode },
+	);
+}
+
 function writeSettings(settingsPath, value, previousRaw) {
 	const formatted = `${JSON.stringify(value, null, 2)}\n`;
 	if (formatted === previousRaw) return undefined;
 
-	mkdirSync(dirname(settingsPath), { recursive: true });
 	let backupPath;
 	if (existsSync(settingsPath)) {
 		backupPath = backupPathFor(settingsPath);
-		copyFileSync(settingsPath, backupPath);
+		writeExistingProfileBackup(settingsPath, backupPath);
 	}
 
-	const tempPath = `${settingsPath}.tmp-${process.pid}`;
-	writeFileSync(tempPath, formatted, "utf8");
-	renameSync(tempPath, settingsPath);
+	writeSafeProfileFile({ agentDir: dirname(settingsPath) }, basename(settingsPath), formatted, "TLH defaults settings");
 	return backupPath;
 }
 
@@ -317,7 +327,7 @@ function commandSources(settings, defaultExtensions, { criticalOnly = false } = 
 			continue;
 		}
 		if (!isDefaultDisabled(settings, extension, defaultExtensions) && !isDefaultSourceDeferred(settings, extension)) {
-			console.log(findPackageSource(settings, extension.source) || extension.source);
+			console.log(extension.source);
 		}
 	}
 }

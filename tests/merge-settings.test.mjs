@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -13,6 +13,7 @@ const branchHarnessPackage = "git:github.com/diegopetrucci/the-last-harness@feat
 const retiredPlannotatorPackage = "npm:@plannotator/pi-extension";
 const retiredPermissionGatePackage = "npm:@diegopetrucci/pi-permission-gate";
 const retiredConfirmDestructivePackage = "npm:@diegopetrucci/pi-confirm-destructive";
+const retiredOraclePackage = "npm:@diegopetrucci/pi-oracle";
 const changelogSentinel = "9999.0.0";
 
 function tempFixture(defaultsValue, settingsValue, extensionsValue = []) {
@@ -54,6 +55,37 @@ function backupFiles(settingsPath) {
 		.sort();
 }
 
+function symlinkFile(target, path) {
+	if (process.platform === "win32") {
+		symlinkSync(target, path, "file");
+		return;
+	}
+	symlinkSync(target, path);
+}
+
+function writeSwapBackupSourceToSymlinkAfterOpenPreload(dir) {
+	const preload = join(dir, "swap-backup-source-to-symlink-after-open.mjs");
+	writeFileSync(preload, `import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+
+const originalOpenSync = fs.openSync;
+let sabotaged = false;
+fs.openSync = (path, flags, mode) => {
+	const pathString = String(path);
+	if (!sabotaged && pathString === process.env.TLH_TEST_SWAP_BACKUP_SOURCE_PATH) {
+		const fd = originalOpenSync(path, flags, mode);
+		sabotaged = true;
+		fs.unlinkSync(pathString);
+		fs.symlinkSync(process.env.TLH_TEST_SWAP_BACKUP_SOURCE_TARGET, pathString, "file");
+		return fd;
+	}
+	return originalOpenSync(path, flags, mode);
+};
+syncBuiltinESMExports();
+`);
+	return preload;
+}
+
 test("packaged defaults pin lastChangelogVersion to the changelog sentinel", () => {
 	assert.equal(readJson(settingsDefaultsPath).lastChangelogVersion, changelogSentinel);
 });
@@ -79,6 +111,81 @@ test("merge adds the changelog sentinel when isolated settings omit it", () => {
 	runMerge(fixture);
 
 	assert.equal(readJson(fixture.settings).lastChangelogVersion, changelogSentinel);
+});
+
+test("merge preserves settings and backup file modes when rewriting settings", () => {
+	const fixture = tempFixture(
+		{ packages: [], quietStartup: true },
+		{ packages: [harnessPackage] },
+	);
+	chmodSync(fixture.settings, 0o640);
+
+	runMerge(fixture);
+
+	assert.equal(lstatSync(fixture.settings).mode & 0o777, 0o640);
+	const backups = backupFiles(fixture.settings);
+	assert.equal(backups.length, 1);
+	assert.equal(lstatSync(join(dirname(fixture.settings), backups[0])).mode & 0o777, 0o640);
+});
+
+test("merge rejects symlinked settings targets before creating backups", () => {
+	const fixture = tempFixture(
+		{ packages: [], quietStartup: true },
+		{ packages: [harnessPackage] },
+	);
+	const externalDir = mkdtempSync(join(tmpdir(), "tlh-merge-settings-symlink-target-"));
+	const externalSettings = join(externalDir, "settings.json");
+	writeFileSync(externalSettings, JSON.stringify({ packages: [harnessPackage] }, null, 2));
+	rmSync(fixture.settings);
+	symlinkFile(externalSettings, fixture.settings);
+
+	const result = spawnSync(process.execPath, [
+		mergeScript,
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", fixture.extensions,
+	], {
+		cwd: repoRoot,
+		env: process.env,
+		encoding: "utf8",
+	});
+
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /symlinked Pi settings source/);
+	assert.deepEqual(backupFiles(fixture.settings), []);
+});
+
+test("merge rejects settings sources swapped to a symlink during backup read before creating backups", { skip: process.platform === "win32" }, () => {
+	const fixture = tempFixture(
+		{ packages: [], quietStartup: true },
+		{ packages: [harnessPackage] },
+	);
+	const externalDir = mkdtempSync(join(tmpdir(), "tlh-merge-settings-backup-source-swap-"));
+	const externalSettings = join(externalDir, "settings.json");
+	const externalSource = { packages: ["npm:attacker"] };
+	writeFileSync(externalSettings, JSON.stringify(externalSource, null, 2));
+	const preload = writeSwapBackupSourceToSymlinkAfterOpenPreload(dirname(fixture.settings));
+
+	const result = spawnSync(process.execPath, [
+		"--import", preload,
+		mergeScript,
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", fixture.extensions,
+	], {
+		cwd: repoRoot,
+		env: {
+			...process.env,
+			TLH_TEST_SWAP_BACKUP_SOURCE_PATH: fixture.settings,
+			TLH_TEST_SWAP_BACKUP_SOURCE_TARGET: externalSettings,
+		},
+		encoding: "utf8",
+	});
+
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /symlinked Pi settings source/);
+	assert.deepEqual(backupFiles(fixture.settings), []);
+	assert.deepEqual(readJson(externalSettings), externalSource);
 });
 
 test("merge migrates existing lastChangelogVersion to the changelog sentinel", () => {
@@ -370,6 +477,106 @@ test("merge --force preserves tlh.telemetry.enabled=false while applying default
 	assert.equal(settings.tlh.telemetry.enabled, false, "telemetry opt-out must survive forced reruns");
 });
 
+test("merge migrates existing unpinned managed npm default package sources to bundled pinned sources without --force", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				"npm:@diegopetrucci/pi-notify",
+			],
+		},
+		[
+			{
+				id: "notify",
+				source: "npm:@diegopetrucci/pi-notify@0.1.5",
+			},
+		],
+	);
+
+	runMerge(fixture);
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.packages, [
+		harnessPackage,
+		"npm:@diegopetrucci/pi-notify@0.1.5",
+	]);
+	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, ["npm:@diegopetrucci/pi-notify"]);
+});
+
+test("merge updates managed pinned npm default package sources when the bundled manifest pin changes", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				"npm:@diegopetrucci/pi-notify@0.1.5",
+			],
+			tlh: {
+				defaultExtensionProvenance: {
+					managedPackageIdentities: ["npm:@diegopetrucci/pi-notify"],
+				},
+			},
+		},
+		[
+			{
+				id: "notify",
+				source: "npm:@diegopetrucci/pi-notify@0.1.6",
+			},
+		],
+	);
+
+	runMerge(fixture);
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.packages, [
+		harnessPackage,
+		"npm:@diegopetrucci/pi-notify@0.1.6",
+	]);
+	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, ["npm:@diegopetrucci/pi-notify"]);
+});
+
+test("merge preserves older pinned npm package sources without managed default provenance", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				"npm:@diegopetrucci/pi-notify@0.1.5",
+			],
+		},
+		[
+			{
+				id: "notify",
+				source: "npm:@diegopetrucci/pi-notify@0.1.6",
+			},
+		],
+	);
+
+	const firstOutput = runMerge(fixture, { quiet: false });
+	const afterFirst = readJson(fixture.settings);
+	const afterFirstRaw = readFileSync(fixture.settings, "utf8");
+
+	assert.doesNotMatch(firstOutput, /update default extension package source/);
+	assert.deepEqual(afterFirst.packages, [
+		harnessPackage,
+		"npm:@diegopetrucci/pi-notify@0.1.5",
+	]);
+	assert.deepEqual(afterFirst.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [], []);
+
+	const secondOutput = runMerge(fixture, { quiet: false });
+	const afterSecond = readJson(fixture.settings);
+
+	assert.match(secondOutput, /No settings changes needed\./);
+	assert.doesNotMatch(secondOutput, /update default extension package source/);
+	assert.equal(readFileSync(fixture.settings, "utf8"), afterFirstRaw);
+	assert.deepEqual(afterSecond.packages, [
+		harnessPackage,
+		"npm:@diegopetrucci/pi-notify@0.1.5",
+	]);
+	assert.deepEqual(afterSecond.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [], []);
+});
+
 test("critical source updates dedupe stale same-identity filtered packages", () => {
 	const criticalSource = "git:github.com/example/pi-critical@v2";
 	const fixture = tempFixture(
@@ -594,6 +801,85 @@ test("merge cleanup of retired confirmation packages is idempotent after first r
 	const afterFirst = readFileSync(fixture.settings, "utf8");
 	const firstSettings = readJson(fixture.settings);
 	assert.deepEqual(firstSettings.packages, [harnessPackage], "retired confirmation packages removed on first run");
+
+	const secondOutput = runMerge(fixture, { quiet: false });
+	assert.match(secondOutput, /No settings changes needed\./);
+	assert.equal(readFileSync(fixture.settings, "utf8"), afterFirst, "settings unchanged on second run");
+});
+
+test("merge force-removes pi-oracle package while preserving unrelated packages", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				`${retiredOraclePackage}@2.1.0`,
+				{ source: `${retiredOraclePackage}@1.0.0`, extensions: ["legacy-filter"] },
+				"npm:@diegopetrucci/pi-notify",
+			],
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.packages, [
+		harnessPackage,
+		"npm:@diegopetrucci/pi-notify",
+	]);
+	assert.match(output, /force-remove retired default extension package: npm:@diegopetrucci\/pi-oracle/);
+});
+
+test("merge prunes oracle from tlh.disabledDefaultExtensions and emits a changes line", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [harnessPackage],
+			tlh: { disabledDefaultExtensions: ["oracle", "notify"] },
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["notify"], "oracle should be pruned, other entries preserved");
+	assert.match(output, /remove stale oracle opt-out from tlh\.disabledDefaultExtensions/);
+});
+
+test("merge prunes whitespace-padded oracle entry from tlh.disabledDefaultExtensions", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [harnessPackage],
+			tlh: { disabledDefaultExtensions: [" oracle ", "notify"] },
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["notify"], "whitespace-padded oracle should be pruned");
+	assert.match(output, /remove stale oracle opt-out from tlh\.disabledDefaultExtensions/);
+});
+
+test("merge cleanup of pi-oracle is idempotent after first run", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				retiredOraclePackage,
+			],
+			tlh: { disabledDefaultExtensions: ["oracle", "notify"] },
+		},
+	);
+
+	runMerge(fixture);
+
+	const afterFirst = readFileSync(fixture.settings, "utf8");
+	const firstSettings = readJson(fixture.settings);
+	assert.ok(!firstSettings.packages.includes(retiredOraclePackage), "pi-oracle removed on first run");
+	assert.deepEqual(firstSettings.tlh.disabledDefaultExtensions, ["notify"], "oracle opt-out pruned on first run");
 
 	const secondOutput = runMerge(fixture, { quiet: false });
 	assert.match(secondOutput, /No settings changes needed\./);

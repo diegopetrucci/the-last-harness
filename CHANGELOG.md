@@ -4,15 +4,83 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-06-25
+
 ### Changed
 
+- Refreshed pinned TLH package dependencies and bundled extension references across package metadata, installer validation, and docs.
+- Added a GitHub downloads badge to `README.md` for quicker release-install visibility.
+- Added CI/status-check monitoring guidance for post-PR TLH workflows, plus an opt-in `ci-failure-investigation` experimental path for read-only investigation before asking whether to proceed.
+
+## [0.25.0] - 2026-06-24
+
+### Added
+
+- TLH now bundles a first-party experimental `contrarian` subagent, kept default-off behind `/experimental enable contrarian`, with opt-in guidance across TLH experimental primary-agent prompts and README docs. When enabled, `contrarian` is intended mainly for sparing pre-ticket adversarial stress-tests of plans, assumptions, product directions, bug hypotheses, and review conclusions — not the routine `code-reviewer` diff pass and not a replacement for the broader `oracle` second opinion.
+
+### Changed
+
+- Replaced the bundled `pi-oracle` extension (`npm:@diegopetrucci/pi-oracle`) with a first-party oracle subagent that performs direct high-reasoning read-only analysis. The subagent uses the opposite-provider model pattern (mirroring `code-reviewer`) with high thinking, so it reasons independently from the primary session. No external extension is required.
+- Updated the bundled `pi-subagents` pin and TLH provider-aware review defaults: when TLH injects an opposite-provider model for `code-reviewer` or `oracle`, it now also supplies a same/current-provider fallback plus a warning notice that review independence is reduced if the fallback is used.
+- TLH now instructs agents never to create a git commit on their own; all commits require explicit user approval before proceeding.
+
+## [0.24.0] - 2026-06-22
+
+### Changed
+
+- Removed the per-launch `pi --version` probe from the `tlh` wrapper. The version check ran on every invocation to validate the pinned runtime; it is now replaced with a lighter-weight check, making `tlh` start faster.
+
+### Fixed
+
+- Fixed uninstall safety for runtimes that were migrated from a legacy TLH install: a `migrated`-origin ownership marker now causes `tlh uninstall` to use a surgical `npm uninstall` rather than `rm -rf`, so any packages co-located in a shared prefix are preserved.
+- Tightened private-runtime ownership gating: the installer and uninstaller now require an affirmative `.tlh-runtime-owned` marker (with schema-version, package name, and a realpath-matched path) before treating a runtime prefix as TLH-owned. An unmarked or path-mismatched prefix is refused at install time and skipped at uninstall time, with a manual-removal hint printed instead. Existing installs receive the marker automatically on the next `tlh update` or installer rerun.
+
+## [0.23.0] - 2026-06-20
+
+### Changed
+
+- TLH now runs a self-contained pinned Pi runtime at `~/.the-last-harness/runtime`, exec'd by absolute path and isolated from any global `~/.local` Pi install. The installer and uninstaller never auto-remove `~/.local/bin/pi`; the uninstaller removes the private runtime when it is TLH-owned, and only touches a `~/.local` Pi under the explicit `--force-include-pi` flag.
+- Bundled installer-managed runtime dependencies outside `package.json` are now explicitly pinned too: bundled npm default extensions in `config/default-extensions.json` use concrete versions, existing TLH git-fork defaults stay tag-pinned, and managed Gnosis now defaults to the pinned `v0.5.3` release instead of resolving `latest` unless you override it.
+- TLH now suppresses the upstream Pi "Update Available — Run `pi update`" launch banner. Because TLH pins Pi to a supported version window, the upstream update prompt is misleading noise — `tlh update` is the correct update path. TLH's own update notifications are unaffected.
+
+## [0.22.2] - 2026-06-19
+
+### Changed
+
+- Temporarily pinned TLH package metadata, peer-compatibility guidance, and install/update docs to upstream Pi 0.79.7 while the upstream 0.79.8 breakage is active.
+
+## [0.22.1] - 2026-06-18
+
+### Fixed
+
+- Fixed the tracked package-lock release metadata inconsistency that shipped in 0.22.0.
+
+## [0.22.0] - 2026-06-18
+
+### Changed
+
+- Switched the bundled `mcporter` default extension from `npm:pi-mcp-adapter` to a TLH fork pinned to `git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1`. The fork's only behavior change is the MCP status-bar footer: it now uses the dim style (matching the other footer lines) and lists actively-connected server names after the count when one or more servers are connected (e.g. `MCP: 1/1 servers, atlassian`).
+
+## [0.21.0] - 2026-06-16
+
+- Active non-locked primary agents now respect user `/model` choices and persist them per primary under `tlh.primaryAgent.modelOverrides.<primary>`; reset with `/switch-primary-agent model reset`. Locked primaries such as Rush keep fixed defaults.
+- `code-reviewer` continues to prefer the opposite available provider for review independence, without forcing unavailable Codex-only defaults.
+- Bundled the updated `pi-subagents` tag with the completion-guard fix for VCS/PR false positives.
+
+## [0.20.0] - 2026-06-15
+
+### Changed
+
+- The TLH git commit footer is now coauthor-only: `Co-authored-by: The Last Harness <hi@thelastharness.com>`. The decorative `🤖 Generated with ...` heading line has been removed. GitHub and git log co-authorship attribution is unchanged. The attribution guard now requires a blank line before the coauthor trailer (or a footer-only message) to match git trailer parsing rules; commit messages with only a single newline before the trailer are rejected.
 - TLH now requires upstream Pi >=0.79.1. Installer checks, wrapper defaults, package metadata, and current install/update docs all use the raised runtime floor.
-- The compact (non-expanded) subagent view now hides the artifact-path line — press Ctrl+O for the expanded view that still shows it — and renders the current tool command (e.g. long `bash` invocations) in full, wrapped to terminal width and capped at 3 lines with `…` on overflow instead of mid-flag `...` truncation.
+- The compact (non-expanded) subagent view now hides the artifact-path line - press Ctrl+O for the expanded view that still shows it - and renders the current tool command (e.g. long `bash` invocations) in full, wrapped to terminal width and capped at 3 lines with `...` on overflow instead of mid-flag `...` truncation.
+- `code-reviewer` now prefers an available opposite provider for review independence: Anthropic sessions try the OpenAI Codex subscription provider when it is available, OpenAI/OpenAI-Codex sessions try Anthropic Opus when it is available, and OpenAI API-only setups are not forced onto unavailable Codex-only defaults.
 
 ### Fixed
 
 - The TLH startup header now mirrors upstream Pi 0.79.1 project-trust behavior. It keeps `AGENTS.md` and `CLAUDE.md` visible as context even when trust is unresolved, hides trust-gated project `.pi` and `.agents/skills` resources until the project is trusted, and honors the nearest saved trust decision inherited from parent folders in the isolated TLH profile.
 - Bundled the updated `pi-subagents` tag with the observability fix for non-zero child exits and SIGTERM-like failures.
+- Bundled `pi-subagents` now cleans up run-owned background processes when terminal child runs finish, while soft pause and resume remain non-destructive.
 
 ## [0.19.0] - 2026-06-09
 
@@ -23,7 +91,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
-- Rush, product, and bug-hunter now run at fixed thinking levels. Attempting to change thinking under these primaries with `/thinking` or `/effort` returns a clear error: `Thinking is locked at "<level>" for the <name> primary agent.` The locked levels are: rush → low (off on OpenAI/OpenAI-Codex), product → high, bug-hunter → high.
+- Rush, product, and bug-hunter now run at fixed thinking levels. Attempting to change thinking under these primaries with `/thinking` or `/effort` returns a clear error: `Thinking is locked at "<level>" for the <name> primary agent.` The locked levels are: rush → low (off on the OpenAI Codex subscription provider), product → high, bug-hunter → high.
 - Architect now enforces a minimum thinking floor of medium. `/thinking` and `/effort` cannot set architect thinking below medium. Any session currently running architect below medium will be bumped to architect's default thinking on the next primary apply (session start or primary switch).
 
 ## [0.18.0] - 2026-06-08
@@ -44,7 +112,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Bundled `pi-subagents` now pins `git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-5`.
 - The `tlh` wrapper now pins the absolute `pi` path at install/update time for faster launch; the minimum Pi version (>=0.76.0) is enforced at install/update time rather than on every `tlh` invocation. If the pinned binary is later moved away or removed, the wrapper falls back to PATH discovery automatically; if it is replaced in place with an unsupported version, run `tlh update` to re-validate and repin.
 - The footer no longer shows the model provider name; the provider prefix is always hidden.
-- Context cap is now a built-in TLH feature (no longer a bundled default extension). The bundled `@diegopetrucci/pi-context-cap` default extension has been removed and will be force-uninstalled from existing isolated profiles on the next `tlh` install or update. Previous `tlh.disabledDefaultExtensions: ["context-cap"]` opt-outs are intentionally **not** preserved — those entries are silently pruned on upgrade. To opt out of the cap again, run `/toggle-context-cap` or set `tlh.contextCap.disabled: true` in your isolated settings.
+- Context cap is now a built-in TLH feature (no longer a bundled default extension). The bundled `@diegopetrucci/pi-context-cap` default extension has been removed and will be force-uninstalled from existing isolated profiles on the next `tlh` install or update. Previous `tlh.disabledDefaultExtensions: ["context-cap"]` opt-outs are intentionally **not** preserved - those entries are silently pruned on upgrade. To opt out of the cap again, run `/toggle-context-cap` or set `tlh.contextCap.disabled: true` in your isolated settings.
 - TLH now records bundled default-extension provenance in `tlh.defaultExtensionProvenance.managedPackageIdentities` so retired-default cleanup can distinguish TLH-managed packages from later manual re-adds. Older installs migrate this metadata on update; legacy Plannotator is still cleaned up once during that migration.
 - `tlh` install/update now force-removes the retired bundled `permission-gate` and `confirm-destructive` confirmation packages from existing isolated TLH profiles. New installs already omit both packages, and this cleanup only touches the isolated TLH profile (for example `~/.the-last-harness/agent/settings.json`), not normal Pi config under `~/.pi/agent`.
 - Renamed the first-party git-diff review command/docs/UI copy to `/annotate-git-diff` and the packaged extension name to `annotate-git-diff`; historical attribution still references the upstream `pi-extension-diff-review` and `pi-diff-review` packages.
@@ -132,7 +200,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Bundled TLH `pi-rtk` default now points at the no-footer fork tag, preserving `/rtk` repo-tooling behavior without adding a persistent footer indicator.
 - Bundled `pi-web-access` now defers to existing upstream/manual `pi-web-access` installs during normal merges and updates, avoiding duplicate `web_search`/`fetch_content`/`get_search_content` providers unless you explicitly switch to the TLH fork.
 - Bundled critical `pi-subagents` now pins `git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-1`, matching the merged fork tag and the reduced bundled slash-command surface (`/subagents-doctor` only).
-- Footer restructured into three logical lines: working directory/git (unchanged), a single flowing `agent: … • model • thinking • context` line, and an optional session-stats line showing cost and/or subscription usage. Empty lines are omitted entirely.
+- Footer restructured into three logical lines: working directory/git (unchanged), a single flowing `agent: ... • model • thinking • context` line, and an optional session-stats line showing cost and/or subscription usage. Empty lines are omitted entirely.
 - Subscription usage session label now reads e.g. `5h session 27% used` (was `5h 27% used`).
 - Removed the `/tlh`, `/harness`, `/agent`, and `/architect` TLH slash commands. Use `/switch-primary-agent` for explicit primary-agent status/default controls, or `Shift+Tab` to cycle the active primary.
 - Non-stable-install track warning is now rendered in the TLH header instead of as a standalone launch notice, and the launch notice copy was simplified.

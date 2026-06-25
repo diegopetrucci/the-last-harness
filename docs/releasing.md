@@ -10,6 +10,8 @@ Releases are GitHub tag based. Pushing a semver tag such as `v0.1.0` runs `.gith
 
 There is no `stable` branch. A release is the immutable Git tag plus its GitHub Release assets. The stage-1 installer (`scripts/tlh-install.mjs`) and `scripts/lib/` helpers must be present in both the tag and package tarball.
 
+For pin-PR title and body conventions (PRs updating `config/default-extensions.json` fork tags), see [CONTRIBUTING.md — Pull requests and CI](../CONTRIBUTING.md#pull-requests-and-ci).
+
 ## Prepare a release
 
 From a clean `main` branch with Node.js >=22.19.0:

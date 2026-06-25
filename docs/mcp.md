@@ -1,6 +1,6 @@
 # MCP adapter
 
-TLH ships the upstream `pi-mcp-adapter` package as the non-critical bundled default `mcporter`.
+TLH ships a TLH fork of `pi-mcp-adapter` as the non-critical bundled default `mcporter`. The fork is pinned to `git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1` and its only divergence from upstream is the MCP status-bar footer: it uses the dim style (matching the other footer lines) and lists actively-connected server names after the count when one or more servers are connected (e.g. `MCP: 1/1 servers, atlassian`).
 
 ## Default usage
 
@@ -18,7 +18,7 @@ Common slash commands:
 ## Configuration
 
 - Bundled default id: `mcporter`
-- Extension source: `npm:pi-mcp-adapter`
+- Extension source: `git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1` (TLH fork of `npm:pi-mcp-adapter`)
 - Supported MCP config locations:
   - Shared config: `~/.config/mcp/mcp.json`
   - TLH isolated profile: `~/.the-last-harness/agent/mcp.json` or `${PI_CODING_AGENT_DIR}/mcp.json`

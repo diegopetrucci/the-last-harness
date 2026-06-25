@@ -23,7 +23,6 @@ test("autocomplete hides configured slash commands only in slash-command-name co
 			{ value: "changelog", label: "/changelog" },
 			{ value: "clone", label: "/clone" },
 			{ value: "import", label: "/import" },
-			{ value: "oracle-model", label: "/oracle-model" },
 			{ value: "quiet-tools", label: "/quiet-tools" },
 			{ value: "fff-health", label: "/fff-health" },
 			{ value: "fff-rescan", label: "/fff-rescan" },
@@ -46,7 +45,6 @@ test("autocomplete keeps hidden commands outside slash-command-name context", as
 			{ value: "changelog", label: "/changelog" },
 			{ value: "clone", label: "/clone" },
 			{ value: "import", label: "/import" },
-			{ value: "oracle-model", label: "/oracle-model" },
 			{ value: "quiet-tools", label: "/quiet-tools" },
 			{ value: "fff-health", label: "/fff-health" },
 			{ value: "intercom", label: "/intercom" },
@@ -66,7 +64,6 @@ test("autocomplete returns null when filtering removes every slash-command sugge
 			{ value: "changelog", label: "/changelog" },
 			{ value: "clone", label: "/clone" },
 			{ value: "import", label: "/import" },
-			{ value: "oracle-model", label: "/oracle-model" },
 			{ value: "quiet-tools", label: "/quiet-tools" },
 			{ value: "fff-health", label: "/fff-health" },
 			{ value: "fff-rescan", label: "/fff-rescan" },
@@ -78,4 +75,25 @@ test("autocomplete returns null when filtering removes every slash-command sugge
 	const result = await provider.getSuggestions(["/fff-health"], 0, 11, { signal: AbortSignal.abort() });
 
 	assert.equal(result, null);
+});
+
+test("wrapper forwards triggerCharacters when the underlying provider declares them", () => {
+	const underlying = {
+		triggerCharacters: ["#", "$"],
+		async getSuggestions() {
+			return { items: [] };
+		},
+		applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+			return { lines, cursorLine, cursorCol, item, prefix };
+		},
+	};
+	const wrapper = createTlhAutocompleteProvider(underlying);
+
+	assert.deepEqual(wrapper.triggerCharacters, ["#", "$"]);
+});
+
+test("wrapper has no triggerCharacters property when the underlying provider omits it", () => {
+	const wrapper = createTlhAutocompleteProvider(createProvider({ items: [] }));
+
+	assert.ok(!("triggerCharacters" in wrapper), "wrapper must not have an own triggerCharacters key");
 });

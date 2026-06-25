@@ -14,11 +14,14 @@ import { FooterGitCache } from "./the-last-harness/footer-git-cache.js";
 import { createTlhHeader } from "./the-last-harness/header.js";
 import { readTlhInstallNotice } from "./the-last-harness/install-state.js";
 import { scheduleTlhLaunchTelemetry } from "./the-last-harness/launch-telemetry.js";
+import { installTlhModelVisibilityFilter } from "./the-last-harness/model-visibility.js";
+import { installTlhNewVersionNotificationOverride } from "./the-last-harness/new-version-notice.js";
 import { installTlhPackageUpdateNotificationOverride } from "./the-last-harness/package-update-notice.js";
 import { registerTlhPrimaryAgentRuntime } from "./the-last-harness/primary-agent-runtime.js";
 import { collectStartupResources } from "./the-last-harness/resources.js";
 import { getTlhStartupTip } from "./the-last-harness/startup-tip.js";
 import { createTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage.mjs";
+import { registerTokensCommand } from "./the-last-harness/tokens.js";
 import { getTlhUsageLimitsConfig, registerUsageCommand, shouldShowTlhUsageWeekly } from "./the-last-harness/usage-limits.js";
 import { getTlhHeaderUpdate, maybeNotifyAvailableTlhUpdate } from "./the-last-harness/update-check.js";
 import { registerVersionCommand } from "./the-last-harness/version.js";
@@ -30,6 +33,7 @@ function getActiveProjectTrustDecision(ctx: ExtensionContext): boolean | undefin
 }
 
 export default function theLastHarness(pi: ExtensionAPI) {
+	installTlhModelVisibilityFilter();
 	registerContextCap(pi);
 
 	const primaryAgentRuntime = registerTlhPrimaryAgentRuntime(pi, { env: process.env });
@@ -38,12 +42,14 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	}
 
 	installTlhPackageUpdateNotificationOverride();
+	installTlhNewVersionNotificationOverride();
 	registerToggleTlhGitAttributionCommand(pi);
 	registerAnnotateLastMessageCommand(pi);
 	registerEffortCommand(pi, primaryAgentRuntime);
 	registerExperimentalCommand(pi);
 	registerReviewCommand(pi);
 	registerTlhChangelogCommand(pi);
+	registerTokensCommand(pi);
 	registerUsageCommand(pi);
 	registerVersionCommand(pi);
 	let activeTlhHeader: ReturnType<typeof createTlhHeader> | undefined;

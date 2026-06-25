@@ -10,7 +10,13 @@ Run the aggregate validation script, which covers the runtime TypeScript typeche
 npm run validate
 ```
 
-This default validation path stays deterministic and repo-local.
+This default validation path stays deterministic and repo-local. Its `npm test` step uses the quiet dot reporter for passing runs.
+
+When you need the full Node test reporter for diagnostics, rerun:
+
+```sh
+npm run test:verbose
+```
 
 If you are iterating on runtime `.mts` sources under `scripts/`, you can run the focused commands directly:
 
