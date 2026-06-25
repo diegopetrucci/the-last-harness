@@ -111,7 +111,11 @@ test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs i
 	assert.match(html, /\.monaco-editor/, "editor.main.css content must be inlined");
 
 	// Monaco worker source is inlined as a non-empty bundled script.
-	assert.match(html, /window\.__reviewMonacoWorkerSource = "\(function\(\)\{/, "editor worker source must be inlined");
+	const workerSourceMatch = html.match(/window\.__reviewMonacoWorkerSource = ("(?:\\.|[^"\\])*")/s);
+	assert.ok(workerSourceMatch, "editor worker source assignment must be inlined");
+	const workerSource = JSON.parse(workerSourceMatch[1]);
+	assert.match(workerSource, /\(function\(\)\{/, "editor worker bundle must contain the Monaco worker IIFE");
+	assert.match(workerSource, /EditorSimpleWorker/, "editor worker bundle must include Monaco worker code");
 
 	// No unreplaced template markers.
 	assert.doesNotMatch(html, /__INLINE_MONACO_EDITOR_JS__/);
@@ -120,9 +124,9 @@ test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs i
 	assert.doesNotMatch(html, /__INLINE_MONACO_BASIC_LANGUAGES_JS__/, "__INLINE_MONACO_BASIC_LANGUAGES_JS__ marker must be replaced");
 
 	// Monaco language bundles are inlined (representative sample).
-	assert.match(html, /define\("vs\/typescript-/, "TypeScript tokenizer bundle must be inlined");
-	assert.match(html, /define\("vs\/python-/, "Python tokenizer bundle must be inlined");
-	assert.match(html, /define\("vs\/go-/, "Go tokenizer bundle must be inlined");
+	assert.match(html, /define\("vs\/basic-languages\/typescript\/typescript"/, "TypeScript tokenizer bundle must be inlined");
+	assert.match(html, /define\("vs\/basic-languages\/python\/python"/, "Python tokenizer bundle must be inlined");
+	assert.match(html, /define\("vs\/basic-languages\/go\/go"/, "Go tokenizer bundle must be inlined");
 
 	// The asset config must not expose monacoVsBaseUrl.
 	assert.doesNotMatch(html, /monacoVsBaseUrl/);

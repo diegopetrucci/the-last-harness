@@ -240,7 +240,7 @@ export function managedDefaultExtensionPackageIdentities(settings, defaultExtens
         const identity = packageIdentity(extension.source);
         if (!identity)
             continue;
-        if (packages.some((entry) => packageIdentity(entry) === identity)) {
+        if (packages.some((entry) => packageSourceOf(entry)?.trim() === extension.source)) {
             managedIdentities.add(identity);
         }
     }
