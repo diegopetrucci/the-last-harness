@@ -8,7 +8,14 @@
     "pi-package",
     "pi",
     "coding-agent",
-    "agent"
+    "agent",
+    "developer-tools",
+    "cli",
+    "terminal",
+    "typescript",
+    "llm",
+    "orchestration",
+    "tlh"
   ],
   "repository": {
     "type": "git",
