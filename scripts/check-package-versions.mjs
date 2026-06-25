@@ -114,7 +114,8 @@ function readTextFile(path) {
 	try {
 		return readFileSync(path, "utf8").replace(/^\uFEFF/, "");
 	} catch (error) {
-		throw new Error(`Unable to read ${path}: ${error.message}`);
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`Unable to read ${path}: ${message}`, { cause: error });
 	}
 }
 
@@ -124,7 +125,8 @@ function readJsonFile(path) {
 	try {
 		return JSON.parse(raw);
 	} catch (error) {
-		throw new Error(`Invalid JSON in ${path}: ${error.message}`);
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`Invalid JSON in ${path}: ${message}`, { cause: error });
 	}
 }
 

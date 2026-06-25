@@ -1,6 +1,7 @@
 # The last harness you'll ever need.
 
 [![CI](https://github.com/diegopetrucci/the-last-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/diegopetrucci/the-last-harness/actions/workflows/ci.yml)
+[![Downloads](https://img.shields.io/github/downloads/diegopetrucci/the-last-harness/total)](https://github.com/diegopetrucci/the-last-harness/releases)
 [![Node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933?logo=nodedotjs)](package.json)
 
 `tlh` (The Last Harness) is an opinionated harness built on top of [Pi](https://github.com/earendil-works/pi).
@@ -181,7 +182,7 @@ Normal `tlh update` runs are conservative: they preserve user-owned isolated-pro
 
 Node.js >=22.19.0 must be available on your `PATH`.
 
-TLH runs its own pinned Pi 0.79.7 from a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. The installer always provisions the private runtime automatically (per-user, no sudo) and hard-fails with an actionable error if it cannot.
+TLH runs its own pinned Pi 0.80.2 from a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. The installer always provisions the private runtime automatically (per-user, no sudo) and hard-fails with an actionable error if it cannot.
 
 The installer writes an ownership marker (`.tlh-runtime-owned`) into the runtime prefix on every successful install or repair. Ownership is determined by this marker, not by directory shape alone — `npm install --prefix` produces an identical `bin/lib` layout regardless of who ran it, so shape alone is not a reliable signal. Accordingly, the installer refuses a non-empty unmarked runtime prefix that has no recorded TLH provenance; this matters most when using a non-default `--agent-dir` whose sibling `runtime/` directory could belong to a separate installation. Older TLH installs from before the marker was introduced gain it automatically on the next `tlh update` or installer rerun — no action required.
 

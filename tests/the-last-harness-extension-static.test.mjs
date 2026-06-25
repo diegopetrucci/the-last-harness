@@ -103,14 +103,15 @@ test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs i
 	// Regression guard: no file:// URL pointing into node_modules must appear in the built HTML.
 	assert.doesNotMatch(html, /file:\/\/[^\s'"]*node_modules/, "built HTML must not contain file:// URLs into node_modules");
 
-	// Monaco editor JS is inlined (editor.main.js contains 'vs/editor/edcore.main').
-	assert.match(html, /vs\/editor\/edcore\.main/, "editor.main.js content must be inlined");
+	// Monaco editor JS is inlined (editor.main.js defines 'vs/editor/editor.main').
+	assert.match(html, /define\("vs\/editor\/editor\.main"/, "editor.main.js content must be inlined");
+	assert.match(html, /"bootstrapError":null/, "packaged review assets should load without a bootstrap error");
 
 	// Monaco editor CSS is inlined (editor.main.css contains '.monaco-editor').
 	assert.match(html, /\.monaco-editor/, "editor.main.css content must be inlined");
 
-	// Monaco worker source is inlined (workerMain.js contains 'EditorSimpleWorker').
-	assert.match(html, /EditorSimpleWorker/, "workerMain.js content must be inlined");
+	// Monaco worker source is inlined as a non-empty bundled script.
+	assert.match(html, /window\.__reviewMonacoWorkerSource = "\(function\(\)\{/, "editor worker source must be inlined");
 
 	// No unreplaced template markers.
 	assert.doesNotMatch(html, /__INLINE_MONACO_EDITOR_JS__/);
@@ -118,10 +119,10 @@ test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs i
 	assert.doesNotMatch(html, /__INLINE_MONACO_WORKER_SOURCE_JSON__/);
 	assert.doesNotMatch(html, /__INLINE_MONACO_BASIC_LANGUAGES_JS__/, "__INLINE_MONACO_BASIC_LANGUAGES_JS__ marker must be replaced");
 
-	// Basic-language tokenizers are inlined (representative sample).
-	assert.match(html, /define\("vs\/basic-languages\/typescript\/typescript"/, "TypeScript tokenizer must be inlined");
-	assert.match(html, /define\("vs\/basic-languages\/python\/python"/, "Python tokenizer must be inlined");
-	assert.match(html, /define\("vs\/basic-languages\/go\/go"/, "Go tokenizer must be inlined");
+	// Monaco language bundles are inlined (representative sample).
+	assert.match(html, /define\("vs\/typescript-/, "TypeScript tokenizer bundle must be inlined");
+	assert.match(html, /define\("vs\/python-/, "Python tokenizer bundle must be inlined");
+	assert.match(html, /define\("vs\/go-/, "Go tokenizer bundle must be inlined");
 
 	// The asset config must not expose monacoVsBaseUrl.
 	assert.doesNotMatch(html, /monacoVsBaseUrl/);
@@ -401,7 +402,7 @@ test("extension wires TLH changelog command and release-notes rendering", () => 
 	assert.match(changelogSource, /pi\.sendMessage\(\{/);
 });
 
-test("extension keeps TLH experimental command wiring with delta-follow-up-reviews as the registered flag", () => {
+test("extension keeps TLH experimental command wiring with registered ci and review feature flags", () => {
 	const lockedWriteHelper = sourceSection(
 		profileStateSource,
 		"export function withLockedTlhSettingsWrite",
@@ -412,6 +413,7 @@ test("extension keeps TLH experimental command wiring with delta-follow-up-revie
 	assert.match(extensionSource, /from "\.\/the-last-harness\/experimental\.js"/);
 	assert.match(experimentalSource, /pi\.registerCommand\("experimental"/);
 	assert.match(experimentalSource, /delta-follow-up-reviews/);
+	assert.match(experimentalSource, /ci-failure-investigation/);
 	assert.doesNotMatch(experimentalSource, /run-tests-last/);
 	assert.match(
 		experimentalSource,

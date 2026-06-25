@@ -12,6 +12,14 @@ All notable changes to The Last Harness will be documented in this file.
 
 - The `librarian` subagent now performs read-only GitHub repository research directly via the `gh` CLI and `git` through `bash`, without a separately managed extension package. **Prerequisite:** `gh` must be installed and authenticated (`gh auth login` / `gh auth status`). Without it, librarian reports what it could not verify rather than silently failing.
 
+## [0.26.0] - 2026-06-25
+
+### Changed
+
+- Refreshed pinned TLH package dependencies and bundled extension references across package metadata, installer validation, and docs.
+- Added a GitHub downloads badge to `README.md` for quicker release-install visibility.
+- Added CI/status-check monitoring guidance for post-PR TLH workflows, plus an opt-in `ci-failure-investigation` experimental path for read-only investigation before asking whether to proceed.
+
 ## [0.25.0] - 2026-06-24
 
 ### Added

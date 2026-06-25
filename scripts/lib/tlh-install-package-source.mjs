@@ -58,8 +58,8 @@ export function parseGitSource(source) {
 
 	const { repo: repoWithoutRef, ref } = splitGitRef(url);
 	let repo = repoWithoutRef;
-	let host = "";
-	let repoPath = "";
+	let host;
+	let repoPath;
 	const scpLikeMatch = repoWithoutRef.match(/^git@([^:]+):(.+)$/);
 	if (scpLikeMatch) {
 		host = scpLikeMatch[1] || "";

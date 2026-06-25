@@ -23,10 +23,14 @@ import { validateInstallerTargets } from "../scripts/lib/tlh-install-paths.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoNodeModulesBin = join(repoRoot, "node_modules", ".bin");
-const TLH_MIN_PI_VERSION = "0.79.1";
-const TLH_PINNED_PI_VERSION = "0.79.7";
+const TLH_MIN_PI_VERSION = "0.80.1";
+const TLH_PINNED_PI_VERSION = "0.80.2";
 
 const TLH_PI_PACKAGE_SPEC = `@earendil-works/pi-coding-agent@${TLH_PINNED_PI_VERSION}`;
+
+function escapeRegExp(value) {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function pathWithoutRepoNodeModulesBin(pathValue = process.env.PATH || "") {
 	return pathValue.split(delimiter).filter((entry) => entry && resolve(entry) !== repoNodeModulesBin).join(delimiter);
@@ -106,7 +110,7 @@ function writeFakeTk(fakebin) {
 	writeFakeCommand(fakebin, "tk", "printf 'Usage: tk help\\nTicket CLI helper\\n'");
 }
 
-function writeLoggingPi(commandDir, logPath, version = "0.79.1") {
+function writeLoggingPi(commandDir, logPath, version = TLH_MIN_PI_VERSION) {
 	writeFakePi(commandDir, [
 		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${logPath}"`,
 		`if [[ "\${1:-}" == "--version" ]]; then printf '${version}\\n'; exit 0; fi`,
@@ -114,7 +118,7 @@ function writeLoggingPi(commandDir, logPath, version = "0.79.1") {
 	].join("\n"));
 }
 
-function writeVersionedWrapperPi(commandDir, logPath, version = "0.79.1") {
+function writeVersionedWrapperPi(commandDir, logPath, version = TLH_MIN_PI_VERSION) {
 	writeFakePi(commandDir, [
 		`if [[ "\${1:-}" == "--version" ]]; then printf '${version}\\n'; exit 0; fi`,
 		`{ printf 'cmd=%s\\n' "$0"; printf 'argv=%s\\n' "$*"; printf 'agent=%s\\n' "\${PI_CODING_AGENT_DIR:-}"; printf 'path=%s\\n' "\${PATH:-}"; } >"${logPath}"`,
@@ -291,10 +295,10 @@ test("stage-1 repairs the TLH private Pi runtime to the pinned version when it h
 	}, null, 2));
 	writeFakeCommand(fakebin, "git", "exit 0");
 	writeFakeTk(fakebin);
-	// Seed a stale private runtime binary at the expected path (version 0.79.8 is above pin).
+	// Seed a stale private runtime binary at the expected path (version 0.80.3 is above pin).
 	writeFakePi(runtimeBinDir, [
 		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${stalePiCallLog}"`,
-		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.8\\n'; exit 0; fi",
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.80.3\\n'; exit 0; fi",
 		"exit 0",
 	].join("\n"));
 	writeLoggingPi(templateDir, repairedPiLog, TLH_PINNED_PI_VERSION);
@@ -319,7 +323,7 @@ test("stage-1 repairs the TLH private Pi runtime to the pinned version when it h
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	assert.equal(result.status, 0, output);
-	assert.match(output, /Repairing TLH private Pi runtime to pinned 0\.79\.7/);
+	assert.match(output, new RegExp(`Repairing TLH private Pi runtime to pinned ${escapeRegExp(TLH_PINNED_PI_VERSION)}`));
 	assert.deepEqual(readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [
 		`install -g --ignore-scripts --prefix ${runtimeDir} ${TLH_PI_PACKAGE_SPEC}`,
 	]);
@@ -374,10 +378,10 @@ test("stage-1 repairs the TLH private Pi runtime even when a supported Pi exists
 		`if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_MIN_PI_VERSION}\\n'; exit 0; fi`,
 		"exit 0",
 	].join("\n"));
-	// Stale private runtime at 0.79.8 (above pin) triggers repair.
+	// Stale private runtime at 0.80.3 (above pin) triggers repair.
 	writeFakePi(runtimeBinDir, [
 		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${stalePiCallLog}"`,
-		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.8\\n'; exit 0; fi",
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.80.3\\n'; exit 0; fi",
 		"exit 0",
 	].join("\n"));
 	writeLoggingPi(templateDir, repairedPiLog, TLH_PINNED_PI_VERSION);
@@ -402,7 +406,7 @@ test("stage-1 repairs the TLH private Pi runtime even when a supported Pi exists
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	assert.equal(result.status, 0, output);
-	assert.match(output, /Repairing TLH private Pi runtime to pinned 0\.79\.7/);
+	assert.match(output, new RegExp(`Repairing TLH private Pi runtime to pinned ${escapeRegExp(TLH_PINNED_PI_VERSION)}`));
 	assert.deepEqual(readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [
 		`install -g --ignore-scripts --prefix ${runtimeDir} ${TLH_PI_PACKAGE_SPEC}`,
 	]);
@@ -603,7 +607,7 @@ test("installer helpers no longer support the removed --no-pi-install opt-out", 
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	assert.equal(stage0Help.status, 0, stage0Help.stderr);
-	assert.match(stage0Help.stdout, /Upstream Pi 0\.79\.7/);
+	assert.match(stage0Help.stdout, new RegExp(`Upstream Pi ${escapeRegExp(TLH_PINNED_PI_VERSION)}`));
 	assert.match(stage0Help.stdout, /installed into a private TLH runtime/);
 	assert.doesNotMatch(stage0Help.stdout, /--no-pi-install/);
 
@@ -618,7 +622,7 @@ test("installer helpers no longer support the removed --no-pi-install opt-out", 
 	assert.equal(stage0RemovedFlag.stdout, "");
 
 	assert.throws(() => parseArgs(["--no-pi-install"]), /unknown option: --no-pi-install/);
-	assert.match(usage(), /Upstream Pi 0\.79\.7/);
+	assert.match(usage(), new RegExp(`Upstream Pi ${escapeRegExp(TLH_PINNED_PI_VERSION)}`));
 	assert.doesNotMatch(usage(), /--no-pi-install/);
 
 	const updateHelp = spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-update.mjs"), "--help"], {
@@ -686,7 +690,7 @@ test("stage-1 --no-settings does not short-circuit Gnosis configure", (t) => {
 	const binDir = join(root, "bin");
 	const fakebin = join(root, "fakebin");
 	mkdirSync(homeDir, { recursive: true });
-	writeFakePi(fakebin, "if [[ \"${1:-}\" == \"--version\" ]]; then\n\tprintf '0.79.1\\n'\n\texit 0\nfi\nexit 0");
+	writeFakePi(fakebin, "if [[ \"${1:-}\" == \"--version\" ]]; then\n\tprintf '0.80.1\\n'\n\texit 0\nfi\nexit 0");
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
 	const result = spawnSync(process.execPath, [
@@ -1571,7 +1575,7 @@ function setupTicketsEnabledWrapperFixture(t) {
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
 	writeFakePi(fakebin, [
-		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.7\\n'; exit 0; fi",
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.80.2\\n'; exit 0; fi",
 		"printf 'path=%s\\n' \"${PATH:-}\" >\"${PI_WRAPPER_LOG}\"",
 	].join("\n"));
 
@@ -2446,7 +2450,7 @@ test("wrapper update --extensions helper prepends executable --pi-cmd directory 
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
 	mkdirSync(pinnedPiDir, { recursive: true });
-	writeFileSync(join(pinnedPiDir, "pi"), "#!/bin/sh\nif [ \"${1:-}\" = \"--version\" ]; then printf '0.79.1\\n'; exit 0; fi\nprintf 'unexpected args: %s\\n' \"$*\" >&2\nexit 1\n", "utf8");
+	writeFileSync(join(pinnedPiDir, "pi"), "#!/bin/sh\nif [ \"${1:-}\" = \"--version\" ]; then printf '0.80.1\\n'; exit 0; fi\nprintf 'unexpected args: %s\\n' \"$*\" >&2\nexit 1\n", "utf8");
 	chmodSync(join(pinnedPiDir, "pi"), 0o755);
 	writeFileSync(join(agentDir, "tlh", "recover-update.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst pi = spawnSync("pi", ["--version"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, pi: { status: pi.status, stdout: pi.stdout, stderr: pi.stderr, error: pi.error?.message } }));\nprocess.exit(pi.status ?? (pi.error ? 1 : 0));\n`, "utf8");
 
@@ -2490,7 +2494,7 @@ test("wrapper update --extensions helper prepends executable --pi-cmd directory 
 	]);
 	assert.equal(updateRecord.env.PI_CODING_AGENT_DIR, agentDir);
 	assert.equal(updateRecord.pi.status, 0, JSON.stringify(updateRecord));
-	assert.match(updateRecord.pi.stdout, /0\.79\.1/);
+	assert.match(updateRecord.pi.stdout, new RegExp(escapeRegExp(TLH_MIN_PI_VERSION)));
 
 	const updatePathEntries = updateRecord.env.PATH.split(delimiter);
 	assert.equal(updatePathEntries[0], pinnedPiDir, `expected pinned_dir first; got ${updatePathEntries.join(delimiter)}`);
@@ -2522,10 +2526,10 @@ test("wrapper update --extensions helper prepends the pinned private runtime dir
 	mkdirSync(cwdDir, { recursive: true });
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
-	// Pinned pi at 0.79.8 (soft-warn territory) — still prepended for --extensions.
+	// Pinned pi at 0.80.3 (soft-warn territory) — still prepended for --extensions.
 	writeFakePi(pinnedPiDir, [
 		`printf '%s\\n' "$*" >>"${pinnedPiCallLog}"`,
-		`if [[ "\${1:-}" == "--version" ]]; then printf '0.79.8\\n'; exit 0; fi`,
+		`if [[ "\${1:-}" == "--version" ]]; then printf '0.80.3\\n'; exit 0; fi`,
 		"exit 85",
 	].join("\n"));
 	writeFileSync(join(agentDir, "tlh", "recover-update.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst pi = spawnSync("pi", ["--version"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, pi: { status: pi.status, stdout: pi.stdout, stderr: pi.stderr, error: pi.error?.message } }));\nprocess.exit(pi.status ?? (pi.error ? 1 : 0));\n`, "utf8");
@@ -2565,7 +2569,7 @@ test("wrapper update --extensions helper prepends the pinned private runtime dir
 	assert.equal(updatePathEntries.includes(cwdDir), false);
 	assert.equal(updatePathEntries.includes(agentBin), false);
 	// The update script invokes pi --version and finds the pinned runtime.
-	assert.match(updateRecord.pi.stdout, /0\.79\.8/);
+	assert.match(updateRecord.pi.stdout, /0\.80\.3/);
 });
 
 test("tlh update --extensions uses absolute private runtime pi and hard-fails when missing", (t) => {
@@ -2936,8 +2940,8 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
 	// Legacy pi at ~/.local/bin/pi — must NOT be removed when install fails.
 	writeFakePi(legacyBin, `if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_PINNED_PI_VERSION}\\n'; exit 0; fi\nexit 0`);
 
-	// Template pi with WRONG version (0.79.8 > MAX 0.79.7) — simulates a broken npm install.
-	writeFakePi(templateDir, "if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.79.8\\n'; exit 0; fi\nexit 0");
+	// Template pi with WRONG version (0.80.3 > MAX 0.80.2) — simulates a broken npm install.
+	writeFakePi(templateDir, "if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.80.3\\n'; exit 0; fi\nexit 0");
 
 	// Fake npm: always installs the wrong-version template pi.
 	writeFakeNpmInstaller(fakebin, {
@@ -2965,7 +2969,7 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
 
 	// Installer must fail: freshly installed pi has wrong version.
 	assert.notEqual(result.status, 0, `expected installer to fail on wrong-version pi, got exit 0:\n${output}`);
-	assert.match(output, /0\.79\.8/, "error output should mention the wrong version");
+	assert.match(output, /0\.80\.3/, "error output should mention the wrong version");
 
 	// ~/.local/bin/pi must NOT have been removed (install threw before any cleanup could run).
 	assert.equal(existsSync(legacyPiPath), true, "user-owned ~/.local/bin/pi was removed despite installer throwing");
@@ -2982,7 +2986,7 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
 });
 
 // Regression (tlht-5php, blocker): piInstalledByTlh=true, private runtime ABSENT at start,
-// user-owned ~/.local/bin/pi@0.79.7 present.  The installer must provision the private
+// user-owned ~/.local/bin/pi@0.80.2 present.  The installer must provision the private
 // runtime and succeed — without removing or executing ~/.local/bin/pi.
 test("stage-1 regression (tlht-5php): installer never removes or execs user-owned ~/.local/bin/pi when piInstalledByTlh=true and private runtime is absent", (t) => {
 	const root = makeTempDir();
@@ -3018,7 +3022,7 @@ test("stage-1 regression (tlht-5php): installer never removes or execs user-owne
 		piInstalledByTlh: true,
 	}, null, 2));
 
-	// User-owned ~/.local/bin/pi@0.79.7 — must NOT be removed or invoked by the installer.
+	// User-owned ~/.local/bin/pi@0.80.2 — must NOT be removed or invoked by the installer.
 	writeFakePi(legacyBin, [
 		`printf '%s\\n' "$*" >>"${legacyPiInvocationLog}"`,
 		`if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_PINNED_PI_VERSION}\\n'; exit 0; fi`,
@@ -3108,7 +3112,7 @@ test("uninstall.sh does not remove legacy ~/.local/bin/pi without --force-includ
 	}, null, 2));
 
 	// User-owned legacy pi at ~/.local/bin/pi.
-	writeFileSync(join(legacyBin, "pi"), "#!/bin/sh\nprintf '0.79.7\\n'\n", "utf8");
+	writeFileSync(join(legacyBin, "pi"), "#!/bin/sh\nprintf '0.80.2\\n'\n", "utf8");
 	chmodSync(join(legacyBin, "pi"), 0o755);
 
 	// ── (d1) dry-run without --force-include-pi: hint printed, pi NOT removed ──
@@ -3198,7 +3202,6 @@ test("uninstall.sh regression (tlht-h7vq): migrated runtime marker preserves nes
 	writeFileSync(join(tlhPackageDir, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent" }, null, 2));
 	writeFileSync(join(foreignPackageDir, "package.json"), JSON.stringify({ name: "foreign-package" }, null, 2));
 
-	const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 	const dryResult = spawnSync("bash", [join(repoRoot, "uninstall.sh"), "--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], {
 		cwd: repoRoot,
 		env: scrubInstallerEnv({ HOME: homeDir }),
@@ -3210,9 +3213,9 @@ test("uninstall.sh regression (tlht-h7vq): migrated runtime marker preserves nes
 	assert.equal(dryResult.status, 0, `dry-run failed:\n${dryOutput}`);
 	assert.match(
 		dryOutput,
-		new RegExp(`would remove migrated TLH pi from shared runtime \\(npm\\): npm uninstall -g --ignore-scripts --prefix "${escapeRegex(runtimeDir)}" @earendil-works/pi-coding-agent`),
+		new RegExp(`would remove migrated TLH pi from shared runtime \\(npm\\): npm uninstall -g --ignore-scripts --prefix "${escapeRegExp(runtimeDir)}" @earendil-works/pi-coding-agent`),
 	);
-	assert.doesNotMatch(dryOutput, new RegExp(`would remove private runtime: rm -rf ${escapeRegex(runtimeDir)}`));
+	assert.doesNotMatch(dryOutput, new RegExp(`would remove private runtime: rm -rf ${escapeRegExp(runtimeDir)}`));
 	assert.equal(existsSync(foreignPackageDir), true, "dry-run must not remove nested foreign package");
 
 	writeFakeCommand(fakeNpmDir, "npm", [

@@ -680,7 +680,7 @@ function validateOpenedFileForDirectWrite(fd, path, intendedRoot, label) {
 		pathStats = lstatSync(path);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Refusing to write ${label} because the opened path could not be validated: ${path} (${message})`);
+		throw new Error(`Refusing to write ${label} because the opened path could not be validated: ${path} (${message})`, { cause: error });
 	}
 
 	if (pathStats.isSymbolicLink()) {

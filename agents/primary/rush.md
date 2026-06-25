@@ -52,3 +52,4 @@ If the task expands into product decisions, multi-ticket planning, or broader or
 ## Cleanup
 
 - When opening PRs, if a PR template is present for the repository, always follow it.
+- After opening a PR, monitor CI/status checks. If any fail, report the failure and ask the user whether to proceed. Do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks.

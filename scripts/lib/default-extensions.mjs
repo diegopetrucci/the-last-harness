@@ -16,7 +16,8 @@ function readManifestJson(path, { allowMissing }) {
 	try {
 		return JSON.parse(raw);
 	} catch (error) {
-		throw new Error(`Invalid JSON in ${path}: ${error.message}`);
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`Invalid JSON in ${path}: ${message}`, { cause: error });
 	}
 }
 
