@@ -31,6 +31,16 @@ npm run validate
 node scripts/release-notes.mjs --tag "v$version" --output /tmp/tlh-release-notes.md
 ```
 
+Then run the startup performance checker as release-tier manual validation:
+
+```sh
+npm run check:startup-performance
+```
+
+Keep this separate from `npm run validate`: it measures TLH PTY startup timing, so results vary with the machine and current load. The release objective is a steady-state first TLH header mean below `1000ms`.
+
+If the checker fails, investigate before release rather than treating it like a normal deterministic test failure.
+
 Commit the release prep:
 
 ```sh

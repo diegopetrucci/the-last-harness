@@ -23,6 +23,7 @@
   },
   "scripts": {
     "check:package-versions": "node scripts/check-package-versions.mjs",
+    "check:startup-performance": "node scripts/check-startup-performance.mjs",
     "lint": "eslint \"scripts/**/*.{js,mjs,ts}\" \"tests/**/*.{js,mjs,ts}\" \"extensions/**/*.{js,mjs,ts}\"",
     "typecheck": "tsc --noEmit",
     "test": "node --test --test-reporter=dot tests/*.test.mjs",
