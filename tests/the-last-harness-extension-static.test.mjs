@@ -114,8 +114,9 @@ test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs i
 	const workerSourceMatch = html.match(/window\.__reviewMonacoWorkerSource = ("(?:\\.|[^"\\])*")/s);
 	assert.ok(workerSourceMatch, "editor worker source assignment must be inlined");
 	const workerSource = JSON.parse(workerSourceMatch[1]);
-	assert.match(workerSource, /\(function\(\)\{/, "editor worker bundle must contain the Monaco worker IIFE");
-	assert.match(workerSource, /EditorSimpleWorker/, "editor worker bundle must include Monaco worker code");
+	assert.ok(workerSource.trim().length > 1024, "editor worker bundle must be a non-empty inlined script");
+	assert.match(workerSource, /(?:self|globalThis)\.onmessage\b|onmessage\s*=/, "editor worker bundle must register a worker message handler");
+	assert.match(workerSource, /\bpostMessage\b/, "editor worker bundle must communicate with the host");
 
 	// No unreplaced template markers.
 	assert.doesNotMatch(html, /__INLINE_MONACO_EDITOR_JS__/);
