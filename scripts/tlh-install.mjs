@@ -1514,7 +1514,7 @@ async function runInstallFlow(config) {
 	installHarnessPackage(config);
 	await installSupportFilesToProfile(config);
 	await mergeSettings(config);
-	cleanupRetiredProfileFiles(config);
+	if (!config.noSettings) cleanupRetiredProfileFiles(config);
 	await writeInstallState(config);
 	installDefaultExtensions(config);
 	configureGnosis(config);

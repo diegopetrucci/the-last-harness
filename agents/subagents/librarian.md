@@ -23,8 +23,8 @@ You are read-only. Never modify files, create patches, install dependencies, cha
 
 Use only the `bash` tool for GitHub research. All research commands run through `bash` and must be strictly non-mutating:
 
-- **Allowed**: `gh repo view`, `gh issue view`, `gh pr view`, `gh release view`, `gh api` (GET only), `git log`, `git show`, `git diff`, `git ls-files`, `rg`, `read`, `grep`, `find`, `ls`.
-- **Never run**: any command that writes, deletes, pushes, creates, or mutates state — no `git clone` outside a temp directory, no `git commit`, no `git push`, no `gh issue create`, no `gh pr create`, no `gh repo fork`, no credential inspection (`env | grep TOKEN`, `cat ~/.config/gh/hosts.yml`, etc.).
+- **Allowed**: `gh repo view`, `gh issue view`, `gh pr view`, `gh release view`, `gh api` (GET only), `git log`, `git show`, `git diff`, `git ls-files`, and, only when a checkout is genuinely necessary, `git clone` into a temporary directory created with `mktemp -d` for read-only inspection followed by cleanup; also `rg`, `read`, `grep`, `find`, `ls`.
+- **Never run**: any command that writes, deletes, pushes, creates, or mutates state — no persistent or in-repo clones, no `git commit`, no `git push`, no `gh issue create`, no `gh pr create`, no `gh repo fork`, no credential inspection (`env | grep TOKEN`, `cat ~/.config/gh/hosts.yml`, etc.).
 - If a file checkout is genuinely necessary, clone into a temporary directory (`mktemp -d`) and operate read-only within it. Do not leave temp clones behind; remove them when done.
 - Do not inspect secrets, credentials, or environment variables beyond what is strictly required to verify tool availability.
 

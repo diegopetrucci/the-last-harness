@@ -757,6 +757,19 @@ test("stage-1 leaves existing install-only TLH support files untouched during in
 	}
 });
 
+test("stage-1 --no-settings preserves existing extensions/librarian.json during installer flow", (t) => {
+	const existingLibrarianConfig = { version: "1.0.0" };
+	const { result, agentDir } = runStage1LocalPackageInstall(t, {
+		existingLibrarianConfig,
+		noSettings: true,
+	});
+	const output = `${result.stdout}\n${result.stderr}`;
+	const librarianConfigPath = join(agentDir, "extensions", "librarian.json");
+
+	assert.equal(result.status, 0, output);
+	assert.equal(readJson(librarianConfigPath).version, existingLibrarianConfig.version);
+});
+
 test("stage-1 derives packageRoot from custom package source install dirs", (t) => {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");
