@@ -156,24 +156,11 @@ These commands are provided by bundled default extensions and are visible in TLH
 |---------|-----------|-------------|
 | `/context` | `pi-context-inspector` | Open a local HTML breakdown of where this session's context is going |
 | `/fast` | `pi-openai-fast` | Toggle OpenAI Codex Fast mode (ChatGPT-auth GPT-5.4/GPT-5.5 only) |
-| `/librarian-cache` | `pi-librarian` | Show or change the Librarian local-checkout cache mode for future librarian calls |
 | `/mcp` | `pi-mcp-adapter` | Show MCP server status |
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
 | `/rtk` | `pi-rtk` | Control pi-rtk shell-command rewriting |
 | `/subagents-doctor` | `pi-subagents` | Show subagent diagnostics |
 | `/triage-comments` | `pi-triage-comments` | Collect pasted feedback or PR comments, then start a triage investigation |
-
-### `/librarian-cache`
-
-TLH defaults the Librarian local-checkout cache to `off`.
-
-That preference lives in TLH's isolated profile — typically `${PI_CODING_AGENT_DIR}/extensions/librarian.json` — so changing it affects future TLH librarian calls without touching your normal Pi config under `~/.pi/agent`.
-
-Use the command explicitly to inspect or override the current mode:
-
-- `/librarian-cache status` — show the current cache mode
-- `/librarian-cache on` — enable local checkout caching
-- `/librarian-cache off` — disable local checkout caching again
 
 ---
 
@@ -207,7 +194,7 @@ Individual bundled extensions can be disabled without affecting the others. Use 
 
 ```sh
 tlh defaults list        # show installed defaults and opt-out status
-tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disable librarian)
+tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disable fff)
 tlh defaults enable <id>   # re-enable a disabled extension
 ```
 

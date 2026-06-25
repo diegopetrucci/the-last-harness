@@ -16,4 +16,3 @@ Follow-up from PR #173 review: incrementally raise TypeScript validation beyond 
 ## Acceptance Criteria
 
 TypeScript strictness ratchet path is tracked; strict-mode and noUncheckedIndexedAccess are evaluated separately; npm run validate remains passing when any new flag is enabled.
-

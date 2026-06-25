@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import {
 	copyFileSync,
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	readdirSync,
 	readFileSync,
@@ -23,12 +24,17 @@ import {
 	packageSourceInstallDir,
 } from "./lib/tlh-install-package-source.mjs";
 import {
+	assertProfilePathWithinAgent,
 	assertSafeSettingsTarget,
 	copySafeProfileFile,
 	ensureSafeProfileDir,
 	isSymlink,
 	validateInstallerTargets,
+	validateProfileRelativePath,
 } from "./lib/tlh-install-paths.mjs";
+import {
+	packageIdentity,
+} from "./lib/default-extensions.mjs";
 import {
 	assignRequiredEqualsValue,
 	backupPathWithTimestamp,
@@ -837,6 +843,109 @@ function installPiIfNeeded(config) {
 	return { installed: true, piCmd: piBin };
 }
 
+// Retired files that TLH seeded in older isolated profiles.
+// Each path is relative to config.agentDir and must not contain '..' components.
+// The cleanup is idempotent: absent files are silently skipped.
+export const RETIRED_PROFILE_FILES = Object.freeze([
+	"extensions/librarian.json",
+]);
+
+export function cleanupRetiredProfileFiles(config) {
+	// FIX 2: Read post-merge settings to decide whether to keep managed files.
+	// Fail safe: if settings cannot be read, skip file removal rather than risk wrong deletion.
+	let postMergePackages = []; // default empty → proceed with removal when no settings present
+	if (config.settingsPath && existsSync(config.settingsPath)) {
+		try {
+			const raw = readFileSync(config.settingsPath, "utf8");
+			const parsed = JSON.parse(raw);
+			if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) && Array.isArray(parsed.packages)) {
+				postMergePackages = parsed.packages;
+			}
+		} catch {
+			postMergePackages = null; // fail safe: unreadable settings → skip removal
+		}
+	}
+
+	for (const relativePath of RETIRED_PROFILE_FILES) {
+		// FIX 2: Skip extensions/librarian.json when a librarian package survived settings migration.
+		// This mirrors the package-level managed-only behavior: a user-added librarian package
+		// is preserved by the migration, so the companion config file should also be kept.
+		if (relativePath === "extensions/librarian.json") {
+			if (postMergePackages === null) {
+				// Cannot read settings; fail safe and skip removal.
+				if (config.dryRun) log(config, `Would skip removal of retired profile file (settings unreadable, fail safe): ${join(config.agentDir, relativePath)}`);
+				continue;
+			}
+			const librarianIdentity = packageIdentity("npm:@diegopetrucci/pi-librarian");
+			const librarianPresent = postMergePackages.some((entry) => packageIdentity(entry) === librarianIdentity);
+			if (librarianPresent) {
+				if (config.dryRun) log(config, `Skipping retired profile file removal (user-added package preserved): ${join(config.agentDir, relativePath)}`);
+				continue;
+			}
+		}
+
+		// FIX 1: Validate the relative path has no unsafe components.
+		try {
+			validateProfileRelativePath(relativePath, "retired profile path");
+		} catch {
+			warn(`Skipping invalid retired profile path: ${relativePath}`);
+			continue;
+		}
+
+		// FIX 1: Reject if agentDir itself is a symlink.
+		if (isSymlink(config.agentDir)) {
+			warn(`Skipping retired profile file cleanup: agentDir is a symlink: ${config.agentDir}`);
+			continue;
+		}
+
+		// FIX 1: Walk each parent component of the relative path and reject if any is a symlink.
+		// Do NOT create directories as a side effect — this is a read-only/cleanup operation.
+		const components = relativePath.split("/");
+		const parentComponents = components.slice(0, -1);
+		const fileName = components[components.length - 1];
+
+		let cursor = config.agentDir;
+		let skipThis = false;
+		for (const component of parentComponents) {
+			cursor = join(cursor, component);
+			if (isSymlink(cursor)) {
+				warn(`Skipping retired profile file cleanup through symlinked parent: ${cursor}`);
+				skipThis = true;
+				break;
+			}
+			if (!existsSync(cursor)) {
+				skipThis = true; // parent dir absent → target can't exist; skip silently (idempotent)
+				break;
+			}
+		}
+		if (skipThis) continue;
+
+		const target = join(cursor, fileName);
+
+		// FIX 1: Assert the resolved real target stays within the isolated profile and outside ~/.pi.
+		try {
+			assertProfilePathWithinAgent(config, target, "retired profile file");
+		} catch (error) {
+			warn(`Skipping retired profile file cleanup (unsafe path): ${target}: ${error instanceof Error ? error.message : String(error)}`);
+			continue;
+		}
+
+		if (isSymlink(target)) continue; // Conservative: never remove or follow symlinks
+		if (!existsSync(target)) continue; // Idempotent: absent is fine
+		if (!lstatSync(target).isFile()) continue; // Conservative: only regular files
+		if (config.dryRun) {
+			log(config, `Would remove retired profile file: ${target}`);
+			continue;
+		}
+		try {
+			rmSync(target);
+			detailLog(config, `Removed retired profile file: ${target}`);
+		} catch (error) {
+			warn(`failed to remove retired profile file ${target}: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+}
+
 function backupExistingSettingsBeforePiInstall(config) {
 	assertSafeSettingsTarget(config);
 	if (!existsSync(config.settingsPath)) return;
@@ -906,34 +1015,6 @@ function installHarnessPackage(config) {
 		return;
 	}
 	runIsolatedPi(config, [absolutePiCmd(config), "update", config.packageSource]);
-}
-
-async function seedLibrarianConfig(config) {
-	if (config.noSettings) return;
-
-	const targetPath = join(config.agentDir, "extensions", "librarian.json");
-	if (existsSync(targetPath)) return;
-
-	if (!config.supportFilePaths.LIBRARIAN_DEFAULTS_FILE || !existsSync(config.supportFilePaths.LIBRARIAN_DEFAULTS_FILE)) {
-		const prepared = await ensureSupportFilesPrepared(config, supportFileIo());
-		if (!prepared) {
-			if (config.dryRun) {
-				log(config, `Would create isolated Librarian config when missing: ${targetPath}`);
-				return;
-			}
-			throw new Error(`Librarian defaults support file is unavailable for ref ${config.ref}`);
-		}
-	}
-	if (!config.supportFilePaths.LIBRARIAN_DEFAULTS_FILE || !existsSync(config.supportFilePaths.LIBRARIAN_DEFAULTS_FILE)) {
-		throw new Error(`required Librarian defaults support file not found for ref ${config.ref}: config/librarian.defaults.json`);
-	}
-
-	if (config.dryRun) {
-		printCommand(["cp", config.supportFilePaths.LIBRARIAN_DEFAULTS_FILE, targetPath]);
-		return;
-	}
-
-	copySafeProfileFile(config, config.supportFilePaths.LIBRARIAN_DEFAULTS_FILE, "extensions/librarian.json", "isolated Librarian config");
 }
 
 async function mergeSettings(config) {
@@ -1432,8 +1513,8 @@ async function runInstallFlow(config) {
 	config.piCmd = piCmd;
 	installHarnessPackage(config);
 	await installSupportFilesToProfile(config);
-	await seedLibrarianConfig(config);
 	await mergeSettings(config);
+	if (!config.noSettings) cleanupRetiredProfileFiles(config);
 	await writeInstallState(config);
 	installDefaultExtensions(config);
 	configureGnosis(config);
@@ -1498,7 +1579,6 @@ export {
 	nodeVersionMeetsMinimum,
 	parseArgs,
 	run,
-	seedLibrarianConfig,
 	usage,
 	validateInputs,
 };
