@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
-import { packageIdentity, readDefaultExtensions } from "../scripts/lib/default-extensions.mjs";
+import {
+	packageIdentity,
+	readDefaultExtensions,
+	setDefaultExtensionProvenance,
+} from "../scripts/lib/default-extensions.mjs";
 import { installableSupportFiles } from "../scripts/lib/tlh-install-support-manifest.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
@@ -116,6 +120,24 @@ test("shared default-extension reader trims descriptions and can allow missing m
 		() => readDefaultExtensions(join(fixture.dir, "missing-default-extensions.json")),
 		/File does not exist:/,
 	);
+});
+
+test("setDefaultExtensionProvenance returns false for non-plain-object settings", () => {
+	for (const settings of [undefined, null, false, 0, 1n, "tlh", Symbol("tlh")]) {
+		assert.equal(setDefaultExtensionProvenance(settings, ["npm:helper"]), false);
+	}
+	assert.equal(setDefaultExtensionProvenance([], ["npm:helper"]), false);
+	assert.equal(setDefaultExtensionProvenance({ tlh: [] }, ["npm:helper"]), false);
+
+	const settings = {};
+	assert.equal(setDefaultExtensionProvenance(settings, ["npm:helper@1.2.3"]), true);
+	assert.deepEqual(settings, {
+		tlh: {
+			defaultExtensionProvenance: {
+				managedPackageIdentities: ["npm:helper"],
+			},
+		},
+	});
 });
 
 test("bundled manifest keeps quiet-tools-compatible rtk load order", () => {

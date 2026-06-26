@@ -4,7 +4,7 @@ Run these commands from the repository root with Node.js >=22.19.0. Prefer tempo
 
 ## Run validation
 
-Run the aggregate validation script, which covers the installer smoke checks, test suite, lint, settings merge dry-run, and package dry-run:
+Run the aggregate validation script, which covers the main TypeScript `tsc --noEmit` check, the runtime `.mts` typecheck, the generated-output freshness check, installer smoke checks, test suite, lint, settings merge dry-run, and package dry-run:
 
 ```sh
 npm run validate
@@ -17,6 +17,16 @@ When you need the full Node test reporter for diagnostics, rerun:
 ```sh
 npm run test:verbose
 ```
+
+If you are iterating on runtime `.mts` sources under `scripts/`, you can run the focused commands directly:
+
+```sh
+npm run typecheck:runtime
+npm run check:runtime
+npm run build
+```
+
+Use `npm run typecheck` for the main repository TypeScript check, `npm run typecheck:runtime` for the focused runtime `.mts` typecheck, `npm run check:runtime` to verify the generated `scripts/**/*.mjs` outputs are already fresh without rewriting them, and `npm run build` only when you intentionally want to refresh those generated runtime files.
 
 ## Refresh the Understand Anything graph
 
