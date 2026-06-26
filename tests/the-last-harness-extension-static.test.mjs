@@ -28,7 +28,6 @@ const jiti = createJiti(import.meta.url);
 const { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents, loadSubagentMetadata } = await jiti.import(
 	"../extensions/the-last-harness/prompts.ts",
 );
-const { TLH_CONTRARIAN_FEATURE } = await jiti.import("../extensions/the-last-harness/experimental.ts");
 const { buildReviewHtml } = await jiti.import("../extensions/annotate-git-diff/ui.ts");
 
 function sourceSection(source, startMarker, endMarker) {
@@ -222,8 +221,8 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	);
 
 	const primaryPrompt = buildTlhSystemPrompt(rush, loadSubagentMetadata(), true);
-	const experimentalPrimaryPrompt = buildTlhSystemPrompt(rush, loadSubagentMetadata(), true, {
-		enabledFeatures: [TLH_CONTRARIAN_FEATURE],
+	const legacyFlagPrimaryPrompt = buildTlhSystemPrompt(rush, loadSubagentMetadata(), true, {
+		enabledFeatures: ["contrarian"],
 	});
 	const childPrompt = buildChildSubagentSystemPrompt();
 
@@ -232,8 +231,8 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	assert.match(primaryPrompt, /omit `agentScope` or use `"user"`/);
 	assert.match(primaryPrompt, /action: "resume".*omit `context` or use `"fresh"`/);
 	assert.match(primaryPrompt, /TLH minor agents are isolated to the user scope/);
-	assert.doesNotMatch(primaryPrompt, /- contrarian:/i);
-	assert.match(experimentalPrimaryPrompt, /- contrarian:/i);
+	assert.match(primaryPrompt, /- contrarian:/i);
+	assert.match(legacyFlagPrimaryPrompt, /- contrarian:/i);
 
 	for (const prompt of [primaryPrompt, childPrompt]) {
 		assert.doesNotMatch(prompt, /## TLH Ticket Integration Disabled/);
@@ -348,7 +347,7 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 	assert.match(toolCall, /const allowedSubagents = allowedSubagentsForExperimentalConfig\(getTlhGlobalSettings\(ctx\.cwd\)\.tlh\?\.experimental\)/);
 	assert.match(
 		toolCall,
-		/if \(!isEnabledPrimaryAgentSelection\(selection\)\) \{[\s\S]*subagentCallTargetsAgent\(event\.input, "contrarian"\)[\s\S]*validateSubagentToolInput\(\{ agent: "contrarian" \}, \{ allowedSubagents \}\)[\s\S]*const disabledReason = validateSubagentToolInput\(event\.input, \{ allowedSubagents \}\)/,
+		/if \(!isEnabledPrimaryAgentSelection\(selection\)\) \{[\s\S]*if \(!isSubagentResumeAction\(event\.input\)\) \{[\s\S]*return undefined;[\s\S]*const disabledReason = validateSubagentToolInput\(event\.input, \{ allowedSubagents \}\)/,
 	);
 	assert.match(toolCall, /if \(selection === "rush" && isSubagentResumeAction\(event\.input\)\)/);
 	assert.match(toolCall, /if \(selection === "rush" && subagentCallTargetsAgent\(event\.input, "developer"\)\)/);
@@ -425,6 +424,8 @@ test("extension keeps TLH experimental command wiring with registered ci and rev
 	assert.match(experimentalSource, /pi\.registerCommand\("experimental"/);
 	assert.match(experimentalSource, /delta-follow-up-reviews/);
 	assert.match(experimentalSource, /ci-failure-investigation/);
+	assert.doesNotMatch(experimentalSource, /## TLH Experimental Feature: contrarian/);
+	assert.doesNotMatch(experimentalSource, /Enables the contrarian minor agent and primary-agent guidance/);
 	assert.doesNotMatch(experimentalSource, /run-tests-last/);
 	assert.match(
 		experimentalSource,

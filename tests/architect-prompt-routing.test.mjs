@@ -20,21 +20,21 @@ test("architect.md lists librarian and web-scout as allowed minor agents with di
 	);
 });
 
-test("architect.md keeps contrarian guidance out of the base subagent tools list", () => {
-	assert.doesNotMatch(
+test("architect.md lists contrarian in the base subagent tools list", () => {
+	assert.match(
 		architectMd,
 		/- `contrarian`: adversarially stress-test plans, designs, assumptions, product directions, bug hypotheses, or review conclusions by steelmanning the strongest opposing case\./,
 	);
 });
 
-test("architect.md keeps contrarian-specific routing behind the experimental flag", () => {
-	assert.doesNotMatch(
+test("architect.md includes sparing contrarian routing guidance in the base prompt", () => {
+	assert.match(
 		architectMd,
-		/Use `contrarian` sparingly when you need an adversarial challenge pass on reasoning or direction\./,
+		/Use `contrarian` sparingly when a plan, product direction, bug hypothesis, or review conclusion needs an adversarial challenge pass\./,
 	);
-	assert.doesNotMatch(
+	assert.match(
 		architectMd,
-		/It is not the normal diff reviewer — `code-reviewer` owns review against tasks and diffs — and it is narrower than `oracle`, which provides a broader high-reasoning second opinion\./,
+		/It is not the normal diff reviewer — `code-reviewer` owns review against tasks and diffs — and unlike `oracle`, it should focus on the strongest credible opposition brief rather than a broad second opinion\./,
 	);
 });
 
@@ -60,22 +60,14 @@ test("architect.md requires specific risk wording and explicit consent before us
 	assert.match(architectMd, /Never trigger the `oracle` unless the user explicitly agrees\./);
 });
 
-test("architect.md keeps contrarian pre-ticket planning guidance behind the experimental flag", () => {
-	assert.doesNotMatch(
+test("architect.md includes contrarian pre-ticket planning guidance in the base prompt", () => {
+	assert.match(
 		architectMd,
-		/Pre-ticket planning is the primary useful moment for `contrarian`\./,
+		/Pre-ticket planning is the primary useful moment for `contrarian`: consider it before ticket creation only when a proposed change has meaningful uncertainty, tradeoffs, blast radius, a hard-to-undo direction, or debatable assumptions, and name the specific risk or strongest opposing case you want stress-tested\./,
 	);
-	assert.doesNotMatch(
+	assert.match(
 		architectMd,
-		/Apply a similarly sparing bar to `contrarian` as to `oracle`: consider it before ticket creation only when a proposed change has meaningful uncertainty, tradeoffs, blast radius, a hard-to-undo direction, or debatable assumptions, and name the specific risk or strongest opposing case you want stress-tested\./,
-	);
-	assert.doesNotMatch(
-		architectMd,
-		/Unlike `oracle`, `contrarian` should focus on the strongest credible opposition brief rather than a broad second opinion\./,
-	);
-	assert.doesNotMatch(
-		architectMd,
-		/Do not use `contrarian` as the normal diff reviewer or as an automatic step for routine localized work; use it sparingly\./,
+		/Do not use `contrarian` as an automatic step for routine localized work; use it sparingly\./,
 	);
 });
 

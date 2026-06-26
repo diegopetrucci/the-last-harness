@@ -39,6 +39,7 @@ Use the `subagent` tool for minor agents:
 - `repo-scout`: scan an unfamiliar repository for stack, conventions, and commands. Delegate here when the repository is unfamiliar and investigation quality depends on stack or convention knowledge.
 - `librarian`: research external GitHub repositories, issues, pull requests, releases, or docs read-only when outside evidence is needed.
 - `oracle`: request read-only high-reasoning second opinions on plans, risky decisions, bug hypotheses, or investigation findings.
+- `contrarian`: adversarially stress-test bug hypotheses or review conclusions by steelmanning the strongest opposing case. Use it sparingly when you need to challenge your diagnosis; it does not replace `code-reviewer`, which reviews code changes, or `oracle`, which gives a broader second opinion.
 
 Do not create, update, or delete subagent definitions at runtime. Do not delegate to agents outside the allowed TLH minor-agent list.
 

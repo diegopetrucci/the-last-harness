@@ -10,6 +10,13 @@ function readRepoFile(path) {
 	return readFileSync(join(repoRoot, path), "utf8");
 }
 
+function readUnreleasedChangelog() {
+	const changelog = readRepoFile("CHANGELOG.md");
+	const match = changelog.match(/## \[Unreleased\][\s\S]*?(?=\n## \[0\.26\.0\]|$)/);
+	assert.ok(match, "CHANGELOG.md should contain an Unreleased section");
+	return match[0];
+}
+
 const userFacingDocs = [
 	"CHANGELOG.md",
 	"docs/git-attribution.md",
@@ -119,18 +126,20 @@ test("annotate-git-diff docs use the renamed command and extension names", () =>
 	assert.match(commandsDoc, /`annotate-git-diff`/);
 });
 
-test("commands docs describe contrarian, delta-follow-up-reviews, and architect-only ci-failure-investigation as default-off /experimental flags", () => {
+test("commands docs keep /experimental for delta follow-up reviews and ci failure investigation while describing contrarian as bundled by default", () => {
 	const commandsDoc = readRepoFile("docs/commands.md");
 
 	assert.match(commandsDoc, /`\/experimental`/);
 	assert.match(commandsDoc, /contrarian/);
+	assert.match(commandsDoc, /bundled default minor subagent/i);
+	assert.match(commandsDoc, /not part of the `\/experimental` toggle surface/i);
 	assert.match(commandsDoc, /delta-follow-up-reviews/);
 	assert.match(commandsDoc, /ci-failure-investigation/);
 	assert.match(commandsDoc, /architect primary agent do read-only failed ci\/status-check investigation/i);
-	assert.match(commandsDoc, /\/experimental enable contrarian/);
-	assert.match(commandsDoc, /\/experimental disable contrarian/);
+	assert.doesNotMatch(commandsDoc, /\/experimental enable contrarian/);
+	assert.doesNotMatch(commandsDoc, /\/experimental disable contrarian/);
 	assert.match(commandsDoc, /before any edits, commits, pushes, reruns, pr changes, or other follow-up changes/i);
-	assert.match(commandsDoc, /disabled by default/i);
+	assert.match(commandsDoc, /Both flags are disabled by default/i);
 	assert.match(commandsDoc, /stale `run-tests-last` values/i);
 	assert.doesNotMatch(commandsDoc, /contrarian-subagent/);
 });
@@ -140,11 +149,11 @@ test("README and changelog describe review opposite-provider fallback policy", (
 	const changelog = readRepoFile("CHANGELOG.md");
 
 	assert.match(readme, /`code-reviewer` and `oracle` intentionally prefer an available opposite provider/i);
-	assert.match(readme, /Enabled `contrarian` uses that same opposite-provider pattern/i);
+	assert.match(readme, /`contrarian` uses that same opposite-provider pattern/i);
 	assert.match(readme, /Anthropic sessions[\s\S]{0,180}OpenAI Codex subscription provider[\s\S]{0,80}available/i);
 	assert.match(readme, /OpenAI\/OpenAI-Codex sessions[\s\S]{0,120}Anthropic/i);
 	assert.match(readme, /same\/current-provider fallback[\s\S]{0,160}review independence is reduced/i);
-	assert.match(readme, /OpenAI API access[\s\S]{0,220}does not force `code-reviewer`, `oracle`, or enabled `contrarian` onto unavailable Codex-only defaults/i);
+	assert.match(readme, /OpenAI API access[\s\S]{0,220}does not force `code-reviewer`, `oracle`, or `contrarian` onto unavailable Codex-only defaults/i);
 	assert.match(changelog, /opposite-provider model[\s\S]{0,120}`code-reviewer` or `oracle`/i);
 	assert.match(changelog, /same\/current-provider fallback[\s\S]{0,160}review independence is reduced/i);
 	assert.match(changelog, /`code-reviewer` now prefers an available opposite provider/i);
@@ -153,21 +162,22 @@ test("README and changelog describe review opposite-provider fallback policy", (
 });
 
 
-test("README and changelog describe contrarian's experimental sparing adversarial role", () => {
+test("README and changelog describe contrarian as a bundled default sparing adversarial subagent", () => {
 	const readme = readRepoFile("README.md");
-	const changelog = readRepoFile("CHANGELOG.md");
+	const unreleased = readUnreleasedChangelog();
 
-	assert.match(readme, /bundled experimental subagent[\s\S]{0,80}`contrarian`|`contrarian` as a bundled experimental subagent/i);
-	assert.match(readme, /default-off[\s\S]{0,80}\/experimental enable contrarian|\/experimental enable contrarian/i);
-	assert.match(readme, /\/experimental disable contrarian/i);
-	assert.match(readme, /If you enable `contrarian`[\s\S]{0,260}before ticket creation[\s\S]{0,220}specific risk|If you enable `contrarian`[\s\S]{0,260}specific risk[\s\S]{0,220}before ticket creation/i);
+	assert.match(readme, /bundled default minor subagent[\s\S]{0,80}`contrarian`|`contrarian` as a bundled default minor subagent/i);
+	assert.doesNotMatch(readme, /bundled experimental subagent/i);
+	assert.doesNotMatch(readme, /default-off/i);
+	assert.doesNotMatch(readme, /\/experimental enable contrarian/i);
+	assert.doesNotMatch(readme, /\/experimental disable contrarian/i);
+	assert.match(readme, /Use `contrarian` sparingly[\s\S]{0,260}before ticket creation[\s\S]{0,220}specific risk|Use `contrarian` sparingly[\s\S]{0,260}specific risk[\s\S]{0,220}before ticket creation/i);
 	assert.match(readme, /not the normal diff reviewer[\s\S]{0,120}`code-reviewer` reviews changes against tasks/i);
 	assert.match(readme, /different from `oracle`[\s\S]{0,120}broader second-opinion path/i);
-	assert.match(readme, /When enabled, `contrarian` uses that same independence pattern/i);
+	assert.match(readme, /`contrarian` uses that same independence pattern/i);
 	assert.doesNotMatch(readme, /contrarian-subagent/);
-	assert.match(changelog, /bundles a first-party experimental `contrarian` subagent/i);
-	assert.match(changelog, /default-off behind `\/experimental enable contrarian`/i);
-	assert.match(changelog, /intended mainly for sparing pre-ticket adversarial stress-tests/i);
-	assert.match(changelog, /not the routine `code-reviewer` diff pass and not a replacement for the broader `oracle` second opinion/i);
-	assert.doesNotMatch(changelog, /contrarian-subagent/);
+	assert.match(unreleased, /Promoted `contrarian` from an experimental opt-in to a bundled default minor subagent/i);
+	assert.match(unreleased, /sparing adversarial stress-test path rather than a `\/experimental` enable\/disable toggle/i);
+	assert.doesNotMatch(unreleased, /default-off/i);
+	assert.doesNotMatch(unreleased, /\/experimental enable contrarian/i);
 });

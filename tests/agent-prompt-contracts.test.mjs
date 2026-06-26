@@ -219,11 +219,23 @@ test("base architect prompt keeps delta follow-up review guidance behind the exp
 	assert.match(normalizedBody, /delegate final review to `code-reviewer` against the full vcs diff/i);
 });
 
-test("base primary prompts keep contrarian guidance behind the experimental flag", () => {
-	for (const name of ["architect", "rush", "product", "bug-hunter"]) {
-		const { normalizedBody } = readAgentPrompt("primary", name);
-		assert.doesNotMatch(normalizedBody, /contrarian/i, `${name} should not advertise contrarian in the base prompt`);
-	}
+test("base primary prompts include concise contrarian guidance where relevant", () => {
+	assert.match(
+		readAgentPrompt("primary", "architect").normalizedBody,
+		/use [`']?contrarian[`']? sparingly .* strongest opposing case/i,
+	);
+	const rushBody = readAgentPrompt("primary", "rush").normalizedBody;
+	assert.match(rushBody, /contrarian/i);
+	assert.match(rushBody, /strongest opposing case/i);
+	assert.match(rushBody, /use it sparingly rather than as a routine extra pass/i);
+	const productBody = readAgentPrompt("primary", "product").normalizedBody;
+	assert.match(productBody, /contrarian/i);
+	assert.match(productBody, /product directions, tradeoffs, assumptions, or ticket framing/i);
+	assert.match(productBody, /strongest opposing case/i);
+	const bugHunterBody = readAgentPrompt("primary", "bug-hunter").normalizedBody;
+	assert.match(bugHunterBody, /contrarian/i);
+	assert.match(bugHunterBody, /bug hypotheses or review conclusions/i);
+	assert.match(bugHunterBody, /strongest opposing case/i);
 });
 
 test("base architect and rush prompts keep ci failure investigation guidance behind the experimental flag", () => {

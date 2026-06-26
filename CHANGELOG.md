@@ -10,6 +10,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Promoted `contrarian` from an experimental opt-in to a bundled default minor subagent. README and command docs now describe it as a sparing adversarial stress-test path rather than a `/experimental` enable/disable toggle.
 - The `librarian` subagent now performs read-only GitHub repository research directly via the `gh` CLI and `git` through `bash`, without a separately managed extension package. **Prerequisite:** `gh` must be installed and authenticated (`gh auth login` / `gh auth status`). Without it, librarian reports what it could not verify rather than silently failing.
 
 ## [0.26.0] - 2026-06-25
