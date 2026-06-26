@@ -148,6 +148,17 @@ TLH's first-party implementation adapts the MIT-licensed `@ryan_nookpi/pi-extens
 
 ---
 
+## Packaged prompt templates
+
+These slash commands come from prompt templates bundled inside TLH. They insert canned prompt text into the editor for you to review and send.
+
+| Command | Description |
+|---------|-------------|
+| `/merge-origin-main-into-this-branch` | Merge `origin/main` into this branch. |
+| `/rebase-this-branch-onto-origin-main` | Rebase this branch onto `origin/main`. |
+
+---
+
 ## Bundled extension commands
 
 These commands are provided by bundled default extensions and are visible in TLH autocomplete. They are available when the relevant extension is installed and active.

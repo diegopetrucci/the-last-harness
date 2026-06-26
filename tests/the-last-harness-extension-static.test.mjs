@@ -154,6 +154,13 @@ function existingNestedExtensionEntrypoints(directoryName) {
 	);
 }
 
+function parseInlineJsonStringAssignment(source, assignmentName) {
+	const escapedAssignmentName = assignmentName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const assignment = source.match(new RegExp(`${escapedAssignmentName} = ("(?:\\\\.|[^"\\\\])*");`));
+	assert.ok(assignment, `${assignmentName} assignment must be present`);
+	return JSON.parse(assignment[1]);
+}
+
 test("package extension discovery exposes the TLH entrypoints", () => {
 	assert.deepEqual(packageJson.pi?.extensions, ["./extensions"]);
 	assert.deepEqual(existingNestedExtensionEntrypoints("the-last-harness"), []);
@@ -236,9 +243,7 @@ test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs i
 	assert.match(html, /\.monaco-editor/, "editor.main.css content must be inlined");
 
 	// Monaco worker source is inlined as a non-empty bundled script.
-	const workerSourceMatch = html.match(/window\.__reviewMonacoWorkerSource = ("(?:\\.|[^"\\])*")/s);
-	assert.ok(workerSourceMatch, "editor worker source assignment must be inlined");
-	const workerSource = JSON.parse(workerSourceMatch[1]);
+	const workerSource = parseInlineJsonStringAssignment(html, "window.__reviewMonacoWorkerSource");
 	assert.ok(workerSource.trim().length > 1024, "editor worker bundle must be a non-empty inlined script");
 	assert.match(workerSource, /(?:self|globalThis)\.onmessage\b|onmessage\s*=/, "editor worker bundle must register a worker message handler");
 	assert.match(workerSource, /\bpostMessage\b/, "editor worker bundle must communicate with the host");
