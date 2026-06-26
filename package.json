@@ -29,13 +29,17 @@
     "node": ">=22.19.0"
   },
   "scripts": {
+    "build": "npm run build:runtime",
+    "build:runtime": "node scripts/runtime-typescript.mjs build",
     "check:package-versions": "node scripts/check-package-versions.mjs",
+    "check:runtime": "node scripts/runtime-typescript.mjs check",
     "check:startup-performance": "node scripts/check-startup-performance.mjs",
-    "lint": "eslint \"scripts/**/*.{js,mjs,ts}\" \"tests/**/*.{js,mjs,ts}\" \"extensions/**/*.{js,mjs,ts}\"",
-    "typecheck": "tsc --noEmit",
+    "lint": "eslint \"scripts/**/*.{js,mjs,ts,mts}\" \"tests/**/*.{js,mjs,ts,mts}\" \"extensions/**/*.{js,mjs,ts,mts}\"",
     "test": "node --test --test-reporter=dot tests/*.test.mjs",
     "test:verbose": "node --test tests/*.test.mjs",
-    "validate": "npm run check:package-versions && bash scripts/check-installer-smoke.sh && npm run typecheck && npm test && npm run lint && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
+    "typecheck": "tsc --noEmit",
+    "typecheck:runtime": "node scripts/runtime-typescript.mjs typecheck",
+    "validate": "npm run check:package-versions && npm run typecheck && npm run typecheck:runtime && npm run check:runtime && bash scripts/check-installer-smoke.sh && npm test && npm run lint && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
   },
   "files": [
     "agents",
