@@ -17,7 +17,7 @@ function readManifestJson(path, { allowMissing }) {
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Invalid JSON in ${path}: ${message}`);
+        throw new Error(`Invalid JSON in ${path}: ${message}`, { cause: error });
     }
 }
 function readStringArrayField(entry, key, label) {

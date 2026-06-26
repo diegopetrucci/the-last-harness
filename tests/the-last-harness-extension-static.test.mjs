@@ -39,6 +39,77 @@ function sourceSection(source, startMarker, endMarker) {
 	return source.slice(start, end);
 }
 
+function escapeRegex(value) {
+	return value.replace(/[|\\{}()[\]^$+*?.]/g, "\\$&");
+}
+
+function extractMonacoRuntimeSource(html) {
+	const runtimeSourceMatch = html.match(/<script>\n([\s\S]*?)\n<\/script>\n<script>\nwindow\.__reviewMonacoWorkerSource =/);
+	assert.ok(runtimeSourceMatch, "Monaco language/runtime bundle must be inlined");
+	return runtimeSourceMatch[1];
+}
+
+function resolveAmdModuleId(fromModuleId, target) {
+	const normalizedTarget = target.replace(/\.js$/, "");
+	if (!normalizedTarget.startsWith(".")) {
+		return normalizedTarget;
+	}
+
+	const segments = fromModuleId.split("/");
+	segments.pop();
+	for (const segment of normalizedTarget.split("/")) {
+		if (!segment || segment === ".") {
+			continue;
+		}
+		if (segment === "..") {
+			assert.ok(segments.length > 0, `cannot resolve Monaco AMD module from ${fromModuleId} via ${target}`);
+			segments.pop();
+			continue;
+		}
+		segments.push(segment);
+	}
+	return segments.join("/");
+}
+
+function extractMonacoModuleSource(runtimeSource, moduleId) {
+	const moduleMarker = `define("${moduleId}"`;
+	const start = runtimeSource.indexOf(moduleMarker);
+	assert.notEqual(start, -1, `Monaco module ${moduleId} must be inlined`);
+	const nextModuleStart = runtimeSource.indexOf('\ndefine("', start + moduleMarker.length);
+	return runtimeSource.slice(start, nextModuleStart === -1 ? undefined : nextModuleStart);
+}
+
+function discoverBasicLanguageLoaderTarget(runtimeSource, languageId, extensions) {
+	const extensionsPattern = extensions.map((extension) => `"${escapeRegex(extension)}"`).join("\\s*,\\s*");
+	const loaderPatterns = [
+		new RegExp(
+			`id:\\s*"${escapeRegex(languageId)}"[\\s\\S]*?extensions:\\s*\\[${extensionsPattern}\\][\\s\\S]*?loader:\\s*\\(\\)\\s*=>[\\s\\S]*?\\[\\s*"([^"]+)"\\s*\\]`,
+		),
+		new RegExp(
+			`id:\\s*"${escapeRegex(languageId)}"[\\s\\S]*?extensions:\\s*\\[${extensionsPattern}\\][\\s\\S]*?loader:\\s*\\(\\)\\s*=>\\s*import\\(\\s*"([^"]+)"\\s*\\)`,
+		),
+	];
+
+	for (const pattern of loaderPatterns) {
+		const match = runtimeSource.match(pattern);
+		if (match) {
+			return match[1];
+		}
+	}
+
+	assert.fail(`Monaco basic-language registration for ${languageId} must include an inlined loader target`);
+}
+
+function assertRepresentativeMonacoLanguageChunkInlined(runtimeSource, contributionModuleId, { id, extensions }) {
+	const loaderTarget = discoverBasicLanguageLoaderTarget(runtimeSource, id, extensions);
+	const targetModuleId = resolveAmdModuleId(contributionModuleId, loaderTarget);
+	const targetModuleSource = extractMonacoModuleSource(runtimeSource, targetModuleId);
+
+	assert.ok(targetModuleSource.trim().length > 256, `Monaco ${id} loader target ${targetModuleId} must be non-empty`);
+	assert.match(targetModuleSource, /\.conf\s*=|\bconf:/, `Monaco ${id} chunk must export language configuration`);
+	assert.match(targetModuleSource, /\.language\s*=|\blanguage:/, `Monaco ${id} chunk must export tokenizer/runtime data`);
+}
+
 function discoverPiExtensionEntrypoints(extensionDirectory) {
 	const entrypoints = [];
 
@@ -124,10 +195,20 @@ test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs i
 	assert.doesNotMatch(html, /__INLINE_MONACO_WORKER_SOURCE_JSON__/);
 	assert.doesNotMatch(html, /__INLINE_MONACO_BASIC_LANGUAGES_JS__/, "__INLINE_MONACO_BASIC_LANGUAGES_JS__ marker must be replaced");
 
-	// Monaco language bundles are inlined (representative sample).
-	assert.match(html, /define\("vs\/basic-languages\/typescript\/typescript"/, "TypeScript tokenizer bundle must be inlined");
-	assert.match(html, /define\("vs\/basic-languages\/python\/python"/, "Python tokenizer bundle must be inlined");
-	assert.match(html, /define\("vs\/basic-languages\/go\/go"/, "Go tokenizer bundle must be inlined");
+	// Monaco language/runtime assets are inlined as a non-empty bundle without relying on
+	// hardcoded internal chunk names, which can differ across Monaco builds.
+	const runtimeSource = extractMonacoRuntimeSource(html);
+	assert.ok(runtimeSource.trim().length > 1024, "Monaco language/runtime bundle must be non-empty");
+	const contributionModuleMatch = runtimeSource.match(/define\("([^"]*basic-languages\/monaco\.contribution)"/);
+	assert.ok(contributionModuleMatch, "Monaco basic-language runtime must be inlined");
+	const contributionModuleId = contributionModuleMatch[1];
+	for (const language of [
+		{ id: "typescript", extensions: [".ts", ".tsx", ".cts", ".mts"] },
+		{ id: "python", extensions: [".py", ".rpy", ".pyw", ".cpy", ".gyp", ".gypi"] },
+		{ id: "go", extensions: [".go"] },
+	]) {
+		assertRepresentativeMonacoLanguageChunkInlined(runtimeSource, contributionModuleId, language);
+	}
 
 	// The asset config must not expose monacoVsBaseUrl.
 	assert.doesNotMatch(html, /monacoVsBaseUrl/);

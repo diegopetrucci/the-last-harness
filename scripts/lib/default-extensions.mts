@@ -50,7 +50,7 @@ function readManifestJson(path: string, { allowMissing }: { allowMissing: boolea
 		return JSON.parse(raw) as unknown;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Invalid JSON in ${path}: ${message}`);
+		throw new Error(`Invalid JSON in ${path}: ${message}`, { cause: error });
 	}
 }
 

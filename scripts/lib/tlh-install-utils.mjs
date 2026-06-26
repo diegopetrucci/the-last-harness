@@ -88,7 +88,7 @@ export function readJsonFile(path, { missingValue, emptyValue = {} } = {}) {
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Invalid JSON in ${path}: ${message}`);
+        throw new Error(`Invalid JSON in ${path}: ${message}`, { cause: error });
     }
 }
 function throwSymlinkedBackupSource(path, label) {
