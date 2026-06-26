@@ -12,7 +12,7 @@ function readRepoFile(path) {
 
 function readUnreleasedChangelog() {
 	const changelog = readRepoFile("CHANGELOG.md");
-	const match = changelog.match(/## \[Unreleased\][\s\S]*?(?=\n## \[0\.26\.0\]|$)/);
+	const match = changelog.match(/## \[Unreleased\][\s\S]*?(?=\n## \[\d+\.\d+\.\d+[^\]]*\]|$)/);
 	assert.ok(match, "CHANGELOG.md should contain an Unreleased section");
 	return match[0];
 }
@@ -161,6 +161,12 @@ test("README and changelog describe review opposite-provider fallback policy", (
 	assert.doesNotMatch(changelog, /`code-reviewer` now defaults to `openai-codex\/gpt-5\.5`/);
 });
 
+
+test("readUnreleasedChangelog stops before the next version heading", () => {
+	const unreleased = readUnreleasedChangelog();
+
+	assert.doesNotMatch(unreleased, /\n## \[\d+\.\d+\.\d+/);
+});
 
 test("README and changelog describe contrarian as a bundled default sparing adversarial subagent", () => {
 	const readme = readRepoFile("README.md");
