@@ -11,7 +11,10 @@ The event contains:
 - TLH version,
 - a privacy-filtered model value,
 - OS name and version,
-- OS architecture.
+- OS architecture,
+- current `on`/`off` state for each registered TLH experimental feature.
+
+Only registered TLH experimental feature IDs are reported. Unknown, custom, or legacy `tlh.experimental.enabledFeatures` values in settings are ignored and not sent.
 
 TelemetryDeck also receives normal network metadata such as source IP address and request time.
 
