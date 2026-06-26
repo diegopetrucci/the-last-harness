@@ -591,6 +591,7 @@ run_stage1_staged_cwd_isolation_smoke() {
   cp scripts/lib/tlh-install-subagents.mjs "${stage_scripts_dir}/lib/tlh-install-subagents.mjs"
   cp scripts/lib/tlh-install-support-files.mjs "${stage_scripts_dir}/lib/tlh-install-support-files.mjs"
   cp scripts/lib/tlh-install-support-manifest.mjs "${stage_scripts_dir}/lib/tlh-install-support-manifest.mjs"
+  cp scripts/lib/default-extensions.mjs "${stage_scripts_dir}/lib/default-extensions.mjs"
 
   cat >"${fakebin}/sh" <<'EOF_FAKE_STAGED_SH'
 #!/bin/sh
@@ -714,7 +715,6 @@ run_stdin_dry_run_smoke() {
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"
   assert_contains "${combined_file}" "Would fetch installer support files from"
-  assert_contains "${combined_file}" "Would create isolated Librarian config when missing: ${agent_dir}/extensions/librarian.json"
   assert_contains "${combined_file}" "Dry run only; no support files were downloaded."
   assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   assert_not_contains "${combined_file}" "fake curl was invoked"
@@ -727,7 +727,6 @@ run_stdin_dry_run_smoke() {
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"
   assert_contains "${combined_file}" "Would skip settings and keybinding defaults merge (--no-settings)."
-  assert_not_contains "${combined_file}" "Would create isolated Librarian config when missing:"
   assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   assert_not_contains "${combined_file}" "fake curl was invoked"
 

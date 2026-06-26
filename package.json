@@ -8,7 +8,14 @@
     "pi-package",
     "pi",
     "coding-agent",
-    "agent"
+    "agent",
+    "developer-tools",
+    "cli",
+    "terminal",
+    "typescript",
+    "llm",
+    "orchestration",
+    "tlh"
   ],
   "repository": {
     "type": "git",
@@ -26,6 +33,7 @@
     "build:runtime": "node scripts/runtime-typescript.mjs build",
     "check:package-versions": "node scripts/check-package-versions.mjs",
     "check:runtime": "node scripts/runtime-typescript.mjs check",
+    "check:startup-performance": "node scripts/check-startup-performance.mjs",
     "lint": "eslint \"scripts/**/*.{js,mjs,ts,mts}\" \"tests/**/*.{js,mjs,ts,mts}\" \"extensions/**/*.{js,mjs,ts,mts}\"",
     "test": "node --test --test-reporter=dot tests/*.test.mjs",
     "test:verbose": "node --test tests/*.test.mjs",

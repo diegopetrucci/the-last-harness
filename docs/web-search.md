@@ -2,7 +2,7 @@
 
 TLH ships [`pi-web-access`](https://github.com/diegopetrucci/pi-web-access) (an Exa-only fork) as a non-critical default extension. The `web-scout` subagent uses its `web_search`, `fetch_content`, and `get_search_content` tools for general web research.
 
-GitHub-specific research — repositories, issues, pull requests, releases, and project docs — still goes to `librarian`.
+GitHub-specific research — repositories, issues, pull requests, releases, and project docs — still goes to the `librarian` subagent, which uses the `gh` CLI and `git` directly (no extension package required).
 
 Running the upstream `pi-web-access` extension alongside the TLH fork is unsupported because the tool names conflict. Normal TLH install/update runs now defer to a known upstream/manual `pi-web-access` package that is already present in the same isolated profile, so you can keep that provider active without extra steps. If both providers are already installed, remove the TLH fork package from that isolated profile or otherwise make sure only one `pi-web-access` provider remains active.
 

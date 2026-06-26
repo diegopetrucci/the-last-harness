@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import process from "node:process";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
 	assertNotInNormalPiConfig,
@@ -491,10 +492,25 @@ function main() {
 	writeWrapper(args, path);
 }
 
-try {
-	main();
-} catch (error) {
-	const message = error instanceof Error ? error.message : String(error);
-	console.error(`error: ${message}`);
-	process.exitCode = 1;
+function isMainModule() {
+	if (!process.argv[1]) return false;
+	try {
+		const scriptPath = realpathSync.native(resolve(process.argv[1]));
+		const modulePath = realpathSync.native(fileURLToPath(import.meta.url));
+		return scriptPath === modulePath;
+	} catch {
+		return pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
+	}
 }
+
+if (isMainModule()) {
+	try {
+		main();
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		console.error(`error: ${message}`);
+		process.exitCode = 1;
+	}
+}
+
+export { DEFAULT_MARKER, parseArgs, renderWrapper, usage, validateArgs, wrapperPath };

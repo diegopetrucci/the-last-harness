@@ -1456,6 +1456,11 @@ test("enabled primary mode blocks contrarian until the experiment is enabled and
 
 test("enabled primary mode blocks disallowed nested delegation targets after forcing safe defaults", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const ctx = createToolCallContext(
+		[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
+		undefined,
+		{ cwd: fixture.cwd },
+	);
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
@@ -1466,11 +1471,6 @@ test("enabled primary mode blocks disallowed nested delegation targets after for
 				chain: [{ parallel: [{ agent: "planner", prompt: "Plan the work" }] }],
 			},
 		};
-		const ctx = createToolCallContext(
-			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
-			undefined,
-			{ cwd: fixture.cwd },
-		);
 
 		assert.deepEqual(await toolCall(event, ctx), {
 			block: true,

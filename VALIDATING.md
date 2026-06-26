@@ -41,6 +41,20 @@ For runtime `.mts` changes under `scripts/`, use `npm run typecheck:runtime` for
 
 For installer tests, prefer temporary `--agent-dir` and `--bin-dir` values. Do not run a real install into home directories unless explicitly requested.
 
+## Release-tier manual validation
+
+Run this checker during release preparation, not as part of routine local validation:
+
+```sh
+npm run check:startup-performance
+```
+
+This is intentionally separate from `npm run validate`. It launches TLH in a PTY and measures timing, so results are sensitive to the current machine and system load.
+
+Release objective: keep the steady-state first TLH header mean below `1000ms`.
+
+If the checker fails, investigate before release instead of treating it like a normal unit-test failure. The output is a release signal to understand and address, not a standard deterministic test gate.
+
 ## Final validation guidance
 
 Final validation should use this document as the reference for which repository checks to run.

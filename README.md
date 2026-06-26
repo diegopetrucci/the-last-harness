@@ -49,7 +49,7 @@ TLH subagents are fresh child sessions, not a giant shared swarm. They get the t
 - `diff-summarizer` for change overviews
 - `developer` for implementation
 - `code-reviewer` for review
-- `librarian` for repo knowledge
+- `librarian` for read-only GitHub repository research (uses `gh` CLI and `git`)
 - `web-scout` for web research
 - `oracle` for a deeper second opinion
 - `contrarian` as a bundled experimental subagent for sparing adversarial stress-tests; it stays default-off until you run `/experimental enable contrarian`.
@@ -187,3 +187,5 @@ TLH runs its own pinned Pi 0.80.2 from a private runtime at `~/.the-last-harness
 The installer writes an ownership marker (`.tlh-runtime-owned`) into the runtime prefix on every successful install or repair. Ownership is determined by this marker, not by directory shape alone — `npm install --prefix` produces an identical `bin/lib` layout regardless of who ran it, so shape alone is not a reliable signal. Accordingly, the installer refuses a non-empty unmarked runtime prefix that has no recorded TLH provenance; this matters most when using a non-default `--agent-dir` whose sibling `runtime/` directory could belong to a separate installation. Older TLH installs from before the marker was introduced gain it automatically on the next `tlh update` or installer rerun — no action required.
 
 TLH runs its own private runtime and never removes or modifies anything under `~/.local`. Any `pi` you installed yourself (or that a separate tool installed) is left entirely alone. The uninstaller removes the private runtime only when a valid ownership marker is present; a pre-marker or unmarked runtime is skipped and the uninstaller prints a `rm -rf <dir>` command you can run manually if you want to clean it up. To remove the private runtime manually: `rm -rf ~/.the-last-harness/runtime`. If you previously installed pi into `~/.local` and want to remove it yourself: `npm uninstall -g --ignore-scripts --prefix ~/.local @earendil-works/pi-coding-agent` (optional, user-initiated only).
+
+**`gh` CLI (for `librarian` GitHub research):** The `librarian` subagent performs read-only GitHub research using the `gh` CLI and `git`. Install `gh` from <https://cli.github.com/> and authenticate with `gh auth login` before using librarian. Run `gh auth status` to confirm. Without an authenticated `gh`, librarian reports what it could not verify rather than silently failing.

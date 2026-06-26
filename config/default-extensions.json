@@ -10,11 +10,6 @@
     "description": "Improve compatibility with Anthropic Claude Pro/Max OAuth while preserving normal API-key behavior."
   },
   {
-    "id": "librarian",
-    "source": "npm:@diegopetrucci/pi-librarian@0.1.7",
-    "description": "Research GitHub repositories and optionally cache local checkouts."
-  },
-  {
     "id": "mcporter",
     "aliases": ["pi-mcp-adapter", "mcp-adapter"],
     "replaces": ["npm:pi-mcp-adapter"],

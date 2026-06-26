@@ -144,13 +144,6 @@ const BASE_SUPPORT_FILES = Object.freeze([
 ]);
 const SETTINGS_SUPPORT_FILES = Object.freeze([
     {
-        variable: "LIBRARIAN_DEFAULTS_FILE",
-        requirement: REQUIRED,
-        relativePath: "config/librarian.defaults.json",
-        tempPath: "librarian.defaults.json",
-        installName: "",
-    },
-    {
         variable: "KEYBINDINGS_MERGE_SCRIPT",
         requirement: REQUIRED,
         relativePath: "scripts/merge-keybindings.mjs",

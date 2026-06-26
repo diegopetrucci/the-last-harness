@@ -160,13 +160,6 @@ const BASE_SUPPORT_FILES = Object.freeze<readonly SupportFileDescriptor[]>([
 
 const SETTINGS_SUPPORT_FILES = Object.freeze<readonly SupportFileDescriptor[]>([
 	{
-		variable: "LIBRARIAN_DEFAULTS_FILE",
-		requirement: REQUIRED,
-		relativePath: "config/librarian.defaults.json",
-		tempPath: "librarian.defaults.json",
-		installName: "",
-	},
-	{
 		variable: "KEYBINDINGS_MERGE_SCRIPT",
 		requirement: REQUIRED,
 		relativePath: "scripts/merge-keybindings.mjs",
