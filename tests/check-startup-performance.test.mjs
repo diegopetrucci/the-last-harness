@@ -177,7 +177,7 @@ test("check-startup-performance cleans up the active child process group and tem
 	const helperScriptPath = join(fixture.root, "term-trap-helper.sh");
 	writeExecutable(helperScriptPath, `#!/usr/bin/env bash
 set -euo pipefail
-trap 'printf "signal=%s\\n" "TERM" >"${helperSignalFile}"' TERM
+trap 'printf "signal=%s\\n" "TERM" >"${helperSignalFile}"; exit 0' TERM
 printf 'ready\n' >"${helperReadyFile}"
 while true; do
   sleep 0.05
