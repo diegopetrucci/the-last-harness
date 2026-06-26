@@ -4,6 +4,7 @@ import { extname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
+import ts from "typescript";
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const extensionsDir = fileURLToPath(new URL("../extensions/", import.meta.url));
@@ -71,12 +72,26 @@ function resolveAmdModuleId(fromModuleId, target) {
 	return segments.join("/");
 }
 
+function amdDefineModuleId(statement) {
+	if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) {
+		return null;
+	}
+	if (!ts.isIdentifier(statement.expression.expression) || statement.expression.expression.text !== "define") {
+		return null;
+	}
+	const [moduleIdArgument] = statement.expression.arguments;
+	return ts.isStringLiteral(moduleIdArgument) ? moduleIdArgument.text : null;
+}
+
 function extractMonacoModuleSource(runtimeSource, moduleId) {
 	const moduleMarker = `define("${moduleId}"`;
 	const start = runtimeSource.indexOf(moduleMarker);
 	assert.notEqual(start, -1, `Monaco module ${moduleId} must be inlined`);
-	const nextModuleStart = runtimeSource.indexOf('\ndefine("', start + moduleMarker.length);
-	return runtimeSource.slice(start, nextModuleStart === -1 ? undefined : nextModuleStart);
+	const moduleAndFollowingSource = runtimeSource.slice(start);
+	const moduleAst = ts.createSourceFile("monaco-module.js", moduleAndFollowingSource, ts.ScriptTarget.Latest, false, ts.ScriptKind.JS);
+	const [moduleStatement] = moduleAst.statements;
+	assert.equal(amdDefineModuleId(moduleStatement), moduleId, `Monaco module ${moduleId} must be an AMD define() call`);
+	return moduleAndFollowingSource.slice(moduleStatement.getStart(moduleAst), moduleStatement.end);
 }
 
 function discoverBasicLanguageLoaderTarget(runtimeSource, languageId, extensions) {
@@ -157,6 +172,45 @@ test("annotate-git-diff user-facing source copy uses the renamed command", () =>
 	assert.doesNotMatch(annotateGitDiffHtmlSource, /\/diff-review/);
 	assert.match(annotateGitDiffHtmlSource, /<title>TLH annotate-git-diff<\/title>/);
 	assert.match(annotateGitDiffHtmlSource, /<code>\/annotate-git-diff<\/code>/);
+});
+
+test("annotate-git-diff Monaco helper extracts AMD modules across adjacent and whitespace-separated boundaries", () => {
+	const adjacentRuntimeSource =
+		'define("first", [], function () { return { language: true }; });define("second", [], function () { return { conf: true }; });';
+	assert.equal(
+		extractMonacoModuleSource(adjacentRuntimeSource, "first"),
+		'define("first", [], function () { return { language: true }; });',
+	);
+	assert.equal(
+		extractMonacoModuleSource(adjacentRuntimeSource, "second"),
+		'define("second", [], function () { return { conf: true }; });',
+	);
+
+	const whitespaceSeparatedRuntimeSource = [
+		'define("first", [], function () {',
+		'  return { language: true };',
+		'});',
+		' \t ',
+		'  define("second", [], function () {',
+		'    return { conf: true };',
+		'  });',
+	].join("\n");
+	assert.equal(
+		extractMonacoModuleSource(whitespaceSeparatedRuntimeSource, "first"),
+		[
+			'define("first", [], function () {',
+			'  return { language: true };',
+			'});',
+		].join("\n"),
+	);
+	assert.equal(
+		extractMonacoModuleSource(whitespaceSeparatedRuntimeSource, "second"),
+		[
+			'define("second", [], function () {',
+			'    return { conf: true };',
+			'  });',
+		].join("\n"),
+	);
 });
 
 test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs into node_modules", () => {

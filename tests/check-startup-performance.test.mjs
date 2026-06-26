@@ -170,6 +170,7 @@ test("check-startup-performance cleans up the active child process group and tem
 	t.after(() => rmSync(fixture.root, { recursive: true, force: true }));
 
 	const childPidFile = join(fixture.root, "child.pid");
+	const childReadyFile = join(fixture.root, "child.ready");
 	const childSignalFile = join(fixture.root, "child.signal");
 	const helperPidFile = join(fixture.root, "helper.pid");
 	const helperReadyFile = join(fixture.root, "helper.ready");
@@ -177,7 +178,9 @@ test("check-startup-performance cleans up the active child process group and tem
 	const helperScriptPath = join(fixture.root, "term-trap-helper.sh");
 	writeExecutable(helperScriptPath, `#!/usr/bin/env bash
 set -euo pipefail
-trap 'printf "signal=%s\\n" "TERM" >"${helperSignalFile}"' TERM
+trap '' INT
+trap 'printf "signal=%s\\n" "TERM" >"${helperSignalFile}"; exit 0' TERM
+printf '%s\n' "$$" >"${helperPidFile}"
 printf 'ready\n' >"${helperReadyFile}"
 while true; do
   sleep 0.05
@@ -185,9 +188,15 @@ done
 `);
 	writeExecutable(fixture.customCommandPath, `#!/usr/bin/env bash
 set -euo pipefail
+"${helperScriptPath}" &
+helper_pid=$!
+while [[ ! -f "${helperReadyFile}" ]]; do
+  sleep 0.05
+done
 printf '%s\n' "$$" >"${childPidFile}"
 trap '' INT
-trap 'printf "signal=%s\\n" "TERM" >"${childSignalFile}"; "${helperScriptPath}" & helper_pid=$!; printf "%s\\n" "$helper_pid" >"${helperPidFile}"; while [[ ! -f "${helperReadyFile}" ]]; do sleep 0.05; done; kill -TERM "$helper_pid"; wait "$helper_pid"; exit 0' TERM
+trap 'printf "signal=%s\\n" "TERM" >"${childSignalFile}"; wait "$helper_pid"; exit 0' TERM
+printf 'ready\n' >"${childReadyFile}"
 printf 'Context: interrupt cleanup\\n'
 while true; do
   sleep 1
@@ -247,14 +256,16 @@ done
 
 	const temporaryProfile = await waitForCondition(() => {
 		const match = stdout.match(/temporary profile: (.+)/u);
-		if (!match || !existsSync(childPidFile)) {
+		if (!match || !existsSync(childPidFile) || !existsSync(childReadyFile) || !existsSync(helperPidFile) || !existsSync(helperReadyFile)) {
 			return undefined;
 		}
 		return match[1].trim();
-	}, 5000, "startup checker to create a temp profile and launch the child command");
+	}, 5000, "startup checker to create a temp profile and launch the child process group");
 	const workspaceRoot = dirname(temporaryProfile);
 	const childPid = Number.parseInt(readFileSync(childPidFile, "utf8"), 10);
 	assert.ok(Number.isInteger(childPid) && childPid > 0, `expected child pid, got ${childPid}`);
+	const helperPid = Number.parseInt(readFileSync(helperPidFile, "utf8"), 10);
+	assert.ok(Number.isInteger(helperPid) && helperPid > 0, `expected helper pid, got ${helperPid}`);
 
 	const exitPromise = new Promise((resolvePromise, rejectPromise) => {
 		checker.once("error", rejectPromise);
@@ -263,13 +274,6 @@ done
 		});
 	});
 	checker.kill("SIGINT");
-	const helperPid = await waitForCondition(() => {
-		if (!existsSync(helperPidFile)) {
-			return undefined;
-		}
-		const pid = Number.parseInt(readFileSync(helperPidFile, "utf8"), 10);
-		return Number.isInteger(pid) && pid > 0 ? pid : undefined;
-	}, 5000, "TERM-trap helper launch");
 	const exit = await exitPromise;
 
 	assert.deepEqual(exit, { code: null, signal: "SIGINT" });
