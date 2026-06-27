@@ -13,6 +13,11 @@ export const TLH_STARTUP_TIPS = [
 	"Prefix a shell command with ! to send its output into the chat, or !! to run it without adding the output to the model context.",
 	"Run /tlh-changelog to review what’s new in this TLH build.",
 	"At any point, you can ask the oracle for a second opinion.",
+	"Run /tokens to generate a local, sanitized token-spend report for the current session.",
+	"Ask the contrarian to stress-test a plan or decision by steelmanning the strongest opposing case.",
+	"Ask TLH to research the web — the architect can delegate to web-scout for Exa-backed search and fetch.",
+	"Enable ci-failure-investigation via /experimental to let TLH investigate failed CI read-only after opening a PR, before asking how to proceed.",
+	"After opening a PR, TLH monitors CI/status checks and reports failures before asking whether to proceed.",
 ] as const;
 
 export function selectTlhStartupTip(random: () => number = Math.random): string | undefined {

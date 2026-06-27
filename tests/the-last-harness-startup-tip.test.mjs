@@ -61,4 +61,19 @@ test("TLH startup tips cover key TLH affordances with concise user-facing phrasi
 	assert.ok(TLH_STARTUP_TIPS.some((tip) => tip.includes("/tlh-changelog")), "expected a /tlh-changelog startup tip");
 	assert.ok(TLH_STARTUP_TIPS.some((tip) => tip.includes("oracle")), "expected an oracle startup tip");
 	assert.equal(TLH_STARTUP_TIPS.some((tip) => tip.includes("footer data")), false, "expected startup tips to avoid awkward footer-data phrasing");
+
+	assert.ok(TLH_STARTUP_TIPS.some((tip) => tip.includes("/tokens")), "expected a /tokens startup tip");
+	assert.ok(TLH_STARTUP_TIPS.some((tip) => tip.includes("contrarian")), "expected a contrarian startup tip");
+	assert.ok(
+		TLH_STARTUP_TIPS.some((tip) => tip.includes("web-scout") && tip.includes("research the web")),
+		"expected a web research/web-scout startup tip",
+	);
+	assert.ok(
+		TLH_STARTUP_TIPS.some((tip) => tip.includes("ci-failure-investigation")),
+		"expected a ci-failure-investigation startup tip",
+	);
+	assert.ok(
+		TLH_STARTUP_TIPS.some((tip) => tip.includes("monitors CI/status checks")),
+		"expected a PR CI monitoring startup tip",
+	);
 });
