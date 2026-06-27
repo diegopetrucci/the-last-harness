@@ -118,7 +118,7 @@ test("runtime TypeScript helper covers converted installer libraries", () => {
 });
 
 test("runtime TypeScript helper tracks converted top-level CLIs", () => {
-	const convertedCliScripts = ["scripts/merge-keybindings", "scripts/merge-settings"];
+	const convertedCliScripts = ["scripts/merge-keybindings", "scripts/merge-settings", "scripts/tlh-wrapper"];
 
 	for (const path of convertedCliScripts) {
 		assert.equal(existsSync(join(repoRoot, `${path}.mts`)), true, `${path}.mts should exist`);
