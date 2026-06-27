@@ -108,6 +108,7 @@ test("runtime TypeScript helper covers converted installer libraries", () => {
 		"scripts/lib/tlh-install-support-files",
 		"scripts/lib/tlh-install-support-manifest",
 		"scripts/lib/tlh-install-utils",
+		"scripts/lib/tlh-safe-profile-write",
 	];
 
 	for (const path of convertedLibraries) {
