@@ -64,16 +64,18 @@ test("TLH startup tips cover key TLH affordances with concise user-facing phrasi
 
 	assert.ok(TLH_STARTUP_TIPS.some((tip) => tip.includes("/tokens")), "expected a /tokens startup tip");
 	assert.ok(TLH_STARTUP_TIPS.some((tip) => tip.includes("contrarian")), "expected a contrarian startup tip");
-	assert.ok(
-		TLH_STARTUP_TIPS.some((tip) => tip.includes("web-scout") && tip.includes("research the web")),
-		"expected a web research/web-scout startup tip",
-	);
+	const webSearchTip = TLH_STARTUP_TIPS.find((tip) => /search the web/i.test(tip));
+	assert.ok(webSearchTip, "expected a web search startup tip");
+	assert.match(webSearchTip, /just ask/i, "expected the web search startup tip to keep concise ask-based wording");
+
 	assert.ok(
 		TLH_STARTUP_TIPS.some((tip) => tip.includes("ci-failure-investigation")),
 		"expected a ci-failure-investigation startup tip",
 	);
-	assert.ok(
-		TLH_STARTUP_TIPS.some((tip) => tip.includes("monitors CI/status checks")),
-		"expected a PR CI monitoring startup tip",
-	);
+
+	const prCiTip = TLH_STARTUP_TIPS.find((tip) => /PR/i.test(tip) && /CI/i.test(tip));
+	assert.ok(prCiTip, "expected a PR CI monitoring startup tip");
+	assert.match(prCiTip, /monitor/i, "expected the PR CI startup tip to mention monitoring");
+	assert.match(prCiTip, /report/i, "expected the PR CI startup tip to mention reporting");
+	assert.match(prCiTip, /fail/i, "expected the PR CI startup tip to mention failures");
 });
