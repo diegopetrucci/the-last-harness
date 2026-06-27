@@ -117,6 +117,15 @@ test("runtime TypeScript helper covers converted installer libraries", () => {
 	}
 });
 
+test("runtime TypeScript helper tracks converted top-level CLIs", () => {
+	const convertedCliScripts = ["scripts/merge-keybindings", "scripts/merge-settings"];
+
+	for (const path of convertedCliScripts) {
+		assert.equal(existsSync(join(repoRoot, `${path}.mts`)), true, `${path}.mts should exist`);
+		assert.equal(existsSync(join(repoRoot, `${path}.mjs`)), true, `${path}.mjs should exist`);
+	}
+});
+
 test("runtime TypeScript helper builds, checks, and typechecks temporary fixtures", () => {
 	const fixture = createRuntimeFixture('export function greet(name: string) {\n\treturn `hello ${name}`;\n}\n');
 
