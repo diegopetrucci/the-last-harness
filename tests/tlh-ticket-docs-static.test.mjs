@@ -161,6 +161,35 @@ test("README and changelog describe review opposite-provider fallback policy", (
 	assert.doesNotMatch(changelog, /`code-reviewer` now defaults to `openai-codex\/gpt-5\.5`/);
 });
 
+test("README, commands, install, integrations, and changelog docs describe the managed native RTK migration", () => {
+	const readme = readRepoFile("README.md");
+	const commandsDoc = readRepoFile("docs/commands.md");
+	const install = readRepoFile("docs/install.md");
+	const integrations = readRepoFile("docs/integrations.md");
+	const unreleased = readUnreleasedChangelog();
+
+	assert.match(readme, /managed `rtk` at `~\/\.the-last-harness\/agent\/bin\/rtk`/i);
+	assert.match(readme, /RTK_DISABLED=1/);
+	assert.match(readme, /`~\/\.the-last-harness\/agent\/settings\.json`/);
+	assert.match(install, /`~\/\.the-last-harness\/agent\/bin\/rtk`/);
+	assert.match(install, /managed RTK binary/);
+	assert.match(install, /RTK_DISABLED=1/);
+	assert.match(install, /`tlh\.rtk\.disabled`/);
+	assert.match(install, /delete `~\/\.the-last-harness\/agent\/bin\/rtk`/);
+	assert.match(install, /Managed RTK is pinned to `rtk-ai\/rtk` `v0\.42\.4`/);
+	assert.match(install, /SHA-256 verification and validation/);
+	assert.doesNotMatch(commandsDoc, /\| `\/rtk` \|/);
+	assert.match(commandsDoc, /does not register `\/rtk`/);
+	assert.match(commandsDoc, /`tlh\.rtk\.disabled`/);
+	assert.match(integrations, /There is no `\/rtk` command surface anymore/);
+	assert.match(integrations, /`\/rtk enable`, `\/rtk disable`, and `\/rtk status` are gone/);
+	assert.match(integrations, /install or update fails with an actionable error/);
+	assert.match(integrations, /`tlh\.rtk\.disabled`/);
+	assert.match(integrations, /delete `~\/\.the-last-harness\/agent\/bin\/rtk`/);
+	assert.match(unreleased, /Removed the old `\/rtk` command UI/);
+	assert.match(unreleased, /Migrated TLH away from the old bundled `pi-rtk` fork/);
+	assert.match(unreleased, /`RTK_DISABLED=1` or `tlh\.rtk\.disabled`/);
+});
 
 test("readUnreleasedChangelog stops before the next version heading", () => {
 	const unreleased = readUnreleasedChangelog();

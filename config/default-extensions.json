@@ -44,14 +44,6 @@
     "description": "Open a local HTML dashboard explaining where the current session context is going."
   },
   {
-    "id": "rtk",
-    "aliases": ["pi-rtk"],
-    "replaces": ["npm:pi-rtk", "npm:@sherif-fanous/pi-rtk", "git:github.com/sherif-fanous/pi-rtk"],
-    "migrateReplacements": true,
-    "source": "git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
-    "description": "Optimize bash commands with the optional rtk binary while staying compatible with quiet-tools."
-  },
-  {
     "id": "quiet-tools",
     "aliases": ["compact-bash"],
     "replaces": ["npm:@diegopetrucci/pi-compact-bash"],

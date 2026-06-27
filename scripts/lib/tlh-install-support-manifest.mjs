@@ -100,6 +100,13 @@ const BASE_SUPPORT_FILES = Object.freeze([
         installName: "",
     },
     {
+        variable: "TLH_RTK_SCRIPT",
+        requirement: REQUIRED,
+        relativePath: "scripts/tlh-rtk.mjs",
+        tempPath: "tlh-rtk.mjs",
+        installName: "tlh-rtk.mjs",
+    },
+    {
         variable: "TLH_RECOVER_UPDATE_SCRIPT",
         requirement: REQUIRED,
         relativePath: "scripts/tlh-recover-update.mjs",

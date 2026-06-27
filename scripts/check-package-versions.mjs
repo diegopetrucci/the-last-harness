@@ -15,6 +15,9 @@ const DEFAULT_GNOSIS_SCRIPT_PATHS = Object.freeze([
 	"scripts/tlh-gnosis.mjs",
 	"scripts/tlh-install.mjs",
 ]);
+const DEFAULT_RTK_SCRIPT_PATHS = Object.freeze([
+	"scripts/tlh-rtk.mjs",
+]);
 const ALLOWED_LOCAL_DEPENDENCY_PREFIXES = Object.freeze([
 	"file:",
 	"link:",
@@ -31,6 +34,7 @@ Options:
   --lockfile <path>            package-lock.json path (default: package-lock.json)
   --default-extensions <path>  Bundled default-extension manifest (default: config/default-extensions.json)
   --gnosis-script <path>       Managed Gnosis script to validate (repeatable; defaults: scripts/tlh-gnosis.mjs, scripts/tlh-install.mjs)
+  --rtk-script <path>          Managed RTK script to validate (repeatable; default: scripts/tlh-rtk.mjs)
   -h, --help                   Show this help
 `;
 }
@@ -41,9 +45,11 @@ function parseArgs(argv) {
 		lockfilePath: "package-lock.json",
 		defaultExtensionsPath: "config/default-extensions.json",
 		gnosisScriptPaths: [...DEFAULT_GNOSIS_SCRIPT_PATHS],
+		rtkScriptPaths: [...DEFAULT_RTK_SCRIPT_PATHS],
 		help: false,
 	};
 	let customGnosisScripts = false;
+	let customRtkScripts = false;
 
 	for (let index = 0; index < argv.length; index += 1) {
 		const arg = argv[index];
@@ -75,6 +81,15 @@ function parseArgs(argv) {
 			index += 1;
 			continue;
 		}
+		if (arg === "--rtk-script") {
+			if (!customRtkScripts) {
+				args.rtkScriptPaths = [];
+				customRtkScripts = true;
+			}
+			args.rtkScriptPaths.push(requiredValue(argv, index + 1, arg));
+			index += 1;
+			continue;
+		}
 		if (arg.startsWith("--package=")) {
 			args.packagePath = arg.slice("--package=".length);
 			if (!args.packagePath) throw new Error("--package requires a value");
@@ -98,6 +113,16 @@ function parseArgs(argv) {
 				customGnosisScripts = true;
 			}
 			args.gnosisScriptPaths.push(value);
+			continue;
+		}
+		if (arg.startsWith("--rtk-script=")) {
+			const value = arg.slice("--rtk-script=".length);
+			if (!value) throw new Error("--rtk-script requires a value");
+			if (!customRtkScripts) {
+				args.rtkScriptPaths = [];
+				customRtkScripts = true;
+			}
+			args.rtkScriptPaths.push(value);
 			continue;
 		}
 		throw new Error(`Unknown argument: ${arg}`);
@@ -363,19 +388,19 @@ function readDeclaredStringConstant(path, name) {
 	return match[1];
 }
 
-function validateManagedGnosisDefaults(gnosisScriptPaths, problems) {
+function validatePinnedManagedScriptDefaults(scriptPaths, constantName, label, problems) {
 	const versions = [];
-	for (const path of gnosisScriptPaths) {
+	for (const path of scriptPaths) {
 		let version;
 		try {
-			version = readDeclaredStringConstant(path, "DEFAULT_GNOSIS_VERSION");
+			version = readDeclaredStringConstant(path, constantName);
 		} catch (error) {
 			problems.push(error.message);
 			continue;
 		}
 		versions.push({ path, version });
 		if (!isPinnedExactVersion(version)) {
-			problems.push(`${path}#DEFAULT_GNOSIS_VERSION must use an exact version, found ${JSON.stringify(version)}`);
+			problems.push(`${path}#${constantName} must use an exact version, found ${JSON.stringify(version)}`);
 		}
 	}
 
@@ -384,7 +409,7 @@ function validateManagedGnosisDefaults(gnosisScriptPaths, problems) {
 		const details = versions
 			.map(({ path, version }) => `  - ${path}: ${JSON.stringify(version)}`)
 			.join("\n");
-		problems.push(`Managed Gnosis defaults must stay in sync:\n${details}`);
+		problems.push(`${label} defaults must stay in sync:\n${details}`);
 	}
 }
 
@@ -403,7 +428,8 @@ function collectProblems(args) {
 
 	validatePinnedDependencies(packageJson, args.packagePath, problems);
 	validateDefaultExtensionPins(args.defaultExtensionsPath, problems);
-	validateManagedGnosisDefaults(args.gnosisScriptPaths, problems);
+	validatePinnedManagedScriptDefaults(args.gnosisScriptPaths, "DEFAULT_GNOSIS_VERSION", "Managed Gnosis", problems);
+	validatePinnedManagedScriptDefaults(args.rtkScriptPaths, "DEFAULT_RTK_VERSION", "Managed RTK", problems);
 
 	return { version, problems };
 }
