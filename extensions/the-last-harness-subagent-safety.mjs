@@ -9,11 +9,10 @@
  */
 
 export const ALLOWED_SUBAGENTS = Object.freeze(["developer", "code-reviewer", "repo-scout", "diff-summarizer", "librarian", "web-scout", "oracle", "contrarian"]);
-export const CONTRARIAN_EXPERIMENTAL_FEATURE = "contrarian";
 export const SAFE_SUBAGENT_ACTIONS = Object.freeze(["list", "get", "status", "interrupt", "doctor", "resume"]);
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 
-const DEFAULT_ALLOWED_SUBAGENTS = Object.freeze(ALLOWED_SUBAGENTS.filter((agent) => agent !== "contrarian"));
+const DEFAULT_ALLOWED_SUBAGENTS = ALLOWED_SUBAGENTS;
 const ALLOWED_SUBAGENTS_BY_ID = new Map(ALLOWED_SUBAGENTS.map((agent) => [agent.toLowerCase(), agent]));
 
 const SAFE_SUBAGENT_ACTION_SET = new Set(SAFE_SUBAGENT_ACTIONS);
@@ -51,8 +50,8 @@ export function isExperimentalFeatureEnabled(config, featureId) {
 	return Boolean(normalizedFeatureId) && readEnabledExperimentalFeatures(config).includes(normalizedFeatureId);
 }
 
-export function allowedSubagentsForExperimentalConfig(config) {
-	return isExperimentalFeatureEnabled(config, CONTRARIAN_EXPERIMENTAL_FEATURE) ? ALLOWED_SUBAGENTS : DEFAULT_ALLOWED_SUBAGENTS;
+export function allowedSubagentsForExperimentalConfig(_config) {
+	return DEFAULT_ALLOWED_SUBAGENTS;
 }
 
 function normalizeAllowedSubagent(agent) {
@@ -67,14 +66,6 @@ function normalizeAllowedSubagents(allowedSubagents) {
 
 	const normalized = [...new Set(allowedSubagents.map((agent) => normalizeAllowedSubagent(agent)).filter(Boolean))];
 	return normalized.length > 0 ? normalized : DEFAULT_ALLOWED_SUBAGENTS;
-}
-
-function contrarianExperimentalDisabledReason() {
-	return "TLH contrarian is an experimental minor agent and is currently disabled. Enable it with /experimental enable contrarian in the isolated TLH profile before delegating to contrarian.";
-}
-
-function contrarianResumeBlockedReason() {
-	return `${contrarianExperimentalDisabledReason()} TLH primary-agent subagent action=resume may not continue a prior contrarian run while the experiment is disabled.`;
 }
 
 function collectSubagentTargets(input) {
@@ -184,21 +175,6 @@ function validateNestedFreshSubagentContexts(input) {
 	return undefined;
 }
 
-// Resume-by-id/index is target-opaque. Allow opaque resumes by default;
-// trusted callers may pass options.resumeTargetAgent to block known contrarian resumes.
-function validateResumeTarget(allowedSubagentSet, options = {}) {
-	if (allowedSubagentSet.has("contrarian")) {
-		return undefined;
-	}
-
-	const resumeTargetAgent = normalizeAllowedSubagent(options.resumeTargetAgent);
-	if (resumeTargetAgent === "contrarian") {
-		return contrarianResumeBlockedReason();
-	}
-
-	return undefined;
-}
-
 export function validateSubagentToolInput(input, options = {}) {
 	const allowedSubagents = normalizeAllowedSubagents(options.allowedSubagents);
 	const allowedSubagentSet = new Set(allowedSubagents);
@@ -224,7 +200,7 @@ export function validateSubagentToolInput(input, options = {}) {
 			if (contextReason) {
 				return contextReason;
 			}
-			return validateResumeTarget(allowedSubagentSet, options);
+			return undefined;
 		}
 		return undefined;
 	}
@@ -251,13 +227,6 @@ export function validateSubagentToolInput(input, options = {}) {
 
 	const disallowed = targets.filter((agent) => !allowedSubagentSet.has(agent));
 	if (disallowed.length > 0) {
-		const blockedContrarian = disallowed.includes("contrarian") && !allowedSubagentSet.has("contrarian");
-		if (blockedContrarian) {
-			const otherDisallowed = disallowed.filter((agent) => agent !== "contrarian");
-			return otherDisallowed.length > 0
-				? `${contrarianExperimentalDisabledReason()} Other disallowed target(s): ${otherDisallowed.join(", ")}.`
-				: contrarianExperimentalDisabledReason();
-		}
 		return `TLH primary agents may delegate only to: ${allowedSubagents.join(", ")}. Disallowed target(s): ${disallowed.join(", ")}.`;
 	}
 

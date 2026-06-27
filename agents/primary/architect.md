@@ -36,6 +36,7 @@ Use the `subagent` tool for minor agents:
 - `librarian`: research external GitHub repositories, issues, pull requests, releases, or docs read-only when outside evidence is needed.
 - `web-scout`: research the general web outside GitHub via Exa-backed search and fetch in an isolated read-only context.
 - `oracle`: provide read-only high-reasoning second opinions on plans, risky decisions, bug hypotheses, or review findings.
+- `contrarian`: adversarially stress-test plans, designs, assumptions, product directions, bug hypotheses, or review conclusions by steelmanning the strongest opposing case.
 
 Do not create, update, or delete subagent definitions at runtime. Do not delegate to agents outside the allowed TLH minor-agent list.
 
@@ -55,9 +56,10 @@ Before implementation:
 
 1. Clarify requirements, constraints, success criteria, and non-goals.
 2. Only consider the `oracle` before ticket creation when the planning work looks high-stakes, uncertain, hard to validate, hard to undo, or likely to have a broad blast radius. Do not suggest the `oracle` for routine localized work that is reversible and directly testable. If you think the `oracle` could help, explain the specific risk or uncertainty and ask the user if they want you to use it. Never trigger the `oracle` unless the user explicitly agrees.
-3. Surface concerns and tradeoffs until ambiguity is resolved.
-4. Restate the current agreement.
-5. Ask for approval. Proceed only after the user says `approved`.
+3. Use `contrarian` sparingly when a plan, product direction, bug hypothesis, or review conclusion needs an adversarial challenge pass. Pre-ticket planning is the primary useful moment for `contrarian`: consider it before ticket creation only when a proposed change has meaningful uncertainty, tradeoffs, blast radius, a hard-to-undo direction, or debatable assumptions, and name the specific risk or strongest opposing case you want stress-tested. It is not the normal diff reviewer — `code-reviewer` owns review against tasks and diffs — and unlike `oracle`, it should focus on the strongest credible opposition brief rather than a broad second opinion. Do not use `contrarian` as an automatic step for routine localized work; use it sparingly.
+4. Surface concerns and tradeoffs until ambiguity is resolved.
+5. Restate the current agreement.
+6. Ask for approval. Proceed only after the user says `approved`.
 
 ## Planning and task tracking
 

@@ -9,7 +9,7 @@ import { cleanupTempDir, createIsolatedProfileFixture, withEnv } from "./test-fi
 
 const jiti = createJiti(import.meta.url);
 const { TLH_DEFAULT_COMMIT_ATTRIBUTION } = await jiti.import("../extensions/the-last-harness/attribution.ts");
-const { CI_FAILURE_INVESTIGATION_FEATURE, DELTA_FOLLOW_UP_REVIEWS_FEATURE, TLH_CONTRARIAN_FEATURE } = await jiti.import(
+const { CI_FAILURE_INVESTIGATION_FEATURE, DELTA_FOLLOW_UP_REVIEWS_FEATURE } = await jiti.import(
 	"../extensions/the-last-harness/experimental.ts",
 );
 const { registerTlhPrimaryAgentRuntime } = await jiti.import("../extensions/the-last-harness/primary-agent-runtime.ts");
@@ -157,7 +157,7 @@ test("disabled primary mode still injects provider-aware subagent models", async
 	assert.equal(event.input.context, "resume");
 });
 
-test("disabled primary mode keeps malformed mixed experimental arrays fail-closed, preserves the contrarian disabled message, and validates enabled contrarian inputs", async (t) => {
+test("disabled primary mode allows contrarian by default and ignores stale contrarian experimental settings", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const subagentMetadata = [contrarianMetadata()];
 	const branchEntries = [{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "disabled" } }];
@@ -174,78 +174,33 @@ test("disabled primary mode keeps malformed mixed experimental arrays fail-close
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata });
-		const blockedEvent = {
+		const defaultEvent = {
 			toolName: "subagent",
 			input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "project", context: "resume" },
 		};
-		assert.deepEqual(await toolCall(blockedEvent, ctx), {
-			block: true,
-			reason:
-				"TLH contrarian is an experimental minor agent and is currently disabled. Enable it with /experimental enable contrarian in the isolated TLH profile before delegating to contrarian.",
-		});
-		assert.equal(blockedEvent.input.model, "anthropic/claude-opus-4-8");
-		assert.equal(blockedEvent.input.agentScope, "project");
-		assert.equal(blockedEvent.input.context, "resume");
+		assert.equal(await toolCall(defaultEvent, ctx), undefined);
+		assert.equal(defaultEvent.input.model, "anthropic/claude-opus-4-8");
+		assert.equal(defaultEvent.input.agentScope, "project");
+		assert.equal(defaultEvent.input.context, "resume");
 
-		writeFileSync(
-			join(fixture.agent, "settings.json"),
-			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: ["Contrarian", 123] } } }, null, 2)}\n`,
-		);
-		const malformedEvent = {
-			toolName: "subagent",
-			input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "project", context: "resume" },
-		};
-		assert.deepEqual(await toolCall(malformedEvent, ctx), {
-			block: true,
-			reason:
-				"TLH contrarian is an experimental minor agent and is currently disabled. Enable it with /experimental enable contrarian in the isolated TLH profile before delegating to contrarian.",
-		});
-		assert.equal(malformedEvent.input.model, "anthropic/claude-opus-4-8");
-		assert.equal(malformedEvent.input.agentScope, "project");
-		assert.equal(malformedEvent.input.context, "resume");
-
-		writeFileSync(
-			join(fixture.agent, "settings.json"),
-			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: ["Contrarian"] } } }, null, 2)}\n`,
-		);
-		const enabledEvent = {
-			toolName: "subagent",
-			input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "project", context: "resume" },
-		};
-		assert.deepEqual(await toolCall(enabledEvent, ctx), {
-			block: true,
-			reason:
-				'TLH primary-agent subagent execution calls may not use agentScope: "project". TLH minor agents must run from the isolated user scope.',
-		});
-		assert.equal(enabledEvent.input.model, "anthropic/claude-opus-4-8");
-		assert.equal(enabledEvent.input.agentScope, "project");
-		assert.equal(enabledEvent.input.context, "resume");
-
-		const enabledContextEvent = {
-			toolName: "subagent",
-			input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "user", context: "resume" },
-		};
-		assert.deepEqual(await toolCall(enabledContextEvent, ctx), {
-			block: true,
-			reason:
-				'TLH primary-agent subagent execution may not use context: "resume". TLH child sessions must start fresh so parent primary-agent/Gnosis context is not leaked.',
-		});
-		assert.equal(enabledContextEvent.input.model, "anthropic/claude-opus-4-8");
-		assert.equal(enabledContextEvent.input.agentScope, "user");
-		assert.equal(enabledContextEvent.input.context, "resume");
-
-		const safeEnabledEvent = {
-			toolName: "subagent",
-			input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "user", context: "fresh" },
-		};
-		assert.equal(await toolCall(safeEnabledEvent, ctx), undefined);
-		assert.equal(safeEnabledEvent.input.model, "anthropic/claude-opus-4-8");
-		assert.equal(safeEnabledEvent.input.agentScope, "user");
-		assert.equal(safeEnabledEvent.input.context, "fresh");
+		for (const enabledFeatures of [["Contrarian", 123], ["Contrarian"], ["contrarian"]]) {
+			writeFileSync(
+				join(fixture.agent, "settings.json"),
+				`${JSON.stringify({ tlh: { experimental: { enabledFeatures } } }, null, 2)}\n`,
+			);
+			const staleEvent = {
+				toolName: "subagent",
+				input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "project", context: "resume" },
+			};
+			assert.equal(await toolCall(staleEvent, ctx), undefined);
+			assert.equal(staleEvent.input.model, "anthropic/claude-opus-4-8");
+			assert.equal(staleEvent.input.agentScope, "project");
+			assert.equal(staleEvent.input.context, "resume");
+		}
 	});
 });
 
-test("disabled primary mode allows opaque resume while contrarian is disabled", async (t) => {
+test("disabled primary mode allows opaque resume regardless of stale contrarian settings", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const branchEntries = [{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "disabled" } }];
 	const ctx = createToolCallContext(branchEntries, undefined, { cwd: fixture.cwd });
@@ -262,7 +217,7 @@ test("disabled primary mode allows opaque resume while contrarian is disabled", 
 
 		writeFileSync(
 			join(fixture.agent, "settings.json"),
-			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [TLH_CONTRARIAN_FEATURE] } } }, null, 2)}\n`,
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: ["contrarian"] } } }, null, 2)}\n`,
 		);
 		const allowedResumeEvent = {
 			toolName: "subagent",
@@ -426,7 +381,7 @@ test("before_agent_start gates ci failure investigation guidance behind isolated
 	});
 });
 
-test("before_agent_start keeps contrarian guidance and allowed minor-agent entries behind isolated TLH settings", async (t) => {
+test("before_agent_start includes contrarian guidance by default and ignores stale contrarian experimental settings", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const subagentMetadata = [
 		{ name: "developer", description: "Implements exactly one approved task at a time." },
@@ -435,28 +390,32 @@ test("before_agent_start keeps contrarian guidance and allowed minor-agent entri
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const { beforeAgentStart } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata });
-		const defaultPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		const architectCtx = createToolCallContext(
+			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
+			undefined,
+			{ cwd: fixture.cwd },
+		);
+		const defaultPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, architectCtx);
 		assert.doesNotMatch(defaultPrompt.systemPrompt, /## TLH Experimental Feature: contrarian/);
-		assert.doesNotMatch(defaultPrompt.systemPrompt, /\bcontrarian\b/i);
+		assert.match(defaultPrompt.systemPrompt, /- contrarian: Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case\./i);
 		assert.match(defaultPrompt.systemPrompt, /developer: Implements exactly one approved task at a time\./i);
 
 		writeFileSync(
 			join(fixture.agent, "settings.json"),
 			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: ["Contrarian", 123] } } }, null, 2)}\n`,
 		);
-		const malformedPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		const malformedPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, architectCtx);
 		assert.doesNotMatch(malformedPrompt.systemPrompt, /## TLH Experimental Feature: contrarian/);
-		assert.doesNotMatch(malformedPrompt.systemPrompt, /\bcontrarian\b/i);
+		assert.match(malformedPrompt.systemPrompt, /- contrarian: Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case\./i);
 		assert.match(malformedPrompt.systemPrompt, /developer: Implements exactly one approved task at a time\./i);
 
 		writeFileSync(
 			join(fixture.agent, "settings.json"),
-			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [TLH_CONTRARIAN_FEATURE] } } }, null, 2)}\n`,
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: ["contrarian"] } } }, null, 2)}\n`,
 		);
-		const enabledPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
-		assert.match(enabledPrompt.systemPrompt, /## TLH Experimental Feature: contrarian/);
-		assert.match(enabledPrompt.systemPrompt, /Use `contrarian` sparingly when you need an adversarial challenge pass on reasoning or direction\./);
-		assert.match(enabledPrompt.systemPrompt, /- contrarian: Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case\./i);
+		const legacyFlagPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, architectCtx);
+		assert.doesNotMatch(legacyFlagPrompt.systemPrompt, /## TLH Experimental Feature: contrarian/);
+		assert.match(legacyFlagPrompt.systemPrompt, /- contrarian: Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case\./i);
 	});
 });
 
@@ -1415,7 +1374,7 @@ test("enabled primary mode allows approved delegation targets and forces safe to
 	assert.equal(event.input.context, "fresh");
 });
 
-test("enabled primary mode blocks contrarian until the experiment is enabled and still applies provider-aware models", async (t) => {
+test("enabled primary mode allows contrarian by default and stale contrarian settings stay harmless", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const subagentMetadata = [contrarianMetadata()];
 	const branchEntries = [{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }];
@@ -1432,25 +1391,21 @@ test("enabled primary mode blocks contrarian until the experiment is enabled and
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata });
-		const blockedEvent = { toolName: "subagent", input: { agent: "contrarian", prompt: "stress-test this plan" } };
-		assert.deepEqual(await toolCall(blockedEvent, blockedCtx), {
-			block: true,
-			reason:
-				"TLH contrarian is an experimental minor agent and is currently disabled. Enable it with /experimental enable contrarian in the isolated TLH profile before delegating to contrarian.",
-		});
-		assert.equal(blockedEvent.input.model, "anthropic/claude-opus-4-8");
-		assert.equal(blockedEvent.input.agentScope, "user");
-		assert.equal(blockedEvent.input.context, "fresh");
+		const defaultEvent = { toolName: "subagent", input: { agent: "contrarian", prompt: "stress-test this plan" } };
+		assert.equal(await toolCall(defaultEvent, blockedCtx), undefined);
+		assert.equal(defaultEvent.input.model, "anthropic/claude-opus-4-8");
+		assert.equal(defaultEvent.input.agentScope, "user");
+		assert.equal(defaultEvent.input.context, "fresh");
 
 		writeFileSync(
 			join(fixture.agent, "settings.json"),
-			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [TLH_CONTRARIAN_FEATURE] } } }, null, 2)}\n`,
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: ["contrarian"] } } }, null, 2)}\n`,
 		);
-		const allowedEvent = { toolName: "subagent", input: { agent: "contrarian", prompt: "stress-test this plan" } };
-		assert.equal(await toolCall(allowedEvent, blockedCtx), undefined);
-		assert.equal(allowedEvent.input.model, "anthropic/claude-opus-4-8");
-		assert.equal(allowedEvent.input.agentScope, "user");
-		assert.equal(allowedEvent.input.context, "fresh");
+		const legacyFlagEvent = { toolName: "subagent", input: { agent: "contrarian", prompt: "stress-test this plan" } };
+		assert.equal(await toolCall(legacyFlagEvent, blockedCtx), undefined);
+		assert.equal(legacyFlagEvent.input.model, "anthropic/claude-opus-4-8");
+		assert.equal(legacyFlagEvent.input.agentScope, "user");
+		assert.equal(legacyFlagEvent.input.context, "fresh");
 	});
 });
 
@@ -1475,7 +1430,7 @@ test("enabled primary mode blocks disallowed nested delegation targets after for
 		assert.deepEqual(await toolCall(event, ctx), {
 			block: true,
 			reason:
-				"TLH primary agents may delegate only to: developer, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle. Disallowed target(s): planner.",
+				"TLH primary agents may delegate only to: developer, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle, contrarian. Disallowed target(s): planner.",
 		});
 		assert.equal(event.input.agentScope, "user");
 		assert.equal(event.input.context, "fresh");

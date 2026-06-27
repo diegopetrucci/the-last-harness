@@ -1,7 +1,6 @@
 import { SettingsManager, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import {
-	CONTRARIAN_EXPERIMENTAL_FEATURE,
 	normalizeEnabledExperimentalFeatures,
 	normalizeExperimentalFeatureId,
 	readEnabledExperimentalFeatures,
@@ -10,7 +9,6 @@ import { formatHomePath, isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
 import type { AgentPrompt, TlhExperimentalConfig, TlhExperimentalFeatureId, TlhSettings } from "./types.js";
 
-export const TLH_CONTRARIAN_FEATURE: TlhExperimentalFeatureId = CONTRARIAN_EXPERIMENTAL_FEATURE;
 export const DELTA_FOLLOW_UP_REVIEWS_FEATURE: TlhExperimentalFeatureId = "delta-follow-up-reviews";
 export const CI_FAILURE_INVESTIGATION_FEATURE: TlhExperimentalFeatureId = "ci-failure-investigation";
 
@@ -41,46 +39,6 @@ For follow-up review after fixes:
 1. Expect prior findings plus an exact delta baseline, git range or checkpoint, or explicit changed-file list from the delegating primary agent. Do not assume every follow-up review includes the full branch diff.
 2. Default to the requested delta and prior findings: verify the reported fixes, check touched areas for regressions, and avoid rereading the full branch diff unless wider context is needed.
 3. You may read adjacent code or other targeted context when needed for safety or correctness, and should widen to targeted or full re-review for installer or other destructive-path changes, trust-boundary changes, auth or execution changes, unresolved reviewer disagreement, or whenever the requested delta cannot be validated safely without wider context.
-`;
-
-const CONTRARIAN_ARCHITECT_PROMPT = `
-## TLH Experimental Feature: contrarian
-
-This TLH experiment enables the \`contrarian\` minor agent for the architect primary agent.
-
-Additional minor agent:
-- \`contrarian\`: adversarially stress-test plans, designs, assumptions, product directions, bug hypotheses, or review conclusions by steelmanning the strongest opposing case.
-
-Use \`contrarian\` sparingly when you need an adversarial challenge pass on reasoning or direction. It is not the normal diff reviewer — \`code-reviewer\` owns review against tasks and diffs — and it is narrower than \`oracle\`, which provides a broader high-reasoning second opinion.
-
-Pre-ticket planning is the primary useful moment for \`contrarian\`. Apply a similarly sparing bar to \`contrarian\` as to \`oracle\`: consider it before ticket creation only when a proposed change has meaningful uncertainty, tradeoffs, blast radius, a hard-to-undo direction, or debatable assumptions, and name the specific risk or strongest opposing case you want stress-tested. Unlike \`oracle\`, \`contrarian\` should focus on the strongest credible opposition brief rather than a broad second opinion. Do not use \`contrarian\` as the normal diff reviewer or as an automatic step for routine localized work; use it sparingly.
-`;
-
-const CONTRARIAN_RUSH_PROMPT = `
-## TLH Experimental Feature: contrarian
-
-This TLH experiment enables the \`contrarian\` minor agent for TLH Rush.
-
-Additional minor agent:
-- \`contrarian\` only when a plan, bug hypothesis, or review conclusion needs an adversarial stress-test. It is not the normal diff reviewer, and unlike \`oracle\` it should steelman the strongest opposing case rather than offer a broad second opinion. Use it sparingly rather than as a routine extra pass.
-`;
-
-const CONTRARIAN_PRODUCT_PROMPT = `
-## TLH Experimental Feature: contrarian
-
-This TLH experiment enables the \`contrarian\` minor agent for the product primary agent.
-
-Additional minor agent:
-- \`contrarian\` for sparing adversarial stress-tests of product directions, tradeoffs, assumptions, or ticket framing by steelmanning the strongest opposing case. It is not code review — \`code-reviewer\` reviews diffs against tasks — and it is narrower than \`oracle\`, which is the broader second-opinion path.
-`;
-
-const CONTRARIAN_BUG_HUNTER_PROMPT = `
-## TLH Experimental Feature: contrarian
-
-This TLH experiment enables the \`contrarian\` minor agent for the bug-hunter primary agent.
-
-Additional minor agent:
-- \`contrarian\`: adversarially stress-test bug hypotheses or review conclusions by steelmanning the strongest opposing case. Use it sparingly when you need to challenge your diagnosis; it does not replace \`code-reviewer\`, which reviews code changes, or \`oracle\`, which gives a broader second opinion.
 `;
 
 const CI_FAILURE_INVESTIGATION_ARCHITECT_PROMPT = `
@@ -120,16 +78,6 @@ type TlhExperimentalWriteResult = {
 };
 
 const TLH_EXPERIMENTAL_FEATURES: TlhExperimentalFeature[] = [
-	{
-		id: TLH_CONTRARIAN_FEATURE,
-		description: "Enables the contrarian minor agent and primary-agent guidance for sparing adversarial challenge passes.",
-		primaryAgentPrompts: {
-			architect: CONTRARIAN_ARCHITECT_PROMPT.trim(),
-			rush: CONTRARIAN_RUSH_PROMPT.trim(),
-			product: CONTRARIAN_PRODUCT_PROMPT.trim(),
-			"bug-hunter": CONTRARIAN_BUG_HUNTER_PROMPT.trim(),
-		},
-	},
 	{
 		id: DELTA_FOLLOW_UP_REVIEWS_FEATURE,
 		description: "Architect and code-reviewer guidance to scope follow-up reviews to a requested delta after fixes.",

@@ -41,6 +41,7 @@ Use minor subagents only when they materially help:
 - `repo-scout`, `diff-summarizer`, and `librarian` for scoped investigation.
 - `code-reviewer` only when risk warrants a review pass, and only after asking the user if they want one.
 - `oracle` is not a default step. After implementation or review, you may offer an Oracle second pass only if a deeper opinion would be useful.
+- `contrarian` only when a plan, bug hypothesis, or review conclusion needs an adversarial stress-test. It is not the normal diff reviewer, and unlike `oracle` it should steelman the strongest opposing case rather than offer a broad second opinion. Use it sparingly rather than as a routine extra pass.
 - Never delegate implementation to `developer`.
 
 ## Fit

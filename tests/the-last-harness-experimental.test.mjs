@@ -13,7 +13,6 @@ const jiti = createJiti(import.meta.url);
 const {
 	CI_FAILURE_INVESTIGATION_FEATURE,
 	DELTA_FOLLOW_UP_REVIEWS_FEATURE,
-	TLH_CONTRARIAN_FEATURE,
 	buildPrimaryExperimentalPrompt,
 	getTlhExperimentalConfig,
 	isTlhExperimentalFeatureEnabled,
@@ -53,27 +52,18 @@ function registeredExperimentalCommand() {
 	return command;
 }
 
-test("experimental command registers contrarian, delta follow-up review, and architect-only ci failure investigation flags as default-off", async (t) => {
+test("experimental command registers delta follow-up review and architect-only ci failure investigation flags as default-off", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const command = registeredExperimentalCommand();
 		assert.deepEqual(
 			(await command.getArgumentCompletions("enable ")).map((completion) => completion.value),
-			[
-				`enable ${TLH_CONTRARIAN_FEATURE}`,
-				`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
-				`enable ${CI_FAILURE_INVESTIGATION_FEATURE}`,
-			],
+			[`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, `enable ${CI_FAILURE_INVESTIGATION_FEATURE}`],
 		);
 		assert.deepEqual(
 			(await command.getArgumentCompletions("status ")).map((completion) => completion.value),
-			[
-				"status",
-				`status ${TLH_CONTRARIAN_FEATURE}`,
-				`status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
-				`status ${CI_FAILURE_INVESTIGATION_FEATURE}`,
-			],
+			["status", `status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, `status ${CI_FAILURE_INVESTIGATION_FEATURE}`],
 		);
 		assert.equal(await command.getArgumentCompletions("unknown"), null);
 
@@ -82,10 +72,9 @@ test("experimental command registers contrarian, delta follow-up review, and arc
 
 		assert.equal(notifications.at(-1)?.type, "info");
 		assert.match(notifications.at(-1)?.message ?? "", /TLH experimental features:/);
-		assert.match(notifications.at(-1)?.message ?? "", /contrarian/);
+		assert.doesNotMatch(notifications.at(-1)?.message ?? "", /contrarian/);
 		assert.match(notifications.at(-1)?.message ?? "", /delta-follow-up-reviews/);
 		assert.match(notifications.at(-1)?.message ?? "", /disabled \(default\)/);
-		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable contrarian/);
 		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable delta-follow-up-reviews/);
 		assert.match(notifications.at(-1)?.message ?? "", /ci-failure-investigation/);
 		assert.match(notifications.at(-1)?.message ?? "", /architect-only guidance/i);
@@ -94,17 +83,16 @@ test("experimental command registers contrarian, delta follow-up review, and arc
 	});
 });
 
-test("contrarian experimental prompt injection stays default-off and becomes primary-specific when enabled", () => {
+test("contrarian experimental settings stay harmless and no longer inject primary prompts", () => {
 	assert.equal(buildPrimaryExperimentalPrompt({ name: "architect" }, undefined), undefined);
 	assert.equal(buildPrimaryExperimentalPrompt({ name: "rush" }, undefined), undefined);
 
-	const enabledConfig = { enabledFeatures: [TLH_CONTRARIAN_FEATURE] };
-	assert.match(buildPrimaryExperimentalPrompt({ name: "architect" }, enabledConfig) ?? "", /## TLH Experimental Feature: contrarian/);
-	assert.match(buildPrimaryExperimentalPrompt({ name: "architect" }, enabledConfig) ?? "", /Pre-ticket planning is the primary useful moment for `contrarian`/);
-	assert.match(buildPrimaryExperimentalPrompt({ name: "rush" }, enabledConfig) ?? "", /TLH experiment enables the `contrarian` minor agent for TLH Rush/);
-	assert.match(buildPrimaryExperimentalPrompt({ name: "product" }, enabledConfig) ?? "", /product directions, tradeoffs, assumptions, or ticket framing/);
-	assert.match(buildPrimaryExperimentalPrompt({ name: "bug-hunter" }, enabledConfig) ?? "", /stress-test bug hypotheses or review conclusions/);
-	assert.equal(buildPrimaryExperimentalPrompt({ name: "developer" }, enabledConfig), undefined);
+	const legacyConfig = { enabledFeatures: ["contrarian"] };
+	assert.equal(buildPrimaryExperimentalPrompt({ name: "architect" }, legacyConfig), undefined);
+	assert.equal(buildPrimaryExperimentalPrompt({ name: "rush" }, legacyConfig), undefined);
+	assert.equal(buildPrimaryExperimentalPrompt({ name: "product" }, legacyConfig), undefined);
+	assert.equal(buildPrimaryExperimentalPrompt({ name: "bug-hunter" }, legacyConfig), undefined);
+	assert.equal(buildPrimaryExperimentalPrompt({ name: "developer" }, legacyConfig), undefined);
 });
 
 test("ci failure investigation prompt injection stays default-off and only enables architect read-only investigation guidance", () => {
@@ -124,7 +112,7 @@ test("ci failure investigation prompt injection stays default-off and only enabl
 	assert.equal(buildPrimaryExperimentalPrompt({ name: "developer" }, enabledConfig), undefined);
 });
 
-test("experimental helpers normalize mixed-case string enabledFeatures but fail closed for mixed arrays", async (t) => {
+test("experimental helpers treat stale contrarian settings as harmless while malformed arrays still fail closed", async (t) => {
 	const enabledFixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
 	writeFileSync(
 		join(enabledFixture.agent, "settings.json"),
@@ -134,16 +122,16 @@ test("experimental helpers normalize mixed-case string enabledFeatures but fail 
 	await withEnv({ HOME: enabledFixture.home, PI_CODING_AGENT_DIR: enabledFixture.agent }, async () => {
 		const command = registeredExperimentalCommand();
 		const config = getTlhExperimentalConfig(enabledFixture.dir);
-		assert.equal(isTlhExperimentalFeatureEnabled(config, TLH_CONTRARIAN_FEATURE), true);
-		assert.match(buildPrimaryExperimentalPrompt({ name: "architect" }, config) ?? "", /## TLH Experimental Feature: contrarian/);
+		assert.equal(isTlhExperimentalFeatureEnabled(config, "contrarian"), false);
+		assert.equal(buildPrimaryExperimentalPrompt({ name: "architect" }, config), undefined);
 
 		let { ctx, notifications } = createCommandContext(enabledFixture.dir);
 		await command.handler("", ctx);
-		assert.match(notifications.at(-1)?.message ?? "", /- contrarian: enabled\./);
+		assert.doesNotMatch(notifications.at(-1)?.message ?? "", /contrarian/);
 
 		({ ctx, notifications } = createCommandContext(enabledFixture.dir));
-		await command.handler(`status ${TLH_CONTRARIAN_FEATURE}`, ctx);
-		assert.match(notifications.at(-1)?.message ?? "", /- contrarian: enabled\./);
+		await command.handler("status contrarian", ctx);
+		assert.match(notifications.at(-1)?.message ?? "", /unknown tlh experimental feature/i);
 	});
 
 	const malformedFixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
@@ -155,21 +143,21 @@ test("experimental helpers normalize mixed-case string enabledFeatures but fail 
 	await withEnv({ HOME: malformedFixture.home, PI_CODING_AGENT_DIR: malformedFixture.agent }, async () => {
 		const command = registeredExperimentalCommand();
 		const config = getTlhExperimentalConfig(malformedFixture.dir);
-		assert.equal(isTlhExperimentalFeatureEnabled(config, TLH_CONTRARIAN_FEATURE), false);
+		assert.equal(isTlhExperimentalFeatureEnabled(config, "contrarian"), false);
 		assert.equal(buildPrimaryExperimentalPrompt({ name: "architect" }, config), undefined);
 
 		let { ctx, notifications } = createCommandContext(malformedFixture.dir);
 		await command.handler("", ctx);
-		assert.match(notifications.at(-1)?.message ?? "", /- contrarian: disabled \(default\)\./);
+		assert.doesNotMatch(notifications.at(-1)?.message ?? "", /contrarian/);
 
 		({ ctx, notifications } = createCommandContext(malformedFixture.dir));
-		await command.handler(`status ${TLH_CONTRARIAN_FEATURE}`, ctx);
-		assert.match(notifications.at(-1)?.message ?? "", /- contrarian: disabled \(default\)\./);
+		await command.handler("status contrarian", ctx);
+		assert.match(notifications.at(-1)?.message ?? "", /unknown tlh experimental feature/i);
 	});
 });
 
-test("experimental stale settings fail closed and do not rebuild retired run-tests-last guidance", async (t) => {
-	for (const enabledFeatures of [true, [123], [RETIRED_RUN_TESTS_LAST_FEATURE]]) {
+test("experimental stale settings fail closed and do not rebuild retired or promoted guidance", async (t) => {
+	for (const enabledFeatures of [true, [123], [RETIRED_RUN_TESTS_LAST_FEATURE], ["contrarian"]]) {
 		const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
 		const settingsPath = join(fixture.agent, "settings.json");
 		const malformedOrStaleSettings = `${JSON.stringify({ tlh: { experimental: { enabledFeatures } } }, null, 2)}\n`;
