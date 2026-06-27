@@ -408,7 +408,14 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
 	assert.match(footerGitCacheSource, /from "\.\/footer-git\.js"/);
 	assert.doesNotMatch(footerFirstLineSource, /from "\.\/footer-git\.mjs"/);
 	assert.doesNotMatch(footerGitCacheSource, /from "\.\/footer-git\.mjs"/);
-	assert.match(extensionSource, /from "\.\/the-last-harness\/tokens\.js"/);
+	// tokens.js is now lazily imported (not statically); verify the dynamic import is present
+	assert.doesNotMatch(extensionSource, /from "\.\/the-last-harness\/tokens\.js"/);
+	assert.match(extensionSource, /import\("\.\/the-last-harness\/tokens\.js"\)/);
+	// review.js and annotate-last-message.js are lazily imported (load-time probe)
+	assert.doesNotMatch(extensionSource, /from "\.\/the-last-harness\/review\.js"/);
+	assert.doesNotMatch(extensionSource, /from "\.\/the-last-harness\/annotate-last-message\.js"/);
+	assert.match(extensionSource, /import\("\.\/the-last-harness\/review\.js"\)/);
+	assert.match(extensionSource, /import\("\.\/the-last-harness\/annotate-last-message\.js"\)/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/usage-limits\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/constants\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/gnosis\.js"/);
@@ -599,7 +606,7 @@ test("extension keeps TLH experimental command wiring with registered ci and rev
 	assert.match(attributionSource, /settings\.tlh\.attribution = \{ commit: nextEnabled \}/);
 	assert.match(attributionSource, /typeof commit !== "boolean"/);
 	assert.match(typesSource, /commit\?: boolean;/);
-	assert.match(extensionSource, /registerTokensCommand\(pi\)/);
+	assert.match(extensionSource, /import\("\.\/the-last-harness\/tokens\.js"\)/);
 	assert.match(tokensSource, /pi\.registerCommand\("tokens"/);
 	assert.match(tokensSource, /Usage: \/tokens/);
 	assert.match(extensionSource, /registerUsageCommand\(pi\)/);

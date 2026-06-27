@@ -1,6 +1,5 @@
-import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { registerAnnotateLastMessageCommand } from "./the-last-harness/annotate-last-message.js";
 import { registerToggleTlhGitAttributionCommand } from "./the-last-harness/attribution.js";
 import { TLH_HEADER_TOGGLE_SHORTCUT } from "./the-last-harness/constants.js";
 import { createTlhAutocompleteProvider } from "./the-last-harness/autocomplete.js";
@@ -8,7 +7,6 @@ import { registerContextCap } from "./the-last-harness/context-cap.js";
 import { registerTlhChangelogCommand } from "./the-last-harness/changelog.js";
 import { registerEffortCommand } from "./the-last-harness/effort.js";
 import { registerExperimentalCommand } from "./the-last-harness/experimental.js";
-import { registerReviewCommand } from "./the-last-harness/review.js";
 import { createTlhFooter } from "./the-last-harness/footer.js";
 import { FooterGitCache } from "./the-last-harness/footer-git-cache.js";
 import { createTlhHeader } from "./the-last-harness/header.js";
@@ -21,7 +19,6 @@ import { registerTlhPrimaryAgentRuntime } from "./the-last-harness/primary-agent
 import { collectStartupResources } from "./the-last-harness/resources.js";
 import { getTlhStartupTip } from "./the-last-harness/startup-tip.js";
 import { createTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage.js";
-import { registerTokensCommand } from "./the-last-harness/tokens.js";
 import { getTlhUsageLimitsConfig, registerUsageCommand, shouldShowTlhUsageWeekly } from "./the-last-harness/usage-limits.js";
 import { getTlhHeaderUpdate, maybeNotifyAvailableTlhUpdate } from "./the-last-harness/update-check.js";
 import { registerVersionCommand } from "./the-last-harness/version.js";
@@ -44,14 +41,66 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	installTlhPackageUpdateNotificationOverride();
 	installTlhNewVersionNotificationOverride();
 	registerToggleTlhGitAttributionCommand(pi);
-	registerAnnotateLastMessageCommand(pi);
 	registerEffortCommand(pi, primaryAgentRuntime);
 	registerExperimentalCommand(pi);
-	registerReviewCommand(pi);
 	registerTlhChangelogCommand(pi);
-	registerTokensCommand(pi);
 	registerUsageCommand(pi);
 	registerVersionCommand(pi);
+
+	// Lazy-loaded commands: the handler body (and its imported module subtree) is
+	// deferred until the first invocation. Command metadata (name, description,
+	// argument completions) is registered synchronously so discovery/autocomplete
+	// are unaffected. See gnosis rhreyj for the rationale and pattern.
+
+	// /review — lazily imports review.ts (~36 KB) on first use.
+	pi.registerCommand("review", {
+		description: "Review code changes via an interactive mode picker",
+		getArgumentCompletions: () => null,
+		handler: async (args, ctx) => {
+			const { reviewCommandHandler } = await import("./the-last-harness/review.js");
+			return reviewCommandHandler(pi, args, ctx);
+		},
+	});
+
+	// /tokens — lazily imports tokens.ts + tokens-analyzer.ts (~59 KB combined) on first use.
+	pi.registerCommand("tokens", {
+		description: "Generate and open a local TLH token-spend report",
+		handler: async (args, ctx) => {
+			const { tokensCommandHandler } = await import("./the-last-harness/tokens.js");
+			return tokensCommandHandler(pi, args, ctx);
+		},
+	});
+
+	// /annotate-last-message — lazily imports annotate-last-message.ts and its ~15 KB
+	// subtree (prompt/session/ui + shared/quiet-glimpse) on first use. The handler
+	// is initialized once (creating closure state + session_shutdown listener) and
+	// then reused for subsequent invocations.
+	//
+	// The Promise itself is memoized (not the resolved value) so that two
+	// near-simultaneous first invocations of /annotate-last-message both receive
+	// the same in-flight promise. This ensures the dynamic import and
+	// buildAnnotateLastMessageCommandHandler run at most once even under concurrency,
+	// preventing duplicate session_shutdown listeners.
+	{
+		type AnnotateHandlerFn = ReturnType<
+			(typeof import("./the-last-harness/annotate-last-message.js"))["buildAnnotateLastMessageCommandHandler"]
+		>;
+		let annotateHandlerPromise: Promise<AnnotateHandlerFn> | null = null;
+		const getAnnotateHandler = (): Promise<AnnotateHandlerFn> => {
+			if (annotateHandlerPromise === null) {
+				annotateHandlerPromise = import("./the-last-harness/annotate-last-message.js").then(
+					(mod) => mod.buildAnnotateLastMessageCommandHandler(pi),
+				);
+			}
+			return annotateHandlerPromise;
+		};
+		pi.registerCommand("annotate-last-message", {
+			description: "Open a native annotation window for the latest assistant message",
+			handler: async (args: string, ctx: ExtensionCommandContext) => {
+				return (await getAnnotateHandler())(args, ctx);
+			},
+		});
+	}
 	let activeTlhHeader: ReturnType<typeof createTlhHeader> | undefined;
 	pi.registerShortcut(TLH_HEADER_TOGGLE_SHORTCUT, {
 		description: "Toggle TLH startup header resources",

@@ -19,7 +19,15 @@ function appendPrompt(ctx: ExtensionCommandContext, prompt: string): void {
 	ctx.ui.pasteToEditor(`${prefix}${prompt}`);
 }
 
-export function registerAnnotateLastMessageCommand(pi: ExtensionAPI): void {
+/**
+ * Set up the annotate-last-message state, register the session_shutdown listener
+ * on `pi`, and return the command handler function. Exported so the extension
+ * entry can lazily import this module, call this once on first invocation, and
+ * delegate subsequent invocations without re-registering the command.
+ */
+export function buildAnnotateLastMessageCommandHandler(
+	pi: ExtensionAPI,
+): (args: string, ctx: ExtensionCommandContext) => Promise<void> {
 	let activeWindow: QuietGlimpseWindow | null = null;
 	const suppressedWindows = new WeakSet<QuietGlimpseWindow>();
 
@@ -148,14 +156,19 @@ export function registerAnnotateLastMessageCommand(pi: ExtensionAPI): void {
 		}
 	}
 
-	pi.registerCommand("annotate-last-message", {
-		description: "Open a native annotation window for the latest assistant message",
-		handler: async (_args, ctx) => {
-			await openAnnotationWindow(ctx);
-		},
-	});
-
 	pi.on("session_shutdown", async () => {
 		closeActiveWindow({ suppressResults: true });
+	});
+
+	return async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
+		await openAnnotationWindow(ctx);
+	};
+}
+
+export function registerAnnotateLastMessageCommand(pi: ExtensionAPI): void {
+	const handler = buildAnnotateLastMessageCommandHandler(pi);
+	pi.registerCommand("annotate-last-message", {
+		description: "Open a native annotation window for the latest assistant message",
+		handler: (_args, ctx) => handler(_args, ctx),
 	});
 }
