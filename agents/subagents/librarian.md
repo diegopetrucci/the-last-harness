@@ -2,8 +2,8 @@
 name: librarian
 description: Performs read-only GitHub research using gh, git, and rg via bash.
 tools: read, grep, find, ls, bash, contact_supervisor
-model: anthropic/claude-haiku-4-5
 tlhOpenaiModels: openai-codex/gpt-5.4-mini
+tlhAnthropicModels: anthropic/claude-haiku-4-5
 thinking: high
 systemPromptMode: replace
 inheritProjectContext: true
