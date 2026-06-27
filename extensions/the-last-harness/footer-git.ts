@@ -1,7 +1,27 @@
 const BRANCH_HEAD_PREFIX = "# branch.head ";
 const BRANCH_AB_PREFIX = "# branch.ab ";
 
-function createEmptyGitStatus() {
+export type GitStatusSnapshot = {
+	branch?: string;
+	staged: number;
+	unstaged: number;
+	untracked: number;
+	conflict: number;
+	ahead: number;
+	behind: number;
+};
+
+export type PullRequestSnapshot = {
+	number?: number | string;
+	state?: string;
+	isDraft?: boolean;
+	url?: string;
+	title?: string;
+};
+
+type DisplayGitStatusSnapshot = Partial<GitStatusSnapshot> | null | undefined;
+
+function createEmptyGitStatus(): GitStatusSnapshot {
 	return {
 		branch: undefined,
 		staged: 0,
@@ -13,11 +33,11 @@ function createEmptyGitStatus() {
 	};
 }
 
-function positiveCount(value) {
-	return Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
+function positiveCount(value: unknown): number {
+	return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
 }
 
-function addTrackedStatusCounts(status, xy) {
+function addTrackedStatusCounts(status: GitStatusSnapshot, xy: string): void {
 	if (xy.length !== 2) {
 		return;
 	}
@@ -29,7 +49,7 @@ function addTrackedStatusCounts(status, xy) {
 	}
 }
 
-function parseBranchAheadBehind(line, status) {
+function parseBranchAheadBehind(line: string, status: GitStatusSnapshot): void {
 	const match = /^# branch\.ab \+(\d+) -(\d+)$/.exec(line);
 	if (!match) {
 		return;
@@ -38,12 +58,12 @@ function parseBranchAheadBehind(line, status) {
 	status.behind = Number.parseInt(match[2], 10);
 }
 
-function normalizeBranchHead(value) {
+function normalizeBranchHead(value: string): string {
 	const branch = value.trim();
 	return branch === "(detached)" ? "detached" : branch;
 }
 
-export function parseGitStatusPorcelainV2(output) {
+export function parseGitStatusPorcelainV2(output: unknown): GitStatusSnapshot {
 	const status = createEmptyGitStatus();
 	if (typeof output !== "string") {
 		return status;
@@ -83,13 +103,13 @@ export function parseGitStatusPorcelainV2(output) {
 	return status;
 }
 
-export function formatGitStatusFooterSegment(status) {
+export function formatGitStatusFooterSegment(status: DisplayGitStatusSnapshot): string | undefined {
 	if (!status) {
 		return undefined;
 	}
 
-	const parts = [];
-	const indicators = [
+	const parts: string[] = [];
+	const indicators: ReadonlyArray<readonly [string, number]> = [
 		["!", positiveCount(status.conflict)],
 		["+", positiveCount(status.staged)],
 		["~", positiveCount(status.unstaged)],
@@ -107,9 +127,9 @@ export function formatGitStatusFooterSegment(status) {
 	return parts.length > 0 ? parts.join(" ") : undefined;
 }
 
-export function formatPullRequestFooterSegment(pullRequest) {
+export function formatPullRequestFooterSegment(pullRequest: PullRequestSnapshot | null | undefined): string | undefined {
 	const value = pullRequest?.number;
-	if (Number.isSafeInteger(value) && value > 0) {
+	if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
 		return `PR #${value}`;
 	}
 	if (typeof value === "string") {
@@ -121,8 +141,11 @@ export function formatPullRequestFooterSegment(pullRequest) {
 	return undefined;
 }
 
-export function formatTlhGitFooterSegments(status, pullRequest) {
-	const segments = [];
+export function formatTlhGitFooterSegments(
+	status: DisplayGitStatusSnapshot,
+	pullRequest?: PullRequestSnapshot | null,
+): string[] {
+	const segments: string[] = [];
 	const branch = typeof status?.branch === "string" ? status.branch.trim() : "";
 	if (branch) {
 		segments.push(branch);

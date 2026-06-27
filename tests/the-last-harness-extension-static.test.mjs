@@ -18,6 +18,8 @@ const annotateGitDiffHtmlSource = readFileSync(new URL("../extensions/annotate-g
 const attributionSource = readFileSync(new URL("../extensions/the-last-harness/attribution.ts", import.meta.url), "utf8");
 const changelogSource = readFileSync(new URL("../extensions/the-last-harness/changelog.ts", import.meta.url), "utf8");
 const experimentalSource = readFileSync(new URL("../extensions/the-last-harness/experimental.ts", import.meta.url), "utf8");
+const footerFirstLineSource = readFileSync(new URL("../extensions/the-last-harness/footer-first-line.ts", import.meta.url), "utf8");
+const footerGitCacheSource = readFileSync(new URL("../extensions/the-last-harness/footer-git-cache.ts", import.meta.url), "utf8");
 const primaryRuntimeSource = readFileSync(new URL("../extensions/the-last-harness/primary-agent-runtime.ts", import.meta.url), "utf8");
 const effortSource = readFileSync(new URL("../extensions/the-last-harness/effort.ts", import.meta.url), "utf8");
 const promptsSource = readFileSync(new URL("../extensions/the-last-harness/prompts.ts", import.meta.url), "utf8");
@@ -400,8 +402,12 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
 	assert.match(extensionSource, /from "\.\/the-last-harness\/package-update-notice\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/primary-agent-runtime\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/resources\.js"/);
-	assert.match(extensionSource, /from "\.\/the-last-harness\/subscription-usage\.mjs"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/subscription-usage\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/types\.js"/);
+	assert.match(footerFirstLineSource, /from "\.\/footer-git\.js"/);
+	assert.match(footerGitCacheSource, /from "\.\/footer-git\.js"/);
+	assert.doesNotMatch(footerFirstLineSource, /from "\.\/footer-git\.mjs"/);
+	assert.doesNotMatch(footerGitCacheSource, /from "\.\/footer-git\.mjs"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/tokens\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/usage-limits\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/constants\.js"/);

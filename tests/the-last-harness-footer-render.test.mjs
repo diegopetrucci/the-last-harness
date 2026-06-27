@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { composeTlhFooterFirstLine } from "../extensions/the-last-harness/footer-first-line.ts";
+import { createJiti } from "jiti";
+
+const jiti = createJiti(import.meta.url);
+const { composeTlhFooterFirstLine } = await jiti.import("../extensions/the-last-harness/footer-first-line.ts");
 
 const CWD = "~/repo";
 

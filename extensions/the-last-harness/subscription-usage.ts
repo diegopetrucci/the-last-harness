@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import type { TlhSubscriptionUsageProvider, TlhSubscriptionUsageSnapshot, TlhSubscriptionUsageWindow } from "./types.js";
+
 export const TLH_SUBSCRIPTION_USAGE_OPENAI_CODEX_URL = "https://chatgpt.com/backend-api/wham/usage";
 export const TLH_SUBSCRIPTION_USAGE_ANTHROPIC_URL = "https://api.anthropic.com/api/oauth/usage";
 export const TLH_SUBSCRIPTION_USAGE_ANTHROPIC_BETA = "oauth-2025-04-20";
@@ -7,16 +9,75 @@ export const TLH_SUBSCRIPTION_USAGE_CACHE_TTL_MS = 60_000;
 export const TLH_SUBSCRIPTION_USAGE_MIN_FETCH_INTERVAL_MS = 60_000;
 export const TLH_SUBSCRIPTION_USAGE_TIMEOUT_MS = 3_000;
 
-const SUPPORTED_PROVIDERS = new Set(["openai-codex", "anthropic"]);
-const ACCOUNT_ID_KEYS = ["accountId", "account_id", "chatgptAccountId", "chatgpt_account_id"];
-const USAGE_PERCENT_KEYS = ["used_percent", "usedPercent", "utilization"];
-const WINDOW_DURATION_SECONDS_KEYS = ["limit_window_seconds", "limitWindowSeconds"];
+const SUPPORTED_PROVIDERS = new Set<TlhSubscriptionUsageProvider>(["openai-codex", "anthropic"]);
+const ACCOUNT_ID_KEYS = ["accountId", "account_id", "chatgptAccountId", "chatgpt_account_id"] as const;
+const USAGE_PERCENT_KEYS = ["used_percent", "usedPercent", "utilization"] as const;
+const WINDOW_DURATION_SECONDS_KEYS = ["limit_window_seconds", "limitWindowSeconds"] as const;
 
-function asObject(value) {
-	return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
+type JsonRecord = Record<string, unknown>;
+type TlhSubscriptionUsageFetch = typeof globalThis.fetch;
+type ResponseLike = {
+	ok?: boolean;
+	json?: (() => Promise<unknown>) | (() => unknown);
+};
+type TlhSubscriptionUsageTarget = {
+	provider?: unknown;
+	accessToken?: unknown;
+	accountId?: string;
+};
+type TlhSubscriptionUsageFetchOptions = {
+	fetch?: TlhSubscriptionUsageFetch;
+	nowMs?: number;
+	timeoutMs?: number;
+};
+type TlhSubscriptionUsageContext = {
+	model?: { provider?: unknown };
+	modelRegistry?: TlhSubscriptionUsageModelRegistry;
+};
+type TlhSubscriptionUsageModelRegistry = {
+	isUsingOAuth?(model: unknown): boolean;
+	getApiKeyForProvider?(provider: string): Promise<unknown> | unknown;
+	authStorage?: unknown;
+};
+type EligibleProviderContext = {
+	status: "eligible";
+	model: TlhSubscriptionUsageContext["model"];
+	provider: TlhSubscriptionUsageProvider;
+	modelRegistry: TlhSubscriptionUsageModelRegistry;
+	credential: JsonRecord;
+};
+type ResolvedProviderContext =
+	| EligibleProviderContext
+	| { status: "unsupported"; provider: unknown }
+	| { status: "ineligible"; provider: TlhSubscriptionUsageProvider }
+	| { status: "transient-unavailable"; provider: TlhSubscriptionUsageProvider };
+type CredentialResult =
+	| { status: "ok"; credential: JsonRecord | undefined }
+	| { status: "transient-unavailable" };
+type CredentialCacheTarget = {
+	provider: TlhSubscriptionUsageProvider;
+	accountId?: string;
+	cacheKey: string;
+};
+type ResolvedTargetResult =
+	| { status: "resolved"; target: CredentialCacheTarget & { accessToken: string } }
+	| { status: "transient-unavailable" }
+	| { status: "ineligible" }
+	| { status: "mismatch" };
+
+export type TlhSubscriptionUsageServiceOptions = {
+	fetch?: TlhSubscriptionUsageFetch;
+	now?: () => number;
+	cacheTtlMs?: number;
+	minFetchIntervalMs?: number;
+	timeoutMs?: number;
+};
+
+function asObject(value: unknown): JsonRecord | undefined {
+	return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : undefined;
 }
 
-function finiteNumber(value) {
+function finiteNumber(value: unknown): number | undefined {
 	if (typeof value === "number" && Number.isFinite(value)) {
 		return value;
 	}
@@ -27,12 +88,12 @@ function finiteNumber(value) {
 	return undefined;
 }
 
-function positiveNumber(value) {
+function positiveNumber(value: unknown): number | undefined {
 	const parsed = finiteNumber(value);
 	return parsed !== undefined && parsed >= 0 ? parsed : undefined;
 }
 
-function pickNumber(source, keys) {
+function pickNumber(source: JsonRecord | undefined, keys: readonly string[]): number | undefined {
 	for (const key of keys) {
 		const value = positiveNumber(source?.[key]);
 		if (value !== undefined) {
@@ -42,7 +103,7 @@ function pickNumber(source, keys) {
 	return undefined;
 }
 
-function pickFiniteNumber(source, keys) {
+function pickFiniteNumber(source: JsonRecord | undefined, keys: readonly string[]): number | undefined {
 	for (const key of keys) {
 		const value = finiteNumber(source?.[key]);
 		if (value !== undefined) {
@@ -52,7 +113,7 @@ function pickFiniteNumber(source, keys) {
 	return undefined;
 }
 
-function pickString(source, keys) {
+function pickString(source: JsonRecord | undefined, keys: readonly string[]): string | undefined {
 	for (const key of keys) {
 		const value = source?.[key];
 		if (typeof value === "string" && value.trim()) {
@@ -65,25 +126,25 @@ function pickString(source, keys) {
 // Stable, one-way fingerprint of a bearer access token. Used in cache keys
 // only when no account id is available; raw bearer material is never stored in
 // usage service state or returned in snapshots.
-function accessTokenFingerprint(accessToken) {
+function accessTokenFingerprint(accessToken: unknown): string | undefined {
 	if (typeof accessToken !== "string" || !accessToken) {
 		return undefined;
 	}
 	return createHash("sha256").update(accessToken).digest("hex");
 }
 
-function clampPercent(value) {
+function clampPercent(value: number): number {
 	return Math.max(0, Math.min(100, Math.round(value * 10) / 10));
 }
 
-function normalizeCount(value) {
+function normalizeCount(value: number | undefined): number | undefined {
 	if (value === undefined) {
 		return undefined;
 	}
 	return Math.round(value * 1000) / 1000;
 }
 
-function normalizeIsoTime(value) {
+function normalizeIsoTime(value: unknown): string | undefined {
 	if (typeof value === "string" && value.trim()) {
 		const ms = Date.parse(value);
 		return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
@@ -96,17 +157,24 @@ function normalizeIsoTime(value) {
 	return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
 }
 
-function resetAtFromRelativeSeconds(source, nowMs) {
-	const seconds = pickNumber(source, ["seconds_until_reset", "reset_seconds", "resetAfterSeconds", "reset_after_seconds", "resetsInSeconds", "resets_in_seconds"]);
+function resetAtFromRelativeSeconds(source: JsonRecord, nowMs: number): string | undefined {
+	const seconds = pickNumber(source, [
+		"seconds_until_reset",
+		"reset_seconds",
+		"resetAfterSeconds",
+		"reset_after_seconds",
+		"resetsInSeconds",
+		"resets_in_seconds",
+	]);
 	return seconds !== undefined ? new Date(nowMs + seconds * 1000).toISOString() : undefined;
 }
 
-function normalizeWindowDurationMs(source) {
+function normalizeWindowDurationMs(source: JsonRecord): number | undefined {
 	const seconds = pickNumber(source, WINDOW_DURATION_SECONDS_KEYS);
 	return seconds !== undefined ? Math.round(seconds * 1000) : undefined;
 }
 
-function normalizeResetTime(source, nowMs) {
+function normalizeResetTime(source: JsonRecord, nowMs: number): string | undefined {
 	return (
 		normalizeIsoTime(source.reset_at) ??
 		normalizeIsoTime(source.resetAt) ??
@@ -120,7 +188,12 @@ function normalizeResetTime(source, nowMs) {
 	);
 }
 
-function normalizeUsageWindow(source, key, label, nowMs) {
+function normalizeUsageWindow(
+	source: unknown,
+	key: string,
+	label: string,
+	nowMs: number,
+): TlhSubscriptionUsageWindow | undefined {
 	const window = asObject(source);
 	if (!window) {
 		return undefined;
@@ -184,7 +257,7 @@ function normalizeUsageWindow(source, key, label, nowMs) {
 		limit = used + remaining;
 	}
 
-	const normalized = { key, label };
+	const normalized: TlhSubscriptionUsageWindow = { key, label };
 	const normalizedUsed = normalizeCount(used);
 	const normalizedLimit = normalizeCount(limit);
 	const normalizedRemaining = normalizeCount(remaining);
@@ -212,22 +285,30 @@ function normalizeUsageWindow(source, key, label, nowMs) {
 	return Object.keys(normalized).length > 2 ? normalized : undefined;
 }
 
-function createSnapshot(provider, session, weekly, fetchedAt) {
+function createSnapshot(
+	provider: TlhSubscriptionUsageProvider,
+	session: TlhSubscriptionUsageWindow | undefined,
+	weekly: TlhSubscriptionUsageWindow | undefined,
+	fetchedAt: number,
+): TlhSubscriptionUsageSnapshot | undefined {
 	if (!session) {
 		return undefined;
 	}
-	const windows = { session };
+	const windows: TlhSubscriptionUsageSnapshot["windows"] = { session };
 	if (weekly) {
 		windows.weekly = weekly;
 	}
 	return { provider, fetchedAt, windows };
 }
 
-export function isSupportedTlhSubscriptionUsageProvider(provider) {
-	return SUPPORTED_PROVIDERS.has(provider);
+export function isSupportedTlhSubscriptionUsageProvider(provider: unknown): provider is TlhSubscriptionUsageProvider {
+	return typeof provider === "string" && SUPPORTED_PROVIDERS.has(provider as TlhSubscriptionUsageProvider);
 }
 
-export function normalizeOpenAICodexUsage(data, options = {}) {
+export function normalizeOpenAICodexUsage(
+	data: unknown,
+	options: { nowMs?: number } = {},
+): TlhSubscriptionUsageSnapshot | undefined {
 	const nowMs = options.nowMs ?? Date.now();
 	const root = asObject(data);
 	const rateLimit = asObject(root?.rate_limit);
@@ -236,7 +317,10 @@ export function normalizeOpenAICodexUsage(data, options = {}) {
 	return createSnapshot("openai-codex", session, weekly, nowMs);
 }
 
-export function normalizeAnthropicUsage(data, options = {}) {
+export function normalizeAnthropicUsage(
+	data: unknown,
+	options: { nowMs?: number } = {},
+): TlhSubscriptionUsageSnapshot | undefined {
 	const nowMs = options.nowMs ?? Date.now();
 	const root = asObject(data);
 	const session = normalizeUsageWindow(root?.five_hour, "five_hour", "session", nowMs);
@@ -244,26 +328,34 @@ export function normalizeAnthropicUsage(data, options = {}) {
 	return createSnapshot("anthropic", session, weekly, nowMs);
 }
 
-function timeoutSignal(timeoutMs) {
+function timeoutSignal(timeoutMs: number): AbortSignal | undefined {
 	if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || typeof AbortSignal === "undefined" || typeof AbortSignal.timeout !== "function") {
 		return undefined;
 	}
 	return AbortSignal.timeout(timeoutMs);
 }
 
-async function responseJson(response) {
-	if (!response?.ok || typeof response.json !== "function") {
+async function responseJson(response: ResponseLike | null | undefined): Promise<unknown | undefined> {
+	if (response?.ok !== true || typeof response.json !== "function") {
 		return undefined;
 	}
 	return response.json();
 }
 
-function oauthCredentialFromRegistry(modelRegistry, provider) {
-	const credential = modelRegistry?.authStorage?.get?.(provider);
-	return asObject(credential)?.type === "oauth" ? credential : undefined;
+function oauthCredentialFromRegistry(
+	modelRegistry: TlhSubscriptionUsageModelRegistry | undefined,
+	provider: TlhSubscriptionUsageProvider,
+): JsonRecord | undefined {
+	const authStorage = modelRegistry?.authStorage as { get?: (provider: string) => unknown } | undefined;
+	const credential = authStorage?.get?.(provider);
+	const stored = asObject(credential);
+	return stored?.type === "oauth" ? stored : undefined;
 }
 
-function readOauthCredentialFromRegistry(modelRegistry, provider) {
+function readOauthCredentialFromRegistry(
+	modelRegistry: TlhSubscriptionUsageModelRegistry | undefined,
+	provider: TlhSubscriptionUsageProvider,
+): CredentialResult {
 	try {
 		return { status: "ok", credential: oauthCredentialFromRegistry(modelRegistry, provider) };
 	} catch {
@@ -271,7 +363,7 @@ function readOauthCredentialFromRegistry(modelRegistry, provider) {
 	}
 }
 
-function oauthAccessTokenFromCredential(credential) {
+function oauthAccessTokenFromCredential(credential: unknown): string | undefined {
 	const stored = asObject(credential);
 	if (stored?.type !== "oauth") {
 		return undefined;
@@ -280,7 +372,7 @@ function oauthAccessTokenFromCredential(credential) {
 	return access || undefined;
 }
 
-function accountIdFromCredential(credential) {
+function accountIdFromCredential(credential: unknown): string | undefined {
 	const stored = asObject(credential);
 	if (!stored) {
 		return undefined;
@@ -288,25 +380,29 @@ function accountIdFromCredential(credential) {
 	return pickString(stored, ACCOUNT_ID_KEYS);
 }
 
-function subscriptionUsageCacheKey(provider, identity) {
+function subscriptionUsageCacheKey(provider: TlhSubscriptionUsageProvider, identity: string): string {
 	return `${provider}\t${identity}`;
 }
 
-function cacheKeyMatchesProvider(cacheKey, provider) {
-	return typeof cacheKey === "string" && cacheKey.startsWith(`${provider}\t`);
+function cacheKeyMatchesProvider(cacheKey: string, provider: TlhSubscriptionUsageProvider): boolean {
+	return cacheKey.startsWith(`${provider}\t`);
 }
 
-function hasRuntimeCredentialOverride(modelRegistry, provider) {
+function hasRuntimeCredentialOverride(
+	modelRegistry: TlhSubscriptionUsageModelRegistry | undefined,
+	provider: TlhSubscriptionUsageProvider,
+): boolean {
 	try {
-		const runtimeOverrides = modelRegistry?.authStorage?.runtimeOverrides;
+		const authStorage = modelRegistry?.authStorage as { runtimeOverrides?: unknown } | undefined;
+		const runtimeOverrides = authStorage?.runtimeOverrides;
 		return runtimeOverrides instanceof Map && runtimeOverrides.has(provider);
 	} catch {
 		return false;
 	}
 }
 
-function openAiHeaders(accessToken, accountId) {
-	const headers = {
+function openAiHeaders(accessToken: string, accountId: string | undefined): Record<string, string> {
+	const headers: Record<string, string> = {
 		Accept: "application/json",
 		Authorization: `Bearer ${accessToken}`,
 	};
@@ -316,7 +412,7 @@ function openAiHeaders(accessToken, accountId) {
 	return headers;
 }
 
-function anthropicHeaders(accessToken) {
+function anthropicHeaders(accessToken: string): Record<string, string> {
 	return {
 		Accept: "application/json",
 		Authorization: `Bearer ${accessToken}`,
@@ -324,7 +420,10 @@ function anthropicHeaders(accessToken) {
 	};
 }
 
-export async function fetchTlhSubscriptionUsage(target, options = {}) {
+export async function fetchTlhSubscriptionUsage(
+	target: TlhSubscriptionUsageTarget,
+	options: TlhSubscriptionUsageFetchOptions = {},
+): Promise<TlhSubscriptionUsageSnapshot | undefined> {
 	const provider = target?.provider;
 	const accessToken = typeof target?.accessToken === "string" ? target.accessToken.trim() : "";
 	const fetchImpl = options.fetch ?? globalThis.fetch;
@@ -336,19 +435,19 @@ export async function fetchTlhSubscriptionUsage(target, options = {}) {
 	const signal = timeoutSignal(options.timeoutMs ?? TLH_SUBSCRIPTION_USAGE_TIMEOUT_MS);
 	try {
 		if (provider === "openai-codex") {
-			const response = await fetchImpl(TLH_SUBSCRIPTION_USAGE_OPENAI_CODEX_URL, {
+			const response = (await fetchImpl(TLH_SUBSCRIPTION_USAGE_OPENAI_CODEX_URL, {
 				method: "GET",
 				headers: openAiHeaders(accessToken, target.accountId),
 				signal,
-			});
+			})) as ResponseLike;
 			return normalizeOpenAICodexUsage(await responseJson(response), { nowMs });
 		}
 		if (provider === "anthropic") {
-			const response = await fetchImpl(TLH_SUBSCRIPTION_USAGE_ANTHROPIC_URL, {
+			const response = (await fetchImpl(TLH_SUBSCRIPTION_USAGE_ANTHROPIC_URL, {
 				method: "GET",
 				headers: anthropicHeaders(accessToken),
 				signal,
-			});
+			})) as ResponseLike;
 			return normalizeAnthropicUsage(await responseJson(response), { nowMs });
 		}
 	} catch {
@@ -357,7 +456,7 @@ export async function fetchTlhSubscriptionUsage(target, options = {}) {
 	return undefined;
 }
 
-function resolveTlhSubscriptionUsageProviderContext(ctx) {
+function resolveTlhSubscriptionUsageProviderContext(ctx: TlhSubscriptionUsageContext | undefined): ResolvedProviderContext {
 	const model = ctx?.model;
 	const provider = model?.provider;
 	const modelRegistry = ctx?.modelRegistry;
@@ -386,12 +485,15 @@ function resolveTlhSubscriptionUsageProviderContext(ctx) {
 	return { status: "eligible", model, provider, modelRegistry, credential: credentialResult.credential };
 }
 
-function resolveTlhSubscriptionUsageProvider(ctx) {
+function resolveTlhSubscriptionUsageProvider(ctx: TlhSubscriptionUsageContext | undefined): EligibleProviderContext | undefined {
 	const resolved = resolveTlhSubscriptionUsageProviderContext(ctx);
 	return resolved.status === "eligible" ? resolved : undefined;
 }
 
-function credentialCacheTarget(provider, credential) {
+function credentialCacheTarget(
+	provider: TlhSubscriptionUsageProvider,
+	credential: unknown,
+): CredentialCacheTarget | undefined {
 	const accountId = accountIdFromCredential(credential);
 	if (accountId) {
 		return {
@@ -412,7 +514,9 @@ function credentialCacheTarget(provider, credential) {
 	};
 }
 
-function resolveTlhSubscriptionUsageDisplayTarget(ctx) {
+function resolveTlhSubscriptionUsageDisplayTarget(
+	ctx: TlhSubscriptionUsageContext | undefined,
+): CredentialCacheTarget | undefined {
 	const resolved = resolveTlhSubscriptionUsageProvider(ctx);
 	if (!resolved || hasRuntimeCredentialOverride(resolved.modelRegistry, resolved.provider)) {
 		return undefined;
@@ -421,9 +525,9 @@ function resolveTlhSubscriptionUsageDisplayTarget(ctx) {
 	return credentialCacheTarget(resolved.provider, resolved.credential);
 }
 
-async function resolveTlhSubscriptionUsageTarget(resolved) {
+async function resolveTlhSubscriptionUsageTarget(resolved: EligibleProviderContext): Promise<ResolvedTargetResult> {
 	const { provider, modelRegistry } = resolved;
-	let accessToken;
+	let accessToken: unknown;
 	try {
 		accessToken = await modelRegistry.getApiKeyForProvider?.(provider);
 	} catch {
@@ -467,7 +571,18 @@ async function resolveTlhSubscriptionUsageTarget(resolved) {
 }
 
 export class TlhSubscriptionUsageService {
-	constructor(options = {}) {
+	fetch: TlhSubscriptionUsageFetch | undefined;
+	now: () => number;
+	cacheTtlMs: number;
+	minFetchIntervalMs: number;
+	timeoutMs: number;
+	snapshots: Map<string, TlhSubscriptionUsageSnapshot>;
+	lastAttempts: Map<string, number>;
+	inFlight: Map<string, Promise<TlhSubscriptionUsageSnapshot | undefined>>;
+	activeCacheKeys: Map<TlhSubscriptionUsageProvider, string>;
+	ineligibleCacheKeys: Map<TlhSubscriptionUsageProvider, string>;
+
+	constructor(options: TlhSubscriptionUsageServiceOptions = {}) {
 		this.fetch = options.fetch;
 		this.now = typeof options.now === "function" ? options.now : () => Date.now();
 		this.cacheTtlMs = options.cacheTtlMs ?? TLH_SUBSCRIPTION_USAGE_CACHE_TTL_MS;
@@ -480,11 +595,11 @@ export class TlhSubscriptionUsageService {
 		this.ineligibleCacheKeys = new Map();
 	}
 
-	snapshotForCacheKey(provider, cacheKey) {
+	snapshotForCacheKey(provider: TlhSubscriptionUsageProvider, cacheKey: string): TlhSubscriptionUsageSnapshot | undefined {
 		return this.activeCacheKeys.get(provider) === cacheKey ? this.snapshots.get(cacheKey) : undefined;
 	}
 
-	getSnapshot(provider) {
+	getSnapshot(provider?: string): TlhSubscriptionUsageSnapshot | undefined {
 		if (provider !== undefined && !isSupportedTlhSubscriptionUsageProvider(provider)) {
 			return undefined;
 		}
@@ -494,11 +609,11 @@ export class TlhSubscriptionUsageService {
 		}
 		return Array.from(this.activeCacheKeys.entries())
 			.map(([snapshotProvider, cacheKey]) => this.snapshotForCacheKey(snapshotProvider, cacheKey))
-			.filter(Boolean)
+			.filter((snapshot): snapshot is TlhSubscriptionUsageSnapshot => Boolean(snapshot))
 			.sort((a, b) => b.fetchedAt - a.fetchedAt)[0];
 	}
 
-	getSnapshotForContext(ctx) {
+	getSnapshotForContext(ctx: TlhSubscriptionUsageContext | undefined): TlhSubscriptionUsageSnapshot | undefined {
 		const target = resolveTlhSubscriptionUsageDisplayTarget(ctx);
 		if (!target) {
 			return undefined;
@@ -506,7 +621,7 @@ export class TlhSubscriptionUsageService {
 		return this.snapshotForCacheKey(target.provider, target.cacheKey);
 	}
 
-	isEligible(target) {
+	isEligible(target: string | TlhSubscriptionUsageContext | undefined): boolean {
 		if (typeof target === "string") {
 			return isSupportedTlhSubscriptionUsageProvider(target) && this.activeCacheKeys.has(target);
 		}
@@ -514,7 +629,7 @@ export class TlhSubscriptionUsageService {
 		return Boolean(displayTarget && this.ineligibleCacheKeys.get(displayTarget.provider) !== displayTarget.cacheKey);
 	}
 
-	clearProvider(provider) {
+	clearProvider(provider: string): void {
 		if (!isSupportedTlhSubscriptionUsageProvider(provider)) {
 			return;
 		}
@@ -537,14 +652,14 @@ export class TlhSubscriptionUsageService {
 		this.ineligibleCacheKeys.delete(provider);
 	}
 
-	activateTarget(provider, cacheKey) {
+	activateTarget(provider: TlhSubscriptionUsageProvider, cacheKey: string): void {
 		if (this.activeCacheKeys.get(provider) !== cacheKey) {
 			this.clearProvider(provider);
 			this.activeCacheKeys.set(provider, cacheKey);
 		}
 	}
 
-	clear() {
+	clear(): void {
 		this.snapshots.clear();
 		this.lastAttempts.clear();
 		this.inFlight.clear();
@@ -552,7 +667,10 @@ export class TlhSubscriptionUsageService {
 		this.ineligibleCacheKeys.clear();
 	}
 
-	async refresh(ctx, options = {}) {
+	async refresh(
+		ctx: TlhSubscriptionUsageContext | undefined,
+		options: { force?: boolean } = {},
+	): Promise<TlhSubscriptionUsageSnapshot | undefined> {
 		const provider = ctx?.model?.provider;
 		if (!isSupportedTlhSubscriptionUsageProvider(provider)) {
 			return undefined;
@@ -616,7 +734,7 @@ export class TlhSubscriptionUsageService {
 		}
 
 		this.lastAttempts.set(cacheKey, nowMs);
-		const pending = (async () => {
+		const pending: Promise<TlhSubscriptionUsageSnapshot | undefined> = (async () => {
 			const snapshot = await fetchTlhSubscriptionUsage(target, {
 				fetch: this.fetch,
 				nowMs,
@@ -641,6 +759,8 @@ export class TlhSubscriptionUsageService {
 	}
 }
 
-export function createTlhSubscriptionUsageService(options = {}) {
+export function createTlhSubscriptionUsageService(
+	options: TlhSubscriptionUsageServiceOptions = {},
+): TlhSubscriptionUsageService {
 	return new TlhSubscriptionUsageService(options);
 }

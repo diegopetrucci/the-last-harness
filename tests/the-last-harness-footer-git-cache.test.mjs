@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { FooterGitCache } from "../extensions/the-last-harness/footer-git-cache.ts";
+import { createJiti } from "jiti";
+
+const jiti = createJiti(import.meta.url);
+const { FooterGitCache } = await jiti.import("../extensions/the-last-harness/footer-git-cache.ts");
 
 const HASH = "1234567890abcdef1234567890abcdef12345678";
 
