@@ -6,7 +6,7 @@ import {
 	formatPullRequestFooterSegment,
 	formatTlhGitFooterSegments,
 	parseGitStatusPorcelainV2,
-} from "../extensions/the-last-harness/footer-git.mjs";
+} from "../extensions/the-last-harness/footer-git.ts";
 
 const HASH = "1234567890abcdef1234567890abcdef12345678";
 

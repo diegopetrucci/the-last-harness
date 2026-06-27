@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
-import { parseGitStatusPorcelainV2 } from "./footer-git.mjs";
+import { parseGitStatusPorcelainV2 } from "./footer-git.js";
 
 /**
- * Snapshot shape used by `formatTlhGitFooterSegments` in `./footer-git.mjs`.
+ * Snapshot shape used by `formatTlhGitFooterSegments` in `./footer-git.js`.
  * Kept structurally compatible with the return value of `parseGitStatusPorcelainV2`.
  */
 export type GitStatusSnapshot = {

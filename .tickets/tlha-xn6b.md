@@ -1,7 +1,7 @@
 ---
 id: tlha-xn6b
-status: open
-deps: [tlha-fcjg]
+status: closed
+deps: []
 links: []
 created: 2026-06-27T07:37:14Z
 type: task

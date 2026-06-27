@@ -4,7 +4,7 @@ import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { createJiti } from "jiti";
 
-import { createTlhSubscriptionUsageService } from "../extensions/the-last-harness/subscription-usage.mjs";
+import { createTlhSubscriptionUsageService } from "../extensions/the-last-harness/subscription-usage.ts";
 import { DEFAULT_PRIMARY_AGENT } from "../extensions/the-last-harness-primary-agent.mjs";
 
 const jiti = createJiti(import.meta.url);
