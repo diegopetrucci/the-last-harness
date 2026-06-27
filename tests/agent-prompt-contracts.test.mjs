@@ -238,14 +238,33 @@ test("base primary prompts include concise contrarian guidance where relevant", 
 	assert.match(bugHunterBody, /strongest opposing case/i);
 });
 
-test("base architect and rush prompts keep ci failure investigation guidance behind the experimental flag", () => {
+test("base architect and rush prompts keep the post-pr ci watch contract concise and conservative", () => {
 	for (const name of ["architect", "rush"]) {
 		const { normalizedBody } = readAgentPrompt("primary", name);
+		assert.match(normalizedBody, /after opening a pr, monitor ci\/status checks: check immediately\./i);
+		assert.match(
+			normalizedBody,
+			/if checks are pending, queued, running, or absent, ask the user concisely whether to keep a background ci watch and report pass\/fail/i,
+		);
+		assert.match(normalizedBody, /do not enumerate the polling cadence in normal user-facing wording/i);
+		assert.match(
+			normalizedBody,
+			/if you keep watching, use this internal cadence: immediate, 30s, 60s, 2m, 5m, 10m, 15m, 20m, 30m, then hourly/i,
+		);
+		assert.match(normalizedBody, /only say ci is still running if you have actually observed a running state/i);
+		assert.equal(
+			(normalizedBody.match(/ci is still running/gi) ?? []).length,
+			1,
+			`${name} should mention "CI is still running" only in the observed-state-qualified rule`,
+		);
+		assert.match(normalizedBody, /if any fail, report the failure and ask the user whether to proceed\./i);
 		assert.doesNotMatch(normalizedBody, /read-only investigation before asking the user whether to proceed/i);
 		assert.doesNotMatch(normalizedBody, /inspect failed checks, logs, workflow\/config files, diffs/i);
 		assert.doesNotMatch(normalizedBody, /rerun jobs, change the pr, or take any other follow-up action during this investigation/i);
-		assert.match(normalizedBody, /after opening a pr, monitor ci\/status checks/i);
-		assert.match(normalizedBody, /do not investigate .* unless the user explicitly asks/i);
+		assert.match(
+			normalizedBody,
+			/do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks\./i,
+		);
 	}
 });
 

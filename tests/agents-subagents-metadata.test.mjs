@@ -16,8 +16,9 @@ test("web-scout frontmatter has expected metadata fields", () => {
 		splitCommaList(fm.tools),
 		["web_search", "fetch_content", "get_search_content", "read", "grep", "find", "ls", "contact_supervisor"],
 	);
-	assert.equal(fm.model, "anthropic/claude-haiku-4-5");
+	assert.equal(fm.model, undefined);
 	assert.deepEqual(splitCommaList(fm.tlhOpenaiModels), ["openai-codex/gpt-5.4-mini"]);
+	assert.equal(fm.tlhAnthropicModels, "anthropic/claude-haiku-4-5");
 	assert.equal(fm.thinking, "high");
 	assert.equal(fm.systemPromptMode, "replace");
 	assert.equal(fm.inheritProjectContext, "true");
@@ -56,8 +57,9 @@ test("loadSubagentMetadata exposes web-scout with expected model, tlhOpenaiModel
 	const webScout = subagents.find((agent) => agent.name === "web-scout");
 
 	assert.ok(webScout, "web-scout should be present in loadSubagentMetadata()");
-	assert.equal(webScout.model, "anthropic/claude-haiku-4-5");
+	assert.equal(webScout.model, undefined);
 	assert.deepEqual(webScout.tlhOpenaiModels, ["openai-codex/gpt-5.4-mini"]);
+	assert.deepEqual(webScout.tlhAnthropicModels, ["anthropic/claude-haiku-4-5"]);
 	assert.ok("preferOppositeProvider" in webScout);
 	assert.equal(webScout.preferOppositeProvider, undefined);
 	assert.equal(

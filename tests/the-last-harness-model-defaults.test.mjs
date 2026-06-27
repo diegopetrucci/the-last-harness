@@ -11,8 +11,8 @@ const {
 
 const developer = {
 	name: "developer",
-	model: "anthropic/claude-sonnet-4-6",
 	tlhOpenaiModels: ["openai-codex/gpt-5.4"],
+	tlhAnthropicModels: ["anthropic/claude-sonnet-4-6"],
 };
 
 const codeReviewer = {
@@ -83,12 +83,28 @@ const openaiAvailable = [
 
 const reducedIndependenceNotice = "TLH fell back to a same-provider review model; review independence is reduced.";
 
-test("provider-aware model resolver keeps Anthropic when the default model is available", () => {
+test("provider-aware model resolver follows active Anthropic provider for non-review subagents", () => {
 	assert.equal(selectProviderAwareAgentModelId(developer, anthropicAvailable, "anthropic"), "anthropic/claude-sonnet-4-6");
 
 	const input = { agent: "developer", task: "Implement the ticket" };
-	assert.equal(applyProviderAwareSubagentModels(input, agents, anthropicAvailable, "anthropic"), 0);
-	assert.deepEqual(input, { agent: "developer", task: "Implement the ticket" });
+	assert.equal(applyProviderAwareSubagentModels(input, agents, anthropicAvailable, "anthropic"), 1);
+	assert.equal(input.model, "anthropic/claude-sonnet-4-6");
+});
+
+test("provider-aware model resolver follows active provider for non-review subagents when both providers are available", () => {
+	const available = [...anthropicAvailable, ...codexAvailable];
+
+	// OpenAI-Codex is active → picks codex model, not Anthropic (the key fix)
+	assert.equal(selectProviderAwareAgentModelId(developer, available, "openai-codex"), "openai-codex/gpt-5.4");
+	const codexInput = { agent: "developer", task: "Implement the ticket" };
+	assert.equal(applyProviderAwareSubagentModels(codexInput, agents, available, "openai-codex"), 1);
+	assert.equal(codexInput.model, "openai-codex/gpt-5.4");
+
+	// Anthropic is active → picks Anthropic model
+	assert.equal(selectProviderAwareAgentModelId(developer, available, "anthropic"), "anthropic/claude-sonnet-4-6");
+	const anthropicInput = { agent: "developer", task: "Implement the ticket" };
+	assert.equal(applyProviderAwareSubagentModels(anthropicInput, agents, available, "anthropic"), 1);
+	assert.equal(anthropicInput.model, "anthropic/claude-sonnet-4-6");
 });
 
 test("provider-aware model resolver picks OpenAI Codex when Anthropic is unavailable", () => {
