@@ -2735,6 +2735,61 @@ test("wrapper plain update helper does not prepend executable --pi-cmd directory
 	assert.equal(updatePathEntries.includes(agentBin), false);
 });
 
+// ── NODE_COMPILE_CACHE wrapper tests ────────────────────────────────────────
+
+test("wrapper pi exec path exports NODE_COMPILE_CACHE pointing at the runtime prefix", (t) => {
+	const root = makeTempDir("tlh-wrapper-node-compile-cache-");
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const agentBin = join(agentDir, "bin");
+	const runtimeDir = join(root, "runtime");
+	const pinnedPiDir = join(runtimeDir, "bin");
+	const binDir = join(root, "bin");
+	const packageRoot = join(root, "package");
+	const piLog = join(root, "pi.txt");
+	mkdirSync(agentBin, { recursive: true });
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	// Fake pi logs NODE_COMPILE_CACHE so we can assert its value.
+	writeFakePi(pinnedPiDir, [
+		`{ printf 'compile_cache=%s\\n' "\${NODE_COMPILE_CACHE:-}"; } >"${piLog}"`,
+		"exit 0",
+	].join("\n"));
+
+	runHelper("scripts/tlh-wrapper.mjs", [
+		"--agent-dir", agentDir,
+		"--bin-dir", binDir,
+		"--wrapper-name", "tlh",
+		"--package-root", packageRoot,
+		"--pi-cmd", join(pinnedPiDir, "pi"),
+	], { homeDir });
+
+	const wrapper = join(binDir, "tlh");
+	const result = spawnSync(wrapper, ["chat"], {
+		env: scrubInstallerEnv({ HOME: homeDir, PATH: process.env.PATH || "" }),
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+
+	const piRecord = Object.fromEntries(
+		readFileSync(piLog, "utf8").trim().split(/\r?\n/).map((line) => {
+			const separator = line.indexOf("=");
+			return [line.slice(0, separator), line.slice(separator + 1)];
+		}),
+	);
+
+	// NODE_COMPILE_CACHE must point to <runtime-prefix>/node-compile-cache.
+	// runtimeDir = dirname(pinnedPiDir), which is dirname(dirname(piCmd)).
+	assert.equal(
+		piRecord.compile_cache,
+		join(runtimeDir, "node-compile-cache"),
+		`NODE_COMPILE_CACHE must be runtimeDir/node-compile-cache; got: ${piRecord.compile_cache}`,
+	);
+});
+
 // ── cleanupRetiredProfileFiles tests ─────────────────────────────────────────
 
 test("RETIRED_PROFILE_FILES includes extensions/librarian.json", () => {

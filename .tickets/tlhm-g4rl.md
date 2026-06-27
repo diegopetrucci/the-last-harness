@@ -1,6 +1,6 @@
 ---
 id: tlhm-g4rl
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-06-27T19:54:30Z

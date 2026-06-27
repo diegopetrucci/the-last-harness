@@ -459,6 +459,11 @@ function renderWrapper(args: WrapperRenderArgs): string {
 		'  tlh_pinned_dir="."',
 		'fi',
 		'export PATH="${tlh_managed_bin}:${tlh_pinned_dir}${tlh_sanitized_path:+:${tlh_sanitized_path}}"',
+		// Set NODE_COMPILE_CACHE to a stable dir under the private runtime prefix so
+		// Node's on-disk V8 code cache persists across launches.  The dir is already
+		// listed in RUNTIME_OWNED_TOPLEVEL and the uninstall allow-list; Node creates
+		// it automatically.  Scope: interactive pi exec path only.
+		'export NODE_COMPILE_CACHE="${tlh_pinned_dir%/*}/node-compile-cache"',
 		'exec "${default_pi_cmd}" "$@"',
 	];
 	return `${lines.join("\n")}\n`;
