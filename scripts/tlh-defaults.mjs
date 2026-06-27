@@ -132,13 +132,19 @@ function ensureMutableSettings(settings) {
 	settings.tlh ??= {};
 }
 
+function isLegacyRtkDisabledId(id) {
+	return id === "rtk" || id === "pi-rtk";
+}
+
 function orderedDisabledIds(ids, defaultExtensions) {
 	const knownIds = new Set(defaultExtensions.map((extension) => extension.id));
 	const ordered = [];
 	for (const extension of defaultExtensions) {
 		if (ids.has(extension.id)) ordered.push(extension.id);
 	}
-	const unknown = [...ids].filter((id) => !knownIds.has(id)).sort((a, b) => a.localeCompare(b));
+	const unknown = [...ids]
+		.filter((id) => !knownIds.has(id) && !isLegacyRtkDisabledId(id))
+		.sort((a, b) => a.localeCompare(b));
 	return [...ordered, ...unknown];
 }
 

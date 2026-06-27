@@ -18,6 +18,7 @@ function tempFixture({
 	defaultExtensions = [{ id: "helper", source: "npm:helper@1.2.3" }],
 	gnosisVersion = "0.5.3",
 	installVersion = gnosisVersion,
+	rtkVersion = "0.42.4",
 	includeLatestReleaseUrl = true,
 } = {}) {
 	const dir = mkdtempSync(join(tmpdir(), "tlh-check-package-versions-test-"));
@@ -26,6 +27,7 @@ function tempFixture({
 	const defaultExtensionsPath = join(dir, "default-extensions.json");
 	const gnosisScriptPath = join(dir, "tlh-gnosis.mjs");
 	const installScriptPath = join(dir, "tlh-install.mjs");
+	const rtkScriptPath = join(dir, "tlh-rtk.mjs");
 
 	writeFileSync(packagePath, `${JSON.stringify({
 		name: "fixture",
@@ -54,8 +56,9 @@ function tempFixture({
 			: "",
 		"",
 	].join("\n"));
+	writeFileSync(rtkScriptPath, `const DEFAULT_RTK_VERSION = ${JSON.stringify(rtkVersion)};\n`);
 
-	return { packagePath, lockfilePath, defaultExtensionsPath, gnosisScriptPath, installScriptPath };
+	return { packagePath, lockfilePath, defaultExtensionsPath, gnosisScriptPath, installScriptPath, rtkScriptPath };
 }
 
 function runCheckPackageVersions(fixture) {
@@ -66,6 +69,7 @@ function runCheckPackageVersions(fixture) {
 		"--default-extensions", fixture.defaultExtensionsPath,
 		"--gnosis-script", fixture.gnosisScriptPath,
 		"--gnosis-script", fixture.installScriptPath,
+		"--rtk-script", fixture.rtkScriptPath,
 	], {
 		cwd: repoRoot,
 		encoding: "utf8",
@@ -262,4 +266,16 @@ test("check-package-versions rejects latest as the managed Gnosis default", () =
 	assert.equal(result.status, 1);
 	assert.match(result.stderr, /tlh-gnosis\.mjs#DEFAULT_GNOSIS_VERSION must use an exact version, found "latest"/);
 	assert.match(result.stderr, /tlh-install\.mjs#DEFAULT_GNOSIS_VERSION must use an exact version, found "latest"/);
+});
+
+test("check-package-versions rejects latest as the managed RTK default", () => {
+	const fixture = tempFixture({
+		packageVersion: "1.2.3",
+		rtkVersion: "latest",
+	});
+
+	const result = runCheckPackageVersions(fixture);
+
+	assert.equal(result.status, 1);
+	assert.match(result.stderr, /tlh-rtk\.mjs#DEFAULT_RTK_VERSION must use an exact version, found "latest"/);
 });

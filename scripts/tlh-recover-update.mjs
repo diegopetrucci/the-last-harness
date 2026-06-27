@@ -4,12 +4,14 @@ import { spawnSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_WRAPPER_NAME = "tlh";
 const VALID_TRACKS = new Set(["latest-release", "pinned-tag", "ref", "custom"]);
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 const PACKAGE_UPDATE_ARGS = ["update", "--extensions"];
+const MANAGED_RTK_SUPPORTED_PLATFORMS = new Set(["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"]);
 const PACKAGE_UPDATE_UNSUPPORTED_OPTIONS = [
 	["track", "--track"],
 	["ref", "--ref"],
@@ -474,6 +476,48 @@ function printPackageUpdateDryRun(piCommand, args) {
 	console.log(`Would run: PI_CODING_AGENT_DIR=${shellQuote(args.agentDir)} ${shellQuote(piCommand)} ${PACKAGE_UPDATE_ARGS.map(shellQuote).join(" ")}`);
 }
 
+function managedRtkSupportedPlatform() {
+	return MANAGED_RTK_SUPPORTED_PLATFORMS.has(`${process.platform}-${process.arch}`);
+}
+
+function managedRtkScriptPath() {
+	return join(dirname(fileURLToPath(import.meta.url)), "tlh-rtk.mjs");
+}
+
+function installManagedRtk(args, env) {
+	if (!managedRtkSupportedPlatform()) return;
+	const scriptPath = managedRtkScriptPath();
+	if (!existsSync(scriptPath)) {
+		throw new Error(`managed RTK support script not found at ${scriptPath}; run \`tlh update\` to repair support files.`);
+	}
+	const commandArgs = [
+		scriptPath,
+		"--agent-dir",
+		args.agentDir,
+		"--target",
+		join(args.agentDir, "bin", "rtk"),
+	];
+	if (args.dryRun) commandArgs.push("--dry-run", "--detail");
+	else if (args.verbose) commandArgs.push("--detail");
+	if (args.quiet) commandArgs.push("--quiet");
+	commandArgs.push("install-managed");
+
+	const result = spawnSync(process.execPath, commandArgs, {
+		encoding: "utf8",
+		env: {
+			...env,
+			PI_CODING_AGENT_DIR: args.agentDir,
+		},
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	if (result.stderr) process.stderr.write(result.stderr);
+	if (result.error || result.status !== 0) {
+		const status = result.status ?? result.signal ?? result.error?.code ?? 1;
+		const output = `${result.stderr || ""}${result.stdout || ""}`.trim();
+		throw new Error(output || `managed RTK install failed (exit ${status})`);
+	}
+}
+
 function runPackageUpdate(args) {
 	assertPackageUpdateTargetSafe(args.agentDir);
 	assertPackageUpdateArgs(args);
@@ -483,6 +527,7 @@ function runPackageUpdate(args) {
 	const piCommand = join(dirname(args.agentDir), "runtime", "bin", "pi");
 	if (args.dryRun) {
 		printPackageUpdateDryRun(piCommand, args);
+		installManagedRtk(args, sanitizedEnv);
 		return;
 	}
 	if (!existsSync(piCommand)) {
@@ -505,7 +550,13 @@ function runPackageUpdate(args) {
 	if (result.error) {
 		throw result.error;
 	}
-	process.exitCode = result.status ?? (result.signal ? 1 : 0);
+	const exitCode = result.status ?? (result.signal ? 1 : 0);
+	if (exitCode !== 0) {
+		process.exitCode = exitCode;
+		return;
+	}
+	installManagedRtk(args, sanitizedEnv);
+	process.exitCode = 0;
 }
 
 async function downloadInstaller(url) {

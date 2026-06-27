@@ -383,6 +383,7 @@ required|scripts/tlh-defaults.mjs
 required|scripts/lib/default-extensions.mjs
 required|scripts/tlh-gnosis.mjs
 required|scripts/tlh-tickets.mjs
+required|scripts/tlh-rtk.mjs
 required|scripts/tlh-recover-update.mjs
 optional|scripts/tlh-update.mjs
 optional|scripts/tlh-wrapper.mjs
@@ -589,6 +590,8 @@ dry_run_without_stage1() {
   fi
   log "Would fetch Gnosis integration support files."
   log "Would fetch tlh tickets support files."
+  log "Would fetch tlh RTK support files."
+  log "Would install managed RTK into isolated profile: ${agent_dir}/bin/rtk"
   log "Would fetch tlh update support files."
   log "Would fetch tlh wrapper support files."
   log "Would fetch tlh install-state support files."

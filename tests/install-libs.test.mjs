@@ -730,6 +730,13 @@ test("support manifests preserve current-ref packaging while keeping stage-0 boo
 	});
 	assert.equal(manifest.find((file) => file.variable === "TLH_GNOSIS_SCRIPT")?.requirement, "required");
 	assert.equal(manifest.find((file) => file.variable === "TLH_GNOSIS_SCRIPT")?.installName, "");
+	assert.deepEqual(manifest.find((file) => file.variable === "TLH_RTK_SCRIPT"), {
+		variable: "TLH_RTK_SCRIPT",
+		requirement: "required",
+		relativePath: "scripts/tlh-rtk.mjs",
+		tempPath: "tlh-rtk.mjs",
+		installName: "tlh-rtk.mjs",
+	});
 	assert.deepEqual(manifest.find((file) => file.variable === "TLH_RECOVER_UPDATE_SCRIPT"), {
 		variable: "TLH_RECOVER_UPDATE_SCRIPT",
 		requirement: "required",
@@ -749,6 +756,7 @@ test("support manifests preserve current-ref packaging while keeping stage-0 boo
 
 	const installableVariables = new Set(installableSupportFiles().map((file) => file.variable));
 	for (const variable of [
+		"TLH_RTK_SCRIPT",
 		"TLH_RECOVER_UPDATE_SCRIPT",
 	]) {
 		assert.equal(installableVariables.has(variable), true, variable);
@@ -775,6 +783,7 @@ test("support manifests preserve current-ref packaging while keeping stage-0 boo
 	assert.doesNotMatch(bootstrap, /^optional\|scripts\/lib\/tlh-safe-profile-write\.mjs$/m);
 	assert.match(bootstrap, /^required\|scripts\/lib\/tlh-install-utils\.mjs$/m);
 	assert.match(bootstrap, /^required\|scripts\/tlh-gnosis\.mjs$/m);
+	assert.match(bootstrap, /^required\|scripts\/tlh-rtk\.mjs$/m);
 	assert.match(bootstrap, /^required\|scripts\/tlh-recover-update\.mjs$/m);
 	assert.match(bootstrap, /^optional\|scripts\/tlh-wrapper\.mjs$/m);
 	assert.match(bootstrap, /^optional\|scripts\/tlh-install-state\.mjs$/m);
