@@ -322,6 +322,10 @@ const FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES = Object.freeze([
     "npm:@diegopetrucci/pi-permission-gate",
     "npm:@diegopetrucci/pi-confirm-destructive",
     "npm:@diegopetrucci/pi-oracle",
+    "git:github.com/diegopetrucci/pi-rtk",
+    "npm:pi-rtk",
+    "npm:@sherif-fanous/pi-rtk",
+    "git:github.com/sherif-fanous/pi-rtk",
 ]);
 function purgeForceRemovedRetiredDefaultExtensionPackages(settings, changes) {
     if (!Array.isArray(settings.packages))
@@ -358,6 +362,18 @@ function pruneOracleDisabledDefaultExtension(settings, changes) {
         return;
     settings.tlh.disabledDefaultExtensions = nextValues;
     changes.push("remove stale oracle opt-out from tlh.disabledDefaultExtensions");
+}
+function pruneRtkDisabledDefaultExtension(settings, changes) {
+    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
+        return;
+    const values = settings.tlh.disabledDefaultExtensions;
+    if (!Array.isArray(values))
+        return;
+    const nextValues = values.filter((value) => !(typeof value === "string" && ["rtk", "pi-rtk"].includes(value.trim())));
+    if (nextValues.length === values.length)
+        return;
+    settings.tlh.disabledDefaultExtensions = nextValues;
+    changes.push("remove stale rtk opt-out from tlh.disabledDefaultExtensions");
 }
 function scrubGnosisSettings(settings, changes) {
     if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
@@ -577,6 +593,7 @@ function main() {
     purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
     pruneContextCapDisabledDefaultExtension(next, changes);
     pruneOracleDisabledDefaultExtension(next, changes);
+    pruneRtkDisabledDefaultExtension(next, changes);
     syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
     log(args, `Pi settings: ${settingsPath}`);
     if (changes.length === 0) {

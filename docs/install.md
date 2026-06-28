@@ -10,7 +10,7 @@ Run the one-liner:
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
 ```
 
-On supported platforms (linux/darwin × x64/arm64), it installs [Gnosis](https://github.com/skorokithakis/gnosis) automatically. TLH currently pins the managed default to Gnosis `v0.5.3`; installer-owned `TLH_GNOSIS_VERSION` and `TLH_GNOSIS_REPO` overrides can still point at another release or repository when needed. Installs on unsupported platforms hard-fail. TLH also requires `tk` ticket integration; if no valid configured/existing `tk` is found, TLH installs a managed copy at `~/.the-last-harness/agent/bin/tk`. If TLH cannot validate or install `tk`, install fails with an actionable error instead of creating an incomplete workflow. Once the installation is finished, start `tlh` by running… you guessed it, `tlh`.
+On supported platforms (linux/darwin × x64/arm64), it installs [Gnosis](https://github.com/skorokithakis/gnosis) automatically. TLH currently pins the managed default to Gnosis `v0.5.3`; installer-owned `TLH_GNOSIS_VERSION` and `TLH_GNOSIS_REPO` overrides can still point at another release or repository when needed. Installs on unsupported platforms hard-fail. TLH also requires `tk` ticket integration; if no valid configured/existing `tk` is found, TLH installs a managed copy at `~/.the-last-harness/agent/bin/tk`. TLH likewise installs a pinned managed native RTK binary at `~/.the-last-harness/agent/bin/rtk` for shell-command rewriting. If TLH cannot validate or install `tk`, or cannot install and validate the managed RTK binary, install fails with an actionable error instead of creating an incomplete workflow. Once the installation is finished, start `tlh` by running… you guessed it, `tlh`.
 
 Note: if you already have `pi` installed, `tlh` does not replace it — you can keep both, as it uses its own isolated config in `~/.the-last-harness/` and never mutates normal `~/.pi/agent` settings.
 
@@ -75,7 +75,7 @@ tlh update --track latest-release
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
 ```
 
-Normal updates keep Gnosis and ticket integration enabled. They install or refresh the managed isolated `gn` binary when needed, re-enable legacy `settings.tlh.tickets.enabled=false` values, reuse a valid configured/existing `tk` when possible, and install or refresh the managed isolated copy at `~/.the-last-harness/agent/bin/tk` when needed. If no valid `tk` is available and the managed install fails, `tlh update` fails with an actionable error; provide a valid command with `tlh tickets enable --install-path /path/to/tk` or rerun the update once the managed download can succeed. Existing repo-local `.gnosis` and `.tickets` data is left in place.
+Normal updates keep Gnosis and ticket integration enabled. They install or refresh the managed isolated `gn` binary when needed, re-enable legacy `settings.tlh.tickets.enabled=false` values, reuse a valid configured/existing `tk` when possible, install or refresh the managed isolated copy at `~/.the-last-harness/agent/bin/tk` when needed, and repair the pinned managed RTK binary at `~/.the-last-harness/agent/bin/rtk` when needed. If no valid `tk` is available and the managed install fails, or if the managed RTK binary cannot be installed and validated, `tlh update` fails with an actionable error; provide a valid command with `tlh tickets enable --install-path /path/to/tk` for tickets, or rerun the update once the managed download can succeed. Existing repo-local `.gnosis` and `.tickets` data is left in place.
 
 The updating process is intentionally conservative, and won't replace your custom extensions, themes, and so on. If you spot anything that was overridden, [please open an issue](https://github.com/diegopetrucci/the-last-harness/issues).
 
@@ -90,6 +90,32 @@ Release builds with TelemetryDeck identifiers configured also send at most one p
 To opt out persistently, set `"tlh": { "telemetry": { "enabled": false } }` in `~/.the-last-harness/agent/settings.json`. This opt-out is user-owned and survives `tlh update` and installer reruns. Per-run opt-outs are `PI_OFFLINE=1`, `TLH_SKIP_TELEMETRY=1`, `TLH_TELEMETRY_DISABLED=1`, or `PI_TELEMETRY=0`. To reset only the pseudonymous install ID, remove `~/.the-last-harness/agent/tlh/telemetry-state.json`.
 
 Plain `tlh update` also refreshes bundled default extension packages. Bundled npm defaults are installer-pinned to explicit versions from `config/default-extensions.json`, while TLH git-fork defaults stay pinned to their tagged refs; TLH only changes those managed versions when a TLH release updates the bundle. Updates still refresh pinned critical defaults safely before updating other enabled defaults.
+
+## Managed RTK
+
+Native RTK rewriting is bundled as a managed integration now; the old `pi-rtk` package and `/rtk` slash-command UI are gone. TLH keeps a pinned native `rtk` binary at `~/.the-last-harness/agent/bin/rtk`, and the wrapper adds `<agent>/bin` to `PATH` for the wrapped upstream Pi process so TLH sessions can find that managed binary normally.
+
+To disable rewriting for one launch, start TLH with `RTK_DISABLED=1`:
+
+```sh
+RTK_DISABLED=1 tlh
+```
+
+To disable rewriting persistently for the isolated profile, set `tlh.rtk.disabled` in `~/.the-last-harness/agent/settings.json`:
+
+```json
+{
+  "tlh": {
+    "rtk": {
+      "disabled": true
+    }
+  }
+}
+```
+
+To re-enable it, unset `RTK_DISABLED`, remove `tlh.rtk.disabled`, or set that value back to `false`.
+
+To remove only the managed binary while keeping the rest of the profile, delete `~/.the-last-harness/agent/bin/rtk`; the next install or `tlh update` recreates it. To remove the whole isolated RTK/profile setup, use the uninstall script below or delete `~/.the-last-harness` manually.
 
 ## Uninstall
 
@@ -149,7 +175,7 @@ rm -f ~/.local/bin/tlh
 rm -rf ~/.the-last-harness
 ```
 
-This removes the isolated agent dir, the private Pi runtime at `~/.the-last-harness/runtime`, and the managed `tk` copy under the TLH profile. To also remove a TLH-managed legacy pi at `~/.local` (from an older install, only if TLH originally installed it):
+This removes the isolated agent dir, the private Pi runtime at `~/.the-last-harness/runtime`, and the managed `tk` and `rtk` copies under the TLH profile. To also remove a TLH-managed legacy pi at `~/.local` (from an older install, only if TLH originally installed it):
 
 ```sh
 npm uninstall -g --ignore-scripts --prefix "$HOME/.local" @earendil-works/pi-coding-agent
@@ -157,4 +183,4 @@ npm uninstall -g --ignore-scripts --prefix "$HOME/.local" @earendil-works/pi-cod
 
 ## Security note
 
-The one-line installer and `tlh update` run shell commands on your machine, install the upstream Pi npm package per-user into a private runtime at `~/.the-last-harness/runtime` and bundled default extensions, install managed Gnosis and `tk` binaries into the isolated TLH profile when needed, create an isolated Pi profile, and write a wrapper command. Managed bundled npm extension sources are pinned to explicit versions in `config/default-extensions.json`; managed Gnosis defaults to the pinned `v0.5.3` release unless you override it. Managed `tk` is copied from the pinned `wedow/ticket` source tarball (`v0.3.2`) only after SHA-256 verification; TLH does not install `tk` globally or through Homebrew. Review `install.sh` and the stage-1 helper it fetches (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.
+The one-line installer and `tlh update` run shell commands on your machine, install the upstream Pi npm package per-user into a private runtime at `~/.the-last-harness/runtime` and bundled default extensions, install managed Gnosis, `tk`, and RTK binaries into the isolated TLH profile when needed, create an isolated Pi profile, and write a wrapper command. Managed bundled npm extension sources are pinned to explicit versions in `config/default-extensions.json`; managed Gnosis defaults to the pinned `v0.5.3` release unless you override it. Managed `tk` is copied from the pinned `wedow/ticket` source tarball (`v0.3.2`) only after SHA-256 verification; TLH does not install `tk` globally or through Homebrew. Managed RTK is pinned to `rtk-ai/rtk` `v0.42.4`, is installed as `~/.the-last-harness/agent/bin/rtk` only after SHA-256 verification and validation, and install/update hard-fail instead of continuing without it. Review `install.sh` and the stage-1 helper it fetches (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.

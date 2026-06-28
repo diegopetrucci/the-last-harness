@@ -26,6 +26,7 @@ const MAX_PI_VERSION = PINNED_PI_VERSION;
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
 const DEFAULT_GNOSIS_VERSION = "0.5.3";
 const DEFAULT_WRAPPER_NAME = "tlh";
+const MANAGED_RTK_SUPPORTED_PLATFORMS = new Set(["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"]);
 const VALID_UPDATE_TRACKS = ["latest-release", "pinned-tag", "ref", "custom"];
 // Ownership marker file written into the runtime prefix by TLH on every
 // successful provision/repair/reuse.  Authoritative ownership carrier; written
@@ -1263,6 +1264,46 @@ function gnosisInstallSkippedByEnv(config) {
     const value = config.env?.TLH_SKIP_GNOSIS_INSTALL;
     return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
 }
+function managedRtkSupportedPlatform() {
+    return MANAGED_RTK_SUPPORTED_PLATFORMS.has(`${process.platform}-${process.arch}`);
+}
+function configureRtk(config) {
+    if (!managedRtkSupportedPlatform())
+        return;
+    if (!config.supportFilePaths.TLH_RTK_SCRIPT || !existsSync(config.supportFilePaths.TLH_RTK_SCRIPT)) {
+        if (config.dryRun && config.supportFilesDryRunSkipped) {
+            log(config, "Would install required managed RTK after fetching support files.");
+            return;
+        }
+        throw new Error(`required managed RTK support script not found for ref ${config.ref}; re-run the installer from a release that includes scripts/tlh-rtk.mjs`);
+    }
+    const args = [
+        "--agent-dir",
+        config.agentDir,
+        "--target",
+        join(config.agentDir, "bin", "rtk"),
+        "install-managed",
+    ];
+    if (config.dryRun)
+        args.push("--dry-run", "--detail");
+    else if (config.verbose)
+        args.push("--detail");
+    if (config.quiet)
+        args.push("--quiet");
+    const result = spawnSync(process.execPath, [config.supportFilePaths.TLH_RTK_SCRIPT, ...args], {
+        env: inheritedCommandEnv(config, { PI_CODING_AGENT_DIR: config.agentDir }),
+        encoding: "utf8",
+        maxBuffer: COMMAND_MAX_BUFFER,
+        stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (result.stderr)
+        process.stderr.write(result.stderr);
+    if (result.error || result.status !== 0) {
+        const status = result.status ?? result.signal ?? spawnErrorCode(result.error) ?? 1;
+        const output = `${result.stderr || ""}${result.stdout || ""}`.trim();
+        throw new Error(output || `failed to install managed RTK (exit ${status})`);
+    }
+}
 function configureGnosis(config) {
     if (gnosisInstallSkippedByEnv(config)) {
         log(config, "Skipping Gnosis integration (TLH_SKIP_GNOSIS_INSTALL is set).");
@@ -1449,6 +1490,7 @@ async function runInstallFlow(config) {
     await mergeSettings(config);
     if (!config.noSettings)
         cleanupRetiredProfileFiles(config);
+    configureRtk(config);
     await writeInstallState(config);
     installDefaultExtensions(config);
     configureGnosis(config);

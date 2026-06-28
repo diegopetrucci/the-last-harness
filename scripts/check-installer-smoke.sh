@@ -398,6 +398,8 @@ make_fake_stage1_support_root() {
   local manifest_file="${root}/.fake-stage1-support-manifest"
   local requirement relative_path
   mkdir -p "${root}"
+  cp "${ROOT_DIR}/install.sh" "${root}/install.sh"
+  chmod +x "${root}/install.sh"
   extract_stage0_support_manifest false >"${manifest_file}"
   while IFS='|' read -r requirement relative_path; do
     [[ -n "${relative_path}" ]] || continue
@@ -410,6 +412,78 @@ console.log("BUG: fake local stage-1 was invoked");
 EOF_FAKE_STAGE1
 }
 
+write_stage0_manifest_variant() {
+  local dest="$1"
+  local extra_manifest="$2"
+  INSTALLER_DEST="${dest}" STAGE0_EXTRA_MANIFEST="${extra_manifest}" node <<'NODE_STAGE0_VARIANT'
+const fs = require('node:fs');
+
+const dest = process.env.INSTALLER_DEST;
+const extraManifest = (process.env.STAGE0_EXTRA_MANIFEST || '').split(/\r?\n/).filter(Boolean);
+const source = fs.readFileSync('install.sh', 'utf8');
+const startToken = "cat <<'EOF_SUPPORT_FILES'\n";
+const startIndex = source.indexOf(startToken);
+if (startIndex === -1) throw new Error('missing EOF_SUPPORT_FILES heredoc');
+const bodyStart = startIndex + startToken.length;
+const endMarker = '\nEOF_SUPPORT_FILES';
+const endIndex = source.indexOf(endMarker, bodyStart);
+if (endIndex === -1) throw new Error('unterminated EOF_SUPPORT_FILES heredoc');
+const output = extraManifest.length === 0
+  ? source
+  : `${source.slice(0, endIndex)}\n${extraManifest.join('\n')}${source.slice(endIndex)}`;
+fs.writeFileSync(dest, output, 'utf8');
+NODE_STAGE0_VARIANT
+  chmod +x "${dest}"
+}
+
+make_fake_remote_stage1_support_root() {
+  local root="$1"
+  local manifest_file="${root}/.fake-remote-stage1-support-manifest"
+  local requirement relative_path
+  local -a compatibility_paths=(
+    "config/librarian.defaults.json"
+    "scripts/tlh-install-query.mjs"
+    "scripts/lib/tlh-profile-writes.mjs"
+  )
+
+  mkdir -p "${root}"
+  cp "${ROOT_DIR}/install.sh" "${root}/install.sh"
+  chmod +x "${root}/install.sh"
+
+  extract_stage0_support_manifest false >"${manifest_file}"
+  while IFS='|' read -r requirement relative_path; do
+    [[ -n "${relative_path}" ]] || continue
+    mkdir -p "${root}/$(dirname "${relative_path}")"
+    cp "${ROOT_DIR}/${relative_path}" "${root}/${relative_path}"
+  done <"${manifest_file}"
+
+  local compatibility_path
+  for compatibility_path in "${compatibility_paths[@]}"; do
+    mkdir -p "${root}/$(dirname "${compatibility_path}")"
+    cp "${ROOT_DIR}/${compatibility_path}" "${root}/${compatibility_path}"
+  done
+
+  cat >"${root}/scripts/tlh-install.mjs" <<'EOF_FAKE_REMOTE_STAGE1'
+#!/usr/bin/env node
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(scriptDir, "..");
+for (const [label, targetPath] of [
+  ["compat_librarian_present", join(repoRoot, "config", "librarian.defaults.json")],
+  ["compat_query_present", join(scriptDir, "tlh-install-query.mjs")],
+  ["compat_profile_writes_present", join(scriptDir, "lib", "tlh-profile-writes.mjs")],
+  ["stale_poison_present", join(repoRoot, "poison", "stale-stage0-only.txt")],
+]) {
+  console.log(`${label}=${existsSync(targetPath)}`);
+}
+console.log("fake_stage1=ok");
+EOF_FAKE_REMOTE_STAGE1
+  chmod +x "${root}/scripts/tlh-install.mjs"
+}
+
 run_static_checks() {
   log "Running installer static checks..."
   bash -n install.sh
@@ -419,10 +493,12 @@ run_static_checks() {
   node --check scripts/tlh-defaults.mjs
   node --check scripts/tlh-gnosis.mjs
   node --check scripts/tlh-tickets.mjs
+  node --check scripts/tlh-rtk.mjs
   node --check scripts/tlh-update.mjs
   node --check scripts/tlh-wrapper.mjs
   node --check scripts/tlh-install-state.mjs
   node --check scripts/tlh-install.mjs
+  node --check scripts/tlh-install-query.mjs
   node --check scripts/lib/tlh-install-package-source.mjs
   node --check scripts/lib/tlh-install-paths.mjs
   node --check scripts/lib/tlh-install-utils.mjs
@@ -430,7 +506,9 @@ run_static_checks() {
   node --check scripts/lib/tlh-install-subagents.mjs
   node --check scripts/lib/tlh-install-support-files.mjs
   node --check scripts/lib/tlh-install-support-manifest.mjs
+  node --check scripts/lib/tlh-profile-writes.mjs
   node --check scripts/release-notes.mjs
+  node -e 'JSON.parse(require("node:fs").readFileSync("config/librarian.defaults.json", "utf8"))'
   check_extension_load_syntax
 }
 
@@ -519,6 +597,10 @@ EOF_FAKE_GIT
   assert_contains "${combined_file}" "Would download pinned wedow/ticket source:"
   assert_contains "${combined_file}" "Would verify SHA256:"
   assert_contains "${combined_file}" "Ticket CLI integration: enabled (${agent_dir}/bin/tk)"
+  if node -e 'process.exit(["darwin-arm64","darwin-x64","linux-arm64","linux-x64"].includes(`${process.platform}-${process.arch}`) ? 0 : 1)'; then
+    assert_contains "${combined_file}" "Would install RTK"
+    assert_contains "${combined_file}" "${agent_dir}/bin/rtk"
+  fi
 }
 
 run_stage1_relative_path_canonicalization_smoke() {
@@ -715,6 +797,8 @@ run_stdin_dry_run_smoke() {
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"
   assert_contains "${combined_file}" "Would fetch installer support files from"
+  assert_contains "${combined_file}" "Would fetch tlh RTK support files."
+  assert_contains "${combined_file}" "Would install managed RTK into isolated profile: ${agent_dir}/bin/rtk"
   assert_contains "${combined_file}" "Dry run only; no support files were downloaded."
   assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   assert_not_contains "${combined_file}" "fake curl was invoked"
@@ -837,13 +921,15 @@ run_stage0_node_preflight_smoke() {
   local stdout_file="${case_dir}/stdout.log"
   local stderr_file="${case_dir}/stderr.log"
   local combined_file="${case_dir}/combined.log"
+  local raw_base="https://example.invalid/node-preflight-ref"
   local status=0
   mkdir -p "${case_dir}" "${home_dir}"
-  make_failing_curl "${fakebin}"
+  make_support_copy_curl "${fakebin}"
+  make_fake_stage1_support_root "${case_dir}/support-root"
   make_fake_node_version "${fakebin}" "v22.18.9"
 
   set +e
-  (cd "${case_dir}" && run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
+  (cd "${case_dir}" && run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 HOME="${home_dir}" PATH="${fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${case_dir}/support-root" FAKE_RAW_BASE="${raw_base}" TLH_RAW_BASE="${raw_base}" bash -s -- --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
@@ -852,8 +938,9 @@ run_stage0_node_preflight_smoke() {
     cat "${combined_file}" >&2
     fail "stage-0 old Node remote preflight unexpectedly succeeded"
   fi
+  assert_contains "${combined_file}" "Refreshing installer stage-0 from ${raw_base}/install.sh before fetching support files."
   assert_contains "${combined_file}" "Node.js >= 22.19.0 is required (found v22.18.9). Install or upgrade Node.js, then rerun the installer."
-  assert_not_contains "${combined_file}" "fake curl was invoked"
+  assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"
 
@@ -1149,6 +1236,76 @@ run_missing_required_helper_preflight_smoke() {
   assert_not_contains "${combined_file}" "required installer support files not found for ref"
   # Confirm the install step was reached (preflight passed) and the runtime provision failed.
   assert_contains "${combined_file}" "Installing TLH private Pi runtime to"
+}
+
+run_stale_stage0_manifest_compatibility_smoke() {
+  log "Running stale stage-0 manifest compatibility smoke check..."
+  local case_dir="${TMP_ROOT}/stale-stage0-manifest-compat"
+  local home_dir="${case_dir}/home"
+  local agent_dir="${case_dir}/agent"
+  local bin_dir="${case_dir}/bin"
+  local fakebin="${case_dir}/fakebin"
+  local support_root="${case_dir}/support-root"
+  local stale_installer="${case_dir}/stale-install.sh"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local raw_base="https://example.invalid/current-main"
+  local stale_manifest=$'required|config/librarian.defaults.json\nrequired|scripts/tlh-install-query.mjs\nrequired|scripts/lib/tlh-profile-writes.mjs'
+  mkdir -p "${case_dir}" "${home_dir}"
+
+  make_support_copy_curl "${fakebin}"
+  make_fake_remote_stage1_support_root "${support_root}"
+  write_stage0_manifest_variant "${stale_installer}" "${stale_manifest}"
+
+  run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${support_root}" FAKE_RAW_BASE="${raw_base}" TLH_REF="main" TLH_RAW_BASE="${raw_base}" _TLH_STAGE0_CANONICALIZED=1 bash "${stale_installer}" --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  assert_contains "${combined_file}" "fake_stage1=ok"
+  assert_contains "${combined_file}" "compat_librarian_present=true"
+  assert_contains "${combined_file}" "compat_query_present=true"
+  assert_contains "${combined_file}" "compat_profile_writes_present=true"
+  assert_contains "${combined_file}" "stale_poison_present=false"
+  assert_absent "${agent_dir}"
+  assert_absent "${bin_dir}"
+  assert_absent "${home_dir}/.pi"
+  assert_absent "${home_dir}/.the-last-harness"
+}
+
+run_stage0_canonical_handoff_smoke() {
+  log "Running stale stage-0 canonical handoff smoke check..."
+  local case_dir="${TMP_ROOT}/stage0-canonical-handoff"
+  local home_dir="${case_dir}/home"
+  local agent_dir="${case_dir}/agent"
+  local bin_dir="${case_dir}/bin"
+  local fakebin="${case_dir}/fakebin"
+  local support_root="${case_dir}/support-root"
+  local stale_installer="${case_dir}/stale-install.sh"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local raw_base="https://example.invalid/current-main"
+  local stale_manifest=$'required|config/librarian.defaults.json\nrequired|scripts/tlh-install-query.mjs\nrequired|scripts/lib/tlh-profile-writes.mjs\nrequired|poison/stale-stage0-only.txt'
+  mkdir -p "${case_dir}" "${home_dir}"
+
+  make_support_copy_curl "${fakebin}"
+  make_fake_remote_stage1_support_root "${support_root}"
+  write_stage0_manifest_variant "${stale_installer}" "${stale_manifest}"
+
+  run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${support_root}" FAKE_RAW_BASE="${raw_base}" TLH_REF="main" TLH_RAW_BASE="${raw_base}" bash "${stale_installer}" --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  assert_contains "${combined_file}" "Refreshing installer stage-0 from ${raw_base}/install.sh before fetching support files."
+  assert_contains "${combined_file}" "fake_stage1=ok"
+  assert_contains "${combined_file}" "compat_librarian_present=false"
+  assert_contains "${combined_file}" "compat_query_present=false"
+  assert_contains "${combined_file}" "compat_profile_writes_present=false"
+  assert_contains "${combined_file}" "stale_poison_present=false"
+  assert_not_contains "${combined_file}" "stale-stage0-only.txt"
+  assert_absent "${agent_dir}"
+  assert_absent "${bin_dir}"
+  assert_absent "${home_dir}/.pi"
+  assert_absent "${home_dir}/.the-last-harness"
 }
 
 run_wrapper_install_state_normal_pi_guard_smoke() {
@@ -2407,6 +2564,8 @@ run_normal_pi_guard_smoke
 run_gnosis_managed_normal_pi_guard_smoke
 run_tickets_managed_normal_pi_guard_smoke
 run_missing_required_helper_preflight_smoke
+run_stale_stage0_manifest_compatibility_smoke
+run_stage0_canonical_handoff_smoke
 run_wrapper_install_state_normal_pi_guard_smoke
 run_release_pinning_smoke
 

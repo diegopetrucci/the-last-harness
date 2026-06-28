@@ -108,7 +108,7 @@ export const RETIRED_TLH_DEFAULT_PACKAGE_SOURCES = Object.freeze([
 	"npm:@diegopetrucci/pi-librarian",
 ]);
 
-const TARGETED_DEFAULT_EXTENSION_LOAD_ORDER = ["rtk", "quiet-tools"] as const;
+const TARGETED_DEFAULT_EXTENSION_LOAD_ORDER = [] as const;
 
 export function packageSourceOf(entry: unknown): string | undefined {
 	if (typeof entry === "string") return entry;
