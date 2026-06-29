@@ -27,6 +27,7 @@ const expectedBundledNpmSources = new Map([
 	["quiet-tools", "npm:@diegopetrucci/pi-quiet-tools@0.1.4"],
 	["dirty-repo-guard", "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.3"],
 	["triage-comments", "npm:@diegopetrucci/pi-triage-comments@0.1.4"],
+	["intercom", "npm:@diegopetrucci/pi-intercom@0.6.1"],
 ]);
 
 function tempFixture() {
@@ -204,7 +205,7 @@ test("installable support files no longer include the legacy defaults helper tre
 	assert.equal(installableVariables.has("TLH_RECOVER_UPDATE_SCRIPT"), true);
 });
 
-test("merge ignores and cleans stale/manual critical opt-outs while preserving non-critical opt-outs", () => {
+test("merge migrates legacy intercom git installs while cleaning stale critical opt-outs and preserving non-critical opt-outs", () => {
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
 		{
@@ -217,10 +218,15 @@ test("merge ignores and cleans stale/manual critical opt-outs while preserving n
 		},
 		{
 			id: "intercom",
-			replaces: ["npm:pi-intercom"],
+			aliases: ["pi-intercom"],
+			replaces: [
+				"npm:pi-intercom",
+				"git:github.com/nicobailon/pi-intercom",
+				"git:github.com/diegopetrucci/pi-intercom",
+			],
 			migrateReplacements: true,
 			critical: true,
-			source: "git:github.com/tlh/pi-intercom@pinned",
+			source: "npm:@diegopetrucci/pi-intercom@0.6.1",
 		},
 		{
 			id: "helper",
@@ -228,8 +234,12 @@ test("merge ignores and cleans stale/manual critical opt-outs while preserving n
 		},
 	], null, 2));
 	writeFileSync(fixture.settings, JSON.stringify({
-		packages: ["git:github.com/upstream/pi-subagents", "npm:pi-intercom", "npm:helper"],
-		tlh: { disabledDefaultExtensions: ["intercom", "pi-subagents", "helper"] },
+		packages: [
+			"git:github.com/upstream/pi-subagents",
+			"git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-6",
+			"npm:helper",
+		],
+		tlh: { disabledDefaultExtensions: ["pi-intercom", "pi-subagents", "helper"] },
 	}, null, 2));
 
 	runNode(mergeScript, [
@@ -241,9 +251,9 @@ test("merge ignores and cleans stale/manual critical opt-outs while preserving n
 
 	const settings = readJson(fixture.settings);
 	assert(settings.packages.includes("git:github.com/tlh/pi-subagents@pinned"));
-	assert(settings.packages.includes("git:github.com/tlh/pi-intercom@pinned"));
+	assert(settings.packages.includes("npm:@diegopetrucci/pi-intercom@0.6.1"));
 	assert(!settings.packages.includes("git:github.com/upstream/pi-subagents"));
-	assert(!settings.packages.includes("npm:pi-intercom"));
+	assert(!settings.packages.includes("git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-6"));
 	assert(!settings.packages.includes("npm:helper"));
 	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["helper"]);
 });
@@ -1073,29 +1083,42 @@ test("bundled manifest contains subagents and intercom entries with correct crit
 	assert.equal(subagents.migrateReplacements, true, "subagents replacements must stay enabled");
 
 	assert.ok(intercom, "bundled intercom entry should exist");
-	assert.equal(intercom.source, "git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-6");
+	assert.equal(intercom.source, expectedBundledNpmSources.get("intercom"));
 	assert.equal(intercom.critical, true, "intercom must stay critical");
 	assert.deepEqual(intercom.aliases, ["pi-intercom"]);
 	assert.deepEqual(intercom.replaces, [
 		"npm:pi-intercom",
 		"git:github.com/nicobailon/pi-intercom",
+		"git:github.com/diegopetrucci/pi-intercom",
 	]);
 	assert.equal(intercom.migrateReplacements, true, "intercom replacements must stay enabled");
 });
 
-test("bundled manifest contains intercom entry with correct tag and critical flags", () => {
-	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
-	const intercom = bundled.find(({ id }) => id === "intercom");
+test("bundled merge migrates legacy TLH intercom git installs to the scoped npm source", () => {
+	const fixture = tempFixture();
+	const bundledPath = join(repoRoot, "config", "default-extensions.json");
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: ["git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-6"],
+		tlh: { disabledDefaultExtensions: ["pi-intercom"] },
+	}, null, 2));
 
-	assert.ok(intercom, "bundled intercom entry should exist");
-	assert.equal(intercom.source, "git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-6");
-	assert.equal(intercom.critical, true, "intercom must stay critical");
-	assert.deepEqual(intercom.aliases, ["pi-intercom"]);
-	assert.deepEqual(intercom.replaces, [
-		"npm:pi-intercom",
-		"git:github.com/nicobailon/pi-intercom",
+	runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", bundledPath,
+		"--quiet",
 	]);
-	assert.equal(intercom.migrateReplacements, true, "intercom replacements must stay enabled");
+
+	const settings = readJson(fixture.settings);
+	assert(settings.packages.includes(expectedBundledNpmSources.get("intercom")));
+	assert.equal(
+		settings.packages.some((entry) => packageIdentity(entry) === "git:github.com/diegopetrucci/pi-intercom"),
+		false,
+	);
+	assert.deepEqual(
+		(settings.tlh?.disabledDefaultExtensions ?? []).filter((value) => value === "intercom" || value === "pi-intercom"),
+		[],
+	);
 });
 
 test("bundled manifest has no duplicate ids or alias conflicts", () => {
