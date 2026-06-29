@@ -11,7 +11,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
-- Pinned the bundled main-track `pi-subagents` default extension to reviewed upstream-main commit `fa1db3fb525ef97234be6b7df43ba1d5b4d17b45` so TLH main/ref users can test that delta without a TLH release.
+- Updated the bundled main-track `pi-subagents` default extension pin to reviewed upstream-main commit `ebc58962421338d9278fa10bd41d2cd857b1e62b` so TLH main/ref users can test the issue #29 profile-settings preservation fix without a TLH release.
 - Promoted `contrarian` from an experimental opt-in to a bundled default minor subagent. README and command docs now describe it as a sparing adversarial stress-test path rather than a `/experimental` enable/disable toggle.
 - The `librarian` subagent now performs read-only GitHub repository research directly via the `gh` CLI and `git` through `bash`, without a separately managed extension package. **Prerequisite:** `gh` must be installed and authenticated (`gh auth login` / `gh auth status`). Without it, librarian reports what it could not verify rather than silently failing.
 - Migrated TLH away from the old bundled `pi-rtk` fork to a managed pinned native RTK integration. TLH now installs `rtk-ai/rtk` `v0.42.4` at `~/.the-last-harness/agent/bin/rtk`, hard-fails install/update if that managed binary cannot be installed and validated, and uses `RTK_DISABLED=1` or `tlh.rtk.disabled` instead of the old default-extension opt-out flow.
