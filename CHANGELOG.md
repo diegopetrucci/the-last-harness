@@ -16,6 +16,7 @@ All notable changes to The Last Harness will be documented in this file.
 - The `librarian` subagent now performs read-only GitHub repository research directly via the `gh` CLI and `git` through `bash`, without a separately managed extension package. **Prerequisite:** `gh` must be installed and authenticated (`gh auth login` / `gh auth status`). Without it, librarian reports what it could not verify rather than silently failing.
 - Migrated TLH away from the old bundled `pi-rtk` fork to a managed pinned native RTK integration. TLH now installs `rtk-ai/rtk` `v0.42.4` at `~/.the-last-harness/agent/bin/rtk`, hard-fails install/update if that managed binary cannot be installed and validated, and uses `RTK_DISABLED=1` or `tlh.rtk.disabled` instead of the old default-extension opt-out flow.
 - Updated the bundled `mcporter` pin to `npm:@diegopetrucci/pi-mcp-adapter@2.10.1` instead of the previous fork git tag, reducing installer checkout work while preserving the existing MCP adapter behavior.
+- Moved the bundled `pi-web-access` default from the previous Diego git tag to `npm:@diegopetrucci/pi-web-access@0.10.8` and now migrates prior/customized replacement sources to the scoped TLH npm package.
 
 ## [0.26.0] - 2026-06-25
 
