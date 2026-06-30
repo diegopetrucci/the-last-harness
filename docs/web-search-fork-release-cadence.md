@@ -1,34 +1,34 @@
 # Web-search fork release cadence
 
-This document covers the pinned fork/tag workflow for `pi-web-access`. Durable web-search / web-scout policy decisions live in repo-local Gnosis entries `ywsuwh` and `gbmehw`.
+This document covers the source-audit, fork-tag, and scoped npm release workflow for `pi-web-access`. Durable web-search / web-scout policy decisions live in repo-local Gnosis entries `ywsuwh` and `gbmehw`.
 
-## Where the fork lives
+## Where the source lives
 
 Fork: <https://github.com/diegopetrucci/pi-web-access>
 Upstream: `nicobailon/pi-web-access`
 
-## Tag naming
+## Current TLH pin
 
-TLH release tags follow the form `tlh-vX.Y.Z-N`:
+TLH no longer installs `pi-web-access` from a git dependency. The bundled default extension source is:
+
+- TLH bundled extension source: `npm:@diegopetrucci/pi-web-access@0.10.8`
+- Source repository: <https://github.com/diegopetrucci/pi-web-access>
+- Previous git-based TLH source retained for migration coverage: `git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1`
+
+## Source tag naming
+
+When TLH needs a durable source checkpoint in the fork, use tags of the form `tlh-vX.Y.Z-N`:
 
 - `X.Y.Z` mirrors the upstream version from `nicobailon/pi-web-access`.
 - `N` is the TLH revision for changes made on top of the same upstream version (1, 2, 3, …).
 
 Example: `tlh-v0.10.7-1` is the first TLH revision on top of upstream `v0.10.7`.
 
-## Current TLH pin
-
-Every TLH fork tag records the upstream commit SHA in `NOTICE` for auditability.
-
-- TLH fork tag: `tlh-v0.10.7-1`
-- Upstream version: `v0.10.7`
-- Upstream commit SHA: `076bf0db5e739b200286ca37486e4edd8d19123c`
-- Tag audit: annotated, currently unsigned; tag SHA `863cb9fa1746eb2cb35543e20440508fd57fc85b`; tagged `2026-05-22`
-- Branch HEAD at tag: `cf224b77ed45bb4826f30898dfb8f559fb69622f`
+These tags are provenance markers for reviewed fork source states. Once the scoped npm package is published, TLH should treat the npm package version as the live bundled pin and the `tlh-v...` tag as historical source provenance only.
 
 ## Bump process
 
-Follow these steps the next time a tag is rolled:
+Follow these steps the next time the scoped package pin is rolled:
 
 1. Fetch upstream tags in your fork checkout:
    ```sh
@@ -40,8 +40,7 @@ Follow these steps the next time a tag is rolled:
    git rev-parse vX.Y.Z^{}
    ```
 
-3. Rebase or merge the TLH trim/safety patches onto the new upstream commit on a fresh branch
-   named `tlh-vX.Y.Z-1`.
+3. Rebase or merge the TLH trim/safety patches onto the new upstream commit on a fresh review branch.
 
 4. Re-run the full fork test suite:
    ```sh
@@ -50,37 +49,40 @@ Follow these steps the next time a tag is rolled:
    Fix any regressions surfaced by upstream changes — typically request-guard call-site shifts or
    new code paths needing guard plumbing.
 
-5. Update:
+5. Update source-side release metadata as needed:
    - `NOTICE` — new upstream commit SHA.
    - `CHANGELOG.md` — new entry.
-   - `README.md`'s "What leaves the machine" section if MCP behavior changed.
+   - `README.md`'s "What leaves the machine" section if behavior changed.
 
-6. Tag annotated (or signed if a key is available):
+6. If you want a durable source checkpoint before publishing, cut an annotated (or signed) TLH tag:
    ```sh
    git tag -a tlh-vX.Y.Z-1 -m "TLH fork of pi-web-access vX.Y.Z, revision 1"
    # or: git tag -s tlh-vX.Y.Z-1 -m "TLH fork of pi-web-access vX.Y.Z, revision 1"
    ```
 
-7. Push branch and tag explicitly (branch and tag share the same name, so fully qualify
-   both refspecs):
+7. Publish the reviewed scoped package version from that source state. TLH's bundled install source should point at the resulting npm package version (for example `npm:@diegopetrucci/pi-web-access@X.Y.Z`), not at the git tag.
+
+8. If you created a review branch and same-name tag, push both explicitly (fully qualified) so Git does not have to infer which ref you meant:
    ```sh
    git push origin refs/heads/tlh-vX.Y.Z-1:refs/heads/tlh-vX.Y.Z-1 refs/tags/tlh-vX.Y.Z-1:refs/tags/tlh-vX.Y.Z-1
    ```
 
-8. In the TLH repo:
-   - Update this document's current pin section with the new tag and upstream commit SHA.
-   - Bump `config/default-extensions.json` entry for `pi-web-access` (`source`) to the new tag.
-   - Update `tests/default-extensions.test.mjs` to pin the new tag string.
+9. In the TLH repo:
+   - Update this document's current pin section with the new scoped npm package version.
+   - Bump `config/default-extensions.json` entry for `pi-web-access` (`source`) to the new npm pin.
+   - Keep the migration `replaces` list current when a prior TLH-managed source should be migrated forward.
+   - Update `tests/default-extensions.test.mjs` to pin the new package version string.
+   - Update `docs/web-search.md` if user-facing setup, privacy, or opt-out wording changed.
 
-9. Run `npm run validate` in the TLH repo and fix any fallout. That TLH-repo validation flow uses
-   the quiet `npm test` dot reporter for passing runs; if you need the full Node test reporter while
-   diagnosing TLH-side failures, rerun `npm run test:verbose` in the TLH repo.
+10. Run `npm run validate` in the TLH repo and fix any fallout. That TLH-repo validation flow uses
+    the quiet `npm test` dot reporter for passing runs; if you need the full Node test reporter while
+    diagnosing TLH-side failures, rerun `npm run test:verbose` in the TLH repo.
 
 ## Notes
 
-- The branch and tag intentionally share the same name (`tlh-vX.Y.Z-1`). When pushing both,
+- The branch and tag may intentionally share the same name (`tlh-vX.Y.Z-1`). When pushing both,
   fully qualify each ref (`refs/heads/...` and `refs/tags/...`) so Git does not need to infer which
   same-name ref you meant.
-- Running the upstream `pi-web-access` extension alongside the TLH fork at the same time is
-  unsupported. Tool names are unchanged (`web_search`, `fetch_content`, `get_search_content`) and
+- Running the upstream `pi-web-access` extension alongside the TLH-managed package at the same time
+  is unsupported. Tool names are unchanged (`web_search`, `fetch_content`, `get_search_content`) and
   conflicts will occur if both are active.
