@@ -19,6 +19,8 @@ const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
 const retiredPlannotatorPackage = "npm:@plannotator/pi-extension";
 const previousMcporterSource = "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1";
 const bundledMcporterSource = "npm:@diegopetrucci/pi-mcp-adapter@2.10.1";
+const previousPiWebAccessSource = "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1";
+const bundledPiWebAccessSource = "npm:@diegopetrucci/pi-web-access@0.10.8";
 const expectedBundledNpmSources = new Map([
 	["openai-fast", "npm:@diegopetrucci/pi-openai-fast@0.1.6"],
 	["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth@0.6.3"],
@@ -710,7 +712,7 @@ test("tlh-defaults sources emit the bundled npm pin when the installed managed p
 	assert.deepEqual(sources, ["npm:@diegopetrucci/pi-oracle@0.1.13"]);
 });
 
-test("tlh-defaults sources still respect disabled and deferred defaults while pinning managed npm defaults", () => {
+test("tlh-defaults sources still respect disabled defaults while migrating pi-web-access replacements to the managed npm pin", () => {
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
 		{
@@ -723,8 +725,9 @@ test("tlh-defaults sources still respect disabled and deferred defaults while pi
 		},
 		{
 			id: "pi-web-access",
-			replaces: ["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access"],
-			source: "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1",
+			replaces: ["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access", previousPiWebAccessSource],
+			migrateReplacements: true,
+			source: bundledPiWebAccessSource,
 		},
 	], null, 2));
 	writeFileSync(fixture.settings, JSON.stringify({
@@ -740,7 +743,7 @@ test("tlh-defaults sources still respect disabled and deferred defaults while pi
 		.trim()
 		.split("\n")
 		.filter(Boolean);
-	assert.deepEqual(sources, ["npm:@diegopetrucci/pi-oracle@0.1.12"]);
+	assert.deepEqual(sources, ["npm:@diegopetrucci/pi-oracle@0.1.12", bundledPiWebAccessSource]);
 });
 
 test("tlh-defaults sources defers non-migrating replacements and ignores stale/manual critical opt-outs", () => {
@@ -785,31 +788,38 @@ test("tlh-defaults sources defers non-migrating replacements and ignores stale/m
 	assert.deepEqual(criticalSources, ["git:github.com/tlh/critical@pin", "git:github.com/tlh/disabled@pin"]);
 });
 
-test("tlh-defaults enable switches deferred pi-web-access replacements to the bundled TLH source", () => {
-	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "pi-web-access",
-			replaces: ["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access"],
-			source: "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1",
-		},
-	], null, 2));
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: ["git:github.com/nicobailon/pi-web-access@v0.10.7"],
-		tlh: { disabledDefaultExtensions: ["pi-web-access"] },
-	}, null, 2));
+for (const replacementSource of [
+	"npm:pi-web-access@0.10.7",
+	"git:github.com/nicobailon/pi-web-access@v0.10.7",
+	previousPiWebAccessSource,
+]) {
+	test(`tlh-defaults enable switches ${replacementSource} to the bundled TLH source`, () => {
+		const fixture = tempFixture();
+		writeFileSync(fixture.extensions, JSON.stringify([
+			{
+				id: "pi-web-access",
+				replaces: ["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access", previousPiWebAccessSource],
+				migrateReplacements: true,
+				source: bundledPiWebAccessSource,
+			},
+		], null, 2));
+		writeFileSync(fixture.settings, JSON.stringify({
+			packages: [replacementSource],
+			tlh: { disabledDefaultExtensions: ["pi-web-access"] },
+		}, null, 2));
 
-	runNode(defaultsScript, [
-		"--settings", fixture.settings,
-		"--defaults", fixture.extensions,
-		"enable", "pi-web-access",
-	]);
+		runNode(defaultsScript, [
+			"--settings", fixture.settings,
+			"--defaults", fixture.extensions,
+			"enable", "pi-web-access",
+		]);
 
-	const settings = readJson(fixture.settings);
-	assert.deepEqual(settings.packages, ["git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1"]);
-	assert.deepEqual(settings.tlh.disabledDefaultExtensions, []);
-	assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, ["git:github.com/diegopetrucci/pi-web-access"]);
-});
+		const settings = readJson(fixture.settings);
+		assert.deepEqual(settings.packages, [bundledPiWebAccessSource]);
+		assert.deepEqual(settings.tlh.disabledDefaultExtensions, []);
+		assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, ["npm:@diegopetrucci/pi-web-access"]);
+	});
+}
 
 for (const scenario of [
 	{
@@ -1028,18 +1038,19 @@ test("merge does not introduce warnings.anthropicExtraUsage when anthropic-auth 
 	assert.equal(settings.warnings, undefined, "warnings object should not be created by merge");
 });
 
-test("bundled manifest contains pi-web-access entry with correct tag and defer flags", () => {
+test("bundled manifest contains pi-web-access entry with correct source and migration flags", () => {
 	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
 	const webAccess = bundled.find(({ id }) => id === "pi-web-access");
 
 	assert.ok(webAccess, "bundled pi-web-access entry should exist");
-	assert.equal(webAccess.source, "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1");
+	assert.equal(webAccess.source, bundledPiWebAccessSource);
 	assert.equal(webAccess.critical, false, "pi-web-access must not be critical");
 	assert.deepEqual(webAccess.replaces, [
 		"npm:pi-web-access",
 		"git:github.com/nicobailon/pi-web-access",
-	], "pi-web-access should defer to common upstream/manual installs");
-	assert.equal(webAccess.migrateReplacements, false, "pi-web-access replacements must stay deferred by default");
+		previousPiWebAccessSource,
+	], "pi-web-access should migrate upstream and prior TLH replacement sources");
+	assert.equal(webAccess.migrateReplacements, true, "pi-web-access replacements must stay enabled for migration");
 	assert.deepEqual(webAccess.aliases, [], "pi-web-access must have no aliases");
 });
 
