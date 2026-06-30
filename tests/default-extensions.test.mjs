@@ -17,6 +17,8 @@ const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
 const defaultsScript = join(repoRoot, "scripts", "tlh-defaults.mjs");
 const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
 const retiredPlannotatorPackage = "npm:@plannotator/pi-extension";
+const previousMcporterSource = "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1";
+const bundledMcporterSource = "npm:@diegopetrucci/pi-mcp-adapter@2.10.1";
 const expectedBundledNpmSources = new Map([
 	["openai-fast", "npm:@diegopetrucci/pi-openai-fast@0.1.6"],
 	["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth@0.6.3"],
@@ -1041,30 +1043,45 @@ test("bundled manifest contains pi-web-access entry with correct tag and defer f
 	assert.deepEqual(webAccess.aliases, [], "pi-web-access must have no aliases");
 });
 
-test("bundled manifest contains mcporter entry and tlh-defaults accepts its aliases", () => {
+test("bundled manifest contains mcporter entry and migrates prior TLH-managed installs", () => {
 	const bundledPath = join(repoRoot, "config", "default-extensions.json");
 	const bundled = readDefaultExtensions(bundledPath);
 	const mcporter = bundled.find(({ id }) => id === "mcporter");
 
 	assert.ok(mcporter, "bundled mcporter entry should exist");
-	assert.equal(mcporter.source, "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1");
+	assert.equal(mcporter.source, bundledMcporterSource);
 	assert.equal(mcporter.critical, false, "mcporter must not be critical");
 	assert.deepEqual(mcporter.aliases, ["pi-mcp-adapter", "mcp-adapter"]);
-	assert.deepEqual(mcporter.replaces, ["npm:pi-mcp-adapter"]);
-	assert.equal(mcporter.migrateReplacements, true, "mcporter migrates off the upstream npm source");
+	assert.deepEqual(mcporter.replaces, ["npm:pi-mcp-adapter", previousMcporterSource]);
+	assert.equal(mcporter.migrateReplacements, true, "mcporter should migrate both upstream npm and previous TLH git installs");
 
-	const fixture = tempFixture();
-	writeFileSync(fixture.settings, JSON.stringify({ packages: ["npm:pi-mcp-adapter"] }, null, 2));
+	const mergeFixture = tempFixture();
+	writeFileSync(mergeFixture.extensions, JSON.stringify([mcporter], null, 2));
+	writeFileSync(mergeFixture.settings, JSON.stringify({ packages: [previousMcporterSource] }, null, 2));
+
+	runNode(mergeScript, [
+		mergeFixture.defaults,
+		"--settings", mergeFixture.settings,
+		"--default-extensions", mergeFixture.extensions,
+		"--quiet",
+	]);
+
+	const mergedSettings = readJson(mergeFixture.settings);
+	assert.deepEqual(mergedSettings.packages, [harnessPackage, bundledMcporterSource]);
+	assert.deepEqual(mergedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, ["npm:@diegopetrucci/pi-mcp-adapter"]);
+
+	const disableFixture = tempFixture();
+	writeFileSync(disableFixture.settings, JSON.stringify({ packages: [previousMcporterSource] }, null, 2));
 
 	runNode(defaultsScript, [
-		"--settings", fixture.settings,
+		"--settings", disableFixture.settings,
 		"--defaults", bundledPath,
 		"disable", "mcp-adapter",
 	]);
 
-	const settings = readJson(fixture.settings);
-	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["mcporter"]);
-	assert.deepEqual(settings.packages, []);
+	const disabledSettings = readJson(disableFixture.settings);
+	assert.deepEqual(disabledSettings.tlh.disabledDefaultExtensions, ["mcporter"]);
+	assert.deepEqual(disabledSettings.packages, []);
 });
 
 test("bundled manifest contains subagents and intercom entries with correct critical migration flags", () => {
