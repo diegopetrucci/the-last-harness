@@ -1073,7 +1073,7 @@ test("bundled manifest contains subagents and intercom entries with correct crit
 	const intercom = bundled.find(({ id }) => id === "intercom");
 
 	assert.ok(subagents, "bundled subagents entry should exist");
-	assert.equal(subagents.source, "git:github.com/diegopetrucci/pi-subagents@ebc58962421338d9278fa10bd41d2cd857b1e62b");
+	assert.equal(subagents.source, "git:github.com/diegopetrucci/pi-subagents@a7e76d212dfa788c59538e44afddad326c074b86");
 	assert.equal(subagents.critical, true, "subagents must stay critical");
 	assert.deepEqual(subagents.aliases, ["pi-subagents"]);
 	assert.deepEqual(subagents.replaces, [
