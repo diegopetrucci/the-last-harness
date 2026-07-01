@@ -17,6 +17,24 @@ function readUnreleasedChangelog() {
 	return match[0];
 }
 
+function escapeRegExp(value) {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function readPendingOrCurrentChangelog() {
+	const unreleased = readUnreleasedChangelog();
+	if (unreleased.replace(/^## \[Unreleased\]\s*/, "").trim() !== "") {
+		return unreleased;
+	}
+
+	const changelog = readRepoFile("CHANGELOG.md");
+	const { version } = JSON.parse(readRepoFile("package.json"));
+	const escapedVersion = escapeRegExp(version);
+	const match = changelog.match(new RegExp(`## \\[${escapedVersion}\\][\\s\\S]*?(?=\\n## \\[\\d+\\.\\d+\\.\\d+[^\\]]*\\]|$)`));
+	assert.ok(match, `CHANGELOG.md should contain a ${version} section when Unreleased is empty`);
+	return match[0];
+}
+
 const userFacingDocs = [
 	"CHANGELOG.md",
 	"docs/git-attribution.md",
@@ -166,7 +184,7 @@ test("README, commands, install, integrations, and changelog docs describe the m
 	const commandsDoc = readRepoFile("docs/commands.md");
 	const install = readRepoFile("docs/install.md");
 	const integrations = readRepoFile("docs/integrations.md");
-	const unreleased = readUnreleasedChangelog();
+	const changelogSection = readPendingOrCurrentChangelog();
 
 	assert.match(readme, /managed `rtk` at `~\/\.the-last-harness\/agent\/bin\/rtk`/i);
 	assert.match(readme, /RTK_DISABLED=1/);
@@ -186,9 +204,9 @@ test("README, commands, install, integrations, and changelog docs describe the m
 	assert.match(integrations, /install or update fails with an actionable error/);
 	assert.match(integrations, /`tlh\.rtk\.disabled`/);
 	assert.match(integrations, /delete `~\/\.the-last-harness\/agent\/bin\/rtk`/);
-	assert.match(unreleased, /Removed the old `\/rtk` command UI/);
-	assert.match(unreleased, /Migrated TLH away from the old bundled `pi-rtk` fork/);
-	assert.match(unreleased, /`RTK_DISABLED=1` or `tlh\.rtk\.disabled`/);
+	assert.match(changelogSection, /Removed the old `\/rtk` command UI/);
+	assert.match(changelogSection, /Migrated TLH away from the old bundled `pi-rtk` fork/);
+	assert.match(changelogSection, /`RTK_DISABLED=1` or `tlh\.rtk\.disabled`/);
 });
 
 test("readUnreleasedChangelog stops before the next version heading", () => {
@@ -199,7 +217,7 @@ test("readUnreleasedChangelog stops before the next version heading", () => {
 
 test("README and changelog describe contrarian as a bundled default sparing adversarial subagent", () => {
 	const readme = readRepoFile("README.md");
-	const unreleased = readUnreleasedChangelog();
+	const changelogSection = readPendingOrCurrentChangelog();
 
 	assert.match(readme, /bundled default minor subagent[\s\S]{0,80}`contrarian`|`contrarian` as a bundled default minor subagent/i);
 	assert.doesNotMatch(readme, /bundled experimental subagent/i);
@@ -211,8 +229,8 @@ test("README and changelog describe contrarian as a bundled default sparing adve
 	assert.match(readme, /different from `oracle`[\s\S]{0,120}broader second-opinion path/i);
 	assert.match(readme, /`contrarian` uses that same independence pattern/i);
 	assert.doesNotMatch(readme, /contrarian-subagent/);
-	assert.match(unreleased, /Promoted `contrarian` from an experimental opt-in to a bundled default minor subagent/i);
-	assert.match(unreleased, /sparing adversarial stress-test path rather than a `\/experimental` enable\/disable toggle/i);
-	assert.doesNotMatch(unreleased, /default-off/i);
-	assert.doesNotMatch(unreleased, /\/experimental enable contrarian/i);
+	assert.match(changelogSection, /Promoted `contrarian` from an experimental opt-in to a bundled default minor subagent/i);
+	assert.match(changelogSection, /sparing adversarial stress-test path rather than a `\/experimental` enable\/disable toggle/i);
+	assert.doesNotMatch(changelogSection, /default-off/i);
+	assert.doesNotMatch(changelogSection, /\/experimental enable contrarian/i);
 });

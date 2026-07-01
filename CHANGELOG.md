@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-07-01
+
 ### Removed
 
 - Removed the bundled `pi-librarian` extension. Existing TLH-managed `pi-librarian` installs are force-removed on the next `tlh` install or update; packages added manually to that isolated profile are preserved. The leftover `extensions/librarian.json` file in the isolated profile is also cleaned up during migration.
