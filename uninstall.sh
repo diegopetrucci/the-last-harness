@@ -15,7 +15,7 @@ KEEP_PI=false
 QUIET=false
 VERBOSE=false
 PI_PACKAGE_NAME="@earendil-works/pi-coding-agent"
-PINNED_PI_VERSION="0.80.2"
+PINNED_PI_VERSION="0.80.3"
 RUNTIME_MARKER_FILENAME=".tlh-runtime-owned"
 TLH_WRAPPER_MARKER_LINE="# Managed by The Last Harness installer"
 

@@ -6,7 +6,7 @@
   },
   {
     "id": "anthropic-auth",
-    "source": "npm:@gotgenes/pi-anthropic-auth@0.6.3",
+    "source": "npm:@gotgenes/pi-anthropic-auth@1.0.0",
     "description": "Improve compatibility with Anthropic Claude Pro/Max OAuth while preserving normal API-key behavior."
   },
   {
