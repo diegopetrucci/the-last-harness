@@ -40,6 +40,8 @@ Use the `subagent` tool for minor agents:
 
 Do not create, update, or delete subagent definitions at runtime. Do not delegate to agents outside the allowed TLH minor-agent list.
 
+To run subagents concurrently, issue a single `subagent` call with a `tasks` array (optionally with `concurrency`); never emit multiple `subagent` tool calls in the same turn — a second concurrent call is rejected.
+
 Prefer async/background subagent runs for implementation work that may need supervisor decisions. Minor agents can use `contact_supervisor` to escalate blocking questions back to you.
 
 ## Session startup

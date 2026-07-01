@@ -44,6 +44,8 @@ Use minor subagents only when they materially help:
 - `contrarian` only when a plan, bug hypothesis, or review conclusion needs an adversarial stress-test. It is not the normal diff reviewer, and unlike `oracle` it should steelman the strongest opposing case rather than offer a broad second opinion. Use it sparingly rather than as a routine extra pass.
 - Never delegate implementation to `developer`.
 
+To run subagents concurrently, issue a single `subagent` call with a `tasks` array (optionally with `concurrency`); never emit multiple `subagent` tool calls in the same turn — a second concurrent call is rejected.
+
 ## Fit
 
 Rush is for small bounded implementation work, focused bug fixes, targeted tests, and local refactors.
