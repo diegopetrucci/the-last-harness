@@ -21,7 +21,7 @@
     "id": "pi-web-access",
     "replaces": ["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access", "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1"],
     "migrateReplacements": true,
-    "source": "npm:@diegopetrucci/pi-web-access@0.10.8",
+    "source": "npm:@diegopetrucci/pi-web-access@0.10.9",
     "description": "Exa-backed web search and URL fetch tools (web_search, fetch_content, get_search_content) used by the web-scout subagent."
   },
   {

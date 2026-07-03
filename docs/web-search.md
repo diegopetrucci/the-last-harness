@@ -1,14 +1,14 @@
 # Web search
 
-TLH ships [`pi-web-access`](https://github.com/diegopetrucci/pi-web-access) as a non-critical default extension. TLH manages it as the scoped package `npm:@diegopetrucci/pi-web-access@0.10.8`. The `web-scout` subagent uses its `web_search`, `fetch_content`, and `get_search_content` tools for general web research.
+TLH ships [`pi-web-access`](https://github.com/diegopetrucci/pi-web-access) as a non-critical default extension. TLH manages it as the scoped package `npm:@diegopetrucci/pi-web-access@0.10.9`. The `web-scout` subagent uses its `web_search`, `fetch_content`, and `get_search_content` tools for general web research.
 
 GitHub-specific research — repositories, issues, pull requests, releases, and project docs — still goes to the `librarian` subagent, which uses the `gh` CLI and `git` directly (no extension package required).
 
-Running another `pi-web-access` provider alongside the TLH-managed package is unsupported because the tool names conflict. During TLH install/update, TLH migrates known upstream, manual, and older TLH `pi-web-access` variants in the same isolated profile to `npm:@diegopetrucci/pi-web-access@0.10.8`. If you want TLH to stop managing that extension, opt out first with `tlh defaults disable pi-web-access`; otherwise install/update runs will keep the scoped TLH package pinned. If multiple providers are already installed, remove the extras so only one `pi-web-access` provider remains active.
+Running another `pi-web-access` provider alongside the TLH-managed package is unsupported because the tool names conflict. During TLH install/update, TLH migrates known upstream, manual, and older TLH `pi-web-access` variants in the same isolated profile to `npm:@diegopetrucci/pi-web-access@0.10.9`. If you want TLH to stop managing that extension, opt out first with `tlh defaults disable pi-web-access`; otherwise install/update runs will keep the scoped TLH package pinned. If multiple providers are already installed, remove the extras so only one `pi-web-access` provider remains active.
 
 ## Configuration
 
-- Extension source: `npm:@diegopetrucci/pi-web-access@0.10.8`
+- Extension source: `npm:@diegopetrucci/pi-web-access@0.10.9`
 - Settings: `${PI_CODING_AGENT_DIR}/extensions/pi-web-access/settings.json`
 - Cache and Exa usage tracker: `${PI_CODING_AGENT_DIR}/cache/pi-web-access/`
 - The extension never reads or writes `~/.pi/`.
