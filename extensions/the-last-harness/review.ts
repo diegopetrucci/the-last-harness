@@ -419,6 +419,14 @@ function parseGitHubPrUrl(value: string): GitHubPrRef | undefined {
 	}
 }
 
+function parseGitHubRepoSlug(value: string): GitHubRepoRef | undefined {
+	const match = value.trim().match(/^([^/\s]+)\/([^/\s]+)$/u);
+	if (!match) {
+		return undefined;
+	}
+	return { owner: match[1], repo: match[2] };
+}
+
 function parseGitHubRemoteUrl(value: string): GitHubRepoRef | undefined {
 	const trimmed = value.trim();
 	const sshMatch = trimmed.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/i);
@@ -439,6 +447,22 @@ function parseGitHubRemoteUrl(value: string): GitHubRepoRef | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+async function resolveGitHubRepoRefFromGhDefault(pi: ExtensionAPI, cwd: string): Promise<GitHubRepoRef | undefined> {
+	const defaultRepoResult = await pi.exec("gh", ["repo", "set-default", "--view"], { cwd });
+	if (defaultRepoResult.code !== 0) {
+		return undefined;
+	}
+
+	for (const line of defaultRepoResult.stdout.split(/\r?\n/u)) {
+		const repoRef = parseGitHubRepoSlug(line);
+		if (repoRef) {
+			return repoRef;
+		}
+	}
+
+	return undefined;
 }
 
 async function resolveGitHubRepoRefFromLocalRemotes(
@@ -495,6 +519,11 @@ async function resolveGitHubPrRef(
 
 	if (prNumberHint === undefined) {
 		return { ok: false, message: `could not resolve a PR number from '${nOrUrl}'` };
+	}
+
+	const ghDefaultRepoRef = await resolveGitHubRepoRefFromGhDefault(pi, cwd);
+	if (ghDefaultRepoRef) {
+		return { ok: true, prRef: { ...ghDefaultRepoRef, number: prNumberHint } };
 	}
 
 	const repoRefResult = await resolveGitHubRepoRefFromLocalRemotes(pi, cwd);

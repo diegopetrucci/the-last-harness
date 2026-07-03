@@ -1206,7 +1206,70 @@ test("/review pr uses gh pr checkout before diff when switching to the PR head",
 	);
 });
 
-test("/review pr falls back to REST metadata when gh pr view hits a GraphQL rate limit", async (t) => {
+test("/review pr uses the gh default repo for REST metadata fallback when set", async (t) => {
+	const cwd = makeTempDir(t, "tlh-review-pr-rest-view-default-repo-");
+	const customResponses = ["pr"];
+
+	const harness = createReviewHarness({
+		cwd,
+		custom: () => customResponses.shift(),
+		editor: () => "123",
+		exec: async (command, args) => {
+			if (command === "gh" && args.join(" ") === "--version") {
+				return { code: 0, stdout: "gh version 2.0.0\n", stderr: "" };
+			}
+			if (
+				command === "gh" &&
+				args.join(" ") ===
+					"pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
+			) {
+				return { code: 1, stdout: "", stderr: "GraphQL: API rate limit exceeded" };
+			}
+			if (command === "gh" && args.join(" ") === "repo set-default --view") {
+				return { code: 0, stdout: "acme/selected-repo\n", stderr: "" };
+			}
+			if (command === "gh" && args.join(" ") === "api repos/acme/selected-repo/pulls/123") {
+				return {
+					code: 0,
+					stdout: JSON.stringify({
+						number: 123,
+						head: { ref: "feature/review", repo: { full_name: "acme/selected-repo" } },
+						base: { ref: "main", repo: { full_name: "acme/selected-repo" } },
+					}),
+					stderr: "",
+				};
+			}
+			if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD") {
+				return { code: 0, stdout: "feature/review\n", stderr: "" };
+			}
+			if (command === "gh" && args.join(" ") === "pr diff 123") {
+				return { code: 0, stdout: "diff --git a/src/app.ts b/src/app.ts\n", stderr: "" };
+			}
+			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
+		},
+	});
+
+	await harness.handler("", harness.ctx);
+
+	assert.equal(harness.notifications.length, 0);
+	assert.equal(harness.sentMessages.length, 1);
+	assert.match(harness.sentMessages[0], /pr: 123/);
+	assert.match(harness.sentMessages[0], /current-branch: feature\/review/);
+	assert.match(harness.sentMessages[0], /diff --git a\/src\/app.ts b\/src\/app.ts/);
+	assert.ok(
+		harness.execCalls.some(
+			({ command, args }) => command === "gh" && args.join(" ") === "api repos/acme/selected-repo/pulls/123",
+		),
+		"should fetch PR metadata via REST using the gh default repository when GraphQL is rate-limited",
+	);
+	assert.equal(
+		harness.execCalls.some(({ command, args }) => command === "git" && args.join(" ") === "remote"),
+		false,
+		"should not fall back to git remotes when gh already has a default repository",
+	);
+});
+
+test("/review pr falls back to local remotes for REST metadata when no gh default repo is set", async (t) => {
 	const cwd = makeTempDir(t, "tlh-review-pr-rest-view-");
 	const customResponses = ["pr"];
 
@@ -1224,6 +1287,9 @@ test("/review pr falls back to REST metadata when gh pr view hits a GraphQL rate
 					"pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
 			) {
 				return { code: 1, stdout: "", stderr: "GraphQL: API rate limit exceeded" };
+			}
+			if (command === "gh" && args.join(" ") === "repo set-default --view") {
+				return { code: 0, stdout: "", stderr: "X No default remote repository has been set" };
 			}
 			if (command === "git" && args.join(" ") === "remote") {
 				return { code: 0, stdout: "origin\n", stderr: "" };
@@ -1305,6 +1371,9 @@ test("/review pr falls back to REST diff when gh pr diff hits a GraphQL rate lim
 			if (command === "gh" && args.join(" ") === "pr diff 123") {
 				return { code: 1, stdout: "", stderr: "GraphQL: quota exceeded\nmore detail" };
 			}
+			if (command === "gh" && args.join(" ") === "repo set-default --view") {
+				return { code: 0, stdout: "", stderr: "X No default remote repository has been set" };
+			}
 			if (command === "git" && args.join(" ") === "remote") {
 				return { code: 0, stdout: "origin\n", stderr: "" };
 			}
@@ -1364,6 +1433,9 @@ test("/review pr reports both the GraphQL limit and REST fallback resolution fai
 					"pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
 			) {
 				return { code: 1, stdout: "", stderr: "GraphQL: quota exceeded" };
+			}
+			if (command === "gh" && args.join(" ") === "repo set-default --view") {
+				return { code: 0, stdout: "", stderr: "X No default remote repository has been set" };
 			}
 			if (command === "git" && args.join(" ") === "remote") {
 				return { code: 0, stdout: "", stderr: "" };
