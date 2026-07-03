@@ -76,9 +76,9 @@ git diff --cached
 ## Miscellaneous
 
 - At the start of any task, run `gn help plan` and follow its instructions.
+- After finishing a task, run `gn help review`.
 - Before final handoff or review for TLH repository work, load and apply the repo-local hygiene skill at `.pi/skills/tlh-dev-hygiene/SKILL.md`.
 - The `tlh-dev-hygiene` checklist is for TLH repository contributors only; it is not part of the packaged end-user tlh workflow.
-- After finishing a task, run `gn help review`.
 - This project uses a CLI ticket system for task management. Run `tk help` when you need to use it.
 - If the human links you a PR comments, or pastes you one, do not take it at face value — instead, investigate if valid and report back first. Do not start fixing it immediately.
 - If the human asks you to open a PR, after creating it check CI/status checks and investigate PR comments/review comments. Address valid findings; resolve or dismiss invalid or non-actionable comments with rationale.
