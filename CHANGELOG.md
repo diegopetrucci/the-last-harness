@@ -7,6 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Changed
 
 - The bundled `developer` subagent now uses `anthropic/claude-sonnet-5` with `thinking: medium` on the Anthropic path. The OpenAI-Codex model (`openai-codex/gpt-5.4`) is unchanged.
+- Updated the bundled critical `pi-subagents` default from reviewed upstream-main commit `a7e76d212dfa788c59538e44afddad326c074b86` to fork tag `tlh-v0.31.1`, adding the completion-guard validation/advisory false-positive fix and Node 26 test-harness compatibility updates while preserving the issue #30 async-start chat result body suppression and live widget behavior.
 
 ## [0.27.0] - 2026-07-01
 
