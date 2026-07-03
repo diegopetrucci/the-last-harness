@@ -36,12 +36,22 @@ Before relying on `gh`, verify it is available and authenticated:
 gh auth status 2>&1
 ```
 
+For GitHub-heavy work, also preflight rate limits before using GraphQL-heavy commands:
+
+```bash
+gh api rate_limit 2>&1
+```
+
+Use that output to check whether GraphQL quota is low or exhausted before reaching for commands such as `gh pr view` that commonly consume GraphQL quota.
+
 If `gh` is missing or unauthenticated, report that clearly in your findings: state what could not be verified, why (gh absent / not authenticated), and that the user must install and authenticate gh to complete that part of the research. Continue with whatever evidence is still accessible via `git` or local reads.
+
+If GraphQL quota is low, exhausted, or `gh` reports GraphQL rate-limit/quota errors, avoid further GraphQL-heavy lookups. Fall back to `gh api` GET requests against REST endpoints or to local `git` evidence when possible, and clearly report which checks were unavailable because GraphQL quota prevented them.
 
 ## Research process
 
 1. Clarify the research target and success criteria from the request.
-2. Use `gh` and `git` commands via `bash` to gather the most relevant repository or GitHub context. Start with the broadest useful query and narrow only when necessary.
+2. Use `gh` and `git` commands via `bash` to gather the most relevant repository or GitHub context. For GitHub-heavy work, check `gh api rate_limit` first and prefer REST `gh api` GET endpoints or local `git` evidence over GraphQL-heavy commands when GraphQL quota is low or exhausted. Start with the broadest useful query and narrow only when necessary.
 3. Prefer primary sources: repository files, official documentation, releases, issues, pull requests, commits, and maintainer comments.
 4. Cite concrete evidence with repository names, paths, line ranges, issue or pull request numbers, commit SHAs, release versions, and dates when available.
 5. Separate confirmed facts from hypotheses or potentially outdated information.
@@ -55,5 +65,5 @@ Return a concise markdown report with:
 - Research target and scope.
 - Key findings with citations (repo, path, line ranges, issue/PR numbers, commit SHAs, dates).
 - Relevance to the architect's task.
-- Limitations, access problems, or unverifiable claims (including any gh availability issues).
+- Limitations, access problems, or unverifiable claims (including any gh availability issues, GraphQL quota/rate-limit blockers, and checks you could not complete because of them).
 - Recommended next steps, if any, without implementing fixes.
