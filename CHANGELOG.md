@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- The bundled `developer` subagent now uses `anthropic/claude-sonnet-5` with `thinking: medium` on the Anthropic path. The OpenAI-Codex model (`openai-codex/gpt-5.4`) is unchanged.
+
 ## [0.27.0] - 2026-07-01
 
 ### Removed
