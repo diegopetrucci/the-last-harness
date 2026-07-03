@@ -1101,12 +1101,13 @@ test("bundled manifest contains subagents and intercom entries with correct crit
 	const intercom = bundled.find(({ id }) => id === "intercom");
 
 	assert.ok(subagents, "bundled subagents entry should exist");
-	assert.equal(subagents.source, "git:github.com/diegopetrucci/pi-subagents@tlh-v0.31.1");
+	assert.equal(subagents.source, "npm:@diegopetrucci/pi-subagents@0.31.1");
 	assert.equal(subagents.critical, true, "subagents must stay critical");
 	assert.deepEqual(subagents.aliases, ["pi-subagents"]);
 	assert.deepEqual(subagents.replaces, [
 		"npm:pi-subagents",
 		"git:github.com/nicobailon/pi-subagents",
+		"git:github.com/diegopetrucci/pi-subagents",
 	]);
 	assert.equal(subagents.migrateReplacements, true, "subagents replacements must stay enabled");
 
@@ -1120,6 +1121,43 @@ test("bundled manifest contains subagents and intercom entries with correct crit
 		"git:github.com/diegopetrucci/pi-intercom",
 	]);
 	assert.equal(intercom.migrateReplacements, true, "intercom replacements must stay enabled");
+});
+
+test("bundled merge migrates legacy upstream and TLH subagents installs to the scoped npm source without duplicates", () => {
+	const fixture = tempFixture();
+	const bundledPath = join(repoRoot, "config", "default-extensions.json");
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [
+			"git:github.com/nicobailon/pi-subagents@v0.31.0",
+			"git:github.com/diegopetrucci/pi-subagents@tlh-v0.31.1",
+		],
+		tlh: { disabledDefaultExtensions: ["pi-subagents"] },
+	}, null, 2));
+
+	runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", bundledPath,
+		"--quiet",
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(
+		settings.packages.filter((entry) => packageIdentity(entry) === "npm:@diegopetrucci/pi-subagents"),
+		["npm:@diegopetrucci/pi-subagents@0.31.1"],
+	);
+	assert.equal(
+		settings.packages.some((entry) => packageIdentity(entry) === "git:github.com/nicobailon/pi-subagents"),
+		false,
+	);
+	assert.equal(
+		settings.packages.some((entry) => packageIdentity(entry) === "git:github.com/diegopetrucci/pi-subagents"),
+		false,
+	);
+	assert.deepEqual(
+		(settings.tlh?.disabledDefaultExtensions ?? []).filter((value) => value === "subagents" || value === "pi-subagents"),
+		[],
+	);
 });
 
 test("bundled merge migrates legacy TLH intercom git installs to the scoped npm source", () => {
