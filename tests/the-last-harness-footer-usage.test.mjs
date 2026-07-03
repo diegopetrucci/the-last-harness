@@ -47,24 +47,24 @@ function usageProvider(snapshot, onGetSnapshot, eligible = true) {
 	};
 }
 
-function openAiSnapshot() {
+function openAiSnapshot(weekly = { percent: 21.5 }) {
 	return {
 		provider: "openai-codex",
 		fetchedAt: NOW_MS,
 		windows: {
 			session: { key: "primary_window", label: "session", percent: 42 },
-			weekly: { key: "secondary_window", label: "weekly", percent: 21.5 },
+			weekly: { key: "secondary_window", label: "weekly", ...weekly },
 		},
 	};
 }
 
-function anthropicSnapshot() {
+function anthropicSnapshot(weekly = { percent: 88.9 }) {
 	return {
 		provider: "anthropic",
 		fetchedAt: NOW_MS,
 		windows: {
 			session: { key: "five_hour", label: "session", percent: 42 },
-			weekly: { key: "seven_day", label: "weekly", percent: 88.9 },
+			weekly: { key: "seven_day", label: "weekly", ...weekly },
 		},
 	};
 }
@@ -173,6 +173,60 @@ test("footer includes Anthropic weekly usage only when the preference enables it
 
 	assert.match(sessionLine, /5h session 42% used/);
 	assert.match(sessionLine, /weekly 88\.9% used/);
+});
+
+
+test("footer auto-shows weekly by default only below 25% remaining", () => {
+	const ctx = createCtx({ provider: "openai-codex" });
+	const belowThresholdLine = renderSessionStatsLine(ctx, {
+		subscriptionUsage: usageProvider(openAiSnapshot({ percent: 80 })),
+		shouldShowWeekly: () => undefined,
+	});
+	const atThresholdLine = renderSessionStatsLine(ctx, {
+		subscriptionUsage: usageProvider(openAiSnapshot({ percent: 75 })),
+		shouldShowWeekly: () => undefined,
+	});
+	const aboveThresholdLine = renderSessionStatsLine(ctx, {
+		subscriptionUsage: usageProvider(openAiSnapshot({ percent: 74.9 })),
+		shouldShowWeekly: () => undefined,
+	});
+
+	assert.match(belowThresholdLine, /weekly 80% used/);
+	assert.doesNotMatch(atThresholdLine, /weekly/);
+	assert.doesNotMatch(aboveThresholdLine, /weekly/);
+});
+
+
+test("footer auto-show derives weekly remaining from counts when percent is absent", () => {
+	const ctx = createCtx({ provider: "openai-codex" });
+	const sessionLine = renderSessionStatsLine(ctx, {
+		subscriptionUsage: usageProvider(openAiSnapshot({ used: 90, limit: 100, remaining: 10, percent: undefined })),
+		shouldShowWeekly: () => undefined,
+	});
+
+	assert.match(sessionLine, /weekly 90\/100 used/);
+});
+
+
+test("footer explicit weekly on always shows weekly even above the default threshold", () => {
+	const ctx = createCtx({ provider: "openai-codex" });
+	const sessionLine = renderSessionStatsLine(ctx, {
+		subscriptionUsage: usageProvider(openAiSnapshot({ percent: 21.5 })),
+		shouldShowWeekly: () => true,
+	});
+
+	assert.match(sessionLine, /weekly 21\.5% used/);
+});
+
+
+test("footer explicit weekly off hides weekly even below the default threshold", () => {
+	const ctx = createCtx({ provider: "openai-codex" });
+	const sessionLine = renderSessionStatsLine(ctx, {
+		subscriptionUsage: usageProvider(openAiSnapshot({ percent: 80 })),
+		shouldShowWeekly: () => false,
+	});
+
+	assert.doesNotMatch(sessionLine, /weekly/);
 });
 
 test("footer context and subscription usage keep compact token formatting", () => {
