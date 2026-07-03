@@ -197,6 +197,17 @@ test("footer auto-shows weekly by default only below 25% remaining", () => {
 });
 
 
+test("footer auto-show prefers explicit weekly percent over conflicting counts", () => {
+	const ctx = createCtx({ provider: "openai-codex" });
+	const sessionLine = renderSessionStatsLine(ctx, {
+		subscriptionUsage: usageProvider(openAiSnapshot({ percent: 80, used: 10, limit: 100, remaining: 90 })),
+		shouldShowWeekly: () => undefined,
+	});
+
+	assert.match(sessionLine, /weekly 80% used/);
+});
+
+
 test("footer auto-show derives weekly remaining from counts when percent is absent", () => {
 	const ctx = createCtx({ provider: "openai-codex" });
 	const sessionLine = renderSessionStatsLine(ctx, {

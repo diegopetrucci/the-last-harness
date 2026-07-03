@@ -229,15 +229,15 @@ function deriveWeeklyRemainingPercent(window: TlhSubscriptionUsageWindow | undef
 		return undefined;
 	}
 
+	const percentUsed = finiteNumber(window.percent);
+	if (percentUsed !== undefined) {
+		return Math.max(0, Math.min(100, 100 - percentUsed));
+	}
+
 	const remaining = finiteNumber(window.remaining);
 	const limit = finiteNumber(window.limit);
 	if (remaining !== undefined && limit !== undefined && limit > 0) {
 		return Math.max(0, Math.min(100, (remaining / limit) * 100));
-	}
-
-	const percentUsed = finiteNumber(window.percent);
-	if (percentUsed !== undefined) {
-		return Math.max(0, Math.min(100, 100 - percentUsed));
 	}
 
 	return undefined;
