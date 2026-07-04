@@ -20,7 +20,7 @@ const retiredPlannotatorPackage = "npm:@plannotator/pi-extension";
 const previousMcporterSource = "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1";
 const bundledMcporterSource = "npm:@diegopetrucci/pi-mcp-adapter@2.10.1";
 const previousPiWebAccessSource = "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1";
-const bundledPiWebAccessSource = "npm:@diegopetrucci/pi-web-access@0.10.8";
+const bundledPiWebAccessSource = "npm:@diegopetrucci/pi-web-access@0.10.9";
 const expectedBundledNpmSources = new Map([
 	["openai-fast", "npm:@diegopetrucci/pi-openai-fast@0.1.6"],
 	["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth@1.0.0"],
