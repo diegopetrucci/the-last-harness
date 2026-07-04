@@ -293,6 +293,78 @@ test("bug-hunter bash tk show and npm test remain read-only", () => {
 	}
 });
 
+test("developer final-validation no-edit flow stays allowed after tk show", () => {
+	const result = evaluateTracePolicy({
+		agent: "developer",
+		steps: [
+			{ type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+			{ type: "tool", tool: "bash", command: "node --test tests/trace-policy-evals.test.mjs tests/trace-policy-incident-matrix.test.mjs" },
+			{ type: "assistant", text: "Validation passed with no edits required." },
+		],
+	});
+
+	assert.equal(result.ok, true);
+	assert.deepEqual(result.violations, []);
+});
+
+test("developer rejects bare tk show before editing", () => {
+	assert.deepEqual(violationCodes({
+		agent: "developer",
+		steps: [
+			{ type: "tool", tool: "bash", argv: ["tk", "show"] },
+			{ type: "tool", tool: "edit", path: "tests/trace-policy-checker.mjs" },
+		],
+	}), ["developer.ticket_source_required"]);
+});
+
+test("developer must stop after tk show failure", () => {
+	assert.deepEqual(violationCodes({
+		agent: "developer",
+		steps: [
+			{ type: "tool", tool: "bash", argv: ["tk", "show", "tlht-missing"], exitCode: 1 },
+			{ type: "tool", tool: "read", path: "tests/trace-policy-checker.mjs" },
+		],
+	}), ["developer.ticket_lookup_stop_required"]);
+});
+
+test("developer must stop after tk show failure before retrying tk show", () => {
+	assert.deepEqual(violationCodes({
+		agent: "developer",
+		steps: [
+			{ type: "tool", tool: "bash", argv: ["tk", "show", "tlht-missing"], exitCode: 1 },
+			{ type: "tool", tool: "bash", argv: ["tk", "show", "tlht-other"] },
+		],
+	}), ["developer.ticket_lookup_stop_required"]);
+});
+
+test("code-reviewer must inspect diff inputs before findings", () => {
+	assert.deepEqual(violationCodes({
+		agent: "code-reviewer",
+		steps: [
+			{ type: "tool", tool: "bash", command: "git diff --no-color" },
+			{ type: "assistant", text: "The patch is missing a regression test." },
+		],
+	}), ["code-reviewer.diff_inspection_required"]);
+});
+
+test("code-reviewer accepts chained diff inspections before findings", () => {
+	const result = evaluateTracePolicy({
+		agent: "code-reviewer",
+		steps: [
+			{
+				type: "tool",
+				tool: "bash",
+				command:
+					"git status --short --untracked-files=all && git diff --no-color && git diff --cached --no-color",
+			},
+			{ type: "assistant", text: "No blockers found in the reviewed diff." },
+		],
+	});
+
+	assert.equal(result.ok, true);
+	assert.deepEqual(result.violations, []);
+});
+
 test("reported product developer and code-reviewer delegations are rejected", () => {
 	assert.deepEqual(violationCodes({
 		agent: "product",
@@ -335,4 +407,46 @@ test("web-scout fetch budget violation is emitted once when later steps are non-
 
 	assert.equal(result.ok, false);
 	assert.deepEqual(result.violations.map((violation) => violation.code), ["web-scout.fetch_budget_exceeded"]);
+});
+
+
+test("web-scout final output requires URL and UTC retrieval timestamp when present", () => {
+	assert.deepEqual(violationCodes({
+		agent: "web-scout",
+		steps: [
+			{ type: "tool", tool: "web_search", query: "release notes" },
+			{ type: "assistant", text: "Quote: \"Release v1.2.3 is now available for download.\"" },
+		],
+	}), ["web-scout.citation_url_required", "web-scout.citation_timestamp_required"]);
+});
+
+
+test("web-scout final output requires a verbatim source quote", () => {
+	assert.deepEqual(violationCodes({
+		agent: "web-scout",
+		steps: [
+			{ type: "tool", tool: "web_search", query: "release notes" },
+			{
+				type: "assistant",
+				text: "URL: https://example.com/release-notes Retrieved: 2026-07-04T07:40:08Z Evidence summary: release v1.2.3 is now available for download.",
+			},
+		],
+	}), ["web-scout.citation_quote_required"]);
+});
+
+
+test("web-scout allows verbatim quotes up to 25 words", () => {
+	const result = evaluateTracePolicy({
+		agent: "web-scout",
+		steps: [
+			{ type: "tool", tool: "web_search", query: "release notes" },
+			{
+				type: "assistant",
+				text: "URL: https://example.com/release-notes Retrieved: 2026-07-04T07:40:08Z Quote: \"This release adds deterministic citation checks for URLs timestamps quotes while keeping validation mechanical and avoiding factuality judging or live network model calls.\"",
+			},
+		],
+	});
+
+	assert.equal(result.ok, true);
+	assert.deepEqual(result.violations, []);
 });

@@ -54,16 +54,16 @@ Review the resulting `.understand-anything/knowledge-graph.json`, `.understand-a
 
 These workflows are contributor tooling for this repository only. They are not part of the packaged TLH install surface.
 
-Use the lightest tier that answers your question:
+For workflow-eval follow-up on issue #241, keep the stack deterministic-first and use the lightest tier that answers your question:
 
 | Tier | Default path | When to use it | Commands |
 | --- | --- | --- | --- |
 | Deterministic repo-local validation | Yes; this is the normal CI/local path | Most changes | `npm run validate` |
-| Simulated policy/contract evals | Included inside `npm test` | Editing agent prompts, transcript/policy logic, or live-eval docs/contracts | `node --test tests/trace-policy-evals.test.mjs tests/agent-prompt-contracts.test.mjs tests/tlh-live-evals.test.mjs tests/tlh-live-eval-results.test.mjs` |
+| Simulated policy/contract evals | Included inside `npm test` | Editing agent prompts, transcript/policy logic, or live-eval docs/contracts | `node --test tests/trace-policy-evals.test.mjs tests/trace-policy-incident-matrix.test.mjs tests/agent-prompt-contracts.test.mjs tests/tlh-live-evals.test.mjs tests/tlh-live-eval-results.test.mjs` |
 | Live isolated smoke/manual scaffolds | No; opt-in only | You need real model, network, or install/update behavior | `node tests/evals/tlh-live-evals.mjs --list`<br>`node tests/evals/tlh-live-evals.mjs --run --scenario install-update-smoke`<br>`TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs --scenario architect-e2e` |
 | Release/published-asset checks | No; manual only | Verifying a pushed tag or GitHub Release asset | See [`docs/releasing.md`](docs/releasing.md#install-checks) |
 
-The simulated tier is still deterministic and repo-local. Today that means:
+The simulated tier is still deterministic and repo-local. Today that means deterministic incident regressions plus contract checks:
 
 - `tests/trace-policy-evals.test.mjs` for transcript fixtures that exercise architect/Rush/product/bug-hunter/web-scout/oracle policy boundaries.
 - `tests/agent-prompt-contracts.test.mjs` for prompt tool contracts and required workflow anchors.
@@ -120,6 +120,27 @@ Current scenarios cover:
 | `install-update-smoke` | Automated | `bash`; `node`; `npm`; `git`; `network access when install/default-extension setup needs it` | Runs a real isolated install from `file:$PWD`, then `tlh defaults list` and `tlh update --track custom --package-source file:$PWD`. Logs land in `artifacts/install-update-smoke/defaults-list.log` and `artifacts/install-update-smoke/update.log`. |
 
 The model/TUI scenarios stay manual on purpose: fully automating live provider behavior and interactive transcripts here would be brittle and unsafe for default CI.
+
+### Workflow eval boundaries and non-goals
+
+Keep contributor workflow evals scoped to reviewable signals:
+
+- Deterministic incident regressions stay first-class. The incident matrix plus trace-policy fixtures are the primary contributor-facing guardrails for architect/developer/code-reviewer/web-scout workflow rules.
+- Live evals remain opt-in and release-tier/manual. They are useful for smoke coverage, not for normal `npm run validate`, default CI, or routine local iteration.
+- No primary-agent auto-switching gate: launch the intended primary explicitly for a scenario and evaluate that run as-is instead of expecting TLH to auto-pick a different primary during eval setup.
+- No LLM-as-judge gate: pass/fail should come from deterministic checks or a human reviewer reading the prepared artifacts, not from another model scoring transcript quality.
+
+### Real-trace normalization roadmap
+
+Future workflow eval coverage may add curated real-session regressions derived from exported TLH or upstream Pi session JSONL files. Keep that work contributor-focused and reviewable:
+
+- export a real session JSONL only for an incident worth preserving;
+- redact secrets, user-specific paths, repo-specific noise, and other sensitive payloads before the trace leaves the temp/repro workspace;
+- normalize volatile fields such as timestamps, IDs, temp roots, and environment-specific command paths into the same stable transcript shape used by `tests/trace-policy-evals.test.mjs` fixtures;
+- preserve the concrete actor/tool/output sequence needed to replay deterministic policy assertions without introducing model judging;
+- land those normalized traces as explicit regression fixtures only after they are small enough to review and still stay out of normal packaged TLH behavior.
+
+Until that normalization path exists, keep real-trace collection as an opt-in release/debugging aid rather than a required contributor validation step.
 
 ## Style and change expectations
 
