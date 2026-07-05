@@ -57,11 +57,6 @@
     "description": "Prompt before session changes when the current git repo has uncommitted changes."
   },
   {
-    "id": "triage-comments",
-    "source": "npm:@diegopetrucci/pi-triage-comments@0.1.4",
-    "description": "Add /triage-comments and a read-only triage_comments subagent tool for review-comment triage."
-  },
-  {
     "id": "subagents",
     "aliases": ["pi-subagents"],
     "replaces": ["npm:pi-subagents", "git:github.com/nicobailon/pi-subagents", "git:github.com/diegopetrucci/pi-subagents"],

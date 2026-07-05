@@ -170,7 +170,6 @@ These commands are provided by bundled default extensions and are visible in TLH
 | `/mcp` | `pi-mcp-adapter` | Show MCP server status |
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
 | `/subagents-doctor` | `pi-subagents` | Show subagent diagnostics |
-| `/triage-comments` | `pi-triage-comments` | Collect pasted feedback or PR comments, then start a triage investigation |
 
 RTK shell-command rewriting is now a managed native integration rather than a slash-command UI. TLH does not register `/rtk`; use `RTK_DISABLED=1` for a single launch or set `"tlh": { "rtk": { "disabled": true } }` in the isolated TLH profile to disable rewriting.
 

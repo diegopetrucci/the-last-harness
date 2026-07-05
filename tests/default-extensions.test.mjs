@@ -30,7 +30,6 @@ const expectedBundledNpmSources = new Map([
 	["context-inspector", "npm:@diegopetrucci/pi-context-inspector@0.1.3"],
 	["quiet-tools", "npm:@diegopetrucci/pi-quiet-tools@0.1.4"],
 	["dirty-repo-guard", "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.3"],
-	["triage-comments", "npm:@diegopetrucci/pi-triage-comments@0.1.4"],
 	["intercom", "npm:@diegopetrucci/pi-intercom@0.6.2"],
 ]);
 
@@ -157,6 +156,7 @@ test("bundled manifest retires rtk while keeping quiet-tools bundled", () => {
 	assert.equal(ids.includes("confirm-destructive"), false);
 	assert.equal(ids.includes("librarian"), false);
 	assert.equal(ids.includes("rtk"), false);
+	assert.equal(ids.includes("triage-comments"), false);
 	assert.ok(quietTools, "bundled quiet-tools default should exist");
 	assert.deepEqual(quietTools.aliases, ["compact-bash"]);
 	assert.deepEqual(quietTools.replaces, ["npm:@diegopetrucci/pi-compact-bash"]);
