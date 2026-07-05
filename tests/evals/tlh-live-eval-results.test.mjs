@@ -9,7 +9,7 @@ import {
 	createScenarioResult,
 	createSuiteResult,
 	writeResultsFile,
-} from "./evals/tlh-live-eval-results.mjs";
+} from "./tlh-live-eval-results.mjs";
 
 test("live eval results schema aggregates detailed automated checks and manual rubrics", () => {
 	const automatedScenario = createScenarioResult({
