@@ -91,6 +91,14 @@ To opt out persistently, set `"tlh": { "telemetry": { "enabled": false } }` in `
 
 Plain `tlh update` also refreshes bundled default extension packages. Bundled npm defaults are installer-pinned to explicit versions from `config/default-extensions.json`, while TLH git-fork defaults stay pinned to their tagged refs; TLH only changes those managed versions when a TLH release updates the bundle. Updates still refresh pinned critical defaults safely before updating other enabled defaults.
 
+## Doctor
+
+Run `tlh doctor` to inspect the active isolated TLH profile. It is read-only by default: it reports settings drift, missing bundled subagent prompt copies, managed-helper/runtime hints, and prerequisite issues without modifying the profile, creating backups, or touching normal `~/.pi/agent`.
+
+Use `tlh doctor --repair` only when you want the narrow guarded repair path for TLH-owned isolated-profile drift. It can reapply packaged settings defaults, restore bundled subagent prompts, and reinstall managed `gn`, `tk`, and `rtk` helpers. It does **not** replace the private runtime or configure user-owned prerequisites such as `gh` auth, EXA keys, or MCP config.
+
+When `--repair` updates `settings.json`, TLH keeps the existing backup behavior and writes a `settings.json.backup-*` file first. To undo a repair, restore the backup you want or rerun `tlh update` to bring the isolated profile back to installer-managed defaults.
+
 ## Managed RTK
 
 Native RTK rewriting is bundled as a managed integration now; the old `pi-rtk` package and `/rtk` slash-command UI are gone. TLH keeps a pinned native `rtk` binary at `~/.the-last-harness/agent/bin/rtk`, and the wrapper adds `<agent>/bin` to `PATH` for the wrapped upstream Pi process so TLH sessions can find that managed binary normally.
