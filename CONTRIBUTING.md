@@ -54,93 +54,22 @@ Review the resulting `.understand-anything/knowledge-graph.json`, `.understand-a
 
 These workflows are contributor tooling for this repository only. They are not part of the packaged TLH install surface.
 
-For workflow-eval follow-up on issue #241, keep the stack deterministic-first and use the lightest tier that answers your question:
+For the full workflow-eval guide, including scenario details, scoring, and boundaries, see [docs/workflow-evals.md](docs/workflow-evals.md).
 
-| Tier | Default path | When to use it | Commands |
-| --- | --- | --- | --- |
-| Deterministic repo-local validation | Yes; this is the normal CI/local path | Most changes | `npm run validate` |
-| Simulated policy/contract evals | Included inside `npm test` via `tests/**/*.test.mjs` discovery | Editing agent prompts, transcript/policy logic, or live-eval docs/contracts | `node --test tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/trace-policy/trace-policy-incident-matrix.test.mjs tests/agent-prompt-contracts.test.mjs tests/evals/tlh-live-evals.test.mjs tests/evals/tlh-live-eval-results.test.mjs` |
-| Live isolated smoke/manual scaffolds | No; opt-in only | You need real model, network, or install/update behavior | `node tests/evals/tlh-live-evals.mjs --list`<br>`node tests/evals/tlh-live-evals.mjs --run --scenario install-update-smoke`<br>`TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs --scenario architect-e2e` |
-| Release/published-asset checks | No; manual only | Verifying a pushed tag or GitHub Release asset | See [`docs/releasing.md`](docs/releasing.md#install-checks) |
+Quick reference:
 
-The simulated tier is still deterministic and repo-local. Today that means deterministic incident regressions plus contract checks:
+- Default contributor/CI path: `npm run validate`
+- Workflow-specific deterministic checks: `node --test tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/trace-policy/trace-policy-incident-matrix.test.mjs tests/agent-prompt-contracts.test.mjs tests/evals/tlh-live-evals.test.mjs tests/evals/tlh-live-eval-results.test.mjs`
+- Discover live scenarios: `node tests/evals/tlh-live-evals.mjs --list`
+- Run automated install/update smoke: `node tests/evals/tlh-live-evals.mjs --run --scenario install-update-smoke`
+- Prepare a manual architect workflow eval: `TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs --scenario architect-e2e`
 
-- `tests/evals/trace-policy/trace-policy-evals.test.mjs` and `tests/evals/trace-policy/trace-policy-incident-matrix.test.mjs` for transcript fixtures that exercise architect/Rush/product/bug-hunter/web-scout/oracle policy boundaries.
-- `tests/agent-prompt-contracts.test.mjs` for prompt tool contracts and required workflow anchors.
-- `tests/evals/tlh-live-evals.test.mjs` for the live-eval runner contract, scenario list, repo-only command surface, and packaging guardrails.
-- `tests/evals/tlh-live-eval-results.test.mjs` for the structured score/result schema and external results-file behavior.
+Guardrails to remember:
 
-### Opt-in live eval runner
-
-Use the live eval runner only when you explicitly want real model, network, or install/update smoke coverage. It is never part of `npm run validate`.
-
-List the available scenarios and prerequisites:
-
-```sh
-node tests/evals/tlh-live-evals.mjs --list
-```
-
-Run one or more scenarios with a temp `HOME`, isolated agent dir, isolated bin dir, fixture repos, per-step timeouts, and redacted saved artifacts:
-
-```sh
-node tests/evals/tlh-live-evals.mjs --run --scenario install-update-smoke
-TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs --scenario architect-e2e
-```
-
-Runner behavior and safety constraints:
-
-- Running without `--run`, or with `--list`, only prints the scenario list and prerequisites.
-- `--run` or `TLH_RUN_LIVE_EVALS=1` is required to execute anything.
-- The runner creates an isolated temp root containing `home/`, `agent/`, `bin/`, `workspace/`, a top-level `README.md`, a top-level `results.json`, and per-scenario artifacts under `artifacts/<scenario>/`. If you pass `--artifacts-dir DIR`, TLH creates a fresh `tlh-live-evals-*` child workspace under that parent instead of writing those top-level files directly into `DIR`.
-- Saved artifacts redact the temp paths plus environment values whose names look secret-bearing (`KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `COOKIE`, `SESSION`, `BEARER`). Review artifacts before sharing them.
-- Per-run score results stay ephemeral by default. Use `--results-file /path/to/results.json` only when you explicitly want a redacted JSON artifact outside the temp workspace.
-- Manual scenarios always keep the workspace. Automated-only success deletes it unless you pass `--keep-artifacts`; specifying `--artifacts-dir DIR` also keeps the fresh child workspace under that parent for inspection.
-- Cleanup is always the printed `rm -rf ...` command. Removing that temp root fully undoes the live eval.
-- Keep all live evals pointed at temp paths; do not reuse your real `~/.the-last-harness/agent`, `~/.pi/agent`, or normal shell wrapper paths.
-- Keep secrets in environment variables or isolated config only. Do not paste keys into fixture files or committed docs.
-
-### How TLH scores evals
-
-- Deterministic repo-local validation and simulated policy/contract evals are binary pass/fail. Their score is the command exit status from `npm run validate` or the targeted `node --test ...` invocation, and they do not create or commit per-run `results.json` artifacts.
-- The live runner writes one structured `results.json` at the temp workspace root plus a human-readable top-level `README.md`. The JSON stores one result per selected scenario, scenario status (`passed`, `prepared`, or `failed`), check/rubric details, artifact paths, and suite-wide aggregate counts.
-- Automated live scenarios also score as binary pass/fail. For `install-update-smoke`, the scenario result aggregates bootstrap install, `tlh defaults list`, `tlh update`, and install-state verification. The scenario only passes when every automated check passes, and the suite summary rolls those counts up across all selected scenarios.
-- Manual live scenarios use pending rubric items instead of pretending the runner knows the answer. The runner marks them `prepared`, records the rubric criteria in `results.json`, and expects a human to inspect `artifacts/<scenario>/README.md`, logs, and workspace state before assigning the final pass/fail judgment.
-- Live model/network behavior can vary. If a live result matters for a PR or release call, run the same scenario more than once, compare `results.json` and artifacts across runs, and summarize any variance instead of treating one run as definitive.
-- By default, live results stay inside the temp workspace and should remain local or CI-only artifacts. Use `--results-file /path/to/results.json` only when you need an external redacted copy, then delete the temp root with the printed `rm -rf ...` command when you are done.
-- Never commit `results.json`, temp workspaces, or per-run score snapshots. Even with redaction in place, review artifacts before sharing them and keep secrets confined to isolated environment variables or isolated config.
-
-Current scenarios cover:
-
-| Scenario | Mode | Prerequisites | What it prepares or verifies |
-| --- | --- | --- | --- |
-| `architect-e2e` | Manual scaffold | `interactive terminal`; `model auth`; `bash`; `node`; `npm`; `git`; `network access when install/default-extension setup needs it` | Creates a tiny fixture repo plus `artifacts/architect-e2e/README.md`. Verify architect stays orchestration-only, uses ticket approval/developer flow, and keeps all edits inside the fixture repo. |
-| `rush-product-bug-hunter` | Manual scaffold | `interactive terminal`; `model auth`; `bash`; `node`; `npm`; `git`; `network access when install/default-extension setup needs it` | Creates one fixture repo plus prompts for Rush, product, and bug-hunter boundary checks in `artifacts/rush-product-bug-hunter/README.md`. |
-| `web-scout-network-research` | Manual scaffold | `interactive terminal`; `model auth`; `bash`; `node`; `npm`; `git`; `network access (required for research; install/default-extension setup may also need it)`; `EXA_API_KEY or equivalent isolated config` | Creates a research brief and `artifacts/web-scout-network-research/README.md`. Verify real network research, citations, and that saved artifacts stay free of secrets. |
-| `dirty-repo-guard` | Manual scaffold | `interactive terminal`; `bash`; `node`; `npm`; `git`; `network access when install/default-extension setup needs it` | Creates an intentionally dirty fixture repo plus `artifacts/dirty-repo-guard/README.md`. Verify the startup warning/prompt appears before work that could hide the uncommitted change. |
-| `install-update-smoke` | Automated | `bash`; `node`; `npm`; `git`; `network access when install/default-extension setup needs it` | Runs a real isolated install from `file:$PWD`, then `tlh defaults list` and `tlh update --track custom --package-source file:$PWD`. Logs land in `artifacts/install-update-smoke/defaults-list.log` and `artifacts/install-update-smoke/update.log`. |
-
-The model/TUI scenarios stay manual on purpose: fully automating live provider behavior and interactive transcripts here would be brittle and unsafe for default CI.
-
-### Workflow eval boundaries and non-goals
-
-Keep contributor workflow evals scoped to reviewable signals:
-
-- Deterministic incident regressions stay first-class. The incident matrix plus trace-policy fixtures are the primary contributor-facing guardrails for architect/developer/code-reviewer/web-scout workflow rules.
-- Live evals remain opt-in and release-tier/manual. They are useful for smoke coverage, not for normal `npm run validate`, default CI, or routine local iteration.
-- No primary-agent auto-switching gate: launch the intended primary explicitly for a scenario and evaluate that run as-is instead of expecting TLH to auto-pick a different primary during eval setup.
-- No LLM-as-judge gate: pass/fail should come from deterministic checks or a human reviewer reading the prepared artifacts, not from another model scoring transcript quality.
-
-### Real-trace normalization roadmap
-
-Future workflow eval coverage may add curated real-session regressions derived from exported TLH or upstream Pi session JSONL files. Keep that work contributor-focused and reviewable:
-
-- export a real session JSONL only for an incident worth preserving;
-- redact secrets, user-specific paths, repo-specific noise, and other sensitive payloads before the trace leaves the temp/repro workspace;
-- normalize volatile fields such as timestamps, IDs, temp roots, and environment-specific command paths into the same stable transcript shape used by `tests/evals/trace-policy/trace-policy-evals.test.mjs` fixtures;
-- preserve the concrete actor/tool/output sequence needed to replay deterministic policy assertions without introducing model judging;
-- land those normalized traces as explicit regression fixtures only after they are small enough to review and still stay out of normal packaged TLH behavior.
-
-Until that normalization path exists, keep real-trace collection as an opt-in release/debugging aid rather than a required contributor validation step.
+- Keep the stack deterministic-first and use the lightest tier that answers your question.
+- Live evals are opt-in and not part of normal `npm run validate` or default CI.
+- Keep all live evals pointed at temp paths; never reuse real `~/.the-last-harness/agent`, `~/.pi/agent`, or normal shell wrapper paths.
+- Do not commit `results.json`, temp workspaces, or per-run score snapshots.
 
 ## Style and change expectations
 

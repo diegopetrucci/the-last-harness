@@ -201,34 +201,33 @@ test("packaged local development docs exclude repo-only live eval tooling", () =
 	assert.match(docs, /node scripts\/tlh-install\.mjs --dry-run/);
 });
 
-test("contributing docs describe repo-only eval tiers, boundaries, and score artifacts", () => {
+
+test("contributing docs link to the dedicated workflow eval guide and keep a concise quick reference", () => {
 	const docs = readFileSync(join(repoRoot, "CONTRIBUTING.md"), "utf8");
 
-	assert.match(docs, /These workflows are contributor tooling for this repository only/i);
+	assert.match(docs, /\[docs\/workflow-evals\.md\]\(docs\/workflow-evals\.md\)/);
+	assert.match(docs, /Quick reference:/);
+	assert.match(docs, /Default contributor\/CI path: `npm run validate`/);
+	assert.match(docs, /Workflow-specific deterministic checks: `node --test tests\/evals\/trace-policy\/trace-policy-evals\.test\.mjs tests\/evals\/trace-policy\/trace-policy-incident-matrix\.test\.mjs tests\/agent-prompt-contracts\.test\.mjs tests\/evals\/tlh-live-evals\.test\.mjs tests\/evals\/tlh-live-eval-results\.test\.mjs`/);
+	assert.match(docs, /Live evals are opt-in and not part of normal `npm run validate` or default CI\./);
+	assert.doesNotMatch(docs, /issue #241/);
+	assert.doesNotMatch(docs, /Scenario \| Mode \| Prerequisites \| What it checks|What it prepares or verifies/);
+});
+
+test("workflow eval guide owns the detailed contributor-facing eval docs", () => {
+	const docs = readFileSync(join(repoRoot, "docs", "workflow-evals.md"), "utf8");
+
 	assert.match(docs, /issue #241/i);
-	assert.match(docs, /deterministic incident regressions plus contract checks/i);
-	assert.match(docs, /Included inside `npm test` via `tests\/\*\*\/\*\.test\.mjs` discovery/);
+	assert.match(docs, /Deterministic workflow evals \| Yes, through targeted `node --test` commands/i);
 	assert.match(docs, /node --test tests\/evals\/trace-policy\/trace-policy-evals\.test\.mjs tests\/evals\/trace-policy\/trace-policy-incident-matrix\.test\.mjs tests\/agent-prompt-contracts\.test\.mjs tests\/evals\/tlh-live-evals\.test\.mjs tests\/evals\/tlh-live-eval-results\.test\.mjs/);
-	assert.match(docs, /node tests\/evals\/tlh-live-evals\.mjs --list/);
 	assert.match(docs, /--results-file \/path\/to\/results\.json/);
-	assert.match(docs, /fresh `tlh-live-evals-\*` child workspace under that parent/i);
-	assert.match(docs, /tests\/evals\/trace-policy\/trace-policy-incident-matrix\.test\.mjs/);
-	assert.match(docs, /tests\/evals\/tlh-live-eval-results\.test\.mjs/);
-	assert.match(docs, /binary pass\/fail/i);
-	assert.match(docs, /top-level `results\.json`/i);
-	assert.match(docs, /scenario status \(`passed`, `prepared`, or `failed`\)/i);
-	assert.match(docs, /run the same scenario more than once/i);
-	assert.match(docs, /Live evals remain opt-in and release-tier\/manual/i);
+	assert.match(docs, /fresh `tlh-live-evals-\*` child workspace under `DIR`/i);
+	assert.match(docs, /scenario status values such as `passed`, `prepared`, or `failed`/i);
 	assert.match(docs, /No primary-agent auto-switching gate/i);
 	assert.match(docs, /No LLM-as-judge gate/i);
-	assert.match(docs, /exported TLH or upstream Pi session JSONL files/i);
 	assert.match(docs, /normalize volatile fields such as timestamps, IDs, temp roots, and environment-specific command paths/i);
-	assert.match(docs, /`tests\/evals\/trace-policy\/trace-policy-evals\.test\.mjs` fixtures/);
+	assert.match(docs, /Do not commit `results\.json`, temp workspaces, or per-run score snapshots\./i);
 	assert.doesNotMatch(docs, /tests\/trace-policy-evals\.test\.mjs/);
-	assert.match(docs, /without introducing model judging/i);
-	assert.match(docs, /Never commit `results\.json`, temp workspaces, or per-run score snapshots/i);
-	assert.match(docs, /`architect-e2e` \| Manual scaffold \| `interactive terminal`; `model auth`; `bash`; `node`; `npm`; `git`; `network access when install\/default-extension setup needs it`/);
-	assert.match(docs, /`install-update-smoke` \| Automated \| `bash`; `node`; `npm`; `git`; `network access when install\/default-extension setup needs it`/);
 });
 
 test("release docs keep published-asset install checks separate from default validation", () => {
