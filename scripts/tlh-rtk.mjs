@@ -761,8 +761,12 @@ function validateRtkCommand(command, agentDir, release) {
 		if (versionResult.error || versionResult.status !== 0) return false;
 		if ((versionResult.stdout || "").trim() !== `rtk ${release.version}`) return false;
 
+		// Upstream exit-code contract (rtk-ai/rtk src/hooks/rewrite_cmd.rs):
+		// 0 = rewrite+allow, 1 = passthrough, 2 = deny, 3 = rewrite+ask/default (since v0.35.0).
+		// Both 0 and 3 print the rewritten command on stdout, so accept either here.
+		// Keep in sync with extensions/rtk.ts, which accepts the same two codes.
 		const rewriteResult = spawnSync(resolvedCommand, ["rewrite", "git", "status"], { encoding: "utf8", timeout: VALIDATION_TIMEOUT_MS, env: helperEnv(agentDir) });
-		if (rewriteResult.error || rewriteResult.status !== 0) return false;
+		if (rewriteResult.error || (rewriteResult.status !== 0 && rewriteResult.status !== 3)) return false;
 		return (rewriteResult.stdout || "").trim() === "rtk git status";
 	} catch {
 		return false;
