@@ -167,6 +167,8 @@ After adding files, installing a package, or saving project trust, run `/reload`
 
 Normal `tlh update` runs are conservative: they preserve user-owned isolated-profile resources instead of overwriting them, and they still do not touch your normal Pi config.
 
+`tlh doctor` inspects the active isolated TLH profile and is read-only by default: it reports drift and missing prerequisites without rewriting settings, creating backups, or touching normal `~/.pi/agent`. `tlh doctor --repair` is narrower than `tlh update`: it only repairs TLH-owned isolated-profile drift such as packaged settings defaults, bundled subagent prompt copies, and managed `gn`/`tk`/`rtk` helpers. Runtime replacement, `gh` auth, EXA keys, and MCP config stay manual. When settings repair does write, it uses the normal `settings.json.backup-*` backup flow; to undo, restore the backup you want or rerun `tlh update`.
+
 ## Everything else, aka the docs dump
 
 - Slash commands reference: [`docs/commands.md`](docs/commands.md)
