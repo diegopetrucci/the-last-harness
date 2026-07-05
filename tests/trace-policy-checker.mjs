@@ -11,7 +11,7 @@ function normalizeText(value) {
 const WEB_SCOUT_MAX_QUOTE_WORDS = 25;
 const WEB_SCOUT_URL_PATTERN = /\bhttps?:\/\/[^\s)>\]]+/i;
 const WEB_SCOUT_UTC_TIMESTAMP_PATTERN = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\b/;
-const WEB_SCOUT_QUOTED_TEXT_PATTERN = /"([^"\n]+)"|“([^”\n]+)”|‘([^’\n]+)’/g;
+const WEB_SCOUT_QUOTED_TEXT_PATTERN = /"([^"\n]+)"|(?<![A-Za-z0-9_])'([^'\n]+)'(?![A-Za-z0-9_])|“([^”\n]+)”|‘([^’\n]+)’/g;
 
 function normalizeRepoPath(value) {
 	const rawPath = normalizeText(value);
@@ -1156,6 +1156,11 @@ const REQUIRED_CODE_REVIEWER_DIFF_COMMANDS = new Set([
 	"git diff --cached --no-color",
 	"git status --short --untracked-files=all",
 ]);
+const CODE_REVIEWER_FINDING_PATTERN = /\b(?:blocker|nit|bug|risk):|\bno blockers?\s+(?:found|identified|seen)\b|\b(?:the patch|the change|this patch|this change|the implementation|this implementation|the code|this code)\s+(?:is\s+|are\s+)?(?:missing|broken|failing|incorrect|incomplete)\b|\b(?:the patch|the change|this patch|this change|the implementation|this implementation|the code|this code)\s+(?:should|must|needs?|fails?)\b|\b(?:found|identified|observed)\s+(?:an?\s+)?(?:issues?|problems?|risks?)\b|\b(?:issues?|problems?|risks?)\s+(?:found|identified|observed)\b/i;
+
+function isCodeReviewerFindingStep(step) {
+	return step.type === "assistant" && CODE_REVIEWER_FINDING_PATTERN.test(normalizeText(step.text));
+}
 
 function evaluateCodeReviewer(transcript, addViolation) {
 	const seenDiffCommands = new Set();
@@ -1178,7 +1183,7 @@ function evaluateCodeReviewer(transcript, addViolation) {
 			}
 		}
 
-		if (step.type === "assistant" && seenDiffCommands.size < REQUIRED_CODE_REVIEWER_DIFF_COMMANDS.size) {
+		if (isCodeReviewerFindingStep(step) && seenDiffCommands.size < REQUIRED_CODE_REVIEWER_DIFF_COMMANDS.size) {
 			addViolation(
 				"code-reviewer.diff_inspection_required",
 				index,
@@ -1189,7 +1194,7 @@ function evaluateCodeReviewer(transcript, addViolation) {
 }
 
 function quotedTextMatches(text) {
-	return Array.from(text.matchAll(WEB_SCOUT_QUOTED_TEXT_PATTERN), (match) => match[1] || match[2] || match[3] || "");
+	return Array.from(text.matchAll(WEB_SCOUT_QUOTED_TEXT_PATTERN), (match) => match[1] || match[2] || match[3] || match[4] || "");
 }
 
 function wordCount(text) {
