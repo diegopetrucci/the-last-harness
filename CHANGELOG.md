@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Removed
+
+- Removed the bundled `pi-triage-comments` extension. Existing TLH-managed `pi-triage-comments` installs are force-removed on the next `tlh` install or update; packages added manually to that isolated profile are preserved.
+
 ### Changed
 
 - Weekly subscription usage now appears by default only when less than 25% remains; explicit `/usage weekly on` or `/usage weekly off` preferences still override that auto-show behavior.
