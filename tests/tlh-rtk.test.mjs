@@ -266,6 +266,54 @@ test("install-managed fails when the pinned RTK binary does not satisfy rewrite 
 	assert.equal(existsSync(target), false);
 });
 
+test("install-managed succeeds when the pinned RTK binary exits 3 (rewrite+ask) with the expected output", { skip: skipManagedBinaryTests }, () => {
+	const fixture = tempFixture();
+	const archive = createRtkArchive(fixture, { rewriteStatus: 3 });
+	const preload = writeFetchPreload(fixture);
+	const target = join(fixture.agent, "bin", "rtk");
+
+	const result = runRtk([
+		"--agent-dir", fixture.agent,
+		"--target", target,
+		...unsafeRtkArgs(archive),
+		"install-managed",
+	], {
+		env: {
+			HOME: fixture.home,
+			TLH_TEST_ARCHIVE: archive.archivePath,
+		},
+		nodeArgs: ["--import", preload],
+	});
+
+	assert.equal(result.status, 0, result.stderr);
+	assert.equal(result.stdout.trim(), target);
+	assert.equal(sha256File(target), archive.binarySha256);
+});
+
+test("install-managed fails when the pinned RTK binary exits a non-{0,3} rewrite status", { skip: skipManagedBinaryTests }, () => {
+	const fixture = tempFixture();
+	const archive = createRtkArchive(fixture, { rewriteStatus: 2 });
+	const preload = writeFetchPreload(fixture);
+	const target = join(fixture.agent, "bin", "rtk");
+
+	const result = runRtk([
+		"--agent-dir", fixture.agent,
+		"--target", target,
+		...unsafeRtkArgs(archive),
+		"install-managed",
+	], {
+		env: {
+			HOME: fixture.home,
+			TLH_TEST_ARCHIVE: archive.archivePath,
+		},
+		nodeArgs: ["--import", preload],
+	});
+
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /downloaded RTK binary did not validate/i);
+	assert.equal(existsSync(target), false);
+});
+
 test("install-managed rejects a symlinked managed bin path before fetch or writes", { skip: skipManagedBinaryTests }, () => {
 	const fixture = tempFixture();
 	symlinkDirectory(fixture.external, join(fixture.agent, "bin"));

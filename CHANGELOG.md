@@ -11,6 +11,10 @@ All notable changes to The Last Harness will be documented in this file.
 - Switched the bundled critical `pi-subagents` default from the reviewed TLH git tag to the published scoped npm package `npm:@diegopetrucci/pi-subagents@0.31.1`, while preserving migration from existing upstream and TLH git installs so the isolated profile lands on one canonical bundled source without duplicates.
 - Bumped the bundled managed `pi-web-access` default extension pin from `npm:@diegopetrucci/pi-web-access@0.10.8` to `npm:@diegopetrucci/pi-web-access@0.10.9`, while keeping migration coverage for upstream and prior TLH git replacement sources intact.
 
+### Fixed
+
+- Fixed managed RTK install validation to accept `rtk rewrite` exit code 3 in addition to 0, since rtk >= 0.35.0 intentionally exits 3 for a rewrite plus ask/default permission verdict while still printing the rewritten command. Previously TLH's installer rejected the authentic pinned rtk 0.42.4 binary with "downloaded RTK binary did not validate", breaking install/update at the RTK step.
+
 ## [0.27.0] - 2026-07-01
 
 ### Removed
