@@ -59,16 +59,16 @@ For workflow-eval follow-up on issue #241, keep the stack deterministic-first an
 | Tier | Default path | When to use it | Commands |
 | --- | --- | --- | --- |
 | Deterministic repo-local validation | Yes; this is the normal CI/local path | Most changes | `npm run validate` |
-| Simulated policy/contract evals | Included inside `npm test` | Editing agent prompts, transcript/policy logic, or live-eval docs/contracts | `node --test tests/trace-policy-evals.test.mjs tests/trace-policy-incident-matrix.test.mjs tests/agent-prompt-contracts.test.mjs tests/tlh-live-evals.test.mjs tests/tlh-live-eval-results.test.mjs` |
+| Simulated policy/contract evals | Included inside `npm test` via `tests/**/*.test.mjs` discovery | Editing agent prompts, transcript/policy logic, or live-eval docs/contracts | `node --test tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/trace-policy/trace-policy-incident-matrix.test.mjs tests/agent-prompt-contracts.test.mjs tests/evals/tlh-live-evals.test.mjs tests/evals/tlh-live-eval-results.test.mjs` |
 | Live isolated smoke/manual scaffolds | No; opt-in only | You need real model, network, or install/update behavior | `node tests/evals/tlh-live-evals.mjs --list`<br>`node tests/evals/tlh-live-evals.mjs --run --scenario install-update-smoke`<br>`TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs --scenario architect-e2e` |
 | Release/published-asset checks | No; manual only | Verifying a pushed tag or GitHub Release asset | See [`docs/releasing.md`](docs/releasing.md#install-checks) |
 
 The simulated tier is still deterministic and repo-local. Today that means deterministic incident regressions plus contract checks:
 
-- `tests/trace-policy-evals.test.mjs` for transcript fixtures that exercise architect/Rush/product/bug-hunter/web-scout/oracle policy boundaries.
+- `tests/evals/trace-policy/trace-policy-evals.test.mjs` and `tests/evals/trace-policy/trace-policy-incident-matrix.test.mjs` for transcript fixtures that exercise architect/Rush/product/bug-hunter/web-scout/oracle policy boundaries.
 - `tests/agent-prompt-contracts.test.mjs` for prompt tool contracts and required workflow anchors.
-- `tests/tlh-live-evals.test.mjs` for the live-eval runner contract, scenario list, repo-only command surface, and packaging guardrails.
-- `tests/tlh-live-eval-results.test.mjs` for the structured score/result schema and external results-file behavior.
+- `tests/evals/tlh-live-evals.test.mjs` for the live-eval runner contract, scenario list, repo-only command surface, and packaging guardrails.
+- `tests/evals/tlh-live-eval-results.test.mjs` for the structured score/result schema and external results-file behavior.
 
 ### Opt-in live eval runner
 
@@ -136,7 +136,7 @@ Future workflow eval coverage may add curated real-session regressions derived f
 
 - export a real session JSONL only for an incident worth preserving;
 - redact secrets, user-specific paths, repo-specific noise, and other sensitive payloads before the trace leaves the temp/repro workspace;
-- normalize volatile fields such as timestamps, IDs, temp roots, and environment-specific command paths into the same stable transcript shape used by `tests/trace-policy-evals.test.mjs` fixtures;
+- normalize volatile fields such as timestamps, IDs, temp roots, and environment-specific command paths into the same stable transcript shape used by `tests/evals/trace-policy/trace-policy-evals.test.mjs` fixtures;
 - preserve the concrete actor/tool/output sequence needed to replay deterministic policy assertions without introducing model judging;
 - land those normalized traces as explicit regression fixtures only after they are small enough to review and still stay out of normal packaged TLH behavior.
 

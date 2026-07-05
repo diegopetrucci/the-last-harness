@@ -86,8 +86,8 @@ export const TRACE_POLICY_FIXTURES = [
 		transcript: {
 			agent: "rush",
 			steps: [
-				{ type: "tool", tool: "read", path: "tests/trace-policy-checker.mjs" },
-				{ type: "tool", tool: "edit", path: "tests/trace-policy-checker.mjs" },
+				{ type: "tool", tool: "read", path: "tests/evals/trace-policy/trace-policy-checker.mjs" },
+				{ type: "tool", tool: "edit", path: "tests/evals/trace-policy/trace-policy-checker.mjs" },
 				{ type: "tool", tool: "bash", command: "npm test -- --test-name-pattern='trace policy'" },
 			],
 		},
@@ -101,7 +101,7 @@ export const TRACE_POLICY_FIXTURES = [
 		transcript: {
 			agent: "rush",
 			steps: [
-				{ type: "tool", tool: "read", path: "tests/trace-policy-checker.mjs" },
+				{ type: "tool", tool: "read", path: "tests/evals/trace-policy/trace-policy-checker.mjs" },
 				{ type: "tool", tool: "bash", command: 'tk create "Fix a tiny test" -d "..." --acceptance "..."' },
 			],
 		},
@@ -184,9 +184,9 @@ export const TRACE_POLICY_FIXTURES = [
 			agent: "developer",
 			steps: [
 				{ type: "tool", tool: "bash", argv: ["tk", "show", "tlht-4ufp"] },
-				{ type: "tool", tool: "read", path: "tests/trace-policy-checker.mjs" },
-				{ type: "tool", tool: "edit", path: "tests/trace-policy-checker.mjs" },
-				{ type: "tool", tool: "bash", command: "node --test tests/trace-policy-evals.test.mjs" },
+				{ type: "tool", tool: "read", path: "tests/evals/trace-policy/trace-policy-checker.mjs" },
+				{ type: "tool", tool: "edit", path: "tests/evals/trace-policy/trace-policy-checker.mjs" },
+				{ type: "tool", tool: "bash", command: "node --test tests/evals/trace-policy/trace-policy-evals.test.mjs" },
 			],
 		},
 	},
@@ -200,8 +200,8 @@ export const TRACE_POLICY_FIXTURES = [
 		transcript: {
 			agent: "developer",
 			steps: [
-				{ type: "tool", tool: "read", path: "tests/trace-policy-checker.mjs" },
-				{ type: "tool", tool: "edit", path: "tests/trace-policy-checker.mjs" },
+				{ type: "tool", tool: "read", path: "tests/evals/trace-policy/trace-policy-checker.mjs" },
+				{ type: "tool", tool: "edit", path: "tests/evals/trace-policy/trace-policy-checker.mjs" },
 				{ type: "tool", tool: "bash", argv: ["tk", "show", "tlht-4ufp"] },
 			],
 		},
@@ -231,7 +231,7 @@ export const TRACE_POLICY_FIXTURES = [
 			agent: "developer",
 			steps: [
 				{ type: "tool", tool: "bash", argv: ["tk", "show", "tlht-missing"], exitCode: 1 },
-				{ type: "tool", tool: "read", path: "tests/trace-policy-checker.mjs" },
+				{ type: "tool", tool: "read", path: "tests/evals/trace-policy/trace-policy-checker.mjs" },
 			],
 		},
 	},
@@ -245,7 +245,7 @@ export const TRACE_POLICY_FIXTURES = [
 			agent: "developer",
 			steps: [
 				{ type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
-				{ type: "tool", tool: "bash", command: "node --test tests/trace-policy-evals.test.mjs tests/trace-policy-incident-matrix.test.mjs" },
+				{ type: "tool", tool: "bash", command: "node --test tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/trace-policy/trace-policy-incident-matrix.test.mjs" },
 				{ type: "assistant", text: "Validation passed. No edits were needed for this final-validation ticket." },
 			],
 		},
@@ -263,7 +263,7 @@ export const TRACE_POLICY_FIXTURES = [
 				{ type: "tool", tool: "bash", command: "git diff --no-color" },
 				{ type: "tool", tool: "bash", command: "git diff --cached --no-color" },
 				{ type: "tool", tool: "bash", command: "git status --short --untracked-files=all" },
-				{ type: "tool", tool: "read", path: "tests/trace-policy-checker.mjs" },
+				{ type: "tool", tool: "read", path: "tests/evals/trace-policy/trace-policy-checker.mjs" },
 				{ type: "assistant", text: "No blockers found in the reviewed diff." },
 			],
 		},
@@ -299,7 +299,7 @@ export const TRACE_POLICY_FIXTURES = [
 				{ type: "tool", tool: "bash", command: "git diff --no-color" },
 				{ type: "tool", tool: "bash", command: "git diff --cached --no-color" },
 				{ type: "tool", tool: "bash", command: "git status --short --untracked-files=all" },
-				{ type: "tool", tool: "bash", command: "git checkout -- tests/trace-policy-checker.mjs" },
+				{ type: "tool", tool: "bash", command: "git checkout -- tests/evals/trace-policy/trace-policy-checker.mjs" },
 			],
 		},
 	},
@@ -313,7 +313,7 @@ export const TRACE_POLICY_FIXTURES = [
 			steps: [
 				{ type: "tool", tool: "bash", argv: ["tk", "show", "tlhf-qcx4"] },
 				{ type: "tool", tool: "grep", path: "tests", command: "trace-policy" },
-				{ type: "tool", tool: "read", path: "tests/trace-policy-checker.mjs" },
+				{ type: "tool", tool: "read", path: "tests/evals/trace-policy/trace-policy-checker.mjs" },
 			],
 		},
 	},
@@ -450,7 +450,7 @@ export const TRACE_POLICY_FIXTURES = [
 		transcript: {
 			agent: "oracle",
 			steps: [
-				{ type: "tool", tool: "read", path: "tests/trace-policy-checker.mjs" },
+				{ type: "tool", tool: "read", path: "tests/evals/trace-policy/trace-policy-checker.mjs" },
 				{ type: "tool", tool: "grep", path: "tests", pattern: "evaluateOracle" },
 				{ type: "tool", tool: "bash", argv: ["git", "diff", "--no-color", "HEAD~1"] },
 			],

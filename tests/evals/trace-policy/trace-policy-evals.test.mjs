@@ -298,7 +298,7 @@ test("developer final-validation no-edit flow stays allowed after tk show", () =
 		agent: "developer",
 		steps: [
 			{ type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
-			{ type: "tool", tool: "bash", command: "node --test tests/trace-policy-evals.test.mjs tests/trace-policy-incident-matrix.test.mjs" },
+			{ type: "tool", tool: "bash", command: "node --test tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/trace-policy/trace-policy-incident-matrix.test.mjs" },
 			{ type: "assistant", text: "Validation passed with no edits required." },
 		],
 	});
@@ -312,7 +312,7 @@ test("developer rejects bare tk show before editing", () => {
 		agent: "developer",
 		steps: [
 			{ type: "tool", tool: "bash", argv: ["tk", "show"] },
-			{ type: "tool", tool: "edit", path: "tests/trace-policy-checker.mjs" },
+			{ type: "tool", tool: "edit", path: "tests/evals/trace-policy/trace-policy-checker.mjs" },
 		],
 	}), ["developer.ticket_source_required"]);
 });
@@ -322,7 +322,7 @@ test("developer must stop after tk show failure", () => {
 		agent: "developer",
 		steps: [
 			{ type: "tool", tool: "bash", argv: ["tk", "show", "tlht-missing"], exitCode: 1 },
-			{ type: "tool", tool: "read", path: "tests/trace-policy-checker.mjs" },
+			{ type: "tool", tool: "read", path: "tests/evals/trace-policy/trace-policy-checker.mjs" },
 		],
 	}), ["developer.ticket_lookup_stop_required"]);
 });

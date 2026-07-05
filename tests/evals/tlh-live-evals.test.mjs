@@ -5,10 +5,10 @@ import { basename, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { allScenarios, createContext, createScenarioScoreResult, writeWorkspaceOutputs } from "./evals/tlh-live-evals.mjs";
-import { createBinaryScoreCheck, createScenarioResult, createSuiteResult } from "./evals/tlh-live-eval-results.mjs";
+import { allScenarios, createContext, createScenarioScoreResult, writeWorkspaceOutputs } from "./tlh-live-evals.mjs";
+import { createBinaryScoreCheck, createScenarioResult, createSuiteResult } from "./tlh-live-eval-results.mjs";
 
-const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const runnerPath = join(repoRoot, "tests", "evals", "tlh-live-evals.mjs");
 
 function runLiveEval(args = [], env = {}) {
@@ -187,6 +187,8 @@ test("artifacts-dir uses a fresh child workspace and preserves parent README/res
 test("package scripts keep live evals out of package command surfaces", () => {
 	const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
 
+	assert.equal(pkg.scripts.test, 'node --test --test-reporter=dot "tests/**/*.test.mjs"');
+	assert.equal(pkg.scripts["test:verbose"], 'node --test "tests/**/*.test.mjs"');
 	assert.equal(Object.hasOwn(pkg.scripts, "eval:live"), false);
 	assert.doesNotMatch(pkg.scripts.validate, /eval:live|tlh-live-evals/i);
 });
@@ -205,11 +207,13 @@ test("contributing docs describe repo-only eval tiers, boundaries, and score art
 	assert.match(docs, /These workflows are contributor tooling for this repository only/i);
 	assert.match(docs, /issue #241/i);
 	assert.match(docs, /deterministic incident regressions plus contract checks/i);
-	assert.match(docs, /node --test tests\/trace-policy-evals\.test\.mjs tests\/trace-policy-incident-matrix\.test\.mjs tests\/agent-prompt-contracts\.test\.mjs tests\/tlh-live-evals\.test\.mjs tests\/tlh-live-eval-results\.test\.mjs/);
+	assert.match(docs, /Included inside `npm test` via `tests\/\*\*\/\*\.test\.mjs` discovery/);
+	assert.match(docs, /node --test tests\/evals\/trace-policy\/trace-policy-evals\.test\.mjs tests\/evals\/trace-policy\/trace-policy-incident-matrix\.test\.mjs tests\/agent-prompt-contracts\.test\.mjs tests\/evals\/tlh-live-evals\.test\.mjs tests\/evals\/tlh-live-eval-results\.test\.mjs/);
 	assert.match(docs, /node tests\/evals\/tlh-live-evals\.mjs --list/);
 	assert.match(docs, /--results-file \/path\/to\/results\.json/);
 	assert.match(docs, /fresh `tlh-live-evals-\*` child workspace under that parent/i);
-	assert.match(docs, /tests\/tlh-live-eval-results\.test\.mjs/);
+	assert.match(docs, /tests\/evals\/trace-policy\/trace-policy-incident-matrix\.test\.mjs/);
+	assert.match(docs, /tests\/evals\/tlh-live-eval-results\.test\.mjs/);
 	assert.match(docs, /binary pass\/fail/i);
 	assert.match(docs, /top-level `results\.json`/i);
 	assert.match(docs, /scenario status \(`passed`, `prepared`, or `failed`\)/i);
@@ -219,6 +223,8 @@ test("contributing docs describe repo-only eval tiers, boundaries, and score art
 	assert.match(docs, /No LLM-as-judge gate/i);
 	assert.match(docs, /exported TLH or upstream Pi session JSONL files/i);
 	assert.match(docs, /normalize volatile fields such as timestamps, IDs, temp roots, and environment-specific command paths/i);
+	assert.match(docs, /`tests\/evals\/trace-policy\/trace-policy-evals\.test\.mjs` fixtures/);
+	assert.doesNotMatch(docs, /tests\/trace-policy-evals\.test\.mjs/);
 	assert.match(docs, /without introducing model judging/i);
 	assert.match(docs, /Never commit `results\.json`, temp workspaces, or per-run score snapshots/i);
 	assert.match(docs, /`architect-e2e` \| Manual scaffold \| `interactive terminal`; `model auth`; `bash`; `node`; `npm`; `git`; `network access when install\/default-extension setup needs it`/);
