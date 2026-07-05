@@ -189,6 +189,60 @@ if (command === "validate") {
 	return packageRoot;
 }
 
+function createWrapperDoctorProbePackageRoot(root) {
+	const packageRoot = join(root, "wrapper-doctor-package-root");
+	mkdirSync(join(packageRoot, "scripts"), { recursive: true });
+	writeExecutable(join(packageRoot, "scripts", "tlh-doctor.mjs"), `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+const args = process.argv.slice(2);
+let agentDir;
+let settingsPath;
+for (let index = 0; index < args.length; index += 1) {
+  if (args[index] === "--agent-dir") {
+    agentDir = args[index + 1];
+    index += 1;
+    continue;
+  }
+  if (args[index] === "--settings") {
+    settingsPath = args[index + 1];
+    index += 1;
+  }
+}
+writeFileSync(${JSON.stringify(join(root, "wrapper-doctor-call.json"))}, JSON.stringify({
+  argv: args,
+  derivedAgentDir: agentDir,
+  derivedSettingsPath: settingsPath ?? join(agentDir, "settings.json"),
+  env: {
+    PATH: process.env.PATH,
+    PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+  },
+}, null, 2));
+`);
+	return packageRoot;
+}
+
+function runGeneratedWrapper(root, { agentDir, packageRoot, argv, pathEntries }) {
+	const binDir = join(root, "wrapper-bin");
+	const wrapperPath = join(binDir, "tlh");
+	mkdirSync(binDir, { recursive: true });
+	writeExecutable(wrapperPath, renderWrapper({
+		agentDir,
+		binDir,
+		wrapperName: "tlh",
+		packageRoot,
+		piCmd: "",
+	}));
+	return spawnSync("/bin/bash", [wrapperPath, ...argv], {
+		cwd: root,
+		encoding: "utf8",
+		env: {
+			...process.env,
+			PATH: pathEntries.join(delimiter),
+		},
+	});
+}
+
 test("renderWrapper intercepts tlh doctor", () => {
 	const script = renderWrapper({
 		agentDir: "/tmp/agent",
@@ -200,7 +254,64 @@ test("renderWrapper intercepts tlh doctor", () => {
 
 	assert.match(script, /if \[\[ "\$\{1:-\}" == "doctor" \]\]; then/);
 	assert.match(script, /scripts\/tlh-doctor\.mjs/);
+	assert.match(script, /PATH="\$\{tlh_sanitized_path\}" exec/);
 	assert.match(script, /--package-root "\$\{default_tlh_package_root\}"/);
+	assert.doesNotMatch(script, /doctor\.mjs" --agent-dir "\$\{default_agent_dir\}" --settings /);
+});
+
+test("generated wrapper doctor derives settings from an overridden agent dir without using the wrapper profile bin", (t) => {
+	const fixture = tempFixture(t);
+	const defaultAgentDir = join(fixture.root, "default-agent");
+	const otherAgentDir = join(fixture.root, "other-agent");
+	const defaultAgentBin = join(defaultAgentDir, "bin");
+	const fakebin = join(fixture.root, "doctor-path");
+	const packageRoot = createWrapperDoctorProbePackageRoot(fixture.root);
+	mkdirSync(defaultAgentBin, { recursive: true });
+	mkdirSync(otherAgentDir, { recursive: true });
+	mkdirSync(fakebin, { recursive: true });
+	writeExecutable(join(defaultAgentBin, "gh"), "#!/bin/sh\nexit 99\n");
+
+	const result = runGeneratedWrapper(fixture.root, {
+		agentDir: defaultAgentDir,
+		packageRoot,
+		argv: ["doctor", "--agent-dir", otherAgentDir],
+		pathEntries: [defaultAgentBin, fakebin, dirname(process.execPath)],
+	});
+	const output = `${result.stdout}\n${result.stderr}`;
+	assert.equal(result.status, 0, output);
+
+	const record = JSON.parse(readFileSync(join(fixture.root, "wrapper-doctor-call.json"), "utf8"));
+	assert.equal(record.derivedAgentDir, otherAgentDir);
+	assert.equal(record.derivedSettingsPath, join(otherAgentDir, "settings.json"));
+	assert.equal(record.argv.includes("--settings"), false);
+	assert.equal(record.env.PI_CODING_AGENT_DIR, defaultAgentDir);
+	assert.equal(record.env.PATH.split(delimiter)[0], fakebin);
+	assert.equal(record.env.PATH.split(delimiter).includes(defaultAgentBin), false);
+});
+
+test("generated wrapper doctor preserves an explicit --settings override", (t) => {
+	const fixture = tempFixture(t);
+	const defaultAgentDir = join(fixture.root, "default-agent");
+	const otherAgentDir = join(fixture.root, "other-agent");
+	const explicitSettingsPath = join(fixture.root, "custom-settings.json");
+	const packageRoot = createWrapperDoctorProbePackageRoot(fixture.root);
+	mkdirSync(join(defaultAgentDir, "bin"), { recursive: true });
+	mkdirSync(otherAgentDir, { recursive: true });
+	writeFileSync(explicitSettingsPath, "{}\n", "utf8");
+
+	const result = runGeneratedWrapper(fixture.root, {
+		agentDir: defaultAgentDir,
+		packageRoot,
+		argv: ["doctor", "--agent-dir", otherAgentDir, "--settings", explicitSettingsPath],
+		pathEntries: [join(defaultAgentDir, "bin"), dirname(process.execPath)],
+	});
+	const output = `${result.stdout}\n${result.stderr}`;
+	assert.equal(result.status, 0, output);
+
+	const record = JSON.parse(readFileSync(join(fixture.root, "wrapper-doctor-call.json"), "utf8"));
+	assert.equal(record.derivedAgentDir, otherAgentDir);
+	assert.equal(record.derivedSettingsPath, explicitSettingsPath);
+	assert.deepEqual(record.argv.slice(-4), ["--agent-dir", otherAgentDir, "--settings", explicitSettingsPath]);
 });
 
 test("tlh doctor returns success for a healthy isolated profile", (t) => {

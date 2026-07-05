@@ -429,7 +429,7 @@ function renderWrapper(args) {
         "    exit 1",
         "  fi",
         '  tlh_resolve_node',
-        '  PATH="${tlh_managed_helper_path}" exec "${tlh_node_cmd}" "${default_tlh_package_root}/scripts/tlh-doctor.mjs" --agent-dir "${default_agent_dir}" --settings "${default_agent_dir}/settings.json" --package-root "${default_tlh_package_root}" "$@"',
+        '  PATH="${tlh_sanitized_path}" exec "${tlh_node_cmd}" "${default_tlh_package_root}/scripts/tlh-doctor.mjs" --agent-dir "${default_agent_dir}" --package-root "${default_tlh_package_root}" "$@"',
         "fi",
         "",
         // Validate the private pinned runtime and exec it.  No global PATH search:
