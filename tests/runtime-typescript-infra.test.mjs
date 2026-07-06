@@ -85,6 +85,8 @@ test("runtime TypeScript package scripts stay wired into validation before tests
 	assert.equal(pkg.scripts["build:runtime"], "node scripts/runtime-typescript.mjs build");
 	assert.equal(pkg.scripts["check:runtime"], "node scripts/runtime-typescript.mjs check");
 	assert.equal(pkg.scripts["typecheck:runtime"], "node scripts/runtime-typescript.mjs typecheck");
+	assert.equal(pkg.scripts.test, 'node --test --test-reporter=dot "tests/**/*.test.mjs"');
+	assert.equal(pkg.scripts["test:verbose"], 'node --test "tests/**/*.test.mjs"');
 
 	const validate = pkg.scripts.validate;
 	assert.match(validate, /npm run typecheck/);

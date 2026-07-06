@@ -8,6 +8,11 @@ function normalizeText(value) {
 	return typeof value === "string" ? value.trim() : "";
 }
 
+const WEB_SCOUT_MAX_QUOTE_WORDS = 25;
+const WEB_SCOUT_URL_PATTERN = /\bhttps?:\/\/[^\s)>\]]+/i;
+const WEB_SCOUT_UTC_TIMESTAMP_PATTERN = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\b/;
+const WEB_SCOUT_QUOTED_TEXT_PATTERN = /"([^"\n]+)"|(?<![A-Za-z0-9_])'([^'\n]+)'(?![A-Za-z0-9_])|“([^”\n]+)”|‘([^’\n]+)’/g;
+
 function normalizeRepoPath(value) {
 	const rawPath = normalizeText(value);
 	if (!rawPath) {
@@ -818,13 +823,37 @@ function bashMutationPath(step) {
 	return extractShellRedirectionTarget(command) || extractSedInPlaceTarget(command);
 }
 
-function isTkMutatingShellSegment(segment) {
+function tkWordsForShellSegment(segment) {
 	const words = shellWords(segment);
 	const shellCommand = firstShellCommand(words);
 	if (!shellCommand || shellCommand.word.toLowerCase() !== "tk") {
-		return false;
+		return undefined;
 	}
-	const subcommand = normalizeText(words[shellCommand.index + 1]).toLowerCase();
+	return { words, shellCommandIndex: shellCommand.index };
+}
+
+function tkSubcommandForShellSegment(segment) {
+	const tkCommand = tkWordsForShellSegment(segment);
+	if (!tkCommand) {
+		return undefined;
+	}
+	return normalizeText(tkCommand.words[tkCommand.shellCommandIndex + 1]).toLowerCase() || undefined;
+}
+
+function tkShowTicketIdForShellSegment(segment) {
+	const tkCommand = tkWordsForShellSegment(segment);
+	if (!tkCommand) {
+		return undefined;
+	}
+	const subcommand = normalizeText(tkCommand.words[tkCommand.shellCommandIndex + 1]).toLowerCase();
+	if (subcommand !== "show") {
+		return undefined;
+	}
+	return normalizeText(firstPositionalArgument(tkCommand.words.slice(tkCommand.shellCommandIndex + 2)));
+}
+
+function isTkMutatingShellSegment(segment) {
+	const subcommand = tkSubcommandForShellSegment(segment);
 	return Boolean(subcommand) && TK_MUTATING_SUBCOMMANDS.has(subcommand);
 }
 
@@ -849,6 +878,28 @@ function isTkMutatingCommand(step) {
 		return false;
 	}
 	return shellLeafCommandSegments(command).some(isTkMutatingShellSegment);
+}
+
+function isPureTkShowCommand(step) {
+	if (toolName(step) !== "bash") {
+		return false;
+	}
+	const command = commandText(step);
+	if (!command || hasMutatingShellCommand(command) || extractShellRedirectionTarget(command)) {
+		return false;
+	}
+	const segments = shellLeafCommandSegments(command);
+	return segments.length > 0 && segments.every((segment) => Boolean(tkShowTicketIdForShellSegment(segment)));
+}
+
+function didToolStepFail(step) {
+	if (!isRecord(step) || step.type !== "tool") {
+		return false;
+	}
+	if (step.ok === false || step.status === "failed") {
+		return true;
+	}
+	return Number.isInteger(step.exitCode) && step.exitCode !== 0;
 }
 
 function readOnlyBashMutation(step) {
@@ -1064,10 +1115,98 @@ function evaluateBugHunter(transcript, addViolation) {
 	}
 }
 
+function evaluateDeveloper(transcript, addViolation) {
+	let sawSuccessfulTicketShow = false;
+	let failedTicketShowAt;
+
+	for (const [index, step] of transcript.steps.entries()) {
+		const name = toolName(step);
+		if (failedTicketShowAt !== undefined && step.type === "tool") {
+			addViolation(
+				"developer.ticket_lookup_stop_required",
+				index,
+				"Developer must stop after tk show <id> fails and report the blocker instead of continuing with tool work.",
+			);
+			continue;
+		}
+
+		if (isPureTkShowCommand(step)) {
+			if (didToolStepFail(step)) {
+				failedTicketShowAt = index;
+				sawSuccessfulTicketShow = false;
+			} else {
+				failedTicketShowAt = undefined;
+				sawSuccessfulTicketShow = true;
+			}
+			continue;
+		}
+
+		if ((["write", "edit"].includes(name) || readOnlyBashMutation(step)) && !sawSuccessfulTicketShow) {
+			addViolation(
+				"developer.ticket_source_required",
+				index,
+				"Developer must run tk show <id> successfully and treat the assigned ticket as the source of truth before making changes.",
+			);
+		}
+	}
+}
+
+const REQUIRED_CODE_REVIEWER_DIFF_COMMANDS = new Set([
+	"git diff --no-color",
+	"git diff --cached --no-color",
+	"git status --short --untracked-files=all",
+]);
+const CODE_REVIEWER_FINDING_PATTERN = /\b(?:blocker|nit|bug|risk):|\bno blockers?\s+(?:found|identified|seen)\b|\b(?:the patch|the change|this patch|this change|the implementation|this implementation|the code|this code)\s+(?:is\s+|are\s+)?(?:missing|broken|failing|incorrect|incomplete)\b|\b(?:the patch|the change|this patch|this change|the implementation|this implementation|the code|this code)\s+(?:should|must|needs?|fails?)\b|\b(?:found|identified|observed)\s+(?:an?\s+)?(?:issues?|problems?|risks?)\b|\b(?:issues?|problems?|risks?)\s+(?:found|identified|observed)\b/i;
+
+function isCodeReviewerFindingStep(step) {
+	return step.type === "assistant" && CODE_REVIEWER_FINDING_PATTERN.test(normalizeText(step.text));
+}
+
+function evaluateCodeReviewer(transcript, addViolation) {
+	const seenDiffCommands = new Set();
+
+	for (const [index, step] of transcript.steps.entries()) {
+		const name = toolName(step);
+		if (["write", "edit"].includes(name) || readOnlyBashMutation(step)) {
+			addViolation(
+				"code-reviewer.read_only",
+				index,
+				"Code-reviewer must stay read-only and may not modify files or run mutating shell commands.",
+			);
+		}
+
+		if (name === "bash") {
+			for (const segment of shellLeafCommandSegments(commandText(step))) {
+				if (REQUIRED_CODE_REVIEWER_DIFF_COMMANDS.has(segment)) {
+					seenDiffCommands.add(segment);
+				}
+			}
+		}
+
+		if (isCodeReviewerFindingStep(step) && seenDiffCommands.size < REQUIRED_CODE_REVIEWER_DIFF_COMMANDS.size) {
+			addViolation(
+				"code-reviewer.diff_inspection_required",
+				index,
+				"Code-reviewer must inspect git diff, cached diff, and git status before returning findings.",
+			);
+		}
+	}
+}
+
+function quotedTextMatches(text) {
+	return Array.from(text.matchAll(WEB_SCOUT_QUOTED_TEXT_PATTERN), (match) => match[1] || match[2] || match[3] || match[4] || "");
+}
+
+function wordCount(text) {
+	return normalizeText(text).split(/\s+/).filter(Boolean).length;
+}
+
 function evaluateWebScout(transcript, addViolation) {
 	let searchCount = 0;
 	let networkCount = 0;
 	let fetchBudgetExceeded = false;
+	let finalAssistantStep;
+	let finalAssistantIndex = -1;
 
 	for (const [index, step] of transcript.steps.entries()) {
 		const name = toolName(step);
@@ -1100,6 +1239,50 @@ function evaluateWebScout(transcript, addViolation) {
 				"Web-scout exceeded the shared per-turn budget of 6 network calls.",
 			);
 		}
+		if (step.type === "assistant") {
+			finalAssistantStep = step;
+			finalAssistantIndex = index;
+		}
+	}
+
+	if (!finalAssistantStep) {
+		return;
+	}
+
+	const finalAssistantText = normalizeText(finalAssistantStep.text);
+	if (!WEB_SCOUT_URL_PATTERN.test(finalAssistantText)) {
+		addViolation(
+			"web-scout.citation_url_required",
+			finalAssistantIndex,
+			"Web-scout final output must include a source URL.",
+		);
+	}
+	if (!WEB_SCOUT_UTC_TIMESTAMP_PATTERN.test(finalAssistantText)) {
+		addViolation(
+			"web-scout.citation_timestamp_required",
+			finalAssistantIndex,
+			"Web-scout final output must include a UTC retrieval timestamp.",
+		);
+	}
+
+	const quotes = quotedTextMatches(finalAssistantText);
+	if (quotes.length === 0) {
+		addViolation(
+			"web-scout.citation_quote_required",
+			finalAssistantIndex,
+			"Web-scout final output must include a short verbatim quote from the source.",
+		);
+	}
+
+	for (const quote of quotes) {
+		if (wordCount(quote) > WEB_SCOUT_MAX_QUOTE_WORDS) {
+			addViolation(
+				"web-scout.quote_budget_exceeded",
+				finalAssistantIndex,
+				`Web-scout final output may include only verbatim quotes of ${WEB_SCOUT_MAX_QUOTE_WORDS} words or fewer.`,
+			);
+			break;
+		}
 	}
 }
 
@@ -1127,6 +1310,8 @@ const EVALUATORS = Object.freeze({
 	architect: evaluateArchitect,
 	rush: evaluateRush,
 	product: evaluateProduct,
+	developer: evaluateDeveloper,
+	"code-reviewer": evaluateCodeReviewer,
 	"bug-hunter": evaluateBugHunter,
 	"web-scout": evaluateWebScout,
 	oracle: evaluateOracle,
