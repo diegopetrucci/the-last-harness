@@ -4,6 +4,11 @@ import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
 const { findLastAssistantMessage } = await jiti.import("../extensions/the-last-harness/annotate-last-message/session.ts");
+const {
+	ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION,
+	buildAnnotateLastMessageCommand,
+	registerAnnotateLastMessageCommand,
+} = await jiti.import("../extensions/the-last-harness/annotate-last-message.ts");
 const { composeAnnotateLastMessagePrompt, hasAnnotateLastMessageFeedback } = await jiti.import(
 	"../extensions/the-last-harness/annotate-last-message/prompt.ts",
 );
@@ -18,6 +23,32 @@ function messageEntry(role, content, stopReason = "stop") {
 		},
 	};
 }
+
+test("registerAnnotateLastMessageCommand reuses the exported command builder and description", () => {
+	let registeredCommand;
+	let sessionShutdownHandler;
+	registerAnnotateLastMessageCommand({
+		registerCommand(name, command) {
+			if (name === "annotate-last-message") {
+				registeredCommand = command;
+			}
+		},
+		on(event, handler) {
+			if (event === "session_shutdown") {
+				sessionShutdownHandler = handler;
+			}
+		},
+	});
+
+	assert.equal(registeredCommand.description, ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION);
+	assert.equal(typeof registeredCommand.handler, "function");
+	assert.equal(typeof sessionShutdownHandler, "function");
+
+	const builtCommand = buildAnnotateLastMessageCommand();
+	assert.equal(typeof builtCommand.handler, "function");
+	assert.equal(typeof builtCommand.handleSessionShutdown, "function");
+	assert.doesNotThrow(() => builtCommand.handleSessionShutdown());
+});
 
 test("findLastAssistantMessage reports a missing assistant message for an empty branch", () => {
 	assert.deepEqual(findLastAssistantMessage([]), {

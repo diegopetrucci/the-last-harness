@@ -18,6 +18,7 @@ import {
 } from "./tokens-analyzer.js";
 
 const TOKENS_COMMAND_HELP = "Usage: /tokens";
+export const TOKENS_COMMAND_DESCRIPTION = "Generate and open a local TLH token-spend report";
 const REPORT_FILE_NAME = "tokens-report.html";
 const execFileAsync = promisify(execFile);
 const INTEGER_FORMATTER = new Intl.NumberFormat("en-US");
@@ -50,41 +51,45 @@ type OpenCommand = {
 
 type TokensReportSessionManager = Pick<ExtensionContext["sessionManager"], "getSessionDir" | "getSessionFile">;
 
-export function registerTokensCommand(pi: ExtensionAPI, dependencies: TokensCommandDependencies = {}): void {
+export function createTokensCommandHandler(pi: ExtensionAPI, dependencies: TokensCommandDependencies = {}) {
 	const openReport = dependencies.openReport ?? openLocalReport;
 	const now = dependencies.now ?? (() => new Date());
 
-	pi.registerCommand("tokens", {
-		description: "Generate and open a local TLH token-spend report",
-		handler: async (args, ctx) => {
-			if (args.trim()) {
-				ctx.ui.notify(TOKENS_COMMAND_HELP, "error");
-				return;
-			}
+	return async (args: string, ctx: ExtensionContext): Promise<void> => {
+		if (args.trim()) {
+			ctx.ui.notify(TOKENS_COMMAND_HELP, "error");
+			return;
+		}
+
+		try {
+			const analysis = analyzeCurrentSessionUsage(ctx.sessionManager, typeof pi.getAllTools === "function" ? pi.getAllTools() : []);
+			const html = buildTokensReportHtml(analysis, { generatedAt: now().toISOString() });
+			const report = writeLocalTokensReport(ctx.sessionManager, html);
 
 			try {
-				const analysis = analyzeCurrentSessionUsage(ctx.sessionManager, typeof pi.getAllTools === "function" ? pi.getAllTools() : []);
-				const html = buildTokensReportHtml(analysis, { generatedAt: now().toISOString() });
-				const report = writeLocalTokensReport(ctx.sessionManager, html);
-
-				try {
-					await openReport(report.path);
-					ctx.ui.notify(
-						`Opened local TLH token report at ${formatHomePath(report.path)}. Delete ${formatHomePath(report.directory)} when you no longer need it.`,
-						"info",
-					);
-				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					ctx.ui.notify(
-						`Generated local TLH token report at ${formatHomePath(report.path)}, but could not open it automatically: ${message}. Open the file manually and delete ${formatHomePath(report.directory)} when you no longer need it.`,
-						"warning",
-					);
-				}
+				await openReport(report.path);
+				ctx.ui.notify(
+					`Opened local TLH token report at ${formatHomePath(report.path)}. Delete ${formatHomePath(report.directory)} when you no longer need it.`,
+					"info",
+				);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
-				ctx.ui.notify(`Could not generate TLH token report: ${message}`, "error");
+				ctx.ui.notify(
+					`Generated local TLH token report at ${formatHomePath(report.path)}, but could not open it automatically: ${message}. Open the file manually and delete ${formatHomePath(report.directory)} when you no longer need it.`,
+					"warning",
+				);
 			}
-		},
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			ctx.ui.notify(`Could not generate TLH token report: ${message}`, "error");
+		}
+	};
+}
+
+export function registerTokensCommand(pi: ExtensionAPI, dependencies: TokensCommandDependencies = {}): void {
+	pi.registerCommand("tokens", {
+		description: TOKENS_COMMAND_DESCRIPTION,
+		handler: createTokensCommandHandler(pi, dependencies),
 	});
 }
 

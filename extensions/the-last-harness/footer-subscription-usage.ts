@@ -13,7 +13,7 @@ const DAY_MS = 24 * HOUR_MS;
 
 export type TlhFooterSubscriptionUsageOptions = {
 	subscriptionUsage?: TlhSubscriptionUsageSnapshotProvider;
-	shouldShowWeekly?: () => boolean;
+	shouldShowWeekly?: () => boolean | undefined;
 	nowMs?: number;
 };
 
@@ -215,12 +215,37 @@ function subscriptionUsageSnapshot(
 	}
 }
 
-function shouldShowWeeklyUsage(shouldShowWeekly: (() => boolean) | undefined): boolean {
+function getWeeklyVisibilityPreference(shouldShowWeekly: (() => boolean | undefined) | undefined): boolean | undefined {
 	try {
-		return shouldShowWeekly?.() === true;
+		const value = shouldShowWeekly?.();
+		return value === undefined ? undefined : value === true;
 	} catch {
-		return false;
+		return undefined;
 	}
+}
+
+function deriveWeeklyRemainingPercent(window: TlhSubscriptionUsageWindow | undefined): number | undefined {
+	if (!window) {
+		return undefined;
+	}
+
+	const percentUsed = finiteNumber(window.percent);
+	if (percentUsed !== undefined) {
+		return Math.max(0, Math.min(100, 100 - percentUsed));
+	}
+
+	const remaining = finiteNumber(window.remaining);
+	const limit = finiteNumber(window.limit);
+	if (remaining !== undefined && limit !== undefined && limit > 0) {
+		return Math.max(0, Math.min(100, (remaining / limit) * 100));
+	}
+
+	return undefined;
+}
+
+function shouldAutoShowWeeklyUsage(snapshot: TlhSubscriptionUsageSnapshot | undefined): boolean {
+	const remainingPercent = deriveWeeklyRemainingPercent(snapshot?.windows?.weekly);
+	return remainingPercent !== undefined && remainingPercent < 25;
 }
 
 export function getTlhSubscriptionUsageFooterState(
@@ -231,9 +256,11 @@ export function getTlhSubscriptionUsageFooterState(
 	const provider = model?.provider;
 	const subscriptionEligible = isSubscriptionUsageEligible(ctx, provider, options.subscriptionUsage);
 	const usingOAuth = isModelUsingOAuth(ctx, model);
+	const snapshot = subscriptionEligible ? subscriptionUsageSnapshot(ctx, provider, options.subscriptionUsage) : undefined;
+	const weeklyVisibilityPreference = getWeeklyVisibilityPreference(options.shouldShowWeekly);
 	const segment = subscriptionEligible
-		? formatTlhSubscriptionUsageFooterSegment(subscriptionUsageSnapshot(ctx, provider, options.subscriptionUsage), {
-				showWeekly: shouldShowWeeklyUsage(options.shouldShowWeekly),
+		? formatTlhSubscriptionUsageFooterSegment(snapshot, {
+				showWeekly: weeklyVisibilityPreference ?? shouldAutoShowWeeklyUsage(snapshot),
 				nowMs: options.nowMs,
 			})
 		: undefined;

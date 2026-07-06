@@ -24,8 +24,8 @@ export function getTlhUsageLimitsConfig(cwd: string): TlhUsageLimitsConfig | und
 	}
 }
 
-export function shouldShowTlhUsageWeekly(config: TlhUsageLimitsConfig | undefined): boolean {
-	return config?.showWeekly === true;
+export function shouldShowTlhUsageWeekly(config: TlhUsageLimitsConfig | undefined): boolean | undefined {
+	return config?.showWeekly;
 }
 
 function validateTlhUsageLimitsSettings(settings: unknown): asserts settings is TlhSettings {
@@ -99,10 +99,14 @@ function nextWeeklyPreference(current: boolean, action: TlhUsageWeeklyAction): b
 	return !current;
 }
 
-function formatUsageWeeklyStatus(showWeekly: boolean): string {
-	return showWeekly
-		? "TLH usage weekly window is shown. Use /usage weekly off to hide it, or /usage weekly toggle."
-		: "TLH usage weekly window is hidden (default when unset). Use /usage weekly on to show it, or /usage weekly toggle.";
+function formatUsageWeeklyStatus(showWeekly: boolean | undefined): string {
+	if (showWeekly === true) {
+		return "TLH usage weekly window is shown. Use /usage weekly off to hide it, or /usage weekly toggle.";
+	}
+	if (showWeekly === false) {
+		return "TLH usage weekly window is hidden. Use /usage weekly on to show it, or /usage weekly toggle.";
+	}
+	return "TLH usage weekly window follows the default auto mode: it shows only when weekly remaining capacity is below 25%. Use /usage weekly on to always show it, /usage weekly off to always hide it, or /usage weekly toggle.";
 }
 
 function usageCommandCompletions(prefix: string) {
@@ -136,7 +140,7 @@ export function registerUsageCommand(pi: ExtensionAPI): void {
 				return;
 			}
 
-			const nextShowWeekly = nextWeeklyPreference(currentShowWeekly, command.action);
+			const nextShowWeekly = nextWeeklyPreference(currentShowWeekly === true, command.action);
 			try {
 				const result = writeTlhUsageWeeklyPreference(ctx.cwd, nextShowWeekly);
 				const changedLabel = result.changed ? "Updated" : "No change to";

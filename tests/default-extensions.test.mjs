@@ -20,7 +20,7 @@ const retiredPlannotatorPackage = "npm:@plannotator/pi-extension";
 const previousMcporterSource = "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1";
 const bundledMcporterSource = "npm:@diegopetrucci/pi-mcp-adapter@2.10.1";
 const previousPiWebAccessSource = "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1";
-const bundledPiWebAccessSource = "npm:@diegopetrucci/pi-web-access@0.10.8";
+const bundledPiWebAccessSource = "npm:@diegopetrucci/pi-web-access@0.10.9";
 const expectedBundledNpmSources = new Map([
 	["openai-fast", "npm:@diegopetrucci/pi-openai-fast@0.1.6"],
 	["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth@1.0.0"],
@@ -30,7 +30,6 @@ const expectedBundledNpmSources = new Map([
 	["context-inspector", "npm:@diegopetrucci/pi-context-inspector@0.1.3"],
 	["quiet-tools", "npm:@diegopetrucci/pi-quiet-tools@0.1.4"],
 	["dirty-repo-guard", "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.3"],
-	["triage-comments", "npm:@diegopetrucci/pi-triage-comments@0.1.4"],
 	["intercom", "npm:@diegopetrucci/pi-intercom@0.6.2"],
 ]);
 
@@ -157,6 +156,7 @@ test("bundled manifest retires rtk while keeping quiet-tools bundled", () => {
 	assert.equal(ids.includes("confirm-destructive"), false);
 	assert.equal(ids.includes("librarian"), false);
 	assert.equal(ids.includes("rtk"), false);
+	assert.equal(ids.includes("triage-comments"), false);
 	assert.ok(quietTools, "bundled quiet-tools default should exist");
 	assert.deepEqual(quietTools.aliases, ["compact-bash"]);
 	assert.deepEqual(quietTools.replaces, ["npm:@diegopetrucci/pi-compact-bash"]);
@@ -1101,12 +1101,13 @@ test("bundled manifest contains subagents and intercom entries with correct crit
 	const intercom = bundled.find(({ id }) => id === "intercom");
 
 	assert.ok(subagents, "bundled subagents entry should exist");
-	assert.equal(subagents.source, "git:github.com/diegopetrucci/pi-subagents@a7e76d212dfa788c59538e44afddad326c074b86");
+	assert.equal(subagents.source, "npm:@diegopetrucci/pi-subagents@0.31.2");
 	assert.equal(subagents.critical, true, "subagents must stay critical");
 	assert.deepEqual(subagents.aliases, ["pi-subagents"]);
 	assert.deepEqual(subagents.replaces, [
 		"npm:pi-subagents",
 		"git:github.com/nicobailon/pi-subagents",
+		"git:github.com/diegopetrucci/pi-subagents",
 	]);
 	assert.equal(subagents.migrateReplacements, true, "subagents replacements must stay enabled");
 
@@ -1120,6 +1121,43 @@ test("bundled manifest contains subagents and intercom entries with correct crit
 		"git:github.com/diegopetrucci/pi-intercom",
 	]);
 	assert.equal(intercom.migrateReplacements, true, "intercom replacements must stay enabled");
+});
+
+test("bundled merge migrates legacy upstream and TLH subagents installs to the scoped npm source without duplicates", () => {
+	const fixture = tempFixture();
+	const bundledPath = join(repoRoot, "config", "default-extensions.json");
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [
+			"git:github.com/nicobailon/pi-subagents@v0.31.0",
+			"git:github.com/diegopetrucci/pi-subagents@tlh-v0.31.1",
+		],
+		tlh: { disabledDefaultExtensions: ["pi-subagents"] },
+	}, null, 2));
+
+	runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", bundledPath,
+		"--quiet",
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(
+		settings.packages.filter((entry) => packageIdentity(entry) === "npm:@diegopetrucci/pi-subagents"),
+		["npm:@diegopetrucci/pi-subagents@0.31.2"],
+	);
+	assert.equal(
+		settings.packages.some((entry) => packageIdentity(entry) === "git:github.com/nicobailon/pi-subagents"),
+		false,
+	);
+	assert.equal(
+		settings.packages.some((entry) => packageIdentity(entry) === "git:github.com/diegopetrucci/pi-subagents"),
+		false,
+	);
+	assert.deepEqual(
+		(settings.tlh?.disabledDefaultExtensions ?? []).filter((value) => value === "subagents" || value === "pi-subagents"),
+		[],
+	);
 });
 
 test("bundled merge migrates legacy TLH intercom git installs to the scoped npm source", () => {
