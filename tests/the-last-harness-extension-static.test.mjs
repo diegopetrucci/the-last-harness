@@ -86,6 +86,15 @@ function amdDefineModuleId(statement) {
 	return ts.isStringLiteral(moduleIdArgument) ? moduleIdArgument.text : null;
 }
 
+function staticImportSpecifiers(source, fileName = "source.ts") {
+	const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+	return sourceFile.statements
+		.filter(ts.isImportDeclaration)
+		.map((statement) => statement.moduleSpecifier)
+		.filter(ts.isStringLiteral)
+		.map((specifier) => specifier.text);
+}
+
 function extractMonacoModuleSource(runtimeSource, moduleId) {
 	const moduleMarker = `define("${moduleId}"`;
 	const start = runtimeSource.indexOf(moduleMarker);
@@ -429,7 +438,16 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
 	assert.match(footerGitCacheSource, /from "\.\/footer-git\.js"/);
 	assert.doesNotMatch(footerFirstLineSource, /from "\.\/footer-git\.mjs"/);
 	assert.doesNotMatch(footerGitCacheSource, /from "\.\/footer-git\.mjs"/);
-	assert.match(extensionSource, /from "\.\/the-last-harness\/tokens\.js"/);
+	assert.deepEqual(
+		staticImportSpecifiers(extensionSource).filter((specifier) =>
+			["./the-last-harness/review.js", "./the-last-harness/tokens.js", "./the-last-harness/annotate-last-message.js"].includes(specifier),
+		),
+		[],
+		"review, tokens, and annotate-last-message must not be top-level static imports",
+	);
+	assert.match(extensionSource, /import\("\.\/the-last-harness\/review\.js"\)/);
+	assert.match(extensionSource, /import\("\.\/the-last-harness\/tokens\.js"\)/);
+	assert.match(extensionSource, /import\("\.\/the-last-harness\/annotate-last-message\.js"\)/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/usage-limits\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/constants\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/gnosis\.js"/);
@@ -447,6 +465,20 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
 	assert.doesNotMatch(extensionSource, /function collectStartupResources/);
 	assert.doesNotMatch(extensionSource, /function writeTlhPrimaryAgentDefault/);
 	assert.doesNotMatch(extensionSource, /async function applyPrimaryModel/);
+});
+
+test("extension lazy-loads only review, tokens, and annotate-last-message with retryable facades", () => {
+	assert.match(extensionSource, /const REVIEW_COMMAND_DESCRIPTION = "Review code changes via an interactive mode picker";/);
+	assert.match(extensionSource, /const TOKENS_COMMAND_DESCRIPTION = "Generate and open a local TLH token-spend report";/);
+	assert.match(extensionSource, /const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION = "Open a native annotation window for the latest assistant message";/);
+	assert.match(extensionSource, /function createRetryableLazyImport<TModule>\(loader: \(\) => Promise<TModule>\): \(\) => Promise<TModule> \{/);
+	assert.match(extensionSource, /modulePromise = loader\(\)\.catch\(\(error\) => \{[\s\S]*modulePromise = undefined;[\s\S]*throw error;/);
+	assert.match(extensionSource, /pi\.registerCommand\("review", \{[\s\S]*getArgumentCompletions: \(\) => null,[\s\S]*const handler = await getReviewCommandHandler\(\);/);
+	assert.match(extensionSource, /pi\.registerCommand\("tokens", \{[\s\S]*const handler = await getTokensCommandHandler\(\);/);
+	assert.match(extensionSource, /pi\.registerCommand\("annotate-last-message", \{[\s\S]*const command = await getAnnotateLastMessageCommand\(\);/);
+	assert.match(extensionSource, /annotateLastMessageCommandPromise = loadAnnotateLastMessageModule\(\)[\s\S]*buildAnnotateLastMessageCommand\(\)/);
+	assert.match(extensionSource, /pi\.on\("session_shutdown", async \(\) => \{[\s\S]*if \(!annotateLastMessageCommandPromise\) \{[\s\S]*return;[\s\S]*const command = await annotateLastMessageCommandPromise;[\s\S]*command\.handleSessionShutdown\(\);/);
+	assert.doesNotMatch(extensionSource, /import\("\.\/the-last-harness\/(?:effort|thinking|experimental|version|changelog|attribution)\.js"\)/);
 });
 
 test("thinking alias shares the effort command thinking-level behavior", () => {
@@ -620,7 +652,8 @@ test("extension keeps TLH experimental command wiring with registered ci and rev
 	assert.match(attributionSource, /settings\.tlh\.attribution = \{ commit: nextEnabled \}/);
 	assert.match(attributionSource, /typeof commit !== "boolean"/);
 	assert.match(typesSource, /commit\?: boolean;/);
-	assert.match(extensionSource, /registerTokensCommand\(pi\)/);
+	assert.match(extensionSource, /pi\.registerCommand\("tokens", \{/);
+	assert.match(extensionSource, /const handler = await getTokensCommandHandler\(\);/);
 	assert.match(tokensSource, /pi\.registerCommand\("tokens"/);
 	assert.match(tokensSource, /Usage: \/tokens/);
 	assert.match(extensionSource, /registerUsageCommand\(pi\)/);

@@ -1313,47 +1313,53 @@ async function dispatchReviewMode(
 
 // --- Argument completions ---
 
-function getReviewArgumentCompletions() {
+export const REVIEW_COMMAND_DESCRIPTION = "Review code changes via an interactive mode picker";
+
+export function getReviewArgumentCompletions() {
 	return null;
+}
+
+export function createReviewCommandHandler(pi: ExtensionAPI) {
+	return async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+		const activePrimary = currentReviewPrimaryAgentSelection(ctx);
+		if (activePrimary !== REVIEW_REQUIRED_PRIMARY) {
+			ctx.ui.notify(reviewPrimaryBlockedMessage(activePrimary), "error");
+			return;
+		}
+
+		const argv = tokenizeArgs(args);
+		const parsed = parseReviewArgs(argv);
+
+		if (parsed.pickerRequested === false) {
+			ctx.ui.notify(parsed.message, "error");
+			return;
+		}
+
+		if (!ctx.hasUI) {
+			ctx.ui.notify(REVIEW_TUI_REQUIRED_MESSAGE, "error");
+			return;
+		}
+
+		const mode = await showReviewPicker(ctx);
+		if (mode === undefined) {
+			// User cancelled — clean no-op.
+			return;
+		}
+		const completedArgs = await completePickedArgs(ctx, mode);
+		if (completedArgs === undefined) {
+			// User cancelled or left required follow-up input blank.
+			return;
+		}
+		await dispatchReviewMode(pi, ctx, completedArgs);
+	};
 }
 
 // --- Command registration ---
 
 export function registerReviewCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("review", {
-		description: "Review code changes via an interactive mode picker",
+		description: REVIEW_COMMAND_DESCRIPTION,
 		getArgumentCompletions: getReviewArgumentCompletions,
-		handler: async (args, ctx) => {
-			const activePrimary = currentReviewPrimaryAgentSelection(ctx);
-			if (activePrimary !== REVIEW_REQUIRED_PRIMARY) {
-				ctx.ui.notify(reviewPrimaryBlockedMessage(activePrimary), "error");
-				return;
-			}
-
-			const argv = tokenizeArgs(args);
-			const parsed = parseReviewArgs(argv);
-
-			if (parsed.pickerRequested === false) {
-				ctx.ui.notify(parsed.message, "error");
-				return;
-			}
-
-			if (!ctx.hasUI) {
-				ctx.ui.notify(REVIEW_TUI_REQUIRED_MESSAGE, "error");
-				return;
-			}
-
-			const mode = await showReviewPicker(ctx);
-			if (mode === undefined) {
-				// User cancelled — clean no-op.
-				return;
-			}
-			const completedArgs = await completePickedArgs(ctx, mode);
-			if (completedArgs === undefined) {
-				// User cancelled or left required follow-up input blank.
-				return;
-			}
-			await dispatchReviewMode(pi, ctx, completedArgs);
-		},
+		handler: createReviewCommandHandler(pi),
 	});
 }
