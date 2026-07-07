@@ -183,6 +183,32 @@ test("trace-policy fixture importer keeps named assistant messages as assistant 
 	]);
 });
 
+test("trace-policy fixture importer emits tool steps from assistant toolCall blocks while preserving assistant text", () => {
+	const fixture = importTracePolicyFixtureFromText(JSON.stringify({
+		agent: "developer",
+		steps: [
+			{
+				role: "assistant",
+				content: [
+					{ type: "text", text: "Editing /Users/alice/project at 2026-07-07T17:11:04Z" },
+					{ type: "toolCall", name: "edit", arguments: { path: "src/greeter.mjs" } },
+				],
+			},
+		],
+	}));
+
+	assert.deepEqual(fixture.transcript.steps, [
+		{
+			type: "assistant",
+			text: "Editing <HOME>/project at <TIMESTAMP>",
+		},
+		{
+			type: "tool",
+			tool: "edit",
+			path: "src/greeter.mjs",
+		},
+	]);
+});
 test("trace-policy fixture importer normalizes Windows home and temp subpaths", () => {
 	const fixture = importTracePolicyFixtureFromText(JSON.stringify({
 		agent: "developer",
@@ -237,7 +263,6 @@ test("trace-policy fixture importer CLI emits a reviewable skeleton from JSONL i
 		rmSync(tempDir, { recursive: true, force: true });
 	}
 });
-
 
 test("trace-policy fixture importer CLI prefers --id over the input filename", () => {
 	const tempDir = mkdtempSync(join(tmpdir(), "tlh-trace-policy-importer-"));

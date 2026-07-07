@@ -48,7 +48,7 @@ trace_dir="$(mktemp -d)"
 trace_jsonl="$trace_dir/failing-trace.jsonl"
 fixture_preview="$trace_dir/failing-trace.fixture.txt"
 
-# Save the exported trace locally first.
+# External/local step: save or export the trace into $trace_jsonl first.
 node tests/evals/trace-policy/trace-policy-fixture-importer.mjs \
   "$trace_jsonl" \
   --agent architect \

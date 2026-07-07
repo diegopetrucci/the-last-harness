@@ -167,6 +167,31 @@ function normalizeAssistantLikeStep(type, step) {
 	return normalized;
 }
 
+const TOOL_STEP_PROMOTED_ARGUMENT_KEYS = new Set([
+	"command",
+	"path",
+	"query",
+	"url",
+	"status",
+	"argv",
+	"exitCode",
+	"ok",
+	"mutates",
+]);
+
+function toolStepFromToolCallBlock(block) {
+	const argumentsValue = isRecord(block.arguments) ? block.arguments : {};
+	const step = {
+		type: "tool",
+		tool: block.name,
+		...argumentsValue,
+	};
+	if (Object.keys(argumentsValue).some((key) => !TOOL_STEP_PROMOTED_ARGUMENT_KEYS.has(key))) {
+		step.input = argumentsValue;
+	}
+	return normalizeToolStep(step);
+}
+
 function normalizeToolStep(step) {
 	const normalized = {
 		type: "tool",
@@ -195,26 +220,38 @@ function normalizeToolStep(step) {
 	return normalized;
 }
 
-function toStep(record) {
+function toSteps(record) {
 	if (!isRecord(record)) {
-		return undefined;
+		return [];
 	}
 	if (isRecord(record.message)) {
-		return toStep({ ...record, ...record.message });
+		return toSteps({ ...record, ...record.message });
 	}
 
 	const type = normalizeText(record.type).toLowerCase();
 	const role = normalizeText(record.role || record.actor || record.sender).toLowerCase();
 	if (type === "assistant" || role === "assistant") {
-		return normalizeAssistantLikeStep("assistant", record);
+		const steps = [];
+		const assistantStep = normalizeAssistantLikeStep("assistant", record);
+		if (assistantStep.action || assistantStep.text) {
+			steps.push(assistantStep);
+		}
+		if (Array.isArray(record.content)) {
+			for (const block of record.content) {
+				if (isRecord(block) && normalizeText(block.type) === "toolCall") {
+					steps.push(toolStepFromToolCallBlock(block));
+				}
+			}
+		}
+		return steps;
 	}
 	if (type === "user" || role === "user") {
-		return normalizeAssistantLikeStep("user", record);
+		return [normalizeAssistantLikeStep("user", record)];
 	}
 	if (type === "tool" || role === "tool" || normalizeToolName(record)) {
-		return normalizeToolStep(record);
+		return [normalizeToolStep(record)];
 	}
-	return undefined;
+	return [];
 }
 
 function parseJsonLines(text) {
@@ -277,7 +314,7 @@ export function importTracePolicyFixtureFromText(text, options = {}) {
 	const parsed = parseTraceInput(text);
 	const transcriptSource = isRecord(parsed?.transcript) ? parsed.transcript : parsed;
 	const steps = extractStepRecords(parsed)
-		.map((step) => toStep(step))
+		.flatMap((step) => toSteps(step))
 		.filter(Boolean);
 	if (steps.length === 0) {
 		throw new Error("trace input did not yield any assistant/user/tool steps");
