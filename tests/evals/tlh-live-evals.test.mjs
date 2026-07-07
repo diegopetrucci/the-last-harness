@@ -225,7 +225,16 @@ test("workflow eval guide owns the detailed contributor-facing eval docs", () =>
 	assert.match(docs, /scenario status values such as `passed`, `prepared`, or `failed`/i);
 	assert.match(docs, /No primary-agent auto-switching gate/i);
 	assert.match(docs, /No LLM-as-judge gate/i);
-	assert.match(docs, /normalize volatile fields such as timestamps, IDs, temp roots, and environment-specific command paths/i);
+	assert.match(docs, /Incident-to-fixture loop/i);
+	assert.match(docs, /repo-local contributor tooling only; it does not change packaged TLH runtime behavior/i);
+	assert.match(docs, /node tests\/evals\/trace-policy\/trace-policy-fixture-importer\.mjs/i);
+	assert.match(docs, /normalize volatile IDs, timestamps, temp roots, home-directory paths, and generated request\/session IDs/i);
+	assert.match(docs, /stop and clean that up before the fixture enters review/i);
+	assert.match(docs, /trace-policy-fixture-importer\.test\.mjs tests\/evals\/trace-policy\/trace-policy-evals\.test\.mjs tests\/evals\/trace-policy\/trace-policy-incident-matrix\.test\.mjs/i);
+	assert.match(docs, /`npm run validate` remains the full-repo check documented in \[`VALIDATING\.md`\]\(\.\.\/VALIDATING\.md\)/i);
+	assert.match(docs, /Expect it to normalize volatile IDs, timestamps, temp roots, home-directory paths, and generated request\/session IDs/i);
+	assert.match(docs, /use the importer-backed incident-to-fixture loop above instead of checking in raw exports/i);
+	assert.doesNotMatch(docs, /Until that normalization path exists/i);
 	assert.match(docs, /Do not commit `results\.json`, temp workspaces, or per-run score snapshots\./i);
 	assert.doesNotMatch(docs, /tests\/trace-policy-evals\.test\.mjs/);
 });

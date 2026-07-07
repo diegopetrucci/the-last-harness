@@ -84,6 +84,43 @@ test("architect approved env split-string pure tk create stays allowed", () => {
 	assert.deepEqual(result.violations, []);
 });
 
+test("architect paused developer runs do not authorize direct source edits", () => {
+	assert.deepEqual(violationCodes({
+		agent: "architect",
+		steps: [
+			{ type: "assistant", action: "ask_plan_approval", text: "Plan is ready." },
+			{ type: "user", text: "approved" },
+			{ type: "tool", tool: "bash", command: 'tk create "x" -d "..." --acceptance "..."' },
+			{ type: "assistant", action: "ask_ticket_approval", text: "Ticket is ready." },
+			{ type: "user", text: "approved" },
+			{ type: "tool", tool: "subagent", input: { agent: "developer", prompt: "Implement x." } },
+			{ type: "assistant", action: "subagent_paused", text: "The developer run paused." },
+			{ type: "tool", tool: "edit", path: "src/app.ts" },
+		],
+	}), ["architect.direct_source_mutation"]);
+});
+
+test("architect must digest code-reviewer output instead of relaying it raw", () => {
+	assert.deepEqual(violationCodes({
+		agent: "architect",
+		steps: [
+			{ type: "tool", tool: "subagent", input: { agent: "code-reviewer", prompt: "Review the diff." } },
+			{ type: "assistant", action: "relay_raw_reviewer_output", rawReviewerRelay: true, text: "Blocker: missing regression coverage." },
+		],
+	}), ["architect.review_digest_required"]);
+
+	const result = evaluateTracePolicy({
+		agent: "architect",
+		steps: [
+			{ type: "tool", tool: "subagent", input: { agent: "code-reviewer", prompt: "Review the diff." } },
+			{ type: "assistant", action: "summarize_review_findings", text: "I agree with the blocker: add the missing regression coverage before merge." },
+		],
+	});
+
+	assert.equal(result.ok, true);
+	assert.deepEqual(result.violations, []);
+});
+
 test("bug-hunter plain bash rm is rejected", () => {
 	assert.deepEqual(violationCodes({
 		agent: "bug-hunter",
