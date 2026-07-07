@@ -30,6 +30,64 @@ The fixtures are designed to stay reviewable:
 - deterministic assertions instead of model scoring;
 - coverage for architect, developer, code-reviewer, product, Rush, bug-hunter, web-scout, and oracle boundaries.
 
+### Incident-to-fixture loop
+
+Use this contributor workflow when a real TLH workflow run exposes a prompt, policy, or runtime regression. This is repo-local contributor tooling only; it does not change packaged TLH runtime behavior.
+
+1. Capture or export the failing trace into a temp or other local-only path.
+2. Normalize it with the importer.
+3. Review the redacted skeleton before anything reaches the repo.
+4. Add or update deterministic trace-policy fixtures and incident-matrix coverage.
+5. Fix the underlying prompt, policy, or runtime issue.
+6. Run the narrow targeted validation for the files you changed. `npm run validate` remains the full-repo check documented in [`VALIDATING.md`](../VALIDATING.md), but do not use it for every incident-loop iteration.
+
+Example temp/local flow:
+
+```sh
+trace_dir="$(mktemp -d)"
+trace_jsonl="$trace_dir/failing-trace.jsonl"
+fixture_preview="$trace_dir/failing-trace.fixture.txt"
+
+# External/local step: save or export the trace into $trace_jsonl first.
+node tests/evals/trace-policy/trace-policy-fixture-importer.mjs \
+  "$trace_jsonl" \
+  --agent architect \
+  --reject \
+  > "$fixture_preview"
+```
+
+Treat the importer output as a reviewable starting point, not an auto-commit artifact.
+
+Typical targeted validation after an incident-loop change:
+
+- fixture/importer-only changes: `node --test tests/evals/trace-policy/trace-policy-fixture-importer.test.mjs tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/trace-policy/trace-policy-incident-matrix.test.mjs`
+- prompt-contract changes that affect workflow rules: add `tests/agent-prompt-contracts.test.mjs`
+- live-runner/result-schema changes: run the relevant `tests/evals/tlh-live-evals*.test.mjs` file alongside the trace-policy tests
+
+### Importer and redaction expectations
+
+`tests/evals/trace-policy/trace-policy-fixture-importer.mjs` accepts exported JSON or JSONL traces and prints a fixture skeleton for `tests/evals/trace-policy/trace-policy-fixtures.mjs`.
+
+- Run it only on local or temp trace exports, never on checked-in raw incident traces.
+- Review the output before pasting it into the fixture file.
+- Expect it to normalize volatile IDs, timestamps, temp roots, home-directory paths, and generated request/session IDs.
+- Expect it to redact obvious secrets and sensitive fields, but do not assume the importer caught everything; manually remove any remaining sensitive or irrelevant detail.
+- Keep examples and scratch artifacts under temp/local paths such as `$(mktemp -d)`; do not document or rely on real home-directory installs.
+
+If the imported skeleton still contains secrets, user-identifying content, or unrelated transcript noise, stop and clean that up before the fixture enters review.
+
+### Fixture review standards
+
+Before committing a new or updated trace-policy fixture:
+
+- keep only the minimum actor/tool/output sequence needed to reproduce the policy decision;
+- preserve the exact failure signal the deterministic assertion depends on;
+- prefer stable local/temp paths and already-normalized placeholders such as `<HOME>`, `<TMP>`, `<TIMESTAMP>`, `<ID>`, and `<REDACTED>`;
+- add or update `incidentMatrixIds` when the fixture represents a tracked incident boundary;
+- avoid embedding raw exports, score snapshots, or unrelated tool chatter.
+
+A fixture should read like a small deterministic regression, not like a full session dump.
+
 ### Incident matrix
 
 `tests/evals/trace-policy/trace-policy-incident-matrix.test.mjs` keeps milestone and incident coverage explicit. It complements the fixture tests by asserting that the tracked workflow incidents remain represented and well-formed.
@@ -131,16 +189,13 @@ Keep workflow evals scoped to stable, reviewable signals:
 - No LLM-as-judge gate: pass/fail comes from deterministic checks or a human reviewer reading prepared artifacts.
 - Workflow evals are for contributor confidence, not for changing packaged TLH behavior or adding hidden runtime routing.
 
-## Future real-session trace normalization
+## Imported incident traces
 
-Future coverage may add curated real-session regressions derived from exported TLH or upstream Pi session JSONL files, but only after they are normalized into a stable and reviewable fixture shape.
+When a real TLH or upstream Pi session is worth preserving, use the importer-backed incident-to-fixture loop above instead of checking in raw exports.
 
-That future work should:
+Contributor review for imported incidents should still confirm that the fixture:
 
-- start only from incidents worth preserving;
-- redact secrets, user-specific paths, and repo-specific noise before traces leave the repro workspace;
-- normalize volatile fields such as timestamps, IDs, temp roots, and environment-specific command paths;
-- preserve the concrete actor/tool/output sequence needed for deterministic assertions;
-- avoid introducing model judging.
-
-Until that normalization path exists, treat real-session trace collection as an opt-in release/debugging aid rather than a required contributor workflow.
+- starts from an incident worth preserving;
+- redacts secrets, user-specific paths, and repo-specific noise before anything lands in the repo;
+- preserves the concrete actor/tool/output sequence needed for deterministic assertions; and
+- avoids expanding scope into model judging or full-session archival.

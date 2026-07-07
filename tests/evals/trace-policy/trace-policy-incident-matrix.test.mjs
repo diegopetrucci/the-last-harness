@@ -9,6 +9,8 @@ const REQUIRED_MATRIX_IDS = [
 	"gh-217-subagent-agentdirs-preserved",
 	"architect-direct-source-mutation-boundary",
 	"architect-ticket-approval-boundary",
+	"architect-paused-subagent-recovery-boundary",
+	"architect-review-digest-boundary",
 	"developer-ticket-source-before-edit",
 	"code-reviewer-read-only-diff-inspection",
 	"web-scout-citation-discipline",

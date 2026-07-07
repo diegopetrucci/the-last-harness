@@ -46,6 +46,35 @@ export const TRACE_POLICY_INCIDENT_MATRIX = [
 		},
 	},
 	{
+		id: "architect-paused-subagent-recovery-boundary",
+		incident: "gh-241",
+		invariant: "A paused or interrupted developer dispatch is recoverable state, not authorization for architect to edit directly; architect must resume, re-dispatch, ask, or stop.",
+		sourceKind: "synthetic",
+		coverage: {
+			status: "covered",
+			fixtureIds: [
+				"architect-valid-paused-developer-redispatch",
+				"architect-invalid-direct-edit-after-paused-developer",
+				"architect-invalid-direct-write-after-interrupted-developer",
+			],
+			ownerTicket: "tlhf-hsdl",
+		},
+	},
+	{
+		id: "architect-review-digest-boundary",
+		incident: "gh-241",
+		invariant: "Architect must digest code-reviewer output into its own review summary instead of relaying raw reviewer text.",
+		sourceKind: "synthetic",
+		coverage: {
+			status: "covered",
+			fixtureIds: [
+				"architect-valid-digested-review-summary",
+				"architect-invalid-raw-reviewer-relay",
+			],
+			ownerTicket: "tlhf-hsdl",
+		},
+	},
+	{
 		id: "developer-ticket-source-before-edit",
 		incident: "gh-241",
 		invariant: "Developer must run and obey tk show <id> before editing, and must stop if the assigned ticket cannot be shown.",

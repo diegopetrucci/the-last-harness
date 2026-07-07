@@ -979,10 +979,24 @@ function isProductTicketPath(path) {
 	return Boolean(normalized) && normalized.startsWith(".tickets/");
 }
 
+function isArchitectRawReviewerRelayStep(step) {
+	if (!isRecord(step) || step.type !== "assistant") {
+		return false;
+	}
+	if (step.rawReviewerRelay === true) {
+		return true;
+	}
+	if (normalizeText(step.action) === "relay_raw_reviewer_output") {
+		return true;
+	}
+	return false;
+}
+
 function evaluateArchitect(transcript, addViolation) {
 	let pendingApproval;
 	let planApproved = false;
 	let ticketsApproved = false;
+	let sawCodeReviewerDispatch = false;
 
 	for (const [index, step] of transcript.steps.entries()) {
 		if (step.type === "assistant" && step.action === "ask_plan_approval") {
@@ -1019,11 +1033,22 @@ function evaluateArchitect(transcript, addViolation) {
 				"Architect may not create or change tickets until the user replies with the exact word 'approved' after the implementation plan.",
 			);
 		}
-		if (subagentTargets(step).includes("developer") && !ticketsApproved) {
+		const targets = subagentTargets(step);
+		if (targets.includes("developer") && !ticketsApproved) {
 			addViolation(
 				"architect.ticket_approval_required",
 				index,
 				"Architect may not delegate implementation to developer until the user approves the created tickets.",
+			);
+		}
+		if (targets.includes("code-reviewer")) {
+			sawCodeReviewerDispatch = true;
+		}
+		if (sawCodeReviewerDispatch && isArchitectRawReviewerRelayStep(step)) {
+			addViolation(
+				"architect.review_digest_required",
+				index,
+				"Architect must digest code-reviewer output and present its own summary instead of relaying raw reviewer output.",
 			);
 		}
 	}
