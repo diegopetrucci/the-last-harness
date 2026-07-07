@@ -11,7 +11,7 @@ Upstream: `nicobailon/pi-web-access`
 
 TLH no longer installs `pi-web-access` from a git dependency. The bundled default extension source is:
 
-- TLH bundled extension source: `npm:@diegopetrucci/pi-web-access@0.10.9`
+- TLH bundled extension source: `npm:@diegopetrucci/pi-web-access@0.10.10`
 - Source repository: <https://github.com/diegopetrucci/pi-web-access>
 - Previous git-based TLH source retained for migration coverage: `git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1`
 
