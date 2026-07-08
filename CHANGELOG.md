@@ -14,6 +14,7 @@ All notable changes to The Last Harness will be documented in this file.
 - The bundled `developer` subagent now uses `anthropic/claude-sonnet-5` with `thinking: medium` on the Anthropic path. The OpenAI-Codex model (`openai-codex/gpt-5.4`) is unchanged.
 - Switched the bundled critical `pi-subagents` default from the reviewed TLH git tag to the published scoped npm package `npm:@diegopetrucci/pi-subagents@0.31.1`, while preserving migration from existing upstream and TLH git installs so the isolated profile lands on one canonical bundled source without duplicates.
 - Bumped the bundled managed `pi-web-access` default extension pin from `npm:@diegopetrucci/pi-web-access@0.10.8` to `npm:@diegopetrucci/pi-web-access@0.10.10`, while keeping migration coverage for upstream and prior TLH git replacement sources intact.
+- Bumped the bundled critical `pi-subagents` default extension pin from `npm:@diegopetrucci/pi-subagents@0.31.2` to `npm:@diegopetrucci/pi-subagents@0.31.3`.
 
 ### Fixed
 
