@@ -30,7 +30,7 @@ const expectedBundledNpmSources = new Map([
 	["context-inspector", "npm:@diegopetrucci/pi-context-inspector@0.1.3"],
 	["quiet-tools", "npm:@diegopetrucci/pi-quiet-tools@0.1.4"],
 	["dirty-repo-guard", "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.3"],
-	["intercom", "npm:@diegopetrucci/pi-intercom@0.6.2"],
+	["intercom", "npm:@diegopetrucci/pi-intercom@0.7.0"],
 ]);
 
 function tempFixture() {
@@ -230,7 +230,7 @@ test("merge migrates legacy intercom git installs while cleaning stale critical 
 			],
 			migrateReplacements: true,
 			critical: true,
-			source: "npm:@diegopetrucci/pi-intercom@0.6.2",
+			source: "npm:@diegopetrucci/pi-intercom@0.7.0",
 		},
 		{
 			id: "helper",
@@ -255,7 +255,7 @@ test("merge migrates legacy intercom git installs while cleaning stale critical 
 
 	const settings = readJson(fixture.settings);
 	assert(settings.packages.includes("git:github.com/tlh/pi-subagents@pinned"));
-	assert(settings.packages.includes("npm:@diegopetrucci/pi-intercom@0.6.2"));
+	assert(settings.packages.includes("npm:@diegopetrucci/pi-intercom@0.7.0"));
 	assert(!settings.packages.includes("git:github.com/upstream/pi-subagents"));
 	assert(!settings.packages.includes("git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-6"));
 	assert(!settings.packages.includes("npm:helper"));

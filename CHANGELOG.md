@@ -15,6 +15,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Switched the bundled critical `pi-subagents` default from the reviewed TLH git tag to the published scoped npm package `npm:@diegopetrucci/pi-subagents@0.31.1`, while preserving migration from existing upstream and TLH git installs so the isolated profile lands on one canonical bundled source without duplicates.
 - Bumped the bundled managed `pi-web-access` default extension pin from `npm:@diegopetrucci/pi-web-access@0.10.8` to `npm:@diegopetrucci/pi-web-access@0.10.10`, while keeping migration coverage for upstream and prior TLH git replacement sources intact.
 - Bumped the bundled critical `pi-subagents` default extension pin from `npm:@diegopetrucci/pi-subagents@0.31.2` to `npm:@diegopetrucci/pi-subagents@0.31.3`.
+- Bumped the bundled critical `pi-intercom` default extension pin from `npm:@diegopetrucci/pi-intercom@0.6.2` to `npm:@diegopetrucci/pi-intercom@0.7.0`.
 - The generated `tlh` wrapper now exports `NODE_COMPILE_CACHE` pointing at a stable directory under the pinned private runtime (`<runtime-prefix>/node-compile-cache`) on the interactive `pi` launch path, so Node's on-disk compile cache persists across launches for a modestly faster warm startup. Helper subcommands (`update`/`defaults`/`tickets`) are unchanged, and the cache directory remains runtime-owned and is removed on uninstall.
 
 ### Fixed

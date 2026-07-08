@@ -71,7 +71,7 @@
     "replaces": ["npm:pi-intercom", "git:github.com/nicobailon/pi-intercom", "git:github.com/diegopetrucci/pi-intercom"],
     "migrateReplacements": true,
     "critical": true,
-    "source": "npm:@diegopetrucci/pi-intercom@0.6.2",
+    "source": "npm:@diegopetrucci/pi-intercom@0.7.0",
     "description": "Allow child subagents to escalate questions to the supervising session."
   }
 ]
