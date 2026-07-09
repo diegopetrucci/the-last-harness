@@ -70,8 +70,8 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.80.3 <=0.80.3",
-    "@earendil-works/pi-tui": ">=0.80.3 <=0.80.3"
+    "@earendil-works/pi-coding-agent": ">=0.80.5 <=0.80.5",
+    "@earendil-works/pi-tui": ">=0.80.5 <=0.80.5"
   },
   "dependencies": {
     "@tailwindcss/browser": "4.3.1",
@@ -79,8 +79,8 @@
     "monaco-editor": "0.55.1"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.80.3",
-    "@earendil-works/pi-tui": "0.80.3",
+    "@earendil-works/pi-coding-agent": "0.80.5",
+    "@earendil-works/pi-tui": "0.80.5",
     "@eslint/js": "10.0.1",
     "@types/node": "26.0.0",
     "eslint": "10.5.0",

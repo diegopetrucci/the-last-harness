@@ -24,7 +24,7 @@ import { validateInstallerTargets } from "../scripts/lib/tlh-install-paths.mjs";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoNodeModulesBin = join(repoRoot, "node_modules", ".bin");
 const TLH_MIN_PI_VERSION = "0.80.1";
-const TLH_PINNED_PI_VERSION = "0.80.3";
+const TLH_PINNED_PI_VERSION = "0.80.5";
 
 const TLH_PI_PACKAGE_SPEC = `@earendil-works/pi-coding-agent@${TLH_PINNED_PI_VERSION}`;
 const managedRtkSupportedTestPlatform = ["darwin", "linux"].includes(process.platform) && ["x64", "arm64"].includes(process.arch);
@@ -441,10 +441,10 @@ test("stage-1 repairs the TLH private Pi runtime even when a supported Pi exists
 		`if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_MIN_PI_VERSION}\\n'; exit 0; fi`,
 		"exit 0",
 	].join("\n"));
-	// Stale private runtime at 0.80.4 (above pin) triggers repair.
+	// Stale private runtime at 0.80.6 (above pin) triggers repair.
 	writeFakePi(runtimeBinDir, [
 		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${stalePiCallLog}"`,
-		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.80.4\\n'; exit 0; fi",
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.80.6\\n'; exit 0; fi",
 		"exit 0",
 	].join("\n"));
 	writeLoggingPi(templateDir, repairedPiLog, TLH_PINNED_PI_VERSION);
@@ -1706,7 +1706,7 @@ function setupTicketsEnabledWrapperFixture(t) {
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
 	writeFakePi(fakebin, [
-		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.80.3\\n'; exit 0; fi",
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.80.5\\n'; exit 0; fi",
 		"printf 'path=%s\\n' \"${PATH:-}\" >\"${PI_WRAPPER_LOG}\"",
 	].join("\n"));
 
@@ -2672,10 +2672,10 @@ test("wrapper update --extensions helper prepends the pinned private runtime dir
 	mkdirSync(cwdDir, { recursive: true });
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
-	// Pinned pi at 0.80.3 — still prepended for --extensions.
+	// Pinned pi at 0.80.5 — still prepended for --extensions.
 	writeFakePi(pinnedPiDir, [
 		`printf '%s\\n' "$*" >>"${pinnedPiCallLog}"`,
-		`if [[ "\${1:-}" == "--version" ]]; then printf '0.80.3\\n'; exit 0; fi`,
+		`if [[ "\${1:-}" == "--version" ]]; then printf '0.80.5\\n'; exit 0; fi`,
 		"exit 85",
 	].join("\n"));
 	writeFileSync(join(agentDir, "tlh", "recover-update.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst pi = spawnSync("pi", ["--version"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, pi: { status: pi.status, stdout: pi.stdout, stderr: pi.stderr, error: pi.error?.message } }));\nprocess.exit(pi.status ?? (pi.error ? 1 : 0));\n`, "utf8");
@@ -2715,7 +2715,7 @@ test("wrapper update --extensions helper prepends the pinned private runtime dir
 	assert.equal(updatePathEntries.includes(cwdDir), false);
 	assert.equal(updatePathEntries.includes(agentBin), false);
 	// The update script invokes pi --version and finds the pinned runtime.
-	assert.match(updateRecord.pi.stdout, /0\.80\.3/);
+	assert.match(updateRecord.pi.stdout, new RegExp(escapeRegExp(TLH_PINNED_PI_VERSION)));
 });
 
 test("tlh update --extensions fails when managed RTK installation fails after package update", { skip: !managedRtkSupportedTestPlatform }, (t) => {
@@ -3217,8 +3217,8 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
 	// Legacy pi at ~/.local/bin/pi — must NOT be removed when install fails.
 	writeFakePi(legacyBin, `if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_PINNED_PI_VERSION}\\n'; exit 0; fi\nexit 0`);
 
-	// Template pi with WRONG version (0.80.4 > MAX 0.80.3) — simulates a broken npm install.
-	writeFakePi(templateDir, "if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.80.4\\n'; exit 0; fi\nexit 0");
+	// Template pi with WRONG version (0.80.6 > MAX 0.80.5) — simulates a broken npm install.
+	writeFakePi(templateDir, "if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.80.6\\n'; exit 0; fi\nexit 0");
 
 	// Fake npm: always installs the wrong-version template pi.
 	writeFakeNpmInstaller(fakebin, {
@@ -3246,7 +3246,7 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
 
 	// Installer must fail: freshly installed pi has wrong version.
 	assert.notEqual(result.status, 0, `expected installer to fail on wrong-version pi, got exit 0:\n${output}`);
-	assert.match(output, /0\.80\.3/, "error output should mention the wrong version");
+	assert.match(output, /0\.80\.6/, "error output should mention the wrong version");
 
 	// ~/.local/bin/pi must NOT have been removed (install threw before any cleanup could run).
 	assert.equal(existsSync(legacyPiPath), true, "user-owned ~/.local/bin/pi was removed despite installer throwing");
@@ -3263,7 +3263,7 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
 });
 
 // Regression (tlht-5php, blocker): piInstalledByTlh=true, private runtime ABSENT at start,
-// user-owned ~/.local/bin/pi@0.80.3 present.  The installer must provision the private
+// user-owned ~/.local/bin/pi@0.80.5 present.  The installer must provision the private
 // runtime and succeed — without removing or executing ~/.local/bin/pi.
 test("stage-1 regression (tlht-5php): installer never removes or execs user-owned ~/.local/bin/pi when piInstalledByTlh=true and private runtime is absent", (t) => {
 	const root = makeTempDir();
@@ -3299,7 +3299,7 @@ test("stage-1 regression (tlht-5php): installer never removes or execs user-owne
 		piInstalledByTlh: true,
 	}, null, 2));
 
-	// User-owned ~/.local/bin/pi@0.80.3 — must NOT be removed or invoked by the installer.
+	// User-owned ~/.local/bin/pi@0.80.5 — must NOT be removed or invoked by the installer.
 	writeFakePi(legacyBin, [
 		`printf '%s\\n' "$*" >>"${legacyPiInvocationLog}"`,
 		`if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_PINNED_PI_VERSION}\\n'; exit 0; fi`,
@@ -3389,7 +3389,7 @@ test("uninstall.sh does not remove legacy ~/.local/bin/pi without --force-includ
 	}, null, 2));
 
 	// User-owned legacy pi at ~/.local/bin/pi.
-	writeFileSync(join(legacyBin, "pi"), "#!/bin/sh\nprintf '0.80.3\\n'\n", "utf8");
+	writeFileSync(join(legacyBin, "pi"), "#!/bin/sh\nprintf '0.80.5\\n'\n", "utf8");
 	chmodSync(join(legacyBin, "pi"), 0o755);
 
 	// ── (d1) dry-run without --force-include-pi: hint printed, pi NOT removed ──
