@@ -11,6 +11,8 @@ import type { AgentPrompt, TlhExperimentalConfig, TlhExperimentalFeatureId, TlhS
 
 export const DELTA_FOLLOW_UP_REVIEWS_FEATURE: TlhExperimentalFeatureId = "delta-follow-up-reviews";
 export const CI_FAILURE_INVESTIGATION_FEATURE: TlhExperimentalFeatureId = "ci-failure-investigation";
+export const TICKET_WORKFLOW_UI_FEATURE: TlhExperimentalFeatureId = "ticket-workflow-ui";
+export const TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT = "tlh:experimental-feature-changed";
 
 const EXPERIMENTAL_COMMAND_HELP = [
 	"Usage: /experimental [list|status [feature]|enable <feature>|disable <feature>|toggle <feature>]",
@@ -92,6 +94,10 @@ const TLH_EXPERIMENTAL_FEATURES: TlhExperimentalFeature[] = [
 		primaryAgentPrompts: {
 			architect: CI_FAILURE_INVESTIGATION_ARCHITECT_PROMPT.trim(),
 		},
+	},
+	{
+		id: TICKET_WORKFLOW_UI_FEATURE,
+		description: "Enables the experimental ticket workflow UI as a read-only tk-backed surface.",
 	},
 ];
 
@@ -336,6 +342,11 @@ export function registerExperimentalCommand(pi: ExtensionAPI): void {
 				const undoLabel = result.enabled
 					? `Undo with /experimental disable ${command.featureId}.`
 					: `Undo with /experimental enable ${command.featureId}.`;
+				pi.events?.emit?.(TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT, {
+					cwd: ctx.cwd,
+					enabled: result.enabled,
+					featureId: command.featureId,
+				});
 				ctx.ui.notify(
 					`${changedLabel} TLH experimental feature ${command.featureId} at ${formatHomePath(result.settingsPath)}. It is now ${stateLabel}. ${undoLabel}${backupLabel}`,
 					"info",

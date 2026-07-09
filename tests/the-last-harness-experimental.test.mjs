@@ -13,6 +13,7 @@ const jiti = createJiti(import.meta.url);
 const {
 	CI_FAILURE_INVESTIGATION_FEATURE,
 	DELTA_FOLLOW_UP_REVIEWS_FEATURE,
+	TICKET_WORKFLOW_UI_FEATURE,
 	buildPrimaryExperimentalPrompt,
 	getTlhExperimentalConfig,
 	isTlhExperimentalFeatureEnabled,
@@ -52,18 +53,27 @@ function registeredExperimentalCommand() {
 	return command;
 }
 
-test("experimental command registers delta follow-up review and architect-only ci failure investigation flags as default-off", async (t) => {
+test("experimental command registers ticket workflow, delta follow-up review, and architect-only ci failure investigation flags as default-off", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const command = registeredExperimentalCommand();
 		assert.deepEqual(
 			(await command.getArgumentCompletions("enable ")).map((completion) => completion.value),
-			[`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, `enable ${CI_FAILURE_INVESTIGATION_FEATURE}`],
+			[
+				`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
+				`enable ${CI_FAILURE_INVESTIGATION_FEATURE}`,
+				`enable ${TICKET_WORKFLOW_UI_FEATURE}`,
+			],
 		);
 		assert.deepEqual(
 			(await command.getArgumentCompletions("status ")).map((completion) => completion.value),
-			["status", `status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, `status ${CI_FAILURE_INVESTIGATION_FEATURE}`],
+			[
+				"status",
+				`status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
+				`status ${CI_FAILURE_INVESTIGATION_FEATURE}`,
+				`status ${TICKET_WORKFLOW_UI_FEATURE}`,
+			],
 		);
 		assert.equal(await command.getArgumentCompletions("unknown"), null);
 
@@ -79,6 +89,9 @@ test("experimental command registers delta follow-up review and architect-only c
 		assert.match(notifications.at(-1)?.message ?? "", /ci-failure-investigation/);
 		assert.match(notifications.at(-1)?.message ?? "", /architect-only guidance/i);
 		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable ci-failure-investigation/);
+		assert.match(notifications.at(-1)?.message ?? "", /ticket-workflow-ui/);
+		assert.match(notifications.at(-1)?.message ?? "", /experimental ticket workflow ui/i);
+		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable ticket-workflow-ui/);
 		assert.doesNotMatch(notifications.at(-1)?.message ?? "", /run-tests-last/);
 	});
 });
@@ -203,6 +216,54 @@ test("experimental stale settings fail closed and do not rebuild retired or prom
 			assert.equal(buildPrimaryExperimentalPrompt({ name: "developer" }, getTlhExperimentalConfig(fixture.dir)), undefined);
 		});
 	}
+});
+
+test("ticket workflow ui flag status, enable, and disable stay default-off and preserve unrelated isolated settings", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
+	const settingsPath = join(fixture.agent, "settings.json");
+	const initialSettings = `${JSON.stringify(
+		{
+			tlh: {
+				primaryAgent: { selected: "architect" },
+				experimental: { enabledFeatures: [LEGACY_UNKNOWN_FEATURE] },
+			},
+			theme: "dark",
+		},
+		null,
+		2,
+	)}\n`;
+	writeFileSync(settingsPath, initialSettings);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const command = registeredExperimentalCommand();
+
+		let { ctx, notifications } = createCommandContext(fixture.dir);
+		await command.handler(`status ${TICKET_WORKFLOW_UI_FEATURE}`, ctx);
+		assert.match(notifications.at(-1)?.message ?? "", /ticket-workflow-ui: disabled \(default\)/i);
+		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable ticket-workflow-ui/);
+
+		({ ctx, notifications } = createCommandContext(fixture.dir));
+		await command.handler(`enable ${TICKET_WORKFLOW_UI_FEATURE}`, ctx);
+
+		let written = JSON.parse(readFileSync(settingsPath, "utf8"));
+		assert.equal(written.theme, "dark");
+		assert.deepEqual(written.tlh.primaryAgent, { selected: "architect" });
+		assert.deepEqual(written.tlh.experimental.enabledFeatures, [LEGACY_UNKNOWN_FEATURE, TICKET_WORKFLOW_UI_FEATURE]);
+		assert.equal(isTlhExperimentalFeatureEnabled(getTlhExperimentalConfig(fixture.dir), TICKET_WORKFLOW_UI_FEATURE), true);
+		assert.match(notifications.at(-1)?.message ?? "", /Updated TLH experimental feature ticket-workflow-ui/);
+		assert.match(notifications.at(-1)?.message ?? "", /Undo with \/experimental disable ticket-workflow-ui/);
+
+		({ ctx, notifications } = createCommandContext(fixture.dir));
+		await command.handler(`disable ${TICKET_WORKFLOW_UI_FEATURE}`, ctx);
+
+		written = JSON.parse(readFileSync(settingsPath, "utf8"));
+		assert.equal(written.theme, "dark");
+		assert.deepEqual(written.tlh.primaryAgent, { selected: "architect" });
+		assert.deepEqual(written.tlh.experimental.enabledFeatures, [LEGACY_UNKNOWN_FEATURE]);
+		assert.equal(isTlhExperimentalFeatureEnabled(getTlhExperimentalConfig(fixture.dir), TICKET_WORKFLOW_UI_FEATURE), false);
+		assert.match(notifications.at(-1)?.message ?? "", /It is now disabled/);
+		assert.match(notifications.at(-1)?.message ?? "", /Undo with \/experimental enable ticket-workflow-ui/);
+	});
 });
 
 test("experimental enable is idempotent, preserves settings, and does not clobber other enabled features", async (t) => {
