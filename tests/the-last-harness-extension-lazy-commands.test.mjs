@@ -9,15 +9,20 @@ import { createJiti } from "jiti";
 function createPiHarness() {
 	const commands = new Map();
 	const handlers = new Map();
+	const sentMessages = [];
 	let activeTools = [];
 	return {
 		commands,
 		handlers,
+		sentMessages,
 		on(event, handler) {
 			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
 		},
 		registerCommand(name, command) {
 			commands.set(name, command);
+		},
+		sendMessage(message) {
+			sentMessages.push(message);
 		},
 		registerShortcut() {},
 		appendEntry() {},
@@ -71,7 +76,7 @@ function restoreEnv(previousEnv) {
 	}
 }
 
-test("Jiti lazy command facades resolve review, tokens, and annotate-last-message at runtime without extra shutdown listeners", async () => {
+test("Jiti lazy command facades resolve review, tokens, annotate-last-message, and tlh-changelog at runtime without extra shutdown listeners", async () => {
 	const tempDir = mkdtempSync(join(tmpdir(), "tlh-lazy-commands-"));
 	const agentDir = join(tempDir, "agent");
 	const cwd = join(tempDir, "workspace");
@@ -102,10 +107,12 @@ test("Jiti lazy command facades resolve review, tokens, and annotate-last-messag
 		const reviewCommand = pi.commands.get("review");
 		const tokensCommand = pi.commands.get("tokens");
 		const annotateCommand = pi.commands.get("annotate-last-message");
+		const changelogCommand = pi.commands.get("tlh-changelog");
 		assert.equal(typeof reviewCommand?.handler, "function");
 		assert.equal(reviewCommand?.getArgumentCompletions?.("anything"), null);
 		assert.equal(typeof tokensCommand?.handler, "function");
 		assert.equal(typeof annotateCommand?.handler, "function");
+		assert.equal(typeof changelogCommand?.handler, "function");
 
 		const shutdownHandlerCount = pi.handlers.get("session_shutdown")?.length ?? 0;
 
@@ -130,6 +137,16 @@ test("Jiti lazy command facades resolve review, tokens, and annotate-last-messag
 			{ message: "annotate-last-message requires interactive mode.", type: "error" },
 			{ message: "annotate-last-message requires interactive mode.", type: "error" },
 		]);
+
+		const changelogRun = createCommandContext({ cwd });
+		await changelogCommand.handler("", changelogRun.ctx);
+		assert.equal(changelogRun.notifications.length, 0);
+		assert.equal(pi.sentMessages.length, 1);
+		assert.equal(pi.sentMessages[0]?.customType, "TLH release notes");
+		assert.equal(pi.sentMessages[0]?.display, true);
+		assert.equal(pi.sentMessages[0]?.details?.title, "TLH Release Notes");
+		assert.match(pi.sentMessages[0]?.content ?? "", /^# /m);
+
 		assert.equal(
 			pi.handlers.get("session_shutdown")?.length ?? 0,
 			shutdownHandlerCount,
