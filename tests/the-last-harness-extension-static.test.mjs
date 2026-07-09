@@ -626,7 +626,7 @@ test("extension wires TLH changelog lazy facade and release-notes rendering", ()
 	assert.match(changelogSource, /pi\.sendMessage\(\{/);
 });
 
-test("extension keeps TLH experimental command wiring with registered ci and review feature flags", () => {
+test("extension keeps TLH experimental command wiring with registered ticket, ci, and review feature flags", () => {
 	const lockedWriteHelper = sourceSection(
 		profileStateSource,
 		"export function withLockedTlhSettingsWrite",
@@ -638,6 +638,7 @@ test("extension keeps TLH experimental command wiring with registered ci and rev
 	assert.match(experimentalSource, /pi\.registerCommand\("experimental"/);
 	assert.match(experimentalSource, /delta-follow-up-reviews/);
 	assert.match(experimentalSource, /ci-failure-investigation/);
+	assert.match(experimentalSource, /ticket-workflow-ui/);
 	assert.doesNotMatch(experimentalSource, /## TLH Experimental Feature: contrarian/);
 	assert.doesNotMatch(experimentalSource, /Enables the contrarian minor agent and primary-agent guidance/);
 	assert.doesNotMatch(experimentalSource, /run-tests-last/);
