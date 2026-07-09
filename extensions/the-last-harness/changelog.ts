@@ -4,6 +4,7 @@ import { DynamicBorder, getMarkdownTheme, type ExtensionAPI, type ExtensionComma
 import { Container, Markdown, Text, matchesKey } from "@earendil-works/pi-tui";
 
 const TLH_CHANGELOG_PATH = new URL("../../CHANGELOG.md", import.meta.url);
+export const TLH_CHANGELOG_COMMAND_DESCRIPTION = "Show TLH release notes from the packaged changelog";
 const TLH_RELEASE_NOTES_LABEL = "TLH release notes";
 const TLH_RELEASE_NOTES_TITLE = "TLH Release Notes";
 const TLH_CHANGELOG_CLOSE_HINT = "Press Enter or Esc to close";
@@ -44,32 +45,34 @@ async function showTlhChangelogUi(changelog: string, ctx: ExtensionCommandContex
 	return rendered;
 }
 
+export async function handleTlhChangelogCommand(pi: ExtensionAPI, _args: string, ctx: ExtensionCommandContext): Promise<void> {
+	let changelog: string;
+	try {
+		changelog = readTlhChangelog();
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		ctx.ui.notify(`Could not load TLH release notes: ${message}`, "error");
+		return;
+	}
+
+	if (await showTlhChangelogUi(changelog, ctx)) {
+		return;
+	}
+
+	// RPC/print modes cannot host a custom markdown component. Fall back to a displayed
+	// custom message without triggering a turn, which keeps the release notes visible but
+	// also persists the changelog text in session history/context until it is compacted away.
+	pi.sendMessage({
+		customType: TLH_RELEASE_NOTES_LABEL,
+		content: changelog,
+		display: true,
+		details: { title: TLH_RELEASE_NOTES_TITLE },
+	});
+}
+
 export function registerTlhChangelogCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("tlh-changelog", {
-		description: "Show TLH release notes from the packaged changelog",
-		handler: async (_args, ctx) => {
-			let changelog: string;
-			try {
-				changelog = readTlhChangelog();
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				ctx.ui.notify(`Could not load TLH release notes: ${message}`, "error");
-				return;
-			}
-
-			if (await showTlhChangelogUi(changelog, ctx)) {
-				return;
-			}
-
-			// RPC/print modes cannot host a custom markdown component. Fall back to a displayed
-			// custom message without triggering a turn, which keeps the release notes visible but
-			// also persists the changelog text in session history/context until it is compacted away.
-			pi.sendMessage({
-				customType: TLH_RELEASE_NOTES_LABEL,
-				content: changelog,
-				display: true,
-				details: { title: TLH_RELEASE_NOTES_TITLE },
-			});
-		},
+		description: TLH_CHANGELOG_COMMAND_DESCRIPTION,
+		handler: async (args, ctx) => handleTlhChangelogCommand(pi, args, ctx),
 	});
 }
