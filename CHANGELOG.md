@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-07-09
+
 ### Removed
 
 - Removed the bundled `pi-triage-comments` extension. Existing TLH-managed `pi-triage-comments` installs are force-removed on the next `tlh` install or update; packages added manually to that isolated profile are preserved.
