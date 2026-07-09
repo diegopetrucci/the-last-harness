@@ -23,7 +23,7 @@ import { validateInstallerTargets } from "../scripts/lib/tlh-install-paths.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoNodeModulesBin = join(repoRoot, "node_modules", ".bin");
-const TLH_MIN_PI_VERSION = "0.80.1";
+const TLH_NON_PINNED_PI_VERSION = "0.80.1";
 const TLH_PINNED_PI_VERSION = "0.80.5";
 
 const TLH_PI_PACKAGE_SPEC = `@earendil-works/pi-coding-agent@${TLH_PINNED_PI_VERSION}`;
@@ -166,7 +166,7 @@ function writeFakeTk(fakebin) {
 	writeFakeCommand(fakebin, "tk", "printf 'Usage: tk help\\nTicket CLI helper\\n'");
 }
 
-function writeLoggingPi(commandDir, logPath, version = TLH_MIN_PI_VERSION) {
+function writeLoggingPi(commandDir, logPath, version = TLH_PINNED_PI_VERSION) {
 	writeFakePi(commandDir, [
 		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${logPath}"`,
 		`if [[ "\${1:-}" == "--version" ]]; then printf '${version}\\n'; exit 0; fi`,
@@ -174,7 +174,7 @@ function writeLoggingPi(commandDir, logPath, version = TLH_MIN_PI_VERSION) {
 	].join("\n"));
 }
 
-function writeVersionedWrapperPi(commandDir, logPath, version = TLH_MIN_PI_VERSION) {
+function writeVersionedWrapperPi(commandDir, logPath, version = TLH_PINNED_PI_VERSION) {
 	writeFakePi(commandDir, [
 		`if [[ "\${1:-}" == "--version" ]]; then printf '${version}\\n'; exit 0; fi`,
 		`{ printf 'cmd=%s\\n' "$0"; printf 'argv=%s\\n' "$*"; printf 'agent=%s\\n' "\${PI_CODING_AGENT_DIR:-}"; printf 'path=%s\\n' "\${PATH:-}"; } >"${logPath}"`,
@@ -435,10 +435,10 @@ test("stage-1 repairs the TLH private Pi runtime even when a supported Pi exists
 	}, null, 2));
 	writeFakeCommand(fakebin, "git", "exit 0");
 	writeFakeTk(fakebin);
-	// A supported PATH pi — the installer must never use it (private runtime only).
+	// A non-pinned PATH pi — the installer must never use it (private runtime only).
 	writeFakePi(supportedPiDir, [
 		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${pathPiLog}"`,
-		`if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_MIN_PI_VERSION}\\n'; exit 0; fi`,
+		`if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_NON_PINNED_PI_VERSION}\\n'; exit 0; fi`,
 		"exit 0",
 	].join("\n"));
 	// Stale private runtime at 0.80.6 (above pin) triggers repair.
@@ -753,7 +753,7 @@ test("stage-1 --no-settings does not short-circuit Gnosis configure", (t) => {
 	const binDir = join(root, "bin");
 	const fakebin = join(root, "fakebin");
 	mkdirSync(homeDir, { recursive: true });
-	writeFakePi(fakebin, "if [[ \"${1:-}\" == \"--version\" ]]; then\n\tprintf '0.80.1\\n'\n\texit 0\nfi\nexit 0");
+	writeFakePi(fakebin, `if [[ "\${1:-}" == "--version" ]]; then\n\tprintf '${TLH_PINNED_PI_VERSION}\\n'\n\texit 0\nfi\nexit 0`);
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
 	const result = spawnSync(process.execPath, [
@@ -2596,7 +2596,7 @@ test("wrapper update --extensions helper prepends executable --pi-cmd directory 
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
 	mkdirSync(pinnedPiDir, { recursive: true });
-	writeFileSync(join(pinnedPiDir, "pi"), "#!/bin/sh\nif [ \"${1:-}\" = \"--version\" ]; then printf '0.80.1\\n'; exit 0; fi\nprintf 'unexpected args: %s\\n' \"$*\" >&2\nexit 1\n", "utf8");
+	writeFileSync(join(pinnedPiDir, "pi"), `#!/bin/sh\nif [ "\${1:-}" = "--version" ]; then printf '${TLH_NON_PINNED_PI_VERSION}\\n'; exit 0; fi\nprintf 'unexpected args: %s\\n' "$*" >&2\nexit 1\n`, "utf8");
 	chmodSync(join(pinnedPiDir, "pi"), 0o755);
 	writeFileSync(join(agentDir, "tlh", "recover-update.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst pi = spawnSync("pi", ["--version"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, pi: { status: pi.status, stdout: pi.stdout, stderr: pi.stderr, error: pi.error?.message } }));\nprocess.exit(pi.status ?? (pi.error ? 1 : 0));\n`, "utf8");
 
@@ -2640,7 +2640,7 @@ test("wrapper update --extensions helper prepends executable --pi-cmd directory 
 	]);
 	assert.equal(updateRecord.env.PI_CODING_AGENT_DIR, agentDir);
 	assert.equal(updateRecord.pi.status, 0, JSON.stringify(updateRecord));
-	assert.match(updateRecord.pi.stdout, new RegExp(escapeRegExp(TLH_MIN_PI_VERSION)));
+	assert.match(updateRecord.pi.stdout, new RegExp(escapeRegExp(TLH_NON_PINNED_PI_VERSION)));
 
 	const updatePathEntries = updateRecord.env.PATH.split(delimiter);
 	assert.equal(updatePathEntries[0], pinnedPiDir, `expected pinned_dir first; got ${updatePathEntries.join(delimiter)}`);
@@ -3217,7 +3217,7 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
 	// Legacy pi at ~/.local/bin/pi — must NOT be removed when install fails.
 	writeFakePi(legacyBin, `if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_PINNED_PI_VERSION}\\n'; exit 0; fi\nexit 0`);
 
-	// Template pi with WRONG version (0.80.6 > MAX 0.80.5) — simulates a broken npm install.
+	// Template pi with a clearly wrong non-pinned version (0.80.6) — simulates a broken npm install.
 	writeFakePi(templateDir, "if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.80.6\\n'; exit 0; fi\nexit 0");
 
 	// Fake npm: always installs the wrong-version template pi.

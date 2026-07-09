@@ -19,10 +19,8 @@ const DEFAULT_REF = "main";
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 const PINNED_PI_VERSION = "0.80.5";
 const PI_PACKAGE_SPEC = `${PI_PACKAGE_NAME}@${PINNED_PI_VERSION}`;
-// Keep in sync with TLH_MIN_NODE_VERSION, TLH_MIN_PI_VERSION, and TLH_PINNED_PI_VERSION in install.sh.
+// Keep in sync with TLH_MIN_NODE_VERSION and TLH_PINNED_PI_VERSION in install.sh.
 const MIN_NODE_VERSION = "22.19.0";
-const MIN_PI_VERSION = "0.80.1";
-const MAX_PI_VERSION = PINNED_PI_VERSION;
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
 const DEFAULT_GNOSIS_VERSION = "0.5.3";
 const DEFAULT_WRAPPER_NAME = "tlh";
@@ -81,10 +79,6 @@ function compareVersionTriplets(currentVersion, expectedVersion) {
 function nodeVersionMeetsMinimum(currentVersion, minimumVersion = MIN_NODE_VERSION) {
     const comparison = compareVersionTriplets(currentVersion, minimumVersion);
     return comparison !== null && comparison >= 0;
-}
-function versionAtMost(currentVersion, maximumVersion) {
-    const comparison = compareVersionTriplets(currentVersion, maximumVersion);
-    return comparison !== null && comparison <= 0;
 }
 function formatNodeVersion(version) {
     const text = String(version || "").trim();
@@ -487,9 +481,6 @@ function gitCheckoutIo() {
         warn,
     };
 }
-function supportedPiVersionRange() {
-    return `Pi >= ${MIN_PI_VERSION} and <= ${MAX_PI_VERSION}`;
-}
 function pinnedPiInstallCommand(config) {
     return `npm install -g --ignore-scripts --prefix "${piInstallPrefix(config)}" ${PI_PACKAGE_SPEC}`;
 }
@@ -589,8 +580,8 @@ function writeRuntimeMarker(config, prefix, origin) {
         throw error;
     }
 }
-function assertSupportedPiVersion(config, { piCommand = "pi", sourceDescription = "existing pi on PATH", versionCommandDisplay = "pi --version", expectedVersion, } = {}) {
-    // `pi --version` prints a bare semver (e.g. "0.80.1") on stdout. Older builds may
+function assertSupportedPiVersion(config, { piCommand = "pi", sourceDescription = "existing pi on PATH", versionCommandDisplay = "pi --version", } = {}) {
+    // `pi --version` prints a bare semver (e.g. "0.80.5") on stdout. Older builds may
     // differ, so we extract the first semver-shaped substring rather than match strictly.
     const result = spawnCapture(config, [piCommand, "--version"], {
         allowFailure: true,
@@ -598,7 +589,7 @@ function assertSupportedPiVersion(config, { piCommand = "pi", sourceDescription 
     });
     const output = `${result.stdout || ""}${result.stderr || ""}`.trim();
     const installGuidance = pinnedPiInstallGuidance(config);
-    const requiredVersionDescription = expectedVersion ? `Pi ${expectedVersion}` : supportedPiVersionRange();
+    const requiredVersionDescription = `Pi ${PINNED_PI_VERSION}`;
     if (result.error || result.status !== 0) {
         const status = result.status ?? result.signal ?? spawnErrorCode(result.error) ?? "error";
         const probeDetails = output ? ` Probe output: ${output}` : "";
@@ -606,14 +597,10 @@ function assertSupportedPiVersion(config, { piCommand = "pi", sourceDescription 
     }
     const match = output.match(/\d+\.\d+\.\d+/);
     if (!match) {
-        const sampleVersion = expectedVersion ?? MIN_PI_VERSION;
-        throw new Error(`unable to parse Pi version from ${sourceDescription}: ${output || "<empty>"}. The Last Harness requires ${requiredVersionDescription}. Verify that \`${versionCommandDisplay}\` prints a semantic version like ${sampleVersion}, or ${installGuidance}.`);
+        throw new Error(`unable to parse Pi version from ${sourceDescription}: ${output || "<empty>"}. The Last Harness requires ${requiredVersionDescription}. Verify that \`${versionCommandDisplay}\` prints a semantic version like ${PINNED_PI_VERSION}, or ${installGuidance}.`);
     }
     const currentVersion = match[0];
-    const isSupportedVersion = expectedVersion
-        ? currentVersion === expectedVersion
-        : nodeVersionMeetsMinimum(currentVersion, MIN_PI_VERSION) && versionAtMost(currentVersion, MAX_PI_VERSION);
-    if (!isSupportedVersion) {
+    if (currentVersion !== PINNED_PI_VERSION) {
         throw new Error(`${requiredVersionDescription} is required (found ${currentVersion}). ${installGuidance}`);
     }
     verboseLog(config, `Pi version (${sourceDescription}): ${currentVersion}`);
@@ -713,7 +700,6 @@ function installPiIfNeeded(config) {
                 piCommand: piBin,
                 sourceDescription: `TLH private runtime at ${piBin}`,
                 versionCommandDisplay: `${piBin} --version`,
-                expectedVersion: PINNED_PI_VERSION,
             });
             verboseLog(config, `TLH private Pi runtime is valid: ${piBin}`);
             // Prepend the private runtime's bin dir to PATH for the remainder of this
@@ -765,7 +751,6 @@ function installPiIfNeeded(config) {
         piCommand: piBin,
         sourceDescription: `freshly installed TLH private runtime at ${piBin}`,
         versionCommandDisplay: `${piBin} --version`,
-        expectedVersion: PINNED_PI_VERSION,
     });
     // Prepend the private runtime's bin dir for the remainder of this process so
     // downstream steps (pi install, pi update, …) resolve the new binary.
