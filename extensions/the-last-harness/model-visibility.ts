@@ -50,6 +50,7 @@ export const TLH_HIDDEN_MODEL_DEFAULTS = Object.freeze([
 	"anthropic/claude-3-opus-20240229",
 	"anthropic/claude-3-sonnet-20240229",
 	"anthropic/claude-haiku-4-5",
+	"anthropic/claude-haiku-4-5-20251001",
 	"anthropic/claude-opus-4-0",
 	"anthropic/claude-opus-4-1",
 	"anthropic/claude-opus-4-1-20250805",
@@ -61,6 +62,11 @@ export const TLH_HIDDEN_MODEL_DEFAULTS = Object.freeze([
 	"anthropic/claude-sonnet-4-20250514",
 	"anthropic/claude-sonnet-4-5",
 	"anthropic/claude-sonnet-4-5-20250929",
+	"anthropic/claude-sonnet-4-6",
+	"anthropic/claude-sonnet-5",
+	"openai-codex/gpt-5.3-codex-spark",
+	"openai-codex/gpt-5.4",
+	"openai-codex/gpt-5.4-mini",
 ]);
 
 function normalizePatternList(value: unknown): string[] {
