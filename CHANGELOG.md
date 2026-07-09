@@ -21,6 +21,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- TLH autocomplete now hides `/scoped-models`, `/subagents-profiles`, `/subagents-check-profile`, `/subagents-models`, `/skill:pi-subagents`, `/skill:librarian`, `/skill:pi-intercom`, `/websearch`, `/curator`, and `/search` in slash-command-name completion.
 - The librarian subagent now explicitly permits `git remote get-url` for required local-checkout remote identity verification before trusting a bounded local checkout or temporary clone during read-only repository research.
 - Fixed managed RTK install validation to accept `rtk rewrite` exit code 3 in addition to 0, since rtk >= 0.35.0 intentionally exits 3 for a rewrite plus ask/default permission verdict while still printing the rewritten command. Previously TLH's installer rejected the authentic pinned rtk 0.42.4 binary with "downloaded RTK binary did not validate", breaking install/update at the RTK step.
 
