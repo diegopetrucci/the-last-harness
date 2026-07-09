@@ -32,7 +32,7 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 | `/quit` | Quit the TLH TUI |
 | `/reload` | Reload keybindings, extensions, skills, prompts, and themes |
 | `/resume` | Resume a different session |
-| `/scoped-models` | Enable or disable models for Ctrl+P cycling |
+| `/scoped-models` | Enable or disable models for Ctrl+P cycling — **hidden from TLH autocomplete** |
 | `/session` | Show session info and stats |
 | `/settings` | Open the settings menu |
 | `/share` | Share the session as a secret GitHub gist |
@@ -186,16 +186,31 @@ These commands are registered and fully functional, but deliberately excluded fr
 | `/changelog` | Show upstream Pi changelog entries; use `/tlh-changelog` for TLH release notes |
 | `/clone` | Duplicate the current session at the current position |
 | `/import` | Import and resume a session from a JSONL file |
+| `/scoped-models` | Enable or disable models for Ctrl+P cycling |
+
+### Hidden skill commands
+
+| Command | Description |
+|---------|-------------|
+| `/skill:librarian` | Load the bundled librarian skill by name without surfacing it in TLH autocomplete |
+| `/skill:pi-intercom` | Load the bundled intercom skill by name without surfacing it in TLH autocomplete |
+| `/skill:pi-subagents` | Load the bundled subagents skill by name without surfacing it in TLH autocomplete |
 
 ### Hidden bundled extension commands
 
 | Command | Extension | Description |
 |---------|-----------|-------------|
+| `/curator` | `pi-web-access` | Toggle or configure the search curator workflow |
 | `/fff-health` | `pi-fff` | Show FFF file finder health and status |
 | `/fff-mode` | `pi-fff` | Show or set FFF mode (`tools-and-ui`, `tools-only`, `override`) |
 | `/fff-rescan` | `pi-fff` | Trigger FFF to rescan files |
 | `/intercom` | `pi-intercom` | Open the session intercom overlay (internal subagent communication) |
 | `/quiet-tools` | `pi-quiet-tools` | Toggle one-line collapsed invocations for built-in tool rows |
+| `/search` | `pi-web-access` | Browse stored web search results |
+| `/subagents-check-profile` | `pi-subagents` | Check whether a saved profile still points to usable models |
+| `/subagents-models` | `pi-subagents` | Show runtime-loaded builtin subagent models |
+| `/subagents-profiles` | `pi-subagents` | List saved subagent profiles |
+| `/websearch` | `pi-web-access` | Open the web search curator |
 
 ---
 
