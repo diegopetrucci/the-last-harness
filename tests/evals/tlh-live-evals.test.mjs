@@ -19,6 +19,23 @@ function runLiveEval(args = [], env = {}) {
 	});
 }
 
+function withEnv(values, callback) {
+	const previous = new Map();
+	for (const [name, value] of Object.entries(values)) {
+		previous.set(name, Object.hasOwn(process.env, name) ? process.env[name] : undefined);
+		if (value === undefined) delete process.env[name];
+		else process.env[name] = value;
+	}
+	try {
+		return callback();
+	} finally {
+		for (const [name, value] of previous.entries()) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+	}
+}
+
 test("live eval runner is opt-in and skipped by default", () => {
 	const result = runLiveEval();
 
@@ -159,6 +176,50 @@ test("workspace outputs write both README.md and results.json", () => {
 	} finally {
 		rmSync(tempDir, { recursive: true, force: true });
 	}
+});
+
+test("workspace outputs do not globally redact short sensitive-name env flags but still redact longer secrets", () => {
+	withEnv({
+		CLAUDE_CODE_CHILD_SESSION: "1",
+		TLH_TEST_SESSION_TOKEN: "sk-live-eval-secret-1234567890",
+	}, () => {
+		const ctx = createContext({});
+		try {
+			const suiteResult = createSuiteResult({
+				selectedScenarios: [{ id: "install-update-smoke", mode: "automated" }],
+				scenarioResults: [createScenarioResult({
+					scenarioId: "install-update-smoke",
+					mode: "automated",
+					summary: "Smoke.",
+					status: "passed",
+					detail: "flag=1 secret=sk-live-eval-secret-1234567890",
+					checks: [createBinaryScoreCheck({
+						id: "install-bootstrap",
+						label: "Bootstrap isolated install created the tlh wrapper",
+						passed: true,
+						details: "flag=1 secret=sk-live-eval-secret-1234567890",
+					})],
+				})],
+				startedAt: "2026-05-29T00:00:00.000Z",
+				finishedAt: "2026-05-29T00:00:05.000Z",
+				keepWorkspace: true,
+			});
+
+			writeWorkspaceOutputs(ctx, suiteResult);
+
+			const resultsPath = join(ctx.rootDir, "results.json");
+			const rawResults = readFileSync(resultsPath, "utf8");
+			const parsedResults = JSON.parse(rawResults);
+			assert.equal(parsedResults.summary.checks.automated.total, 1);
+			assert.match(rawResults, /"total": 1/);
+			assert.match(rawResults, /flag=1/);
+			assert.doesNotMatch(rawResults, /<CLAUDE_CODE_CHILD_SESSION>/);
+			assert.doesNotMatch(rawResults, /sk-live-eval-secret-1234567890/);
+			assert.match(rawResults, /<TLH_TEST_SESSION_TOKEN>/);
+		} finally {
+			rmSync(ctx.rootDir, { recursive: true, force: true });
+		}
+	});
 });
 
 test("artifacts-dir uses a fresh child workspace and preserves parent README/results files", () => {

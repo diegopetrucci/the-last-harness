@@ -19,6 +19,8 @@ const installTimeoutMs = 10 * 60 * 1000;
 const commandTimeoutMs = 60 * 1000;
 const gitTimeoutMs = 15 * 1000;
 const sensitiveEnvNamePattern = /(KEY|TOKEN|SECRET|PASSWORD|COOKIE|SESSION|BEARER)/i;
+const minimumSensitiveEnvValueLength = 8;
+const nonSecretSensitiveEnvValuePattern = /^(?:0|1|true|false|yes|no|on|off)$/i;
 
 function usage() {
 	return `Usage: node tests/evals/tlh-live-evals.mjs [options]
@@ -162,6 +164,13 @@ function requireCommands(names, ctx) {
 	}
 }
 
+function isSecretLikeSensitiveEnvValue(value) {
+	const normalized = String(value ?? "").trim();
+	if (!normalized) return false;
+	if (nonSecretSensitiveEnvValuePattern.test(normalized)) return false;
+	return normalized.length >= minimumSensitiveEnvValueLength;
+}
+
 function buildRedactions(ctx) {
 	const replacements = [
 		{ value: ctx.rootDir, replacement: "<LIVE_EVAL_ROOT>" },
@@ -171,7 +180,7 @@ function buildRedactions(ctx) {
 		{ value: ctx.workspaceDir, replacement: "<TEMP_WORKSPACE>" },
 	];
 	for (const [name, value] of Object.entries(process.env)) {
-		if (!value || !sensitiveEnvNamePattern.test(name)) continue;
+		if (!sensitiveEnvNamePattern.test(name) || !isSecretLikeSensitiveEnvValue(value)) continue;
 		replacements.push({ value, replacement: `<${name}>` });
 	}
 	return replacements.sort((left, right) => right.value.length - left.value.length);
