@@ -544,7 +544,8 @@ function isPersistentTelemetryOptOut(path: readonly string[], currentValue: unkn
 }
 
 function isInstallerOwnedSetting(path: readonly string[]): boolean {
-	return path.join(".") === "lastChangelogVersion";
+	const joinedPath = path.join(".");
+	return joinedPath === "lastChangelogVersion" || joinedPath === "subagents.disableBuiltins";
 }
 
 function mergeObject(target: JsonObject, defaults: JsonObject, changes: string[], options: MergeOptions): void {

@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Bumped the bundled critical `pi-subagents` default extension pin from `npm:@diegopetrucci/pi-subagents@0.31.3` to `npm:@diegopetrucci/pi-subagents@0.31.4`, picking up the builtin-disable runtime invariant fix from the merged fork release.
+
 ## [0.28.0] - 2026-07-09
 
 ### Removed

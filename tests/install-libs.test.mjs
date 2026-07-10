@@ -39,6 +39,7 @@ import {
 	copyTlhSubagentPrompts,
 	findTlhSubagentsDir,
 	missingTlhSubagentPrompts,
+	restoreNeededTlhSubagentPrompts,
 	settingsRequireTlhSubagentPrompts,
 } from "../scripts/lib/tlh-install-subagents.mjs";
 import {
@@ -683,6 +684,9 @@ test("subagent prompt discovery honors source precedence and copies prompt files
 
 	const installedDir = copyTlhSubagentPrompts(defaultConfig, localPrompts);
 	assert.equal(installedDir, join(realpathSync.native(agentDir), "tlh", "agents", "subagents"));
+	writeFileSync(join(installedDir, "contrarian.md"), "stale:contrarian.md\n");
+	assert.deepEqual(restoreNeededTlhSubagentPrompts(localPrompts, installedDir), ["contrarian.md"]);
+	copyTlhSubagentPrompts(defaultConfig, localPrompts);
 	assert.deepEqual(TLH_SUBAGENT_PROMPTS, [
 		"developer.md",
 		"code-reviewer.md",

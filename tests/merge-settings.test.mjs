@@ -279,6 +279,38 @@ test("merge treats normalized subagents.agentDirs paths as duplicates", () => {
 	assert.deepEqual(readJson(fixture.settings).subagents.agentDirs, ["./tlh/agents/subagents/"]);
 });
 
+test("merge restores subagents.disableBuiltins while preserving user-owned subagent settings", () => {
+	const fixture = tempFixture(
+		{
+			packages: [],
+			subagents: {
+				disableBuiltins: true,
+				agentDirs: ["tlh/agents/subagents"],
+			},
+		},
+		{
+			packages: [harnessPackage],
+			subagents: {
+				disableBuiltins: false,
+				agentDirs: ["custom/subagents"],
+				agentOverrides: {
+					developer: { model: "kept" },
+				},
+			},
+		},
+	);
+
+	runMerge(fixture);
+
+	assert.deepEqual(readJson(fixture.settings).subagents, {
+		disableBuiltins: true,
+		agentDirs: ["custom/subagents", "tlh/agents/subagents"],
+		agentOverrides: {
+			developer: { model: "kept" },
+		},
+	});
+});
+
 test("merge keeps exact append semantics for unrelated arrays", () => {
 	const fixture = tempFixture(
 		{
