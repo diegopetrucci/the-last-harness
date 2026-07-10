@@ -253,11 +253,15 @@ test("ticket workflow UI strips ANSI and control sequences from the ready ticket
 
 		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
 
+		const statusText = uiHarness.statusUpdates.at(-1)?.text ?? "";
 		assert.equal(
-			uiHarness.statusUpdates.at(-1)?.text,
+			statusText,
 			"working on tk: Implement read-only ticket workflow status UI\nUse /tk-status for details.",
 		);
-		assert.doesNotMatch(uiHarness.statusUpdates.at(-1)?.text ?? "", /\u001b|\u0007/);
+		for (const character of statusText) {
+			const code = character.charCodeAt(0);
+			assert.equal(((code >= 0x00 && code <= 0x1f) && code !== 0x0a) || (code >= 0x7f && code <= 0x9f), false);
+		}
 	});
 });
 

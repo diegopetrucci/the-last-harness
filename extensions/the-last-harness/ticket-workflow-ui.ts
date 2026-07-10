@@ -156,10 +156,54 @@ function getTkWorkflowSnapshot(cwd: string): TkWorkflowSnapshot {
 	};
 }
 
+function isTerminalControlCharCode(code: number): boolean {
+	return (code >= 0x00 && code <= 0x1f) || (code >= 0x7f && code <= 0x9f);
+}
+
 function stripTerminalControlSequences(text: string): string {
-	return text
-		.replace(/\u001B(?:\][^\u0007\u001B]*(?:\u0007|\u001B\\)|\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])/g, "")
-		.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
+	let sanitized = "";
+
+	for (let index = 0; index < text.length; index += 1) {
+		const code = text.charCodeAt(index);
+		if (code === 0x1b) {
+			const nextCode = text.charCodeAt(index + 1);
+			if (nextCode === 0x5d) {
+				index += 2;
+				while (index < text.length) {
+					const oscCode = text.charCodeAt(index);
+					if (oscCode === 0x07) {
+						break;
+					}
+					if (oscCode === 0x1b && text.charCodeAt(index + 1) === 0x5c) {
+						index += 1;
+						break;
+					}
+					index += 1;
+				}
+				continue;
+			}
+			if (nextCode === 0x5b) {
+				index += 2;
+				while (index < text.length) {
+					const csiCode = text.charCodeAt(index);
+					if (csiCode >= 0x40 && csiCode <= 0x7e) {
+						break;
+					}
+					index += 1;
+				}
+				continue;
+			}
+			if (nextCode >= 0x40 && nextCode <= 0x5f) {
+				index += 1;
+			}
+			continue;
+		}
+		if (!isTerminalControlCharCode(code)) {
+			sanitized += text[index];
+		}
+	}
+
+	return sanitized;
 }
 
 function extractNextReadyTicketTitle(snapshot: Extract<TkWorkflowSnapshot, { kind: "ok" }>): string | undefined {
