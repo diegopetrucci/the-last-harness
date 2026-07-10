@@ -96,6 +96,10 @@ case "\${1:-}" in
     echo "Tickets stored as markdown files in .tickets/"
     ;;
   query)
+    if [[ ! -d .tickets ]]; then
+      echo "no .tickets directory found" >&2
+      exit 1
+    fi
     case "$state" in
       default)
         cat <<'EOF'
@@ -116,6 +120,10 @@ EOF
     esac
     ;;
   ready)
+    if [[ ! -d .tickets ]]; then
+      echo "no .tickets directory found" >&2
+      exit 1
+    fi
     case "$state" in
       default)
         echo "tlhf-7rd2 [P2][open] - ${READY_TICKET_TITLE}"
@@ -125,6 +133,10 @@ EOF
     esac
     ;;
   blocked)
+    if [[ ! -d .tickets ]]; then
+      echo "no .tickets directory found" >&2
+      exit 1
+    fi
     case "$state" in
       default|updated)
         echo "tlhf-16ll [P2][open] - Document and validate ticket workflow UI experiment <- [tlhf-7rd2]"
@@ -165,6 +177,7 @@ test("ticket workflow UI stays completely disabled by default", async (t) => {
 
 test("enabled ticket workflow UI publishes footer status, ignores unrelated bash results, refreshes after tk bash and user_bash results, and exposes /tk-status", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
+	mkdirSync(join(fixture.cwd, ".tickets"));
 	const statePath = join(fixture.dir, "tk-state");
 	writeFileSync(statePath, "default\n");
 	installFakeTk(fixture.agent, statePath);
@@ -220,6 +233,7 @@ test("enabled ticket workflow UI publishes footer status, ignores unrelated bash
 
 test("ticket workflow UI reacts to current-session experimental enable and disable", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
+	mkdirSync(join(fixture.cwd, ".tickets"));
 	const statePath = join(fixture.dir, "tk-state");
 	writeFileSync(statePath, "default\n");
 	installFakeTk(fixture.agent, statePath);
@@ -264,47 +278,79 @@ test("ticket workflow UI reacts to current-session experimental enable and disab
 	});
 });
 
-test("enabled /tk-status reports unavailable tk and no tickets clearly", async (t) => {
-	const unavailableFixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
+test("enabled ticket workflow UI stays quiet without a .tickets repo while /tk-status reports no-repo", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
+	const statePath = join(fixture.dir, "tk-state");
+	writeFileSync(statePath, "default\n");
+	installFakeTk(fixture.agent, statePath);
 	writeFileSync(
-		join(unavailableFixture.agent, "settings.json"),
+		join(fixture.agent, "settings.json"),
 		`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [TICKET_WORKFLOW_UI_FEATURE] } } }, null, 2)}\n`,
 	);
 
-	await withEnv({ HOME: unavailableFixture.home, PI_CODING_AGENT_DIR: unavailableFixture.agent, PATH: "" }, async () => {
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const pi = createPiHarness();
 		registerTlhTicketWorkflowUi(pi);
 		const uiHarness = createUiHarness();
-		const ctx = createCtx(unavailableFixture.cwd, uiHarness.ui);
+		const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
 		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
-		assert.equal(uiHarness.statusUpdates.at(-1)?.text, undefined);
-		assert.equal(uiHarness.widgetUpdates.at(-1)?.content, undefined);
+		assert.equal(pi.commands.has("tk-status"), true);
+		assert.deepEqual(uiHarness.statusUpdates, [{ key: "tlh-ticket-workflow", text: undefined }]);
+		assert.deepEqual(uiHarness.widgetUpdates, [{ key: "tlh-ticket-workflow", content: undefined, options: undefined }]);
 
 		await pi.commands.get("tk-status").handler("", ctx);
-		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /Ticket workflow status unavailable: tk is unavailable/i);
+		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /No \.tickets directory found/i);
 	});
+});
 
-	const noTicketsFixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
-	const statePath = join(noTicketsFixture.dir, "tk-state");
+test("enabled ticket workflow UI stays quiet for an empty ticket repo while /tk-status reports no tickets", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
+	mkdirSync(join(fixture.cwd, ".tickets"));
+	const statePath = join(fixture.dir, "tk-state");
 	writeFileSync(statePath, "empty\n");
-	installFakeTk(noTicketsFixture.agent, statePath);
+	installFakeTk(fixture.agent, statePath);
 	writeFileSync(
-		join(noTicketsFixture.agent, "settings.json"),
+		join(fixture.agent, "settings.json"),
 		`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [TICKET_WORKFLOW_UI_FEATURE] } } }, null, 2)}\n`,
 	);
 
-	await withEnv({ HOME: noTicketsFixture.home, PI_CODING_AGENT_DIR: noTicketsFixture.agent }, async () => {
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const pi = createPiHarness();
 		registerTlhTicketWorkflowUi(pi);
 		const uiHarness = createUiHarness();
-		const ctx = createCtx(noTicketsFixture.cwd, uiHarness.ui);
+		const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
 		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
-		assert.equal(uiHarness.statusUpdates.at(-1)?.text, undefined);
-		assert.equal(uiHarness.widgetUpdates.at(-1)?.content, undefined);
+		assert.equal(pi.commands.has("tk-status"), true);
+		assert.deepEqual(uiHarness.statusUpdates, [{ key: "tlh-ticket-workflow", text: undefined }]);
+		assert.deepEqual(uiHarness.widgetUpdates, [{ key: "tlh-ticket-workflow", content: undefined, options: undefined }]);
 
 		await pi.commands.get("tk-status").handler("", ctx);
 		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /tk: no tickets in this repo/i);
+	});
+});
+
+test("enabled ticket workflow UI stays quiet when .tickets exists and tk is missing while /tk-status reports unavailable", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
+	mkdirSync(join(fixture.cwd, ".tickets"));
+	writeFileSync(
+		join(fixture.agent, "settings.json"),
+		`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [TICKET_WORKFLOW_UI_FEATURE] } } }, null, 2)}\n`,
+	);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, PATH: "" }, async () => {
+		const pi = createPiHarness();
+		registerTlhTicketWorkflowUi(pi);
+		const uiHarness = createUiHarness();
+		const ctx = createCtx(fixture.cwd, uiHarness.ui);
+
+		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
+		assert.equal(pi.commands.has("tk-status"), true);
+		assert.deepEqual(uiHarness.statusUpdates, [{ key: "tlh-ticket-workflow", text: undefined }]);
+		assert.deepEqual(uiHarness.widgetUpdates, [{ key: "tlh-ticket-workflow", content: undefined, options: undefined }]);
+
+		await pi.commands.get("tk-status").handler("", ctx);
+		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /Ticket workflow status unavailable: tk is unavailable/i);
 	});
 });
