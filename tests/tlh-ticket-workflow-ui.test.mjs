@@ -317,7 +317,7 @@ test("enabled ticket workflow UI stays quiet for an empty ticket repo while /tk-
 	});
 });
 
-test("enabled ticket workflow UI may show unavailable when .tickets exists and tk is missing", async (t) => {
+test("enabled ticket workflow UI stays quiet when .tickets exists and tk is missing while /tk-status keeps diagnostics", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
 	mkdirSync(join(fixture.cwd, ".tickets"));
 	writeFileSync(
@@ -332,8 +332,8 @@ test("enabled ticket workflow UI may show unavailable when .tickets exists and t
 		const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
 		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
-		assert.match(uiHarness.statusUpdates.at(-1)?.text ?? "", /tk: unavailable/);
-		assert.deepEqual(uiHarness.widgetUpdates.at(-1)?.content, ["tk: unavailable", "Use /tk-status for details."]);
+		assert.deepEqual(uiHarness.statusUpdates, [{ key: "tlh-ticket-workflow", text: undefined }]);
+		assert.deepEqual(uiHarness.widgetUpdates, [{ key: "tlh-ticket-workflow", content: undefined, options: undefined }]);
 
 		await pi.commands.get("tk-status").handler("", ctx);
 		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /Ticket workflow status unavailable: tk is unavailable/i);
