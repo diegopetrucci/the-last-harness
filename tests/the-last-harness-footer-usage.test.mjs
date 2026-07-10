@@ -711,8 +711,29 @@ test("line 2 (color-aware): product and bug-hunter render name with accent", () 
 // NEW: extension status line rendering
 // ---------------------------------------------------------------------------
 
+test("tk workflow status renders as dim footer lines between agent and usage without generic duplication", () => {
+	const ctx = createCtx({ provider: "anthropic", usingOAuth: false });
+	const footerData = {
+		getGitBranch: () => undefined,
+		getAvailableProviderCount: () => 1,
+		getExtensionStatuses: () => new Map([
+			["tlh-ticket-workflow", "working on tk: Implement read-only ticket workflow status UI\nUse /tk-status for details."],
+			["my-ext", "my-ext: active"],
+		]),
+	};
+	const footer = createTlhFooter(pi, ctx, colorTheme, () => "architect", footerData, {});
+	const lines = footer.render(COLOR_WIDTH);
+
+	assert.match(lines[1] ?? "", /<dim>agent: <\/dim>/);
+	assert.equal(lines[2], "<dim>working on tk: Implement read-only ticket workflow status UI</dim>");
+	assert.equal(lines[3], "<dim>Use /tk-status for details.</dim>");
+	assert.equal(lines[4], "<dim>$1.250</dim>");
+	assert.equal(lines[5], "my-ext: active");
+	assert.doesNotMatch(lines[5] ?? "", /working on tk|tk-status/);
+});
+
 test("non-context-cap extension statuses are still rendered in the footer", () => {
-	// An unrelated extension status must not be affected by the context-cap filter.
+	// An unrelated extension status must not be affected by the tk workflow status filter.
 	const ctx = createCtx({ entries: [] });
 	const footerData = {
 		getGitBranch: () => undefined,
