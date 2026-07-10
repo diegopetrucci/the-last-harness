@@ -76,7 +76,7 @@
   "dependencies": {
     "@tailwindcss/browser": "4.3.2",
     "glimpseui": "0.8.1",
-    "monaco-editor": "0.55.1"
+    "monaco-editor": "0.53.0"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.80.6",
@@ -88,8 +88,5 @@
     "jiti": "2.7.0",
     "typescript": "6.0.3",
     "typescript-eslint": "8.63.0"
-  },
-  "overrides": {
-    "dompurify": "3.4.11"
   }
 }

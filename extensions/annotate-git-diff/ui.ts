@@ -44,7 +44,7 @@ function resolveMonacoEditorWorkerJs(monacoBasePath: string): string {
 	if (existsSync(assetsDir)) {
 		const editorWorkerAsset = readdirSync(assetsDir)
 			.sort()
-			.find((entry) => /^editor\.worker-.*\.js$/.test(entry));
+			.find((entry) => /^editor\.worker[-.].*\.js$/.test(entry));
 		if (editorWorkerAsset) {
 			return readFileSync(join(assetsDir, editorWorkerAsset), "utf8");
 		}
@@ -85,7 +85,8 @@ function resolveReviewUiAssets(): ReviewUiAssets {
 		const monacoBasePath = join(dirname(require.resolve("monaco-editor/package.json")), "min", "vs");
 		const monacoLoaderJs = readFileSync(join(monacoBasePath, "loader.js"), "utf8");
 		const monacoEditorJs = readFileSync(join(monacoBasePath, "editor", "editor.main.js"), "utf8");
-		const monacoEditorCss = readFileSync(join(monacoBasePath, "editor", "editor.main.css"), "utf8");
+		const monacoEditorCssPath = join(monacoBasePath, "editor", "editor.main.css");
+		const monacoEditorCss = existsSync(monacoEditorCssPath) ? readFileSync(monacoEditorCssPath, "utf8") : "";
 		const monacoWorkerJs = resolveMonacoEditorWorkerJs(monacoBasePath);
 		const monacoRuntimeJs = resolveMonacoRuntimeJs(monacoBasePath);
 		return {
