@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
@@ -122,6 +122,13 @@ function parseArgs(argv: string[]): CliArgs {
 }
 
 function loadExpectedPiVersion(packageRoot: string): string {
+	try {
+		const installSh = readFileSync(join(packageRoot, "install.sh"), "utf8");
+		const pinnedVersion = installSh.match(/^TLH_PINNED_PI_VERSION="([^"]+)"$/m)?.[1]?.trim();
+		if (pinnedVersion) return pinnedVersion;
+	} catch {
+		// Fall through to package metadata.
+	}
 	try {
 		const packageJson = readJsonFile<JsonObject>(join(packageRoot, "package.json"));
 		const devDependencies = isPlainObject(packageJson.devDependencies)

@@ -4,6 +4,15 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Bumped TLH's pinned upstream Pi runtime and package compatibility metadata from 0.80.5 to 0.80.6.
+- Refreshed package dependency pins, including `@tailwindcss/browser` 4.3.2, `@types/node` 26.1.1, `eslint` 10.6.0, and `typescript-eslint` 8.63.0; TypeScript remains on 6.0.3 as the latest version supported by the updated `typescript-eslint` peer range.
+- Added a pinned `dompurify` 3.4.11 override for `monaco-editor` so `npm audit` stays clean while keeping Monaco on its current latest release.
+- Bumped installer-managed helper defaults to Gnosis `0.5.4` and RTK `0.43.0`.
+- Bumped the bundled `context-inspector` default extension pin from `npm:@diegopetrucci/pi-context-inspector@0.1.3` to `npm:@diegopetrucci/pi-context-inspector@0.1.4`.
+- Bumped the bundled `dirty-repo-guard` default extension pin from `npm:@diegopetrucci/pi-dirty-repo-guard@0.1.3` to `npm:@diegopetrucci/pi-dirty-repo-guard@0.1.4`.
+
 ## [0.28.0] - 2026-07-09
 
 ### Removed

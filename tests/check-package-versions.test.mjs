@@ -15,10 +15,11 @@ function tempFixture({
 	dependencies = {},
 	devDependencies = {},
 	peerDependencies = {},
+	overrides = {},
 	defaultExtensions = [{ id: "helper", source: "npm:helper@1.2.3" }],
-	gnosisVersion = "0.5.3",
+	gnosisVersion = "0.5.4",
 	installVersion = gnosisVersion,
-	rtkVersion = "0.42.4",
+	rtkVersion = "0.43.0",
 	includeLatestReleaseUrl = true,
 } = {}) {
 	const dir = mkdtempSync(join(tmpdir(), "tlh-check-package-versions-test-"));
@@ -35,6 +36,7 @@ function tempFixture({
 		dependencies,
 		devDependencies,
 		peerDependencies,
+		overrides,
 	}, null, 2)}\n`);
 	writeFileSync(lockfilePath, `${JSON.stringify({
 		name: "fixture",
@@ -98,6 +100,9 @@ test("check-package-versions passes with pinned dependency exceptions and ignore
 		peerDependencies: {
 			"@earendil-works/pi-coding-agent": ">=0.80.1 <=0.80.2",
 		},
+		overrides: {
+			dompurify: "3.4.11",
+		},
 		defaultExtensions: [
 			{ id: "helper", source: "npm:helper@1.2.3" },
 			{ id: "forked-helper", source: "git:github.com/example/helper@tlh-v1.2.3" },
@@ -128,7 +133,7 @@ test("check-package-versions reports the mismatched file fields", () => {
 	assert.match(result.stderr, /package-lock\.json#packages\[""\]\.version: "1\.2\.3"/);
 });
 
-test("check-package-versions rejects loose dependencies and devDependencies", () => {
+test("check-package-versions rejects loose dependencies, devDependencies, and overrides", () => {
 	const fixture = tempFixture({
 		packageVersion: "1.2.3",
 		dependencies: {
@@ -140,6 +145,9 @@ test("check-package-versions rejects loose dependencies and devDependencies", ()
 		peerDependencies: {
 			allowed: "^1.0.0",
 		},
+		overrides: {
+			dompurify: "^3.4.11",
+		},
 	});
 
 	const result = runCheckPackageVersions(fixture);
@@ -147,6 +155,7 @@ test("check-package-versions rejects loose dependencies and devDependencies", ()
 	assert.equal(result.status, 1);
 	assert.match(result.stderr, /package\.json#dependencies\.eslint must use an exact version or pinned non-registry source, found "\^9\.39\.4"/);
 	assert.match(result.stderr, /package\.json#devDependencies\.typescript must use an exact version or pinned non-registry source, found "latest"/);
+	assert.match(result.stderr, /package\.json#overrides\.dompurify must use an exact version or pinned non-registry source, found "\^3\.4\.11"/);
 	assert.doesNotMatch(result.stderr, /peerDependencies/);
 });
 

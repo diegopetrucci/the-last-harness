@@ -70,23 +70,26 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.80.5 <=0.80.5",
-    "@earendil-works/pi-tui": ">=0.80.5 <=0.80.5"
+    "@earendil-works/pi-coding-agent": "0.80.6",
+    "@earendil-works/pi-tui": "0.80.6"
   },
   "dependencies": {
-    "@tailwindcss/browser": "4.3.1",
+    "@tailwindcss/browser": "4.3.2",
     "glimpseui": "0.8.1",
     "monaco-editor": "0.55.1"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.80.5",
-    "@earendil-works/pi-tui": "0.80.5",
+    "@earendil-works/pi-coding-agent": "0.80.6",
+    "@earendil-works/pi-tui": "0.80.6",
     "@eslint/js": "10.0.1",
-    "@types/node": "26.0.0",
-    "eslint": "10.5.0",
+    "@types/node": "26.1.1",
+    "eslint": "10.6.0",
     "globals": "17.7.0",
     "jiti": "2.7.0",
     "typescript": "6.0.3",
-    "typescript-eslint": "8.62.0"
+    "typescript-eslint": "8.63.0"
+  },
+  "overrides": {
+    "dompurify": "3.4.11"
   }
 }

@@ -321,7 +321,7 @@ function isPinnedDependencySpec(spec) {
 }
 
 function validatePinnedDependencies(packageJson, packagePath, problems) {
-	for (const field of ["dependencies", "devDependencies"]) {
+	for (const field of ["dependencies", "devDependencies", "overrides"]) {
 		const value = packageJson[field];
 		if (value === undefined) continue;
 		if (!isPlainObject(value)) {

@@ -14,7 +14,7 @@ export function getAvailableThinkingLevels(model: ReasoningModel | undefined): T
 		if (mapped === null) {
 			return false;
 		}
-		if (level === "xhigh") {
+		if (level === "xhigh" || level === "max") {
 			return mapped !== undefined;
 		}
 		return true;

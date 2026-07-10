@@ -120,9 +120,9 @@ function architectPrimary() {
 	};
 }
 
-/** A reasoning model whose thinkingLevelMap supports xhigh. */
+/** A reasoning model whose thinkingLevelMap supports xhigh and max. */
 function reasoningModel(provider = "anthropic") {
-	return { provider, id: "claude-opus-4-8", reasoning: true, thinkingLevelMap: { xhigh: "max" } };
+	return { provider, id: "claude-opus-4-8", reasoning: true, thinkingLevelMap: { xhigh: "xhigh", max: "max" } };
 }
 
 // ---------------------------------------------------------------------------
@@ -231,13 +231,13 @@ test("locked handler also fires with no args (handler called without a level)", 
 // 2. minThinking floor — architect (minThinking: medium)
 // ---------------------------------------------------------------------------
 
-test("getArgumentCompletions for architect returns only medium/high/xhigh when no prefix", () => {
+test("getArgumentCompletions for architect returns only medium/high/xhigh/max when no prefix", () => {
 	const pi = createPiHarness();
 	registerEffortCommand(pi, createFakeRuntime(architectPrimary()));
 	const completions = pi.commands.get("effort").getArgumentCompletions("");
 	assert.deepEqual(
 		completions.map((c) => c.value),
-		["medium", "high", "xhigh"],
+		["medium", "high", "xhigh", "max"],
 	);
 });
 
@@ -283,6 +283,15 @@ test("architect handler accepts xhigh when model supports it", async () => {
 	const { notifications, ctx } = createCtx({ model: reasoningModel() });
 	await pi.commands.get("effort").handler("xhigh", ctx);
 	assert.equal(pi.thinkingLevel, "xhigh");
+	assert.equal(notifications.at(-1)?.type, "info");
+});
+
+test("architect handler accepts max when model supports it", async () => {
+	const pi = createPiHarness();
+	registerEffortCommand(pi, createFakeRuntime(architectPrimary()));
+	const { notifications, ctx } = createCtx({ model: reasoningModel() });
+	await pi.commands.get("effort").handler("max", ctx);
+	assert.equal(pi.thinkingLevel, "max");
 	assert.equal(notifications.at(-1)?.type, "info");
 });
 
@@ -339,7 +348,7 @@ test("getArgumentCompletions with no primary returns all thinking levels", () =>
 	const completions = pi.commands.get("effort").getArgumentCompletions("");
 	assert.deepEqual(
 		completions.map((c) => c.value),
-		["off", "minimal", "low", "medium", "high", "xhigh"],
+		["off", "minimal", "low", "medium", "high", "xhigh", "max"],
 	);
 });
 
@@ -347,10 +356,10 @@ test("getArgumentCompletions with no primary filters by prefix normally", () => 
 	const pi = createPiHarness();
 	registerEffortCommand(pi, createFakeRuntime(undefined));
 	const completions = pi.commands.get("effort").getArgumentCompletions("m");
-	// THINKING_LEVELS order: off, minimal, low, medium, high, xhigh — so minimal precedes medium
+	// THINKING_LEVELS order: off, minimal, low, medium, high, xhigh, max — so minimal precedes medium and max.
 	assert.deepEqual(
 		completions.map((c) => c.value),
-		["minimal", "medium"],
+		["minimal", "medium", "max"],
 	);
 });
 
@@ -387,7 +396,7 @@ test("no runtime passed behaves identically to disabled primary (full completion
 	const completions = pi.commands.get("effort").getArgumentCompletions("");
 	assert.deepEqual(
 		completions.map((c) => c.value),
-		["off", "minimal", "low", "medium", "high", "xhigh"],
+		["off", "minimal", "low", "medium", "high", "xhigh", "max"],
 	);
 });
 
