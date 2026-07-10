@@ -15,7 +15,7 @@ function writeSettings(agentDir, settings = {}) {
 }
 
 function createPiHarness({
-	version = "0.42.4",
+	version = "0.43.0",
 	rewriteStatus = 0,
 	rewriteOutput = "rtk git status",
 	execBehavior,
@@ -84,7 +84,7 @@ test("RTK extension falls back to the managed isolated binary when PATH lookup i
 					return { code: 1, stdout: "", stderr: "not found", killed: false };
 				}
 				if (command === managedRtk && args[0] === "--version") {
-					return { code: 0, stdout: "rtk 0.42.4\n", stderr: "", killed: false };
+					return { code: 0, stdout: "rtk 0.43.0\n", stderr: "", killed: false };
 				}
 				if (command === managedRtk && args[0] === "rewrite") {
 					return { code: 0, stdout: "rtk git status", stderr: "", killed: false };
@@ -118,7 +118,7 @@ test("RTK extension falls back to the managed isolated binary when PATH rtk is t
 					return { code: 0, stdout: "rtk 0.22.9\n", stderr: "", killed: false };
 				}
 				if (command === managedRtk && args[0] === "--version") {
-					return { code: 0, stdout: "rtk 0.42.4\n", stderr: "", killed: false };
+					return { code: 0, stdout: "rtk 0.43.0\n", stderr: "", killed: false };
 				}
 				if (command === managedRtk && args[0] === "rewrite") {
 					return { code: 0, stdout: "rtk git status", stderr: "", killed: false };
