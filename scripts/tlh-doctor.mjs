@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { disabledDefaultExtensionIds, packageIdentity, readDefaultExtensions, } from "./lib/default-extensions.mjs";
-import { copyTlhSubagentPrompts, missingTlhSubagentPrompts, settingsRequireTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
+import { copyTlhSubagentPrompts, missingTlhSubagentPrompts, restoreNeededTlhSubagentPrompts, settingsRequireTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
 import { pathWithinOrEqual, realpathForCompare, } from "./lib/tlh-install-paths.mjs";
 import { assignOptionValue, defaultTlhSettingsPath, expandHomePath, pathIsInNormalPiConfig, readJsonFile, resolveTlhAgentDir, } from "./lib/tlh-install-utils.mjs";
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -233,13 +233,19 @@ function addBundledSubagentCheck(results, packageRoot, agentDir) {
         recordCheck(results, "OK", "bundled subagent resources", "packaged defaults do not require copied subagent prompts");
         return;
     }
-    const subagentDir = join(agentDir, "tlh", "agents", "subagents");
-    const missing = missingTlhSubagentPrompts(subagentDir);
-    if (missing.length === 0) {
-        recordCheck(results, "OK", "bundled subagent resources", `found complete prompt bundle at ${subagentDir}`);
+    const sourceDir = join(packageRoot, "agents", "subagents");
+    const sourceMissing = missingTlhSubagentPrompts(sourceDir);
+    if (sourceMissing.length > 0) {
+        recordCheck(results, "FAIL", "bundled subagent resources", `packaged prompts are incomplete; run \`tlh update\` (${summarizeItems(sourceMissing)})`);
         return;
     }
-    recordCheck(results, "FAIL", "bundled subagent resources", `missing ${missing.length} prompt(s): ${summarizeItems(missing)}`);
+    const subagentDir = join(agentDir, "tlh", "agents", "subagents");
+    const restoreNeeded = restoreNeededTlhSubagentPrompts(sourceDir, subagentDir);
+    if (restoreNeeded.length === 0) {
+        recordCheck(results, "OK", "bundled subagent resources", `found current prompt bundle at ${subagentDir}`);
+        return;
+    }
+    recordCheck(results, "FAIL", "bundled subagent resources", `restoration needed for ${restoreNeeded.length} prompt(s): ${summarizeItems(restoreNeeded)}`);
 }
 function readRuntimeMarker(markerPath) {
     if (!existsSync(markerPath)) {
@@ -544,22 +550,22 @@ function repairBundledSubagentPrompts(packageRoot, agentDir) {
     if (!settingsRequireTlhSubagentPrompts(packagedDefaultsPath)) {
         return repairAction("SKIP", "bundled subagent resources", "packaged defaults do not require copied subagent prompts");
     }
-    const subagentDir = join(agentDir, "tlh", "agents", "subagents");
-    const missing = missingTlhSubagentPrompts(subagentDir);
-    if (missing.length === 0) {
-        return repairAction("OK", "bundled subagent resources", `prompt bundle already complete at ${subagentDir}`);
-    }
     const sourceDir = join(packageRoot, "agents", "subagents");
     const sourceMissing = missingTlhSubagentPrompts(sourceDir);
     if (sourceMissing.length > 0) {
         return repairAction("FAIL", "bundled subagent resources", `packaged prompts are incomplete; run \`tlh update\` (${summarizeItems(sourceMissing)})`);
     }
-    copyTlhSubagentPrompts({ agentDir }, sourceDir);
-    const remainingMissing = missingTlhSubagentPrompts(subagentDir);
-    if (remainingMissing.length > 0) {
-        return repairAction("FAIL", "bundled subagent resources", `prompt restore incomplete (${summarizeItems(remainingMissing)})`);
+    const subagentDir = join(agentDir, "tlh", "agents", "subagents");
+    const restoreNeeded = restoreNeededTlhSubagentPrompts(sourceDir, subagentDir);
+    if (restoreNeeded.length === 0) {
+        return repairAction("OK", "bundled subagent resources", `prompt bundle already current at ${subagentDir}`);
     }
-    return repairAction("OK", "bundled subagent resources", `restored ${missing.length} prompt(s) from packaged defaults`);
+    copyTlhSubagentPrompts({ agentDir }, sourceDir);
+    const remainingNeeded = restoreNeededTlhSubagentPrompts(sourceDir, subagentDir);
+    if (remainingNeeded.length > 0) {
+        return repairAction("FAIL", "bundled subagent resources", `prompt restore incomplete (${summarizeItems(remainingNeeded)})`);
+    }
+    return repairAction("OK", "bundled subagent resources", `restored ${restoreNeeded.length} prompt(s) from packaged defaults`);
 }
 function repairManagedHelper(label, scriptPath, commandArgs, env) {
     const result = runCommand(process.execPath, [scriptPath, ...commandArgs], { env, timeout: REPAIR_HELPER_TIMEOUT_MS });

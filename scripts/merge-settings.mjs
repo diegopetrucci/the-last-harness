@@ -439,7 +439,11 @@ function isPersistentTelemetryOptOut(path, currentValue, defaultValue) {
     return path.join(".") === "tlh.telemetry.enabled" && currentValue === false && defaultValue === true;
 }
 function isInstallerOwnedSetting(path) {
-    return path.join(".") === "lastChangelogVersion";
+    const joinedPath = path.join(".");
+    return joinedPath === "lastChangelogVersion" || joinedPath === "subagents.disableBuiltins";
+}
+function isInstallerOwnedObjectContainer(path) {
+    return path.join(".") === "subagents";
 }
 function mergeObject(target, defaults, changes, options) {
     for (const [key, value] of Object.entries(defaults)) {
@@ -460,6 +464,11 @@ function mergeObject(target, defaults, changes, options) {
         }
         if (isPlainObject(value) && isPlainObject(target[key])) {
             mergeObject(target[key], value, changes, { ...options, path });
+            continue;
+        }
+        if (isPlainObject(value) && isInstallerOwnedObjectContainer(path)) {
+            target[key] = clone(value);
+            changes.push(`overwrite ${label}`);
             continue;
         }
         if (isPersistentTelemetryOptOut(path, target[key], value)) {
