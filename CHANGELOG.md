@@ -7,6 +7,14 @@ All notable changes to The Last Harness will be documented in this file.
 ### Changed
 
 - Bumped the bundled critical `pi-subagents` default extension pin from `npm:@diegopetrucci/pi-subagents@0.31.3` to `npm:@diegopetrucci/pi-subagents@0.31.4`, picking up the builtin-disable runtime invariant fix from the merged fork release.
+- Bumped TLH's pinned upstream Pi runtime and package compatibility metadata from 0.80.5 to 0.80.6.
+- Refreshed package dependency pins, including `@tailwindcss/browser` 4.3.2, `@types/node` 26.1.1, `eslint` 10.6.0, and `typescript-eslint` 8.63.0; TypeScript remains on 6.0.3 as the latest version supported by the updated `typescript-eslint` peer range.
+- Kept `monaco-editor` on audit-clean 0.53.0 because the newer 0.55.x line depends on a vulnerable `dompurify` pin that package-level npm overrides would not protect in end-user installs.
+- Bumped installer-managed helper defaults to Gnosis `0.5.4` and RTK `0.43.0`.
+- The bundled `/effort` and `/thinking` command path now supports the upstream `max` thinking-level option when the active model exposes it.
+- `tlh doctor` now reads the expected private-runtime Pi pin from the packaged `install.sh` fallback, so runtime drift hints stay aligned with the shipped installer pin.
+- Bumped the bundled `context-inspector` default extension pin from `npm:@diegopetrucci/pi-context-inspector@0.1.3` to `npm:@diegopetrucci/pi-context-inspector@0.1.4`.
+- Bumped the bundled `dirty-repo-guard` default extension pin from `npm:@diegopetrucci/pi-dirty-repo-guard@0.1.3` to `npm:@diegopetrucci/pi-dirty-repo-guard@0.1.4`.
 
 ## [0.28.0] - 2026-07-09
 

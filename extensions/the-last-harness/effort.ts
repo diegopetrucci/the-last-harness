@@ -8,6 +8,7 @@ import {
 	getAvailableThinkingLevels,
 	isThinkingLevel,
 	parseThinkingLevelOption,
+	setExtensionThinkingLevel,
 	thinkingLevelAtLeast,
 } from "./thinking.js";
 import type { ReasoningModel } from "./types.js";
@@ -69,7 +70,7 @@ async function handleThinkingLevelCommand(
 			ctx.ui.notify(`${primary!.name} requires at least ${minThinking} thinking.`, "error");
 			return;
 		}
-		pi.setThinkingLevel(requestedLevel);
+		setExtensionThinkingLevel(pi, requestedLevel);
 		ctx.ui.notify(`Thinking level set to ${pi.getThinkingLevel()}.`, "info");
 		return;
 	}
@@ -91,7 +92,7 @@ async function handleThinkingLevelCommand(
 		return;
 	}
 
-	pi.setThinkingLevel(selectedLevel);
+	setExtensionThinkingLevel(pi, selectedLevel);
 	ctx.ui.notify(`Thinking level set to ${pi.getThinkingLevel()}.`, "info");
 }
 

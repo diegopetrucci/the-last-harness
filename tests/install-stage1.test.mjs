@@ -6,7 +6,7 @@ import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { captureConsole, makeTempDir } from "./install-stage1-test-helpers.mjs";
+import { makeTempDir, readPiLogRecords } from "./install-stage1-test-helpers.mjs";
 
 import {
 	MIN_NODE_VERSION,
@@ -14,7 +14,6 @@ import {
 	RUNTIME_OWNED_TOPLEVEL,
 	assertSupportedNodeRuntime,
 	buildInstallConfig,
-	installDefaultExtensions,
 	nodeVersionMeetsMinimum,
 	parseArgs,
 	usage,
@@ -24,7 +23,7 @@ import { validateInstallerTargets } from "../scripts/lib/tlh-install-paths.mjs";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoNodeModulesBin = join(repoRoot, "node_modules", ".bin");
 const TLH_NON_PINNED_PI_VERSION = "0.80.1";
-const TLH_PINNED_PI_VERSION = "0.80.5";
+const TLH_PINNED_PI_VERSION = "0.80.6";
 
 const TLH_PI_PACKAGE_SPEC = `@earendil-works/pi-coding-agent@${TLH_PINNED_PI_VERSION}`;
 const managedRtkSupportedTestPlatform = ["darwin", "linux"].includes(process.platform) && ["x64", "arm64"].includes(process.arch);
@@ -235,62 +234,9 @@ function runStage1LocalPackageInstall(t, {
 	return { result, homeDir, agentDir, binDir, piLog };
 }
 
-function makeDefaultExtensionInstallConfig(t, { defaultExtensions, settings, dryRun = false, fakePiBody = "exit 0", fakeGitBody = "" }) {
-	const root = makeTempDir();
-	const homeDir = join(root, "home");
-	const agentDir = join(root, "agent");
-	const binDir = join(root, "bin");
-	const fakebin = join(root, "fakebin");
-	const piLog = join(root, "pi.log");
-	const defaultsPath = join(root, "default-extensions.json");
-	mkdirSync(homeDir, { recursive: true });
-	mkdirSync(agentDir, { recursive: true });
-	writeFileSync(defaultsPath, JSON.stringify(defaultExtensions, null, 2));
-	writeFileSync(join(agentDir, "settings.json"), JSON.stringify(settings, null, 2));
-	writeFakePi(fakebin, fakePiBody);
-	if (fakeGitBody) writeFakeCommand(fakebin, "git", fakeGitBody);
-	t.after(() => rmSync(root, { recursive: true, force: true }));
-
-	const env = scrubInstallerEnv({
-		HOME: homeDir,
-		PATH: `${fakebin}:${process.env.PATH || ""}`,
-		PI_LOG: piLog,
-		AGENT_DIR: agentDir,
-	});
-	const args = ["--agent-dir", agentDir, "--bin-dir", binDir];
-	if (dryRun) args.unshift("--dry-run");
-	const config = buildInstallConfig(parseArgs(args, env), env);
-	if (!dryRun) config.quiet = true;
-	// In the private-runtime model, absolutePiCmd(config) resolves to the private
-	// runtime path which doesn't exist in tests.  Seed piCmd to the fakebin pi so
-	// installDefaultExtensions can invoke pi without a real npm install.
-	config.piCmd = join(fakebin, "pi");
-	config.supportFilePaths.TLH_DEFAULTS_SCRIPT = join(repoRoot, "scripts/tlh-defaults.mjs");
-	config.supportFilePaths.DEFAULT_EXTENSIONS_FILE = defaultsPath;
-	return { config, agentDir, piLog };
-}
-
-function readPiLog(path) {
-	if (!existsSync(path)) return [];
-	return readFileSync(path, "utf8").trim().split(/\r?\n/).filter(Boolean);
-}
-
-function readPiLogRecords(path) {
-	return readPiLog(path).map((line) => {
-		const [agentDir, cwd, ...commandParts] = line.split("|");
-		return { agentDir, cwd, command: commandParts.join("|") };
-	});
-}
-
 function readJsonLines(path) {
 	if (!existsSync(path)) return [];
 	return readFileSync(path, "utf8").trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
-}
-
-function assertPiCommands(path, agentDir, commands) {
-	const records = readPiLogRecords(path);
-	assert.deepEqual(records.map((record) => [record.agentDir, record.command]), commands.map((command) => [agentDir, command]));
-	for (const record of records) assert.equal(realpathSync(record.cwd), realpathSync(agentDir));
 }
 
 test("stage-1 enforces the TLH Node runtime minimum", () => {
@@ -423,10 +369,10 @@ test("stage-1 repairs the TLH private Pi runtime even when a supported Pi exists
 		`if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_NON_PINNED_PI_VERSION}\\n'; exit 0; fi`,
 		"exit 0",
 	].join("\n"));
-	// Stale private runtime at 0.80.6 (above pin) triggers repair.
+	// Stale private runtime at 0.80.7 (above pin) triggers repair.
 	writeFakePi(runtimeBinDir, [
 		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${stalePiCallLog}"`,
-		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.80.6\\n'; exit 0; fi",
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.80.7\\n'; exit 0; fi",
 		"exit 0",
 	].join("\n"));
 	writeLoggingPi(templateDir, repairedPiLog, TLH_PINNED_PI_VERSION);
@@ -654,6 +600,7 @@ test("installer helpers no longer support the removed --no-pi-install opt-out", 
 	assert.equal(stage0Help.status, 0, stage0Help.stderr);
 	assert.match(stage0Help.stdout, new RegExp(`Upstream Pi ${escapeRegExp(TLH_PINNED_PI_VERSION)}`));
 	assert.match(stage0Help.stdout, /installed into a private TLH runtime/);
+	assert.match(stage0Help.stdout, /TLH_GNOSIS_VERSION\s+Gnosis version to install \(default: 0\.5\.4\)/);
 	assert.doesNotMatch(stage0Help.stdout, /--no-pi-install/);
 
 	const stage0RemovedFlag = spawnSync("bash", [join(repoRoot, "install.sh"), "--no-pi-install"], {
@@ -668,6 +615,7 @@ test("installer helpers no longer support the removed --no-pi-install opt-out", 
 
 	assert.throws(() => parseArgs(["--no-pi-install"]), /unknown option: --no-pi-install/);
 	assert.match(usage(), new RegExp(`Upstream Pi ${escapeRegExp(TLH_PINNED_PI_VERSION)}`));
+	assert.match(usage(), /TLH_GNOSIS_VERSION\s+Gnosis version to install \(default: 0\.5\.4\)/);
 	assert.doesNotMatch(usage(), /--no-pi-install/);
 
 	const updateHelp = spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-update.mjs"), "--help"], {
@@ -723,7 +671,7 @@ test("stage-1 defaults managed Gnosis to the pinned release and still honors env
 		return buildInstallConfig(parseArgs(["--agent-dir", agentDir, "--bin-dir", binDir], env), env);
 	};
 
-	assert.equal(configFor().gnosisVersion, "0.5.3");
+	assert.equal(configFor().gnosisVersion, "0.5.4");
 	assert.equal(configFor({ TLH_GNOSIS_VERSION: "latest" }).gnosisVersion, "latest");
 	assert.equal(configFor({ TLH_GNOSIS_VERSION: "0.5.2" }).gnosisVersion, "0.5.2");
 });
@@ -2009,187 +1957,6 @@ test("tlh update removes isolated bin and skips non-file bash candidates before 
 	}
 });
 
-test("stage-1 batches non-critical default extension updates", (t) => {
-	const defaults = [
-		{ id: "helper-a", source: "npm:helper-a" },
-		{ id: "helper-b", source: "npm:helper-b" },
-	];
-	const { config, agentDir, piLog } = makeDefaultExtensionInstallConfig(t, {
-		defaultExtensions: defaults,
-		settings: { packages: defaults.map((entry) => entry.source) },
-		fakePiBody: "printf '%s|%s|%s\n' \"${PI_CODING_AGENT_DIR:-}\" \"$PWD\" \"$*\" >>\"${PI_LOG}\"",
-	});
-
-	installDefaultExtensions(config);
-
-	assertPiCommands(piLog, agentDir, ["update --extensions"]);
-});
-
-test("stage-1 falls back to old-CLI positional per-source non-critical updates when batch update fails", (t) => {
-	const criticalSource = "git:github.com/example/critical";
-	const defaults = [
-		{ id: "critical", critical: true, source: criticalSource },
-		{ id: "helper-a", source: "npm:helper-a" },
-		{ id: "helper-b", source: "npm:helper-b" },
-	];
-	const { config, agentDir, piLog } = makeDefaultExtensionInstallConfig(t, {
-		defaultExtensions: defaults,
-		settings: { packages: defaults.map((entry) => entry.source) },
-		fakePiBody: [
-			"printf '%s|%s|%s\\n' \"${PI_CODING_AGENT_DIR:-}\" \"$PWD\" \"$*\" >>\"${PI_LOG}\"",
-			"if [[ \"$1\" == \"update\" && \"${2:-}\" == \"--extensions\" ]]; then",
-			"\tprintf 'batch failed\\n' >&2",
-			"\texit 42",
-			"fi",
-			"if [[ \"$1\" == \"update\" && \"${2:-}\" == \"--extension\" ]]; then",
-			"\tprintf 'old pi does not support --extension\\n' >&2",
-			"\texit 98",
-			"fi",
-			"if [[ \"$1\" == \"update\" && \"${2:-}\" == \"npm:helper-a\" ]]; then",
-			"\ttouch \"${PI_CODING_AGENT_DIR}/fallback-a.done\"",
-			"\texit 0",
-			"fi",
-			"if [[ \"$1\" == \"update\" && \"${2:-}\" == \"npm:helper-b\" ]]; then",
-			"\ttouch \"${PI_CODING_AGENT_DIR}/fallback-b.attempted\"",
-			"\tprintf 'helper-b failed\\n' >&2",
-			"\texit 43",
-			"fi",
-			"if [[ \"$1\" == \"install\" && \"${2:-}\" == \"git:github.com/example/critical\" ]]; then",
-			"\t[[ -f \"${PI_CODING_AGENT_DIR}/fallback-a.done\" && -f \"${PI_CODING_AGENT_DIR}/fallback-b.attempted\" ]] || { printf 'critical install ran before fallback completed\\n' >&2; exit 44; }",
-			"\texit 0",
-			"fi",
-		].join("\n"),
-	});
-
-	const stderr = captureConsole("error", () => installDefaultExtensions(config));
-
-	assertPiCommands(piLog, agentDir, [
-		"update --extensions",
-		"update npm:helper-a",
-		"update npm:helper-b",
-		"install git:github.com/example/critical",
-	]);
-	assert.match(stderr, /warning: settings-wide extension refresh from merged settings failed; falling back to per-source updates for only 2 non-critical bundled default source\(s\)/);
-	assert.match(stderr, /warning: default extension package update failed; continuing: npm:helper-b/);
-	assert.match(stderr, /warning: 1 bundled default extension package\(s\) failed to update/);
-});
-
-test("stage-1 rejects unsafe critical default checkouts before settings-wide updates", (t) => {
-	const criticalSource = "git:github.com/example/critical@pin";
-	const defaults = [
-		{ id: "critical", critical: true, source: criticalSource },
-		{ id: "helper", source: "npm:helper" },
-	];
-	const { config, agentDir, piLog } = makeDefaultExtensionInstallConfig(t, {
-		defaultExtensions: defaults,
-		settings: { packages: defaults.map((entry) => entry.source) },
-		fakePiBody: [
-			"printf '%s|%s|%s\\n' \"${PI_CODING_AGENT_DIR:-}\" \"$PWD\" \"$*\" >>\"${PI_LOG}\"",
-			"printf 'pi should not run for unsafe critical checkout\\n' >&2",
-			"exit 45",
-		].join("\n"),
-	});
-	mkdirSync(join(agentDir, "git", "github.com", "example", "critical"), { recursive: true });
-
-	assert.throws(
-		() => installDefaultExtensions(config),
-		/refusing to use existing non-git critical default extension package checkout/,
-	);
-	assert.deepEqual(readPiLog(piLog), []);
-});
-
-test("stage-1 preflights critical checkouts before batch and validates critical refs after", (t) => {
-	const criticalSource = "git:github.com/example/critical@pin";
-	const defaults = [
-		{ id: "critical", critical: true, source: criticalSource },
-		{ id: "helper", source: "npm:helper" },
-	];
-	const { config, agentDir, piLog } = makeDefaultExtensionInstallConfig(t, {
-		defaultExtensions: defaults,
-		settings: { packages: defaults.map((entry) => entry.source) },
-		fakePiBody: [
-			"printf '%s|%s|%s\\n' \"${PI_CODING_AGENT_DIR:-}\" \"$PWD\" \"$*\" >>\"${PI_LOG}\"",
-			"if [[ \"$1\" == \"update\" && \"${2:-}\" == \"--extensions\" ]]; then",
-			"\t[[ -f \"${PI_CODING_AGENT_DIR}/preflight-safe.done\" ]] || { printf 'settings-wide update ran before critical preflight\\n' >&2; exit 46; }",
-			"\tprintf 'stage:settings-wide-batch\\n' >>\"${PI_LOG}.order\"",
-			"\ttouch \"${PI_CODING_AGENT_DIR}/settings-wide-update.done\"",
-			"\texit 0",
-			"fi",
-			"if [[ \"$1\" == \"update\" && \"${2:-}\" == \"--extension\" ]]; then",
-			"\tprintf 'unexpected per-source fallback: %s\\n' \"$*\" >&2",
-			"\texit 47",
-			"fi",
-			"if [[ \"$1\" == \"install\" && \"${2:-}\" == \"git:github.com/example/critical@pin\" ]]; then",
-			"\t[[ -f \"${PI_CODING_AGENT_DIR}/settings-wide-update.done\" ]] || { printf 'critical install ran before settings-wide update\\n' >&2; exit 48; }",
-			"\t[[ -f \"${PI_CODING_AGENT_DIR}/critical-preinstall-validation.done\" ]] || { printf 'critical install ran before post-batch safety validation\\n' >&2; exit 49; }",
-			"\tprintf 'stage:critical-install\\n' >>\"${PI_LOG}.order\"",
-			"\ttouch \"${PI_CODING_AGENT_DIR}/critical-install.done\"",
-			"\texit 0",
-			"fi",
-		].join("\n"),
-		fakeGitBody: [
-			"target=''",
-			"if [[ \"${1:-}\" == \"-C\" ]]; then target=\"$2\"; shift 2; fi",
-			"record_stage() { local stage=\"$1\" marker=\"$2\"; if [[ ! -f \"${AGENT_DIR}/${marker}\" ]]; then printf 'stage:%s\\n' \"$stage\" >>\"${PI_LOG}.order\"; touch \"${AGENT_DIR}/${marker}\"; fi; }",
-			"if [[ \"${1:-}\" == \"rev-parse\" && \"${2:-}\" == \"--show-toplevel\" ]]; then",
-			"\tif [[ ! -f \"${AGENT_DIR}/settings-wide-update.done\" ]]; then",
-			"\t\trecord_stage preflight-safe preflight-safe.done",
-			"\telif [[ ! -f \"${AGENT_DIR}/critical-install.done\" ]]; then",
-			"\t\t[[ -f \"${AGENT_DIR}/preflight-safe.done\" ]] || { printf 'post-batch validation ran before preflight\\n' >&2; exit 50; }",
-			"\t\trecord_stage critical-preinstall-validation critical-preinstall-validation.done",
-			"\telse",
-			"\t\t[[ -f \"${AGENT_DIR}/settings-wide-update.done\" ]] || { printf 'ref validation ran before settings-wide update\\n' >&2; exit 51; }",
-			"\t\trecord_stage critical-ref-validation critical-ref-validation.done",
-			"\tfi",
-			"\tprintf '%s\\n' \"$target\"",
-			"\texit 0",
-			"fi",
-			"if [[ \"${1:-}\" == \"rev-parse\" && \"${2:-}\" == \"--absolute-git-dir\" ]]; then printf '%s/.git\\n' \"$target\"; exit 0; fi",
-			"if [[ \"${1:-}\" == \"rev-parse\" && \"${2:-}\" == \"--git-common-dir\" ]]; then printf '%s/.git\\n' \"$target\"; exit 0; fi",
-			"exit 0",
-		].join("\n"),
-	});
-	mkdirSync(join(agentDir, "git", "github.com", "example", "critical", ".git"), { recursive: true });
-
-	installDefaultExtensions(config);
-
-	assertPiCommands(piLog, agentDir, [
-		"update --extensions",
-		"install git:github.com/example/critical@pin",
-	]);
-	const stages = readFileSync(`${piLog}.order`, "utf8").trim().split(/\r?\n/);
-	assert.deepEqual(stages, [
-		"stage:preflight-safe",
-		"stage:settings-wide-batch",
-		"stage:critical-preinstall-validation",
-		"stage:critical-install",
-		"stage:critical-ref-validation",
-	]);
-});
-
-test("stage-1 keeps critical defaults on per-source install path while dry-run shows batch fallback", (t) => {
-	const criticalSource = "git:github.com/example/critical@pin";
-	const defaults = [
-		{ id: "critical", critical: true, source: criticalSource },
-		{ id: "helper", source: "npm:helper" },
-	];
-	const { config } = makeDefaultExtensionInstallConfig(t, {
-		defaultExtensions: defaults,
-		settings: { packages: defaults.map((entry) => entry.source) },
-		dryRun: true,
-	});
-
-	const stdout = captureConsole("log", () => installDefaultExtensions(config));
-
-	assert.match(stdout, /Would preflight 1 critical bundled default git checkout target\(s\) before any settings-wide default extension update/);
-	assert.match(stdout, /pi install git:github\.com\/example\/critical@pin/);
-	assert.match(stdout, /git -C .*\/git\/github\.com\/example\/critical fetch --prune --tags origin/);
-	assert.match(stdout, /Dry run: settings-wide extension refresh will run from merged settings/);
-	assert.match(stdout, /PI_CODING_AGENT_DIR=.*pi update --extensions/);
-	assert.match(stdout, /would retry only 1 non-critical bundled default source\(s\) individually/i);
-	assert.doesNotMatch(stdout, /^Would.*\bpi\s+update\b/m);
-	assert.doesNotMatch(stdout, /pi update --extension npm:helper/);
-});
 
 test("stage-1 canonicalizes relative target dirs before deriving wrapper and state paths", (t) => {
 	const root = makeTempDir();
@@ -2563,10 +2330,10 @@ test("wrapper update --extensions helper prepends the pinned private runtime dir
 	mkdirSync(cwdDir, { recursive: true });
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
-	// Pinned pi at 0.80.5 — still prepended for --extensions.
+	// Pinned pi at 0.80.6 — still prepended for --extensions.
 	writeFakePi(pinnedPiDir, [
 		`printf '%s\\n' "$*" >>"${pinnedPiCallLog}"`,
-		`if [[ "\${1:-}" == "--version" ]]; then printf '0.80.5\\n'; exit 0; fi`,
+		`if [[ "\${1:-}" == "--version" ]]; then printf '0.80.6\\n'; exit 0; fi`,
 		"exit 85",
 	].join("\n"));
 	writeFileSync(join(agentDir, "tlh", "recover-update.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst pi = spawnSync("pi", ["--version"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, pi: { status: pi.status, stdout: pi.stdout, stderr: pi.stderr, error: pi.error?.message } }));\nprocess.exit(pi.status ?? (pi.error ? 1 : 0));\n`, "utf8");
@@ -2926,8 +2693,8 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
 	// Legacy pi at ~/.local/bin/pi — must NOT be removed when install fails.
 	writeFakePi(legacyBin, `if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_PINNED_PI_VERSION}\\n'; exit 0; fi\nexit 0`);
 
-	// Template pi with a clearly wrong non-pinned version (0.80.6) — simulates a broken npm install.
-	writeFakePi(templateDir, "if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.80.6\\n'; exit 0; fi\nexit 0");
+	// Template pi with a clearly wrong non-pinned version (0.80.7) — simulates a broken npm install.
+	writeFakePi(templateDir, "if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.80.7\\n'; exit 0; fi\nexit 0");
 
 	// Fake npm: always installs the wrong-version template pi.
 	writeFakeNpmInstaller(fakebin, {
@@ -2955,7 +2722,7 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
 
 	// Installer must fail: freshly installed pi has wrong version.
 	assert.notEqual(result.status, 0, `expected installer to fail on wrong-version pi, got exit 0:\n${output}`);
-	assert.match(output, /0\.80\.6/, "error output should mention the wrong version");
+	assert.match(output, /0\.80\.7/, "error output should mention the wrong version");
 
 	// ~/.local/bin/pi must NOT have been removed (install threw before any cleanup could run).
 	assert.equal(existsSync(legacyPiPath), true, "user-owned ~/.local/bin/pi was removed despite installer throwing");
@@ -2972,7 +2739,7 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
 });
 
 // Regression (tlht-5php, blocker): piInstalledByTlh=true, private runtime ABSENT at start,
-// user-owned ~/.local/bin/pi@0.80.5 present.  The installer must provision the private
+// user-owned ~/.local/bin/pi@0.80.6 present.  The installer must provision the private
 // runtime and succeed — without removing or executing ~/.local/bin/pi.
 test("stage-1 regression (tlht-5php): installer never removes or execs user-owned ~/.local/bin/pi when piInstalledByTlh=true and private runtime is absent", (t) => {
 	const root = makeTempDir();
@@ -3008,7 +2775,7 @@ test("stage-1 regression (tlht-5php): installer never removes or execs user-owne
 		piInstalledByTlh: true,
 	}, null, 2));
 
-	// User-owned ~/.local/bin/pi@0.80.5 — must NOT be removed or invoked by the installer.
+	// User-owned ~/.local/bin/pi@0.80.6 — must NOT be removed or invoked by the installer.
 	writeFakePi(legacyBin, [
 		`printf '%s\\n' "$*" >>"${legacyPiInvocationLog}"`,
 		`if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_PINNED_PI_VERSION}\\n'; exit 0; fi`,
@@ -3098,7 +2865,7 @@ test("uninstall.sh does not remove legacy ~/.local/bin/pi without --force-includ
 	}, null, 2));
 
 	// User-owned legacy pi at ~/.local/bin/pi.
-	writeFileSync(join(legacyBin, "pi"), "#!/bin/sh\nprintf '0.80.5\\n'\n", "utf8");
+	writeFileSync(join(legacyBin, "pi"), "#!/bin/sh\nprintf '0.80.6\\n'\n", "utf8");
 	chmodSync(join(legacyBin, "pi"), 0o755);
 
 	// ── (d1) dry-run without --force-include-pi: hint printed, pi NOT removed ──
