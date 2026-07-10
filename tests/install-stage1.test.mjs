@@ -6,14 +6,14 @@ import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { captureConsole, makeTempDir } from "./install-stage1-test-helpers.mjs";
+
 import {
 	MIN_NODE_VERSION,
-	RETIRED_PROFILE_FILES,
 	RUNTIME_MARKER_FILENAME,
 	RUNTIME_OWNED_TOPLEVEL,
 	assertSupportedNodeRuntime,
 	buildInstallConfig,
-	cleanupRetiredProfileFiles,
 	installDefaultExtensions,
 	nodeVersionMeetsMinimum,
 	parseArgs,
@@ -35,10 +35,6 @@ function escapeRegExp(value) {
 
 function pathWithoutRepoNodeModulesBin(pathValue = process.env.PATH || "") {
 	return pathValue.split(delimiter).filter((entry) => entry && resolve(entry) !== repoNodeModulesBin).join(delimiter);
-}
-
-function makeTempDir(prefix = "tlh-install-stage1-test-") {
-	return mkdtempSync(join(tmpdir(), prefix));
 }
 
 function scrubInstallerEnv(overrides = {}, baseEnv = process.env) {
@@ -127,20 +123,6 @@ function runInstaller(args, env = scrubInstallerEnv()) {
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 	});
-}
-
-function captureConsole(method, callback) {
-	const original = console[method];
-	const lines = [];
-	console[method] = (...args) => {
-		lines.push(args.map(String).join(" "));
-	};
-	try {
-		callback();
-	} finally {
-		console[method] = original;
-	}
-	return lines.join("\n");
 }
 
 function writeFakeCommand(fakebin, name, body) {
@@ -2999,188 +2981,6 @@ test("wrapper pi exec path exports NODE_COMPILE_CACHE pointing at the runtime pr
 	);
 });
 
-// ── cleanupRetiredProfileFiles tests ─────────────────────────────────────────
-
-test("RETIRED_PROFILE_FILES includes extensions/librarian.json", () => {
-	assert.ok(
-		RETIRED_PROFILE_FILES.includes("extensions/librarian.json"),
-		"RETIRED_PROFILE_FILES must include extensions/librarian.json",
-	);
-});
-
-test("cleanupRetiredProfileFiles removes extensions/librarian.json when present as a regular file", (t) => {
-	const root = makeTempDir("tlh-cleanup-retired-present-");
-	const agentDir = join(root, "agent");
-	const extensionsDir = join(agentDir, "extensions");
-	const librarianJson = join(extensionsDir, "librarian.json");
-	mkdirSync(extensionsDir, { recursive: true });
-	writeFileSync(librarianJson, JSON.stringify({ version: "1.0.0" }), "utf8");
-	t.after(() => rmSync(root, { recursive: true, force: true }));
-
-	const config = { agentDir, dryRun: false, quiet: true, verbose: false };
-	cleanupRetiredProfileFiles(config);
-
-	assert.equal(existsSync(librarianJson), false, "extensions/librarian.json should be removed");
-});
-
-test("cleanupRetiredProfileFiles is idempotent when extensions/librarian.json is absent", (t) => {
-	const root = makeTempDir("tlh-cleanup-retired-absent-");
-	const agentDir = join(root, "agent");
-	mkdirSync(agentDir, { recursive: true });
-	t.after(() => rmSync(root, { recursive: true, force: true }));
-
-	const config = { agentDir, dryRun: false, quiet: true, verbose: false };
-	assert.doesNotThrow(() => cleanupRetiredProfileFiles(config));
-});
-
-test("cleanupRetiredProfileFiles skips a symlinked extensions/librarian.json without error", (t) => {
-	if (process.platform === "win32") return; // symlink creation may require privileges on Windows
-	const root = makeTempDir("tlh-cleanup-retired-symlink-");
-	const agentDir = join(root, "agent");
-	const extensionsDir = join(agentDir, "extensions");
-	const librarianJson = join(extensionsDir, "librarian.json");
-	const externalFile = join(root, "external-librarian.json");
-	mkdirSync(extensionsDir, { recursive: true });
-	writeFileSync(externalFile, JSON.stringify({ version: "1.0.0" }), "utf8");
-	symlinkSync(externalFile, librarianJson);
-	t.after(() => rmSync(root, { recursive: true, force: true }));
-
-	const config = { agentDir, dryRun: false, quiet: true, verbose: false };
-	cleanupRetiredProfileFiles(config);
-
-	// The symlink itself should still exist (not removed) and the external file should be untouched.
-	assert.ok(existsSync(librarianJson), "symlinked extensions/librarian.json should be preserved");
-	assert.ok(existsSync(externalFile), "external file should be untouched");
-});
-
-test("cleanupRetiredProfileFiles dry-run logs removal without deleting the file", (t) => {
-	const root = makeTempDir("tlh-cleanup-retired-dryrun-");
-	const agentDir = join(root, "agent");
-	const extensionsDir = join(agentDir, "extensions");
-	const librarianJson = join(extensionsDir, "librarian.json");
-	mkdirSync(extensionsDir, { recursive: true });
-	writeFileSync(librarianJson, JSON.stringify({ version: "1.0.0" }), "utf8");
-	t.after(() => rmSync(root, { recursive: true, force: true }));
-
-	const loggedLines = [];
-	const config = {
-		agentDir,
-		dryRun: true,
-		quiet: false,
-		verbose: false,
-		// captureLog is used by the test by patching console
-	};
-
-	const originalLog = console.log;
-	try {
-		console.log = (line) => { loggedLines.push(line); };
-		cleanupRetiredProfileFiles(config);
-	} finally {
-		console.log = originalLog;
-	}
-
-	assert.ok(existsSync(librarianJson), "file should not be removed in dry-run mode");
-	assert.ok(
-		loggedLines.some((line) => line.includes("Would remove retired profile file") && line.includes("librarian.json")),
-		`expected dry-run log line; got: ${JSON.stringify(loggedLines)}`,
-	);
-});
-
-test("cleanupRetiredProfileFiles only operates within config.agentDir and does not touch other paths", (t) => {
-	// Verify that a librarian.json at a completely separate path is never touched.
-	const root = makeTempDir("tlh-cleanup-retired-isolation-");
-	const agentDir = join(root, "agent");
-	const otherDir = join(root, "other-profile");
-	const otherLibrarianJson = join(otherDir, "extensions", "librarian.json");
-	mkdirSync(join(agentDir, "extensions"), { recursive: true });
-	mkdirSync(join(otherDir, "extensions"), { recursive: true });
-	writeFileSync(otherLibrarianJson, JSON.stringify({ version: "1.0.0" }), "utf8");
-	t.after(() => rmSync(root, { recursive: true, force: true }));
-
-	const config = { agentDir, dryRun: false, quiet: true, verbose: false };
-	cleanupRetiredProfileFiles(config);
-
-	// The file at otherDir is untouched because cleanupRetiredProfileFiles only resolves
-	// paths relative to config.agentDir.
-	assert.ok(existsSync(otherLibrarianJson), "file outside agentDir must not be removed");
-});
-
-// ── FIX 1: symlinked parent traversal ────────────────────────────────────────
-
-test("cleanupRetiredProfileFiles skips cleanup and preserves external file when parent dir is a symlink (FIX 1)", (t) => {
-	if (process.platform === "win32") return; // symlink creation may require privileges on Windows
-	const root = makeTempDir("tlh-cleanup-retired-symlink-parent-");
-	const agentDir = join(root, "agent");
-	const externalDir = join(root, "external-extensions");
-	const externalFile = join(externalDir, "librarian.json");
-	mkdirSync(agentDir, { recursive: true });
-	mkdirSync(externalDir, { recursive: true });
-	writeFileSync(externalFile, JSON.stringify({ version: "1.0.0" }), "utf8");
-	// Make extensions/ inside agentDir a symlink pointing to an external dir.
-	symlinkSync(externalDir, join(agentDir, "extensions"), "dir");
-	t.after(() => rmSync(root, { recursive: true, force: true }));
-
-	// No settingsPath → postMergePackages defaults to [] → FIX 2 gate passes → FIX 1 fires.
-	const config = { agentDir, dryRun: false, quiet: true, verbose: false };
-	let stderrOutput = "";
-	const originalError = console.error;
-	try {
-		console.error = (line) => { stderrOutput += line + "\n"; };
-		assert.doesNotThrow(() => cleanupRetiredProfileFiles(config));
-	} finally {
-		console.error = originalError;
-	}
-
-	// The external file must survive: cleanup must not follow the symlinked parent.
-	assert.ok(existsSync(externalFile), "external file must not be removed when parent dir is a symlink");
-	// A warning must be emitted identifying the symlinked component.
-	assert.match(stderrOutput, /symlinked parent/, `expected symlink-parent warning; got: ${stderrOutput}`);
-});
-
-// ── FIX 2: managed-only gate for extensions/librarian.json ───────────────────
-
-test("cleanupRetiredProfileFiles preserves extensions/librarian.json when user-added librarian package is in post-merge settings (FIX 2)", (t) => {
-	const root = makeTempDir("tlh-cleanup-retired-user-added-");
-	const agentDir = join(root, "agent");
-	const extensionsDir = join(agentDir, "extensions");
-	const librarianJson = join(extensionsDir, "librarian.json");
-	const settingsPath = join(agentDir, "settings.json");
-	mkdirSync(extensionsDir, { recursive: true });
-	writeFileSync(librarianJson, JSON.stringify({ version: "1.0.0" }), "utf8");
-	// Post-merge settings still contain a librarian package (user-added, preserved by migration).
-	writeFileSync(settingsPath, JSON.stringify({ packages: ["npm:@diegopetrucci/pi-librarian"] }), "utf8");
-	t.after(() => rmSync(root, { recursive: true, force: true }));
-
-	const config = { agentDir, dryRun: false, quiet: true, verbose: false, settingsPath };
-	cleanupRetiredProfileFiles(config);
-
-	assert.ok(
-		existsSync(librarianJson),
-		"extensions/librarian.json must be preserved when user-added librarian package is present in post-merge settings",
-	);
-});
-
-test("cleanupRetiredProfileFiles removes extensions/librarian.json when librarian package is absent from post-merge settings (FIX 2)", (t) => {
-	const root = makeTempDir("tlh-cleanup-retired-managed-absent-");
-	const agentDir = join(root, "agent");
-	const extensionsDir = join(agentDir, "extensions");
-	const librarianJson = join(extensionsDir, "librarian.json");
-	const settingsPath = join(agentDir, "settings.json");
-	mkdirSync(extensionsDir, { recursive: true });
-	writeFileSync(librarianJson, JSON.stringify({ version: "1.0.0" }), "utf8");
-	// Post-merge settings do NOT contain a librarian package (TLH-managed one was removed by migration).
-	writeFileSync(settingsPath, JSON.stringify({ packages: ["npm:some-other-extension"] }), "utf8");
-	t.after(() => rmSync(root, { recursive: true, force: true }));
-
-	const config = { agentDir, dryRun: false, quiet: true, verbose: false, settingsPath };
-	cleanupRetiredProfileFiles(config);
-
-	assert.equal(
-		existsSync(librarianJson),
-		false,
-		"extensions/librarian.json must be removed when librarian package is absent from post-merge settings",
-	);
-});
 // Regression (tlht-5php): post-install validation — broken/wrong-version npm install must
 // throw, leaving any user-owned ~/.local/bin/pi untouched.
 test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", (t) => {
