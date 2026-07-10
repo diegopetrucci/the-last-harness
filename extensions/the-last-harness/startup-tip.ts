@@ -12,6 +12,8 @@ export const TLH_STARTUP_TIPS = [
 	"Use /name to give the current session a label you can spot later.",
 	"Prefix a shell command with ! to send its output into the chat, or !! to run it without adding the output to the model context.",
 	"Run /tlh-changelog to review what’s new in this TLH build.",
+	"Run `tlh doctor` in your terminal to check if your tlh installation is healthy",
+	"Run /analyse-tlh-sessions to review recent tlh sessions for recurring issues (note: it's an expensive check!)",
 	"At any point, you can ask the oracle for a second opinion.",
 	"Run `/tokens` to know what's eating up your subscription limit.",
 	"Ask the contrarian to stress-test a plan or decision by steelmanning the strongest opposing case.",
