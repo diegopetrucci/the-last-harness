@@ -65,7 +65,7 @@ function configureHealthyFixture(t) {
 
 	const runtimeBin = join(fixture.runtimeDir, "bin");
 	mkdirSync(runtimeBin, { recursive: true });
-	writeExecutable(join(runtimeBin, "pi"), "#!/bin/sh\necho 'pi 0.80.5'\n");
+	writeExecutable(join(runtimeBin, "pi"), "#!/bin/sh\necho 'pi 0.80.6'\n");
 	writeFileSync(join(fixture.runtimeDir, ".tlh-runtime-owned"), JSON.stringify({
 		schemaVersion: 1,
 		packageName: "@earendil-works/pi-coding-agent",
@@ -102,7 +102,7 @@ esac
 	writeExecutable(join(fixture.fakebin, "rtk"), `#!/bin/sh
 case "$1" in
   --version)
-    echo 'rtk 0.42.4'
+    echo 'rtk 0.43.0'
     exit 0
     ;;
   rewrite)

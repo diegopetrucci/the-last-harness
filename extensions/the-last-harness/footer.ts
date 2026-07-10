@@ -9,6 +9,7 @@ import {
 import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
 import { formatCompactTokenCount, formatHomePath, sanitizeStatusText } from "./common.js";
+import { TK_WORKFLOW_STATUS_KEY } from "./ticket-workflow-ui.js";
 import type { FooterGitCache } from "./footer-git-cache.js";
 import { composeTlhFooterFirstLine } from "./footer-first-line.js";
 import {
@@ -122,6 +123,19 @@ export function createTlhFooter(
 			const line3 = line3Parts.length > 0 ? line3Parts.join(" · ") : undefined;
 
 			const lines: string[] = [pwdLine, agentLine2];
+
+			const extensionStatuses = footerData?.getExtensionStatuses?.();
+			const tkWorkflowStatus = extensionStatuses?.get(TK_WORKFLOW_STATUS_KEY);
+			if (tkWorkflowStatus) {
+				const tkWorkflowLines = tkWorkflowStatus
+					.split(/\r?\n/)
+					.map((line) => sanitizeStatusText(line))
+					.filter(Boolean);
+				for (const line of tkWorkflowLines) {
+					lines.push(truncateToWidth(theme.fg("dim", line), width, theme.fg("dim", "...")));
+				}
+			}
+
 			if (line3 !== undefined) {
 				lines.push(truncateToWidth(theme.fg("dim", line3), width, theme.fg("dim", "...")));
 			}
@@ -137,14 +151,17 @@ export function createTlhFooter(
 			}
 
 			// Extension status line (conditional on registered extension statuses)
-			const extensionStatuses = footerData?.getExtensionStatuses?.();
 			if (extensionStatuses && extensionStatuses.size > 0) {
 				const visibleStatuses = Array.from(extensionStatuses.entries())
+					.filter(([key]) => key !== TK_WORKFLOW_STATUS_KEY)
 					.sort(([a], [b]) => a.localeCompare(b));
 				const statusLine = visibleStatuses
 					.map(([, text]) => sanitizeStatusText(text))
+					.filter(Boolean)
 					.join(" ");
-				lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
+				if (statusLine) {
+					lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
+				}
 			}
 
 			return lines;

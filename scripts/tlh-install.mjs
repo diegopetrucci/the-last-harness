@@ -17,12 +17,12 @@ import { formatSupportFileManifest, installableSupportFiles, supportFileManifest
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
-const PINNED_PI_VERSION = "0.80.5";
+const PINNED_PI_VERSION = "0.80.6";
 const PI_PACKAGE_SPEC = `${PI_PACKAGE_NAME}@${PINNED_PI_VERSION}`;
 // Keep in sync with TLH_MIN_NODE_VERSION and TLH_PINNED_PI_VERSION in install.sh.
 const MIN_NODE_VERSION = "22.19.0";
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
-const DEFAULT_GNOSIS_VERSION = "0.5.3";
+const DEFAULT_GNOSIS_VERSION = "0.5.4";
 const DEFAULT_WRAPPER_NAME = "tlh";
 const MANAGED_RTK_SUPPORTED_PLATFORMS = new Set(["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"]);
 const VALID_UPDATE_TRACKS = ["latest-release", "pinned-tag", "ref", "custom"];
@@ -43,7 +43,7 @@ const VALID_UPDATE_TRACKS = ["latest-release", "pinned-tag", "ref", "custom"];
 const RUNTIME_MARKER_FILENAME = ".tlh-runtime-owned";
 const RUNTIME_MARKER_SCHEMA_VERSION = 1;
 // npm 11.x --prefix layout; empirically confirmed: npm 11.16.0 +
-// @earendil-works/pi-coding-agent@0.80.5.  Mirrors the advisory exclusivity
+// @earendil-works/pi-coding-agent@0.80.6.  Mirrors the advisory exclusivity
 // tripwire in uninstall.sh (demoted from gate): the only top-level entries a
 // TLH-owned runtime prefix should contain are those created by
 // npm install -g --ignore-scripts --prefix, plus the TLH runtime ownership
@@ -129,7 +129,7 @@ Environment overrides:
   TLH_UPDATE_TRACK     Update track for future tlh update
   TLH_PACKAGE_SOURCE   Package source passed to \`pi install\`
   TLH_RAW_BASE         Base URL for installer support files
-  TLH_GNOSIS_VERSION   Gnosis version to install (default: 0.5.3)
+  TLH_GNOSIS_VERSION   Gnosis version to install (default: 0.5.4)
   TLH_GNOSIS_REPO      Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
 `;
 }
@@ -581,7 +581,7 @@ function writeRuntimeMarker(config, prefix, origin) {
     }
 }
 function assertSupportedPiVersion(config, { piCommand = "pi", sourceDescription = "existing pi on PATH", versionCommandDisplay = "pi --version", } = {}) {
-    // `pi --version` prints a bare semver (e.g. "0.80.5") on stdout. Older builds may
+    // `pi --version` prints a bare semver (e.g. "0.80.6") on stdout. Older builds may
     // differ, so we extract the first semver-shaped substring rather than match strictly.
     const result = spawnCapture(config, [piCommand, "--version"], {
         allowFailure: true,

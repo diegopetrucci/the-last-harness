@@ -15,28 +15,28 @@ import {
 const VALIDATION_TIMEOUT_MS = 5_000;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 const DEFAULT_RTK_REPO = "rtk-ai/rtk";
-const DEFAULT_RTK_VERSION = "0.42.4";
+const DEFAULT_RTK_VERSION = "0.43.0";
 const SAFE_HELPER_PATH = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(delimiter);
 const PINNED_RTK_RELEASES = Object.freeze({
 	"darwin-arm64": Object.freeze({
 		assetName: "rtk-aarch64-apple-darwin.tar.gz",
-		assetSha256: "f223ca074a0215af002679bc1d34ca92b93e25b3e8ae16aace6e84c06e586802",
-		binarySha256: "bd5caeed9bade5fa95984be42b5801b6c1a7b0c0cc158a1c698de09104d1ab2f",
+		assetSha256: "8a17e49acbd378997eb21d0eb6f7f861111f35b4fc9b1c74edf4c7448e576c65",
+		binarySha256: "2dab449f32ea744c30b02a3ef9806e3e7d3b356a145332f3f2aaabb5ea48edee",
 	}),
 	"darwin-x64": Object.freeze({
 		assetName: "rtk-x86_64-apple-darwin.tar.gz",
-		assetSha256: "84121316867613e61925c209607f033b2113bb0ce312c267a79d3e3e8f221e49",
-		binarySha256: "93279fcc6de69a5572870b08c79365505279ab9122aa9534d6ed71a357897070",
+		assetSha256: "a85f60e2637811be68366208b8d8b9c5ba1b748cb5df4477ab20cd73d3c5d9f8",
+		binarySha256: "22adaa27b3fd6d8906159ba3ff7ca8346e914df112408bcc7a88cda30a3a6107",
 	}),
 	"linux-arm64": Object.freeze({
 		assetName: "rtk-aarch64-unknown-linux-gnu.tar.gz",
-		assetSha256: "cc2b91c064eb670c097c184913c8fbcb1a943d53d7fe505375e96ba0c5b6459f",
-		binarySha256: "de3ad14d390bef0b102be4c8153b714f3ee0a85b4defc3a438155de86fc8e3a8",
+		assetSha256: "5519f7ca12e5c143a609f0d28a0a77b97413a8dce31c2681f1a41c24519a8731",
+		binarySha256: "86bd2badb697e41fa4fae805ed1a42d9b2495600260918d6ba9c148bc40013cf",
 	}),
 	"linux-x64": Object.freeze({
 		assetName: "rtk-x86_64-unknown-linux-musl.tar.gz",
-		assetSha256: "34975116da11e09e502501daf758143e0b22ed3a42a10eb67fb693a6270d9e36",
-		binarySha256: "1d8bf5f1861f5ce33236400b1d93b967aec30b6a456e9a0b43b1584c5200119a",
+		assetSha256: "ff8a1e7766496e175291a85aeca1dc97c9ff6df33e51e5893d1fbc78fea2a609",
+		binarySha256: "f160611f3baee17fe4eb3a04c56a8bc3d15fec4274d8838016088d4776c6f628",
 	}),
 });
 

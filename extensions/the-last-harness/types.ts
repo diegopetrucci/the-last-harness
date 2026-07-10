@@ -231,7 +231,7 @@ export type SubagentMetadata = {
 	preferOppositeProvider?: boolean;
 };
 
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export type ReasoningModel = {
 	reasoning?: boolean;

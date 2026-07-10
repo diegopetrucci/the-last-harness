@@ -1,6 +1,4 @@
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { statSync } from "node:fs";
-import { join } from "node:path";
 
 import { SettingsManager, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -13,16 +11,17 @@ import { isRecord } from "./common.js";
 import { findValidTlhTicketCommand } from "./tickets.js";
 import type { TlhSettings } from "./types.js";
 
-const TK_WORKFLOW_STATUS_KEY = "tlh-ticket-workflow";
+export const TK_WORKFLOW_STATUS_KEY = "tlh-ticket-workflow";
 const TK_WORKFLOW_WIDGET_KEY = "tlh-ticket-workflow";
 const TK_STATUS_COMMAND = "tk-status";
 const TK_COMMAND_TIMEOUT_MS = 4000;
 const TK_USER_BASH_REFRESH_DELAY_MS = 250;
 const TK_STATUS_HELP = "Use /tk-status for details.";
+const TK_WORKING_ON_PREFIX = "working on tk: ";
 
 type TkWorkflowSnapshot =
 	| { kind: "disabled" }
-	| { kind: "unavailable"; message: string; hasRepoEvidence: boolean }
+	| { kind: "unavailable"; message: string }
 	| { kind: "no-repo"; message: string }
 	| { kind: "no-tickets" }
 	| {
@@ -67,14 +66,6 @@ function runTkCommand(command: string, cwd: string, args: string[]): TkCommandRe
 	});
 }
 
-function hasTicketRepoEvidence(cwd: string): boolean {
-	try {
-		return statSync(join(cwd, ".tickets")).isDirectory();
-	} catch {
-		return false;
-	}
-}
-
 function parseJsonLines(output: string): Array<{ status?: string }> {
 	const lines = output
 		.split(/\r?\n/)
@@ -96,28 +87,27 @@ function getTkWorkflowSnapshot(cwd: string): TkWorkflowSnapshot {
 	}
 
 	const settings = getTlhGlobalSettings(cwd);
-	const repoEvidence = hasTicketRepoEvidence(cwd);
 	const command = findValidTlhTicketCommand(settings, getAgentDir());
 	if (!command) {
-		return { kind: "unavailable", message: "tk is unavailable for this TLH profile.", hasRepoEvidence: repoEvidence };
+		return { kind: "unavailable", message: "tk is unavailable for this TLH profile." };
 	}
 
 	const queryResult = runTkCommand(command, cwd, ["query"]);
 	const queryFailure = firstOutputLine(queryResult);
 	if (queryResult.error) {
-		return { kind: "unavailable", message: queryResult.error.message, hasRepoEvidence: repoEvidence };
+		return { kind: "unavailable", message: queryResult.error.message };
 	}
 	if (queryResult.status !== 0) {
 		return isNoRepoMessage(queryFailure)
 			? { kind: "no-repo", message: "No .tickets directory found for this repo." }
-			: { kind: "unavailable", message: queryFailure ?? "tk query failed.", hasRepoEvidence: repoEvidence };
+			: { kind: "unavailable", message: queryFailure ?? "tk query failed." };
 	}
 
 	let tickets: Array<{ status?: string }>;
 	try {
 		tickets = parseJsonLines(queryResult.stdout || "");
 	} catch {
-		return { kind: "unavailable", message: "Could not parse tk query output.", hasRepoEvidence: repoEvidence };
+		return { kind: "unavailable", message: "Could not parse tk query output." };
 	}
 	if (tickets.length === 0) {
 		return { kind: "no-tickets" };
@@ -125,24 +115,24 @@ function getTkWorkflowSnapshot(cwd: string): TkWorkflowSnapshot {
 
 	const readyResult = runTkCommand(command, cwd, ["ready"]);
 	if (readyResult.error) {
-		return { kind: "unavailable", message: readyResult.error.message, hasRepoEvidence: repoEvidence };
+		return { kind: "unavailable", message: readyResult.error.message };
 	}
 	if (readyResult.status !== 0) {
 		const failure = firstOutputLine(readyResult);
 		return isNoRepoMessage(failure)
 			? { kind: "no-repo", message: "No .tickets directory found for this repo." }
-			: { kind: "unavailable", message: failure ?? "tk ready failed.", hasRepoEvidence: repoEvidence };
+			: { kind: "unavailable", message: failure ?? "tk ready failed." };
 	}
 
 	const blockedResult = runTkCommand(command, cwd, ["blocked"]);
 	if (blockedResult.error) {
-		return { kind: "unavailable", message: blockedResult.error.message, hasRepoEvidence: repoEvidence };
+		return { kind: "unavailable", message: blockedResult.error.message };
 	}
 	if (blockedResult.status !== 0) {
 		const failure = firstOutputLine(blockedResult);
 		return isNoRepoMessage(failure)
 			? { kind: "no-repo", message: "No .tickets directory found for this repo." }
-			: { kind: "unavailable", message: failure ?? "tk blocked failed.", hasRepoEvidence: repoEvidence };
+			: { kind: "unavailable", message: failure ?? "tk blocked failed." };
 	}
 
 	const active = tickets.filter((ticket) => ticket.status === "open" || ticket.status === "in_progress").length;
@@ -155,17 +145,73 @@ function getTkWorkflowSnapshot(cwd: string): TkWorkflowSnapshot {
 	};
 }
 
-function formatTkWorkflowSummary(snapshot: TkWorkflowSnapshot): string | undefined {
-	if (snapshot.kind === "disabled") {
+function isTerminalControlCharCode(code: number): boolean {
+	return (code >= 0x00 && code <= 0x1f) || (code >= 0x7f && code <= 0x9f);
+}
+
+function stripTerminalControlSequences(text: string): string {
+	let sanitized = "";
+
+	for (let index = 0; index < text.length; index += 1) {
+		const code = text.charCodeAt(index);
+		if (code === 0x1b) {
+			const nextCode = text.charCodeAt(index + 1);
+			if (nextCode === 0x5d) {
+				index += 2;
+				while (index < text.length) {
+					const oscCode = text.charCodeAt(index);
+					if (oscCode === 0x07) {
+						break;
+					}
+					if (oscCode === 0x1b && text.charCodeAt(index + 1) === 0x5c) {
+						index += 1;
+						break;
+					}
+					index += 1;
+				}
+				continue;
+			}
+			if (nextCode === 0x5b) {
+				index += 2;
+				while (index < text.length) {
+					const csiCode = text.charCodeAt(index);
+					if (csiCode >= 0x40 && csiCode <= 0x7e) {
+						break;
+					}
+					index += 1;
+				}
+				continue;
+			}
+			if (nextCode >= 0x40 && nextCode <= 0x5f) {
+				index += 1;
+			}
+			continue;
+		}
+		if (!isTerminalControlCharCode(code)) {
+			sanitized += text[index];
+		}
+	}
+
+	return sanitized;
+}
+
+function extractNextReadyTicketTitle(snapshot: Extract<TkWorkflowSnapshot, { kind: "ok" }>): string | undefined {
+	const nextReady = snapshot.ready[0]?.trim();
+	if (!nextReady) {
 		return undefined;
 	}
-	if (snapshot.kind === "unavailable") {
-		return snapshot.hasRepoEvidence ? "tk: unavailable" : undefined;
-	}
-	if (snapshot.kind === "no-repo" || snapshot.kind === "no-tickets") {
+	const titleSeparatorIndex = nextReady.indexOf(" - ");
+	const title = titleSeparatorIndex >= 0 ? nextReady.slice(titleSeparatorIndex + 3).trim() : "";
+	return title || nextReady;
+}
+
+function formatTkWorkflowFooterStatus(snapshot: TkWorkflowSnapshot): string | undefined {
+	if (snapshot.kind !== "ok") {
 		return undefined;
 	}
-	return `tk: ${snapshot.ready.length} ready • ${snapshot.blocked.length} blocked • ${snapshot.active} active`;
+	const title = extractNextReadyTicketTitle(snapshot);
+	const safeTitle = title ? stripTerminalControlSequences(title).trim() : undefined;
+	return safeTitle ? `${TK_WORKING_ON_PREFIX}${safeTitle}\n${TK_STATUS_HELP}` : undefined;
 }
 
 function formatTkWorkflowDetails(snapshot: TkWorkflowSnapshot): string {
@@ -195,13 +241,8 @@ function formatTkWorkflowDetails(snapshot: TkWorkflowSnapshot): string {
 }
 
 function setTkWorkflowUi(ctx: ExtensionContext, snapshot: TkWorkflowSnapshot): void {
-	const summary = formatTkWorkflowSummary(snapshot);
-	ctx.ui.setStatus?.(TK_WORKFLOW_STATUS_KEY, summary);
-	if (!summary) {
-		ctx.ui.setWidget?.(TK_WORKFLOW_WIDGET_KEY, undefined);
-		return;
-	}
-	ctx.ui.setWidget?.(TK_WORKFLOW_WIDGET_KEY, [summary, TK_STATUS_HELP], { placement: "belowEditor" });
+	ctx.ui.setStatus?.(TK_WORKFLOW_STATUS_KEY, formatTkWorkflowFooterStatus(snapshot));
+	ctx.ui.setWidget?.(TK_WORKFLOW_WIDGET_KEY, undefined);
 }
 
 function shouldRefreshFromBashCommand(command: string): boolean {

@@ -4,7 +4,7 @@ TLH includes managed integrations for project memory, ticketed workflows, and na
 
 ## Gnosis integration
 
-[Gnosis](https://github.com/skorokithakis/gnosis) is a small `gn` CLI for recording project decisions, constraints, rejected alternatives, and lessons that are not obvious from code alone. On supported platforms (linux/darwin × x64/arm64), TLH installs it automatically because `tlh` works better when agents can consult and update repo-local project memory. TLH currently pins the managed default to Gnosis `v0.5.3`, while installer-owned `TLH_GNOSIS_VERSION` and `TLH_GNOSIS_REPO` overrides still let maintainers point at a different release or repository when needed. Installs and updates on unsupported platforms hard-fail.
+[Gnosis](https://github.com/skorokithakis/gnosis) is a small `gn` CLI for recording project decisions, constraints, rejected alternatives, and lessons that are not obvious from code alone. On supported platforms (linux/darwin × x64/arm64), TLH installs it automatically because `tlh` works better when agents can consult and update repo-local project memory. TLH currently pins the managed default to Gnosis `v0.5.4`, while installer-owned `TLH_GNOSIS_VERSION` and `TLH_GNOSIS_REPO` overrides still let maintainers point at a different release or repository when needed. Installs and updates on unsupported platforms hard-fail.
 
 When a valid Gnosis `gn` binary is present, TLH appends these instructions to the system prompt:
 
@@ -38,7 +38,7 @@ Managed installs download the pinned `wedow/ticket` source tarball (`v0.3.2`) an
 
 TLH now bundles RTK as a managed native rewrite integration rather than a separately managed `pi-rtk` extension. There is no `/rtk` command surface anymore: `/rtk enable`, `/rtk disable`, and `/rtk status` are gone.
 
-On supported darwin/linux x64/arm64 platforms, install and update place the pinned managed RTK binary at `~/.the-last-harness/agent/bin/rtk`. The wrapper adds `<agent>/bin` to `PATH` for the wrapped upstream Pi process, so TLH sessions and child shells can find that managed binary normally. If TLH cannot install and validate the pinned RTK binary, install or update fails with an actionable error instead of continuing without rewrite support.
+On supported darwin/linux x64/arm64 platforms, install and update place the pinned managed RTK `v0.43.0` binary at `~/.the-last-harness/agent/bin/rtk`. The wrapper adds `<agent>/bin` to `PATH` for the wrapped upstream Pi process, so TLH sessions and child shells can find that managed binary normally. If TLH cannot install and validate the pinned RTK binary, install or update fails with an actionable error instead of continuing without rewrite support.
 
 To disable RTK rewriting for a single launch, set `RTK_DISABLED=1` before starting TLH:
 

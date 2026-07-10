@@ -15,7 +15,7 @@ import {
 const VALIDATION_TIMEOUT_MS = 5000;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
-const DEFAULT_GNOSIS_VERSION = "0.5.3";
+const DEFAULT_GNOSIS_VERSION = "0.5.4";
 
 function usage() {
 	return `Usage: tlh-gnosis.mjs <command>
@@ -31,7 +31,7 @@ Options:
   --agent-dir <dir>    Isolated Pi agent dir (default: ~/.the-last-harness/agent, or PI_CODING_AGENT_DIR)
   --target <path>      Managed gn install target (default: <agent-dir>/bin/gn)
   --gnosis-repo <r>    Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
-  --gnosis-version <v> Gnosis version to install (default: 0.5.3)
+  --gnosis-version <v> Gnosis version to install (default: 0.5.4)
   --detail             Print verbose/dry-run installer details
   --dry-run            Print intended changes without writing
   --quiet              Only print errors
