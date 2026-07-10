@@ -101,7 +101,7 @@ case "\${1:-}" in
       exit 1
     fi
     case "$state" in
-      default)
+      default|ansi)
         cat <<'EOF'
 {"id":"tlhf-16ll","status":"open"}
 {"id":"tlhf-7rd2","status":"open"}
@@ -128,6 +128,9 @@ EOF
       default)
         echo "tlhf-7rd2 [P2][open] - ${READY_TICKET_TITLE}"
         ;;
+      ansi)
+        printf 'tlhf-7rd2 [P2][open] - Implement \\033[31mread-only\\033[0m ticket workflow\\a status UI\\n'
+        ;;
       updated|empty)
         ;;
     esac
@@ -138,7 +141,7 @@ EOF
       exit 1
     fi
     case "$state" in
-      default|updated)
+      default|updated|ansi)
         echo "tlhf-16ll [P2][open] - Document and validate ticket workflow UI experiment <- [tlhf-7rd2]"
         ;;
       empty)
@@ -228,6 +231,33 @@ test("enabled ticket workflow UI publishes footer status, ignores unrelated bash
 		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /tk: 0 ready • 1 blocked • 1 active • 3 total/);
 		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /Blocked:/);
 		assert.doesNotMatch(uiHarness.notifications.at(-1)?.message ?? "", /start|close .*tlhf-/i);
+	});
+});
+
+test("ticket workflow UI strips ANSI and control sequences from the ready ticket footer title", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
+	mkdirSync(join(fixture.cwd, ".tickets"));
+	const statePath = join(fixture.dir, "tk-state");
+	writeFileSync(statePath, "ansi\n");
+	installFakeTk(fixture.agent, statePath);
+	writeFileSync(
+		join(fixture.agent, "settings.json"),
+		`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [TICKET_WORKFLOW_UI_FEATURE] } } }, null, 2)}\n`,
+	);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const pi = createPiHarness();
+		registerTlhTicketWorkflowUi(pi);
+		const uiHarness = createUiHarness();
+		const ctx = createCtx(fixture.cwd, uiHarness.ui);
+
+		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
+
+		assert.equal(
+			uiHarness.statusUpdates.at(-1)?.text,
+			"working on tk: Implement read-only ticket workflow status UI\nUse /tk-status for details.",
+		);
+		assert.doesNotMatch(uiHarness.statusUpdates.at(-1)?.text ?? "", /\u001b|\u0007/);
 	});
 });
 

@@ -156,6 +156,12 @@ function getTkWorkflowSnapshot(cwd: string): TkWorkflowSnapshot {
 	};
 }
 
+function stripTerminalControlSequences(text: string): string {
+	return text
+		.replace(/\u001B(?:\][^\u0007\u001B]*(?:\u0007|\u001B\\)|\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])/g, "")
+		.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
+}
+
 function extractNextReadyTicketTitle(snapshot: Extract<TkWorkflowSnapshot, { kind: "ok" }>): string | undefined {
 	const nextReady = snapshot.ready[0]?.trim();
 	if (!nextReady) {
@@ -171,7 +177,8 @@ function formatTkWorkflowFooterStatus(snapshot: TkWorkflowSnapshot): string | un
 		return undefined;
 	}
 	const title = extractNextReadyTicketTitle(snapshot);
-	return title ? `${TK_WORKING_ON_PREFIX}${title}\n${TK_STATUS_HELP}` : undefined;
+	const safeTitle = title ? stripTerminalControlSequences(title).trim() : undefined;
+	return safeTitle ? `${TK_WORKING_ON_PREFIX}${safeTitle}\n${TK_STATUS_HELP}` : undefined;
 }
 
 function formatTkWorkflowDetails(snapshot: TkWorkflowSnapshot): string {
