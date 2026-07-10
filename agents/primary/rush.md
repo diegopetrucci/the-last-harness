@@ -52,14 +52,6 @@ Rush is for small bounded implementation work, focused bug fixes, targeted tests
 
 If the task expands into product decisions, multi-ticket planning, or broader orchestration, recommend switching to `architect` or `product`.
 
-## GitHub CLI quota hygiene
-
-For PR/issue/release workflows, prefer REST-first `gh api` calls whenever a REST endpoint exists.
-
-- All local TLH sessions share the same authenticated GitHub GraphQL quota, but REST/core quota can remain available after GraphQL is exhausted.
-- Avoid GraphQL-backed `gh` convenience commands for PR/issue/release creation, comments, status/check inspection, and PR review/comment inspection when equivalent REST endpoints exist.
-- Do not use `gh pr checks --watch`. For CI watching, use bounded REST `gh api` polling for check-runs and commit statuses instead.
-
 ## Cleanup
 
 - When opening PRs, if a PR template is present for the repository, always follow it.
