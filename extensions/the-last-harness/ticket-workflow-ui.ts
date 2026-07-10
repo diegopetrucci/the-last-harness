@@ -9,10 +9,9 @@ import {
 } from "./experimental.js";
 import { isRecord } from "./common.js";
 import { findValidTlhTicketCommand } from "./tickets.js";
+import { TK_WORKFLOW_STATUS_KEY, TK_WORKFLOW_WIDGET_KEY } from "./ticket-workflow-ui-constants.js";
 import type { TlhSettings } from "./types.js";
 
-export const TK_WORKFLOW_STATUS_KEY = "tlh-ticket-workflow";
-const TK_WORKFLOW_WIDGET_KEY = "tlh-ticket-workflow";
 const TK_STATUS_COMMAND = "tk-status";
 const TK_COMMAND_TIMEOUT_MS = 4000;
 const TK_USER_BASH_REFRESH_DELAY_MS = 250;
@@ -266,7 +265,14 @@ function shouldRefreshFromBashCommand(command: string): boolean {
 	return false;
 }
 
-export function registerTlhTicketWorkflowUi(pi: ExtensionAPI): void {
+export type TlhTicketWorkflowUiRuntime = {
+	applyCurrentSettings(ctx: ExtensionContext): void;
+	handleExperimentalFeatureChange(event: unknown): void;
+	handleUserBash(event: { command: string }, ctx: ExtensionContext): void;
+	handleToolResult(event: { toolName: string; input: { command?: unknown } }, ctx: ExtensionContext): void;
+};
+
+export function createTlhTicketWorkflowUiRuntime(pi: ExtensionAPI): TlhTicketWorkflowUiRuntime {
 	let commandRegistered = false;
 	let activeContext: ExtensionContext | undefined;
 
@@ -304,36 +310,53 @@ export function registerTlhTicketWorkflowUi(pi: ExtensionAPI): void {
 		refresh(ctx);
 	};
 
+	return {
+		applyCurrentSettings,
+		handleExperimentalFeatureChange(event: unknown) {
+			if (!isRecord(event) || event.featureId !== TICKET_WORKFLOW_UI_FEATURE || !activeContext?.hasUI) {
+				return;
+			}
+			if (typeof event.cwd === "string" && event.cwd !== activeContext.cwd) {
+				return;
+			}
+			applyCurrentSettings(activeContext);
+		},
+		handleUserBash(event: { command: string }, ctx: ExtensionContext) {
+			if (!ctx.hasUI || !isTicketWorkflowUiEnabled(ctx.cwd) || !shouldRefreshFromBashCommand(event.command)) {
+				return;
+			}
+			const timeout = setTimeout(() => refresh(ctx), TK_USER_BASH_REFRESH_DELAY_MS);
+			timeout.unref?.();
+		},
+		handleToolResult(event: { toolName: string; input: { command?: unknown } }, ctx: ExtensionContext) {
+			if (!ctx.hasUI || !isTicketWorkflowUiEnabled(ctx.cwd) || event.toolName !== "bash") {
+				return;
+			}
+			const command = typeof event.input.command === "string" ? event.input.command : undefined;
+			if (!command || !shouldRefreshFromBashCommand(command)) {
+				return;
+			}
+			refresh(ctx);
+		},
+	};
+}
+
+export function registerTlhTicketWorkflowUi(pi: ExtensionAPI): void {
+	const runtime = createTlhTicketWorkflowUiRuntime(pi);
+
 	pi.events?.on?.(TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT, (event: unknown) => {
-		if (!isRecord(event) || event.featureId !== TICKET_WORKFLOW_UI_FEATURE || !activeContext?.hasUI) {
-			return;
-		}
-		if (typeof event.cwd === "string" && event.cwd !== activeContext.cwd) {
-			return;
-		}
-		applyCurrentSettings(activeContext);
+		runtime.handleExperimentalFeatureChange(event);
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
-		applyCurrentSettings(ctx);
+		runtime.applyCurrentSettings(ctx);
 	});
 
 	pi.on("user_bash", (event, ctx) => {
-		if (!ctx.hasUI || !isTicketWorkflowUiEnabled(ctx.cwd) || !shouldRefreshFromBashCommand(event.command)) {
-			return;
-		}
-		const timeout = setTimeout(() => refresh(ctx), TK_USER_BASH_REFRESH_DELAY_MS);
-		timeout.unref?.();
+		runtime.handleUserBash(event, ctx);
 	});
 
 	pi.on("tool_result", async (event, ctx) => {
-		if (!ctx.hasUI || !isTicketWorkflowUiEnabled(ctx.cwd) || event.toolName !== "bash") {
-			return;
-		}
-		const command = typeof event.input.command === "string" ? event.input.command : undefined;
-		if (!command || !shouldRefreshFromBashCommand(command)) {
-			return;
-		}
-		refresh(ctx);
+		runtime.handleToolResult(event, ctx);
 	});
 }
