@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { packageSourceInstallDir } from "./tlh-install-package-source.mjs";
 import { copySafeProfileFile, ensureSafeProfileDir } from "./tlh-install-paths.mjs";
@@ -46,6 +46,21 @@ export function defaultExtensionsRequireCriticalInstall(defaultExtensionsFile, {
 }
 export function missingTlhSubagentPrompts(dir, { prompts = TLH_SUBAGENT_PROMPTS } = {}) {
     return prompts.filter((prompt) => !existsSync(join(dir, prompt)));
+}
+export function restoreNeededTlhSubagentPrompts(sourceDir, targetDir, { prompts = TLH_SUBAGENT_PROMPTS } = {}) {
+    return prompts.filter((prompt) => {
+        const sourcePath = join(sourceDir, prompt);
+        const targetPath = join(targetDir, prompt);
+        if (!existsSync(targetPath)) {
+            return true;
+        }
+        try {
+            return readFileSync(targetPath, "utf8") !== readFileSync(sourcePath, "utf8");
+        }
+        catch {
+            return true;
+        }
+    });
 }
 function tlhSubagentPromptsComplete(dir, options = {}) {
     return existsSync(dir) && missingTlhSubagentPrompts(dir, options).length === 0;
