@@ -434,7 +434,21 @@ function scriptedResponseFor(role, step, ticketId) {
 			args: { command: "git status --short --untracked-files=all && printf '\n---DIFF---\n' && git diff --no-color" },
 		};
 	}
-	return { type: "text", text: "No blockers. Reviewed git status, the full unstaged diff, and the new greeting helper test. Residual risk is low because the change is isolated and covered by a targeted node:test." };
+	if (step === 1) {
+		return {
+			type: "tool",
+			toolName: "read",
+			args: { path: "src/greeting.mjs" },
+		};
+	}
+	if (step === 2) {
+		return {
+			type: "tool",
+			toolName: "read",
+			args: { path: "test/greeting.test.mjs" },
+		};
+	}
+	return { type: "text", text: "No blockers. Reviewed git status, the full unstaged diff, src/greeting.mjs, and test/greeting.test.mjs. Residual risk is low because the change is isolated and covered by a targeted node:test." };
 }
 
 function flattenText(message) {
@@ -662,7 +676,9 @@ test("hermetic core architect workflow runs end-to-end with deterministic subage
 		assert.equal(developerTools.some((entry) => entry.toolName === "write" && entry.input.path === "test/greeting.test.mjs"), true, diagnostics);
 		assert.equal(architectTools.some((entry) => entry.toolName === "subagent" && entry.input.agent === "developer"), true, diagnostics);
 		assert.equal(architectTools.some((entry) => entry.toolName === "subagent" && entry.input.agent === "code-reviewer"), true, diagnostics);
-		assert.equal(reviewerTools.some((entry) => entry.toolName !== "bash"), false, diagnostics);
+		assert.equal(reviewerTools.some((entry) => ["write", "edit", "subagent"].includes(entry.toolName)), false, diagnostics);
+		assert.equal(reviewerTools.some((entry) => entry.toolName === "read" && entry.input.path === "src/greeting.mjs"), true, diagnostics);
+		assert.equal(reviewerTools.some((entry) => entry.toolName === "read" && entry.input.path === "test/greeting.test.mjs"), true, diagnostics);
 		assert.equal(developerTools.some((entry) => entry.toolName === "bash" && entry.input.command === "node test/greeting.test.mjs"), true, diagnostics);
 		const developerBashResults = developerRun?.toolResults.filter((result) => result.toolName === "bash") ?? [];
 		assert.equal(developerBashResults.length, 2, diagnostics);
@@ -677,6 +693,12 @@ test("hermetic core architect workflow runs end-to-end with deterministic subage
 		assert.match(reviewerBashText, /\?\? test\/greeting\.test\.mjs/, diagnostics);
 		assert.match(reviewerBashText, /---DIFF---/, diagnostics);
 		assert.match(reviewerBashText, /\+export \{ formatGreeting \} from '\.\/greeting\.mjs';/, diagnostics);
+		const reviewerReadResults = reviewerRun?.toolResults.filter((result) => result.toolName === "read") ?? [];
+		assert.equal(reviewerReadResults.length, 2, diagnostics);
+		assert.equal(reviewerReadResults.every((result) => result.isError === false), true, diagnostics);
+		const reviewerReadTexts = reviewerReadResults.map((result) => result.content.filter((block) => block.type === "text").map((block) => block.text).join("\n"));
+		assert.equal(reviewerReadTexts.some((text) => /export function formatGreeting\(name\)/.test(text) && /Hello, \$\{name\}!/.test(text)), true, diagnostics);
+		assert.equal(reviewerReadTexts.some((text) => /import \{ formatGreeting \} from "\.\.\/src\/index\.mjs";/.test(text) && /assert\.equal\(formatGreeting\("Ada"\), "Hello, Ada!"\);/.test(text)), true, diagnostics);
 		assert.equal(sessionRoles.some((entry) => entry.role === "developer" && /TLH Child Subagent Defaults/.test(entry.systemPrompt)), true, diagnostics);
 		assert.equal(sessionRoles.some((entry) => entry.role === "code-reviewer" && /TLH Child Subagent Defaults/.test(entry.systemPrompt)), true, diagnostics);
 		assert.equal(promptLogs.some((entry) => /switch-primary-agent/.test(entry.systemPrompt)), false, diagnostics);
