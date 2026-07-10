@@ -59,6 +59,16 @@ test("TLH startup tips cover key TLH affordances with concise user-facing phrasi
 	);
 
 	assert.ok(TLH_STARTUP_TIPS.some((tip) => tip.includes("/tlh-changelog")), "expected a /tlh-changelog startup tip");
+	assert.ok(
+		TLH_STARTUP_TIPS.includes("Run `tlh doctor` in your terminal to check if your tlh installation is healthy"),
+		"expected the exact tlh doctor startup tip wording",
+	);
+	assert.ok(
+		TLH_STARTUP_TIPS.includes(
+			"Run /analyse-tlh-sessions to review recent tlh sessions for recurring issues (note: it's an expensive check!)",
+		),
+		"expected the exact /analyse-tlh-sessions startup tip wording",
+	);
 	assert.ok(TLH_STARTUP_TIPS.some((tip) => tip.includes("oracle")), "expected an oracle startup tip");
 	assert.equal(TLH_STARTUP_TIPS.some((tip) => tip.includes("footer data")), false, "expected startup tips to avoid awkward footer-data phrasing");
 
