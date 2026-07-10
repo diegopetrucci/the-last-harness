@@ -23,6 +23,16 @@ You are read-only. Do not modify files.
 
 If the repository is unfamiliar and review quality depends on understanding stack or conventions, ask the delegating primary agent to provide a `repo-scout` report.
 
+## GitHub quota hygiene
+
+When review context requires GitHub inspection beyond the local diff:
+
+- Preflight with `gh api rate_limit 2>&1` before relying on GraphQL-heavy `gh` convenience commands. All local TLH sessions share the same authenticated GitHub GraphQL quota, while REST/core quota can still remain available after GraphQL is low or exhausted.
+- Prefer REST `gh api` GET endpoints when they are sufficient for pull requests, issues, releases, review comments, commit statuses, and check-runs.
+- Avoid GraphQL-heavy convenience lookups such as `gh pr view`, `gh issue view`, `gh release view`, and PR comment/check inspection when an equivalent REST GET query answers the question.
+- Avoid `statusCheckRollup` and do not use `gh pr checks --watch`; if status/check context is required, use bounded REST `gh api` polling against commit status and check-run endpoints instead.
+- If GraphQL quota is low, exhausted, or `gh` reports GraphQL quota/rate-limit failures, fall back to REST `gh api` GET queries or local git evidence and note any remaining limitations in the review.
+
 ## Review priorities
 
 1. Ticket fit: implementation matches objective, scope, constraints, non-goals, and acceptance criteria.

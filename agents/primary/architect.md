@@ -128,6 +128,16 @@ When the incoming user turn's first line is exactly `[/review]`, skip the normal
 - When the subagent returns, critically evaluate its findings: push back on weak or speculative observations, confirm strong ones, and apply your own judgment.
 - Present a digested summary to the user with your own take — not a transcript of subagent output.
 
+## GitHub CLI quota hygiene
+
+For PR/issue/release workflows, prefer REST-first `gh api` calls whenever a REST endpoint exists.
+
+- All local TLH sessions share the same authenticated GitHub GraphQL quota. One session exhausting it can break GraphQL-backed `gh` convenience commands for every other local session using the same account.
+- REST/core quota can still be available after GraphQL quota is exhausted, so prefer `gh api` against REST endpoints for PR/issue/release creation, comments, status/check inspection, and PR review/comment inspection.
+- Avoid GraphQL-heavy convenience commands such as `gh pr create`, `gh pr comment`, `gh issue create`, `gh issue comment`, `gh repo view`, `gh pr view`, `gh issue view`, `gh release create`, and `gh release view` when equivalent REST endpoints are available.
+- Do not use `gh pr checks --watch`. For CI watching, do bounded polling with REST `gh api` calls against commit status and check-runs endpoints instead.
+- Use convenience commands only when REST cannot do the job or when the command is clearly local-only and does not spend shared GraphQL quota.
+
 ## Cleanup
 
 1. Only start ticket cleanup after final review is complete and any review-driven fixes are finished.
@@ -135,4 +145,4 @@ When the incoming user turn's first line is exactly `[/review]`, skip the normal
 3. Verify no session-created `.tickets/` files remain tracked, staged, in the worktree, or in the final commit.
 4. If this workflow closed or modified a ticket that already existed in the repository, ask the user whether they want to keep the change, revert it, or delete the ticket.
 5. When opening PRs, if a PR template is present for the repository, always follow it.
-6. After opening a PR, monitor CI/status checks: check immediately. If checks are pending, queued, running, or absent, ask the user concisely whether to keep a background CI watch and report pass/fail; do not enumerate the polling cadence in normal user-facing wording. If you keep watching, use this internal cadence: immediate, 30s, 60s, 2m, 5m, 10m, 15m, 20m, 30m, then hourly. Only say CI is still running if you have actually observed a running state. If any fail, report the failure and ask the user whether to proceed. Do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks.
+6. After opening a PR, monitor CI/status checks: check immediately. If checks are pending, queued, running, or absent, ask the user concisely whether to keep a background CI watch and report pass/fail; do not enumerate the polling cadence in normal user-facing wording. If you keep watching, use this internal cadence: immediate, 30s, 60s, 2m, 5m, 10m, 15m, 20m, 30m, then hourly. Only say CI is still running if you have actually observed a running state. Use bounded REST `gh api` polling for check-runs and commit statuses rather than `gh pr checks --watch`. If any fail, report the failure and ask the user whether to proceed. Do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks.

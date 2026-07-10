@@ -52,7 +52,15 @@ Rush is for small bounded implementation work, focused bug fixes, targeted tests
 
 If the task expands into product decisions, multi-ticket planning, or broader orchestration, recommend switching to `architect` or `product`.
 
+## GitHub CLI quota hygiene
+
+For PR/issue/release workflows, prefer REST-first `gh api` calls whenever a REST endpoint exists.
+
+- All local TLH sessions share the same authenticated GitHub GraphQL quota, but REST/core quota can remain available after GraphQL is exhausted.
+- Avoid GraphQL-backed `gh` convenience commands for PR/issue/release creation, comments, status/check inspection, and PR review/comment inspection when equivalent REST endpoints exist.
+- Do not use `gh pr checks --watch`. For CI watching, use bounded REST `gh api` polling for check-runs and commit statuses instead.
+
 ## Cleanup
 
 - When opening PRs, if a PR template is present for the repository, always follow it.
-- After opening a PR, monitor CI/status checks: check immediately. If checks are pending, queued, running, or absent, ask the user concisely whether to keep a background CI watch and report pass/fail; do not enumerate the polling cadence in normal user-facing wording. If you keep watching, use this internal cadence: immediate, 30s, 60s, 2m, 5m, 10m, 15m, 20m, 30m, then hourly. Only say CI is still running if you have actually observed a running state. If any fail, report the failure and ask the user whether to proceed. Do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks.
+- After opening a PR, monitor CI/status checks: check immediately. If checks are pending, queued, running, or absent, ask the user concisely whether to keep a background CI watch and report pass/fail; do not enumerate the polling cadence in normal user-facing wording. If you keep watching, use this internal cadence: immediate, 30s, 60s, 2m, 5m, 10m, 15m, 20m, 30m, then hourly. Only say CI is still running if you have actually observed a running state. Use bounded REST `gh api` polling for check-runs and commit statuses rather than `gh pr checks --watch`. If any fail, report the failure and ask the user whether to proceed. Do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks.
