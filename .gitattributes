@@ -1,0 +1,17 @@
+# Generated runtime .mjs outputs compiled from TypeScript sources (.mts → .mjs).
+# Hand-written .mjs files under scripts/ are intentionally absent from this list.
+scripts/lib/default-extensions.mjs linguist-generated=true
+scripts/lib/tlh-install-git.mjs linguist-generated=true
+scripts/lib/tlh-install-package-source.mjs linguist-generated=true
+scripts/lib/tlh-install-paths.mjs linguist-generated=true
+scripts/lib/tlh-install-subagents.mjs linguist-generated=true
+scripts/lib/tlh-install-support-files.mjs linguist-generated=true
+scripts/lib/tlh-install-support-manifest.mjs linguist-generated=true
+scripts/lib/tlh-install-utils.mjs linguist-generated=true
+scripts/lib/tlh-safe-profile-write.mjs linguist-generated=true
+scripts/merge-keybindings.mjs linguist-generated=true
+scripts/merge-settings.mjs linguist-generated=true
+scripts/tlh-doctor.mjs linguist-generated=true
+scripts/tlh-install.mjs linguist-generated=true
+scripts/tlh-update.mjs linguist-generated=true
+scripts/tlh-wrapper.mjs linguist-generated=true

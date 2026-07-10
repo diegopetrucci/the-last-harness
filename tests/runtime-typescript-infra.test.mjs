@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, globSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -219,5 +219,43 @@ test("runtime TypeScript check cleans temporary outputs when TypeScript compilat
 		assertNoTemporaryCheckOutputs(fixture.tempDir);
 	} finally {
 		fixture.cleanup();
+	}
+});
+
+test(".gitattributes linguist-generated entries are in sync with scripts/**/*.mts sources", () => {
+	const gitattributesPath = join(repoRoot, ".gitattributes");
+	assert.ok(existsSync(gitattributesPath), ".gitattributes must exist at repo root");
+
+	// Derive expected generated .mjs paths from all .mts sources.
+	const mtsFiles = globSync("scripts/**/*.mts", { cwd: repoRoot }).filter((f) => !f.endsWith(".d.mts"));
+	const expectedPaths = new Set(
+		mtsFiles.map((f) => f.replace(/\.mts$/, ".mjs")),
+	);
+
+	// Parse .gitattributes for linguist-generated=true entries.
+	const gitattributesContent = readFileSync(gitattributesPath, "utf8");
+	const generatedEntries = new Set(
+		gitattributesContent
+			.split("\n")
+			.map((line) => line.trim())
+			.filter((line) => !line.startsWith("#") && line.includes("linguist-generated=true"))
+			.map((line) => line.split(/\s+/)[0]),
+	);
+
+	// Every .mts source must have a corresponding entry.
+	for (const expectedPath of expectedPaths) {
+		assert.ok(
+			generatedEntries.has(expectedPath),
+			`Missing .gitattributes linguist-generated entry for generated file: ${expectedPath}`,
+		);
+	}
+
+	// Every linguist-generated entry must correspond to an existing .mts source.
+	for (const entry of generatedEntries) {
+		const mtsPath = entry.replace(/\.mjs$/, ".mts");
+		assert.ok(
+			existsSync(join(repoRoot, mtsPath)),
+			`Stale .gitattributes linguist-generated entry — no corresponding .mts source: ${entry}`,
+		);
 	}
 });
