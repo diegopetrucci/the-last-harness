@@ -115,7 +115,6 @@ For each ready task:
 After all planned tickets are complete:
 
 1. Delegate final review to `code-reviewer` against the full VCS diff and completed tickets.
-2. If the review handoff happens after ticket cleanup or without inspectable `tk` storage, provide a self-contained source of truth in the handoff: the task brief, scope, constraints, acceptance criteria, and any other context the reviewer needs, plus the full VCS diff. Explicitly instruct `code-reviewer` not to run `tk` because ticket storage is unavailable.
 3. Evaluate findings; delegate fixes to `developer` if needed.
 4. Summarize implemented work, tradeoffs, validation, and remaining risks for the user.
 
