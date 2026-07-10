@@ -9,8 +9,8 @@ import {
 import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
 import { formatCompactTokenCount, formatHomePath, sanitizeStatusText } from "./common.js";
-import { TK_WORKFLOW_STATUS_KEY } from "./ticket-workflow-ui.js";
 import type { FooterGitCache } from "./footer-git-cache.js";
+import { TK_WORKFLOW_STATUS_KEY } from "./ticket-workflow-ui-constants.js";
 import { composeTlhFooterFirstLine } from "./footer-first-line.js";
 import {
 	getTlhSubscriptionUsageFooterState,
