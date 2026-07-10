@@ -62,7 +62,22 @@ export function registerLazyTlhTicketWorkflowUi(pi: ExtensionAPI, options: TlhTi
 	};
 
 	const applyCurrentSettings = (ctx: ExtensionContext) => {
-		if (!ctx.hasUI || !isTicketWorkflowUiEnabled(ctx.cwd)) {
+		if (!ctx.hasUI) {
+			return;
+		}
+		if (runtime) {
+			runtime.applyCurrentSettings(ctx);
+			return;
+		}
+		if (runtimePromise) {
+			void runtimePromise
+				.then((loadedRuntime) => {
+					loadedRuntime.applyCurrentSettings(ctx);
+				})
+				.catch(() => undefined);
+			return;
+		}
+		if (!isTicketWorkflowUiEnabled(ctx.cwd)) {
 			return;
 		}
 		void getRuntime()

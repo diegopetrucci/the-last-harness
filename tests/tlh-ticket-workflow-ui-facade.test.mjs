@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -115,6 +115,64 @@ test("lazy ticket workflow facade skips runtime import by default and loads it o
 			["handleUserBash", "tk ready", fixture.cwd],
 			["handleToolResult", "tk ready", fixture.cwd],
 		]);
+	});
+});
+
+test("lazy ticket workflow facade refreshes a loaded runtime for later disabled sessions before re-enable", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-facade-", { cwd: true, test: t });
+	const secondCwd = join(fixture.dir, "workspace-second");
+	mkdirSync(secondCwd, { recursive: true });
+	const settingsPath = join(fixture.agent, "settings.json");
+	writeFileSync(settingsPath, `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [TICKET_WORKFLOW_UI_FEATURE] } } }, null, 2)}\n`);
+
+	const loadCalls = [];
+	const runtimeCalls = [];
+	let activeCtx;
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const pi = createPiHarness();
+		registerLazyTlhTicketWorkflowUi(pi, {
+			loadModule: async () => {
+				loadCalls.push("load");
+				return {
+					createTlhTicketWorkflowUiRuntime() {
+						return {
+							applyCurrentSettings(ctx) {
+								activeCtx = ctx;
+								runtimeCalls.push(["applyCurrentSettings", ctx.cwd]);
+							},
+							handleExperimentalFeatureChange(event) {
+								runtimeCalls.push(["handleExperimentalFeatureChange", event.enabled, activeCtx?.cwd]);
+							},
+							handleUserBash() {},
+							handleToolResult() {},
+						};
+					},
+				};
+			},
+		});
+		const firstCtx = createCtx(fixture.cwd);
+		const secondCtx = createCtx(secondCwd);
+
+		await fireAll(pi, "session_start", { reason: "restore" }, firstCtx);
+		await flushAsyncWork();
+		assert.deepEqual(loadCalls, ["load"]);
+		assert.deepEqual(runtimeCalls, [["applyCurrentSettings", fixture.cwd]]);
+
+		writeFileSync(settingsPath, `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [] } } }, null, 2)}\n`);
+		await fireAll(pi, "session_start", { reason: "restore" }, secondCtx);
+		await flushAsyncWork();
+		assert.deepEqual(loadCalls, ["load"]);
+		assert.deepEqual(runtimeCalls.slice(-1), [["applyCurrentSettings", secondCwd]]);
+
+		writeFileSync(settingsPath, `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [TICKET_WORKFLOW_UI_FEATURE] } } }, null, 2)}\n`);
+		pi.events.emit(TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT, {
+			cwd: secondCwd,
+			enabled: true,
+			featureId: TICKET_WORKFLOW_UI_FEATURE,
+		});
+		await flushAsyncWork();
+		assert.deepEqual(runtimeCalls.slice(-1), [["handleExperimentalFeatureChange", true, secondCwd]]);
 	});
 });
 
