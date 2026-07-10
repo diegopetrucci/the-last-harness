@@ -311,6 +311,54 @@ test("merge restores subagents.disableBuiltins while preserving user-owned subag
 	});
 });
 
+for (const [name, malformedValue] of [
+	["scalar", "nope"],
+	["null", null],
+	["array", ["custom/subagents"]],
+]) {
+	test(`merge repairs malformed subagents ${name} container with installer defaults`, () => {
+		const fixture = tempFixture(
+			{
+				packages: [],
+				subagents: {
+					disableBuiltins: true,
+					agentDirs: ["tlh/agents/subagents"],
+				},
+			},
+			{
+				packages: [harnessPackage],
+				subagents: malformedValue,
+			},
+		);
+
+		runMerge(fixture);
+
+		assert.deepEqual(readJson(fixture.settings).subagents, {
+			disableBuiltins: true,
+			agentDirs: ["tlh/agents/subagents"],
+		});
+	});
+}
+
+test("merge only repairs malformed non-installer object containers with --force", () => {
+	const fixture = tempFixture(
+		{
+			packages: [],
+			warnings: { anthropicExtraUsage: false },
+		},
+		{
+			packages: [harnessPackage],
+			warnings: "broken",
+		},
+	);
+
+	runMerge(fixture);
+	assert.equal(readJson(fixture.settings).warnings, "broken");
+
+	runMerge(fixture, { force: true });
+	assert.deepEqual(readJson(fixture.settings).warnings, { anthropicExtraUsage: false });
+});
+
 test("merge keeps exact append semantics for unrelated arrays", () => {
 	const fixture = tempFixture(
 		{

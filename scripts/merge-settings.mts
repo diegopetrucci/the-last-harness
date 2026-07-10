@@ -548,6 +548,10 @@ function isInstallerOwnedSetting(path: readonly string[]): boolean {
 	return joinedPath === "lastChangelogVersion" || joinedPath === "subagents.disableBuiltins";
 }
 
+function isInstallerOwnedObjectContainer(path: readonly string[]): boolean {
+	return path.join(".") === "subagents";
+}
+
 function mergeObject(target: JsonObject, defaults: JsonObject, changes: string[], options: MergeOptions): void {
 	for (const [key, value] of Object.entries(defaults)) {
 		const path = [...options.path, key];
@@ -571,6 +575,12 @@ function mergeObject(target: JsonObject, defaults: JsonObject, changes: string[]
 
 		if (isPlainObject(value) && isPlainObject(target[key])) {
 			mergeObject(target[key], value, changes, { ...options, path });
+			continue;
+		}
+
+		if (isPlainObject(value) && isInstallerOwnedObjectContainer(path)) {
+			target[key] = clone(value);
+			changes.push(`overwrite ${label}`);
 			continue;
 		}
 

@@ -539,6 +539,35 @@ test("tlh doctor --repair restores isolated settings drift, preserves user value
 	assert.match(output, /Summary: .*0 FAIL/);
 });
 
+test("tlh doctor --repair repairs malformed subagents containers without --force", (t) => {
+	const fixture = configureHealthyFixture(t);
+	const packageRoot = createFakeDoctorPackageRoot(fixture.root);
+	const settingsPath = join(fixture.agentDir, "settings.json");
+	writeFileSync(settingsPath, JSON.stringify({
+		subagents: "broken",
+		packages: ["git:github.com/example/unmanaged-extension"],
+	}, null, 2));
+
+	const result = runDoctor(["--repair", "--agent-dir", fixture.agentDir, "--package-root", packageRoot], {
+		env: {
+			HOME: fixture.home,
+			PATH: `${fixture.fakebin}:${process.env.PATH}`,
+			EXA_API_KEY: "hidden",
+		},
+	});
+	const output = `${result.stdout}\n${result.stderr}`;
+	const repairedSettings = JSON.parse(readFileSync(settingsPath, "utf8"));
+
+	assert.equal(result.status, 0, output);
+	assert.deepEqual(repairedSettings.subagents, {
+		disableBuiltins: true,
+		agentDirs: ["tlh/agents/subagents"],
+	});
+	assert.ok(repairedSettings.packages.includes("git:github.com/example/unmanaged-extension"));
+	assert.match(output, /OK\s+settings drift:/);
+	assert.match(output, /Summary: .*0 FAIL/);
+});
+
 test("tlh doctor --repair allows managed helper repairs to run longer than diagnostics timeout", (t) => {
 	const fixture = configureHealthyFixture(t);
 	const packageRoot = createFakeDoctorPackageRoot(fixture.root, { gnosisDelayMs: 5500 });
