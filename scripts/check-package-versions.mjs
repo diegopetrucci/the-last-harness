@@ -15,8 +15,19 @@ const DEFAULT_GNOSIS_SCRIPT_PATHS = Object.freeze([
 	"scripts/tlh-gnosis.mjs",
 	"scripts/tlh-install.mjs",
 ]);
+const DEFAULT_PI_INSTALL_SCRIPT_PATHS = Object.freeze([
+	"scripts/tlh-install.mts",
+	"scripts/tlh-install.mjs",
+]);
 const DEFAULT_RTK_SCRIPT_PATHS = Object.freeze([
 	"scripts/tlh-rtk.mjs",
+]);
+const DEFAULT_INSTALL_SH_PATH = "install.sh";
+const MANAGED_PI_DEPENDENCIES = Object.freeze([
+	{ field: "peerDependencies", name: "@earendil-works/pi-coding-agent" },
+	{ field: "devDependencies", name: "@earendil-works/pi-coding-agent" },
+	{ field: "peerDependencies", name: "@earendil-works/pi-tui" },
+	{ field: "devDependencies", name: "@earendil-works/pi-tui" },
 ]);
 const ALLOWED_LOCAL_DEPENDENCY_PREFIXES = Object.freeze([
 	"file:",
@@ -33,7 +44,9 @@ Options:
   --package <path>             package.json path (default: package.json)
   --lockfile <path>            package-lock.json path (default: package-lock.json)
   --default-extensions <path>  Bundled default-extension manifest (default: config/default-extensions.json)
+  --install-sh <path>          install.sh path for TLH_PINNED_PI_VERSION validation (default: install.sh)
   --gnosis-script <path>       Managed Gnosis script to validate (repeatable; defaults: scripts/tlh-gnosis.mjs, scripts/tlh-install.mjs)
+  --pi-install-script <path>   TLH install script to validate PINNED_PI_VERSION in (repeatable; defaults: scripts/tlh-install.mts, scripts/tlh-install.mjs)
   --rtk-script <path>          Managed RTK script to validate (repeatable; default: scripts/tlh-rtk.mjs)
   -h, --help                   Show this help
 `;
@@ -44,11 +57,14 @@ function parseArgs(argv) {
 		packagePath: "package.json",
 		lockfilePath: "package-lock.json",
 		defaultExtensionsPath: "config/default-extensions.json",
+		installShPath: DEFAULT_INSTALL_SH_PATH,
 		gnosisScriptPaths: [...DEFAULT_GNOSIS_SCRIPT_PATHS],
+		piInstallScriptPaths: [...DEFAULT_PI_INSTALL_SCRIPT_PATHS],
 		rtkScriptPaths: [...DEFAULT_RTK_SCRIPT_PATHS],
 		help: false,
 	};
 	let customGnosisScripts = false;
+	let customPiInstallScripts = false;
 	let customRtkScripts = false;
 
 	for (let index = 0; index < argv.length; index += 1) {
@@ -72,12 +88,26 @@ function parseArgs(argv) {
 			index += 1;
 			continue;
 		}
+		if (arg === "--install-sh") {
+			args.installShPath = requiredValue(argv, index + 1, arg);
+			index += 1;
+			continue;
+		}
 		if (arg === "--gnosis-script") {
 			if (!customGnosisScripts) {
 				args.gnosisScriptPaths = [];
 				customGnosisScripts = true;
 			}
 			args.gnosisScriptPaths.push(requiredValue(argv, index + 1, arg));
+			index += 1;
+			continue;
+		}
+		if (arg === "--pi-install-script") {
+			if (!customPiInstallScripts) {
+				args.piInstallScriptPaths = [];
+				customPiInstallScripts = true;
+			}
+			args.piInstallScriptPaths.push(requiredValue(argv, index + 1, arg));
 			index += 1;
 			continue;
 		}
@@ -105,6 +135,11 @@ function parseArgs(argv) {
 			if (!args.defaultExtensionsPath) throw new Error("--default-extensions requires a value");
 			continue;
 		}
+		if (arg.startsWith("--install-sh=")) {
+			args.installShPath = arg.slice("--install-sh=".length);
+			if (!args.installShPath) throw new Error("--install-sh requires a value");
+			continue;
+		}
 		if (arg.startsWith("--gnosis-script=")) {
 			const value = arg.slice("--gnosis-script=".length);
 			if (!value) throw new Error("--gnosis-script requires a value");
@@ -113,6 +148,16 @@ function parseArgs(argv) {
 				customGnosisScripts = true;
 			}
 			args.gnosisScriptPaths.push(value);
+			continue;
+		}
+		if (arg.startsWith("--pi-install-script=")) {
+			const value = arg.slice("--pi-install-script=".length);
+			if (!value) throw new Error("--pi-install-script requires a value");
+			if (!customPiInstallScripts) {
+				args.piInstallScriptPaths = [];
+				customPiInstallScripts = true;
+			}
+			args.piInstallScriptPaths.push(value);
 			continue;
 		}
 		if (arg.startsWith("--rtk-script=")) {
@@ -388,6 +433,16 @@ function readDeclaredStringConstant(path, name) {
 	return match[1];
 }
 
+function readShellStringVariable(path, name) {
+	const source = readTextFile(path);
+	const pattern = new RegExp(`(?:^|\\n)${escapeRegex(name)}="([^"\\n]+)"(?:$|\\n)`);
+	const match = source.match(pattern);
+	if (!match) {
+		throw new Error(`Missing ${name} variable in ${path}`);
+	}
+	return match[1];
+}
+
 function validatePinnedManagedScriptDefaults(scriptPaths, constantName, label, problems) {
 	const versions = [];
 	for (const path of scriptPaths) {
@@ -413,6 +468,56 @@ function validatePinnedManagedScriptDefaults(scriptPaths, constantName, label, p
 	}
 }
 
+function validateManagedPiPins(args, packageJson, problems) {
+	const versions = [];
+
+	for (const { field, name } of MANAGED_PI_DEPENDENCIES) {
+		const spec = packageJson[field]?.[name];
+		const label = `${args.packagePath}#${field}.${name}`;
+		if (typeof spec !== "string" || spec.trim().length === 0) {
+			problems.push(`Missing string dependency spec at ${label}`);
+			continue;
+		}
+		if (!isPinnedExactVersion(spec)) {
+			problems.push(`${label} must use an exact version, found ${JSON.stringify(spec)}`);
+			continue;
+		}
+		versions.push({ label, version: spec.trim() });
+	}
+
+	try {
+		const installShVersion = readShellStringVariable(args.installShPath, "TLH_PINNED_PI_VERSION");
+		if (!isPinnedExactVersion(installShVersion)) {
+			problems.push(`${args.installShPath}#TLH_PINNED_PI_VERSION must use an exact version, found ${JSON.stringify(installShVersion)}`);
+		} else {
+			versions.push({ label: `${args.installShPath}#TLH_PINNED_PI_VERSION`, version: installShVersion });
+		}
+	} catch (error) {
+		problems.push(error.message);
+	}
+
+	for (const path of args.piInstallScriptPaths) {
+		try {
+			const version = readDeclaredStringConstant(path, "PINNED_PI_VERSION");
+			if (!isPinnedExactVersion(version)) {
+				problems.push(`${path}#PINNED_PI_VERSION must use an exact version, found ${JSON.stringify(version)}`);
+				continue;
+			}
+			versions.push({ label: `${path}#PINNED_PI_VERSION`, version });
+		} catch (error) {
+			problems.push(error.message);
+		}
+	}
+
+	const distinctVersions = new Set(versions.map(({ version }) => version));
+	if (versions.length > 1 && distinctVersions.size > 1) {
+		const details = versions
+			.map(({ label, version }) => `  - ${label}: ${JSON.stringify(version)}`)
+			.join("\n");
+		problems.push(`Managed Pi pins must stay in sync:\n${details}`);
+	}
+}
+
 function collectProblems(args) {
 	const packageJson = readJsonFile(args.packagePath);
 	const packageLock = readJsonFile(args.lockfilePath);
@@ -427,6 +532,7 @@ function collectProblems(args) {
 	}
 
 	validatePinnedDependencies(packageJson, args.packagePath, problems);
+	validateManagedPiPins(args, packageJson, problems);
 	validateDefaultExtensionPins(args.defaultExtensionsPath, problems);
 	validatePinnedManagedScriptDefaults(args.gnosisScriptPaths, "DEFAULT_GNOSIS_VERSION", "Managed Gnosis", problems);
 	validatePinnedManagedScriptDefaults(args.rtkScriptPaths, "DEFAULT_RTK_VERSION", "Managed RTK", problems);
