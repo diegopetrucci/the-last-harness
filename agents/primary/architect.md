@@ -128,10 +128,6 @@ When the incoming user turn's first line is exactly `[/review]`, skip the normal
 - When the subagent returns, critically evaluate its findings: push back on weak or speculative observations, confirm strong ones, and apply your own judgment.
 - Present a digested summary to the user with your own take — not a transcript of subagent output.
 
-## GitHub CLI quota hygiene
-
-For PR/issue/release workflows, prefer REST-first `gh api` calls whenever a REST endpoint exists.
-
 ## Cleanup
 
 1. Only start ticket cleanup after final review is complete and any review-driven fixes are finished.
