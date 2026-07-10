@@ -44,7 +44,7 @@ function sha256File(path) {
 }
 
 function writeMockRtk(path, {
-	version = "0.42.4",
+	version = "0.43.0",
 	rewriteOutput = "rtk git status",
 	rewriteStatus = 0,
 	extraComment = "",
@@ -98,7 +98,7 @@ exit 99
 }
 
 function unsafeRtkArgs({
-	version = "0.42.4",
+	version = "0.43.0",
 	assetName,
 	assetSha256,
 	binarySha256,
@@ -177,7 +177,7 @@ test("install-managed refreshes a checksum-drifted managed RTK binary to the pin
 
 	const version = spawnSync(target, ["--version"], { encoding: "utf8" });
 	assert.equal(version.status, 0, version.stderr);
-	assert.equal(version.stdout.trim(), "rtk 0.42.4");
+	assert.equal(version.stdout.trim(), "rtk 0.43.0");
 
 	const rewrite = spawnSync(target, ["rewrite", "git", "status"], { encoding: "utf8" });
 	assert.equal(rewrite.status, 0, rewrite.stderr);

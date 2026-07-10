@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { packageSourceInstallDir } from "./tlh-install-package-source.mjs";
@@ -66,6 +66,25 @@ export function missingTlhSubagentPrompts(
 	{ prompts = TLH_SUBAGENT_PROMPTS }: { prompts?: readonly string[] } = {},
 ): string[] {
 	return prompts.filter((prompt) => !existsSync(join(dir, prompt)));
+}
+
+export function restoreNeededTlhSubagentPrompts(
+	sourceDir: string,
+	targetDir: string,
+	{ prompts = TLH_SUBAGENT_PROMPTS }: { prompts?: readonly string[] } = {},
+): string[] {
+	return prompts.filter((prompt) => {
+		const sourcePath = join(sourceDir, prompt);
+		const targetPath = join(targetDir, prompt);
+		if (!existsSync(targetPath)) {
+			return true;
+		}
+		try {
+			return readFileSync(targetPath, "utf8") !== readFileSync(sourcePath, "utf8");
+		} catch {
+			return true;
+		}
+	});
 }
 
 function tlhSubagentPromptsComplete(dir: string, options: { prompts?: readonly string[] } = {}): boolean {

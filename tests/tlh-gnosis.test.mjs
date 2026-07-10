@@ -71,8 +71,15 @@ test("install-managed dry-run uses the pinned default Gnosis release", () => {
 	], { env: { HOME: fixture.home } });
 
 	assert.equal(result.status, 0, result.stderr);
-	assert.match(result.stderr, /Would download Gnosis 0\.5\.3 from https:\/\/github\.com\/skorokithakis\/gnosis/);
+	assert.match(result.stderr, /Would download Gnosis 0\.5\.4 from https:\/\/github\.com\/skorokithakis\/gnosis/);
 	assert.equal(result.stdout.trim(), join(fixture.agent, "bin", "gn"));
+});
+
+test("help shows the pinned default Gnosis release", () => {
+	const result = runGnosis(["--help"]);
+
+	assert.equal(result.status, 0, result.stderr);
+	assert.match(result.stdout, /--gnosis-version <v> Gnosis version to install \(default: 0\.5\.4\)/);
 });
 
 test("install-managed dry-run still honors TLH_GNOSIS_VERSION and CLI overrides", () => {

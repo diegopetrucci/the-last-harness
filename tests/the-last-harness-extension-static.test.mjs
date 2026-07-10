@@ -118,20 +118,25 @@ function discoverBasicLanguageLoaderTarget(runtimeSource, languageId, extensions
 			`id:\\s*"${escapeRegex(languageId)}"[\\s\\S]*?extensions:\\s*\\[${extensionsPattern}\\][\\s\\S]*?loader:\\s*\\(\\)\\s*=>\\s*import\\(\\s*"([^"]+)"\\s*\\)`,
 		),
 	];
+	const modulePattern = /define\("([^"]+)"[\s\S]*?(?=define\("|$)/g;
 
-	for (const pattern of loaderPatterns) {
-		const match = runtimeSource.match(pattern);
-		if (match) {
-			return match[1];
+	for (const moduleMatch of runtimeSource.matchAll(modulePattern)) {
+		const [, moduleId] = moduleMatch;
+		const moduleSource = moduleMatch[0];
+		for (const pattern of loaderPatterns) {
+			const match = moduleSource.match(pattern);
+			if (match) {
+				return { fromModuleId: moduleId, loaderTarget: match[1] };
+			}
 		}
 	}
 
 	assert.fail(`Monaco basic-language registration for ${languageId} must include an inlined loader target`);
 }
 
-function assertRepresentativeMonacoLanguageChunkInlined(runtimeSource, contributionModuleId, { id, extensions }) {
-	const loaderTarget = discoverBasicLanguageLoaderTarget(runtimeSource, id, extensions);
-	const targetModuleId = resolveAmdModuleId(contributionModuleId, loaderTarget);
+function assertRepresentativeMonacoLanguageChunkInlined(runtimeSource, _contributionModuleId, { id, extensions }) {
+	const { fromModuleId, loaderTarget } = discoverBasicLanguageLoaderTarget(runtimeSource, id, extensions);
+	const targetModuleId = resolveAmdModuleId(fromModuleId, loaderTarget);
 	const targetModuleSource = extractMonacoModuleSource(runtimeSource, targetModuleId);
 
 	assert.ok(targetModuleSource.trim().length > 256, `Monaco ${id} loader target ${targetModuleId} must be non-empty`);
