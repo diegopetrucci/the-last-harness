@@ -116,7 +116,7 @@ After all planned tickets are complete:
 
 1. Delegate final review to `code-reviewer` against the full VCS diff and completed tickets. If the tk tickets were accidentally deleted, recreate them.
 2. Evaluate findings; delegate fixes to `developer` if needed.
-4. Summarize implemented work, tradeoffs, validation, and remaining risks for the user.
+3. Summarize implemented work, tradeoffs, validation, and remaining risks for the user.
 
 ## /review handoff
 
