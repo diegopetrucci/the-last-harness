@@ -1,100 +1,106 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import test from "node:test";
 
-import {
-	assertPromptAnchors,
-	bodyPattern,
-	includesAllTerms,
-	orderedTerms,
-	readAgentPrompt,
-} from "./agent-prompt-test-helpers.mjs";
+const testDir = dirname(fileURLToPath(import.meta.url));
 
-test("architect prompt keeps REST-first GitHub workflow quota guidance", () => {
+function readAgentPrompt(group, name) {
+	return readFileSync(resolve(testDir, "..", "agents", group, `${name}.md`), "utf8");
+}
+
+function assertIncludesAllTerms(body, label, terms) {
+	for (const term of terms) {
+		assert.match(body, new RegExp(escapeRegExp(term), "i"), `${label} should include ${term}`);
+	}
+}
+
+function assertOrderedTerms(body, label, terms) {
+	let lastIndex = -1;
+	for (const term of terms) {
+		const index = body.toLowerCase().indexOf(term.toLowerCase(), lastIndex + 1);
+		assert.notEqual(index, -1, `${label} should include ${term}`);
+		assert.ok(index > lastIndex, `${label} should keep ${term} after earlier terms`);
+		lastIndex = index;
+	}
+}
+
+function assertBodyPattern(body, label, pattern) {
+	assert.match(body, pattern, `${label} should match ${pattern}`);
+}
+
+function assertExcludesAllTerms(body, label, terms) {
+	for (const term of terms) {
+		assert.doesNotMatch(body, new RegExp(escapeRegExp(term), "i"), `${label} should not include ${term}`);
+	}
+}
+
+function escapeRegExp(value) {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+test("architect prompt keeps bounded REST CI polling guidance", () => {
 	const agent = readAgentPrompt("primary", "architect");
 
-	assertPromptAnchors(agent, [
-		includesAllTerms("shared GraphQL quota warning", [
-			"all local TLH sessions share the same authenticated GitHub GraphQL quota",
-			"REST/core quota can still be available after GraphQL quota is exhausted",
-		]),
-		orderedTerms("REST-first GitHub workflow coverage", [
-			"prefer REST-first `gh api` calls whenever a REST endpoint exists",
-			"PR/issue/release creation",
-			"comments",
-			"status/check inspection",
-			"PR review/comment inspection",
-		]),
-		bodyPattern("avoid GraphQL-heavy convenience commands", /avoid GraphQL-heavy convenience commands such as `gh pr create`, `gh pr comment`, `gh issue create`, `gh issue comment`, `gh repo view`, `gh pr view`, `gh issue view`, `gh release create`, and `gh release view`/i),
-		bodyPattern("ban gh pr checks watch", /do not use `gh pr checks --watch`/i),
-		bodyPattern("REST polling for CI watch", /bounded REST `gh api` polling .* rather than `gh pr checks --watch`/i),
-	]);
+	assertBodyPattern(
+		agent,
+		"architect cleanup guidance",
+		/use bounded REST `gh api` polling for check-runs and commit statuses rather than `gh pr checks --watch`/i,
+	);
+	assertBodyPattern(agent, "architect cleanup guidance", /do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks/i);
 });
 
-test("rush prompt keeps REST-first GitHub workflow quota guidance", () => {
+test("rush prompt keeps bounded REST CI polling guidance", () => {
 	const agent = readAgentPrompt("primary", "rush");
 
-	assertPromptAnchors(agent, [
-		includesAllTerms("shared quota fallback guidance", [
-			"all local TLH sessions share the same authenticated GitHub GraphQL quota",
-			"REST/core quota can remain available after GraphQL is exhausted",
-		]),
-		includesAllTerms("REST-first workflow coverage", [
-			"prefer REST-first `gh api` calls whenever a REST endpoint exists",
-			"PR/issue/release workflows",
-			"creation",
-			"comments",
-			"status/check inspection",
-			"PR review/comment inspection",
-		]),
-		bodyPattern("avoid GraphQL-backed convenience commands", /avoid GraphQL-backed `gh` convenience commands/i),
-		bodyPattern("ban gh pr checks watch", /do not use `gh pr checks --watch`/i),
-		bodyPattern("REST polling for CI watch", /bounded REST `gh api` polling .* rather than `gh pr checks --watch`/i),
-	]);
+	assertBodyPattern(
+		agent,
+		"rush cleanup guidance",
+		/use bounded REST `gh api` polling for check-runs and commit statuses rather than `gh pr checks --watch`/i,
+	);
+	assertBodyPattern(agent, "rush cleanup guidance", /do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks/i);
 });
 
 test("librarian prompt keeps REST-first GitHub research quota guidance", () => {
 	const agent = readAgentPrompt("subagents", "librarian");
 
-	assertPromptAnchors(agent, [
-		includesAllTerms("shared quota preflight guidance", [
-			"gh api rate_limit 2>&1",
-			"all local TLH sessions share the same authenticated GitHub GraphQL quota",
-			"REST/core quota can still remain available after GraphQL is low or exhausted",
-		]),
-		includesAllTerms("REST-first inspection coverage", [
-			"prefer them over GraphQL-backed convenience commands",
-			"PRs",
-			"issues",
-			"releases",
-			"review comments",
-			"commit statuses",
-			"check-runs",
-		]),
-		bodyPattern("avoid statusCheckRollup", /avoid `?statusCheckRollup`?/i),
-		bodyPattern("ban gh pr checks watch", /avoid `gh pr checks --watch`/i),
+	assertIncludesAllTerms(agent, "shared quota preflight guidance", [
+		"gh api rate_limit 2>&1",
+		"all local TLH sessions share the same authenticated GitHub GraphQL quota",
+		"REST/core quota can still remain available after GraphQL is low or exhausted",
 	]);
+	assertOrderedTerms(agent, "REST-first inspection coverage", [
+		"prefer them over GraphQL-backed convenience commands",
+		"PRs",
+		"issues",
+		"releases",
+		"review comments",
+		"commit statuses",
+		"check-runs",
+	]);
+	assertBodyPattern(agent, "avoid statusCheckRollup", /avoid `?statusCheckRollup`?/i);
+	assertBodyPattern(agent, "ban gh pr checks watch", /avoid `gh pr checks --watch`/i);
+	assertBodyPattern(agent, "REST fallback on GraphQL failure", /fall back to `gh api` GET requests against REST endpoints or to local `git` evidence when possible/i);
 });
 
-test("code-reviewer prompt keeps REST-first GitHub review quota guidance", () => {
+test("code-reviewer prompt matches current review-only guidance without removed quota sections", () => {
 	const agent = readAgentPrompt("subagents", "code-reviewer");
 
-	assertPromptAnchors(agent, [
-		includesAllTerms("shared quota preflight guidance", [
-			"gh api rate_limit 2>&1",
-			"all local TLH sessions share the same authenticated GitHub GraphQL quota",
-			"REST/core quota can still remain available after GraphQL is low or exhausted",
-		]),
-		includesAllTerms("REST-first review coverage", [
-			"Prefer REST `gh api` GET endpoints",
-			"pull requests",
-			"issues",
-			"releases",
-			"review comments",
-			"commit statuses",
-			"check-runs",
-		]),
-		bodyPattern("avoid GraphQL-heavy convenience lookups", /avoid GraphQL-heavy convenience lookups such as `gh pr view`, `gh issue view`, `gh release view`/i),
-		bodyPattern("avoid statusCheckRollup", /avoid `?statusCheckRollup`?/i),
-		bodyPattern("ban gh pr checks watch", /do not use `gh pr checks --watch`/i),
-		bodyPattern("REST fallback on GraphQL failure", /fall back to REST `gh api` GET queries or local git evidence/i),
+	assertIncludesAllTerms(agent, "review inputs guidance", [
+		"Use `git diff --no-color`, `git diff --cached --no-color`, and `git status --short --untracked-files=all`.",
+		"Inspect relevant untracked new files when needed so the review covers pre-staging changes.",
+		"If the repository is unfamiliar and review quality depends on understanding stack or conventions, ask the delegating primary agent to provide a `repo-scout` report.",
+	]);
+	assertIncludesAllTerms(agent, "review output guidance", [
+		"Use `contact_supervisor` only if a required review decision is blocked by missing context or conflicting instructions.",
+		"For each required fix include:",
+		"Do not include optional suggestions, style nitpicks, praise sections, or generic checklists.",
+	]);
+	assertExcludesAllTerms(agent, "removed GitHub quota guidance", [
+		"gh api rate_limit 2>&1",
+		"all local TLH sessions share the same authenticated GitHub GraphQL quota",
+		"gh pr checks --watch",
+		"statusCheckRollup",
 	]);
 });
