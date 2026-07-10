@@ -17,7 +17,7 @@ import { registerTlhPrimaryAgentRuntime } from "./the-last-harness/primary-agent
 import { collectStartupResources } from "./the-last-harness/resources.js";
 import { getTlhStartupTip } from "./the-last-harness/startup-tip.js";
 import { createLazyTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage-facade.js";
-import { registerTlhTicketWorkflowUi } from "./the-last-harness/ticket-workflow-ui.js";
+import { registerLazyTlhTicketWorkflowUi } from "./the-last-harness/ticket-workflow-ui-facade.js";
 import { getTlhUsageLimitsConfig, registerUsageCommand, shouldShowTlhUsageWeekly } from "./the-last-harness/usage-limits.js";
 import { getTlhHeaderUpdate, maybeNotifyAvailableTlhUpdate } from "./the-last-harness/update-check.js";
 import { registerVersionCommand } from "./the-last-harness/version.js";
@@ -130,7 +130,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	});
 	registerEffortCommand(pi, primaryAgentRuntime);
 	registerExperimentalCommand(pi);
-	registerTlhTicketWorkflowUi(pi);
+	registerLazyTlhTicketWorkflowUi(pi);
 	pi.registerCommand("review", {
 		description: REVIEW_COMMAND_DESCRIPTION,
 		getArgumentCompletions: () => null,
