@@ -132,12 +132,6 @@ When the incoming user turn's first line is exactly `[/review]`, skip the normal
 
 For PR/issue/release workflows, prefer REST-first `gh api` calls whenever a REST endpoint exists.
 
-- All local TLH sessions share the same authenticated GitHub GraphQL quota. One session exhausting it can break GraphQL-backed `gh` convenience commands for every other local session using the same account.
-- REST/core quota can still be available after GraphQL quota is exhausted, so prefer `gh api` against REST endpoints for PR/issue/release creation, comments, status/check inspection, and PR review/comment inspection.
-- Avoid GraphQL-heavy convenience commands such as `gh pr create`, `gh pr comment`, `gh issue create`, `gh issue comment`, `gh repo view`, `gh pr view`, `gh issue view`, `gh release create`, and `gh release view` when equivalent REST endpoints are available.
-- Do not use `gh pr checks --watch`. For CI watching, do bounded polling with REST `gh api` calls against commit status and check-runs endpoints instead.
-- Use convenience commands only when REST cannot do the job or when the command is clearly local-only and does not spend shared GraphQL quota.
-
 ## Cleanup
 
 1. Only start ticket cleanup after final review is complete and any review-driven fixes are finished.
