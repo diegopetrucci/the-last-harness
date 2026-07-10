@@ -13,7 +13,7 @@ import { isRecord } from "./common.js";
 import { findValidTlhTicketCommand } from "./tickets.js";
 import type { TlhSettings } from "./types.js";
 
-const TK_WORKFLOW_STATUS_KEY = "tlh-ticket-workflow";
+export const TK_WORKFLOW_STATUS_KEY = "tlh-ticket-workflow";
 const TK_WORKFLOW_WIDGET_KEY = "tlh-ticket-workflow";
 const TK_STATUS_COMMAND = "tk-status";
 const TK_COMMAND_TIMEOUT_MS = 4000;

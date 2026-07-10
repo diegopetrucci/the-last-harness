@@ -9,6 +9,7 @@ import {
 import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
 import { formatCompactTokenCount, formatHomePath, sanitizeStatusText } from "./common.js";
+import { TK_WORKFLOW_STATUS_KEY } from "./ticket-workflow-ui.js";
 import type { FooterGitCache } from "./footer-git-cache.js";
 import { composeTlhFooterFirstLine } from "./footer-first-line.js";
 import {
@@ -16,8 +17,6 @@ import {
 	type TlhFooterSubscriptionUsageOptions,
 } from "./footer-subscription-usage.js";
 export { formatTlhSubscriptionUsageFooterSegment } from "./footer-subscription-usage.js";
-
-const TK_WORKFLOW_STATUS_KEY = "tlh-ticket-workflow";
 
 function formatCost(cost: number): string {
 	return cost < 0.001 ? "<$0.001" : `$${cost.toFixed(3)}`;
