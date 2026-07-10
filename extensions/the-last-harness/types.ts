@@ -122,7 +122,17 @@ export type TlhRtkConfig = {
 	disabled?: boolean;
 };
 
+export type TlhSubagentOverride = {
+	model?: string;
+	thinking?: string;
+};
+
+export type TlhSubagentsConfig = {
+	agentOverrides?: Record<string, TlhSubagentOverride>;
+};
+
 export type TlhSettings = {
+	subagents?: TlhSubagentsConfig;
 	tlh?: {
 		usageLimits?: TlhUsageLimitsConfig;
 		attribution?: TlhAttributionConfig;
@@ -228,6 +238,8 @@ export type SubagentMetadata = {
 	model?: string;
 	tlhOpenaiModels?: string[];
 	tlhAnthropicModels?: string[];
+	thinking?: ThinkingLevel;
+	tlhOpenaiThinking?: ThinkingLevel;
 	preferOppositeProvider?: boolean;
 };
 

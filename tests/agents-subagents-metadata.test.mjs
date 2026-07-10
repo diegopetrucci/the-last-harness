@@ -60,6 +60,8 @@ test("loadSubagentMetadata exposes web-scout with expected model, tlhOpenaiModel
 	assert.equal(webScout.model, undefined);
 	assert.deepEqual(webScout.tlhOpenaiModels, ["openai-codex/gpt-5.4-mini"]);
 	assert.deepEqual(webScout.tlhAnthropicModels, ["anthropic/claude-haiku-4-5"]);
+	assert.equal(webScout.thinking, "high");
+	assert.equal(webScout.tlhOpenaiThinking, undefined);
 	assert.ok("preferOppositeProvider" in webScout);
 	assert.equal(webScout.preferOppositeProvider, undefined);
 	assert.equal(

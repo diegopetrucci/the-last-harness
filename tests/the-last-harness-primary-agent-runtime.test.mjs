@@ -152,7 +152,7 @@ test("disabled primary mode still injects provider-aware subagent models", async
 	]);
 
 	assert.equal(await toolCall(event, ctx), undefined);
-	assert.equal(event.input.model, "openai-codex/gpt-5.4");
+	assert.equal(event.input.model, "openai-codex/gpt-5.4:medium");
 	assert.equal(event.input.agentScope, undefined);
 	assert.equal(event.input.context, "resume");
 });
@@ -242,9 +242,57 @@ test("enabled primary mode validates subagent input after injecting provider-awa
 		reason:
 			'TLH primary-agent subagent execution may not use context: "resume". TLH child sessions must start fresh so parent primary-agent/Gnosis context is not leaked.',
 	});
-	assert.equal(event.input.model, "openai-codex/gpt-5.4");
+	assert.equal(event.input.model, "openai-codex/gpt-5.4:medium");
 	assert.equal(event.input.agentScope, "user");
 });
+
+test("minor-agent persisted overrides from isolated settings affect subagent dispatch", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ subagents: { agentOverrides: { developer: { thinking: "high" } } } }, null, 2)}\n`);
+		const { toolCall } = registerRuntimeHarness();
+		const event = { toolName: "subagent", input: { agent: "developer", prompt: "Implement the ticket" } };
+		await toolCall(event, createToolCallContext(
+			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
+			undefined,
+			{
+				cwd: fixture.cwd,
+				modelRegistry: {
+					getAvailable: () => [{ provider: "openai-codex", id: "gpt-5.4", reasoning: true }],
+				},
+			},
+		));
+		assert.equal(event.input.model, "openai-codex/gpt-5.4:high");
+	});
+});
+
+
+test("minor-agent persisted unsupported effort warns and falls back without deleting settings", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const notifications = [];
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ subagents: { agentOverrides: { developer: { thinking: "xhigh" } } } }, null, 2)}\n`);
+		const { toolCall } = registerRuntimeHarness();
+		const event = { toolName: "subagent", input: { agent: "developer", prompt: "Implement the ticket" } };
+		await toolCall(event, createToolCallContext(
+			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
+			notifications,
+			{
+				cwd: fixture.cwd,
+				modelRegistry: {
+					getAvailable: () => [{ provider: "openai-codex", id: "gpt-5.4", reasoning: true, thinkingLevelMap: { xhigh: null } }],
+				},
+			},
+		));
+		assert.equal(event.input.model, "openai-codex/gpt-5.4");
+		assert.match(notifications[0]?.message ?? "", /stored minor-agent effort/i);
+		const settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
+		assert.equal(settings.subagents.agentOverrides.developer.thinking, "xhigh");
+	});
+});
+
 
 test("before_agent_start adds TLH commit attribution guidance only when enabled", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });

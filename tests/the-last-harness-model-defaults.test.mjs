@@ -5,6 +5,7 @@ import { createJiti } from "jiti";
 const jiti = createJiti(import.meta.url);
 const {
 	applyProviderAwareSubagentModels,
+	resolveProviderAwareSubagentResolution,
 	selectProviderAwareAgentDefaults,
 	selectProviderAwareAgentModelId,
 } = await jiti.import("../extensions/the-last-harness/model-defaults.ts");
@@ -80,6 +81,13 @@ const codexAvailable = [
 const openaiAvailable = [
 	{ provider: "openai", id: "gpt-5.4" },
 	{ provider: "openai", id: "gpt-5.5" },
+];
+
+const reasoningAnthropicAvailable = anthropicAvailable.map((model) => ({ ...model, reasoning: true }));
+const reasoningCodexAvailable = codexAvailable.map((model) => ({ ...model, reasoning: true }));
+const limitedReasoningAvailable = [
+	{ provider: "anthropic", id: "claude-opus-4-8", reasoning: true, thinkingLevelMap: { xhigh: null } },
+	{ provider: "openai-codex", id: "gpt-5.5", reasoning: true, thinkingLevelMap: { xhigh: null } },
 ];
 
 const reducedIndependenceNotice = "TLH fell back to a same-provider review model; review independence is reduced.";
@@ -345,6 +353,110 @@ test("provider-aware subagent mutation preserves explicit user-supplied model va
 	const input = { agent: "developer", task: "Implement the ticket", model: "openai/gpt-5.4" };
 	assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 0);
 	assert.equal(input.model, "openai/gpt-5.4");
+});
+
+
+test("explicit plain model keeps its model and receives supported persisted thinking", () => {
+	const input = { agent: "developer", task: "Implement", model: "anthropic/claude-sonnet-5" };
+	assert.equal(
+		applyProviderAwareSubagentModels(input, agents, reasoningAnthropicAvailable, "openai-codex", undefined, {
+			agentOverrides: new Map([["developer", { model: "openai-codex/gpt-5.4", thinking: "high" }]]),
+		}),
+		1,
+	);
+	assert.equal(input.model, "anthropic/claude-sonnet-5:high");
+});
+
+
+test("explicit known thinking suffix wins over persisted thinking", () => {
+	const input = { agent: "developer", task: "Implement", model: "anthropic/claude-sonnet-5:low" };
+	assert.equal(
+		applyProviderAwareSubagentModels(input, agents, reasoningAnthropicAvailable, "openai-codex", undefined, {
+			agentOverrides: new Map([["developer", { thinking: "high" }]]),
+		}),
+		0,
+	);
+	assert.equal(input.model, "anthropic/claude-sonnet-5:low");
+});
+
+
+test("persisted minor-agent overrides win over bundled defaults and apply supported thinking suffixes", () => {
+	const overrideAgents = new Map([[developer.name, developer]]);
+	const input = { agent: "developer", task: "Implement the ticket" };
+	assert.equal(
+		applyProviderAwareSubagentModels(input, overrideAgents, reasoningAnthropicAvailable, "openai-codex", undefined, {
+			agentOverrides: new Map([["developer", { model: "anthropic/claude-sonnet-5", thinking: "high" }]]),
+		}),
+		1,
+	);
+	assert.equal(input.model, "anthropic/claude-sonnet-5:high");
+});
+
+
+test("persisted thinking suffix is applied to opposite-provider fallbacks", () => {
+	const input = { agent: "code-reviewer", task: "Review the diff" };
+	assert.equal(
+		applyProviderAwareSubagentModels(input, agents, [...reasoningAnthropicAvailable, ...reasoningCodexAvailable], "anthropic", undefined, {
+			agentOverrides: new Map([["code-reviewer", { thinking: "high" }]]),
+		}),
+		1,
+	);
+	assert.equal(input.model, "openai-codex/gpt-5.5:high");
+	assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-4-8:high"]);
+	assert.equal(input.modelFallbackNotice, reducedIndependenceNotice);
+});
+
+
+test("persisted off effort is explicit on selected and generated fallback models", () => {
+	const input = { agent: "code-reviewer", task: "Review the diff" };
+	assert.equal(
+		applyProviderAwareSubagentModels(input, agents, [...reasoningAnthropicAvailable, ...reasoningCodexAvailable], "anthropic", undefined, {
+			agentOverrides: new Map([["code-reviewer", { thinking: "off" }]]),
+		}),
+		1,
+	);
+	assert.equal(input.model, "openai-codex/gpt-5.5:off");
+	assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-4-8:off"]);
+});
+
+
+test("unsupported stored effort warns and falls back for that run", () => {
+	const warnings = [];
+	const input = { agent: "code-reviewer", task: "Review the diff" };
+	assert.equal(
+		applyProviderAwareSubagentModels(input, agents, limitedReasoningAvailable, "anthropic", undefined, {
+			agentOverrides: new Map([["code-reviewer", { thinking: "xhigh" }]]),
+			onWarning: (warning) => warnings.push(warning.message),
+		}),
+		1,
+	);
+	assert.equal(input.model, "openai-codex/gpt-5.5");
+	assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-4-8"]);
+	assert.equal(warnings.length, 1);
+	assert.match(warnings[0], /stored minor-agent effort/i);
+	assert.match(warnings[0], /openai-codex\/gpt-5\.5/i);
+});
+
+
+test("subagent resolution reports independence state for bundled and overridden review models", () => {
+	assert.equal(
+		resolveProviderAwareSubagentResolution(
+			codeReviewer,
+			[...reasoningAnthropicAvailable, ...reasoningCodexAvailable],
+			"anthropic",
+		).independence,
+		"preferred",
+	);
+	assert.equal(
+		resolveProviderAwareSubagentResolution(
+			codeReviewer,
+			reasoningAnthropicAvailable,
+			"anthropic",
+			undefined,
+			{ model: "anthropic/claude-opus-4-8" },
+		).independence,
+		"degraded",
+	);
 });
 
 test("provider-aware subagent mutation injects model but preserves caller-supplied fallback fields", () => {

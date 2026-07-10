@@ -51,6 +51,7 @@ These commands are registered by the TLH extension bundled with this profile.
 | `/experimental` | Open the TLH experimental-feature picker in TUI, or list/change TLH experimental features via typed subcommands (`delta-follow-up-reviews`, `ci-failure-investigation`, and `ticket-workflow-ui` are currently registered) |
 | `/review` | Open an interactive code-review mode picker (requires the architect primary agent) |
 | `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
+| `/subagent-settings` | Show or edit persisted TLH bundled minor-agent model and effort overrides |
 | `/tlh-changelog` | Show TLH release notes from the packaged `CHANGELOG.md` |
 | `/tokens` | Generate and open a single no-flags local HTML token-spend report for the current session |
 | `/toggle-context-cap` | Toggle the 200k effective context-window cap for auto-compaction |
@@ -65,6 +66,31 @@ Both `/thinking` and `/effort` are subject to the active primary-agent thinking 
 ### `/experimental`
 
 `/experimental` currently registers `delta-follow-up-reviews`, `ci-failure-investigation`, and `ticket-workflow-ui`. In the interactive TLH TUI, running `/experimental` with no arguments opens a picker that shows current feature state and lets you toggle flags; outside the TUI it falls back to the status list. Typed subcommands remain available: `/experimental list`, `/experimental status [feature]`, `/experimental enable <feature>`, `/experimental disable <feature>`, and `/experimental toggle <feature>`. `contrarian` is a bundled default minor subagent for sparing pre-ticket planning stress-tests when a proposed change genuinely warrants an adversarial brief; it is not part of the `/experimental` toggle surface, not the routine `code-reviewer` diff pass, and not the broader `oracle` second-opinion path. `delta-follow-up-reviews` is an opt-in flag that adds architect and `code-reviewer` guidance for delta-scoped follow-up reviews after fixes. `ci-failure-investigation` is an opt-in flag that lets the architect primary agent do read-only failed CI/status-check investigation after TLH opens a PR, then summarize and ask whether to proceed before any edits, commits, pushes, reruns, PR changes, or other follow-up changes. `ticket-workflow-ui` is an experimental, default-off, read-only ticket workflow surface backed by the `tk` CLI. Enable it with `/experimental enable ticket-workflow-ui` when you want the UI, and undo it with `/experimental disable ticket-workflow-ui`. All three flags are disabled by default. Stale `run-tests-last` values in `tlh.experimental.enabledFeatures` do not re-enable retired behavior.
+
+### `/subagent-settings`
+
+`/subagent-settings` manages persisted model and effort overrides for TLH's bundled minor-agent roles: `code-reviewer`, `contrarian`, `developer`, `diff-summarizer`, `librarian`, `oracle`, `repo-scout`, and `web-scout`.
+
+- Run `/subagent-settings` with no arguments in the interactive TLH TUI to open a picker for per-role status, set, and reset actions.
+- Run `/subagent-settings status` to see all bundled roles, or `/subagent-settings status <role>` for one role.
+- Run `/subagent-settings set <role> model <provider/id>`, `/subagent-settings set <role> effort <off|minimal|low|medium|high|xhigh>`, or combine them in either order, for example `/subagent-settings set developer model openai-codex/gpt-5.4 effort high`.
+- Run `/subagent-settings reset <role> model`, `/subagent-settings reset <role> effort`, or `/subagent-settings reset <role>` to remove saved values for one role.
+- Run `/subagent-settings reset-all` to clear only the saved `model`/`thinking` fields for bundled TLH minor agents. Unrelated per-role keys and non-TLH entries under `subagents.agentOverrides` are preserved.
+
+Overrides are stored in the active isolated TLH profile under `subagents.agentOverrides` in `settings.json` (normally `~/.the-last-harness/agent/settings.json`, or the profile pointed to by `PI_CODING_AGENT_DIR`). TLH writes only the selected role's `model` and `thinking` fields, keeps unrelated settings intact, and creates a `settings.json.bak-*` backup before each write. To undo a persistent change, use the matching reset command or restore the backup path shown in the notification.
+
+Precedence from highest to lowest is:
+
+1. an explicit model and `:effort` suffix on a direct subagent dispatch,
+2. the direct dispatch's explicit model combined with a saved effort when that model has no suffix,
+3. saved `/subagent-settings` model and effort overrides, and
+4. bundled provider-aware role defaults.
+
+Provider-aware defaults still matter when you have not pinned a model. `code-reviewer`, `oracle`, and `contrarian` prefer an available opposite provider for independence; other bundled minor agents follow the current session provider when TLH injects defaults.
+
+Fixed model overrides for `code-reviewer`, `oracle`, and `contrarian` require confirmation because they can reduce provider independence. TLH shows that warning in status output too. In non-UI/headless command contexts, those independence-sensitive fixed-model writes are refused because the confirmation prompt cannot be shown.
+
+Only `off`, `minimal`, `low`, `medium`, `high`, and `xhigh` are supported edit values in v1. If a previously saved effort is still present in `settings.json` but the current effective model no longer supports it, TLH warns and falls back to the bundled default effort for that dispatch until you reset or replace the stored value.
 
 ### `/tokens`
 

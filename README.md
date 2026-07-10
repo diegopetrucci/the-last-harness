@@ -91,6 +91,30 @@ Use `Shift+Tab` to cycle the current session through `architect` → `rush` → 
 
 TLH applies bundled model/thinking defaults per primary agent. For active non-locked primaries, user `/model` choices are respected and persisted per primary under `tlh.primaryAgent.modelOverrides.<primary>`; reset the current primary's override with `/switch-primary-agent model reset`. Locked primaries such as Rush keep their fixed defaults. For review independence, `code-reviewer` and `oracle` prefer the opposite available provider: Anthropic primaries try OpenAI Codex for review, and OpenAI/OpenAI-Codex primaries try Anthropic. TLH adds a dynamic same/current-provider fallback only when it injects that opposite-provider review model; a displayed fallback notice means the run completed with reduced review independence. `contrarian` uses that same independence pattern for sparing adversarial stress-tests rather than as a routine review step. All other bundled subagents — `developer`, `web-scout`, `repo-scout`, `librarian`, and `diff-summarizer` — follow the active primary session provider when TLH injects model defaults.
 
+#### Minor-agent model and effort overrides
+
+Use `/subagent-settings` when you want a persistent override for a bundled TLH minor-agent role. The command manages `code-reviewer`, `contrarian`, `developer`, `diff-summarizer`, `librarian`, `oracle`, `repo-scout`, and `web-scout`.
+
+- `/subagent-settings` opens an interactive picker in the TLH TUI.
+- `/subagent-settings status` shows all bundled roles, and `/subagent-settings status <role>` shows one.
+- `/subagent-settings set <role> model <provider/id>` pins a role to one available model.
+- `/subagent-settings set <role> effort <off|minimal|low|medium|high|xhigh>` saves a supported effort override for that role.
+- `/subagent-settings set <role> ...` accepts `model` and `effort` in either order.
+- `/subagent-settings reset <role> [model|effort]` removes one or both saved fields for that role.
+- `/subagent-settings reset-all` clears only bundled-role `model`/`thinking` overrides and leaves unrelated `subagents.agentOverrides` entries alone.
+
+These overrides are stored in the isolated TLH profile under `subagents.agentOverrides` in `settings.json` (normally `~/.the-last-harness/agent/settings.json`). TLH keeps unrelated settings intact, writes only the selected role's `model` and `thinking` fields, and creates a `settings.json.bak-*` backup before each write.
+
+Precedence is deliberate: bundled provider-aware defaults are the baseline; a saved role model override replaces TLH's injected model choice for that role; a saved role effort override replaces TLH's injected effort when the resolved model supports it. If a direct subagent dispatch already includes an explicit model, TLH keeps that model; a saved effort is only appended when that explicit model does not already include a `:effort` suffix.
+
+Provider independence is not guaranteed once you pin a fixed model for `code-reviewer`, `oracle`, or `contrarian`. TLH asks for confirmation before saving those fixed-model overrides in UI-enabled sessions, repeats the warning in status output, and refuses that write in headless/non-UI command contexts because there is no confirmation prompt.
+
+Only `off`, `minimal`, `low`, `medium`, `high`, and `xhigh` are supported edit values. If a previously stored effort becomes unsupported for the role's current effective model, TLH warns and falls back to the bundled default effort for that dispatch until you reset or replace the stored value.
+
+To undo a persistent change, run the matching `/subagent-settings reset ...` form, use `/subagent-settings reset-all` to clear bundled minor-agent model/effort overrides in bulk, or restore the `settings.json.bak-*` backup path that TLH shows after each write.
+
+See [`docs/commands.md`](docs/commands.md) for the full command grammar and examples.
+
 #### Hidden model defaults in the TLH profile
 
 TLH also ships with a bundled hidden-model filter for selected legacy Anthropic models. Those bundled defaults are built into TLH itself (currently in `extensions/the-last-harness/model-visibility.ts`); they are not written into `settings.json` as default JSON. Any `tlh.modelVisibility` entries you add under the TLH isolated profile at `~/.the-last-harness/agent/settings.json` are user overrides/additional customization only. TLH does not modify your normal `~/.pi/agent/settings.json` for this, and it does not delete auth or model definitions.
