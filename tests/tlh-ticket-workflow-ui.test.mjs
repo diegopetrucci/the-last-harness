@@ -11,6 +11,9 @@ const jiti = createJiti(import.meta.url);
 const { registerTlhTicketWorkflowUi } = await jiti.import("../extensions/the-last-harness/ticket-workflow-ui.ts");
 const { TICKET_WORKFLOW_UI_FEATURE } = await jiti.import("../extensions/the-last-harness/experimental.ts");
 
+const READY_TICKET_TITLE = "Implement read-only - ticket workflow status UI";
+const READY_TICKET_FOOTER_STATUS = `working on tk: ${READY_TICKET_TITLE}\nUse /tk-status for details.`;
+
 function createPiHarness() {
 	const commands = new Map();
 	const handlers = new Map();
@@ -115,7 +118,7 @@ EOF
   ready)
     case "$state" in
       default)
-        echo "tlhf-7rd2 [P2][open] - Implement read-only ticket workflow status UI"
+        echo "tlhf-7rd2 [P2][open] - ${READY_TICKET_TITLE}"
         ;;
       updated|empty)
         ;;
@@ -160,7 +163,7 @@ test("ticket workflow UI stays completely disabled by default", async (t) => {
 	});
 });
 
-test("enabled ticket workflow UI renders read-only status, ignores unrelated bash results, refreshes after tk bash and user_bash results, and exposes /tk-status", async (t) => {
+test("enabled ticket workflow UI publishes footer status, ignores unrelated bash results, refreshes after tk bash and user_bash results, and exposes /tk-status", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
 	const statePath = join(fixture.dir, "tk-state");
 	writeFileSync(statePath, "default\n");
@@ -179,25 +182,32 @@ test("enabled ticket workflow UI renders read-only status, ignores unrelated bas
 		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
 
 		assert.equal(pi.commands.has("tk-status"), true);
-		assert.match(uiHarness.statusUpdates.at(-1)?.text ?? "", /tk: 1 ready • 1 blocked • 2 active/);
-		assert.deepEqual(uiHarness.widgetUpdates.at(-1)?.content, [
-			"tk: 1 ready • 1 blocked • 2 active",
-			"Use /tk-status for details.",
-		]);
+		assert.equal(
+			uiHarness.statusUpdates.at(-1)?.text,
+			READY_TICKET_FOOTER_STATUS,
+		);
+		assert.equal(uiHarness.widgetUpdates.at(-1)?.content, undefined);
 
 		writeFileSync(statePath, "updated\n");
 		await fireAll(pi, "tool_result", { toolName: "bash", input: { command: "git status" } }, ctx);
-		assert.match(uiHarness.statusUpdates.at(-1)?.text ?? "", /tk: 1 ready • 1 blocked • 2 active/);
+		assert.equal(
+			uiHarness.statusUpdates.at(-1)?.text,
+			READY_TICKET_FOOTER_STATUS,
+		);
 
 		await fireAll(pi, "tool_result", { toolName: "bash", input: { command: "tk close tlhf-7rd2" } }, ctx);
-		assert.match(uiHarness.statusUpdates.at(-1)?.text ?? "", /tk: 0 ready • 1 blocked • 1 active/);
+		assert.equal(uiHarness.statusUpdates.at(-1)?.text, undefined);
+		assert.equal(uiHarness.widgetUpdates.at(-1)?.content, undefined);
 
 		writeFileSync(statePath, "default\n");
 		const [userBashHandler] = pi.handlers.get("user_bash") ?? [];
 		const userBashResult = userBashHandler({ command: "tk ready", cwd: fixture.cwd }, ctx);
 		assert.equal(userBashResult, undefined);
 		await delay(300);
-		assert.match(uiHarness.statusUpdates.at(-1)?.text ?? "", /tk: 1 ready • 1 blocked • 2 active/);
+		assert.equal(
+			uiHarness.statusUpdates.at(-1)?.text,
+			READY_TICKET_FOOTER_STATUS,
+		);
 
 		writeFileSync(statePath, "updated\n");
 		await pi.commands.get("tk-status").handler("", ctx);
@@ -234,7 +244,11 @@ test("ticket workflow UI reacts to current-session experimental enable and disab
 		});
 
 		assert.equal(pi.commands.has("tk-status"), true);
-		assert.match(uiHarness.statusUpdates.at(-1)?.text ?? "", /tk: 1 ready • 1 blocked • 2 active/);
+		assert.equal(
+			uiHarness.statusUpdates.at(-1)?.text,
+			READY_TICKET_FOOTER_STATUS,
+		);
+		assert.equal(uiHarness.widgetUpdates.at(-1)?.content, undefined);
 
 		writeFileSync(settingsPath, `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [] } } }, null, 2)}\n`);
 		pi.events.emit("tlh:experimental-feature-changed", {
@@ -264,7 +278,8 @@ test("enabled /tk-status reports unavailable tk and no tickets clearly", async (
 		const ctx = createCtx(unavailableFixture.cwd, uiHarness.ui);
 
 		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
-		assert.match(uiHarness.statusUpdates.at(-1)?.text ?? "", /tk: unavailable/);
+		assert.equal(uiHarness.statusUpdates.at(-1)?.text, undefined);
+		assert.equal(uiHarness.widgetUpdates.at(-1)?.content, undefined);
 
 		await pi.commands.get("tk-status").handler("", ctx);
 		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /Ticket workflow status unavailable: tk is unavailable/i);
@@ -286,7 +301,8 @@ test("enabled /tk-status reports unavailable tk and no tickets clearly", async (
 		const ctx = createCtx(noTicketsFixture.cwd, uiHarness.ui);
 
 		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
-		assert.match(uiHarness.statusUpdates.at(-1)?.text ?? "", /tk: no tickets/);
+		assert.equal(uiHarness.statusUpdates.at(-1)?.text, undefined);
+		assert.equal(uiHarness.widgetUpdates.at(-1)?.content, undefined);
 
 		await pi.commands.get("tk-status").handler("", ctx);
 		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /tk: no tickets in this repo/i);
