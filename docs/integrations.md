@@ -61,3 +61,9 @@ To disable it persistently for the isolated profile, set `tlh.rtk.disabled` in `
 To re-enable rewriting, unset `RTK_DISABLED`, remove `tlh.rtk.disabled`, or set it back to `false`.
 
 Removing `~/.the-last-harness` removes the managed RTK copy along with the rest of the isolated profile. To remove only the managed binary while keeping the rest of TLH, delete `~/.the-last-harness/agent/bin/rtk`; the next install or `tlh update` recreates it. The old `tlh.disabledDefaultExtensions` RTK markers and `tlh defaults disable rtk` flow no longer control RTK after this migration.
+
+## Terminal activity bridge
+
+If you already use a supported terminal integration such as Herdr or cmux, TLH reports an effective in-progress state that includes both the primary session and active async/background subagents. That means the integration may keep showing TLH as working even after the main prompt is ready for input, until those background jobs finish or clear.
+
+This bridge is session-scoped only. TLH does not install, enable, or reconfigure Herdr, cmux, or any other external integration for you, and it does not write persistent external config as part of this bridge. If your terminal setup does not already support this status handoff, nothing new is installed.

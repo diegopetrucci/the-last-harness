@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Supported terminal integrations such as Herdr and cmux can now show TLH as working while primary activity or async/background subagents are still active, without requiring TLH to install those integrations.
+
 ## [0.28.0] - 2026-07-09
 
 ### Removed
