@@ -321,6 +321,34 @@ function cmuxStatusValue(_snapshot: TlhEffectiveActivitySnapshot): string {
 	return "working";
 }
 
+function sanitizeCmuxStatusKeySegment(value: string): string | undefined {
+	const sanitized = value
+		.trim()
+		.replace(/[^A-Za-z0-9._-]+/g, "-")
+		.replace(/^-+|-+$/g, "");
+	return sanitized.length > 0 ? sanitized : undefined;
+}
+
+function getCmuxStatusKey(
+	env: NodeJS.ProcessEnv,
+	ctx: Pick<ExtensionContext, "sessionManager">,
+): string {
+	const surfaceSegment = typeof env.CMUX_SURFACE_ID === "string" ? sanitizeCmuxStatusKeySegment(env.CMUX_SURFACE_ID) : undefined;
+	if (surfaceSegment) {
+		return `${CMUX_STATUS_KEY}-${surfaceSegment}`;
+	}
+	try {
+		const sessionId = ctx.sessionManager.getSessionId();
+		const sessionSegment = typeof sessionId === "string" ? sanitizeCmuxStatusKeySegment(sessionId) : undefined;
+		if (sessionSegment) {
+			return `${CMUX_STATUS_KEY}-${sessionSegment}`;
+		}
+	} catch {
+		// Ignore session id lookup failures and fall back to the global key.
+	}
+	return CMUX_STATUS_KEY;
+}
+
 export function createCmuxActivityReporter(options: CmuxActivityReporterOptions = {}): TlhActivityReporter {
 	const env = options.env ?? process.env;
 	if (!env.CMUX_WORKSPACE_ID) {
@@ -330,19 +358,22 @@ export function createCmuxActivityReporter(options: CmuxActivityReporterOptions 
 	const runner = options.runner ?? defaultCommandRunner;
 	let rootSession = false;
 	let lastValue: string | undefined;
+	let statusKey = CMUX_STATUS_KEY;
 	const sendState = async (state: "working" | "idle"): Promise<void> => {
 		if (state === "idle") {
 			lastValue = undefined;
-			await runner(cmuxBin, ["clear-status", CMUX_STATUS_KEY]);
+			await runner(cmuxBin, ["clear-status", statusKey]);
 			return;
 		}
 		const value = lastValue ?? "working";
-		await runner(cmuxBin, ["set-status", CMUX_STATUS_KEY, value]);
+		await runner(cmuxBin, ["set-status", statusKey, value]);
 	};
 	const queuedReporter = createQueuedStateReporter(sendState, options);
 	return {
 		handleSessionStart(ctx) {
 			rootSession = ctx.hasUI;
+			if (!rootSession) return;
+			statusKey = getCmuxStatusKey(env, ctx);
 		},
 		handleSnapshot(snapshot) {
 			if (!rootSession) return;
@@ -352,7 +383,7 @@ export function createCmuxActivityReporter(options: CmuxActivityReporterOptions 
 		handleSessionShutdown() {
 			if (!rootSession) return;
 			queuedReporter.handleSessionShutdown();
-			void runner(cmuxBin, ["clear-status", CMUX_STATUS_KEY]).catch(() => undefined);
+			void runner(cmuxBin, ["clear-status", statusKey]).catch(() => undefined);
 		},
 		dispose() {
 			queuedReporter.dispose();

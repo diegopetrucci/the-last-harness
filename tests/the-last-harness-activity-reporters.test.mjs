@@ -121,11 +121,11 @@ test("Herdr reporter sends monotonic working/idle state with session refs", asyn
 	assert.equal(calls.at(-1).method, "pane.release_agent");
 });
 
-test("cmux reporter uses status commands without synthetic lifecycle hooks", async () => {
+test("cmux reporter uses per-surface status keys and status-only commands", async () => {
 	const timers = createFakeTimers();
 	const commands = [];
 	const reporter = createCmuxActivityReporter({
-		env: { CMUX_WORKSPACE_ID: "workspace:1", CMUX_BIN: "cmux" },
+		env: { CMUX_WORKSPACE_ID: "workspace:1", CMUX_SURFACE_ID: "pane 1:/left", CMUX_BIN: "cmux" },
 		runner: async (command, args) => {
 			commands.push({ command, args: [...args] });
 		},
@@ -133,21 +133,59 @@ test("cmux reporter uses status commands without synthetic lifecycle hooks", asy
 		idleDebounceMs: 25,
 	});
 
-	reporter.handleSessionStart({ hasUI: true, sessionManager: { getSessionFile: () => undefined, getSessionId: () => "s" } });
+	reporter.handleSessionStart({ hasUI: true, sessionManager: { getSessionFile: () => undefined, getSessionId: () => "session-1" } });
 	reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: ["job-1"] });
 	reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: ["job-1"] });
 	await flushAsyncWork();
-	assert.deepEqual(commands, [{ command: "cmux", args: ["set-status", "tlh", "working"] }]);
+	assert.deepEqual(commands, [{ command: "cmux", args: ["set-status", "tlh-pane-1-left", "working"] }]);
 
 	reporter.handleSnapshot({ inProgress: false, primaryReasons: [], activeAsyncJobIds: [] });
 	timers.advance(25);
 	await flushAsyncWork();
-	assert.deepEqual(commands.at(-1), { command: "cmux", args: ["clear-status", "tlh"] });
+	assert.deepEqual(commands.at(-1), { command: "cmux", args: ["clear-status", "tlh-pane-1-left"] });
 	assert.equal(commands.some(({ args }) => args.includes("hooks") || args.includes("prompt-submit") || args.includes("stop")), false);
 
 	reporter.handleSessionShutdown();
 	await flushAsyncWork();
-	assert.deepEqual(commands.at(-1), { command: "cmux", args: ["clear-status", "tlh"] });
+	assert.deepEqual(commands.at(-1), { command: "cmux", args: ["clear-status", "tlh-pane-1-left"] });
+});
+
+
+test("cmux reporter falls back to session id then global key", async () => {
+	const sessionCommands = [];
+	const sessionReporter = createCmuxActivityReporter({
+		env: { CMUX_WORKSPACE_ID: "workspace:1", CMUX_BIN: "cmux" },
+		runner: async (command, args) => {
+			sessionCommands.push({ command, args: [...args] });
+		},
+	});
+	sessionReporter.handleSessionStart({
+		hasUI: true,
+		sessionManager: { getSessionFile: () => undefined, getSessionId: () => "session:/two pane" },
+	});
+	sessionReporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: ["job-1"] });
+	await flushAsyncWork();
+	assert.deepEqual(sessionCommands, [{ command: "cmux", args: ["set-status", "tlh-session-two-pane", "working"] }]);
+
+	const fallbackCommands = [];
+	const fallbackReporter = createCmuxActivityReporter({
+		env: { CMUX_WORKSPACE_ID: "workspace:1", CMUX_SURFACE_ID: "///", CMUX_BIN: "cmux" },
+		runner: async (command, args) => {
+			fallbackCommands.push({ command, args: [...args] });
+		},
+	});
+	fallbackReporter.handleSessionStart({
+		hasUI: true,
+		sessionManager: {
+			getSessionFile: () => undefined,
+			getSessionId: () => {
+				throw new Error("missing session");
+			},
+		},
+	});
+	fallbackReporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: ["job-2"] });
+	await flushAsyncWork();
+	assert.deepEqual(fallbackCommands, [{ command: "cmux", args: ["set-status", "tlh", "working"] }]);
 });
 
 test("cmux reporter no-ops without workspace env", async () => {
