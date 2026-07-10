@@ -20,6 +20,7 @@ const annotateGitDiffHtmlSource = readFileSync(new URL("../extensions/annotate-g
 const attributionSource = readFileSync(new URL("../extensions/the-last-harness/attribution.ts", import.meta.url), "utf8");
 const changelogSource = readFileSync(new URL("../extensions/the-last-harness/changelog.ts", import.meta.url), "utf8");
 const experimentalSource = readFileSync(new URL("../extensions/the-last-harness/experimental.ts", import.meta.url), "utf8");
+const ticketWorkflowUiFacadeSource = readFileSync(new URL("../extensions/the-last-harness/ticket-workflow-ui-facade.ts", import.meta.url), "utf8");
 const footerFirstLineSource = readFileSync(new URL("../extensions/the-last-harness/footer-first-line.ts", import.meta.url), "utf8");
 const footerGitCacheSource = readFileSync(new URL("../extensions/the-last-harness/footer-git-cache.ts", import.meta.url), "utf8");
 const subscriptionUsageFacadeSource = readFileSync(new URL("../extensions/the-last-harness/subscription-usage-facade.ts", import.meta.url), "utf8");
@@ -640,6 +641,11 @@ test("extension keeps TLH experimental command wiring with registered ticket, ci
 
 	assert.match(extensionSource, /registerExperimentalCommand\(pi\)/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/experimental\.js"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/ticket-workflow-ui-facade\.js"/);
+	assert.match(extensionSource, /registerLazyTlhTicketWorkflowUi\(pi\)/);
+	assert.doesNotMatch(extensionSource, /from "\.\/the-last-harness\/ticket-workflow-ui\.js"/);
+	assert.match(ticketWorkflowUiFacadeSource, /import\("\.\/ticket-workflow-ui\.js"\)/);
+	assert.match(ticketWorkflowUiFacadeSource, /createRetryableLazyImport/);
 	assert.match(experimentalSource, /pi\.registerCommand\("experimental"/);
 	assert.match(experimentalSource, /delta-follow-up-reviews/);
 	assert.match(experimentalSource, /ci-failure-investigation/);
