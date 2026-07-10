@@ -18,7 +18,6 @@ This repository packages **The Last Harness** as an isolated profile for the ups
 - Contributor docs: `README.md` covers install/update/uninstall and security, `CONTRIBUTING.md` explains contribution workflow, `VALIDATING.md` and `npm run validate` define the standard validation pass, `CHANGELOG.md` tracks releases, and `VISION.md` captures product direction.
 - Extended docs: `docs/` contains install, integration, MCP, telemetry, local-development, release, workflow-eval, and web-search reference material.
 - Package/tooling manifests: `package.json`, `package-lock.json`, `eslint.config.mjs`, `tsconfig.json`, and `tsconfig.runtime-scripts.json` define the Node package, linting, and TypeScript settings used by contributors and validation.
-- Additional contributor guidance: `AGENTS.md` documents repo-specific agent instructions, and `CLAUDE.md` carries Claude-focused contributor guidance.
 
 ## Safety Requirements
 
