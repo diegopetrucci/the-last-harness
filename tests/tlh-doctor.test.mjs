@@ -408,7 +408,7 @@ test("tlh doctor reports repairable settings drift without mutating settings or 
 	const settingsPath = join(fixture.agentDir, "settings.json");
 	const driftedSettings = {
 		subagents: {
-			disableBuiltins: true,
+			disableBuiltins: false,
 			agentOverrides: {
 				developer: { model: "kept" },
 			},
@@ -470,20 +470,41 @@ test("tlh doctor drift summary does not disclose credential-like package sources
 	assert.equal(backupsAfterDoctor, backupsBeforeDoctor, "plain doctor must not create settings backups");
 });
 
+test("tlh doctor reports stale bundled subagent prompts as repairable drift", (t) => {
+	const fixture = configureHealthyFixture(t);
+	const stalePromptPath = join(fixture.agentDir, "tlh", "agents", "subagents", "contrarian.md");
+	writeFileSync(stalePromptPath, "stale contrarian prompt\n", "utf8");
+
+	const result = runDoctor(["--agent-dir", fixture.agentDir, "--package-root", repoRoot], {
+		env: {
+			HOME: fixture.home,
+			PATH: `${fixture.fakebin}:${process.env.PATH}`,
+			EXA_API_KEY: "hidden",
+		},
+	});
+	const output = `${result.stdout}\n${result.stderr}`;
+
+	assert.equal(result.status, 1, output);
+	assert.match(output, /FAIL\s+bundled subagent resources: restoration needed for 1 prompt\(s\): contrarian\.md/);
+	assert.equal(readFileSync(stalePromptPath, "utf8"), "stale contrarian prompt\n");
+});
+
+
 test("tlh doctor --repair restores isolated settings drift, preserves user values, and creates a backup", (t) => {
 	const fixture = configureHealthyFixture(t);
 	const packageRoot = createFakeDoctorPackageRoot(fixture.root);
 	const settingsPath = join(fixture.agentDir, "settings.json");
 	writeFileSync(settingsPath, JSON.stringify({
 		subagents: {
-			disableBuiltins: true,
+			disableBuiltins: false,
 			agentOverrides: {
 				developer: { model: "kept" },
 			},
 		},
 		packages: ["git:github.com/example/unmanaged-extension"],
 	}, null, 2));
-	rmSync(join(fixture.agentDir, "tlh", "agents", "subagents"), { recursive: true, force: true });
+	const stalePromptPath = join(fixture.agentDir, "tlh", "agents", "subagents", "contrarian.md");
+	writeFileSync(stalePromptPath, "stale contrarian prompt\n", "utf8");
 	const backupsBeforeRepair = readdirSync(fixture.agentDir).filter((entry) => /^settings\.json\.backup-/.test(entry)).length;
 
 	const result = runDoctor(["--repair", "--agent-dir", fixture.agentDir, "--package-root", packageRoot], {
@@ -498,21 +519,52 @@ test("tlh doctor --repair restores isolated settings drift, preserves user value
 	const backupsAfterRepair = readdirSync(fixture.agentDir).filter((entry) => /^settings\.json\.backup-/.test(entry)).length;
 
 	assert.equal(result.status, 0, output);
+	assert.equal(repairedSettings.subagents.disableBuiltins, true);
 	assert.deepEqual(repairedSettings.subagents.agentDirs, ["tlh/agents/subagents"]);
 	assert.deepEqual(repairedSettings.subagents.agentOverrides, { developer: { model: "kept" } });
 	assert.ok(repairedSettings.packages.includes("git:github.com/example/unmanaged-extension"));
 	assert.equal(backupsAfterRepair, backupsBeforeRepair + 1, "repair should create one additional settings backup");
 	assert.equal(existsSync(join(fixture.agentDir, "tlh", "agents", "subagents", "developer.md")), true);
+	assert.equal(readFileSync(stalePromptPath, "utf8"), readFileSync(join(packageRoot, "agents", "subagents", "contrarian.md"), "utf8"));
 	assert.match(readFileSync(join(fixture.root, "gnosis-helper.log"), "utf8"), /configure-install/);
 	assert.match(readFileSync(join(fixture.root, "tickets-helper.log"), "utf8"), /configure-install/);
 	assert.match(readFileSync(join(fixture.root, "rtk-helper.log"), "utf8"), /install-managed/);
 	assert.match(output, /Repair actions:/);
 	assert.match(output, /OK\s+settings drift:/);
-	assert.match(output, /OK\s+bundled subagent resources: restored/);
+	assert.match(output, /OK\s+bundled subagent resources: restored 1 prompt\(s\) from packaged defaults/);
 	assert.match(output, /WARN\s+private runtime: runtime replacement stays manual; run `tlh update` if runtime drift remains/);
 	assert.match(output, /OK\s+profile isolation\/settings:/);
 	assert.match(output, /OK\s+settings drift:/);
 	assert.match(output, /OK\s+bundled subagent resources:/);
+	assert.match(output, /Summary: .*0 FAIL/);
+});
+
+test("tlh doctor --repair repairs malformed subagents containers without --force", (t) => {
+	const fixture = configureHealthyFixture(t);
+	const packageRoot = createFakeDoctorPackageRoot(fixture.root);
+	const settingsPath = join(fixture.agentDir, "settings.json");
+	writeFileSync(settingsPath, JSON.stringify({
+		subagents: "broken",
+		packages: ["git:github.com/example/unmanaged-extension"],
+	}, null, 2));
+
+	const result = runDoctor(["--repair", "--agent-dir", fixture.agentDir, "--package-root", packageRoot], {
+		env: {
+			HOME: fixture.home,
+			PATH: `${fixture.fakebin}:${process.env.PATH}`,
+			EXA_API_KEY: "hidden",
+		},
+	});
+	const output = `${result.stdout}\n${result.stderr}`;
+	const repairedSettings = JSON.parse(readFileSync(settingsPath, "utf8"));
+
+	assert.equal(result.status, 0, output);
+	assert.deepEqual(repairedSettings.subagents, {
+		disableBuiltins: true,
+		agentDirs: ["tlh/agents/subagents"],
+	});
+	assert.ok(repairedSettings.packages.includes("git:github.com/example/unmanaged-extension"));
+	assert.match(output, /OK\s+settings drift:/);
 	assert.match(output, /Summary: .*0 FAIL/);
 });
 
