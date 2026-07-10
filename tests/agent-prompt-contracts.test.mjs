@@ -120,6 +120,7 @@ const contracts = [
 			bodyPattern("reviewer is read-only", /you are read-only/i),
 			orderedTerms("review inspects vcs diff inputs", ["git diff --no-color", "git diff --cached --no-color", "git status --short --untracked-files=all"]),
 			orderedTerms("ticket ids guide review", ["tk show <id>", "source of truth"]),
+			orderedTerms("reviewer falls back to supplied brief when ticket storage is unavailable", ["ticket storage", "cleaned up", "missing", "fall back", "self-contained brief", "diff"]),
 			bodyPattern("review output stays findings-only", /return only findings that matter/i),
 		],
 	},
@@ -217,6 +218,16 @@ test("base architect prompt keeps delta follow-up review guidance behind the exp
 	assert.doesNotMatch(normalizedBody, /default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint/i);
 	assert.doesNotMatch(normalizedBody, /prior findings.*git range or checkpoint.*changed-file list/i);
 	assert.match(normalizedBody, /delegate final review to `code-reviewer` against the full vcs diff/i);
+});
+
+
+test("base architect prompt requires final review before ticket cleanup and a self-contained no-tk fallback after cleanup", () => {
+	const architect = readAgentPrompt("primary", "architect");
+	const { normalizedBody } = architect;
+	assert.match(normalizedBody, /only start ticket cleanup after final review is complete and any review-driven fixes are finished/i);
+	assert.match(normalizedBody, /during cleanup after final review and before the final handoff, delete any `tk` tickets created for the current workflow or session once they are closed/i);
+	assert.match(normalizedBody, /if the review handoff happens after ticket cleanup or without inspectable `tk` storage, provide a self-contained source of truth in the handoff/i);
+	assert.match(normalizedBody, /explicitly instruct `code-reviewer` not to run `tk` because ticket storage is unavailable/i);
 });
 
 test("base primary prompts include concise contrarian guidance where relevant", () => {

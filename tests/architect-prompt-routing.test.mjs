@@ -105,3 +105,11 @@ test("architect.md keeps delta follow-up review guidance out of the base prompt"
 test("architect.md keeps ordinary final review on the full VCS diff", () => {
 	assert.match(architectMd, /Delegate final review to `code-reviewer` against the full VCS diff and completed tickets\./);
 });
+
+test("architect.md requires final review before ticket cleanup and a no-tk self-contained fallback after cleanup", () => {
+	assert.match(architectMd, /Only start ticket cleanup after final review is complete and any review-driven fixes are finished\./);
+	assert.match(architectMd, /During cleanup after final review and before the final handoff, delete any `tk` tickets created for the current workflow or session once they are closed\./);
+	assert.match(architectMd, /If the review handoff happens after ticket cleanup or without inspectable `tk` storage, provide a self-contained source of truth in the handoff: the task brief, scope, constraints, acceptance criteria, and any other context the reviewer needs, plus the full VCS diff\./);
+	assert.match(architectMd, /Explicitly instruct `code-reviewer` not to run `tk` because ticket storage is unavailable\./);
+	assert.match(architectMd, /If ticket storage for the reviewed work is already cleaned up or otherwise unavailable, include a self-contained source of truth in that handoff and explicitly instruct `code-reviewer` not to run `tk`\./);
+});
