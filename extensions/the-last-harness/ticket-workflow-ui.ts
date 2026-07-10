@@ -13,12 +13,13 @@ import { isRecord } from "./common.js";
 import { findValidTlhTicketCommand } from "./tickets.js";
 import type { TlhSettings } from "./types.js";
 
-const TK_WORKFLOW_STATUS_KEY = "tlh-ticket-workflow";
+export const TK_WORKFLOW_STATUS_KEY = "tlh-ticket-workflow";
 const TK_WORKFLOW_WIDGET_KEY = "tlh-ticket-workflow";
 const TK_STATUS_COMMAND = "tk-status";
 const TK_COMMAND_TIMEOUT_MS = 4000;
 const TK_USER_BASH_REFRESH_DELAY_MS = 250;
 const TK_STATUS_HELP = "Use /tk-status for details.";
+const TK_WORKING_ON_PREFIX = "working on tk: ";
 
 type TkWorkflowSnapshot =
 	| { kind: "disabled" }
@@ -155,17 +156,73 @@ function getTkWorkflowSnapshot(cwd: string): TkWorkflowSnapshot {
 	};
 }
 
-function formatTkWorkflowSummary(snapshot: TkWorkflowSnapshot): string | undefined {
-	if (snapshot.kind === "disabled") {
+function isTerminalControlCharCode(code: number): boolean {
+	return (code >= 0x00 && code <= 0x1f) || (code >= 0x7f && code <= 0x9f);
+}
+
+function stripTerminalControlSequences(text: string): string {
+	let sanitized = "";
+
+	for (let index = 0; index < text.length; index += 1) {
+		const code = text.charCodeAt(index);
+		if (code === 0x1b) {
+			const nextCode = text.charCodeAt(index + 1);
+			if (nextCode === 0x5d) {
+				index += 2;
+				while (index < text.length) {
+					const oscCode = text.charCodeAt(index);
+					if (oscCode === 0x07) {
+						break;
+					}
+					if (oscCode === 0x1b && text.charCodeAt(index + 1) === 0x5c) {
+						index += 1;
+						break;
+					}
+					index += 1;
+				}
+				continue;
+			}
+			if (nextCode === 0x5b) {
+				index += 2;
+				while (index < text.length) {
+					const csiCode = text.charCodeAt(index);
+					if (csiCode >= 0x40 && csiCode <= 0x7e) {
+						break;
+					}
+					index += 1;
+				}
+				continue;
+			}
+			if (nextCode >= 0x40 && nextCode <= 0x5f) {
+				index += 1;
+			}
+			continue;
+		}
+		if (!isTerminalControlCharCode(code)) {
+			sanitized += text[index];
+		}
+	}
+
+	return sanitized;
+}
+
+function extractNextReadyTicketTitle(snapshot: Extract<TkWorkflowSnapshot, { kind: "ok" }>): string | undefined {
+	const nextReady = snapshot.ready[0]?.trim();
+	if (!nextReady) {
 		return undefined;
 	}
-	if (snapshot.kind === "unavailable") {
-		return snapshot.hasRepoEvidence ? "tk: unavailable" : undefined;
-	}
-	if (snapshot.kind === "no-repo" || snapshot.kind === "no-tickets") {
+	const titleSeparatorIndex = nextReady.indexOf(" - ");
+	const title = titleSeparatorIndex >= 0 ? nextReady.slice(titleSeparatorIndex + 3).trim() : "";
+	return title || nextReady;
+}
+
+function formatTkWorkflowFooterStatus(snapshot: TkWorkflowSnapshot): string | undefined {
+	if (snapshot.kind !== "ok") {
 		return undefined;
 	}
-	return `tk: ${snapshot.ready.length} ready • ${snapshot.blocked.length} blocked • ${snapshot.active} active`;
+	const title = extractNextReadyTicketTitle(snapshot);
+	const safeTitle = title ? stripTerminalControlSequences(title).trim() : undefined;
+	return safeTitle ? `${TK_WORKING_ON_PREFIX}${safeTitle}\n${TK_STATUS_HELP}` : undefined;
 }
 
 function formatTkWorkflowDetails(snapshot: TkWorkflowSnapshot): string {
@@ -195,13 +252,8 @@ function formatTkWorkflowDetails(snapshot: TkWorkflowSnapshot): string {
 }
 
 function setTkWorkflowUi(ctx: ExtensionContext, snapshot: TkWorkflowSnapshot): void {
-	const summary = formatTkWorkflowSummary(snapshot);
-	ctx.ui.setStatus?.(TK_WORKFLOW_STATUS_KEY, summary);
-	if (!summary) {
-		ctx.ui.setWidget?.(TK_WORKFLOW_WIDGET_KEY, undefined);
-		return;
-	}
-	ctx.ui.setWidget?.(TK_WORKFLOW_WIDGET_KEY, [summary, TK_STATUS_HELP], { placement: "belowEditor" });
+	ctx.ui.setStatus?.(TK_WORKFLOW_STATUS_KEY, formatTkWorkflowFooterStatus(snapshot));
+	ctx.ui.setWidget?.(TK_WORKFLOW_WIDGET_KEY, undefined);
 }
 
 function shouldRefreshFromBashCommand(command: string): boolean {
