@@ -1,5 +1,7 @@
 import type { ThinkingLevel } from "./types.js";
 
+import { isRecord } from "./common.js";
+
 export type ProviderModelReference = {
 	provider: string;
 	id: string;
@@ -25,10 +27,6 @@ const OPENAI_PROVIDERS = new Set(["openai-codex", "openai"]);
 const ANTHROPIC_PROVIDERS = new Set(["anthropic"]);
 const OPPOSITE_PROVIDER_FALLBACK_NOTICE =
 	"TLH fell back to a same-provider review model; review independence is reduced.";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 
 export function parseProviderModelReference(model: string | undefined): ProviderModelReference | undefined {
 	const slash = model?.indexOf("/") ?? -1;
