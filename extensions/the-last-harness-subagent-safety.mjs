@@ -15,6 +15,12 @@ export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 const DEFAULT_ALLOWED_SUBAGENTS = ALLOWED_SUBAGENTS;
 const ALLOWED_SUBAGENTS_BY_ID = new Map(ALLOWED_SUBAGENTS.map((agent) => [agent.toLowerCase(), agent]));
 
+const EMBEDDED_SUBAGENT_TARGET_PATTERN = /^embedded\.[a-z0-9][a-z0-9-]*$/;
+
+export function isEmbeddedSubagentTarget(value) {
+	return typeof value === "string" && EMBEDDED_SUBAGENT_TARGET_PATTERN.test(value.trim());
+}
+
 const SAFE_SUBAGENT_ACTION_SET = new Set(SAFE_SUBAGENT_ACTIONS);
 
 function isRecord(value) {
@@ -220,14 +226,17 @@ export function validateSubagentToolInput(input, options = {}) {
 		return nestedContextReason;
 	}
 
+	const allowEmbeddedTargets = Boolean(options.allowEmbeddedTargets);
+	const embeddedSuffix = allowEmbeddedTargets ? ", or embedded.<slug>" : "";
+
 	const targets = collectSubagentTargets(input);
 	if (targets.length === 0) {
-		return `TLH primary-agent subagent execution must target one of: ${allowedSubagents.join(", ")}.`;
+		return `TLH primary-agent subagent execution must target one of: ${allowedSubagents.join(", ")}${embeddedSuffix}.`;
 	}
 
-	const disallowed = targets.filter((agent) => !allowedSubagentSet.has(agent));
+	const disallowed = targets.filter((agent) => !allowedSubagentSet.has(agent) && !(allowEmbeddedTargets && isEmbeddedSubagentTarget(agent)));
 	if (disallowed.length > 0) {
-		return `TLH primary agents may delegate only to: ${allowedSubagents.join(", ")}. Disallowed target(s): ${disallowed.join(", ")}.`;
+		return `TLH primary agents may delegate only to: ${allowedSubagents.join(", ")}${embeddedSuffix}. Disallowed target(s): ${disallowed.join(", ")}.`;
 	}
 
 	return undefined;
