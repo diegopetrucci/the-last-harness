@@ -58,6 +58,8 @@ Use `contrarian` sparingly, usually before ticket creation, when a proposed chan
 
 For review independence, `code-reviewer` and `oracle` intentionally prefer an available opposite provider. `contrarian` uses that same opposite-provider pattern for adversarial challenge passes. Anthropic sessions try to use the OpenAI Codex subscription provider for these subagents when it is available, while OpenAI/OpenAI-Codex sessions try Anthropic. When TLH injects one of those opposite-provider subagent models, it also supplies a same/current-provider fallback candidate for retryable model failures; if that fallback is used, the subagent output includes a notice that review independence is reduced. If you only have regular OpenAI API access and not the Codex subscription provider, TLH does not force `code-reviewer`, `oracle`, or `contrarian` onto unavailable Codex-only defaults. All other bundled subagents — including `developer`, `web-scout`, `repo-scout`, and `librarian` — follow the active primary session provider when TLH injects model defaults.
 
+Advanced users can also add trusted user-owned embedded subagents, gated behind the default-off `embedded-subagents` experimental flag; when the flag is on, only the architect primary may delegate to them, and only when you explicitly ask (prompt policy, not a runtime gate). See [docs/embedded-subagents.md](docs/embedded-subagents.md).
+
 ## Why this workflow is useful
 
 ### Benefits
