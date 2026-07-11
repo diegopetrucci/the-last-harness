@@ -29,6 +29,10 @@ type ReviewSettings = {
 
 const REVIEW_REQUIRED_PRIMARY: ReviewPrimaryAgentSelection = "architect";
 
+// Intentionally not imported from "./common.js" (see issue #296): review.ts is loaded
+// in tests via a native Node strip-types `import`, which — unlike the jiti.import()
+// loader used by other extension tests — does not remap "./common.js" to "./common.ts",
+// so that import would fail with ERR_MODULE_NOT_FOUND.
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
