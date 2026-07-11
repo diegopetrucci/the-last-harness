@@ -846,3 +846,495 @@ run_uninstall_marker_authoritative_smoke() {
   assert_absent "${wrapper_path}"
   assert_absent "${profile_root}"
 }
+
+run_uninstall_malformed_marker_json_smoke() {
+  log "Running uninstall.sh malformed-marker-JSON ownership-marker adversarial smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-malformed-marker"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  mkdir -p "${case_dir}"
+
+  # Each sub-case seeds a valid agent-dir (install-state piInstalledByTlh=true) and a
+  # TLH pi runtime layout, then writes an adversarial or symlinked marker file.
+  # The invariant is: unextractable OR field-VALUE invalid/mismatched marker → SKIP
+  # (Cases 1-9 below).  Grammar-only defects that leave all ownership field VALUES
+  # intact are a separate class: the sed-based parser extracts values leniently and
+  # PLANS REMOVAL when all fields are valid and the path+pi-layout checks pass
+  # (Case 10 below).  Do NOT read this function as "all malformed markers → skip".
+
+  # ── Case 1: truncated JSON (packageName and other fields absent) ─────────────
+  local truncated_agent="${case_dir}/truncated/agent"
+  local truncated_runtime="${case_dir}/truncated/runtime"
+  local truncated_bin="${case_dir}/bin-truncated"
+  write_tlh_install_state "${truncated_agent}" true
+  write_tlh_pi_runtime "${truncated_runtime}"
+  printf '{"schemaVersion":1,' >"${truncated_runtime}/.tlh-runtime-owned"
+
+  bash uninstall.sh --dry-run --agent-dir "${truncated_agent}" --bin-dir "${truncated_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_not_contains "${combined_file}" "would remove private runtime: rm -rf ${truncated_runtime}"
+
+  # ── Case 2: garbage (not JSON) ───────────────────────────────────────────────
+  local garbage_agent="${case_dir}/garbage/agent"
+  local garbage_runtime="${case_dir}/garbage/runtime"
+  local garbage_bin="${case_dir}/bin-garbage"
+  write_tlh_install_state "${garbage_agent}" true
+  write_tlh_pi_runtime "${garbage_runtime}"
+  printf '!!NOT_JSON_AT_ALL!!' >"${garbage_runtime}/.tlh-runtime-owned"
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${garbage_agent}" --bin-dir "${garbage_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_not_contains "${combined_file}" "would remove private runtime: rm -rf ${garbage_runtime}"
+
+  # ── Case 3: trailing comma inside origin value ("created," ≠ "created") ──────
+  local trailcomma_origin_agent="${case_dir}/trailing-comma-origin/agent"
+  local trailcomma_origin_runtime="${case_dir}/trailing-comma-origin/runtime"
+  local trailcomma_origin_bin="${case_dir}/bin-trailing-comma-origin"
+  local trailcomma_origin_real
+  write_tlh_install_state "${trailcomma_origin_agent}" true
+  write_tlh_pi_runtime "${trailcomma_origin_runtime}"
+  trailcomma_origin_real="$(cd "${trailcomma_origin_runtime}" >/dev/null 2>&1 && pwd -P)"
+  printf '{"schemaVersion":1,"packageName":"@earendil-works/pi-coding-agent","runtimeAbsPath":"%s","origin":"created,"}' \
+    "${trailcomma_origin_real}" >"${trailcomma_origin_runtime}/.tlh-runtime-owned"
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${trailcomma_origin_agent}" --bin-dir "${trailcomma_origin_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_not_contains "${combined_file}" "would remove private runtime: rm -rf ${trailcomma_origin_runtime}"
+
+  # ── Case 4: CRLF embedded in runtimeAbsPath value (\r taints path comparison) ─
+  # The \r inside the JSON string value causes sed to extract PATH\r ≠ actual PATH.
+  local crlf_agent="${case_dir}/crlf/agent"
+  local crlf_runtime="${case_dir}/crlf/runtime"
+  local crlf_bin="${case_dir}/bin-crlf"
+  local crlf_real
+  write_tlh_install_state "${crlf_agent}" true
+  write_tlh_pi_runtime "${crlf_runtime}"
+  crlf_real="$(cd "${crlf_runtime}" >/dev/null 2>&1 && pwd -P)"
+  printf '{"schemaVersion":1,"packageName":"@earendil-works/pi-coding-agent","runtimeAbsPath":"%s\r","origin":"created"}' \
+    "${crlf_real}" >"${crlf_runtime}/.tlh-runtime-owned"
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${crlf_agent}" --bin-dir "${crlf_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_not_contains "${combined_file}" "would remove private runtime: rm -rf ${crlf_runtime}"
+
+  # ── Case 5: escaped quote in packageName (sed [^"]* stops early; wrong value) ─
+  # The marker contains a literal backslash before the closing " of the packageName
+  # value.  sed [^"]* captures the backslash and stops at ", extracting
+  # @earendil-works/pi-coding-agent\ which ≠ the expected package name.
+  local escquote_agent="${case_dir}/escaped-quote/agent"
+  local escquote_runtime="${case_dir}/escaped-quote/runtime"
+  local escquote_bin="${case_dir}/bin-escaped-quote"
+  local escquote_real
+  write_tlh_install_state "${escquote_agent}" true
+  write_tlh_pi_runtime "${escquote_runtime}"
+  escquote_real="$(cd "${escquote_runtime}" >/dev/null 2>&1 && pwd -P)"
+  # In the heredoc body: \\ is a single backslash written to the file.
+  # File content: ..."packageName":"@earendil-works/pi-coding-agent\",...
+  # sed stops at the first " after the opening ", capturing the trailing \.
+  cat >"${escquote_runtime}/.tlh-runtime-owned" <<EOF_ESCQUOTE
+{"schemaVersion":1,"packageName":"@earendil-works/pi-coding-agent\\","runtimeAbsPath":"${escquote_real}","origin":"created"}
+EOF_ESCQUOTE
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${escquote_agent}" --bin-dir "${escquote_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_not_contains "${combined_file}" "would remove private runtime: rm -rf ${escquote_runtime}"
+
+  # ── Case 6: nested object as packageName value (no string → empty extraction) ─
+  # The sed pattern requires '"' immediately after ':'; a '{' causes no match,
+  # leaving _mpkg empty → fails packageName check.
+  local nested_agent="${case_dir}/nested-object/agent"
+  local nested_runtime="${case_dir}/nested-object/runtime"
+  local nested_bin="${case_dir}/bin-nested-object"
+  local nested_real
+  write_tlh_install_state "${nested_agent}" true
+  write_tlh_pi_runtime "${nested_runtime}"
+  nested_real="$(cd "${nested_runtime}" >/dev/null 2>&1 && pwd -P)"
+  printf '{"schemaVersion":1,"packageName":{"real":"@earendil-works/pi-coding-agent"},"runtimeAbsPath":"%s","origin":"created"}' \
+    "${nested_real}" >"${nested_runtime}/.tlh-runtime-owned"
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${nested_agent}" --bin-dir "${nested_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_not_contains "${combined_file}" "would remove private runtime: rm -rf ${nested_runtime}"
+
+  # ── Case 7: duplicate schemaVersion keys (last occurrence is wrong → SKIP) ───
+  # sed uses greedy .* and picks the LAST match on the line; putting the wrong
+  # schemaVersion last (=2) means _mver="2" ≠ "1" → fails schemaVersion check.
+  local dupkey_agent="${case_dir}/duplicate-key/agent"
+  local dupkey_runtime="${case_dir}/duplicate-key/runtime"
+  local dupkey_bin="${case_dir}/bin-duplicate-key"
+  local dupkey_real
+  write_tlh_install_state "${dupkey_agent}" true
+  write_tlh_pi_runtime "${dupkey_runtime}"
+  dupkey_real="$(cd "${dupkey_runtime}" >/dev/null 2>&1 && pwd -P)"
+  printf '{"schemaVersion":1,"packageName":"@earendil-works/pi-coding-agent","runtimeAbsPath":"%s","origin":"created","schemaVersion":2}' \
+    "${dupkey_real}" >"${dupkey_runtime}/.tlh-runtime-owned"
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${dupkey_agent}" --bin-dir "${dupkey_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_not_contains "${combined_file}" "would remove private runtime: rm -rf ${dupkey_runtime}"
+
+  # ── Case 8: symlinked RUNTIME_DIR → "is a symlink; cannot verify TLH ownership" ─
+  local symlinkrt_agent="${case_dir}/symlinked-runtime-dir/agent"
+  local symlinkrt_real_runtime="${case_dir}/symlinked-runtime-dir/real-runtime"
+  local symlinkrt_runtime="${case_dir}/symlinked-runtime-dir/runtime"
+  local symlinkrt_bin="${case_dir}/bin-symlinked-runtime-dir"
+  write_tlh_install_state "${symlinkrt_agent}" true
+  write_tlh_pi_runtime "${symlinkrt_real_runtime}"
+  write_tlh_runtime_marker "${symlinkrt_real_runtime}" created
+  ln -s "${symlinkrt_real_runtime}" "${symlinkrt_runtime}"
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${symlinkrt_agent}" --bin-dir "${symlinkrt_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_contains "${combined_file}" "${symlinkrt_runtime} is a symlink; cannot verify TLH ownership"
+  assert_not_contains "${combined_file}" "would remove private runtime: rm -rf ${symlinkrt_runtime}"
+
+  # ── Case 9: symlinked marker file → "ownership marker ... is a symlink" ────────
+  local symlinkm_agent="${case_dir}/symlinked-marker/agent"
+  local symlinkm_runtime="${case_dir}/symlinked-marker/runtime"
+  local symlinkm_bin="${case_dir}/bin-symlinked-marker"
+  local symlinkm_marker="${symlinkm_runtime}/.tlh-runtime-owned"
+  local symlinkm_marker_target="${case_dir}/symlinked-marker/real-marker-content"
+  local symlinkm_real
+  write_tlh_install_state "${symlinkm_agent}" true
+  write_tlh_pi_runtime "${symlinkm_runtime}"
+  symlinkm_real="$(cd "${symlinkm_runtime}" >/dev/null 2>&1 && pwd -P)"
+  printf '{"schemaVersion":1,"packageName":"@earendil-works/pi-coding-agent","runtimeAbsPath":"%s","origin":"created"}' \
+    "${symlinkm_real}" >"${symlinkm_marker_target}"
+  ln -s "${symlinkm_marker_target}" "${symlinkm_marker}"
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${symlinkm_agent}" --bin-dir "${symlinkm_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_contains "${combined_file}" "ownership marker ${symlinkm_marker} is a symlink; cannot verify TLH ownership"
+  assert_not_contains "${combined_file}" "would remove private runtime: rm -rf ${symlinkm_runtime}"
+
+  # ── Case 10: grammar-only-malformed marker (trailing comma after last field) → PLANS REMOVAL ──
+  # The marker JSON is syntactically invalid (a trailing comma after the closing
+  # "origin":"created" makes it unparseable by JSON.parse).  However, all ownership
+  # field VALUES are valid and extractable by the bash sed-based parser: schemaVersion=1,
+  # packageName=@earendil-works/pi-coding-agent, runtimeAbsPath matches, origin=created.
+  # The pi layout is present and the runtime dir is real (not a symlink).
+  # Per the intentional lenient value-extraction design (Option A), uninstall.sh PLANS
+  # rm -rf removal: a grammar defect that does not corrupt any ownership field value does
+  # not block removal when the runtime is provably TLH-owned.  This is correct behavior.
+  local grammaronly_agent="${case_dir}/grammar-only/agent"
+  local grammaronly_runtime="${case_dir}/grammar-only/runtime"
+  local grammaronly_bin="${case_dir}/bin-grammar-only"
+  local grammaronly_real
+  write_tlh_install_state "${grammaronly_agent}" true
+  write_tlh_pi_runtime "${grammaronly_runtime}"
+  grammaronly_real="$(cd "${grammaronly_runtime}" >/dev/null 2>&1 && pwd -P)"
+  # Trailing comma after "origin":"created" — invalid JSON grammar, valid extracted values.
+  printf '{"schemaVersion":1,"packageName":"@earendil-works/pi-coding-agent","runtimeAbsPath":"%s","origin":"created",}' \
+    "${grammaronly_real}" >"${grammaronly_runtime}/.tlh-runtime-owned"
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${grammaronly_agent}" --bin-dir "${grammaronly_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would remove private runtime: rm -rf ${grammaronly_runtime}"
+  assert_not_contains "${combined_file}" "would skip pi/runtime removal"
+}
+
+run_uninstall_install_state_parser_smoke() {
+  log "Running uninstall.sh install-state parser CRLF/trailing-comma/whitespace smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-install-state-parser"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local home_dir="${case_dir}/home"
+  mkdir -p "${case_dir}" "${home_dir}"
+
+  # The read_pi_installed_by_tlh function explicitly handles CRLF (tr -d '\r'),
+  # trailing commas (grep pattern matches 'false'/'true' regardless of suffix),
+  # and extra whitespace ([[:space:]]* around ':').  These cases prove each
+  # variant is correctly parsed despite the malformation.
+
+  # ── CRLF: piInstalledByTlh=false with CRLF line endings → read as false ───────
+  local crlf_false_agent="${case_dir}/crlf-false/agent"
+  local crlf_false_bin="${case_dir}/bin-crlf-false"
+  mkdir -p "${crlf_false_agent}/tlh"
+  printf '{\r\n  "schemaVersion": 1,\r\n  "piInstalledByTlh": false\r\n}\r\n' >"${crlf_false_agent}/tlh/install-state.json"
+
+  bash uninstall.sh --dry-run --agent-dir "${crlf_false_agent}" --bin-dir "${crlf_false_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_contains "${combined_file}" "install-state: piInstalledByTlh=false"
+
+  # ── Field followed by comma: "piInstalledByTlh": false, (valid JSON with a following field) ─
+  local trailcomma_false_agent="${case_dir}/trailing-comma-false/agent"
+  local trailcomma_false_bin="${case_dir}/bin-trailing-comma-false"
+  mkdir -p "${trailcomma_false_agent}/tlh"
+  cat >"${trailcomma_false_agent}/tlh/install-state.json" <<'EOF_TC_FALSE'
+{
+  "schemaVersion": 1,
+  "piInstalledByTlh": false,
+  "extra": "field"
+}
+EOF_TC_FALSE
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${trailcomma_false_agent}" --bin-dir "${trailcomma_false_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_contains "${combined_file}" "install-state: piInstalledByTlh=false"
+
+  # ── Whitespace: extra spaces around : → read as false ────────────────────────
+  local ws_false_agent="${case_dir}/whitespace-false/agent"
+  local ws_false_bin="${case_dir}/bin-whitespace-false"
+  mkdir -p "${ws_false_agent}/tlh"
+  cat >"${ws_false_agent}/tlh/install-state.json" <<'EOF_WS_FALSE'
+{
+  "schemaVersion": 1,
+  "piInstalledByTlh"  :  false
+}
+EOF_WS_FALSE
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${ws_false_agent}" --bin-dir "${ws_false_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_contains "${combined_file}" "install-state: piInstalledByTlh=false"
+
+  # ── CRLF: piInstalledByTlh=true with CRLF → read as true (no private runtime → no-op skip) ─
+  # Uses a scrubbed HOME so ~/.local/bin/pi from the host system does not interfere.
+  local crlf_true_agent="${case_dir}/crlf-true/agent"
+  local crlf_true_bin="${case_dir}/bin-crlf-true"
+  mkdir -p "${crlf_true_agent}/tlh"
+  printf '{\r\n  "schemaVersion": 1,\r\n  "piInstalledByTlh": true\r\n}\r\n' >"${crlf_true_agent}/tlh/install-state.json"
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  HOME="${home_dir}" bash uninstall.sh --dry-run --agent-dir "${crlf_true_agent}" --bin-dir "${crlf_true_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  # piInstalledByTlh parsed as true → REMOVE_PI=true; no private runtime present
+  # → falls through to "no pi installation found" skip (not the false/absent path).
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_contains "${combined_file}" "no pi installation found"
+  assert_not_contains "${combined_file}" "piInstalledByTlh=false"
+  assert_not_contains "${combined_file}" "piInstalledByTlh field missing"
+
+  # ── Field followed by comma: piInstalledByTlh=true, → read as true ─────────────
+  local trailcomma_true_agent="${case_dir}/trailing-comma-true/agent"
+  local trailcomma_true_bin="${case_dir}/bin-trailing-comma-true"
+  mkdir -p "${trailcomma_true_agent}/tlh"
+  cat >"${trailcomma_true_agent}/tlh/install-state.json" <<'EOF_TC_TRUE'
+{
+  "schemaVersion": 1,
+  "piInstalledByTlh": true,
+  "extra": "field"
+}
+EOF_TC_TRUE
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  HOME="${home_dir}" bash uninstall.sh --dry-run --agent-dir "${trailcomma_true_agent}" --bin-dir "${trailcomma_true_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_contains "${combined_file}" "no pi installation found"
+  assert_not_contains "${combined_file}" "piInstalledByTlh=false"
+  assert_not_contains "${combined_file}" "piInstalledByTlh field missing"
+
+  # ── Whitespace: piInstalledByTlh  :  true → read as true ─────────────────────
+  local ws_true_agent="${case_dir}/whitespace-true/agent"
+  local ws_true_bin="${case_dir}/bin-whitespace-true"
+  mkdir -p "${ws_true_agent}/tlh"
+  cat >"${ws_true_agent}/tlh/install-state.json" <<'EOF_WS_TRUE'
+{
+  "schemaVersion": 1,
+  "piInstalledByTlh"  :  true
+}
+EOF_WS_TRUE
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  HOME="${home_dir}" bash uninstall.sh --dry-run --agent-dir "${ws_true_agent}" --bin-dir "${ws_true_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_contains "${combined_file}" "no pi installation found"
+  assert_not_contains "${combined_file}" "piInstalledByTlh=false"
+  assert_not_contains "${combined_file}" "piInstalledByTlh field missing"
+}
+
+run_uninstall_special_char_paths_smoke() {
+  log "Running uninstall.sh special-character paths smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-special-char-paths"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  local status=0
+  local sq dol bt
+  sq="'"   # single quote
+  dol='$'  # dollar sign
+  bt='`'   # backtick
+  mkdir -p "${case_dir}"
+
+  # ── Dry-run: spaces in --agent-dir ──────────────────────────────────────
+  local space_agent="${case_dir}/my agent dir/agent"
+  local space_bin="${case_dir}/bin-space"
+  assert_safe_uninstall_smoke_paths "${space_agent}" "${space_bin}"
+  write_tlh_install_state "${space_agent}" false
+
+  bash uninstall.sh --dry-run --agent-dir "${space_agent}" --bin-dir "${space_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would run: rm -rf ${space_agent}"
+
+  # ── Dry-run: single quote in --agent-dir ────────────────────────────────
+  local sq_agent="${case_dir}/agent${sq}s dir/agent"
+  local sq_bin="${case_dir}/bin-sq"
+  assert_safe_uninstall_smoke_paths "${sq_agent}" "${sq_bin}"
+  write_tlh_install_state "${sq_agent}" false
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${sq_agent}" --bin-dir "${sq_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would run: rm -rf ${sq_agent}"
+
+  # ── Dry-run: dollar sign in --agent-dir ─────────────────────────────────
+  local dol_agent="${case_dir}/agent${dol}cost/agent"
+  local dol_bin="${case_dir}/bin-dol"
+  assert_safe_uninstall_smoke_paths "${dol_agent}" "${dol_bin}"
+  write_tlh_install_state "${dol_agent}" false
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${dol_agent}" --bin-dir "${dol_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would run: rm -rf ${dol_agent}"
+
+  # ── Dry-run: backtick in --agent-dir ────────────────────────────────────
+  local bt_agent="${case_dir}/agent${bt}tick/agent"
+  local bt_bin="${case_dir}/bin-bt"
+  assert_safe_uninstall_smoke_paths "${bt_agent}" "${bt_bin}"
+  write_tlh_install_state "${bt_agent}" false
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${bt_agent}" --bin-dir "${bt_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would run: rm -rf ${bt_agent}"
+
+  # ── Dry-run: spaces in --bin-dir with managed wrapper ───────────────────
+  # BIN_DIR is resolved via realpath_for_compare in uninstall.sh, so resolve
+  # the canonical path before asserting on the printed WRAPPER_PATH.
+  local space_bindir_agent="${case_dir}/space-bindir agent/agent"
+  local space_bin_dir="${case_dir}/my bin dir"
+  assert_safe_uninstall_smoke_paths "${space_bindir_agent}" "${space_bin_dir}"
+  write_tlh_install_state "${space_bindir_agent}" false
+  mkdir -p "${space_bin_dir}"
+  local space_bin_dir_real
+  space_bin_dir_real="$(cd "${space_bin_dir}" >/dev/null 2>&1 && pwd -P)"
+  local space_bindir_wrapper="${space_bin_dir_real}/tlh"
+  write_managed_wrapper "${space_bindir_wrapper}"
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${space_bindir_agent}" --bin-dir "${space_bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would run: rm -f ${space_bindir_wrapper}"
+  assert_contains "${combined_file}" "would run: rm -rf ${space_bindir_agent}"
+
+  # ── Dry-run: special chars in --wrapper-name are rejected by validator ─────
+  # --wrapper-name is restricted to [A-Za-z0-9._-]; spaces, quotes, $, and
+  # backticks must produce a clear validation error (not a word-split crash).
+  local wn_agent="${case_dir}/wn-agent/agent"
+  local wn_bin="${case_dir}/bin-wn"
+  write_tlh_install_state "${wn_agent}" false
+  local wn_status=0
+  set +e
+  bash uninstall.sh --dry-run --agent-dir "${wn_agent}" --bin-dir "${wn_bin}" --wrapper-name "bad name" >"${stdout_file}" 2>"${stderr_file}"
+  wn_status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${wn_status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "--wrapper-name with space unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "--wrapper-name must be a simple command name"
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  wn_status=0
+  set +e
+  bash uninstall.sh --dry-run --agent-dir "${wn_agent}" --bin-dir "${wn_bin}" --wrapper-name "bad${dol}name" >"${stdout_file}" 2>"${stderr_file}"
+  wn_status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${wn_status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "--wrapper-name with dollar sign unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "--wrapper-name must be a simple command name"
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  wn_status=0
+  set +e
+  bash uninstall.sh --dry-run --agent-dir "${wn_agent}" --bin-dir "${wn_bin}" --wrapper-name "bad${bt}name" >"${stdout_file}" 2>"${stderr_file}"
+  wn_status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${wn_status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "--wrapper-name with backtick unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "--wrapper-name must be a simple command name"
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  wn_status=0
+  set +e
+  bash uninstall.sh --dry-run --agent-dir "${wn_agent}" --bin-dir "${wn_bin}" --wrapper-name "bad${sq}name" >"${stdout_file}" 2>"${stderr_file}"
+  wn_status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${wn_status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "--wrapper-name with single quote unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "--wrapper-name must be a simple command name"
+
+  # ── Non-dry-run: space+single-quote agent dir; sibling and parent preserved
+  # Validates AGENT_DIR-only recursion (gnosis hggnmq): uninstall.sh must
+  # rm -rf only AGENT_DIR and attempt rmdir PROFILE_ROOT, leaving sibling
+  # content under PROFILE_ROOT untouched.
+  local real_profile="${case_dir}/profile${dol}data"
+  local real_agent="${real_profile}/agent${sq}s dir"
+  local real_bin="${case_dir}/bin-real"
+  local sibling_file="${real_profile}/sibling keep.txt"
+  local sibling_subdir="${real_profile}/sibling dir"
+  assert_safe_uninstall_smoke_paths "${real_agent}" "${real_bin}"
+  write_tlh_install_state "${real_agent}" false
+  write_managed_wrapper "${real_bin}/tlh"
+  # Seed sibling file and directory next to agent dir at PROFILE_ROOT level.
+  printf 'sibling — must survive special-char uninstall\n' >"${sibling_file}"
+  mkdir -p "${sibling_subdir}"
+  printf 'sibling dir content — must survive\n' >"${sibling_subdir}/content.txt"
+
+  : >"${stdout_file}"; : >"${stderr_file}"
+  set +e
+  bash uninstall.sh --agent-dir "${real_agent}" --bin-dir "${real_bin}" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -ne 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "special-char paths non-dry-run smoke exited with non-zero status: ${status}"
+  fi
+
+  # Agent dir must be removed.
+  assert_absent "${real_agent}"
+
+  # Siblings at PROFILE_ROOT level must be preserved (AGENT_DIR-only recursion).
+  assert_present "${sibling_file}"
+  assert_present "${sibling_subdir}/content.txt"
+  assert_present "${real_profile}"
+}
