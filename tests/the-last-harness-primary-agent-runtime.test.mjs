@@ -112,7 +112,7 @@ function contrarianMetadata() {
 	return {
 		name: "contrarian",
 		description: "Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case.",
-		tlhOpenaiModels: ["openai-codex/gpt-5.5"],
+		tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
 		tlhAnthropicModels: ["anthropic/claude-opus-4-8"],
 		preferOppositeProvider: true,
 	};

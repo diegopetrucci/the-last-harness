@@ -120,7 +120,19 @@ test("runtime TypeScript helper covers converted installer libraries", () => {
 });
 
 test("runtime TypeScript helper tracks converted top-level CLIs", () => {
-	const convertedCliScripts = ["scripts/merge-keybindings", "scripts/merge-settings", "scripts/tlh-doctor", "scripts/tlh-install", "scripts/tlh-update", "scripts/tlh-wrapper"];
+	const convertedCliScripts = [
+		"scripts/merge-keybindings",
+		"scripts/merge-settings",
+		"scripts/tlh-defaults",
+		"scripts/tlh-doctor",
+		"scripts/tlh-gnosis",
+		"scripts/tlh-install",
+		"scripts/tlh-recover-update",
+		"scripts/tlh-rtk",
+		"scripts/tlh-tickets",
+		"scripts/tlh-update",
+		"scripts/tlh-wrapper",
+	];
 
 	for (const path of convertedCliScripts) {
 		assert.equal(existsSync(join(repoRoot, `${path}.mts`)), true, `${path}.mts should exist`);

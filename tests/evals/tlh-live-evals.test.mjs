@@ -269,7 +269,8 @@ test("contributing docs link to the dedicated workflow eval guide and keep a con
 	assert.match(docs, /\[docs\/workflow-evals\.md\]\(docs\/workflow-evals\.md\)/);
 	assert.match(docs, /Quick reference:/);
 	assert.match(docs, /Default contributor\/CI path: `npm run validate`/);
-	assert.match(docs, /Workflow-specific deterministic checks: `node --test tests\/evals\/trace-policy\/trace-policy-evals\.test\.mjs tests\/evals\/trace-policy\/trace-policy-incident-matrix\.test\.mjs tests\/agent-prompt-contracts\.test\.mjs tests\/evals\/tlh-live-evals\.test\.mjs tests\/evals\/tlh-live-eval-results\.test\.mjs`/);
+	assert.match(docs, /Workflow-specific deterministic checks: `node --test tests\/hermetic-core-workflow\.test\.mjs tests\/evals\/trace-policy\/trace-policy-evals\.test\.mjs tests\/evals\/trace-policy\/trace-policy-incident-matrix\.test\.mjs tests\/agent-prompt-contracts\.test\.mjs tests\/evals\/tlh-live-evals\.test\.mjs tests\/evals\/tlh-live-eval-results\.test\.mjs`/);
+	assert.match(docs, /The hermetic core-workflow integration test is deterministic and included in normal `npm test` \/ `npm run validate`\./);
 	assert.match(docs, /Live evals are opt-in and not part of normal `npm run validate` or default CI\./);
 	assert.doesNotMatch(docs, /issue #241/);
 	assert.doesNotMatch(docs, /Scenario \| Mode \| Prerequisites \| What it checks|What it prepares or verifies/);
@@ -279,8 +280,14 @@ test("workflow eval guide owns the detailed contributor-facing eval docs", () =>
 	const docs = readFileSync(join(repoRoot, "docs", "workflow-evals.md"), "utf8");
 
 	assert.match(docs, /issue #241/i);
-	assert.match(docs, /Deterministic workflow evals \| Yes, through targeted `node --test` commands/i);
-	assert.match(docs, /node --test tests\/evals\/trace-policy\/trace-policy-evals\.test\.mjs tests\/evals\/trace-policy\/trace-policy-incident-matrix\.test\.mjs tests\/agent-prompt-contracts\.test\.mjs tests\/evals\/tlh-live-evals\.test\.mjs tests\/evals\/tlh-live-eval-results\.test\.mjs/);
+	assert.match(docs, /Deterministic workflow evals \| Yes, through targeted `node --test` commands and the normal `npm test` \/ `npm run validate` path/i);
+	assert.match(docs, /node --test tests\/hermetic-core-workflow\.test\.mjs tests\/evals\/trace-policy\/trace-policy-evals\.test\.mjs tests\/evals\/trace-policy\/trace-policy-incident-matrix\.test\.mjs tests\/agent-prompt-contracts\.test\.mjs tests\/evals\/tlh-live-evals\.test\.mjs tests\/evals\/tlh-live-eval-results\.test\.mjs/);
+	assert.match(docs, /`tests\/hermetic-core-workflow\.test\.mjs` is the highest-level automated workflow integration check/i);
+	assert.match(docs, /It runs as part of the normal `npm test` and `npm run validate` path/i);
+	assert.match(docs, /without model credentials, network access, or manual review/i);
+	assert.match(docs, /fake provider only; no real model\/provider credentials/i);
+	assert.match(docs, /isolated temp HOME, agent profile, wrapper\/bin, and workspace paths/i);
+	assert.match(docs, /The hermetic core-workflow integration test is deterministic and part of normal `npm test` \/ `npm run validate`; live evals remain opt-in and release-tier\/manual, not part of normal `npm run validate` or default CI\./i);
 	assert.match(docs, /--results-file \/path\/to\/results\.json/);
 	assert.match(docs, /fresh `tlh-live-evals-\*` child workspace under `DIR`/i);
 	assert.match(docs, /scenario status values such as `passed`, `prepared`, or `failed`/i);
@@ -298,6 +305,7 @@ test("workflow eval guide owns the detailed contributor-facing eval docs", () =>
 	assert.doesNotMatch(docs, /Until that normalization path exists/i);
 	assert.match(docs, /Do not commit `results\.json`, temp workspaces, or per-run score snapshots\./i);
 	assert.doesNotMatch(docs, /tests\/trace-policy-evals\.test\.mjs/);
+	assert.doesNotMatch(docs, /TLH_SKIP_GNOSIS|internal installer test escape/i);
 });
 
 test("release docs keep published-asset install checks separate from default validation", () => {

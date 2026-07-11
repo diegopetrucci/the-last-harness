@@ -6,22 +6,18 @@ This repository packages **The Last Harness** as an isolated profile for the ups
 
 ## Project Structure
 
-- `install.sh` — one-line installer and `tlh` wrapper creator.
-- `scripts/merge-settings.mjs` — conservative settings merge helper for the isolated profile.
-- `scripts/tlh-defaults.mjs` — manages persistent opt-outs for bundled default extensions.
-- `scripts/tlh-gnosis.mjs` — manages Gnosis integration settings for the isolated profile.
-- `config/settings.defaults.json` — installer-owned default Pi settings.
-- `config/default-extensions.json` — bundled default extension package manifest.
-- `config/APPEND_SYSTEM.md` — packaged system-prompt guidance.
-- `extensions/` — Pi extensions exposed by `package.json`.
-- `skills/` — Pi skills exposed by `package.json`.
-- `prompts/` — Pi prompt templates exposed by `package.json`.
-- `themes/` — Pi themes exposed by `package.json`.
-- `README.md` — public install, update, uninstall, and security documentation.
-- `CHANGELOG.md` — release notes for versioned releases.
-- `docs/releasing.md` — tag-based release checklist and process.
-- `docs/web-search-fork-release-cadence.md` — pinned fork/tag process notes for the web-search fork; durable web-search / web-scout decisions live in repo-local Gnosis entries `ywsuwh` and `gbmehw`.
-- `.github/workflows/release.yml` — tag-triggered GitHub Release workflow.
+- Installer entrypoints: `install.sh` performs install/update bootstrap work and creates the `tlh` wrapper; `uninstall.sh` removes the isolated profile and managed wrapper artifacts.
+- Installer/runtime scripts: `scripts/` contains installer, update, doctor, wrapper, merge, runtime-TypeScript, release-notes, and ticket/RTK helpers; `scripts/lib/` holds shared installer modules; `scripts/installer-smoke/` contains staged smoke-test helpers; `scripts/check-installer-smoke.sh`, `scripts/check-package-versions.mjs`, and `scripts/check-startup-performance.mjs` are contributor-facing validation checks.
+- Packaged profile defaults: `config/` contains installer-owned settings, keybindings, librarian defaults, bundled extension manifests, and appended system prompt text for the isolated profile.
+- Packaged resources: `extensions/`, `prompts/`, and `themes/` are published package resources; `skills/` is an intentional future package placeholder and is not currently present in this repository (per Gnosis `zeqwga`).
+- Agent definitions: `agents/primary/` and `agents/subagents/` hold packaged primary-agent and subagent prompt specs used by tlh.
+- Tests and evals: `tests/` contains the automated test suite and fixture helpers, while `tests/evals/` contains deterministic workflow/trace-policy checks plus opt-in live-eval tooling.
+- Contributor automation: `.github/workflows/` defines CI, release, startup-performance, and Claude automation; `.github/PULL_REQUEST_TEMPLATE.md` provides PR guidance.
+- Contributor-local tooling: `.pi/` stores repo-local prompts and skills for contributors, `.gnosis/entries.jsonl` stores repo-local Gnosis memory, and `.symphony/setup` contains local dependency setup automation.
+- Repository illustrations: `assets/` stores documentation and workflow illustrations used in the repository and is not shipped in the npm package.
+- Contributor docs: `README.md` covers install/update/uninstall and security, `CONTRIBUTING.md` explains contribution workflow, `VALIDATING.md` and `npm run validate` define the standard validation pass, `CHANGELOG.md` tracks releases, and `VISION.md` captures product direction.
+- Extended docs: `docs/` contains install, integration, MCP, telemetry, local-development, release, workflow-eval, and web-search reference material.
+- Package/tooling manifests: `package.json`, `package-lock.json`, `eslint.config.mjs`, `tsconfig.json`, and `tsconfig.runtime-scripts.json` define the Node package, linting, and TypeScript settings used by contributors and validation.
 
 ## Safety Requirements
 
