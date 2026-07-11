@@ -1,5 +1,7 @@
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { registerTlhActivityReporters } from "./the-last-harness/activity-reporters.js";
+import { registerTlhEffectiveActivityTracker } from "./the-last-harness/activity-tracker.js";
 import { registerToggleTlhGitAttributionCommand } from "./the-last-harness/attribution.js";
 import { TLH_HEADER_TOGGLE_SHORTCUT } from "./the-last-harness/constants.js";
 import { createTlhAutocompleteProvider } from "./the-last-harness/autocomplete.js";
@@ -49,6 +51,8 @@ function createRetryableLazyImport<TModule>(loader: () => Promise<TModule>): () 
 export default function theLastHarness(pi: ExtensionAPI) {
 	installTlhModelVisibilityFilter();
 	registerContextCap(pi);
+	const activityTracker = registerTlhEffectiveActivityTracker(pi);
+	registerTlhActivityReporters(pi, activityTracker);
 
 	const primaryAgentRuntime = registerTlhPrimaryAgentRuntime(pi, { env: process.env });
 	if (!primaryAgentRuntime) {

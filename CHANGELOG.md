@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Supported terminal integrations such as Herdr and cmux can now show TLH as working while primary activity or async/background subagents are still active, without requiring TLH to install those integrations.
+
 ### Changed
 
 - The isolated profile defaults now enable Pi's `showCacheMissNotices` setting, showing transcript notices for significant prompt-cache misses; existing user values are preserved by the settings merge.
