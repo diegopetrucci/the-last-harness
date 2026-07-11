@@ -110,6 +110,8 @@ need_value() {
 
 expand_path() {
   local path="$1"
+  # literal '~/' in case arms is intentional; these arms detect unexpanded tildes passed as path arguments
+  # shellcheck disable=SC2088
   case "${path}" in
     '~')
       printf '%s\n' "${HOME}"

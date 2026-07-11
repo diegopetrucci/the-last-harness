@@ -37,6 +37,14 @@ bash install.sh --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -
 bash -s -- --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -d)" < install.sh
 ```
 
+To lint all tracked shell scripts for ShellCheck findings:
+
+```sh
+npm run lint:sh
+```
+
+This runs ShellCheck over every `*.sh` file tracked by git. It is also included in `npm run validate`.
+
 For runtime `.mts` changes under `scripts/`, use `npm run typecheck:runtime` for the focused runtime-only typecheck, `npm run check:runtime` to confirm the generated `.mjs` files are fresh without mutating the worktree, and `npm run build` only when you intentionally want to refresh those generated outputs.
 
 For installer tests, prefer temporary `--agent-dir` and `--bin-dir` values. Do not run a real install into home directories unless explicitly requested.
