@@ -645,6 +645,14 @@ function numberFromUnknown(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+// Intentionally includes arrays (unlike common.ts isPlainObject which excludes them).
+// artifactPaths can arrive as an array in the wild; the two call sites that handle it
+// (in collectArtifactReferences and the standalone artifact-entry sanitizer) iterate
+// Object.values(artifactPaths), which works correctly for both plain objects and arrays.
+// Replacing this with the shared common.ts isRecord/isPlainObject would silently skip
+// array-valued artifactPaths at those call sites.
+// If the schema for artifactPaths is ever narrowed to plain-object-only, audit those
+// call sites first and confirm no callers pass an array before switching.
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
