@@ -18,14 +18,14 @@ const developer = {
 
 const codeReviewer = {
 	name: "code-reviewer",
-	tlhOpenaiModels: ["openai-codex/gpt-5.5"],
+	tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
 	tlhAnthropicModels: ["anthropic/claude-opus-4-8"],
 	preferOppositeProvider: true,
 };
 
 const oracle = {
 	name: "oracle",
-	tlhOpenaiModels: ["openai-codex/gpt-5.5"],
+	tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
 	tlhAnthropicModels: ["anthropic/claude-opus-4-8"],
 	preferOppositeProvider: true,
 };
@@ -33,15 +33,15 @@ const oracle = {
 const anthropicParentPrefersCodexReviewer = {
 	name: "anthropic-parent-prefers-codex-reviewer",
 	model: "anthropic/claude-opus-4-8",
-	tlhOpenaiModels: ["openai-codex/gpt-5.5"],
+	tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
 	tlhAnthropicModels: ["anthropic/claude-opus-4-8"],
 	preferOppositeProvider: true,
 };
 
 const openaiParentPrefersAnthropicReviewer = {
 	name: "openai-parent-prefers-anthropic-reviewer",
-	model: "openai-codex/gpt-5.5",
-	tlhOpenaiModels: ["openai-codex/gpt-5.5"],
+	model: "openai-codex/gpt-5.6-sol",
+	tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
 	tlhAnthropicModels: ["anthropic/claude-opus-4-8"],
 	preferOppositeProvider: true,
 };
@@ -76,6 +76,7 @@ const anthropicAvailable = [
 const codexAvailable = [
 	{ provider: "openai-codex", id: "gpt-5.4" },
 	{ provider: "openai-codex", id: "gpt-5.5" },
+	{ provider: "openai-codex", id: "gpt-5.6-sol" },
 ];
 
 const openaiAvailable = [
@@ -87,7 +88,7 @@ const reasoningAnthropicAvailable = anthropicAvailable.map((model) => ({ ...mode
 const reasoningCodexAvailable = codexAvailable.map((model) => ({ ...model, reasoning: true }));
 const limitedReasoningAvailable = [
 	{ provider: "anthropic", id: "claude-opus-4-8", reasoning: true, thinkingLevelMap: { xhigh: null } },
-	{ provider: "openai-codex", id: "gpt-5.5", reasoning: true, thinkingLevelMap: { xhigh: null } },
+	{ provider: "openai-codex", id: "gpt-5.6-sol", reasoning: true, thinkingLevelMap: { xhigh: null } },
 ];
 
 const reducedIndependenceNotice = "TLH fell back to a same-provider review model; review independence is reduced.";
@@ -143,12 +144,12 @@ test("provider-aware opposite-provider preference picks Codex for opted-in Anthr
 
 	assert.equal(
 		selectProviderAwareAgentModelId(anthropicParentPrefersCodexReviewer, available, "anthropic"),
-		"openai-codex/gpt-5.5",
+		"openai-codex/gpt-5.6-sol",
 	);
 
 	const input = { agent: anthropicParentPrefersCodexReviewer.name, task: "Review the diff" };
 	assert.equal(applyProviderAwareSubagentModels(input, agents, available, "anthropic"), 1);
-	assert.equal(input.model, "openai-codex/gpt-5.5");
+	assert.equal(input.model, "openai-codex/gpt-5.6-sol");
 	assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-4-8"]);
 	assert.equal(input.modelFallbackNotice, reducedIndependenceNotice);
 });
@@ -169,7 +170,7 @@ test("provider-aware opposite-provider preference picks Anthropic for opted-in O
 	const input = { agent: openaiParentPrefersAnthropicReviewer.name, task: "Review the diff" };
 	assert.equal(applyProviderAwareSubagentModels(input, agents, available, "openai-codex"), 1);
 	assert.equal(input.model, "anthropic/claude-opus-4-8");
-	assert.deepEqual(input.fallbackModels, ["openai-codex/gpt-5.5"]);
+	assert.deepEqual(input.fallbackModels, ["openai-codex/gpt-5.6-sol"]);
 	assert.equal(input.modelFallbackNotice, reducedIndependenceNotice);
 });
 
@@ -187,14 +188,14 @@ test("provider-aware subagent mutation gives code-reviewer the opposite availabl
 
 	const anthropicInput = { agent: "code-reviewer" };
 	assert.equal(applyProviderAwareSubagentModels(anthropicInput, agents, available, "anthropic"), 1);
-	assert.equal(anthropicInput.model, "openai-codex/gpt-5.5");
+	assert.equal(anthropicInput.model, "openai-codex/gpt-5.6-sol");
 	assert.deepEqual(anthropicInput.fallbackModels, ["anthropic/claude-opus-4-8"]);
 	assert.equal(anthropicInput.modelFallbackNotice, reducedIndependenceNotice);
 
 	const codexInput = { agent: "code-reviewer" };
 	assert.equal(applyProviderAwareSubagentModels(codexInput, agents, available, "openai-codex"), 1);
 	assert.equal(codexInput.model, "anthropic/claude-opus-4-8");
-	assert.deepEqual(codexInput.fallbackModels, ["openai-codex/gpt-5.5"]);
+	assert.deepEqual(codexInput.fallbackModels, ["openai-codex/gpt-5.6-sol"]);
 	assert.equal(codexInput.modelFallbackNotice, reducedIndependenceNotice);
 
 	const noOppositeInput = { agent: "code-reviewer" };
@@ -218,7 +219,7 @@ test("provider-aware subagent mutation gives code-reviewer and oracle current-se
 		),
 		1,
 	);
-	assert.equal(reviewerInput.model, "openai-codex/gpt-5.5");
+	assert.equal(reviewerInput.model, "openai-codex/gpt-5.6-sol");
 	assert.deepEqual(reviewerInput.fallbackModels, ["anthropic/claude-sonnet-4-6"]);
 	assert.equal(reviewerInput.modelFallbackNotice, reducedIndependenceNotice);
 
@@ -401,7 +402,7 @@ test("persisted thinking suffix is applied to opposite-provider fallbacks", () =
 		}),
 		1,
 	);
-	assert.equal(input.model, "openai-codex/gpt-5.5:high");
+	assert.equal(input.model, "openai-codex/gpt-5.6-sol:high");
 	assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-4-8:high"]);
 	assert.equal(input.modelFallbackNotice, reducedIndependenceNotice);
 });
@@ -415,7 +416,7 @@ test("persisted off effort is explicit on selected and generated fallback models
 		}),
 		1,
 	);
-	assert.equal(input.model, "openai-codex/gpt-5.5:off");
+	assert.equal(input.model, "openai-codex/gpt-5.6-sol:off");
 	assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-4-8:off"]);
 });
 
@@ -430,11 +431,11 @@ test("unsupported stored effort warns and falls back for that run", () => {
 		}),
 		1,
 	);
-	assert.equal(input.model, "openai-codex/gpt-5.5");
+	assert.equal(input.model, "openai-codex/gpt-5.6-sol");
 	assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-4-8"]);
 	assert.equal(warnings.length, 1);
 	assert.match(warnings[0], /stored minor-agent effort/i);
-	assert.match(warnings[0], /openai-codex\/gpt-5\.5/i);
+	assert.match(warnings[0], /openai-codex\/gpt-5\.6-sol/i);
 });
 
 
@@ -466,7 +467,7 @@ test("provider-aware subagent mutation injects model but preserves caller-suppli
 	// caller-provided fallbackModels kept, TLH auto-adds modelFallbackNotice.
 	const withFallbackModels = { agent: "code-reviewer", fallbackModels: ["custom/provider-model"] };
 	assert.equal(applyProviderAwareSubagentModels(withFallbackModels, agents, available, "anthropic"), 1);
-	assert.equal(withFallbackModels.model, "openai-codex/gpt-5.5");
+	assert.equal(withFallbackModels.model, "openai-codex/gpt-5.6-sol");
 	assert.deepEqual(withFallbackModels.fallbackModels, ["custom/provider-model"]);
 	assert.equal(withFallbackModels.modelFallbackNotice, reducedIndependenceNotice);
 
@@ -475,7 +476,7 @@ test("provider-aware subagent mutation injects model but preserves caller-suppli
 	const withFallbackNotice = { agent: "oracle", modelFallbackNotice: "custom fallback notice" };
 	assert.equal(applyProviderAwareSubagentModels(withFallbackNotice, agents, available, "openai-codex"), 1);
 	assert.equal(withFallbackNotice.model, "anthropic/claude-opus-4-8");
-	assert.deepEqual(withFallbackNotice.fallbackModels, ["openai-codex/gpt-5.5"]);
+	assert.deepEqual(withFallbackNotice.fallbackModels, ["openai-codex/gpt-5.6-sol"]);
 	assert.equal(withFallbackNotice.modelFallbackNotice, "custom fallback notice");
 
 	// Explicit model still prevents all injection regardless of other fallback fields.
@@ -515,6 +516,6 @@ test("provider-aware subagent mutation handles chain sequential and parallel ste
 
 	assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 2);
 	assert.equal(input.chain[0].model, "openai-codex/gpt-5.4");
-	assert.equal(input.chain[1].parallel[0].model, "openai-codex/gpt-5.5");
+	assert.equal(input.chain[1].parallel[0].model, "openai-codex/gpt-5.6-sol");
 	assert.equal(input.chain[1].parallel[1].model, "openai/gpt-5.4");
 });

@@ -544,7 +544,12 @@ function isPersistentTelemetryOptOut(path: readonly string[], currentValue: unkn
 }
 
 function isInstallerOwnedSetting(path: readonly string[]): boolean {
-	return path.join(".") === "lastChangelogVersion";
+	const joinedPath = path.join(".");
+	return joinedPath === "lastChangelogVersion" || joinedPath === "subagents.disableBuiltins";
+}
+
+function isInstallerOwnedObjectContainer(path: readonly string[]): boolean {
+	return path.join(".") === "subagents";
 }
 
 function mergeObject(target: JsonObject, defaults: JsonObject, changes: string[], options: MergeOptions): void {
@@ -570,6 +575,12 @@ function mergeObject(target: JsonObject, defaults: JsonObject, changes: string[]
 
 		if (isPlainObject(value) && isPlainObject(target[key])) {
 			mergeObject(target[key], value, changes, { ...options, path });
+			continue;
+		}
+
+		if (isPlainObject(value) && isInstallerOwnedObjectContainer(path)) {
+			target[key] = clone(value);
+			changes.push(`overwrite ${label}`);
 			continue;
 		}
 

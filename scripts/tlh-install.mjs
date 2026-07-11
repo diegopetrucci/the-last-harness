@@ -353,6 +353,10 @@ function detailLog(config, message) {
 function warn(message) {
     console.error(`warning: ${message}`);
 }
+function verboseWarn(config, message) {
+    if (config.verbose && !config.quiet)
+        warn(message);
+}
 function printCommand(commandArgs) {
     console.log(`+ ${renderShellWords(commandArgs)} `);
 }
@@ -614,10 +618,10 @@ function preferBinDirOnPathForCurrentInstall(config, binDir, { addMessage, prepe
     const alreadyPresent = currentEntries.includes(binDir);
     config.env.PATH = [binDir, ...currentEntries.filter((entry) => entry !== binDir)].join(delimiter);
     if (alreadyPresent) {
-        warn(prependMessage);
+        verboseWarn(config, prependMessage);
         return;
     }
-    warn(`${addMessage} Added it to PATH for this install; add it to your shell profile with: export PATH="${binDir}:$PATH"`);
+    verboseWarn(config, `${addMessage} Added it to PATH for this install; add it to your shell profile with: export PATH="${binDir}:$PATH"`);
 }
 function runtimePrefix(config) {
     // Private TLH runtime prefix: sibling of agent/ under ~/.the-last-harness/.
@@ -1179,7 +1183,7 @@ function updateNonCriticalDefaultExtensions(config, sources) {
         log(config, "Dry run: settings-wide extension refresh will run from merged settings.");
     }
     else {
-        log(config, `Running settings-wide extension refresh from merged settings; fallback retries only ${fallbackDescription} individually.`);
+        verboseLog(config, `Running settings-wide extension refresh from merged settings; fallback retries only ${fallbackDescription} individually.`);
     }
     try {
         runIsolatedPi(config, [absolutePiCmd(config), "update", "--extensions"]);

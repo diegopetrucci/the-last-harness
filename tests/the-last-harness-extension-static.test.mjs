@@ -20,6 +20,7 @@ const annotateGitDiffHtmlSource = readFileSync(new URL("../extensions/annotate-g
 const attributionSource = readFileSync(new URL("../extensions/the-last-harness/attribution.ts", import.meta.url), "utf8");
 const changelogSource = readFileSync(new URL("../extensions/the-last-harness/changelog.ts", import.meta.url), "utf8");
 const experimentalSource = readFileSync(new URL("../extensions/the-last-harness/experimental.ts", import.meta.url), "utf8");
+const ticketWorkflowUiFacadeSource = readFileSync(new URL("../extensions/the-last-harness/ticket-workflow-ui-facade.ts", import.meta.url), "utf8");
 const footerFirstLineSource = readFileSync(new URL("../extensions/the-last-harness/footer-first-line.ts", import.meta.url), "utf8");
 const footerGitCacheSource = readFileSync(new URL("../extensions/the-last-harness/footer-git-cache.ts", import.meta.url), "utf8");
 const subscriptionUsageFacadeSource = readFileSync(new URL("../extensions/the-last-harness/subscription-usage-facade.ts", import.meta.url), "utf8");
@@ -360,7 +361,7 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	const rush = primaryAgents.get("rush");
 	assert.ok(architect, "architect primary prompt should load");
 	assert.ok(rush, "Rush primary prompt should load");
-	assert.deepEqual(architect.tlhOpenaiModels, ["openai-codex/gpt-5.5"]);
+	assert.deepEqual(architect.tlhOpenaiModels, ["openai-codex/gpt-5.6-sol"]);
 	assert.deepEqual(rush.tlhOpenaiModels, ["openai-codex/gpt-5.5"]);
 	assert.equal(rush.thinking, "low");
 	assert.equal(rush.tlhOpenaiThinking, "off");
@@ -390,6 +391,18 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	assert.deepEqual(
 		loadSubagentMetadata().find((agent) => agent.name === "developer")?.tlhOpenaiModels,
 		["openai-codex/gpt-5.4"],
+	);
+	assert.deepEqual(
+		loadSubagentMetadata().find((agent) => agent.name === "code-reviewer")?.tlhOpenaiModels,
+		["openai-codex/gpt-5.6-sol"],
+	);
+	assert.deepEqual(
+		loadSubagentMetadata().find((agent) => agent.name === "oracle")?.tlhOpenaiModels,
+		["openai-codex/gpt-5.6-sol"],
+	);
+	assert.deepEqual(
+		loadSubagentMetadata().find((agent) => agent.name === "contrarian")?.tlhOpenaiModels,
+		["openai-codex/gpt-5.6-sol"],
 	);
 
 	const primaryPrompt = buildTlhSystemPrompt(rush, loadSubagentMetadata(), true);
@@ -640,6 +653,11 @@ test("extension keeps TLH experimental command wiring with registered ticket, ci
 
 	assert.match(extensionSource, /registerExperimentalCommand\(pi\)/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/experimental\.js"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/ticket-workflow-ui-facade\.js"/);
+	assert.match(extensionSource, /registerLazyTlhTicketWorkflowUi\(pi\)/);
+	assert.doesNotMatch(extensionSource, /from "\.\/the-last-harness\/ticket-workflow-ui\.js"/);
+	assert.match(ticketWorkflowUiFacadeSource, /import\("\.\/ticket-workflow-ui\.js"\)/);
+	assert.match(ticketWorkflowUiFacadeSource, /createRetryableLazyImport/);
 	assert.match(experimentalSource, /pi\.registerCommand\("experimental"/);
 	assert.match(experimentalSource, /delta-follow-up-reviews/);
 	assert.match(experimentalSource, /ci-failure-investigation/);

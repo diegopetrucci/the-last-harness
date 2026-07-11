@@ -181,6 +181,7 @@ function runStage1LocalPackageInstall(t, {
 	dryRun = false,
 	noSettings = false,
 	force = false,
+	verbose = false,
 	existingSupportFiles,
 	existingLibrarianConfig,
 	envOverrides = {},
@@ -230,6 +231,7 @@ function runStage1LocalPackageInstall(t, {
 	if (dryRun) args.unshift("--dry-run");
 	if (noSettings) args.push("--no-settings");
 	if (force) args.push("--force");
+	if (verbose) args.push("--verbose");
 	const result = runInstaller(args, env);
 	return { result, homeDir, agentDir, binDir, piLog };
 }
@@ -238,6 +240,26 @@ function readJsonLines(path) {
 	if (!existsSync(path)) return [];
 	return readFileSync(path, "utf8").trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
 }
+
+test("stage-1 hides PATH-adjustment and refresh fallback detail lines unless --verbose", (t) => {
+	for (const verbose of [false, true]) {
+		const { result, agentDir } = runStage1LocalPackageInstall(t, { verbose });
+		const output = `${result.stdout}\n${result.stderr}`;
+		const runtimeBinDir = join(dirname(agentDir), "runtime", "bin");
+		const runtimePiPath = join(runtimeBinDir, "pi");
+		const pathNotice = `warning: ${runtimePiPath} installed but ${runtimeBinDir} is not on PATH. Added it to PATH for this install; add it to your shell profile with: export PATH="${runtimeBinDir}:$PATH"`;
+		const refreshDetailPattern = /Running settings-wide extension refresh from merged settings; fallback retries only 10 non-critical bundled default source\(s\) individually\./;
+
+		assert.equal(result.status, 0, output);
+		if (verbose) {
+			assert.ok(output.includes(pathNotice), output);
+			assert.match(output, refreshDetailPattern);
+		} else {
+			assert.equal(output.includes(pathNotice), false, output);
+			assert.doesNotMatch(output, refreshDetailPattern);
+		}
+	}
+});
 
 test("stage-1 enforces the TLH Node runtime minimum", () => {
 	assert.equal(MIN_NODE_VERSION, "22.19.0");

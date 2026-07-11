@@ -59,7 +59,7 @@ For the full workflow-eval guide, including scenario details, scoring, and bound
 Quick reference:
 
 - Default contributor/CI path: `npm run validate`
-- Workflow-specific deterministic checks: `node --test tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/trace-policy/trace-policy-incident-matrix.test.mjs tests/agent-prompt-contracts.test.mjs tests/evals/tlh-live-evals.test.mjs tests/evals/tlh-live-eval-results.test.mjs`
+- Workflow-specific deterministic checks: `node --test tests/hermetic-core-workflow.test.mjs tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/trace-policy/trace-policy-incident-matrix.test.mjs tests/agent-prompt-contracts.test.mjs tests/evals/tlh-live-evals.test.mjs tests/evals/tlh-live-eval-results.test.mjs`
 - Discover live scenarios: `node tests/evals/tlh-live-evals.mjs --list`
 - Run automated install/update smoke: `node tests/evals/tlh-live-evals.mjs --run --scenario install-update-smoke`
 - Prepare a manual architect workflow eval: `TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs --scenario architect-e2e`
@@ -67,6 +67,7 @@ Quick reference:
 Guardrails to remember:
 
 - Keep the stack deterministic-first and use the lightest tier that answers your question.
+- The hermetic core-workflow integration test is deterministic and included in normal `npm test` / `npm run validate`.
 - Live evals are opt-in and not part of normal `npm run validate` or default CI.
 - Keep all live evals pointed at temp paths; never reuse real `~/.the-last-harness/agent`, `~/.pi/agent`, or normal shell wrapper paths.
 - Do not commit `results.json`, temp workspaces, or per-run score snapshots.

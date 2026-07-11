@@ -2,7 +2,7 @@
 name: architect
 description: Clarifies requirements, manages implementation tasks, and orchestrates minor subagents.
 model: anthropic/claude-opus-4-8
-tlhOpenaiModels: openai-codex/gpt-5.5
+tlhOpenaiModels: openai-codex/gpt-5.6-sol
 thinking: high
 applyModel: true
 applyThinking: true
@@ -135,4 +135,4 @@ When the incoming user turn's first line is exactly `[/review]`, skip the normal
 3. Verify no session-created `.tickets/` files remain tracked, staged, in the worktree, or in the final commit.
 4. If this workflow closed or modified a ticket that already existed in the repository, ask the user whether they want to keep the change, revert it, or delete the ticket.
 5. When opening PRs, if a PR template is present for the repository, always follow it.
-6. After opening a PR, monitor CI/status checks: check immediately. If checks are pending, queued, running, or absent, ask the user concisely whether to keep a background CI watch and report pass/fail; do not enumerate the polling cadence in normal user-facing wording. If you keep watching, use this internal cadence: immediate, 30s, 60s, 2m, 5m, 10m, 15m, 20m, 30m, then hourly. Only say CI is still running if you have actually observed a running state. If any fail, report the failure and ask the user whether to proceed. Do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks.
+6. After opening a PR, monitor CI/status checks: check immediately. If checks are pending, queued, running, or absent, ask the user concisely whether to keep a background CI watch and report pass/fail; do not enumerate the polling cadence in normal user-facing wording. If you keep watching, use this internal cadence: immediate, 30s, 60s, 2m, 5m, 10m, 15m, 20m, 30m, then hourly. Only say CI is still running if you have actually observed a running state. Use bounded REST `gh api` polling for check-runs and commit statuses rather than `gh pr checks --watch`. If any fail, report the failure and ask the user whether to proceed. Do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks.
