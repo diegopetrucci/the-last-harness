@@ -17,15 +17,14 @@ import { formatSupportFileManifest, installableSupportFiles, supportFileManifest
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
-const PINNED_PI_VERSION = "0.80.2";
+const PINNED_PI_VERSION = "0.80.6";
 const PI_PACKAGE_SPEC = `${PI_PACKAGE_NAME}@${PINNED_PI_VERSION}`;
-// Keep in sync with TLH_MIN_NODE_VERSION, TLH_MIN_PI_VERSION, and TLH_PINNED_PI_VERSION in install.sh.
+// Keep in sync with TLH_MIN_NODE_VERSION and TLH_PINNED_PI_VERSION in install.sh.
 const MIN_NODE_VERSION = "22.19.0";
-const MIN_PI_VERSION = "0.80.1";
-const MAX_PI_VERSION = PINNED_PI_VERSION;
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
-const DEFAULT_GNOSIS_VERSION = "0.5.3";
+const DEFAULT_GNOSIS_VERSION = "0.5.4";
 const DEFAULT_WRAPPER_NAME = "tlh";
+const MANAGED_RTK_SUPPORTED_PLATFORMS = new Set(["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"]);
 const VALID_UPDATE_TRACKS = ["latest-release", "pinned-tag", "ref", "custom"];
 // Ownership marker file written into the runtime prefix by TLH on every
 // successful provision/repair/reuse.  Authoritative ownership carrier; written
@@ -44,7 +43,7 @@ const VALID_UPDATE_TRACKS = ["latest-release", "pinned-tag", "ref", "custom"];
 const RUNTIME_MARKER_FILENAME = ".tlh-runtime-owned";
 const RUNTIME_MARKER_SCHEMA_VERSION = 1;
 // npm 11.x --prefix layout; empirically confirmed: npm 11.16.0 +
-// @earendil-works/pi-coding-agent@0.80.2.  Mirrors the advisory exclusivity
+// @earendil-works/pi-coding-agent@0.80.6.  Mirrors the advisory exclusivity
 // tripwire in uninstall.sh (demoted from gate): the only top-level entries a
 // TLH-owned runtime prefix should contain are those created by
 // npm install -g --ignore-scripts --prefix, plus the TLH runtime ownership
@@ -80,10 +79,6 @@ function compareVersionTriplets(currentVersion, expectedVersion) {
 function nodeVersionMeetsMinimum(currentVersion, minimumVersion = MIN_NODE_VERSION) {
     const comparison = compareVersionTriplets(currentVersion, minimumVersion);
     return comparison !== null && comparison >= 0;
-}
-function versionAtMost(currentVersion, maximumVersion) {
-    const comparison = compareVersionTriplets(currentVersion, maximumVersion);
-    return comparison !== null && comparison <= 0;
 }
 function formatNodeVersion(version) {
     const text = String(version || "").trim();
@@ -134,7 +129,7 @@ Environment overrides:
   TLH_UPDATE_TRACK     Update track for future tlh update
   TLH_PACKAGE_SOURCE   Package source passed to \`pi install\`
   TLH_RAW_BASE         Base URL for installer support files
-  TLH_GNOSIS_VERSION   Gnosis version to install (default: 0.5.3)
+  TLH_GNOSIS_VERSION   Gnosis version to install (default: 0.5.4)
   TLH_GNOSIS_REPO      Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
 `;
 }
@@ -358,6 +353,10 @@ function detailLog(config, message) {
 function warn(message) {
     console.error(`warning: ${message}`);
 }
+function verboseWarn(config, message) {
+    if (config.verbose && !config.quiet)
+        warn(message);
+}
 function printCommand(commandArgs) {
     console.log(`+ ${renderShellWords(commandArgs)} `);
 }
@@ -486,9 +485,6 @@ function gitCheckoutIo() {
         warn,
     };
 }
-function supportedPiVersionRange() {
-    return `Pi >= ${MIN_PI_VERSION} and <= ${MAX_PI_VERSION}`;
-}
 function pinnedPiInstallCommand(config) {
     return `npm install -g --ignore-scripts --prefix "${piInstallPrefix(config)}" ${PI_PACKAGE_SPEC}`;
 }
@@ -589,7 +585,7 @@ function writeRuntimeMarker(config, prefix, origin) {
     }
 }
 function assertSupportedPiVersion(config, { piCommand = "pi", sourceDescription = "existing pi on PATH", versionCommandDisplay = "pi --version", } = {}) {
-    // `pi --version` prints a bare semver (e.g. "0.80.1") on stdout. Older builds may
+    // `pi --version` prints a bare semver (e.g. "0.80.6") on stdout. Older builds may
     // differ, so we extract the first semver-shaped substring rather than match strictly.
     const result = spawnCapture(config, [piCommand, "--version"], {
         allowFailure: true,
@@ -597,18 +593,19 @@ function assertSupportedPiVersion(config, { piCommand = "pi", sourceDescription 
     });
     const output = `${result.stdout || ""}${result.stderr || ""}`.trim();
     const installGuidance = pinnedPiInstallGuidance(config);
+    const requiredVersionDescription = `Pi ${PINNED_PI_VERSION}`;
     if (result.error || result.status !== 0) {
         const status = result.status ?? result.signal ?? spawnErrorCode(result.error) ?? "error";
         const probeDetails = output ? ` Probe output: ${output}` : "";
-        throw new Error(`unable to determine Pi version from ${sourceDescription} (${versionCommandDisplay} exited with ${status}). The Last Harness requires ${supportedPiVersionRange()}. Verify that \`${versionCommandDisplay}\` works, or ${installGuidance}.${probeDetails}`);
+        throw new Error(`unable to determine Pi version from ${sourceDescription} (${versionCommandDisplay} exited with ${status}). The Last Harness requires ${requiredVersionDescription}. Verify that \`${versionCommandDisplay}\` works, or ${installGuidance}.${probeDetails}`);
     }
     const match = output.match(/\d+\.\d+\.\d+/);
     if (!match) {
-        throw new Error(`unable to parse Pi version from ${sourceDescription}: ${output || "<empty>"}. The Last Harness requires ${supportedPiVersionRange()}. Verify that \`${versionCommandDisplay}\` prints a semantic version like ${MIN_PI_VERSION}, or ${installGuidance}.`);
+        throw new Error(`unable to parse Pi version from ${sourceDescription}: ${output || "<empty>"}. The Last Harness requires ${requiredVersionDescription}. Verify that \`${versionCommandDisplay}\` prints a semantic version like ${PINNED_PI_VERSION}, or ${installGuidance}.`);
     }
     const currentVersion = match[0];
-    if (!nodeVersionMeetsMinimum(currentVersion, MIN_PI_VERSION) || !versionAtMost(currentVersion, MAX_PI_VERSION)) {
-        throw new Error(`${supportedPiVersionRange()} is required (found ${currentVersion}). ${installGuidance}`);
+    if (currentVersion !== PINNED_PI_VERSION) {
+        throw new Error(`${requiredVersionDescription} is required (found ${currentVersion}). ${installGuidance}`);
     }
     verboseLog(config, `Pi version (${sourceDescription}): ${currentVersion}`);
 }
@@ -621,10 +618,10 @@ function preferBinDirOnPathForCurrentInstall(config, binDir, { addMessage, prepe
     const alreadyPresent = currentEntries.includes(binDir);
     config.env.PATH = [binDir, ...currentEntries.filter((entry) => entry !== binDir)].join(delimiter);
     if (alreadyPresent) {
-        warn(prependMessage);
+        verboseWarn(config, prependMessage);
         return;
     }
-    warn(`${addMessage} Added it to PATH for this install; add it to your shell profile with: export PATH="${binDir}:$PATH"`);
+    verboseWarn(config, `${addMessage} Added it to PATH for this install; add it to your shell profile with: export PATH="${binDir}:$PATH"`);
 }
 function runtimePrefix(config) {
     // Private TLH runtime prefix: sibling of agent/ under ~/.the-last-harness/.
@@ -1186,7 +1183,7 @@ function updateNonCriticalDefaultExtensions(config, sources) {
         log(config, "Dry run: settings-wide extension refresh will run from merged settings.");
     }
     else {
-        log(config, `Running settings-wide extension refresh from merged settings; fallback retries only ${fallbackDescription} individually.`);
+        verboseLog(config, `Running settings-wide extension refresh from merged settings; fallback retries only ${fallbackDescription} individually.`);
     }
     try {
         runIsolatedPi(config, [absolutePiCmd(config), "update", "--extensions"]);
@@ -1262,6 +1259,46 @@ function installDefaultExtensions(config) {
 function gnosisInstallSkippedByEnv(config) {
     const value = config.env?.TLH_SKIP_GNOSIS_INSTALL;
     return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
+}
+function managedRtkSupportedPlatform() {
+    return MANAGED_RTK_SUPPORTED_PLATFORMS.has(`${process.platform}-${process.arch}`);
+}
+function configureRtk(config) {
+    if (!managedRtkSupportedPlatform())
+        return;
+    if (!config.supportFilePaths.TLH_RTK_SCRIPT || !existsSync(config.supportFilePaths.TLH_RTK_SCRIPT)) {
+        if (config.dryRun && config.supportFilesDryRunSkipped) {
+            log(config, "Would install required managed RTK after fetching support files.");
+            return;
+        }
+        throw new Error(`required managed RTK support script not found for ref ${config.ref}; re-run the installer from a release that includes scripts/tlh-rtk.mjs`);
+    }
+    const args = [
+        "--agent-dir",
+        config.agentDir,
+        "--target",
+        join(config.agentDir, "bin", "rtk"),
+        "install-managed",
+    ];
+    if (config.dryRun)
+        args.push("--dry-run", "--detail");
+    else if (config.verbose)
+        args.push("--detail");
+    if (config.quiet)
+        args.push("--quiet");
+    const result = spawnSync(process.execPath, [config.supportFilePaths.TLH_RTK_SCRIPT, ...args], {
+        env: inheritedCommandEnv(config, { PI_CODING_AGENT_DIR: config.agentDir }),
+        encoding: "utf8",
+        maxBuffer: COMMAND_MAX_BUFFER,
+        stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (result.stderr)
+        process.stderr.write(result.stderr);
+    if (result.error || result.status !== 0) {
+        const status = result.status ?? result.signal ?? spawnErrorCode(result.error) ?? 1;
+        const output = `${result.stderr || ""}${result.stdout || ""}`.trim();
+        throw new Error(output || `failed to install managed RTK (exit ${status})`);
+    }
 }
 function configureGnosis(config) {
     if (gnosisInstallSkippedByEnv(config)) {
@@ -1449,6 +1486,7 @@ async function runInstallFlow(config) {
     await mergeSettings(config);
     if (!config.noSettings)
         cleanupRetiredProfileFiles(config);
+    configureRtk(config);
     await writeInstallState(config);
     installDefaultExtensions(config);
     configureGnosis(config);

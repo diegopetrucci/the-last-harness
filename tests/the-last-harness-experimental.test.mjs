@@ -9,10 +9,12 @@ import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mj
 
 const RETIRED_RUN_TESTS_LAST_FEATURE = "run-tests-last";
 const LEGACY_UNKNOWN_FEATURE = "legacy-flag";
+const SERIAL_TEST = { concurrency: false };
 const jiti = createJiti(import.meta.url);
 const {
 	CI_FAILURE_INVESTIGATION_FEATURE,
 	DELTA_FOLLOW_UP_REVIEWS_FEATURE,
+	TICKET_WORKFLOW_UI_FEATURE,
 	buildPrimaryExperimentalPrompt,
 	getTlhExperimentalConfig,
 	isTlhExperimentalFeatureEnabled,
@@ -21,23 +23,43 @@ const {
 
 function createPiHarness() {
 	const commands = new Map();
+	const emittedEvents = [];
 	return {
 		commands,
+		emittedEvents,
+		events: {
+			emit(name, payload) {
+				emittedEvents.push({ name, payload });
+			},
+		},
 		registerCommand(name, options) {
 			commands.set(name, options);
 		},
 	};
 }
 
-function createCommandContext(cwd) {
+function createCommandContext(cwd, { mode = "print", hasUI = false, selectResponses = [] } = {}) {
 	const notifications = [];
+	const selectCalls = [];
+	const pendingSelections = [...selectResponses];
 	return {
 		notifications,
+		selectCalls,
 		ctx: {
 			cwd,
+			mode,
+			hasUI,
 			ui: {
 				notify(message, type = "info") {
 					notifications.push({ message, type });
+				},
+				async select(prompt, options) {
+					selectCalls.push({ prompt, options });
+					if (pendingSelections.length === 0) {
+						return null;
+					}
+					const nextSelection = pendingSelections.shift();
+					return typeof nextSelection === "function" ? nextSelection(options) : nextSelection;
 				},
 			},
 		},
@@ -52,23 +74,32 @@ function registeredExperimentalCommand() {
 	return command;
 }
 
-test("experimental command registers delta follow-up review and architect-only ci failure investigation flags as default-off", async (t) => {
+test("experimental command registers ticket workflow, delta follow-up review, and architect-only ci failure investigation flags as default-off", SERIAL_TEST, async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const command = registeredExperimentalCommand();
 		assert.deepEqual(
 			(await command.getArgumentCompletions("enable ")).map((completion) => completion.value),
-			[`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, `enable ${CI_FAILURE_INVESTIGATION_FEATURE}`],
+			[
+				`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
+				`enable ${CI_FAILURE_INVESTIGATION_FEATURE}`,
+				`enable ${TICKET_WORKFLOW_UI_FEATURE}`,
+			],
 		);
 		assert.deepEqual(
 			(await command.getArgumentCompletions("status ")).map((completion) => completion.value),
-			["status", `status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, `status ${CI_FAILURE_INVESTIGATION_FEATURE}`],
+			[
+				"status",
+				`status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
+				`status ${CI_FAILURE_INVESTIGATION_FEATURE}`,
+				`status ${TICKET_WORKFLOW_UI_FEATURE}`,
+			],
 		);
 		assert.equal(await command.getArgumentCompletions("unknown"), null);
 
 		const { ctx, notifications } = createCommandContext(fixture.dir);
-		await command.handler("", ctx);
+		await command.handler("list", ctx);
 
 		assert.equal(notifications.at(-1)?.type, "info");
 		assert.match(notifications.at(-1)?.message ?? "", /TLH experimental features:/);
@@ -79,7 +110,72 @@ test("experimental command registers delta follow-up review and architect-only c
 		assert.match(notifications.at(-1)?.message ?? "", /ci-failure-investigation/);
 		assert.match(notifications.at(-1)?.message ?? "", /architect-only guidance/i);
 		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable ci-failure-investigation/);
+		assert.match(notifications.at(-1)?.message ?? "", /ticket-workflow-ui/);
+		assert.match(notifications.at(-1)?.message ?? "", /experimental ticket workflow ui/i);
+		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable ticket-workflow-ui/);
 		assert.doesNotMatch(notifications.at(-1)?.message ?? "", /run-tests-last/);
+	});
+});
+
+test("experimental command opens a TUI picker with no args and toggles selections until cancelled", SERIAL_TEST, async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
+	const settingsPath = join(fixture.agent, "settings.json");
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const pi = createPiHarness();
+		registerExperimentalCommand(pi);
+		const command = pi.commands.get("experimental");
+		const { ctx, notifications, selectCalls } = createCommandContext(fixture.dir, {
+			mode: "tui",
+			hasUI: true,
+			selectResponses: [(options) => options[0], null],
+		});
+
+		await command.handler("", ctx);
+
+		assert.equal(selectCalls.length, 2);
+		assert.match(selectCalls[0].prompt, /toggle tlh experimental features/i);
+		assert.match(selectCalls[0].options[0], new RegExp(DELTA_FOLLOW_UP_REVIEWS_FEATURE));
+		assert.match(selectCalls[0].options[0], /disabled \(default\)/i);
+		assert.equal(JSON.parse(readFileSync(settingsPath, "utf8")).tlh.experimental.enabledFeatures[0], DELTA_FOLLOW_UP_REVIEWS_FEATURE);
+		assert.match(selectCalls[1].options[0], /enabled/i);
+		assert.match(notifications.at(-1)?.message ?? "", /Updated TLH experimental feature delta-follow-up-reviews/);
+		assert.deepEqual(pi.emittedEvents.at(-1), {
+			name: "tlh:experimental-feature-changed",
+			payload: { cwd: fixture.dir, enabled: true, featureId: DELTA_FOLLOW_UP_REVIEWS_FEATURE },
+		});
+	});
+});
+
+test("experimental command falls back to status output with no args when UI is unavailable", SERIAL_TEST, async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const command = registeredExperimentalCommand();
+		const { ctx, notifications, selectCalls } = createCommandContext(fixture.dir, { hasUI: false });
+
+		await command.handler("", ctx);
+
+		assert.equal(selectCalls.length, 0);
+		assert.equal(notifications.at(-1)?.type, "info");
+		assert.match(notifications.at(-1)?.message ?? "", /TLH experimental features:/);
+		assert.match(notifications.at(-1)?.message ?? "", /delta-follow-up-reviews/);
+	});
+});
+
+test("experimental command falls back to status output with no args outside TUI even when UI is available", SERIAL_TEST, async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const command = registeredExperimentalCommand();
+		const { ctx, notifications, selectCalls } = createCommandContext(fixture.dir, { mode: "rpc", hasUI: true });
+
+		await command.handler("", ctx);
+
+		assert.equal(selectCalls.length, 0);
+		assert.equal(notifications.at(-1)?.type, "info");
+		assert.match(notifications.at(-1)?.message ?? "", /TLH experimental features:/);
+		assert.match(notifications.at(-1)?.message ?? "", /delta-follow-up-reviews/);
 	});
 });
 
@@ -112,7 +208,7 @@ test("ci failure investigation prompt injection stays default-off and only enabl
 	assert.equal(buildPrimaryExperimentalPrompt({ name: "developer" }, enabledConfig), undefined);
 });
 
-test("experimental helpers treat stale contrarian settings as harmless while malformed arrays still fail closed", async (t) => {
+test("experimental helpers treat stale contrarian settings as harmless while malformed arrays still fail closed", SERIAL_TEST, async (t) => {
 	const enabledFixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
 	writeFileSync(
 		join(enabledFixture.agent, "settings.json"),
@@ -156,7 +252,7 @@ test("experimental helpers treat stale contrarian settings as harmless while mal
 	});
 });
 
-test("experimental stale settings fail closed and do not rebuild retired or promoted guidance", async (t) => {
+test("experimental stale settings fail closed and do not rebuild retired or promoted guidance", SERIAL_TEST, async (t) => {
 	for (const enabledFeatures of [true, [123], [RETIRED_RUN_TESTS_LAST_FEATURE], ["contrarian"]]) {
 		const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
 		const settingsPath = join(fixture.agent, "settings.json");
@@ -205,7 +301,55 @@ test("experimental stale settings fail closed and do not rebuild retired or prom
 	}
 });
 
-test("experimental enable is idempotent, preserves settings, and does not clobber other enabled features", async (t) => {
+test("ticket workflow ui flag status, enable, and disable stay default-off and preserve unrelated isolated settings", SERIAL_TEST, async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
+	const settingsPath = join(fixture.agent, "settings.json");
+	const initialSettings = `${JSON.stringify(
+		{
+			tlh: {
+				primaryAgent: { selected: "architect" },
+				experimental: { enabledFeatures: [LEGACY_UNKNOWN_FEATURE] },
+			},
+			theme: "dark",
+		},
+		null,
+		2,
+	)}\n`;
+	writeFileSync(settingsPath, initialSettings);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const command = registeredExperimentalCommand();
+
+		let { ctx, notifications } = createCommandContext(fixture.dir);
+		await command.handler(`status ${TICKET_WORKFLOW_UI_FEATURE}`, ctx);
+		assert.match(notifications.at(-1)?.message ?? "", /ticket-workflow-ui: disabled \(default\)/i);
+		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable ticket-workflow-ui/);
+
+		({ ctx, notifications } = createCommandContext(fixture.dir));
+		await command.handler(`enable ${TICKET_WORKFLOW_UI_FEATURE}`, ctx);
+
+		let written = JSON.parse(readFileSync(settingsPath, "utf8"));
+		assert.equal(written.theme, "dark");
+		assert.deepEqual(written.tlh.primaryAgent, { selected: "architect" });
+		assert.deepEqual(written.tlh.experimental.enabledFeatures, [LEGACY_UNKNOWN_FEATURE, TICKET_WORKFLOW_UI_FEATURE]);
+		assert.equal(isTlhExperimentalFeatureEnabled(getTlhExperimentalConfig(fixture.dir), TICKET_WORKFLOW_UI_FEATURE), true);
+		assert.match(notifications.at(-1)?.message ?? "", /Updated TLH experimental feature ticket-workflow-ui/);
+		assert.match(notifications.at(-1)?.message ?? "", /Undo with \/experimental disable ticket-workflow-ui/);
+
+		({ ctx, notifications } = createCommandContext(fixture.dir));
+		await command.handler(`disable ${TICKET_WORKFLOW_UI_FEATURE}`, ctx);
+
+		written = JSON.parse(readFileSync(settingsPath, "utf8"));
+		assert.equal(written.theme, "dark");
+		assert.deepEqual(written.tlh.primaryAgent, { selected: "architect" });
+		assert.deepEqual(written.tlh.experimental.enabledFeatures, [LEGACY_UNKNOWN_FEATURE]);
+		assert.equal(isTlhExperimentalFeatureEnabled(getTlhExperimentalConfig(fixture.dir), TICKET_WORKFLOW_UI_FEATURE), false);
+		assert.match(notifications.at(-1)?.message ?? "", /It is now disabled/);
+		assert.match(notifications.at(-1)?.message ?? "", /Undo with \/experimental enable ticket-workflow-ui/);
+	});
+});
+
+test("experimental enable is idempotent, preserves settings, and does not clobber other enabled features", SERIAL_TEST, async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
 	const settingsPath = join(fixture.agent, "settings.json");
 	const initialSettings = `${JSON.stringify(
@@ -245,7 +389,7 @@ test("experimental enable is idempotent, preserves settings, and does not clobbe
 	});
 });
 
-test("experimental disable and normal-Pi refusal follow isolated settings rules", async (t) => {
+test("experimental disable and normal-Pi refusal follow isolated settings rules", SERIAL_TEST, async (t) => {
 	const disableFixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
 	const disableSettingsPath = join(disableFixture.agent, "settings.json");
 	writeFileSync(
@@ -280,7 +424,7 @@ test("experimental disable and normal-Pi refusal follow isolated settings rules"
 	});
 });
 
-test("experimental retired flag actions do not create settings or backups on a fresh profile", async (t) => {
+test("experimental retired flag actions do not create settings or backups on a fresh profile", SERIAL_TEST, async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
 	const settingsPath = join(fixture.agent, "settings.json");
 

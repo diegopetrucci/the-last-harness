@@ -17,16 +17,20 @@ const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
 const defaultsScript = join(repoRoot, "scripts", "tlh-defaults.mjs");
 const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
 const retiredPlannotatorPackage = "npm:@plannotator/pi-extension";
+const previousMcporterSource = "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1";
+const bundledMcporterSource = "npm:@diegopetrucci/pi-mcp-adapter@2.10.1";
+const previousPiWebAccessSource = "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1";
+const bundledPiWebAccessSource = "npm:@diegopetrucci/pi-web-access@0.10.10";
 const expectedBundledNpmSources = new Map([
 	["openai-fast", "npm:@diegopetrucci/pi-openai-fast@0.1.6"],
-	["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth@0.6.3"],
+	["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth@1.0.0"],
 	["fff", "npm:@ff-labs/pi-fff@0.9.6"],
 	["inline-bash", "npm:@diegopetrucci/pi-inline-bash@0.1.3"],
 	["notify", "npm:@diegopetrucci/pi-notify@0.1.7"],
-	["context-inspector", "npm:@diegopetrucci/pi-context-inspector@0.1.3"],
+	["context-inspector", "npm:@diegopetrucci/pi-context-inspector@0.1.4"],
 	["quiet-tools", "npm:@diegopetrucci/pi-quiet-tools@0.1.4"],
-	["dirty-repo-guard", "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.3"],
-	["triage-comments", "npm:@diegopetrucci/pi-triage-comments@0.1.4"],
+	["dirty-repo-guard", "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.4"],
+	["intercom", "npm:@diegopetrucci/pi-intercom@0.7.0"],
 ]);
 
 function tempFixture() {
@@ -140,10 +144,10 @@ test("setDefaultExtensionProvenance returns false for non-plain-object settings"
 	});
 });
 
-test("bundled manifest keeps quiet-tools-compatible rtk load order", () => {
+test("bundled manifest retires rtk while keeping quiet-tools bundled", () => {
 	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
 	const ids = bundled.map(({ id }) => id);
-	const rtk = bundled.find(({ id }) => id === "rtk");
+	const quietTools = bundled.find(({ id }) => id === "quiet-tools");
 	const dirtyRepoGuard = bundled.find(({ id }) => id === "dirty-repo-guard");
 
 	assert.ok(dirtyRepoGuard, "bundled dirty-repo-guard default should exist");
@@ -151,17 +155,13 @@ test("bundled manifest keeps quiet-tools-compatible rtk load order", () => {
 	assert.equal(ids.includes("permission-gate"), false);
 	assert.equal(ids.includes("confirm-destructive"), false);
 	assert.equal(ids.includes("librarian"), false);
-	assert.ok(rtk, "bundled rtk default should exist");
-	assert.deepEqual(rtk.aliases, ["pi-rtk"]);
-	assert.deepEqual(rtk.replaces, [
-		"npm:pi-rtk",
-		"npm:@sherif-fanous/pi-rtk",
-		"git:github.com/sherif-fanous/pi-rtk",
-	]);
-	assert.equal(rtk.migrateReplacements, true);
-	assert.equal(rtk.critical, false);
-	assert.equal(rtk.source, "git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5");
-	assert(ids.indexOf("rtk") < ids.indexOf("quiet-tools"), "quiet-tools should load after rtk");
+	assert.equal(ids.includes("rtk"), false);
+	assert.equal(ids.includes("triage-comments"), false);
+	assert.ok(quietTools, "bundled quiet-tools default should exist");
+	assert.deepEqual(quietTools.aliases, ["compact-bash"]);
+	assert.deepEqual(quietTools.replaces, ["npm:@diegopetrucci/pi-compact-bash"]);
+	assert.equal(quietTools.critical, false);
+	assert.equal(quietTools.source, expectedBundledNpmSources.get("quiet-tools"));
 });
 
 test("bundled manifest pins every managed npm default to an explicit version", () => {
@@ -209,7 +209,7 @@ test("installable support files no longer include the legacy defaults helper tre
 	assert.equal(installableVariables.has("TLH_RECOVER_UPDATE_SCRIPT"), true);
 });
 
-test("merge ignores and cleans stale/manual critical opt-outs while preserving non-critical opt-outs", () => {
+test("merge migrates legacy intercom git installs while cleaning stale critical opt-outs and preserving non-critical opt-outs", () => {
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
 		{
@@ -222,10 +222,15 @@ test("merge ignores and cleans stale/manual critical opt-outs while preserving n
 		},
 		{
 			id: "intercom",
-			replaces: ["npm:pi-intercom"],
+			aliases: ["pi-intercom"],
+			replaces: [
+				"npm:pi-intercom",
+				"git:github.com/nicobailon/pi-intercom",
+				"git:github.com/diegopetrucci/pi-intercom",
+			],
 			migrateReplacements: true,
 			critical: true,
-			source: "git:github.com/tlh/pi-intercom@pinned",
+			source: "npm:@diegopetrucci/pi-intercom@0.7.0",
 		},
 		{
 			id: "helper",
@@ -233,8 +238,12 @@ test("merge ignores and cleans stale/manual critical opt-outs while preserving n
 		},
 	], null, 2));
 	writeFileSync(fixture.settings, JSON.stringify({
-		packages: ["git:github.com/upstream/pi-subagents", "npm:pi-intercom", "npm:helper"],
-		tlh: { disabledDefaultExtensions: ["intercom", "pi-subagents", "helper"] },
+		packages: [
+			"git:github.com/upstream/pi-subagents",
+			"git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-6",
+			"npm:helper",
+		],
+		tlh: { disabledDefaultExtensions: ["pi-intercom", "pi-subagents", "helper"] },
 	}, null, 2));
 
 	runNode(mergeScript, [
@@ -246,26 +255,31 @@ test("merge ignores and cleans stale/manual critical opt-outs while preserving n
 
 	const settings = readJson(fixture.settings);
 	assert(settings.packages.includes("git:github.com/tlh/pi-subagents@pinned"));
-	assert(settings.packages.includes("git:github.com/tlh/pi-intercom@pinned"));
+	assert(settings.packages.includes("npm:@diegopetrucci/pi-intercom@0.7.0"));
 	assert(!settings.packages.includes("git:github.com/upstream/pi-subagents"));
-	assert(!settings.packages.includes("npm:pi-intercom"));
+	assert(!settings.packages.includes("git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-6"));
 	assert(!settings.packages.includes("npm:helper"));
 	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["helper"]);
 });
 
-test("merge migrates non-critical pi-rtk replacements to the bundled TLH fork", () => {
+test("merge force-removes legacy pi-rtk packages and prunes stale rtk opt-outs", () => {
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
 		{
-			id: "rtk",
-			aliases: ["pi-rtk"],
-			replaces: ["npm:pi-rtk", "npm:@sherif-fanous/pi-rtk", "git:github.com/sherif-fanous/pi-rtk"],
-			migrateReplacements: true,
-			source: "git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
+			id: "helper",
+			source: "npm:helper",
 		},
 	], null, 2));
 	writeFileSync(fixture.settings, JSON.stringify({
-		packages: ["npm:@sherif-fanous/pi-rtk"],
+		packages: [
+			harnessPackage,
+			"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
+			"npm:pi-rtk",
+			"npm:@sherif-fanous/pi-rtk",
+			"git:github.com/sherif-fanous/pi-rtk@v0.5.0",
+			"npm:helper",
+		],
+		tlh: { disabledDefaultExtensions: ["rtk", "pi-rtk", "helper"] },
 	}, null, 2));
 
 	runNode(mergeScript, [
@@ -276,33 +290,26 @@ test("merge migrates non-critical pi-rtk replacements to the bundled TLH fork", 
 	]);
 
 	const settings = readJson(fixture.settings);
-	assert(settings.packages.includes("git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5"));
-	assert(!settings.packages.includes("npm:pi-rtk"));
-	assert(!settings.packages.includes("npm:@sherif-fanous/pi-rtk"));
-	assert(!settings.packages.includes("git:github.com/sherif-fanous/pi-rtk"));
+	assert.deepEqual(settings.packages, [harnessPackage]);
+	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["helper"]);
 });
 
-test("merge reorders only targeted default extensions so unrelated defaults stay in place", () => {
+test("merge no longer reorders quiet-tools around retired rtk packages", () => {
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
 		{
-			id: "rtk",
-			aliases: ["pi-rtk"],
-			replaces: ["npm:pi-rtk", "npm:@sherif-fanous/pi-rtk", "git:github.com/sherif-fanous/pi-rtk"],
-			migrateReplacements: true,
-			source: "git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
-		},
-		{
 			id: "quiet-tools",
+			aliases: ["compact-bash"],
 			replaces: ["npm:@diegopetrucci/pi-compact-bash"],
-			source: "npm:@diegopetrucci/pi-quiet-tools",
+			source: "npm:@diegopetrucci/pi-quiet-tools@0.1.4",
 		},
 	], null, 2));
 	writeFileSync(fixture.settings, JSON.stringify({
 		packages: [
+			harnessPackage,
 			"npm:before",
-			"npm:@diegopetrucci/pi-compact-bash",
-			"npm:@sherif-fanous/pi-rtk",
+			"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
+			"npm:@diegopetrucci/pi-quiet-tools",
 			"npm:after",
 		],
 	}, null, 2));
@@ -313,13 +320,12 @@ test("merge reorders only targeted default extensions so unrelated defaults stay
 		"--default-extensions", fixture.extensions,
 	]);
 
-	assert.match(output, /reorder targeted default extension packages for load order: quiet-tools, rtk -> rtk, quiet-tools/);
+	assert.doesNotMatch(output, /reorder targeted default extension packages for load order/);
 	assert.deepEqual(readJson(fixture.settings).packages, [
+		harnessPackage,
 		"npm:before",
-		"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
+		"npm:@diegopetrucci/pi-quiet-tools@0.1.4",
 		"npm:after",
-		"git:github.com/diegopetrucci/the-last-harness",
-		"npm:@diegopetrucci/pi-compact-bash",
 	]);
 });
 
@@ -468,48 +474,28 @@ test("tlh-defaults rejects symlinked settings targets before creating backups", 
 	assert.deepEqual(backupFiles(fixture.settings), []);
 });
 
-test("tlh-defaults enable repairs targeted default extension load order for rtk", () => {
+test("tlh-defaults prunes legacy rtk opt-outs while mutating other defaults", () => {
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
 		{
-			id: "rtk",
-			aliases: ["pi-rtk"],
-			replaces: ["npm:pi-rtk", "npm:@sherif-fanous/pi-rtk", "git:github.com/sherif-fanous/pi-rtk"],
-			migrateReplacements: true,
-			source: "git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
-		},
-		{
-			id: "quiet-tools",
-			replaces: ["npm:@diegopetrucci/pi-compact-bash"],
-			source: "npm:@diegopetrucci/pi-quiet-tools",
+			id: "helper",
+			source: "npm:helper",
 		},
 	], null, 2));
 	writeFileSync(fixture.settings, JSON.stringify({
-		packages: [
-			"npm:before",
-			"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
-			"npm:@diegopetrucci/pi-compact-bash",
-		],
+		packages: ["npm:helper"],
+		tlh: { disabledDefaultExtensions: ["rtk", "pi-rtk"] },
 	}, null, 2));
 
 	runNode(defaultsScript, [
 		"--settings", fixture.settings,
 		"--defaults", fixture.extensions,
-		"disable", "rtk",
-	]);
-	runNode(defaultsScript, [
-		"--settings", fixture.settings,
-		"--defaults", fixture.extensions,
-		"enable", "rtk",
+		"disable", "helper",
 	]);
 
 	const settings = readJson(fixture.settings);
-	assert.deepEqual(settings.packages, [
-		"npm:before",
-		"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
-		"npm:@diegopetrucci/pi-compact-bash",
-	]);
-	assert.deepEqual(settings.tlh?.disabledDefaultExtensions ?? [], []);
+	assert.deepEqual(settings.packages, []);
+	assert.deepEqual(settings.tlh?.disabledDefaultExtensions ?? [], ["helper"]);
 });
 
 test("merge updates critical package pins without --force", () => {
@@ -726,7 +712,7 @@ test("tlh-defaults sources emit the bundled npm pin when the installed managed p
 	assert.deepEqual(sources, ["npm:@diegopetrucci/pi-oracle@0.1.13"]);
 });
 
-test("tlh-defaults sources still respect disabled and deferred defaults while pinning managed npm defaults", () => {
+test("tlh-defaults sources still respect disabled defaults while migrating pi-web-access replacements to the managed npm pin", () => {
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
 		{
@@ -739,8 +725,9 @@ test("tlh-defaults sources still respect disabled and deferred defaults while pi
 		},
 		{
 			id: "pi-web-access",
-			replaces: ["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access"],
-			source: "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1",
+			replaces: ["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access", previousPiWebAccessSource],
+			migrateReplacements: true,
+			source: bundledPiWebAccessSource,
 		},
 	], null, 2));
 	writeFileSync(fixture.settings, JSON.stringify({
@@ -756,7 +743,7 @@ test("tlh-defaults sources still respect disabled and deferred defaults while pi
 		.trim()
 		.split("\n")
 		.filter(Boolean);
-	assert.deepEqual(sources, ["npm:@diegopetrucci/pi-oracle@0.1.12"]);
+	assert.deepEqual(sources, ["npm:@diegopetrucci/pi-oracle@0.1.12", bundledPiWebAccessSource]);
 });
 
 test("tlh-defaults sources defers non-migrating replacements and ignores stale/manual critical opt-outs", () => {
@@ -801,31 +788,38 @@ test("tlh-defaults sources defers non-migrating replacements and ignores stale/m
 	assert.deepEqual(criticalSources, ["git:github.com/tlh/critical@pin", "git:github.com/tlh/disabled@pin"]);
 });
 
-test("tlh-defaults enable switches deferred pi-web-access replacements to the bundled TLH source", () => {
-	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "pi-web-access",
-			replaces: ["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access"],
-			source: "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1",
-		},
-	], null, 2));
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: ["git:github.com/nicobailon/pi-web-access@v0.10.7"],
-		tlh: { disabledDefaultExtensions: ["pi-web-access"] },
-	}, null, 2));
+for (const replacementSource of [
+	"npm:pi-web-access@0.10.7",
+	"git:github.com/nicobailon/pi-web-access@v0.10.7",
+	previousPiWebAccessSource,
+]) {
+	test(`tlh-defaults enable switches ${replacementSource} to the bundled TLH source`, () => {
+		const fixture = tempFixture();
+		writeFileSync(fixture.extensions, JSON.stringify([
+			{
+				id: "pi-web-access",
+				replaces: ["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access", previousPiWebAccessSource],
+				migrateReplacements: true,
+				source: bundledPiWebAccessSource,
+			},
+		], null, 2));
+		writeFileSync(fixture.settings, JSON.stringify({
+			packages: [replacementSource],
+			tlh: { disabledDefaultExtensions: ["pi-web-access"] },
+		}, null, 2));
 
-	runNode(defaultsScript, [
-		"--settings", fixture.settings,
-		"--defaults", fixture.extensions,
-		"enable", "pi-web-access",
-	]);
+		runNode(defaultsScript, [
+			"--settings", fixture.settings,
+			"--defaults", fixture.extensions,
+			"enable", "pi-web-access",
+		]);
 
-	const settings = readJson(fixture.settings);
-	assert.deepEqual(settings.packages, ["git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1"]);
-	assert.deepEqual(settings.tlh.disabledDefaultExtensions, []);
-	assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, ["git:github.com/diegopetrucci/pi-web-access"]);
-});
+		const settings = readJson(fixture.settings);
+		assert.deepEqual(settings.packages, [bundledPiWebAccessSource]);
+		assert.deepEqual(settings.tlh.disabledDefaultExtensions, []);
+		assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, ["npm:@diegopetrucci/pi-web-access"]);
+	});
+}
 
 for (const scenario of [
 	{
@@ -1044,45 +1038,61 @@ test("merge does not introduce warnings.anthropicExtraUsage when anthropic-auth 
 	assert.equal(settings.warnings, undefined, "warnings object should not be created by merge");
 });
 
-test("bundled manifest contains pi-web-access entry with correct tag and defer flags", () => {
+test("bundled manifest contains pi-web-access entry with correct source and migration flags", () => {
 	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
 	const webAccess = bundled.find(({ id }) => id === "pi-web-access");
 
 	assert.ok(webAccess, "bundled pi-web-access entry should exist");
-	assert.equal(webAccess.source, "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1");
+	assert.equal(webAccess.source, bundledPiWebAccessSource);
 	assert.equal(webAccess.critical, false, "pi-web-access must not be critical");
 	assert.deepEqual(webAccess.replaces, [
 		"npm:pi-web-access",
 		"git:github.com/nicobailon/pi-web-access",
-	], "pi-web-access should defer to common upstream/manual installs");
-	assert.equal(webAccess.migrateReplacements, false, "pi-web-access replacements must stay deferred by default");
+		previousPiWebAccessSource,
+	], "pi-web-access should migrate upstream and prior TLH replacement sources");
+	assert.equal(webAccess.migrateReplacements, true, "pi-web-access replacements must stay enabled for migration");
 	assert.deepEqual(webAccess.aliases, [], "pi-web-access must have no aliases");
 });
 
-test("bundled manifest contains mcporter entry and tlh-defaults accepts its aliases", () => {
+test("bundled manifest contains mcporter entry and migrates prior TLH-managed installs", () => {
 	const bundledPath = join(repoRoot, "config", "default-extensions.json");
 	const bundled = readDefaultExtensions(bundledPath);
 	const mcporter = bundled.find(({ id }) => id === "mcporter");
 
 	assert.ok(mcporter, "bundled mcporter entry should exist");
-	assert.equal(mcporter.source, "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1");
+	assert.equal(mcporter.source, bundledMcporterSource);
 	assert.equal(mcporter.critical, false, "mcporter must not be critical");
 	assert.deepEqual(mcporter.aliases, ["pi-mcp-adapter", "mcp-adapter"]);
-	assert.deepEqual(mcporter.replaces, ["npm:pi-mcp-adapter"]);
-	assert.equal(mcporter.migrateReplacements, true, "mcporter migrates off the upstream npm source");
+	assert.deepEqual(mcporter.replaces, ["npm:pi-mcp-adapter", previousMcporterSource]);
+	assert.equal(mcporter.migrateReplacements, true, "mcporter should migrate both upstream npm and previous TLH git installs");
 
-	const fixture = tempFixture();
-	writeFileSync(fixture.settings, JSON.stringify({ packages: ["npm:pi-mcp-adapter"] }, null, 2));
+	const mergeFixture = tempFixture();
+	writeFileSync(mergeFixture.extensions, JSON.stringify([mcporter], null, 2));
+	writeFileSync(mergeFixture.settings, JSON.stringify({ packages: [previousMcporterSource] }, null, 2));
+
+	runNode(mergeScript, [
+		mergeFixture.defaults,
+		"--settings", mergeFixture.settings,
+		"--default-extensions", mergeFixture.extensions,
+		"--quiet",
+	]);
+
+	const mergedSettings = readJson(mergeFixture.settings);
+	assert.deepEqual(mergedSettings.packages, [harnessPackage, bundledMcporterSource]);
+	assert.deepEqual(mergedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, ["npm:@diegopetrucci/pi-mcp-adapter"]);
+
+	const disableFixture = tempFixture();
+	writeFileSync(disableFixture.settings, JSON.stringify({ packages: [previousMcporterSource] }, null, 2));
 
 	runNode(defaultsScript, [
-		"--settings", fixture.settings,
+		"--settings", disableFixture.settings,
 		"--defaults", bundledPath,
 		"disable", "mcp-adapter",
 	]);
 
-	const settings = readJson(fixture.settings);
-	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["mcporter"]);
-	assert.deepEqual(settings.packages, []);
+	const disabledSettings = readJson(disableFixture.settings);
+	assert.deepEqual(disabledSettings.tlh.disabledDefaultExtensions, ["mcporter"]);
+	assert.deepEqual(disabledSettings.packages, []);
 });
 
 test("bundled manifest contains subagents and intercom entries with correct critical migration flags", () => {
@@ -1091,39 +1101,90 @@ test("bundled manifest contains subagents and intercom entries with correct crit
 	const intercom = bundled.find(({ id }) => id === "intercom");
 
 	assert.ok(subagents, "bundled subagents entry should exist");
-	assert.equal(subagents.source, "git:github.com/diegopetrucci/pi-subagents@tlh-v0.26.0-13");
+	assert.equal(subagents.source, "npm:@diegopetrucci/pi-subagents@0.31.4");
 	assert.equal(subagents.critical, true, "subagents must stay critical");
 	assert.deepEqual(subagents.aliases, ["pi-subagents"]);
 	assert.deepEqual(subagents.replaces, [
 		"npm:pi-subagents",
 		"git:github.com/nicobailon/pi-subagents",
+		"git:github.com/diegopetrucci/pi-subagents",
 	]);
 	assert.equal(subagents.migrateReplacements, true, "subagents replacements must stay enabled");
 
 	assert.ok(intercom, "bundled intercom entry should exist");
-	assert.equal(intercom.source, "git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-6");
+	assert.equal(intercom.source, expectedBundledNpmSources.get("intercom"));
 	assert.equal(intercom.critical, true, "intercom must stay critical");
 	assert.deepEqual(intercom.aliases, ["pi-intercom"]);
 	assert.deepEqual(intercom.replaces, [
 		"npm:pi-intercom",
 		"git:github.com/nicobailon/pi-intercom",
+		"git:github.com/diegopetrucci/pi-intercom",
 	]);
 	assert.equal(intercom.migrateReplacements, true, "intercom replacements must stay enabled");
 });
 
-test("bundled manifest contains intercom entry with correct tag and critical flags", () => {
-	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
-	const intercom = bundled.find(({ id }) => id === "intercom");
+test("bundled merge migrates legacy upstream and TLH subagents installs to the scoped npm source without duplicates", () => {
+	const fixture = tempFixture();
+	const bundledPath = join(repoRoot, "config", "default-extensions.json");
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [
+			"git:github.com/nicobailon/pi-subagents@v0.31.0",
+			"git:github.com/diegopetrucci/pi-subagents@tlh-v0.31.1",
+		],
+		tlh: { disabledDefaultExtensions: ["pi-subagents"] },
+	}, null, 2));
 
-	assert.ok(intercom, "bundled intercom entry should exist");
-	assert.equal(intercom.source, "git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-6");
-	assert.equal(intercom.critical, true, "intercom must stay critical");
-	assert.deepEqual(intercom.aliases, ["pi-intercom"]);
-	assert.deepEqual(intercom.replaces, [
-		"npm:pi-intercom",
-		"git:github.com/nicobailon/pi-intercom",
+	runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", bundledPath,
+		"--quiet",
 	]);
-	assert.equal(intercom.migrateReplacements, true, "intercom replacements must stay enabled");
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(
+		settings.packages.filter((entry) => packageIdentity(entry) === "npm:@diegopetrucci/pi-subagents"),
+		["npm:@diegopetrucci/pi-subagents@0.31.4"],
+	);
+	assert.equal(
+		settings.packages.some((entry) => packageIdentity(entry) === "git:github.com/nicobailon/pi-subagents"),
+		false,
+	);
+	assert.equal(
+		settings.packages.some((entry) => packageIdentity(entry) === "git:github.com/diegopetrucci/pi-subagents"),
+		false,
+	);
+	assert.deepEqual(
+		(settings.tlh?.disabledDefaultExtensions ?? []).filter((value) => value === "subagents" || value === "pi-subagents"),
+		[],
+	);
+});
+
+test("bundled merge migrates legacy TLH intercom git installs to the scoped npm source", () => {
+	const fixture = tempFixture();
+	const bundledPath = join(repoRoot, "config", "default-extensions.json");
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: ["git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-6"],
+		tlh: { disabledDefaultExtensions: ["pi-intercom"] },
+	}, null, 2));
+
+	runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", bundledPath,
+		"--quiet",
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert(settings.packages.includes(expectedBundledNpmSources.get("intercom")));
+	assert.equal(
+		settings.packages.some((entry) => packageIdentity(entry) === "git:github.com/diegopetrucci/pi-intercom"),
+		false,
+	);
+	assert.deepEqual(
+		(settings.tlh?.disabledDefaultExtensions ?? []).filter((value) => value === "intercom" || value === "pi-intercom"),
+		[],
+	);
 });
 
 test("bundled manifest has no duplicate ids or alias conflicts", () => {

@@ -112,7 +112,7 @@ function contrarianMetadata() {
 	return {
 		name: "contrarian",
 		description: "Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case.",
-		tlhOpenaiModels: ["openai-codex/gpt-5.5"],
+		tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
 		tlhAnthropicModels: ["anthropic/claude-opus-4-8"],
 		preferOppositeProvider: true,
 	};
@@ -1857,6 +1857,37 @@ test("architect before_agent_start preserves medium floor selection but restores
 
 		await beforeAgentStart({ systemPrompt: "base prompt" }, makeCtx([]));
 		assert.equal(pi.thinkingLevel, "high", "architect restores its declared default after returning from rush");
+	});
+});
+
+test("primary runtime applies a max thinking default", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const architectPrimary = createPrimaryPrompt("architect", {
+		model: "anthropic/claude-opus-4-8",
+		thinking: "max",
+		applyModel: true,
+		applyThinking: true,
+	});
+	const primaryAgents = new Map([["architect", architectPrimary]]);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { pi, runtime, beforeAgentStart } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		assert.ok(runtime, "runtime should register outside child sessions");
+
+		const makeCtx = (branch) => ({
+			cwd: fixture.cwd,
+			sessionManager: { getBranch: () => branch },
+			ui: { notify() {} },
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-8" }] },
+			model: { provider: "anthropic", id: "claude-opus-4-8" },
+		});
+
+		await runtime.applySessionStart(makeCtx([]));
+		assert.equal(pi.thinkingLevel, "max");
+
+		pi.thinkingLevel = "off";
+		await beforeAgentStart({ systemPrompt: "base prompt" }, makeCtx([]));
+		assert.equal(pi.thinkingLevel, "max");
 	});
 });
 

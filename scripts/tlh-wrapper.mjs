@@ -142,6 +142,11 @@ function renderWrapper(args) {
         'tlh_original_path="${PATH:-}"',
         'tlh_managed_bin="${default_agent_dir}/bin"',
         'tlh_wrapper_cwd_physical="$(pwd -P)"',
+        // tlh_clean_abs_path returns its normalized path in the global
+        // tlh_abs_result instead of via stdout/$(): pure string work does not
+        // need a command-substitution fork, and this runs once per PATH entry
+        // on every launch.
+        'tlh_abs_result=""',
         'tlh_clean_abs_path() {',
         '  local tlh_path="$1"',
         '  local tlh_part',
@@ -175,7 +180,7 @@ function renderWrapper(args) {
         '    tlh_clean_count=$((tlh_clean_count + 1))',
         '  done',
         '  if ((tlh_clean_count == 0)); then',
-        "    printf '/\\n'",
+        '    tlh_abs_result="/"',
         '    return',
         '  fi',
         '  tlh_result=""',
@@ -184,20 +189,26 @@ function renderWrapper(args) {
         '    tlh_result="${tlh_result}/${tlh_clean_parts[${tlh_index}]}"',
         '    tlh_index=$((tlh_index + 1))',
         '  done',
-        '  printf \'%s\\n\' "${tlh_result}"',
+        '  tlh_abs_result="${tlh_result}"',
         '}',
+        // tlh_realpath_dir is only ever invoked inside $(...), which already
+        // provides a subshell; the previous inner (...) double-forked. Dropping
+        // it keeps cwd mutation contained in the command-substitution subshell
+        // while halving the realpath fork cost per PATH entry.
         'tlh_realpath_dir() {',
         '  local tlh_path="$1"',
-        '  (cd -P -- "${tlh_path}" >/dev/null 2>&1 && pwd -P)',
+        '  cd -P -- "${tlh_path}" >/dev/null 2>&1 && pwd -P',
         '}',
-        'tlh_managed_bin_abs="$(tlh_clean_abs_path "${tlh_managed_bin}")"',
+        'tlh_clean_abs_path "${tlh_managed_bin}"',
+        'tlh_managed_bin_abs="${tlh_abs_result}"',
         'tlh_managed_bin_real=""',
         'if tlh_managed_bin_real="$(tlh_realpath_dir "${tlh_managed_bin}")"; then',
         '  :',
         'else',
         '  tlh_managed_bin_real=""',
         'fi',
-        'tlh_wrapper_cwd_abs="$(tlh_clean_abs_path "${tlh_wrapper_cwd_physical}")"',
+        'tlh_clean_abs_path "${tlh_wrapper_cwd_physical}"',
+        'tlh_wrapper_cwd_abs="${tlh_abs_result}"',
         'tlh_wrapper_cwd_real="${tlh_wrapper_cwd_physical}"',
         'tlh_path_entry_should_drop() {',
         '  local tlh_path_entry="$1"',
@@ -206,7 +217,8 @@ function renderWrapper(args) {
         '  if [[ -z "${tlh_path_entry}" ]]; then',
         '    return 0',
         '  fi',
-        '  tlh_entry_abs="$(tlh_clean_abs_path "${tlh_path_entry}")"',
+        '  tlh_clean_abs_path "${tlh_path_entry}"',
+        '  tlh_entry_abs="${tlh_abs_result}"',
         '  if [[ "${tlh_entry_abs}" == "${tlh_wrapper_cwd_abs}" || "${tlh_entry_abs}" == "${tlh_managed_bin_abs}" ]]; then',
         '    return 0',
         '  fi',
@@ -264,6 +276,7 @@ function renderWrapper(args) {
         '    tlh_script_dir="."',
         '  fi',
         '  tlh_clean_abs_path "${tlh_script_dir}/${tlh_import_spec}"',
+        '  printf \'%s\\n\' "${tlh_abs_result}"',
         '}',
         'tlh_js_relative_imports_exist() {',
         '  local tlh_script_path="$1"',
@@ -281,7 +294,8 @@ function renderWrapper(args) {
         '  local tlh_pending_count=1',
         '  local -a tlh_pending_scripts=()',
         '  local -a tlh_checked_scripts=()',
-        '  tlh_script_path="$(tlh_clean_abs_path "${tlh_script_path}")"',
+        '  tlh_clean_abs_path "${tlh_script_path}"',
+        '  tlh_script_path="${tlh_abs_result}"',
         '  [[ -f "${tlh_script_path}" ]] || return 1',
         '  tlh_pending_scripts[0]="${tlh_script_path}"',
         '  while ((tlh_pending_index < tlh_pending_count)); do',
@@ -353,6 +367,9 @@ function renderWrapper(args) {
         'tlh_package_tickets_script_is_usable() {',
         '  tlh_package_script_is_usable "${default_tlh_package_root}/scripts/tlh-tickets.mjs"',
         '}',
+        'tlh_package_doctor_script_is_usable() {',
+        '  tlh_package_script_is_usable "${default_tlh_package_root}/scripts/tlh-doctor.mjs"',
+        '}',
         'export PI_CODING_AGENT_DIR="${default_agent_dir}"',
         "",
         'if [[ "${1:-}" == "update" ]]; then',
@@ -405,6 +422,16 @@ function renderWrapper(args) {
         '  PATH="${tlh_managed_helper_path}" exec "${tlh_node_cmd}" "${default_tlh_package_root}/scripts/tlh-tickets.mjs" --settings "${default_agent_dir}/settings.json" --agent-dir "${default_agent_dir}" --wrapper-name "${default_wrapper_name}" "$@"',
         "fi",
         "",
+        'if [[ "${1:-}" == "doctor" ]]; then',
+        "  shift",
+        '  if ! tlh_package_doctor_script_is_usable; then',
+        "    printf 'error: tlh doctor package support files are missing or corrupt; run `tlh update` to recover.\\n' >&2",
+        "    exit 1",
+        "  fi",
+        '  tlh_resolve_node',
+        '  PATH="${tlh_sanitized_path}" exec "${tlh_node_cmd}" "${default_tlh_package_root}/scripts/tlh-doctor.mjs" --agent-dir "${default_agent_dir}" --package-root "${default_tlh_package_root}" "$@"',
+        "fi",
+        "",
         // Validate the private pinned runtime and exec it.  No global PATH search:
         // default_pi_cmd is always the absolute private runtime binary.
         'if [[ -z "${default_pi_cmd}" ]]; then',
@@ -420,6 +447,11 @@ function renderWrapper(args) {
         '  tlh_pinned_dir="."',
         'fi',
         'export PATH="${tlh_managed_bin}:${tlh_pinned_dir}${tlh_sanitized_path:+:${tlh_sanitized_path}}"',
+        // Set NODE_COMPILE_CACHE to a stable dir under the private runtime prefix so
+        // Node's on-disk V8 code cache persists across launches.  The dir is already
+        // listed in RUNTIME_OWNED_TOPLEVEL and the uninstall allow-list; Node creates
+        // it automatically.  Scope: interactive pi exec path only.
+        'export NODE_COMPILE_CACHE="${tlh_pinned_dir%/*}/node-compile-cache"',
         'exec "${default_pi_cmd}" "$@"',
     ];
     return `${lines.join("\n")}\n`;

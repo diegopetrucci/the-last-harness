@@ -1,10 +1,10 @@
 # Integrations
 
-TLH includes managed integrations for project memory and ticketed workflows. Gnosis project memory and `tk` ticket support are required for standard architect/product workflows; Rush keeps that tooling available but handles small bounded tasks with direct edits instead of the default `tk` loop.
+TLH includes managed integrations for project memory, ticketed workflows, and native RTK shell-command rewriting. Gnosis project memory and `tk` ticket support are required for standard architect/product workflows; Rush keeps that tooling available but handles small bounded tasks with direct edits instead of the default `tk` loop. RTK is also installer-managed now: the old `pi-rtk` package and `/rtk` slash-command UI are gone.
 
 ## Gnosis integration
 
-[Gnosis](https://github.com/skorokithakis/gnosis) is a small `gn` CLI for recording project decisions, constraints, rejected alternatives, and lessons that are not obvious from code alone. On supported platforms (linux/darwin × x64/arm64), TLH installs it automatically because `tlh` works better when agents can consult and update repo-local project memory. TLH currently pins the managed default to Gnosis `v0.5.3`, while installer-owned `TLH_GNOSIS_VERSION` and `TLH_GNOSIS_REPO` overrides still let maintainers point at a different release or repository when needed. Installs and updates on unsupported platforms hard-fail.
+[Gnosis](https://github.com/skorokithakis/gnosis) is a small `gn` CLI for recording project decisions, constraints, rejected alternatives, and lessons that are not obvious from code alone. On supported platforms (linux/darwin × x64/arm64), TLH installs it automatically because `tlh` works better when agents can consult and update repo-local project memory. TLH currently pins the managed default to Gnosis `v0.5.4`, while installer-owned `TLH_GNOSIS_VERSION` and `TLH_GNOSIS_REPO` overrides still let maintainers point at a different release or repository when needed. Installs and updates on unsupported platforms hard-fail.
 
 When a valid Gnosis `gn` binary is present, TLH appends these instructions to the system prompt:
 
@@ -33,3 +33,37 @@ If TLH cannot validate a configured/existing `tk` and cannot install the managed
 Removing `~/.the-last-harness` removes any managed `tk` copy. To remove only the managed `tk` binary while keeping the rest of the profile, delete `~/.the-last-harness/agent/bin/tk`; the next install/update will recreate it if no other valid `tk` is configured. Running `tlh tickets enable` without a managed reinstall clears the recorded SHA-256, so the next install/update refreshes the managed binary when the managed path is in use.
 
 Managed installs download the pinned `wedow/ticket` source tarball (`v0.3.2`) and verify its SHA-256 before extracting the `ticket` script; inherited environment variables cannot override those installer-owned source pins. TLH also records the SHA-256 of the managed binary in `settings.tlh.tickets.installedSha256`. When a future TLH release bumps the pinned SHA, the next `tlh update` or installer rerun reinstalls the managed binary and refreshes the recorded value. Custom (non-managed) `installPath` values are unaffected by this check.
+
+## Native RTK integration
+
+TLH now bundles RTK as a managed native rewrite integration rather than a separately managed `pi-rtk` extension. There is no `/rtk` command surface anymore: `/rtk enable`, `/rtk disable`, and `/rtk status` are gone.
+
+On supported darwin/linux x64/arm64 platforms, install and update place the pinned managed RTK `v0.43.0` binary at `~/.the-last-harness/agent/bin/rtk`. The wrapper adds `<agent>/bin` to `PATH` for the wrapped upstream Pi process, so TLH sessions and child shells can find that managed binary normally. If TLH cannot install and validate the pinned RTK binary, install or update fails with an actionable error instead of continuing without rewrite support.
+
+To disable RTK rewriting for a single launch, set `RTK_DISABLED=1` before starting TLH:
+
+```sh
+RTK_DISABLED=1 tlh
+```
+
+To disable it persistently for the isolated profile, set `tlh.rtk.disabled` in `~/.the-last-harness/agent/settings.json`:
+
+```json
+{
+  "tlh": {
+    "rtk": {
+      "disabled": true
+    }
+  }
+}
+```
+
+To re-enable rewriting, unset `RTK_DISABLED`, remove `tlh.rtk.disabled`, or set it back to `false`.
+
+Removing `~/.the-last-harness` removes the managed RTK copy along with the rest of the isolated profile. To remove only the managed binary while keeping the rest of TLH, delete `~/.the-last-harness/agent/bin/rtk`; the next install or `tlh update` recreates it. The old `tlh.disabledDefaultExtensions` RTK markers and `tlh defaults disable rtk` flow no longer control RTK after this migration.
+
+## Terminal activity bridge
+
+If you already use a supported terminal integration such as Herdr or cmux, TLH reports an effective in-progress state that includes both the primary session and active async/background subagents. That means the integration may keep showing TLH as working even after the main prompt is ready for input, until those background jobs finish or clear.
+
+This bridge is session-scoped only. TLH does not install, enable, or reconfigure Herdr, cmux, or any other external integration for you, and it does not write persistent external config as part of this bridge. If your terminal setup does not already support this status handoff, nothing new is installed.

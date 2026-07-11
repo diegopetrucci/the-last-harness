@@ -4,14 +4,61 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
-### Removed
+### Fixed
 
-- Removed the bundled `pi-librarian` extension. Existing TLH-managed `pi-librarian` installs are force-removed on the next `tlh` install or update; packages added manually to that isolated profile are preserved. The leftover `extensions/librarian.json` file in the isolated profile is also cleaned up during migration.
+- Supported terminal integrations such as Herdr and cmux can now show TLH as working while primary activity or async/background subagents are still active, without requiring TLH to install those integrations.
 
 ### Changed
 
+- The isolated profile defaults now enable Pi's `showCacheMissNotices` setting, showing transcript notices for significant prompt-cache misses; existing user values are preserved by the settings merge.
+- Bumped the bundled critical `pi-subagents` default extension pin from `npm:@diegopetrucci/pi-subagents@0.31.3` to `npm:@diegopetrucci/pi-subagents@0.31.4`, picking up the builtin-disable runtime invariant fix from the merged fork release.
+- Bumped TLH's pinned upstream Pi runtime and package compatibility metadata from 0.80.5 to 0.80.6.
+- Refreshed package dependency pins, including `@tailwindcss/browser` 4.3.2, `@types/node` 26.1.1, `eslint` 10.6.0, and `typescript-eslint` 8.63.0; TypeScript remains on 6.0.3 as the latest version supported by the updated `typescript-eslint` peer range.
+- Kept `monaco-editor` on audit-clean 0.53.0 because the newer 0.55.x line depends on a vulnerable `dompurify` pin that package-level npm overrides would not protect in end-user installs.
+- Bumped installer-managed helper defaults to Gnosis `0.5.4` and RTK `0.43.0`.
+- The bundled `/effort` and `/thinking` command path now supports the upstream `max` thinking-level option when the active model exposes it.
+- `tlh doctor` now reads the expected private-runtime Pi pin from the packaged `install.sh` fallback, so runtime drift hints stay aligned with the shipped installer pin.
+- Bumped the bundled `context-inspector` default extension pin from `npm:@diegopetrucci/pi-context-inspector@0.1.3` to `npm:@diegopetrucci/pi-context-inspector@0.1.4`.
+- Bumped the bundled `dirty-repo-guard` default extension pin from `npm:@diegopetrucci/pi-dirty-repo-guard@0.1.3` to `npm:@diegopetrucci/pi-dirty-repo-guard@0.1.4`.
+
+## [0.28.0] - 2026-07-09
+
+### Removed
+
+- Removed the bundled `pi-triage-comments` extension. Existing TLH-managed `pi-triage-comments` installs are force-removed on the next `tlh` install or update; packages added manually to that isolated profile are preserved.
+
+### Changed
+
+- Bumped TLH's pinned upstream Pi runtime from 0.80.3 to 0.80.5 for the private runtime installed under `~/.the-last-harness/runtime`.
+- Weekly subscription usage now appears by default only when less than 25% remains; explicit `/usage weekly on` or `/usage weekly off` preferences still override that auto-show behavior.
+- The bundled `developer` subagent now uses `anthropic/claude-sonnet-5` with `thinking: medium` on the Anthropic path. The OpenAI-Codex model (`openai-codex/gpt-5.4`) is unchanged.
+- Switched the bundled critical `pi-subagents` default from the reviewed TLH git tag to the published scoped npm package `npm:@diegopetrucci/pi-subagents@0.31.1`, while preserving migration from existing upstream and TLH git installs so the isolated profile lands on one canonical bundled source without duplicates.
+- Bumped the bundled managed `pi-web-access` default extension pin from `npm:@diegopetrucci/pi-web-access@0.10.8` to `npm:@diegopetrucci/pi-web-access@0.10.10`, while keeping migration coverage for upstream and prior TLH git replacement sources intact.
+- Bumped the bundled critical `pi-subagents` default extension pin from `npm:@diegopetrucci/pi-subagents@0.31.2` to `npm:@diegopetrucci/pi-subagents@0.31.3`.
+- Bumped the bundled critical `pi-intercom` default extension pin from `npm:@diegopetrucci/pi-intercom@0.6.2` to `npm:@diegopetrucci/pi-intercom@0.7.0`.
+- The generated `tlh` wrapper now exports `NODE_COMPILE_CACHE` pointing at a stable directory under the pinned private runtime (`<runtime-prefix>/node-compile-cache`) on the interactive `pi` launch path, so Node's on-disk compile cache persists across launches for a modestly faster warm startup. Helper subcommands (`update`/`defaults`/`tickets`) are unchanged, and the cache directory remains runtime-owned and is removed on uninstall.
+
+### Fixed
+
+- TLH autocomplete now hides `/scoped-models`, `/subagents-profiles`, `/subagents-check-profile`, `/subagents-models`, `/skill:pi-subagents`, `/skill:librarian`, `/skill:pi-intercom`, `/websearch`, `/curator`, and `/search` in slash-command-name completion.
+- The librarian subagent now explicitly permits `git remote get-url` for required local-checkout remote identity verification before trusting a bounded local checkout or temporary clone during read-only repository research.
+- Fixed managed RTK install validation to accept `rtk rewrite` exit code 3 in addition to 0, since rtk >= 0.35.0 intentionally exits 3 for a rewrite plus ask/default permission verdict while still printing the rewritten command. Previously TLH's installer rejected the authentic pinned rtk 0.42.4 binary with "downloaded RTK binary did not validate", breaking install/update at the RTK step.
+
+## [0.27.0] - 2026-07-01
+
+### Removed
+
+- Removed the bundled `pi-librarian` extension. Existing TLH-managed `pi-librarian` installs are force-removed on the next `tlh` install or update; packages added manually to that isolated profile are preserved. The leftover `extensions/librarian.json` file in the isolated profile is also cleaned up during migration.
+- Removed the old `/rtk` command UI; `/rtk enable`, `/rtk disable`, and `/rtk status` are no longer available.
+
+### Changed
+
+- Updated the bundled main-track `pi-subagents` default extension pin to reviewed upstream-main commit `a7e76d212dfa788c59538e44afddad326c074b86` so TLH main/ref users can test the issue #30 async-start chat result body suppression fix while keeping the live widget, without a TLH release.
 - Promoted `contrarian` from an experimental opt-in to a bundled default minor subagent. README and command docs now describe it as a sparing adversarial stress-test path rather than a `/experimental` enable/disable toggle.
 - The `librarian` subagent now performs read-only GitHub repository research directly via the `gh` CLI and `git` through `bash`, without a separately managed extension package. **Prerequisite:** `gh` must be installed and authenticated (`gh auth login` / `gh auth status`). Without it, librarian reports what it could not verify rather than silently failing.
+- Migrated TLH away from the old bundled `pi-rtk` fork to a managed pinned native RTK integration. TLH now installs `rtk-ai/rtk` `v0.42.4` at `~/.the-last-harness/agent/bin/rtk`, hard-fails install/update if that managed binary cannot be installed and validated, and uses `RTK_DISABLED=1` or `tlh.rtk.disabled` instead of the old default-extension opt-out flow.
+- Updated the bundled `mcporter` pin to `npm:@diegopetrucci/pi-mcp-adapter@2.10.1` instead of the previous fork git tag, reducing installer checkout work while preserving the existing MCP adapter behavior.
+- Moved the bundled `pi-web-access` default from the previous Diego git tag to `npm:@diegopetrucci/pi-web-access@0.10.8` and now migrates prior/customized replacement sources to the scoped TLH npm package.
 
 ## [0.26.0] - 2026-06-25
 

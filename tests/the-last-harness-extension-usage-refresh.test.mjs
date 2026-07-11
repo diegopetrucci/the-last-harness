@@ -173,6 +173,80 @@ EOF`,
 	}
 });
 
+test("subscription usage footer first render stays synchronous before the lazy service loads", async () => {
+	const tempDir = mkdtempSync(join(tmpdir(), "tlh-usage-first-render-"));
+	const agentDir = join(tempDir, "agent");
+	const cwd = join(tempDir, "workspace");
+	const previousEnv = {
+		PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+		TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
+	};
+	const previousFetch = globalThis.fetch;
+
+	let fetchCalls = 0;
+	let renderRequests = 0;
+	let firstRenderLines;
+	const credential = { type: "oauth", access: "oauth-access-token" };
+	const authStorage = {
+		runtimeOverrides: new Map(),
+		get: (provider) => (provider === "anthropic" ? credential : undefined),
+	};
+
+	try {
+		delete process.env.PI_SUBAGENT_CHILD;
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		process.env.TLH_SKIP_UPDATE_CHECK = "1";
+		mkdirSync(agentDir, { recursive: true });
+		mkdirSync(cwd, { recursive: true });
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			`${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+		);
+
+		globalThis.fetch = async () => {
+			fetchCalls += 1;
+			return {
+				ok: true,
+				json: async () => ({ five_hour: { used: 4, limit: 10 } }),
+			};
+		};
+
+		const pi = createPi();
+		theLastHarness(pi);
+		const ctx = createCtx({
+			cwd,
+			authStorage,
+			currentAccessToken: () => "oauth-access-token",
+			requestRender: () => {
+				renderRequests += 1;
+			},
+		});
+		ctx.ui.setFooter = (factory) => {
+			const footer = factory(
+				{
+					requestRender: () => {
+						renderRequests += 1;
+					},
+				},
+				theme,
+				footerData,
+			);
+			firstRenderLines = footer.render(100);
+			assert.equal(fetchCalls, 0, "first footer render must not wait for or trigger usage loading");
+		};
+
+		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
+		assert.ok(Array.isArray(firstRenderLines), "first footer render should complete synchronously");
+		assert.equal(firstRenderLines[2] ?? "", "", "first footer render should tolerate the empty lazy-load snapshot");
+		await eventually(() => fetchCalls === 1 && renderRequests === 1, "lazy refresh should load usage and request one rerender");
+	} finally {
+		globalThis.fetch = previousFetch;
+		restoreEnv(previousEnv);
+		rmSync(tempDir, { recursive: true, force: true });
+	}
+});
+
 test("subscription usage refresh requests a footer render when a runtime override clears active usage", async () => {
 	const tempDir = mkdtempSync(join(tmpdir(), "tlh-usage-refresh-"));
 	const agentDir = join(tempDir, "agent");

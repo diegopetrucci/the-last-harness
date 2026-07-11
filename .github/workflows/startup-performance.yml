@@ -1,0 +1,43 @@
+name: Startup performance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  startup-performance:
+    name: Startup performance (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22.19.0'
+
+      - name: Measure TLH startup performance
+        env:
+          HOME: ${{ runner.temp }}/tlh-home
+          TLH_AGENT_DIR: ${{ runner.temp }}/tlh-agent
+          TLH_BIN_DIR: ${{ runner.temp }}/tlh-bin
+          TLH_WORK_DIR: ${{ runner.temp }}/tlh-work
+          TLH_PACKAGE_SOURCE: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p "${HOME}" "${TLH_AGENT_DIR}" "${TLH_BIN_DIR}" "${TLH_WORK_DIR}"
+          export PATH="${TLH_BIN_DIR}:${PATH}"
+
+          cd "${TLH_WORK_DIR}"
+          bash "${GITHUB_WORKSPACE}/install.sh"
+          node "${GITHUB_WORKSPACE}/scripts/check-startup-performance.mjs" --runs 6 --budget-ms 2500 --profile-source "${TLH_AGENT_DIR}"

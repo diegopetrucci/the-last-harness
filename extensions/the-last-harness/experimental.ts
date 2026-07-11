@@ -1,4 +1,4 @@
-import { SettingsManager, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { SettingsManager, getAgentDir, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import {
 	normalizeEnabledExperimentalFeatures,
@@ -11,10 +11,12 @@ import type { AgentPrompt, TlhExperimentalConfig, TlhExperimentalFeatureId, TlhS
 
 export const DELTA_FOLLOW_UP_REVIEWS_FEATURE: TlhExperimentalFeatureId = "delta-follow-up-reviews";
 export const CI_FAILURE_INVESTIGATION_FEATURE: TlhExperimentalFeatureId = "ci-failure-investigation";
+export const TICKET_WORKFLOW_UI_FEATURE: TlhExperimentalFeatureId = "ticket-workflow-ui";
+export const TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT = "tlh:experimental-feature-changed";
 
 const EXPERIMENTAL_COMMAND_HELP = [
 	"Usage: /experimental [list|status [feature]|enable <feature>|disable <feature>|toggle <feature>]",
-	"With no argument, /experimental lists TLH experimental features.",
+	"With no argument, /experimental opens the TLH experimental feature picker when UI is available, otherwise it lists feature status.",
 ].join(" ");
 
 const DELTA_FOLLOW_UP_REVIEWS_ARCHITECT_PROMPT = `
@@ -66,6 +68,7 @@ type TlhExperimentalFeature = {
 };
 
 type TlhExperimentalSlashAction =
+	| { type: "picker" }
 	| { type: "list" }
 	| { type: "status"; featureId?: string }
 	| { type: "enable" | "disable" | "toggle"; featureId: string };
@@ -92,6 +95,10 @@ const TLH_EXPERIMENTAL_FEATURES: TlhExperimentalFeature[] = [
 		primaryAgentPrompts: {
 			architect: CI_FAILURE_INVESTIGATION_ARCHITECT_PROMPT.trim(),
 		},
+	},
+	{
+		id: TICKET_WORKFLOW_UI_FEATURE,
+		description: "Enables the experimental ticket workflow UI as a read-only tk-backed surface.",
 	},
 ];
 
@@ -198,8 +205,11 @@ export function isTlhExperimentalFeatureEnabled(config: unknown, featureId: TlhE
 
 function parseExperimentalSlashAction(args: string): TlhExperimentalSlashAction | undefined {
 	const parts = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
-	if (parts.length === 0 || parts[0] === "list") {
-		return parts.length === 0 || parts.length === 1 ? { type: "list" } : undefined;
+	if (parts.length === 0) {
+		return { type: "picker" };
+	}
+	if (parts[0] === "list") {
+		return parts.length === 1 ? { type: "list" } : undefined;
 	}
 	if (parts[0] === "status") {
 		return parts.length <= 2 ? { type: "status", featureId: parts[1] } : undefined;
@@ -251,6 +261,65 @@ function formatExperimentalStatusMessage(config: TlhExperimentalConfig | undefin
 		"TLH experimental features:",
 		...TLH_EXPERIMENTAL_FEATURES.map((feature) => formatExperimentalFeatureStatus(feature, isTlhExperimentalFeatureEnabled(config, feature.id))),
 	].join("\n");
+}
+
+function experimentalFeaturePickerOption(feature: TlhExperimentalFeature, enabled: boolean): string {
+	const stateLabel = enabled ? "enabled" : "disabled (default)";
+	return `${enabled ? "●" : "○"} ${feature.id} — ${stateLabel} — ${feature.description}`;
+}
+
+function notifyExperimentalWriteResult(
+	pi: ExtensionAPI,
+	ctx: ExtensionCommandContext,
+	featureId: string,
+	result: TlhExperimentalWriteResult,
+): void {
+	const changedLabel = result.changed ? "Updated" : "No change to";
+	const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
+	const stateLabel = result.enabled ? "enabled" : "disabled";
+	const undoLabel = result.enabled ? `Undo with /experimental disable ${featureId}.` : `Undo with /experimental enable ${featureId}.`;
+	pi.events?.emit?.(TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT, {
+		cwd: ctx.cwd,
+		enabled: result.enabled,
+		featureId,
+	});
+	ctx.ui.notify(
+		`${changedLabel} TLH experimental feature ${featureId} at ${formatHomePath(result.settingsPath)}. It is now ${stateLabel}. ${undoLabel}${backupLabel}`,
+		"info",
+	);
+}
+
+async function showExperimentalFeaturePicker(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
+	if (ctx.mode !== "tui" || !ctx.hasUI || !hasRegisteredExperimentalFeatures() || typeof ctx.ui.select !== "function") {
+		ctx.ui.notify(formatExperimentalStatusMessage(getTlhExperimentalConfig(ctx.cwd)), "info");
+		return;
+	}
+
+	while (true) {
+		const config = getTlhExperimentalConfig(ctx.cwd);
+		const featureIdsByOption = new Map(
+			TLH_EXPERIMENTAL_FEATURES.map((feature) => {
+				const option = experimentalFeaturePickerOption(feature, isTlhExperimentalFeatureEnabled(config, feature.id));
+				return [option, feature.id] as const;
+			}),
+		);
+		const selectedOption = await ctx.ui.select("Toggle TLH experimental features (Esc to close)", [...featureIdsByOption.keys()]);
+		if (!selectedOption) {
+			return;
+		}
+		const selectedFeatureId = featureIdsByOption.get(selectedOption);
+		if (!selectedFeatureId) {
+			ctx.ui.notify("Unknown TLH experimental feature picker selection.", "error");
+			return;
+		}
+
+		try {
+			notifyExperimentalWriteResult(pi, ctx, selectedFeatureId, writeExperimentalFeaturePreference(ctx.cwd, selectedFeatureId, "toggle"));
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			ctx.ui.notify(`Could not update TLH experimental feature ${selectedFeatureId}: ${message}`, "error");
+		}
+	}
 }
 
 function nextEnabledState(currentEnabled: boolean, action: "enable" | "disable" | "toggle"): boolean {
@@ -322,6 +391,11 @@ export function registerExperimentalCommand(pi: ExtensionAPI): void {
 				return;
 			}
 
+			if (command.type === "picker") {
+				await showExperimentalFeaturePicker(pi, ctx);
+				return;
+			}
+
 			if (command.type === "list" || command.type === "status") {
 				const featureId = command.type === "status" ? command.featureId : undefined;
 				ctx.ui.notify(formatExperimentalStatusMessage(getTlhExperimentalConfig(ctx.cwd), featureId), "info");
@@ -329,17 +403,7 @@ export function registerExperimentalCommand(pi: ExtensionAPI): void {
 			}
 
 			try {
-				const result = writeExperimentalFeaturePreference(ctx.cwd, command.featureId, command.type);
-				const changedLabel = result.changed ? "Updated" : "No change to";
-				const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
-				const stateLabel = result.enabled ? "enabled" : "disabled";
-				const undoLabel = result.enabled
-					? `Undo with /experimental disable ${command.featureId}.`
-					: `Undo with /experimental enable ${command.featureId}.`;
-				ctx.ui.notify(
-					`${changedLabel} TLH experimental feature ${command.featureId} at ${formatHomePath(result.settingsPath)}. It is now ${stateLabel}. ${undoLabel}${backupLabel}`,
-					"info",
-				);
+				notifyExperimentalWriteResult(pi, ctx, command.featureId, writeExperimentalFeaturePreference(ctx.cwd, command.featureId, command.type));
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				ctx.ui.notify(`Could not update TLH experimental feature ${command.featureId}: ${message}`, "error");

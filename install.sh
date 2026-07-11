@@ -3,10 +3,9 @@ set -euo pipefail
 
 REPO="${TLH_REPO:-diegopetrucci/the-last-harness}"
 REF="${TLH_REF:-main}"
-# Keep in sync with MIN_NODE_VERSION, MIN_PI_VERSION, and PINNED_PI_VERSION in scripts/tlh-install.mjs.
+# Keep in sync with MIN_NODE_VERSION and PINNED_PI_VERSION in scripts/tlh-install.mjs.
 TLH_MIN_NODE_VERSION="22.19.0"
-TLH_MIN_PI_VERSION="0.80.1"
-TLH_PINNED_PI_VERSION="0.80.2"
+TLH_PINNED_PI_VERSION="0.80.6"
 
 DRY_RUN=false
 NO_SETTINGS=false
@@ -59,7 +58,7 @@ Environment overrides:
   TLH_UPDATE_TRACK     Update track for future tlh update
   TLH_PACKAGE_SOURCE   Package source passed to `pi install`
   TLH_RAW_BASE         Base URL for installer support files
-  TLH_GNOSIS_VERSION   Gnosis version to install (default: 0.5.3)
+  TLH_GNOSIS_VERSION   Gnosis version to install (default: 0.5.4)
   TLH_GNOSIS_REPO      Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
 
 Examples:
@@ -111,6 +110,8 @@ need_value() {
 
 expand_path() {
   local path="$1"
+  # literal '~/' in case arms is intentional; these arms detect unexpanded tildes passed as path arguments
+  # shellcheck disable=SC2088
   case "${path}" in
     '~')
       printf '%s\n' "${HOME}"
@@ -383,6 +384,7 @@ required|scripts/tlh-defaults.mjs
 required|scripts/lib/default-extensions.mjs
 required|scripts/tlh-gnosis.mjs
 required|scripts/tlh-tickets.mjs
+required|scripts/tlh-rtk.mjs
 required|scripts/tlh-recover-update.mjs
 optional|scripts/tlh-update.mjs
 optional|scripts/tlh-wrapper.mjs
@@ -552,6 +554,30 @@ fetch_remote_support_root() {
   fi
 }
 
+# Remote/stale stage-0 installers cannot reliably tell whether their embedded
+# support manifest still matches the requested ref, so refresh install.sh once
+# before any manifest-driven fetches. Local checkouts and dry runs bypass this.
+canonicalize_stage0_installer() {
+  require_command curl
+  TMP_DIR="$(mktemp -d)"
+  TMP_DIR="$(cd "${TMP_DIR}" >/dev/null 2>&1 && pwd -P)"
+
+  local canonical_installer="${TMP_DIR}/install.sh"
+  log "Refreshing installer stage-0 from ${RAW_BASE}/install.sh before fetching support files."
+  if ! fetch_support_file "${RAW_BASE}/install.sh" "${canonical_installer}"; then
+    rm -f "${canonical_installer}"
+    die "unable to refresh installer stage-0 from ${RAW_BASE}/install.sh for ref ${REF}"
+  fi
+
+  if [[ "${#ORIGINAL_ARGS[@]}" -eq 0 ]]; then
+    TLH_REPO="${REPO}" TLH_REF="${REF}" TLH_RAW_BASE="${RAW_BASE}" TLH_UPDATE_TRACK="${UPDATE_TRACK_INPUT}" \
+      _TLH_STAGE0_CANONICALIZED=1 bash "${canonical_installer}"
+  else
+    TLH_REPO="${REPO}" TLH_REF="${REF}" TLH_RAW_BASE="${RAW_BASE}" TLH_UPDATE_TRACK="${UPDATE_TRACK_INPUT}" \
+      _TLH_STAGE0_CANONICALIZED=1 bash "${canonical_installer}" "${ORIGINAL_ARGS[@]}"
+  fi
+}
+
 run_stage1() {
   local support_root="$1"
   require_command node
@@ -589,6 +615,8 @@ dry_run_without_stage1() {
   fi
   log "Would fetch Gnosis integration support files."
   log "Would fetch tlh tickets support files."
+  log "Would fetch tlh RTK support files."
+  log "Would install managed RTK into isolated profile: ${agent_dir}/bin/rtk"
   log "Would fetch tlh update support files."
   log "Would fetch tlh wrapper support files."
   log "Would fetch tlh install-state support files."
@@ -606,19 +634,27 @@ dry_run_without_stage1() {
 }
 
 validate_stage0_fallback_targets
-require_supported_node_stage0
 
 LOCAL_SUPPORT_ROOT=""
 if LOCAL_SUPPORT_ROOT="$(find_local_support_root)"; then
+  require_supported_node_stage0
   run_stage1 "${LOCAL_SUPPORT_ROOT}"
   exit $?
 fi
 
 if [[ "${DRY_RUN}" == "true" ]]; then
+  require_supported_node_stage0
   dry_run_without_stage1
   exit 0
 fi
 
+if [[ "${_TLH_STAGE0_CANONICALIZED:-}" != "1" ]]; then
+  require_command node
+  canonicalize_stage0_installer
+  exit $?
+fi
+
+require_supported_node_stage0
 require_command node
 fetch_remote_support_root
 run_stage1 "${TMP_DIR}"

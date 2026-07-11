@@ -1,14 +1,14 @@
 # Web search
 
-TLH ships [`pi-web-access`](https://github.com/diegopetrucci/pi-web-access) (an Exa-only fork) as a non-critical default extension. The `web-scout` subagent uses its `web_search`, `fetch_content`, and `get_search_content` tools for general web research.
+TLH ships [`pi-web-access`](https://github.com/diegopetrucci/pi-web-access) as a non-critical default extension. TLH manages it as the scoped package `npm:@diegopetrucci/pi-web-access@0.10.10`. The `web-scout` subagent uses its `web_search`, `fetch_content`, and `get_search_content` tools for general web research.
 
 GitHub-specific research — repositories, issues, pull requests, releases, and project docs — still goes to the `librarian` subagent, which uses the `gh` CLI and `git` directly (no extension package required).
 
-Running the upstream `pi-web-access` extension alongside the TLH fork is unsupported because the tool names conflict. Normal TLH install/update runs now defer to a known upstream/manual `pi-web-access` package that is already present in the same isolated profile, so you can keep that provider active without extra steps. If both providers are already installed, remove the TLH fork package from that isolated profile or otherwise make sure only one `pi-web-access` provider remains active.
+Running another `pi-web-access` provider alongside the TLH-managed package is unsupported because the tool names conflict. During TLH install/update, TLH migrates known upstream, manual, and older TLH `pi-web-access` variants in the same isolated profile to `npm:@diegopetrucci/pi-web-access@0.10.10`. If you want TLH to stop managing that extension, opt out first with `tlh defaults disable pi-web-access`; otherwise install/update runs will keep the scoped TLH package pinned. If multiple providers are already installed, remove the extras so only one `pi-web-access` provider remains active.
 
 ## Configuration
 
-- Extension source: `git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1`
+- Extension source: `npm:@diegopetrucci/pi-web-access@0.10.10`
 - Settings: `${PI_CODING_AGENT_DIR}/extensions/pi-web-access/settings.json`
 - Cache and Exa usage tracker: `${PI_CODING_AGENT_DIR}/cache/pi-web-access/`
 - The extension never reads or writes `~/.pi/`.
@@ -23,7 +23,7 @@ TLH never persists the key unless you explicitly set it.
 
 ## Privacy
 
-Queries leave the machine via Exa. Exactly what is transmitted is documented in the fork's README under ["What leaves the machine"](https://github.com/diegopetrucci/pi-web-access/blob/tlh-v0.10.7-1/README.md#what-leaves-the-machine).
+Queries leave the machine via Exa. Exactly what is transmitted is documented in the fork's README under ["What leaves the machine"](https://github.com/diegopetrucci/pi-web-access#what-leaves-the-machine).
 
 ## Opt out
 
@@ -64,4 +64,4 @@ install -m 600 ~/.pi/web-search.json "$target"
 
 If `$target` already exists, review or merge it manually instead of overwriting it by default.
 
-For durable web-search / web-scout decisions, see repo-local Gnosis entries `ywsuwh` and `gbmehw`. For pinned fork/tag process details, see [`docs/web-search-fork-release-cadence.md`](web-search-fork-release-cadence.md).
+For durable web-search / web-scout decisions, see repo-local Gnosis entries `ywsuwh` and `gbmehw`. For scoped npm pin and source-release details, see [`docs/web-search-fork-release-cadence.md`](web-search-fork-release-cadence.md).

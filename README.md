@@ -125,6 +125,7 @@ TLH is not just “Pi, but with a new prompt.” The harness bakes in workflow a
 
 - **Project memory is mandatory**: TLH requires Gnosis (`gn`) so decisions, constraints, rejected alternatives, and lessons can live in repo-local memory instead of disappearing into chat history.
 - **Ticketed execution is mandatory for architect/product flows**: TLH requires `tk` for dependency-tracked tickets and installs the managed command at `~/.the-last-harness/agent/bin/tk` when it needs to supply one. Rush is the main exception for very small direct-edit tasks.
+- **Native RTK rewriting is managed too**: TLH bundles the rewrite-only RTK integration, keeps a pinned managed `rtk` at `~/.the-last-harness/agent/bin/rtk`, and hard-fails install/update if that binary cannot be installed or validated on supported platforms.
 - **Context is capped on purpose**: TLH uses a 200k context cap, expects compaction instead of endless chat growth, and provides `/context` so you can inspect where your tokens are going.
 - **Fresh child contexts are the default**: child sessions start clean and focused rather than inheriting an entire messy parent transcript.
 - **Model defaults are role-aware**: TLH ships bundled per-role model/thinking defaults instead of expecting every user to tune everything manually.
@@ -142,6 +143,7 @@ TLH also aims to make the day-to-day session experience calmer and safer:
 - a first-party `/tokens` command that generates a local HTML token-spend report for the current session from sanitized session analysis,
 - bundled web-search support for research-heavy work,
 - bundled MCP adapter support,
+- managed native RTK shell-command rewriting with isolated-profile opt-out controls,
 - subscription usage footer controls,
 - completion notifications, and
 - conservative settings merges that preserve user-owned isolated configuration.
@@ -165,11 +167,13 @@ After adding files, installing a package, or saving project trust, run `/reload`
 
 Normal `tlh update` runs are conservative: they preserve user-owned isolated-profile resources instead of overwriting them, and they still do not touch your normal Pi config.
 
+`tlh doctor` inspects the active isolated TLH profile and is read-only by default: it reports drift and missing prerequisites without rewriting settings, creating backups, or touching normal `~/.pi/agent`. `tlh doctor --repair` is narrower than `tlh update`: it only repairs TLH-owned isolated-profile drift such as packaged settings defaults, bundled subagent prompt copies, and managed `gn`/`tk`/`rtk` helpers. Runtime replacement, `gh` auth, EXA keys, and MCP config stay manual. When settings repair does write, it uses the normal `settings.json.backup-*` backup flow; to undo, restore the backup you want or rerun `tlh update`.
+
 ## Everything else, aka the docs dump
 
 - Slash commands reference: [`docs/commands.md`](docs/commands.md)
 - Install, update, uninstall, paths, and undo steps: [`docs/install.md`](docs/install.md)
-- Gnosis, `tk`, and TLH workflow integrations: [`docs/integrations.md`](docs/integrations.md)
+- Gnosis, `tk`, native RTK, and TLH workflow integrations: [`docs/integrations.md`](docs/integrations.md)
 - Web search setup, privacy, and opt-out: [`docs/web-search.md`](docs/web-search.md)
 - MCP usage and caveats: [`docs/mcp.md`](docs/mcp.md)
 - Launch telemetry and opt-out: [`docs/telemetry.md`](docs/telemetry.md)
@@ -182,7 +186,9 @@ Normal `tlh update` runs are conservative: they preserve user-owned isolated-pro
 
 Node.js >=22.19.0 must be available on your `PATH`.
 
-TLH runs its own pinned Pi 0.80.2 from a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. The installer always provisions the private runtime automatically (per-user, no sudo) and hard-fails with an actionable error if it cannot.
+TLH runs its own pinned Pi 0.80.6 from a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. The installer always provisions the private runtime automatically (per-user, no sudo) and hard-fails with an actionable error if it cannot.
+
+TLH also manages a pinned native RTK binary for shell-command rewriting at `~/.the-last-harness/agent/bin/rtk` on supported darwin/linux x64/arm64 platforms. Install and update hard-fail if that managed binary cannot be installed or validated. To disable rewriting without removing the binary, set `RTK_DISABLED=1` for a single launch or set `"tlh": { "rtk": { "disabled": true } }` in the isolated profile at `~/.the-last-harness/agent/settings.json`. To remove just the managed binary, delete `~/.the-last-harness/agent/bin/rtk`; to remove the whole isolated RTK/profile setup, remove `~/.the-last-harness` (or use the uninstall script).
 
 The installer writes an ownership marker (`.tlh-runtime-owned`) into the runtime prefix on every successful install or repair. Ownership is determined by this marker, not by directory shape alone — `npm install --prefix` produces an identical `bin/lib` layout regardless of who ran it, so shape alone is not a reliable signal. Accordingly, the installer refuses a non-empty unmarked runtime prefix that has no recorded TLH provenance; this matters most when using a non-default `--agent-dir` whose sibling `runtime/` directory could belong to a separate installation. Older TLH installs from before the marker was introduced gain it automatically on the next `tlh update` or installer rerun — no action required.
 

@@ -322,6 +322,10 @@ const FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES = Object.freeze([
     "npm:@diegopetrucci/pi-permission-gate",
     "npm:@diegopetrucci/pi-confirm-destructive",
     "npm:@diegopetrucci/pi-oracle",
+    "git:github.com/diegopetrucci/pi-rtk",
+    "npm:pi-rtk",
+    "npm:@sherif-fanous/pi-rtk",
+    "git:github.com/sherif-fanous/pi-rtk",
 ]);
 function purgeForceRemovedRetiredDefaultExtensionPackages(settings, changes) {
     if (!Array.isArray(settings.packages))
@@ -358,6 +362,18 @@ function pruneOracleDisabledDefaultExtension(settings, changes) {
         return;
     settings.tlh.disabledDefaultExtensions = nextValues;
     changes.push("remove stale oracle opt-out from tlh.disabledDefaultExtensions");
+}
+function pruneRtkDisabledDefaultExtension(settings, changes) {
+    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
+        return;
+    const values = settings.tlh.disabledDefaultExtensions;
+    if (!Array.isArray(values))
+        return;
+    const nextValues = values.filter((value) => !(typeof value === "string" && ["rtk", "pi-rtk"].includes(value.trim())));
+    if (nextValues.length === values.length)
+        return;
+    settings.tlh.disabledDefaultExtensions = nextValues;
+    changes.push("remove stale rtk opt-out from tlh.disabledDefaultExtensions");
 }
 function scrubGnosisSettings(settings, changes) {
     if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
@@ -423,7 +439,11 @@ function isPersistentTelemetryOptOut(path, currentValue, defaultValue) {
     return path.join(".") === "tlh.telemetry.enabled" && currentValue === false && defaultValue === true;
 }
 function isInstallerOwnedSetting(path) {
-    return path.join(".") === "lastChangelogVersion";
+    const joinedPath = path.join(".");
+    return joinedPath === "lastChangelogVersion" || joinedPath === "subagents.disableBuiltins";
+}
+function isInstallerOwnedObjectContainer(path) {
+    return path.join(".") === "subagents";
 }
 function mergeObject(target, defaults, changes, options) {
     for (const [key, value] of Object.entries(defaults)) {
@@ -444,6 +464,11 @@ function mergeObject(target, defaults, changes, options) {
         }
         if (isPlainObject(value) && isPlainObject(target[key])) {
             mergeObject(target[key], value, changes, { ...options, path });
+            continue;
+        }
+        if (isPlainObject(value) && isInstallerOwnedObjectContainer(path)) {
+            target[key] = clone(value);
+            changes.push(`overwrite ${label}`);
             continue;
         }
         if (isPersistentTelemetryOptOut(path, target[key], value)) {
@@ -577,6 +602,7 @@ function main() {
     purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
     pruneContextCapDisabledDefaultExtension(next, changes);
     pruneOracleDisabledDefaultExtension(next, changes);
+    pruneRtkDisabledDefaultExtension(next, changes);
     syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
     log(args, `Pi settings: ${settingsPath}`);
     if (changes.length === 0) {
