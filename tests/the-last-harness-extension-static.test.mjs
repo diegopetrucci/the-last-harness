@@ -427,6 +427,69 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	}
 });
 
+test("allowed-subagents prompt keeps bundled minor-agent listings and scopes embedded guidance to architect", () => {
+	const primaryAgents = loadPrimaryAgents();
+	const architect = primaryAgents.get("architect");
+	const rush = primaryAgents.get("rush");
+	const product = primaryAgents.get("product");
+	const bugHunter = primaryAgents.get("bug-hunter");
+	const subagents = loadSubagentMetadata();
+
+	const embeddedConfig = { enabledFeatures: ["embedded-subagents"] };
+	const noEmbeddedConfig = { enabledFeatures: [] };
+
+	// Patterns
+	const embeddedClause = /embedded\.<slug>.*subagent.*explicitly names or asks/s;
+	const closingRule = /Do not delegate outside this bundled TLH minor-agent list\./;
+	const managementGuidance = /TLH minor agents are isolated to the user scope/;
+	const sectionHeader = /## TLH Allowed Minor Subagents/;
+
+	// architect + embedded-subagents flag ON: has embedded clause, no closing rule
+	const architectOn = buildTlhSystemPrompt(architect, subagents, true, embeddedConfig);
+	assert.match(architectOn, sectionHeader, "architect+on: section header present");
+	assert.match(architectOn, managementGuidance, "architect+on: management guidance present");
+	assert.match(architectOn, embeddedClause, "architect+on: embedded clause present");
+	assert.doesNotMatch(architectOn, closingRule, "architect+on: no closing rule");
+
+	// architect + embedded-subagents flag OFF: no embedded clause, has closing rule
+	const architectOff = buildTlhSystemPrompt(architect, subagents, true, noEmbeddedConfig);
+	assert.match(architectOff, sectionHeader, "architect+off: section header present");
+	assert.match(architectOff, managementGuidance, "architect+off: management guidance present");
+	assert.doesNotMatch(architectOff, embeddedClause, "architect+off: no embedded clause");
+	assert.match(architectOff, closingRule, "architect+off: closing rule present");
+
+	// architect + undefined config: no embedded clause, has closing rule
+	const architectUndefined = buildTlhSystemPrompt(architect, subagents, true, undefined);
+	assert.doesNotMatch(architectUndefined, embeddedClause, "architect+undefined: no embedded clause");
+	assert.match(architectUndefined, closingRule, "architect+undefined: closing rule present");
+
+	// rush / product / bug-hunter: no embedded clause and has closing rule regardless of flag
+	for (const primary of [rush, product, bugHunter]) {
+		const label = primary?.name ?? "unknown";
+		for (const config of [embeddedConfig, noEmbeddedConfig, undefined]) {
+			const prompt = buildTlhSystemPrompt(primary, subagents, true, config);
+			assert.match(prompt, sectionHeader, `${label}: section header present`);
+			assert.match(prompt, managementGuidance, `${label}: management guidance present`);
+			assert.doesNotMatch(prompt, embeddedClause, `${label}: no embedded clause`);
+			assert.match(prompt, closingRule, `${label}: closing rule present`);
+		}
+	}
+
+	// All variants include bundled agent listings
+	for (const [primary, config] of [
+		[architect, embeddedConfig],
+		[architect, noEmbeddedConfig],
+		[rush, embeddedConfig],
+		[rush, noEmbeddedConfig],
+		[product, embeddedConfig],
+		[bugHunter, embeddedConfig],
+	]) {
+		const prompt = buildTlhSystemPrompt(primary, subagents, true, config);
+		assert.match(prompt, /- developer:/, `${primary?.name}: developer listing present`);
+		assert.match(prompt, /- code-reviewer:/, `${primary?.name}: code-reviewer listing present`);
+	}
+});
+
 test("child startup branch uses the mandatory-ticket child prompt", () => {
 	const registerBlock = sourceSection(
 		primaryRuntimeSource,

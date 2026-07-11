@@ -1,7 +1,8 @@
 import { join } from "node:path";
 
 import { SELECTABLE_PRIMARY_AGENTS } from "../the-last-harness-primary-agent.mjs";
-import { allowedSubagentsForExperimentalConfig } from "../the-last-harness-subagent-safety.mjs";
+import { allowedSubagentsForExperimentalConfig, isExperimentalFeatureEnabled } from "../the-last-harness-subagent-safety.mjs";
+import { EMBEDDED_SUBAGENTS_FEATURE } from "./experimental.js";
 import { CHILD_SUBAGENT_PROMPT, HARNESS_PROMPT } from "./constants.js";
 import { readMarkdownFilesRecursive, readText } from "./common.js";
 import { packageRoot } from "./package-version.js";
@@ -105,7 +106,7 @@ export function loadSubagentMetadata(): SubagentMetadata[] {
 		.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function formatAllowedSubagents(subagents: SubagentMetadata[], experimentalConfig: TlhExperimentalConfig | undefined): string {
+function formatAllowedSubagents(primary: AgentPrompt | undefined, subagents: SubagentMetadata[], experimentalConfig: TlhExperimentalConfig | undefined): string {
 	const allowed = new Set(allowedSubagentsForExperimentalConfig(experimentalConfig));
 	const lines = subagents
 		.filter((agent) => allowed.has(agent.name))
@@ -113,7 +114,13 @@ function formatAllowedSubagents(subagents: SubagentMetadata[], experimentalConfi
 	if (lines.length === 0) {
 		return "";
 	}
-	return `## TLH Allowed Minor Subagents\n\nYou may delegate only to these minor agents via the subagent tool:\n\n${lines.join("\n")}\n\nFor subagent management \`action: "list"\`/\`"get"\`/\`"resume"\` calls, omit \`agentScope\` or use \`"user"\`. For \`action: "resume"\`, also omit \`context\` or use \`"fresh"\`. TLH minor agents are isolated to the user scope.`;
+	const managementGuidance = `For subagent management \`action: "list"\`/\`"get"\`/\`"resume"\` calls, omit \`agentScope\` or use \`"user"\`. For \`action: "resume"\`, also omit \`context\` or use \`"fresh"\`. TLH minor agents are isolated to the user scope.`;
+	const isArchitect = primary?.name === "architect";
+	const embeddedEnabled = isExperimentalFeatureEnabled(experimentalConfig, EMBEDDED_SUBAGENTS_FEATURE);
+	if (isArchitect && embeddedEnabled) {
+		return `## TLH Allowed Minor Subagents\n\nYou may delegate to these minor agents via the subagent tool:\n\n${lines.join("\n")}\n\n${managementGuidance} You may also delegate to a trusted \`embedded.<slug>\` subagent only when the user explicitly names or asks for that trusted agent; never proactively choose embedded agents on the user's behalf.`;
+	}
+	return `## TLH Allowed Minor Subagents\n\nYou may delegate only to these minor agents via the subagent tool:\n\n${lines.join("\n")}\n\n${managementGuidance}\n\nDo not delegate outside this bundled TLH minor-agent list.`;
 }
 
 export function buildTlhSystemPrompt(
@@ -127,7 +134,7 @@ export function buildTlhSystemPrompt(
 		if (primary) {
 			prompts.push(primary.systemPrompt.trim());
 		}
-		prompts.push(formatAllowedSubagents(subagents, experimentalConfig));
+		prompts.push(formatAllowedSubagents(primary, subagents, experimentalConfig));
 	}
 	return prompts.filter(Boolean).join("\n\n");
 }

@@ -38,7 +38,7 @@ Use the `subagent` tool for minor agents:
 - `oracle`: provide read-only high-reasoning second opinions on plans, risky decisions, bug hypotheses, or review findings.
 - `contrarian`: adversarially stress-test plans, designs, assumptions, product directions, bug hypotheses, or review conclusions by steelmanning the strongest opposing case.
 
-Do not create, update, or delete subagent definitions at runtime. Do not delegate to agents outside the allowed TLH minor-agent list.
+Do not create, update, or delete subagent definitions at runtime. Delegate only to targets permitted by the TLH Allowed Minor Subagents prompt section.
 
 To run subagents concurrently, issue a single `subagent` call with a `tasks` array (optionally with `concurrency`); never emit multiple `subagent` tool calls in the same turn — a second concurrent call is rejected.
 
