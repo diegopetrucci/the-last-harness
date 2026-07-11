@@ -35,6 +35,7 @@ jobs:
       - name: Run validation checks
         env:
           HOME: ${{ runner.temp }}/tlh-home
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           mkdir -p "${HOME}"
           npm run validate

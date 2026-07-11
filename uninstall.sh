@@ -47,6 +47,8 @@ die() {
 
 expand_path() {
   local path="$1"
+  # literal '~/' in case arms is intentional; these arms detect and expand unexpanded tilde arguments
+  # shellcheck disable=SC2088
   case "${path}" in
     '~')    printf '%s\n' "${HOME}" ;;
     '~/'*)  printf '%s/%s\n' "${HOME}" "${path#\~/}" ;;

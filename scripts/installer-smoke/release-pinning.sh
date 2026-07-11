@@ -33,14 +33,18 @@ NODE
   chmod +x "${dist_dir}/install.sh"
   bash -n "${dist_dir}/install.sh"
   assert_contains "${dist_dir}/install.sh" "REF=\"\${TLH_REF:-${tag}}\""
+  # single-quoted strings below are literal content assertions on install.sh text, not bash expansions
+  # shellcheck disable=SC2016
   assert_contains "${dist_dir}/install.sh" 'UPDATE_TRACK_INPUT="${TLH_UPDATE_TRACK:-latest-release}"'
+  # shellcheck disable=SC2016
   assert_not_contains "${dist_dir}/install.sh" 'REF="${TLH_REF:-main}"'
+  # shellcheck disable=SC2016
   assert_not_contains "${dist_dir}/install.sh" 'UPDATE_TRACK_INPUT="${TLH_UPDATE_TRACK:-}"'
 
   local manifest_file="${case_dir}/stage0-manifest.txt"
-  local requirement relative_path
+  local _ relative_path
   extract_stage0_support_manifest false >"${manifest_file}"
-  while IFS='|' read -r requirement relative_path; do
+  while IFS='|' read -r _ relative_path; do
     [[ -n "${relative_path}" ]] || continue
     mkdir -p "${dist_dir}/$(dirname "${relative_path}")"
     : >"${dist_dir}/${relative_path}"

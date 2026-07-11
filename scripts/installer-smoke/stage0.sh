@@ -134,6 +134,8 @@ run_stage0_validation_precedes_local_support_smoke() {
   make_fake_stage1_support_root "${stage_root}"
 
   set +e
+  # literal '~/.pi/agent' is intentional; smoke test exercises the alias guard that rejects unexpanded tildes
+  # shellcheck disable=SC2088
   run_scrubbed_installer_env HOME="${home_dir}" bash "${stage_root}/install.sh" --dry-run --agent-dir "~/.pi/agent" --bin-dir "${case_dir}/bin" >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e
