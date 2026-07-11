@@ -4,7 +4,7 @@ TLH lets you add your own trusted markdown subagents inside the isolated TLH pro
 
 ## Enable the flag
 
-```sh
+```text
 /experimental enable embedded-subagents
 ```
 
@@ -12,7 +12,7 @@ Then **start a new session** — the runtime snapshots `tlh.experimental` at ses
 
 To disable it again:
 
-```sh
+```text
 /experimental disable embedded-subagents
 ```
 
@@ -159,7 +159,7 @@ When flag is **off** (the default), any `embedded.*` target is blocked the same 
 
 To stop using an embedded agent, disable the flag:
 
-```sh
+```text
 /experimental disable embedded-subagents
 ```
 
