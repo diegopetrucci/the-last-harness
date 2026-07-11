@@ -2,7 +2,7 @@
 name: oracle
 description: Provides read-only high-reasoning second opinions and direct analysis.
 tools: read, grep, find, ls, contact_supervisor, bash
-tlhOpenaiModels: openai-codex/gpt-5.5
+tlhOpenaiModels: openai-codex/gpt-5.6-sol
 tlhAnthropicModels: anthropic/claude-opus-4-8
 preferOppositeProvider: true
 thinking: high

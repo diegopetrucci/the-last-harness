@@ -243,7 +243,7 @@ function writeFakeTk(path) {
 function registerScriptedProviders(modelRegistry, scriptState) {
 	const models = {
 		anthropic: ["claude-opus-4-8", "claude-sonnet-4-6"],
-		"openai-codex": ["gpt-5.4", "gpt-5.5"],
+		"openai-codex": ["gpt-5.4", "gpt-5.5", "gpt-5.6-sol"],
 	};
 	for (const [provider, ids] of Object.entries(models)) {
 		modelRegistry.registerProvider(provider, {
@@ -278,7 +278,7 @@ function scriptedRoleForModel(model) {
 	if (model.provider === "openai-codex" && model.id === "gpt-5.4") {
 		return "developer";
 	}
-	if (model.provider === "openai-codex" && model.id === "gpt-5.5") {
+	if (model.provider === "openai-codex" && (model.id === "gpt-5.5" || model.id === "gpt-5.6-sol")) {
 		return "code-reviewer";
 	}
 	return currentRole();
@@ -551,7 +551,11 @@ test("hermetic core architect workflow runs end-to-end with deterministic subage
 					appendSystemPrompt: [],
 				});
 				await resourceLoader.reload();
-				const modelKey = params.model?.includes("/") ? params.model.split("/") : role === "developer" ? ["openai-codex", "gpt-5.4"] : ["openai-codex", "gpt-5.5"];
+				const modelKey = params.model?.includes("/")
+					? params.model.split("/")
+					: role === "developer"
+						? ["openai-codex", "gpt-5.4"]
+						: ["openai-codex", "gpt-5.6-sol"];
 				const model = modelRegistry.find(modelKey[0], modelKey[1]);
 				assert.ok(model, `expected subagent model ${modelKey.join("/")}`);
 				return createAgentSession({
@@ -655,6 +659,7 @@ test("hermetic core architect workflow runs end-to-end with deterministic subage
 		assert.equal(scriptState.providerCalls.some((entry) => entry.role === "architect" && entry.step === 1), true, diagnostics);
 		assert.equal(scriptState.providerCalls.some((entry) => entry.role === "architect" && entry.step === 2), true, diagnostics);
 		assert.equal(scriptState.providerCalls.some((entry) => entry.role === "code-reviewer"), true, diagnostics);
+		assert.equal(scriptState.providerCalls.some((entry) => entry.role === "code-reviewer" && entry.model === "openai-codex/gpt-5.6-sol"), true, diagnostics);
 		const architectTools = toolLogs.filter((entry) => entry.role === "architect");
 		const developerTools = toolLogs.filter((entry) => entry.role === "developer");
 		const reviewerTools = toolLogs.filter((entry) => entry.role === "code-reviewer");
