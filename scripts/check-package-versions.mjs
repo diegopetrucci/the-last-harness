@@ -12,6 +12,7 @@ const COMMIT_SHA_GIT_REF_RE = /^[0-9a-f]{7,40}$/i;
 const FLOATING_GIT_REF_RE = /^(?:head|latest|main|master|trunk|develop)$/i;
 const BRANCH_LIKE_GIT_REF_RE = /^(?:feature|features|release|releases|hotfix|bugfix|fix|feat|chore|develop|dev)(?:$|[/-])/i;
 const DEFAULT_GNOSIS_SCRIPT_PATHS = Object.freeze([
+	"scripts/tlh-gnosis.mts",
 	"scripts/tlh-gnosis.mjs",
 	"scripts/tlh-install.mjs",
 ]);
@@ -20,6 +21,7 @@ const DEFAULT_PI_INSTALL_SCRIPT_PATHS = Object.freeze([
 	"scripts/tlh-install.mjs",
 ]);
 const DEFAULT_RTK_SCRIPT_PATHS = Object.freeze([
+	"scripts/tlh-rtk.mts",
 	"scripts/tlh-rtk.mjs",
 ]);
 const DEFAULT_INSTALL_SH_PATH = "install.sh";
@@ -45,9 +47,9 @@ Options:
   --lockfile <path>            package-lock.json path (default: package-lock.json)
   --default-extensions <path>  Bundled default-extension manifest (default: config/default-extensions.json)
   --install-sh <path>          install.sh path for TLH_PINNED_PI_VERSION validation (default: install.sh)
-  --gnosis-script <path>       Managed Gnosis script to validate (repeatable; defaults: scripts/tlh-gnosis.mjs, scripts/tlh-install.mjs)
+  --gnosis-script <path>       Managed Gnosis script to validate (repeatable; defaults: scripts/tlh-gnosis.mts, scripts/tlh-gnosis.mjs, scripts/tlh-install.mjs)
   --pi-install-script <path>   TLH install script to validate PINNED_PI_VERSION in (repeatable; defaults: scripts/tlh-install.mts, scripts/tlh-install.mjs)
-  --rtk-script <path>          Managed RTK script to validate (repeatable; default: scripts/tlh-rtk.mjs)
+  --rtk-script <path>          Managed RTK script to validate (repeatable; defaults: scripts/tlh-rtk.mts, scripts/tlh-rtk.mjs)
   -h, --help                   Show this help
 `;
 }
