@@ -352,7 +352,8 @@ test("before_agent_start activates ticket runtime without disabled-ticket prompt
 	assert.match(beforeAgentStart, /const settings = getTlhGlobalSettings\(ctx\.cwd\);/);
 	assert.doesNotMatch(beforeAgentStart, /ticketIntegrationEnabled/);
 	assert.match(beforeAgentStart, /activateTlhTicketRuntime\(settings, getAgentDir\(\)\);/);
-	assert.match(beforeAgentStart, /buildTlhSystemPrompt\(activePrimaryAgent\(\), subagentMetadata, primaryEnabled, settings\.tlh\?\.experimental\)/);
+	assert.match(beforeAgentStart, /sessionExperimentalSnapshot = settings\.tlh\?\.experimental/);
+	assert.match(beforeAgentStart, /buildTlhSystemPrompt\(activePrimaryAgent\(\), subagentMetadata, primaryEnabled, sessionExperimentalSnapshot\)/);
 });
 
 test("primary and child prompts do not include disabled-ticket fallback guidance", () => {
@@ -577,7 +578,13 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 	);
 	assert.match(toolCall, /if \(selection === "rush" && isSubagentResumeAction\(event\.input\)\)/);
 	assert.match(toolCall, /if \(selection === "rush" && subagentCallTargetsAgent\(event\.input, "developer"\)\)/);
-	assert.match(toolCall, /const reason = validateSubagentToolInput\(event\.input, \{ allowedSubagents \}\)/);
+	assert.match(toolCall, /const embeddedFeatureEnabled = isExperimentalFeatureEnabled\(sessionExperimentalSnapshot, EMBEDDED_SUBAGENTS_FEATURE\)/);
+	assert.match(
+		toolCall,
+		/if \(embeddedFeatureEnabled\) \{[\s\S]*const embeddedBlockReason = embeddedDelegationBlockedReason\(selection, event\.input\)/,
+	);
+	assert.match(toolCall, /const allowEmbeddedTargets = embeddedFeatureEnabled && selection === "architect"/);
+	assert.match(toolCall, /const reason = validateSubagentToolInput\(event\.input, \{ allowedSubagents, allowEmbeddedTargets \}\)/);
 	assert(
 		toolCall.indexOf('if (event.toolName === "bash")') < toolCall.indexOf("resolveTlhCommitAttribution"),
 		"parent tool_call should resolve attribution only inside the bash branch",
@@ -586,7 +593,7 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 		toolCall.indexOf("applyProviderAwareSubagentModels") < toolCall.indexOf("!isEnabledPrimaryAgentSelection(selection)"),
 		"provider-aware subagent defaults should run before the disabled-primary guard",
 	);
-	const genericValidationIndex = toolCall.indexOf("const reason = validateSubagentToolInput(event.input, { allowedSubagents })");
+	const genericValidationIndex = toolCall.indexOf("const reason = validateSubagentToolInput(event.input, { allowedSubagents, allowEmbeddedTargets })");
 	assert(
 		toolCall.indexOf("isSubagentResumeAction") < genericValidationIndex,
 		"Rush resume guard should run before generic subagent validation",
@@ -594,6 +601,14 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 	assert(
 		toolCall.lastIndexOf('subagentCallTargetsAgent(event.input, "developer")') < genericValidationIndex,
 		"Rush developer guard should run before generic subagent validation",
+	);
+	assert(
+		toolCall.indexOf("embeddedDelegationBlockedReason") < genericValidationIndex,
+		"Embedded delegation block check should run before generic subagent validation",
+	);
+	assert(
+		toolCall.indexOf("allowEmbeddedTargets") < genericValidationIndex,
+		"allowEmbeddedTargets computation should appear before generic subagent validation",
 	);
 });
 
@@ -676,7 +691,7 @@ test("extension keeps TLH experimental command wiring with registered ticket, ci
 	assert.match(typesSource, /enabledFeatures\?: string\[];/);
 	assert.match(typesSource, /export type TlhExperimentalFeatureId = string;/);
 	assert.match(primaryRuntimeSource, /from "\.\/experimental\.js"/);
-	assert.match(primaryRuntimeSource, /buildPrimaryExperimentalPrompt\(activePrimaryAgent\(\), settings\.tlh\?\.experimental\)/);
+	assert.match(primaryRuntimeSource, /buildPrimaryExperimentalPrompt\(activePrimaryAgent\(\), sessionExperimentalSnapshot\)/);
 	assert.doesNotMatch(extensionSource, /registerTlhCommitAttributionRuntime\(pi\)/);
 	assert.match(extensionSource, /registerToggleTlhGitAttributionCommand\(pi\)/);
 	assert.match(attributionSource, /from "\.\/profile-state\.js"/);
