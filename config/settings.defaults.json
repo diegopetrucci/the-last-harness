@@ -15,5 +15,6 @@
   },
   "warnings": {
     "anthropicExtraUsage": false
-  }
+  },
+  "showCacheMissNotices": true
 }
