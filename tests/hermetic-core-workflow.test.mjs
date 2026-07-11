@@ -19,6 +19,7 @@ import { withEnv } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
 const { default: theLastHarness } = await jiti.import("../extensions/the-last-harness.ts");
+const { splitKnownThinkingSuffix } = await jiti.import("../extensions/the-last-harness/model-defaults.ts");
 
 class ScriptedEventStream {
 	#queue = [];
@@ -551,15 +552,7 @@ test("hermetic core architect workflow runs end-to-end with deterministic subage
 					appendSystemPrompt: [],
 				});
 				await resourceLoader.reload();
-				const knownThinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
-				function stripThinkingSuffix(modelStr) {
-					const colon = modelStr.lastIndexOf(":");
-					if (colon !== -1 && knownThinkingLevels.includes(modelStr.slice(colon + 1))) {
-						return modelStr.slice(0, colon);
-					}
-					return modelStr;
-				}
-				const baseModel = params.model ? stripThinkingSuffix(params.model) : params.model;
+				const baseModel = splitKnownThinkingSuffix(params.model).baseModel;
 				const modelKey = baseModel?.includes("/")
 					? baseModel.split("/")
 					: role === "developer"

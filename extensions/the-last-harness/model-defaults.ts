@@ -60,7 +60,7 @@ export function formatProviderModelReference(model: ProviderModelReference): str
 	return `${model.provider}/${model.id}`;
 }
 
-function splitKnownThinkingSuffix(model: string | undefined): { baseModel: string | undefined; thinkingSuffix: string } {
+export function splitKnownThinkingSuffix(model: string | undefined): { baseModel: string | undefined; thinkingSuffix: string } {
 	if (!model) {
 		return { baseModel: model, thinkingSuffix: "" };
 	}
