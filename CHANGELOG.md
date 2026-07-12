@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
+- Install and update now prune stale settings/keybindings backups (`settings.json.backup-*`, `keybindings.json.backup-*`) from the isolated profile. Backups older than ~28 days are removed, but the two newest are always kept regardless of age. Pruning is scoped strictly to `~/.the-last-harness/agent` and never touches `~/.pi`. To keep a backup indefinitely, copy it outside the isolated profile before it ages out.
 - (Beta) TLH should now report its status better when working within terminals like Herdr and Cmux. Before, it was showing as `idle` when the primary agent was idle but subagents were still running.
 - Support for `max` thinking.
 - Support for `pi`'s cache missing alerts. Enabled by default.
