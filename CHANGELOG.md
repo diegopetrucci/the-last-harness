@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-07-12
+
 ### Added
 
 - Support for `max` thinking.
