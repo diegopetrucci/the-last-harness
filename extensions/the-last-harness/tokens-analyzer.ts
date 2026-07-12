@@ -388,10 +388,10 @@ export function analyzeSessionEntries(
 			const rawMsgUsage = isRecord(message.usage) ? message.usage : undefined;
 			const cmInput = numberFromUnknown(rawMsgUsage?.input ?? rawMsgUsage?.inputTokens) ?? 0;
 			const cmCacheRead = numberFromUnknown(
-				rawMsgUsage?.cacheRead ?? rawMsgUsage?.cacheReadTokens ?? rawMsgUsage?.cache_read_input_tokens,
+				rawMsgUsage?.cacheRead ?? rawMsgUsage?.cacheReadTokens ?? rawMsgUsage?.cache_read_input_tokens ?? rawMsgUsage?.cacheReadInputTokens,
 			) ?? 0;
 			const cmCacheWrite = numberFromUnknown(
-				rawMsgUsage?.cacheWrite ?? rawMsgUsage?.cacheWriteTokens ?? rawMsgUsage?.cache_creation_input_tokens,
+				rawMsgUsage?.cacheWrite ?? rawMsgUsage?.cacheWriteTokens ?? rawMsgUsage?.cache_creation_input_tokens ?? rawMsgUsage?.cacheWriteInputTokens,
 			) ?? 0;
 			const cmPromptTokens = cmInput + cmCacheRead + cmCacheWrite;
 

@@ -798,7 +798,7 @@ test("cacheMisses: worst list is sorted by missedTokens descending and capped at
 				provider: "anthropic",
 				model: "claude-3-5-sonnet",
 				usage: usageRaw({
-					input: isBaseline ? sizes[i] : sizes[i],
+					input: sizes[i],
 					cacheRead: isBaseline ? 5000 : 0,
 					costInput: 0.001,
 				}),
@@ -821,6 +821,79 @@ test("cacheMisses: worst list is sorted by missedTokens descending and capped at
 			`worst[${i - 1}].missedTokens should be >= worst[${i}].missedTokens`,
 		);
 	}
+});
+
+test("cacheMisses: cacheReadInputTokens/cacheWriteInputTokens aliases produce same miss detection as cacheRead/cacheWrite", () => {
+	// Regression for tlhmo-y445: the cache-miss path must recognise the
+	// cacheReadInputTokens / cacheWriteInputTokens camelCase aliases, matching
+	// the precedence normalizeUsage already uses.
+
+	// Baseline turn uses the canonical cacheRead/cacheWrite keys.
+	// Miss turn uses the cacheReadInputTokens/cacheWriteInputTokens aliases.
+	// If the aliases are ignored, cmCacheRead stays 0 and miss detection breaks.
+	const entriesAlias = [
+		// Turn 0: seed cache activity so prev.reportedCache=true.
+		// Use canonical cacheRead key here (baseline).
+		assistantEntry("a1", null, "2026-07-12T10:00:00.000Z", {
+			provider: "anthropic",
+			model: "claude-3-5-sonnet",
+			usage: {
+				input: 5000,
+				output: 100,
+				cacheReadInputTokens: 2000,
+				cacheWriteInputTokens: 500,
+			},
+		}),
+		// Turn 1: no cache → miss. Uses cacheReadInputTokens=0 (absent = 0).
+		assistantEntry("a2", "a1", "2026-07-12T10:10:00.000Z", {
+			provider: "anthropic",
+			model: "claude-3-5-sonnet",
+			usage: {
+				input: 7500,
+				output: 80,
+				// No cacheReadInputTokens / cacheWriteInputTokens → miss
+			},
+		}),
+	];
+
+	// Equivalent entries using the canonical cacheRead/cacheWrite keys (reference).
+	const entriesCanonical = [
+		assistantEntry("a1", null, "2026-07-12T10:00:00.000Z", {
+			provider: "anthropic",
+			model: "claude-3-5-sonnet",
+			usage: {
+				input: 5000,
+				output: 100,
+				cacheRead: 2000,
+				cacheWrite: 500,
+			},
+		}),
+		assistantEntry("a2", "a1", "2026-07-12T10:10:00.000Z", {
+			provider: "anthropic",
+			model: "claude-3-5-sonnet",
+			usage: {
+				input: 7500,
+				output: 80,
+			},
+		}),
+	];
+
+	const aliasAnalysis = analyzeSessionEntries(entriesAlias);
+	const canonicalAnalysis = analyzeSessionEntries(entriesCanonical);
+
+	// Both should detect exactly 1 miss.
+	assert.equal(aliasAnalysis.cacheMisses.missCount, 1,
+		"cacheReadInputTokens/cacheWriteInputTokens aliases: should detect 1 miss");
+	assert.equal(aliasAnalysis.cacheMisses.missCount, canonicalAnalysis.cacheMisses.missCount,
+		"alias and canonical keys must produce the same missCount");
+	assert.equal(aliasAnalysis.cacheMisses.missedTokens, canonicalAnalysis.cacheMisses.missedTokens,
+		"alias and canonical keys must produce the same missedTokens");
+
+	// Turn 0 baseline: promptTokens = 5000 + 2000 + 500 = 7500; reportedCache = true.
+	// Turn 1: promptTokens = 7500; cacheRead = 0.
+	// missedTokens = min(7500, 7500) - 0 = 7500.
+	assert.equal(aliasAnalysis.cacheMisses.missedTokens, 7500,
+		"missedTokens should be 7500 when cacheReadInputTokens/cacheWriteInputTokens are read correctly");
 });
 
 test("cacheMisses: analyzeCurrentSessionUsage accepts optional priceSource and forwards it", () => {
