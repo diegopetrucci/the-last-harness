@@ -25,8 +25,6 @@ All notable changes to The Last Harness will be documented in this file.
 - `tlh doctor` now reads the expected private-runtime Pi pin from the packaged `install.sh` fallback, so runtime drift hints stay aligned with the shipped installer pin.
 - Bumped the bundled `context-inspector` default extension pin from `npm:@diegopetrucci/pi-context-inspector@0.1.3` to `npm:@diegopetrucci/pi-context-inspector@0.1.4`.
 - Bumped the bundled `dirty-repo-guard` default extension pin from `npm:@diegopetrucci/pi-dirty-repo-guard@0.1.3` to `npm:@diegopetrucci/pi-dirty-repo-guard@0.1.4`.
-- The `/tokens` report now labels the primary bucket with the active primary-agent name (for example `architect`) instead of the generic "Primary assistant", falling back to "Primary assistant" when the active label is unavailable.
-- The `/tokens` report section order now places Tools/MCP and the new Cache misses section directly after the Overview.
 
 ## [0.28.0] - 2026-07-09
 
