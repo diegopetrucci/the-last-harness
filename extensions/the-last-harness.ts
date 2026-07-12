@@ -84,7 +84,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	const getTokensCommandHandler = () => {
 		if (!tokensCommandHandlerPromise) {
 			tokensCommandHandlerPromise = loadTokensModule()
-				.then((module) => module.createTokensCommandHandler(pi))
+				.then((module) => module.createTokensCommandHandler(pi, { getPrimaryAgentLabel: () => primaryAgentRuntime.currentPrimaryAgentLabel() }))
 				.catch((error) => {
 					tokensCommandHandlerPromise = undefined;
 					throw error;
