@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Added a new default-off `embedded-subagents` experimental flag that lets the architect primary agent delegate to trusted user-owned `embedded.<slug>` subagents placed under the isolated profile's `agents/` directory; enable via `/experimental enable embedded-subagents` (takes effect at the next session); see `docs/embedded-subagents.md`.
+
 ### Fixed
 
 - Supported terminal integrations such as Herdr and cmux can now show TLH as working while primary activity or async/background subagents are still active, without requiring TLH to install those integrations.
