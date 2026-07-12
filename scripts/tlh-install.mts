@@ -127,8 +127,10 @@ interface ParsedArgs extends Record<string, unknown> {
 	updateTrackInput: string;
 	rawBaseInput: string;
 	agentDirInput: string;
+	agentDirExplicit: boolean;
 	binDirInput: string;
 	wrapperName: string;
+	wrapperNameExplicit: boolean;
 	printSupportManifest: boolean;
 	help: boolean;
 	piInstalledByTlhOverride: boolean | undefined;
@@ -263,16 +265,20 @@ an isolated Pi profile and installer-owned helper commands.
 Requirements:
   Node.js >= ${MIN_NODE_VERSION} on PATH
   Upstream Pi ${PINNED_PI_VERSION} (installed per-user into a private TLH runtime prefix,
-  default: ~/.the-last-harness/runtime; install or repair failures stop with an actionable error)
+  default: ~/.the-last-harness/runtime (release) or ~/.the-last-harness-main/runtime (main);
+  install or repair failures stop with an actionable error)
 
 Options:
   --dry-run                  Print actions and settings/keybinding changes without writing
   --force                    Allow scalar isolated defaults and installer wrapper overwrite
   --no-settings              Install the package but skip isolated settings/keybinding merge
   --no-wrapper               Skip creating the tlh wrapper command
-  --agent-dir DIR            Isolated Pi agent dir (default: ~/.the-last-harness/agent)
+  --agent-dir DIR            Isolated Pi agent dir
+                             (default for main: ~/.the-last-harness-main/agent;
+                              default for release tags: ~/.the-last-harness/agent)
   --bin-dir DIR              Wrapper install dir (default: ~/.local/bin)
-  --wrapper-name N           Wrapper command name (default: tlh)
+  --wrapper-name N           Wrapper command name
+                             (default for main: tlh-main; default for release tags: tlh)
   --ref REF                  Install The Last Harness from a branch, tag, or commit
   --track TRACK              Update track for future tlh update: latest-release, pinned-tag, ref, custom
   --quiet                    Suppress installer progress output
@@ -281,9 +287,9 @@ Options:
   -h, --help                 Show this help
 
 Environment overrides:
-  TLH_AGENT_DIR        Isolated Pi agent dir
+  TLH_AGENT_DIR        Isolated Pi agent dir (explicit; overrides the ref-derived default)
   TLH_BIN_DIR          Wrapper install dir
-  TLH_WRAPPER_NAME     Wrapper command name
+  TLH_WRAPPER_NAME     Wrapper command name (explicit; overrides the ref-derived default)
   TLH_REPO             GitHub repo, owner/name (default: diegopetrucci/the-last-harness)
   TLH_REF              Raw-file ref and package ref (default: main in source; release assets pin this to their tag)
   TLH_UPDATE_TRACK     Update track for future tlh update
@@ -324,8 +330,12 @@ function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv = process.env
 		updateTrackInput: env.TLH_UPDATE_TRACK || "",
 		rawBaseInput: env.TLH_RAW_BASE || "",
 		agentDirInput: defaultAgentDir(env),
+		// Track whether each of these was explicitly provided so that
+		// buildInstallConfig() can apply ref-derived defaults for the main ref.
+		agentDirExplicit: !!env.TLH_AGENT_DIR,
 		binDirInput: defaultBinDir(env),
 		wrapperName: env.TLH_WRAPPER_NAME || DEFAULT_WRAPPER_NAME,
+		wrapperNameExplicit: !!env.TLH_WRAPPER_NAME,
 		printSupportManifest: false,
 		help: false,
 		piInstalledByTlhOverride: undefined,
@@ -388,6 +398,7 @@ function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv = process.env
 		}
 		if (arg === "--agent-dir") {
 			args.agentDirInput = requiredValue(argv, ++index, arg);
+			args.agentDirExplicit = true;
 			continue;
 		}
 		if (arg === "--bin-dir") {
@@ -396,6 +407,7 @@ function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv = process.env
 		}
 		if (arg === "--wrapper-name") {
 			args.wrapperName = requiredValue(argv, ++index, arg);
+			args.wrapperNameExplicit = true;
 			continue;
 		}
 		if (arg === "--ref") {
@@ -408,6 +420,7 @@ function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv = process.env
 		}
 		if (arg.startsWith("--agent-dir=")) {
 			assignRequiredEqualsValue(args, "agentDirInput", arg.slice("--agent-dir=".length), "--agent-dir");
+			args.agentDirExplicit = true;
 			continue;
 		}
 		if (arg.startsWith("--bin-dir=")) {
@@ -416,6 +429,7 @@ function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv = process.env
 		}
 		if (arg.startsWith("--wrapper-name=")) {
 			assignRequiredEqualsValue(args, "wrapperName", arg.slice("--wrapper-name=".length), "--wrapper-name");
+			args.wrapperNameExplicit = true;
 			continue;
 		}
 		if (arg.startsWith("--ref=")) {
@@ -439,9 +453,21 @@ function isSemverTag(ref: string): boolean {
 function buildInstallConfig(parsedArgs: ParsedArgs, env: NodeJS.ProcessEnv = process.env): InstallConfig {
 	// piInstalledByTlhOverride is set when an explicit --pi-installed-by-tlh flag was passed
 	// (e.g. tlh-update.mjs carries through the preserved value from an existing install-state).
-	const agentDir = resolve(expandPath(parsedArgs.agentDirInput));
+	//
+	// Main-ref auto-defaults: when installing from the default ref ('main') and the user has
+	// NOT explicitly provided a wrapper name or agent dir (via env or CLI), use separate
+	// named defaults so that main-track installs don't collide with release-tag installs.
+	// Explicit values (tracked via parsedArgs.*Explicit booleans) always win.
+	const isMainRef = parsedArgs.ref === DEFAULT_REF;
+	const effectiveWrapperName = (isMainRef && !parsedArgs.wrapperNameExplicit)
+		? "tlh-main"
+		: parsedArgs.wrapperName;
+	const effectiveAgentDirInput = (isMainRef && !parsedArgs.agentDirExplicit)
+		? join(homedir(), ".the-last-harness-main", "agent")
+		: parsedArgs.agentDirInput;
+	const agentDir = resolve(expandPath(effectiveAgentDirInput));
 	const binDir = resolve(expandPath(parsedArgs.binDirInput));
-	const wrapperPath = join(binDir, parsedArgs.wrapperName);
+	const wrapperPath = join(binDir, effectiveWrapperName);
 	let packageSource = parsedArgs.packageSourceInput;
 	let packageSourceIsDefault = false;
 	if (!packageSource) {
@@ -476,6 +502,7 @@ function buildInstallConfig(parsedArgs: ParsedArgs, env: NodeJS.ProcessEnv = pro
 		binDir,
 		settingsPath: join(agentDir, "settings.json"),
 		keybindingsPath: join(agentDir, "keybindings.json"),
+		wrapperName: effectiveWrapperName,
 		supportDir: join(agentDir, "tlh"),
 		statePath: join(agentDir, "tlh", "install-state.json"),
 		wrapperPath,
