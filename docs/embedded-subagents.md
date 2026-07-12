@@ -70,6 +70,8 @@ Project-scoped `.pi/agents/**/*.md` files are **not** a supported path for TLH-p
 
 Enabling the flag and placing the agent file in the supported location is what authorizes architect to delegate to that agent. The "only when the user explicitly names or asks for it" rule in the architect system prompt is **prompt policy, not a runtime gate** — the runtime does not verify that the user typed the agent name. If you enable the flag and the file exists, the architect primary agent is authorized to run it.
 
+**Known limitation — resume is not re-checked against the architect-only rule.** The architect-only runtime block applies to *initiating* a delegation to an `embedded.*` target. Management actions — including `subagent({ action: "resume", ... })` — are exempt from that block. As a result, if architect starts an embedded subagent run and the user then switches the primary agent (via `/switch-primary-agent`) to `product` or `bug-hunter` within the same session, that non-architect primary can `resume` the already-started embedded run; the runtime does not re-check the resumed run's initiating agent against the architect-only rule. This is a known, accepted defense-in-depth gap, not a sandbox escape: embedded subagents are trusted, user-owned agents (as noted below), so this is a defense-in-depth boundary rather than isolation of untrusted code. It is tracked for a proper fix (threading the resumed run's agent identity into the gate) in issue #330.
+
 ## Least-privilege starter
 
 Start with a read-only helper unless you really need mutation:
