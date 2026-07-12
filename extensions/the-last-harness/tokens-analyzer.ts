@@ -1,5 +1,10 @@
 import type { ExtensionContext, SessionEntry, ToolInfo } from "@earendil-works/pi-coding-agent";
 
+// Cache-miss detection ported from pi-coding-agent@0.80.6 core/cache-stats
+const NOISE_FLOOR_TOKENS = 1024;
+// The upstream provider prompt-cache TTL is ~5 minutes; large idle gaps between turns tend
+// to cause cache misses because entries expire. Detection reports idleMs but does not gate on the TTL.
+
 const BUILT_IN_TOOL_NAMES = new Set(["bash", "read", "edit", "write", "grep", "find", "ls"]);
 /** Approximate characters per token used for tool-payload size estimates. */
 const CHARS_PER_TOKEN = 4;
@@ -89,6 +94,13 @@ export type TlhToolSourceUsage = {
 	tools: string[];
 };
 
+export type TlhAgentProviderUsage = {
+	key: string;
+	agent?: string;
+	provider?: string;
+	usage: TlhUsageTotals;
+};
+
 export type TlhDiscoveredSubagentRun = {
 	key: string;
 	sourceEntryId: string;
@@ -139,15 +151,53 @@ export type TlhUsageTimelineTurn = {
 
 export type TlhToolCatalogEntry = Pick<ToolInfo, "name" | "sourceInfo">;
 
+/**
+ * Structural interface for a model price source.
+ * ctx.modelRegistry from ExtensionContext satisfies this shape.
+ * When absent, the cache-read rate fallback is 0.
+ */
+export type ModelPriceSource = {
+	find(provider: string, modelId: string): { cost: { cacheRead: number } } | undefined;
+};
+
+export type TlhCacheMissEvent = {
+	/**
+	 * 0-based index of the assistant message across all primary assistant messages
+	 * processed in session order (incremented for every assistant message, including
+	 * those with no miss). Stable across analysis runs on the same entries.
+	 */
+	turnIndex: number;
+	/** Milliseconds elapsed since the previous assistant message's timestamp. */
+	idleMs: number;
+	/** True when the provider/model key changed relative to the previous assistant message. */
+	modelChanged: boolean;
+	missedTokens: number;
+	missedCost: number;
+};
+
+export type TlhCacheMisses = {
+	/** Total tokens that could have been served from cache but were not. */
+	missedTokens: number;
+	/** Estimated USD cost of the cache misses. */
+	missedCost: number;
+	/** Number of individual miss events above the noise floor. */
+	missCount: number;
+	/** Top-10 individual miss events, sorted by missedTokens descending. */
+	worst: TlhCacheMissEvent[];
+};
+
 export type TlhSessionUsageAnalysisOptions = {
 	sessionId?: string;
 	sessionName?: string;
 	startedAt?: string;
 	activeLeafId?: string | null;
 	toolCatalog?: readonly TlhToolCatalogEntry[];
+	/** Optional pricing source used to look up the cache-read token rate when a message has no cacheRead tokens. */
+	priceSource?: ModelPriceSource;
 };
 
 export type TlhSessionUsageAnalysis = {
+	cacheMisses: TlhCacheMisses;
 	session: {
 		sessionId?: string;
 		sessionName?: string;
@@ -189,6 +239,7 @@ export type TlhSessionUsageAnalysis = {
 		runCount: number;
 		usage: TlhUsageTotals;
 		models: TlhModelUsage[];
+		byAgent: TlhAgentProviderUsage[];
 		runs: TlhDiscoveredSubagentRun[];
 	};
 	references: {
@@ -218,6 +269,7 @@ type StructuredDiscoveries = {
 export function analyzeCurrentSessionUsage(
 	sessionManager: TokensAnalysisSessionManager,
 	toolCatalog: readonly TlhToolCatalogEntry[] = [],
+	priceSource?: ModelPriceSource,
 ): TlhSessionUsageAnalysis {
 	const header = sessionManager.getHeader();
 	return analyzeSessionEntries(sessionManager.getEntries(), {
@@ -226,6 +278,7 @@ export function analyzeCurrentSessionUsage(
 		startedAt: header?.timestamp,
 		activeLeafId: sessionManager.getLeafId(),
 		toolCatalog,
+		priceSource,
 	});
 }
 
@@ -237,6 +290,7 @@ export function analyzeSessionEntries(
 		startedAt,
 		activeLeafId,
 		toolCatalog = [],
+		priceSource,
 	}: TlhSessionUsageAnalysisOptions = {},
 ): TlhSessionUsageAnalysis {
 	const byId = new Map<string, SessionEntry>();
@@ -268,7 +322,27 @@ export function analyzeSessionEntries(
 	let mcpProxyCalls = 0;
 	let mcpDirectCalls = 0;
 
+	// Cache-miss detection state — ported from pi-coding-agent@0.80.6 core/cache-stats
+	type CacheMissPrev = {
+		promptTokens: number;
+		timestamp: number;
+		modelKey: string;
+		/** True once any assistant message in this session has reported cacheRead+cacheWrite>0. */
+		reportedCache: boolean;
+	};
+	let cacheMissPrev: CacheMissPrev | undefined;
+	/** 0-based index incremented for every primary assistant message processed. */
+	let assistantTurnIndex = 0;
+	const cacheMissEvents: TlhCacheMissEvent[] = [];
+	let totalMissedTokens = 0;
+	let totalMissedCost = 0;
+
 	for (const entry of entries) {
+		// Cache-miss detection: compaction and branch_summary legitimately change context — clear prev.
+		if (entry.type === "compaction" || entry.type === "branch_summary") {
+			cacheMissPrev = undefined;
+		}
+
 		if (entry.type === "custom") {
 			registerDiscoveries(collectStructuredDiscoveries(entry.data, { sourceEntryId: entry.id }), {
 				subagentRuns,
@@ -306,6 +380,66 @@ export function analyzeSessionEntries(
 				primaryTotals.turns += 1;
 				primaryTotals.assistantMessages += 1;
 			}
+
+			// Cache-miss detection (primary session only; subagent runs are excluded).
+			// Ported from pi-coding-agent@0.80.6 core/cache-stats.
+			// Raw per-message cost breakdown is read directly here; normalizeUsage collapses
+			// cost to a single total and is NOT sufficient for the per-component rate math.
+			const rawMsgUsage = isRecord(message.usage) ? message.usage : undefined;
+			const cmInput = numberFromUnknown(rawMsgUsage?.input ?? rawMsgUsage?.inputTokens) ?? 0;
+			const cmCacheRead = numberFromUnknown(
+				rawMsgUsage?.cacheRead ?? rawMsgUsage?.cacheReadTokens ?? rawMsgUsage?.cache_read_input_tokens ?? rawMsgUsage?.cacheReadInputTokens,
+			) ?? 0;
+			const cmCacheWrite = numberFromUnknown(
+				rawMsgUsage?.cacheWrite ?? rawMsgUsage?.cacheWriteTokens ?? rawMsgUsage?.cache_creation_input_tokens ?? rawMsgUsage?.cacheWriteInputTokens,
+			) ?? 0;
+			const cmPromptTokens = cmInput + cmCacheRead + cmCacheWrite;
+
+			const rawCost = isRecord(rawMsgUsage?.cost) ? rawMsgUsage.cost : undefined;
+			const cmCostInput = numberFromUnknown(rawCost?.input) ?? 0;
+			const cmCostCacheWrite = numberFromUnknown(rawCost?.cacheWrite) ?? 0;
+			const cmCostCacheRead = numberFromUnknown(rawCost?.cacheRead) ?? 0;
+
+			const cmProvider = typeof message.provider === "string" ? message.provider : "";
+			const cmModel = typeof message.model === "string" ? message.model : "";
+			const cmModelKey = `${cmProvider}/${cmModel}`;
+			const cmTimestampMs = Date.parse(entry.timestamp);
+			const cmTimestamp = Number.isFinite(cmTimestampMs) ? cmTimestampMs : 0;
+
+			// Evaluate miss: skip when no prev, zero promptTokens, or no cache activity ever seen.
+			if (
+				cacheMissPrev !== undefined &&
+				cmPromptTokens > 0 &&
+				!(cmCacheRead + cmCacheWrite === 0 && !cacheMissPrev.reportedCache)
+			) {
+				const missedTokens = Math.min(cacheMissPrev.promptTokens, cmPromptTokens) - cmCacheRead;
+				if (missedTokens > NOISE_FLOOR_TOKENS) {
+					const paidTokens = cmInput + cmCacheWrite;
+					const paidPerToken = paidTokens > 0 ? (cmCostInput + cmCostCacheWrite) / paidTokens : 0;
+					const readPerToken =
+						cmCacheRead > 0
+							? cmCostCacheRead / cmCacheRead
+							: (priceSource?.find(cmProvider, cmModel)?.cost.cacheRead ?? 0) / 1_000_000;
+					const missedCost = missedTokens * Math.max(0, paidPerToken - readPerToken);
+					const idleMs = Math.max(0, cmTimestamp - cacheMissPrev.timestamp);
+					const modelChanged = cmModelKey !== cacheMissPrev.modelKey;
+					cacheMissEvents.push({ turnIndex: assistantTurnIndex, idleMs, modelChanged, missedTokens, missedCost });
+					totalMissedTokens += missedTokens;
+					totalMissedCost += missedCost;
+				}
+			}
+
+			// Update prev for next iteration (only when promptTokens > 0).
+			if (cmPromptTokens > 0) {
+				cacheMissPrev = {
+					promptTokens: cmPromptTokens,
+					timestamp: cmTimestamp,
+					modelKey: cmModelKey,
+					// Carry forward: once any message reported cache activity, the flag stays true.
+					reportedCache: (cacheMissPrev?.reportedCache ?? false) || cmCacheRead + cmCacheWrite > 0,
+				};
+			}
+			assistantTurnIndex += 1;
 
 			const activeBranch = activeBranchIds.has(entry.id);
 			const turn: MutableTurn = {
@@ -441,13 +575,16 @@ export function analyzeSessionEntries(
 		}
 	}
 
+	const agentProviderUsage = new Map<string, TlhAgentProviderUsage>();
+
 	for (const run of subagentRuns.values()) {
 		if (run.usage) {
 			addUsage(subagentTotals, run.usage);
 		}
 		const model = firstNonEmptyString(run.model, run.attemptedModels?.[0]);
+		const provider = model ? splitProviderModel(model).provider : undefined;
 		if (model) {
-			const { provider, modelId } = splitProviderModel(model);
+			const { modelId } = splitProviderModel(model);
 			addModelUsage(modelUsage, {
 				provider,
 				modelId,
@@ -456,6 +593,17 @@ export function analyzeSessionEntries(
 				countAsTurn: run.usage?.turns ?? 0,
 				countAsAssistantMessage: run.usage?.assistantMessages ?? 0,
 			});
+		}
+		if (run.usage) {
+			const agentKey = `${run.agent ?? ""}:${provider ?? ""}`;
+			const existing = agentProviderUsage.get(agentKey) ?? {
+				key: agentKey,
+				agent: run.agent,
+				provider,
+				usage: createUsageTotals(),
+			};
+			addUsage(existing.usage, run.usage);
+			agentProviderUsage.set(agentKey, existing);
 		}
 	}
 
@@ -472,7 +620,17 @@ export function analyzeSessionEntries(
 	const combinedTotals = cloneUsageTotals(primaryTotals);
 	addUsage(combinedTotals, subagentTotals);
 
+	const worstMisses = [...cacheMissEvents]
+		.sort((a, b) => b.missedTokens - a.missedTokens)
+		.slice(0, 10);
+
 	return {
+		cacheMisses: {
+			missedTokens: totalMissedTokens,
+			missedCost: totalMissedCost,
+			missCount: cacheMissEvents.length,
+			worst: worstMisses,
+		},
 		session: {
 			sessionId,
 			sessionName,
@@ -521,6 +679,11 @@ export function analyzeSessionEntries(
 			runCount: subagentRuns.size,
 			usage: subagentTotals,
 			models: sortModelUsage([...modelUsage.values()].filter((model) => model.source === "subagent")),
+			byAgent: [...agentProviderUsage.values()].sort(
+				(left, right) =>
+					(left.agent ?? "").localeCompare(right.agent ?? "") ||
+					(left.provider ?? "").localeCompare(right.provider ?? ""),
+			),
 			runs: [...subagentRuns.values()].sort(
 				(left, right) =>
 					(right.usage?.totalTokens ?? 0) - (left.usage?.totalTokens ?? 0) ||
