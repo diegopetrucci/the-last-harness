@@ -1,3 +1,5 @@
+// Adapted with the annotate-git-diff derived family.
+// See ../../docs/upstream-sync-inventory.md for reconstructed provenance and sync guidance.
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";

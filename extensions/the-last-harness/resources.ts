@@ -1,3 +1,5 @@
+// Mirrors Pi project-trust/resource visibility for TLH startup summaries.
+// See ../../docs/upstream-sync-inventory.md for sync/review guidance.
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 

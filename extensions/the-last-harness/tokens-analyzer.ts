@@ -1,6 +1,7 @@
 import type { ExtensionContext, SessionEntry, ToolInfo } from "@earendil-works/pi-coding-agent";
 
-// Cache-miss detection ported from pi-coding-agent@0.80.6 core/cache-stats
+// Cache-miss detection ported from pi-coding-agent@0.80.6 core/cache-stats.
+// See ../../docs/upstream-sync-inventory.md for sync/review guidance.
 const NOISE_FLOOR_TOKENS = 1024;
 // The upstream provider prompt-cache TTL is ~5 minutes; large idle gaps between turns tend
 // to cause cache misses because entries expire. Detection reports idleMs but does not gate on the TTL.

@@ -1,5 +1,6 @@
 /**
  * Suppresses the upstream Pi "Update Available — Run `pi update`" banner at launch.
+ * See ../../docs/upstream-sync-inventory.md for sync/review guidance.
  *
  * WHY: TLH pins Pi to a supported version window, so the upstream update prompt is
  * misleading noise — the correct update path is `tlh update`, not `pi update`.
