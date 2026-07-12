@@ -347,13 +347,19 @@ test("before_agent_start reapplies primary defaults without a one-shot model gat
 test("before_agent_start activates ticket runtime without disabled-ticket prompt branching", () => {
 	const lifecycleHooks = sourceSection(primaryRuntimeSource, "function registerLifecycleHooks()", "\n\n\treturn { applySessionStart");
 	const beforeAgentStart = sourceSection(lifecycleHooks, 'pi.on("before_agent_start"', 'pi.on("tool_call"');
+	const applySessionStart = sourceSection(primaryRuntimeSource, "async function applySessionStart(", "function registerLifecycleHooks()");
 
 	assert.match(primaryRuntimeSource, /function getTlhGlobalSettings\(cwd: string\): TlhSettings/);
 	assert.match(beforeAgentStart, /const settings = getTlhGlobalSettings\(ctx\.cwd\);/);
 	assert.doesNotMatch(beforeAgentStart, /ticketIntegrationEnabled/);
 	assert.match(beforeAgentStart, /activateTlhTicketRuntime\(settings, getAgentDir\(\)\);/);
-	assert.match(beforeAgentStart, /sessionExperimentalSnapshot = settings\.tlh\?\.experimental/);
+	// The per-turn refresh must NOT be reintroduced in before_agent_start.
+	assert.doesNotMatch(beforeAgentStart, /sessionExperimentalSnapshot =/);
+	// delta/ci prompt guidance reads settings fresh per turn.
+	assert.match(beforeAgentStart, /buildPrimaryExperimentalPrompt\(activePrimaryAgent\(\), settings\.tlh\?\.experimental\)/);
 	assert.match(beforeAgentStart, /buildTlhSystemPrompt\(activePrimaryAgent\(\), subagentMetadata, primaryEnabled, sessionExperimentalSnapshot\)/);
+	// The embedded snapshot is captured once per session in applySessionStart.
+	assert.match(applySessionStart, /sessionExperimentalSnapshot = getTlhGlobalSettings\(ctx\.cwd\)\.tlh\?\.experimental/);
 });
 
 test("primary and child prompts do not include disabled-ticket fallback guidance", () => {
@@ -754,7 +760,7 @@ test("extension keeps TLH experimental command wiring with registered ticket, ci
 	assert.match(typesSource, /enabledFeatures\?: string\[];/);
 	assert.match(typesSource, /export type TlhExperimentalFeatureId = string;/);
 	assert.match(primaryRuntimeSource, /from "\.\/experimental\.js"/);
-	assert.match(primaryRuntimeSource, /buildPrimaryExperimentalPrompt\(activePrimaryAgent\(\), sessionExperimentalSnapshot\)/);
+	assert.match(primaryRuntimeSource, /buildPrimaryExperimentalPrompt\(activePrimaryAgent\(\), settings\.tlh\?\.experimental\)/);
 	assert.doesNotMatch(extensionSource, /registerTlhCommitAttributionRuntime\(pi\)/);
 	assert.match(extensionSource, /registerToggleTlhGitAttributionCommand\(pi\)/);
 	assert.match(attributionSource, /from "\.\/profile-state\.js"/);

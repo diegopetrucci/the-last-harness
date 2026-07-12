@@ -743,6 +743,7 @@ function createTlhPrimaryAgentRuntime(
 	}
 
 	async function applySessionStart(ctx: ExtensionContext): Promise<void> {
+		sessionExperimentalSnapshot = getTlhGlobalSettings(ctx.cwd).tlh?.experimental;
 		syncPrimaryAgentState(ctx);
 		await applyPrimaryDefaults(ctx);
 	}
@@ -794,7 +795,6 @@ function createTlhPrimaryAgentRuntime(
 
 		pi.on("before_agent_start", async (event, ctx) => {
 			const settings = getTlhGlobalSettings(ctx.cwd);
-			sessionExperimentalSnapshot = settings.tlh?.experimental;
 			const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
 			syncPrimaryAgentState(ctx);
 			const selection = currentPrimaryAgentSelection();
@@ -803,8 +803,13 @@ function createTlhPrimaryAgentRuntime(
 			await applyPrimaryDefaults(ctx);
 			const prompts = [
 				event.systemPrompt,
+				// The embedded-subagents prompt clause uses the once-per-session snapshot so the prompt
+				// policy always matches the session-start embedded delegation gate (documented
+				// next-session-only semantics).
 				buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled, sessionExperimentalSnapshot),
-				buildPrimaryExperimentalPrompt(activePrimaryAgent(), sessionExperimentalSnapshot),
+				// Other experimental prompt guidance (delta-follow-up-reviews, ci-failure-investigation)
+				// reads settings fresh each turn to preserve its pre-existing mid-session behavior.
+				buildPrimaryExperimentalPrompt(activePrimaryAgent(), settings.tlh?.experimental),
 				buildTlhCommitAttributionPrompt(commitAttributionState),
 			];
 			if (shouldAppendGnosisPrompt(ctx.cwd)) {

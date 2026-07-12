@@ -78,7 +78,8 @@ export function registerRuntimeHarness(options = {}) {
 	const toolCall = pi.events.find((event) => event.name === "tool_call")?.handler;
 	assert.equal(typeof beforeAgentStart, "function");
 	assert.equal(typeof toolCall, "function");
-	return { pi, runtime, beforeAgentStart, toolCall };
+	const applySessionStart = (ctx) => runtime?.applySessionStart(ctx);
+	return { pi, runtime, beforeAgentStart, toolCall, applySessionStart };
 }
 
 export function writePrimaryConfig(agentDir, primaryAgent = {}) {
