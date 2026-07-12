@@ -136,6 +136,110 @@ test("stage-1 infers update track unless env or CLI overrides", (t) => {
 	assert.equal(configFor(["--track", "ref"], { TLH_REF: "v1.2.3", TLH_UPDATE_TRACK: "latest-release" }).updateTrack, "ref");
 });
 
+test("stage-1 applies tlh-main defaults for main ref when wrapper name and agent dir are not explicit", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const binDir = join(root, "bin");
+	mkdirSync(homeDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	// No explicit --agent-dir, no TLH_AGENT_DIR, no --wrapper-name, no TLH_WRAPPER_NAME.
+	// ref defaults to 'main' (DEFAULT_REF).
+	const env = scrubInstallerEnv({ HOME: homeDir });
+	const config = buildInstallConfig(parseArgs(["--bin-dir", binDir], env), env);
+
+	// Wrapper and agent dir should use the main-specific named defaults.
+	assert.equal(config.wrapperName, "tlh-main");
+	assert.ok(config.agentDir.endsWith(join(".the-last-harness-main", "agent")),
+		`agentDir should end with .the-last-harness-main/agent, got: ${config.agentDir}`);
+	// Runtime prefix is derived from dirname(agentDir)/runtime — verify it follows agentDir.
+	assert.ok(config.agentDir.includes(".the-last-harness-main"),
+		`agentDir should include .the-last-harness-main, got: ${config.agentDir}`);
+	// The runtimePrefix (dirname(agentDir)/runtime) = .the-last-harness-main/runtime;
+	// we verify the agentDir parent matches so the derivation is correct.
+	const expectedRuntimePrefix = join(dirname(config.agentDir), "runtime");
+	assert.ok(expectedRuntimePrefix.endsWith(join(".the-last-harness-main", "runtime")),
+		`runtimePrefix should end with .the-last-harness-main/runtime, got: ${expectedRuntimePrefix}`);
+	assert.equal(config.wrapperPath, join(binDir, "tlh-main"));
+});
+
+test("stage-1 keeps tlh defaults for release tag ref (non-main)", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const binDir = join(root, "bin");
+	mkdirSync(homeDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	// Semver tag ref — non-main, so standard defaults apply.
+	const env = scrubInstallerEnv({ HOME: homeDir, TLH_REF: "v1.2.3" });
+	const config = buildInstallConfig(parseArgs(["--bin-dir", binDir], env), env);
+
+	assert.equal(config.wrapperName, "tlh");
+	assert.ok(config.agentDir.endsWith(join(".the-last-harness", "agent")),
+		`agentDir should end with .the-last-harness/agent, got: ${config.agentDir}`);
+	// Ensure .the-last-harness-main is NOT used for a tag install.
+	assert.ok(!config.agentDir.includes(".the-last-harness-main"),
+		`agentDir should not include .the-last-harness-main for a tag ref, got: ${config.agentDir}`);
+	assert.equal(config.wrapperPath, join(binDir, "tlh"));
+});
+
+test("stage-1 explicit --wrapper-name and --agent-dir override main-ref auto-defaults", (t) => {
+	const root = makeTempDir();
+	const homeDir = join(root, "home");
+	const binDir = join(root, "bin");
+	const customAgentDir = join(root, "my-agent");
+	mkdirSync(homeDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	// Explicit CLI overrides: even on main ref, explicit values must win.
+	const envBase = scrubInstallerEnv({ HOME: homeDir });
+	const configCliOverride = buildInstallConfig(
+		parseArgs(["--bin-dir", binDir, "--wrapper-name", "tlh", "--agent-dir", customAgentDir], envBase),
+		envBase,
+	);
+	assert.equal(configCliOverride.wrapperName, "tlh",
+		"explicit --wrapper-name tlh on main ref must not be rewritten to tlh-main");
+	assert.equal(configCliOverride.agentDir, customAgentDir,
+		"explicit --agent-dir on main ref must not be replaced with .the-last-harness-main/agent");
+
+	// Explicit env overrides via TLH_WRAPPER_NAME / TLH_AGENT_DIR.
+	const envWithExplicit = scrubInstallerEnv({
+		HOME: homeDir,
+		TLH_WRAPPER_NAME: "my-tlh",
+		TLH_AGENT_DIR: customAgentDir,
+	});
+	const configEnvOverride = buildInstallConfig(
+		parseArgs(["--bin-dir", binDir], envWithExplicit),
+		envWithExplicit,
+	);
+	assert.equal(configEnvOverride.wrapperName, "my-tlh",
+		"TLH_WRAPPER_NAME env must override main-ref auto-default");
+	assert.equal(configEnvOverride.agentDir, customAgentDir,
+		"TLH_AGENT_DIR env must override main-ref auto-default");
+
+	// Partial override: explicit wrapper name only; agentDir still gets main-ref default.
+	const envPartialWrapperName = scrubInstallerEnv({ HOME: homeDir, TLH_WRAPPER_NAME: "my-tlh" });
+	const configPartialWrapper = buildInstallConfig(
+		parseArgs(["--bin-dir", binDir], envPartialWrapperName),
+		envPartialWrapperName,
+	);
+	assert.equal(configPartialWrapper.wrapperName, "my-tlh",
+		"TLH_WRAPPER_NAME overrides wrapper name even on main ref");
+	assert.ok(configPartialWrapper.agentDir.endsWith(join(".the-last-harness-main", "agent")),
+		`agentDir should still use main-ref default when only wrapper name is explicit: ${configPartialWrapper.agentDir}`);
+
+	// Partial override: explicit agent dir only; wrapperName still gets main-ref default.
+	const envPartialAgentDir = scrubInstallerEnv({ HOME: homeDir, TLH_AGENT_DIR: customAgentDir });
+	const configPartialAgent = buildInstallConfig(
+		parseArgs(["--bin-dir", binDir], envPartialAgentDir),
+		envPartialAgentDir,
+	);
+	assert.equal(configPartialAgent.wrapperName, "tlh-main",
+		"wrapperName should still use main-ref default when only agent dir is explicit");
+	assert.equal(configPartialAgent.agentDir, customAgentDir,
+		"TLH_AGENT_DIR env must override main-ref auto-default agentDir");
+});
+
 test("stage-1 defaults managed Gnosis to the pinned release and still honors env overrides", (t) => {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");
@@ -403,7 +507,10 @@ test("stage-1 canonicalizes relative target dirs before deriving wrapper and sta
 	assert.equal(config.settingsPath, join(expectedAgentDir, "settings.json"));
 	assert.equal(config.keybindingsPath, join(expectedAgentDir, "keybindings.json"));
 	assert.equal(config.statePath, join(expectedAgentDir, "tlh", "install-state.json"));
-	assert.equal(config.wrapperPath, join(expectedBinDir, "tlh"));
+	// ref defaults to 'main' (TLH_REF is scrubbed by scrubInstallerEnv); no explicit --wrapper-name,
+	// so main-ref auto-default applies and wrapperName becomes 'tlh-main'.
+	assert.equal(config.wrapperName, "tlh-main");
+	assert.equal(config.wrapperPath, join(expectedBinDir, "tlh-main"));
 	assert.equal(
 		config.packageRoot,
 		join(expectedAgentDir, "git", "github.com", "diegopetrucci", "the-last-harness"),
