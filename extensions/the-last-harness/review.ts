@@ -1,6 +1,29 @@
-import type { Stats } from "node:fs";
-import { lstat, open, readdir, readFile, type FileHandle } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { lstat, readdir } from "node:fs/promises";
+import { join, resolve } from "node:path";
+
+// Sibling modules are imported with explicit .ts extensions: review.ts is loaded in
+// tests via Node native strip-types (see the issue #296 note below), which does not
+// remap ".js" to ".ts". allowImportingTsExtensions is enabled in tsconfig.json for this.
+import { REVIEW_MODES, REVIEW_MODE_DESCRIPTIONS, decideBranchAction, tokenizeArgs, parseReviewArgs } from "./review-args.ts";
+import type { ReviewMode, ReviewDispatchArgs } from "./review-args.ts";
+export { REVIEW_MODES, decideBranchAction, parseReviewArgs } from "./review-args.ts";
+export type { ReviewMode, BranchDecisionAction, ParsedReviewArgs, ReviewDispatchArgs } from "./review-args.ts";
+import {
+	buildReviewEnvelope,
+	parseNullDelimitedGitPaths,
+	buildSnapshotParts,
+	appendUntrackedSnapshot,
+} from "./review-envelope.ts";
+import type { ReviewGatheredContext } from "./review-envelope.ts";
+export type { ReviewGatheredContext } from "./review-envelope.ts";
+export { buildReviewEnvelope } from "./review-envelope.ts";
+import {
+	isGhGraphqlQuotaFailure,
+	resolveGitHubPrRef,
+	fetchPrMetadataViaRest,
+	fetchPrDiffViaRest,
+} from "./review-github.ts";
+import type { GitHubPrRef } from "./review-github.ts";
 
 import { DynamicBorder, getAgentDir, getSelectListTheme, SettingsManager, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Container, matchesKey, SelectList, Text } from "@earendil-works/pi-tui";
@@ -12,8 +35,6 @@ import { primaryAgentSelectionFromBranch, resolvePrimaryAgentConfig } from "../t
 const REVIEW_TITLE = "Choose a review mode";
 const REVIEW_PICKER_HINT = "↑/↓ to move  Enter to confirm  Esc to cancel";
 const REVIEW_DEFAULT_BRANCH_BASE = "main";
-const REVIEW_PICKER_ONLY_GUIDANCE =
-	"/review is picker-only. Run /review with no arguments, then choose a mode in the picker. Typed shortcuts like `/review pr 123` and `--extra` are no longer supported.";
 const REVIEW_TUI_REQUIRED_MESSAGE =
 	"/review requires the interactive TUI picker. Re-run /review in the TLH UI.";
 
@@ -59,184 +80,7 @@ function reviewPrimaryBlockedMessage(activePrimary: ReviewPrimaryAgentSelection)
 	return `/review only works while the architect primary agent is active. Current primary agent: ${activePrimary}. Switch to architect with /switch-primary-agent architect (or Shift+Tab), then rerun /review.`;
 }
 
-export const REVIEW_MODES = ["uncommitted", "branch", "commit", "pr", "folder"] as const;
-export type ReviewMode = (typeof REVIEW_MODES)[number];
 
-const REVIEW_MODE_DESCRIPTIONS: Record<ReviewMode, string> = {
-	uncommitted: "Review staged/unstaged changes plus untracked non-gitignored files",
-	branch: "Review commits on the current branch vs a chosen base (prompted; blank defaults to main)",
-	commit: "Review a single commit by SHA",
-	pr: "Review a pull request by number or URL",
-	folder: "Review files in one or more folders",
-};
-
-const REVIEW_UNTRACKED_BEGIN_DELIMITER = "--- begin untracked files ---";
-const REVIEW_UNTRACKED_END_DELIMITER = "--- end untracked files ---";
-
-// --- Types ---
-
-/** Action returned by the pure branch-mismatch decision helper. */
-export type BranchDecisionAction = "proceed" | "abort-dirty" | "switch" | "abort-cancelled";
-
-export type ParsedReviewArgs =
-	| { pickerRequested: true }
-	| { pickerRequested: false; message: string };
-
-export type ReviewDispatchArgs =
-	| { mode: "uncommitted"; extra: string | undefined }
-	| { mode: "branch"; base: string | undefined; extra: string | undefined }
-	| { mode: "commit"; sha: string | undefined; extra: string | undefined }
-	| { mode: "pr"; nOrUrl: string | undefined; extra: string | undefined }
-	| { mode: "folder"; paths: string[]; extra: string | undefined };
-
-// --- Pure helpers ---
-
-/**
- * Pure branch-mismatch decision function for PR mode.
- * Maps the current state + user confirmation to an action.
- * Has no knowledge of git, gh, or any I/O.
- */
-export function decideBranchAction(params: {
-	currentBranch: string;
-	prHead: string;
-	isDirty: boolean;
-	userConfirm: boolean;
-}): BranchDecisionAction {
-	const { currentBranch, prHead, isDirty, userConfirm } = params;
-	if (currentBranch === prHead) return "proceed";
-	if (isDirty) return "abort-dirty";
-	return userConfirm ? "switch" : "abort-cancelled";
-}
-
-/**
- * Tokenise a raw args string from the command handler, respecting single- and
- * double-quoted groups so that quoted picker follow-up input stays grouped.
- * Unquoted whitespace, including newlines from editor prompts, splits tokens.
- */
-function tokenizeArgs(raw: string): string[] {
-	if (!raw.trim()) return [];
-
-	const tokens: string[] = [];
-	let current = "";
-	let inSingleQuote = false;
-	let inDoubleQuote = false;
-
-	for (const ch of raw) {
-		if (ch === "'" && !inDoubleQuote) {
-			inSingleQuote = !inSingleQuote;
-		} else if (ch === '"' && !inSingleQuote) {
-			inDoubleQuote = !inDoubleQuote;
-		} else if (/\s/.test(ch) && !inSingleQuote && !inDoubleQuote) {
-			if (current) {
-				tokens.push(current);
-				current = "";
-			}
-		} else {
-			current += ch;
-		}
-	}
-	if (current) {
-		tokens.push(current);
-	}
-	return tokens;
-}
-
-/**
- * /review is picker-only. Bare /review requests the picker; any typed
- * arguments are rejected with explicit guidance so users do not think the
- * command silently ignored meaningful input.
- */
-export function parseReviewArgs(argv: string[]): ParsedReviewArgs {
-	if (argv.length === 0) {
-		return { pickerRequested: true };
-	}
-
-	return {
-		pickerRequested: false,
-		message: REVIEW_PICKER_ONLY_GUIDANCE,
-	};
-}
-
-/**
- * Optional context gathered at command time (filled progressively by T2/T3).
- * All fields are optional so T2 and T3 can each contribute without ordering
- * constraints between them.
- */
-export interface ReviewGatheredContext {
-	/** The branch checked out when the command ran. */
-	currentBranch?: string;
-	/** Set by T3 when a branch checkout was performed to satisfy the review. */
-	checkout?: { performed: boolean; priorBranch: string };
-	/** The diff text (uncommitted/branch/commit) or folder snapshot, or the output of `gh pr diff`. */
-	body?: string;
-	/** Describes the content type of `body`. */
-	bodyKind?: "diff" | "snapshot";
-}
-
-/**
- * Build the canonical [/review] envelope string to send as a user message.
- *
- * The first line is always exactly `[/review]` so the architect can detect it.
- * Structured metadata follows, then the `extra` block, then a fenced section
- * holding the diff or snapshot body.
- *
- * T2 populates `ctx.body` / `ctx.bodyKind` for local modes; T3 does the same
- * for PR mode and also fills `ctx.checkout` when it switches branches.
- */
-export function buildReviewEnvelope(
-	parsed: ReviewDispatchArgs,
-	ctx?: ReviewGatheredContext,
-): string {
-	const { mode, extra } = parsed;
-	const lines: string[] = [];
-
-	// ── Line 1: hard-coded trigger token ──────────────────────────────────────
-	lines.push("[/review]");
-
-	// ── Metadata ──────────────────────────────────────────────────────────────
-	lines.push(`mode: ${mode}`);
-
-	// Mode-specific refs
-	if (parsed.mode === "branch" && parsed.base) {
-		lines.push(`base: ${parsed.base}`);
-	} else if (parsed.mode === "commit" && parsed.sha) {
-		lines.push(`sha: ${parsed.sha}`);
-	} else if (parsed.mode === "pr" && parsed.nOrUrl) {
-		lines.push(`pr: ${parsed.nOrUrl}`);
-	} else if (parsed.mode === "folder" && parsed.paths.length > 0) {
-		lines.push(`paths: ${parsed.paths.join(" ")}`);
-	}
-
-	// Branch context
-	if (ctx?.currentBranch !== undefined) {
-		lines.push(`current-branch: ${ctx.currentBranch}`);
-	}
-
-	// Checkout notice (set by T3 when it had to switch branches)
-	if (ctx?.checkout?.performed) {
-		lines.push(`checkout: switched-from ${ctx.checkout.priorBranch}`);
-		lines.push(`note: previously on ${ctx.checkout.priorBranch}; run \`git checkout -\` to return.`);
-	}
-
-	// ── Extra block ───────────────────────────────────────────────────────────
-	if (extra === undefined) {
-		lines.push("extra: (none)");
-	} else {
-		lines.push("extra:");
-		lines.push(extra);
-	}
-
-	// ── Body fenced section ───────────────────────────────────────────────────
-	const hasBody = ctx?.body !== undefined;
-	const fenceKind = hasBody ? (ctx?.bodyKind ?? "diff") : "(pending)";
-	const bodyText = hasBody ? escapeEnvelopeFenceLines(ctx?.body as string, fenceKind) : "(no body gathered)";
-
-	lines.push(`--- begin ${fenceKind} ---`);
-	lines.push(bodyText);
-	lines.push(`--- end ${fenceKind} ---`);
-
-	return lines.join("\n");
-}
 
 // --- Helpers for picker integration ---
 
@@ -392,207 +236,6 @@ function rejectFlagLike(value: string, fieldName: string): { ok: true } | { ok: 
 		return { ok: false, message: `${fieldName} cannot start with '-' (got '${value}'). If this is intentional, run the underlying command manually.` };
 	}
 	return { ok: true };
-}
-
-function isGhGraphqlQuotaFailure(stderr: string): boolean {
-	return /graphql/i.test(stderr) && /(rate limit|quota|submitted too quickly)/i.test(stderr);
-}
-
-type GitHubRepoRef = { owner: string; repo: string };
-type GitHubPrRef = GitHubRepoRef & { number: number };
-type GitHubRestPrMetadata = {
-	number: number;
-	headRefName: string;
-	baseRefName: string;
-	isCrossRepository: boolean;
-};
-
-function parseGitHubPrUrl(value: string): GitHubPrRef | undefined {
-	try {
-		const url = new URL(value);
-		if (url.hostname !== "github.com") {
-			return undefined;
-		}
-		const match = url.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/.*)?$/);
-		if (!match) {
-			return undefined;
-		}
-		return { owner: match[1], repo: match[2], number: Number.parseInt(match[3], 10) };
-	} catch {
-		return undefined;
-	}
-}
-
-function parseGitHubRepoSlug(value: string): GitHubRepoRef | undefined {
-	const match = value.trim().match(/^([^/\s]+)\/([^/\s]+)$/u);
-	if (!match) {
-		return undefined;
-	}
-	return { owner: match[1], repo: match[2] };
-}
-
-function parseGitHubRemoteUrl(value: string): GitHubRepoRef | undefined {
-	const trimmed = value.trim();
-	const sshMatch = trimmed.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/i);
-	if (sshMatch) {
-		return { owner: sshMatch[1], repo: sshMatch[2] };
-	}
-
-	try {
-		const url = new URL(trimmed);
-		if (url.hostname !== "github.com") {
-			return undefined;
-		}
-		const match = url.pathname.match(/^\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-		if (!match) {
-			return undefined;
-		}
-		return { owner: match[1], repo: match[2] };
-	} catch {
-		return undefined;
-	}
-}
-
-async function resolveGitHubRepoRefFromGhDefault(pi: ExtensionAPI, cwd: string): Promise<GitHubRepoRef | undefined> {
-	const defaultRepoResult = await pi.exec("gh", ["repo", "set-default", "--view"], { cwd });
-	if (defaultRepoResult.code !== 0) {
-		return undefined;
-	}
-
-	for (const line of defaultRepoResult.stdout.split(/\r?\n/u)) {
-		const repoRef = parseGitHubRepoSlug(line);
-		if (repoRef) {
-			return repoRef;
-		}
-	}
-
-	return undefined;
-}
-
-async function resolveGitHubRepoRefFromLocalRemotes(
-	pi: ExtensionAPI,
-	cwd: string,
-): Promise<{ ok: true; repoRef: GitHubRepoRef } | { ok: false; message: string }> {
-	const remoteListResult = await pi.exec("git", ["remote"], { cwd });
-	if (remoteListResult.code !== 0) {
-		const firstLine = remoteListResult.stderr.split("\n")[0]?.trim() || "git remote failed";
-		return { ok: false, message: `could not list git remotes: ${firstLine}` };
-	}
-
-	const remoteNames = remoteListResult.stdout
-		.split(/\r?\n/u)
-		.map((name) => name.trim())
-		.filter(Boolean);
-	if (remoteNames.length === 0) {
-		return { ok: false, message: "could not resolve GitHub repository because this repo has no git remotes" };
-	}
-
-	const orderedRemoteNames = Array.from(new Set(["origin", ...remoteNames]));
-	const remoteFailures: string[] = [];
-	for (const remoteName of orderedRemoteNames) {
-		const remoteUrlResult = await pi.exec("git", ["remote", "get-url", remoteName], { cwd });
-		if (remoteUrlResult.code !== 0) {
-			const firstLine = remoteUrlResult.stderr.split("\n")[0]?.trim() || `git remote get-url ${remoteName} failed`;
-			remoteFailures.push(`${remoteName}: ${firstLine}`);
-			continue;
-		}
-
-		const repoRef = parseGitHubRemoteUrl(remoteUrlResult.stdout);
-		if (repoRef) {
-			return { ok: true, repoRef };
-		}
-		remoteFailures.push(`${remoteName}: unsupported remote URL '${remoteUrlResult.stdout.trim()}'`);
-	}
-
-	return {
-		ok: false,
-		message: `could not parse a GitHub owner/repo from local git remotes (${remoteFailures.join("; ")})`,
-	};
-}
-
-async function resolveGitHubPrRef(
-	pi: ExtensionAPI,
-	cwd: string,
-	nOrUrl: string,
-	prNumberHint: number | undefined,
-): Promise<{ ok: true; prRef: GitHubPrRef } | { ok: false; message: string }> {
-	const urlRef = parseGitHubPrUrl(nOrUrl);
-	if (urlRef) {
-		return { ok: true, prRef: urlRef };
-	}
-
-	if (prNumberHint === undefined) {
-		return { ok: false, message: `could not resolve a PR number from '${nOrUrl}'` };
-	}
-
-	const ghDefaultRepoRef = await resolveGitHubRepoRefFromGhDefault(pi, cwd);
-	if (ghDefaultRepoRef) {
-		return { ok: true, prRef: { ...ghDefaultRepoRef, number: prNumberHint } };
-	}
-
-	const repoRefResult = await resolveGitHubRepoRefFromLocalRemotes(pi, cwd);
-	if (repoRefResult.ok === false) {
-		return { ok: false, message: repoRefResult.message };
-	}
-
-	return { ok: true, prRef: { ...repoRefResult.repoRef, number: prNumberHint } };
-}
-
-async function fetchPrMetadataViaRest(
-	pi: ExtensionAPI,
-	cwd: string,
-	prRef: GitHubPrRef,
-): Promise<{ ok: true; prData: GitHubRestPrMetadata } | { ok: false; message: string }> {
-	const result = await pi.exec("gh", ["api", `repos/${prRef.owner}/${prRef.repo}/pulls/${prRef.number}`], { cwd });
-	if (result.code !== 0) {
-		const firstLine = result.stderr.split("\n")[0]?.trim() || "gh api failed";
-		return { ok: false, message: firstLine };
-	}
-
-	try {
-		const payload = JSON.parse(result.stdout) as {
-			number?: number;
-			head?: { ref?: string; repo?: { full_name?: string | null } | null };
-			base?: { ref?: string; repo?: { full_name?: string | null } | null };
-		};
-		const number = typeof payload.number === "number" ? payload.number : prRef.number;
-		const headRefName = payload.head?.ref;
-		const baseRefName = payload.base?.ref;
-		if (!headRefName || !baseRefName) {
-			return { ok: false, message: "REST PR metadata response was missing head/base refs" };
-		}
-		return {
-			ok: true,
-			prData: {
-				number,
-				headRefName,
-				baseRefName,
-				isCrossRepository:
-					typeof payload.head?.repo?.full_name === "string" && typeof payload.base?.repo?.full_name === "string"
-						? payload.head.repo.full_name !== payload.base.repo.full_name
-						: false,
-			},
-		};
-	} catch {
-		return { ok: false, message: "Could not parse REST PR metadata response" };
-	}
-}
-
-async function fetchPrDiffViaRest(
-	pi: ExtensionAPI,
-	cwd: string,
-	prRef: GitHubPrRef,
-): Promise<{ ok: true; diff: string } | { ok: false; message: string }> {
-	const result = await pi.exec(
-		"gh",
-		["api", "-H", "Accept: application/vnd.github.v3.diff", `repos/${prRef.owner}/${prRef.repo}/pulls/${prRef.number}`],
-		{ cwd },
-	);
-	if (result.code !== 0) {
-		const firstLine = result.stderr.split("\n")[0]?.trim() || "gh api failed";
-		return { ok: false, message: firstLine };
-	}
-	return { ok: true, diff: result.stdout };
 }
 
 /**
@@ -767,22 +410,6 @@ async function gatherCommit(
 }
 
 /**
- * Return true when a file is likely binary.
- * Heuristic: read the first 8 KB and check for a NUL (0x00) byte.
- */
-async function isBinaryFile(filePath: string): Promise<boolean> {
-	let handle: FileHandle | undefined;
-	try {
-		handle = await open(filePath, "r");
-		const buf = Buffer.alloc(8192);
-		const { bytesRead } = await handle.read(buf, 0, 8192, 0);
-		return buf.subarray(0, bytesRead).includes(0);
-	} finally {
-		await handle?.close();
-	}
-}
-
-/**
  * Recursively collect all non-directory entries under a directory.
  *
  * Subdirectories named `node_modules` or starting with `.` are skipped
@@ -806,119 +433,6 @@ async function walkDir(dir: string): Promise<string[]> {
 		}
 	}
 	return files;
-}
-
-function parseNullDelimitedGitPaths(stdout: string): string[] {
-	return stdout.split("\0").filter((filePath) => filePath.length > 0);
-}
-
-function escapeDelimitedContentLine(line: string): string {
-	return `\\${line}`;
-}
-
-function escapeContentDelimiters(content: string): string {
-	return content
-		.split("\n")
-		.map((line) => {
-			if (
-				line === "--- begin snapshot ---"
-				|| line === "--- end snapshot ---"
-				|| line === REVIEW_UNTRACKED_BEGIN_DELIMITER
-				|| line === REVIEW_UNTRACKED_END_DELIMITER
-				|| /^--- (?:file|untracked file): .* ---$/.test(line)
-			) {
-				return escapeDelimitedContentLine(line);
-			}
-			return line;
-		})
-		.join("\n");
-}
-
-function escapeEnvelopeFenceLines(body: string, fenceKind: string): string {
-	const beginFence = `--- begin ${fenceKind} ---`;
-	const endFence = `--- end ${fenceKind} ---`;
-	return body
-		.split("\n")
-		.map((line) => (line === beginFence || line === endFence ? escapeDelimitedContentLine(line) : line))
-		.join("\n");
-}
-
-function renderDelimitedPath(relPath: string): string {
-	return JSON.stringify(relPath)
-		.replace(/[\u007f-\u009f\u2028\u2029]/g, (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`)
-		.replace(/\[/g, "\\u005b")
-		.replace(/\]/g, "\\u005d");
-}
-
-function getNonRegularSnapshotMarker(relPath: string, pathStat: Stats): string | undefined {
-	const renderedPath = renderDelimitedPath(relPath);
-	if (pathStat.isSymbolicLink()) {
-		return `[skipped symlink: ${renderedPath}]`;
-	}
-	if (pathStat.isDirectory()) {
-		return `[skipped directory: ${renderedPath}]`;
-	}
-	if (!pathStat.isFile()) {
-		return `[skipped non-regular entry: ${renderedPath}]`;
-	}
-	return undefined;
-}
-
-/**
- * Build snapshot entries for a set of file paths.
- * Binary files are skipped with an annotation instead of inline content.
- */
-async function buildSnapshotParts(cwd: string, filePaths: string[], label: string): Promise<string[]> {
-	const parts: string[] = [];
-
-	for (const filePath of filePaths) {
-		const relPath = relative(cwd, filePath);
-		const renderedPath = renderDelimitedPath(relPath);
-
-		let pathStat: Stats;
-		try {
-			pathStat = await lstat(filePath);
-		} catch {
-			parts.push(`[skipped lstat failure: ${renderedPath}]`);
-			continue;
-		}
-
-		const nonRegularMarker = getNonRegularSnapshotMarker(relPath, pathStat);
-		if (nonRegularMarker) {
-			parts.push(nonRegularMarker);
-			continue;
-		}
-
-		let bin: boolean;
-		try {
-			bin = await isBinaryFile(filePath);
-		} catch {
-			parts.push(`[skipped binary detection failure: ${renderedPath}]`);
-			continue;
-		}
-		if (bin) {
-			parts.push(`[skipped binary: ${renderedPath}]`);
-			continue;
-		}
-
-		try {
-			const content = escapeContentDelimiters(await readFile(filePath, "utf8"));
-			parts.push(`--- ${label}: ${renderedPath} ---\n${content}`);
-		} catch {
-			parts.push(`[skipped read failure: ${renderedPath}]`);
-		}
-	}
-
-	return parts;
-}
-
-function appendUntrackedSnapshot(diffBody: string, untrackedParts: string[]): string {
-	if (untrackedParts.length === 0) {
-		return diffBody;
-	}
-
-	const untrackedBody = [REVIEW_UNTRACKED_BEGIN_DELIMITER, ...untrackedParts, REVIEW_UNTRACKED_END_DELIMITER].join("\n");
-	return diffBody.trim().length > 0 ? `${diffBody}\n\n${untrackedBody}` : untrackedBody;
 }
 
 /**
