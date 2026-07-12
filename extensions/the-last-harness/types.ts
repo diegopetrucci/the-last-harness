@@ -66,6 +66,12 @@ export type TlhAttributionWriteResult = {
 	state: TlhCommitAttributionState;
 };
 
+export type TlhCacheRetentionWriteResult = {
+	settingsPath: string;
+	backupPath?: string;
+	changed: boolean;
+};
+
 export type TlhUpdateCheckConfig = {
 	enabled?: boolean;
 };
@@ -111,6 +117,10 @@ export type TlhContextCapConfig = {
 	disabled?: boolean;
 };
 
+export type TlhCacheRetentionConfig = {
+	anthropic?: "long";
+};
+
 export type TlhModelVisibilityConfig = {
 	disabled?: boolean;
 	hidden?: string[];
@@ -132,6 +142,7 @@ export type TlhSettings = {
 		primaryAgent?: TlhPrimaryAgentConfig;
 		experimental?: TlhExperimentalConfig;
 		contextCap?: TlhContextCapConfig;
+		cacheRetention?: TlhCacheRetentionConfig;
 		modelVisibility?: TlhModelVisibilityConfig;
 		rtk?: TlhRtkConfig;
 	};

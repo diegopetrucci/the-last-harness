@@ -14,6 +14,7 @@ All notable changes to The Last Harness will be documented in this file.
   - Usage by tools and MCPs is now more clear.
 - (Beta) TLH should now report its status better when working within terminals like Herdr and Cmux. Before, it was showing as `idle` when the primary agent was idle but subagents were still running.
 - Bumped `gnosis`' version: it now defaults to citing the person that added an entry.
+- Added default-off `tlh.cacheRetention.anthropic: "long"` plus `/toggle-cache-retention` for optional 1-hour Anthropic cache retention on supported direct primary requests only; toggling off removes the property, child sessions stay on upstream defaults, and settings writes remain isolated with backups.
 
 ## [0.28.0] - 2026-07-09
 

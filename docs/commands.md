@@ -53,10 +53,15 @@ These commands are registered by the TLH extension bundled with this profile.
 | `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
 | `/tlh-changelog` | Show TLH release notes from the packaged `CHANGELOG.md` |
 | `/tokens` | Generate and open a single no-flags local HTML token-spend report for the current session |
+| `/toggle-cache-retention` | Toggle 1-hour Anthropic cache retention for supported direct primary requests |
 | `/toggle-context-cap` | Toggle the 200k effective context-window cap for auto-compaction |
 | `/toggle-tlh-git-attribution` | Toggle the TLH commit attribution footer for agent-created git commits |
 | `/usage` | Show or change TLH subscription usage-limit footer preferences |
 | `/version` | Show the installed TLH version and the upstream Pi runtime version |
+
+### `/toggle-cache-retention`
+
+Anthropic 1-hour cache retention is default-off and applies only to supported direct requests from the architect primary, not child sessions. `/toggle-cache-retention` writes `tlh.cacheRetention.anthropic: "long"` in the isolated profile; run it again to remove that property and disable the feature. The tradeoff is higher cache-write pricing: 1-hour writes cost 2x input, versus 1.25x for 5-minute retention.
 
 ### `/thinking` and `/effort`
 

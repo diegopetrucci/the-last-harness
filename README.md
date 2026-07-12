@@ -141,6 +141,7 @@ TLH also aims to make the day-to-day session experience calmer and safer:
 - a lightweight first-party `/annotate-last-message` command that opens a native annotation window for the latest assistant reply and turns submitted notes into agent feedback,
 - a first-party `/annotate-git-diff` command that opens a native review window and pastes submitted feedback back into the editor as a prompt,
 - a first-party `/tokens` command that generates a local HTML token-spend report for the current session from sanitized session analysis,
+- a first-party `/toggle-cache-retention` command for optional 1-hour Anthropic cache retention on supported direct architect-primary requests; it is default-off, uses `tlh.cacheRetention.anthropic: "long"` when enabled, costs 2x input for cache writes versus 1.25x for 5-minute retention, and removes that property when toggled off again,
 - bundled web-search support for research-heavy work,
 - bundled MCP adapter support,
 - managed native RTK shell-command rewriting with isolated-profile opt-out controls,

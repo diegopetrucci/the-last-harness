@@ -5,6 +5,7 @@ import { registerTlhEffectiveActivityTracker } from "./the-last-harness/activity
 import { registerToggleTlhGitAttributionCommand } from "./the-last-harness/attribution.js";
 import { TLH_HEADER_TOGGLE_SHORTCUT } from "./the-last-harness/constants.js";
 import { createTlhAutocompleteProvider } from "./the-last-harness/autocomplete.js";
+import { registerAnthropicCacheRetention } from "./the-last-harness/cache-retention.js";
 import { registerContextCap } from "./the-last-harness/context-cap.js";
 import { registerEffortCommand } from "./the-last-harness/effort.js";
 import { registerExperimentalCommand } from "./the-last-harness/experimental.js";
@@ -61,6 +62,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 
 	installTlhPackageUpdateNotificationOverride();
 	installTlhNewVersionNotificationOverride();
+	registerAnthropicCacheRetention(pi, primaryAgentRuntime);
 	registerToggleTlhGitAttributionCommand(pi);
 	const loadReviewModule = createRetryableLazyImport(() => import("./the-last-harness/review.js"));
 	const loadTokensModule = createRetryableLazyImport(() => import("./the-last-harness/tokens.js"));
