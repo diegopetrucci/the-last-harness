@@ -37,11 +37,11 @@ curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main
     --wrapper-name tlh --agent-dir ~/.the-last-harness/agent
   ```
 
-  Or set the equivalent environment variables before piping to bash:
+  Or set the equivalent environment variables on the `bash` side of the pipe so the installer process inherits them (assigning them before `curl` would scope them to `curl` only, not to `install.sh`):
 
   ```sh
-  TLH_WRAPPER_NAME=tlh TLH_AGENT_DIR=~/.the-last-harness/agent \
-    curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --ref main --track ref
+  curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | \
+    TLH_WRAPPER_NAME=tlh TLH_AGENT_DIR=~/.the-last-harness/agent bash -s -- --ref main --track ref
   ```
 
 These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH shows a header warning only for those installs. It appears above `Context:` and reads `Warning: running TLH from {name} track` (for example `Warning: running TLH from v0.28.0 track`, `Warning: running TLH from main track`, `Warning: running TLH from local track`, or `Warning: running TLH from unknown track`). Official latest-release installs skip that warning, though interactive starts may still show a quiet startup tip.
