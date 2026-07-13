@@ -118,6 +118,14 @@ Use `tlh doctor --repair` only when you want the narrow guarded repair path for 
 
 When `--repair` updates `settings.json`, TLH keeps the existing backup behavior and writes a `settings.json.backup-*` file first. To undo a repair, restore the backup you want or rerun `tlh update` to bring the isolated profile back to installer-managed defaults.
 
+## GitHub helper
+
+Run `tlh github ...` for the installer-owned REST-first GitHub helper. It uses the packaged `scripts/tlh-gh.mjs` support files and your existing `gh` CLI authentication, so authenticate first with `gh auth login` and verify with `gh auth status`.
+
+Covered workflows include rate-limit inspection, repo metadata, issue and pull-request reads, diffs, reviews, comments, issue/PR creation, issue/PR comment creation, and commit checks/statuses. The helper does **not** launch upstream Pi. GraphQL-only operations remain explicit limitations: `tlh github pr review-threads` and `tlh github pr status-check-rollup` are intentionally unsupported and fail clearly instead of pretending they are REST-capable.
+
+`tlh github` does not store separate auth or GitHub state under the TLH profile; it reuses your normal `gh` login. To recover a missing or corrupt packaged helper, rerun `tlh update`. To remove the command entirely, remove the TLH wrapper/profile with the uninstall flow below (or delete the wrapper manually); there is no extra helper-specific cleanup beyond that.
+
 ## Managed RTK
 
 Native RTK rewriting is bundled as a managed integration now; the old `pi-rtk` package and `/rtk` slash-command UI are gone. TLH keeps a pinned native `rtk` binary at `~/.the-last-harness/agent/bin/rtk`, and the wrapper adds `<agent>/bin` to `PATH` for the wrapped upstream Pi process so TLH sessions can find that managed binary normally.

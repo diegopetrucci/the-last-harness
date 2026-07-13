@@ -31,6 +31,7 @@ test("wrapper skips stale fallback package helpers for unlocatable custom source
 	const updateLog = join(root, "update.json");
 	const defaultsLog = join(root, "defaults.json");
 	const ticketsLog = join(root, "tickets.json");
+	const githubLog = join(root, "github.json");
 	mkdirSync(join(agentDir, "tlh"), { recursive: true });
 	mkdirSync(homeDir, { recursive: true });
 	t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -50,12 +51,14 @@ test("wrapper skips stale fallback package helpers for unlocatable custom source
 	writeWrapperHelperLogger(join(config.packageRoot, "scripts", "tlh-update.mjs"), "TLH_UPDATE_LOG", "stale-package");
 	writeWrapperHelperLogger(join(config.packageRoot, "scripts", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "stale-package");
 	writeWrapperHelperLogger(join(config.packageRoot, "scripts", "tlh-tickets.mjs"), "TLH_TICKETS_LOG", "stale-package");
+	writeWrapperHelperLogger(join(config.packageRoot, "scripts", "tlh-gh.mjs"), "TLH_GITHUB_LOG", "stale-package");
 	mkdirSync(join(config.packageRoot, "config"), { recursive: true });
 	writeFileSync(join(config.packageRoot, "config", "default-extensions.json"), "[\n  \"stale-package\"\n]\n", "utf8");
 	writeWrapperHelperLogger(join(agentDir, "tlh", "recover-update.mjs"), "TLH_UPDATE_LOG", "recovery");
 	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-update.mjs"), "TLH_UPDATE_LOG", "legacy-profile");
 	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "legacy-profile");
 	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-tickets.mjs"), "TLH_TICKETS_LOG", "legacy-profile");
+	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-gh.mjs"), "TLH_GITHUB_LOG", "legacy-profile");
 	writeFileSync(join(agentDir, "tlh", "default-extensions.json"), "[\n  \"legacy-profile\"\n]\n", "utf8");
 
 	runHelper("scripts/tlh-wrapper.mjs", [
@@ -76,6 +79,7 @@ test("wrapper skips stale fallback package helpers for unlocatable custom source
 		TLH_UPDATE_LOG: updateLog,
 		TLH_DEFAULTS_LOG: defaultsLog,
 		TLH_TICKETS_LOG: ticketsLog,
+		TLH_GITHUB_LOG: githubLog,
 	});
 	const wrapperPath = join(binDir, config.wrapperName);
 
@@ -107,6 +111,16 @@ test("wrapper skips stale fallback package helpers for unlocatable custom source
 	assert.match(ticketsResult.stderr, /tlh tickets package support files are missing or corrupt; run `tlh update` to recover\./);
 	assert.doesNotMatch(ticketsResult.stderr, /ERR_MODULE_NOT_FOUND/);
 	assert.equal(existsSync(ticketsLog), false);
+
+	const githubResult = spawnSync(wrapperPath, ["github", "repo", "view", "--repo", "acme/widgets"], {
+		env: wrapperEnv,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	assert.equal(githubResult.status, 1);
+	assert.match(githubResult.stderr, /tlh github support files are missing or corrupt; run `tlh update` to recover\./);
+	assert.doesNotMatch(githubResult.stderr, /ERR_MODULE_NOT_FOUND/);
+	assert.equal(existsSync(githubLog), false);
 });
 
 test("wrapper uses original node for helpers while exposing isolated bin only for tickets and pi", (t) => {
@@ -276,6 +290,7 @@ test("wrapper defaults and tickets helpers do not invoke PATH pi", (t) => {
 	const fakebin = join(root, "fakebin");
 	const defaultsLog = join(root, "defaults.json");
 	const ticketsLog = join(root, "tickets.json");
+	const githubLog = join(root, "github.json");
 	const piProbeLog = join(root, "pi-probe.log");
 	mkdirSync(join(agentDir, "tlh"), { recursive: true });
 	mkdirSync(agentBin, { recursive: true });
@@ -292,6 +307,7 @@ exit 64`);
 	writeWrapperHelperLogger(join(packageRoot, "scripts", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "package");
 	writeFileSync(join(packageRoot, "config", "default-extensions.json"), "[]\n", "utf8");
 	writeFileSync(join(packageRoot, "scripts", "tlh-tickets.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst tk = spawnSync("tk", ["help"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_TICKETS_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, tk: { status: tk.status, stdout: (tk.stdout || "").trim(), stderr: (tk.stderr || "").trim(), error: tk.error?.message } }));\nprocess.exit(tk.status ?? (tk.error ? 1 : 0));\n`, "utf8");
+	writeWrapperHelperLogger(join(packageRoot, "scripts", "tlh-gh.mjs"), "TLH_GITHUB_LOG", "package");
 
 	runHelper("scripts/tlh-wrapper.mjs", [
 		"--agent-dir",
@@ -310,6 +326,7 @@ exit 64`);
 		PATH: [fakebin, agentBin, process.env.PATH || ""].join(":"),
 		TLH_DEFAULTS_LOG: defaultsLog,
 		TLH_TICKETS_LOG: ticketsLog,
+		TLH_GITHUB_LOG: githubLog,
 	});
 
 	const defaultsResult = spawnSync(wrapper, ["defaults", "list"], {
@@ -353,6 +370,20 @@ exit 64`);
 	assert.deepEqual(ticketsPathEntries.slice(0, 2), [agentBin, fakebin]);
 	assert.equal(ticketsRecord.tk.status, 0);
 	assert.equal(ticketsRecord.tk.stdout, "isolated tk help");
+	assert.equal(existsSync(piProbeLog), false);
+
+	const githubResult = spawnSync(wrapper, ["github", "repo", "view", "--repo", "acme/widgets"], {
+		env: wrapperEnv,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	assert.equal(githubResult.status, 0, githubResult.stderr);
+	const githubRecord = JSON.parse(readFileSync(githubLog, "utf8"));
+	assert.deepEqual(githubRecord.argv, ["repo", "view", "--repo", "acme/widgets"]);
+	assert.equal(githubRecord.env.PI_CODING_AGENT_DIR, agentDir);
+	const githubPathEntries = githubRecord.env.PATH.split(":");
+	assert.equal(githubPathEntries[0], fakebin);
+	assert.equal(githubPathEntries.includes(agentBin), false);
 	assert.equal(existsSync(piProbeLog), false);
 });
 

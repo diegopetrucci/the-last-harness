@@ -84,3 +84,14 @@ test("renderWrapper: NODE_COMPILE_CACHE export uses tlh_pinned_dir%/* (strip bin
 		"rendered wrapper must contain the verbatim NODE_COMPILE_CACHE export expression",
 	);
 });
+
+test("renderWrapper: github helper branch runs before pi with sanitized PATH and recovery diagnostics", () => {
+	const rendered = renderWrapper(PINNED_ARGS);
+	assert.match(rendered, /if \[\[ "\$\{1:-\}" == "github" \]\]; then/);
+	assert.match(rendered, /tlh github support files are missing or corrupt; run `tlh update` to recover\./);
+	assert.match(rendered, /PATH="\$\{tlh_sanitized_path\}" exec "\$\{tlh_node_cmd\}" "\$\{default_tlh_package_root\}\/scripts\/tlh-gh\.mjs"/);
+	assert.ok(
+		rendered.indexOf('if [[ "${1:-}" == "github" ]]; then') < rendered.indexOf('exec "${default_pi_cmd}" "$@"'),
+		"github helper branch must dispatch before the upstream pi exec path",
+	);
+});

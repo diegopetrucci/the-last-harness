@@ -13,6 +13,7 @@ scripts/merge-keybindings.mjs linguist-generated=true
 scripts/merge-settings.mjs linguist-generated=true
 scripts/tlh-defaults.mjs linguist-generated=true
 scripts/tlh-doctor.mjs linguist-generated=true
+scripts/tlh-gh.mjs linguist-generated=true
 scripts/tlh-gnosis.mjs linguist-generated=true
 scripts/tlh-install.mjs linguist-generated=true
 scripts/tlh-recover-update.mjs linguist-generated=true

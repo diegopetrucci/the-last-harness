@@ -125,6 +125,7 @@ test("runtime TypeScript helper tracks converted top-level CLIs", () => {
 		"scripts/merge-settings",
 		"scripts/tlh-defaults",
 		"scripts/tlh-doctor",
+		"scripts/tlh-gh",
 		"scripts/tlh-gnosis",
 		"scripts/tlh-install",
 		"scripts/tlh-recover-update",

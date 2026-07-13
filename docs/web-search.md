@@ -2,7 +2,7 @@
 
 TLH ships [`pi-web-access`](https://github.com/diegopetrucci/pi-web-access) as a non-critical default extension. TLH manages it as the scoped package `npm:@diegopetrucci/pi-web-access@0.10.10`. The `web-scout` subagent uses its `web_search`, `fetch_content`, and `get_search_content` tools for general web research.
 
-GitHub-specific research — repositories, issues, pull requests, releases, and project docs — still goes to the `librarian` subagent, which uses the `gh` CLI and `git` directly (no extension package required).
+GitHub-specific research — repositories, issues, pull requests, releases, and project docs — still goes to the `librarian` subagent, which uses `tlh github` for covered read-only REST workflows plus the `gh` CLI and `git` when needed (no extension package required).
 
 Running another `pi-web-access` provider alongside the TLH-managed package is unsupported because the tool names conflict. During TLH install/update, TLH migrates known upstream, manual, and older TLH `pi-web-access` variants in the same isolated profile to `npm:@diegopetrucci/pi-web-access@0.10.10`. If you want TLH to stop managing that extension, opt out first with `tlh defaults disable pi-web-access`; otherwise install/update runs will keep the scoped TLH package pinned. If multiple providers are already installed, remove the extras so only one `pi-web-access` provider remains active.
 

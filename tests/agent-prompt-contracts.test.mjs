@@ -40,25 +40,39 @@ function escapeRegExp(value) {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-test("architect prompt keeps bounded REST CI polling guidance", () => {
+test("architect prompt keeps positive tlh github workflow guidance", () => {
 	const agent = readAgentPrompt("primary", "architect");
 
+	assertIncludesAllTerms(agent, "architect GitHub workflow guidance", [
+		"prefer `tlh github` over raw `gh` or direct API calls",
+		"state-changing issue/PR actions such as create and comment only after the user authorizes that action",
+		"plain `git clone`",
+		"GraphQL-only and unsupported by `tlh github`",
+	]);
 	assertBodyPattern(
 		agent,
 		"architect cleanup guidance",
-		/use bounded REST `gh api` polling for check-runs and commit statuses rather than `gh pr checks --watch`/i,
+		/use bounded REST `tlh github checks <sha>` \/ `tlh github statuses <sha>` polling for covered workflows rather than `gh pr checks --watch`/i,
 	);
+	assertBodyPattern(agent, "architect cleanup guidance", /if a needed GitHub check is GraphQL-only, say so clearly instead of implying helper coverage/i);
 	assertBodyPattern(agent, "architect cleanup guidance", /do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks/i);
 });
 
-test("rush prompt keeps bounded REST CI polling guidance", () => {
+test("rush prompt keeps positive tlh github workflow guidance", () => {
 	const agent = readAgentPrompt("primary", "rush");
 
+	assertIncludesAllTerms(agent, "rush GitHub workflow guidance", [
+		"prefer `tlh github` over raw `gh` or direct API calls",
+		"state-changing issue/PR actions such as create and comment only after the user authorizes that action",
+		"plain `git clone`",
+		"GraphQL-only and unsupported by `tlh github`",
+	]);
 	assertBodyPattern(
 		agent,
 		"rush cleanup guidance",
-		/use bounded REST `gh api` polling for check-runs and commit statuses rather than `gh pr checks --watch`/i,
+		/use bounded REST `tlh github checks <sha>` \/ `tlh github statuses <sha>` polling for covered workflows rather than `gh pr checks --watch`/i,
 	);
+	assertBodyPattern(agent, "rush cleanup guidance", /if a needed GitHub check is GraphQL-only, say so clearly instead of implying helper coverage/i);
 	assertBodyPattern(agent, "rush cleanup guidance", /do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks/i);
 });
 
@@ -66,12 +80,19 @@ test("librarian prompt keeps REST-first GitHub research quota guidance", () => {
 	const agent = readAgentPrompt("subagents", "librarian");
 
 	assertIncludesAllTerms(agent, "shared quota preflight guidance", [
-		"gh api rate_limit 2>&1",
+		"tlh github rate-limit 2>&1",
 		"all local TLH sessions share the same authenticated GitHub GraphQL quota",
 		"REST/core quota can still remain available after GraphQL is low or exhausted",
 	]);
+	assertIncludesAllTerms(agent, "REST-first helper coverage", [
+		"read-only REST-first `tlh github`",
+		"issue view/list/comments",
+		"pr view/list/diff/reviews/comments",
+		"checks",
+		"statuses",
+	]);
 	assertOrderedTerms(agent, "REST-first inspection coverage", [
-		"prefer them over GraphQL-backed convenience commands",
+		"prefer `tlh github` or bounded `gh api` GET requests over GraphQL-backed convenience commands",
 		"PRs",
 		"issues",
 		"releases",
@@ -79,9 +100,12 @@ test("librarian prompt keeps REST-first GitHub research quota guidance", () => {
 		"commit statuses",
 		"check-runs",
 	]);
+	assertBodyPattern(agent, "librarian stays read-only", /do not use `tlh github issue create`, `tlh github issue comment`, `tlh github pr create`, or `tlh github pr comment`/i);
+	assertBodyPattern(agent, "plain git clone only", /plain `git clone`/i);
+	assertBodyPattern(agent, "graphQL-only limitation guidance", /`tlh github pr review-threads` and `tlh github pr status-check-rollup` remain GraphQL-only limitations/i);
 	assertBodyPattern(agent, "avoid statusCheckRollup", /avoid `?statusCheckRollup`?/i);
 	assertBodyPattern(agent, "ban gh pr checks watch", /avoid `gh pr checks --watch`/i);
-	assertBodyPattern(agent, "REST fallback on GraphQL failure", /fall back to `gh api` GET requests against REST endpoints or to local `git` evidence when possible/i);
+	assertBodyPattern(agent, "REST fallback on GraphQL failure", /fall back to read-only `tlh github` coverage first, then to `gh api` GET requests against REST endpoints or to local `git` evidence when possible/i);
 });
 
 test("code-reviewer prompt matches current review-only guidance without removed quota sections", () => {

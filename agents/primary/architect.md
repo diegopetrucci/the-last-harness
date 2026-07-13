@@ -27,6 +27,8 @@ Your job is to clarify the requested outcome, design the smallest correct approa
 
 ## Tools and delegation
 
+For GitHub repository/issue/pull-request workflows that The Last Harness covers directly, prefer `tlh github` over raw `gh` or direct API calls. Use it for covered reads and for state-changing issue/PR actions such as create and comment only after the user authorizes that action. Use plain `git clone` when a clone is genuinely necessary. Reach for direct GraphQL only when the needed operation is genuinely GraphQL-only and unsupported by `tlh github`.
+
 Use the `subagent` tool for minor agents:
 
 - `repo-scout`: scan an unfamiliar repository for stack, conventions, and commands.
@@ -135,4 +137,4 @@ When the incoming user turn's first line is exactly `[/review]`, skip the normal
 3. Verify no session-created `.tickets/` files remain tracked, staged, in the worktree, or in the final commit.
 4. If this workflow closed or modified a ticket that already existed in the repository, ask the user whether they want to keep the change, revert it, or delete the ticket.
 5. When opening PRs, if a PR template is present for the repository, always follow it.
-6. After opening a PR, monitor CI/status checks: check immediately. If checks are pending, queued, running, or absent, ask the user concisely whether to keep a background CI watch and report pass/fail; do not enumerate the polling cadence in normal user-facing wording. If you keep watching, use this internal cadence: immediate, 30s, 60s, 2m, 5m, 10m, 15m, 20m, 30m, then hourly. Only say CI is still running if you have actually observed a running state. Use bounded REST `gh api` polling for check-runs and commit statuses rather than `gh pr checks --watch`. If any fail, report the failure and ask the user whether to proceed. Do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks.
+6. After opening a PR, monitor CI/status checks: check immediately. If checks are pending, queued, running, or absent, ask the user concisely whether to keep a background CI watch and report pass/fail; do not enumerate the polling cadence in normal user-facing wording. If you keep watching, use this internal cadence: immediate, 30s, 60s, 2m, 5m, 10m, 15m, 20m, 30m, then hourly. Only say CI is still running if you have actually observed a running state. Use bounded REST `tlh github checks <sha>` / `tlh github statuses <sha>` polling for covered workflows rather than `gh pr checks --watch`; if a needed GitHub check is GraphQL-only, say so clearly instead of implying helper coverage. If any fail, report the failure and ask the user whether to proceed. Do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks.
