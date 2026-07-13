@@ -10,7 +10,7 @@ import {
 	fetchTlhSubscriptionUsage,
 	normalizeAnthropicUsage,
 	normalizeOpenAICodexUsage,
-} from "../extensions/the-last-harness/subscription-usage.mjs";
+} from "../extensions/the-last-harness/subscription-usage.ts";
 
 const NOW_MS = Date.parse("2026-05-19T19:00:00Z");
 const RESET_AT = "2026-05-19T20:00:00.000Z";

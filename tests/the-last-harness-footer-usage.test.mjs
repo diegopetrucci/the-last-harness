@@ -4,7 +4,7 @@ import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { createJiti } from "jiti";
 
-import { createTlhSubscriptionUsageService } from "../extensions/the-last-harness/subscription-usage.mjs";
+import { createTlhSubscriptionUsageService } from "../extensions/the-last-harness/subscription-usage.ts";
 import { DEFAULT_PRIMARY_AGENT } from "../extensions/the-last-harness-primary-agent.mjs";
 
 const jiti = createJiti(import.meta.url);
@@ -47,24 +47,24 @@ function usageProvider(snapshot, onGetSnapshot, eligible = true) {
 	};
 }
 
-function openAiSnapshot() {
+function openAiSnapshot(weekly = { percent: 21.5 }) {
 	return {
 		provider: "openai-codex",
 		fetchedAt: NOW_MS,
 		windows: {
 			session: { key: "primary_window", label: "session", percent: 42 },
-			weekly: { key: "secondary_window", label: "weekly", percent: 21.5 },
+			weekly: { key: "secondary_window", label: "weekly", ...weekly },
 		},
 	};
 }
 
-function anthropicSnapshot() {
+function anthropicSnapshot(weekly = { percent: 88.9 }) {
 	return {
 		provider: "anthropic",
 		fetchedAt: NOW_MS,
 		windows: {
 			session: { key: "five_hour", label: "session", percent: 42 },
-			weekly: { key: "seven_day", label: "weekly", percent: 88.9 },
+			weekly: { key: "seven_day", label: "weekly", ...weekly },
 		},
 	};
 }
@@ -173,6 +173,71 @@ test("footer includes Anthropic weekly usage only when the preference enables it
 
 	assert.match(sessionLine, /5h session 42% used/);
 	assert.match(sessionLine, /weekly 88\.9% used/);
+});
+
+
+test("footer auto-shows weekly by default only below 25% remaining", () => {
+	const ctx = createCtx({ provider: "openai-codex" });
+	const belowThresholdLine = renderSessionStatsLine(ctx, {
+		subscriptionUsage: usageProvider(openAiSnapshot({ percent: 80 })),
+		shouldShowWeekly: () => undefined,
+	});
+	const atThresholdLine = renderSessionStatsLine(ctx, {
+		subscriptionUsage: usageProvider(openAiSnapshot({ percent: 75 })),
+		shouldShowWeekly: () => undefined,
+	});
+	const aboveThresholdLine = renderSessionStatsLine(ctx, {
+		subscriptionUsage: usageProvider(openAiSnapshot({ percent: 74.9 })),
+		shouldShowWeekly: () => undefined,
+	});
+
+	assert.match(belowThresholdLine, /weekly 80% used/);
+	assert.doesNotMatch(atThresholdLine, /weekly/);
+	assert.doesNotMatch(aboveThresholdLine, /weekly/);
+});
+
+
+test("footer auto-show prefers explicit weekly percent over conflicting counts", () => {
+	const ctx = createCtx({ provider: "openai-codex" });
+	const sessionLine = renderSessionStatsLine(ctx, {
+		subscriptionUsage: usageProvider(openAiSnapshot({ percent: 80, used: 10, limit: 100, remaining: 90 })),
+		shouldShowWeekly: () => undefined,
+	});
+
+	assert.match(sessionLine, /weekly 80% used/);
+});
+
+
+test("footer auto-show derives weekly remaining from counts when percent is absent", () => {
+	const ctx = createCtx({ provider: "openai-codex" });
+	const sessionLine = renderSessionStatsLine(ctx, {
+		subscriptionUsage: usageProvider(openAiSnapshot({ used: 90, limit: 100, remaining: 10, percent: undefined })),
+		shouldShowWeekly: () => undefined,
+	});
+
+	assert.match(sessionLine, /weekly 90\/100 used/);
+});
+
+
+test("footer explicit weekly on always shows weekly even above the default threshold", () => {
+	const ctx = createCtx({ provider: "openai-codex" });
+	const sessionLine = renderSessionStatsLine(ctx, {
+		subscriptionUsage: usageProvider(openAiSnapshot({ percent: 21.5 })),
+		shouldShowWeekly: () => true,
+	});
+
+	assert.match(sessionLine, /weekly 21\.5% used/);
+});
+
+
+test("footer explicit weekly off hides weekly even below the default threshold", () => {
+	const ctx = createCtx({ provider: "openai-codex" });
+	const sessionLine = renderSessionStatsLine(ctx, {
+		subscriptionUsage: usageProvider(openAiSnapshot({ percent: 80 })),
+		shouldShowWeekly: () => false,
+	});
+
+	assert.doesNotMatch(sessionLine, /weekly/);
 });
 
 test("footer context and subscription usage keep compact token formatting", () => {
@@ -646,8 +711,29 @@ test("line 2 (color-aware): product and bug-hunter render name with accent", () 
 // NEW: extension status line rendering
 // ---------------------------------------------------------------------------
 
+test("tk workflow status renders as dim footer lines between agent and usage without generic duplication", () => {
+	const ctx = createCtx({ provider: "anthropic", usingOAuth: false });
+	const footerData = {
+		getGitBranch: () => undefined,
+		getAvailableProviderCount: () => 1,
+		getExtensionStatuses: () => new Map([
+			["tlh-ticket-workflow", "working on tk: Implement read-only ticket workflow status UI\nUse /tk-status for details."],
+			["my-ext", "my-ext: active"],
+		]),
+	};
+	const footer = createTlhFooter(pi, ctx, colorTheme, () => "architect", footerData, {});
+	const lines = footer.render(COLOR_WIDTH);
+
+	assert.match(lines[1] ?? "", /<dim>agent: <\/dim>/);
+	assert.equal(lines[2], "<dim>working on tk: Implement read-only ticket workflow status UI</dim>");
+	assert.equal(lines[3], "<dim>Use /tk-status for details.</dim>");
+	assert.equal(lines[4], "<dim>$1.250</dim>");
+	assert.equal(lines[5], "my-ext: active");
+	assert.doesNotMatch(lines[5] ?? "", /working on tk|tk-status/);
+});
+
 test("non-context-cap extension statuses are still rendered in the footer", () => {
-	// An unrelated extension status must not be affected by the context-cap filter.
+	// An unrelated extension status must not be affected by the tk workflow status filter.
 	const ctx = createCtx({ entries: [] });
 	const footerData = {
 		getGitBranch: () => undefined,

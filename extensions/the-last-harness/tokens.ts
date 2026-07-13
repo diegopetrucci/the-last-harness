@@ -8,6 +8,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { formatHomePath } from "./common.js";
 import {
 	analyzeCurrentSessionUsage,
+	type TlhAgentProviderUsage,
+	type TlhCacheMissEvent,
 	type TlhModelUsage,
 	type TlhSanitizedReference,
 	type TlhSessionUsageAnalysis,
@@ -18,6 +20,7 @@ import {
 } from "./tokens-analyzer.js";
 
 const TOKENS_COMMAND_HELP = "Usage: /tokens";
+export const TOKENS_COMMAND_DESCRIPTION = "Generate and open a local TLH token-spend report";
 const REPORT_FILE_NAME = "tokens-report.html";
 const execFileAsync = promisify(execFile);
 const INTEGER_FORMATTER = new Intl.NumberFormat("en-US");
@@ -36,6 +39,7 @@ const PERCENT_FORMATTER = new Intl.NumberFormat("en-US", {
 type TokensCommandDependencies = {
 	openReport?: (path: string) => Promise<void>;
 	now?: () => Date;
+	getPrimaryAgentLabel?: () => string | undefined;
 };
 
 type LocalTokensReport = {
@@ -50,46 +54,58 @@ type OpenCommand = {
 
 type TokensReportSessionManager = Pick<ExtensionContext["sessionManager"], "getSessionDir" | "getSessionFile">;
 
-export function registerTokensCommand(pi: ExtensionAPI, dependencies: TokensCommandDependencies = {}): void {
+export function createTokensCommandHandler(pi: ExtensionAPI, dependencies: TokensCommandDependencies = {}) {
 	const openReport = dependencies.openReport ?? openLocalReport;
 	const now = dependencies.now ?? (() => new Date());
+	const getPrimaryAgentLabel = dependencies.getPrimaryAgentLabel;
 
-	pi.registerCommand("tokens", {
-		description: "Generate and open a local TLH token-spend report",
-		handler: async (args, ctx) => {
-			if (args.trim()) {
-				ctx.ui.notify(TOKENS_COMMAND_HELP, "error");
-				return;
+	return async (args: string, ctx: ExtensionContext): Promise<void> => {
+		if (args.trim()) {
+			ctx.ui.notify(TOKENS_COMMAND_HELP, "error");
+			return;
+		}
+
+		try {
+			const analysis = analyzeCurrentSessionUsage(ctx.sessionManager, typeof pi.getAllTools === "function" ? pi.getAllTools() : [], ctx.modelRegistry);
+			let primaryAgentLabel: string | undefined;
+			try {
+				primaryAgentLabel = getPrimaryAgentLabel?.();
+			} catch {
+				// Fall back to default label if the source throws.
 			}
+			const html = buildTokensReportHtml(analysis, { generatedAt: now().toISOString(), primaryAgentLabel });
+			const report = writeLocalTokensReport(ctx.sessionManager, html);
 
 			try {
-				const analysis = analyzeCurrentSessionUsage(ctx.sessionManager, typeof pi.getAllTools === "function" ? pi.getAllTools() : []);
-				const html = buildTokensReportHtml(analysis, { generatedAt: now().toISOString() });
-				const report = writeLocalTokensReport(ctx.sessionManager, html);
-
-				try {
-					await openReport(report.path);
-					ctx.ui.notify(
-						`Opened local TLH token report at ${formatHomePath(report.path)}. Delete ${formatHomePath(report.directory)} when you no longer need it.`,
-						"info",
-					);
-				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					ctx.ui.notify(
-						`Generated local TLH token report at ${formatHomePath(report.path)}, but could not open it automatically: ${message}. Open the file manually and delete ${formatHomePath(report.directory)} when you no longer need it.`,
-						"warning",
-					);
-				}
+				await openReport(report.path);
+				ctx.ui.notify(
+					`Opened local TLH token report at ${formatHomePath(report.path)}. Delete ${formatHomePath(report.directory)} when you no longer need it.`,
+					"info",
+				);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
-				ctx.ui.notify(`Could not generate TLH token report: ${message}`, "error");
+				ctx.ui.notify(
+					`Generated local TLH token report at ${formatHomePath(report.path)}, but could not open it automatically: ${message}. Open the file manually and delete ${formatHomePath(report.directory)} when you no longer need it.`,
+					"warning",
+				);
 			}
-		},
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			ctx.ui.notify(`Could not generate TLH token report: ${message}`, "error");
+		}
+	};
+}
+
+export function registerTokensCommand(pi: ExtensionAPI, dependencies: TokensCommandDependencies = {}): void {
+	pi.registerCommand("tokens", {
+		description: TOKENS_COMMAND_DESCRIPTION,
+		handler: createTokensCommandHandler(pi, dependencies),
 	});
 }
 
-export function buildTokensReportHtml(analysis: TlhSessionUsageAnalysis, options: { generatedAt?: string } = {}): string {
+export function buildTokensReportHtml(analysis: TlhSessionUsageAnalysis, options: { generatedAt?: string; primaryAgentLabel?: string } = {}): string {
 	const generatedAt = options.generatedAt ?? new Date().toISOString();
+	const primaryLabel = (options.primaryAgentLabel && options.primaryAgentLabel.trim()) ? options.primaryAgentLabel.trim() : "Primary assistant";
 	const coverage = analysis.primaryAssistant.usageCoverage;
 	const combinedCacheTotal =
 		analysis.totals.combined.cacheReadTokens + analysis.totals.combined.cacheWriteTokens;
@@ -125,7 +141,8 @@ export function buildTokensReportHtml(analysis: TlhSessionUsageAnalysis, options
 			[
 				"<div class=\"grid cards three\">",
 				renderMetricCard("Combined total", formatInteger(analysis.totals.combined.totalTokens), `${formatCurrency(analysis.totals.combined.costUsd)} • ${formatInteger(analysis.totals.combined.turns)} turns`),
-				renderMetricCard("Primary assistant", formatInteger(analysis.totals.primary.totalTokens), `${formatCurrency(analysis.totals.primary.costUsd)} • ${formatCoverage(coverage)}`),
+				renderMetricCard(primaryLabel, formatInteger(analysis.totals.primary.totalTokens), `${formatCurrency(analysis.totals.primary.costUsd)} • ${formatCoverage(coverage)}`),
+
 				renderMetricCard("Subagents", formatInteger(analysis.totals.subagents.totalTokens), `${formatCurrency(analysis.totals.subagents.costUsd)} • ${formatInteger(analysis.subagents.runCount)} discovered runs`),
 				"</div>",
 				renderKeyValueGrid([
@@ -141,23 +158,7 @@ export function buildTokensReportHtml(analysis: TlhSessionUsageAnalysis, options
 					["Tool calls", formatInteger(analysis.tools.totalCalls)],
 					["Cache tokens", `${formatInteger(combinedCacheTotal)} total • ${formatCacheShare(combinedCacheTotal, analysis.totals.combined.totalTokens)}`],
 				]),
-				renderUsageTotalsTable(analysis),
-			].join(""),
-		),
-		renderSection(
-			"Timeline",
-			[
-				`<p class="section-note">${escapeHtml("Each row is one assistant turn. Branch status, usage, tools, and discoveries are summarized without transcript text.")}</p>`,
-				renderTimelineTable(analysis.primaryAssistant.timeline),
-			].join(""),
-		),
-		renderSection(
-			"Agents/subagents",
-			[
-				`<p class="section-note">${escapeHtml("Primary totals are exact where the provider reported usage. Subagent totals are discoverable-only and may undercount hidden work.")}</p>`,
-				renderModelUsageTable("Primary assistant models", analysis.primaryAssistant.models),
-				renderModelUsageTable("Discovered subagent models", analysis.subagents.models),
-				renderSubagentRunsTable(analysis),
+				renderUsageTotalsTable(analysis, primaryLabel),
 			].join(""),
 		),
 		renderSection(
@@ -174,11 +175,28 @@ export function buildTokensReportHtml(analysis: TlhSessionUsageAnalysis, options
 				renderToolTable(analysis.tools.byTool),
 			].join(""),
 		),
+		renderCacheMissesSection(analysis),
+		renderSection(
+			"Timeline",
+			[
+				`<p class="section-note">${escapeHtml("Each row is one assistant turn. Branch status, usage, tools, and discoveries are summarized without transcript text.")}</p>`,
+				renderTimelineTable(analysis.primaryAssistant.timeline),
+			].join(""),
+		),
+		renderSection(
+			"Agents/subagents",
+			[
+				`<p class="section-note">${escapeHtml("Primary totals are exact where the provider reported usage. Subagent totals are discoverable-only and may undercount hidden work.")}</p>`,
+				renderModelUsageTable(`${primaryLabel} models`, analysis.primaryAssistant.models),
+				renderModelUsageTable("Discovered subagent models", analysis.subagents.models),
+				renderSubagentRunsTable(analysis),
+			].join(""),
+		),
 		renderSection(
 			"Cache",
 			[
 				`<p class="section-note">${escapeHtml("Cache totals combine provider-reported cache read/write usage across primary assistant turns and any discovered subagent usage.")}</p>`,
-				renderCacheTotalsTable(analysis),
+				renderCacheTotalsTable(analysis, primaryLabel),
 				renderCacheTimelineTable(cacheTurns),
 			].join(""),
 		),
@@ -218,24 +236,31 @@ function renderKeyValueGrid(items: Array<[string, string]>): string {
 	].join("");
 }
 
-function renderUsageTotalsTable(analysis: TlhSessionUsageAnalysis): string {
-	const rows: Array<[string, TlhUsageTotals]> = [
-		["Primary assistant", analysis.totals.primary],
-		["Subagents", analysis.totals.subagents],
-		["Combined", analysis.totals.combined],
+function renderUsageTotalsTable(analysis: TlhSessionUsageAnalysis, primaryLabel = "Primary assistant"): string {
+	const em = "\u2014";
+	const usageRow = (label: string, provider: string, usage: TlhUsageTotals): string[] => [
+		label,
+		provider,
+		formatInteger(usage.inputTokens),
+		formatInteger(usage.outputTokens),
+		formatInteger(usage.cacheReadTokens),
+		formatInteger(usage.cacheWriteTokens),
+		formatInteger(usage.totalTokens),
+		formatCurrency(usage.costUsd),
+		formatInteger(usage.turns),
+	];
+	const subAgentRows: string[][] = analysis.subagents.byAgent.map((entry: TlhAgentProviderUsage) =>
+		usageRow(entry.agent ?? "unknown", entry.provider ?? em, entry.usage),
+	);
+	const rows: string[][] = [
+		usageRow(primaryLabel, em, analysis.totals.primary),
+		...subAgentRows,
+		usageRow("Subagents (all)", em, analysis.totals.subagents),
+		usageRow("Combined", em, analysis.totals.combined),
 	];
 	return renderTable(
-		["Bucket", "Input", "Output", "Cache read", "Cache write", "Total", "Cost", "Turns"],
-		rows.map(([label, usage]) => [
-			label,
-			formatInteger(usage.inputTokens),
-			formatInteger(usage.outputTokens),
-			formatInteger(usage.cacheReadTokens),
-			formatInteger(usage.cacheWriteTokens),
-			formatInteger(usage.totalTokens),
-			formatCurrency(usage.costUsd),
-			formatInteger(usage.turns),
-		]),
+		["Bucket", "Provider", "Input", "Output", "Cache read", "Cache write", "Total", "Cost", "Turns"],
+		rows,
 		"No usage totals recorded.",
 	);
 }
@@ -337,9 +362,9 @@ function renderToolTable(tools: TlhToolUsage[]): string {
 	].join("");
 }
 
-function renderCacheTotalsTable(analysis: TlhSessionUsageAnalysis): string {
+function renderCacheTotalsTable(analysis: TlhSessionUsageAnalysis, primaryLabel = "Primary assistant"): string {
 	const rows: Array<[string, TlhUsageTotals]> = [
-		["Primary assistant", analysis.totals.primary],
+		[primaryLabel, analysis.totals.primary],
 		["Subagents", analysis.totals.subagents],
 		["Combined", analysis.totals.combined],
 	];
@@ -378,6 +403,48 @@ function renderCacheTimelineTable(turns: TlhUsageTimelineTurn[]): string {
 			"No primary assistant turns reported cache activity.",
 		),
 	].join("");
+}
+
+function renderCacheMissesSection(analysis: TlhSessionUsageAnalysis): string {
+	const { cacheMisses } = analysis;
+	const explanatoryNote = `<p class="section-note">${escapeHtml("A cache miss is prompt content that was sent on an earlier turn but had to be re-sent and re-billed at full price instead of being served from the provider's prompt cache. Misses commonly happen after an idle gap longer than the cache TTL (~5 min), when the model is switched mid-session, or after a context reset (compaction). Only misses above a small noise floor are counted.")}</p>`;
+
+	if (cacheMisses.missCount === 0) {
+		return renderSection(
+			"Cache misses",
+			[
+				explanatoryNote,
+				`<p class="section-note">${escapeHtml("No significant cache misses detected.")}</p>`,
+			].join(""),
+		);
+	}
+
+	return renderSection(
+		"Cache misses",
+		[
+			explanatoryNote,
+			"<div class=\"grid cards three\">",
+			renderMetricCard("Missed tokens", formatInteger(cacheMisses.missedTokens), ""),
+			renderMetricCard("Extra cost", formatCurrency(cacheMisses.missedCost), ""),
+			renderMetricCard("Miss count", formatInteger(cacheMisses.missCount), ""),
+			"</div>",
+			renderWorstMissesTable(cacheMisses.worst),
+		].join(""),
+	);
+}
+
+function renderWorstMissesTable(worst: TlhCacheMissEvent[]): string {
+	return renderTable(
+		["Turn", "Idle gap", "Model changed", "Missed tokens", "Extra cost"],
+		worst.map((event) => [
+			String(event.turnIndex + 1),
+			formatIdleMs(event.idleMs),
+			event.modelChanged ? "yes" : "no",
+			formatInteger(event.missedTokens),
+			formatCurrency(event.missedCost),
+		]),
+		"No significant cache miss events recorded.",
+	);
 }
 
 function renderReferenceSummary(title: string, refs: TlhSanitizedReference[]): string {
@@ -565,6 +632,13 @@ function formatCacheShare(cacheTokens: number, totalTokens: number): string {
 		return "0%";
 	}
 	return PERCENT_FORMATTER.format(cacheTokens / totalTokens);
+}
+
+function formatIdleMs(ms: number): string {
+	if (ms < 60_000) {
+		return `${Math.round(ms / 1000)}s`;
+	}
+	return `${Math.round(ms / 60_000)} min`;
 }
 
 function formatErrorRate(errors: number, results: number): string {

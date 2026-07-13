@@ -42,6 +42,7 @@ test("hidden model defaults stay pinned to the approved ordered list", () => {
 		"anthropic/claude-3-opus-20240229",
 		"anthropic/claude-3-sonnet-20240229",
 		"anthropic/claude-haiku-4-5",
+		"anthropic/claude-haiku-4-5-20251001",
 		"anthropic/claude-opus-4-0",
 		"anthropic/claude-opus-4-1",
 		"anthropic/claude-opus-4-1-20250805",
@@ -53,6 +54,11 @@ test("hidden model defaults stay pinned to the approved ordered list", () => {
 		"anthropic/claude-sonnet-4-20250514",
 		"anthropic/claude-sonnet-4-5",
 		"anthropic/claude-sonnet-4-5-20250929",
+		"anthropic/claude-sonnet-4-6",
+		"anthropic/claude-sonnet-5",
+		"openai-codex/gpt-5.3-codex-spark",
+		"openai-codex/gpt-5.4",
+		"openai-codex/gpt-5.4-mini",
 	]);
 });
 
@@ -67,10 +73,14 @@ test("model visibility matches canonical and bare-id glob patterns with visible 
 	assert.equal(matchesTlhModelVisibilityPattern({ provider: "anthropic", id: "claude-opus-4-5" }, "claude-opus-4-*"), true);
 	assert.equal(matchesTlhModelVisibilityPattern({ provider: "openai-codex", id: "gpt-5.5" }, "claude-opus-4-*"), false);
 
+	const defaultsOnlyConfig = normalizeTlhModelVisibilityConfig({});
+
 	assert.equal(isTlhModelHidden({ provider: "anthropic", id: "claude-opus-4-5" }, config), true);
 	assert.equal(isTlhModelHidden({ provider: "anthropic", id: "claude-opus-4-6" }, config), false);
 	assert.equal(isTlhModelHidden({ provider: "anthropic", id: "claude-haiku-4-5" }, config), false);
 	assert.equal(isTlhModelHidden({ provider: "anthropic", id: "claude-3-5-sonnet-20241022" }, config), true);
+	assert.equal(isTlhModelHidden({ provider: "anthropic", id: "claude-sonnet-4-6" }, defaultsOnlyConfig), true);
+	assert.equal(isTlhModelHidden({ provider: "openai-codex", id: "gpt-5.4" }, defaultsOnlyConfig), true);
 });
 
 test("model visibility settings are isolated-profile only and normalize hidden/visible arrays", async (t) => {
@@ -111,6 +121,7 @@ test("installed model visibility filter is idempotent, hides defaults, and prese
 		{ provider: "anthropic", id: "claude-haiku-4-5" },
 		{ provider: "anthropic", id: "claude-opus-4-6" },
 		{ provider: "anthropic", id: "claude-sonnet-4-6" },
+		{ provider: "openai-codex", id: "gpt-5.4" },
 		{ provider: "openai-codex", id: "gpt-5.5" },
 	]);
 
@@ -124,25 +135,43 @@ test("installed model visibility filter is idempotent, hides defaults, and prese
 		assert.equal(ModelRegistry.prototype.getAvailable, patchedGetAvailable);
 		assert.equal(InteractiveMode.prototype.findExactModelMatch, patchedFindExactModelMatch);
 
-		assert.deepEqual(modelKeys(registry.getAvailable()), ["anthropic/claude-sonnet-4-6", "openai-codex/gpt-5.5"]);
+		assert.deepEqual(modelKeys(registry.getAvailable()), ["openai-codex/gpt-5.5"]);
 		assert.deepEqual(modelKeys(getUnfilteredAvailableModels(registry)), [
 			"anthropic/claude-haiku-4-5",
 			"anthropic/claude-opus-4-6",
 			"anthropic/claude-sonnet-4-6",
+			"openai-codex/gpt-5.4",
 			"openai-codex/gpt-5.5",
 		]);
 
 		writeFileSync(
 			settingsPath,
-			`${JSON.stringify({ tlh: { modelVisibility: { hidden: ["anthropic/claude-sonnet-4-6"], unhide: ["claude-haiku-4-5"] } } }, null, 2)}\n`,
+			`${JSON.stringify(
+				{
+					tlh: {
+						modelVisibility: {
+							hidden: ["anthropic/claude-opus-4-6"],
+							unhide: ["claude-haiku-4-5", "anthropic/claude-sonnet-4-6", "openai-codex/gpt-5.4"],
+						},
+					},
+				},
+				null,
+				2,
+			)}\n`,
 		);
-		assert.deepEqual(modelKeys(registry.getAvailable()), ["anthropic/claude-haiku-4-5", "openai-codex/gpt-5.5"]);
+		assert.deepEqual(modelKeys(registry.getAvailable()), [
+			"anthropic/claude-haiku-4-5",
+			"anthropic/claude-sonnet-4-6",
+			"openai-codex/gpt-5.4",
+			"openai-codex/gpt-5.5",
+		]);
 
 		writeFileSync(settingsPath, `${JSON.stringify({ tlh: { modelVisibility: { disabled: true } } }, null, 2)}\n`);
 		assert.deepEqual(modelKeys(registry.getAvailable()), [
 			"anthropic/claude-haiku-4-5",
 			"anthropic/claude-opus-4-6",
 			"anthropic/claude-sonnet-4-6",
+			"openai-codex/gpt-5.4",
 			"openai-codex/gpt-5.5",
 		]);
 	});
@@ -161,7 +190,7 @@ test("installed model visibility filter keeps getAll direct lookup unfiltered wh
 		writeFileSync(settingsPath, `${JSON.stringify({}, null, 2)}\n`);
 		installTlhModelVisibilityFilter();
 
-		assert.deepEqual(modelKeys(registry.getAvailable()), ["anthropic/claude-sonnet-4-6", "openai-codex/gpt-5.5"]);
+		assert.deepEqual(modelKeys(registry.getAvailable()), ["openai-codex/gpt-5.5"]);
 		assert.deepEqual(modelKeys(registry.getAll()), [
 			"anthropic/claude-opus-4-6",
 			"anthropic/claude-sonnet-4-6",
@@ -195,7 +224,7 @@ test("exact /model provider/model lookup can resolve hidden models without unfil
 		);
 		assert.deepEqual(hiddenExactMatch, { provider: "anthropic", id: "claude-opus-4-6" });
 		assert.equal(await InteractiveMode.prototype.findExactModelMatch.call(interactiveMode, "claude-opus-4-6"), undefined);
-		assert.deepEqual(modelKeys(registry.getAvailable()), ["anthropic/claude-sonnet-4-6", "openai-codex/gpt-5.5"]);
+		assert.deepEqual(modelKeys(registry.getAvailable()), ["openai-codex/gpt-5.5"]);
 
 		interactiveMode.runtimeHost.session.scopedModels = [{ model: { provider: "anthropic", id: "claude-sonnet-4-6" } }];
 		assert.equal(await InteractiveMode.prototype.findExactModelMatch.call(interactiveMode, "anthropic/claude-opus-4-6"), undefined);

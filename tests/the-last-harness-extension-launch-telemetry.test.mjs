@@ -10,7 +10,7 @@ import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mj
 
 const jiti = createJiti(import.meta.url);
 const { TLH_NAME, TLH_TELEMETRY_EVENT_TYPE, TLH_TELEMETRY_STATE_SCHEMA_VERSION } = await jiti.import("../extensions/the-last-harness/constants.ts");
-const { CI_FAILURE_INVESTIGATION_FEATURE, DELTA_FOLLOW_UP_REVIEWS_FEATURE, TLH_CONTRARIAN_FEATURE } = await jiti.import(
+const { CI_FAILURE_INVESTIGATION_FEATURE, DELTA_FOLLOW_UP_REVIEWS_FEATURE, TICKET_WORKFLOW_UI_FEATURE } = await jiti.import(
 	"../extensions/the-last-harness/experimental.ts",
 );
 const { sendTlhLaunchTelemetry } = await jiti.import("../extensions/the-last-harness/launch-telemetry.ts");
@@ -34,7 +34,7 @@ test("launch telemetry sends allowlisted experimental feature states and reuses 
 	writeFileSync(
 		join(fixture.agent, "settings.json"),
 		`${JSON.stringify(
-			{ tlh: { experimental: { enabledFeatures: [" Contrarian ", "legacy-flag"] } } },
+			{ tlh: { experimental: { enabledFeatures: [" delta-follow-up-reviews ", "legacy-flag"] } } },
 			null,
 			2,
 		)}\n`,
@@ -79,9 +79,9 @@ test("launch telemetry sends allowlisted experimental feature states and reuses 
 	assert.equal(event.clientUser, createHash("sha256").update(EXISTING_INSTALL_ID).digest("hex"));
 	assert.equal(event.payload["Tlh.App.version"], "1.2.3");
 	assert.equal(event.payload["Tlh.Runtime.model"], "gpt-4o");
-	assert.equal(event.payload[`Tlh.Experimental.${TLH_CONTRARIAN_FEATURE}`], "on");
-	assert.equal(event.payload[`Tlh.Experimental.${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`], "off");
+	assert.equal(event.payload[`Tlh.Experimental.${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`], "on");
 	assert.equal(event.payload[`Tlh.Experimental.${CI_FAILURE_INVESTIGATION_FEATURE}`], "off");
+	assert.equal(event.payload[`Tlh.Experimental.${TICKET_WORKFLOW_UI_FEATURE}`], "off");
 	assert.equal(Object.hasOwn(event.payload, "Tlh.Experimental.legacy-flag"), false);
 	assert.equal(readFileSync(telemetryStatePath(fixture), "utf8"), originalState);
 });
@@ -91,7 +91,7 @@ test("launch telemetry skips when the isolated profile has telemetry opt-out ena
 	writeTelemetryState(fixture);
 	writeFileSync(
 		join(fixture.agent, "settings.json"),
-		`${JSON.stringify({ tlh: { telemetry: { enabled: false }, experimental: { enabledFeatures: [TLH_CONTRARIAN_FEATURE] } } }, null, 2)}\n`,
+		`${JSON.stringify({ tlh: { telemetry: { enabled: false }, experimental: { enabledFeatures: [DELTA_FOLLOW_UP_REVIEWS_FEATURE] } } }, null, 2)}\n`,
 	);
 
 	const previousFetch = globalThis.fetch;
@@ -126,7 +126,7 @@ test("launch telemetry skips when telemetry settings are malformed", async (t) =
 	writeTelemetryState(fixture);
 	writeFileSync(
 		join(fixture.agent, "settings.json"),
-		`${JSON.stringify({ tlh: { telemetry: { enabled: "nope" }, experimental: { enabledFeatures: [TLH_CONTRARIAN_FEATURE] } } }, null, 2)}\n`,
+		`${JSON.stringify({ tlh: { telemetry: { enabled: "nope" }, experimental: { enabledFeatures: [DELTA_FOLLOW_UP_REVIEWS_FEATURE] } } }, null, 2)}\n`,
 	);
 
 	const previousFetch = globalThis.fetch;

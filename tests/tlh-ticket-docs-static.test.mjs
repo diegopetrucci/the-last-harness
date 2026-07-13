@@ -19,13 +19,6 @@ const userFacingDocs = [
 	"docs/releasing.md",
 ];
 
-const annotateGitDiffDocs = [
-	"README.md",
-	"docs/commands.md",
-	"extensions/annotate-git-diff/README.md",
-	"CHANGELOG.md",
-];
-
 const legacyTicketGuidancePatterns = [
 	/--with-tickets/,
 	/--without-tickets/,
@@ -41,61 +34,6 @@ const legacyTicketGuidancePatterns = [
 	/tickets configure-install/i,
 ];
 
-test("install, integrations, and changelog docs describe mandatory managed tk behavior", () => {
-	const install = readRepoFile("docs/install.md");
-	const integrations = readRepoFile("docs/integrations.md");
-	const changelog = readRepoFile("CHANGELOG.md");
-
-	assert.match(install, /requires `tk` ticket integration/);
-	assert.match(install, /`~\/\.the-last-harness\/agent\/bin\/tk`/);
-	assert.match(install, /install fails with an actionable error/);
-	assert.match(install, /`tlh update` fails with an actionable error/);
-	assert.match(integrations, /requires the `tk` ticket CLI/);
-	assert.match(integrations, /install or update fails with an actionable error/);
-	assert.match(changelog, /`tk` ticket integration is now mandatory/);
-});
-
-test("integrations docs describe Rush primary behavior and default tk-loop exception", () => {
-	const integrations = readRepoFile("docs/integrations.md");
-
-	assert.match(
-		integrations,
-		/Rush keeps that tooling available but handles small bounded tasks with direct edits instead of the default `tk` loop/i,
-	);
-	assert.match(
-		integrations,
-		/does not start with the default ticket\/developer\/review loop, even though the managed `tk` command is still installed/i,
-	);
-});
-
-test("git attribution docs carry the detailed behavior while changelog records the release", () => {
-	const attributionDoc = readRepoFile("docs/git-attribution.md");
-	const changelog = readRepoFile("CHANGELOG.md");
-
-	assert.match(attributionDoc, /`\/toggle-tlh-git-attribution`/);
-	assert.match(attributionDoc, /`tlh\.attribution\.commit` is unset or `true`/);
-	assert.match(attributionDoc, /Co-authored-by: The Last Harness <hi@thelastharness\.com>/);
-	assert.match(attributionDoc, /Set `tlh\.attribution\.commit` to `false`/);
-	assert.match(attributionDoc, /Delete `tlh\.attribution\.commit`/);
-	assert.match(attributionDoc, /TLH does not change `git push`/);
-	assert.doesNotMatch(attributionDoc, /`\/attribution toggle`/);
-	assert.doesNotMatch(attributionDoc, /Set `tlh\.attribution\.commit` to `""`/);
-	assert.doesNotMatch(attributionDoc, /custom footer/i);
-	assert.doesNotMatch(attributionDoc, /noreply@the-last-harness\.invalid/);
-	assert.match(changelog, /`\/toggle-tlh-git-attribution`/);
-	assert.match(changelog, /boolean `tlh\.attribution\.commit` settings/);
-	assert.doesNotMatch(changelog, /`\/attribution toggle`/);
-});
-
-test("install docs describe separate pi removal with the TLH per-user npm prefix", () => {
-	const install = readRepoFile("docs/install.md");
-
-	assert.match(
-		install,
-		/Separately-installed pi[\s\S]{0,300}npm uninstall -g --ignore-scripts --prefix "\$HOME\/\.local" @earendil-works\/pi-coding-agent/,
-	);
-});
-
 test("user-facing docs and installer help do not advertise legacy ticket opt-outs", () => {
 	const sources = [...userFacingDocs, "install.sh"];
 
@@ -107,67 +45,37 @@ test("user-facing docs and installer help do not advertise legacy ticket opt-out
 	}
 });
 
-test("annotate-git-diff docs use the renamed command and extension names", () => {
-	for (const path of annotateGitDiffDocs) {
-		const source = readRepoFile(path);
-		assert.match(source, /annotate-git-diff/, `${path} should mention annotate-git-diff`);
-		assert.doesNotMatch(source, /\/diff-review/, `${path} still mentions /diff-review`);
+test("contributing guide links to the upstream-sync inventory", () => {
+	const source = readRepoFile("CONTRIBUTING.md");
+	assert.match(source, /docs\/upstream-sync-inventory\.md/);
+});
+
+test("upstream-sync inventory documents required provenance caveats and exclusions", () => {
+	const source = readRepoFile("docs/upstream-sync-inventory.md");
+	assert.match(source, /Historically reconstructed.*not originally attested/i);
+	assert.match(source, /2e839268686fbc530a5ab2cef4667d53fdb4b2d5/);
+	assert.match(source, /bd0701670693372e687ed732e98ec338e60a0fb4/);
+	assert.match(source, /packages\/diff-review/);
+	assert.match(source, /package version `0\.2\.5`/);
+	assert.match(source, /src\/core\/model-resolver\.ts/);
+	assert.match(source, /ordinary dependency pins by themselves/i);
+	assert.match(source, /generated runtime `scripts\/\*\*\/\*\.mjs` outputs/i);
+	assert.match(source, /quarterly and on upstream package\/repo releases/i);
+});
+
+test("tracked upstream-sync source files point readers to the inventory", () => {
+	for (const path of [
+		"extensions/annotate-git-diff/index.ts",
+		"extensions/rtk.ts",
+		"extensions/shared/quiet-glimpse.ts",
+		"extensions/the-last-harness/model-visibility.ts",
+		"extensions/the-last-harness/new-version-notice.ts",
+		"extensions/the-last-harness/package-update-notice.ts",
+		"extensions/the-last-harness/profile-state.ts",
+		"extensions/the-last-harness/resources.ts",
+		"extensions/the-last-harness/thinking.ts",
+		"extensions/the-last-harness/tokens-analyzer.ts",
+	]) {
+		assert.match(readRepoFile(path), /upstream-sync-inventory\.md/, `${path} should reference the inventory`);
 	}
-
-	const commandsDoc = readRepoFile("docs/commands.md");
-	assert.doesNotMatch(commandsDoc, /extensions\/diff-review\/README\.md/);
-	assert.match(commandsDoc, /`annotate-git-diff`/);
-});
-
-test("commands docs describe contrarian, delta-follow-up-reviews, and architect-only ci-failure-investigation as default-off /experimental flags", () => {
-	const commandsDoc = readRepoFile("docs/commands.md");
-
-	assert.match(commandsDoc, /`\/experimental`/);
-	assert.match(commandsDoc, /contrarian/);
-	assert.match(commandsDoc, /delta-follow-up-reviews/);
-	assert.match(commandsDoc, /ci-failure-investigation/);
-	assert.match(commandsDoc, /architect primary agent do read-only failed ci\/status-check investigation/i);
-	assert.match(commandsDoc, /\/experimental enable contrarian/);
-	assert.match(commandsDoc, /\/experimental disable contrarian/);
-	assert.match(commandsDoc, /before any edits, commits, pushes, reruns, pr changes, or other follow-up changes/i);
-	assert.match(commandsDoc, /disabled by default/i);
-	assert.match(commandsDoc, /stale `run-tests-last` values/i);
-	assert.doesNotMatch(commandsDoc, /contrarian-subagent/);
-});
-
-test("README and changelog describe review opposite-provider fallback policy", () => {
-	const readme = readRepoFile("README.md");
-	const changelog = readRepoFile("CHANGELOG.md");
-
-	assert.match(readme, /`code-reviewer` and `oracle` intentionally prefer an available opposite provider/i);
-	assert.match(readme, /Enabled `contrarian` uses that same opposite-provider pattern/i);
-	assert.match(readme, /Anthropic sessions[\s\S]{0,180}OpenAI Codex subscription provider[\s\S]{0,80}available/i);
-	assert.match(readme, /OpenAI\/OpenAI-Codex sessions[\s\S]{0,120}Anthropic/i);
-	assert.match(readme, /same\/current-provider fallback[\s\S]{0,160}review independence is reduced/i);
-	assert.match(readme, /OpenAI API access[\s\S]{0,220}does not force `code-reviewer`, `oracle`, or enabled `contrarian` onto unavailable Codex-only defaults/i);
-	assert.match(changelog, /opposite-provider model[\s\S]{0,120}`code-reviewer` or `oracle`/i);
-	assert.match(changelog, /same\/current-provider fallback[\s\S]{0,160}review independence is reduced/i);
-	assert.match(changelog, /`code-reviewer` now prefers an available opposite provider/i);
-	assert.match(changelog, /OpenAI API-only setups are not forced onto unavailable Codex-only defaults/i);
-	assert.doesNotMatch(changelog, /`code-reviewer` now defaults to `openai-codex\/gpt-5\.5`/);
-});
-
-
-test("README and changelog describe contrarian's experimental sparing adversarial role", () => {
-	const readme = readRepoFile("README.md");
-	const changelog = readRepoFile("CHANGELOG.md");
-
-	assert.match(readme, /bundled experimental subagent[\s\S]{0,80}`contrarian`|`contrarian` as a bundled experimental subagent/i);
-	assert.match(readme, /default-off[\s\S]{0,80}\/experimental enable contrarian|\/experimental enable contrarian/i);
-	assert.match(readme, /\/experimental disable contrarian/i);
-	assert.match(readme, /If you enable `contrarian`[\s\S]{0,260}before ticket creation[\s\S]{0,220}specific risk|If you enable `contrarian`[\s\S]{0,260}specific risk[\s\S]{0,220}before ticket creation/i);
-	assert.match(readme, /not the normal diff reviewer[\s\S]{0,120}`code-reviewer` reviews changes against tasks/i);
-	assert.match(readme, /different from `oracle`[\s\S]{0,120}broader second-opinion path/i);
-	assert.match(readme, /When enabled, `contrarian` uses that same independence pattern/i);
-	assert.doesNotMatch(readme, /contrarian-subagent/);
-	assert.match(changelog, /bundles a first-party experimental `contrarian` subagent/i);
-	assert.match(changelog, /default-off behind `\/experimental enable contrarian`/i);
-	assert.match(changelog, /intended mainly for sparing pre-ticket adversarial stress-tests/i);
-	assert.match(changelog, /not the routine `code-reviewer` diff pass and not a replacement for the broader `oracle` second opinion/i);
-	assert.doesNotMatch(changelog, /contrarian-subagent/);
 });

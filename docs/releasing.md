@@ -23,13 +23,31 @@ npm version "$version" --no-git-tag-version
 git diff -- package.json
 ```
 
-Update `CHANGELOG.md` with a `## [$version] - YYYY-MM-DD` section, then run the aggregate validation script and release-notes check:
+Update `CHANGELOG.md` with a `## [$version] - YYYY-MM-DD` section.
+
+Before validation, update release-sensitive docs that include concrete versioned install guidance or runtime pins:
+
+- `docs/install.md`: pinned-tag install examples and the non-stable-track warning examples should use `v$version`.
+- `README.md` and `docs/install.md`: any pinned Pi runtime version, minimum Node.js version, managed Gnosis version, managed `tk` version, or bundled default-extension behavior should match the release metadata and installer constants.
+- `docs/releasing.md`: keep this checklist aligned when release validation adds or removes required documentation checks.
+
+Then run the aggregate validation script and release-notes check:
 
 ```sh
 npm install --no-package-lock --legacy-peer-deps
 npm run validate
 node scripts/release-notes.mjs --tag "v$version" --output /tmp/tlh-release-notes.md
 ```
+
+Then run the startup performance checker as release-tier manual validation:
+
+```sh
+npm run check:startup-performance
+```
+
+Keep this separate from `npm run validate`: it measures TLH PTY startup timing, so results vary with the machine and current load. The release objective is a steady-state first TLH header mean below `1000ms`.
+
+If the checker fails, investigate before release rather than treating it like a normal deterministic test failure.
 
 Commit the release prep:
 

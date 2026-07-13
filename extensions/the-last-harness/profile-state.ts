@@ -1,3 +1,5 @@
+// TLH-private settings/state write guards layered on top of Pi settings storage.
+// See ../../docs/upstream-sync-inventory.md for sync/review guidance.
 import { closeSync, constants, lstatSync, mkdirSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";

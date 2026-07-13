@@ -3,19 +3,32 @@ set -euo pipefail
 
 REPO="${TLH_REPO:-diegopetrucci/the-last-harness}"
 REF="${TLH_REF:-main}"
-# Keep in sync with MIN_NODE_VERSION, MIN_PI_VERSION, and PINNED_PI_VERSION in scripts/tlh-install.mjs.
+# Keep in sync with MIN_NODE_VERSION and PINNED_PI_VERSION in scripts/tlh-install.mjs.
 TLH_MIN_NODE_VERSION="22.19.0"
-TLH_MIN_PI_VERSION="0.80.1"
-TLH_PINNED_PI_VERSION="0.80.2"
+TLH_PINNED_PI_VERSION="0.80.6"
 
 DRY_RUN=false
 NO_SETTINGS=false
 NO_WRAPPER=false
 QUIET=false
 VERBOSE=false
-AGENT_DIR_INPUT="${TLH_AGENT_DIR:-$HOME/.the-last-harness/agent}"
+# Track whether AGENT_DIR_INPUT and WRAPPER_NAME were explicitly set (env or CLI).
+# Explicit values always win over ref-derived defaults (mirrors tlh-install.mjs).
+if [[ -n "${TLH_AGENT_DIR:-}" ]]; then
+  AGENT_DIR_INPUT="${TLH_AGENT_DIR}"
+  AGENT_DIR_EXPLICIT=true
+else
+  AGENT_DIR_INPUT="$HOME/.the-last-harness/agent"
+  AGENT_DIR_EXPLICIT=false
+fi
 BIN_DIR_INPUT="${TLH_BIN_DIR:-$HOME/.local/bin}"
-WRAPPER_NAME="${TLH_WRAPPER_NAME:-tlh}"
+if [[ -n "${TLH_WRAPPER_NAME:-}" ]]; then
+  WRAPPER_NAME="${TLH_WRAPPER_NAME}"
+  WRAPPER_NAME_EXPLICIT=true
+else
+  WRAPPER_NAME="tlh"
+  WRAPPER_NAME_EXPLICIT=false
+fi
 UPDATE_TRACK_INPUT="${TLH_UPDATE_TRACK:-}"
 RAW_BASE_INPUT="${TLH_RAW_BASE:-}"
 TMP_DIR=""
@@ -41,9 +54,12 @@ Options:
   --force          Allow scalar isolated defaults and installer wrapper overwrite
   --no-settings     Install the package but skip isolated settings/keybinding merge
   --no-wrapper      Skip creating the tlh wrapper command
-  --agent-dir DIR   Isolated Pi agent dir (default: ~/.the-last-harness/agent)
+  --agent-dir DIR   Isolated Pi agent dir
+                    (default for main: ~/.the-last-harness-main/agent;
+                     default for release tags: ~/.the-last-harness/agent)
   --bin-dir DIR     Wrapper install dir (default: ~/.local/bin)
-  --wrapper-name N  Wrapper command name (default: tlh)
+  --wrapper-name N  Wrapper command name
+                    (default for main: tlh-main; default for release tags: tlh)
   --ref REF         Install The Last Harness from a branch, tag, or commit
   --track TRACK     Update track for future tlh update: latest-release, pinned-tag, ref, custom
   --quiet           Suppress installer progress output
@@ -59,7 +75,7 @@ Environment overrides:
   TLH_UPDATE_TRACK     Update track for future tlh update
   TLH_PACKAGE_SOURCE   Package source passed to `pi install`
   TLH_RAW_BASE         Base URL for installer support files
-  TLH_GNOSIS_VERSION   Gnosis version to install (default: 0.5.3)
+  TLH_GNOSIS_VERSION   Gnosis version to install (default: 0.5.4)
   TLH_GNOSIS_REPO      Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
 
 Examples:
@@ -111,6 +127,8 @@ need_value() {
 
 expand_path() {
   local path="$1"
+  # literal '~/' in case arms is intentional; these arms detect unexpanded tildes passed as path arguments
+  # shellcheck disable=SC2088
   case "${path}" in
     '~')
       printf '%s\n' "${HOME}"
@@ -293,11 +311,13 @@ while [[ $# -gt 0 ]]; do
       ;;
     --agent-dir)
       AGENT_DIR_INPUT="$(need_value "$1" "${2:-}")"
+      AGENT_DIR_EXPLICIT=true
       shift 2
       ;;
     --agent-dir=*)
       AGENT_DIR_INPUT="${1#--agent-dir=}"
       [[ -n "${AGENT_DIR_INPUT}" ]] || die "--agent-dir requires a value"
+      AGENT_DIR_EXPLICIT=true
       shift
       ;;
     --bin-dir)
@@ -311,11 +331,13 @@ while [[ $# -gt 0 ]]; do
       ;;
     --wrapper-name)
       WRAPPER_NAME="$(need_value "$1" "${2:-}")"
+      WRAPPER_NAME_EXPLICIT=true
       shift 2
       ;;
     --wrapper-name=*)
       WRAPPER_NAME="${1#--wrapper-name=}"
       [[ -n "${WRAPPER_NAME}" ]] || die "--wrapper-name requires a value"
+      WRAPPER_NAME_EXPLICIT=true
       shift
       ;;
     --pi-installed-by-tlh)
@@ -365,6 +387,20 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Apply ref-conditional defaults (mirrors buildInstallConfig in scripts/tlh-install.mjs).
+# When REF == main and the user did NOT explicitly set wrapper name or agent dir
+# (via env var or CLI flag), use tlh-main / ~/.the-last-harness-main/agent so that
+# main-track installs don't collide with release-tag installs.
+# Explicit values (WRAPPER_NAME_EXPLICIT / AGENT_DIR_EXPLICIT) always win.
+if [[ "${REF}" == "main" ]]; then
+  if [[ "${WRAPPER_NAME_EXPLICIT}" != "true" ]]; then
+    WRAPPER_NAME="tlh-main"
+  fi
+  if [[ "${AGENT_DIR_EXPLICIT}" != "true" ]]; then
+    AGENT_DIR_INPUT="$HOME/.the-last-harness-main/agent"
+  fi
+fi
+
 RAW_BASE="${RAW_BASE_INPUT:-https://raw.githubusercontent.com/${REPO}/${REF}}"
 
 bootstrap_support_manifest() {
@@ -383,6 +419,7 @@ required|scripts/tlh-defaults.mjs
 required|scripts/lib/default-extensions.mjs
 required|scripts/tlh-gnosis.mjs
 required|scripts/tlh-tickets.mjs
+required|scripts/tlh-rtk.mjs
 required|scripts/tlh-recover-update.mjs
 optional|scripts/tlh-update.mjs
 optional|scripts/tlh-wrapper.mjs
@@ -392,7 +429,6 @@ required|config/default-extensions.json
 EOF_SUPPORT_FILES
   if [[ "${NO_SETTINGS}" != "true" ]]; then
     cat <<'EOF_SETTINGS_SUPPORT_FILES'
-required|config/librarian.defaults.json
 required|scripts/merge-keybindings.mjs
 required|config/keybindings.defaults.json
 EOF_SETTINGS_SUPPORT_FILES
@@ -553,6 +589,30 @@ fetch_remote_support_root() {
   fi
 }
 
+# Remote/stale stage-0 installers cannot reliably tell whether their embedded
+# support manifest still matches the requested ref, so refresh install.sh once
+# before any manifest-driven fetches. Local checkouts and dry runs bypass this.
+canonicalize_stage0_installer() {
+  require_command curl
+  TMP_DIR="$(mktemp -d)"
+  TMP_DIR="$(cd "${TMP_DIR}" >/dev/null 2>&1 && pwd -P)"
+
+  local canonical_installer="${TMP_DIR}/install.sh"
+  log "Refreshing installer stage-0 from ${RAW_BASE}/install.sh before fetching support files."
+  if ! fetch_support_file "${RAW_BASE}/install.sh" "${canonical_installer}"; then
+    rm -f "${canonical_installer}"
+    die "unable to refresh installer stage-0 from ${RAW_BASE}/install.sh for ref ${REF}"
+  fi
+
+  if [[ "${#ORIGINAL_ARGS[@]}" -eq 0 ]]; then
+    TLH_REPO="${REPO}" TLH_REF="${REF}" TLH_RAW_BASE="${RAW_BASE}" TLH_UPDATE_TRACK="${UPDATE_TRACK_INPUT}" \
+      _TLH_STAGE0_CANONICALIZED=1 bash "${canonical_installer}"
+  else
+    TLH_REPO="${REPO}" TLH_REF="${REF}" TLH_RAW_BASE="${RAW_BASE}" TLH_UPDATE_TRACK="${UPDATE_TRACK_INPUT}" \
+      _TLH_STAGE0_CANONICALIZED=1 bash "${canonical_installer}" "${ORIGINAL_ARGS[@]}"
+  fi
+}
+
 run_stage1() {
   local support_root="$1"
   require_command node
@@ -566,12 +626,11 @@ run_stage1() {
 }
 
 dry_run_without_stage1() {
-  local agent_dir bin_dir settings_path keybindings_path librarian_config_path package_source
+  local agent_dir bin_dir settings_path keybindings_path package_source
   agent_dir="$(normalize_path_for_stage0 "${AGENT_DIR_INPUT}")"
   bin_dir="$(normalize_path_for_stage0 "${BIN_DIR_INPUT}")"
   settings_path="${agent_dir}/settings.json"
   keybindings_path="${agent_dir}/keybindings.json"
-  librarian_config_path="${agent_dir}/extensions/librarian.json"
   package_source="${TLH_PACKAGE_SOURCE:-git:github.com/${REPO}@${REF}}"
 
   log "The Last Harness installer"
@@ -587,11 +646,12 @@ dry_run_without_stage1() {
   else
     log "Would merge settings defaults into: ${settings_path}"
     log "Would merge keybinding defaults into: ${keybindings_path}"
-    log "Would create isolated Librarian config when missing: ${librarian_config_path}"
     log "Would install bundled default extension packages after settings merge."
   fi
   log "Would fetch Gnosis integration support files."
   log "Would fetch tlh tickets support files."
+  log "Would fetch tlh RTK support files."
+  log "Would install managed RTK into isolated profile: ${agent_dir}/bin/rtk"
   log "Would fetch tlh update support files."
   log "Would fetch tlh wrapper support files."
   log "Would fetch tlh install-state support files."
@@ -609,19 +669,27 @@ dry_run_without_stage1() {
 }
 
 validate_stage0_fallback_targets
-require_supported_node_stage0
 
 LOCAL_SUPPORT_ROOT=""
 if LOCAL_SUPPORT_ROOT="$(find_local_support_root)"; then
+  require_supported_node_stage0
   run_stage1 "${LOCAL_SUPPORT_ROOT}"
   exit $?
 fi
 
 if [[ "${DRY_RUN}" == "true" ]]; then
+  require_supported_node_stage0
   dry_run_without_stage1
   exit 0
 fi
 
+if [[ "${_TLH_STAGE0_CANONICALIZED:-}" != "1" ]]; then
+  require_command node
+  canonicalize_stage0_installer
+  exit $?
+fi
+
+require_supported_node_stage0
 require_command node
 fetch_remote_support_root
 run_stage1 "${TMP_DIR}"

@@ -24,7 +24,7 @@ import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import { applyProviderAwareSubagentModels, selectProviderAwareAgentDefaults } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
-import { isThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
+import { isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
 import {
 	buildChildSubagentSystemPrompt,
 	buildTlhSystemPrompt,
@@ -500,7 +500,7 @@ function createTlhPrimaryAgentRuntime(
 		if (currentThinking === thinking || currentThinkingSatisfiesPrimaryFloor(primary, currentThinking)) {
 			return;
 		}
-		pi.setThinkingLevel(thinking);
+		setExtensionThinkingLevel(pi, thinking);
 	}
 
 	async function applyPrimaryDefaults(ctx: ExtensionContext): Promise<void> {
@@ -805,14 +805,6 @@ function createTlhPrimaryAgentRuntime(
 			const selection = currentPrimaryAgentSelection();
 			const allowedSubagents = allowedSubagentsForExperimentalConfig(getTlhGlobalSettings(ctx.cwd).tlh?.experimental);
 			if (!isEnabledPrimaryAgentSelection(selection)) {
-				if (subagentCallTargetsAgent(event.input, "contrarian")) {
-					const contrarianReason = validateSubagentToolInput({ agent: "contrarian" }, { allowedSubagents });
-					if (contrarianReason) {
-						return { block: true, reason: contrarianReason };
-					}
-					const disabledReason = validateSubagentToolInput(event.input, { allowedSubagents });
-					return disabledReason ? { block: true, reason: disabledReason } : undefined;
-				}
 				if (!isSubagentResumeAction(event.input)) {
 					return undefined;
 				}

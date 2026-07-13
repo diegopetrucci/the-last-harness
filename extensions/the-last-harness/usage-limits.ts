@@ -1,19 +1,36 @@
-import { SettingsManager, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { SettingsManager, getAgentDir, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-import { formatHomePath, isRecord } from "./common.js";
-import { withLockedTlhSettingsWrite } from "./profile-state.js";
-import type {
-	TlhSettings,
-	TlhUsageLimitsConfig,
-	TlhUsageLimitsWriteResult,
-	TlhUsageWeeklyAction,
-} from "./types.js";
+import type { TlhSettings, TlhUsageLimitsConfig } from "./types.js";
 
-type TlhUsageSlashAction =
-	| { type: "status" }
-	| { type: "weekly"; action: TlhUsageWeeklyAction };
+export const USAGE_COMMAND_HELP = "Usage: /usage [status|weekly on|weekly off|weekly toggle]. With no argument, /usage shows status.";
 
-const USAGE_COMMAND_HELP = "Usage: /usage [status|weekly on|weekly off|weekly toggle]. With no argument, /usage shows status.";
+const USAGE_COMMAND_COMPLETIONS = [
+	{ value: "status", description: "Show TLH usage-limit footer preferences" },
+	{ value: "weekly on", description: "Show the weekly usage-limit window in the footer" },
+	{ value: "weekly off", description: "Hide the weekly usage-limit window in the footer" },
+	{ value: "weekly toggle", description: "Toggle the weekly usage-limit window in the footer" },
+] as const;
+
+type UsageLimitsCommandModule = {
+	handleUsageCommand(args: string, ctx: ExtensionCommandContext): Promise<void>;
+};
+
+type TlhUsageCommandFacadeOptions = {
+	loadModule?: () => Promise<UsageLimitsCommandModule>;
+};
+
+function createRetryableLazyImport<TModule>(loader: () => Promise<TModule>): () => Promise<TModule> {
+	let modulePromise: Promise<TModule> | undefined;
+	return () => {
+		if (!modulePromise) {
+			modulePromise = loader().catch((error) => {
+				modulePromise = undefined;
+				throw error;
+			});
+		}
+		return modulePromise;
+	};
+}
 
 export function getTlhUsageLimitsConfig(cwd: string): TlhUsageLimitsConfig | undefined {
 	try {
@@ -24,131 +41,26 @@ export function getTlhUsageLimitsConfig(cwd: string): TlhUsageLimitsConfig | und
 	}
 }
 
-export function shouldShowTlhUsageWeekly(config: TlhUsageLimitsConfig | undefined): boolean {
-	return config?.showWeekly === true;
-}
-
-function validateTlhUsageLimitsSettings(settings: unknown): asserts settings is TlhSettings {
-	if (!isRecord(settings)) {
-		throw new Error("settings.json must contain a JSON object");
-	}
-	const tlh = settings.tlh;
-	if (tlh !== undefined && !isRecord(tlh)) {
-		throw new Error("settings field 'tlh' must be an object if present");
-	}
-	const usageLimits = isRecord(tlh) ? tlh.usageLimits : undefined;
-	if (usageLimits !== undefined && !isRecord(usageLimits)) {
-		throw new Error("settings field 'tlh.usageLimits' must be an object if present");
-	}
-}
-
-function ensureMutableUsageLimitsSettings(settings: TlhSettings): asserts settings is TlhSettings & {
-	tlh: { usageLimits: TlhUsageLimitsConfig };
-} {
-	validateTlhUsageLimitsSettings(settings);
-	settings.tlh ??= {};
-	settings.tlh.usageLimits ??= {};
-}
-
-function parseTlhSettingsContent(content: string | undefined): TlhSettings {
-	if (!content) {
-		return {};
-	}
-	const parsed = JSON.parse(content) as unknown;
-	validateTlhUsageLimitsSettings(parsed);
-	return parsed;
-}
-
-function writeTlhUsageWeeklyPreference(cwd: string, showWeekly: boolean): TlhUsageLimitsWriteResult {
-	return withLockedTlhSettingsWrite(cwd, "Refusing to write usage-limit settings outside the isolated TLH profile.", (current) => {
-		const settings = parseTlhSettingsContent(current);
-		ensureMutableUsageLimitsSettings(settings);
-
-		if (settings.tlh.usageLimits.showWeekly === showWeekly) {
-			return { changed: false };
-		}
-
-		settings.tlh.usageLimits.showWeekly = showWeekly;
-		return {
-			changed: true,
-			nextContent: `${JSON.stringify(settings, null, 2)}\n`,
-		};
-	});
-}
-
-function parseUsageSlashAction(args: string): TlhUsageSlashAction | undefined {
-	const parts = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
-	if (parts.length === 0) {
-		return { type: "status" };
-	}
-	if (parts.length === 1 && parts[0] === "status") {
-		return { type: "status" };
-	}
-	if (parts.length === 2 && parts[0] === "weekly") {
-		const action = parts[1];
-		if (action === "on" || action === "off" || action === "toggle") {
-			return { type: "weekly", action };
-		}
-	}
-	return undefined;
-}
-
-function nextWeeklyPreference(current: boolean, action: TlhUsageWeeklyAction): boolean {
-	if (action === "on") return true;
-	if (action === "off") return false;
-	return !current;
-}
-
-function formatUsageWeeklyStatus(showWeekly: boolean): string {
-	return showWeekly
-		? "TLH usage weekly window is shown. Use /usage weekly off to hide it, or /usage weekly toggle."
-		: "TLH usage weekly window is hidden (default when unset). Use /usage weekly on to show it, or /usage weekly toggle.";
+export function shouldShowTlhUsageWeekly(config: TlhUsageLimitsConfig | undefined): boolean | undefined {
+	return config?.showWeekly;
 }
 
 function usageCommandCompletions(prefix: string) {
-	const options = [
-		{ value: "status", description: "Show TLH usage-limit footer preferences" },
-		{ value: "weekly on", description: "Show the weekly usage-limit window in the footer" },
-		{ value: "weekly off", description: "Hide the weekly usage-limit window in the footer" },
-		{ value: "weekly toggle", description: "Toggle the weekly usage-limit window in the footer" },
-	];
 	const normalizedPrefix = prefix.trim().toLowerCase();
-	const completions = options
+	const completions = USAGE_COMMAND_COMPLETIONS
 		.filter((option) => option.value.startsWith(normalizedPrefix))
 		.map((option) => ({ value: option.value, label: option.value, description: option.description }));
 	return completions.length > 0 ? completions : null;
 }
 
-export function registerUsageCommand(pi: ExtensionAPI): void {
+export function registerUsageCommand(pi: ExtensionAPI, options: TlhUsageCommandFacadeOptions = {}): void {
+	const loadModule = createRetryableLazyImport(options.loadModule ?? (() => import("./usage-limits-command.js") as Promise<UsageLimitsCommandModule>));
 	pi.registerCommand("usage", {
 		description: "Show or change TLH usage-limit footer preferences",
 		getArgumentCompletions: usageCommandCompletions,
 		handler: async (args, ctx) => {
-			const command = parseUsageSlashAction(args);
-			if (!command) {
-				ctx.ui.notify(USAGE_COMMAND_HELP, "error");
-				return;
-			}
-
-			const currentShowWeekly = shouldShowTlhUsageWeekly(getTlhUsageLimitsConfig(ctx.cwd));
-			if (command.type === "status") {
-				ctx.ui.notify(formatUsageWeeklyStatus(currentShowWeekly), "info");
-				return;
-			}
-
-			const nextShowWeekly = nextWeeklyPreference(currentShowWeekly, command.action);
-			try {
-				const result = writeTlhUsageWeeklyPreference(ctx.cwd, nextShowWeekly);
-				const changedLabel = result.changed ? "Updated" : "No change to";
-				const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
-				ctx.ui.notify(
-					`${changedLabel} TLH usage weekly-window preference at ${formatHomePath(result.settingsPath)}. ${formatUsageWeeklyStatus(nextShowWeekly)}${backupLabel}`,
-					"info",
-				);
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				ctx.ui.notify(`Could not update TLH usage weekly-window preference: ${message}`, "error");
-			}
+			const module = await loadModule();
+			await module.handleUsageCommand(args, ctx);
 		},
 	});
 }

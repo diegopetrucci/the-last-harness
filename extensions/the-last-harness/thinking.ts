@@ -1,5 +1,12 @@
+// Legacy Pi typing-compatibility shim retained for re-evaluation on the next Pi bump.
+// See ../../docs/upstream-sync-inventory.md for sync/review guidance.
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
 import { FALLBACK_THINKING_LEVELS, THINKING_LEVEL_DESCRIPTIONS, THINKING_LEVELS } from "./constants.js";
 import type { ReasoningModel, ThinkingLevel } from "./types.js";
+
+// Legacy compatibility alias/cast; Pi 0.80.6 already includes "max" in this API.
+type RuntimeThinkingLevel = Parameters<ExtensionAPI["setThinkingLevel"]>[0];
 
 export function getAvailableThinkingLevels(model: ReasoningModel | undefined): ThinkingLevel[] {
 	if (!model) {
@@ -14,7 +21,7 @@ export function getAvailableThinkingLevels(model: ReasoningModel | undefined): T
 		if (mapped === null) {
 			return false;
 		}
-		if (level === "xhigh") {
+		if (level === "xhigh" || level === "max") {
 			return mapped !== undefined;
 		}
 		return true;
@@ -36,4 +43,11 @@ export function parseThinkingLevelOption(option: string): ThinkingLevel | undefi
 
 export function thinkingLevelAtLeast(level: ThinkingLevel, floor: ThinkingLevel): boolean {
 	return THINKING_LEVELS.indexOf(level) >= THINKING_LEVELS.indexOf(floor);
+}
+
+export function setExtensionThinkingLevel(
+	pi: Pick<ExtensionAPI, "setThinkingLevel">,
+	level: ThinkingLevel,
+): void {
+	pi.setThinkingLevel(level as RuntimeThinkingLevel);
 }

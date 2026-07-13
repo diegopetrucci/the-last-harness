@@ -118,6 +118,10 @@ export type TlhModelVisibilityConfig = {
 	unhide?: string[];
 };
 
+export type TlhRtkConfig = {
+	disabled?: boolean;
+};
+
 export type TlhSettings = {
 	tlh?: {
 		usageLimits?: TlhUsageLimitsConfig;
@@ -129,6 +133,7 @@ export type TlhSettings = {
 		experimental?: TlhExperimentalConfig;
 		contextCap?: TlhContextCapConfig;
 		modelVisibility?: TlhModelVisibilityConfig;
+		rtk?: TlhRtkConfig;
 	};
 };
 
@@ -226,7 +231,7 @@ export type SubagentMetadata = {
 	preferOppositeProvider?: boolean;
 };
 
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export type ReasoningModel = {
 	reasoning?: boolean;

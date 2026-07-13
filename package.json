@@ -1,6 +1,6 @@
 {
   "name": "the-last-harness",
-  "version": "0.26.0",
+  "version": "0.29.0",
   "description": "The Last Harness Pi package",
   "license": "MIT",
   "type": "module",
@@ -8,7 +8,14 @@
     "pi-package",
     "pi",
     "coding-agent",
-    "agent"
+    "agent",
+    "developer-tools",
+    "cli",
+    "terminal",
+    "typescript",
+    "llm",
+    "orchestration",
+    "tlh"
   ],
   "repository": {
     "type": "git",
@@ -22,12 +29,18 @@
     "node": ">=22.19.0"
   },
   "scripts": {
+    "build": "npm run build:runtime",
+    "build:runtime": "node scripts/runtime-typescript.mjs build",
     "check:package-versions": "node scripts/check-package-versions.mjs",
-    "lint": "eslint \"scripts/**/*.{js,mjs,ts}\" \"tests/**/*.{js,mjs,ts}\" \"extensions/**/*.{js,mjs,ts}\"",
+    "check:runtime": "node scripts/runtime-typescript.mjs check",
+    "check:startup-performance": "node scripts/check-startup-performance.mjs",
+    "lint": "eslint \"scripts/**/*.{js,mjs,ts,mts}\" \"tests/**/*.{js,mjs,ts,mts}\" \"extensions/**/*.{js,mjs,ts,mts}\"",
+    "lint:sh": "git ls-files '*.sh' | xargs shellcheck",
+    "test": "node --test --test-reporter=dot \"tests/**/*.test.mjs\"",
+    "test:verbose": "node --test \"tests/**/*.test.mjs\"",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --test-reporter=dot tests/*.test.mjs",
-    "test:verbose": "node --test tests/*.test.mjs",
-    "validate": "npm run check:package-versions && bash scripts/check-installer-smoke.sh && npm run typecheck && npm test && npm run lint && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
+    "typecheck:runtime": "node scripts/runtime-typescript.mjs typecheck",
+    "validate": "npm run check:package-versions && npm run typecheck && npm run typecheck:runtime && npm run check:runtime && bash scripts/check-installer-smoke.sh && npm test && npm run lint && npm run lint:sh && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
   },
   "files": [
     "agents",
@@ -58,23 +71,24 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.80.1 <=0.80.2",
-    "@earendil-works/pi-tui": ">=0.80.1 <=0.80.2"
+    "@earendil-works/pi-coding-agent": "0.80.6",
+    "@earendil-works/pi-tui": "0.80.6"
   },
   "dependencies": {
-    "@tailwindcss/browser": "4.3.1",
+    "@tailwindcss/browser": "4.3.2",
     "glimpseui": "0.8.1",
-    "monaco-editor": "0.55.1"
+    "monaco-editor": "0.53.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.80.2",
-    "@earendil-works/pi-tui": "0.80.2",
+    "@earendil-works/pi-coding-agent": "0.80.6",
+    "@earendil-works/pi-tui": "0.80.6",
     "@eslint/js": "10.0.1",
-    "@types/node": "26.0.0",
-    "eslint": "10.5.0",
+    "@types/node": "26.1.1",
+    "eslint": "10.6.0",
     "globals": "17.7.0",
     "jiti": "2.7.0",
     "typescript": "6.0.3",
-    "typescript-eslint": "8.62.0"
+    "shellcheck": "4.1.0",
+    "typescript-eslint": "8.63.0"
   }
 }

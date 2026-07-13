@@ -2,8 +2,8 @@ import js from "@eslint/js";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 
-const targetFiles = ["scripts/**/*.{js,mjs,ts}", "tests/**/*.{js,mjs,ts}", "extensions/**/*.{js,mjs,ts}"];
-const typescriptFiles = ["scripts/**/*.ts", "tests/**/*.ts", "extensions/**/*.ts"];
+const targetFiles = ["scripts/**/*.{js,mjs,ts,mts}", "tests/**/*.{js,mjs,ts,mts}", "extensions/**/*.{js,mjs,ts,mts}"];
+const typescriptFiles = ["scripts/**/*.{ts,mts}", "tests/**/*.{ts,mts}", "extensions/**/*.{ts,mts}"];
 
 const unusedArgsOptions = { argsIgnorePattern: "^_" };
 

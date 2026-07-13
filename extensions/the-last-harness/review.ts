@@ -29,6 +29,10 @@ type ReviewSettings = {
 
 const REVIEW_REQUIRED_PRIMARY: ReviewPrimaryAgentSelection = "architect";
 
+// Intentionally not imported from "./common.js" (see issue #296): review.ts is loaded
+// in tests via a native Node strip-types `import`, which — unlike the jiti.import()
+// loader used by other extension tests — does not remap "./common.js" to "./common.ts",
+// so that import would fail with ERR_MODULE_NOT_FOUND.
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -388,6 +392,207 @@ function rejectFlagLike(value: string, fieldName: string): { ok: true } | { ok: 
 		return { ok: false, message: `${fieldName} cannot start with '-' (got '${value}'). If this is intentional, run the underlying command manually.` };
 	}
 	return { ok: true };
+}
+
+function isGhGraphqlQuotaFailure(stderr: string): boolean {
+	return /graphql/i.test(stderr) && /(rate limit|quota|submitted too quickly)/i.test(stderr);
+}
+
+type GitHubRepoRef = { owner: string; repo: string };
+type GitHubPrRef = GitHubRepoRef & { number: number };
+type GitHubRestPrMetadata = {
+	number: number;
+	headRefName: string;
+	baseRefName: string;
+	isCrossRepository: boolean;
+};
+
+function parseGitHubPrUrl(value: string): GitHubPrRef | undefined {
+	try {
+		const url = new URL(value);
+		if (url.hostname !== "github.com") {
+			return undefined;
+		}
+		const match = url.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/.*)?$/);
+		if (!match) {
+			return undefined;
+		}
+		return { owner: match[1], repo: match[2], number: Number.parseInt(match[3], 10) };
+	} catch {
+		return undefined;
+	}
+}
+
+function parseGitHubRepoSlug(value: string): GitHubRepoRef | undefined {
+	const match = value.trim().match(/^([^/\s]+)\/([^/\s]+)$/u);
+	if (!match) {
+		return undefined;
+	}
+	return { owner: match[1], repo: match[2] };
+}
+
+function parseGitHubRemoteUrl(value: string): GitHubRepoRef | undefined {
+	const trimmed = value.trim();
+	const sshMatch = trimmed.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/i);
+	if (sshMatch) {
+		return { owner: sshMatch[1], repo: sshMatch[2] };
+	}
+
+	try {
+		const url = new URL(trimmed);
+		if (url.hostname !== "github.com") {
+			return undefined;
+		}
+		const match = url.pathname.match(/^\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+		if (!match) {
+			return undefined;
+		}
+		return { owner: match[1], repo: match[2] };
+	} catch {
+		return undefined;
+	}
+}
+
+async function resolveGitHubRepoRefFromGhDefault(pi: ExtensionAPI, cwd: string): Promise<GitHubRepoRef | undefined> {
+	const defaultRepoResult = await pi.exec("gh", ["repo", "set-default", "--view"], { cwd });
+	if (defaultRepoResult.code !== 0) {
+		return undefined;
+	}
+
+	for (const line of defaultRepoResult.stdout.split(/\r?\n/u)) {
+		const repoRef = parseGitHubRepoSlug(line);
+		if (repoRef) {
+			return repoRef;
+		}
+	}
+
+	return undefined;
+}
+
+async function resolveGitHubRepoRefFromLocalRemotes(
+	pi: ExtensionAPI,
+	cwd: string,
+): Promise<{ ok: true; repoRef: GitHubRepoRef } | { ok: false; message: string }> {
+	const remoteListResult = await pi.exec("git", ["remote"], { cwd });
+	if (remoteListResult.code !== 0) {
+		const firstLine = remoteListResult.stderr.split("\n")[0]?.trim() || "git remote failed";
+		return { ok: false, message: `could not list git remotes: ${firstLine}` };
+	}
+
+	const remoteNames = remoteListResult.stdout
+		.split(/\r?\n/u)
+		.map((name) => name.trim())
+		.filter(Boolean);
+	if (remoteNames.length === 0) {
+		return { ok: false, message: "could not resolve GitHub repository because this repo has no git remotes" };
+	}
+
+	const orderedRemoteNames = Array.from(new Set(["origin", ...remoteNames]));
+	const remoteFailures: string[] = [];
+	for (const remoteName of orderedRemoteNames) {
+		const remoteUrlResult = await pi.exec("git", ["remote", "get-url", remoteName], { cwd });
+		if (remoteUrlResult.code !== 0) {
+			const firstLine = remoteUrlResult.stderr.split("\n")[0]?.trim() || `git remote get-url ${remoteName} failed`;
+			remoteFailures.push(`${remoteName}: ${firstLine}`);
+			continue;
+		}
+
+		const repoRef = parseGitHubRemoteUrl(remoteUrlResult.stdout);
+		if (repoRef) {
+			return { ok: true, repoRef };
+		}
+		remoteFailures.push(`${remoteName}: unsupported remote URL '${remoteUrlResult.stdout.trim()}'`);
+	}
+
+	return {
+		ok: false,
+		message: `could not parse a GitHub owner/repo from local git remotes (${remoteFailures.join("; ")})`,
+	};
+}
+
+async function resolveGitHubPrRef(
+	pi: ExtensionAPI,
+	cwd: string,
+	nOrUrl: string,
+	prNumberHint: number | undefined,
+): Promise<{ ok: true; prRef: GitHubPrRef } | { ok: false; message: string }> {
+	const urlRef = parseGitHubPrUrl(nOrUrl);
+	if (urlRef) {
+		return { ok: true, prRef: urlRef };
+	}
+
+	if (prNumberHint === undefined) {
+		return { ok: false, message: `could not resolve a PR number from '${nOrUrl}'` };
+	}
+
+	const ghDefaultRepoRef = await resolveGitHubRepoRefFromGhDefault(pi, cwd);
+	if (ghDefaultRepoRef) {
+		return { ok: true, prRef: { ...ghDefaultRepoRef, number: prNumberHint } };
+	}
+
+	const repoRefResult = await resolveGitHubRepoRefFromLocalRemotes(pi, cwd);
+	if (repoRefResult.ok === false) {
+		return { ok: false, message: repoRefResult.message };
+	}
+
+	return { ok: true, prRef: { ...repoRefResult.repoRef, number: prNumberHint } };
+}
+
+async function fetchPrMetadataViaRest(
+	pi: ExtensionAPI,
+	cwd: string,
+	prRef: GitHubPrRef,
+): Promise<{ ok: true; prData: GitHubRestPrMetadata } | { ok: false; message: string }> {
+	const result = await pi.exec("gh", ["api", `repos/${prRef.owner}/${prRef.repo}/pulls/${prRef.number}`], { cwd });
+	if (result.code !== 0) {
+		const firstLine = result.stderr.split("\n")[0]?.trim() || "gh api failed";
+		return { ok: false, message: firstLine };
+	}
+
+	try {
+		const payload = JSON.parse(result.stdout) as {
+			number?: number;
+			head?: { ref?: string; repo?: { full_name?: string | null } | null };
+			base?: { ref?: string; repo?: { full_name?: string | null } | null };
+		};
+		const number = typeof payload.number === "number" ? payload.number : prRef.number;
+		const headRefName = payload.head?.ref;
+		const baseRefName = payload.base?.ref;
+		if (!headRefName || !baseRefName) {
+			return { ok: false, message: "REST PR metadata response was missing head/base refs" };
+		}
+		return {
+			ok: true,
+			prData: {
+				number,
+				headRefName,
+				baseRefName,
+				isCrossRepository:
+					typeof payload.head?.repo?.full_name === "string" && typeof payload.base?.repo?.full_name === "string"
+						? payload.head.repo.full_name !== payload.base.repo.full_name
+						: false,
+			},
+		};
+	} catch {
+		return { ok: false, message: "Could not parse REST PR metadata response" };
+	}
+}
+
+async function fetchPrDiffViaRest(
+	pi: ExtensionAPI,
+	cwd: string,
+	prRef: GitHubPrRef,
+): Promise<{ ok: true; diff: string } | { ok: false; message: string }> {
+	const result = await pi.exec(
+		"gh",
+		["api", "-H", "Accept: application/vnd.github.v3.diff", `repos/${prRef.owner}/${prRef.repo}/pulls/${prRef.number}`],
+		{ cwd },
+	);
+	if (result.code !== 0) {
+		const firstLine = result.stderr.split("\n")[0]?.trim() || "gh api failed";
+		return { ok: false, message: firstLine };
+	}
+	return { ok: true, diff: result.stdout };
 }
 
 /**
@@ -885,22 +1090,44 @@ async function gatherPr(
 		["pr", "view", nOrUrl, "--json", "number,headRefName,baseRefName,isCrossRepository,headRepository"],
 		{ cwd },
 	);
+	let prRef: GitHubPrRef | undefined;
+	let prData: { number: number; headRefName: string; baseRefName: string; isCrossRepository: boolean };
 	if (prViewResult.code !== 0) {
 		const firstLine = prViewResult.stderr.split("\n")[0]?.trim() ?? "";
-		return {
-			ok: false,
-			message: `Could not resolve PR '${nOrUrl}': ${firstLine}`,
-		};
-	}
+		if (!isGhGraphqlQuotaFailure(prViewResult.stderr)) {
+			return {
+				ok: false,
+				message: `Could not resolve PR '${nOrUrl}': ${firstLine}`,
+			};
+		}
 
-	let prData: { number: number; headRefName: string; baseRefName: string; isCrossRepository: boolean };
-	try {
-		prData = JSON.parse(prViewResult.stdout) as typeof prData;
-	} catch {
-		return {
-			ok: false,
-			message: `Could not parse PR metadata for '${nOrUrl}'.`,
-		};
+		const prNumberHint = /^\d+$/u.test(nOrUrl.trim()) ? Number.parseInt(nOrUrl.trim(), 10) : undefined;
+		const prRefResult = await resolveGitHubPrRef(pi, cwd, nOrUrl, prNumberHint);
+		if (prRefResult.ok === false) {
+			return {
+				ok: false,
+				message: `gh pr view hit a GraphQL quota/rate-limit error for '${nOrUrl}': ${firstLine}. REST fallback could not resolve the PR target: ${prRefResult.message}`,
+			};
+		}
+		prRef = prRefResult.prRef;
+
+		const restPrResult = await fetchPrMetadataViaRest(pi, cwd, prRef);
+		if (restPrResult.ok === false) {
+			return {
+				ok: false,
+				message: `gh pr view hit a GraphQL quota/rate-limit error for '${nOrUrl}': ${firstLine}. REST fallback also failed: ${restPrResult.message}`,
+			};
+		}
+		prData = restPrResult.prData;
+	} else {
+		try {
+			prData = JSON.parse(prViewResult.stdout) as typeof prData;
+		} catch {
+			return {
+				ok: false,
+				message: `Could not parse PR metadata for '${nOrUrl}'.`,
+			};
+		}
 	}
 
 	if (prData.isCrossRepository === true) {
@@ -983,21 +1210,54 @@ async function gatherPr(
 
 	// 7. Diff gathering
 	const diffResult = await pi.exec("gh", ["pr", "diff", String(prNumber)], { cwd });
+	let diffBody: string;
 	if (diffResult.code !== 0) {
 		const firstLine = diffResult.stderr.split("\n")[0]?.trim() ?? "";
-		return {
-			ok: false,
-			message: formatPostCheckoutPrFailure(
-				`gh pr diff failed for PR #${prNumber}: ${firstLine}`,
-				checkoutCtx,
-				effectiveBranch,
-			),
-		};
+		if (!isGhGraphqlQuotaFailure(diffResult.stderr)) {
+			return {
+				ok: false,
+				message: formatPostCheckoutPrFailure(
+					`gh pr diff failed for PR #${prNumber}: ${firstLine}`,
+					checkoutCtx,
+					effectiveBranch,
+				),
+			};
+		}
+
+		if (!prRef) {
+			const prRefResult = await resolveGitHubPrRef(pi, cwd, nOrUrl, prNumber);
+			if (prRefResult.ok === false) {
+				return {
+					ok: false,
+					message: formatPostCheckoutPrFailure(
+						`gh pr diff hit a GraphQL quota/rate-limit error for PR #${prNumber}: ${firstLine}. REST fallback could not resolve the PR target: ${prRefResult.message}`,
+						checkoutCtx,
+						effectiveBranch,
+					),
+				};
+			}
+			prRef = prRefResult.prRef;
+		}
+
+		const restDiffResult = await fetchPrDiffViaRest(pi, cwd, prRef);
+		if (restDiffResult.ok === false) {
+			return {
+				ok: false,
+				message: formatPostCheckoutPrFailure(
+					`gh pr diff hit a GraphQL quota/rate-limit error for PR #${prNumber}: ${firstLine}. REST fallback also failed: ${restDiffResult.message}`,
+					checkoutCtx,
+					effectiveBranch,
+				),
+			};
+		}
+		diffBody = restDiffResult.diff;
+	} else {
+		diffBody = diffResult.stdout;
 	}
 
 	const ctx: ReviewGatheredContext = {
 		currentBranch: effectiveBranch,
-		body: diffResult.stdout,
+		body: diffBody,
 		bodyKind: "diff",
 	};
 	if (checkoutCtx !== undefined) {
@@ -1057,47 +1317,53 @@ async function dispatchReviewMode(
 
 // --- Argument completions ---
 
-function getReviewArgumentCompletions() {
+export const REVIEW_COMMAND_DESCRIPTION = "Review code changes via an interactive mode picker";
+
+export function getReviewArgumentCompletions() {
 	return null;
+}
+
+export function createReviewCommandHandler(pi: ExtensionAPI) {
+	return async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+		const activePrimary = currentReviewPrimaryAgentSelection(ctx);
+		if (activePrimary !== REVIEW_REQUIRED_PRIMARY) {
+			ctx.ui.notify(reviewPrimaryBlockedMessage(activePrimary), "error");
+			return;
+		}
+
+		const argv = tokenizeArgs(args);
+		const parsed = parseReviewArgs(argv);
+
+		if (parsed.pickerRequested === false) {
+			ctx.ui.notify(parsed.message, "error");
+			return;
+		}
+
+		if (!ctx.hasUI) {
+			ctx.ui.notify(REVIEW_TUI_REQUIRED_MESSAGE, "error");
+			return;
+		}
+
+		const mode = await showReviewPicker(ctx);
+		if (mode === undefined) {
+			// User cancelled — clean no-op.
+			return;
+		}
+		const completedArgs = await completePickedArgs(ctx, mode);
+		if (completedArgs === undefined) {
+			// User cancelled or left required follow-up input blank.
+			return;
+		}
+		await dispatchReviewMode(pi, ctx, completedArgs);
+	};
 }
 
 // --- Command registration ---
 
 export function registerReviewCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("review", {
-		description: "Review code changes via an interactive mode picker",
+		description: REVIEW_COMMAND_DESCRIPTION,
 		getArgumentCompletions: getReviewArgumentCompletions,
-		handler: async (args, ctx) => {
-			const activePrimary = currentReviewPrimaryAgentSelection(ctx);
-			if (activePrimary !== REVIEW_REQUIRED_PRIMARY) {
-				ctx.ui.notify(reviewPrimaryBlockedMessage(activePrimary), "error");
-				return;
-			}
-
-			const argv = tokenizeArgs(args);
-			const parsed = parseReviewArgs(argv);
-
-			if (parsed.pickerRequested === false) {
-				ctx.ui.notify(parsed.message, "error");
-				return;
-			}
-
-			if (!ctx.hasUI) {
-				ctx.ui.notify(REVIEW_TUI_REQUIRED_MESSAGE, "error");
-				return;
-			}
-
-			const mode = await showReviewPicker(ctx);
-			if (mode === undefined) {
-				// User cancelled — clean no-op.
-				return;
-			}
-			const completedArgs = await completePickedArgs(ctx, mode);
-			if (completedArgs === undefined) {
-				// User cancelled or left required follow-up input blank.
-				return;
-			}
-			await dispatchReviewMode(pi, ctx, completedArgs);
-		},
+		handler: createReviewCommandHandler(pi),
 	});
 }

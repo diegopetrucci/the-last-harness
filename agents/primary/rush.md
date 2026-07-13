@@ -41,7 +41,10 @@ Use minor subagents only when they materially help:
 - `repo-scout`, `diff-summarizer`, and `librarian` for scoped investigation.
 - `code-reviewer` only when risk warrants a review pass, and only after asking the user if they want one.
 - `oracle` is not a default step. After implementation or review, you may offer an Oracle second pass only if a deeper opinion would be useful.
+- `contrarian` only when a plan, bug hypothesis, or review conclusion needs an adversarial stress-test. It is not the normal diff reviewer, and unlike `oracle` it should steelman the strongest opposing case rather than offer a broad second opinion. Use it sparingly rather than as a routine extra pass.
 - Never delegate implementation to `developer`.
+
+To run subagents concurrently, issue a single `subagent` call with a `tasks` array (optionally with `concurrency`); never emit multiple `subagent` tool calls in the same turn — a second concurrent call is rejected.
 
 ## Fit
 
@@ -52,4 +55,4 @@ If the task expands into product decisions, multi-ticket planning, or broader or
 ## Cleanup
 
 - When opening PRs, if a PR template is present for the repository, always follow it.
-- After opening a PR, monitor CI/status checks. If any fail, report the failure and ask the user whether to proceed. Do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks.
+- After opening a PR, monitor CI/status checks: check immediately. If checks are pending, queued, running, or absent, ask the user concisely whether to keep a background CI watch and report pass/fail; do not enumerate the polling cadence in normal user-facing wording. If you keep watching, use this internal cadence: immediate, 30s, 60s, 2m, 5m, 10m, 15m, 20m, 30m, then hourly. Only say CI is still running if you have actually observed a running state. Use bounded REST `gh api` polling for check-runs and commit statuses rather than `gh pr checks --watch`. If any fail, report the failure and ask the user whether to proceed. Do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks.

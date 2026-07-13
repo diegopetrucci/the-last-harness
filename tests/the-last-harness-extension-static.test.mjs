@@ -4,6 +4,7 @@ import { extname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
+import ts from "typescript";
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const extensionsDir = fileURLToPath(new URL("../extensions/", import.meta.url));
@@ -11,24 +12,33 @@ const PI_EXTENSION_FILE_ENTRYPOINT_EXTENSIONS = new Set([".ts", ".js"]);
 const PI_EXTENSION_DIRECTORY_ENTRYPOINT_FILES = ["package.json", "index.ts", "index.js"];
 
 const extensionSource = readFileSync(new URL("../extensions/the-last-harness.ts", import.meta.url), "utf8");
+const rtkExtensionSource = readFileSync(new URL("../extensions/rtk.ts", import.meta.url), "utf8");
+const rtkExtensionLicenseSource = readFileSync(new URL("../extensions/rtk.APACHE-2.0.txt", import.meta.url), "utf8");
 const annotateGitDiffSource = readFileSync(new URL("../extensions/annotate-git-diff/index.ts", import.meta.url), "utf8");
 const annotateGitDiffAppSource = readFileSync(new URL("../extensions/annotate-git-diff/web/app.js", import.meta.url), "utf8");
 const annotateGitDiffHtmlSource = readFileSync(new URL("../extensions/annotate-git-diff/web/index.html", import.meta.url), "utf8");
 const attributionSource = readFileSync(new URL("../extensions/the-last-harness/attribution.ts", import.meta.url), "utf8");
+const attributionCommandSource = readFileSync(new URL("../extensions/the-last-harness/attribution-command.ts", import.meta.url), "utf8");
 const changelogSource = readFileSync(new URL("../extensions/the-last-harness/changelog.ts", import.meta.url), "utf8");
 const experimentalSource = readFileSync(new URL("../extensions/the-last-harness/experimental.ts", import.meta.url), "utf8");
+const experimentalCommandSource = readFileSync(new URL("../extensions/the-last-harness/experimental-command.ts", import.meta.url), "utf8");
+const ticketWorkflowUiFacadeSource = readFileSync(new URL("../extensions/the-last-harness/ticket-workflow-ui-facade.ts", import.meta.url), "utf8");
+const footerFirstLineSource = readFileSync(new URL("../extensions/the-last-harness/footer-first-line.ts", import.meta.url), "utf8");
+const footerGitCacheSource = readFileSync(new URL("../extensions/the-last-harness/footer-git-cache.ts", import.meta.url), "utf8");
+const subscriptionUsageFacadeSource = readFileSync(new URL("../extensions/the-last-harness/subscription-usage-facade.ts", import.meta.url), "utf8");
 const primaryRuntimeSource = readFileSync(new URL("../extensions/the-last-harness/primary-agent-runtime.ts", import.meta.url), "utf8");
 const effortSource = readFileSync(new URL("../extensions/the-last-harness/effort.ts", import.meta.url), "utf8");
+const effortCommandSource = readFileSync(new URL("../extensions/the-last-harness/effort-command.ts", import.meta.url), "utf8");
 const promptsSource = readFileSync(new URL("../extensions/the-last-harness/prompts.ts", import.meta.url), "utf8");
 const tokensSource = readFileSync(new URL("../extensions/the-last-harness/tokens.ts", import.meta.url), "utf8");
 const usageLimitsSource = readFileSync(new URL("../extensions/the-last-harness/usage-limits.ts", import.meta.url), "utf8");
+const usageLimitsCommandSource = readFileSync(new URL("../extensions/the-last-harness/usage-limits-command.ts", import.meta.url), "utf8");
 const profileStateSource = readFileSync(new URL("../extensions/the-last-harness/profile-state.ts", import.meta.url), "utf8");
 const typesSource = readFileSync(new URL("../extensions/the-last-harness/types.ts", import.meta.url), "utf8");
 const jiti = createJiti(import.meta.url);
 const { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents, loadSubagentMetadata } = await jiti.import(
 	"../extensions/the-last-harness/prompts.ts",
 );
-const { TLH_CONTRARIAN_FEATURE } = await jiti.import("../extensions/the-last-harness/experimental.ts");
 const { buildReviewHtml } = await jiti.import("../extensions/annotate-git-diff/ui.ts");
 
 function sourceSection(source, startMarker, endMarker) {
@@ -37,6 +47,105 @@ function sourceSection(source, startMarker, endMarker) {
 	const end = source.indexOf(endMarker, start);
 	assert.notEqual(end, -1, `missing end marker: ${endMarker}`);
 	return source.slice(start, end);
+}
+
+function escapeRegex(value) {
+	return value.replace(/[|\\{}()[\]^$+*?.]/g, "\\$&");
+}
+
+function extractMonacoRuntimeSource(html) {
+	const runtimeSourceMatch = html.match(/<script>\n([\s\S]*?)\n<\/script>\n<script>\nwindow\.__reviewMonacoWorkerSource =/);
+	assert.ok(runtimeSourceMatch, "Monaco language/runtime bundle must be inlined");
+	return runtimeSourceMatch[1];
+}
+
+function resolveAmdModuleId(fromModuleId, target) {
+	const normalizedTarget = target.replace(/\.js$/, "");
+	if (!normalizedTarget.startsWith(".")) {
+		return normalizedTarget;
+	}
+
+	const segments = fromModuleId.split("/");
+	segments.pop();
+	for (const segment of normalizedTarget.split("/")) {
+		if (!segment || segment === ".") {
+			continue;
+		}
+		if (segment === "..") {
+			assert.ok(segments.length > 0, `cannot resolve Monaco AMD module from ${fromModuleId} via ${target}`);
+			segments.pop();
+			continue;
+		}
+		segments.push(segment);
+	}
+	return segments.join("/");
+}
+
+function amdDefineModuleId(statement) {
+	if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) {
+		return null;
+	}
+	if (!ts.isIdentifier(statement.expression.expression) || statement.expression.expression.text !== "define") {
+		return null;
+	}
+	const [moduleIdArgument] = statement.expression.arguments;
+	return ts.isStringLiteral(moduleIdArgument) ? moduleIdArgument.text : null;
+}
+
+function staticImportSpecifiers(source, fileName = "source.ts") {
+	const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+	return sourceFile.statements
+		.filter(ts.isImportDeclaration)
+		.map((statement) => statement.moduleSpecifier)
+		.filter(ts.isStringLiteral)
+		.map((specifier) => specifier.text);
+}
+
+function extractMonacoModuleSource(runtimeSource, moduleId) {
+	const moduleMarker = `define("${moduleId}"`;
+	const start = runtimeSource.indexOf(moduleMarker);
+	assert.notEqual(start, -1, `Monaco module ${moduleId} must be inlined`);
+	const moduleAndFollowingSource = runtimeSource.slice(start);
+	const moduleAst = ts.createSourceFile("monaco-module.js", moduleAndFollowingSource, ts.ScriptTarget.Latest, false, ts.ScriptKind.JS);
+	const [moduleStatement] = moduleAst.statements;
+	assert.equal(amdDefineModuleId(moduleStatement), moduleId, `Monaco module ${moduleId} must be an AMD define() call`);
+	return moduleAndFollowingSource.slice(moduleStatement.getStart(moduleAst), moduleStatement.end);
+}
+
+function discoverBasicLanguageLoaderTarget(runtimeSource, languageId, extensions) {
+	const extensionsPattern = extensions.map((extension) => `"${escapeRegex(extension)}"`).join("\\s*,\\s*");
+	const loaderPatterns = [
+		new RegExp(
+			`id:\\s*"${escapeRegex(languageId)}"[\\s\\S]*?extensions:\\s*\\[${extensionsPattern}\\][\\s\\S]*?loader:\\s*\\(\\)\\s*=>[\\s\\S]*?\\[\\s*"([^"]+)"\\s*\\]`,
+		),
+		new RegExp(
+			`id:\\s*"${escapeRegex(languageId)}"[\\s\\S]*?extensions:\\s*\\[${extensionsPattern}\\][\\s\\S]*?loader:\\s*\\(\\)\\s*=>\\s*import\\(\\s*"([^"]+)"\\s*\\)`,
+		),
+	];
+	const modulePattern = /define\("([^"]+)"[\s\S]*?(?=define\("|$)/g;
+
+	for (const moduleMatch of runtimeSource.matchAll(modulePattern)) {
+		const [, moduleId] = moduleMatch;
+		const moduleSource = moduleMatch[0];
+		for (const pattern of loaderPatterns) {
+			const match = moduleSource.match(pattern);
+			if (match) {
+				return { fromModuleId: moduleId, loaderTarget: match[1] };
+			}
+		}
+	}
+
+	assert.fail(`Monaco basic-language registration for ${languageId} must include an inlined loader target`);
+}
+
+function assertRepresentativeMonacoLanguageChunkInlined(runtimeSource, _contributionModuleId, { id, extensions }) {
+	const { fromModuleId, loaderTarget } = discoverBasicLanguageLoaderTarget(runtimeSource, id, extensions);
+	const targetModuleId = resolveAmdModuleId(fromModuleId, loaderTarget);
+	const targetModuleSource = extractMonacoModuleSource(runtimeSource, targetModuleId);
+
+	assert.ok(targetModuleSource.trim().length > 256, `Monaco ${id} loader target ${targetModuleId} must be non-empty`);
+	assert.match(targetModuleSource, /\.conf\s*=|\bconf:/, `Monaco ${id} chunk must export language configuration`);
+	assert.match(targetModuleSource, /\.language\s*=|\blanguage:/, `Monaco ${id} chunk must export tokenizer/runtime data`);
 }
 
 function discoverPiExtensionEntrypoints(extensionDirectory) {
@@ -68,11 +177,37 @@ function existingNestedExtensionEntrypoints(directoryName) {
 	);
 }
 
+function parseInlineJsonStringAssignment(source, assignmentName) {
+	const escapedAssignmentName = assignmentName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const assignment = source.match(new RegExp(`${escapedAssignmentName} = ("(?:\\\\.|[^"\\\\])*");`));
+	assert.ok(assignment, `${assignmentName} assignment must be present`);
+	return JSON.parse(assignment[1]);
+}
+
 test("package extension discovery exposes the TLH entrypoints", () => {
 	assert.deepEqual(packageJson.pi?.extensions, ["./extensions"]);
 	assert.deepEqual(existingNestedExtensionEntrypoints("the-last-harness"), []);
 	assert.deepEqual(existingNestedExtensionEntrypoints("annotate-git-diff"), ["annotate-git-diff/index.ts"]);
-	assert.deepEqual(discoverPiExtensionEntrypoints(extensionsDir), ["annotate-git-diff/index.ts", "the-last-harness.ts"]);
+	assert.deepEqual(discoverPiExtensionEntrypoints(extensionsDir), ["annotate-git-diff/index.ts", "rtk.ts", "the-last-harness.ts"]);
+});
+
+
+test("vendored RTK extension records Apache provenance and stays rewrite-only", () => {
+	assert.match(rtkExtensionSource, /Vendored from rtk-ai\/rtk v0\.42\.4 \(hooks\/pi\/rtk\.ts\), Apache-2\.0\./);
+	assert.match(rtkExtensionSource, /See \.\/rtk\.APACHE-2\.0\.txt for the upstream license text and provenance\./);
+	assert.match(rtkExtensionLicenseSource, /This file applies to the vendored extension source at extensions\/rtk\.ts\./);
+	assert.match(rtkExtensionLicenseSource, /Upstream project: https:\/\/github\.com\/rtk-ai\/rtk/);
+	assert.match(rtkExtensionLicenseSource, /Upstream tag: v0\.42\.4/);
+	assert.match(rtkExtensionLicenseSource, /Upstream path: hooks\/pi\/rtk\.ts/);
+	assert.match(rtkExtensionLicenseSource, /Apache License\s+Version 2\.0, January 2004/);
+	assert.match(rtkExtensionSource, /RTK_DISABLED=1 and the isolated-profile setting tlh\.rtk\.disabled/);
+	assert.match(rtkExtensionSource, /join\(getAgentDir\(\), "bin", "rtk"\)/);
+	assert.match(rtkExtensionSource, /pi\.exec\(command, \["--version"\]/);
+	assert.match(rtkExtensionSource, /pi\.exec\(rtkCommand, \["rewrite", cmd\]/);
+	assert.doesNotMatch(rtkExtensionSource, /pi\.registerCommand\(/);
+	assert.doesNotMatch(rtkExtensionSource, /"\/rtk"/);
+	assert.match(typesSource, /export type TlhRtkConfig = \{[\s\S]*disabled\?: boolean;/);
+	assert.match(typesSource, /rtk\?: TlhRtkConfig;/);
 });
 
 test("annotate-git-diff source registers the renamed command without a legacy alias", () => {
@@ -86,6 +221,45 @@ test("annotate-git-diff user-facing source copy uses the renamed command", () =>
 	assert.doesNotMatch(annotateGitDiffHtmlSource, /\/diff-review/);
 	assert.match(annotateGitDiffHtmlSource, /<title>TLH annotate-git-diff<\/title>/);
 	assert.match(annotateGitDiffHtmlSource, /<code>\/annotate-git-diff<\/code>/);
+});
+
+test("annotate-git-diff Monaco helper extracts AMD modules across adjacent and whitespace-separated boundaries", () => {
+	const adjacentRuntimeSource =
+		'define("first", [], function () { return { language: true }; });define("second", [], function () { return { conf: true }; });';
+	assert.equal(
+		extractMonacoModuleSource(adjacentRuntimeSource, "first"),
+		'define("first", [], function () { return { language: true }; });',
+	);
+	assert.equal(
+		extractMonacoModuleSource(adjacentRuntimeSource, "second"),
+		'define("second", [], function () { return { conf: true }; });',
+	);
+
+	const whitespaceSeparatedRuntimeSource = [
+		'define("first", [], function () {',
+		'  return { language: true };',
+		'});',
+		' \t ',
+		'  define("second", [], function () {',
+		'    return { conf: true };',
+		'  });',
+	].join("\n");
+	assert.equal(
+		extractMonacoModuleSource(whitespaceSeparatedRuntimeSource, "first"),
+		[
+			'define("first", [], function () {',
+			'  return { language: true };',
+			'});',
+		].join("\n"),
+	);
+	assert.equal(
+		extractMonacoModuleSource(whitespaceSeparatedRuntimeSource, "second"),
+		[
+			'define("second", [], function () {',
+			'    return { conf: true };',
+			'  });',
+		].join("\n"),
+	);
 });
 
 test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs into node_modules", () => {
@@ -111,7 +285,10 @@ test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs i
 	assert.match(html, /\.monaco-editor/, "editor.main.css content must be inlined");
 
 	// Monaco worker source is inlined as a non-empty bundled script.
-	assert.match(html, /window\.__reviewMonacoWorkerSource = "\(function\(\)\{/, "editor worker source must be inlined");
+	const workerSource = parseInlineJsonStringAssignment(html, "window.__reviewMonacoWorkerSource");
+	assert.ok(workerSource.trim().length > 1024, "editor worker bundle must be a non-empty inlined script");
+	assert.match(workerSource, /(?:self|globalThis)\.onmessage\b|onmessage\s*=/, "editor worker bundle must register a worker message handler");
+	assert.match(workerSource, /\bpostMessage\b/, "editor worker bundle must communicate with the host");
 
 	// No unreplaced template markers.
 	assert.doesNotMatch(html, /__INLINE_MONACO_EDITOR_JS__/);
@@ -119,10 +296,20 @@ test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs i
 	assert.doesNotMatch(html, /__INLINE_MONACO_WORKER_SOURCE_JSON__/);
 	assert.doesNotMatch(html, /__INLINE_MONACO_BASIC_LANGUAGES_JS__/, "__INLINE_MONACO_BASIC_LANGUAGES_JS__ marker must be replaced");
 
-	// Monaco language bundles are inlined (representative sample).
-	assert.match(html, /define\("vs\/typescript-/, "TypeScript tokenizer bundle must be inlined");
-	assert.match(html, /define\("vs\/python-/, "Python tokenizer bundle must be inlined");
-	assert.match(html, /define\("vs\/go-/, "Go tokenizer bundle must be inlined");
+	// Monaco language/runtime assets are inlined as a non-empty bundle without relying on
+	// hardcoded internal chunk names, which can differ across Monaco builds.
+	const runtimeSource = extractMonacoRuntimeSource(html);
+	assert.ok(runtimeSource.trim().length > 1024, "Monaco language/runtime bundle must be non-empty");
+	const contributionModuleMatch = runtimeSource.match(/define\("([^"]*basic-languages\/monaco\.contribution)"/);
+	assert.ok(contributionModuleMatch, "Monaco basic-language runtime must be inlined");
+	const contributionModuleId = contributionModuleMatch[1];
+	for (const language of [
+		{ id: "typescript", extensions: [".ts", ".tsx", ".cts", ".mts"] },
+		{ id: "python", extensions: [".py", ".rpy", ".pyw", ".cpy", ".gyp", ".gypi"] },
+		{ id: "go", extensions: [".go"] },
+	]) {
+		assertRepresentativeMonacoLanguageChunkInlined(runtimeSource, contributionModuleId, language);
+	}
 
 	// The asset config must not expose monacoVsBaseUrl.
 	assert.doesNotMatch(html, /monacoVsBaseUrl/);
@@ -178,7 +365,7 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	const rush = primaryAgents.get("rush");
 	assert.ok(architect, "architect primary prompt should load");
 	assert.ok(rush, "Rush primary prompt should load");
-	assert.deepEqual(architect.tlhOpenaiModels, ["openai-codex/gpt-5.5"]);
+	assert.deepEqual(architect.tlhOpenaiModels, ["openai-codex/gpt-5.6-sol"]);
 	assert.deepEqual(rush.tlhOpenaiModels, ["openai-codex/gpt-5.5"]);
 	assert.equal(rush.thinking, "low");
 	assert.equal(rush.tlhOpenaiThinking, "off");
@@ -209,10 +396,22 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 		loadSubagentMetadata().find((agent) => agent.name === "developer")?.tlhOpenaiModels,
 		["openai-codex/gpt-5.4"],
 	);
+	assert.deepEqual(
+		loadSubagentMetadata().find((agent) => agent.name === "code-reviewer")?.tlhOpenaiModels,
+		["openai-codex/gpt-5.6-sol"],
+	);
+	assert.deepEqual(
+		loadSubagentMetadata().find((agent) => agent.name === "oracle")?.tlhOpenaiModels,
+		["openai-codex/gpt-5.6-sol"],
+	);
+	assert.deepEqual(
+		loadSubagentMetadata().find((agent) => agent.name === "contrarian")?.tlhOpenaiModels,
+		["openai-codex/gpt-5.6-sol"],
+	);
 
 	const primaryPrompt = buildTlhSystemPrompt(rush, loadSubagentMetadata(), true);
-	const experimentalPrimaryPrompt = buildTlhSystemPrompt(rush, loadSubagentMetadata(), true, {
-		enabledFeatures: [TLH_CONTRARIAN_FEATURE],
+	const legacyFlagPrimaryPrompt = buildTlhSystemPrompt(rush, loadSubagentMetadata(), true, {
+		enabledFeatures: ["contrarian"],
 	});
 	const childPrompt = buildChildSubagentSystemPrompt();
 
@@ -221,8 +420,8 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	assert.match(primaryPrompt, /omit `agentScope` or use `"user"`/);
 	assert.match(primaryPrompt, /action: "resume".*omit `context` or use `"fresh"`/);
 	assert.match(primaryPrompt, /TLH minor agents are isolated to the user scope/);
-	assert.doesNotMatch(primaryPrompt, /- contrarian:/i);
-	assert.match(experimentalPrimaryPrompt, /- contrarian:/i);
+	assert.match(primaryPrompt, /- contrarian:/i);
+	assert.match(legacyFlagPrimaryPrompt, /- contrarian:/i);
 
 	for (const prompt of [primaryPrompt, childPrompt]) {
 		assert.doesNotMatch(prompt, /## TLH Ticket Integration Disabled/);
@@ -245,7 +444,6 @@ test("child startup branch uses the mandatory-ticket child prompt", () => {
 test("extension imports extracted shared helpers from nested TypeScript modules", () => {
 	assert.match(extensionSource, /from "\.\/the-last-harness\/attribution\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/autocomplete\.js"/);
-	assert.match(extensionSource, /from "\.\/the-last-harness\/changelog\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/effort\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/footer\.js"/);
 	assert.doesNotMatch(extensionSource, /from "\.\/the-last-harness\/gnosis\.js"/);
@@ -256,9 +454,30 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
 	assert.match(extensionSource, /from "\.\/the-last-harness\/package-update-notice\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/primary-agent-runtime\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/resources\.js"/);
-	assert.match(extensionSource, /from "\.\/the-last-harness\/subscription-usage\.mjs"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/subscription-usage-facade\.js"/);
+	assert.doesNotMatch(extensionSource, /from "\.\/the-last-harness\/subscription-usage\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/types\.js"/);
-	assert.match(extensionSource, /from "\.\/the-last-harness\/tokens\.js"/);
+	assert.match(footerFirstLineSource, /from "\.\/footer-git\.js"/);
+	assert.match(footerGitCacheSource, /from "\.\/footer-git\.js"/);
+	assert.doesNotMatch(footerFirstLineSource, /from "\.\/footer-git\.mjs"/);
+	assert.doesNotMatch(footerGitCacheSource, /from "\.\/footer-git\.mjs"/);
+	assert.deepEqual(
+		staticImportSpecifiers(extensionSource).filter((specifier) =>
+			[
+				"./the-last-harness/review.js",
+				"./the-last-harness/tokens.js",
+				"./the-last-harness/annotate-last-message.js",
+				"./the-last-harness/changelog.js",
+				"./the-last-harness/launch-telemetry.js",
+			].includes(specifier),
+		),
+		[],
+		"review, tokens, annotate-last-message, tlh-changelog, and launch telemetry must not be top-level static imports",
+	);
+	assert.match(extensionSource, /import\("\.\/the-last-harness\/review\.js"\)/);
+	assert.match(extensionSource, /import\("\.\/the-last-harness\/tokens\.js"\)/);
+	assert.match(extensionSource, /import\("\.\/the-last-harness\/annotate-last-message\.js"\)/);
+	assert.match(extensionSource, /import\("\.\/the-last-harness\/changelog\.js"\)/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/usage-limits\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/constants\.js"/);
 	assert.match(primaryRuntimeSource, /from "\.\/gnosis\.js"/);
@@ -278,23 +497,58 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
 	assert.doesNotMatch(extensionSource, /async function applyPrimaryModel/);
 });
 
+test("extension lazy-loads review, tokens, annotate-last-message, and tlh-changelog with retryable facades", () => {
+	assert.match(extensionSource, /const REVIEW_COMMAND_DESCRIPTION = "Review code changes via an interactive mode picker";/);
+	assert.match(extensionSource, /const TOKENS_COMMAND_DESCRIPTION = "Generate and open a local TLH token-spend report";/);
+	assert.match(extensionSource, /const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION = "Open a native annotation window for the latest assistant message";/);
+	assert.match(extensionSource, /const TLH_CHANGELOG_COMMAND_DESCRIPTION = "Show TLH release notes from the packaged changelog";/);
+	assert.match(extensionSource, /function createRetryableLazyImport<TModule>\(loader: \(\) => Promise<TModule>\): \(\) => Promise<TModule> \{/);
+	assert.match(extensionSource, /modulePromise = loader\(\)\.catch\(\(error\) => \{[\s\S]*modulePromise = undefined;[\s\S]*throw error;/);
+	assert.match(extensionSource, /pi\.registerCommand\("review", \{[\s\S]*getArgumentCompletions: \(\) => null,[\s\S]*const handler = await getReviewCommandHandler\(\);/);
+	assert.match(extensionSource, /pi\.registerCommand\("tokens", \{[\s\S]*const handler = await getTokensCommandHandler\(\);/);
+	assert.match(extensionSource, /pi\.registerCommand\("annotate-last-message", \{[\s\S]*const command = await getAnnotateLastMessageCommand\(\);/);
+	assert.match(extensionSource, /pi\.registerCommand\("tlh-changelog", \{[\s\S]*const handler = await getTlhChangelogCommandHandler\(\);[\s\S]*await handler\(pi, args, ctx\);/);
+	assert.match(extensionSource, /annotateLastMessageCommandPromise = loadAnnotateLastMessageModule\(\)[\s\S]*buildAnnotateLastMessageCommand\(\)/);
+	assert.match(extensionSource, /tlhChangelogCommandHandlerPromise = loadTlhChangelogModule\(\)[\s\S]*handleTlhChangelogCommand/);
+	assert.match(extensionSource, /pi\.on\("session_shutdown", async \(\) => \{[\s\S]*if \(!annotateLastMessageCommandPromise\) \{[\s\S]*return;[\s\S]*const command = await annotateLastMessageCommandPromise;[\s\S]*command\.handleSessionShutdown\(\);/);
+	assert.doesNotMatch(extensionSource, /import\("\.\/the-last-harness\/(?:effort|thinking|experimental|version|attribution)\.js"\)/);
+});
+
+test("header, footer, and update-check stay on the eager startup path pending benchmark-proven deferment", () => {
+	const sessionStart = sourceSection(extensionSource, 'pi.on("session_start"', "\n\t});\n}");
+
+	assert.match(extensionSource, /from "\.\/the-last-harness\/footer\.js"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/footer-git-cache\.js"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/header\.js"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/update-check\.js"/);
+	assert.doesNotMatch(extensionSource, /import\("\.\/the-last-harness\/(?:footer|footer-git-cache|header|update-check)\.js"\)/);
+	assert.match(sessionStart, /const headerUpdate = getTlhHeaderUpdate\(\);/);
+	assert.match(sessionStart, /void maybeNotifyAvailableTlhUpdate\(ctx\)\.catch\(\(\) => undefined\);/);
+});
+
 test("thinking alias shares the effort command thinking-level behavior", () => {
 	assert.match(effortSource, /\["effort", "thinking"\] as const/);
 	assert.match(effortSource, /description: "Pick the model thinking level"/);
-	assert.match(effortSource, /Unknown thinking level/);
-	assert.match(effortSource, /Thinking level set to/);
-	assert.match(effortSource, /Available thinking levels/);
-	assert.match(effortSource, /Pick thinking level/);
+	assert.match(effortSource, /import\("\.\/effort-command\.js"\)/);
+	assert.match(effortCommandSource, /Unknown thinking level/);
+	assert.match(effortCommandSource, /Thinking level set to/);
+	assert.match(effortCommandSource, /Available thinking levels/);
+	assert.match(effortCommandSource, /Pick thinking level/);
 });
 
 test("extension delegates launch update and telemetry services to feature modules", () => {
 	const sessionStart = sourceSection(extensionSource, 'pi.on("session_start"', "\n\t});\n}");
 
-	assert.match(extensionSource, /from "\.\/the-last-harness\/launch-telemetry\.js"/);
+	assert.doesNotMatch(extensionSource, /from "\.\/the-last-harness\/launch-telemetry\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/model-visibility\.js"/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/update-check\.js"/);
-	assert.match(sessionStart, /scheduleTlhLaunchTelemetry\(ctx\)/);
-	assert.match(sessionStart, /maybeNotifyAvailableTlhUpdate\(ctx\)/);
+	assert.match(
+		sessionStart,
+		/if \(event\.reason === "startup"\) \{[\s\S]*void import\("\.\/the-last-harness\/launch-telemetry\.js"\)[\s\S]*scheduleTlhLaunchTelemetry\(ctx\)[\s\S]*\.catch\(\(\) => undefined\);[\s\S]*\}/,
+	);
+	assert.match(sessionStart, /if \(!ctx\.hasUI\) \{[\s\S]*return;[\s\S]*if \(event\.reason === "startup"\)/);
+	assert.match(sessionStart, /const headerUpdate = getTlhHeaderUpdate\(\);/);
+	assert.match(sessionStart, /void maybeNotifyAvailableTlhUpdate\(ctx\)\.catch\(\(\) => undefined\);/);
 	assert.doesNotMatch(extensionSource, /function maybeSendTlhLaunchTelemetry/);
 	assert.doesNotMatch(extensionSource, /function fetchLatestTlhRelease/);
 });
@@ -337,7 +591,7 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 	assert.match(toolCall, /const allowedSubagents = allowedSubagentsForExperimentalConfig\(getTlhGlobalSettings\(ctx\.cwd\)\.tlh\?\.experimental\)/);
 	assert.match(
 		toolCall,
-		/if \(!isEnabledPrimaryAgentSelection\(selection\)\) \{[\s\S]*subagentCallTargetsAgent\(event\.input, "contrarian"\)[\s\S]*validateSubagentToolInput\(\{ agent: "contrarian" \}, \{ allowedSubagents \}\)[\s\S]*const disabledReason = validateSubagentToolInput\(event\.input, \{ allowedSubagents \}\)/,
+		/if \(!isEnabledPrimaryAgentSelection\(selection\)\) \{[\s\S]*if \(!isSubagentResumeAction\(event\.input\)\) \{[\s\S]*return undefined;[\s\S]*const disabledReason = validateSubagentToolInput\(event\.input, \{ allowedSubagents \}\)/,
 	);
 	assert.match(toolCall, /if \(selection === "rush" && isSubagentResumeAction\(event\.input\)\)/);
 	assert.match(toolCall, /if \(selection === "rush" && subagentCallTargetsAgent\(event\.input, "developer"\)\)/);
@@ -384,25 +638,31 @@ test("child runtime wires commit attribution prompt and bash guard without prima
 test("extension wires subscription usage to lifecycle refreshes and footer", () => {
 	const sessionStart = sourceSection(extensionSource, 'pi.on("session_start"', "\n\t});\n}");
 
-	assert.match(extensionSource, /createTlhSubscriptionUsageService\(\)/);
+	assert.match(extensionSource, /createLazyTlhSubscriptionUsageService\(\)/);
 	assert.match(extensionSource, /pi\.on\("model_select"/);
 	assert.match(extensionSource, /pi\.on\("turn_end"/);
+	assert.match(extensionSource, /subscriptionUsageService\.refresh\(ctx, options\)/);
+	assert.match(sessionStart, /subscriptionUsageService\.registerFooterRenderRequest\(ctx, \(\) => tui\.requestRender\(\)\)/);
 	assert.match(sessionStart, /refreshSubscriptionUsage\(ctx\)/);
 	assert.match(sessionStart, /subscriptionUsage: subscriptionUsageService/);
 	assert.match(sessionStart, /shouldShowTlhUsageWeekly\(getTlhUsageLimitsConfig\(ctx\.cwd\)\)/);
 	assert.match(sessionStart, /onChange: \(\) => tui\.requestRender\(\)/);
 	assert.match(sessionStart, /typeof footerData\?\.onBranchChange === "function" \? \(cb\) => footerData\.onBranchChange\(cb\) : undefined/);
+	assert.match(subscriptionUsageFacadeSource, /import\("\.\/subscription-usage\.js"\)/);
+	assert.match(subscriptionUsageFacadeSource, /createTlhSubscriptionUsageService\(\)/);
 });
 
-test("extension wires TLH changelog command and release-notes rendering", () => {
-	assert.match(extensionSource, /registerTlhChangelogCommand\(pi\)/);
+test("extension wires TLH changelog lazy facade and release-notes rendering", () => {
+	assert.match(extensionSource, /pi\.registerCommand\("tlh-changelog", \{[\s\S]*description: TLH_CHANGELOG_COMMAND_DESCRIPTION,[\s\S]*const handler = await getTlhChangelogCommandHandler\(\);/);
+	assert.match(changelogSource, /export const TLH_CHANGELOG_COMMAND_DESCRIPTION = "Show TLH release notes from the packaged changelog";/);
+	assert.match(changelogSource, /export async function handleTlhChangelogCommand\(pi: ExtensionAPI, _args: string, ctx: ExtensionCommandContext\): Promise<void>/);
 	assert.match(changelogSource, /pi\.registerCommand\("tlh-changelog"/);
 	assert.match(changelogSource, /new Markdown\(changelog/);
 	assert.match(changelogSource, /ctx\.ui\.custom/);
 	assert.match(changelogSource, /pi\.sendMessage\(\{/);
 });
 
-test("extension keeps TLH experimental command wiring with registered ci and review feature flags", () => {
+test("extension keeps TLH experimental command wiring with registered ticket, ci, and review feature flags", () => {
 	const lockedWriteHelper = sourceSection(
 		profileStateSource,
 		"export function withLockedTlhSettingsWrite",
@@ -411,17 +671,26 @@ test("extension keeps TLH experimental command wiring with registered ci and rev
 
 	assert.match(extensionSource, /registerExperimentalCommand\(pi\)/);
 	assert.match(extensionSource, /from "\.\/the-last-harness\/experimental\.js"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/ticket-workflow-ui-facade\.js"/);
+	assert.match(extensionSource, /registerLazyTlhTicketWorkflowUi\(pi\)/);
+	assert.doesNotMatch(extensionSource, /from "\.\/the-last-harness\/ticket-workflow-ui\.js"/);
+	assert.match(ticketWorkflowUiFacadeSource, /import\("\.\/ticket-workflow-ui\.js"\)/);
+	assert.match(ticketWorkflowUiFacadeSource, /createRetryableLazyImport/);
 	assert.match(experimentalSource, /pi\.registerCommand\("experimental"/);
+	assert.match(experimentalSource, /import\("\.\/experimental-command\.js"\)/);
 	assert.match(experimentalSource, /delta-follow-up-reviews/);
 	assert.match(experimentalSource, /ci-failure-investigation/);
+	assert.match(experimentalSource, /ticket-workflow-ui/);
+	assert.doesNotMatch(experimentalSource, /## TLH Experimental Feature: contrarian/);
+	assert.doesNotMatch(experimentalSource, /Enables the contrarian minor agent and primary-agent guidance/);
 	assert.doesNotMatch(experimentalSource, /run-tests-last/);
 	assert.match(
-		experimentalSource,
+		experimentalCommandSource,
 		/withLockedTlhSettingsWrite\(cwd, "Refusing to write experimental settings outside the isolated TLH profile\./,
 	);
-	assert.doesNotMatch(experimentalSource, /tlhSettingsPathForWrite\(\)/);
-	assert.doesNotMatch(experimentalSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
-	assert.match(experimentalSource, /settings\.tlh\.experimental\.enabledFeatures = nextEnabledFeatures/);
+	assert.doesNotMatch(experimentalCommandSource, /tlhSettingsPathForWrite\(\)/);
+	assert.doesNotMatch(experimentalCommandSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
+	assert.match(experimentalCommandSource, /settings\.tlh\.experimental\.enabledFeatures = nextEnabledFeatures/);
 	assert.match(typesSource, /experimental\?: TlhExperimentalConfig;/);
 	assert.match(typesSource, /enabledFeatures\?: string\[];/);
 	assert.match(typesSource, /export type TlhExperimentalFeatureId = string;/);
@@ -429,44 +698,45 @@ test("extension keeps TLH experimental command wiring with registered ci and rev
 	assert.match(primaryRuntimeSource, /buildPrimaryExperimentalPrompt\(activePrimaryAgent\(\), settings\.tlh\?\.experimental\)/);
 	assert.doesNotMatch(extensionSource, /registerTlhCommitAttributionRuntime\(pi\)/);
 	assert.match(extensionSource, /registerToggleTlhGitAttributionCommand\(pi\)/);
-	assert.match(attributionSource, /from "\.\/profile-state\.js"/);
+	assert.match(attributionSource, /import\("\.\/attribution-command\.js"\)/);
 	assert.doesNotMatch(attributionSource, /pi\.on\("before_agent_start"/);
 	assert.doesNotMatch(attributionSource, /pi\.on\("tool_call"/);
 	assert.doesNotMatch(attributionSource, /user_bash/);
 	assert.match(attributionSource, /pi\.registerCommand\("toggle-tlh-git-attribution"/);
 	assert.doesNotMatch(attributionSource, /pi\.registerCommand\("attribution"/);
 	assert.doesNotMatch(attributionSource, /value: "toggle"/);
-	assert.match(attributionSource, /Usage: \/toggle-tlh-git-attribution/);
+	assert.match(attributionCommandSource, /Usage: \/toggle-tlh-git-attribution/);
 	assert.match(
-		attributionSource,
+		attributionCommandSource,
 		/withLockedTlhSettingsWrite\(cwd, "Refusing to write attribution settings outside the isolated TLH profile\./,
 	);
-	assert.doesNotMatch(attributionSource, /tlhSettingsPathForWrite\(\)/);
-	assert.doesNotMatch(attributionSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
+	assert.doesNotMatch(attributionCommandSource, /tlhSettingsPathForWrite\(\)/);
+	assert.doesNotMatch(attributionCommandSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
 	assert.match(attributionSource, /TLH_DEFAULT_COMMIT_ATTRIBUTION/);
-	assert.match(attributionSource, /settings\.tlh\.attribution = \{ commit: nextEnabled \}/);
-	assert.match(attributionSource, /typeof commit !== "boolean"/);
+	assert.match(attributionCommandSource, /settings\.tlh\.attribution = \{ commit: nextEnabled \}/);
+	assert.match(attributionCommandSource, /typeof commit !== "boolean"/);
 	assert.match(typesSource, /commit\?: boolean;/);
-	assert.match(extensionSource, /registerTokensCommand\(pi\)/);
+	assert.match(extensionSource, /pi\.registerCommand\("tokens", \{/);
+	assert.match(extensionSource, /const handler = await getTokensCommandHandler\(\);/);
 	assert.match(tokensSource, /pi\.registerCommand\("tokens"/);
 	assert.match(tokensSource, /Usage: \/tokens/);
 	assert.match(extensionSource, /registerUsageCommand\(pi\)/);
-	assert.match(usageLimitsSource, /from "\.\/profile-state\.js"/);
+	assert.match(usageLimitsSource, /import\("\.\/usage-limits-command\.js"\)/);
 	assert.match(usageLimitsSource, /pi\.registerCommand\("usage"/);
 	assert.match(usageLimitsSource, /value: "weekly on"/);
 	assert.match(usageLimitsSource, /value: "weekly off"/);
 	assert.match(usageLimitsSource, /value: "weekly toggle"/);
 	assert.match(
-		usageLimitsSource,
+		usageLimitsCommandSource,
 		/withLockedTlhSettingsWrite\(cwd, "Refusing to write usage-limit settings outside the isolated TLH profile\./,
 	);
-	assert.doesNotMatch(usageLimitsSource, /tlhSettingsPathForWrite\(\)/);
-	assert.doesNotMatch(usageLimitsSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
+	assert.doesNotMatch(usageLimitsCommandSource, /tlhSettingsPathForWrite\(\)/);
+	assert.doesNotMatch(usageLimitsCommandSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
 	assert.match(lockedWriteHelper, /const settingsPath = tlhSettingsPathForWrite\(\);/);
 	assert.match(lockedWriteHelper, /assertSafeTlhSettingsPath\(settingsPath\);/);
 	assert.match(lockedWriteHelper, /if \(current\) \{/);
 	assert.match(lockedWriteHelper, /const backupPath = `\$\{settingsPath\}\.bak-\$\{settingsBackupTimestamp\(\)\}`;/);
 	assert.match(lockedWriteHelper, /writeFileSync\(backupPath, current, \{ encoding: "utf8", flag: "wx", mode: 0o600 \}\);/);
-	assert.match(usageLimitsSource, /settings\.tlh\.usageLimits\.showWeekly = showWeekly/);
-	assert.match(usageLimitsSource, /showWeekly === true/);
+	assert.match(usageLimitsCommandSource, /settings\.tlh\.usageLimits\.showWeekly = showWeekly/);
+	assert.match(usageLimitsCommandSource, /showWeekly === true/);
 });

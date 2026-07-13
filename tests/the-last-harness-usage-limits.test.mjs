@@ -43,7 +43,7 @@ function registeredUsageCommand() {
 	return command;
 }
 
-test("usage command registers completions and reports weekly hidden by default", async (t) => {
+test("usage command registers completions and reports weekly auto mode by default", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -61,8 +61,10 @@ test("usage command registers completions and reports weekly hidden by default",
 		const { ctx, notifications } = createCommandContext(fixture.dir);
 		await command.handler("", ctx);
 		assert.equal(notifications.at(-1)?.type, "info");
-		assert.match(notifications.at(-1)?.message ?? "", /hidden \(default when unset\)/);
+		assert.match(notifications.at(-1)?.message ?? "", /default auto mode/);
+		assert.match(notifications.at(-1)?.message ?? "", /below 25%/);
 		assert.match(notifications.at(-1)?.message ?? "", /\/usage weekly on/);
+		assert.match(notifications.at(-1)?.message ?? "", /\/usage weekly off/);
 	});
 });
 
@@ -175,6 +177,7 @@ test("usage weekly off and toggle persist explicit preferences", async (t) => {
 		const notice = notifications.at(-1);
 		assert.equal(notice?.type, "info");
 		assert.match(notice?.message ?? "", /hidden/);
+		assert.doesNotMatch(notice?.message ?? "", /default auto mode|default when unset/);
 		assert.match(notice?.message ?? "", /\/usage weekly on/);
 	});
 

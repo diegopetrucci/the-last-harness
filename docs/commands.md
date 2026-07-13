@@ -32,7 +32,7 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 | `/quit` | Quit the TLH TUI |
 | `/reload` | Reload keybindings, extensions, skills, prompts, and themes |
 | `/resume` | Resume a different session |
-| `/scoped-models` | Enable or disable models for Ctrl+P cycling |
+| `/scoped-models` | Enable or disable models for Ctrl+P cycling — **hidden from TLH autocomplete** |
 | `/session` | Show session info and stats |
 | `/settings` | Open the settings menu |
 | `/share` | Share the session as a secret GitHub gist |
@@ -48,7 +48,7 @@ These commands are registered by the TLH extension bundled with this profile.
 |---------|-------------|
 | `/thinking` | Pick the model thinking level, subject to the active primary-agent thinking constraints |
 | `/effort` | Supported alias for `/thinking`, subject to the same active primary-agent thinking constraints |
-| `/experimental` | List or change TLH experimental features (`contrarian`, `delta-follow-up-reviews`, and `ci-failure-investigation` are currently registered) |
+| `/experimental` | Open the TLH experimental-feature picker in TUI, or list/change TLH experimental features via typed subcommands (`delta-follow-up-reviews`, `ci-failure-investigation`, and `ticket-workflow-ui` are currently registered) |
 | `/review` | Open an interactive code-review mode picker (requires the architect primary agent) |
 | `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
 | `/tlh-changelog` | Show TLH release notes from the packaged `CHANGELOG.md` |
@@ -64,7 +64,7 @@ Both `/thinking` and `/effort` are subject to the active primary-agent thinking 
 
 ### `/experimental`
 
-`/experimental` currently registers `contrarian`, `delta-follow-up-reviews`, and `ci-failure-investigation`. `contrarian` bundles the adversarial `contrarian` minor agent but keeps it disabled by default; enable it with `/experimental enable contrarian` and disable it with `/experimental disable contrarian`. It is intended mainly for sparing pre-ticket planning stress-tests when a proposed change genuinely warrants an adversarial brief, not the routine `code-reviewer` diff pass and not the broader `oracle` second-opinion path. `delta-follow-up-reviews` is an opt-in flag that adds architect and `code-reviewer` guidance for delta-scoped follow-up reviews after fixes. `ci-failure-investigation` is an opt-in flag that lets the architect primary agent do read-only failed CI/status-check investigation after TLH opens a PR, then summarize and ask whether to proceed before any edits, commits, pushes, reruns, PR changes, or other follow-up changes. All three flags are disabled by default. Stale `run-tests-last` values in `tlh.experimental.enabledFeatures` do not re-enable retired behavior.
+`/experimental` currently registers `delta-follow-up-reviews`, `ci-failure-investigation`, and `ticket-workflow-ui`. In the interactive TLH TUI, running `/experimental` with no arguments opens a picker that shows current feature state and lets you toggle flags; outside the TUI it falls back to the status list. Typed subcommands remain available: `/experimental list`, `/experimental status [feature]`, `/experimental enable <feature>`, `/experimental disable <feature>`, and `/experimental toggle <feature>`. `contrarian` is a bundled default minor subagent for sparing pre-ticket planning stress-tests when a proposed change genuinely warrants an adversarial brief; it is not part of the `/experimental` toggle surface, not the routine `code-reviewer` diff pass, and not the broader `oracle` second-opinion path. `delta-follow-up-reviews` is an opt-in flag that adds architect and `code-reviewer` guidance for delta-scoped follow-up reviews after fixes. `ci-failure-investigation` is an opt-in flag that lets the architect primary agent do read-only failed CI/status-check investigation after TLH opens a PR, then summarize and ask whether to proceed before any edits, commits, pushes, reruns, PR changes, or other follow-up changes. `ticket-workflow-ui` is an experimental, default-off, read-only ticket workflow surface backed by the `tk` CLI. Enable it with `/experimental enable ticket-workflow-ui` when you want the UI, and undo it with `/experimental disable ticket-workflow-ui`. All three flags are disabled by default. Stale `run-tests-last` values in `tlh.experimental.enabledFeatures` do not re-enable retired behavior.
 
 ### `/tokens`
 
@@ -148,6 +148,17 @@ TLH's first-party implementation adapts the MIT-licensed `@ryan_nookpi/pi-extens
 
 ---
 
+## Packaged prompt templates
+
+These slash commands come from prompt templates bundled inside TLH. They insert canned prompt text into the editor for you to review and send.
+
+| Command | Description |
+|---------|-------------|
+| `/merge-origin-main-into-this-branch` | Merge `origin/main` into this branch. |
+| `/rebase-this-branch-onto-origin-main` | Rebase this branch onto `origin/main`. |
+
+---
+
 ## Bundled extension commands
 
 These commands are provided by bundled default extensions and are visible in TLH autocomplete. They are available when the relevant extension is installed and active.
@@ -156,24 +167,11 @@ These commands are provided by bundled default extensions and are visible in TLH
 |---------|-----------|-------------|
 | `/context` | `pi-context-inspector` | Open a local HTML breakdown of where this session's context is going |
 | `/fast` | `pi-openai-fast` | Toggle OpenAI Codex Fast mode (ChatGPT-auth GPT-5.4/GPT-5.5 only) |
-| `/librarian-cache` | `pi-librarian` | Show or change the Librarian local-checkout cache mode for future librarian calls |
 | `/mcp` | `pi-mcp-adapter` | Show MCP server status |
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
-| `/rtk` | `pi-rtk` | Control pi-rtk shell-command rewriting |
 | `/subagents-doctor` | `pi-subagents` | Show subagent diagnostics |
-| `/triage-comments` | `pi-triage-comments` | Collect pasted feedback or PR comments, then start a triage investigation |
 
-### `/librarian-cache`
-
-TLH defaults the Librarian local-checkout cache to `off`.
-
-That preference lives in TLH's isolated profile — typically `${PI_CODING_AGENT_DIR}/extensions/librarian.json` — so changing it affects future TLH librarian calls without touching your normal Pi config under `~/.pi/agent`.
-
-Use the command explicitly to inspect or override the current mode:
-
-- `/librarian-cache status` — show the current cache mode
-- `/librarian-cache on` — enable local checkout caching
-- `/librarian-cache off` — disable local checkout caching again
+RTK shell-command rewriting is now a managed native integration rather than a slash-command UI. TLH does not register `/rtk`; use `RTK_DISABLED=1` for a single launch or set `"tlh": { "rtk": { "disabled": true } }` in the isolated TLH profile to disable rewriting.
 
 ---
 
@@ -188,16 +186,31 @@ These commands are registered and fully functional, but deliberately excluded fr
 | `/changelog` | Show upstream Pi changelog entries; use `/tlh-changelog` for TLH release notes |
 | `/clone` | Duplicate the current session at the current position |
 | `/import` | Import and resume a session from a JSONL file |
+| `/scoped-models` | Enable or disable models for Ctrl+P cycling |
+
+### Hidden skill commands
+
+| Command | Description |
+|---------|-------------|
+| `/skill:librarian` | Load the bundled librarian skill by name without surfacing it in TLH autocomplete |
+| `/skill:pi-intercom` | Load the bundled intercom skill by name without surfacing it in TLH autocomplete |
+| `/skill:pi-subagents` | Load the bundled subagents skill by name without surfacing it in TLH autocomplete |
 
 ### Hidden bundled extension commands
 
 | Command | Extension | Description |
 |---------|-----------|-------------|
+| `/curator` | `pi-web-access` | Toggle or configure the search curator workflow |
 | `/fff-health` | `pi-fff` | Show FFF file finder health and status |
 | `/fff-mode` | `pi-fff` | Show or set FFF mode (`tools-and-ui`, `tools-only`, `override`) |
 | `/fff-rescan` | `pi-fff` | Trigger FFF to rescan files |
 | `/intercom` | `pi-intercom` | Open the session intercom overlay (internal subagent communication) |
 | `/quiet-tools` | `pi-quiet-tools` | Toggle one-line collapsed invocations for built-in tool rows |
+| `/search` | `pi-web-access` | Browse stored web search results |
+| `/subagents-check-profile` | `pi-subagents` | Check whether a saved profile still points to usable models |
+| `/subagents-models` | `pi-subagents` | Show runtime-loaded builtin subagent models |
+| `/subagents-profiles` | `pi-subagents` | List saved subagent profiles |
+| `/websearch` | `pi-web-access` | Open the web search curator |
 
 ---
 
@@ -207,8 +220,10 @@ Individual bundled extensions can be disabled without affecting the others. Use 
 
 ```sh
 tlh defaults list        # show installed defaults and opt-out status
-tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disable librarian)
+tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disable fff)
 tlh defaults enable <id>   # re-enable a disabled extension
 ```
 
 Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions, not first-party packaged commands like `/annotate-last-message` or `/annotate-git-diff`.
+
+RTK is separate from `tlh defaults`: TLH manages the pinned native binary at `<agent>/bin/rtk`, there is no `/rtk` command surface anymore, and the persistent opt-out is `tlh.rtk.disabled` rather than `tlh defaults disable rtk`. To remove only the managed RTK binary while keeping the rest of the profile, delete `<agent>/bin/rtk`; the next install or `tlh update` recreates it.

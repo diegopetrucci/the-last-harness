@@ -13,26 +13,52 @@ function tempFixture({
 	lockfileVersion = packageVersion,
 	rootPackageVersion = packageVersion,
 	dependencies = {},
-	devDependencies = {},
-	peerDependencies = {},
+	devDependencies = {
+		"@earendil-works/pi-coding-agent": "0.80.6",
+		"@earendil-works/pi-tui": "0.80.6",
+	},
+	peerDependencies = {
+		"@earendil-works/pi-coding-agent": "0.80.6",
+		"@earendil-works/pi-tui": "0.80.6",
+	},
+	overrides = {},
 	defaultExtensions = [{ id: "helper", source: "npm:helper@1.2.3" }],
-	gnosisVersion = "0.5.3",
+	gnosisVersion = "0.5.4",
+	gnosisMtsVersion = gnosisVersion,
 	installVersion = gnosisVersion,
+	installShPiVersion = "0.80.6",
+	installMtsPiVersion = installShPiVersion,
+	installMjsPiVersion = installShPiVersion,
+	rtkVersion = "0.43.0",
 	includeLatestReleaseUrl = true,
 } = {}) {
 	const dir = mkdtempSync(join(tmpdir(), "tlh-check-package-versions-test-"));
 	const packagePath = join(dir, "package.json");
 	const lockfilePath = join(dir, "package-lock.json");
 	const defaultExtensionsPath = join(dir, "default-extensions.json");
+	const installShPath = join(dir, "install.sh");
+	const gnosisScriptMtsPath = join(dir, "tlh-gnosis.mts");
 	const gnosisScriptPath = join(dir, "tlh-gnosis.mjs");
-	const installScriptPath = join(dir, "tlh-install.mjs");
+	const installMtsPath = join(dir, "tlh-install.mts");
+	const installMjsPath = join(dir, "tlh-install.mjs");
+	const rtkScriptMtsPath = join(dir, "tlh-rtk.mts");
+	const rtkScriptPath = join(dir, "tlh-rtk.mjs");
 
 	writeFileSync(packagePath, `${JSON.stringify({
 		name: "fixture",
 		version: packageVersion,
 		dependencies,
-		devDependencies,
-		peerDependencies,
+		devDependencies: {
+			"@earendil-works/pi-coding-agent": "0.80.6",
+			"@earendil-works/pi-tui": "0.80.6",
+			...devDependencies,
+		},
+		peerDependencies: {
+			"@earendil-works/pi-coding-agent": "0.80.6",
+			"@earendil-works/pi-tui": "0.80.6",
+			...peerDependencies,
+		},
+		overrides,
 	}, null, 2)}\n`);
 	writeFileSync(lockfilePath, `${JSON.stringify({
 		name: "fixture",
@@ -46,16 +72,25 @@ function tempFixture({
 		},
 	}, null, 2)}\n`);
 	writeFileSync(defaultExtensionsPath, `${JSON.stringify(defaultExtensions, null, 2)}\n`);
+	writeFileSync(installShPath, `TLH_PINNED_PI_VERSION=${JSON.stringify(installShPiVersion)}\n`);
+	writeFileSync(gnosisScriptMtsPath, `const DEFAULT_GNOSIS_VERSION = ${JSON.stringify(gnosisMtsVersion)};\n`);
 	writeFileSync(gnosisScriptPath, `const DEFAULT_GNOSIS_VERSION = ${JSON.stringify(gnosisVersion)};\n`);
-	writeFileSync(installScriptPath, [
+	writeFileSync(installMtsPath, [
+		`const PINNED_PI_VERSION = ${JSON.stringify(installMtsPiVersion)};`,
+		"",
+	].join("\n"));
+	writeFileSync(installMjsPath, [
+		`const PINNED_PI_VERSION = ${JSON.stringify(installMjsPiVersion)};`,
 		`const DEFAULT_GNOSIS_VERSION = ${JSON.stringify(installVersion)};`,
 		includeLatestReleaseUrl
 			? 'const LATEST_RELEASE_URL = "https://github.com/example/the-last-harness/releases/latest/download/install.sh";'
 			: "",
 		"",
 	].join("\n"));
+	writeFileSync(rtkScriptMtsPath, `const DEFAULT_RTK_VERSION = ${JSON.stringify(rtkVersion)};\n`);
+	writeFileSync(rtkScriptPath, `const DEFAULT_RTK_VERSION = ${JSON.stringify(rtkVersion)};\n`);
 
-	return { packagePath, lockfilePath, defaultExtensionsPath, gnosisScriptPath, installScriptPath };
+	return { packagePath, lockfilePath, defaultExtensionsPath, installShPath, gnosisScriptMtsPath, gnosisScriptPath, installMtsPath, installMjsPath, rtkScriptMtsPath, rtkScriptPath };
 }
 
 function runCheckPackageVersions(fixture) {
@@ -64,8 +99,14 @@ function runCheckPackageVersions(fixture) {
 		"--package", fixture.packagePath,
 		"--lockfile", fixture.lockfilePath,
 		"--default-extensions", fixture.defaultExtensionsPath,
+		"--install-sh", fixture.installShPath,
+		"--gnosis-script", fixture.gnosisScriptMtsPath,
 		"--gnosis-script", fixture.gnosisScriptPath,
-		"--gnosis-script", fixture.installScriptPath,
+		"--gnosis-script", fixture.installMjsPath,
+		"--pi-install-script", fixture.installMtsPath,
+		"--pi-install-script", fixture.installMjsPath,
+		"--rtk-script", fixture.rtkScriptMtsPath,
+		"--rtk-script", fixture.rtkScriptPath,
 	], {
 		cwd: repoRoot,
 		encoding: "utf8",
@@ -92,7 +133,11 @@ test("check-package-versions passes with pinned dependency exceptions and ignore
 			sshHelper: "git+ssh://git@github.com/example/ssh-helper.git#abcdef1234567",
 		},
 		peerDependencies: {
-			"@earendil-works/pi-coding-agent": ">=0.80.1 <=0.80.2",
+			"@earendil-works/pi-coding-agent": "0.80.6",
+			"@earendil-works/pi-tui": "0.80.6",
+		},
+		overrides: {
+			dompurify: "3.4.11",
 		},
 		defaultExtensions: [
 			{ id: "helper", source: "npm:helper@1.2.3" },
@@ -124,7 +169,7 @@ test("check-package-versions reports the mismatched file fields", () => {
 	assert.match(result.stderr, /package-lock\.json#packages\[""\]\.version: "1\.2\.3"/);
 });
 
-test("check-package-versions rejects loose dependencies and devDependencies", () => {
+test("check-package-versions rejects loose dependencies, devDependencies, and overrides", () => {
 	const fixture = tempFixture({
 		packageVersion: "1.2.3",
 		dependencies: {
@@ -136,6 +181,9 @@ test("check-package-versions rejects loose dependencies and devDependencies", ()
 		peerDependencies: {
 			allowed: "^1.0.0",
 		},
+		overrides: {
+			dompurify: "^3.4.11",
+		},
 	});
 
 	const result = runCheckPackageVersions(fixture);
@@ -143,6 +191,7 @@ test("check-package-versions rejects loose dependencies and devDependencies", ()
 	assert.equal(result.status, 1);
 	assert.match(result.stderr, /package\.json#dependencies\.eslint must use an exact version or pinned non-registry source, found "\^9\.39\.4"/);
 	assert.match(result.stderr, /package\.json#devDependencies\.typescript must use an exact version or pinned non-registry source, found "latest"/);
+	assert.match(result.stderr, /package\.json#overrides\.dompurify must use an exact version or pinned non-registry source, found "\^3\.4\.11"/);
 	assert.doesNotMatch(result.stderr, /peerDependencies/);
 });
 
@@ -262,4 +311,75 @@ test("check-package-versions rejects latest as the managed Gnosis default", () =
 	assert.equal(result.status, 1);
 	assert.match(result.stderr, /tlh-gnosis\.mjs#DEFAULT_GNOSIS_VERSION must use an exact version, found "latest"/);
 	assert.match(result.stderr, /tlh-install\.mjs#DEFAULT_GNOSIS_VERSION must use an exact version, found "latest"/);
+});
+
+test("check-package-versions rejects managed Gnosis version drift in the TypeScript source", () => {
+	const fixture = tempFixture({
+		packageVersion: "1.2.3",
+		gnosisMtsVersion: "0.5.3",
+	});
+
+	const result = runCheckPackageVersions(fixture);
+
+	assert.equal(result.status, 1);
+	assert.match(result.stderr, /Managed Gnosis defaults must stay in sync:/);
+	assert.match(result.stderr, /tlh-gnosis\.mts: "0\.5\.3"/);
+	assert.match(result.stderr, /tlh-gnosis\.mjs: "0\.5\.4"/);
+});
+
+test("check-package-versions rejects latest as the managed RTK defaults", () => {
+	const fixture = tempFixture({
+		packageVersion: "1.2.3",
+		rtkVersion: "latest",
+	});
+
+	const result = runCheckPackageVersions(fixture);
+
+	assert.equal(result.status, 1);
+	assert.match(result.stderr, /tlh-rtk\.mts#DEFAULT_RTK_VERSION must use an exact version, found "latest"/);
+	assert.match(result.stderr, /tlh-rtk\.mjs#DEFAULT_RTK_VERSION must use an exact version, found "latest"/);
+});
+
+test("check-package-versions rejects managed RTK version drift in the TypeScript source", () => {
+	const fixture = tempFixture({
+		packageVersion: "1.2.3",
+		rtkVersion: "0.43.0",
+	});
+	writeFileSync(fixture.rtkScriptMtsPath, 'const DEFAULT_RTK_VERSION = "0.42.0";\n');
+
+	const result = runCheckPackageVersions(fixture);
+
+	assert.equal(result.status, 1);
+	assert.match(result.stderr, /Managed RTK defaults must stay in sync:/);
+	assert.match(result.stderr, /tlh-rtk\.mts: "0\.42\.0"/);
+	assert.match(result.stderr, /tlh-rtk\.mjs: "0\.43\.0"/);
+});
+
+test("check-package-versions rejects managed Pi pin drift across package metadata and install sources", () => {
+	const fixture = tempFixture({
+		packageVersion: "1.2.3",
+		installMtsPiVersion: "0.80.7",
+	});
+
+	const result = runCheckPackageVersions(fixture);
+
+	assert.equal(result.status, 1);
+	assert.match(result.stderr, /Managed Pi pins must stay in sync:/);
+	assert.match(result.stderr, /package\.json#peerDependencies\.@earendil-works\/pi-coding-agent: "0\.80\.6"/);
+	assert.match(result.stderr, /tlh-install\.mts#PINNED_PI_VERSION: "0\.80\.7"/);
+});
+
+test("check-package-versions rejects non-exact managed Pi package pins", () => {
+	const fixture = tempFixture({
+		packageVersion: "1.2.3",
+		peerDependencies: {
+			"@earendil-works/pi-coding-agent": "^0.80.6",
+			"@earendil-works/pi-tui": "0.80.6",
+		},
+	});
+
+	const result = runCheckPackageVersions(fixture);
+
+	assert.equal(result.status, 1);
+	assert.match(result.stderr, /package\.json#peerDependencies\.@earendil-works\/pi-coding-agent must use an exact version, found "\^0\.80\.6"/);
 });

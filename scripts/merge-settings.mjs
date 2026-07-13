@@ -3,41 +3,16 @@ import { existsSync } from "node:fs";
 import { basename, dirname, join, normalize, parse, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
-
-import {
-	criticalDefaultExtensionOptOutIds,
-	defaultExtensionPackageIdentities,
-	disabledDefaultExtensionIds,
-	managedDefaultExtensionPackageIdentities,
-	packageIdentity,
-	packageSourceOf,
-	readDefaultExtensionProvenance,
-	readDefaultExtensions,
-	RETIRED_TLH_DEFAULT_PACKAGE_SOURCES,
-	repairTargetedDefaultExtensionLoadOrder,
-	setDefaultExtensionProvenance,
-	withLegacyRetiredDefaultPackageIdentities,
-} from "./lib/default-extensions.mjs";
-import {
-	assertNotInNormalPiConfig,
-	assignOptionValue,
-	backupPathWithTimestamp,
-	defaultTlhSettingsPath,
-	expandHomePath,
-	readJsonFile,
-	readRegularFileForBackup,
-} from "./lib/tlh-install-utils.mjs";
+import { criticalDefaultExtensionOptOutIds, defaultExtensionPackageIdentities, disabledDefaultExtensionIds, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, repairTargetedDefaultExtensionLoadOrder, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
+import { assertNotInNormalPiConfig, assignOptionValue, backupPathWithTimestamp, defaultTlhSettingsPath, expandHomePath, readJsonFile, readRegularFileForBackup, } from "./lib/tlh-install-utils.mjs";
 import { writeSafeProfileFile } from "./lib/tlh-safe-profile-write.mjs";
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-
 const DEFAULT_PACKAGE_SOURCE = "git:github.com/diegopetrucci/the-last-harness";
 const TLH_CHANGELOG_SENTINEL = "9999.0.0";
 const HARNESS_PACKAGE_IDENTITY = packageIdentity(DEFAULT_PACKAGE_SOURCE);
-
 function usage() {
-	return `Usage: node scripts/merge-settings.mjs [defaults.json] [options]
+    return `Usage: node scripts/merge-settings.mjs [defaults.json] [options]
 
 Merge installer defaults into The Last Harness isolated Pi settings without clobbering user values.
 
@@ -51,616 +26,610 @@ Options:
   -h, --help               Show this help
 `;
 }
-
 function parseArgs(argv) {
-	const args = {
-		defaultsPath: undefined,
-		settingsPath: undefined,
-		packageSource: undefined,
-		defaultExtensionsPath: undefined,
-		dryRun: false,
-		force: false,
-		quiet: false,
-		help: false,
-	};
-
-	for (let i = 0; i < argv.length; i += 1) {
-		const arg = argv[i];
-		if (arg === "--dry-run") {
-			args.dryRun = true;
-			continue;
-		}
-		if (arg === "--force") {
-			args.force = true;
-			continue;
-		}
-		if (arg === "--quiet") {
-			args.quiet = true;
-			continue;
-		}
-		if (arg === "-h" || arg === "--help") {
-			args.help = true;
-			continue;
-		}
-		const settingsIndex = assignOptionValue(args, "settingsPath", argv, i, "--settings");
-		if (settingsIndex !== undefined) {
-			i = settingsIndex;
-			continue;
-		}
-		const packageSourceIndex = assignOptionValue(args, "packageSource", argv, i, "--package-source");
-		if (packageSourceIndex !== undefined) {
-			i = packageSourceIndex;
-			continue;
-		}
-		const defaultExtensionsIndex = assignOptionValue(args, "defaultExtensionsPath", argv, i, "--default-extensions");
-		if (defaultExtensionsIndex !== undefined) {
-			i = defaultExtensionsIndex;
-			continue;
-		}
-		if (arg.startsWith("-")) {
-			throw new Error(`Unknown option: ${arg}`);
-		}
-		if (args.defaultsPath) {
-			throw new Error(`Unexpected extra argument: ${arg}`);
-		}
-		args.defaultsPath = arg;
-	}
-
-	return args;
+    const args = {
+        defaultsPath: undefined,
+        settingsPath: undefined,
+        packageSource: undefined,
+        defaultExtensionsPath: undefined,
+        dryRun: false,
+        force: false,
+        quiet: false,
+        help: false,
+    };
+    for (let index = 0; index < argv.length; index += 1) {
+        const arg = argv[index];
+        if (arg === "--dry-run") {
+            args.dryRun = true;
+            continue;
+        }
+        if (arg === "--force") {
+            args.force = true;
+            continue;
+        }
+        if (arg === "--quiet") {
+            args.quiet = true;
+            continue;
+        }
+        if (arg === "-h" || arg === "--help") {
+            args.help = true;
+            continue;
+        }
+        const settingsIndex = assignOptionValue(args, "settingsPath", argv, index, "--settings");
+        if (settingsIndex !== undefined) {
+            index = settingsIndex;
+            continue;
+        }
+        const packageSourceIndex = assignOptionValue(args, "packageSource", argv, index, "--package-source");
+        if (packageSourceIndex !== undefined) {
+            index = packageSourceIndex;
+            continue;
+        }
+        const defaultExtensionsIndex = assignOptionValue(args, "defaultExtensionsPath", argv, index, "--default-extensions");
+        if (defaultExtensionsIndex !== undefined) {
+            index = defaultExtensionsIndex;
+            continue;
+        }
+        if (arg.startsWith("-")) {
+            throw new Error(`Unknown option: ${arg}`);
+        }
+        if (args.defaultsPath) {
+            throw new Error(`Unexpected extra argument: ${arg}`);
+        }
+        args.defaultsPath = arg;
+    }
+    return args;
 }
-
 function defaultDefaultsPath() {
-	return join(resolve(__dirname, ".."), "config", "settings.defaults.json");
+    return join(resolve(__dirname, ".."), "config", "settings.defaults.json");
 }
-
 function defaultDefaultExtensionsPath() {
-	return join(resolve(__dirname, ".."), "config", "default-extensions.json");
+    return join(resolve(__dirname, ".."), "config", "default-extensions.json");
 }
-
 function isPlainObject(value) {
-	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
-
 function clone(value) {
-	return JSON.parse(JSON.stringify(value));
+    return JSON.parse(JSON.stringify(value));
 }
-
 function packageIdentityExists(packages, identity) {
-	return Boolean(identity) && packages.some((entry) => packageIdentity(entry) === identity);
+    return Boolean(identity) && packages.some((entry) => packageIdentity(entry) === identity);
 }
-
 function isPinnedNpmSource(source) {
-	return typeof source === "string" && source.trim().startsWith("npm:") && packageIdentity(source) !== source.trim();
+    return typeof source === "string" && source.trim().startsWith("npm:") && packageIdentity(source) !== source.trim();
 }
-
 function isUnpinnedNpmSource(source) {
-	return typeof source === "string" && source.trim().startsWith("npm:") && packageIdentity(source) === source.trim();
+    return typeof source === "string" && source.trim().startsWith("npm:") && packageIdentity(source) === source.trim();
 }
-
 function shouldMigrateManagedDefaultExtensionSource(currentSource, extension, { force, managedPackageIdentities = new Set() }) {
-	if (force || extension.critical === true) return true;
-	const identity = packageIdentity(extension.source);
-	if (!identity || packageIdentity(currentSource) !== identity) return false;
-	if (!isPinnedNpmSource(extension.source)) return false;
-	if (isUnpinnedNpmSource(currentSource)) return true;
-	return managedPackageIdentities.has(identity);
+    if (force || extension.critical === true)
+        return true;
+    const identity = packageIdentity(extension.source);
+    if (!identity || packageIdentity(currentSource) !== identity)
+        return false;
+    if (!isPinnedNpmSource(extension.source))
+        return false;
+    if (isUnpinnedNpmSource(currentSource))
+        return true;
+    return managedPackageIdentities.has(identity);
 }
-
 function shouldMigrateDefaultExtensionReplacements(extension, { force }) {
-	return force || extension.migrateReplacements === true;
+    return force || extension.migrateReplacements === true;
 }
-
 function shouldEnsureDefaultExtensionSource(existingPackages, extension, { force }) {
-	if (shouldMigrateDefaultExtensionReplacements(extension, { force })) return true;
-	if (packageIdentityExists(existingPackages, packageIdentity(extension.source))) return true;
-	return !extension.replaces.some((oldSource) => packageIdentityExists(existingPackages, packageIdentity(oldSource)));
+    if (shouldMigrateDefaultExtensionReplacements(extension, { force }))
+        return true;
+    if (packageIdentityExists(existingPackages, packageIdentity(extension.source)))
+        return true;
+    return !extension.replaces.some((oldSource) => packageIdentityExists(existingPackages, packageIdentity(oldSource)));
 }
-
 function prepareDefaults(defaults, packageSource, defaultExtensions, disabledIds, existingSettings, { force }) {
-	const next = clone(defaults);
-	next.lastChangelogVersion = TLH_CHANGELOG_SENTINEL;
-
-	// Strip the anthropic-auth warning suppression from the defaults clone when
-	// that extension is disabled, so the merge engine cannot re-introduce
-	// warnings.anthropicExtraUsage into an opted-out user's settings on update.
-	if (disabledIds.has("anthropic-auth")) {
-		if (isPlainObject(next.warnings) && next.warnings.anthropicExtraUsage !== undefined) {
-			delete next.warnings.anthropicExtraUsage;
-			if (Object.keys(next.warnings).length === 0) {
-				delete next.warnings;
-			}
-		}
-	}
-
-	const ensuredSource = packageSource || DEFAULT_PACKAGE_SOURCE;
-	const existingPackages = isPlainObject(existingSettings) && Array.isArray(existingSettings.packages) ? existingSettings.packages : [];
-	const ensuredPackages = [
-		ensuredSource,
-		...defaultExtensions
-			.filter((extension) => !disabledIds.has(extension.id))
-			.filter((extension) => shouldEnsureDefaultExtensionSource(existingPackages, extension, { force }))
-			.map((extension) => extension.source),
-	];
-	const ensuredIdentities = new Set(ensuredPackages.map(packageIdentity).filter(Boolean));
-	const disabledIdentities = new Set(
-		defaultExtensions.filter((extension) => disabledIds.has(extension.id)).flatMap(defaultExtensionPackageIdentities),
-	);
-	const packages = Array.isArray(next.packages) ? next.packages : [];
-	next.packages = [
-		...ensuredPackages,
-		...packages.filter((entry) => {
-			const identity = packageIdentity(entry);
-			return !ensuredIdentities.has(identity) && !disabledIdentities.has(identity);
-		}),
-	];
-	return next;
+    const next = clone(defaults);
+    next.lastChangelogVersion = TLH_CHANGELOG_SENTINEL;
+    // Strip the anthropic-auth warning suppression from the defaults clone when
+    // that extension is disabled, so the merge engine cannot re-introduce
+    // warnings.anthropicExtraUsage into an opted-out user's settings on update.
+    if (disabledIds.has("anthropic-auth")) {
+        const warnings = isPlainObject(next.warnings) ? next.warnings : undefined;
+        if (warnings?.anthropicExtraUsage !== undefined) {
+            delete warnings.anthropicExtraUsage;
+            if (Object.keys(warnings).length === 0) {
+                delete next.warnings;
+            }
+        }
+    }
+    const ensuredSource = packageSource || DEFAULT_PACKAGE_SOURCE;
+    const existingPackages = isPlainObject(existingSettings) && Array.isArray(existingSettings.packages) ? existingSettings.packages : [];
+    const ensuredPackages = [
+        ensuredSource,
+        ...defaultExtensions
+            .filter((extension) => !disabledIds.has(extension.id))
+            .filter((extension) => shouldEnsureDefaultExtensionSource(existingPackages, extension, { force }))
+            .map((extension) => extension.source),
+    ];
+    const ensuredIdentities = new Set(ensuredPackages.map(packageIdentity).filter((value) => Boolean(value)));
+    const disabledIdentities = new Set(defaultExtensions.filter((extension) => disabledIds.has(extension.id)).flatMap(defaultExtensionPackageIdentities));
+    const packages = Array.isArray(next.packages) ? next.packages : [];
+    next.packages = [
+        ...ensuredPackages,
+        ...packages.filter((entry) => {
+            const identity = packageIdentity(entry);
+            return !ensuredIdentities.has(identity || "") && !disabledIdentities.has(identity || "");
+        }),
+    ];
+    return next;
 }
-
 function removePackageByIdentity(settings, identity) {
-	if (!identity || !Array.isArray(settings.packages)) return undefined;
-	const index = settings.packages.findIndex((entry) => packageIdentity(entry) === identity);
-	if (index === -1) return undefined;
-	const [removed] = settings.packages.splice(index, 1);
-	return packageSourceOf(removed) || identity;
+    if (!identity || !Array.isArray(settings.packages))
+        return undefined;
+    const index = settings.packages.findIndex((entry) => packageIdentity(entry) === identity);
+    if (index === -1)
+        return undefined;
+    const [removed] = settings.packages.splice(index, 1);
+    return packageSourceOf(removed) || identity;
 }
-
 function removeDuplicatePackagesByIdentity(settings, identity) {
-	if (!identity || !Array.isArray(settings.packages)) return [];
-	const removedSources = [];
-	let seen = false;
-	for (let index = 0; index < settings.packages.length;) {
-		if (packageIdentity(settings.packages[index]) !== identity) {
-			index += 1;
-			continue;
-		}
-		if (!seen) {
-			seen = true;
-			index += 1;
-			continue;
-		}
-		const [removed] = settings.packages.splice(index, 1);
-		removedSources.push(packageSourceOf(removed) || identity);
-	}
-	return removedSources;
+    if (!identity || !Array.isArray(settings.packages))
+        return [];
+    const removedSources = [];
+    let seen = false;
+    for (let index = 0; index < settings.packages.length;) {
+        if (packageIdentity(settings.packages[index]) !== identity) {
+            index += 1;
+            continue;
+        }
+        if (!seen) {
+            seen = true;
+            index += 1;
+            continue;
+        }
+        const [removed] = settings.packages.splice(index, 1);
+        removedSources.push(packageSourceOf(removed) || identity);
+    }
+    return removedSources;
 }
-
 function applyHarnessPackageDedupes(settings, ensuredSource, changes) {
-	if (!Array.isArray(settings.packages)) return;
-	for (const removedSource of removeDuplicatePackagesByIdentity(settings, HARNESS_PACKAGE_IDENTITY)) {
-		changes.push(`remove duplicate harness package: ${removedSource} (same identity as ${ensuredSource})`);
-	}
+    if (!Array.isArray(settings.packages))
+        return;
+    for (const removedSource of removeDuplicatePackagesByIdentity(settings, HARNESS_PACKAGE_IDENTITY)) {
+        changes.push(`remove duplicate harness package: ${removedSource} (same identity as ${ensuredSource})`);
+    }
 }
-
 function applyReplacedDefaultExtensions(settings, defaultExtensions, disabledIds, changes, { force }) {
-	if (!Array.isArray(settings.packages)) return;
-
-	for (const extension of defaultExtensions) {
-		if (!shouldMigrateDefaultExtensionReplacements(extension, { force })) continue;
-		if (disabledIds.has(extension.id)) continue;
-		const newIdentity = packageIdentity(extension.source);
-		for (const oldSource of extension.replaces) {
-			const oldIdentity = packageIdentity(oldSource);
-			if (!oldIdentity || oldIdentity === newIdentity) continue;
-			let removedSource;
-			while ((removedSource = removePackageByIdentity(settings, oldIdentity))) {
-				changes.push(`remove replaced default extension package: ${removedSource} -> ${extension.source}`);
-			}
-		}
-	}
+    if (!Array.isArray(settings.packages))
+        return;
+    for (const extension of defaultExtensions) {
+        if (!shouldMigrateDefaultExtensionReplacements(extension, { force }))
+            continue;
+        if (disabledIds.has(extension.id))
+            continue;
+        const newIdentity = packageIdentity(extension.source);
+        for (const oldSource of extension.replaces) {
+            const oldIdentity = packageIdentity(oldSource);
+            if (!oldIdentity || oldIdentity === newIdentity)
+                continue;
+            let removedSource;
+            while ((removedSource = removePackageByIdentity(settings, oldIdentity))) {
+                changes.push(`remove replaced default extension package: ${removedSource} -> ${extension.source}`);
+            }
+        }
+    }
 }
-
-function applyDefaultExtensionPackageDedupes(settings, defaultExtensions, disabledIds, changes, { force, sourceUpdatedIdentities = new Set() }) {
-	if (!Array.isArray(settings.packages)) return;
-
-	for (const extension of defaultExtensions) {
-		const identity = packageIdentity(extension.source);
-		if (!shouldMigrateDefaultExtensionReplacements(extension, { force }) && !sourceUpdatedIdentities.has(identity)) continue;
-		if (disabledIds.has(extension.id)) continue;
-		const removedSources = removeDuplicatePackagesByIdentity(settings, identity);
-		for (const removedSource of removedSources) {
-			changes.push(`remove duplicate default extension package: ${removedSource} (same identity as ${extension.source})`);
-		}
-	}
+function applyDefaultExtensionPackageDedupes(settings, defaultExtensions, disabledIds, changes, { force, sourceUpdatedIdentities = new Set(), }) {
+    if (!Array.isArray(settings.packages))
+        return;
+    for (const extension of defaultExtensions) {
+        const identity = packageIdentity(extension.source);
+        if (!shouldMigrateDefaultExtensionReplacements(extension, { force }) && !sourceUpdatedIdentities.has(identity || ""))
+            continue;
+        if (disabledIds.has(extension.id))
+            continue;
+        const removedSources = removeDuplicatePackagesByIdentity(settings, identity);
+        for (const removedSource of removedSources) {
+            changes.push(`remove duplicate default extension package: ${removedSource} (same identity as ${extension.source})`);
+        }
+    }
 }
-
-function applyDefaultExtensionSourceUpdates(settings, defaultExtensions, disabledIds, changes, { force, managedPackageIdentities = new Set() }) {
-	const updatedIdentities = new Set();
-	if (!Array.isArray(settings.packages)) return updatedIdentities;
-
-	for (const extension of defaultExtensions) {
-		if (disabledIds.has(extension.id)) continue;
-		const identity = packageIdentity(extension.source);
-		if (!identity) continue;
-		const index = settings.packages.findIndex((entry) => packageIdentity(entry) === identity);
-		if (index === -1) continue;
-
-		const current = settings.packages[index];
-		const currentSource = packageSourceOf(current);
-		if (!currentSource) continue;
-		if (!shouldMigrateManagedDefaultExtensionSource(currentSource, extension, { force, managedPackageIdentities })) continue;
-
-		const sourceNeedsUpdate = currentSource !== extension.source;
-		const removesCriticalExtensionFilter = extension.critical === true
-			&& isPlainObject(current)
-			&& Object.hasOwn(current, "extensions");
-		if (!sourceNeedsUpdate && !removesCriticalExtensionFilter) continue;
-
-		if (isPlainObject(current)) {
-			const next = { ...clone(current), source: extension.source };
-			if (removesCriticalExtensionFilter) delete next.extensions;
-			settings.packages[index] = Object.keys(next).length === 1 && typeof next.source === "string"
-				? next.source
-				: next;
-		} else {
-			settings.packages[index] = extension.source;
-		}
-		if (sourceNeedsUpdate) {
-			changes.push(`update default extension package source: ${currentSource} -> ${extension.source}`);
-		}
-		if (removesCriticalExtensionFilter) {
-			changes.push(`remove critical default extension package filter: ${extension.id}`);
-		}
-		updatedIdentities.add(identity);
-	}
-
-	return updatedIdentities;
+function applyDefaultExtensionSourceUpdates(settings, defaultExtensions, disabledIds, changes, { force, managedPackageIdentities = new Set(), }) {
+    const updatedIdentities = new Set();
+    if (!Array.isArray(settings.packages))
+        return updatedIdentities;
+    for (const extension of defaultExtensions) {
+        if (disabledIds.has(extension.id))
+            continue;
+        const identity = packageIdentity(extension.source);
+        if (!identity)
+            continue;
+        const index = settings.packages.findIndex((entry) => packageIdentity(entry) === identity);
+        if (index === -1)
+            continue;
+        const current = settings.packages[index];
+        const currentSource = packageSourceOf(current);
+        if (!currentSource)
+            continue;
+        if (!shouldMigrateManagedDefaultExtensionSource(currentSource, extension, { force, managedPackageIdentities }))
+            continue;
+        const sourceNeedsUpdate = currentSource !== extension.source;
+        const removesCriticalExtensionFilter = extension.critical === true
+            && isPlainObject(current)
+            && Object.hasOwn(current, "extensions");
+        if (!sourceNeedsUpdate && !removesCriticalExtensionFilter)
+            continue;
+        if (isPlainObject(current)) {
+            const next = { ...clone(current), source: extension.source };
+            if (removesCriticalExtensionFilter)
+                delete next.extensions;
+            settings.packages[index] = Object.keys(next).length === 1 && typeof next.source === "string"
+                ? next.source
+                : next;
+        }
+        else {
+            settings.packages[index] = extension.source;
+        }
+        if (sourceNeedsUpdate) {
+            changes.push(`update default extension package source: ${currentSource} -> ${extension.source}`);
+        }
+        if (removesCriticalExtensionFilter) {
+            changes.push(`remove critical default extension package filter: ${extension.id}`);
+        }
+        updatedIdentities.add(identity);
+    }
+    return updatedIdentities;
 }
-
 function applyDisabledDefaultExtensions(settings, defaultExtensions, disabledIds, changes) {
-	if (disabledIds.size === 0 || !Array.isArray(settings.packages)) return;
-
-	for (const extension of defaultExtensions) {
-		if (!disabledIds.has(extension.id)) continue;
-		const removedSources = [];
-		for (const identity of defaultExtensionPackageIdentities(extension)) {
-			let removedSource;
-			while ((removedSource = removePackageByIdentity(settings, identity))) {
-				removedSources.push(removedSource);
-			}
-		}
-		if (removedSources.length === 0) continue;
-
-		changes.push(`remove disabled default extension package: ${extension.id}`);
-	}
+    if (disabledIds.size === 0 || !Array.isArray(settings.packages))
+        return;
+    for (const extension of defaultExtensions) {
+        if (!disabledIds.has(extension.id))
+            continue;
+        const removedSources = [];
+        for (const identity of defaultExtensionPackageIdentities(extension)) {
+            let removedSource;
+            while ((removedSource = removePackageByIdentity(settings, identity))) {
+                removedSources.push(removedSource);
+            }
+        }
+        if (removedSources.length === 0)
+            continue;
+        changes.push(`remove disabled default extension package: ${extension.id}`);
+    }
 }
-
 function applyRetiredTlhDefaultPackageCleanup(settings, changes, managedPackageIdentities) {
-	if (!Array.isArray(settings.packages)) return;
-
-	for (const source of RETIRED_TLH_DEFAULT_PACKAGE_SOURCES) {
-		const identity = packageIdentity(source);
-		if (!identity || !managedPackageIdentities.has(identity)) continue;
-		let removedSource;
-		while ((removedSource = removePackageByIdentity(settings, identity))) {
-			changes.push(`remove retired TLH default package: ${removedSource}`);
-		}
-		managedPackageIdentities.delete(identity);
-	}
+    if (!Array.isArray(settings.packages))
+        return;
+    for (const source of RETIRED_TLH_DEFAULT_PACKAGE_SOURCES) {
+        const identity = packageIdentity(source);
+        if (!identity || !managedPackageIdentities.has(identity))
+            continue;
+        let removedSource;
+        while ((removedSource = removePackageByIdentity(settings, identity))) {
+            changes.push(`remove retired TLH default package: ${removedSource}`);
+        }
+        managedPackageIdentities.delete(identity);
+    }
 }
-
 function applyDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds, changes) {
-	const loadOrderRepair = repairTargetedDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds);
-	if (!loadOrderRepair) return;
-	changes.push(
-		`reorder targeted default extension packages for load order: ${loadOrderRepair.previous.join(", ")} -> ${loadOrderRepair.next.join(", ")}`,
-	);
+    const loadOrderRepair = repairTargetedDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds);
+    if (!loadOrderRepair)
+        return;
+    changes.push(`reorder targeted default extension packages for load order: ${loadOrderRepair.previous.join(", ")} -> ${loadOrderRepair.next.join(", ")}`);
 }
-
 // Sources of retired default extensions that TLH now removes unconditionally
 // from isolated settings because they should no longer stay installed after
 // install/update reruns.
 const FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES = Object.freeze([
-	"npm:@diegopetrucci/pi-context-cap",
-	"npm:@diegopetrucci/pi-permission-gate",
-	"npm:@diegopetrucci/pi-confirm-destructive",
-	"npm:@diegopetrucci/pi-oracle",
+    "npm:@diegopetrucci/pi-context-cap",
+    "npm:@diegopetrucci/pi-permission-gate",
+    "npm:@diegopetrucci/pi-confirm-destructive",
+    "npm:@diegopetrucci/pi-oracle",
+    "git:github.com/diegopetrucci/pi-rtk",
+    "npm:pi-rtk",
+    "npm:@sherif-fanous/pi-rtk",
+    "git:github.com/sherif-fanous/pi-rtk",
 ]);
-
 function purgeForceRemovedRetiredDefaultExtensionPackages(settings, changes) {
-	if (!Array.isArray(settings.packages)) return;
-	for (const source of FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES) {
-		const identity = packageIdentity(source);
-		if (!identity) continue;
-		while (removePackageByIdentity(settings, identity)) {
-			changes.push(`force-remove retired default extension package: ${source}`);
-		}
-	}
+    if (!Array.isArray(settings.packages))
+        return;
+    for (const source of FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES) {
+        const identity = packageIdentity(source);
+        if (!identity)
+            continue;
+        while (removePackageByIdentity(settings, identity)) {
+            changes.push(`force-remove retired default extension package: ${source}`);
+        }
+    }
 }
-
 function pruneContextCapDisabledDefaultExtension(settings, changes) {
-	if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
-	const values = settings.tlh.disabledDefaultExtensions;
-	if (!Array.isArray(values)) return;
-	const nextValues = values.filter((value) => !(typeof value === "string" && value.trim() === "context-cap"));
-	if (nextValues.length === values.length) return;
-	settings.tlh.disabledDefaultExtensions = nextValues;
-	changes.push("remove stale context-cap opt-out from tlh.disabledDefaultExtensions");
+    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
+        return;
+    const values = settings.tlh.disabledDefaultExtensions;
+    if (!Array.isArray(values))
+        return;
+    const nextValues = values.filter((value) => !(typeof value === "string" && value.trim() === "context-cap"));
+    if (nextValues.length === values.length)
+        return;
+    settings.tlh.disabledDefaultExtensions = nextValues;
+    changes.push("remove stale context-cap opt-out from tlh.disabledDefaultExtensions");
 }
-
 function pruneOracleDisabledDefaultExtension(settings, changes) {
-	if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
-	const values = settings.tlh.disabledDefaultExtensions;
-	if (!Array.isArray(values)) return;
-	const nextValues = values.filter((value) => !(typeof value === "string" && value.trim() === "oracle"));
-	if (nextValues.length === values.length) return;
-	settings.tlh.disabledDefaultExtensions = nextValues;
-	changes.push("remove stale oracle opt-out from tlh.disabledDefaultExtensions");
+    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
+        return;
+    const values = settings.tlh.disabledDefaultExtensions;
+    if (!Array.isArray(values))
+        return;
+    const nextValues = values.filter((value) => !(typeof value === "string" && value.trim() === "oracle"));
+    if (nextValues.length === values.length)
+        return;
+    settings.tlh.disabledDefaultExtensions = nextValues;
+    changes.push("remove stale oracle opt-out from tlh.disabledDefaultExtensions");
 }
-
+function pruneRtkDisabledDefaultExtension(settings, changes) {
+    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
+        return;
+    const values = settings.tlh.disabledDefaultExtensions;
+    if (!Array.isArray(values))
+        return;
+    const nextValues = values.filter((value) => !(typeof value === "string" && ["rtk", "pi-rtk"].includes(value.trim())));
+    if (nextValues.length === values.length)
+        return;
+    settings.tlh.disabledDefaultExtensions = nextValues;
+    changes.push("remove stale rtk opt-out from tlh.disabledDefaultExtensions");
+}
 function scrubGnosisSettings(settings, changes) {
-	if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
-	if (!Object.hasOwn(settings.tlh, "gnosis")) return;
-	delete settings.tlh.gnosis;
-	changes.push("remove tlh.gnosis (one-time cleanup)");
+    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
+        return;
+    if (!Object.hasOwn(settings.tlh, "gnosis"))
+        return;
+    delete settings.tlh.gnosis;
+    changes.push("remove tlh.gnosis (one-time cleanup)");
 }
-
 function removeCriticalDisabledDefaultExtensionOptOuts(settings, defaultExtensions, changes) {
-	if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
-	const values = settings.tlh.disabledDefaultExtensions;
-	if (!Array.isArray(values)) return;
-
-	const criticalIds = criticalDefaultExtensionOptOutIds(defaultExtensions);
-	if (criticalIds.size === 0) return;
-
-	const nextValues = values.filter((value) => !(typeof value === "string" && criticalIds.has(value.trim())));
-	if (nextValues.length === values.length) return;
-
-	settings.tlh.disabledDefaultExtensions = nextValues;
-	changes.push("remove invalid critical default extension opt-out");
+    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
+        return;
+    const values = settings.tlh.disabledDefaultExtensions;
+    if (!Array.isArray(values))
+        return;
+    const criticalIds = criticalDefaultExtensionOptOutIds(defaultExtensions);
+    if (criticalIds.size === 0)
+        return;
+    const nextValues = values.filter((value) => !(typeof value === "string" && criticalIds.has(value.trim())));
+    if (nextValues.length === values.length)
+        return;
+    settings.tlh.disabledDefaultExtensions = nextValues;
+    changes.push("remove invalid critical default extension opt-out");
 }
-
 function sameIdentitySets(left, right) {
-	if (left.size !== right.size) return false;
-	for (const value of left) {
-		if (!right.has(value)) return false;
-	}
-	return true;
+    if (left.size !== right.size)
+        return false;
+    for (const value of left) {
+        if (!right.has(value))
+            return false;
+    }
+    return true;
 }
-
 function syncDefaultExtensionProvenance(settings, defaultExtensions, disabledIds, changes) {
-	const previous = readDefaultExtensionProvenance(settings);
-	const previousRaw = isPlainObject(settings) && isPlainObject(settings.tlh) && Object.hasOwn(settings.tlh, "defaultExtensionProvenance")
-		? JSON.stringify(settings.tlh.defaultExtensionProvenance)
-		: undefined;
-	const nextManagedIdentities = managedDefaultExtensionPackageIdentities(settings, defaultExtensions, disabledIds);
-	if (!setDefaultExtensionProvenance(settings, nextManagedIdentities)) return;
-	const nextRaw = JSON.stringify(settings.tlh.defaultExtensionProvenance);
-	if (previousRaw !== nextRaw || !previous.exists || !sameIdentitySets(previous.managedPackageIdentities, nextManagedIdentities)) {
-		changes.push("update TLH default extension provenance metadata");
-	}
+    const previous = readDefaultExtensionProvenance(settings);
+    const tlh = isPlainObject(settings) && isPlainObject(settings.tlh) ? settings.tlh : undefined;
+    const previousRaw = tlh && Object.hasOwn(tlh, "defaultExtensionProvenance")
+        ? JSON.stringify(tlh.defaultExtensionProvenance)
+        : undefined;
+    const nextManagedIdentities = managedDefaultExtensionPackageIdentities(settings, defaultExtensions, disabledIds);
+    if (!setDefaultExtensionProvenance(settings, nextManagedIdentities))
+        return;
+    const nextTlh = isPlainObject(settings.tlh) ? settings.tlh : undefined;
+    const nextRaw = JSON.stringify(nextTlh?.defaultExtensionProvenance);
+    if (previousRaw !== nextRaw || !previous.exists || !sameIdentitySets(previous.managedPackageIdentities, nextManagedIdentities)) {
+        changes.push("update TLH default extension provenance metadata");
+    }
 }
-
 function mergeSettings(existing, defaults, { force }) {
-	if (!isPlainObject(existing)) {
-		throw new Error("Existing settings must be a JSON object");
-	}
-	if (!isPlainObject(defaults)) {
-		throw new Error("Default settings must be a JSON object");
-	}
-
-	const next = clone(existing);
-	const changes = [];
-	mergeObject(next, defaults, changes, { force, path: [] });
-	return { next, changes };
+    if (!isPlainObject(existing)) {
+        throw new Error("Existing settings must be a JSON object");
+    }
+    if (!isPlainObject(defaults)) {
+        throw new Error("Default settings must be a JSON object");
+    }
+    const next = clone(existing);
+    const changes = [];
+    mergeObject(next, defaults, changes, { force, path: [] });
+    return { next, changes };
 }
-
 function isPersistentTelemetryOptOut(path, currentValue, defaultValue) {
-	// Telemetry opt-outs are user-owned and must survive installer reruns and forced updates.
-	return path.join(".") === "tlh.telemetry.enabled" && currentValue === false && defaultValue === true;
+    // Telemetry opt-outs are user-owned and must survive installer reruns and forced updates.
+    return path.join(".") === "tlh.telemetry.enabled" && currentValue === false && defaultValue === true;
 }
-
 function isInstallerOwnedSetting(path) {
-	return path.join(".") === "lastChangelogVersion";
+    const joinedPath = path.join(".");
+    return joinedPath === "lastChangelogVersion" || joinedPath === "subagents.disableBuiltins";
 }
-
+function isInstallerOwnedObjectContainer(path) {
+    return path.join(".") === "subagents";
+}
 function mergeObject(target, defaults, changes, options) {
-	for (const [key, value] of Object.entries(defaults)) {
-		const path = [...options.path, key];
-		const label = path.join(".");
-
-		if (key === "packages" && options.path.length === 0) {
-			mergePackages(target, value, changes);
-			continue;
-		}
-
-		if (target[key] === undefined) {
-			target[key] = clone(value);
-			changes.push(`set ${label}`);
-			continue;
-		}
-
-		if (Array.isArray(value) && Array.isArray(target[key])) {
-			mergeArray(target[key], value, changes, { label, path });
-			continue;
-		}
-
-		if (isPlainObject(value) && isPlainObject(target[key])) {
-			mergeObject(target[key], value, changes, { ...options, path });
-			continue;
-		}
-
-		if (isPersistentTelemetryOptOut(path, target[key], value)) {
-			continue;
-		}
-
-		if ((options.force || isInstallerOwnedSetting(path)) && JSON.stringify(target[key]) !== JSON.stringify(value)) {
-			target[key] = clone(value);
-			changes.push(`overwrite ${label}`);
-		}
-	}
+    for (const [key, value] of Object.entries(defaults)) {
+        const path = [...options.path, key];
+        const label = path.join(".");
+        if (key === "packages" && options.path.length === 0) {
+            mergePackages(target, value, changes);
+            continue;
+        }
+        if (target[key] === undefined) {
+            target[key] = clone(value);
+            changes.push(`set ${label}`);
+            continue;
+        }
+        if (Array.isArray(value) && Array.isArray(target[key])) {
+            mergeArray(target[key], value, changes, { label, path });
+            continue;
+        }
+        if (isPlainObject(value) && isPlainObject(target[key])) {
+            mergeObject(target[key], value, changes, { ...options, path });
+            continue;
+        }
+        if (isPlainObject(value) && isInstallerOwnedObjectContainer(path)) {
+            target[key] = clone(value);
+            changes.push(`overwrite ${label}`);
+            continue;
+        }
+        if (isPersistentTelemetryOptOut(path, target[key], value)) {
+            continue;
+        }
+        if ((options.force || isInstallerOwnedSetting(path)) && JSON.stringify(target[key]) !== JSON.stringify(value)) {
+            target[key] = clone(value);
+            changes.push(`overwrite ${label}`);
+        }
+    }
 }
-
 function mergePackages(target, packageDefaults, changes) {
-	if (!Array.isArray(packageDefaults)) {
-		throw new Error("Default settings field 'packages' must be an array");
-	}
-	if (target.packages === undefined) {
-		target.packages = [];
-	}
-	if (!Array.isArray(target.packages)) {
-		throw new Error("Existing settings field 'packages' must be an array if present");
-	}
-
-	const seen = new Map();
-	target.packages.forEach((entry, index) => {
-		const identity = packageIdentity(entry);
-		if (identity && !seen.has(identity)) seen.set(identity, index);
-	});
-
-	for (const entry of packageDefaults) {
-		const source = packageSourceOf(entry);
-		const identity = packageIdentity(entry);
-		if (!source || !identity) {
-			throw new Error(`Invalid package entry in defaults: ${JSON.stringify(entry)}`);
-		}
-		if (seen.has(identity)) {
-			const existingIndex = seen.get(identity);
-			const existingSource = packageSourceOf(target.packages[existingIndex]);
-			if (identity === HARNESS_PACKAGE_IDENTITY && existingSource !== source) {
-				target.packages[existingIndex] = clone(entry);
-				changes.push(`replace packages: ${existingSource} -> ${source}`);
-			}
-			continue;
-		}
-		target.packages.push(clone(entry));
-		seen.set(identity, target.packages.length - 1);
-		changes.push(`append packages: ${source}`);
-	}
+    if (!Array.isArray(packageDefaults)) {
+        throw new Error("Default settings field 'packages' must be an array");
+    }
+    if (target.packages === undefined) {
+        target.packages = [];
+    }
+    if (!Array.isArray(target.packages)) {
+        throw new Error("Existing settings field 'packages' must be an array if present");
+    }
+    const seen = new Map();
+    target.packages.forEach((entry, index) => {
+        const identity = packageIdentity(entry);
+        if (identity && !seen.has(identity))
+            seen.set(identity, index);
+    });
+    for (const entry of packageDefaults) {
+        const source = packageSourceOf(entry);
+        const identity = packageIdentity(entry);
+        if (!source || !identity) {
+            throw new Error(`Invalid package entry in defaults: ${JSON.stringify(entry)}`);
+        }
+        if (seen.has(identity)) {
+            const existingIndex = seen.get(identity);
+            const existingSource = packageSourceOf(target.packages[existingIndex]);
+            if (identity === HARNESS_PACKAGE_IDENTITY && existingSource !== source) {
+                target.packages[existingIndex] = clone(entry);
+                changes.push(`replace packages: ${existingSource} -> ${source}`);
+            }
+            continue;
+        }
+        target.packages.push(clone(entry));
+        seen.set(identity, target.packages.length - 1);
+        changes.push(`append packages: ${source}`);
+    }
 }
-
 function normalizeAgentDirPath(value) {
-	const normalized = normalize(value);
-	const root = parse(normalized).root;
-	let stripped = normalized;
-	while (stripped.length > root.length && stripped.endsWith(sep)) {
-		stripped = stripped.slice(0, -sep.length);
-	}
-	return stripped;
+    const normalized = normalize(value);
+    const root = parse(normalized).root;
+    let stripped = normalized;
+    while (stripped.length > root.length && stripped.endsWith(sep)) {
+        stripped = stripped.slice(0, -sep.length);
+    }
+    return stripped;
 }
-
 function arrayMergeKey(item, path) {
-	if (path.join(".") === "subagents.agentDirs" && typeof item === "string") {
-		return `path:${normalizeAgentDirPath(item)}`;
-	}
-	return `json:${JSON.stringify(item)}`;
+    if (path.join(".") === "subagents.agentDirs" && typeof item === "string") {
+        return `path:${normalizeAgentDirPath(item)}`;
+    }
+    return `json:${JSON.stringify(item)}`;
 }
-
 function mergeArray(targetArray, defaultArray, changes, { label, path }) {
-	const seen = new Set(targetArray.map((item) => arrayMergeKey(item, path)));
-	for (const item of defaultArray) {
-		const key = arrayMergeKey(item, path);
-		if (seen.has(key)) continue;
-		targetArray.push(clone(item));
-		seen.add(key);
-		changes.push(`append ${label}`);
-	}
+    const seen = new Set(targetArray.map((item) => arrayMergeKey(item, path)));
+    for (const item of defaultArray) {
+        const key = arrayMergeKey(item, path);
+        if (seen.has(key))
+            continue;
+        targetArray.push(clone(item));
+        seen.add(key);
+        changes.push(`append ${label}`);
+    }
 }
-
 function backupPathFor(settingsPath) {
-	return backupPathWithTimestamp(settingsPath);
+    return backupPathWithTimestamp(settingsPath);
 }
-
 function assertNotNormalPiSettings(settingsPath) {
-	assertNotInNormalPiConfig(
-		settingsPath,
-		`Refusing to modify normal Pi config from The Last Harness installer: ${settingsPath}`,
-	);
+    assertNotInNormalPiConfig(settingsPath, `Refusing to modify normal Pi config from The Last Harness installer: ${settingsPath}`);
 }
-
 function writeExistingProfileBackup(settingsPath, backupPath) {
-	const { content, mode } = readRegularFileForBackup(settingsPath, "Pi settings");
-	writeSafeProfileFile(
-		{ agentDir: dirname(settingsPath) },
-		basename(backupPath),
-		content,
-		"Pi settings backup",
-		{ mode },
-	);
+    const { content, mode } = readRegularFileForBackup(settingsPath, "Pi settings");
+    writeSafeProfileFile({ agentDir: dirname(settingsPath) }, basename(backupPath), content, "Pi settings backup", { mode });
 }
-
 function writeSettings(settingsPath, value, { dryRun, existed }) {
-	const formatted = `${JSON.stringify(value, null, 2)}\n`;
-	if (dryRun) return undefined;
-
-	let backupPath;
-	if (existed) {
-		backupPath = backupPathFor(settingsPath);
-		writeExistingProfileBackup(settingsPath, backupPath);
-	}
-
-	writeSafeProfileFile({ agentDir: dirname(settingsPath) }, basename(settingsPath), formatted, "Pi settings");
-	return backupPath;
+    const formatted = `${JSON.stringify(value, null, 2)}\n`;
+    if (dryRun)
+        return undefined;
+    let backupPath;
+    if (existed) {
+        backupPath = backupPathFor(settingsPath);
+        writeExistingProfileBackup(settingsPath, backupPath);
+    }
+    writeSafeProfileFile({ agentDir: dirname(settingsPath) }, basename(settingsPath), formatted, "Pi settings");
+    return backupPath;
 }
-
 function log(args, message) {
-	if (!args.quiet) console.log(message);
+    if (!args.quiet)
+        console.log(message);
 }
-
 function main() {
-	const args = parseArgs(process.argv.slice(2));
-	if (args.help) {
-		console.log(usage());
-		return;
-	}
-
-	const defaultsPath = resolve(expandHomePath(args.defaultsPath || defaultDefaultsPath()));
-	const defaultExtensionsPath = resolve(expandHomePath(args.defaultExtensionsPath || defaultDefaultExtensionsPath()));
-	const settingsPath = resolve(expandHomePath(args.settingsPath || defaultTlhSettingsPath()));
-	assertNotNormalPiSettings(settingsPath);
-	const existed = existsSync(settingsPath);
-	const existing = readJsonFile(settingsPath, { missingValue: {} });
-	const rawDefaults = readJsonFile(defaultsPath);
-	const defaultExtensions = readDefaultExtensions(defaultExtensionsPath, { allowMissing: true });
-	const disabledIds = disabledDefaultExtensionIds(existing, defaultExtensions);
-	const ensuredHarnessSource = args.packageSource || DEFAULT_PACKAGE_SOURCE;
-	const defaults = prepareDefaults(rawDefaults, args.packageSource, defaultExtensions, disabledIds, existing, { force: args.force });
-	const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
-	applyHarnessPackageDedupes(next, ensuredHarnessSource, changes);
-	const managedDefaultExtensionProvenance = readDefaultExtensionProvenance(next).managedPackageIdentities;
-	const sourceUpdatedIdentities = applyDefaultExtensionSourceUpdates(next, defaultExtensions, disabledIds, changes, {
-		force: args.force,
-		managedPackageIdentities: managedDefaultExtensionProvenance,
-	});
-	applyReplacedDefaultExtensions(next, defaultExtensions, disabledIds, changes, { force: args.force });
-	applyDefaultExtensionPackageDedupes(next, defaultExtensions, disabledIds, changes, { force: args.force, sourceUpdatedIdentities });
-	applyDisabledDefaultExtensions(next, defaultExtensions, disabledIds, changes);
-	applyRetiredTlhDefaultPackageCleanup(
-		next,
-		changes,
-		withLegacyRetiredDefaultPackageIdentities(next, readDefaultExtensionProvenance(next).managedPackageIdentities),
-	);
-	applyDefaultExtensionLoadOrder(next, defaultExtensions, disabledIds, changes);
-	removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
-	scrubGnosisSettings(next, changes);
-	purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
-	pruneContextCapDisabledDefaultExtension(next, changes);
-	pruneOracleDisabledDefaultExtension(next, changes);
-	syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
-
-	log(args, `Pi settings: ${settingsPath}`);
-	if (changes.length === 0) {
-		log(args, "No settings changes needed.");
-		return;
-	}
-
-	for (const change of changes) {
-		log(args, `${args.dryRun ? "Would" : "Will"} ${change}`);
-	}
-
-	if (args.dryRun) {
-		if (existed) log(args, `Would back up existing settings before writing.`);
-		log(args, "Dry run only; no settings were changed.");
-		return;
-	}
-
-	const backupPath = writeSettings(settingsPath, next, { dryRun: args.dryRun, existed });
-	if (backupPath) log(args, `Backed up previous settings to: ${backupPath}`);
-	log(args, "Settings updated.");
+    const args = parseArgs(process.argv.slice(2));
+    if (args.help) {
+        console.log(usage());
+        return;
+    }
+    const defaultsPath = resolve(expandHomePath(args.defaultsPath || defaultDefaultsPath()) || defaultDefaultsPath());
+    const defaultExtensionsPath = resolve(expandHomePath(args.defaultExtensionsPath || defaultDefaultExtensionsPath()) || defaultDefaultExtensionsPath());
+    const settingsPath = resolve(expandHomePath(args.settingsPath || defaultTlhSettingsPath()) || defaultTlhSettingsPath());
+    assertNotNormalPiSettings(settingsPath);
+    const existed = existsSync(settingsPath);
+    const existing = readJsonFile(settingsPath, { missingValue: {} });
+    const rawDefaults = readJsonFile(defaultsPath);
+    const defaultExtensions = readDefaultExtensions(defaultExtensionsPath, { allowMissing: true });
+    const disabledIds = disabledDefaultExtensionIds(existing, defaultExtensions);
+    const ensuredHarnessSource = args.packageSource || DEFAULT_PACKAGE_SOURCE;
+    const defaults = prepareDefaults(rawDefaults, args.packageSource, defaultExtensions, disabledIds, existing, { force: args.force });
+    const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
+    applyHarnessPackageDedupes(next, ensuredHarnessSource, changes);
+    const managedDefaultExtensionProvenance = readDefaultExtensionProvenance(next).managedPackageIdentities;
+    const sourceUpdatedIdentities = applyDefaultExtensionSourceUpdates(next, defaultExtensions, disabledIds, changes, {
+        force: args.force,
+        managedPackageIdentities: managedDefaultExtensionProvenance,
+    });
+    applyReplacedDefaultExtensions(next, defaultExtensions, disabledIds, changes, { force: args.force });
+    applyDefaultExtensionPackageDedupes(next, defaultExtensions, disabledIds, changes, { force: args.force, sourceUpdatedIdentities });
+    applyDisabledDefaultExtensions(next, defaultExtensions, disabledIds, changes);
+    applyRetiredTlhDefaultPackageCleanup(next, changes, withLegacyRetiredDefaultPackageIdentities(next, readDefaultExtensionProvenance(next).managedPackageIdentities));
+    applyDefaultExtensionLoadOrder(next, defaultExtensions, disabledIds, changes);
+    removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
+    scrubGnosisSettings(next, changes);
+    purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
+    pruneContextCapDisabledDefaultExtension(next, changes);
+    pruneOracleDisabledDefaultExtension(next, changes);
+    pruneRtkDisabledDefaultExtension(next, changes);
+    syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
+    log(args, `Pi settings: ${settingsPath}`);
+    if (changes.length === 0) {
+        log(args, "No settings changes needed.");
+        return;
+    }
+    for (const change of changes) {
+        log(args, `${args.dryRun ? "Would" : "Will"} ${change}`);
+    }
+    if (args.dryRun) {
+        if (existed)
+            log(args, "Would back up existing settings before writing.");
+        log(args, "Dry run only; no settings were changed.");
+        return;
+    }
+    const backupPath = writeSettings(settingsPath, next, { dryRun: args.dryRun, existed });
+    if (backupPath)
+        log(args, `Backed up previous settings to: ${backupPath}`);
+    log(args, "Settings updated.");
 }
-
+function errorMessage(error) {
+    return error instanceof Error ? error.message : String(error);
+}
 try {
-	main();
-} catch (error) {
-	console.error(`merge-settings: ${error.message}`);
-	process.exit(1);
+    main();
+}
+catch (error) {
+    console.error(`merge-settings: ${errorMessage(error)}`);
+    process.exit(1);
 }

@@ -2,7 +2,7 @@
 name: code-reviewer
 description: Reviews diffs against assigned tasks for correctness, security, and maintainability.
 tools: read, grep, find, ls, bash, contact_supervisor
-tlhOpenaiModels: openai-codex/gpt-5.5
+tlhOpenaiModels: openai-codex/gpt-5.6-sol
 tlhAnthropicModels: anthropic/claude-opus-4-8
 preferOppositeProvider: true
 thinking: high
@@ -17,7 +17,7 @@ You are read-only. Do not modify files.
 
 ## Inputs
 
-- Either the `tk` ticket IDs supplied by the delegating primary agent, or a supplied task brief plus the diff. If ticket IDs are supplied, run `tk show <id>` for each and treat them as the source of truth. Otherwise treat the supplied brief plus the diff as the source of truth.
+- Either the `tk` ticket IDs supplied by the delegating primary agent, or a supplied self-contained task brief plus the diff. If ticket IDs are supplied and inspectable, run `tk show <id>` for each and treat them as the source of truth. If the ticket storage has been cleaned up or is otherwise missing so those IDs cannot be inspected, fall back to the supplied self-contained brief plus the diff when the delegating primary agent provided them. Otherwise treat the supplied self-contained brief plus the diff as the source of truth.
 - The VCS diff. Use `git diff --no-color`, `git diff --cached --no-color`, and `git status --short --untracked-files=all`. Inspect relevant untracked new files when needed so the review covers pre-staging changes.
 - The repository context and relevant project instructions.
 

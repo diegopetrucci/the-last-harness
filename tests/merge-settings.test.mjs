@@ -14,6 +14,10 @@ const retiredPlannotatorPackage = "npm:@plannotator/pi-extension";
 const retiredPermissionGatePackage = "npm:@diegopetrucci/pi-permission-gate";
 const retiredConfirmDestructivePackage = "npm:@diegopetrucci/pi-confirm-destructive";
 const retiredOraclePackage = "npm:@diegopetrucci/pi-oracle";
+const retiredTlhRtkPackage = "git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5";
+const retiredUpstreamRtkPackage = "npm:pi-rtk";
+const retiredSherifNpmRtkPackage = "npm:@sherif-fanous/pi-rtk";
+const retiredSherifGitRtkPackage = "git:github.com/sherif-fanous/pi-rtk@v0.5.0";
 const changelogSentinel = "9999.0.0";
 
 function tempFixture(defaultsValue, settingsValue, extensionsValue = []) {
@@ -273,6 +277,86 @@ test("merge treats normalized subagents.agentDirs paths as duplicates", () => {
 	runMerge(fixture);
 
 	assert.deepEqual(readJson(fixture.settings).subagents.agentDirs, ["./tlh/agents/subagents/"]);
+});
+
+test("merge restores subagents.disableBuiltins while preserving user-owned subagent settings", () => {
+	const fixture = tempFixture(
+		{
+			packages: [],
+			subagents: {
+				disableBuiltins: true,
+				agentDirs: ["tlh/agents/subagents"],
+			},
+		},
+		{
+			packages: [harnessPackage],
+			subagents: {
+				disableBuiltins: false,
+				agentDirs: ["custom/subagents"],
+				agentOverrides: {
+					developer: { model: "kept" },
+				},
+			},
+		},
+	);
+
+	runMerge(fixture);
+
+	assert.deepEqual(readJson(fixture.settings).subagents, {
+		disableBuiltins: true,
+		agentDirs: ["custom/subagents", "tlh/agents/subagents"],
+		agentOverrides: {
+			developer: { model: "kept" },
+		},
+	});
+});
+
+for (const [name, malformedValue] of [
+	["scalar", "nope"],
+	["null", null],
+	["array", ["custom/subagents"]],
+]) {
+	test(`merge repairs malformed subagents ${name} container with installer defaults`, () => {
+		const fixture = tempFixture(
+			{
+				packages: [],
+				subagents: {
+					disableBuiltins: true,
+					agentDirs: ["tlh/agents/subagents"],
+				},
+			},
+			{
+				packages: [harnessPackage],
+				subagents: malformedValue,
+			},
+		);
+
+		runMerge(fixture);
+
+		assert.deepEqual(readJson(fixture.settings).subagents, {
+			disableBuiltins: true,
+			agentDirs: ["tlh/agents/subagents"],
+		});
+	});
+}
+
+test("merge only repairs malformed non-installer object containers with --force", () => {
+	const fixture = tempFixture(
+		{
+			packages: [],
+			warnings: { anthropicExtraUsage: false },
+		},
+		{
+			packages: [harnessPackage],
+			warnings: "broken",
+		},
+	);
+
+	runMerge(fixture);
+	assert.equal(readJson(fixture.settings).warnings, "broken");
+
+	runMerge(fixture, { force: true });
+	assert.deepEqual(readJson(fixture.settings).warnings, { anthropicExtraUsage: false });
 });
 
 test("merge keeps exact append semantics for unrelated arrays", () => {
@@ -904,6 +988,181 @@ test("merge cleanup of pi-context-cap is idempotent after first run", () => {
 	const firstSettings = readJson(fixture.settings);
 	assert.ok(!firstSettings.packages.includes("npm:@diegopetrucci/pi-context-cap"), "pi-context-cap removed on first run");
 	assert.deepEqual(firstSettings.tlh.disabledDefaultExtensions, ["notify"], "context-cap opt-out pruned on first run");
+
+	const secondOutput = runMerge(fixture, { quiet: false });
+	assert.match(secondOutput, /No settings changes needed\./);
+	assert.equal(readFileSync(fixture.settings, "utf8"), afterFirst, "settings unchanged on second run");
+});
+
+test("merge force-removes legacy pi-rtk packages and prunes stale rtk opt-outs idempotently", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				retiredTlhRtkPackage,
+				retiredUpstreamRtkPackage,
+				retiredSherifNpmRtkPackage,
+				retiredSherifGitRtkPackage,
+				"npm:keep",
+			],
+			tlh: { disabledDefaultExtensions: ["rtk", "pi-rtk", "notify"] },
+		},
+	);
+
+	const firstOutput = runMerge(fixture, { quiet: false });
+	const afterFirst = readFileSync(fixture.settings, "utf8");
+	const firstSettings = readJson(fixture.settings);
+
+	assert.deepEqual(firstSettings.packages, [harnessPackage, "npm:keep"]);
+	assert.deepEqual(firstSettings.tlh.disabledDefaultExtensions, ["notify"]);
+	assert.match(firstOutput, /force-remove retired default extension package: git:github\.com\/diegopetrucci\/pi-rtk/);
+	assert.match(firstOutput, /force-remove retired default extension package: npm:pi-rtk/);
+	assert.match(firstOutput, /force-remove retired default extension package: npm:@sherif-fanous\/pi-rtk/);
+	assert.match(firstOutput, /force-remove retired default extension package: git:github\.com\/sherif-fanous\/pi-rtk/);
+	assert.match(firstOutput, /remove stale rtk opt-out from tlh\.disabledDefaultExtensions/);
+
+	const secondOutput = runMerge(fixture, { quiet: false });
+	assert.match(secondOutput, /No settings changes needed\./);
+	assert.equal(readFileSync(fixture.settings, "utf8"), afterFirst, "settings unchanged on second run");
+});
+
+// ── Librarian retirement tests ────────────────────────────────────────────────
+
+const retiredLibrarianPackage = "npm:@diegopetrucci/pi-librarian";
+
+test("merge removes the TLH-managed librarian package from isolated settings and logs it", () => {
+	// A profile with NO defaultExtensionProvenance is treated as a legacy install
+	// where the librarian package was TLH-seeded. The carry-over logic in
+	// withLegacyRetiredDefaultPackageIdentities adds it to managedPackageIdentities,
+	// causing applyRetiredTlhDefaultPackageCleanup to remove it.
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				retiredLibrarianPackage,
+				"npm:unrelated-package",
+			],
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+	const settings = readJson(fixture.settings);
+
+	assert.match(output, /Will remove retired TLH default package: npm:@diegopetrucci\/pi-librarian/);
+	assert.deepEqual(settings.packages, [
+		harnessPackage,
+		"npm:unrelated-package",
+	]);
+	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, []);
+});
+
+test("merge preserves a user-added librarian package that TLH did not install", () => {
+	// A profile WITH defaultExtensionProvenance set causes withLegacyRetiredDefaultPackageIdentities
+	// to skip the legacy carry-over path, so a librarian package not in managedPackageIdentities
+	// is treated as user-added and must be preserved.
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				retiredLibrarianPackage,
+			],
+			tlh: {
+				defaultExtensionProvenance: {
+					managedPackageIdentities: [], // provenance exists but librarian is NOT managed
+				},
+			},
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+	const settings = readJson(fixture.settings);
+
+	assert.ok(
+		settings.packages.includes(retiredLibrarianPackage),
+		"user-added librarian package must be preserved",
+	);
+	assert.doesNotMatch(output, /pi-librarian/);
+});
+
+test("merge removes TLH-managed librarian from a modern profile where provenance already records it as managed", () => {
+	// Dominant real-world migration case: a user who received librarian as a TLH
+	// default before retirement. Their profile is MODERN (defaultExtensionProvenance
+	// exists) and the librarian identity IS already in managedPackageIdentities.
+	// withLegacyRetiredDefaultPackageIdentities skips the legacy carry-over path
+	// (because provenance exists) but the identity is already present in the set,
+	// so applyRetiredTlhDefaultPackageCleanup must still remove the package.
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				retiredLibrarianPackage,
+				"npm:unrelated-package",
+			],
+			tlh: {
+				defaultExtensionProvenance: {
+					managedPackageIdentities: [retiredLibrarianPackage],
+				},
+			},
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+	const settings = readJson(fixture.settings);
+
+	// Package must be removed and the change logged
+	assert.match(output, /Will remove retired TLH default package: npm:@diegopetrucci\/pi-librarian/);
+	assert.ok(
+		!settings.packages.some((entry) => (typeof entry === "string" ? entry : entry.source) === retiredLibrarianPackage),
+		"librarian must be removed from packages",
+	);
+	assert.ok(settings.packages.includes("npm:unrelated-package"), "unrelated package must be preserved");
+
+	// Resynced provenance must NOT contain the retired librarian identity
+	const resynced = settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [];
+	assert.ok(
+		!resynced.includes(retiredLibrarianPackage),
+		"resynced provenance must not list the retired librarian identity",
+	);
+});
+
+test("merge dry-run reports retired librarian cleanup without writing settings", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				retiredLibrarianPackage,
+			],
+		},
+	);
+	const before = readFileSync(fixture.settings, "utf8");
+
+	const output = runMerge(fixture, { dryRun: true, quiet: false });
+
+	assert.match(output, /Would remove retired TLH default package: npm:@diegopetrucci\/pi-librarian/);
+	assert.equal(readFileSync(fixture.settings, "utf8"), before);
+});
+
+test("merge librarian retirement cleanup is idempotent after first run", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				retiredLibrarianPackage,
+			],
+		},
+	);
+
+	runMerge(fixture);
+
+	const afterFirst = readFileSync(fixture.settings, "utf8");
+	const firstSettings = readJson(fixture.settings);
+	assert.ok(!firstSettings.packages.includes(retiredLibrarianPackage), "librarian removed on first run");
 
 	const secondOutput = runMerge(fixture, { quiet: false });
 	assert.match(secondOutput, /No settings changes needed\./);

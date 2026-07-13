@@ -56,7 +56,7 @@ You are running inside a delegated TLH child subagent session.
 
 export const GNOSIS_VALIDATION_TIMEOUT_MS = 5000;
 
-export const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+export const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 export const FALLBACK_THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
 
 export const THINKING_LEVEL_DESCRIPTIONS: Record<ThinkingLevel, string> = {
@@ -65,5 +65,6 @@ export const THINKING_LEVEL_DESCRIPTIONS: Record<ThinkingLevel, string> = {
 	low: "Light reasoning budget",
 	medium: "Balanced default reasoning budget",
 	high: "Deeper reasoning budget",
-	xhigh: "Maximum reasoning budget when the model supports it",
+	xhigh: "Extra-high reasoning budget when the model supports it",
+	max: "Maximum reasoning budget when the model supports it",
 };
