@@ -914,25 +914,31 @@ export function cleanupOldSettingsBackups(config) {
     // Keep only filenames that match TLH backup patterns AND carry a parseable
     // TLH timestamp. Files like `settings.json.backup-mynotes` share the prefix
     // but have no timestamp, so they must never be treated as deletion candidates.
-    const candidates = entries.filter((name) => (name.startsWith("settings.json.backup") ||
-        name.startsWith("keybindings.json.backup")) &&
+    const settingsCandidates = entries.filter((name) => name.startsWith("settings.json.backup") &&
         parseBackupTimestamp(name) !== undefined);
-    if (candidates.length === 0)
+    const keybindingsCandidates = entries.filter((name) => name.startsWith("keybindings.json.backup") &&
+        parseBackupTimestamp(name) !== undefined);
+    if (settingsCandidates.length === 0 && keybindingsCandidates.length === 0)
         return;
     // Determine which candidates are eligible for removal.
+    // Each file type (settings vs keybindings) gets its own independent keepNewest:2
+    // floor so that two recent settings backups cannot consume the floor and cause
+    // the only keybindings backup (however old) to be deleted.
     // All candidates have a parseable timestamp, so mtimeFallback is a defensive
     // safety net only — it should never be reached in normal operation.
-    const toDelete = selectExpiredBackups(candidates, {
-        mtimeFallback: (filename) => {
-            try {
-                const stat = lstatSync(join(config.agentDir, filename));
-                return stat.mtimeMs;
-            }
-            catch {
-                return undefined;
-            }
-        },
-    });
+    const mtimeFallback = (filename) => {
+        try {
+            const stat = lstatSync(join(config.agentDir, filename));
+            return stat.mtimeMs;
+        }
+        catch {
+            return undefined;
+        }
+    };
+    const toDelete = [
+        ...selectExpiredBackups(settingsCandidates, { mtimeFallback }),
+        ...selectExpiredBackups(keybindingsCandidates, { mtimeFallback }),
+    ];
     for (const filename of toDelete) {
         const target = join(config.agentDir, filename);
         // Assert target stays within the isolated agent dir and outside ~/.pi.

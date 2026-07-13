@@ -218,6 +218,35 @@ test("cleanupOldSettingsBackups is idempotent when agentDir is empty", (t) => {
 	assert.doesNotThrow(() => cleanupOldSettingsBackups(makeConfig(agentDir)));
 });
 
+test("cleanupOldSettingsBackups retains sole old keybindings backup when two recent settings backups exist (mixed-profile regression)", (t) => {
+	// Regression: with a combined candidate list, two recent settings backups consume
+	// the keepNewest:2 floor and the only keybindings backup (older than 28 days)
+	// gets incorrectly deleted. Each file type must have its own independent floor.
+	const root = makeTempDir("tlh-backup-cleanup-mixed-profile-");
+	const agentDir = join(root, "agent");
+	mkdirSync(agentDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	// Two recent settings backups (retained by age, fill the settings floor).
+	const recentSettings1 = recentBackupName("settings.json", 1);
+	const recentSettings2 = recentBackupName("settings.json", 2);
+	writeFileSync(join(agentDir, recentSettings1), "{}", "utf8");
+	writeFileSync(join(agentDir, recentSettings2), "{}", "utf8");
+
+	// One keybindings backup older than 28 days — the only keybindings backup.
+	const oldKeybindings = oldBackupName("keybindings.json", 35);
+	writeFileSync(join(agentDir, oldKeybindings), "[]", "utf8");
+
+	cleanupOldSettingsBackups(makeConfig(agentDir));
+
+	assert.ok(
+		existsSync(join(agentDir, oldKeybindings)),
+		"sole old keybindings backup must be retained (keepNewest:2 floor is per-type, not shared)",
+	);
+	assert.ok(existsSync(join(agentDir, recentSettings1)), "recent settings backup 1 should be retained");
+	assert.ok(existsSync(join(agentDir, recentSettings2)), "recent settings backup 2 should be retained");
+});
+
 test("cleanupOldSettingsBackups does not delete user files with no parseable timestamp", (t) => {
 	// Regression: files like `settings.json.backup-mynotes` share the backup prefix
 	// but carry no TLH timestamp. They must never be treated as deletion candidates,
