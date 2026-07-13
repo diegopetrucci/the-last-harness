@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 import { SettingsManager, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import {
@@ -28,6 +30,7 @@ import { isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast } from
 import {
 	buildChildSubagentSystemPrompt,
 	buildTlhSystemPrompt,
+	loadAuthorizedEmbeddedSubagentRuntimeNames,
 	loadPrimaryAgents,
 	loadSubagentMetadata,
 } from "./prompts.js";
@@ -259,36 +262,55 @@ function rushDeveloperDelegationReason(): string {
 	return "TLH Rush may not delegate implementation to developer. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.";
 }
 
-function subagentCallTargetsMatching(input: unknown, predicate: (agent: string) => boolean): boolean {
+function collectSubagentCallTargetsMatching(input: unknown, predicate: (agent: string) => boolean): string[] {
 	if (!isRecord(input)) {
-		return false;
+		return [];
 	}
-	if (typeof input.agent === "string" && predicate(input.agent.trim())) {
-		return true;
+	const matches: string[] = [];
+	if (typeof input.agent === "string") {
+		const agent = input.agent.trim();
+		if (predicate(agent)) {
+			matches.push(agent);
+		}
 	}
-	if (Array.isArray(input.tasks) && input.tasks.some((task) => subagentCallTargetsMatching(task, predicate))) {
-		return true;
+	if (Array.isArray(input.tasks)) {
+		for (const task of input.tasks) {
+			matches.push(...collectSubagentCallTargetsMatching(task, predicate));
+		}
 	}
 	if (!Array.isArray(input.chain)) {
-		return false;
+		return [...new Set(matches)];
 	}
 	for (const step of input.chain) {
 		if (!isRecord(step)) {
 			continue;
 		}
-		if (typeof step.agent === "string" && predicate(step.agent.trim())) {
-			return true;
+		if (typeof step.agent === "string") {
+			const agent = step.agent.trim();
+			if (predicate(agent)) {
+				matches.push(agent);
+			}
 		}
-		if (Array.isArray(step.parallel) && step.parallel.some((task) => subagentCallTargetsMatching(task, predicate))) {
-			return true;
+		if (Array.isArray(step.parallel)) {
+			for (const task of step.parallel) {
+				matches.push(...collectSubagentCallTargetsMatching(task, predicate));
+			}
 		}
 	}
-	return false;
+	return [...new Set(matches)];
+}
+
+function subagentCallTargetsMatching(input: unknown, predicate: (agent: string) => boolean): boolean {
+	return collectSubagentCallTargetsMatching(input, predicate).length > 0;
+}
+
+function isSubagentManagementActionInput(input: unknown): boolean {
+	return isRecord(input) && typeof input.action === "string" && input.action.trim().length > 0;
 }
 
 function embeddedDelegationBlockedReason(selection: TlhPrimaryAgentSelection, input: unknown): string | undefined {
 	// Management actions are exempt from embedded-target restrictions.
-	if (isRecord(input) && typeof input.action === "string" && input.action.trim()) {
+	if (isSubagentManagementActionInput(input)) {
 		return undefined;
 	}
 	if (!subagentCallTargetsMatching(input, isEmbeddedSubagentTarget)) {
@@ -858,7 +880,21 @@ function createTlhPrimaryAgentRuntime(
 			}
 			const allowEmbeddedTargets = embeddedFeatureEnabled && selection === "architect";
 			const reason = validateSubagentToolInput(event.input, { allowedSubagents, allowEmbeddedTargets });
-			return reason ? { block: true, reason } : undefined;
+			if (reason) {
+				return { block: true, reason };
+			}
+			if (allowEmbeddedTargets && !isSubagentManagementActionInput(event.input)) {
+				const authorizedEmbeddedTargets = new Set(loadAuthorizedEmbeddedSubagentRuntimeNames(getAgentDir()));
+				const requestedEmbeddedTargets = collectSubagentCallTargetsMatching(event.input, isEmbeddedSubagentTarget);
+				const unauthorizedTargets = requestedEmbeddedTargets.filter((target) => !authorizedEmbeddedTargets.has(target));
+				if (unauthorizedTargets.length > 0) {
+					return {
+						block: true,
+						reason: `TLH architect may delegate to embedded.<slug> only when a valid package: embedded / name: <slug> markdown definition currently exists under ${formatHomePath(join(getAgentDir(), "agents"))}. Unauthorized target(s): ${unauthorizedTargets.join(", ")}.`,
+					};
+				}
+			}
+			return undefined;
 		});
 	}
 

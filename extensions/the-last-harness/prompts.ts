@@ -1,15 +1,15 @@
 import { join } from "node:path";
 
 import { SELECTABLE_PRIMARY_AGENTS } from "../the-last-harness-primary-agent.mjs";
-import { allowedSubagentsForExperimentalConfig, isExperimentalFeatureEnabled } from "../the-last-harness-subagent-safety.mjs";
+import { allowedSubagentsForExperimentalConfig, isEmbeddedSubagentTarget, isExperimentalFeatureEnabled } from "../the-last-harness-subagent-safety.mjs";
 import { EMBEDDED_SUBAGENTS_FEATURE } from "./experimental.js";
 import { CHILD_SUBAGENT_PROMPT, HARNESS_PROMPT } from "./constants.js";
-import { readMarkdownFilesRecursive, readText } from "./common.js";
+import { readMarkdownFilesRecursive, readText, uniqueSorted } from "./common.js";
 import { packageRoot } from "./package-version.js";
 import { isThinkingLevel } from "./thinking.js";
 import type { AgentPrompt, SubagentMetadata, ThinkingLevel, TlhExperimentalConfig, TlhPrimaryAgentSelection } from "./types.js";
 
-function parseFrontmatter(content: string): { frontmatter: Record<string, string>; body: string } {
+export function parseFrontmatter(content: string): { frontmatter: Record<string, string>; body: string } {
 	if (!content.startsWith("---")) {
 		return { frontmatter: {}, body: content.trim() };
 	}
@@ -104,6 +104,25 @@ export function loadSubagentMetadata(): SubagentMetadata[] {
 			preferOppositeProvider: agent.preferOppositeProvider,
 		}))
 		.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function loadAuthorizedEmbeddedSubagentRuntimeNames(agentDir: string): string[] {
+	return uniqueSorted(
+		readMarkdownFilesRecursive(join(agentDir, "agents"))
+			.map((filePath) => readText(filePath))
+			.filter((content): content is string => typeof content === "string")
+			.map((content) => parseFrontmatter(content).frontmatter)
+			.map((frontmatter) => {
+				const name = frontmatter.name?.trim();
+				const description = frontmatter.description?.trim();
+				if (frontmatter.package?.trim() !== "embedded" || !name || !description) {
+					return undefined;
+				}
+				const runtimeName = `embedded.${name}`;
+				return isEmbeddedSubagentTarget(runtimeName) ? runtimeName : undefined;
+			})
+			.filter((runtimeName): runtimeName is string => typeof runtimeName === "string"),
+	);
 }
 
 function formatAllowedSubagents(primary: AgentPrompt | undefined, subagents: SubagentMetadata[], experimentalConfig: TlhExperimentalConfig | undefined): string {

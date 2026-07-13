@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { PRIMARY_AGENT_SESSION_STATE_ENTRY } from "../extensions/the-last-harness-primary-agent.mjs";
@@ -402,6 +402,13 @@ function standardDisallowedTargetReason(target) {
 	return `TLH primary agents may delegate only to: ${ALLOWED_SUBAGENTS.join(", ")}. Disallowed target(s): ${target}.`;
 }
 
+function writeEmbeddedAgent(agentDir, relativePath, frontmatter) {
+	const filePath = join(agentDir, "agents", relativePath);
+	mkdirSync(dirname(filePath), { recursive: true });
+	writeFileSync(filePath, `${frontmatter}\nbody\n`);
+	return filePath;
+}
+
 test("embedded subagents: flag off blocks embedded targets for architect with standard disallowed-target reason", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
@@ -459,7 +466,7 @@ test("embedded subagents: flag off + rush and product get the standard disallowe
 	});
 });
 
-test("embedded subagents: flag on + architect allows embedded targets in single/tasks/chain/parallel shapes", async (t) => {
+test("embedded subagents: flag on + architect allows only profile-authorized embedded targets", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -467,35 +474,41 @@ test("embedded subagents: flag on + architect allows embedded targets in single/
 			join(fixture.agent, "settings.json"),
 			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
 		);
+		writeEmbeddedAgent(
+			fixture.agent,
+			"trusted/my-tool.md",
+			"---\nname: my-tool\npackage: embedded\ndescription: Trusted helper\n---",
+		);
 		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
 			undefined,
 			{ cwd: fixture.cwd },
 		);
-		// Snapshot at session start with flag enabled
 		await applySessionStart(ctx);
 
-		// Single target
 		const singleEvent = { toolName: "subagent", input: { agent: "embedded.my-tool", prompt: "do something" } };
 		assert.equal(await toolCall(singleEvent, ctx), undefined, "single embedded target should be allowed for architect");
 		assert.equal(singleEvent.input.agentScope, "user");
 		assert.equal(singleEvent.input.context, "fresh");
 
-		// Tasks shape
 		const tasksEvent = { toolName: "subagent", input: { tasks: [{ agent: "embedded.my-tool", prompt: "step 1" }] } };
 		assert.equal(await toolCall(tasksEvent, ctx), undefined, "tasks embedded target should be allowed for architect");
 
-		// Chain shape
 		const chainEvent = { toolName: "subagent", input: { chain: [{ agent: "embedded.my-tool", prompt: "chain step" }] } };
 		assert.equal(await toolCall(chainEvent, ctx), undefined, "chain embedded target should be allowed for architect");
 
-		// Parallel-in-chain shape
 		const parallelEvent = {
 			toolName: "subagent",
 			input: { chain: [{ parallel: [{ agent: "embedded.my-tool", prompt: "parallel" }] }] },
 		};
 		assert.equal(await toolCall(parallelEvent, ctx), undefined, "parallel-in-chain embedded target should be allowed for architect");
+
+		const missingEvent = { toolName: "subagent", input: { agent: "embedded.missing-tool", prompt: "blocked" } };
+		const missingResult = await toolCall(missingEvent, ctx);
+		assert.equal(missingResult?.block, true);
+		assert.match(missingResult?.reason ?? "", /valid package: embedded \/ name: <slug>/);
+		assert.match(missingResult?.reason ?? "", /embedded\.missing-tool/);
 	});
 });
 
@@ -577,11 +590,126 @@ test("embedded subagents: flag on + bug-hunter blocks embedded targets with bug-
 	});
 });
 
+test("embedded subagents: same-name external fallback stays blocked when the profile file is missing required discovery frontmatter", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const externalAgentsDir = join(fixture.dir, "external-agents");
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({
+				tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } },
+				subagents: { agentDirs: [externalAgentsDir] },
+			}, null, 2)}\n`,
+		);
+		writeEmbeddedAgent(
+			externalAgentsDir,
+			"fallback.md",
+			"---\nname: fallback\npackage: embedded\ndescription: External helper\n---",
+		);
+		writeEmbeddedAgent(
+			fixture.agent,
+			"fallback.md",
+			"---\nname: fallback\npackage: embedded\ndescription:\n---",
+		);
+		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const ctx = createToolCallContext(
+			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
+			undefined,
+			{ cwd: fixture.cwd },
+		);
+		await applySessionStart(ctx);
+
+		const blockedEvent = { toolName: "subagent", input: { agent: "embedded.fallback", prompt: "do something" } };
+		const blockedResult = await toolCall(blockedEvent, ctx);
+		assert.equal(blockedResult?.block, true);
+		assert.match(blockedResult?.reason ?? "", /embedded\.fallback/);
+		assert.match(blockedResult?.reason ?? "", /currently exists under/);
+	});
+});
+
+test("embedded subagents: same-name external agents stay blocked and deleting profile files is observed immediately", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const externalAgentsDir = join(fixture.dir, "external-agents");
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({
+				tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } },
+				subagents: { agentDirs: [externalAgentsDir] },
+			}, null, 2)}\n`,
+		);
+		writeEmbeddedAgent(
+			externalAgentsDir,
+			"fallback.md",
+			"---\nname: fallback\npackage: embedded\ndescription: External helper\n---",
+		);
+		const profilePath = writeEmbeddedAgent(
+			fixture.agent,
+			"fallback.md",
+			"---\nname: fallback\npackage: embedded\ndescription: Profile helper\n---",
+		);
+		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const ctx = createToolCallContext(
+			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
+			undefined,
+			{ cwd: fixture.cwd },
+		);
+		await applySessionStart(ctx);
+
+		const allowedEvent = { toolName: "subagent", input: { agent: "embedded.fallback", prompt: "do something" } };
+		assert.equal(await toolCall(allowedEvent, ctx), undefined, "profile-owned embedded agent should be allowed");
+
+		writeFileSync(profilePath, "---\nname: fallback\npackage: bundled\ndescription: No longer embedded\n---\nbody\n");
+
+		const blockedEvent = { toolName: "subagent", input: { agent: "embedded.fallback", prompt: "do something" } };
+		const blockedResult = await toolCall(blockedEvent, ctx);
+		assert.equal(blockedResult?.block, true);
+		assert.match(blockedResult?.reason ?? "", /embedded\.fallback/);
+		assert.match(blockedResult?.reason ?? "", /currently exists under/);
+	});
+});
+
+test("embedded subagents: malformed or unreadable profile files fail closed", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
+		);
+		writeEmbeddedAgent(
+			fixture.agent,
+			"broken-uppercase.md",
+			"---\nname: My-Tool\npackage: embedded\ndescription: Broken helper\n---",
+		);
+		writeEmbeddedAgent(
+			fixture.agent,
+			"broken-package.md",
+			"---\nname: other-tool\npackage: bundled\ndescription: Wrong package\n---",
+		);
+		symlinkSync(join(fixture.agent, "missing-target.md"), join(fixture.agent, "agents", "missing-file.md"));
+		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const ctx = createToolCallContext(
+			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
+			undefined,
+			{ cwd: fixture.cwd },
+		);
+		await applySessionStart(ctx);
+
+		for (const target of ["embedded.my-tool", "embedded.other-tool", "embedded.missing-file"]) {
+			const result = await toolCall({ toolName: "subagent", input: { agent: target, prompt: "blocked" } }, ctx);
+			assert.equal(result?.block, true, `${target} should fail closed`);
+			assert.match(result?.reason ?? "", /currently exists under/);
+		}
+	});
+});
+
 test("embedded subagents: snapshot semantics — enabling flag mid-session does NOT open the gate", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		// No settings file → flag off at session start
 		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
@@ -612,10 +740,14 @@ test("embedded subagents: snapshot semantics — disabling flag mid-session does
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		// Flag enabled at session start
 		writeFileSync(
 			join(fixture.agent, "settings.json"),
 			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
+		);
+		writeEmbeddedAgent(
+			fixture.agent,
+			"my-tool.md",
+			"---\nname: my-tool\npackage: embedded\ndescription: Trusted helper\n---",
 		);
 		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
 		const ctx = createToolCallContext(
@@ -623,16 +755,13 @@ test("embedded subagents: snapshot semantics — disabling flag mid-session does
 			undefined,
 			{ cwd: fixture.cwd },
 		);
-		// Snapshot taken here: flag on
 		await applySessionStart(ctx);
 
-		// Now disable the flag mid-session
 		writeFileSync(
 			join(fixture.agent, "settings.json"),
 			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [] } } }, null, 2)}\n`,
 		);
 
-		// Gate must still allow: snapshot was taken when flag was on
 		const embeddedEvent = { toolName: "subagent", input: { agent: "embedded.my-tool", prompt: "do something" } };
 		assert.equal(await toolCall(embeddedEvent, ctx), undefined, "disabling flag mid-session must not close the embedded gate");
 		assert.equal(embeddedEvent.input.agentScope, "user");
@@ -739,10 +868,14 @@ test("embedded subagents: multi-turn — disabling flag mid-session then re-firi
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		// Flag ON at session start.
 		writeFileSync(
 			join(fixture.agent, "settings.json"),
 			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
+		);
+		writeEmbeddedAgent(
+			fixture.agent,
+			"my-tool.md",
+			"---\nname: my-tool\npackage: embedded\ndescription: Trusted helper\n---",
 		);
 		const { applySessionStart, beforeAgentStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
 		const ctx = createToolCallContext(
