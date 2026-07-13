@@ -1,6 +1,7 @@
 // TLH first-party /annotate-git-diff extension.
 // Adapted from @ryan_nookpi/pi-extension-diff-review (MIT), itself inspired by
-// badlogic/pi-diff-review. See ./README.md for attribution details.
+// badlogic/pi-diff-review. See ./README.md for attribution details and
+// ../../docs/upstream-sync-inventory.md for sync/review guidance.
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { readSystemClipboard, writeSystemClipboard } from "./clipboard.js";
 import { getCommitFiles, getReviewWindowData, isWorkingTreeCommitSha, loadReviewFileContents } from "./git.js";

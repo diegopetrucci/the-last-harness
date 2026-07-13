@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { criticalGitSourceSpec, gitSourceInstallSource, packageSourceInstallDir, } from "./lib/tlh-install-package-source.mjs";
 import { assertProfilePathWithinAgent, assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, validateInstallerTargets, validateProfileRelativePath, } from "./lib/tlh-install-paths.mjs";
 import { packageIdentity, } from "./lib/default-extensions.mjs";
-import { assignRequiredEqualsValue, backupPathWithTimestamp, renderShellWords, requiredValue, shellWord, } from "./lib/tlh-install-utils.mjs";
+import { assignRequiredEqualsValue, backupPathWithTimestamp, parseBackupTimestamp, renderShellWords, requiredValue, selectExpiredBackups, shellWord, } from "./lib/tlh-install-utils.mjs";
 import { TLH_SUBAGENT_PROMPTS, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, missingTlhSubagentPrompts, settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
 import { assertGitSourceTargetSafe, refreshGitCheckout, } from "./lib/tlh-install-git.mjs";
 import { findLocalRepoDir, ensureSupportFilesPrepared, installableSupportFilesArePrepared, preflightRuntimeSupportFiles, } from "./lib/tlh-install-support-files.mjs";
@@ -894,6 +894,80 @@ export function cleanupRetiredProfileFiles(config) {
         }
     }
 }
+export function cleanupOldSettingsBackups(config) {
+    // Skip entirely when agentDir itself is a symlink — same safety posture as cleanupRetiredProfileFiles.
+    if (isSymlink(config.agentDir)) {
+        warn(`Skipping stale settings backup cleanup: agentDir is a symlink: ${config.agentDir}`);
+        return;
+    }
+    // Gather candidate filenames from the agent-dir root (non-recursive).
+    if (!existsSync(config.agentDir))
+        return;
+    let entries;
+    try {
+        entries = readdirSync(config.agentDir);
+    }
+    catch (error) {
+        warn(`Skipping stale settings backup cleanup: cannot read agentDir: ${error instanceof Error ? error.message : String(error)}`);
+        return;
+    }
+    // Keep only filenames that match TLH backup patterns AND carry a parseable
+    // TLH timestamp. Files like `settings.json.backup-mynotes` share the prefix
+    // but have no timestamp, so they must never be treated as deletion candidates.
+    const settingsCandidates = entries.filter((name) => name.startsWith("settings.json.backup") &&
+        parseBackupTimestamp(name) !== undefined);
+    const keybindingsCandidates = entries.filter((name) => name.startsWith("keybindings.json.backup") &&
+        parseBackupTimestamp(name) !== undefined);
+    if (settingsCandidates.length === 0 && keybindingsCandidates.length === 0)
+        return;
+    // Determine which candidates are eligible for removal.
+    // Each file type (settings vs keybindings) gets its own independent keepNewest:2
+    // floor so that two recent settings backups cannot consume the floor and cause
+    // the only keybindings backup (however old) to be deleted.
+    // All candidates have a parseable timestamp, so mtimeFallback is a defensive
+    // safety net only — it should never be reached in normal operation.
+    const mtimeFallback = (filename) => {
+        try {
+            const stat = lstatSync(join(config.agentDir, filename));
+            return stat.mtimeMs;
+        }
+        catch {
+            return undefined;
+        }
+    };
+    const toDelete = [
+        ...selectExpiredBackups(settingsCandidates, { mtimeFallback }),
+        ...selectExpiredBackups(keybindingsCandidates, { mtimeFallback }),
+    ];
+    for (const filename of toDelete) {
+        const target = join(config.agentDir, filename);
+        // Assert target stays within the isolated agent dir and outside ~/.pi.
+        try {
+            assertProfilePathWithinAgent(config, target, "stale settings backup");
+        }
+        catch (error) {
+            warn(`Skipping stale settings backup cleanup (unsafe path): ${target}: ${error instanceof Error ? error.message : String(error)}`);
+            continue;
+        }
+        if (isSymlink(target))
+            continue; // Conservative: never remove or follow symlinks
+        if (!existsSync(target))
+            continue; // Idempotent: absent is fine
+        if (!lstatSync(target).isFile())
+            continue; // Conservative: only regular files
+        if (config.dryRun) {
+            log(config, `Would remove stale settings backup: ${target}`);
+            continue;
+        }
+        try {
+            rmSync(target);
+            detailLog(config, `Removed stale settings backup: ${target}`);
+        }
+        catch (error) {
+            warn(`failed to remove stale settings backup ${target}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+}
 function backupExistingSettingsBeforePiInstall(config) {
     assertSafeSettingsTarget(config);
     if (!existsSync(config.settingsPath))
@@ -1511,6 +1585,8 @@ async function runInstallFlow(config) {
     await mergeSettings(config);
     if (!config.noSettings)
         cleanupRetiredProfileFiles(config);
+    if (!config.noSettings)
+        cleanupOldSettingsBackups(config);
     configureRtk(config);
     await writeInstallState(config);
     installDefaultExtensions(config);

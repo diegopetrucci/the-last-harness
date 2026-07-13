@@ -42,6 +42,8 @@ For installer-specific checks, use temporary paths, for example:
 bash install.sh --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -d)"
 ```
 
+For vendored/adapted upstream code and Pi-sensitive compatibility shims, see [docs/upstream-sync-inventory.md](docs/upstream-sync-inventory.md) before editing those areas.
+
 Docs-only changes may use narrower validation, but inspect the rendered/content shape and review the diff before opening a PR.
 
 ## Refresh the Understand Anything graph when needed
