@@ -232,6 +232,7 @@ test("/tokens writes a private local HTML report from sanitized analyzer output 
 test("buildTokensReportHtml escapes dynamic content while preserving required report structure", () => {
 	const html = buildTokensReportHtml(
 		{
+			cacheMisses: { missedTokens: 0, missedCost: 0, missCount: 0, worst: [] },
 			session: {
 				sessionId: "session-<1>",
 				sessionName: "<script>alert(1)</script>",
@@ -285,6 +286,7 @@ test("buildTokensReportHtml escapes dynamic content while preserving required re
 				precision: "discoverable-only",
 				runCount: 1,
 				usage: { inputTokens: 2, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 1, totalTokens: 4, costUsd: 0.01, turns: 1, assistantMessages: 1 },
+				byAgent: [],
 				models: [{ key: "sub/model<unsafe>", provider: "sub", modelId: "model<unsafe>", source: "subagent", usage: { inputTokens: 2, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 1, totalTokens: 4, costUsd: 0.01, turns: 1, assistantMessages: 1 } }],
 				runs: [{ key: "run", sourceEntryId: "tr1", sourceTurnIndex: 1, runId: "run-1", agent: "developer<img>", mode: "single", model: "sub/model<unsafe>", session: { kind: "session", label: "run-1/session<script>.jsonl", basename: "session<script>.jsonl", extension: ".jsonl", runId: "run-1", pathRedacted: true }, artifacts: [{ kind: "artifact", label: "run-1/output<script>.md", basename: "output<script>.md", extension: ".md", runId: "run-1", pathRedacted: true }], usage: { inputTokens: 2, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 1, totalTokens: 4, costUsd: 0.01, turns: 1, assistantMessages: 1 }, success: true }],
 			},
@@ -486,4 +488,341 @@ test("analyzeSessionEntries byTool sorts by approxTokens descending, with callCo
 	assert.ok(cheapTool.callCount > expensiveTool.callCount, "cheap-tool has more calls");
 	assert.equal(analysis.tools.byTool[0].toolName, "expensive-tool", "byTool[0] is expensive-tool (highest approxTokens)");
 	assert.equal(analysis.tools.byTool[1].toolName, "cheap-tool", "byTool[1] is cheap-tool (lower approxTokens despite more calls)");
+});
+
+// ---------------------------------------------------------------------------
+// renderUsageTotalsTable – Provider column and per-subagent sub-rows
+// ---------------------------------------------------------------------------
+
+function makeMinimalAnalysis(overrides = {}) {
+	const zeroTotals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0, costUsd: 0, turns: 0, assistantMessages: 0 };
+	return {
+		cacheMisses: { missedTokens: 0, missedCost: 0, missCount: 0, worst: [] },
+		session: {
+			sessionId: "s1",
+			sessionName: "Test",
+			startedAt: "2026-07-12T00:00:00Z",
+			entryCount: 1,
+			leafCount: 1,
+			activeLeafId: "a1",
+			assistantTurnsOnActiveBranch: 1,
+			assistantTurnsOffActiveBranch: 0,
+		},
+		totals: {
+			primary: { ...zeroTotals, inputTokens: 10, outputTokens: 5, totalTokens: 15, costUsd: 0.02, turns: 1, assistantMessages: 1 },
+			subagents: { ...zeroTotals, inputTokens: 20, outputTokens: 8, totalTokens: 28, costUsd: 0.05, turns: 2, assistantMessages: 2 },
+			combined: { ...zeroTotals, inputTokens: 30, outputTokens: 13, totalTokens: 43, costUsd: 0.07, turns: 3, assistantMessages: 3 },
+		},
+		primaryAssistant: {
+			usage: { ...zeroTotals },
+			usageCoverage: { assistantMessages: 1, withUsage: 1, withoutUsage: 0 },
+			models: [],
+			timeline: [],
+		},
+		tools: {
+			precision: "estimated",
+			totalCalls: 0,
+			totalResults: 0,
+			totalErrors: 0,
+			mcpCalls: 0,
+			mcpProxyCalls: 0,
+			mcpDirectCalls: 0,
+			mcpApproxTokens: 0,
+			totalToolApproxTokens: 0,
+			byTool: [],
+			bySource: [],
+		},
+		subagents: {
+			precision: "discoverable-only",
+			runCount: 0,
+			usage: { ...zeroTotals },
+			models: [],
+			byAgent: [],
+			runs: [],
+		},
+		references: { artifacts: [], sessions: [], intercomTargets: [] },
+		caveats: [],
+		...overrides,
+	};
+}
+
+test("renderUsageTotalsTable includes Provider column header and preserves Primary assistant and Combined rows", () => {
+	const analysis = makeMinimalAnalysis();
+	const html = buildTokensReportHtml(analysis, { generatedAt: "2026-07-12T00:00:00Z" });
+
+	// Provider column header must be present
+	assert.match(html, /<th>Provider<\/th>/);
+
+	// Primary assistant row uses em-dash for provider
+	assert.match(html, /<td>Primary assistant<\/td><td>\u2014<\/td>/);
+
+	// Subagents (all) subtotal row uses em-dash for provider
+	assert.match(html, /<td>Subagents \(all\)<\/td><td>\u2014<\/td>/);
+
+	// Combined row uses em-dash for provider
+	assert.match(html, /<td>Combined<\/td><td>\u2014<\/td>/);
+});
+
+test("renderUsageTotalsTable renders per-subagent sub-rows with plain agent name (no arrow prefix) and provider", () => {
+	const zeroTotals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0, costUsd: 0, turns: 0, assistantMessages: 0 };
+	const analysis = makeMinimalAnalysis({
+		subagents: {
+			precision: "discoverable-only",
+			runCount: 2,
+			usage: { ...zeroTotals },
+			models: [],
+			byAgent: [
+				{ key: "developer|anthropic", agent: "developer", provider: "anthropic", usage: { ...zeroTotals, inputTokens: 12, outputTokens: 4, totalTokens: 16, costUsd: 0.03, turns: 1, assistantMessages: 1 } },
+				{ key: "reviewer|openai", agent: "reviewer", provider: "openai", usage: { ...zeroTotals, inputTokens: 8, outputTokens: 4, totalTokens: 12, costUsd: 0.02, turns: 1, assistantMessages: 1 } },
+			],
+			runs: [],
+		},
+	});
+	const html = buildTokensReportHtml(analysis, { generatedAt: "2026-07-12T00:00:00Z" });
+
+	// Sub-row for developer/anthropic: plain name, no ↳ prefix
+	assert.match(html, /<td>developer<\/td><td>anthropic<\/td>/);
+
+	// Sub-row for reviewer/openai: plain name, no ↳ prefix
+	assert.match(html, /<td>reviewer<\/td><td>openai<\/td>/);
+
+	// No arrow prefix (\u21b3) anywhere in the sub-row section
+	assert.doesNotMatch(html, /\u21b3/);
+
+	// Subagents (all) subtotal row still present
+	assert.match(html, /<td>Subagents \(all\)<\/td><td>\u2014<\/td>/);
+
+	// Sub-rows appear before the Subagents (all) row in document order
+	const developerIdx = html.indexOf("<td>developer</td>");
+	const subtotalIdx = html.indexOf("Subagents (all)");
+	assert.ok(developerIdx < subtotalIdx, "developer sub-row appears before Subagents (all) subtotal");
+});
+
+test("renderUsageTotalsTable renders 'unknown' for missing agent name in sub-row (no arrow prefix)", () => {
+	const zeroTotals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0, costUsd: 0, turns: 0, assistantMessages: 0 };
+	const analysis = makeMinimalAnalysis({
+		subagents: {
+			precision: "discoverable-only",
+			runCount: 1,
+			usage: { ...zeroTotals },
+			models: [],
+			byAgent: [
+				{ key: "|anthropic", agent: undefined, provider: "anthropic", usage: { ...zeroTotals, turns: 1, assistantMessages: 1 } },
+			],
+			runs: [],
+		},
+	});
+	const html = buildTokensReportHtml(analysis, { generatedAt: "2026-07-12T00:00:00Z" });
+
+	// Agent label falls back to literal 'unknown' (not em-dash, not arrow) when agent is undefined
+	assert.match(html, /<td>unknown<\/td><td>anthropic<\/td>/);
+
+	// No ↳ arrow prefix
+	assert.doesNotMatch(html, /\u21b3/);
+
+	// No em-dash used for missing agent (em-dash is only for provider-less rows)
+	assert.doesNotMatch(html, /<td>\u2014<\/td><td>anthropic<\/td>/);
+});
+
+test("buildTokensReportHtml section order is: Overview, Tools/MCP, Cache misses, Timeline, Agents/subagents, Cache, Caveats", () => {
+	const analysis = makeMinimalAnalysis();
+	const html = buildTokensReportHtml(analysis, { generatedAt: "2026-07-12T00:00:00Z" });
+
+	const overviewIdx = html.indexOf("<h2>Overview</h2>");
+	const toolsMcpIdx = html.indexOf("<h2>Tools/MCP</h2>");
+	const cacheMissesIdx = html.indexOf("<h2>Cache misses</h2>");
+	const timelineIdx = html.indexOf("<h2>Timeline</h2>");
+	const agentsIdx = html.indexOf("<h2>Agents/subagents</h2>");
+	const cacheIdx = html.indexOf("<h2>Cache</h2>");
+	const caveatsIdx = html.indexOf("<h2>Caveats</h2>");
+
+	assert.ok(overviewIdx !== -1, "Overview section present");
+	assert.ok(toolsMcpIdx !== -1, "Tools/MCP section present");
+	assert.ok(cacheMissesIdx !== -1, "Cache misses section present");
+	assert.ok(timelineIdx !== -1, "Timeline section present");
+	assert.ok(agentsIdx !== -1, "Agents/subagents section present");
+	assert.ok(cacheIdx !== -1, "Cache section present");
+	assert.ok(caveatsIdx !== -1, "Caveats section present");
+
+	assert.ok(overviewIdx < toolsMcpIdx, "Overview before Tools/MCP");
+	assert.ok(toolsMcpIdx < cacheMissesIdx, "Tools/MCP before Cache misses");
+	assert.ok(cacheMissesIdx < timelineIdx, "Cache misses before Timeline");
+	assert.ok(timelineIdx < agentsIdx, "Timeline before Agents/subagents");
+	assert.ok(agentsIdx < cacheIdx, "Agents/subagents before Cache");
+	assert.ok(cacheIdx < caveatsIdx, "Cache before Caveats");
+});
+
+// ---------------------------------------------------------------------------
+// Primary-agent label threading
+// ---------------------------------------------------------------------------
+
+test("buildTokensReportHtml uses a provided primaryAgentLabel in all four primary-bucket sites", () => {
+	const analysis = makeMinimalAnalysis({
+		primaryAssistant: {
+			usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0, costUsd: 0, turns: 0, assistantMessages: 0 },
+			usageCoverage: { assistantMessages: 1, withUsage: 1, withoutUsage: 0 },
+			models: [
+				{ key: "openai/gpt-5", provider: "openai", modelId: "gpt-5", source: "primary", usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 15, costUsd: 0.02, turns: 1, assistantMessages: 1 } },
+			],
+			timeline: [],
+		},
+	});
+	const html = buildTokensReportHtml(analysis, { generatedAt: "2026-07-12T00:00:00Z", primaryAgentLabel: "architect" });
+
+	// Site 1: renderUsageTotalsTable primary row Bucket cell
+	assert.match(html, /<td>architect<\/td><td>\u2014<\/td>/, "site 1: usage totals table primary row uses provided label");
+
+	// Site 2: Overview metric card title
+	assert.match(html, /<p class="card-label">architect<\/p>/, "site 2: Overview metric card title uses provided label");
+
+	// Site 3: models table heading becomes '<label> models'
+	assert.match(html, /<h3>architect models<\/h3>/, "site 3: models table heading uses provided label");
+
+	// Site 4: renderCacheTotalsTable primary row
+	// The cache table has 'architect' as the first bucket row (before Subagents and Combined)
+	const cacheTableIdx = html.indexOf("<h2>Cache</h2>");
+	const cacheSection = html.slice(cacheTableIdx);
+	const architectInCache = cacheSection.indexOf("<td>architect</td>");
+	assert.ok(architectInCache !== -1, "site 4: cache totals table primary row uses provided label");
+
+	// Fallback label 'Primary assistant' must NOT appear as primary bucket (subagent and combined rows unaffected)
+	assert.doesNotMatch(html, /<td>Primary assistant<\/td><td>\u2014<\/td>/, "fallback label absent when custom label provided");
+});
+
+test("buildTokensReportHtml falls back to 'Primary assistant' when no primaryAgentLabel is given", () => {
+	const analysis = makeMinimalAnalysis({
+		primaryAssistant: {
+			usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0, costUsd: 0, turns: 0, assistantMessages: 0 },
+			usageCoverage: { assistantMessages: 1, withUsage: 1, withoutUsage: 0 },
+			models: [],
+			timeline: [],
+		},
+	});
+	const html = buildTokensReportHtml(analysis, { generatedAt: "2026-07-12T00:00:00Z" });
+
+	// Site 1: usage totals table primary row
+	assert.match(html, /<td>Primary assistant<\/td><td>\u2014<\/td>/, "site 1: fallback label in usage totals table");
+
+	// Site 2: Overview metric card title
+	assert.match(html, /<p class="card-label">Primary assistant<\/p>/, "site 2: fallback label in Overview metric card");
+
+	// Site 3: models table heading
+	assert.match(html, /<h3>Primary assistant models<\/h3>/, "site 3: fallback label in models table heading");
+
+	// Site 4: cache totals table primary row
+	const cacheTableIdx = html.indexOf("<h2>Cache</h2>");
+	const cacheSection = html.slice(cacheTableIdx);
+	assert.ok(cacheSection.indexOf("<td>Primary assistant</td>") !== -1, "site 4: fallback label in cache totals table");
+});
+
+test("createTokensCommandHandler passes getPrimaryAgentLabel to the report (integration)", async (t) => {
+	const sessionDir = makeTempDir("tlh-tokens-label-", t);
+	const pi = createPiHarness();
+	let openedPath;
+	registerTokensCommand(pi, {
+		openReport: async (path) => { openedPath = path; },
+		now: () => new Date("2026-07-12T00:00:00Z"),
+		getPrimaryAgentLabel: () => "architect",
+	});
+	const command = pi.commands.get("tokens");
+	const { ctx } = createCommandContext({ sessionDir, entries: [] });
+	await command.handler("", ctx);
+	assert.ok(openedPath, "report was opened");
+	const html = readFileSync(openedPath, "utf8");
+	assert.match(html, /<p class="card-label">architect<\/p>/, "metric card uses provided label");
+	assert.match(html, /<h3>architect models<\/h3>/, "models heading uses provided label");
+});
+
+test("renderUsageTotalsTable renders no sub-rows but still shows Subagents (all) when byAgent is empty", () => {
+	const analysis = makeMinimalAnalysis();
+	// byAgent is [] by default in makeMinimalAnalysis
+	const html = buildTokensReportHtml(analysis, { generatedAt: "2026-07-12T00:00:00Z" });
+
+	// No ↳ rows
+	assert.doesNotMatch(html, /\u21b3/);
+
+	// Subagents (all) row still present
+	assert.match(html, /<td>Subagents \(all\)<\/td><td>\u2014<\/td>/);
+});
+
+// ---------------------------------------------------------------------------
+// Cache misses section
+// ---------------------------------------------------------------------------
+
+test("buildTokensReportHtml renders Cache misses section with cards and worst table when missCount > 0", () => {
+	const analysis = makeMinimalAnalysis({
+		cacheMisses: {
+			missedTokens: 12_500,
+			missedCost: 0.0375,
+			missCount: 3,
+			worst: [
+				{ turnIndex: 4, idleMs: 420_000, modelChanged: false, missedTokens: 8000, missedCost: 0.024 },
+				{ turnIndex: 9, idleMs: 25_000, modelChanged: true, missedTokens: 3000, missedCost: 0.009 },
+				{ turnIndex: 1, idleMs: 45_000, modelChanged: false, missedTokens: 1500, missedCost: 0.0045 },
+			],
+		},
+	});
+	const html = buildTokensReportHtml(analysis, { generatedAt: "2026-07-12T00:00:00Z" });
+
+	// Section heading present
+	assert.match(html, /<h2>Cache misses<\/h2>/);
+
+	// Explanatory note present
+	assert.match(html, /A cache miss is prompt content/);
+	assert.match(html, /Only misses above a small noise floor are counted\./);
+
+	// Three metric cards
+	assert.match(html, /Missed tokens/);
+	assert.match(html, /Extra cost/);
+	assert.match(html, /Miss count/);
+	// Values: 12,500 tokens, 3 misses
+	assert.match(html, /12,500/);
+	assert.match(html, />3</);
+
+	// Worst-misses table column headers
+	assert.match(html, /<th>Turn<\/th>/);
+	assert.match(html, /<th>Idle gap<\/th>/);
+	assert.match(html, /<th>Model changed<\/th>/);
+	assert.match(html, /<th>Missed tokens<\/th>/);
+	assert.match(html, /<th>Extra cost<\/th>/);
+
+	// Turn indices are 1-based (turnIndex 4 → "5", turnIndex 9 → "10", turnIndex 1 → "2")
+	assert.match(html, /<td>5<\/td>/);
+	assert.match(html, /<td>10<\/td>/);
+	assert.match(html, /<td>2<\/td>/);
+
+	// Idle gap formatting: 420,000ms → 7 min; 25,000ms → 25s; 45,000ms → 45s
+	assert.match(html, /7 min/);
+	assert.match(html, /25s/);
+	assert.match(html, /45s/);
+
+	// modelChanged rendered as yes/no
+	assert.match(html, /<td>no<\/td>/);
+	assert.match(html, /<td>yes<\/td>/);
+
+	// Section is positioned after Tools/MCP and before Timeline
+	const toolsMcpIdx = html.indexOf("<h2>Tools/MCP</h2>");
+	const cacheMissesIdx = html.indexOf("<h2>Cache misses</h2>");
+	const timelineIdx = html.indexOf("<h2>Timeline</h2>");
+	assert.ok(toolsMcpIdx < cacheMissesIdx, "Cache misses after Tools/MCP");
+	assert.ok(cacheMissesIdx < timelineIdx, "Cache misses before Timeline");
+});
+
+test("buildTokensReportHtml renders Cache misses empty state when missCount is 0", () => {
+	// makeMinimalAnalysis already defaults cacheMisses to missCount=0
+	const analysis = makeMinimalAnalysis();
+	const html = buildTokensReportHtml(analysis, { generatedAt: "2026-07-12T00:00:00Z" });
+
+	// Section heading present
+	assert.match(html, /<h2>Cache misses<\/h2>/);
+
+	// Explanatory note present
+	assert.match(html, /A cache miss is prompt content/);
+
+	// Empty-state note present
+	assert.match(html, /No significant cache misses detected\./);
+
+	// No worst-misses table columns (table is omitted in empty state)
+	assert.doesNotMatch(html, /<th>Idle gap<\/th>/);
+	assert.doesNotMatch(html, /<th>Model changed<\/th>/);
 });

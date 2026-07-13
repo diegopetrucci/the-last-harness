@@ -30,6 +30,10 @@ jobs:
           HOME: ${{ runner.temp }}/tlh-home
           TLH_AGENT_DIR: ${{ runner.temp }}/tlh-agent
           TLH_BIN_DIR: ${{ runner.temp }}/tlh-bin
+          # Pin the wrapper name explicitly: a bare install here defaults to ref "main",
+          # which otherwise installs the wrapper as "tlh-main". The perf script looks
+          # for "tlh" on PATH, so keep the standard wrapper name.
+          TLH_WRAPPER_NAME: tlh
           TLH_WORK_DIR: ${{ runner.temp }}/tlh-work
           TLH_PACKAGE_SOURCE: ${{ github.workspace }}
         run: |

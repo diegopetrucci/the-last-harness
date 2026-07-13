@@ -1,7 +1,6 @@
-import { SettingsManager, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { SettingsManager, getAgentDir, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-import { formatHomePath, isRecord } from "./common.js";
-import { withLockedTlhSettingsWrite } from "./profile-state.js";
+import { isRecord } from "./common.js";
 import {
 	commandBasename,
 	extractHereDocBodies,
@@ -19,11 +18,10 @@ import {
 	stripLeadingShellCommandPrefixes,
 	tokenizeShellWords,
 } from "./shell-parser.js";
-import type { TlhAttributionConfig, TlhAttributionWriteResult, TlhCommitAttributionState, TlhSettings } from "./types.js";
+import type { TlhAttributionConfig, TlhCommitAttributionState, TlhSettings } from "./types.js";
 
 export const TLH_DEFAULT_COMMIT_ATTRIBUTION = `Co-authored-by: The Last Harness <hi@thelastharness.com>`;
 
-const TOGGLE_TLH_GIT_ATTRIBUTION_COMMAND_HELP = "Usage: /toggle-tlh-git-attribution";
 const TLH_GIT_COMMIT_ATTRIBUTION_PROMPT_HEADING = "## TLH Git Commit Attribution";
 const TLH_GIT_COMMIT_BLOCK_REASON = "Blocked TLH bash git commit because the commit message is missing the required TLH attribution footer.";
 const GIT_GLOBAL_OPTIONS_WITH_VALUES = new Set(["-C", "-c", "--config-env", "--git-dir", "--namespace", "--super-prefix", "--work-tree"]);
@@ -497,81 +495,36 @@ export function getTlhGitCommitAttributionBlockReason(command: string, state: Tl
 	return getWrappedShellGitCommitAttributionBlockReason(command, state.footer);
 }
 
-function validateTlhAttributionSettings(settings: unknown): asserts settings is TlhSettings {
-	if (!isRecord(settings)) {
-		throw new Error("settings.json must contain a JSON object");
-	}
-	const tlh = settings.tlh;
-	if (tlh !== undefined && !isRecord(tlh)) {
-		throw new Error("settings field 'tlh' must be an object if present");
-	}
-	const attribution = isRecord(tlh) ? tlh.attribution : undefined;
-	if (attribution !== undefined && !isRecord(attribution)) {
-		throw new Error("settings field 'tlh.attribution' must be an object if present");
-	}
-	const commit = isRecord(attribution) ? attribution.commit : undefined;
-	if (commit !== undefined && typeof commit !== "boolean") {
-		throw new Error("settings field 'tlh.attribution.commit' must be a boolean if present");
-	}
+type AttributionCommandModule = {
+	handleToggleTlhGitAttributionCommand(pi: ExtensionAPI, args: string, ctx: ExtensionCommandContext): Promise<void>;
+};
+
+type TlhAttributionCommandFacadeOptions = {
+	loadModule?: () => Promise<AttributionCommandModule>;
+};
+
+function createRetryableLazyImport<TModule>(loader: () => Promise<TModule>): () => Promise<TModule> {
+	let modulePromise: Promise<TModule> | undefined;
+	return () => {
+		if (!modulePromise) {
+			modulePromise = loader().catch((error) => {
+				modulePromise = undefined;
+				throw error;
+			});
+		}
+		return modulePromise;
+	};
 }
 
-function parseTlhSettingsContent(content: string | undefined): TlhSettings {
-	if (!content) {
-		return {};
-	}
-	const parsed = JSON.parse(content) as unknown;
-	validateTlhAttributionSettings(parsed);
-	return parsed;
-}
-
-function ensureMutableAttributionSettings(settings: TlhSettings): asserts settings is TlhSettings & {
-	tlh: { attribution: TlhAttributionConfig };
-} {
-	validateTlhAttributionSettings(settings);
-	settings.tlh ??= {};
-	settings.tlh.attribution ??= {};
-}
-
-function toggleTlhCommitAttribution(cwd: string): TlhAttributionWriteResult {
-	return withLockedTlhSettingsWrite(cwd, "Refusing to write attribution settings outside the isolated TLH profile.", (current) => {
-		const settings = parseTlhSettingsContent(current);
-		const currentState = resolveTlhCommitAttribution(settings.tlh?.attribution);
-		const nextEnabled = !currentState.enabled;
-
-		ensureMutableAttributionSettings(settings);
-		settings.tlh.attribution = { commit: nextEnabled };
-		return {
-			changed: true,
-			state: resolveTlhCommitAttribution(settings.tlh.attribution),
-			nextContent: `${JSON.stringify(settings, null, 2)}\n`,
-		};
-	});
-}
-
-function formatCommitAttributionStatus(state: TlhCommitAttributionState): string {
-	return state.enabled ? "TLH commit attribution is enabled." : "TLH commit attribution is disabled.";
-}
-
-export function registerToggleTlhGitAttributionCommand(pi: ExtensionAPI): void {
+export function registerToggleTlhGitAttributionCommand(pi: ExtensionAPI, options: TlhAttributionCommandFacadeOptions = {}): void {
+	const loadModule = createRetryableLazyImport(
+		options.loadModule ?? (() => import("./attribution-command.js") as Promise<AttributionCommandModule>),
+	);
 	pi.registerCommand("toggle-tlh-git-attribution", {
 		description: "Toggle TLH git commit attribution",
 		handler: async (args, ctx) => {
-			if (args.trim()) {
-				ctx.ui.notify(TOGGLE_TLH_GIT_ATTRIBUTION_COMMAND_HELP, "error");
-				return;
-			}
-
-			try {
-				const result = toggleTlhCommitAttribution(ctx.cwd);
-				const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
-				ctx.ui.notify(
-					`Updated TLH commit attribution at ${formatHomePath(result.settingsPath)}. ${formatCommitAttributionStatus(result.state)}${backupLabel}`,
-					"info",
-				);
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				ctx.ui.notify(`Could not update TLH commit attribution: ${message}`, "error");
-			}
+			const module = await loadModule();
+			await module.handleToggleTlhGitAttributionCommand(pi, args, ctx);
 		},
 	});
 }

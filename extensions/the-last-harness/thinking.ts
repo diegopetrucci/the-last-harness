@@ -1,9 +1,11 @@
+// Legacy Pi typing-compatibility shim retained for re-evaluation on the next Pi bump.
+// See ../../docs/upstream-sync-inventory.md for sync/review guidance.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { FALLBACK_THINKING_LEVELS, THINKING_LEVEL_DESCRIPTIONS, THINKING_LEVELS } from "./constants.js";
 import type { ReasoningModel, ThinkingLevel } from "./types.js";
 
-// TLH extends the upstream union with "max" before the ExtensionAPI typing does.
+// Legacy compatibility alias/cast; Pi 0.80.6 already includes "max" in this API.
 type RuntimeThinkingLevel = Parameters<ExtensionAPI["setThinkingLevel"]>[0];
 
 export function getAvailableThinkingLevels(model: ReasoningModel | undefined): ThinkingLevel[] {
