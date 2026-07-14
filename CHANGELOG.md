@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Bumped the bundled critical pi-subagents default extension pin from `npm:@diegopetrucci/pi-subagents@0.31.4` to `npm:@diegopetrucci/pi-subagents@0.31.5` (v0.32.0+v0.34.0 upstream intakes and RPC bridge default-off hardening).
+
 ### Added
 
 - Install and update now prune stale settings/keybindings backups (`settings.json.backup-*`, `keybindings.json.backup-*`) from the isolated profile. Backups older than ~28 days are removed, but the two newest are always kept regardless of age. Pruning is scoped strictly to `~/.the-last-harness/agent` and never touches `~/.pi`. To keep a backup indefinitely, copy it outside the isolated profile before it ages out.
