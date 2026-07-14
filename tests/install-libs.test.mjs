@@ -39,6 +39,7 @@ import {
 	copyTlhSubagentPrompts,
 	findTlhSubagentsDir,
 	missingTlhSubagentPrompts,
+	provisionSubagentExtensionConfig,
 	restoreNeededTlhSubagentPrompts,
 	settingsRequireTlhSubagentPrompts,
 } from "../scripts/lib/tlh-install-subagents.mjs";
@@ -804,4 +805,34 @@ test("settings defaults declare when bundled subagent prompts are required", (t)
 
 	writeFileSync(defaults, "not json");
 	assert.equal(settingsRequireTlhSubagentPrompts(defaults), false);
+});
+
+test("provisionSubagentExtensionConfig sets toolDescriptionMode compact and is idempotent", (t) => {
+	const agentDir = tempFixture(t, "tlh-ext-config-test-");
+	const config = { agentDir };
+	const configPath = join(agentDir, "extensions", "subagent", "config.json");
+
+	// Fresh install: config does not exist yet.
+	provisionSubagentExtensionConfig(config);
+	assert.ok(existsSync(configPath), "config.json created on first run");
+	const created = JSON.parse(readFileSync(configPath, "utf8"));
+	assert.equal(created.toolDescriptionMode, "compact", "toolDescriptionMode set to compact");
+
+	// Idempotent re-run: existing value must not change.
+	provisionSubagentExtensionConfig(config);
+	const afterRerun = JSON.parse(readFileSync(configPath, "utf8"));
+	assert.equal(afterRerun.toolDescriptionMode, "compact", "unchanged on re-run");
+
+	// User edit preserved: user sets toolDescriptionMode to \"full\".
+	writeFileSync(configPath, JSON.stringify({ toolDescriptionMode: "full" }) + "\n");
+	provisionSubagentExtensionConfig(config);
+	const afterUserEdit = JSON.parse(readFileSync(configPath, "utf8"));
+	assert.equal(afterUserEdit.toolDescriptionMode, "full", "user override to full is preserved");
+
+	// Other config keys preserved when toolDescriptionMode is absent.
+	writeFileSync(configPath, JSON.stringify({ asyncByDefault: true }) + "\n");
+	provisionSubagentExtensionConfig(config);
+	const afterExtraKey = JSON.parse(readFileSync(configPath, "utf8"));
+	assert.equal(afterExtraKey.toolDescriptionMode, "compact", "compact added when key missing");
+	assert.equal(afterExtraKey.asyncByDefault, true, "pre-existing user keys are preserved");
 });

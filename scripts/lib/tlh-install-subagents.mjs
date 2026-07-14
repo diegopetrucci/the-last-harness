@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { packageSourceInstallDir } from "./tlh-install-package-source.mjs";
 import { copySafeProfileFile, ensureSafeProfileDir } from "./tlh-install-paths.mjs";
 import { readJsonFile } from "./tlh-install-utils.mjs";
+import { writeSafeProfileFile } from "./tlh-safe-profile-write.mjs";
 const TLH_SUBAGENT_PROMPTS = Object.freeze([
     "developer.md",
     "code-reviewer.md",
@@ -97,4 +98,42 @@ export function copyTlhSubagentPrompts(config, sourceDir, { prompts = TLH_SUBAGE
         copySafeProfileFile(config, join(sourceDir, prompt), `tlh/agents/subagents/${prompt}`, `TLH subagent prompt ${prompt}`);
     }
     return supportSubagentsDir;
+}
+/**
+ * Provision the subagent extension config at extensions/subagent/config.json
+ * with TLH-preferred defaults.
+ *
+ * Idempotency: if toolDescriptionMode is already present (set to any value,
+ * including a user-chosen override such as "full"), it is left untouched.
+ * Re-running the installer is therefore safe and will not clobber user edits.
+ *
+ * Revert path: to disable compact descriptions, open
+ * <agentDir>/extensions/subagent/config.json and set
+ * "toolDescriptionMode": "full", or remove the key entirely. Either change
+ * will be preserved on subsequent installer runs.
+ *
+ * Runtime note: toolDescriptionMode requires pi-subagents >= v0.33.0
+ * (fork feature). Older builds simply ignore the unknown key.
+ */
+export function provisionSubagentExtensionConfig(config) {
+    const relativePath = "extensions/subagent/config.json";
+    const configPath = join(config.agentDir, relativePath);
+    let existing = {};
+    if (existsSync(configPath)) {
+        try {
+            const parsed = readJsonFile(configPath, { missingValue: {} });
+            if (isPlainObject(parsed))
+                existing = parsed;
+        }
+        catch {
+            // Unable to read/parse existing config — leave it untouched.
+            return;
+        }
+    }
+    // Preserve any value the user has already set (including explicit "full").
+    if ("toolDescriptionMode" in existing)
+        return;
+    ensureSafeProfileDir(config, "extensions/subagent", "TLH subagent extension config directory");
+    const updated = { toolDescriptionMode: "compact", ...existing };
+    writeSafeProfileFile(config, relativePath, JSON.stringify(updated, null, 2) + "\n", "TLH subagent extension config");
 }
