@@ -1101,7 +1101,7 @@ test("bundled manifest contains subagents and intercom entries with correct crit
 	const intercom = bundled.find(({ id }) => id === "intercom");
 
 	assert.ok(subagents, "bundled subagents entry should exist");
-	assert.equal(subagents.source, "npm:@diegopetrucci/pi-subagents@0.31.4");
+	assert.equal(subagents.source, "npm:@diegopetrucci/pi-subagents@0.31.5");
 	assert.equal(subagents.critical, true, "subagents must stay critical");
 	assert.deepEqual(subagents.aliases, ["pi-subagents"]);
 	assert.deepEqual(subagents.replaces, [
@@ -1144,7 +1144,7 @@ test("bundled merge migrates legacy upstream and TLH subagents installs to the s
 	const settings = readJson(fixture.settings);
 	assert.deepEqual(
 		settings.packages.filter((entry) => packageIdentity(entry) === "npm:@diegopetrucci/pi-subagents"),
-		["npm:@diegopetrucci/pi-subagents@0.31.4"],
+		["npm:@diegopetrucci/pi-subagents@0.31.5"],
 	);
 	assert.equal(
 		settings.packages.some((entry) => packageIdentity(entry) === "git:github.com/nicobailon/pi-subagents"),
