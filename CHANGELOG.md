@@ -7,6 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Changed
 
 - Bumped the bundled critical pi-subagents default extension pin from `npm:@diegopetrucci/pi-subagents@0.31.4` to `npm:@diegopetrucci/pi-subagents@0.31.5` (v0.32.0+v0.34.0 upstream intakes and RPC bridge default-off hardening).
+- Bumped the bundled `mcporter` default extension pin from `npm:@diegopetrucci/pi-mcp-adapter@2.10.1` to `npm:@diegopetrucci/pi-mcp-adapter@2.10.2`, keeping the existing TLH MCP footer behavior while picking up the adapter's lazy-loading startup facade for lower startup overhead before MCP is used.
 
 ### Added
 

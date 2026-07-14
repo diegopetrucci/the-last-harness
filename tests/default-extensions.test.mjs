@@ -18,7 +18,8 @@ const defaultsScript = join(repoRoot, "scripts", "tlh-defaults.mjs");
 const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
 const retiredPlannotatorPackage = "npm:@plannotator/pi-extension";
 const previousMcporterSource = "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1";
-const bundledMcporterSource = "npm:@diegopetrucci/pi-mcp-adapter@2.10.1";
+const previousBundledMcporterSource = "npm:@diegopetrucci/pi-mcp-adapter@2.10.1";
+const bundledMcporterSource = "npm:@diegopetrucci/pi-mcp-adapter@2.10.2";
 const previousPiWebAccessSource = "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1";
 const bundledPiWebAccessSource = "npm:@diegopetrucci/pi-web-access@0.10.10";
 const expectedBundledNpmSources = new Map([
@@ -1066,20 +1067,61 @@ test("bundled manifest contains mcporter entry and migrates prior TLH-managed in
 	assert.deepEqual(mcporter.replaces, ["npm:pi-mcp-adapter", previousMcporterSource]);
 	assert.equal(mcporter.migrateReplacements, true, "mcporter should migrate both upstream npm and previous TLH git installs");
 
-	const mergeFixture = tempFixture();
-	writeFileSync(mergeFixture.extensions, JSON.stringify([mcporter], null, 2));
-	writeFileSync(mergeFixture.settings, JSON.stringify({ packages: [previousMcporterSource] }, null, 2));
+	const replacementMergeFixture = tempFixture();
+	writeFileSync(replacementMergeFixture.extensions, JSON.stringify([mcporter], null, 2));
+	writeFileSync(replacementMergeFixture.settings, JSON.stringify({ packages: [previousMcporterSource] }, null, 2));
 
 	runNode(mergeScript, [
-		mergeFixture.defaults,
-		"--settings", mergeFixture.settings,
-		"--default-extensions", mergeFixture.extensions,
+		replacementMergeFixture.defaults,
+		"--settings", replacementMergeFixture.settings,
+		"--default-extensions", replacementMergeFixture.extensions,
 		"--quiet",
 	]);
 
-	const mergedSettings = readJson(mergeFixture.settings);
-	assert.deepEqual(mergedSettings.packages, [harnessPackage, bundledMcporterSource]);
-	assert.deepEqual(mergedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, ["npm:@diegopetrucci/pi-mcp-adapter"]);
+	const replacementMergedSettings = readJson(replacementMergeFixture.settings);
+	assert.deepEqual(replacementMergedSettings.packages, [harnessPackage, bundledMcporterSource]);
+	assert.deepEqual(replacementMergedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, ["npm:@diegopetrucci/pi-mcp-adapter"]);
+
+	const managedPinnedFixture = tempFixture();
+	writeFileSync(managedPinnedFixture.extensions, JSON.stringify([mcporter], null, 2));
+	writeFileSync(managedPinnedFixture.settings, JSON.stringify({
+		packages: [previousBundledMcporterSource],
+		tlh: {
+			defaultExtensionProvenance: {
+				managedPackageIdentities: ["npm:@diegopetrucci/pi-mcp-adapter"],
+			},
+		},
+	}, null, 2));
+
+	runNode(mergeScript, [
+		managedPinnedFixture.defaults,
+		"--settings", managedPinnedFixture.settings,
+		"--default-extensions", managedPinnedFixture.extensions,
+		"--quiet",
+	]);
+
+	const managedPinnedSettings = readJson(managedPinnedFixture.settings);
+	assert.equal(managedPinnedSettings.packages.includes(bundledMcporterSource), true);
+	assert.equal(managedPinnedSettings.packages.includes(previousBundledMcporterSource), false);
+	assert.equal(managedPinnedSettings.packages.includes(harnessPackage), true);
+	assert.deepEqual(managedPinnedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, ["npm:@diegopetrucci/pi-mcp-adapter"]);
+
+	const manualPinnedFixture = tempFixture();
+	writeFileSync(manualPinnedFixture.extensions, JSON.stringify([mcporter], null, 2));
+	writeFileSync(manualPinnedFixture.settings, JSON.stringify({ packages: [previousBundledMcporterSource] }, null, 2));
+
+	runNode(mergeScript, [
+		manualPinnedFixture.defaults,
+		"--settings", manualPinnedFixture.settings,
+		"--default-extensions", manualPinnedFixture.extensions,
+		"--quiet",
+	]);
+
+	const manualPinnedSettings = readJson(manualPinnedFixture.settings);
+	assert.equal(manualPinnedSettings.packages.includes(previousBundledMcporterSource), true);
+	assert.equal(manualPinnedSettings.packages.includes(bundledMcporterSource), false);
+	assert.equal(manualPinnedSettings.packages.includes(harnessPackage), true);
+	assert.deepEqual(manualPinnedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, []);
 
 	const disableFixture = tempFixture();
 	writeFileSync(disableFixture.settings, JSON.stringify({ packages: [previousMcporterSource] }, null, 2));
