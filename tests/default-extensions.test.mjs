@@ -20,18 +20,20 @@ const retiredPlannotatorPackage = "npm:@plannotator/pi-extension";
 const previousMcporterSource = "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1";
 const previousBundledMcporterSource = "npm:@diegopetrucci/pi-mcp-adapter@2.10.1";
 const bundledMcporterSource = "npm:@diegopetrucci/pi-mcp-adapter@2.10.2";
+const previousBundledNotifySource = "npm:@diegopetrucci/pi-notify@0.1.7";
+const bundledNotifySource = "npm:@diegopetrucci/pi-notify@0.1.10";
 const previousPiWebAccessSource = "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1";
 const bundledPiWebAccessSource = "npm:@diegopetrucci/pi-web-access@0.10.10";
 const expectedBundledNpmSources = new Map([
-	["openai-fast", "npm:@diegopetrucci/pi-openai-fast@0.1.6"],
+	["openai-fast", "npm:@diegopetrucci/pi-openai-fast@0.1.9"],
 	["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth@1.0.0"],
 	["fff", "npm:@ff-labs/pi-fff@0.9.6"],
 	["inline-bash", "npm:@diegopetrucci/pi-inline-bash@0.1.3"],
-	["notify", "npm:@diegopetrucci/pi-notify@0.1.7"],
-	["context-inspector", "npm:@diegopetrucci/pi-context-inspector@0.1.4"],
+	["notify", bundledNotifySource],
+	["context-inspector", "npm:@diegopetrucci/pi-context-inspector@0.1.6"],
 	["quiet-tools", "npm:@diegopetrucci/pi-quiet-tools@0.1.4"],
 	["dirty-repo-guard", "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.4"],
-	["intercom", "npm:@diegopetrucci/pi-intercom@0.7.0"],
+	["intercom", "npm:@diegopetrucci/pi-intercom@0.8.0"],
 ]);
 
 function tempFixture() {
@@ -1137,13 +1139,61 @@ test("bundled manifest contains mcporter entry and migrates prior TLH-managed in
 	assert.deepEqual(disabledSettings.packages, []);
 });
 
+test("bundled same-identity managed npm pins advance while manual pins stay untouched", () => {
+	const fixtureExtension = {
+		id: "notify",
+		source: bundledNotifySource,
+	};
+
+	const managedPinnedFixture = tempFixture();
+	writeFileSync(managedPinnedFixture.extensions, JSON.stringify([fixtureExtension], null, 2));
+	writeFileSync(managedPinnedFixture.settings, JSON.stringify({
+		packages: [previousBundledNotifySource],
+		tlh: {
+			defaultExtensionProvenance: {
+				managedPackageIdentities: ["npm:@diegopetrucci/pi-notify"],
+			},
+		},
+	}, null, 2));
+
+	runNode(mergeScript, [
+		managedPinnedFixture.defaults,
+		"--settings", managedPinnedFixture.settings,
+		"--default-extensions", managedPinnedFixture.extensions,
+		"--quiet",
+	]);
+
+	const managedPinnedSettings = readJson(managedPinnedFixture.settings);
+	assert.equal(managedPinnedSettings.packages.includes(bundledNotifySource), true);
+	assert.equal(managedPinnedSettings.packages.includes(previousBundledNotifySource), false);
+	assert.deepEqual(managedPinnedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, ["npm:@diegopetrucci/pi-notify"]);
+
+	const manualPinnedFixture = tempFixture();
+	writeFileSync(manualPinnedFixture.extensions, JSON.stringify([fixtureExtension], null, 2));
+	writeFileSync(manualPinnedFixture.settings, JSON.stringify({
+		packages: [previousBundledNotifySource],
+	}, null, 2));
+
+	runNode(mergeScript, [
+		manualPinnedFixture.defaults,
+		"--settings", manualPinnedFixture.settings,
+		"--default-extensions", manualPinnedFixture.extensions,
+		"--quiet",
+	]);
+
+	const manualPinnedSettings = readJson(manualPinnedFixture.settings);
+	assert.equal(manualPinnedSettings.packages.includes(previousBundledNotifySource), true);
+	assert.equal(manualPinnedSettings.packages.includes(bundledNotifySource), false);
+	assert.deepEqual(manualPinnedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, []);
+});
+
 test("bundled manifest contains subagents and intercom entries with correct critical migration flags", () => {
 	const bundled = readDefaultExtensions(join(repoRoot, "config", "default-extensions.json"));
 	const subagents = bundled.find(({ id }) => id === "subagents");
 	const intercom = bundled.find(({ id }) => id === "intercom");
 
 	assert.ok(subagents, "bundled subagents entry should exist");
-	assert.equal(subagents.source, "npm:@diegopetrucci/pi-subagents@0.31.5");
+	assert.equal(subagents.source, "npm:@diegopetrucci/pi-subagents@0.31.6");
 	assert.equal(subagents.critical, true, "subagents must stay critical");
 	assert.deepEqual(subagents.aliases, ["pi-subagents"]);
 	assert.deepEqual(subagents.replaces, [
@@ -1186,7 +1236,7 @@ test("bundled merge migrates legacy upstream and TLH subagents installs to the s
 	const settings = readJson(fixture.settings);
 	assert.deepEqual(
 		settings.packages.filter((entry) => packageIdentity(entry) === "npm:@diegopetrucci/pi-subagents"),
-		["npm:@diegopetrucci/pi-subagents@0.31.5"],
+		["npm:@diegopetrucci/pi-subagents@0.31.6"],
 	);
 	assert.equal(
 		settings.packages.some((entry) => packageIdentity(entry) === "git:github.com/nicobailon/pi-subagents"),

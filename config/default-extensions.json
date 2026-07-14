@@ -1,7 +1,7 @@
 [
   {
     "id": "openai-fast",
-    "source": "npm:@diegopetrucci/pi-openai-fast@0.1.6",
+    "source": "npm:@diegopetrucci/pi-openai-fast@0.1.9",
     "description": "Enable optional OpenAI Codex Fast mode commands for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions."
   },
   {
@@ -36,12 +36,12 @@
   },
   {
     "id": "notify",
-    "source": "npm:@diegopetrucci/pi-notify@0.1.7",
+    "source": "npm:@diegopetrucci/pi-notify@0.1.10",
     "description": "Send a notification when an agent turn finishes."
   },
   {
     "id": "context-inspector",
-    "source": "npm:@diegopetrucci/pi-context-inspector@0.1.4",
+    "source": "npm:@diegopetrucci/pi-context-inspector@0.1.6",
     "description": "Open a local HTML dashboard explaining where the current session context is going."
   },
   {
@@ -62,7 +62,7 @@
     "replaces": ["npm:pi-subagents", "git:github.com/nicobailon/pi-subagents", "git:github.com/diegopetrucci/pi-subagents"],
     "migrateReplacements": true,
     "critical": true,
-    "source": "npm:@diegopetrucci/pi-subagents@0.31.5",
+    "source": "npm:@diegopetrucci/pi-subagents@0.31.6",
     "description": "Delegate work to isolated TLH-profile subagents."
   },
   {
@@ -71,7 +71,7 @@
     "replaces": ["npm:pi-intercom", "git:github.com/nicobailon/pi-intercom", "git:github.com/diegopetrucci/pi-intercom"],
     "migrateReplacements": true,
     "critical": true,
-    "source": "npm:@diegopetrucci/pi-intercom@0.7.0",
+    "source": "npm:@diegopetrucci/pi-intercom@0.8.0",
     "description": "Allow child subagents to escalate questions to the supervising session."
   }
 ]

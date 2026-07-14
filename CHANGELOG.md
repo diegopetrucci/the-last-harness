@@ -6,8 +6,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
-- Bumped the bundled critical pi-subagents default extension pin from `npm:@diegopetrucci/pi-subagents@0.31.4` to `npm:@diegopetrucci/pi-subagents@0.31.5` (v0.32.0+v0.34.0 upstream intakes and RPC bridge default-off hardening).
-- Bumped the bundled `mcporter` default extension pin from `npm:@diegopetrucci/pi-mcp-adapter@2.10.1` to `npm:@diegopetrucci/pi-mcp-adapter@2.10.2`, keeping the existing TLH MCP footer behavior while picking up the adapter's lazy-loading startup facade for lower startup overhead before MCP is used.
+- Bumped bundled default extension pins to the reviewed current releases: `mcporter` `npm:@diegopetrucci/pi-mcp-adapter@2.10.2`, `pi-openai-fast` `npm:@diegopetrucci/pi-openai-fast@0.1.9`, `pi-notify` `npm:@diegopetrucci/pi-notify@0.1.10`, `pi-context-inspector` `npm:@diegopetrucci/pi-context-inspector@0.1.6`, critical `pi-subagents` `npm:@diegopetrucci/pi-subagents@0.31.6`, and critical `pi-intercom` `npm:@diegopetrucci/pi-intercom@0.8.0`.
+- Refreshed the remaining safely updatable direct npm dependencies to `monaco-editor` `0.55.1`, `eslint` `10.7.0`, and `typescript-eslint` `8.64.0`, while keeping `typescript` pinned at `6.0.3` to stay within the supported peer range.
 
 ### Added
 
