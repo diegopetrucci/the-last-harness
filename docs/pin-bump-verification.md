@@ -1,5 +1,9 @@
 # Fork pin-bump verification tally
 
+> **Live tracker:** completion is tracked in GitHub issue
+> [#346](https://github.com/diegopetrucci/the-last-harness/issues/346).
+> This doc is the reference detail; tick items off in the issue.
+
 Running checklist of behaviors that could **only be unit-tested / statically verified**
 during the `@diegopetrucci/pi-subagents` v0.34.0 intake and its follow-ups, and therefore
 still need a **live-session runtime check after the fork pin is bumped**.
