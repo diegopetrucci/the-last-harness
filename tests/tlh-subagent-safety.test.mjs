@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
 	ALLOWED_SUBAGENTS,
+	SAFE_SUBAGENT_ACTIONS,
 	SUBAGENT_CHILD_ENV,
 	allowedSubagentsForExperimentalConfig,
 	isEmbeddedSubagentTarget,
@@ -356,6 +357,31 @@ test("validateSubagentToolInput rejects non-fresh top-level and nested contexts"
 	assert.match(
 		validateSubagentToolInput({ tasks: [{ agent: "developer", context: "" }] }),
 		/nested tasks\[0\]\.context may not use context: ""/,
+	);
+});
+
+// Regression: upstream v0.34.0 added eject/disable/enable/reset management verbs that mutate
+// agent definitions/overrides. TLH policy forbids runtime agent-definition mutation. These are
+// blocked by the SAFE_SUBAGENT_ACTIONS whitelist on the tool_call path. The RPC path is gated
+// separately (ps-5n7r). This test pins the behavior so a future whitelist change cannot
+// silently allow any of these verbs.
+test("validateSubagentToolInput blocks v0.34.0 agent-mutation verbs (eject/disable/enable/reset)", () => {
+	// Each new verb must be rejected with a block reason.
+	for (const action of ["eject", "disable", "enable", "reset"]) {
+		const reason = validateSubagentToolInput({ action });
+		assert.match(
+			reason,
+			/may not use subagent management action/,
+			`expected block reason for action '${action}'`,
+		);
+		assert.match(reason, new RegExp(`'${action}'`), `reason should name the blocked action '${action}'`);
+	}
+
+	// The whitelist must remain exactly this set — no additions without an explicit policy decision.
+	assert.deepEqual(
+		[...SAFE_SUBAGENT_ACTIONS],
+		["list", "get", "status", "interrupt", "doctor", "resume"],
+		"SAFE_SUBAGENT_ACTIONS whitelist changed — verify TLH policy before widening",
 	);
 });
 
