@@ -8,7 +8,7 @@ TLH lets you add your own trusted markdown subagents inside the isolated TLH pro
 /experimental enable embedded-subagents
 ```
 
-Then **start a new session** — the runtime snapshots `tlh.experimental` at session start, so enabling or disabling the flag takes effect only in the next session, not mid-session.
+Then **start a new session or run `/reload`** — the runtime snapshots `tlh.experimental` when a session starts or explicitly reloads, so enabling or disabling the flag does not affect the active runtime until one of those activation boundaries.
 
 To disable it again:
 
@@ -44,7 +44,9 @@ For TLH-primary use, the required frontmatter fields are:
 
 - `package: embedded`
 - `name: <slug>` where `<slug>` is lowercase letters, digits, and hyphens only, and must not start with a hyphen
-- runtime name: `embedded.<slug>`
+- `description: <text>` with a non-empty value
+
+The resulting runtime name is `embedded.<slug>`.
 
 The runtime enforces the slug pattern `/^embedded\.[a-z0-9][a-z0-9-]*$/` — uppercase letters, dots after the prefix, underscores, and leading hyphens are all rejected.
 
@@ -68,7 +70,7 @@ Project-scoped `.pi/agents/**/*.md` files are **not** a supported path for TLH-p
 
 ## Authorization model
 
-Enabling the flag and placing the agent file in the supported location is what authorizes architect to delegate to that agent. At execution time, TLH re-scans only the active isolated profile's `agents/**/*.md` tree and authorizes only runtime names backed by a **currently present, readable, valid** markdown file with `package: embedded` and `name: <slug>`. Same-name agents that exist only in installed packages or configured `subagents.agentDirs` stay blocked for TLH-primary embedded delegation. Deleting or breaking the profile file is observed on the next embedded delegation attempt.
+Enabling the flag and placing the agent file in the supported location is what authorizes architect to delegate to that agent. At execution time, TLH re-scans only the active isolated profile's `agents/**/*.md` tree and authorizes only runtime names backed by a **currently present, readable, valid, regular non-symlink `.md` file** with `package: embedded`, `name: <slug>`, and a non-empty `description`. Files ending in `.chain.md` do not authorize embedded delegation. Same-name agents that exist only in symlinks, chain definitions, installed packages, or configured `subagents.agentDirs` stay blocked for TLH-primary embedded delegation. Deleting or breaking the profile file is observed on the next embedded delegation attempt.
 
 The "only when the user explicitly names or asks for it" rule in the architect system prompt is still **prompt policy, not a runtime gate** — the runtime does not verify that the user typed the agent name.
 
@@ -146,7 +148,7 @@ Use embedded.repo-helper to inspect the auth flow.
 Use my trusted embedded.repo-developer agent for this small fix.
 ```
 
-The `rush`, `product`, and `bug-hunter` primaries are **hard-blocked** from running embedded targets at runtime — only architect can execute them.
+The `rush`, `product`, and `bug-hunter` primaries are blocked from **initiating** delegation to embedded targets at runtime — only architect can initiate those runs. The accepted issue #330 resume limitation described above still applies to already-started runs.
 
 When flag is **off** (the default), any `embedded.*` target is blocked the same way an unknown agent name would be. No embedded-specific behavior exists.
 
@@ -154,10 +156,10 @@ When flag is **off** (the default), any `embedded.*` target is blocked the same 
 
 - This is a **trusted extension point, not a sandbox**. If you give an embedded agent write-capable tools, it can edit files and run commands with the same local access a normal user-scope subagent would have.
 - Embedded agents are **user-scope only** when TLH primaries are enabled. The runtime forces `agentScope: "user"` and `context: "fresh"` for embedded execution.
-- Authorization comes only from valid profile-owned `agents/**/*.md` definitions under the active TLH profile; installed-package agents and `subagents.agentDirs` do not authorize `embedded.*` runtime names for TLH-primary delegation.
+- Authorization comes only from valid profile-owned, regular non-symlink `.md` definitions under the active TLH profile's `agents/**/*.md` tree; `.chain.md` files, installed-package agents, and `subagents.agentDirs` do not authorize `embedded.*` runtime names for TLH-primary delegation.
 - `embedded.*` is for **trusted, user-owned** agents. Do not treat it as a way to safely run repo-controlled prompts from untrusted repositories.
 - Project-scoped `.pi/agents/**/*.md` embedded agents are **not** a supported path for TLH-primary embedded delegation.
-- `rush`, `product`, and `bug-hunter` do not run `embedded.*`; architect is the only TLH primary that can execute them.
+- `rush`, `product`, and `bug-hunter` cannot initiate `embedded.*` runs; architect is the only TLH primary that can initiate them. See the accepted issue #330 resume limitation above for already-started runs.
 - If you disable TLH primaries, upstream subagent behavior still exists, but this guide documents only the supported primaries-enabled TLH flow above.
 
 ## Undo or remove an embedded agent
@@ -168,7 +170,7 @@ To stop using an embedded agent, disable the flag:
 /experimental disable embedded-subagents
 ```
 
-Then start a new session for the change to take effect.
+Then start a new session or run `/reload` for the flag change to take effect.
 
 To fully remove the agent file:
 

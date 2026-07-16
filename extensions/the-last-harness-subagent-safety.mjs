@@ -74,7 +74,16 @@ function normalizeAllowedSubagents(allowedSubagents) {
 	return normalized.length > 0 ? normalized : DEFAULT_ALLOWED_SUBAGENTS;
 }
 
-function collectSubagentTargets(input) {
+function collectParallelTargets(parallel, targets) {
+	const tasks = Array.isArray(parallel) ? parallel : [parallel];
+	for (const task of tasks) {
+		if (!isRecord(task)) continue;
+		const agent = stringField(task.agent);
+		if (agent) targets.push(agent);
+	}
+}
+
+export function collectSubagentTargets(input) {
 	if (!isRecord(input)) {
 		return [];
 	}
@@ -98,12 +107,7 @@ function collectSubagentTargets(input) {
 			if (!isRecord(step)) continue;
 			const agent = stringField(step.agent);
 			if (agent) targets.push(agent);
-			if (!Array.isArray(step.parallel)) continue;
-			for (const task of step.parallel) {
-				if (!isRecord(task)) continue;
-				const parallelAgent = stringField(task.agent);
-				if (parallelAgent) targets.push(parallelAgent);
-			}
+			collectParallelTargets(step.parallel, targets);
 		}
 	}
 

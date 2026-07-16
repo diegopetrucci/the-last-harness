@@ -4,6 +4,11 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Bumped bundled default extension pins to the reviewed current releases: `mcporter` `npm:@diegopetrucci/pi-mcp-adapter@2.10.2`, `pi-openai-fast` `npm:@diegopetrucci/pi-openai-fast@0.1.9`, `pi-notify` `npm:@diegopetrucci/pi-notify@0.1.10`, `pi-context-inspector` `npm:@diegopetrucci/pi-context-inspector@0.1.6`, critical `pi-subagents` `npm:@diegopetrucci/pi-subagents@0.31.6`, and critical `pi-intercom` `npm:@diegopetrucci/pi-intercom@0.8.0`.
+- Refreshed the remaining safely updatable direct npm dependencies to `monaco-editor` `0.55.1`, `eslint` `10.7.0`, and `typescript-eslint` `8.64.0`, while keeping `typescript` pinned at `6.0.3` to stay within the supported peer range.
+
 ### Added
 
 - Install and update now prune stale settings/keybindings backups (`settings.json.backup-*`, `keybindings.json.backup-*`) from the isolated profile. Backups older than ~28 days are removed, but the two newest are always kept regardless of age. Pruning is scoped strictly to `~/.the-last-harness/agent` and never touches `~/.pi`. To keep a backup indefinitely, copy it outside the isolated profile before it ages out.

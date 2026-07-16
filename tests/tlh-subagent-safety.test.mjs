@@ -215,6 +215,24 @@ test("validateSubagentToolInput rejects disallowed agents", () => {
 		validateSubagentToolInput({ chain: [{ parallel: [{ agent: "repo-scout" }, { agent: "root" }] }] }),
 		/Disallowed target\(s\): root/,
 	);
+	assert.match(
+		validateSubagentToolInput({
+			chain: [
+				{
+					agent: "repo-scout",
+					task: "Return repository areas as structured JSON.",
+					as: "inventory",
+					outputSchema: { type: "object", properties: { items: { type: "array", items: { type: "string" } } } },
+				},
+				{
+					expand: { from: { output: "inventory", path: "/items" }, maxItems: 10 },
+					parallel: { agent: "root", task: "Inspect {item}." },
+					collect: { as: "inspections" },
+				},
+			],
+		}),
+		/Disallowed target\(s\): root/,
+	);
 });
 
 test("isEmbeddedSubagentTarget accepts strict embedded.<slug> names and rejects malformed ones", () => {
@@ -278,6 +296,30 @@ test("validateSubagentToolInput with allowEmbeddedTargets:true allows valid embe
 	assertAllowed(parallelInChain, opts);
 	assert.equal(parallelInChain.agentScope, "user");
 	assert.equal(parallelInChain.context, "fresh");
+
+	// object-valued dynamic parallel inside chain
+	const dynamicParallelInChain = {
+		chain: [
+			{
+				agent: "repo-scout",
+				task: "Return repository areas as structured JSON.",
+				as: "inventory",
+				outputSchema: { type: "object", properties: { items: { type: "array", items: { type: "string" } } } },
+			},
+			{
+				expand: { from: { output: "inventory", path: "/items" }, maxItems: 10 },
+				parallel: {
+					agent: "embedded.dynamic-helper",
+					task: "Inspect {item}.",
+					outputSchema: { type: "object", properties: { agent: { const: "root" } } },
+				},
+				collect: { as: "inspections" },
+			},
+		],
+	};
+	assertAllowed(dynamicParallelInChain, opts);
+	assert.equal(dynamicParallelInChain.agentScope, "user");
+	assert.equal(dynamicParallelInChain.context, "fresh");
 
 	// mixed: bundled + embedded
 	const mixed = { tasks: [{ agent: "developer", prompt: "impl" }, { agent: "embedded.scout", prompt: "scout" }] };

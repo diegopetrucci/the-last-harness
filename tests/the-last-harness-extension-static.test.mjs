@@ -184,11 +184,25 @@ function parseInlineJsonStringAssignment(source, assignmentName) {
 	return JSON.parse(assignment[1]);
 }
 
-test("package extension discovery exposes the TLH entrypoints", () => {
-	assert.deepEqual(packageJson.pi?.extensions, ["./extensions"]);
+test("package manifest selects only the ordered generated JS entrypoints", () => {
+	assert.deepEqual(packageJson.pi?.extensions, [
+		"./extensions/annotate-git-diff/index.js",
+		"./extensions/rtk.js",
+		"./extensions/the-last-harness.js",
+	]);
 	assert.deepEqual(existingNestedExtensionEntrypoints("the-last-harness"), []);
-	assert.deepEqual(existingNestedExtensionEntrypoints("annotate-git-diff"), ["annotate-git-diff/index.ts"]);
-	assert.deepEqual(discoverPiExtensionEntrypoints(extensionsDir), ["annotate-git-diff/index.ts", "rtk.ts", "the-last-harness.ts"]);
+	assert.deepEqual(existingNestedExtensionEntrypoints("annotate-git-diff"), [
+		"annotate-git-diff/index.ts",
+		"annotate-git-diff/index.js",
+	]);
+	assert.deepEqual(discoverPiExtensionEntrypoints(extensionsDir), [
+		"annotate-git-diff/index.js",
+		"annotate-git-diff/index.ts",
+		"rtk.js",
+		"rtk.ts",
+		"the-last-harness.js",
+		"the-last-harness.ts",
+	]);
 });
 
 

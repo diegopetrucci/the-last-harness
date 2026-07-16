@@ -50,7 +50,6 @@ import {
 	defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall,
 	findTlhSubagentsDir as findTlhSubagentsDirFromSources,
 	missingTlhSubagentPrompts,
-	provisionSubagentExtensionConfig,
 	settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts,
 } from "./lib/tlh-install-subagents.mjs";
 import {
@@ -1321,7 +1320,6 @@ async function installSupportFilesToProfile(config: InstallConfig): Promise<void
 		} else {
 			log(config, "Would skip TLH subagent prompts because this ref does not enable bundled subagents in settings.");
 		}
-		log(config, "Would provision subagent extension config (extensions/subagent/config.json) with toolDescriptionMode: compact.");
 		return;
 	}
 
@@ -1330,7 +1328,6 @@ async function installSupportFilesToProfile(config: InstallConfig): Promise<void
 		const sourcePath = config.supportFilePaths[file.variable];
 		if (sourcePath) copySafeProfileFile(config, sourcePath, `tlh/${file.installName}`, `TLH support file ${file.installName}`);
 	}
-	provisionSubagentExtensionConfig(config);
 	if (!requireSubagentPrompts) return;
 	if (!subagentsSrc) {
 		throw new Error("TLH subagent prompts not found; re-run installer from a complete checkout or package.");

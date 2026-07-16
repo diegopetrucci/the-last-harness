@@ -14,7 +14,14 @@ import {
 	resolvePrimaryAgentConfig,
 } from "../the-last-harness-primary-agent.mjs";
 import { createPrimaryToolState, filterAvailableTools } from "../the-last-harness-primary-tools.mjs";
-import { allowedSubagentsForExperimentalConfig, isEmbeddedSubagentTarget, isExperimentalFeatureEnabled, registerTlhStartupMode, validateSubagentToolInput } from "../the-last-harness-subagent-safety.mjs";
+import {
+	allowedSubagentsForExperimentalConfig,
+	collectSubagentTargets,
+	isEmbeddedSubagentTarget,
+	isExperimentalFeatureEnabled,
+	registerTlhStartupMode,
+	validateSubagentToolInput,
+} from "../the-last-harness-subagent-safety.mjs";
 import {
 	buildTlhCommitAttributionPrompt,
 	getTlhGitCommitAttributionBlockReason,
@@ -263,41 +270,7 @@ function rushDeveloperDelegationReason(): string {
 }
 
 function collectSubagentCallTargetsMatching(input: unknown, predicate: (agent: string) => boolean): string[] {
-	if (!isRecord(input)) {
-		return [];
-	}
-	const matches: string[] = [];
-	if (typeof input.agent === "string") {
-		const agent = input.agent.trim();
-		if (predicate(agent)) {
-			matches.push(agent);
-		}
-	}
-	if (Array.isArray(input.tasks)) {
-		for (const task of input.tasks) {
-			matches.push(...collectSubagentCallTargetsMatching(task, predicate));
-		}
-	}
-	if (!Array.isArray(input.chain)) {
-		return [...new Set(matches)];
-	}
-	for (const step of input.chain) {
-		if (!isRecord(step)) {
-			continue;
-		}
-		if (typeof step.agent === "string") {
-			const agent = step.agent.trim();
-			if (predicate(agent)) {
-				matches.push(agent);
-			}
-		}
-		if (Array.isArray(step.parallel)) {
-			for (const task of step.parallel) {
-				matches.push(...collectSubagentCallTargetsMatching(task, predicate));
-			}
-		}
-	}
-	return [...new Set(matches)];
+	return collectSubagentTargets(input).filter((agent) => predicate(agent));
 }
 
 function subagentCallTargetsMatching(input: unknown, predicate: (agent: string) => boolean): boolean {

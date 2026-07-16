@@ -1,3 +1,4 @@
+import { lstatSync } from "node:fs";
 import { join } from "node:path";
 
 import { SELECTABLE_PRIMARY_AGENTS } from "../the-last-harness-primary-agent.mjs";
@@ -109,6 +110,16 @@ export function loadSubagentMetadata(): SubagentMetadata[] {
 export function loadAuthorizedEmbeddedSubagentRuntimeNames(agentDir: string): string[] {
 	return uniqueSorted(
 		readMarkdownFilesRecursive(join(agentDir, "agents"))
+			.filter((filePath) => {
+				if (filePath.endsWith(".chain.md")) {
+					return false;
+				}
+				try {
+					return lstatSync(filePath).isFile();
+				} catch {
+					return false;
+				}
+			})
 			.map((filePath) => readText(filePath))
 			.filter((content): content is string => typeof content === "string")
 			.map((content) => parseFrontmatter(content).frontmatter)

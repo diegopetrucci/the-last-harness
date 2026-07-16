@@ -127,6 +127,17 @@ function readEnabledFeatures(config: unknown): string[] {
 	return readEnabledExperimentalFeatures(config) as string[];
 }
 
+function telemetryExperimentalFeatureKey(featureId: TlhExperimentalFeatureId): string {
+	return `Tlh.Experimental.${featureId}`;
+}
+
+export function buildExperimentalFeatureTelemetryPayload(config: unknown): Record<string, "on" | "off"> {
+	const enabledFeatures = new Set(readEnabledFeatures(config));
+	return Object.fromEntries(
+		TLH_EXPERIMENTAL_FEATURES.map((feature) => [telemetryExperimentalFeatureKey(feature.id), enabledFeatures.has(feature.id) ? "on" : "off"]),
+	) as Record<string, "on" | "off">;
+}
+
 export function getExperimentalFeature(featureId: string): TlhExperimentalFeature | undefined {
 	const normalized = normalizeExperimentalFeatureId(featureId) as string | undefined;
 	return normalized ? TLH_EXPERIMENTAL_FEATURES_BY_ID.get(normalized) : undefined;

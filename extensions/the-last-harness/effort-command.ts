@@ -1,4 +1,4 @@
-import { type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import { selectProviderAwareAgentDefaults } from "./model-defaults.js";
 import type { TlhPrimaryAgentRuntime } from "./primary-agent-runtime.js";

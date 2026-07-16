@@ -15,9 +15,10 @@ import {
 	TLH_TELEMETRY_TIMEOUT_MS,
 } from "./constants.js";
 import { isFalseyEnvFlag, isPlainObject, isTruthyEnvFlag, readText } from "./common.js";
+import { buildExperimentalFeatureTelemetryPayload } from "./experimental.js";
 import { getTlhVersion } from "./package-version.js";
 import { tlhStateDir, tlhTelemetryStatePath } from "./profile-state.js";
-import type { TlhOsMetadata, TlhTelemetryConfig, TlhTelemetrySnapshot, TlhTelemetryState } from "./types.js";
+import type { TlhExperimentalConfig, TlhOsMetadata, TlhTelemetryConfig, TlhTelemetrySnapshot, TlhTelemetryState } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -35,7 +36,12 @@ function configuredTlhTelemetryIngestBaseUrl(): string {
 	return (process.env.TLH_TELEMETRY_INGEST_BASE_URL || TLH_TELEMETRY_INGEST_BASE_URL).trim().replace(/\/+$/, "");
 }
 
-function readTlhTelemetrySettings(): { ok: true; config?: TlhTelemetryConfig } | { ok: false } {
+type TlhLaunchSettings = {
+	telemetry?: TlhTelemetryConfig;
+	experimental?: TlhExperimentalConfig;
+};
+
+function readTlhLaunchSettings(): { ok: true; config: TlhLaunchSettings } | { ok: false } {
 	const stateDir = tlhStateDir();
 	if (!stateDir) {
 		return { ok: false };
@@ -43,14 +49,14 @@ function readTlhTelemetrySettings(): { ok: true; config?: TlhTelemetryConfig } |
 
 	const settingsPath = join(dirname(stateDir), "settings.json");
 	if (!existsSync(settingsPath)) {
-		return { ok: true };
+		return { ok: true, config: {} };
 	}
 	const settingsContent = readText(settingsPath);
 	if (settingsContent === undefined) {
 		return { ok: false };
 	}
 	if (!settingsContent.trim()) {
-		return { ok: true };
+		return { ok: true, config: {} };
 	}
 
 	let settings: unknown;
@@ -75,20 +81,19 @@ function readTlhTelemetrySettings(): { ok: true; config?: TlhTelemetryConfig } |
 	if (enabled !== undefined && typeof enabled !== "boolean") {
 		return { ok: false };
 	}
-	return { ok: true, config: telemetry as TlhTelemetryConfig | undefined };
+	const experimental = isPlainObject(tlh) && isPlainObject(tlh.experimental) ? (tlh.experimental as TlhExperimentalConfig) : undefined;
+	return { ok: true, config: { telemetry: telemetry as TlhTelemetryConfig | undefined, experimental } };
 }
 
-function shouldSkipTlhLaunchTelemetry(): boolean {
+function shouldSkipTlhLaunchTelemetry(launchSettings: ReturnType<typeof readTlhLaunchSettings> = readTlhLaunchSettings()): boolean {
 	if (!tlhTelemetryStatePath()) return true;
 	if (!configuredTlhTelemetryNamespace() || !configuredTlhTelemetryAppId() || !configuredTlhTelemetryIngestBaseUrl()) return true;
 	if (isTruthyEnvFlag(process.env.PI_OFFLINE)) return true;
 	if (isTruthyEnvFlag(process.env.TLH_SKIP_TELEMETRY)) return true;
 	if (isTruthyEnvFlag(process.env.TLH_TELEMETRY_DISABLED)) return true;
 	if (isFalseyEnvFlag(process.env.PI_TELEMETRY)) return true;
-
-	const telemetrySettings = readTlhTelemetrySettings();
-	if (!telemetrySettings.ok) return true;
-	return telemetrySettings.config?.enabled === false;
+	if (!launchSettings.ok) return true;
+	return launchSettings.config.telemetry?.enabled === false;
 }
 
 function isUuid(value: unknown): value is string {
@@ -223,8 +228,10 @@ async function getTlhOsMetadata(): Promise<TlhOsMetadata> {
 	}
 }
 
-async function maybeSendTlhLaunchTelemetry(snapshot: TlhTelemetrySnapshot): Promise<void> {
-	if (shouldSkipTlhLaunchTelemetry()) return;
+export async function sendTlhLaunchTelemetry(snapshot: TlhTelemetrySnapshot): Promise<void> {
+	const launchSettings = readTlhLaunchSettings();
+	if (shouldSkipTlhLaunchTelemetry(launchSettings)) return;
+	if (!launchSettings.ok) return;
 
 	const namespace = configuredTlhTelemetryNamespace();
 	const appID = configuredTlhTelemetryAppId();
@@ -243,6 +250,7 @@ async function maybeSendTlhLaunchTelemetry(snapshot: TlhTelemetrySnapshot): Prom
 				"Tlh.Device.osName": osMetadata.osName,
 				"Tlh.Device.osVersion": osMetadata.osVersion,
 				"Tlh.Device.osArch": osMetadata.osArch,
+				...buildExperimentalFeatureTelemetryPayload(launchSettings.config.experimental),
 			},
 		},
 	];
@@ -272,7 +280,7 @@ export function scheduleTlhLaunchTelemetry(ctx: ExtensionContext): void {
 		modelId: ctx.model?.id,
 	};
 	const timer = setTimeout(() => {
-		void maybeSendTlhLaunchTelemetry(telemetrySnapshot).catch(() => undefined);
+		void sendTlhLaunchTelemetry(telemetrySnapshot).catch(() => undefined);
 	}, 0) as ReturnType<typeof setTimeout> & { unref?: () => void };
 	timer.unref?.();
 }
