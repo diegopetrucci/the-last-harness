@@ -41,7 +41,6 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
             const contextWindow = contextUsage?.contextWindow ?? model?.contextWindow ?? 0;
             const contextPercentValue = contextUsage?.percent ?? 0;
             const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
-            // Line 1: cwd • branch • git-status • PR • sessionName (unchanged)
             const pwd = composeTlhFooterFirstLine({
                 cwd: formatHomePath(ctx.sessionManager.getCwd()),
                 sessionName: ctx.sessionManager.getSessionName(),
@@ -50,10 +49,6 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                 fallbackBranch: footerData?.getGitBranch?.(),
             });
             const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
-            // Line 2 (single flowing left-justified line):
-            //   agent: <primaryName> • <model|no-model> [• thinking] • context% [• DUMB ZONE]
-            // Each segment is explicitly themed to avoid ANSI foreground-reset bleed from nested
-            // theme.fg() calls. Non-default agent names are highlighted with the accent color.
             const modelOrNoModel = model?.id ?? "no-model";
             const modelPart = modelOrNoModel;
             const primaryName = getPrimaryName();
@@ -82,8 +77,6 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                 agentLine2Str += dimSep + theme.fg("error", DUMB_ZONE_LABEL);
             }
             const agentLine2 = truncateToWidth(agentLine2Str, width, theme.fg("dim", "..."));
-            // Line 3 (optional): [<cost> · ]<subscription usage segment>
-            // Omitted entirely when both parts are absent.
             const subscriptionUsageState = getTlhSubscriptionUsageFooterState(ctx, model, usageOptions);
             const costStr = totals.cost > 0 && !subscriptionUsageState.suppressCost ? formatCost(totals.cost) : undefined;
             const line3Parts = [];
@@ -107,7 +100,6 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
             if (line3 !== undefined) {
                 lines.push(truncateToWidth(theme.fg("dim", line3), width, theme.fg("dim", "...")));
             }
-            // Hint line (conditional on pending editor text during an active turn)
             const editorText = ctx.ui.getEditorText();
             if (editorText.length > 0 && !ctx.isIdle()) {
                 const steerKey = keyText("tui.input.submit") || "enter";
@@ -116,7 +108,6 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                 const queueHint = `${theme.fg("dim", queueKey)}${theme.fg("muted", " queue follow-up")}`;
                 lines.push(truncateToWidth(`${steeringHint}${theme.fg("muted", " · ")}${queueHint}`, width, theme.fg("dim", "...")));
             }
-            // Extension status line (conditional on registered extension statuses)
             if (extensionStatuses && extensionStatuses.size > 0) {
                 const visibleStatuses = Array.from(extensionStatuses.entries())
                     .filter(([key]) => key !== TK_WORKFLOW_STATUS_KEY)

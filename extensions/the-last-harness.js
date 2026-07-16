@@ -1,4 +1,3 @@
-import {} from "@earendil-works/pi-coding-agent";
 import { registerTlhActivityReporters } from "./the-last-harness/activity-reporters.js";
 import { registerTlhEffectiveActivityTracker } from "./the-last-harness/activity-tracker.js";
 import { registerToggleTlhGitAttributionCommand } from "./the-last-harness/attribution.js";
@@ -122,7 +121,6 @@ export default function theLastHarness(pi) {
             command.handleSessionShutdown();
         }
         catch {
-            // Swallow prior lazy-import/build failures during shutdown.
         }
     });
     registerEffortCommand(pi, primaryAgentRuntime);
@@ -195,7 +193,6 @@ export default function theLastHarness(pi) {
             });
         }
         catch {
-            // Keep startup resilient. The header can still render without resource details.
         }
         const headerUpdate = getTlhHeaderUpdate();
         const installNotice = event.reason === "startup" ? readTlhInstallNotice() : undefined;

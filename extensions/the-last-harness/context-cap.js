@@ -2,14 +2,8 @@ import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { formatHomePath } from "./common.js";
 import { DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
-// Re-exported alias so callers can reference the cap value without coupling to
-// the "dumb zone" label used in footer rendering. Both names point to the same
-// compile-time constant; 200_000 is defined exactly once in constants.ts.
 export const DEFAULT_CONTEXT_CAP_TOKENS = DUMB_ZONE_THRESHOLD_TOKENS;
 const TOGGLE_CONTEXT_CAP_COMMAND_HELP = "Usage: /toggle-context-cap";
-// WeakMap stores the original contextWindow before we capped it.
-// Keyed by model object identity so each Pi model instance is tracked
-// independently across multiple concurrent sessions.
 const originalContextWindows = new WeakMap();
 function getOriginalContextWindow(model) {
     const stored = originalContextWindows.get(model);
@@ -46,7 +40,6 @@ function forEachRegistryModel(ctx, callback) {
         }
     }
     catch {
-        // Best effort. The active ctx.model is handled separately.
     }
 }
 function applyContextCapToSession(ctx) {

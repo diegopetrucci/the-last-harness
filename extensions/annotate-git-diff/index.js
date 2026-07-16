@@ -58,7 +58,6 @@ export default function (pi) {
             windowToClose.close();
         }
         catch {
-            // Window is already closing; ignore shutdown races.
         }
     }
     async function reviewRepository(ctx) {

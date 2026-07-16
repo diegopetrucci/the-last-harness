@@ -1,9 +1,5 @@
 import { VERSION } from "@earendil-works/pi-coding-agent";
 import { getTlhVersion } from "./package-version.js";
-/**
- * Format a concise plain-text version string for both TLH and Pi.
- * Exported for unit testing without side effects.
- */
 export function formatVersionOutput(tlhVersion, piVersion) {
     return `tlh: ${tlhVersion}  |  pi: ${piVersion}`;
 }

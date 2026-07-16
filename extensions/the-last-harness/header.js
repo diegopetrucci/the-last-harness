@@ -18,7 +18,6 @@ export function createTlhHeader(theme, resources, headerUpdate, installNotice, o
             return [];
         }
         const heading = truncateToWidth(color.heading(`[${name}]`), width, color.dim("..."));
-        // Wrap items across multiple lines, splitting on ", " boundaries (never mid-item).
         const prefix = "  ";
         const wrappedLines = [];
         let currentLine = prefix;
@@ -29,9 +28,6 @@ export function createTlhHeader(theme, resources, headerUpdate, installNotice, o
                 currentLine = candidate;
             }
             else {
-                // Non-final line: append ", " separator if it fits, otherwise push bare.
-                // The isFirstOnLine force-accept can leave currentLine near or at `width`,
-                // so appending ", " would overflow the terminal width.
                 if (visibleWidth(currentLine + ", ") > width) {
                     wrappedLines.push(color.dim(currentLine));
                 }
@@ -41,7 +37,6 @@ export function createTlhHeader(theme, resources, headerUpdate, installNotice, o
                 currentLine = prefix + item;
             }
         }
-        // Final line: no trailing ", ".
         wrappedLines.push(color.dim(currentLine));
         return [heading, ...wrappedLines];
     };

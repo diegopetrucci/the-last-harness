@@ -1,5 +1,3 @@
-// Pi compatibility shim for TLH model visibility/filtering behavior.
-// See ../../docs/upstream-sync-inventory.md for sync/review guidance.
 import { InteractiveMode, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { isRecord, readText, uniqueSorted } from "./common.js";
 import { safeTlhProfileFilePath } from "./profile-state.js";

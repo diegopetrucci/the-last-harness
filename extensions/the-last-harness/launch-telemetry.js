@@ -243,7 +243,6 @@ export async function sendTlhLaunchTelemetry(snapshot) {
         });
     }
     catch {
-        // Launch telemetry is best-effort; never block or notify during startup.
     }
 }
 export function scheduleTlhLaunchTelemetry(ctx) {

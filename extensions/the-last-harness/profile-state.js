@@ -1,5 +1,3 @@
-// TLH-private settings/state write guards layered on top of Pi settings storage.
-// See ../../docs/upstream-sync-inventory.md for sync/review guidance.
 import { closeSync, constants, lstatSync, mkdirSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
@@ -49,9 +47,6 @@ export function tlhStatePath(fileName) {
     return safeTlhProfileFilePath(join("tlh", fileName));
 }
 export function tlhStartupStatePath() {
-    // Only persist state when the wrapper has selected an isolated profile and
-    // the TLH support path resolves inside that profile. This avoids mutating
-    // normal Pi config through a symlinked `${AGENT_DIR}/tlh` directory.
     return tlhStatePath("startup-state.json");
 }
 export function tlhTelemetryStatePath() {
@@ -124,9 +119,6 @@ function canReplaceTlhStartupStateFile(statePath) {
 }
 function writeTlhStartupStateAtomically(statePath, content) {
     const nofollowFlag = constants.O_NOFOLLOW;
-    // Startup state is best-effort. If this platform cannot protect the temp
-    // file's final component from symlinks, fail closed instead of weakening the
-    // atomic replacement by silently dropping O_NOFOLLOW.
     if (typeof nofollowFlag !== "number" || nofollowFlag === 0) {
         return;
     }
@@ -168,7 +160,6 @@ export function writeTlhStartupState(state) {
         writeTlhStartupStateAtomically(statePath, `${JSON.stringify(state, null, 2)}\n`);
     }
     catch {
-        // Startup state is best-effort; never block launch.
     }
 }
 export function updateTlhStartupState(updates) {

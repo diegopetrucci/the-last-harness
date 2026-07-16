@@ -1,4 +1,3 @@
-import {} from "@earendil-works/pi-coding-agent";
 import { selectProviderAwareAgentDefaults } from "./model-defaults.js";
 import { formatThinkingLevelOption, getAvailableThinkingLevels, isThinkingLevel, parseThinkingLevelOption, setExtensionThinkingLevel, thinkingLevelAtLeast, } from "./thinking.js";
 export async function handleThinkingLevelCommand(pi, args, ctx, runtime) {

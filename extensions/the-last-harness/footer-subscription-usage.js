@@ -47,7 +47,6 @@ function formatResetCountdown(resetsAt, nowMs, windowType) {
         const remainingHours = Math.floor((deltaMs - totalDays * DAY_MS) / HOUR_MS);
         return `${totalDays}d ${remainingHours}h`;
     }
-    // Session-style format (also used as weekly fallback when delta < 1 day)
     if (totalMinutes < 1) {
         return "<1m";
     }

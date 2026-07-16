@@ -1,4 +1,4 @@
-import { type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import { THINKING_LEVEL_DESCRIPTIONS, THINKING_LEVELS } from "./constants.js";
 import type { TlhPrimaryAgentRuntime } from "./primary-agent-runtime.js";

@@ -77,7 +77,6 @@ export function createRepoChangeWatcher(repoRoot, onChange, options = {}) {
                 watcher?.close();
             }
             catch {
-                // Ignore watcher shutdown races.
             }
             watcher = null;
         },

@@ -28,7 +28,6 @@ export function buildAnnotateLastMessageCommand() {
             windowToClose.close();
         }
         catch {
-            // Ignore races when the native window is already closing.
         }
     }
     async function openAnnotationWindow(ctx) {

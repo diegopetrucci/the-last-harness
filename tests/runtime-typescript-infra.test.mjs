@@ -24,6 +24,7 @@ function createRuntimeFixture({
 	sourceExtension,
 	outputExtension,
 	generatedRegistryEntries,
+	compilerOptions = {},
 }) {
 	const fixtureRoot = mkdtempSync(join(tmpdir(), "tlh-runtime-typescript-fixture-"));
 	const sourceRoot = join(fixtureRoot, sourceRootName);
@@ -47,6 +48,7 @@ function createRuntimeFixture({
 					isolatedModules: true,
 					verbatimModuleSyntax: true,
 					skipLibCheck: true,
+					...compilerOptions,
 				},
 				include: [includeGlob],
 				exclude: ["node_modules/**"],
@@ -101,6 +103,7 @@ function createExtensionsFixture(sourceContent, options = {}) {
 		sourceExtension: ".ts",
 		outputExtension: ".js",
 		generatedRegistryEntries: options.generatedRegistryEntries,
+		compilerOptions: options.compilerOptions,
 	});
 }
 
@@ -203,7 +206,7 @@ test("runtime TypeScript helper tracks generated extension runtime modules", () 
 });
 
 test("runtime TypeScript helper builds, checks, and typechecks temporary script fixtures", () => {
-	const fixture = createScriptsFixture('export function greet(name: string) {\n\treturn `hello ${name}`;\n}\n');
+	const fixture = createScriptsFixture('// script fixture comment should remain\nexport function greet(name: string) {\n\treturn `hello ${name}`;\n}\n');
 
 	try {
 		assert.equal(existsSync(fixture.outputPath), false);
@@ -211,7 +214,9 @@ test("runtime TypeScript helper builds, checks, and typechecks temporary script 
 		const buildResult = runRuntimeTypescript("build", fixture);
 		assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
 		assert.equal(existsSync(fixture.outputPath), true);
-		assert.match(readFileSync(fixture.outputPath, "utf8"), /export function greet\(name\)/);
+		const outputContent = readFileSync(fixture.outputPath, "utf8");
+		assert.match(outputContent, /script fixture comment should remain/);
+		assert.match(outputContent, /export function greet\(name\)/);
 
 		const checkResult = runRuntimeTypescript("check", fixture);
 		assert.equal(checkResult.status, 0, checkResult.stderr || checkResult.stdout);
@@ -225,8 +230,10 @@ test("runtime TypeScript helper builds, checks, and typechecks temporary script 
 	}
 });
 
-test("runtime TypeScript helper builds and checks temporary extension fixtures", () => {
-	const fixture = createExtensionsFixture('export function assetHref() {\n\treturn new URL("./note.txt", import.meta.url).href;\n}\n');
+test("runtime TypeScript helper builds and checks temporary extension fixtures while omitting comments", () => {
+	const fixture = createExtensionsFixture('// extension fixture comment should be removed\nexport function assetHref() {\n\treturn new URL("./note.txt", import.meta.url).href;\n}\n', {
+		compilerOptions: { removeComments: true },
+	});
 	writeFileSync(join(fixture.sourceRoot, "fixture/note.txt"), "hello from asset\n");
 
 	try {
@@ -235,7 +242,9 @@ test("runtime TypeScript helper builds and checks temporary extension fixtures",
 		const buildResult = runRuntimeTypescript("build", fixture);
 		assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
 		assert.equal(existsSync(fixture.outputPath), true);
-		assert.match(readFileSync(fixture.outputPath, "utf8"), /import\.meta\.url/);
+		const outputContent = readFileSync(fixture.outputPath, "utf8");
+		assert.doesNotMatch(outputContent, /extension fixture comment should be removed/);
+		assert.match(outputContent, /import\.meta\.url/);
 
 		const checkResult = runRuntimeTypescript("check", fixture);
 		assert.equal(checkResult.status, 0, checkResult.stderr || checkResult.stdout);
@@ -346,6 +355,20 @@ test("runtime TypeScript check cleans temporary outputs when TypeScript compilat
 		assertNoTemporaryCheckOutputs(fixture.tempDir);
 	} finally {
 		fixture.cleanup();
+	}
+});
+
+test("generated extension outputs omit empty Pi runtime imports for type-only entrypoint dependencies", () => {
+	for (const path of [
+		"extensions/the-last-harness.js",
+		"extensions/the-last-harness/effort.js",
+		"extensions/the-last-harness/effort-command.js",
+	]) {
+		assert.doesNotMatch(
+			readFileSync(join(repoRoot, path), "utf8"),
+			/import\s*\{\s*\}\s*from\s*"@earendil-works\/pi-coding-agent";/,
+			`${path} should not contain an empty Pi runtime import`,
+		);
 	}
 });
 
