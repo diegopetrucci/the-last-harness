@@ -1,10 +1,5 @@
-// Cache-miss detection ported from pi-coding-agent@0.80.6 core/cache-stats.
-// See ../../docs/upstream-sync-inventory.md for sync/review guidance.
 const NOISE_FLOOR_TOKENS = 1024;
-// The upstream provider prompt-cache TTL is ~5 minutes; large idle gaps between turns tend
-// to cause cache misses because entries expire. Detection reports idleMs but does not gate on the TTL.
 const BUILT_IN_TOOL_NAMES = new Set(["bash", "read", "edit", "write", "grep", "find", "ls"]);
-/** Approximate characters per token used for tool-payload size estimates. */
 const CHARS_PER_TOKEN = 4;
 const SKIP_DISCOVERY_KEYS = new Set([
     "content",
@@ -65,13 +60,11 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
     let mcpProxyCalls = 0;
     let mcpDirectCalls = 0;
     let cacheMissPrev;
-    /** 0-based index incremented for every primary assistant message processed. */
     let assistantTurnIndex = 0;
     const cacheMissEvents = [];
     let totalMissedTokens = 0;
     let totalMissedCost = 0;
     for (const entry of entries) {
-        // Cache-miss detection: compaction and branch_summary legitimately change context — clear prev.
         if (entry.type === "compaction" || entry.type === "branch_summary") {
             cacheMissPrev = undefined;
         }
@@ -110,10 +103,6 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
                 primaryTotals.turns += 1;
                 primaryTotals.assistantMessages += 1;
             }
-            // Cache-miss detection (primary session only; subagent runs are excluded).
-            // Ported from pi-coding-agent@0.80.6 core/cache-stats.
-            // Raw per-message cost breakdown is read directly here; normalizeUsage collapses
-            // cost to a single total and is NOT sufficient for the per-component rate math.
             const rawMsgUsage = isRecord(message.usage) ? message.usage : undefined;
             const cmInput = numberFromUnknown(rawMsgUsage?.input ?? rawMsgUsage?.inputTokens) ?? 0;
             const cmCacheRead = numberFromUnknown(rawMsgUsage?.cacheRead ?? rawMsgUsage?.cacheReadTokens ?? rawMsgUsage?.cache_read_input_tokens ?? rawMsgUsage?.cacheReadInputTokens) ?? 0;
@@ -128,7 +117,6 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
             const cmModelKey = `${cmProvider}/${cmModel}`;
             const cmTimestampMs = Date.parse(entry.timestamp);
             const cmTimestamp = Number.isFinite(cmTimestampMs) ? cmTimestampMs : 0;
-            // Evaluate miss: skip when no prev, zero promptTokens, or no cache activity ever seen.
             if (cacheMissPrev !== undefined &&
                 cmPromptTokens > 0 &&
                 !(cmCacheRead + cmCacheWrite === 0 && !cacheMissPrev.reportedCache)) {
@@ -147,13 +135,11 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
                     totalMissedCost += missedCost;
                 }
             }
-            // Update prev for next iteration (only when promptTokens > 0).
             if (cmPromptTokens > 0) {
                 cacheMissPrev = {
                     promptTokens: cmPromptTokens,
                     timestamp: cmTimestamp,
                     modelKey: cmModelKey,
-                    // Carry forward: once any message reported cache activity, the flag stays true.
                     reportedCache: (cacheMissPrev?.reportedCache ?? false) || cmCacheRead + cmCacheWrite > 0,
                 };
             }
@@ -487,14 +473,6 @@ function costFromUnknown(value) {
 function numberFromUnknown(value) {
     return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
-// Intentionally includes arrays (unlike common.ts isPlainObject which excludes them).
-// artifactPaths can arrive as an array in the wild; the two call sites that handle it
-// (in collectArtifactReferences and the standalone artifact-entry sanitizer) iterate
-// Object.values(artifactPaths), which works correctly for both plain objects and arrays.
-// Replacing this with the shared common.ts isRecord/isPlainObject would silently skip
-// array-valued artifactPaths at those call sites.
-// If the schema for artifactPaths is ever narrowed to plain-object-only, audit those
-// call sites first and confirm no callers pass an array before switching.
 function isRecord(value) {
     return typeof value === "object" && value !== null;
 }
@@ -921,11 +899,6 @@ function splitProviderModel(value) {
         modelId: value.slice(slashIndex + 1),
     };
 }
-/**
- * Serialize tool-call arguments to JSON and return the character length.
- * Returns 0 if arguments are absent or not serializable.
- * Only the character count is used — raw payload text is never stored.
- */
 function safeArgChars(args) {
     if (args == null) {
         return 0;
@@ -937,10 +910,6 @@ function safeArgChars(args) {
         return 0;
     }
 }
-/**
- * Sum the character length of all text items in a tool-result content array.
- * Image and other non-text items are excluded — only derived counts are used.
- */
 function resultContentChars(content) {
     if (!Array.isArray(content)) {
         return 0;

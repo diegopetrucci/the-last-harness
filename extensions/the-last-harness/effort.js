@@ -1,4 +1,3 @@
-import {} from "@earendil-works/pi-coding-agent";
 import { THINKING_LEVEL_DESCRIPTIONS, THINKING_LEVELS } from "./constants.js";
 import { thinkingLevelAtLeast } from "./thinking.js";
 function createRetryableLazyImport(loader) {

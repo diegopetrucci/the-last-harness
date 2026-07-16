@@ -1,29 +1,8 @@
-// Vendored from rtk-ai/rtk v0.42.4 (hooks/pi/rtk.ts), Apache-2.0.
-// See ./rtk.APACHE-2.0.txt for the upstream license text and provenance.
-// See ../docs/upstream-sync-inventory.md for TLH sync/review guidance.
-// TLH adaptations:
-// - keep native RTK rewrite-only with no /rtk command UI
-// - prefer normal PATH lookup, then fall back to the managed <agent>/bin/rtk when needed
-// - respect RTK_DISABLED=1 and the isolated-profile setting tlh.rtk.disabled
-// - avoid duplicate handler registration when the extension is loaded twice for the same session
-//
-// RTK Pi extension — rewrites bash commands to use rtk for token savings.
-// Requires: rtk >= 0.23.0 in PATH or at the managed isolated fallback path.
-//
-// This is a thin delegating extension: all rewrite logic lives in `rtk rewrite`,
-// which is the single source of truth (src/discover/registry.rs).
-// To add or change rewrite rules, edit the Rust registry — not this file.
-//
-// Exit code contract for `rtk rewrite`:
-//   0 + stdout  Rewrite found → mutate command
-//   1           No RTK equivalent → pass through unchanged
-//   3 + stdout  Rewrite (advisory) → mutate command
 import { join } from "node:path";
 import { SettingsManager, getAgentDir, isToolCallEventType } from "@earendil-works/pi-coding-agent";
 const REWRITE_TIMEOUT_MS = 2_000;
 const MIN_SUPPORTED_RTK_MINOR = 23;
 const TLH_RTK_EXTENSION_STATE = Symbol.for("tlh.rtkExtensionState");
-// Parse "X.Y.Z" semver, return [major, minor, patch] or null.
 function parseSemver(raw) {
     const match = raw.trim().match(/(\d+)\.(\d+)\.(\d+)/);
     if (!match)
@@ -82,7 +61,6 @@ async function resolveRtkCommand(pi) {
     console.warn(`[rtk] ${describeUnusableRtk(pathProbe, "rtk in PATH")} and ${describeUnusableRtk(managedProbe, `managed fallback ${managedCommand}`)} — extension disabled`);
     return null;
 }
-// Calls `rtk rewrite`; returns the rewritten command or null (pass through).
 async function rewriteCommand(pi, rtkCommand, cmd, signal) {
     const result = await pi.exec(rtkCommand, ["rewrite", cmd], {
         timeout: REWRITE_TIMEOUT_MS,
@@ -123,14 +101,12 @@ export default async function rtk(pi) {
                     return;
                 if (isRtkSettingDisabled(ctx.cwd))
                     return;
-                // Delegate to RTK.
                 const rewritten = await rewriteCommand(pi, rtkCommand, cmd, ctx.signal);
                 if (rewritten && rewritten !== cmd) {
                     event.input.command = rewritten;
                 }
             }
             catch (error) {
-                // Fail open: never block execution on an unexpected error.
                 console.warn("[rtk] unexpected error in tool_call handler; passing through command", error);
                 return;
             }

@@ -37,7 +37,6 @@ export function createTokensCommandHandler(pi, dependencies = {}) {
                 primaryAgentLabel = getPrimaryAgentLabel?.();
             }
             catch {
-                // Fall back to default label if the source throws.
             }
             const html = buildTokensReportHtml(analysis, { generatedAt: now().toISOString(), primaryAgentLabel });
             const report = writeLocalTokensReport(ctx.sessionManager, html);
@@ -434,7 +433,6 @@ function setPrivateMode(path, mode) {
         chmodSync(path, mode);
     }
     catch {
-        // Best effort only. The file contents remain local even if chmod is unsupported.
     }
 }
 function dedupeParents(values) {

@@ -39,14 +39,9 @@ function defaultRunner(command, args, options) {
                 child.kill("SIGTERM");
             }
             catch {
-                // Ignore: process may already be gone.
             }
             finish(new Error("aborted"));
         };
-        // Attach child listeners before checking a pre-aborted signal so a
-        // delayed ENOENT/close cannot escape as an uncaught exception that
-        // would terminate the host Pi process. The `settled` guard inside
-        // `finish()` makes any post-abort close/error a safe no-op.
         child.stdout?.on("data", (chunk) => {
             stdout += typeof chunk === "string" ? chunk : chunk.toString("utf8");
         });
@@ -128,11 +123,6 @@ function pullRequestSnapshotsEqual(left, right) {
         && left?.url === right?.url
         && left?.title === right?.title);
 }
-/**
- * Background cache for the TLH footer's git status and (best-effort) GitHub PR
- * metadata. Refreshes asynchronously and exposes synchronous snapshot getters
- * so footer `render()` never spawns subprocesses.
- */
 export class FooterGitCache {
     cwd;
     runner;
@@ -163,9 +153,6 @@ export class FooterGitCache {
         if (!options.skipInitialRefresh) {
             void this.refresh();
         }
-        // Subscribe to external branch-change notifications, if any. Each
-        // callback invocation schedules a refresh; the existing in-flight
-        // promise sharing automatically dedupes overlapping callbacks.
         if (options.onBranchChangeSource) {
             this.branchChangeUnsubscribe = options.onBranchChangeSource(() => {
                 void this.refresh();
@@ -178,10 +165,6 @@ export class FooterGitCache {
     getPullRequestSnapshot() {
         return this.pullRequestSnapshot;
     }
-    /**
-     * Trigger a refresh. Concurrent calls share the in-flight promise. Safe to
-     * call after `dispose()` (resolves immediately as a no-op).
-     */
     refresh() {
         if (this.disposed) {
             return Promise.resolve();
@@ -189,10 +172,6 @@ export class FooterGitCache {
         if (this.refreshInFlight) {
             return this.refreshInFlight;
         }
-        // Refresh is best-effort; swallow rejections at the cache boundary so
-        // `void this.refresh()` callers (interval tick, branch-change, initial
-        // kick) never produce unhandled rejections that could terminate the
-        // host Pi process under Node's default unhandled-rejection policy.
         const run = this.runRefresh()
             .finally(() => {
             this.refreshInFlight = undefined;
@@ -209,14 +188,9 @@ export class FooterGitCache {
             return;
         }
         if (result.kind === "transient") {
-            // Timeout, spawn error, or exit-0-but-unparseable. Likely transient;
-            // keep last-known snapshots and retry on the next tick.
             return;
         }
         if (result.kind === "not-a-repo") {
-            // cwd is no longer inside a git worktree (e.g. user cd'd to /tmp).
-            // Drop stale state so the footer renders just the path; otherwise the
-            // 8s poll would never recover because exit 128 is persistent.
             this.statusSnapshot = undefined;
             this.pullRequestSnapshot = undefined;
             this.lastSeenBranch = undefined;
@@ -229,8 +203,6 @@ export class FooterGitCache {
         const isValidBranch = !!branch && branch !== "detached";
         const branchChanged = branch !== this.lastSeenBranch;
         if (branchChanged) {
-            // Stale PR data belongs to the previous branch; clear it before
-            // attempting a fresh lookup for the new branch.
             this.pullRequestSnapshot = undefined;
         }
         this.lastSeenBranch = branch;
@@ -247,10 +219,8 @@ export class FooterGitCache {
             this.pullRequestSnapshot = pr;
         }
         else if (branchChanged) {
-            // Branch changed and PR lookup failed; leave snapshot cleared above.
             this.pullRequestSnapshot = undefined;
         }
-        // Otherwise (same branch, gh failed): keep prior PR snapshot.
         this.emitChangeIfSnapshotsChanged(previousStatusSnapshot, previousPullRequestSnapshot);
     }
     emitChangeIfSnapshotsChanged(previousStatusSnapshot, previousPullRequestSnapshot) {
@@ -265,14 +235,8 @@ export class FooterGitCache {
             this.onChange?.();
         }
         catch {
-            // Silent: rendering hooks must not break refreshes.
         }
     }
-    // Three-way split so runRefresh can distinguish persistent "not a repo"
-    // failures (cwd left the worktree, exit 128) from transient ones (timeout,
-    // spawn error, or exit-0-but-unparseable). Collapsing them caused the
-    // footer to keep showing the previous repo's branch/PR forever after cd'ing
-    // out of a git directory.
     async fetchGitStatus() {
         const result = await this.runCommandSafely("git", GIT_STATUS_ARGS, this.gitTimeoutMs);
         if (!result) {
@@ -307,7 +271,6 @@ export class FooterGitCache {
             return await this.runner(command, args, { cwd: this.cwd(), signal: controller.signal });
         }
         catch {
-            // Silent: missing binary, abort, spawn error, non-zero stderr, etc.
             return undefined;
         }
         finally {
@@ -315,11 +278,6 @@ export class FooterGitCache {
             this.inflightControllers.delete(controller);
         }
     }
-    /**
-     * Stop background refreshes and cancel any in-flight subprocesses.
-     * Idempotent. After disposal the snapshot getters keep returning the
-     * last-known values but no further refreshes occur.
-     */
     dispose() {
         if (this.disposed) {
             return;
@@ -334,7 +292,6 @@ export class FooterGitCache {
                 this.branchChangeUnsubscribe();
             }
             catch {
-                // Ignore: a misbehaving notifier must not block disposal.
             }
             this.branchChangeUnsubscribe = undefined;
         }

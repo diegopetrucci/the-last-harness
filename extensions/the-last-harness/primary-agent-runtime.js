@@ -97,7 +97,6 @@ function writeTlhPrimaryAgentModelOverride(cwd, primary, modelKey) {
             }
             modelOverrides[primary] = modelKey;
         }
-        // Clean up empty modelOverrides object
         if (Object.keys(modelOverrides).length === 0) {
             delete primaryAgent.modelOverrides;
         }
@@ -238,8 +237,6 @@ function registerChildSubagentRuntime(pi, buildChildPrompt, env) {
         if (event.toolName !== "bash") {
             return undefined;
         }
-        // `toolName` narrows the branch, but not the shared mutable `input` payload.
-        // Keep a runtime guard so direct/custom tool-call objects cannot pass a non-string command.
         if (typeof event.input.command !== "string") {
             return undefined;
         }
@@ -413,7 +410,6 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         const availableModels = getUnfilteredAvailableModels(ctx.modelRegistry);
         const primaryDefaults = selectProviderAwareAgentDefaults(primary, availableModels, ctx.model?.provider);
         const currentProviderDefaults = selectProviderAwareAgentDefaults(primary, [], ctx.model?.provider);
-        // Resolve model: stored override (if still available in registry) takes precedence over frontmatter default
         let resolvedModel = primaryDefaults.model;
         if (!forceApply) {
             const storedOverride = primaryConfig?.modelOverrides?.[selection];
@@ -422,7 +418,6 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
                 if (overrideRef) {
                     resolvedModel = overrideRef;
                 }
-                // If override is unavailable, fall through to primaryDefaults.model (no error)
             }
         }
         const activePrimaryModel = shouldApplyModel ? await applyPrimaryModel(ctx, primary, resolvedModel) : undefined;
@@ -578,11 +573,9 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
     }
     function registerLifecycleHooks() {
         pi.on("model_select", async (event, ctx) => {
-            // Ignore events emitted by TLH's own applyPrimaryModel to avoid a feedback loop.
             if (tlhApplyingModel) {
                 return;
             }
-            // Only handle user-initiated model selections (source "set" is emitted by /model and pi.setModel alike).
             if (event.source !== "set") {
                 return;
             }
@@ -595,21 +588,17 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             if (!primary) {
                 return;
             }
-            // Locked primaries (e.g. rush) keep their fixed provider defaults and do not persist user model overrides.
             if (shouldForceApplyForLock(primary)) {
                 return;
             }
             const chosenKey = `${event.model.provider}/${event.model.id}`;
-            // Determine the primary's bundled default model to know whether to clear the override.
             const primaryDefaults = selectProviderAwareAgentDefaults(primary, getUnfilteredAvailableModels(ctx.modelRegistry), event.model.provider);
             const bundledKey = primaryDefaults.model ? `${primaryDefaults.model.provider}/${primaryDefaults.model.id}` : undefined;
-            // If user picked the bundled default, clear the override; otherwise record it.
             const nextOverride = chosenKey === bundledKey ? undefined : chosenKey;
             try {
                 writeTlhPrimaryAgentModelOverride(ctx.cwd, selection, nextOverride);
             }
             catch {
-                // Best-effort: model override persistence is non-blocking.
             }
         });
         pi.on("session_tree", async (_event, ctx) => {
@@ -640,8 +629,6 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         });
         pi.on("tool_call", async (event, ctx) => {
             if (event.toolName === "bash") {
-                // `toolName` narrows this branch, but not the shared mutable `input` payload.
-                // Keep a runtime guard so direct/custom tool-call objects cannot pass a non-string command.
                 if (typeof event.input.command !== "string") {
                     return undefined;
                 }

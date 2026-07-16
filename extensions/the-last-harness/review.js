@@ -3,17 +3,12 @@ import { join, relative, resolve } from "node:path";
 import { DynamicBorder, getAgentDir, getSelectListTheme, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Container, matchesKey, SelectList, Text } from "@earendil-works/pi-tui";
 import { primaryAgentSelectionFromBranch, resolvePrimaryAgentConfig } from "../the-last-harness-primary-agent.mjs";
-// --- Constants ---
 const REVIEW_TITLE = "Choose a review mode";
 const REVIEW_PICKER_HINT = "↑/↓ to move  Enter to confirm  Esc to cancel";
 const REVIEW_DEFAULT_BRANCH_BASE = "main";
 const REVIEW_PICKER_ONLY_GUIDANCE = "/review is picker-only. Run /review with no arguments, then choose a mode in the picker. Typed shortcuts like `/review pr 123` and `--extra` are no longer supported.";
 const REVIEW_TUI_REQUIRED_MESSAGE = "/review requires the interactive TUI picker. Re-run /review in the TLH UI.";
 const REVIEW_REQUIRED_PRIMARY = "architect";
-// Intentionally not imported from "./common.js" (see issue #296): review.ts is loaded
-// in tests via a native Node strip-types `import`, which — unlike the jiti.import()
-// loader used by other extension tests — does not remap "./common.js" to "./common.ts",
-// so that import would fail with ERR_MODULE_NOT_FOUND.
 function isRecord(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -45,12 +40,6 @@ const REVIEW_MODE_DESCRIPTIONS = {
 };
 const REVIEW_UNTRACKED_BEGIN_DELIMITER = "--- begin untracked files ---";
 const REVIEW_UNTRACKED_END_DELIMITER = "--- end untracked files ---";
-// --- Pure helpers ---
-/**
- * Pure branch-mismatch decision function for PR mode.
- * Maps the current state + user confirmation to an action.
- * Has no knowledge of git, gh, or any I/O.
- */
 export function decideBranchAction(params) {
     const { currentBranch, prHead, isDirty, userConfirm } = params;
     if (currentBranch === prHead)
@@ -59,11 +48,6 @@ export function decideBranchAction(params) {
         return "abort-dirty";
     return userConfirm ? "switch" : "abort-cancelled";
 }
-/**
- * Tokenise a raw args string from the command handler, respecting single- and
- * double-quoted groups so that quoted picker follow-up input stays grouped.
- * Unquoted whitespace, including newlines from editor prompts, splits tokens.
- */
 function tokenizeArgs(raw) {
     if (!raw.trim())
         return [];
@@ -93,11 +77,6 @@ function tokenizeArgs(raw) {
     }
     return tokens;
 }
-/**
- * /review is picker-only. Bare /review requests the picker; any typed
- * arguments are rejected with explicit guidance so users do not think the
- * command silently ignored meaningful input.
- */
 export function parseReviewArgs(argv) {
     if (argv.length === 0) {
         return { pickerRequested: true };
@@ -107,24 +86,11 @@ export function parseReviewArgs(argv) {
         message: REVIEW_PICKER_ONLY_GUIDANCE,
     };
 }
-/**
- * Build the canonical [/review] envelope string to send as a user message.
- *
- * The first line is always exactly `[/review]` so the architect can detect it.
- * Structured metadata follows, then the `extra` block, then a fenced section
- * holding the diff or snapshot body.
- *
- * T2 populates `ctx.body` / `ctx.bodyKind` for local modes; T3 does the same
- * for PR mode and also fills `ctx.checkout` when it switches branches.
- */
 export function buildReviewEnvelope(parsed, ctx) {
     const { mode, extra } = parsed;
     const lines = [];
-    // ── Line 1: hard-coded trigger token ──────────────────────────────────────
     lines.push("[/review]");
-    // ── Metadata ──────────────────────────────────────────────────────────────
     lines.push(`mode: ${mode}`);
-    // Mode-specific refs
     if (parsed.mode === "branch" && parsed.base) {
         lines.push(`base: ${parsed.base}`);
     }
@@ -137,16 +103,13 @@ export function buildReviewEnvelope(parsed, ctx) {
     else if (parsed.mode === "folder" && parsed.paths.length > 0) {
         lines.push(`paths: ${parsed.paths.join(" ")}`);
     }
-    // Branch context
     if (ctx?.currentBranch !== undefined) {
         lines.push(`current-branch: ${ctx.currentBranch}`);
     }
-    // Checkout notice (set by T3 when it had to switch branches)
     if (ctx?.checkout?.performed) {
         lines.push(`checkout: switched-from ${ctx.checkout.priorBranch}`);
         lines.push(`note: previously on ${ctx.checkout.priorBranch}; run \`git checkout -\` to return.`);
     }
-    // ── Extra block ───────────────────────────────────────────────────────────
     if (extra === undefined) {
         lines.push("extra: (none)");
     }
@@ -154,7 +117,6 @@ export function buildReviewEnvelope(parsed, ctx) {
         lines.push("extra:");
         lines.push(extra);
     }
-    // ── Body fenced section ───────────────────────────────────────────────────
     const hasBody = ctx?.body !== undefined;
     const fenceKind = hasBody ? (ctx?.bodyKind ?? "diff") : "(pending)";
     const bodyText = hasBody ? escapeEnvelopeFenceLines(ctx?.body, fenceKind) : "(no body gathered)";
@@ -163,8 +125,6 @@ export function buildReviewEnvelope(parsed, ctx) {
     lines.push(`--- end ${fenceKind} ---`);
     return lines.join("\n");
 }
-// --- Helpers for picker integration ---
-/** Construct full dispatch args for a mode chosen interactively with defaults applied. */
 function makePickedArgs(mode) {
     return { mode, extra: undefined };
 }
@@ -204,7 +164,6 @@ async function completePickedArgs(ctx, mode) {
     const paths = tokenizeArgs(rawPaths);
     return paths.length > 0 ? { mode: "folder", paths, extra: undefined } : undefined;
 }
-// --- Interactive picker ---
 async function showReviewPicker(ctx) {
     if (!ctx.hasUI) {
         return undefined;
@@ -255,12 +214,6 @@ async function resolveRepoRoot(pi, cwd, context) {
     }
     return { ok: true, root: repoRootResult.stdout.trim() };
 }
-/**
- * Reject values that look like git/gh flags (start with '-').
- * pi.exec is argv-based (no shell injection), but a leading dash could still
- * cause the value to be interpreted as a git or gh option rather than a ref,
- * SHA, or PR identifier.
- */
 function rejectFlagLike(value, fieldName) {
     if (value.startsWith("-")) {
         return { ok: false, message: `${fieldName} cannot start with '-' (got '${value}'). If this is intentional, run the underlying command manually.` };
@@ -416,13 +369,8 @@ async function fetchPrDiffViaRest(pi, cwd, prRef) {
     }
     return { ok: true, diff: result.stdout };
 }
-/**
- * Gather staged + unstaged changes vs HEAD for the uncommitted mode.
- * Also appends untracked, non-gitignored file contents so brand-new files are reviewable.
- */
 async function gatherUncommitted(pi, cmdCtx) {
     const cwd = cmdCtx.cwd;
-    // Resolve current branch (also validates we are inside a git repo)
     const branchResult = await pi.exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd });
     if (branchResult.code !== 0) {
         const message = detectNotGitRepo(branchResult.stderr)
@@ -431,7 +379,6 @@ async function gatherUncommitted(pi, cmdCtx) {
         return { ok: false, message };
     }
     const currentBranch = branchResult.stdout.trim();
-    // Gather full diff (staged + unstaged vs HEAD)
     const diffResult = await pi.exec("git", ["diff", "HEAD"], { cwd });
     if (diffResult.code !== 0) {
         const message = detectNotGitRepo(diffResult.stderr)
@@ -443,7 +390,6 @@ async function gatherUncommitted(pi, cmdCtx) {
     if (repoRootResult.ok === false) {
         return { ok: false, message: repoRootResult.message };
     }
-    // Include untracked, non-gitignored files so the reviewer can see newly added content.
     const untrackedResult = await pi.exec("git", ["ls-files", "-z", "--others", "--exclude-standard", "--", "."], { cwd: repoRootResult.root });
     if (untrackedResult.code !== 0) {
         const message = detectNotGitRepo(untrackedResult.stderr)
@@ -460,18 +406,13 @@ async function gatherUncommitted(pi, cmdCtx) {
         ctx: { currentBranch, body, bodyKind: "diff" },
     };
 }
-/**
- * Gather git diff <base>...HEAD (three-dot, vs merge-base) for the branch mode.
- */
 async function gatherBranch(pi, cmdCtx, base) {
     const effectiveBase = base?.trim() || REVIEW_DEFAULT_BRANCH_BASE;
-    // Reject flag-like values before passing anything to git.
     const baseCheck = rejectFlagLike(effectiveBase, "base");
     if (baseCheck.ok === false) {
         return { ok: false, message: baseCheck.message };
     }
     const cwd = cmdCtx.cwd;
-    // Refuse if HEAD is detached
     const symRefResult = await pi.exec("git", ["symbolic-ref", "-q", "HEAD"], { cwd });
     if (symRefResult.code !== 0) {
         if (detectNotGitRepo(symRefResult.stderr)) {
@@ -485,10 +426,8 @@ async function gatherBranch(pi, cmdCtx, base) {
             message: "HEAD is detached. Check out a branch before running /review.",
         };
     }
-    // Resolve current branch
     const branchResult = await pi.exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd });
     const currentBranch = branchResult.code === 0 ? branchResult.stdout.trim() : undefined;
-    // Validate that the base ref resolves
     const verifyResult = await pi.exec("git", ["rev-parse", "--verify", effectiveBase], { cwd });
     if (verifyResult.code !== 0) {
         return {
@@ -496,7 +435,6 @@ async function gatherBranch(pi, cmdCtx, base) {
             message: `Branch base '${effectiveBase}' does not resolve to a valid ref. Make sure the branch or commit exists locally.`,
         };
     }
-    // Compute three-dot diff vs merge-base
     const diffResult = await pi.exec("git", ["diff", `${effectiveBase}...HEAD`], { cwd });
     if (diffResult.code !== 0) {
         return {
@@ -509,9 +447,6 @@ async function gatherBranch(pi, cmdCtx, base) {
         ctx: { currentBranch, body: diffResult.stdout, bodyKind: "diff" },
     };
 }
-/**
- * Gather git show --format=fuller <sha> (commit header + diff) for the commit mode.
- */
 async function gatherCommit(pi, cmdCtx, sha) {
     if (!sha) {
         return {
@@ -520,12 +455,10 @@ async function gatherCommit(pi, cmdCtx, sha) {
         };
     }
     const cwd = cmdCtx.cwd;
-    // Reject flag-like values before passing to git
     const shaCheck = rejectFlagLike(sha, "sha");
     if (shaCheck.ok === false) {
         return { ok: false, message: shaCheck.message };
     }
-    // Validate that the ref resolves to an actual commit object
     const verifyResult = await pi.exec("git", ["rev-parse", "--verify", `${sha}^{commit}`], { cwd });
     if (verifyResult.code !== 0) {
         if (detectNotGitRepo(verifyResult.stderr)) {
@@ -539,7 +472,6 @@ async function gatherCommit(pi, cmdCtx, sha) {
             message: `Commit '${sha}' does not resolve to a valid commit. Check that the SHA is correct and reachable.`,
         };
     }
-    // Gather the full commit diff including the message header
     const showResult = await pi.exec("git", ["show", "--format=fuller", sha], { cwd });
     if (showResult.code !== 0) {
         return {
@@ -547,7 +479,6 @@ async function gatherCommit(pi, cmdCtx, sha) {
             message: `git show failed for '${sha}': ${showResult.stderr.trim()}`,
         };
     }
-    // Resolve current branch (best-effort; irrelevant if we are reviewing an old commit)
     const branchResult = await pi.exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd });
     const currentBranch = branchResult.code === 0 ? branchResult.stdout.trim() : undefined;
     return {
@@ -555,10 +486,6 @@ async function gatherCommit(pi, cmdCtx, sha) {
         ctx: { currentBranch, body: showResult.stdout, bodyKind: "diff" },
     };
 }
-/**
- * Return true when a file is likely binary.
- * Heuristic: read the first 8 KB and check for a NUL (0x00) byte.
- */
 async function isBinaryFile(filePath) {
     let handle;
     try {
@@ -571,21 +498,12 @@ async function isBinaryFile(filePath) {
         await handle?.close();
     }
 }
-/**
- * Recursively collect all non-directory entries under a directory.
- *
- * Subdirectories named `node_modules` or starting with `.` are skipped
- * to avoid generating useless snapshots from tooling/VCS directories.
- * This filter applies only to entries discovered during recursion — the
- * user-specified top-level path is always walked regardless of its name.
- */
 async function walkDir(dir) {
     const entries = await readdir(dir, { withFileTypes: true });
     const files = [];
     for (const entry of entries) {
         const full = join(dir, entry.name);
         if (entry.isDirectory()) {
-            // Skip well-known noisy directories during recursion.
             if (entry.name === "node_modules" || entry.name.startsWith(".")) {
                 continue;
             }
@@ -645,10 +563,6 @@ function getNonRegularSnapshotMarker(relPath, pathStat) {
     }
     return undefined;
 }
-/**
- * Build snapshot entries for a set of file paths.
- * Binary files are skipped with an annotation instead of inline content.
- */
 async function buildSnapshotParts(cwd, filePaths, label) {
     const parts = [];
     for (const filePath of filePaths) {
@@ -696,10 +610,6 @@ function appendUntrackedSnapshot(diffBody, untrackedParts) {
     const untrackedBody = [REVIEW_UNTRACKED_BEGIN_DELIMITER, ...untrackedParts, REVIEW_UNTRACKED_END_DELIMITER].join("\n");
     return diffBody.trim().length > 0 ? `${diffBody}\n\n${untrackedBody}` : untrackedBody;
 }
-/**
- * Build a snapshot payload from the given paths for the folder mode.
- * Directories are walked; binary files are skipped with an annotation.
- */
 async function gatherFolder(pi, cmdCtx, paths) {
     if (paths.length === 0) {
         return {
@@ -709,7 +619,6 @@ async function gatherFolder(pi, cmdCtx, paths) {
     }
     const cwd = cmdCtx.cwd;
     const absPaths = paths.map((p) => resolve(cwd, p));
-    // Validate all paths exist before doing any work
     for (let i = 0; i < absPaths.length; i++) {
         try {
             await lstat(absPaths[i]);
@@ -721,7 +630,6 @@ async function gatherFolder(pi, cmdCtx, paths) {
             };
         }
     }
-    // Resolve current branch (best-effort; folder mode may be used outside a git repo)
     let currentBranch;
     const branchResult = await pi.exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd });
     if (branchResult.code === 0) {
@@ -733,17 +641,12 @@ async function gatherFolder(pi, cmdCtx, paths) {
         const pathStat = await lstat(absPath);
         let filePaths;
         if (pathStat.isDirectory()) {
-            // Prefer git ls-files to respect .gitignore naturally;
-            // --others --exclude-standard includes untracked-but-not-gitignored files.
-            // If git reports zero files for this directory, keep that empty result instead of
-            // walking the tree and accidentally snapshotting ignored files.
             const lsResult = await pi.exec("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."], { cwd: absPath });
             if (lsResult.code === 0) {
                 filePaths = parseNullDelimitedGitPaths(lsResult.stdout)
                     .map((filePath) => join(absPath, filePath));
             }
             else if (detectNotGitRepo(lsResult.stderr)) {
-                // Fall back to a plain recursive walk only when outside git entirely.
                 filePaths = await walkDir(absPath);
             }
             else {
@@ -767,10 +670,6 @@ async function gatherFolder(pi, cmdCtx, paths) {
         },
     };
 }
-/**
- * Show a confirm prompt asking the user whether to switch to the PR head branch.
- * Returns true if confirmed, false if cancelled.
- */
 async function showBranchSwitchConfirm(cmdCtx, currentBranch, headRefName, baseRefName) {
     const confirmed = await cmdCtx.ui.custom((_tui, theme, _kb, done) => {
         const container = new Container();
@@ -799,33 +698,18 @@ async function showBranchSwitchConfirm(cmdCtx, currentBranch, headRefName, baseR
     });
     return confirmed;
 }
-/**
- * Gather PR diff for the pr mode.
- *
- * Steps:
- * 1. Validate nOrUrl argument.
- * 2. Reject flag-like nOrUrl.
- * 3. Check gh CLI availability.
- * 4. Resolve PR metadata with `gh pr view`.
- * 5. Resolve current branch.
- * 6. Branch-mismatch decision tree.
- * 7. Gather diff with `gh pr diff`.
- */
 async function gatherPr(pi, cmdCtx, nOrUrl) {
     const cwd = cmdCtx.cwd;
-    // 1. Argument validation
     if (!nOrUrl || !nOrUrl.trim()) {
         return {
             ok: false,
             message: "PR review requires a PR number or URL. Re-run /review and choose PR.",
         };
     }
-    // 2. Reject flag-like nOrUrl
     const nOrUrlCheck = rejectFlagLike(nOrUrl, "pr");
     if (nOrUrlCheck.ok === false) {
         return { ok: false, message: nOrUrlCheck.message };
     }
-    // 3. gh CLI availability check
     const ghCheckResult = await pi.exec("gh", ["--version"], { cwd });
     if (ghCheckResult.code !== 0) {
         return {
@@ -833,7 +717,6 @@ async function gatherPr(pi, cmdCtx, nOrUrl) {
             message: "PR mode requires the GitHub CLI. Install: https://cli.github.com — then run `gh auth login`.",
         };
     }
-    // 4. PR metadata resolution
     const prViewResult = await pi.exec("gh", ["pr", "view", nOrUrl, "--json", "number,headRefName,baseRefName,isCrossRepository,headRepository"], { cwd });
     let prRef;
     let prData;
@@ -881,7 +764,6 @@ async function gatherPr(pi, cmdCtx, nOrUrl) {
         };
     }
     const { number: prNumber, headRefName, baseRefName } = prData;
-    // 5. Current branch resolution
     const branchResult = await pi.exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd });
     if (branchResult.code !== 0) {
         return {
@@ -890,11 +772,9 @@ async function gatherPr(pi, cmdCtx, nOrUrl) {
         };
     }
     const currentBranch = branchResult.stdout.trim();
-    // 6. Branch-mismatch decision tree
     let effectiveBranch = currentBranch;
     let checkoutCtx;
     if (currentBranch !== headRefName) {
-        // Check whether the working tree is dirty
         const statusResult = await pi.exec("git", ["status", "--porcelain"], { cwd });
         if (statusResult.code !== 0) {
             const firstLine = statusResult.stderr.split("\n")[0]?.trim() ?? "git status failed";
@@ -904,7 +784,6 @@ async function gatherPr(pi, cmdCtx, nOrUrl) {
             };
         }
         const isDirty = statusResult.stdout.trim().length > 0;
-        // Working tree is clean — confirm before switching
         let userConfirm = false;
         if (!isDirty) {
             if (!cmdCtx.hasUI) {
@@ -925,7 +804,6 @@ async function gatherPr(pi, cmdCtx, nOrUrl) {
         if (action === "abort-cancelled") {
             return { ok: false, message: "Review cancelled — branch was not switched." };
         }
-        // action === "switch" — perform the checkout
         const checkoutResult = await pi.exec("gh", ["pr", "checkout", String(prNumber)], { cwd });
         if (checkoutResult.code !== 0) {
             const firstLine = checkoutResult.stderr.split("\n")[0]?.trim() ?? "";
@@ -937,7 +815,6 @@ async function gatherPr(pi, cmdCtx, nOrUrl) {
         effectiveBranch = headRefName;
         checkoutCtx = { performed: true, priorBranch: currentBranch };
     }
-    // 7. Diff gathering
     const diffResult = await pi.exec("gh", ["pr", "diff", String(prNumber)], { cwd });
     let diffBody;
     if (diffResult.code !== 0) {
@@ -980,9 +857,7 @@ async function gatherPr(pi, cmdCtx, nOrUrl) {
     }
     return { ok: true, ctx };
 }
-// --- Mode handler ---
 async function dispatchReviewMode(pi, cmdCtx, parsed) {
-    // --- Gather phase (all modes) ---
     let result;
     if (parsed.mode === "pr") {
         result = await gatherPr(pi, cmdCtx, parsed.nOrUrl);
@@ -1003,20 +878,16 @@ async function dispatchReviewMode(pi, cmdCtx, parsed) {
                 break;
         }
     }
-    // --- Uniform error handling ---
     if (result.ok === false) {
         cmdCtx.ui.notify(result.message, "error");
         return;
     }
-    // --- PR-specific post-gather notification ---
     if (parsed.mode === "pr" && result.ctx.checkout?.performed) {
         cmdCtx.ui.notify(`Switched from '${result.ctx.checkout.priorBranch}' to '${result.ctx.currentBranch}'. Use \`git checkout -\` to return.`, "info");
     }
-    // --- Send envelope ---
     const envelope = buildReviewEnvelope(parsed, result.ctx);
     pi.sendUserMessage(envelope);
 }
-// --- Argument completions ---
 export const REVIEW_COMMAND_DESCRIPTION = "Review code changes via an interactive mode picker";
 export function getReviewArgumentCompletions() {
     return null;
@@ -1040,18 +911,15 @@ export function createReviewCommandHandler(pi) {
         }
         const mode = await showReviewPicker(ctx);
         if (mode === undefined) {
-            // User cancelled — clean no-op.
             return;
         }
         const completedArgs = await completePickedArgs(ctx, mode);
         if (completedArgs === undefined) {
-            // User cancelled or left required follow-up input blank.
             return;
         }
         await dispatchReviewMode(pi, ctx, completedArgs);
     };
 }
-// --- Command registration ---
 export function registerReviewCommand(pi) {
     pi.registerCommand("review", {
         description: REVIEW_COMMAND_DESCRIPTION,

@@ -49,9 +49,6 @@ export async function handleTlhChangelogCommand(pi, _args, ctx) {
     if (await showTlhChangelogUi(changelog, ctx)) {
         return;
     }
-    // RPC/print modes cannot host a custom markdown component. Fall back to a displayed
-    // custom message without triggering a turn, which keeps the release notes visible but
-    // also persists the changelog text in session history/context until it is compacted away.
     pi.sendMessage({
         customType: TLH_RELEASE_NOTES_LABEL,
         content: changelog,

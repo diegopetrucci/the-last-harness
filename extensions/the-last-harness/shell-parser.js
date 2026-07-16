@@ -1,6 +1,3 @@
-// Pure shell-parsing helpers, constants, and types.
-// This module has no dependency on git-attribution concepts; the seam is
-// one-directional: attribution.ts imports from here, never the reverse.
 export const ENV_SHORT_OPTIONS_WITH_VALUES = new Set(["-C", "-P", "-a", "-u"]);
 export const ENV_LONG_OPTIONS_WITH_VALUES = new Set(["--argv0", "--chdir", "--unset"]);
 export const ENV_SHORT_OPTIONS_WITHOUT_VALUES = new Set(["-0", "-i", "-v"]);

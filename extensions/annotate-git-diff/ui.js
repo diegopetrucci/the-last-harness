@@ -98,9 +98,6 @@ export function buildReviewHtml(data) {
     const assetConfig = escapeForInlineScript(JSON.stringify({
         bootstrapError: assets.bootstrapError,
     }));
-    // Use function-form replacements throughout so that `$` in the replacement text
-    // is treated as a literal character rather than a special `String.replace` pattern
-    // (e.g. `$&`, `$'`, `$``, `$1` are all live in minified Monaco JS).
     const safeReplace = (source, marker, replacement) => source.replace(marker, () => replacement);
     let html = templateHtml;
     html = safeReplace(html, '"__INLINE_DATA__"', payload);

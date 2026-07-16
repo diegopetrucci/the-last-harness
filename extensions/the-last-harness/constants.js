@@ -5,8 +5,6 @@ export const TLH_RELEASES_URL = `https://github.com/${TLH_REPO}/releases`;
 export const TLH_LATEST_RELEASE_API_URL = `https://api.github.com/repos/${TLH_REPO}/releases/latest`;
 export const TLH_UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 export const TLH_UPDATE_CHECK_TIMEOUT_MS = 3000;
-// TelemetryDeck appID/namespace are public client analytics identifiers, not secrets.
-// Env overrides support local verification against mock TelemetryDeck endpoints.
 export const TLH_TELEMETRY_NAMESPACE = "com.gordicorp";
 export const TLH_TELEMETRY_APP_ID = "A4B1E0A4-E03B-450A-B0FA-2ED9895353F3";
 export const TLH_TELEMETRY_INGEST_BASE_URL = "https://nom.telemetrydeck.com/v2/namespace";
@@ -15,8 +13,6 @@ export const TLH_TELEMETRY_TIMEOUT_MS = 1500;
 export const TLH_TELEMETRY_STATE_SCHEMA_VERSION = 1;
 export const DUMB_ZONE_THRESHOLD_TOKENS = 200_000;
 export const DUMB_ZONE_LABEL = "DUMB ZONE";
-// Pi prefixes package-backed commands with provenance tags like [u:git:github.com/org/repo@ref].
-// tlh keeps autocomplete focused on the command description instead.
 export const AUTOCOMPLETE_SOURCE_TAG_PATTERN = /(^|—\s*)\[(?:u|p|t)(?::(?:npm|git):[^\]]+)?\]\s*/g;
 export const PRIMARY_AGENT_CYCLE_SHORTCUT = "shift+tab";
 export const TLH_HEADER_TOGGLE_SHORTCUT = "ctrl+shift+e";

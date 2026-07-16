@@ -1,5 +1,3 @@
-// Mirrors Pi project-trust/resource visibility for TLH startup summaries.
-// See ../../docs/upstream-sync-inventory.md for sync/review guidance.
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { DefaultPackageManager, SettingsManager, getAgentDir, loadProjectContextFiles, } from "@earendil-works/pi-coding-agent";
@@ -41,7 +39,6 @@ function labelTheme(resource) {
         }
     }
     catch {
-        // fall through to filename
     }
     return basename(resource.path, extname(resource.path));
 }

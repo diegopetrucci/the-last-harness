@@ -59,7 +59,6 @@ function createQueuedStateReporter(sendState, options = {}) {
                     await sendState(nextState);
                 }
                 catch {
-                    // Reporter failures must never block or crash TLH.
                 }
             }
         }
@@ -140,7 +139,6 @@ function defaultHerdrRequestSender(env) {
                     socket?.destroy();
                 }
                 catch {
-                    // Ignore teardown failures.
                 }
                 resolve();
             };
@@ -293,7 +291,6 @@ function getCmuxStatusKey(env, ctx) {
         }
     }
     catch {
-        // Ignore session id lookup failures and fall back to the global key.
     }
     return CMUX_STATUS_KEY;
 }

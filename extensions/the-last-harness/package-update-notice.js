@@ -1,5 +1,3 @@
-// Pi compatibility shim for TLH-specific package-update copy.
-// See ../../docs/upstream-sync-inventory.md for sync/review guidance.
 import { DynamicBorder, InteractiveMode } from "@earendil-works/pi-coding-agent";
 import { Spacer, Text } from "@earendil-works/pi-tui";
 const TLH_PACKAGE_UPDATE_NOTICE_PATCHED = Symbol.for("tlh.packageUpdateNoticePatched");

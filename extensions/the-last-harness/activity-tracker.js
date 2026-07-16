@@ -29,7 +29,6 @@ function resolvePiSubagentsTempScopeId() {
             return `user-${sanitizeTempScopeSegment(username)}`;
     }
     catch {
-        // Fall through to home-directory-based scoping.
     }
     const homedir = process.env.USERPROFILE ?? process.env.HOME;
     if (homedir)
@@ -40,7 +39,6 @@ function resolvePiSubagentsTempScopeId() {
             return `home-${sanitizeTempScopeSegment(fallbackHomedir)}`;
     }
     catch {
-        // Fall through to the shared scope.
     }
     return "shared";
 }
@@ -203,7 +201,6 @@ export function createTlhEffectiveActivityTracker(options = {}) {
                 listener(snapshot);
             }
             catch {
-                // Subscribers must not crash tracker updates.
             }
         }
     };
@@ -232,8 +229,6 @@ export function createTlhEffectiveActivityTracker(options = {}) {
                     if (isRecord(error) && error.code === "ENOENT") {
                         return undefined;
                     }
-                    // Fail closed: this ticket only rehydrates from the stable top-level async status.json layout.
-                    // If pi-subagents changes its registry shape or the runtime dir is unavailable, leave async jobs empty.
                     return undefined;
                 }
             })();
@@ -256,7 +251,6 @@ export function createTlhEffectiveActivityTracker(options = {}) {
                     setAsyncJobActive(status.runId, { asyncDir: candidateAsyncDir, source: "rehydrated" });
                 }
                 catch {
-                    // Fail closed on malformed or partially-written async artifacts.
                 }
             }
             notifyIfChanged();
@@ -397,7 +391,6 @@ export function registerTlhEffectiveActivityTracker(pi) {
                 unsubscribe();
             }
             catch {
-                // Best-effort event-bus cleanup during shutdown.
             }
         }
         tracker.dispose();

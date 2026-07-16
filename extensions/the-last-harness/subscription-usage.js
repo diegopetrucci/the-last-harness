@@ -53,9 +53,6 @@ function pickString(source, keys) {
     }
     return undefined;
 }
-// Stable, one-way fingerprint of a bearer access token. Used in cache keys
-// only when no account id is available; raw bearer material is never stored in
-// usage service state or returned in snapshots.
 function accessTokenFingerprint(accessToken) {
     if (typeof accessToken !== "string" || !accessToken) {
         return undefined;
