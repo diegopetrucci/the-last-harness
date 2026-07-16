@@ -14,17 +14,27 @@ function readPackageJson() {
 	return JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
 }
 
-function createRuntimeFixture(sourceContent) {
+function createRuntimeFixture({
+	targetId,
+	sourceRootName,
+	sourceRelativePath,
+	sourceContent,
+	tsconfigFileName,
+	includeGlob,
+	sourceExtension,
+	outputExtension,
+	generatedRegistryEntries,
+}) {
 	const fixtureRoot = mkdtempSync(join(tmpdir(), "tlh-runtime-typescript-fixture-"));
-	const scriptsRoot = join(fixtureRoot, "scripts");
-	const scriptsDir = join(scriptsRoot, "lib");
+	const sourceRoot = join(fixtureRoot, sourceRootName);
+	const sourcePath = join(sourceRoot, sourceRelativePath);
+	const outputPath = join(sourceRoot, sourceRelativePath.slice(0, -sourceExtension.length) + outputExtension);
 	const tempDir = join(fixtureRoot, "tmp");
-	const sourcePath = join(scriptsDir, "fixture.mts");
-	const outputPath = join(scriptsDir, "fixture.mjs");
-	const tsconfigPath = join(fixtureRoot, "tsconfig.runtime-scripts.json");
+	const tsconfigPath = join(fixtureRoot, tsconfigFileName);
 
-	mkdirSync(scriptsDir, { recursive: true });
+	mkdirSync(dirname(sourcePath), { recursive: true });
 	mkdirSync(tempDir, { recursive: true });
+	writeFileSync(join(fixtureRoot, "package.json"), '{\n  "type": "module"\n}\n');
 	writeFileSync(
 		tsconfigPath,
 		`${JSON.stringify(
@@ -38,7 +48,7 @@ function createRuntimeFixture(sourceContent) {
 					verbatimModuleSyntax: true,
 					skipLibCheck: true,
 				},
-				include: ["scripts/**/*.mts"],
+				include: [includeGlob],
 				exclude: ["node_modules/**"],
 			},
 			null,
@@ -46,10 +56,17 @@ function createRuntimeFixture(sourceContent) {
 		)}\n`,
 	);
 	writeFileSync(sourcePath, sourceContent);
+	writeFileSync(
+		join(fixtureRoot, ".gitattributes"),
+		`${(generatedRegistryEntries ?? [join(sourceRootName, sourceRelativePath.slice(0, -sourceExtension.length) + outputExtension).replaceAll("\\", "/")])
+			.map((path) => `${path} linguist-generated=true`)
+			.join("\n")}\n`,
+	);
 
 	return {
+		targetId,
 		fixtureRoot,
-		scriptsRoot,
+		sourceRoot,
 		tempDir,
 		sourcePath,
 		outputPath,
@@ -60,17 +77,52 @@ function createRuntimeFixture(sourceContent) {
 	};
 }
 
-function runRuntimeTypescript(mode, fixtureRoot, scriptsRoot, tsconfigPath, tempDir) {
+function createScriptsFixture(sourceContent) {
+	return createRuntimeFixture({
+		targetId: "scripts",
+		sourceRootName: "scripts",
+		sourceRelativePath: "lib/fixture.mts",
+		sourceContent,
+		tsconfigFileName: "tsconfig.runtime-scripts.json",
+		includeGlob: "scripts/**/*.mts",
+		sourceExtension: ".mts",
+		outputExtension: ".mjs",
+	});
+}
+
+function createExtensionsFixture(sourceContent, options = {}) {
+	return createRuntimeFixture({
+		targetId: "extensions",
+		sourceRootName: "extensions",
+		sourceRelativePath: "fixture/index.ts",
+		sourceContent,
+		tsconfigFileName: "tsconfig.runtime-extensions.json",
+		includeGlob: "extensions/**/*.ts",
+		sourceExtension: ".ts",
+		outputExtension: ".js",
+		generatedRegistryEntries: options.generatedRegistryEntries,
+	});
+}
+
+function runRuntimeTypescript(mode, fixture) {
+	const env = {
+		...process.env,
+		TLH_RUNTIME_TYPESCRIPT_REPO_ROOT: fixture.fixtureRoot,
+		TLH_RUNTIME_TYPESCRIPT_TARGETS: fixture.targetId,
+		TLH_RUNTIME_TYPESCRIPT_TMPDIR: fixture.tempDir,
+	};
+	if (fixture.targetId === "scripts") {
+		env.TLH_RUNTIME_TYPESCRIPT_SCRIPTS_DIR = fixture.sourceRoot;
+		env.TLH_RUNTIME_TYPESCRIPT_SCRIPTS_TSCONFIG = fixture.tsconfigPath;
+	} else {
+		env.TLH_RUNTIME_TYPESCRIPT_EXTENSIONS_DIR = fixture.sourceRoot;
+		env.TLH_RUNTIME_TYPESCRIPT_EXTENSIONS_TSCONFIG = fixture.tsconfigPath;
+	}
+
 	return spawnSync(process.execPath, [runtimeTypescriptScript, mode], {
-		cwd: fixtureRoot,
+		cwd: fixture.fixtureRoot,
 		encoding: "utf8",
-		env: {
-			...process.env,
-			TLH_RUNTIME_TYPESCRIPT_REPO_ROOT: fixtureRoot,
-			TLH_RUNTIME_TYPESCRIPT_SCRIPTS_DIR: scriptsRoot,
-			TLH_RUNTIME_TYPESCRIPT_TSCONFIG: tsconfigPath,
-			TLH_RUNTIME_TYPESCRIPT_TMPDIR: tempDir,
-		},
+		env,
 	});
 }
 
@@ -140,72 +192,73 @@ test("runtime TypeScript helper tracks converted top-level CLIs", () => {
 	}
 });
 
-test("runtime TypeScript helper builds, checks, and typechecks temporary fixtures", () => {
-	const fixture = createRuntimeFixture('export function greet(name: string) {\n\treturn `hello ${name}`;\n}\n');
+test("runtime TypeScript helper tracks generated extension runtime modules", () => {
+	const extensionSources = globSync("extensions/**/*.ts", { cwd: repoRoot }).filter((path) => !path.endsWith(".d.ts"));
+	assert.equal(extensionSources.length > 0, true, "extension TypeScript sources should exist");
+
+	for (const sourcePath of extensionSources) {
+		const outputPath = sourcePath.replace(/\.ts$/, ".js");
+		assert.equal(existsSync(join(repoRoot, outputPath)), true, `${outputPath} should exist`);
+	}
+});
+
+test("runtime TypeScript helper builds, checks, and typechecks temporary script fixtures", () => {
+	const fixture = createScriptsFixture('export function greet(name: string) {\n\treturn `hello ${name}`;\n}\n');
 
 	try {
 		assert.equal(existsSync(fixture.outputPath), false);
 
-		const buildResult = runRuntimeTypescript(
-			"build",
-			fixture.fixtureRoot,
-			fixture.scriptsRoot,
-			fixture.tsconfigPath,
-			fixture.tempDir,
-		);
+		const buildResult = runRuntimeTypescript("build", fixture);
 		assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
 		assert.equal(existsSync(fixture.outputPath), true);
 		assert.match(readFileSync(fixture.outputPath, "utf8"), /export function greet\(name\)/);
 
-		const checkResult = runRuntimeTypescript(
-			"check",
-			fixture.fixtureRoot,
-			fixture.scriptsRoot,
-			fixture.tsconfigPath,
-			fixture.tempDir,
-		);
+		const checkResult = runRuntimeTypescript("check", fixture);
 		assert.equal(checkResult.status, 0, checkResult.stderr || checkResult.stdout);
-		assert.match(checkResult.stdout, /Runtime TypeScript generated outputs are fresh/);
+		assert.match(checkResult.stdout, /Generated runtime outputs are fresh/);
 		assertNoTemporaryCheckOutputs(fixture.tempDir);
 
-		const typecheckResult = runRuntimeTypescript(
-			"typecheck",
-			fixture.fixtureRoot,
-			fixture.scriptsRoot,
-			fixture.tsconfigPath,
-			fixture.tempDir,
-		);
+		const typecheckResult = runRuntimeTypescript("typecheck", fixture);
 		assert.equal(typecheckResult.status, 0, typecheckResult.stderr || typecheckResult.stdout);
 	} finally {
 		fixture.cleanup();
 	}
 });
 
-test("runtime TypeScript freshness check fails on stale fixture output without rewriting it", () => {
-	const fixture = createRuntimeFixture("export const answer = 42;\n");
+test("runtime TypeScript helper builds and checks temporary extension fixtures", () => {
+	const fixture = createExtensionsFixture('export function assetHref() {\n\treturn new URL("./note.txt", import.meta.url).href;\n}\n');
+	writeFileSync(join(fixture.sourceRoot, "fixture/note.txt"), "hello from asset\n");
 
 	try {
-		const buildResult = runRuntimeTypescript(
-			"build",
-			fixture.fixtureRoot,
-			fixture.scriptsRoot,
-			fixture.tsconfigPath,
-			fixture.tempDir,
-		);
+		assert.equal(existsSync(fixture.outputPath), false);
+
+		const buildResult = runRuntimeTypescript("build", fixture);
+		assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+		assert.equal(existsSync(fixture.outputPath), true);
+		assert.match(readFileSync(fixture.outputPath, "utf8"), /import\.meta\.url/);
+
+		const checkResult = runRuntimeTypescript("check", fixture);
+		assert.equal(checkResult.status, 0, checkResult.stderr || checkResult.stdout);
+		assert.match(checkResult.stdout, /Generated runtime outputs are fresh/);
+		assertNoTemporaryCheckOutputs(fixture.tempDir);
+	} finally {
+		fixture.cleanup();
+	}
+});
+
+test("runtime TypeScript freshness check fails on stale script fixture output without rewriting it", () => {
+	const fixture = createScriptsFixture("export const answer = 42;\n");
+
+	try {
+		const buildResult = runRuntimeTypescript("build", fixture);
 		assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
 
 		const staleContent = `// stale test fixture\n${readFileSync(fixture.outputPath, "utf8")}`;
 		writeFileSync(fixture.outputPath, staleContent);
 
-		const checkResult = runRuntimeTypescript(
-			"check",
-			fixture.fixtureRoot,
-			fixture.scriptsRoot,
-			fixture.tsconfigPath,
-			fixture.tempDir,
-		);
+		const checkResult = runRuntimeTypescript("check", fixture);
 		assert.equal(checkResult.status, 1, checkResult.stderr || checkResult.stdout);
-		assert.match(checkResult.stderr, /Runtime TypeScript generated outputs are not fresh\./);
+		assert.match(checkResult.stderr, /Generated runtime outputs are not fresh for scripts\/\*\*\/\*\.mts\./);
 		assert.match(checkResult.stderr, /scripts\/lib\/fixture\.mjs/);
 		assert.match(checkResult.stderr, /npm run build/);
 		assert.equal(readFileSync(fixture.outputPath, "utf8"), staleContent);
@@ -215,36 +268,107 @@ test("runtime TypeScript freshness check fails on stale fixture output without r
 	}
 });
 
-test("runtime TypeScript check cleans temporary outputs when TypeScript compilation fails", () => {
-	const fixture = createRuntimeFixture("export const broken = ;\n");
+test("runtime TypeScript freshness check fails on missing extension output without rewriting sources", () => {
+	const fixture = createExtensionsFixture("export const answer = 42;\n");
 
 	try {
-		const checkResult = runRuntimeTypescript(
-			"check",
-			fixture.fixtureRoot,
-			fixture.scriptsRoot,
-			fixture.tsconfigPath,
-			fixture.tempDir,
-		);
-		assert.notEqual(checkResult.status, 0);
-		assert.doesNotMatch(`${checkResult.stdout}\n${checkResult.stderr}`, /Runtime TypeScript generated outputs are not fresh\./);
+		const buildResult = runRuntimeTypescript("build", fixture);
+		assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+		rmSync(fixture.outputPath, { force: true });
+
+		const checkResult = runRuntimeTypescript("check", fixture);
+		assert.equal(checkResult.status, 1, checkResult.stderr || checkResult.stdout);
+		assert.match(checkResult.stderr, /Generated runtime outputs are not fresh for extensions\/\*\*\/\*\.ts\./);
+		assert.match(checkResult.stderr, /extensions\/fixture\/index\.js/);
+		assert.match(checkResult.stderr, /npm run build/);
+		assert.equal(existsSync(fixture.sourcePath), true);
 		assertNoTemporaryCheckOutputs(fixture.tempDir);
 	} finally {
 		fixture.cleanup();
 	}
 });
 
-test(".gitattributes linguist-generated entries are in sync with scripts/**/*.mts sources", () => {
+test("runtime TypeScript normalizes Windows-style generated-output registry paths for extensions", () => {
+	const fixture = createExtensionsFixture("export const answer = 42;\n", {
+		generatedRegistryEntries: ["extensions\\fixture\\index.js"],
+	});
+
+	try {
+		const buildResult = runRuntimeTypescript("build", fixture);
+		assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+		assert.equal(existsSync(fixture.outputPath), true);
+
+		const checkResult = runRuntimeTypescript("check", fixture);
+		assert.equal(checkResult.status, 0, checkResult.stderr || checkResult.stdout);
+		assert.match(checkResult.stdout, /Generated runtime outputs are fresh/);
+		assertNoTemporaryCheckOutputs(fixture.tempDir);
+	} finally {
+		fixture.cleanup();
+	}
+});
+
+test("runtime TypeScript build removes orphan generated extension output that is explicitly registered", () => {
+	const fixture = createExtensionsFixture("export const answer = 42;\n", {
+		generatedRegistryEntries: ["extensions/fixture/index.js", "extensions/fixture/orphan.js"],
+	});
+	const orphanOutputPath = join(fixture.sourceRoot, "fixture/orphan.js");
+	const handAuthoredWebAssetPath = join(fixture.sourceRoot, "fixture/web/app.js");
+	mkdirSync(dirname(handAuthoredWebAssetPath), { recursive: true });
+	writeFileSync(orphanOutputPath, "// orphan generated output\n");
+	writeFileSync(handAuthoredWebAssetPath, "// hand authored asset\n");
+
+	try {
+		const checkResult = runRuntimeTypescript("check", fixture);
+		assert.equal(checkResult.status, 1, checkResult.stderr || checkResult.stdout);
+		assert.match(checkResult.stderr, /Orphan generated runtime outputs would still ship:/);
+		assert.match(checkResult.stderr, /extensions\/fixture\/orphan\.js/);
+		assert.equal(readFileSync(orphanOutputPath, "utf8"), "// orphan generated output\n");
+		assert.equal(readFileSync(handAuthoredWebAssetPath, "utf8"), "// hand authored asset\n");
+		assertNoTemporaryCheckOutputs(fixture.tempDir);
+
+		const buildResult = runRuntimeTypescript("build", fixture);
+		assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+		assert.equal(existsSync(orphanOutputPath), false);
+		assert.equal(readFileSync(handAuthoredWebAssetPath, "utf8"), "// hand authored asset\n");
+		assert.match(buildResult.stdout, /Removed orphan generated runtime outputs/);
+	} finally {
+		fixture.cleanup();
+	}
+});
+
+test("runtime TypeScript check cleans temporary outputs when TypeScript compilation fails", () => {
+	const fixture = createScriptsFixture("export const broken = ;\n");
+
+	try {
+		const checkResult = runRuntimeTypescript("check", fixture);
+		assert.notEqual(checkResult.status, 0);
+		assert.doesNotMatch(`${checkResult.stdout}\n${checkResult.stderr}`, /Generated runtime outputs are not fresh/);
+		assertNoTemporaryCheckOutputs(fixture.tempDir);
+	} finally {
+		fixture.cleanup();
+	}
+});
+
+test("package manifest lists only the ordered generated JS extension entrypoints to avoid duplicate TS and JS discovery", () => {
+	const pkg = readPackageJson();
+	assert.deepEqual(pkg.pi.extensions, [
+		"./extensions/annotate-git-diff/index.js",
+		"./extensions/rtk.js",
+		"./extensions/the-last-harness.js",
+	]);
+});
+
+test(".gitattributes linguist-generated entries are in sync with runtime TypeScript sources", () => {
 	const gitattributesPath = join(repoRoot, ".gitattributes");
 	assert.ok(existsSync(gitattributesPath), ".gitattributes must exist at repo root");
 
-	// Derive expected generated .mjs paths from all .mts sources.
-	const mtsFiles = globSync("scripts/**/*.mts", { cwd: repoRoot }).filter((f) => !f.endsWith(".d.mts"));
-	const expectedPaths = new Set(
-		mtsFiles.map((f) => f.replace(/\.mts$/, ".mjs")),
-	);
+	const mtsFiles = globSync("scripts/**/*.mts", { cwd: repoRoot }).filter((path) => !path.endsWith(".d.mts"));
+	const tsFiles = globSync("extensions/**/*.ts", { cwd: repoRoot }).filter((path) => !path.endsWith(".d.ts"));
+	const expectedPaths = new Set([
+		...mtsFiles.map((path) => path.replace(/\.mts$/, ".mjs")),
+		...tsFiles.map((path) => path.replace(/\.ts$/, ".js")),
+	]);
 
-	// Parse .gitattributes for linguist-generated=true entries.
 	const gitattributesContent = readFileSync(gitattributesPath, "utf8");
 	const generatedEntries = new Set(
 		gitattributesContent
@@ -254,7 +378,6 @@ test(".gitattributes linguist-generated entries are in sync with scripts/**/*.mt
 			.map((line) => line.split(/\s+/)[0]),
 	);
 
-	// Every .mts source must have a corresponding entry.
 	for (const expectedPath of expectedPaths) {
 		assert.ok(
 			generatedEntries.has(expectedPath),
@@ -262,12 +385,11 @@ test(".gitattributes linguist-generated entries are in sync with scripts/**/*.mt
 		);
 	}
 
-	// Every linguist-generated entry must correspond to an existing .mts source.
 	for (const entry of generatedEntries) {
-		const mtsPath = entry.replace(/\.mjs$/, ".mts");
+		const sourcePath = entry.endsWith(".mjs") ? entry.replace(/\.mjs$/, ".mts") : entry.replace(/\.js$/, ".ts");
 		assert.ok(
-			existsSync(join(repoRoot, mtsPath)),
-			`Stale .gitattributes linguist-generated entry — no corresponding .mts source: ${entry}`,
+			existsSync(join(repoRoot, sourcePath)),
+			`Stale .gitattributes linguist-generated entry — no corresponding source: ${entry}`,
 		);
 	}
 });
