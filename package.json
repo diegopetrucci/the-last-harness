@@ -58,7 +58,9 @@
   ],
   "pi": {
     "extensions": [
-      "./extensions"
+      "./extensions/annotate-git-diff/index.js",
+      "./extensions/rtk.js",
+      "./extensions/the-last-harness.js"
     ],
     "skills": [
       "./skills"

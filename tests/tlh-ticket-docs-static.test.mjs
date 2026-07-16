@@ -59,7 +59,8 @@ test("upstream-sync inventory documents required provenance caveats and exclusio
 	assert.match(source, /package version `0\.2\.5`/);
 	assert.match(source, /src\/core\/model-resolver\.ts/);
 	assert.match(source, /ordinary dependency pins by themselves/i);
-	assert.match(source, /generated runtime `scripts\/\*\*\/\*\.mjs` outputs/i);
+	assert.match(source, /generated runtime `scripts\/\*\*\/\*\.mjs` outputs.*generated same-layout `extensions\/\*\*\/\*\.js` outputs/i);
+	assert.match(source, /review same-named `scripts\/\*\*\/\*\.mts` and authoritative `extensions\/\*\*\/\*\.ts` sources rather than their generated `scripts\/\*\*\/\*\.mjs` \/ `extensions\/\*\*\/\*\.js` mirrors/i);
 	assert.match(source, /quarterly and on upstream package\/repo releases/i);
 });
 
