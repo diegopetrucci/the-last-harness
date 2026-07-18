@@ -76,9 +76,9 @@ function runClipboardCommand(command, runner, input) {
     }
     return outputToString(result.stdout);
 }
-function runFirstAvailable(commands, runner, input) {
+function runFirstAvailable(platform, commands, runner, input) {
     if (commands.length === 0) {
-        throw new Error(`System clipboard is unsupported on ${process.platform}.`);
+        throw new Error(`System clipboard is unsupported on ${platform}.`);
     }
     const errors = [];
     for (const command of commands) {
@@ -95,14 +95,15 @@ function runFirstAvailable(commands, runner, input) {
 export function readSystemClipboard(options = {}) {
     const platform = options.platform ?? process.platform;
     const runner = options.runner ?? defaultRunner;
-    return runFirstAvailable(clipboardReadCommands(platform), runner);
+    return runFirstAvailable(platform, clipboardReadCommands(platform), runner);
 }
 export function writeSystemClipboard(text, options = {}) {
     const platform = options.platform ?? process.platform;
     const runner = options.runner ?? defaultRunner;
-    runFirstAvailable(clipboardWriteCommands(platform), runner, text);
+    runFirstAvailable(platform, clipboardWriteCommands(platform), runner, text);
 }
 export const __testing = {
     clipboardReadCommands,
     clipboardWriteCommands,
+    MAX_CLIPBOARD_BYTES,
 };
