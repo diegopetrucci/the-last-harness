@@ -9,7 +9,7 @@
  */
 
 export const ALLOWED_SUBAGENTS = Object.freeze(["developer", "code-reviewer", "repo-scout", "diff-summarizer", "librarian", "web-scout", "oracle", "contrarian"]);
-export const SAFE_SUBAGENT_ACTIONS = Object.freeze(["list", "get", "status", "interrupt", "doctor", "resume"]);
+export const SAFE_SUBAGENT_ACTIONS = Object.freeze(["list", "get", "models", "status", "interrupt", "doctor", "resume"]);
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 
 const DEFAULT_ALLOWED_SUBAGENTS = ALLOWED_SUBAGENTS;
@@ -87,19 +87,6 @@ function collectSubagentTargets(input) {
 		}
 	}
 
-	if (Array.isArray(input.chain)) {
-		for (const step of input.chain) {
-			if (!isRecord(step)) continue;
-			const agent = stringField(step.agent);
-			if (agent) targets.push(agent);
-			if (!Array.isArray(step.parallel)) continue;
-			for (const task of step.parallel) {
-				if (!isRecord(task)) continue;
-				const parallelAgent = stringField(task.agent);
-				if (parallelAgent) targets.push(parallelAgent);
-			}
-		}
-	}
 
 	return [...new Set(targets)];
 }
@@ -159,18 +146,6 @@ function validateNestedFreshSubagentContexts(input) {
 		}
 	}
 
-	if (Array.isArray(input.chain)) {
-		for (let chainIndex = 0; chainIndex < input.chain.length; chainIndex += 1) {
-			const step = input.chain[chainIndex];
-			const stepReason = validateNestedFreshContext(step, `chain[${chainIndex}].context`);
-			if (stepReason) return stepReason;
-			if (!isRecord(step) || !Array.isArray(step.parallel)) continue;
-			for (let parallelIndex = 0; parallelIndex < step.parallel.length; parallelIndex += 1) {
-				const reason = validateNestedFreshContext(step.parallel[parallelIndex], `chain[${chainIndex}].parallel[${parallelIndex}].context`);
-				if (reason) return reason;
-			}
-		}
-	}
 
 	return undefined;
 }

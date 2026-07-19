@@ -198,19 +198,5 @@ export function applyProviderAwareSubagentModels(input, agents, availableModels,
             mutations += applyModelToRunnableTarget(task, agents, availableModels, currentProvider, currentModel);
         }
     }
-    if (Array.isArray(input.chain)) {
-        for (const step of input.chain) {
-            if (!isRecord(step)) {
-                continue;
-            }
-            if (Array.isArray(step.parallel)) {
-                for (const task of step.parallel) {
-                    mutations += applyModelToRunnableTarget(task, agents, availableModels, currentProvider, currentModel);
-                }
-                continue;
-            }
-            mutations += applyModelToRunnableTarget(step, agents, availableModels, currentProvider, currentModel);
-        }
-    }
     return mutations;
 }

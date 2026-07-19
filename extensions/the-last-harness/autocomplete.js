@@ -7,7 +7,6 @@ const HIDDEN_SLASH_COMMANDS = new Set([
     "subagents-profiles",
     "subagents-check-profile",
     "subagents-models",
-    "skill:pi-subagents",
     "skill:librarian",
     "skill:pi-intercom",
     "websearch",

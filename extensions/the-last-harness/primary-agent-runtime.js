@@ -192,24 +192,7 @@ function subagentCallTargetsAgent(input, target) {
     if (matchesSubagentName(input.agent, target)) {
         return true;
     }
-    if (Array.isArray(input.tasks) && input.tasks.some((task) => subagentCallTargetsAgent(task, target))) {
-        return true;
-    }
-    if (!Array.isArray(input.chain)) {
-        return false;
-    }
-    for (const step of input.chain) {
-        if (!isRecord(step)) {
-            continue;
-        }
-        if (matchesSubagentName(step.agent, target)) {
-            return true;
-        }
-        if (Array.isArray(step.parallel) && step.parallel.some((task) => subagentCallTargetsAgent(task, target))) {
-            return true;
-        }
-    }
-    return false;
+    return Array.isArray(input.tasks) && input.tasks.some((task) => subagentCallTargetsAgent(task, target));
 }
 function rushResumeDelegationReason() {
     return "TLH Rush may not use subagent action=resume because resuming by run id or index can continue a prior developer subagent without an explicit safe target. Rush must edit directly or start a new allowed subagent with an explicit agent target.";

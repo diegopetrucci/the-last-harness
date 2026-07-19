@@ -389,7 +389,7 @@ test("provider-aware subagent mutation handles parallel tasks", () => {
 	assert.equal(input.tasks[2].model, undefined);
 });
 
-test("provider-aware subagent mutation handles chain sequential and parallel steps", () => {
+test("provider-aware subagent mutation ignores legacy chain payloads", () => {
 	const input = {
 		chain: [
 			{ agent: "developer", task: "Implement {task}" },
@@ -402,8 +402,8 @@ test("provider-aware subagent mutation handles chain sequential and parallel ste
 		],
 	};
 
-	assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 2);
-	assert.equal(input.chain[0].model, "openai-codex/gpt-5.4");
-	assert.equal(input.chain[1].parallel[0].model, "openai-codex/gpt-5.6-sol");
+	assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 0);
+	assert.equal(input.chain[0].model, undefined);
+	assert.equal(input.chain[1].parallel[0].model, undefined);
 	assert.equal(input.chain[1].parallel[1].model, "openai/gpt-5.4");
 });

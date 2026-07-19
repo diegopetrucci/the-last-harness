@@ -7,6 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Changed
 
 - Bumped bundled default extension pins to the reviewed current releases: `mcporter` `npm:@diegopetrucci/pi-mcp-adapter@2.10.2`, `pi-openai-fast` `npm:@diegopetrucci/pi-openai-fast@0.1.9`, `pi-notify` `npm:@diegopetrucci/pi-notify@0.1.10`, `pi-context-inspector` `npm:@diegopetrucci/pi-context-inspector@0.1.6`, critical `pi-subagents` `npm:@diegopetrucci/pi-subagents@0.31.6`, and critical `pi-intercom` `npm:@diegopetrucci/pi-intercom@0.8.0`.
+- Aligned TLH’s subagent safety and provider-aware model injection with the `pi-subagents` `0.31.6` single/parallel contract: safe management actions now include `models`, TLH no longer traverses legacy `chain` payloads in its model-facing hooks, and hidden autocomplete/docs references to `/skill:pi-subagents` were removed.
 - Refreshed the remaining safely updatable direct npm dependencies to `monaco-editor` `0.55.1`, `eslint` `10.7.0`, and `typescript-eslint` `8.64.0`, while keeping `typescript` pinned at `6.0.3` to stay within the supported peer range.
 
 ### Added
