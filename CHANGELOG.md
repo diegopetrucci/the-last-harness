@@ -14,6 +14,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Install and update now prune stale settings/keybindings backups (`settings.json.backup-*`, `keybindings.json.backup-*`) from the isolated profile. Backups older than ~28 days are removed, but the two newest are always kept regardless of age. Pruning is scoped strictly to `~/.the-last-harness/agent` and never touches `~/.pi`. To keep a backup indefinitely, copy it outside the isolated profile before it ages out.
 
+### Fixed
+
+- Fixed same-millisecond isolated `settings.json` backup collisions in TLH's shared settings writer by keeping the first timestamp-only backup name, then retrying exclusive `settings.json.bak-<timestamp>-<n>` suffixes under the existing Pi settings lock.
+
 ## [0.29.0] - 2026-07-12
 
 ### Added
