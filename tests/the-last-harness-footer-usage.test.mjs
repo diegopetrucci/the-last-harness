@@ -58,6 +58,22 @@ function openAiSnapshot(weekly = { percent: 21.5 }) {
 	};
 }
 
+function openAiPrimaryWeeklySnapshot({ percent = 42, resetsAt } = {}) {
+	return {
+		provider: "openai-codex",
+		fetchedAt: NOW_MS,
+		windows: {
+			session: {
+				key: "primary_window",
+				label: "session",
+				percent,
+				durationMs: 7 * 24 * 60 * 60 * 1000,
+				...(resetsAt ? { resetsAt } : {}),
+			},
+		},
+	};
+}
+
 function anthropicSnapshot(weekly = { percent: 88.9 }) {
 	return {
 		provider: "anthropic",
@@ -157,6 +173,19 @@ test("footer renders OpenAI/Codex session usage and hides weekly by default", ()
 	assert.doesNotMatch(sessionLine, /weekly/);
 	assert.doesNotMatch(sessionLine, /\$/);
 	assert.match(agentLine, /12\.3%\/200k/);
+});
+
+
+test("footer formats an exact seven-day OpenAI primary window as weekly without showing secondary usage", () => {
+	const snapshot = openAiPrimaryWeeklySnapshot({ resetsAt: "2026-05-24T01:00:00.000Z" });
+	const ctx = createCtx({ provider: "openai-codex" });
+	const sessionLine = renderSessionStatsLine(ctx, {
+		subscriptionUsage: usageProvider(snapshot),
+		shouldShowWeekly: () => false,
+	});
+
+	assert.equal(formatTlhSubscriptionUsageFooterSegment(snapshot, { nowMs: NOW_MS }), "weekly 42% used, resets in 4d 6h");
+	assert.equal(sessionLine, "weekly 42% used");
 });
 
 test("footer includes Anthropic weekly usage only when the preference enables it", () => {

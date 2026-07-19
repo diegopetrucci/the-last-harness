@@ -16,6 +16,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Fixed OpenAI subscription usage footer presentation so an exact normalized seven-day primary window now renders as `weekly` and uses day/hour reset countdowns, without changing weekly-slot visibility semantics.
 - Fixed same-millisecond isolated `settings.json` backup collisions in TLH's shared settings writer by keeping the first timestamp-only backup name, then retrying exclusive `settings.json.bak-<timestamp>-<n>` suffixes under the existing Pi settings lock.
 
 ## [0.29.0] - 2026-07-12
