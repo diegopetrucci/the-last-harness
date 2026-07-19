@@ -172,8 +172,25 @@ export function tlhSettingsPathForWrite() {
     }
     return join(agentDir, "settings.json");
 }
+const SETTINGS_BACKUP_SUFFIX_RETRY_LIMIT = 32;
 function settingsBackupTimestamp() {
     return new Date().toISOString().replace(/[:.]/g, "-");
+}
+function writeCollisionSafeSettingsBackup(settingsPath, current) {
+    const timestamp = settingsBackupTimestamp();
+    for (let suffix = 0; suffix <= SETTINGS_BACKUP_SUFFIX_RETRY_LIMIT; suffix += 1) {
+        const backupPath = suffix === 0 ? `${settingsPath}.bak-${timestamp}` : `${settingsPath}.bak-${timestamp}-${suffix}`;
+        try {
+            writeFileSync(backupPath, current, { encoding: "utf8", flag: "wx", mode: 0o600 });
+            return backupPath;
+        }
+        catch (error) {
+            if (!isRecord(error) || error.code !== "EEXIST") {
+                throw error;
+            }
+        }
+    }
+    throw new Error(`Could not create a unique TLH settings backup after ${SETTINGS_BACKUP_SUFFIX_RETRY_LIMIT + 1} attempts: ${settingsPath}.bak-${timestamp}`);
 }
 function getSettingsStorageForWrite(cwd) {
     const manager = SettingsManager.create(cwd, getAgentDir());
@@ -200,8 +217,7 @@ export function withLockedTlhSettingsWrite(cwd, outsideProfileError, update) {
             throw new Error("TLH settings write must provide replacement content when changed.");
         }
         if (current) {
-            const backupPath = `${settingsPath}.bak-${settingsBackupTimestamp()}`;
-            writeFileSync(backupPath, current, { encoding: "utf8", flag: "wx", mode: 0o600 });
+            const backupPath = writeCollisionSafeSettingsBackup(settingsPath, current);
             result = { ...baseResult, settingsPath, backupPath };
             return nextContent;
         }

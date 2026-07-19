@@ -194,7 +194,6 @@ These commands are registered and fully functional, but deliberately excluded fr
 |---------|-------------|
 | `/skill:librarian` | Load the bundled librarian skill by name without surfacing it in TLH autocomplete |
 | `/skill:pi-intercom` | Load the bundled intercom skill by name without surfacing it in TLH autocomplete |
-| `/skill:pi-subagents` | Load the bundled subagents skill by name without surfacing it in TLH autocomplete |
 
 ### Hidden bundled extension commands
 

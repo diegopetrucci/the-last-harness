@@ -253,24 +253,7 @@ function subagentCallTargetsAgent(input: unknown, target: string): boolean {
 	if (matchesSubagentName(input.agent, target)) {
 		return true;
 	}
-	if (Array.isArray(input.tasks) && input.tasks.some((task) => subagentCallTargetsAgent(task, target))) {
-		return true;
-	}
-	if (!Array.isArray(input.chain)) {
-		return false;
-	}
-	for (const step of input.chain) {
-		if (!isRecord(step)) {
-			continue;
-		}
-		if (matchesSubagentName(step.agent, target)) {
-			return true;
-		}
-		if (Array.isArray(step.parallel) && step.parallel.some((task) => subagentCallTargetsAgent(task, target))) {
-			return true;
-		}
-	}
-	return false;
+	return Array.isArray(input.tasks) && input.tasks.some((task) => subagentCallTargetsAgent(task, target));
 }
 
 function rushResumeDelegationReason(): string {
