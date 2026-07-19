@@ -12,7 +12,7 @@ Included here:
 Explicitly excluded here:
 
 - ordinary dependency pins by themselves
-- generated runtime `scripts/**/*.mjs` outputs that mirror same-named `scripts/**/*.mts` sources; see [local development](local-development.md) for the generation/freshness workflow
+- generated runtime `scripts/**/*.mjs` outputs that mirror same-named `scripts/**/*.mts` sources, plus generated same-layout `extensions/**/*.js` outputs that mirror authoritative `extensions/**/*.ts` sources; see [local development](local-development.md) for the generation/freshness workflow
 
 ## Review cadence
 
@@ -43,7 +43,7 @@ Explicitly excluded here:
 ## Practical sync checklist
 
 1. Reconfirm the relevant upstream snapshot first.
-2. Diff tracked sources; for runtime scripts, review same-named `scripts/**/*.mts` sources rather than their generated `scripts/**/*.mjs` mirrors.
+2. Diff tracked sources; for generated runtime outputs, review same-named `scripts/**/*.mts` and authoritative `extensions/**/*.ts` sources rather than their generated `scripts/**/*.mjs` / `extensions/**/*.js` mirrors.
 3. Preserve TLH-only safety behavior unless the ticket explicitly says to change it.
 4. Run the narrowest targeted tests listed above plus a `git diff --check` pass.
 5. If provenance is incomplete, say so explicitly in the PR or ticket notes rather than implying stronger attestation.
