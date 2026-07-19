@@ -374,6 +374,53 @@ test("developer must stop after tk show failure before retrying tk show", () => 
 	}), ["developer.ticket_lookup_stop_required"]);
 });
 
+test("developer tolerates malformed null transcript steps", () => {
+	const result = evaluateTracePolicy({
+		agent: "developer",
+		steps: [null],
+	});
+
+	assert.equal(result.ok, true);
+	assert.deepEqual(result.violations, []);
+});
+
+test("developer may continue after a successful blocking contact_supervisor escalation", () => {
+	const result = evaluateTracePolicy({
+		agent: "developer",
+		steps: [
+			{ type: "tool", tool: "bash", argv: ["tk", "show", "tlhm-s7bk"] },
+			{ type: "tool", tool: "contact_supervisor", input: { reason: "need_decision" } },
+			{ type: "tool", tool: "read", path: "tests/evals/trace-policy/trace-policy-checker.mjs" },
+		],
+	});
+
+	assert.equal(result.ok, true);
+	assert.deepEqual(result.violations, []);
+});
+
+test("developer must stop after a failed blocking contact_supervisor escalation", () => {
+	assert.deepEqual(violationCodes({
+		agent: "developer",
+		steps: [
+			{ type: "tool", tool: "bash", argv: ["tk", "show", "tlhm-s7bk"] },
+			{ type: "tool", tool: "contact_supervisor", input: { reason: "need_decision" }, ok: false },
+			{ type: "tool", tool: "read", path: "tests/evals/trace-policy/trace-policy-checker.mjs" },
+		],
+	}), ["developer.blocking_escalation_stop_required"]);
+
+	const blockerOnlyResult = evaluateTracePolicy({
+		agent: "developer",
+		steps: [
+			{ type: "tool", tool: "bash", argv: ["tk", "show", "tlhm-s7bk"] },
+			{ type: "tool", tool: "contact_supervisor", input: { reason: "need_decision" }, status: "failed" },
+			{ type: "assistant", text: "Blocker: blocking contact_supervisor escalation was unavailable in this session, so I stopped without further tool work." },
+		],
+	});
+
+	assert.equal(blockerOnlyResult.ok, true);
+	assert.deepEqual(blockerOnlyResult.violations, []);
+});
+
 test("code-reviewer must inspect diff inputs before findings", () => {
 	assert.deepEqual(violationCodes({
 		agent: "code-reviewer",

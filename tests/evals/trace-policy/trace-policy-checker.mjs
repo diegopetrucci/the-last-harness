@@ -902,6 +902,14 @@ function didToolStepFail(step) {
 	return Number.isInteger(step.exitCode) && step.exitCode !== 0;
 }
 
+function isBlockingContactSupervisorEscalation(step) {
+	if (!isRecord(step)) {
+		return false;
+	}
+	const inputReason = isRecord(step.input) ? normalizeText(step.input.reason) : "";
+	return toolName(step) === "contact_supervisor" && normalizeText(inputReason || step.reason) === "need_decision";
+}
+
 function readOnlyBashMutation(step) {
 	if (toolName(step) !== "bash") {
 		return false;
@@ -970,6 +978,17 @@ function subagentTargets(step) {
 	return collectSubagentTargets(isRecord(step.input) ? step.input : step);
 }
 
+const RESEARCH_SUBAGENT_TARGETS = new Set(["librarian", "repo-scout", "web-scout"]);
+
+function expectedResearchTarget(transcript) {
+	const target = normalizeText(transcript?.metadata?.expectedResearchTarget);
+	return RESEARCH_SUBAGENT_TARGETS.has(target) ? target : undefined;
+}
+
+function researchSubagentTargets(step) {
+	return subagentTargets(step).filter((target) => RESEARCH_SUBAGENT_TARGETS.has(target));
+}
+
 function isDisallowedProductPath(path) {
 	return !isAllowedNonSourcePath(path);
 }
@@ -997,6 +1016,9 @@ function evaluateArchitect(transcript, addViolation) {
 	let planApproved = false;
 	let ticketsApproved = false;
 	let sawCodeReviewerDispatch = false;
+	const requiredResearchTarget = expectedResearchTarget(transcript);
+	let sawRequiredResearchTarget = false;
+	let sawResearchRouting = false;
 
 	for (const [index, step] of transcript.steps.entries()) {
 		if (step.type === "assistant" && step.action === "ask_plan_approval") {
@@ -1034,6 +1056,21 @@ function evaluateArchitect(transcript, addViolation) {
 			);
 		}
 		const targets = subagentTargets(step);
+		const researchTargets = researchSubagentTargets(step);
+		const wrongResearchTargets = researchTargets.filter((target) => target !== requiredResearchTarget);
+		if (requiredResearchTarget && researchTargets.length > 0) {
+			sawResearchRouting = true;
+		}
+		if (requiredResearchTarget && wrongResearchTargets.length > 0) {
+			addViolation(
+				"architect.research_target_mismatch",
+				index,
+				`Architect research routing expected only '${requiredResearchTarget}' but also delegated to '${wrongResearchTargets.join(", ")}'.`,
+			);
+		}
+		if (requiredResearchTarget && researchTargets.includes(requiredResearchTarget)) {
+			sawRequiredResearchTarget = true;
+		}
 		if (targets.includes("developer") && !ticketsApproved) {
 			addViolation(
 				"architect.ticket_approval_required",
@@ -1051,6 +1088,14 @@ function evaluateArchitect(transcript, addViolation) {
 				"Architect must digest code-reviewer output and present its own summary instead of relaying raw reviewer output.",
 			);
 		}
+	}
+
+	if (requiredResearchTarget && !sawRequiredResearchTarget && !sawResearchRouting) {
+		addViolation(
+			"architect.research_target_mismatch",
+			transcript.steps.length,
+			`Architect research routing expected '${requiredResearchTarget}' but no matching research subagent delegation occurred.`,
+		);
 	}
 }
 
@@ -1143,6 +1188,7 @@ function evaluateBugHunter(transcript, addViolation) {
 function evaluateDeveloper(transcript, addViolation) {
 	let sawSuccessfulTicketShow = false;
 	let failedTicketShowAt;
+	let failedBlockingEscalationAt;
 
 	for (const [index, step] of transcript.steps.entries()) {
 		const name = toolName(step);
@@ -1154,6 +1200,14 @@ function evaluateDeveloper(transcript, addViolation) {
 			);
 			continue;
 		}
+		if (failedBlockingEscalationAt !== undefined && step.type === "tool") {
+			addViolation(
+				"developer.blocking_escalation_stop_required",
+				index,
+				"Developer must stop after a blocking contact_supervisor escalation fails or is unavailable and report the blocker instead of continuing with tool work.",
+			);
+			continue;
+		}
 
 		if (isPureTkShowCommand(step)) {
 			if (didToolStepFail(step)) {
@@ -1162,6 +1216,15 @@ function evaluateDeveloper(transcript, addViolation) {
 			} else {
 				failedTicketShowAt = undefined;
 				sawSuccessfulTicketShow = true;
+			}
+			continue;
+		}
+
+		if (isBlockingContactSupervisorEscalation(step)) {
+			if (didToolStepFail(step)) {
+				failedBlockingEscalationAt = index;
+			} else {
+				failedBlockingEscalationAt = undefined;
 			}
 			continue;
 		}

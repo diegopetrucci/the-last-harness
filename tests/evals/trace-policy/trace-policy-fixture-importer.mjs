@@ -154,6 +154,13 @@ function normalizeToolName(step) {
 	return normalizeText(step.tool || step.name || step.tool_name || step.toolName);
 }
 
+function flattenMessageRecord(record) {
+	if (!isRecord(record)) {
+		return record;
+	}
+	return isRecord(record.message) ? { ...record, ...record.message } : record;
+}
+
 function normalizeAssistantLikeStep(type, step) {
 	const normalized = { type };
 	const action = normalizeText(step.action);
@@ -220,38 +227,108 @@ function normalizeToolStep(step) {
 	return normalized;
 }
 
-function toSteps(record) {
-	if (!isRecord(record)) {
-		return [];
-	}
-	if (isRecord(record.message)) {
-		return toSteps({ ...record, ...record.message });
-	}
+function isToolResultRecord(record) {
+	return normalizeText(record?.role || record?.actor || record?.sender).toLowerCase() === "toolresult";
+}
 
-	const type = normalizeText(record.type).toLowerCase();
-	const role = normalizeText(record.role || record.actor || record.sender).toLowerCase();
-	if (type === "assistant" || role === "assistant") {
-		const steps = [];
-		const assistantStep = normalizeAssistantLikeStep("assistant", record);
-		if (assistantStep.action || assistantStep.text) {
-			steps.push(assistantStep);
+function normalizeToolResultFailure(step) {
+	const details = isRecord(step.details) ? step.details : {};
+	const exitCode = Number.isInteger(step.exitCode)
+		? step.exitCode
+		: Number.isInteger(details.exitCode)
+			? details.exitCode
+			: undefined;
+	const ok = typeof step.ok === "boolean"
+		? step.ok
+		: typeof details.ok === "boolean"
+			? details.ok
+			: undefined;
+	const rawStatus = typeof step.status === "string"
+		? step.status
+		: typeof details.status === "string"
+			? details.status
+			: undefined;
+	const status = rawStatus ? normalizeString(rawStatus) : undefined;
+	const failed = step.isError === true || ok === false || status === "failed" || (Number.isInteger(exitCode) && exitCode !== 0);
+	if (!failed) {
+		return undefined;
+	}
+	const normalized = {
+		ok: false,
+		status: status || "failed",
+	};
+	if (Number.isInteger(exitCode)) {
+		normalized.exitCode = exitCode;
+	}
+	return normalized;
+}
+
+function toolStepFromToolResultRecord(record) {
+	const normalized = normalizeToolStep({
+		type: "tool",
+		tool: normalizeToolName(record) || "unknown-tool",
+		...normalizeToolResultFailure(record),
+	});
+	return normalized;
+}
+
+function normalizeTraceSteps(records) {
+	const steps = [];
+	const toolCallIndexes = new Map();
+
+	for (const rawRecord of records) {
+		const record = flattenMessageRecord(rawRecord);
+		if (!isRecord(record)) {
+			continue;
 		}
-		if (Array.isArray(record.content)) {
-			for (const block of record.content) {
-				if (isRecord(block) && normalizeText(block.type) === "toolCall") {
+
+		const type = normalizeText(record.type).toLowerCase();
+		const role = normalizeText(record.role || record.actor || record.sender).toLowerCase();
+		if (type === "assistant" || role === "assistant") {
+			const assistantStep = normalizeAssistantLikeStep("assistant", record);
+			if (assistantStep.action || assistantStep.text) {
+				steps.push(assistantStep);
+			}
+			if (Array.isArray(record.content)) {
+				for (const block of record.content) {
+					if (!isRecord(block) || normalizeText(block.type) !== "toolCall") {
+						continue;
+					}
 					steps.push(toolStepFromToolCallBlock(block));
+					const toolCallId = normalizeText(block.id);
+					if (toolCallId) {
+						toolCallIndexes.set(toolCallId, steps.length - 1);
+					}
 				}
 			}
+			continue;
 		}
-		return steps;
+		if (type === "user" || role === "user") {
+			steps.push(normalizeAssistantLikeStep("user", record));
+			continue;
+		}
+		if (isToolResultRecord(record)) {
+			const toolCallId = normalizeText(record.toolCallId);
+			const toolCallIndex = toolCallId ? toolCallIndexes.get(toolCallId) : undefined;
+			if (toolCallIndex !== undefined) {
+				const failure = normalizeToolResultFailure(record);
+				if (failure) {
+					steps[toolCallIndex] = {
+						...steps[toolCallIndex],
+						...failure,
+					};
+				}
+				continue;
+			}
+			steps.push(toolStepFromToolResultRecord(record));
+			continue;
+		}
+		if (type === "tool" || role === "tool" || normalizeToolName(record)) {
+			steps.push(normalizeToolStep(record));
+		}
 	}
-	if (type === "user" || role === "user") {
-		return [normalizeAssistantLikeStep("user", record)];
-	}
-	if (type === "tool" || role === "tool" || normalizeToolName(record)) {
-		return [normalizeToolStep(record)];
-	}
-	return [];
+
+	return steps;
 }
 
 function parseJsonLines(text) {
@@ -313,9 +390,7 @@ function extractStepRecords(parsed) {
 export function importTracePolicyFixtureFromText(text, options = {}) {
 	const parsed = parseTraceInput(text);
 	const transcriptSource = isRecord(parsed?.transcript) ? parsed.transcript : parsed;
-	const steps = extractStepRecords(parsed)
-		.flatMap((step) => toSteps(step))
-		.filter(Boolean);
+	const steps = normalizeTraceSteps(extractStepRecords(parsed)).filter(Boolean);
 	if (steps.length === 0) {
 		throw new Error("trace input did not yield any assistant/user/tool steps");
 	}
