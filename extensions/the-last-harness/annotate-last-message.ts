@@ -191,10 +191,15 @@ export function buildAnnotateLastMessageCommand(
 				window.on("error", onError);
 			});
 
-			void (async (windowMessageSource: QuietGlimpseWindow, sourceData: LastAssistantMessageData) => {
+			void (async (
+				windowMessageSource: QuietGlimpseWindow,
+				sourceData: LastAssistantMessageData,
+				windowLifecycleGeneration: number,
+			) => {
 				try {
 					const result = await terminalMessagePromise;
 					if (suppressedWindows.has(windowMessageSource)) return;
+					if (windowLifecycleGeneration !== lifecycleGeneration) return;
 					if (result == null) return;
 					if (result.type === "cancel") {
 						ctx.ui.notify("Annotation cancelled.", "info");
@@ -210,10 +215,11 @@ export function buildAnnotateLastMessageCommand(
 					ctx.ui.notify("Appended annotation feedback to the editor.", "info");
 				} catch (error) {
 					if (suppressedWindows.has(windowMessageSource)) return;
+					if (windowLifecycleGeneration !== lifecycleGeneration) return;
 					const message = error instanceof Error ? error.message : String(error);
 					ctx.ui.notify(`Annotation failed: ${message}`, "error");
 				}
-			})(window, messageData);
+			})(window, messageData, generation);
 
 			ctx.ui.notify("Opened native annotation window.", "info");
 		} catch (error) {

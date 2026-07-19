@@ -145,10 +145,12 @@ export function buildAnnotateLastMessageCommand(dependencies = {}) {
                 window.on("closed", onClosed);
                 window.on("error", onError);
             });
-            void (async (windowMessageSource, sourceData) => {
+            void (async (windowMessageSource, sourceData, windowLifecycleGeneration) => {
                 try {
                     const result = await terminalMessagePromise;
                     if (suppressedWindows.has(windowMessageSource))
+                        return;
+                    if (windowLifecycleGeneration !== lifecycleGeneration)
                         return;
                     if (result == null)
                         return;
@@ -167,10 +169,12 @@ export function buildAnnotateLastMessageCommand(dependencies = {}) {
                 catch (error) {
                     if (suppressedWindows.has(windowMessageSource))
                         return;
+                    if (windowLifecycleGeneration !== lifecycleGeneration)
+                        return;
                     const message = error instanceof Error ? error.message : String(error);
                     ctx.ui.notify(`Annotation failed: ${message}`, "error");
                 }
-            })(window, messageData);
+            })(window, messageData, generation);
             ctx.ui.notify("Opened native annotation window.", "info");
         }
         catch (error) {

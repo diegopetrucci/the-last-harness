@@ -663,6 +663,44 @@ test("discovery traversal keeps the exact object-property boundary and does not 
 	);
 });
 
+test("discovery traversal caps inherited for-in enumeration work at the same exact boundary", () => {
+	const prototype = {};
+	for (let index = 0; index < 4; index += 1) {
+		prototype[`inherited${index}`] = index;
+	}
+	const details = Object.create(prototype);
+	details.within = {
+		artifactPath: "/Users/me/.the-last-harness/agent/artifacts/run-prototype/within.md",
+	};
+	for (let index = 1; index < 63; index += 1) {
+		details[`filler${index}`] = index;
+	}
+
+	const originalHasOwn = Object.hasOwn;
+	let detailHasOwnCalls = 0;
+	Object.hasOwn = function patchedHasOwn(target, key) {
+		if (target === details) {
+			detailHasOwnCalls += 1;
+			if (detailHasOwnCalls > 64) {
+				throw new Error(`prototype traversal exceeded boundary at ${String(key)}`);
+			}
+		}
+		return originalHasOwn(target, key);
+	};
+
+	try {
+		const analysis = analyzeSingleSubagentResult(details);
+
+		assert.equal(detailHasOwnCalls, 64);
+		assert.deepEqual(
+			analysis.references.artifacts.map((reference) => reference.label),
+			["run-prototype/within.md"],
+		);
+	} finally {
+		Object.hasOwn = originalHasOwn;
+	}
+});
+
 test("discovery traversal keeps exact attemptedModels and agents boundaries", () => {
 	const attemptedModels = Array.from({ length: 64 }, (_, index) => `provider/model-${index}`);
 	Object.defineProperty(attemptedModels, "64", {

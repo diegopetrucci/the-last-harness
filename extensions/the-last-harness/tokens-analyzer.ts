@@ -829,16 +829,21 @@ function *takeArrayIndices(value: readonly unknown[], limit: number): IterableIt
 }
 
 function *takeOwnEnumerableKeys(value: Record<string, unknown>, limit: number): IterableIterator<string> {
-	let count = 0;
+	let examined = 0;
+	let yielded = 0;
 	for (const key in value) {
+		if (examined >= limit) {
+			break;
+		}
+		examined += 1;
 		if (!Object.hasOwn(value, key)) {
 			continue;
 		}
-		if (count >= limit) {
+		yield key;
+		yielded += 1;
+		if (yielded >= limit) {
 			break;
 		}
-		yield key;
-		count += 1;
 	}
 }
 

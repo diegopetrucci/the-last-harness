@@ -358,6 +358,47 @@ test("annotate-last-message cancels a pending open on shutdown without blocking 
 	assert.equal(secondWindow.closeCalls, 1);
 });
 
+test("annotate-last-message suppresses terminal results settled immediately before shutdown", async (t) => {
+	const terminalEvents = [
+		{
+			name: "submit",
+			emit(window) {
+				window.emit("message", {
+					type: "submit",
+					overallComment: "Queued feedback",
+					inlineComments: [],
+					sectionComments: [],
+				});
+			},
+		},
+		{
+			name: "error",
+			emit(window) {
+				window.emit("error", new Error("queued failure"));
+			},
+		},
+	];
+
+	for (const terminalEvent of terminalEvents) {
+		await t.test(terminalEvent.name, async () => {
+			const window = new FakeWindow();
+			const command = buildAnnotateLastMessageCommand({
+				openAnnotationWindow: async () => window,
+			});
+			const context = createContext({ branch: [messageEntry("assistant", [{ type: "text", text: "Latest reply" }])] });
+
+			await command.handler("", context.ctx);
+			terminalEvent.emit(window);
+			command.handleSessionShutdown();
+			await flushAsyncWork();
+
+			assert.equal(window.closeCalls, 0);
+			assert.deepEqual(context.pasted, []);
+			assert.deepEqual(context.notifications, [{ message: "Opened native annotation window.", level: "info" }]);
+		});
+	}
+});
+
 test("annotate-last-message suppresses late submit and error events after shutdown", async () => {
 	const timers = [];
 	const window = new FakeWindow();
