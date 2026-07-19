@@ -138,6 +138,9 @@ test("runtime TypeScript helper tracks converted top-level CLIs", () => {
 		assert.equal(existsSync(join(repoRoot, `${path}.mts`)), true, `${path}.mts should exist`);
 		assert.equal(existsSync(join(repoRoot, `${path}.mjs`)), true, `${path}.mjs should exist`);
 	}
+
+	assert.equal(existsSync(join(repoRoot, "scripts", "tlh-gh.mts")), false, "scripts/tlh-gh.mts should not exist");
+	assert.equal(existsSync(join(repoRoot, "scripts", "tlh-gh.mjs")), false, "scripts/tlh-gh.mjs should not exist");
 });
 
 test("runtime TypeScript helper builds, checks, and typechecks temporary fixtures", () => {

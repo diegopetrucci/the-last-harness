@@ -84,3 +84,11 @@ test("renderWrapper: NODE_COMPILE_CACHE export uses tlh_pinned_dir%/* (strip bin
 		"rendered wrapper must contain the verbatim NODE_COMPILE_CACHE export expression",
 	);
 });
+
+test("renderWrapper: no github helper branch or tlh-gh dispatch is rendered", () => {
+	const rendered = renderWrapper(PINNED_ARGS);
+
+	assert.doesNotMatch(rendered, /\[\[ "\$\{1:-\}" == "github" \]\]/);
+	assert.doesNotMatch(rendered, /scripts\/tlh-gh\.mjs/);
+	assert.doesNotMatch(rendered, /tlh github support files are missing or corrupt/);
+});

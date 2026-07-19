@@ -40,29 +40,57 @@ function escapeRegExp(value) {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-test("architect prompt keeps bounded REST CI polling guidance", () => {
+test("architect prompt keeps direct gh api GitHub workflow guidance", () => {
 	const agent = readAgentPrompt("primary", "architect");
 
+	assertIncludesAllTerms(agent, "architect GitHub workflow guidance", [
+		"gh auth status 2>&1",
+		"gh api rate_limit 2>&1",
+		"gh api repos/OWNER/REPO",
+		"gh api repos/OWNER/REPO/issues/NUMBER",
+		"gh api repos/OWNER/REPO/pulls/NUMBER",
+		"gh api repos/OWNER/REPO/commits/SHA/check-runs",
+		"gh api repos/OWNER/REPO/commits/SHA/status",
+		"gh api --paginate",
+		"--method POST --input -",
+		"plain `git clone https://github.com/OWNER/REPO.git`",
+		"Review threads and `statusCheckRollup` remain GraphQL-only exceptions",
+	]);
 	assertBodyPattern(
 		agent,
 		"architect cleanup guidance",
-		/use bounded REST `gh api` polling for check-runs and commit statuses rather than `gh pr checks --watch`/i,
+		/use bounded REST `gh api repos\/OWNER\/REPO\/commits\/SHA\/check-runs` \/ `gh api repos\/OWNER\/REPO\/commits\/SHA\/status` polling rather than `gh pr checks --watch`/i,
 	);
+	assertBodyPattern(agent, "architect cleanup guidance", /if a needed GitHub check is GraphQL-only, say so clearly instead of implying REST coverage/i);
 	assertBodyPattern(agent, "architect cleanup guidance", /do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks/i);
 });
 
-test("rush prompt keeps bounded REST CI polling guidance", () => {
+test("rush prompt keeps direct gh api GitHub workflow guidance", () => {
 	const agent = readAgentPrompt("primary", "rush");
 
+	assertIncludesAllTerms(agent, "rush GitHub workflow guidance", [
+		"gh auth status 2>&1",
+		"gh api rate_limit 2>&1",
+		"gh api repos/OWNER/REPO",
+		"gh api repos/OWNER/REPO/issues/NUMBER",
+		"gh api repos/OWNER/REPO/pulls/NUMBER",
+		"gh api repos/OWNER/REPO/commits/SHA/check-runs",
+		"gh api repos/OWNER/REPO/commits/SHA/status",
+		"gh api --paginate",
+		"--method POST --input -",
+		"plain `git clone https://github.com/OWNER/REPO.git`",
+		"Review threads and `statusCheckRollup` remain GraphQL-only exceptions",
+	]);
 	assertBodyPattern(
 		agent,
 		"rush cleanup guidance",
-		/use bounded REST `gh api` polling for check-runs and commit statuses rather than `gh pr checks --watch`/i,
+		/use bounded REST `gh api repos\/OWNER\/REPO\/commits\/SHA\/check-runs` \/ `gh api repos\/OWNER\/REPO\/commits\/SHA\/status` polling rather than `gh pr checks --watch`/i,
 	);
+	assertBodyPattern(agent, "rush cleanup guidance", /if a needed GitHub check is GraphQL-only, say so clearly instead of implying REST coverage/i);
 	assertBodyPattern(agent, "rush cleanup guidance", /do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks/i);
 });
 
-test("librarian prompt keeps REST-first GitHub research quota guidance", () => {
+test("librarian prompt keeps read-only REST-first GitHub research guidance", () => {
 	const agent = readAgentPrompt("subagents", "librarian");
 
 	assertIncludesAllTerms(agent, "shared quota preflight guidance", [
@@ -70,8 +98,18 @@ test("librarian prompt keeps REST-first GitHub research quota guidance", () => {
 		"all local TLH sessions share the same authenticated GitHub GraphQL quota",
 		"REST/core quota can still remain available after GraphQL is low or exhausted",
 	]);
+	assertIncludesAllTerms(agent, "REST-first endpoint guidance", [
+		"gh api repos/OWNER/REPO",
+		"gh api repos/OWNER/REPO --jq .size",
+		"gh api repos/OWNER/REPO/issues/NUMBER",
+		"gh api repos/OWNER/REPO/pulls/NUMBER",
+		"gh api repos/OWNER/REPO/commits/SHA/check-runs",
+		"gh api repos/OWNER/REPO/commits/SHA/status",
+		"gh api --paginate ...",
+		"plain `git clone`",
+	]);
 	assertOrderedTerms(agent, "REST-first inspection coverage", [
-		"prefer them over GraphQL-backed convenience commands",
+		"prefer bounded `gh api` GET requests over GraphQL-backed convenience commands",
 		"PRs",
 		"issues",
 		"releases",
@@ -79,6 +117,12 @@ test("librarian prompt keeps REST-first GitHub research quota guidance", () => {
 		"commit statuses",
 		"check-runs",
 	]);
+	assertExcludesAllTerms(agent, "librarian avoids GraphQL-backed repo size guidance", [
+		"gh repo view OWNER/REPO --json diskUsage",
+	]);
+	assertBodyPattern(agent, "librarian stays read-only", /never switch to `gh api` mutations/i);
+	assertBodyPattern(agent, "librarian blocks POST stdin mutations", /no `printf \.\.\. \| gh api \.\.\. --method POST --input -`/i);
+	assertBodyPattern(agent, "graphQL-only limitation guidance", /Review threads and `statusCheckRollup` remain GraphQL-only limitations/i);
 	assertBodyPattern(agent, "avoid statusCheckRollup", /avoid `?statusCheckRollup`?/i);
 	assertBodyPattern(agent, "ban gh pr checks watch", /avoid `gh pr checks --watch`/i);
 	assertBodyPattern(agent, "REST fallback on GraphQL failure", /fall back to `gh api` GET requests against REST endpoints or to local `git` evidence when possible/i);
