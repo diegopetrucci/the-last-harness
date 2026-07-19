@@ -19,7 +19,9 @@ const SUBAGENT_NESTED_KEYS = new Set(["results", "steps", "children", "modelAtte
 const PREFERRED_SUBAGENT_CHILD_KEYS = ["results", "steps"];
 const MAX_DISCOVERY_DEPTH = 8;
 const MAX_DISCOVERY_ARRAY_ITEMS = 64;
-const MAX_DISCOVERY_OBJECTS = 512;
+const MAX_DISCOVERY_OBJECT_PROPERTIES = 64;
+const MAX_DISCOVERY_ARTIFACT_PATHS = 64;
+const MAX_DISCOVERY_CONTAINERS = 512;
 export function analyzeCurrentSessionUsage(sessionManager, toolCatalog = [], priceSource) {
     const header = sessionManager.getHeader();
     return analyzeSessionEntries(sessionManager.getEntries(), {
@@ -476,6 +478,29 @@ function numberFromUnknown(value) {
 function isRecord(value) {
     return typeof value === "object" && value !== null;
 }
+function* takeArrayIndices(value, limit) {
+    for (let index = 0; index < value.length && index < limit; index += 1) {
+        yield index;
+    }
+}
+function* takeOwnEnumerableKeys(value, limit) {
+    let examined = 0;
+    let yielded = 0;
+    for (const key in value) {
+        if (examined >= limit) {
+            break;
+        }
+        examined += 1;
+        if (!Object.hasOwn(value, key)) {
+            continue;
+        }
+        yield key;
+        yielded += 1;
+        if (yielded >= limit) {
+            break;
+        }
+    }
+}
 function collectActiveBranchIds(activeLeafId, byId) {
     const branch = new Set();
     if (!activeLeafId) {
@@ -567,8 +592,8 @@ function collectStructuredDiscoveries(value, context) {
     const sessionRefs = new Map();
     const artifactRefs = new Map();
     const intercomTargets = new Set();
-    const seenObjects = new Set();
-    let objectVisits = 0;
+    const seenContainers = new Set();
+    let containerVisits = 0;
     const registerRun = (run) => {
         subagentRuns.set(run.key, run);
         if (run.session) {
@@ -582,24 +607,28 @@ function collectStructuredDiscoveries(value, context) {
         }
     };
     const visit = (current, path, skipNestedRuns) => {
-        if (path.length > MAX_DISCOVERY_DEPTH || objectVisits >= MAX_DISCOVERY_OBJECTS) {
+        if (path.length > MAX_DISCOVERY_DEPTH || !isRecord(current)) {
             return;
         }
+        if (seenContainers.has(current) || containerVisits >= MAX_DISCOVERY_CONTAINERS) {
+            return;
+        }
+        seenContainers.add(current);
+        containerVisits += 1;
+        const canDescend = path.length < MAX_DISCOVERY_DEPTH && containerVisits < MAX_DISCOVERY_CONTAINERS;
         if (Array.isArray(current)) {
-            for (const [index, item] of current.slice(0, MAX_DISCOVERY_ARRAY_ITEMS).entries()) {
-                visit(item, [...path, String(index)], skipNestedRuns);
+            if (!canDescend) {
+                return;
+            }
+            for (const index of takeArrayIndices(current, MAX_DISCOVERY_ARRAY_ITEMS)) {
+                if (containerVisits >= MAX_DISCOVERY_CONTAINERS) {
+                    break;
+                }
+                visit(current[index], [...path, String(index)], skipNestedRuns);
             }
             return;
         }
-        if (!isRecord(current)) {
-            return;
-        }
-        if (seenObjects.has(current)) {
-            return;
-        }
-        seenObjects.add(current);
-        objectVisits += 1;
-        const nestedRuns = !skipNestedRuns ? collectPreferredNestedSubagentRuns(current, context) : [];
+        const nestedRuns = !skipNestedRuns && canDescend ? collectPreferredNestedSubagentRuns(current, context) : [];
         for (const nestedRun of nestedRuns) {
             registerRun(nestedRun);
         }
@@ -629,21 +658,27 @@ function collectStructuredDiscoveries(value, context) {
             }
         }
         if (isRecord(current.artifactPaths)) {
-            for (const nestedValue of Object.values(current.artifactPaths)) {
-                const artifactRef = sanitizePathReference(nestedValue, "artifact");
+            for (const key of takeOwnEnumerableKeys(current.artifactPaths, MAX_DISCOVERY_ARTIFACT_PATHS)) {
+                const artifactRef = sanitizePathReference(current.artifactPaths[key], "artifact");
                 if (artifactRef) {
                     artifactRefs.set(referenceKey(artifactRef), artifactRef);
                 }
             }
         }
-        for (const [key, nestedValue] of Object.entries(current)) {
+        if (!canDescend) {
+            return;
+        }
+        for (const key of takeOwnEnumerableKeys(current, MAX_DISCOVERY_OBJECT_PROPERTIES)) {
             if (SKIP_DISCOVERY_KEYS.has(key)) {
                 continue;
             }
             if (run && SUBAGENT_NESTED_KEYS.has(key)) {
                 continue;
             }
-            visit(nestedValue, [...path, key], skipNestedRuns ||
+            if (containerVisits >= MAX_DISCOVERY_CONTAINERS) {
+                break;
+            }
+            visit(current[key], [...path, key], skipNestedRuns ||
                 Boolean(run) ||
                 (nestedRuns.length > 0 && PREFERRED_SUBAGENT_CHILD_KEYS.includes(key)));
         }
@@ -668,7 +703,8 @@ function collectPreferredNestedSubagentRuns(value, context) {
         if (!Array.isArray(nested)) {
             continue;
         }
-        for (const item of nested.slice(0, MAX_DISCOVERY_ARRAY_ITEMS)) {
+        for (const index of takeArrayIndices(nested, MAX_DISCOVERY_ARRAY_ITEMS)) {
+            const item = nested[index];
             if (!isRecord(item)) {
                 continue;
             }
@@ -745,8 +781,8 @@ function collectArtifactReferences(value) {
         }
     }
     if (isRecord(value.artifactPaths)) {
-        for (const candidate of Object.values(value.artifactPaths)) {
-            const ref = sanitizePathReference(candidate, "artifact");
+        for (const key of takeOwnEnumerableKeys(value.artifactPaths, MAX_DISCOVERY_ARTIFACT_PATHS)) {
+            const ref = sanitizePathReference(value.artifactPaths[key], "artifact");
             if (ref) {
                 refs.set(referenceKey(ref), ref);
             }
@@ -760,7 +796,8 @@ function sumUsageArray(value) {
     }
     const total = createUsageTotals();
     let foundUsage = false;
-    for (const item of value.slice(0, MAX_DISCOVERY_ARRAY_ITEMS)) {
+    for (const index of takeArrayIndices(value, MAX_DISCOVERY_ARRAY_ITEMS)) {
+        const item = value[index];
         if (!isRecord(item)) {
             continue;
         }
@@ -873,10 +910,18 @@ function arrayOfStrings(value) {
     if (!Array.isArray(value)) {
         return [];
     }
-    return dedupeStrings(value
-        .filter((item) => typeof item === "string")
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0));
+    const strings = [];
+    for (const index of takeArrayIndices(value, MAX_DISCOVERY_ARRAY_ITEMS)) {
+        const item = value[index];
+        if (typeof item !== "string") {
+            continue;
+        }
+        const trimmed = item.trim();
+        if (trimmed.length > 0) {
+            strings.push(trimmed);
+        }
+    }
+    return dedupeStrings(strings);
 }
 function dedupeStrings(values) {
     return [

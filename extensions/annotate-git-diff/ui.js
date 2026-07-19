@@ -92,6 +92,7 @@ function resolveReviewUiAssets() {
 }
 export function buildReviewHtml(data) {
     const templateHtml = readFileSync(join(webDir, "index.html"), "utf8");
+    const reviewStateJs = escapeInlineScriptSource(readFileSync(join(webDir, "review-state.js"), "utf8"));
     const appJs = escapeInlineScriptSource(readFileSync(join(webDir, "app.js"), "utf8"));
     const assets = resolveReviewUiAssets();
     const payload = escapeForInlineScript(JSON.stringify(data));
@@ -108,6 +109,7 @@ export function buildReviewHtml(data) {
     html = safeReplace(html, "__INLINE_MONACO_WORKER_SOURCE_JSON__", escapeForInlineScript(JSON.stringify(assets.monacoWorkerJs)));
     html = safeReplace(html, "__INLINE_MONACO_EDITOR_JS__", escapeInlineScriptSource(assets.monacoEditorJs));
     html = safeReplace(html, "__INLINE_MONACO_BASIC_LANGUAGES_JS__", escapeInlineScriptSource(assets.monacoBasicLanguagesJs));
+    html = safeReplace(html, "__INLINE_REVIEW_STATE_JS__", reviewStateJs);
     html = safeReplace(html, "__INLINE_JS__", appJs);
     return html;
 }

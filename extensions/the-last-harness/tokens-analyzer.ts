@@ -27,7 +27,9 @@ const SUBAGENT_NESTED_KEYS = new Set(["results", "steps", "children", "modelAtte
 const PREFERRED_SUBAGENT_CHILD_KEYS = ["results", "steps"] as const;
 const MAX_DISCOVERY_DEPTH = 8;
 const MAX_DISCOVERY_ARRAY_ITEMS = 64;
-const MAX_DISCOVERY_OBJECTS = 512;
+const MAX_DISCOVERY_OBJECT_PROPERTIES = 64;
+const MAX_DISCOVERY_ARTIFACT_PATHS = 64;
+const MAX_DISCOVERY_CONTAINERS = 512;
 
 type TokensAnalysisSessionManager = Pick<ExtensionContext["sessionManager"], "getEntries" | "getHeader" | "getLeafId" | "getSessionName">;
 
@@ -811,14 +813,38 @@ function numberFromUnknown(value: unknown): number | undefined {
 
 // Intentionally includes arrays (unlike common.ts isPlainObject which excludes them).
 // artifactPaths can arrive as an array in the wild; the two call sites that handle it
-// (in collectArtifactReferences and the standalone artifact-entry sanitizer) iterate
-// Object.values(artifactPaths), which works correctly for both plain objects and arrays.
+// rely on enumerable own-property iteration working for both plain objects and arrays.
 // Replacing this with the shared common.ts isRecord/isPlainObject would silently skip
 // array-valued artifactPaths at those call sites.
 // If the schema for artifactPaths is ever narrowed to plain-object-only, audit those
 // call sites first and confirm no callers pass an array before switching.
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
+}
+
+function *takeArrayIndices(value: readonly unknown[], limit: number): IterableIterator<number> {
+	for (let index = 0; index < value.length && index < limit; index += 1) {
+		yield index;
+	}
+}
+
+function *takeOwnEnumerableKeys(value: Record<string, unknown>, limit: number): IterableIterator<string> {
+	let examined = 0;
+	let yielded = 0;
+	for (const key in value) {
+		if (examined >= limit) {
+			break;
+		}
+		examined += 1;
+		if (!Object.hasOwn(value, key)) {
+			continue;
+		}
+		yield key;
+		yielded += 1;
+		if (yielded >= limit) {
+			break;
+		}
+	}
 }
 
 function collectActiveBranchIds(activeLeafId: string | null | undefined, byId: Map<string, SessionEntry>): Set<string> {
@@ -933,8 +959,8 @@ function collectStructuredDiscoveries(value: unknown, context: DiscoveryContext)
 	const sessionRefs = new Map<string, TlhSanitizedReference>();
 	const artifactRefs = new Map<string, TlhSanitizedReference>();
 	const intercomTargets = new Set<string>();
-	const seenObjects = new Set<object>();
-	let objectVisits = 0;
+	const seenContainers = new Set<object>();
+	let containerVisits = 0;
 
 	const registerRun = (run: TlhDiscoveredSubagentRun): void => {
 		subagentRuns.set(run.key, run);
@@ -950,25 +976,32 @@ function collectStructuredDiscoveries(value: unknown, context: DiscoveryContext)
 	};
 
 	const visit = (current: unknown, path: string[], skipNestedRuns: boolean): void => {
-		if (path.length > MAX_DISCOVERY_DEPTH || objectVisits >= MAX_DISCOVERY_OBJECTS) {
+		if (path.length > MAX_DISCOVERY_DEPTH || !isRecord(current)) {
 			return;
 		}
+		if (seenContainers.has(current) || containerVisits >= MAX_DISCOVERY_CONTAINERS) {
+			return;
+		}
+		seenContainers.add(current);
+		containerVisits += 1;
+
+		const canDescend = path.length < MAX_DISCOVERY_DEPTH && containerVisits < MAX_DISCOVERY_CONTAINERS;
 		if (Array.isArray(current)) {
-			for (const [index, item] of current.slice(0, MAX_DISCOVERY_ARRAY_ITEMS).entries()) {
-				visit(item, [...path, String(index)], skipNestedRuns);
+			if (!canDescend) {
+				return;
+			}
+			for (const index of takeArrayIndices(current, MAX_DISCOVERY_ARRAY_ITEMS)) {
+				if (containerVisits >= MAX_DISCOVERY_CONTAINERS) {
+					break;
+				}
+				visit(current[index], [...path, String(index)], skipNestedRuns);
 			}
 			return;
 		}
-		if (!isRecord(current)) {
-			return;
-		}
-		if (seenObjects.has(current)) {
-			return;
-		}
-		seenObjects.add(current);
-		objectVisits += 1;
 
-		const nestedRuns = !skipNestedRuns ? collectPreferredNestedSubagentRuns(current, context) : [];
+		// The preferred results/steps fast path is independently capped at two arrays of
+		// MAX_DISCOVERY_ARRAY_ITEMS. It does not recurse, so cycles cannot amplify its work.
+		const nestedRuns = !skipNestedRuns && canDescend ? collectPreferredNestedSubagentRuns(current, context) : [];
 		for (const nestedRun of nestedRuns) {
 			registerRun(nestedRun);
 		}
@@ -1000,23 +1033,29 @@ function collectStructuredDiscoveries(value: unknown, context: DiscoveryContext)
 			}
 		}
 		if (isRecord(current.artifactPaths)) {
-			for (const nestedValue of Object.values(current.artifactPaths)) {
-				const artifactRef = sanitizePathReference(nestedValue, "artifact");
+			for (const key of takeOwnEnumerableKeys(current.artifactPaths, MAX_DISCOVERY_ARTIFACT_PATHS)) {
+				const artifactRef = sanitizePathReference(current.artifactPaths[key], "artifact");
 				if (artifactRef) {
 					artifactRefs.set(referenceKey(artifactRef), artifactRef);
 				}
 			}
 		}
 
-		for (const [key, nestedValue] of Object.entries(current)) {
+		if (!canDescend) {
+			return;
+		}
+		for (const key of takeOwnEnumerableKeys(current, MAX_DISCOVERY_OBJECT_PROPERTIES)) {
 			if (SKIP_DISCOVERY_KEYS.has(key)) {
 				continue;
 			}
 			if (run && SUBAGENT_NESTED_KEYS.has(key)) {
 				continue;
 			}
+			if (containerVisits >= MAX_DISCOVERY_CONTAINERS) {
+				break;
+			}
 			visit(
-				nestedValue,
+				current[key],
 				[...path, key],
 				skipNestedRuns ||
 					Boolean(run) ||
@@ -1050,7 +1089,8 @@ function collectPreferredNestedSubagentRuns(
 		if (!Array.isArray(nested)) {
 			continue;
 		}
-		for (const item of nested.slice(0, MAX_DISCOVERY_ARRAY_ITEMS)) {
+		for (const index of takeArrayIndices(nested, MAX_DISCOVERY_ARRAY_ITEMS)) {
+			const item = nested[index];
 			if (!isRecord(item)) {
 				continue;
 			}
@@ -1137,8 +1177,8 @@ function collectArtifactReferences(value: Record<string, unknown>): TlhSanitized
 		}
 	}
 	if (isRecord(value.artifactPaths)) {
-		for (const candidate of Object.values(value.artifactPaths)) {
-			const ref = sanitizePathReference(candidate, "artifact");
+		for (const key of takeOwnEnumerableKeys(value.artifactPaths, MAX_DISCOVERY_ARTIFACT_PATHS)) {
+			const ref = sanitizePathReference(value.artifactPaths[key], "artifact");
 			if (ref) {
 				refs.set(referenceKey(ref), ref);
 			}
@@ -1153,7 +1193,8 @@ function sumUsageArray(value: unknown): TlhUsageTotals | undefined {
 	}
 	const total = createUsageTotals();
 	let foundUsage = false;
-	for (const item of value.slice(0, MAX_DISCOVERY_ARRAY_ITEMS)) {
+	for (const index of takeArrayIndices(value, MAX_DISCOVERY_ARRAY_ITEMS)) {
+		const item = value[index];
 		if (!isRecord(item)) {
 			continue;
 		}
@@ -1289,12 +1330,18 @@ function arrayOfStrings(value: unknown): string[] {
 	if (!Array.isArray(value)) {
 		return [];
 	}
-	return dedupeStrings(
-		value
-			.filter((item): item is string => typeof item === "string")
-			.map((item) => item.trim())
-			.filter((item) => item.length > 0),
-	);
+	const strings: string[] = [];
+	for (const index of takeArrayIndices(value, MAX_DISCOVERY_ARRAY_ITEMS)) {
+		const item = value[index];
+		if (typeof item !== "string") {
+			continue;
+		}
+		const trimmed = item.trim();
+		if (trimmed.length > 0) {
+			strings.push(trimmed);
+		}
+	}
+	return dedupeStrings(strings);
 }
 
 function dedupeStrings(values: Array<string | undefined>): string[] {

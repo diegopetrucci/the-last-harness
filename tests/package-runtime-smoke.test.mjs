@@ -20,6 +20,7 @@ const requiredPackedAssets = [
 	"agents/subagents/developer.md",
 	"extensions/annotate-git-diff/web/app.js",
 	"extensions/annotate-git-diff/web/index.html",
+	"extensions/annotate-git-diff/web/review-state.js",
 	"extensions/the-last-harness/annotate-last-message/web/app.js",
 	"extensions/the-last-harness/annotate-last-message/web/index.html",
 	"extensions/the-last-harness-primary-agent.mjs",
