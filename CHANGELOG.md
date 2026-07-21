@@ -4,7 +4,11 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
-### Added
+### Experimental
+
+- You can now add custom (non built-in) subagents. Ask TLH how to.
+
+### Fixed
 
 - OpenAI weekly/daily usage now shows days, not just hours.
 

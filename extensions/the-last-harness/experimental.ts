@@ -10,6 +10,7 @@ import type { AgentPrompt, TlhExperimentalConfig, TlhExperimentalFeatureId, TlhS
 export const DELTA_FOLLOW_UP_REVIEWS_FEATURE: TlhExperimentalFeatureId = "delta-follow-up-reviews";
 export const CI_FAILURE_INVESTIGATION_FEATURE: TlhExperimentalFeatureId = "ci-failure-investigation";
 export const TICKET_WORKFLOW_UI_FEATURE: TlhExperimentalFeatureId = "ticket-workflow-ui";
+export const EMBEDDED_SUBAGENTS_FEATURE: TlhExperimentalFeatureId = "embedded-subagents";
 export const TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT = "tlh:experimental-feature-changed";
 
 export const EXPERIMENTAL_COMMAND_HELP = [
@@ -90,6 +91,10 @@ export const TLH_EXPERIMENTAL_FEATURES: TlhExperimentalFeature[] = [
 	{
 		id: TICKET_WORKFLOW_UI_FEATURE,
 		description: "Enables the experimental ticket workflow UI as a read-only tk-backed surface.",
+	},
+	{
+		id: EMBEDDED_SUBAGENTS_FEATURE,
+		description: "Gates architect-only delegation to trusted user-owned embedded.<slug> subagents.",
 	},
 ];
 

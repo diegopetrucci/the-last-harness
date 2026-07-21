@@ -382,12 +382,19 @@ test("before_agent_start reapplies primary defaults without a one-shot model gat
 test("before_agent_start activates ticket runtime without disabled-ticket prompt branching", () => {
 	const lifecycleHooks = sourceSection(primaryRuntimeSource, "function registerLifecycleHooks()", "\n\n\treturn { applySessionStart");
 	const beforeAgentStart = sourceSection(lifecycleHooks, 'pi.on("before_agent_start"', 'pi.on("tool_call"');
+	const applySessionStart = sourceSection(primaryRuntimeSource, "async function applySessionStart(", "function registerLifecycleHooks()");
 
 	assert.match(primaryRuntimeSource, /function getTlhGlobalSettings\(cwd: string\): TlhSettings/);
 	assert.match(beforeAgentStart, /const settings = getTlhGlobalSettings\(ctx\.cwd\);/);
 	assert.doesNotMatch(beforeAgentStart, /ticketIntegrationEnabled/);
 	assert.match(beforeAgentStart, /activateTlhTicketRuntime\(settings, getAgentDir\(\)\);/);
-	assert.match(beforeAgentStart, /buildTlhSystemPrompt\(activePrimaryAgent\(\), subagentMetadata, primaryEnabled, settings\.tlh\?\.experimental\)/);
+	// The per-turn refresh must NOT be reintroduced in before_agent_start.
+	assert.doesNotMatch(beforeAgentStart, /sessionExperimentalSnapshot =/);
+	// delta/ci prompt guidance reads settings fresh per turn.
+	assert.match(beforeAgentStart, /buildPrimaryExperimentalPrompt\(activePrimaryAgent\(\), settings\.tlh\?\.experimental\)/);
+	assert.match(beforeAgentStart, /buildTlhSystemPrompt\(activePrimaryAgent\(\), subagentMetadata, primaryEnabled, sessionExperimentalSnapshot\)/);
+	// The embedded snapshot is captured once per session in applySessionStart.
+	assert.match(applySessionStart, /sessionExperimentalSnapshot = getTlhGlobalSettings\(ctx\.cwd\)\.tlh\?\.experimental/);
 });
 
 test("primary and child prompts do not include disabled-ticket fallback guidance", () => {
@@ -458,6 +465,69 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 		assert.doesNotMatch(prompt, /## TLH Ticket Integration Disabled/);
 		assert.doesNotMatch(prompt, /non-ticket/i);
 		assert.doesNotMatch(prompt, /ticket integration is disabled/i);
+	}
+});
+
+test("allowed-subagents prompt keeps bundled minor-agent listings and scopes embedded guidance to architect", () => {
+	const primaryAgents = loadPrimaryAgents();
+	const architect = primaryAgents.get("architect");
+	const rush = primaryAgents.get("rush");
+	const product = primaryAgents.get("product");
+	const bugHunter = primaryAgents.get("bug-hunter");
+	const subagents = loadSubagentMetadata();
+
+	const embeddedConfig = { enabledFeatures: ["embedded-subagents"] };
+	const noEmbeddedConfig = { enabledFeatures: [] };
+
+	// Patterns
+	const embeddedClause = /embedded\.<slug>.*subagent.*explicitly names or asks/s;
+	const closingRule = /Do not delegate outside this bundled TLH minor-agent list\./;
+	const managementGuidance = /TLH minor agents are isolated to the user scope/;
+	const sectionHeader = /## TLH Allowed Minor Subagents/;
+
+	// architect + embedded-subagents flag ON: has embedded clause, no closing rule
+	const architectOn = buildTlhSystemPrompt(architect, subagents, true, embeddedConfig);
+	assert.match(architectOn, sectionHeader, "architect+on: section header present");
+	assert.match(architectOn, managementGuidance, "architect+on: management guidance present");
+	assert.match(architectOn, embeddedClause, "architect+on: embedded clause present");
+	assert.doesNotMatch(architectOn, closingRule, "architect+on: no closing rule");
+
+	// architect + embedded-subagents flag OFF: no embedded clause, has closing rule
+	const architectOff = buildTlhSystemPrompt(architect, subagents, true, noEmbeddedConfig);
+	assert.match(architectOff, sectionHeader, "architect+off: section header present");
+	assert.match(architectOff, managementGuidance, "architect+off: management guidance present");
+	assert.doesNotMatch(architectOff, embeddedClause, "architect+off: no embedded clause");
+	assert.match(architectOff, closingRule, "architect+off: closing rule present");
+
+	// architect + undefined config: no embedded clause, has closing rule
+	const architectUndefined = buildTlhSystemPrompt(architect, subagents, true, undefined);
+	assert.doesNotMatch(architectUndefined, embeddedClause, "architect+undefined: no embedded clause");
+	assert.match(architectUndefined, closingRule, "architect+undefined: closing rule present");
+
+	// rush / product / bug-hunter: no embedded clause and has closing rule regardless of flag
+	for (const primary of [rush, product, bugHunter]) {
+		const label = primary?.name ?? "unknown";
+		for (const config of [embeddedConfig, noEmbeddedConfig, undefined]) {
+			const prompt = buildTlhSystemPrompt(primary, subagents, true, config);
+			assert.match(prompt, sectionHeader, `${label}: section header present`);
+			assert.match(prompt, managementGuidance, `${label}: management guidance present`);
+			assert.doesNotMatch(prompt, embeddedClause, `${label}: no embedded clause`);
+			assert.match(prompt, closingRule, `${label}: closing rule present`);
+		}
+	}
+
+	// All variants include bundled agent listings
+	for (const [primary, config] of [
+		[architect, embeddedConfig],
+		[architect, noEmbeddedConfig],
+		[rush, embeddedConfig],
+		[rush, noEmbeddedConfig],
+		[product, embeddedConfig],
+		[bugHunter, embeddedConfig],
+	]) {
+		const prompt = buildTlhSystemPrompt(primary, subagents, true, config);
+		assert.match(prompt, /- developer:/, `${primary?.name}: developer listing present`);
+		assert.match(prompt, /- code-reviewer:/, `${primary?.name}: code-reviewer listing present`);
 	}
 });
 
@@ -652,7 +722,15 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 	);
 	assert.match(toolCall, /if \(selection === "rush" && isSubagentResumeAction\(event\.input\)\)/);
 	assert.match(toolCall, /if \(selection === "rush" && subagentCallTargetsAgent\(event\.input, "developer"\)\)/);
-	assert.match(toolCall, /const reason = validateSubagentToolInput\(event\.input, \{ allowedSubagents \}\)/);
+	assert.match(toolCall, /const embeddedFeatureEnabled = isExperimentalFeatureEnabled\(sessionExperimentalSnapshot, EMBEDDED_SUBAGENTS_FEATURE\)/);
+	assert.match(
+		toolCall,
+		/if \(embeddedFeatureEnabled\) \{[\s\S]*const embeddedBlockReason = embeddedDelegationBlockedReason\(selection, event\.input\)/,
+	);
+	assert.match(toolCall, /const allowEmbeddedTargets = embeddedFeatureEnabled && selection === "architect"/);
+	assert.match(toolCall, /const requestedEmbeddedTargets = collectSubagentCallTargetsMatching\(event\.input, isEmbeddedSubagentTarget\)/);
+	assert.match(toolCall, /if \(requestedEmbeddedTargets\.length > 0\) \{[\s\S]*loadAuthorizedEmbeddedSubagentRuntimeNames\(getAgentDir\(\)\)/);
+	assert.match(toolCall, /const reason = validateSubagentToolInput\(event\.input, \{ allowedSubagents, allowEmbeddedTargets \}\)/);
 	assert(
 		toolCall.indexOf('if (event.toolName === "bash")') < toolCall.indexOf("resolveTlhCommitAttribution"),
 		"parent tool_call should resolve attribution only inside the bash branch",
@@ -661,7 +739,7 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 		toolCall.indexOf("applyProviderAwareSubagentModels") < toolCall.indexOf("!isEnabledPrimaryAgentSelection(selection)"),
 		"provider-aware subagent defaults should run before the disabled-primary guard",
 	);
-	const genericValidationIndex = toolCall.indexOf("const reason = validateSubagentToolInput(event.input, { allowedSubagents })");
+	const genericValidationIndex = toolCall.indexOf("const reason = validateSubagentToolInput(event.input, { allowedSubagents, allowEmbeddedTargets })");
 	assert(
 		toolCall.indexOf("isSubagentResumeAction") < genericValidationIndex,
 		"Rush resume guard should run before generic subagent validation",
@@ -669,6 +747,24 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 	assert(
 		toolCall.lastIndexOf('subagentCallTargetsAgent(event.input, "developer")') < genericValidationIndex,
 		"Rush developer guard should run before generic subagent validation",
+	);
+	assert(
+		toolCall.indexOf("embeddedDelegationBlockedReason") < genericValidationIndex,
+		"Embedded delegation block check should run before generic subagent validation",
+	);
+	assert(
+		toolCall.indexOf("allowEmbeddedTargets") < genericValidationIndex,
+		"allowEmbeddedTargets computation should appear before generic subagent validation",
+	);
+	const requestedEmbeddedTargetsIndex = toolCall.indexOf("const requestedEmbeddedTargets = collectSubagentCallTargetsMatching(event.input, isEmbeddedSubagentTarget)");
+	const embeddedAuthorizationScanIndex = toolCall.indexOf("loadAuthorizedEmbeddedSubagentRuntimeNames(getAgentDir())");
+	assert(
+		requestedEmbeddedTargetsIndex < embeddedAuthorizationScanIndex,
+		"Embedded target collection should happen before the authorization scan",
+	);
+	assert(
+		toolCall.indexOf("if (requestedEmbeddedTargets.length > 0)") < embeddedAuthorizationScanIndex,
+		"Embedded authorization scan should be gated behind an actual embedded target request",
 	);
 });
 
