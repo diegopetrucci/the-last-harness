@@ -185,6 +185,30 @@ function validateNestedFreshSubagentContexts(input) {
 	return undefined;
 }
 
+export function isExecutionBearingResumeChain(input) {
+	return isRecord(input) && stringField(input.action) === "resume" && Array.isArray(input.chain) && input.chain.length > 0;
+}
+
+function validateExecutionBearingTargets(input, allowedSubagents, allowedSubagentSet, allowEmbeddedTargets) {
+	const nestedContextReason = validateNestedFreshSubagentContexts(input);
+	if (nestedContextReason) {
+		return nestedContextReason;
+	}
+
+	const embeddedSuffix = allowEmbeddedTargets ? ", or embedded.<slug>" : "";
+	const targets = collectSubagentTargets(input);
+	if (targets.length === 0) {
+		return `TLH primary-agent subagent execution must target one of: ${allowedSubagents.join(", ")}${embeddedSuffix}.`;
+	}
+
+	const disallowed = targets.filter((agent) => !allowedSubagentSet.has(agent) && !(allowEmbeddedTargets && isEmbeddedSubagentTarget(agent)));
+	if (disallowed.length > 0) {
+		return `TLH primary agents may delegate only to: ${allowedSubagents.join(", ")}${embeddedSuffix}. Disallowed target(s): ${disallowed.join(", ")}.`;
+	}
+
+	return undefined;
+}
+
 export function validateSubagentToolInput(input, options = {}) {
 	const allowedSubagents = normalizeAllowedSubagents(options.allowedSubagents);
 	const allowedSubagentSet = new Set(allowedSubagents);
@@ -210,7 +234,10 @@ export function validateSubagentToolInput(input, options = {}) {
 			if (contextReason) {
 				return contextReason;
 			}
-			return undefined;
+			if (!isExecutionBearingResumeChain(input)) {
+				return undefined;
+			}
+			return validateExecutionBearingTargets(input, allowedSubagents, allowedSubagentSet, Boolean(options.allowEmbeddedTargets));
 		}
 		return undefined;
 	}
@@ -225,25 +252,7 @@ export function validateSubagentToolInput(input, options = {}) {
 		return contextReason;
 	}
 
-	const nestedContextReason = validateNestedFreshSubagentContexts(input);
-	if (nestedContextReason) {
-		return nestedContextReason;
-	}
-
-	const allowEmbeddedTargets = Boolean(options.allowEmbeddedTargets);
-	const embeddedSuffix = allowEmbeddedTargets ? ", or embedded.<slug>" : "";
-
-	const targets = collectSubagentTargets(input);
-	if (targets.length === 0) {
-		return `TLH primary-agent subagent execution must target one of: ${allowedSubagents.join(", ")}${embeddedSuffix}.`;
-	}
-
-	const disallowed = targets.filter((agent) => !allowedSubagentSet.has(agent) && !(allowEmbeddedTargets && isEmbeddedSubagentTarget(agent)));
-	if (disallowed.length > 0) {
-		return `TLH primary agents may delegate only to: ${allowedSubagents.join(", ")}${embeddedSuffix}. Disallowed target(s): ${disallowed.join(", ")}.`;
-	}
-
-	return undefined;
+	return validateExecutionBearingTargets(input, allowedSubagents, allowedSubagentSet, Boolean(options.allowEmbeddedTargets));
 }
 
 /**

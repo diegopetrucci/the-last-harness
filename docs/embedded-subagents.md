@@ -26,7 +26,7 @@ Create user-owned embedded agents here:
 ~/.the-last-harness/agent/agents/**/*.md
 ```
 
-If you installed TLH with a custom `--agent-dir`, use the same `agents/**/*.md` structure under that custom profile directory instead.
+If you installed TLH with a custom `--agent-dir`, use the same `agents/**/*.md` structure under that custom profile directory instead. Definitions beneath any nested `.agents/skills` path are excluded from agent discovery and cannot authorize embedded delegation.
 
 Create the directory if it does not exist yet:
 
@@ -70,11 +70,11 @@ Project-scoped `.pi/agents/**/*.md` files are **not** a supported path for TLH-p
 
 ## Authorization model
 
-Enabling the flag and placing the agent file in the supported location is what authorizes architect to delegate to that agent. At execution time, TLH re-scans only the active isolated profile's `agents/**/*.md` tree and authorizes only runtime names backed by a **currently present, readable, valid, regular non-symlink `.md` file** with `package: embedded`, `name: <slug>`, and a non-empty `description`. Files ending in `.chain.md` do not authorize embedded delegation. Same-name agents that exist only in symlinks, chain definitions, installed packages, or configured `subagents.agentDirs` stay blocked for TLH-primary embedded delegation. Deleting or breaking the profile file is observed on the next embedded delegation attempt.
+Enabling the flag and placing the agent file in the supported location is what authorizes architect to delegate to that agent. At execution time, TLH re-scans only the active isolated profile's `agents/**/*.md` tree, excludes definitions beneath nested `.agents/skills` paths, follows the pinned upstream discovery order for the remaining same-name profile definitions, and authorizes only runtime names whose **last effective same-name profile definition** is a currently readable, valid, regular non-symlink `.md` file with `package: embedded`, `name: <slug>`, and a non-empty `description`. Files ending in `.chain.md` also do not authorize embedded delegation or participate in same-name selection. A later same-name symlink therefore blocks an earlier regular authorizer, while a later valid regular file may supersede an earlier same-name symlink. Same-name agents that exist only in symlinks, installed packages, or configured `subagents.agentDirs` stay blocked for TLH-primary embedded delegation. Deleting or breaking the selected profile file is observed on the next embedded delegation attempt.
 
 The "only when the user explicitly names or asks for it" rule in the architect system prompt is still **prompt policy, not a runtime gate** — the runtime does not verify that the user typed the agent name.
 
-**Known limitation — resume is not re-checked against the architect-only rule.** The architect-only runtime block applies to *initiating* a delegation to an `embedded.*` target. Management actions — including `subagent({ action: "resume", ... })` — are exempt from that block. As a result, if architect starts an embedded subagent run and the user then switches the primary agent (via `/switch-primary-agent`) to `product` or `bug-hunter` within the same session, that non-architect primary can `resume` the already-started embedded run; the runtime does not re-check the resumed run's initiating agent against the architect-only rule. This is a known, accepted defense-in-depth gap, not a sandbox escape: embedded subagents are trusted, user-owned agents (as noted below), so this is a defense-in-depth boundary rather than isolation of untrusted code. It is tracked for a proper fix (threading the resumed run's agent identity into the gate) in issue #330.
+**Known limitation — opaque resume is not re-checked against the architect-only rule.** TLH now treats `subagent({ action: "resume", chain: [...] })` as fresh execution and re-runs the normal embedded-target gates. The remaining accepted issue #330 limitation applies only to *opaque* resume calls that continue an already-started run by id/index without an attached execution chain. If architect starts an embedded subagent run and the user then switches the primary agent (via `/switch-primary-agent`) to `product` or `bug-hunter` within the same session, that non-architect primary can still opaque-`resume` the already-started embedded run; the runtime does not re-check the resumed run's initiating agent against the architect-only rule. This is a known, accepted defense-in-depth gap, not a sandbox escape: embedded subagents are trusted, user-owned agents (as noted below), so this is a defense-in-depth boundary rather than isolation of untrusted code. It is tracked for a proper fix (threading the resumed run's agent identity into the gate) in issue #330.
 
 ## Least-privilege starter
 
@@ -136,7 +136,7 @@ This matches TLH's bundled developer-style tool set, but it is still your own tr
 
 ## How to ask TLH to use one
 
-With TLH primary agents enabled and the flag on, the architect primary may delegate to `embedded.<slug>` agents only when a matching valid profile file currently exists under the active TLH profile's `agents/**/*.md` tree. The system prompt also instructs architect to do so only when you explicitly name or ask for that trusted agent — but again, that user-naming rule is prompt policy, not a hard runtime check.
+With TLH primary agents enabled and the flag on, the architect primary may delegate to `embedded.<slug>` agents only when a matching valid profile file currently exists under the active TLH profile's `agents/**/*.md` tree outside nested `.agents/skills` paths. The system prompt also instructs architect to do so only when you explicitly name or ask for that trusted agent — but again, that user-naming rule is prompt policy, not a hard runtime check.
 
 Good examples:
 
@@ -148,7 +148,7 @@ Use embedded.repo-helper to inspect the auth flow.
 Use my trusted embedded.repo-developer agent for this small fix.
 ```
 
-The `rush`, `product`, and `bug-hunter` primaries are blocked from **initiating** delegation to embedded targets at runtime — only architect can initiate those runs. The accepted issue #330 resume limitation described above still applies to already-started runs.
+The `rush`, `product`, and `bug-hunter` primaries are blocked from **initiating** delegation to embedded targets at runtime — including `resume.chain` attached execution. The accepted issue #330 opaque-resume limitation described above still applies to already-started runs.
 
 When flag is **off** (the default), any `embedded.*` target is blocked the same way an unknown agent name would be. No embedded-specific behavior exists.
 
@@ -156,10 +156,10 @@ When flag is **off** (the default), any `embedded.*` target is blocked the same 
 
 - This is a **trusted extension point, not a sandbox**. If you give an embedded agent write-capable tools, it can edit files and run commands with the same local access a normal user-scope subagent would have.
 - Embedded agents are **user-scope only** when TLH primaries are enabled. The runtime forces `agentScope: "user"` and `context: "fresh"` for embedded execution.
-- Authorization comes only from valid profile-owned, regular non-symlink `.md` definitions under the active TLH profile's `agents/**/*.md` tree; `.chain.md` files, installed-package agents, and `subagents.agentDirs` do not authorize `embedded.*` runtime names for TLH-primary delegation.
+- Authorization comes only from the last effective same-name valid profile-owned definition under the active TLH profile's `agents/**/*.md` tree outside nested `.agents/skills` paths, and that selected definition must be a regular non-symlink `.md` file; `.chain.md` files, installed-package agents, and `subagents.agentDirs` do not authorize `embedded.*` runtime names for TLH-primary delegation.
 - `embedded.*` is for **trusted, user-owned** agents. Do not treat it as a way to safely run repo-controlled prompts from untrusted repositories.
 - Project-scoped `.pi/agents/**/*.md` embedded agents are **not** a supported path for TLH-primary embedded delegation.
-- `rush`, `product`, and `bug-hunter` cannot initiate `embedded.*` runs; architect is the only TLH primary that can initiate them. See the accepted issue #330 resume limitation above for already-started runs.
+- `rush`, `product`, and `bug-hunter` cannot initiate `embedded.*` runs, including via `resume.chain`; architect is the only TLH primary that can initiate them. See the accepted issue #330 opaque-resume limitation above for already-started runs.
 - If you disable TLH primaries, upstream subagent behavior still exists, but this guide documents only the supported primaries-enabled TLH flow above.
 
 ## Undo or remove an embedded agent

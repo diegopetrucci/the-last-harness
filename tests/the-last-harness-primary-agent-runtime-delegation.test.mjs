@@ -443,6 +443,7 @@ test("embedded subagents: flag off blocks embedded targets for architect with st
 			{ tasks: [{ agent: "embedded.my-tool", prompt: "step 1" }] },
 			{ chain: [{ agent: "embedded.my-tool", prompt: "chain step" }] },
 			{ chain: [{ parallel: [{ agent: "embedded.my-tool", prompt: "parallel" }] }] },
+			{ action: "resume", id: "run-123", chain: [{ agent: "embedded.my-tool", prompt: "resume chain step" }] },
 		]) {
 			const result = await toolCall({ toolName: "subagent", input }, ctx);
 			assert.equal(result?.block, true, `expected block for input: ${JSON.stringify(input)}`);
@@ -543,11 +544,28 @@ test("embedded subagents: flag on + architect allows only profile-authorized emb
 		};
 		assert.equal(await toolCall(parallelEvent, ctx), undefined, "parallel-in-chain embedded target should be allowed for architect");
 
+		const resumeChainEvent = {
+			toolName: "subagent",
+			input: { action: "resume", id: "run-123", chain: [{ agent: "embedded.my-tool", prompt: "resume chain step" }] },
+		};
+		assert.equal(await toolCall(resumeChainEvent, ctx), undefined, "resume.chain embedded target should be allowed for architect when profile-authorized");
+		assert.equal(resumeChainEvent.input.agentScope, "user");
+		assert.equal(resumeChainEvent.input.context, "fresh");
+
 		const missingEvent = { toolName: "subagent", input: { agent: "embedded.missing-tool", prompt: "blocked" } };
 		const missingResult = await toolCall(missingEvent, ctx);
 		assert.equal(missingResult?.block, true);
 		assert.match(missingResult?.reason ?? "", /valid package: embedded \/ name: <slug>/);
 		assert.match(missingResult?.reason ?? "", /embedded\.missing-tool/);
+
+		const missingResumeChainEvent = {
+			toolName: "subagent",
+			input: { action: "resume", id: "run-456", chain: [{ agent: "embedded.missing-tool", prompt: "blocked" }] },
+		};
+		const missingResumeChainResult = await toolCall(missingResumeChainEvent, ctx);
+		assert.equal(missingResumeChainResult?.block, true);
+		assert.match(missingResumeChainResult?.reason ?? "", /valid package: embedded \/ name: <slug>/);
+		assert.match(missingResumeChainResult?.reason ?? "", /Unauthorized target\(s\): embedded\.missing-tool/);
 	});
 });
 
@@ -614,7 +632,32 @@ test("embedded subagents: flag on + rush blocks embedded targets with rush-speci
 	});
 });
 
-test("embedded subagents: flag on + product blocks embedded targets with product-specific reason", async (t) => {
+test("embedded subagents: flag on keeps opaque resume issue #330 behavior for product and bug-hunter", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
+		);
+		for (const selected of ["product", "bug-hunter"]) {
+			const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+			const ctx = createToolCallContext(
+				[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected } }],
+				undefined,
+				{ cwd: fixture.cwd },
+			);
+			await applySessionStart(ctx);
+
+			const opaqueResumeEvent = { toolName: "subagent", input: { action: "resume", id: "run-123", message: "Continue the approved ticket." } };
+			assert.equal(await toolCall(opaqueResumeEvent, ctx), undefined, `${selected} opaque resume should remain allowed`);
+			assert.equal(opaqueResumeEvent.input.agentScope, "user");
+			assert.equal(opaqueResumeEvent.input.context, "fresh");
+		}
+	});
+});
+
+test("embedded subagents: flag on + product blocks embedded targets with product-specific reason, including resume.chain", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -630,15 +673,19 @@ test("embedded subagents: flag on + product blocks embedded targets with product
 		);
 		await applySessionStart(ctx);
 
-		const embeddedEvent = { toolName: "subagent", input: { agent: "embedded.my-tool", prompt: "do something" } };
-		const result = await toolCall(embeddedEvent, ctx);
-		assert.equal(result?.block, true);
-		assert.match(result?.reason ?? "", /Product may not delegate to embedded/i);
-		assert.match(result?.reason ?? "", /reserved for the architect/i);
+		for (const input of [
+			{ agent: "embedded.my-tool", prompt: "do something" },
+			{ action: "resume", id: "run-123", chain: [{ agent: "embedded.my-tool", prompt: "resume chain step" }] },
+		]) {
+			const result = await toolCall({ toolName: "subagent", input }, ctx);
+			assert.equal(result?.block, true);
+			assert.match(result?.reason ?? "", /Product may not delegate to embedded/i);
+			assert.match(result?.reason ?? "", /reserved for the architect/i);
+		}
 	});
 });
 
-test("embedded subagents: flag on + bug-hunter blocks embedded targets with bug-hunter-specific reason", async (t) => {
+test("embedded subagents: flag on + bug-hunter blocks embedded targets with bug-hunter-specific reason, including resume.chain", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -654,11 +701,15 @@ test("embedded subagents: flag on + bug-hunter blocks embedded targets with bug-
 		);
 		await applySessionStart(ctx);
 
-		const embeddedEvent = { toolName: "subagent", input: { agent: "embedded.my-tool", prompt: "do something" } };
-		const result = await toolCall(embeddedEvent, ctx);
-		assert.equal(result?.block, true);
-		assert.match(result?.reason ?? "", /Bug-Hunter may not delegate to embedded/i);
-		assert.match(result?.reason ?? "", /reserved for the architect/i);
+		for (const input of [
+			{ agent: "embedded.my-tool", prompt: "do something" },
+			{ action: "resume", id: "run-123", chain: [{ agent: "embedded.my-tool", prompt: "resume chain step" }] },
+		]) {
+			const result = await toolCall({ toolName: "subagent", input }, ctx);
+			assert.equal(result?.block, true);
+			assert.match(result?.reason ?? "", /Bug-Hunter may not delegate to embedded/i);
+			assert.match(result?.reason ?? "", /reserved for the architect/i);
+		}
 	});
 });
 
@@ -852,6 +903,121 @@ test("embedded subagents: same-name external agents stay blocked when the profil
 		assert.equal(blockedResult?.block, true);
 		assert.match(blockedResult?.reason ?? "", /embedded\.fallback/);
 		assert.match(blockedResult?.reason ?? "", /currently exists under/);
+	});
+});
+
+test("embedded subagents: later same-name profile symlink collisions use upstream package normalization and block descriptions", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
+		);
+		const collisionCases = [
+			{
+				name: "fallback",
+				laterFrontmatter: "---\nname: fallback\npackage: embedded\ndescription: Later symlink authorizer\n---",
+			},
+			{
+				name: "normalized-package",
+				laterFrontmatter: "---\nname: normalized-package\npackage: Embedded\ndescription: Later normalized-package symlink authorizer\n---",
+			},
+			{
+				name: "block-description",
+				laterFrontmatter: "---\nname: block-description\npackage: embedded\ndescription:\n  Later block-valued\n  symlink authorizer\n---",
+			},
+		];
+		for (const { name, laterFrontmatter } of collisionCases) {
+			writeEmbeddedAgent(
+				fixture.agent,
+				`a/${name}.md`,
+				`---\nname: ${name}\npackage: embedded\ndescription: Earlier regular authorizer\n---`,
+			);
+			const laterSymlinkTargetPath = writeEmbeddedAgent(fixture.dir, `later-${name}.md`, laterFrontmatter);
+			mkdirSync(join(fixture.agent, "agents", "z"), { recursive: true });
+			symlinkSync(laterSymlinkTargetPath, join(fixture.agent, "agents", "z", `${name}.md`));
+		}
+		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const ctx = createToolCallContext(
+			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
+			undefined,
+			{ cwd: fixture.cwd },
+		);
+		await applySessionStart(ctx);
+
+		for (const { name } of collisionCases) {
+			const runtimeName = `embedded.${name}`;
+			const blockedResult = await toolCall({ toolName: "subagent", input: { agent: runtimeName, prompt: "blocked" } }, ctx);
+			assert.equal(blockedResult?.block, true, `${runtimeName} should bind to the later symlink definition`);
+			assert.match(blockedResult?.reason ?? "", new RegExp(runtimeName.replace(".", "\\.")));
+		}
+	});
+});
+
+test("embedded subagents: a later valid regular profile definition supersedes an earlier same-name symlink collision", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
+		);
+		const earlierSymlinkTargetPath = writeEmbeddedAgent(
+			fixture.dir,
+			"earlier-symlink-target.md",
+			"---\nname: fallback\npackage: embedded\ndescription: Earlier symlink authorizer\n---",
+		);
+		mkdirSync(join(fixture.agent, "agents", "a"), { recursive: true });
+		symlinkSync(earlierSymlinkTargetPath, join(fixture.agent, "agents", "a", "fallback.md"));
+		writeEmbeddedAgent(
+			fixture.agent,
+			"z/fallback.md",
+			"---\nname: fallback\npackage: embedded\ndescription: Later regular authorizer\n---",
+		);
+		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const ctx = createToolCallContext(
+			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
+			undefined,
+			{ cwd: fixture.cwd },
+		);
+		await applySessionStart(ctx);
+
+		assert.equal(await toolCall({ toolName: "subagent", input: { agent: "embedded.fallback", prompt: "allowed" } }, ctx), undefined);
+	});
+});
+
+test("embedded subagents: definitions beneath nested .agents/skills paths do not supersede an earlier same-name symlink", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
+		);
+		const earlierSymlinkTargetPath = writeEmbeddedAgent(
+			fixture.dir,
+			"legacy-skill-collision-target.md",
+			"---\nname: fallback\npackage: embedded\ndescription: Earlier symlink definition\n---",
+		);
+		mkdirSync(join(fixture.agent, "agents", "a"), { recursive: true });
+		symlinkSync(earlierSymlinkTargetPath, join(fixture.agent, "agents", "a", "fallback.md"));
+		writeEmbeddedAgent(
+			fixture.agent,
+			"z/.agents/skills/fallback.md",
+			"---\nname: fallback\npackage: embedded\ndescription: Excluded legacy skill definition\n---",
+		);
+		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const ctx = createToolCallContext(
+			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
+			undefined,
+			{ cwd: fixture.cwd },
+		);
+		await applySessionStart(ctx);
+
+		const blockedResult = await toolCall({ toolName: "subagent", input: { agent: "embedded.fallback", prompt: "blocked" } }, ctx);
+		assert.equal(blockedResult?.block, true);
+		assert.match(blockedResult?.reason ?? "", /embedded\.fallback/);
 	});
 });
 

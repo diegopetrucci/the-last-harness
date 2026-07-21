@@ -1,5 +1,5 @@
 import { lstatSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join, relative, sep } from "node:path";
 import { SELECTABLE_PRIMARY_AGENTS } from "../the-last-harness-primary-agent.mjs";
 import { allowedSubagentsForExperimentalConfig, isEmbeddedSubagentTarget, isExperimentalFeatureEnabled } from "../the-last-harness-subagent-safety.mjs";
 import { EMBEDDED_SUBAGENTS_FEATURE } from "./experimental.js";
@@ -95,32 +95,113 @@ export function loadSubagentMetadata() {
     }))
         .sort((a, b) => a.name.localeCompare(b.name));
 }
+function parseSubagentDiscoveryFrontmatter(content) {
+    const frontmatter = {};
+    const normalized = content.replace(/\r\n/g, "\n");
+    if (!normalized.startsWith("---")) {
+        return frontmatter;
+    }
+    const endIndex = normalized.indexOf("\n---", 3);
+    if (endIndex === -1) {
+        return frontmatter;
+    }
+    let currentKey;
+    let currentBlockLines;
+    let currentIndent;
+    const flushBlock = () => {
+        if (currentKey === undefined || currentBlockLines === undefined) {
+            return;
+        }
+        const rawBlock = currentBlockLines.join("\n");
+        const prefix = rawBlock.match(/^([ \t]+)/m)?.[1] ?? "";
+        frontmatter[currentKey] = prefix
+            ? rawBlock.replace(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "gm"), "").replace(/^\n/, "")
+            : rawBlock;
+        currentKey = undefined;
+        currentBlockLines = undefined;
+        currentIndent = undefined;
+    };
+    for (const line of normalized.slice(4, endIndex).split("\n")) {
+        const indent = line.search(/\S|$/);
+        if (currentKey !== undefined && currentBlockLines !== undefined && indent > (currentIndent ?? 0)) {
+            currentBlockLines.push(line);
+            continue;
+        }
+        flushBlock();
+        const match = line.match(/^([\w-]+):\s*(.*)$/);
+        if (!match) {
+            continue;
+        }
+        let value = match[2].trim();
+        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+            value = value.slice(1, -1);
+        }
+        if (value === "") {
+            currentKey = match[1];
+            currentBlockLines = [];
+            currentIndent = indent;
+        }
+        else {
+            frontmatter[match[1]] = value;
+        }
+    }
+    flushBlock();
+    return frontmatter;
+}
+function normalizeSubagentPackageName(value) {
+    const trimmed = value?.trim();
+    if (!trimmed) {
+        return undefined;
+    }
+    const normalized = trimmed
+        .toLowerCase()
+        .replace(/\s+/g, "-")
+        .replace(/[^a-z0-9.-]/g, "")
+        .replace(/-+/g, "-")
+        .replace(/\.+/g, ".")
+        .replace(/(?:^[-.]+|[-.]+$)/g, "");
+    return /^[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)*$/.test(normalized) ? normalized : undefined;
+}
+function isLegacyAgentSkillPath(rootDir, filePath) {
+    const parts = relative(rootDir, filePath)
+        .split(sep)
+        .map((part) => part.toLowerCase());
+    if (basename(rootDir).toLowerCase() === ".agents") {
+        parts.unshift(".agents");
+    }
+    return parts.some((part, index) => part === ".agents" && parts[index + 1] === "skills");
+}
 export function loadAuthorizedEmbeddedSubagentRuntimeNames(agentDir) {
-    return uniqueSorted(readMarkdownFilesRecursive(join(agentDir, "agents"))
-        .filter((filePath) => {
-        if (filePath.endsWith(".chain.md")) {
-            return false;
+    const authorizationByRuntimeName = new Map();
+    const agentsDir = join(agentDir, "agents");
+    for (const filePath of readMarkdownFilesRecursive(agentsDir)) {
+        if (filePath.endsWith(".chain.md") || isLegacyAgentSkillPath(agentsDir, filePath)) {
+            continue;
         }
-        try {
-            return lstatSync(filePath).isFile();
+        const content = readText(filePath);
+        if (typeof content !== "string") {
+            continue;
         }
-        catch {
-            return false;
-        }
-    })
-        .map((filePath) => readText(filePath))
-        .filter((content) => typeof content === "string")
-        .map((content) => parseFrontmatter(content).frontmatter)
-        .map((frontmatter) => {
-        const name = frontmatter.name?.trim();
-        const description = frontmatter.description?.trim();
-        if (frontmatter.package?.trim() !== "embedded" || !name || !description) {
-            return undefined;
+        const frontmatter = parseSubagentDiscoveryFrontmatter(content);
+        const name = frontmatter.name;
+        const description = frontmatter.description;
+        if (normalizeSubagentPackageName(frontmatter.package) !== "embedded" || !name || !description) {
+            continue;
         }
         const runtimeName = `embedded.${name}`;
-        return isEmbeddedSubagentTarget(runtimeName) ? runtimeName : undefined;
-    })
-        .filter((runtimeName) => typeof runtimeName === "string"));
+        if (!isEmbeddedSubagentTarget(runtimeName)) {
+            continue;
+        }
+        try {
+            authorizationByRuntimeName.set(runtimeName, lstatSync(filePath).isFile());
+        }
+        catch {
+            continue;
+        }
+    }
+    return uniqueSorted([...authorizationByRuntimeName.entries()]
+        .filter(([, authorized]) => authorized)
+        .map(([runtimeName]) => runtimeName));
 }
 function formatAllowedSubagents(primary, subagents, experimentalConfig) {
     const allowed = new Set(allowedSubagentsForExperimentalConfig(experimentalConfig));

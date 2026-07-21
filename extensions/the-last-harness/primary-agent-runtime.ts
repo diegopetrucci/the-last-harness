@@ -18,6 +18,7 @@ import {
 	allowedSubagentsForExperimentalConfig,
 	collectSubagentTargets,
 	isEmbeddedSubagentTarget,
+	isExecutionBearingResumeChain,
 	isExperimentalFeatureEnabled,
 	registerTlhStartupMode,
 	validateSubagentToolInput,
@@ -277,13 +278,16 @@ function subagentCallTargetsMatching(input: unknown, predicate: (agent: string) 
 	return collectSubagentCallTargetsMatching(input, predicate).length > 0;
 }
 
-function isSubagentManagementActionInput(input: unknown): boolean {
-	return isRecord(input) && typeof input.action === "string" && input.action.trim().length > 0;
+function isOpaqueSubagentManagementActionInput(input: unknown): boolean {
+	if (!isRecord(input) || typeof input.action !== "string" || input.action.trim().length === 0) {
+		return false;
+	}
+	return !isExecutionBearingResumeChain(input);
 }
 
 function embeddedDelegationBlockedReason(selection: TlhPrimaryAgentSelection, input: unknown): string | undefined {
-	// Management actions are exempt from embedded-target restrictions.
-	if (isSubagentManagementActionInput(input)) {
+	// Opaque management actions stay exempt; resume.chain is treated as new execution.
+	if (isOpaqueSubagentManagementActionInput(input)) {
 		return undefined;
 	}
 	if (!subagentCallTargetsMatching(input, isEmbeddedSubagentTarget)) {
@@ -856,7 +860,7 @@ function createTlhPrimaryAgentRuntime(
 			if (reason) {
 				return { block: true, reason };
 			}
-			if (allowEmbeddedTargets && !isSubagentManagementActionInput(event.input)) {
+			if (allowEmbeddedTargets && !isOpaqueSubagentManagementActionInput(event.input)) {
 				const authorizedEmbeddedTargets = new Set(loadAuthorizedEmbeddedSubagentRuntimeNames(getAgentDir()));
 				const requestedEmbeddedTargets = collectSubagentCallTargetsMatching(event.input, isEmbeddedSubagentTarget);
 				const unauthorizedTargets = requestedEmbeddedTargets.filter((target) => !authorizedEmbeddedTargets.has(target));

@@ -192,6 +192,32 @@ test("validateSubagentToolInput allows opaque resume and blocks unsafe scopes/co
 	assert.equal(allowedDeveloperResume.context, "fresh");
 });
 
+
+test("validateSubagentToolInput treats resume.chain as execution-bearing while preserving resume normalization", () => {
+	const allowedResumeChain = { action: "resume", id: "run-123", chain: [{ agent: "developer", prompt: "Implement the fix" }], agentScope: "both" };
+	assertAllowed(allowedResumeChain);
+	assert.equal(allowedResumeChain.agentScope, "user");
+	assert.equal(allowedResumeChain.context, "fresh");
+
+	const embeddedResumeChain = { action: "resume", id: "run-456", chain: [{ agent: "embedded.my-tool", prompt: "Inspect the repo" }] };
+	assert.match(
+		validateSubagentToolInput(embeddedResumeChain),
+		/Disallowed target\(s\): embedded\.my-tool/,
+	);
+	assert.equal(embeddedResumeChain.agentScope, "user");
+	assert.equal(embeddedResumeChain.context, "fresh");
+
+	const staleNestedContextResumeChain = {
+		action: "resume",
+		id: "run-789",
+		chain: [{ parallel: [{ agent: "developer", prompt: "Implement the fix", context: "resume" }] }],
+	};
+	assert.match(
+		validateSubagentToolInput(staleNestedContextResumeChain),
+		/nested chain\[0\]\.parallel\[0\]\.context may not use context: "resume"/,
+	);
+});
+
 test("validateSubagentToolInput uses generic primary-agent wording", () => {
 	const reasons = [
 		validateSubagentToolInput(null),

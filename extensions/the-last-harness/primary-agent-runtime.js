@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_PRIMARY_AGENT, DISABLED_PRIMARY_AGENT, PRIMARY_AGENT_CYCLE, PRIMARY_AGENT_SESSION_STATE_ENTRY, isEnabledPrimaryAgentSelection, nextPrimaryAgentSelection, primaryAgentDefaultLabel, primaryAgentSelectionFromBranch, resolvePrimaryAgentConfig, } from "../the-last-harness-primary-agent.mjs";
 import { createPrimaryToolState, filterAvailableTools } from "../the-last-harness-primary-tools.mjs";
-import { allowedSubagentsForExperimentalConfig, collectSubagentTargets, isEmbeddedSubagentTarget, isExperimentalFeatureEnabled, registerTlhStartupMode, validateSubagentToolInput, } from "../the-last-harness-subagent-safety.mjs";
+import { allowedSubagentsForExperimentalConfig, collectSubagentTargets, isEmbeddedSubagentTarget, isExecutionBearingResumeChain, isExperimentalFeatureEnabled, registerTlhStartupMode, validateSubagentToolInput, } from "../the-last-harness-subagent-safety.mjs";
 import { buildTlhCommitAttributionPrompt, getTlhGitCommitAttributionBlockReason, resolveTlhCommitAttribution, } from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME } from "./constants.js";
@@ -201,11 +201,14 @@ function collectSubagentCallTargetsMatching(input, predicate) {
 function subagentCallTargetsMatching(input, predicate) {
     return collectSubagentCallTargetsMatching(input, predicate).length > 0;
 }
-function isSubagentManagementActionInput(input) {
-    return isRecord(input) && typeof input.action === "string" && input.action.trim().length > 0;
+function isOpaqueSubagentManagementActionInput(input) {
+    if (!isRecord(input) || typeof input.action !== "string" || input.action.trim().length === 0) {
+        return false;
+    }
+    return !isExecutionBearingResumeChain(input);
 }
 function embeddedDelegationBlockedReason(selection, input) {
-    if (isSubagentManagementActionInput(input)) {
+    if (isOpaqueSubagentManagementActionInput(input)) {
         return undefined;
     }
     if (!subagentCallTargetsMatching(input, isEmbeddedSubagentTarget)) {
@@ -675,7 +678,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             if (reason) {
                 return { block: true, reason };
             }
-            if (allowEmbeddedTargets && !isSubagentManagementActionInput(event.input)) {
+            if (allowEmbeddedTargets && !isOpaqueSubagentManagementActionInput(event.input)) {
                 const authorizedEmbeddedTargets = new Set(loadAuthorizedEmbeddedSubagentRuntimeNames(getAgentDir()));
                 const requestedEmbeddedTargets = collectSubagentCallTargetsMatching(event.input, isEmbeddedSubagentTarget);
                 const unauthorizedTargets = requestedEmbeddedTargets.filter((target) => !authorizedEmbeddedTargets.has(target));
