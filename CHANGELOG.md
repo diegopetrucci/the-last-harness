@@ -12,6 +12,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
+- New `/what-consumed-my-session-limit-and-tokens` command that generates and opens a local, private HTML report attributing token consumption across all TLH sessions (including subagent child sessions, across every project) within the current provider session-limit window (Anthropic 5-hour or OpenAI Codex session window, resolved from the subscription usage snapshot with a trailing-5h fallback). The report ranks sessions by in-window usage with per-provider totals and privacy/accuracy caveats, and embeds no transcript text or tool payloads.
 - Install and update now prune stale settings/keybindings backups (`settings.json.backup-*`, `keybindings.json.backup-*`) from the isolated profile. Backups older than ~28 days are removed, but the two newest are always kept regardless of age. Pruning is scoped strictly to `~/.the-last-harness/agent` and never touches `~/.pi`. To keep a backup indefinitely, copy it outside the isolated profile before it ages out.
 
 ### Fixed
