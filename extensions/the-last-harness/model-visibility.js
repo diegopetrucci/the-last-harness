@@ -1,8 +1,11 @@
-import { InteractiveMode, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { InteractiveMode, ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { isRecord, readText, uniqueSorted } from "./common.js";
 import { safeTlhProfileFilePath } from "./profile-state.js";
 const TLH_MODEL_VISIBILITY_PATCHED = Symbol.for("tlh.modelVisibilityPatched");
 const TLH_MODEL_VISIBILITY_GET_AVAILABLE_ORIGINAL = Symbol.for("tlh.modelVisibilityGetAvailableOriginal");
+const TLH_MODEL_VISIBILITY_RUNTIME_PATCHED = Symbol.for("tlh.modelVisibilityRuntimePatched");
+const TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_ORIGINAL = Symbol.for("tlh.modelVisibilityRuntimeGetAvailableOriginal");
+const TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_SNAPSHOT_ORIGINAL = Symbol.for("tlh.modelVisibilityRuntimeGetAvailableSnapshotOriginal");
 const TLH_MODEL_VISIBILITY_EXACT_LOOKUP_PATCHED = Symbol.for("tlh.modelVisibilityExactLookupPatched");
 const TLH_MODEL_VISIBILITY_FIND_EXACT_MODEL_MATCH_ORIGINAL = Symbol.for("tlh.modelVisibilityFindExactModelMatchOriginal");
 export const TLH_HIDDEN_MODEL_DEFAULTS = Object.freeze([
@@ -152,6 +155,20 @@ export function filterTlhVisibleModels(models, config = getTlhModelVisibilityCon
     return models.filter((model) => !isTlhModelHidden(model, config));
 }
 export function installTlhModelVisibilityFilter() {
+    const modelRuntimePrototype = ModelRuntime.prototype;
+    if (!modelRuntimePrototype[TLH_MODEL_VISIBILITY_RUNTIME_PATCHED]) {
+        const originalGetAvailable = modelRuntimePrototype.getAvailable;
+        const originalGetAvailableSnapshot = modelRuntimePrototype.getAvailableSnapshot;
+        modelRuntimePrototype[TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_ORIGINAL] = originalGetAvailable;
+        modelRuntimePrototype[TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_SNAPSHOT_ORIGINAL] = originalGetAvailableSnapshot;
+        modelRuntimePrototype.getAvailable = async function tlhModelVisibilityRuntimeGetAvailable(providerId) {
+            return filterTlhVisibleModels(await originalGetAvailable.call(this, providerId));
+        };
+        modelRuntimePrototype.getAvailableSnapshot = function tlhModelVisibilityRuntimeGetAvailableSnapshot() {
+            return filterTlhVisibleModels(originalGetAvailableSnapshot.call(this));
+        };
+        modelRuntimePrototype[TLH_MODEL_VISIBILITY_RUNTIME_PATCHED] = true;
+    }
     const modelRegistryPrototype = ModelRegistry.prototype;
     if (!modelRegistryPrototype[TLH_MODEL_VISIBILITY_PATCHED]) {
         const originalGetAvailable = modelRegistryPrototype.getAvailable;
@@ -173,11 +190,11 @@ export function installTlhModelVisibilityFilter() {
         if (exactMatch || !isCanonicalModelReference(searchTerm)) {
             return exactMatch;
         }
-        if ((this.session?.scopedModels?.length ?? 0) > 0 || !this.session?.modelRegistry) {
+        if ((this.session?.scopedModels?.length ?? 0) > 0) {
             return exactMatch;
         }
         try {
-            return findExactModelReferenceMatch(searchTerm, getUnfilteredAvailableModels(this.session.modelRegistry));
+            return findExactModelReferenceMatch(searchTerm, getUnfilteredAvailableModels(this.session));
         }
         catch {
             return exactMatch;
@@ -185,8 +202,34 @@ export function installTlhModelVisibilityFilter() {
     };
     interactiveModePrototype[TLH_MODEL_VISIBILITY_EXACT_LOOKUP_PATCHED] = true;
 }
-export function getUnfilteredAvailableModels(modelRegistry) {
-    const modelRegistryPrototype = Object.getPrototypeOf(modelRegistry);
-    const originalGetAvailable = modelRegistryPrototype?.[TLH_MODEL_VISIBILITY_GET_AVAILABLE_ORIGINAL];
-    return originalGetAvailable ? originalGetAvailable.call(modelRegistry) : modelRegistry.getAvailable();
+function getUnfilteredRuntimeAvailableSnapshot(modelRuntime) {
+    const modelRuntimePrototype = Object.getPrototypeOf(modelRuntime);
+    const originalGetAvailableSnapshot = modelRuntimePrototype?.[TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_SNAPSHOT_ORIGINAL];
+    return originalGetAvailableSnapshot
+        ? [...originalGetAvailableSnapshot.call(modelRuntime)]
+        : [...modelRuntime.getAvailableSnapshot()];
+}
+export function getUnfilteredAvailableModels(modelSource) {
+    if (!modelSource) {
+        return [];
+    }
+    if ("getAvailableSnapshot" in modelSource && typeof modelSource.getAvailableSnapshot === "function") {
+        return getUnfilteredRuntimeAvailableSnapshot(modelSource);
+    }
+    if ("modelRuntime" in modelSource && modelSource.modelRuntime) {
+        return getUnfilteredRuntimeAvailableSnapshot(modelSource.modelRuntime);
+    }
+    if ("modelRegistry" in modelSource && modelSource.modelRegistry) {
+        return getUnfilteredAvailableModels(modelSource.modelRegistry);
+    }
+    const compatibilityRuntime = modelSource.runtime;
+    if (compatibilityRuntime) {
+        return getUnfilteredRuntimeAvailableSnapshot(compatibilityRuntime);
+    }
+    if ("getAvailable" in modelSource && typeof modelSource.getAvailable === "function") {
+        const modelRegistryPrototype = Object.getPrototypeOf(modelSource);
+        const originalGetAvailable = modelRegistryPrototype?.[TLH_MODEL_VISIBILITY_GET_AVAILABLE_ORIGINAL];
+        return originalGetAvailable ? originalGetAvailable.call(modelSource) : modelSource.getAvailable();
+    }
+    return [];
 }

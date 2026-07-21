@@ -14,19 +14,19 @@ function tempFixture({
 	rootPackageVersion = packageVersion,
 	dependencies = {},
 	devDependencies = {
-		"@earendil-works/pi-coding-agent": "0.80.6",
-		"@earendil-works/pi-tui": "0.80.6",
+		"@earendil-works/pi-coding-agent": "0.81.1",
+		"@earendil-works/pi-tui": "0.81.1",
 	},
 	peerDependencies = {
-		"@earendil-works/pi-coding-agent": "0.80.6",
-		"@earendil-works/pi-tui": "0.80.6",
+		"@earendil-works/pi-coding-agent": "0.81.1",
+		"@earendil-works/pi-tui": "0.81.1",
 	},
 	overrides = {},
 	defaultExtensions = [{ id: "helper", source: "npm:helper@1.2.3" }],
 	gnosisVersion = "0.5.4",
 	gnosisMtsVersion = gnosisVersion,
 	installVersion = gnosisVersion,
-	installShPiVersion = "0.80.6",
+	installShPiVersion = "0.81.1",
 	installMtsPiVersion = installShPiVersion,
 	installMjsPiVersion = installShPiVersion,
 	rtkVersion = "0.43.0",
@@ -49,13 +49,13 @@ function tempFixture({
 		version: packageVersion,
 		dependencies,
 		devDependencies: {
-			"@earendil-works/pi-coding-agent": "0.80.6",
-			"@earendil-works/pi-tui": "0.80.6",
+			"@earendil-works/pi-coding-agent": "0.81.1",
+			"@earendil-works/pi-tui": "0.81.1",
 			...devDependencies,
 		},
 		peerDependencies: {
-			"@earendil-works/pi-coding-agent": "0.80.6",
-			"@earendil-works/pi-tui": "0.80.6",
+			"@earendil-works/pi-coding-agent": "0.81.1",
+			"@earendil-works/pi-tui": "0.81.1",
 			...peerDependencies,
 		},
 		overrides,
@@ -133,8 +133,8 @@ test("check-package-versions passes with pinned dependency exceptions and ignore
 			sshHelper: "git+ssh://git@github.com/example/ssh-helper.git#abcdef1234567",
 		},
 		peerDependencies: {
-			"@earendil-works/pi-coding-agent": "0.80.6",
-			"@earendil-works/pi-tui": "0.80.6",
+			"@earendil-works/pi-coding-agent": "0.81.1",
+			"@earendil-works/pi-tui": "0.81.1",
 		},
 		overrides: {
 			dompurify: "3.4.11",
@@ -365,7 +365,7 @@ test("check-package-versions rejects managed Pi pin drift across package metadat
 
 	assert.equal(result.status, 1);
 	assert.match(result.stderr, /Managed Pi pins must stay in sync:/);
-	assert.match(result.stderr, /package\.json#peerDependencies\.@earendil-works\/pi-coding-agent: "0\.80\.6"/);
+	assert.match(result.stderr, /package\.json#peerDependencies\.@earendil-works\/pi-coding-agent: "0\.81\.1"/);
 	assert.match(result.stderr, /tlh-install\.mts#PINNED_PI_VERSION: "0\.80\.7"/);
 });
 
@@ -373,13 +373,13 @@ test("check-package-versions rejects non-exact managed Pi package pins", () => {
 	const fixture = tempFixture({
 		packageVersion: "1.2.3",
 		peerDependencies: {
-			"@earendil-works/pi-coding-agent": "^0.80.6",
-			"@earendil-works/pi-tui": "0.80.6",
+			"@earendil-works/pi-coding-agent": "^0.81.1",
+			"@earendil-works/pi-tui": "0.81.1",
 		},
 	});
 
 	const result = runCheckPackageVersions(fixture);
 
 	assert.equal(result.status, 1);
-	assert.match(result.stderr, /package\.json#peerDependencies\.@earendil-works\/pi-coding-agent must use an exact version, found "\^0\.80\.6"/);
+	assert.match(result.stderr, /package\.json#peerDependencies\.@earendil-works\/pi-coding-agent must use an exact version, found "\^0\.81\.1"/);
 });

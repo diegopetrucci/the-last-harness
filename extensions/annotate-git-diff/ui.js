@@ -33,10 +33,11 @@ function resolveMonacoEditorWorkerJs(monacoBasePath) {
     }
     throw new Error(`Unable to locate Monaco editor worker under ${monacoBasePath}`);
 }
-function resolveMonacoRuntimeJs(monacoBasePath) {
+function resolveMonacoRuntimeJs(monacoBasePath, monacoEntryPath) {
     const excludedFiles = new Set([
         join(monacoBasePath, "loader.js"),
         join(monacoBasePath, "editor", "editor.main.js"),
+        monacoEntryPath,
     ]);
     const scripts = [];
     const visit = (dir) => {
@@ -60,17 +61,18 @@ function resolveMonacoRuntimeJs(monacoBasePath) {
 function resolveReviewUiAssets() {
     try {
         const tailwindBrowserJs = safeReadResolvedAsset("@tailwindcss/browser");
-        const monacoBasePath = join(dirname(require.resolve("monaco-editor/package.json")), "min", "vs");
+        const monacoEntryPath = require.resolve("monaco-editor");
+        const monacoBasePath = dirname(monacoEntryPath);
         const monacoLoaderJs = readFileSync(join(monacoBasePath, "loader.js"), "utf8");
-        const monacoEditorJs = readFileSync(join(monacoBasePath, "editor", "editor.main.js"), "utf8");
+        const monacoEntryJs = readFileSync(monacoEntryPath, "utf8");
         const monacoEditorCssPath = join(monacoBasePath, "editor", "editor.main.css");
         const monacoEditorCss = existsSync(monacoEditorCssPath) ? readFileSync(monacoEditorCssPath, "utf8") : "";
         const monacoWorkerJs = resolveMonacoEditorWorkerJs(monacoBasePath);
-        const monacoRuntimeJs = resolveMonacoRuntimeJs(monacoBasePath);
+        const monacoRuntimeJs = resolveMonacoRuntimeJs(monacoBasePath, monacoEntryPath);
         return {
             tailwindBrowserJs,
             monacoLoaderJs,
-            monacoEditorJs,
+            monacoEntryJs,
             monacoEditorCss,
             monacoWorkerJs,
             monacoBasicLanguagesJs: monacoRuntimeJs,
@@ -82,7 +84,7 @@ function resolveReviewUiAssets() {
         return {
             tailwindBrowserJs: "",
             monacoLoaderJs: "",
-            monacoEditorJs: "",
+            monacoEntryJs: "",
             monacoEditorCss: "",
             monacoWorkerJs: "",
             monacoBasicLanguagesJs: "",
@@ -107,7 +109,7 @@ export function buildReviewHtml(data) {
     html = safeReplace(html, "__INLINE_MONACO_LOADER_JS__", escapeInlineScriptSource(assets.monacoLoaderJs));
     html = safeReplace(html, "__INLINE_MONACO_EDITOR_CSS__", escapeInlineStyleSource(assets.monacoEditorCss));
     html = safeReplace(html, "__INLINE_MONACO_WORKER_SOURCE_JSON__", escapeForInlineScript(JSON.stringify(assets.monacoWorkerJs)));
-    html = safeReplace(html, "__INLINE_MONACO_EDITOR_JS__", escapeInlineScriptSource(assets.monacoEditorJs));
+    html = safeReplace(html, "__INLINE_MONACO_ENTRY_JS__", escapeInlineScriptSource(assets.monacoEntryJs));
     html = safeReplace(html, "__INLINE_MONACO_BASIC_LANGUAGES_JS__", escapeInlineScriptSource(assets.monacoBasicLanguagesJs));
     html = safeReplace(html, "__INLINE_REVIEW_STATE_JS__", reviewStateJs);
     html = safeReplace(html, "__INLINE_JS__", appJs);

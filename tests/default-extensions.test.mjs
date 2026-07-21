@@ -21,18 +21,18 @@ const previousMcporterSource = "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-
 const previousBundledMcporterSource = "npm:@diegopetrucci/pi-mcp-adapter@2.10.1";
 const bundledMcporterSource = "npm:@diegopetrucci/pi-mcp-adapter@2.10.2";
 const previousBundledNotifySource = "npm:@diegopetrucci/pi-notify@0.1.7";
-const bundledNotifySource = "npm:@diegopetrucci/pi-notify@0.1.10";
+const bundledNotifySource = "npm:@diegopetrucci/pi-notify@0.1.11";
 const previousPiWebAccessSource = "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1";
 const bundledPiWebAccessSource = "npm:@diegopetrucci/pi-web-access@0.10.10";
 const expectedBundledNpmSources = new Map([
-	["openai-fast", "npm:@diegopetrucci/pi-openai-fast@0.1.9"],
-	["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth@1.0.0"],
-	["fff", "npm:@ff-labs/pi-fff@0.9.6"],
-	["inline-bash", "npm:@diegopetrucci/pi-inline-bash@0.1.3"],
+	["openai-fast", "npm:@diegopetrucci/pi-openai-fast@0.1.10"],
+	["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth@2.0.0"],
+	["fff", "npm:@ff-labs/pi-fff@0.10.1"],
+	["inline-bash", "npm:@diegopetrucci/pi-inline-bash@0.1.5"],
 	["notify", bundledNotifySource],
-	["context-inspector", "npm:@diegopetrucci/pi-context-inspector@0.1.6"],
-	["quiet-tools", "npm:@diegopetrucci/pi-quiet-tools@0.1.4"],
-	["dirty-repo-guard", "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.4"],
+	["context-inspector", "npm:@diegopetrucci/pi-context-inspector@0.1.7"],
+	["quiet-tools", "npm:@diegopetrucci/pi-quiet-tools@0.1.6"],
+	["dirty-repo-guard", "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.5"],
 	["intercom", "npm:@diegopetrucci/pi-intercom@0.8.0"],
 ]);
 
@@ -304,7 +304,7 @@ test("merge no longer reorders quiet-tools around retired rtk packages", () => {
 			id: "quiet-tools",
 			aliases: ["compact-bash"],
 			replaces: ["npm:@diegopetrucci/pi-compact-bash"],
-			source: "npm:@diegopetrucci/pi-quiet-tools@0.1.4",
+			source: "npm:@diegopetrucci/pi-quiet-tools@0.1.6",
 		},
 	], null, 2));
 	writeFileSync(fixture.settings, JSON.stringify({
@@ -327,7 +327,7 @@ test("merge no longer reorders quiet-tools around retired rtk packages", () => {
 	assert.deepEqual(readJson(fixture.settings).packages, [
 		harnessPackage,
 		"npm:before",
-		"npm:@diegopetrucci/pi-quiet-tools@0.1.4",
+		"npm:@diegopetrucci/pi-quiet-tools@0.1.6",
 		"npm:after",
 	]);
 });
@@ -1193,7 +1193,7 @@ test("bundled manifest contains subagents and intercom entries with correct crit
 	const intercom = bundled.find(({ id }) => id === "intercom");
 
 	assert.ok(subagents, "bundled subagents entry should exist");
-	assert.equal(subagents.source, "npm:@diegopetrucci/pi-subagents@0.31.6");
+	assert.equal(subagents.source, "npm:@diegopetrucci/pi-subagents@0.31.7");
 	assert.equal(subagents.critical, true, "subagents must stay critical");
 	assert.deepEqual(subagents.aliases, ["pi-subagents"]);
 	assert.deepEqual(subagents.replaces, [
@@ -1236,7 +1236,7 @@ test("bundled merge migrates legacy upstream and TLH subagents installs to the s
 	const settings = readJson(fixture.settings);
 	assert.deepEqual(
 		settings.packages.filter((entry) => packageIdentity(entry) === "npm:@diegopetrucci/pi-subagents"),
-		["npm:@diegopetrucci/pi-subagents@0.31.6"],
+		["npm:@diegopetrucci/pi-subagents@0.31.7"],
 	);
 	assert.equal(
 		settings.packages.some((entry) => packageIdentity(entry) === "git:github.com/nicobailon/pi-subagents"),
