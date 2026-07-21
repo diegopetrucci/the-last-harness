@@ -6,6 +6,7 @@ const USAGE_COMMAND_COMPLETIONS = [
     { value: "weekly off", description: "Hide the weekly usage-limit window in the footer" },
     { value: "weekly toggle", description: "Toggle the weekly usage-limit window in the footer" },
 ];
+let cachedTlhUsageWeeklyVisibility;
 function createRetryableLazyImport(loader) {
     let modulePromise;
     return () => {
@@ -29,6 +30,19 @@ export function getTlhUsageLimitsConfig(cwd) {
 }
 export function shouldShowTlhUsageWeekly(config) {
     return config?.showWeekly;
+}
+export function getPersistedTlhUsageWeeklyVisibility(cwd) {
+    return shouldShowTlhUsageWeekly(getTlhUsageLimitsConfig(cwd));
+}
+export function getCachedTlhUsageWeeklyVisibility() {
+    return cachedTlhUsageWeeklyVisibility;
+}
+export function refreshCachedTlhUsageWeeklyVisibility(cwd) {
+    cachedTlhUsageWeeklyVisibility = getPersistedTlhUsageWeeklyVisibility(cwd);
+    return cachedTlhUsageWeeklyVisibility;
+}
+export function setCachedTlhUsageWeeklyVisibility(showWeekly) {
+    cachedTlhUsageWeeklyVisibility = showWeekly;
 }
 function usageCommandCompletions(prefix) {
     const normalizedPrefix = prefix.trim().toLowerCase();
