@@ -370,8 +370,8 @@ function extractAgent(source, fallbackAgent, options = {}) {
 	return normalizeString(fallbackAgent || "developer");
 }
 
-function isStandaloneTraceRecord(parsed) {
-	return isRecord(parsed) && normalizeTraceSteps([parsed]).length > 0;
+function isStandaloneTraceRecord(record) {
+	return isRecord(record) && normalizeTraceSteps([record]).length > 0;
 }
 
 function extractStepRecords(parsed) {
@@ -396,11 +396,16 @@ function extractStepRecords(parsed) {
 	throw new Error("trace input does not include a recognizable steps/events/messages array");
 }
 
+function isStandaloneTraceSelection(parsed, records) {
+	return isRecord(parsed) && records.length === 1 && records[0] === parsed;
+}
+
 export function importTracePolicyFixtureFromText(text, options = {}) {
 	const parsed = parseTraceInput(text);
-	const standaloneTraceRecord = isStandaloneTraceRecord(parsed);
+	const stepRecords = extractStepRecords(parsed);
+	const standaloneTraceRecord = isStandaloneTraceSelection(parsed, stepRecords);
 	const transcriptSource = isRecord(parsed?.transcript) ? parsed.transcript : parsed;
-	const steps = normalizeTraceSteps(extractStepRecords(parsed)).filter(Boolean);
+	const steps = normalizeTraceSteps(stepRecords).filter(Boolean);
 	if (steps.length === 0) {
 		throw new Error("trace input did not yield any assistant/user/tool steps");
 	}

@@ -221,22 +221,56 @@ test("trace-policy fixture importer accepts standalone assistant, user, and tool
 });
 
 
-test("trace-policy fixture importer preserves wrapper-object role-based agent extraction", () => {
-	const fixture = importTracePolicyFixtureFromText(JSON.stringify({
-		transcript: {
-			role: "architect",
-			steps: [{ role: "assistant", content: "Ready" }],
-		},
-	}), { agent: "developer" });
-
-	assert.equal(fixture.transcript.agent, "architect");
-	assert.deepEqual(fixture.transcript.steps, [
+test("trace-policy fixture importer preserves named wrapper role-based agent extraction", () => {
+	const cases = [
 		{
-			type: "assistant",
-			text: "Ready",
+			name: "steps wrapper",
+			input: {
+				role: "architect",
+				name: "wrapper-agent",
+				steps: [{ role: "assistant", content: "Ready" }],
+			},
 		},
-	]);
+		{
+			name: "events wrapper",
+			input: {
+				role: "architect",
+				name: "wrapper-agent",
+				events: [{ role: "assistant", content: "Ready" }],
+			},
+		},
+		{
+			name: "messages wrapper",
+			input: {
+				role: "architect",
+				name: "wrapper-agent",
+				messages: [{ message: { role: "assistant", content: "Ready" } }],
+			},
+		},
+		{
+			name: "transcript steps wrapper",
+			input: {
+				transcript: {
+					role: "architect",
+					name: "wrapper-agent",
+					steps: [{ role: "assistant", content: "Ready" }],
+				},
+			},
+		},
+	];
+
+	for (const { name, input } of cases) {
+		const fixture = importTracePolicyFixtureFromText(JSON.stringify(input), { agent: "developer" });
+		assert.equal(fixture.transcript.agent, "architect", `${name} agent`);
+		assert.deepEqual(fixture.transcript.steps, [
+			{
+				type: "assistant",
+				text: "Ready",
+			},
+		], name);
+	}
 });
+
 
 
 test("trace-policy fixture importer keeps named assistant messages as assistant steps", () => {
