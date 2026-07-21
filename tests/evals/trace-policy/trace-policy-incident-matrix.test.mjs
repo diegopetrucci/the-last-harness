@@ -14,6 +14,7 @@ const REQUIRED_MATRIX_IDS = [
 	"architect-deterministic-research-routing",
 	"developer-ticket-source-before-edit",
 	"developer-blocking-contact-supervisor-stop-boundary",
+	"developer-pre-existing-changes-preservation-boundary",
 	"code-reviewer-read-only-diff-inspection",
 	"web-scout-citation-discipline",
 	"installer-profile-isolation-safety",

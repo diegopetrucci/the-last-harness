@@ -3,6 +3,7 @@ const TLH_SUBSCRIPTION_USAGE_PROVIDERS = new Set(["openai-codex", "anthropic"]);
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
+const WEEK_MS = 7 * DAY_MS;
 function finiteNumber(value) {
     return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
@@ -59,8 +60,12 @@ function formatResetCountdown(resetsAt, nowMs, windowType) {
 function normalizedUsageLabel(value) {
     return value?.trim().toLowerCase().replaceAll("_", "-").replaceAll(" ", "-") ?? "";
 }
+function formatUsageWindowPresentation(window, windowType) {
+    return window.durationMs === WEEK_MS ? "weekly" : windowType;
+}
 function formatUsageWindowLabel(provider, window, windowType) {
-    if (windowType === "weekly") {
+    const presentation = formatUsageWindowPresentation(window, windowType);
+    if (presentation === "weekly") {
         return "weekly";
     }
     const duration = formatUsageDuration(window.durationMs);
@@ -78,6 +83,7 @@ function formatUsageWindow(provider, window, windowType, nowMs) {
     if (!window) {
         return undefined;
     }
+    const presentation = formatUsageWindowPresentation(window, windowType);
     const label = formatUsageWindowLabel(provider, window, windowType);
     const percent = finiteNumber(window.percent);
     let base;
@@ -98,7 +104,7 @@ function formatUsageWindow(provider, window, windowType, nowMs) {
     if (!base) {
         return undefined;
     }
-    const countdown = formatResetCountdown(window.resetsAt, nowMs, windowType);
+    const countdown = formatResetCountdown(window.resetsAt, nowMs, presentation);
     return countdown ? `${base}, resets in ${countdown}` : base;
 }
 export function formatTlhSubscriptionUsageFooterSegment(snapshot, options = {}) {

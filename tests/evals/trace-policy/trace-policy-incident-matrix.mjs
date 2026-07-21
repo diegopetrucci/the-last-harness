@@ -30,6 +30,7 @@ export const TRACE_POLICY_INCIDENT_MATRIX = [
 			fixtureIds: [
 				"architect-invalid-direct-source-edit",
 				"architect-invalid-direct-source-write",
+				"architect-invalid-pre-existing-changes-authorization-does-not-bypass-direct-mutation",
 			],
 			ownerTicket: "tlht-sp6g",
 		},
@@ -124,6 +125,23 @@ export const TRACE_POLICY_INCIDENT_MATRIX = [
 				"developer-invalid-blocking-contact-supervisor-failure-continues",
 			],
 			ownerTicket: "tlhm-s7bk",
+		},
+	},
+	{
+		id: "developer-pre-existing-changes-preservation-boundary",
+		incident: "gh-331",
+		invariant: "The #331 pre-existing-changes boundary activates only when metadata.hasPreExistingChanges is exactly true. For Developer, risky Git commands that can overwrite or discard pre-existing changes require reviewed scoped authorization set to exact true; safe read-only Git variants and ordinary branch switches remain allowed, and bare checkout operand ambiguity stays documented as a syntax limitation. That authorization never bypasses other mutation boundaries, including Architect direct-source-mutation protection.",
+		sourceKind: "synthetic",
+		coverage: {
+			status: "covered",
+			fixtureIds: [
+				"developer-invalid-pre-existing-changes-risky-git-reset",
+				"developer-valid-pre-existing-changes-authorized-risky-git-reset",
+				"developer-valid-pre-existing-changes-safe-git-variants",
+				"developer-valid-pre-existing-changes-bare-checkout-ambiguity",
+				"architect-invalid-pre-existing-changes-authorization-does-not-bypass-direct-mutation",
+			],
+			ownerTicket: "tlhm-hdng",
 		},
 	},
 	{
