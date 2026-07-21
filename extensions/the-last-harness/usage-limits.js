@@ -31,11 +31,14 @@ export function getTlhUsageLimitsConfig(cwd) {
 export function shouldShowTlhUsageWeekly(config) {
     return config?.showWeekly;
 }
+export function getPersistedTlhUsageWeeklyVisibility(cwd) {
+    return shouldShowTlhUsageWeekly(getTlhUsageLimitsConfig(cwd));
+}
 export function getCachedTlhUsageWeeklyVisibility() {
     return cachedTlhUsageWeeklyVisibility;
 }
 export function refreshCachedTlhUsageWeeklyVisibility(cwd) {
-    cachedTlhUsageWeeklyVisibility = shouldShowTlhUsageWeekly(getTlhUsageLimitsConfig(cwd));
+    cachedTlhUsageWeeklyVisibility = getPersistedTlhUsageWeeklyVisibility(cwd);
     return cachedTlhUsageWeeklyVisibility;
 }
 export function setCachedTlhUsageWeeklyVisibility(showWeekly) {

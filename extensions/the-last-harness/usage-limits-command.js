@@ -1,6 +1,6 @@
 import { formatHomePath, isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
-import { getCachedTlhUsageWeeklyVisibility, refreshCachedTlhUsageWeeklyVisibility, setCachedTlhUsageWeeklyVisibility, USAGE_COMMAND_HELP, } from "./usage-limits.js";
+import { getCachedTlhUsageWeeklyVisibility, getPersistedTlhUsageWeeklyVisibility, refreshCachedTlhUsageWeeklyVisibility, setCachedTlhUsageWeeklyVisibility, USAGE_COMMAND_HELP, } from "./usage-limits.js";
 function validateTlhUsageLimitsSettings(settings) {
     if (!isRecord(settings)) {
         throw new Error("settings.json must contain a JSON object");
@@ -84,7 +84,10 @@ export async function handleUsageCommand(args, ctx) {
         ctx.ui.notify(formatUsageWeeklyStatus(currentShowWeekly), "info");
         return;
     }
-    const nextShowWeekly = nextWeeklyPreference(getCachedTlhUsageWeeklyVisibility() === true, command.action);
+    const currentShowWeekly = command.action === "toggle"
+        ? getPersistedTlhUsageWeeklyVisibility(ctx.cwd)
+        : getCachedTlhUsageWeeklyVisibility();
+    const nextShowWeekly = nextWeeklyPreference(currentShowWeekly === true, command.action);
     try {
         const result = writeTlhUsageWeeklyPreference(ctx.cwd, nextShowWeekly);
         setCachedTlhUsageWeeklyVisibility(nextShowWeekly);

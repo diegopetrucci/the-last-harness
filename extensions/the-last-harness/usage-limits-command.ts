@@ -4,6 +4,7 @@ import { formatHomePath, isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
 import {
 	getCachedTlhUsageWeeklyVisibility,
+	getPersistedTlhUsageWeeklyVisibility,
 	refreshCachedTlhUsageWeeklyVisibility,
 	setCachedTlhUsageWeeklyVisibility,
 	USAGE_COMMAND_HELP,
@@ -113,7 +114,11 @@ export async function handleUsageCommand(args: string, ctx: ExtensionCommandCont
 		return;
 	}
 
-	const nextShowWeekly = nextWeeklyPreference(getCachedTlhUsageWeeklyVisibility() === true, command.action);
+	const currentShowWeekly =
+		command.action === "toggle"
+			? getPersistedTlhUsageWeeklyVisibility(ctx.cwd)
+			: getCachedTlhUsageWeeklyVisibility();
+	const nextShowWeekly = nextWeeklyPreference(currentShowWeekly === true, command.action);
 	try {
 		const result = writeTlhUsageWeeklyPreference(ctx.cwd, nextShowWeekly);
 		setCachedTlhUsageWeeklyVisibility(nextShowWeekly);

@@ -11,6 +11,7 @@ const jiti = createJiti(import.meta.url);
 const { registerUsageCommand, shouldShowTlhUsageWeekly } = await jiti.import("../extensions/the-last-harness/usage-limits.ts");
 const {
 	getCachedTlhUsageWeeklyVisibility,
+	getPersistedTlhUsageWeeklyVisibility,
 	refreshCachedTlhUsageWeeklyVisibility,
 	setCachedTlhUsageWeeklyVisibility,
 } = await import("../extensions/the-last-harness/usage-limits.js");
@@ -211,16 +212,22 @@ test("usage weekly off and toggle persist explicit preferences", async (t) => {
 
 	const toggleFixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
 	const toggleSettingsPath = join(toggleFixture.agent, "settings.json");
+	writeFileSync(toggleSettingsPath, `${JSON.stringify({ tlh: { usageLimits: { showWeekly: false } } }, null, 2)}\n`);
 
 	await withEnv({ HOME: toggleFixture.home, PI_CODING_AGENT_DIR: toggleFixture.agent }, async () => {
 		const command = registeredUsageCommand();
 		const { ctx, notifications } = createCommandContext(toggleFixture.dir);
+
+		setCachedTlhUsageWeeklyVisibility(true);
+		assert.equal(getCachedTlhUsageWeeklyVisibility(), true);
+		assert.equal(getPersistedTlhUsageWeeklyVisibility(toggleFixture.dir), false);
 
 		await command.handler("weekly toggle", ctx);
 
 		const written = JSON.parse(readFileSync(toggleSettingsPath, "utf8"));
 		assert.equal(written.tlh.usageLimits.showWeekly, true);
 		assert.equal(shouldShowTlhUsageWeekly(written.tlh.usageLimits), true);
+		assert.equal(getCachedTlhUsageWeeklyVisibility(), true);
 
 		const notice = notifications.at(-1);
 		assert.equal(notice?.type, "info");
@@ -229,24 +236,46 @@ test("usage weekly off and toggle persist explicit preferences", async (t) => {
 	});
 });
 
-test("usage weekly writes update the cache only after successful persistence", async (t) => {
+test("usage weekly toggle honors external persisted changes without refreshing footer cache", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
 	const settingsPath = join(fixture.agent, "settings.json");
-	writeFileSync(settingsPath, `${JSON.stringify({ tlh: { usageLimits: { showWeekly: false } } }, null, 2)}\n`);
+	writeFileSync(settingsPath, `${JSON.stringify({ tlh: { usageLimits: { showWeekly: true } } }, null, 2)}\n`);
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const command = registeredUsageCommand();
 		const { ctx } = createCommandContext(fixture.dir);
 
 		refreshCachedTlhUsageWeeklyVisibility(fixture.dir);
+		assert.equal(getCachedTlhUsageWeeklyVisibility(), true);
+
+		writeFileSync(settingsPath, `${JSON.stringify({ tlh: { usageLimits: { showWeekly: false } } }, null, 2)}\n`);
+		assert.equal(getCachedTlhUsageWeeklyVisibility(), true, "manual change should not pre-refresh the cache");
+		assert.equal(getPersistedTlhUsageWeeklyVisibility(fixture.dir), false);
+
+		await command.handler("weekly toggle", ctx);
+		const written = JSON.parse(readFileSync(settingsPath, "utf8"));
+		assert.equal(written.tlh.usageLimits.showWeekly, true, "toggle should invert the persisted false value");
+		assert.equal(getCachedTlhUsageWeeklyVisibility(), true, "cache updates only after the write succeeds");
+	});
+});
+
+test("usage weekly toggle leaves the cached preference unchanged when persistence fails", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
+	const settingsPath = join(fixture.agent, "settings.json");
+	writeFileSync(settingsPath, `${JSON.stringify({ tlh: { usageLimits: { showWeekly: false } } }, null, 2)}\n`);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const command = registeredUsageCommand();
+		const { ctx, notifications } = createCommandContext(fixture.dir);
+
+		refreshCachedTlhUsageWeeklyVisibility(fixture.dir);
 		assert.equal(getCachedTlhUsageWeeklyVisibility(), false);
 
-		await command.handler("weekly on", ctx);
-		assert.equal(getCachedTlhUsageWeeklyVisibility(), true);
-
 		writeFileSync(settingsPath, "{\n", "utf8");
-		await command.handler("weekly off", ctx);
-		assert.equal(getCachedTlhUsageWeeklyVisibility(), true);
+		await command.handler("weekly toggle", ctx);
+		assert.equal(getCachedTlhUsageWeeklyVisibility(), false);
+		assert.equal(notifications.at(-1)?.type, "error");
+		assert.match(notifications.at(-1)?.message ?? "", /Could not update TLH usage weekly-window preference/);
 	});
 });
 

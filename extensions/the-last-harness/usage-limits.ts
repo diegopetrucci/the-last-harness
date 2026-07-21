@@ -47,12 +47,16 @@ export function shouldShowTlhUsageWeekly(config: TlhUsageLimitsConfig | undefine
 	return config?.showWeekly;
 }
 
+export function getPersistedTlhUsageWeeklyVisibility(cwd: string): boolean | undefined {
+	return shouldShowTlhUsageWeekly(getTlhUsageLimitsConfig(cwd));
+}
+
 export function getCachedTlhUsageWeeklyVisibility(): boolean | undefined {
 	return cachedTlhUsageWeeklyVisibility;
 }
 
 export function refreshCachedTlhUsageWeeklyVisibility(cwd: string): boolean | undefined {
-	cachedTlhUsageWeeklyVisibility = shouldShowTlhUsageWeekly(getTlhUsageLimitsConfig(cwd));
+	cachedTlhUsageWeeklyVisibility = getPersistedTlhUsageWeeklyVisibility(cwd);
 	return cachedTlhUsageWeeklyVisibility;
 }
 
