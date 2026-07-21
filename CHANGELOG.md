@@ -8,6 +8,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 - You can now add custom (non built-in) subagents. Ask TLH how to.
 
+### Changed
+
+- Bumped the critical `pi-subagents` pin to `npm:@diegopetrucci/pi-subagents@0.31.8`: the subagent tool is now fail-closed to the 8 TLH actions for every caller, `steer` is restored as the supported parent→child guidance action (groundwork for retiring `pi-intercom`), and the unused scheduler is unwired from startup.
+
 ### Fixed
 
 - OpenAI weekly/daily usage now shows days, not just hours.
