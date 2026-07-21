@@ -3,6 +3,7 @@ import { TLH_HEADER_TOGGLE_SHORTCUT_LABEL, TLH_NAME } from "./constants.js";
 import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
 export function createTlhHeader(theme, resources, headerUpdate, installNotice, options = {}) {
     let expanded = false;
+    let startupResources = resources;
     const color = {
         heading: (text) => theme.fg("mdHeading", text),
         dim: (text) => theme.fg("dim", text),
@@ -76,14 +77,14 @@ export function createTlhHeader(theme, resources, headerUpdate, installNotice, o
     };
     const collapsedContextHintLines = (width) => {
         const hint = `Press ${TLH_HEADER_TOGGLE_SHORTCUT_LABEL} to show loaded skills, prompts, and extensions`;
-        const plainText = resources.context.length === 0
+        const plainText = startupResources.context.length === 0
             ? hint
-            : `Context: ${resources.context.join(", ")}. ${hint}`;
+            : `Context: ${startupResources.context.join(", ")}. ${hint}`;
         return wrapTextWithAnsi(plainText, width).map((line) => color.dim(line));
     };
     const headerDetails = (width) => [
         ...installWarningLine(width),
-        ...contextLine(resources.context, width),
+        ...contextLine(startupResources.context, width),
     ];
     const renderCollapsed = (width) => {
         const lines = [logo, "", ...installWarningLine(width), ...collapsedContextHintLines(width), ...startupTipLine(width)];
@@ -96,10 +97,10 @@ export function createTlhHeader(theme, resources, headerUpdate, installNotice, o
             lines.push("", ...details);
         }
         const resourceSections = [
-            section("Skills", resources.skills, width),
-            section("Prompts", resources.prompts, width),
-            section("Extensions", resources.extensions, width),
-            section("Themes", resources.themes, width),
+            section("Skills", startupResources.skills, width),
+            section("Prompts", startupResources.prompts, width),
+            section("Extensions", startupResources.extensions, width),
+            section("Themes", startupResources.themes, width),
         ].filter((resourceSection) => resourceSection.length > 0);
         for (const resourceSection of resourceSections) {
             lines.push("", ...resourceSection);
@@ -116,6 +117,9 @@ export function createTlhHeader(theme, resources, headerUpdate, installNotice, o
         },
         setExpanded(nextExpanded) {
             expanded = nextExpanded;
+        },
+        setResources(nextResources) {
+            startupResources = nextResources;
         },
         toggleExpanded() {
             expanded = !expanded;

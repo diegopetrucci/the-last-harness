@@ -12,6 +12,7 @@ export function createTlhHeader(
 	options: { requestRender?: () => void; startupTip?: string } = {},
 ) {
 	let expanded = false;
+	let startupResources = resources;
 	const color = {
 		heading: (text: string) => theme.fg("mdHeading", text),
 		dim: (text: string) => theme.fg("dim", text),
@@ -100,15 +101,15 @@ export function createTlhHeader(
 
 	const collapsedContextHintLines = (width: number): string[] => {
 		const hint = `Press ${TLH_HEADER_TOGGLE_SHORTCUT_LABEL} to show loaded skills, prompts, and extensions`;
-		const plainText = resources.context.length === 0
+		const plainText = startupResources.context.length === 0
 			? hint
-			: `Context: ${resources.context.join(", ")}. ${hint}`;
+			: `Context: ${startupResources.context.join(", ")}. ${hint}`;
 		return wrapTextWithAnsi(plainText, width).map((line) => color.dim(line));
 	};
 
 	const headerDetails = (width: number): string[] => [
 		...installWarningLine(width),
-		...contextLine(resources.context, width),
+		...contextLine(startupResources.context, width),
 	];
 
 	const renderCollapsed = (width: number) => {
@@ -123,10 +124,10 @@ export function createTlhHeader(
 			lines.push("", ...details);
 		}
 		const resourceSections = [
-			section("Skills", resources.skills, width),
-			section("Prompts", resources.prompts, width),
-			section("Extensions", resources.extensions, width),
-			section("Themes", resources.themes, width),
+			section("Skills", startupResources.skills, width),
+			section("Prompts", startupResources.prompts, width),
+			section("Extensions", startupResources.extensions, width),
+			section("Themes", startupResources.themes, width),
 		].filter((resourceSection) => resourceSection.length > 0);
 
 		for (const resourceSection of resourceSections) {
@@ -146,6 +147,9 @@ export function createTlhHeader(
 		},
 		setExpanded(nextExpanded: boolean) {
 			expanded = nextExpanded;
+		},
+		setResources(nextResources: StartupResources) {
+			startupResources = nextResources;
 		},
 		toggleExpanded() {
 			expanded = !expanded;

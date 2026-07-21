@@ -2,7 +2,13 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import { formatHomePath, isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
-import { getTlhUsageLimitsConfig, shouldShowTlhUsageWeekly, USAGE_COMMAND_HELP } from "./usage-limits.js";
+import {
+	getCachedTlhUsageWeeklyVisibility,
+	getPersistedTlhUsageWeeklyVisibility,
+	refreshCachedTlhUsageWeeklyVisibility,
+	setCachedTlhUsageWeeklyVisibility,
+	USAGE_COMMAND_HELP,
+} from "./usage-limits.js";
 import type {
 	TlhSettings,
 	TlhUsageLimitsConfig,
@@ -102,15 +108,20 @@ export async function handleUsageCommand(args: string, ctx: ExtensionCommandCont
 		return;
 	}
 
-	const currentShowWeekly = shouldShowTlhUsageWeekly(getTlhUsageLimitsConfig(ctx.cwd));
 	if (command.type === "status") {
+		const currentShowWeekly = refreshCachedTlhUsageWeeklyVisibility(ctx.cwd);
 		ctx.ui.notify(formatUsageWeeklyStatus(currentShowWeekly), "info");
 		return;
 	}
 
+	const currentShowWeekly =
+		command.action === "toggle"
+			? getPersistedTlhUsageWeeklyVisibility(ctx.cwd)
+			: getCachedTlhUsageWeeklyVisibility();
 	const nextShowWeekly = nextWeeklyPreference(currentShowWeekly === true, command.action);
 	try {
 		const result = writeTlhUsageWeeklyPreference(ctx.cwd, nextShowWeekly);
+		setCachedTlhUsageWeeklyVisibility(nextShowWeekly);
 		const changedLabel = result.changed ? "Updated" : "No change to";
 		const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
 		ctx.ui.notify(

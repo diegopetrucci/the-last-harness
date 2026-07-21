@@ -34,6 +34,7 @@ const tokensSource = readFileSync(new URL("../extensions/the-last-harness/tokens
 const usageLimitsSource = readFileSync(new URL("../extensions/the-last-harness/usage-limits.ts", import.meta.url), "utf8");
 const usageLimitsCommandSource = readFileSync(new URL("../extensions/the-last-harness/usage-limits-command.ts", import.meta.url), "utf8");
 const profileStateSource = readFileSync(new URL("../extensions/the-last-harness/profile-state.ts", import.meta.url), "utf8");
+const packageVersionSource = readFileSync(new URL("../extensions/the-last-harness/package-version.ts", import.meta.url), "utf8");
 const typesSource = readFileSync(new URL("../extensions/the-last-harness/types.ts", import.meta.url), "utf8");
 const jiti = createJiti(import.meta.url);
 const { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents, loadSubagentMetadata } = await jiti.import(
@@ -598,7 +599,7 @@ test("extension lazy-loads review, tokens, annotate-last-message, and tlh-change
 	assert.doesNotMatch(extensionSource, /import\("\.\/the-last-harness\/(?:effort|thinking|experimental|version|attribution)\.js"\)/);
 });
 
-test("header, footer, and update-check stay on the eager startup path pending benchmark-proven deferment", () => {
+test("header and footer install before deferred update side effects", () => {
 	const sessionStart = sourceSection(extensionSource, 'pi.on("session_start"', "\n\t});\n}");
 
 	assert.match(extensionSource, /from "\.\/the-last-harness\/footer\.js"/);
@@ -607,7 +608,20 @@ test("header, footer, and update-check stay on the eager startup path pending be
 	assert.match(extensionSource, /from "\.\/the-last-harness\/update-check\.js"/);
 	assert.doesNotMatch(extensionSource, /import\("\.\/the-last-harness\/(?:footer|footer-git-cache|header|update-check)\.js"\)/);
 	assert.match(sessionStart, /const headerUpdate = getTlhHeaderUpdate\(\);/);
-	assert.match(sessionStart, /void maybeNotifyAvailableTlhUpdate\(ctx\)\.catch\(\(\) => undefined\);/);
+	assert.match(sessionStart, /void maybeNotifyAvailableTlhUpdate\(ctx, \{[\s\S]*canNotify: \(\) => activeTlhHeaderSessionToken === sessionToken,[\s\S]*\}\)\.catch\(\(\) => undefined\);/);
+	assert.match(sessionStart, /persistTlhLastSeenVersion\(\);/);
+	assert.doesNotMatch(sessionStart, /scheduleDeferredStartupTask\(\(\) => \{\s*if \(event\.reason === "startup"\)/);
+	assert.doesNotMatch(sessionStart, /await (?:collectStartupResources|startupResourceCollector)\(/);
+	assert.match(
+		sessionStart,
+		/if \(typeof ctx\.ui\.setFooter === "function"\) \{[\s\S]*ctx\.ui\.setFooter\([\s\S]*if \(typeof ctx\.ui\.setHeader === "function"\) \{[\s\S]*ctx\.ui\.setHeader\([\s\S]*scheduleDeferredStartupTask\(\(\) => \{[\s\S]*persistTlhLastSeenVersion\(\);[\s\S]*void maybeNotifyAvailableTlhUpdate\(ctx, \{[\s\S]*\}\)\.catch\(\(\) => undefined\);/,
+	);
+});
+
+test("package version lookup caches the manifest result in-process", () => {
+	assert.match(packageVersionSource, /let cachedTlhVersion: string \| undefined;/);
+	assert.match(packageVersionSource, /if \(cachedTlhVersion\) \{\s*return cachedTlhVersion;\s*\}/);
+	assert.match(packageVersionSource, /cachedTlhVersion = typeof packageJson\.version === "string"/);
 });
 
 test("thinking alias shares the effort command thinking-level behavior", () => {
@@ -632,7 +646,7 @@ test("extension delegates launch update and telemetry services to feature module
 	);
 	assert.match(sessionStart, /if \(!ctx\.hasUI\) \{[\s\S]*return;[\s\S]*if \(event\.reason === "startup"\)/);
 	assert.match(sessionStart, /const headerUpdate = getTlhHeaderUpdate\(\);/);
-	assert.match(sessionStart, /void maybeNotifyAvailableTlhUpdate\(ctx\)\.catch\(\(\) => undefined\);/);
+	assert.match(sessionStart, /scheduleDeferredStartupTask\(\(\) => \{[\s\S]*void maybeNotifyAvailableTlhUpdate\(ctx, \{[\s\S]*\}\)\.catch\(\(\) => undefined\);/);
 	assert.doesNotMatch(extensionSource, /function maybeSendTlhLaunchTelemetry/);
 	assert.doesNotMatch(extensionSource, /function fetchLatestTlhRelease/);
 });
@@ -641,6 +655,19 @@ test("extension installs TLH model-visibility, package-update, and new-version-n
 	assert.match(extensionSource, /installTlhModelVisibilityFilter\(\)/);
 	assert.match(extensionSource, /installTlhPackageUpdateNotificationOverride\(\)/);
 	assert.match(extensionSource, /installTlhNewVersionNotificationOverride\(\)/);
+});
+
+test("extension registers synchronous header-session invalidation before async shutdown handlers", () => {
+	const invalidationRegistration = 'pi.on("session_shutdown", () => {';
+	const firstShutdownHandlerIndex = extensionSource.indexOf('pi.on("session_shutdown"');
+	const invalidationHandlerIndex = extensionSource.indexOf(invalidationRegistration);
+	const contextCapRegistrationIndex = extensionSource.indexOf("registerContextCap(pi)");
+	const annotateShutdownIndex = extensionSource.indexOf('pi.on("session_shutdown", async () => {');
+
+	assert.notEqual(invalidationHandlerIndex, -1, "expected a synchronous header-session invalidation handler");
+	assert.equal(firstShutdownHandlerIndex, invalidationHandlerIndex, "header-session invalidation must be the first shutdown handler registered here");
+	assert.ok(invalidationHandlerIndex < contextCapRegistrationIndex, "invalidation must register before context-cap async shutdown work");
+	assert.ok(invalidationHandlerIndex < annotateShutdownIndex, "invalidation must register before annotate async shutdown work");
 });
 
 test("extension runs primary session_start work before UI startup in one handler", () => {
@@ -755,7 +782,7 @@ test("extension wires subscription usage to lifecycle refreshes and footer", () 
 	assert.match(sessionStart, /subscriptionUsageService\.registerFooterRenderRequest\(ctx, \(\) => tui\.requestRender\(\)\)/);
 	assert.match(sessionStart, /refreshSubscriptionUsage\(ctx\)/);
 	assert.match(sessionStart, /subscriptionUsage: subscriptionUsageService/);
-	assert.match(sessionStart, /shouldShowTlhUsageWeekly\(getTlhUsageLimitsConfig\(ctx\.cwd\)\)/);
+	assert.match(sessionStart, /shouldShowWeekly: getCachedTlhUsageWeeklyVisibility/);
 	assert.match(sessionStart, /onChange: \(\) => tui\.requestRender\(\)/);
 	assert.match(sessionStart, /typeof footerData\?\.onBranchChange === "function" \? \(cb\) => footerData\.onBranchChange\(cb\) : undefined/);
 	assert.match(subscriptionUsageFacadeSource, /import\("\.\/subscription-usage\.js"\)/);

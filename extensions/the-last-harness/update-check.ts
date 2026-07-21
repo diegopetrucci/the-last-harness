@@ -28,13 +28,22 @@ type TlhUpdateCheckTestHooks = {
 	fetchLatestRelease?: (currentVersion: string) => Promise<TlhLatestRelease | undefined>;
 };
 
+type MaybeNotifyAvailableTlhUpdateOptions = {
+	canNotify?: () => boolean;
+};
+
+type TlhUpdateCheckResult = {
+	currentVersion: string;
+	latestRelease?: TlhLatestRelease;
+};
+
 const defaultTlhUpdateCheckHooks: Required<TlhUpdateCheckTestHooks> = {
 	now: () => Date.now(),
 	fetchLatestRelease: fetchLatestTlhRelease,
 };
 
 let tlhUpdateCheckHooks: Required<TlhUpdateCheckTestHooks> = defaultTlhUpdateCheckHooks;
-let maybeNotifyAvailableTlhUpdateInFlight: Promise<void> | undefined;
+let maybeNotifyAvailableTlhUpdateInFlight: Promise<TlhUpdateCheckResult> | undefined;
 const notifiedTlhUpdateVersions = new Set<string>();
 let checkedTlhHeaderUpdate = false;
 let cachedTlhHeaderUpdate: TlhHeaderUpdate | undefined;
@@ -48,9 +57,6 @@ export function getTlhHeaderUpdate(): TlhHeaderUpdate | undefined {
 	const currentVersion = getTlhVersion();
 	const lastSeenVersion = readTlhStartupState().lastSeenVersion;
 
-	if (lastSeenVersion !== currentVersion) {
-		updateTlhStartupState({ lastSeenVersion: currentVersion });
-	}
 	if (typeof lastSeenVersion === "string" && lastSeenVersion.length > 0 && lastSeenVersion !== currentVersion) {
 		cachedTlhHeaderUpdate = { version: currentVersion, releasesUrl: TLH_RELEASES_URL };
 	}
@@ -160,7 +166,11 @@ export function buildTlhUpdateNotificationMessage(
 	return `The Last Harness update available. Run \`tlh update\` to get on version ${latestLabel}.`;
 }
 
-function notifyTlhUpdate(ctx: ExtensionContext, _currentVersion: string, latestRelease: TlhLatestRelease): void {
+function canNotifyTlhUpdate(options: MaybeNotifyAvailableTlhUpdateOptions): boolean {
+	return options.canNotify?.() ?? true;
+}
+
+function notifyTlhUpdate(ctx: ExtensionContext, latestRelease: TlhLatestRelease): void {
 	ctx.ui.notify(buildTlhUpdateNotificationMessage(latestRelease), "warning");
 }
 
@@ -168,17 +178,22 @@ function notifiedTlhUpdateKey(version: string): string {
 	return `${tlhStartupStatePath() || "no-startup-state"}:${version}`;
 }
 
-function maybeNotifyCachedTlhUpdate(ctx: ExtensionContext, currentVersion: string, state: TlhStartupState): boolean {
+function maybeNotifyCachedTlhUpdate(
+	ctx: ExtensionContext,
+	currentVersion: string,
+	state: TlhStartupState,
+	options: MaybeNotifyAvailableTlhUpdateOptions = {},
+): boolean {
 	const latestRelease = getCachedTlhLatestRelease(state);
 	if (!latestRelease || !isNewerTlhVersion(latestRelease.version, currentVersion)) {
 		return false;
 	}
 	const updateCheck = getTlhUpdateCheckState(state);
 	const notificationKey = notifiedTlhUpdateKey(latestRelease.version);
-	if (updateCheck.lastNotifiedVersion === latestRelease.version || notifiedTlhUpdateVersions.has(notificationKey)) {
+	if (updateCheck.lastNotifiedVersion === latestRelease.version || notifiedTlhUpdateVersions.has(notificationKey) || !canNotifyTlhUpdate(options)) {
 		return false;
 	}
-	notifyTlhUpdate(ctx, currentVersion, latestRelease);
+	notifyTlhUpdate(ctx, latestRelease);
 	notifiedTlhUpdateVersions.add(notificationKey);
 	updateTlhStartupState({
 		updateCheck: {
@@ -192,12 +207,14 @@ function maybeNotifyCachedTlhUpdate(ctx: ExtensionContext, currentVersion: strin
 	return true;
 }
 
-async function runMaybeNotifyAvailableTlhUpdate(ctx: ExtensionContext): Promise<void> {
+async function runMaybeNotifyAvailableTlhUpdate(): Promise<TlhUpdateCheckResult> {
 	const currentVersion = getTlhVersion();
 	let state = readTlhStartupState();
 	if (!shouldRefreshTlhLatestRelease(state)) {
-		maybeNotifyCachedTlhUpdate(ctx, currentVersion, state);
-		return;
+		return {
+			currentVersion,
+			latestRelease: getCachedTlhLatestRelease(state),
+		};
 	}
 
 	updateTlhStartupState({
@@ -211,10 +228,10 @@ async function runMaybeNotifyAvailableTlhUpdate(ctx: ExtensionContext): Promise<
 	try {
 		latestRelease = await tlhUpdateCheckHooks.fetchLatestRelease(currentVersion);
 	} catch {
-		return;
+		return { currentVersion };
 	}
 	if (!latestRelease) {
-		return;
+		return { currentVersion };
 	}
 
 	state = readTlhStartupState();
@@ -227,38 +244,31 @@ async function runMaybeNotifyAvailableTlhUpdate(ctx: ExtensionContext): Promise<
 		},
 	});
 
-	state = readTlhStartupState();
-	const updateCheck = getTlhUpdateCheckState(state);
-	const notificationKey = notifiedTlhUpdateKey(latestRelease.version);
-	if (!isNewerTlhVersion(latestRelease.version, currentVersion) || updateCheck.lastNotifiedVersion === latestRelease.version || notifiedTlhUpdateVersions.has(notificationKey)) {
-		return;
-	}
-
-	notifyTlhUpdate(ctx, currentVersion, latestRelease);
-	notifiedTlhUpdateVersions.add(notificationKey);
-	updateTlhStartupState({
-		updateCheck: {
-			...updateCheck,
-			lastNotifiedVersion: latestRelease.version,
-		},
-	});
+	return { currentVersion, latestRelease };
 }
 
-export async function maybeNotifyAvailableTlhUpdate(ctx: ExtensionContext): Promise<void> {
+export function persistTlhLastSeenVersion(): void {
+	const currentVersion = getTlhVersion();
+	if (readTlhStartupState().lastSeenVersion !== currentVersion) {
+		updateTlhStartupState({ lastSeenVersion: currentVersion });
+	}
+}
+
+export async function maybeNotifyAvailableTlhUpdate(
+	ctx: ExtensionContext,
+	options: MaybeNotifyAvailableTlhUpdateOptions = {},
+): Promise<void> {
 	if (shouldSkipTlhUpdateCheck(ctx.cwd)) {
 		return;
 	}
-	if (maybeNotifyAvailableTlhUpdateInFlight) {
-		return maybeNotifyAvailableTlhUpdateInFlight;
-	}
-
-	const inFlight = runMaybeNotifyAvailableTlhUpdate(ctx).finally(() => {
+	const inFlight = maybeNotifyAvailableTlhUpdateInFlight ?? runMaybeNotifyAvailableTlhUpdate().finally(() => {
 		if (maybeNotifyAvailableTlhUpdateInFlight === inFlight) {
 			maybeNotifyAvailableTlhUpdateInFlight = undefined;
 		}
 	});
 	maybeNotifyAvailableTlhUpdateInFlight = inFlight;
-	return inFlight;
+	const result = await inFlight;
+	maybeNotifyCachedTlhUpdate(ctx, result.currentVersion, readTlhStartupState(), options);
 }
 
 export function __setTlhUpdateCheckTestHooks(hooks: TlhUpdateCheckTestHooks = {}): void {
