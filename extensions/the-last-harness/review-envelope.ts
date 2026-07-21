@@ -2,7 +2,7 @@ import type { Stats } from "node:fs";
 import { lstat, open, readFile, type FileHandle } from "node:fs/promises";
 import { relative } from "node:path";
 
-import type { ReviewDispatchArgs } from "./review-args.ts";
+import type { ReviewDispatchArgs } from "./review-args.js";
 
 // --- Delimiter constants ---
 

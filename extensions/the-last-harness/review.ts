@@ -1,29 +1,26 @@
 import { lstat, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-// Sibling modules are imported with explicit .ts extensions: review.ts is loaded in
-// tests via Node native strip-types (see the issue #296 note below), which does not
-// remap ".js" to ".ts". allowImportingTsExtensions is enabled in tsconfig.json for this.
-import { REVIEW_MODES, REVIEW_MODE_DESCRIPTIONS, decideBranchAction, tokenizeArgs, parseReviewArgs } from "./review-args.ts";
-import type { ReviewMode, ReviewDispatchArgs } from "./review-args.ts";
-export { REVIEW_MODES, decideBranchAction, parseReviewArgs } from "./review-args.ts";
-export type { ReviewMode, BranchDecisionAction, ParsedReviewArgs, ReviewDispatchArgs } from "./review-args.ts";
+import { REVIEW_MODES, REVIEW_MODE_DESCRIPTIONS, decideBranchAction, tokenizeArgs, parseReviewArgs } from "./review-args.js";
+import type { ReviewMode, ReviewDispatchArgs } from "./review-args.js";
+export { REVIEW_MODES, decideBranchAction, parseReviewArgs } from "./review-args.js";
+export type { ReviewMode, BranchDecisionAction, ParsedReviewArgs, ReviewDispatchArgs } from "./review-args.js";
 import {
 	buildReviewEnvelope,
 	parseNullDelimitedGitPaths,
 	buildSnapshotParts,
 	appendUntrackedSnapshot,
-} from "./review-envelope.ts";
-import type { ReviewGatheredContext } from "./review-envelope.ts";
-export type { ReviewGatheredContext } from "./review-envelope.ts";
-export { buildReviewEnvelope } from "./review-envelope.ts";
+} from "./review-envelope.js";
+import type { ReviewGatheredContext } from "./review-envelope.js";
+export type { ReviewGatheredContext } from "./review-envelope.js";
+export { buildReviewEnvelope } from "./review-envelope.js";
 import {
 	isGhGraphqlQuotaFailure,
 	resolveGitHubPrRef,
 	fetchPrMetadataViaRest,
 	fetchPrDiffViaRest,
-} from "./review-github.ts";
-import type { GitHubPrRef } from "./review-github.ts";
+} from "./review-github.js";
+import type { GitHubPrRef } from "./review-github.js";
 
 import { DynamicBorder, getAgentDir, getSelectListTheme, SettingsManager, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Container, matchesKey, SelectList, Text } from "@earendil-works/pi-tui";
@@ -50,10 +47,8 @@ type ReviewSettings = {
 
 const REVIEW_REQUIRED_PRIMARY: ReviewPrimaryAgentSelection = "architect";
 
-// Intentionally not imported from "./common.js" (see issue #296): review.ts is loaded
-// in tests via a native Node strip-types `import`, which — unlike the jiti.import()
-// loader used by other extension tests — does not remap "./common.js" to "./common.ts",
-// so that import would fail with ERR_MODULE_NOT_FOUND.
+// Intentionally not imported from "./common.js" (see issue #296): keep review.ts
+// source-level tests isolated from unrelated shared-runtime dependencies.
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
