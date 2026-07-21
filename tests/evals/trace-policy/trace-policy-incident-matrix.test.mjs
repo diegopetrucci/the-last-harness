@@ -11,7 +11,10 @@ const REQUIRED_MATRIX_IDS = [
 	"architect-ticket-approval-boundary",
 	"architect-paused-subagent-recovery-boundary",
 	"architect-review-digest-boundary",
+	"architect-deterministic-research-routing",
 	"developer-ticket-source-before-edit",
+	"developer-blocking-contact-supervisor-stop-boundary",
+	"developer-pre-existing-changes-preservation-boundary",
 	"code-reviewer-read-only-diff-inspection",
 	"web-scout-citation-discipline",
 	"installer-profile-isolation-safety",
@@ -34,6 +37,8 @@ function fixtureIdsByMatrixId() {
 	return index;
 }
 
+const ALLOWED_RESEARCH_TARGETS = new Set(["librarian", "repo-scout", "web-scout"]);
+
 test("trace-policy fixtures have stable ids and deterministic expected results", () => {
 	const fixtureIds = new Set();
 
@@ -45,10 +50,18 @@ test("trace-policy fixtures have stable ids and deterministic expected results",
 		assert.ok(fixture.transcript);
 		assert.ok(fixture.expectedResult === "allow" || fixture.expectedResult === "reject");
 		assert.equal(fixture.valid, fixture.expectedResult === "allow");
+
+		const expectedResearchTarget = fixture.transcript.metadata?.expectedResearchTarget;
+		if (expectedResearchTarget !== undefined) {
+			assert.ok(
+				ALLOWED_RESEARCH_TARGETS.has(expectedResearchTarget),
+				`fixture ${fixture.id} has unsupported expected research target ${expectedResearchTarget}`,
+			);
+		}
 	}
 });
 
-test("gh-241 milestone incident matrix is present and well-formed", () => {
+test("workflow incident matrix is present and well-formed", () => {
 	const matrixIds = TRACE_POLICY_INCIDENT_MATRIX.map((entry) => entry.id);
 
 	assert.deepEqual(matrixIds, REQUIRED_MATRIX_IDS);

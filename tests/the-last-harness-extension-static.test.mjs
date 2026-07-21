@@ -18,17 +18,21 @@ const annotateGitDiffSource = readFileSync(new URL("../extensions/annotate-git-d
 const annotateGitDiffAppSource = readFileSync(new URL("../extensions/annotate-git-diff/web/app.js", import.meta.url), "utf8");
 const annotateGitDiffHtmlSource = readFileSync(new URL("../extensions/annotate-git-diff/web/index.html", import.meta.url), "utf8");
 const attributionSource = readFileSync(new URL("../extensions/the-last-harness/attribution.ts", import.meta.url), "utf8");
+const attributionCommandSource = readFileSync(new URL("../extensions/the-last-harness/attribution-command.ts", import.meta.url), "utf8");
 const changelogSource = readFileSync(new URL("../extensions/the-last-harness/changelog.ts", import.meta.url), "utf8");
 const experimentalSource = readFileSync(new URL("../extensions/the-last-harness/experimental.ts", import.meta.url), "utf8");
+const experimentalCommandSource = readFileSync(new URL("../extensions/the-last-harness/experimental-command.ts", import.meta.url), "utf8");
 const ticketWorkflowUiFacadeSource = readFileSync(new URL("../extensions/the-last-harness/ticket-workflow-ui-facade.ts", import.meta.url), "utf8");
 const footerFirstLineSource = readFileSync(new URL("../extensions/the-last-harness/footer-first-line.ts", import.meta.url), "utf8");
 const footerGitCacheSource = readFileSync(new URL("../extensions/the-last-harness/footer-git-cache.ts", import.meta.url), "utf8");
 const subscriptionUsageFacadeSource = readFileSync(new URL("../extensions/the-last-harness/subscription-usage-facade.ts", import.meta.url), "utf8");
 const primaryRuntimeSource = readFileSync(new URL("../extensions/the-last-harness/primary-agent-runtime.ts", import.meta.url), "utf8");
 const effortSource = readFileSync(new URL("../extensions/the-last-harness/effort.ts", import.meta.url), "utf8");
+const effortCommandSource = readFileSync(new URL("../extensions/the-last-harness/effort-command.ts", import.meta.url), "utf8");
 const promptsSource = readFileSync(new URL("../extensions/the-last-harness/prompts.ts", import.meta.url), "utf8");
 const tokensSource = readFileSync(new URL("../extensions/the-last-harness/tokens.ts", import.meta.url), "utf8");
 const usageLimitsSource = readFileSync(new URL("../extensions/the-last-harness/usage-limits.ts", import.meta.url), "utf8");
+const usageLimitsCommandSource = readFileSync(new URL("../extensions/the-last-harness/usage-limits-command.ts", import.meta.url), "utf8");
 const profileStateSource = readFileSync(new URL("../extensions/the-last-harness/profile-state.ts", import.meta.url), "utf8");
 const typesSource = readFileSync(new URL("../extensions/the-last-harness/types.ts", import.meta.url), "utf8");
 const jiti = createJiti(import.meta.url);
@@ -180,11 +184,25 @@ function parseInlineJsonStringAssignment(source, assignmentName) {
 	return JSON.parse(assignment[1]);
 }
 
-test("package extension discovery exposes the TLH entrypoints", () => {
-	assert.deepEqual(packageJson.pi?.extensions, ["./extensions"]);
+test("package manifest selects only the ordered generated JS entrypoints", () => {
+	assert.deepEqual(packageJson.pi?.extensions, [
+		"./extensions/annotate-git-diff/index.js",
+		"./extensions/rtk.js",
+		"./extensions/the-last-harness.js",
+	]);
 	assert.deepEqual(existingNestedExtensionEntrypoints("the-last-harness"), []);
-	assert.deepEqual(existingNestedExtensionEntrypoints("annotate-git-diff"), ["annotate-git-diff/index.ts"]);
-	assert.deepEqual(discoverPiExtensionEntrypoints(extensionsDir), ["annotate-git-diff/index.ts", "rtk.ts", "the-last-harness.ts"]);
+	assert.deepEqual(existingNestedExtensionEntrypoints("annotate-git-diff"), [
+		"annotate-git-diff/index.ts",
+		"annotate-git-diff/index.js",
+	]);
+	assert.deepEqual(discoverPiExtensionEntrypoints(extensionsDir), [
+		"annotate-git-diff/index.js",
+		"annotate-git-diff/index.ts",
+		"rtk.js",
+		"rtk.ts",
+		"the-last-harness.js",
+		"the-last-harness.ts",
+	]);
 });
 
 
@@ -510,13 +528,26 @@ test("extension lazy-loads review, tokens, annotate-last-message, and tlh-change
 	assert.doesNotMatch(extensionSource, /import\("\.\/the-last-harness\/(?:effort|thinking|experimental|version|attribution)\.js"\)/);
 });
 
+test("header, footer, and update-check stay on the eager startup path pending benchmark-proven deferment", () => {
+	const sessionStart = sourceSection(extensionSource, 'pi.on("session_start"', "\n\t});\n}");
+
+	assert.match(extensionSource, /from "\.\/the-last-harness\/footer\.js"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/footer-git-cache\.js"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/header\.js"/);
+	assert.match(extensionSource, /from "\.\/the-last-harness\/update-check\.js"/);
+	assert.doesNotMatch(extensionSource, /import\("\.\/the-last-harness\/(?:footer|footer-git-cache|header|update-check)\.js"\)/);
+	assert.match(sessionStart, /const headerUpdate = getTlhHeaderUpdate\(\);/);
+	assert.match(sessionStart, /void maybeNotifyAvailableTlhUpdate\(ctx\)\.catch\(\(\) => undefined\);/);
+});
+
 test("thinking alias shares the effort command thinking-level behavior", () => {
 	assert.match(effortSource, /\["effort", "thinking"\] as const/);
 	assert.match(effortSource, /description: "Pick the model thinking level"/);
-	assert.match(effortSource, /Unknown thinking level/);
-	assert.match(effortSource, /Thinking level set to/);
-	assert.match(effortSource, /Available thinking levels/);
-	assert.match(effortSource, /Pick thinking level/);
+	assert.match(effortSource, /import\("\.\/effort-command\.js"\)/);
+	assert.match(effortCommandSource, /Unknown thinking level/);
+	assert.match(effortCommandSource, /Thinking level set to/);
+	assert.match(effortCommandSource, /Available thinking levels/);
+	assert.match(effortCommandSource, /Pick thinking level/);
 });
 
 test("extension delegates launch update and telemetry services to feature modules", () => {
@@ -530,7 +561,8 @@ test("extension delegates launch update and telemetry services to feature module
 		/if \(event\.reason === "startup"\) \{[\s\S]*void import\("\.\/the-last-harness\/launch-telemetry\.js"\)[\s\S]*scheduleTlhLaunchTelemetry\(ctx\)[\s\S]*\.catch\(\(\) => undefined\);[\s\S]*\}/,
 	);
 	assert.match(sessionStart, /if \(!ctx\.hasUI\) \{[\s\S]*return;[\s\S]*if \(event\.reason === "startup"\)/);
-	assert.match(sessionStart, /maybeNotifyAvailableTlhUpdate\(ctx\)/);
+	assert.match(sessionStart, /const headerUpdate = getTlhHeaderUpdate\(\);/);
+	assert.match(sessionStart, /void maybeNotifyAvailableTlhUpdate\(ctx\)\.catch\(\(\) => undefined\);/);
 	assert.doesNotMatch(extensionSource, /function maybeSendTlhLaunchTelemetry/);
 	assert.doesNotMatch(extensionSource, /function fetchLatestTlhRelease/);
 });
@@ -645,6 +677,11 @@ test("extension wires TLH changelog lazy facade and release-notes rendering", ()
 });
 
 test("extension keeps TLH experimental command wiring with registered ticket, ci, and review feature flags", () => {
+	const backupWriteHelper = sourceSection(
+		profileStateSource,
+		"const SETTINGS_BACKUP_SUFFIX_RETRY_LIMIT = 32;",
+		"function getSettingsStorageForWrite",
+	);
 	const lockedWriteHelper = sourceSection(
 		profileStateSource,
 		"export function withLockedTlhSettingsWrite",
@@ -659,6 +696,7 @@ test("extension keeps TLH experimental command wiring with registered ticket, ci
 	assert.match(ticketWorkflowUiFacadeSource, /import\("\.\/ticket-workflow-ui\.js"\)/);
 	assert.match(ticketWorkflowUiFacadeSource, /createRetryableLazyImport/);
 	assert.match(experimentalSource, /pi\.registerCommand\("experimental"/);
+	assert.match(experimentalSource, /import\("\.\/experimental-command\.js"\)/);
 	assert.match(experimentalSource, /delta-follow-up-reviews/);
 	assert.match(experimentalSource, /ci-failure-investigation/);
 	assert.match(experimentalSource, /ticket-workflow-ui/);
@@ -666,12 +704,12 @@ test("extension keeps TLH experimental command wiring with registered ticket, ci
 	assert.doesNotMatch(experimentalSource, /Enables the contrarian minor agent and primary-agent guidance/);
 	assert.doesNotMatch(experimentalSource, /run-tests-last/);
 	assert.match(
-		experimentalSource,
+		experimentalCommandSource,
 		/withLockedTlhSettingsWrite\(cwd, "Refusing to write experimental settings outside the isolated TLH profile\./,
 	);
-	assert.doesNotMatch(experimentalSource, /tlhSettingsPathForWrite\(\)/);
-	assert.doesNotMatch(experimentalSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
-	assert.match(experimentalSource, /settings\.tlh\.experimental\.enabledFeatures = nextEnabledFeatures/);
+	assert.doesNotMatch(experimentalCommandSource, /tlhSettingsPathForWrite\(\)/);
+	assert.doesNotMatch(experimentalCommandSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
+	assert.match(experimentalCommandSource, /settings\.tlh\.experimental\.enabledFeatures = nextEnabledFeatures/);
 	assert.match(typesSource, /experimental\?: TlhExperimentalConfig;/);
 	assert.match(typesSource, /enabledFeatures\?: string\[];/);
 	assert.match(typesSource, /export type TlhExperimentalFeatureId = string;/);
@@ -679,45 +717,52 @@ test("extension keeps TLH experimental command wiring with registered ticket, ci
 	assert.match(primaryRuntimeSource, /buildPrimaryExperimentalPrompt\(activePrimaryAgent\(\), settings\.tlh\?\.experimental\)/);
 	assert.doesNotMatch(extensionSource, /registerTlhCommitAttributionRuntime\(pi\)/);
 	assert.match(extensionSource, /registerToggleTlhGitAttributionCommand\(pi\)/);
-	assert.match(attributionSource, /from "\.\/profile-state\.js"/);
+	assert.match(attributionSource, /import\("\.\/attribution-command\.js"\)/);
 	assert.doesNotMatch(attributionSource, /pi\.on\("before_agent_start"/);
 	assert.doesNotMatch(attributionSource, /pi\.on\("tool_call"/);
 	assert.doesNotMatch(attributionSource, /user_bash/);
 	assert.match(attributionSource, /pi\.registerCommand\("toggle-tlh-git-attribution"/);
 	assert.doesNotMatch(attributionSource, /pi\.registerCommand\("attribution"/);
 	assert.doesNotMatch(attributionSource, /value: "toggle"/);
-	assert.match(attributionSource, /Usage: \/toggle-tlh-git-attribution/);
+	assert.match(attributionCommandSource, /Usage: \/toggle-tlh-git-attribution/);
 	assert.match(
-		attributionSource,
+		attributionCommandSource,
 		/withLockedTlhSettingsWrite\(cwd, "Refusing to write attribution settings outside the isolated TLH profile\./,
 	);
-	assert.doesNotMatch(attributionSource, /tlhSettingsPathForWrite\(\)/);
-	assert.doesNotMatch(attributionSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
+	assert.doesNotMatch(attributionCommandSource, /tlhSettingsPathForWrite\(\)/);
+	assert.doesNotMatch(attributionCommandSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
 	assert.match(attributionSource, /TLH_DEFAULT_COMMIT_ATTRIBUTION/);
-	assert.match(attributionSource, /settings\.tlh\.attribution = \{ commit: nextEnabled \}/);
-	assert.match(attributionSource, /typeof commit !== "boolean"/);
+	assert.match(attributionCommandSource, /settings\.tlh\.attribution = \{ commit: nextEnabled \}/);
+	assert.match(attributionCommandSource, /typeof commit !== "boolean"/);
 	assert.match(typesSource, /commit\?: boolean;/);
 	assert.match(extensionSource, /pi\.registerCommand\("tokens", \{/);
 	assert.match(extensionSource, /const handler = await getTokensCommandHandler\(\);/);
 	assert.match(tokensSource, /pi\.registerCommand\("tokens"/);
 	assert.match(tokensSource, /Usage: \/tokens/);
 	assert.match(extensionSource, /registerUsageCommand\(pi\)/);
-	assert.match(usageLimitsSource, /from "\.\/profile-state\.js"/);
+	assert.match(usageLimitsSource, /import\("\.\/usage-limits-command\.js"\)/);
 	assert.match(usageLimitsSource, /pi\.registerCommand\("usage"/);
 	assert.match(usageLimitsSource, /value: "weekly on"/);
 	assert.match(usageLimitsSource, /value: "weekly off"/);
 	assert.match(usageLimitsSource, /value: "weekly toggle"/);
 	assert.match(
-		usageLimitsSource,
+		usageLimitsCommandSource,
 		/withLockedTlhSettingsWrite\(cwd, "Refusing to write usage-limit settings outside the isolated TLH profile\./,
 	);
-	assert.doesNotMatch(usageLimitsSource, /tlhSettingsPathForWrite\(\)/);
-	assert.doesNotMatch(usageLimitsSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
+	assert.doesNotMatch(usageLimitsCommandSource, /tlhSettingsPathForWrite\(\)/);
+	assert.doesNotMatch(usageLimitsCommandSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
 	assert.match(lockedWriteHelper, /const settingsPath = tlhSettingsPathForWrite\(\);/);
 	assert.match(lockedWriteHelper, /assertSafeTlhSettingsPath\(settingsPath\);/);
+	assert.match(backupWriteHelper, /const SETTINGS_BACKUP_SUFFIX_RETRY_LIMIT = 32;/);
+	assert.match(backupWriteHelper, /function writeCollisionSafeSettingsBackup\(settingsPath: string, current: string\): string \{/);
+	assert.match(backupWriteHelper, /const timestamp = settingsBackupTimestamp\(\);/);
+	assert.match(backupWriteHelper, /suffix === 0 \? `\$\{settingsPath\}\.bak-\$\{timestamp\}` : `\$\{settingsPath\}\.bak-\$\{timestamp\}-\$\{suffix\}`/);
+	assert.match(backupWriteHelper, /writeFileSync\(backupPath, current, \{ encoding: "utf8", flag: "wx", mode: 0o600 \}\);/);
+	assert.match(backupWriteHelper, /if \(!isRecord\(error\) \|\| error\.code !== "EEXIST"\) \{/);
+	assert.match(backupWriteHelper, /throw error;/);
+	assert.match(backupWriteHelper, /Could not create a unique TLH settings backup after \$\{SETTINGS_BACKUP_SUFFIX_RETRY_LIMIT \+ 1\} attempts/);
 	assert.match(lockedWriteHelper, /if \(current\) \{/);
-	assert.match(lockedWriteHelper, /const backupPath = `\$\{settingsPath\}\.bak-\$\{settingsBackupTimestamp\(\)\}`;/);
-	assert.match(lockedWriteHelper, /writeFileSync\(backupPath, current, \{ encoding: "utf8", flag: "wx", mode: 0o600 \}\);/);
-	assert.match(usageLimitsSource, /settings\.tlh\.usageLimits\.showWeekly = showWeekly/);
-	assert.match(usageLimitsSource, /showWeekly === true/);
+	assert.match(lockedWriteHelper, /const backupPath = writeCollisionSafeSettingsBackup\(settingsPath, current\);/);
+	assert.match(usageLimitsCommandSource, /settings\.tlh\.usageLimits\.showWeekly = showWeekly/);
+	assert.match(usageLimitsCommandSource, /showWeekly === true/);
 });

@@ -1,3 +1,5 @@
+// TLH-private settings/state write guards layered on top of Pi settings storage.
+// See ../../docs/upstream-sync-inventory.md for sync/review guidance.
 import { closeSync, constants, lstatSync, mkdirSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
@@ -189,8 +191,29 @@ export function tlhSettingsPathForWrite(): string | undefined {
 	return join(agentDir, "settings.json");
 }
 
+const SETTINGS_BACKUP_SUFFIX_RETRY_LIMIT = 32;
+
 function settingsBackupTimestamp(): string {
 	return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+function writeCollisionSafeSettingsBackup(settingsPath: string, current: string): string {
+	const timestamp = settingsBackupTimestamp();
+	for (let suffix = 0; suffix <= SETTINGS_BACKUP_SUFFIX_RETRY_LIMIT; suffix += 1) {
+		const backupPath =
+			suffix === 0 ? `${settingsPath}.bak-${timestamp}` : `${settingsPath}.bak-${timestamp}-${suffix}`;
+		try {
+			writeFileSync(backupPath, current, { encoding: "utf8", flag: "wx", mode: 0o600 });
+			return backupPath;
+		} catch (error) {
+			if (!isRecord(error) || error.code !== "EEXIST") {
+				throw error;
+			}
+		}
+	}
+	throw new Error(
+		`Could not create a unique TLH settings backup after ${SETTINGS_BACKUP_SUFFIX_RETRY_LIMIT + 1} attempts: ${settingsPath}.bak-${timestamp}`,
+	);
 }
 
 function getSettingsStorageForWrite(cwd: string): SettingsStorageLike {
@@ -224,8 +247,7 @@ export function withLockedTlhSettingsWrite<TResult extends { changed: boolean; n
 			throw new Error("TLH settings write must provide replacement content when changed.");
 		}
 		if (current) {
-			const backupPath = `${settingsPath}.bak-${settingsBackupTimestamp()}`;
-			writeFileSync(backupPath, current, { encoding: "utf8", flag: "wx", mode: 0o600 });
+			const backupPath = writeCollisionSafeSettingsBackup(settingsPath, current);
 			result = { ...baseResult, settingsPath, backupPath };
 			return nextContent;
 		}

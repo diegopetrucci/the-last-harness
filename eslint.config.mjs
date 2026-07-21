@@ -4,6 +4,13 @@ import tseslint from "typescript-eslint";
 
 const targetFiles = ["scripts/**/*.{js,mjs,ts,mts}", "tests/**/*.{js,mjs,ts,mts}", "extensions/**/*.{js,mjs,ts,mts}"];
 const typescriptFiles = ["scripts/**/*.{ts,mts}", "tests/**/*.{ts,mts}", "extensions/**/*.{ts,mts}"];
+const generatedExtensionJavaScriptFiles = [
+	"extensions/*.js",
+	"extensions/annotate-git-diff/*.js",
+	"extensions/shared/*.js",
+	"extensions/the-last-harness/*.js",
+	"extensions/the-last-harness/annotate-last-message/*.js",
+];
 
 const unusedArgsOptions = { argsIgnorePattern: "^_" };
 
@@ -33,6 +40,13 @@ export default tseslint.config(
 		},
 	},
 	...tseslint.configs.recommended.map(withFiles),
+	{
+		name: "tlh/generated-extension-javascript-empty-catch",
+		files: generatedExtensionJavaScriptFiles,
+		rules: {
+			"no-empty": ["error", { allowEmptyCatch: true }],
+		},
+	},
 	{
 		name: "tlh/typescript-unused-args",
 		files: typescriptFiles,

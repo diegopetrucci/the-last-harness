@@ -1,4 +1,4 @@
-import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { registerTlhActivityReporters } from "./the-last-harness/activity-reporters.js";
 import { registerTlhEffectiveActivityTracker } from "./the-last-harness/activity-tracker.js";
@@ -84,7 +84,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	const getTokensCommandHandler = () => {
 		if (!tokensCommandHandlerPromise) {
 			tokensCommandHandlerPromise = loadTokensModule()
-				.then((module) => module.createTokensCommandHandler(pi))
+				.then((module) => module.createTokensCommandHandler(pi, { getPrimaryAgentLabel: () => primaryAgentRuntime.currentPrimaryAgentLabel() }))
 				.catch((error) => {
 					tokensCommandHandlerPromise = undefined;
 					throw error;

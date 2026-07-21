@@ -12,9 +12,23 @@ NO_SETTINGS=false
 NO_WRAPPER=false
 QUIET=false
 VERBOSE=false
-AGENT_DIR_INPUT="${TLH_AGENT_DIR:-$HOME/.the-last-harness/agent}"
+# Track whether AGENT_DIR_INPUT and WRAPPER_NAME were explicitly set (env or CLI).
+# Explicit values always win over ref-derived defaults (mirrors tlh-install.mjs).
+if [[ -n "${TLH_AGENT_DIR:-}" ]]; then
+  AGENT_DIR_INPUT="${TLH_AGENT_DIR}"
+  AGENT_DIR_EXPLICIT=true
+else
+  AGENT_DIR_INPUT="$HOME/.the-last-harness/agent"
+  AGENT_DIR_EXPLICIT=false
+fi
 BIN_DIR_INPUT="${TLH_BIN_DIR:-$HOME/.local/bin}"
-WRAPPER_NAME="${TLH_WRAPPER_NAME:-tlh}"
+if [[ -n "${TLH_WRAPPER_NAME:-}" ]]; then
+  WRAPPER_NAME="${TLH_WRAPPER_NAME}"
+  WRAPPER_NAME_EXPLICIT=true
+else
+  WRAPPER_NAME="tlh"
+  WRAPPER_NAME_EXPLICIT=false
+fi
 UPDATE_TRACK_INPUT="${TLH_UPDATE_TRACK:-}"
 RAW_BASE_INPUT="${TLH_RAW_BASE:-}"
 TMP_DIR=""
@@ -40,9 +54,12 @@ Options:
   --force          Allow scalar isolated defaults and installer wrapper overwrite
   --no-settings     Install the package but skip isolated settings/keybinding merge
   --no-wrapper      Skip creating the tlh wrapper command
-  --agent-dir DIR   Isolated Pi agent dir (default: ~/.the-last-harness/agent)
+  --agent-dir DIR   Isolated Pi agent dir
+                    (default for main: ~/.the-last-harness-main/agent;
+                     default for release tags: ~/.the-last-harness/agent)
   --bin-dir DIR     Wrapper install dir (default: ~/.local/bin)
-  --wrapper-name N  Wrapper command name (default: tlh)
+  --wrapper-name N  Wrapper command name
+                    (default for main: tlh-main; default for release tags: tlh)
   --ref REF         Install The Last Harness from a branch, tag, or commit
   --track TRACK     Update track for future tlh update: latest-release, pinned-tag, ref, custom
   --quiet           Suppress installer progress output
@@ -294,11 +311,13 @@ while [[ $# -gt 0 ]]; do
       ;;
     --agent-dir)
       AGENT_DIR_INPUT="$(need_value "$1" "${2:-}")"
+      AGENT_DIR_EXPLICIT=true
       shift 2
       ;;
     --agent-dir=*)
       AGENT_DIR_INPUT="${1#--agent-dir=}"
       [[ -n "${AGENT_DIR_INPUT}" ]] || die "--agent-dir requires a value"
+      AGENT_DIR_EXPLICIT=true
       shift
       ;;
     --bin-dir)
@@ -312,11 +331,13 @@ while [[ $# -gt 0 ]]; do
       ;;
     --wrapper-name)
       WRAPPER_NAME="$(need_value "$1" "${2:-}")"
+      WRAPPER_NAME_EXPLICIT=true
       shift 2
       ;;
     --wrapper-name=*)
       WRAPPER_NAME="${1#--wrapper-name=}"
       [[ -n "${WRAPPER_NAME}" ]] || die "--wrapper-name requires a value"
+      WRAPPER_NAME_EXPLICIT=true
       shift
       ;;
     --pi-installed-by-tlh)
@@ -365,6 +386,20 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# Apply ref-conditional defaults (mirrors buildInstallConfig in scripts/tlh-install.mjs).
+# When REF == main and the user did NOT explicitly set wrapper name or agent dir
+# (via env var or CLI flag), use tlh-main / ~/.the-last-harness-main/agent so that
+# main-track installs don't collide with release-tag installs.
+# Explicit values (WRAPPER_NAME_EXPLICIT / AGENT_DIR_EXPLICIT) always win.
+if [[ "${REF}" == "main" ]]; then
+  if [[ "${WRAPPER_NAME_EXPLICIT}" != "true" ]]; then
+    WRAPPER_NAME="tlh-main"
+  fi
+  if [[ "${AGENT_DIR_EXPLICIT}" != "true" ]]; then
+    AGENT_DIR_INPUT="$HOME/.the-last-harness-main/agent"
+  fi
+fi
 
 RAW_BASE="${RAW_BASE_INPUT:-https://raw.githubusercontent.com/${REPO}/${REF}}"
 

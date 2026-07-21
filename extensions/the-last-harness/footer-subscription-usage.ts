@@ -10,6 +10,7 @@ const TLH_SUBSCRIPTION_USAGE_PROVIDERS = new Set(["openai-codex", "anthropic"]);
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
+const WEEK_MS = 7 * DAY_MS;
 
 export type TlhFooterSubscriptionUsageOptions = {
 	subscriptionUsage?: TlhSubscriptionUsageSnapshotProvider;
@@ -89,12 +90,17 @@ function normalizedUsageLabel(value: string | undefined): string {
 	return value?.trim().toLowerCase().replaceAll("_", "-").replaceAll(" ", "-") ?? "";
 }
 
+function formatUsageWindowPresentation(window: TlhSubscriptionUsageWindow, windowType: "session" | "weekly"): "session" | "weekly" {
+	return window.durationMs === WEEK_MS ? "weekly" : windowType;
+}
+
 function formatUsageWindowLabel(
 	provider: string,
 	window: TlhSubscriptionUsageWindow,
 	windowType: "session" | "weekly",
 ): string {
-	if (windowType === "weekly") {
+	const presentation = formatUsageWindowPresentation(window, windowType);
+	if (presentation === "weekly") {
 		return "weekly";
 	}
 
@@ -122,6 +128,7 @@ function formatUsageWindow(
 		return undefined;
 	}
 
+	const presentation = formatUsageWindowPresentation(window, windowType);
 	const label = formatUsageWindowLabel(provider, window, windowType);
 	const percent = finiteNumber(window.percent);
 
@@ -144,7 +151,7 @@ function formatUsageWindow(
 		return undefined;
 	}
 
-	const countdown = formatResetCountdown(window.resetsAt, nowMs, windowType);
+	const countdown = formatResetCountdown(window.resetsAt, nowMs, presentation);
 	return countdown ? `${base}, resets in ${countdown}` : base;
 }
 

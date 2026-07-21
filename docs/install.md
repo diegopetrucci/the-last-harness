@@ -21,7 +21,7 @@ The installer is split into a stage-0 Bash bootstrapper (`install.sh`) and a sta
 - Pinned to a release tag for future updates:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.28.0/install.sh | bash -s -- --track pinned-tag
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.29.0/install.sh | bash -s -- --track pinned-tag
 ```
 - Any remote branch, eg `main`:
 
@@ -29,7 +29,22 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v
 curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- --ref main --track ref
 ```
 
-These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH shows a header warning only for those installs. It appears above `Context:` and reads `Warning: running TLH from {name} track` (for example `Warning: running TLH from v0.28.0 track`, `Warning: running TLH from main track`, `Warning: running TLH from local track`, or `Warning: running TLH from unknown track`). Official latest-release installs skip that warning, though interactive starts may still show a quiet startup tip.
+  When installing from `main`, the installer automatically uses separate defaults so that a main-track install does not collide with a stable-release install: the wrapper command defaults to **`tlh-main`** (instead of `tlh`) and the isolated agent dir defaults to **`~/.the-last-harness-main/agent`** (with a private runtime at `~/.the-last-harness-main/runtime`). You can override either default back to the release values by passing explicit flags:
+
+  ```sh
+  curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | bash -s -- \
+    --ref main --track ref \
+    --wrapper-name tlh --agent-dir ~/.the-last-harness/agent
+  ```
+
+  Or set the equivalent environment variables on the `bash` side of the pipe so the installer process inherits them (assigning them before `curl` would scope them to `curl` only, not to `install.sh`):
+
+  ```sh
+  curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/install.sh | \
+    TLH_WRAPPER_NAME=tlh TLH_AGENT_DIR=~/.the-last-harness/agent bash -s -- --ref main --track ref
+  ```
+
+These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH shows a header warning only for those installs. It appears above `Context:` and reads `Warning: running TLH from {name} track` (for example `Warning: running TLH from v0.29.0 track`, `Warning: running TLH from main track`, `Warning: running TLH from local track`, or `Warning: running TLH from unknown track`). Official latest-release installs skip that warning, though interactive starts may still show a quiet startup tip.
 
 ## Installer options
 
@@ -38,9 +53,13 @@ These alternatives keep TLH isolated, but they are not the official latest stabl
 --force          Allow scalar isolated defaults and installer wrapper overwrite
 --no-settings     Install the package but skip isolated settings/keybinding merge
 --no-wrapper      Skip creating the tlh wrapper command
---agent-dir DIR   Isolated Pi agent dir, default ~/.the-last-harness/agent
+--agent-dir DIR   Isolated Pi agent dir
+                  (default for release tags: ~/.the-last-harness/agent;
+                   default for main ref:     ~/.the-last-harness-main/agent)
 --bin-dir DIR     Wrapper install dir, default ~/.local/bin
---wrapper-name N  Wrapper command name, default tlh
+--wrapper-name N  Wrapper command name
+                  (default for release tags: tlh;
+                   default for main ref:     tlh-main)
 --ref REF         Install from a branch, tag, or commit
 --track TRACK     Update track: latest-release, pinned-tag, ref, custom
 --quiet          Suppress installer progress output
@@ -50,7 +69,7 @@ These alternatives keep TLH isolated, but they are not the official latest stabl
 Example pinned-tag install:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.28.0/install.sh | bash -s -- --track pinned-tag
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.29.0/install.sh | bash -s -- --track pinned-tag
 ```
 
 ## Update
@@ -85,7 +104,7 @@ Bundled default-extension opt-outs apply only to non-critical defaults. The TLH 
 
 At launch, TLH checks GitHub Releases in the background at most once per day and warns once when a newer release is available. It never auto-updates. Set `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `TLH_SKIP_UPDATE_CHECK=1`, or `"tlh": { "updateCheck": { "enabled": false } }` in the isolated settings to disable the check.
 
-Release builds with TelemetryDeck identifiers configured also send at most one pseudonymous launch event when an interactive `tlh` process starts. The event includes a hashed random install ID, event type, TLH version, privacy-filtered model value, OS name/version, and OS architecture. It does not include prompts, cwd, command arguments, repo names, hostname, username, file contents, settings contents, full environment variables, extension/package lists, API keys, provider base URLs, auth state, headers, or account identifiers. TelemetryDeck receives normal network metadata such as source IP address and request time.
+Release builds with TelemetryDeck identifiers configured also send at most one pseudonymous launch event when an interactive `tlh` process starts. The event includes a hashed random install ID, event type, TLH version, privacy-filtered model value, OS name/version, OS architecture, and the current `on`/`off` state for each registered TLH experimental feature. Unknown, custom, or legacy `tlh.experimental.enabledFeatures` values in settings are ignored and not sent. It does not include prompts, cwd, command arguments, repo names, hostname, username, file contents, settings contents, full environment variables, extension/package lists, API keys, provider base URLs, auth state, headers, or account identifiers. TelemetryDeck receives normal network metadata such as source IP address and request time.
 
 To opt out persistently, set `"tlh": { "telemetry": { "enabled": false } }` in `~/.the-last-harness/agent/settings.json`. This opt-out is user-owned and survives `tlh update` and installer reruns. Per-run opt-outs are `PI_OFFLINE=1`, `TLH_SKIP_TELEMETRY=1`, `TLH_TELEMETRY_DISABLED=1`, or `PI_TELEMETRY=0`. To reset only the pseudonymous install ID, remove `~/.the-last-harness/agent/tlh/telemetry-state.json`.
 
@@ -131,6 +150,13 @@ Run the one-liner from the release asset:
 
 ```sh
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/uninstall.sh | bash -s --
+```
+
+If you installed from `main` (which defaults to the `tlh-main` wrapper and `~/.the-last-harness-main/agent`), the uninstaller has no `--ref` auto-detection, so you must supply the matching flags explicitly:
+
+```sh
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/uninstall.sh | bash -s -- \
+  --wrapper-name tlh-main --agent-dir ~/.the-last-harness-main/agent
 ```
 
 The script removes the isolated agent dir under `~/.the-last-harness/agent`, the `tlh` wrapper, and the private Pi runtime at `~/.the-last-harness/runtime` when a valid ownership marker (`.tlh-runtime-owned` inside the runtime directory) is present. An unmarked or pre-marker runtime is skipped and a manual-removal hint is printed instead. A legacy TLH-installed pi at `~/.local` is removed only when `--force-include-pi` is explicitly passed; without that flag the uninstaller leaves it in place and prints a manual-removal hint. The parent dir `~/.the-last-harness` is removed only when empty after the agent dir is gone. Normal Pi config at `~/.pi/agent` is never touched.

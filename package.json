@@ -1,6 +1,6 @@
 {
   "name": "the-last-harness",
-  "version": "0.28.0",
+  "version": "0.29.0",
   "description": "The Last Harness Pi package",
   "license": "MIT",
   "type": "module",
@@ -58,7 +58,9 @@
   ],
   "pi": {
     "extensions": [
-      "./extensions"
+      "./extensions/annotate-git-diff/index.js",
+      "./extensions/rtk.js",
+      "./extensions/the-last-harness.js"
     ],
     "skills": [
       "./skills"
@@ -77,18 +79,18 @@
   "dependencies": {
     "@tailwindcss/browser": "4.3.2",
     "glimpseui": "0.8.1",
-    "monaco-editor": "0.53.0"
+    "monaco-editor": "0.55.1"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.80.6",
     "@earendil-works/pi-tui": "0.80.6",
     "@eslint/js": "10.0.1",
     "@types/node": "26.1.1",
-    "eslint": "10.6.0",
+    "eslint": "10.7.0",
     "globals": "17.7.0",
     "jiti": "2.7.0",
-    "typescript": "6.0.3",
     "shellcheck": "4.1.0",
-    "typescript-eslint": "8.63.0"
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.64.0"
   }
 }

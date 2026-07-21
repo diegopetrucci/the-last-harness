@@ -4,7 +4,7 @@ Run these commands from the repository root with Node.js >=22.19.0. Prefer tempo
 
 ## Run validation
 
-Run the aggregate validation script, which covers the main TypeScript `tsc --noEmit` check, the runtime `.mts` typecheck, the generated-output freshness check, installer smoke checks, test suite, lint, settings merge dry-run, and package dry-run:
+Run the aggregate validation script, which covers the main TypeScript `tsc --noEmit` check, the runtime TypeScript check for `scripts/**/*.mts` and authoritative `extensions/**/*.ts`, the generated-output freshness check for `scripts/**/*.mjs` plus same-layout `extensions/**/*.js`, installer smoke checks, test suite, lint, settings merge dry-run, and package dry-run:
 
 ```sh
 npm run validate
@@ -18,7 +18,7 @@ When you need the full Node test reporter for diagnostics, rerun:
 npm run test:verbose
 ```
 
-If you are iterating on runtime `.mts` sources under `scripts/`, you can run the focused commands directly:
+If you are iterating on runtime TypeScript sources under `scripts/` or `extensions/`, you can run the focused commands directly:
 
 ```sh
 npm run typecheck:runtime
@@ -26,7 +26,7 @@ npm run check:runtime
 npm run build
 ```
 
-Use `npm run typecheck` for the main repository TypeScript check, `npm run typecheck:runtime` for the focused runtime `.mts` typecheck, `npm run check:runtime` to verify the generated `scripts/**/*.mjs` outputs are already fresh without rewriting them, and `npm run build` only when you intentionally want to refresh those generated runtime files.
+Use `npm run typecheck` for the main repository TypeScript check, `npm run typecheck:runtime` for the focused runtime TypeScript check covering `scripts/**/*.mts` and authoritative `extensions/**/*.ts`, `npm run check:runtime` to verify the generated `scripts/**/*.mjs` and same-layout `extensions/**/*.js` outputs are already fresh without rewriting them, and `npm run build` only when you intentionally want to refresh those generated runtime files. Review and edit the TypeScript sources rather than the generated `.mjs`/`.js` mirrors.
 
 ## Refresh the Understand Anything graph
 
@@ -54,10 +54,10 @@ Review the resulting `.understand-anything/knowledge-graph.json`, `.understand-a
 
 ## Test the extension directly
 
-Test the extension directly from this checkout without installing it:
+Test the extension directly from this checkout without installing it. After TypeScript edits, run `npm run build` first so the generated JS entrypoint matches the authoritative source:
 
 ```sh
-pi --no-extensions -e ./extensions/the-last-harness.ts
+pi --no-extensions -e ./extensions/the-last-harness.js
 ```
 
 Then run the thinking picker in the interactive UI (or the supported `/effort` alias):
@@ -81,14 +81,14 @@ You can also test direct arguments, validation, and the alias:
 
 ```sh
 tmp="$(mktemp -d)"
-PI_CODING_AGENT_DIR="$tmp/agent" pi --no-extensions -e ./extensions/the-last-harness.ts
+PI_CODING_AGENT_DIR="$tmp/agent" pi --no-extensions -e ./extensions/the-last-harness.js
 ```
 
 ## Test the package install flow locally
 
 ```sh
 tmp="$(mktemp -d)"
-PI_CODING_AGENT_DIR="$tmp/agent" pi install "file:$PWD"
+PI_CODING_AGENT_DIR="$tmp/agent" pi install "$PWD"
 PI_CODING_AGENT_DIR="$tmp/agent" pi
 ```
 

@@ -45,9 +45,11 @@ const ANSI_PATTERN = new RegExp(
 	`${String.raw`\u001B`}(?:\\][^${String.raw`\u0007\u001B`}]*(?:${String.raw`\u0007`}|${String.raw`\u001B\\`})|\\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])`,
 	"gu",
 );
-const HEADER_MARKERS = ["Context:", "Press Ctrl+Shift+E", "Warning: running TLH from"];
+const HEADER_TEXT_MARKERS = ["Context:", "Press Ctrl+Shift+E", "Warning: running TLH from"];
 const HEADER_LOGO_PATTERN = /(^|\n)\s*tlh(?:\s+v\d[^\n]*)?\s*(?=\n|$)/u;
+const HEADER_RULE_PATTERN = /(^|\n)[^\n]*─(?:[^\n]*─){19,}[^\n]*(?=\n|$)/u;
 const FOOTER_MARKER = "agent: ";
+const FOOTER_CWD_PATTERN = /(^|\n)(?:~|\/)[^\n]* \([^\n()]+\)(?=\n|$)/u;
 let interruptSignal;
 const PYTHON_PTY_BRIDGE = String.raw`
 import os
@@ -401,11 +403,13 @@ function stripTerminalNoise(text) {
 }
 
 function hasHeaderMarker(text) {
-	return HEADER_MARKERS.some((marker) => text.includes(marker)) || HEADER_LOGO_PATTERN.test(text);
+	return HEADER_TEXT_MARKERS.some((marker) => text.includes(marker))
+		|| HEADER_LOGO_PATTERN.test(text)
+		|| HEADER_RULE_PATTERN.test(text);
 }
 
 function hasFooterMarker(text) {
-	return text.includes(FOOTER_MARKER);
+	return text.includes(FOOTER_MARKER) || FOOTER_CWD_PATTERN.test(text);
 }
 
 function delay(ms) {

@@ -30,6 +30,7 @@ export const TRACE_POLICY_INCIDENT_MATRIX = [
 			fixtureIds: [
 				"architect-invalid-direct-source-edit",
 				"architect-invalid-direct-source-write",
+				"architect-invalid-pre-existing-changes-authorization-does-not-bypass-direct-mutation",
 			],
 			ownerTicket: "tlht-sp6g",
 		},
@@ -75,6 +76,25 @@ export const TRACE_POLICY_INCIDENT_MATRIX = [
 		},
 	},
 	{
+		id: "architect-deterministic-research-routing",
+		incident: "gh-256",
+		invariant: "Architect research routing follows explicit fixture metadata for unambiguous scenarios instead of natural-language intent classification.",
+		sourceKind: "synthetic",
+		coverage: {
+			status: "covered",
+			fixtureIds: [
+				"architect-valid-github-history-routes-to-librarian",
+				"architect-invalid-github-history-routes-to-web-scout",
+				"architect-invalid-github-history-mixed-research-targets",
+				"architect-valid-general-web-routes-to-web-scout",
+				"architect-invalid-general-web-routes-to-repo-scout",
+				"architect-valid-unfamiliar-repo-routes-to-repo-scout",
+				"architect-invalid-unfamiliar-repo-routes-to-librarian",
+			],
+			ownerTicket: "tlhm-g0dz",
+		},
+	},
+	{
 		id: "developer-ticket-source-before-edit",
 		incident: "gh-241",
 		invariant: "Developer must run and obey tk show <id> before editing, and must stop if the assigned ticket cannot be shown.",
@@ -89,6 +109,39 @@ export const TRACE_POLICY_INCIDENT_MATRIX = [
 				"developer-valid-final-validation-no-edit",
 			],
 			ownerTicket: "tlht-4ufp",
+		},
+	},
+	{
+		id: "developer-blocking-contact-supervisor-stop-boundary",
+		incident: "gh-256",
+		invariant: "Developer must stop after a blocking contact_supervisor escalation fails or is unavailable; successful blocking escalation may continue, and a blocker report with no further tool work remains allowed.",
+		sourceKind: "synthetic",
+		coverage: {
+			status: "covered",
+			fixtureIds: [
+				"developer-valid-blocking-contact-supervisor-success-continues",
+				"developer-valid-blocking-contact-supervisor-failure-stops",
+				"developer-valid-blocking-contact-supervisor-unavailable-stops",
+				"developer-invalid-blocking-contact-supervisor-failure-continues",
+			],
+			ownerTicket: "tlhm-s7bk",
+		},
+	},
+	{
+		id: "developer-pre-existing-changes-preservation-boundary",
+		incident: "gh-331",
+		invariant: "The #331 pre-existing-changes boundary activates only when metadata.hasPreExistingChanges is exactly true. For Developer, risky Git commands that can overwrite or discard pre-existing changes require reviewed scoped authorization set to exact true; safe read-only Git variants and ordinary branch switches remain allowed, and bare checkout operand ambiguity stays documented as a syntax limitation. That authorization never bypasses other mutation boundaries, including Architect direct-source-mutation protection.",
+		sourceKind: "synthetic",
+		coverage: {
+			status: "covered",
+			fixtureIds: [
+				"developer-invalid-pre-existing-changes-risky-git-reset",
+				"developer-valid-pre-existing-changes-authorized-risky-git-reset",
+				"developer-valid-pre-existing-changes-safe-git-variants",
+				"developer-valid-pre-existing-changes-bare-checkout-ambiguity",
+				"architect-invalid-pre-existing-changes-authorization-does-not-bypass-direct-mutation",
+			],
+			ownerTicket: "tlhm-hdng",
 		},
 	},
 	{

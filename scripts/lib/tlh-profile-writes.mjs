@@ -44,6 +44,58 @@ function relativeProfilePath(agentDir, targetPath, label) {
 	return relativePath;
 }
 
+function presentPlanString(plan, key, label) {
+	if (plan?.[key] === undefined) {
+		return undefined;
+	}
+	if (typeof plan[key] !== "string" || plan[key].length === 0) {
+		throw new Error(`refusing to write ${label} with malformed compatibility plan ${key}`);
+	}
+	return plan[key];
+}
+
+function validatedPlanPaths(plan, label) {
+	const agentRoot = presentPlanString(plan, "agentRoot", label);
+	const legacyAgentDir = presentPlanString(plan, "agentDir", label);
+	const agentDir = agentRoot ?? legacyAgentDir;
+	const targetPath = presentPlanString(plan, "targetPath", label);
+	if (agentDir === undefined || targetPath === undefined) {
+		throw new Error(`refusing to write ${label} with malformed compatibility plan`);
+	}
+	if (agentRoot !== undefined && legacyAgentDir !== undefined && resolve(agentRoot) !== resolve(legacyAgentDir)) {
+		throw new Error(`refusing to write ${label} with mismatched compatibility plan profile roots`);
+	}
+
+	const intendedAgentDir = presentPlanString(plan, "intendedAgentDir", label);
+	if (intendedAgentDir !== undefined && resolve(intendedAgentDir) !== realpathForCompare(agentDir)) {
+		throw new Error(`refusing to write ${label} with mismatched compatibility plan intended profile root`);
+	}
+	const lexicalTargetParent = dirname(resolve(targetPath));
+	const targetParent = presentPlanString(plan, "targetParent", label);
+	if (targetParent !== undefined && resolve(targetParent) !== lexicalTargetParent) {
+		throw new Error(`refusing to write ${label} with mismatched compatibility plan target parent`);
+	}
+	const intendedTargetParent = presentPlanString(plan, "intendedTargetParent", label);
+	if (intendedTargetParent !== undefined && resolve(intendedTargetParent) !== realpathForCompare(lexicalTargetParent)) {
+		throw new Error(`refusing to write ${label} with mismatched compatibility plan intended target parent`);
+	}
+
+	const derivedRelativePath = relativeProfilePath(agentDir, targetPath, label);
+	if (plan.relativePath === undefined) {
+		return { agentDir, relativePath: derivedRelativePath };
+	}
+	if (typeof plan.relativePath !== "string") {
+		throw new Error(`refusing to write ${label} with malformed compatibility plan relative path`);
+	}
+	validateProfileRelativePath(plan.relativePath, label);
+	if (plan.relativePath !== derivedRelativePath) {
+		throw new Error(
+			`refusing to write ${label} with forged compatibility plan target: ${plan.relativePath} (expected ${derivedRelativePath})`,
+		);
+	}
+	return { agentDir, relativePath: derivedRelativePath };
+}
+
 export function createSafeTlhProfileWritePlan({ agentDir, targetPath, label = "TLH profile file", homeDir = homedir() }) {
 	const resolvedAgentDir = resolve(agentDir);
 	const resolvedTargetPath = resolve(targetPath);
@@ -70,16 +122,15 @@ export function createSafeTlhProfileWritePlan({ agentDir, targetPath, label = "T
 }
 
 export function writeSafeTlhProfileFile(plan, content, { mode = 0o600, exclusive = false } = {}) {
-	const agentDir = plan.agentRoot || plan.agentDir;
-	const label = plan.label || "TLH profile file";
-	const targetPath = plan.targetPath;
+	const label = plan?.label || "TLH profile file";
 	const validatedMode = validateMode(mode, label);
 	if (exclusive) {
 		throw new Error(`refusing to write ${label} with exclusive mode through the stale compatibility shim because atomic exclusive writes are unsupported`);
 	}
+	const { agentDir, relativePath } = validatedPlanPaths(plan, label);
 	return writeSafeProfileFile(
 		{ agentDir },
-		plan.relativePath || relativeProfilePath(agentDir, targetPath, label),
+		relativePath,
 		content,
 		label,
 		{ mode: validatedMode },

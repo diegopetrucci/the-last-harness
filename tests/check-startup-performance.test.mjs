@@ -126,7 +126,7 @@ test("check-startup-performance uses a temporary tlh wrapper for the default com
 		"--budget-ms",
 		"10000",
 		"--timeout-ms",
-		"2000",
+		"5000",
 		"--profile-source",
 		fixture.agentDir,
 	]);
@@ -147,7 +147,7 @@ test("check-startup-performance keeps custom --command launches usable", (t) => 
 		"--budget-ms",
 		"10000",
 		"--timeout-ms",
-		"2000",
+		"5000",
 		"--profile-source",
 		fixture.agentDir,
 		"--command",
@@ -159,6 +159,68 @@ test("check-startup-performance keeps custom --command launches usable", (t) => 
 	assert.doesNotMatch(result.stdout, /temporary wrapper:/);
 	assert.match(result.stdout, /PASS warm first-header mean/);
 	assert.equal(result.stderr, "");
+});
+
+test("check-startup-performance requires genuine header output after a delayed rendered footer", (t) => {
+	const fixture = createManagedWrapperFixture();
+	t.after(() => rmSync(fixture.root, { recursive: true, force: true }));
+	writeExecutable(fixture.customCommandPath, `#!/usr/bin/env bash
+set -euo pipefail
+printf '~/Developer/the-last-harness-minotaur (main)\n'
+sleep 0.15
+printf '────────────────────────────────────────────────────────────────────────────────\n'
+trap 'exit 0' INT TERM
+while true; do
+  sleep 1
+done
+`);
+	const result = runCheckStartupPerformance(fixture, [
+		"--runs",
+		"2",
+		"--budget-ms",
+		"10000",
+		"--timeout-ms",
+		"5000",
+		"--profile-source",
+		fixture.agentDir,
+		"--command",
+		fixture.customCommandPath,
+	]);
+
+	assert.equal(result.status, 0, result.stderr);
+	assert.match(result.stdout, /PASS warm first-header mean/);
+	const warmRun = result.stdout.match(/run\s+2 warm\s+output [\d.]+ms\s+header ([\d.]+)ms\s+footer ([\d.]+)ms/u);
+	assert.ok(warmRun, `expected warm-run timing output, got:\n${result.stdout}`);
+	assert.ok(Number(warmRun[1]) - Number(warmRun[2]) >= 100, `expected delayed header after footer, got: ${warmRun[0]}`);
+	assert.equal(result.stderr, "");
+});
+
+test("check-startup-performance does not treat rendered footer cwd output as a header", (t) => {
+	const fixture = createManagedWrapperFixture();
+	t.after(() => rmSync(fixture.root, { recursive: true, force: true }));
+	writeExecutable(fixture.customCommandPath, `#!/usr/bin/env bash
+set -euo pipefail
+printf '~/Developer/the-last-harness-minotaur (main)\n'
+trap 'exit 0' INT TERM
+while true; do
+  sleep 1
+done
+`);
+	const result = runCheckStartupPerformance(fixture, [
+		"--runs",
+		"2",
+		"--budget-ms",
+		"10000",
+		"--timeout-ms",
+		"300",
+		"--profile-source",
+		fixture.agentDir,
+		"--command",
+		fixture.customCommandPath,
+	]);
+
+	assert.equal(result.status, 1);
+	assert.match(result.stderr, /timed out waiting for header/);
 });
 
 test("check-startup-performance cleans up the active child process group and temp workspace on SIGINT", async (t) => {

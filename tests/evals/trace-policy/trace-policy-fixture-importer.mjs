@@ -24,7 +24,7 @@ function titleFromFixtureId(value) {
 }
 
 function isSensitiveKey(key) {
-	return /(?:token|secret|password|passwd|api[_-]?keys?|auth(?:orization)?|cookie|session)/i.test(normalizeText(key));
+	return /(?:token|secret|password|passwd|api[_-]?keys?|auth(?:orization)?|bearer|cookie|session)/i.test(normalizeText(key));
 }
 
 const ISO_TIMESTAMP_PATTERN = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g;
@@ -32,7 +32,7 @@ const UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{
 const GENERATED_ID_PATTERN = /\b(?:(?:call|msg|req|run|toolu|trace)_(?=[a-z0-9_-]*\d)[a-z0-9_-]{6,}|(?:req|session|trace)-(?=[a-z0-9_-]*\d)[a-z0-9_-]{6,})\b/gi;
 const LONG_HEX_ID_PATTERN = /\b[0-9a-f]{16,}\b/gi;
 const BEARER_PATTERN = /\bBearer\s+[^\s"']+/gi;
-const SECRET_ASSIGNMENT_PATTERN = /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|KEY|AUTH)[A-Z0-9_]*)=([^\s"']+|"[^"]*"|'[^']*')/gi;
+const SECRET_ASSIGNMENT_PATTERN = /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|KEY|AUTH|BEARER)[A-Z0-9_]*)=([^\s"']+|"[^"]*"|'[^']*')/gi;
 const WINDOWS_HOME_PATTERN = /[A-Za-z]:\\Users\\[^\\/:\s]+(?:\\[^\\\s"')\]]+)*/g;
 const WINDOWS_TEMP_PATTERN = /[A-Za-z]:\\(?:Users\\[^\\/:\s]+\\AppData\\Local\\Temp|Temp)(?:\\[^\\\s"')\]]+)*/g;
 const POSIX_HOME_PATTERN = /\/(?:Users|home)\/[^/:\s"')\]]+(?:\/[^\s"')\]]+)*/g;
@@ -154,6 +154,13 @@ function normalizeToolName(step) {
 	return normalizeText(step.tool || step.name || step.tool_name || step.toolName);
 }
 
+function flattenMessageRecord(record) {
+	if (!isRecord(record)) {
+		return record;
+	}
+	return isRecord(record.message) ? { ...record, ...record.message } : record;
+}
+
 function normalizeAssistantLikeStep(type, step) {
 	const normalized = { type };
 	const action = normalizeText(step.action);
@@ -220,38 +227,108 @@ function normalizeToolStep(step) {
 	return normalized;
 }
 
-function toSteps(record) {
-	if (!isRecord(record)) {
-		return [];
-	}
-	if (isRecord(record.message)) {
-		return toSteps({ ...record, ...record.message });
-	}
+function isToolResultRecord(record) {
+	return normalizeText(record?.role || record?.actor || record?.sender).toLowerCase() === "toolresult";
+}
 
-	const type = normalizeText(record.type).toLowerCase();
-	const role = normalizeText(record.role || record.actor || record.sender).toLowerCase();
-	if (type === "assistant" || role === "assistant") {
-		const steps = [];
-		const assistantStep = normalizeAssistantLikeStep("assistant", record);
-		if (assistantStep.action || assistantStep.text) {
-			steps.push(assistantStep);
+function normalizeToolResultFailure(step) {
+	const details = isRecord(step.details) ? step.details : {};
+	const exitCode = Number.isInteger(step.exitCode)
+		? step.exitCode
+		: Number.isInteger(details.exitCode)
+			? details.exitCode
+			: undefined;
+	const ok = typeof step.ok === "boolean"
+		? step.ok
+		: typeof details.ok === "boolean"
+			? details.ok
+			: undefined;
+	const rawStatus = typeof step.status === "string"
+		? step.status
+		: typeof details.status === "string"
+			? details.status
+			: undefined;
+	const status = rawStatus ? normalizeString(rawStatus) : undefined;
+	const failed = step.isError === true || ok === false || status === "failed" || (Number.isInteger(exitCode) && exitCode !== 0);
+	if (!failed) {
+		return undefined;
+	}
+	const normalized = {
+		ok: false,
+		status: status || "failed",
+	};
+	if (Number.isInteger(exitCode)) {
+		normalized.exitCode = exitCode;
+	}
+	return normalized;
+}
+
+function toolStepFromToolResultRecord(record) {
+	const normalized = normalizeToolStep({
+		type: "tool",
+		tool: normalizeToolName(record) || "unknown-tool",
+		...normalizeToolResultFailure(record),
+	});
+	return normalized;
+}
+
+function normalizeTraceSteps(records) {
+	const steps = [];
+	const toolCallIndexes = new Map();
+
+	for (const rawRecord of records) {
+		const record = flattenMessageRecord(rawRecord);
+		if (!isRecord(record)) {
+			continue;
 		}
-		if (Array.isArray(record.content)) {
-			for (const block of record.content) {
-				if (isRecord(block) && normalizeText(block.type) === "toolCall") {
+
+		const type = normalizeText(record.type).toLowerCase();
+		const role = normalizeText(record.role || record.actor || record.sender).toLowerCase();
+		if (type === "assistant" || role === "assistant") {
+			const assistantStep = normalizeAssistantLikeStep("assistant", record);
+			if (assistantStep.action || assistantStep.text) {
+				steps.push(assistantStep);
+			}
+			if (Array.isArray(record.content)) {
+				for (const block of record.content) {
+					if (!isRecord(block) || normalizeText(block.type) !== "toolCall") {
+						continue;
+					}
 					steps.push(toolStepFromToolCallBlock(block));
+					const toolCallId = normalizeText(block.id);
+					if (toolCallId) {
+						toolCallIndexes.set(toolCallId, steps.length - 1);
+					}
 				}
 			}
+			continue;
 		}
-		return steps;
+		if (type === "user" || role === "user") {
+			steps.push(normalizeAssistantLikeStep("user", record));
+			continue;
+		}
+		if (isToolResultRecord(record)) {
+			const toolCallId = normalizeText(record.toolCallId);
+			const toolCallIndex = toolCallId ? toolCallIndexes.get(toolCallId) : undefined;
+			if (toolCallIndex !== undefined) {
+				const failure = normalizeToolResultFailure(record);
+				if (failure) {
+					steps[toolCallIndex] = {
+						...steps[toolCallIndex],
+						...failure,
+					};
+				}
+				continue;
+			}
+			steps.push(toolStepFromToolResultRecord(record));
+			continue;
+		}
+		if (type === "tool" || role === "tool" || normalizeToolName(record)) {
+			steps.push(normalizeToolStep(record));
+		}
 	}
-	if (type === "user" || role === "user") {
-		return [normalizeAssistantLikeStep("user", record)];
-	}
-	if (type === "tool" || role === "tool" || normalizeToolName(record)) {
-		return [normalizeToolStep(record)];
-	}
-	return [];
+
+	return steps;
 }
 
 function parseJsonLines(text) {
@@ -283,12 +360,18 @@ function parseTraceInput(text) {
 	return parseJsonLines(normalized);
 }
 
-function extractAgent(source, fallbackAgent) {
-	const directAgent = normalizeText(source?.agent || source?.role || source?.actor);
+function extractAgent(source, fallbackAgent, options = {}) {
+	const directAgent = options.allowRoleFallback
+		? normalizeText(source?.agent || source?.role || source?.actor)
+		: normalizeText(source?.agent);
 	if (directAgent) {
 		return normalizeString(directAgent);
 	}
 	return normalizeString(fallbackAgent || "developer");
+}
+
+function isStandaloneTraceRecord(record) {
+	return isRecord(record) && normalizeTraceSteps([record]).length > 0;
 }
 
 function extractStepRecords(parsed) {
@@ -307,15 +390,22 @@ function extractStepRecords(parsed) {
 	if (Array.isArray(parsed?.messages)) {
 		return parsed.messages;
 	}
+	if (isStandaloneTraceRecord(parsed)) {
+		return [parsed];
+	}
 	throw new Error("trace input does not include a recognizable steps/events/messages array");
+}
+
+function isStandaloneTraceSelection(parsed, records) {
+	return isRecord(parsed) && records.length === 1 && records[0] === parsed;
 }
 
 export function importTracePolicyFixtureFromText(text, options = {}) {
 	const parsed = parseTraceInput(text);
+	const stepRecords = extractStepRecords(parsed);
+	const standaloneTraceRecord = isStandaloneTraceSelection(parsed, stepRecords);
 	const transcriptSource = isRecord(parsed?.transcript) ? parsed.transcript : parsed;
-	const steps = extractStepRecords(parsed)
-		.flatMap((step) => toSteps(step))
-		.filter(Boolean);
+	const steps = normalizeTraceSteps(stepRecords).filter(Boolean);
 	if (steps.length === 0) {
 		throw new Error("trace input did not yield any assistant/user/tool steps");
 	}
@@ -323,7 +413,7 @@ export function importTracePolicyFixtureFromText(text, options = {}) {
 	const fixtureSource = options.id || options.inputPath || "imported-trace";
 	const fixtureSourceName = basename(fixtureSource, extname(fixtureSource));
 	const fixtureId = sanitizeFixtureId(fixtureSourceName);
-	const agent = extractAgent(transcriptSource, options.agent);
+	const agent = extractAgent(transcriptSource, options.agent, { allowRoleFallback: !standaloneTraceRecord });
 	return {
 		id: fixtureId,
 		name: normalizeString(options.name || `imported ${titleFromFixtureId(fixtureId)}`),
