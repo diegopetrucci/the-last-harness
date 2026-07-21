@@ -831,17 +831,54 @@ function gitCheckoutHasPathspec(args) {
 	return separatorIndex >= 0 && args.slice(separatorIndex + 1).some((arg) => normalizeText(arg) !== "");
 }
 
+function gitCheckoutPositionalArguments(args, shortOptionsWithValues = new Set(), longOptionsWithValues = new Set()) {
+	const positionalArgs = [];
+	let skipNext = false;
+
+	for (const arg of args) {
+		if (skipNext) {
+			skipNext = false;
+			continue;
+		}
+		if (!arg) {
+			continue;
+		}
+		if (arg === "--") {
+			break;
+		}
+		if (longOptionsWithValues.has(arg)) {
+			skipNext = true;
+			continue;
+		}
+		if (arg.startsWith("--")) {
+			continue;
+		}
+		if (arg.startsWith("-")) {
+			skipNext = gitShortOptionConsumesNextToken(arg, shortOptionsWithValues);
+			continue;
+		}
+		positionalArgs.push(arg);
+	}
+
+	return positionalArgs;
+}
+
 function gitCheckoutHasDestructivePathMode(args) {
 	const branchOptionsWithValues = new Set(["b", "B"]);
 	return gitCheckoutHasPathspec(args)
+		|| gitCheckoutPositionalArguments(args, branchOptionsWithValues).length >= 2
 		|| gitArgsContainFlag(args, "p", "--patch", branchOptionsWithValues)
 		|| ["--ours", "--theirs", "--pathspec-from-file"].some((flag) => (
 			gitArgsContainLongFlag(args, flag, branchOptionsWithValues)
 		));
 }
 
+function isGitExecutableForExistingChangesBoundary(commandWord) {
+	return pathPosix.basename(commandWord.replaceAll("\\", "/")) === "git";
+}
+
 function isRiskyExistingChangesGitInvocation(commandWord, args) {
-	if (commandWord !== "git") {
+	if (!isGitExecutableForExistingChangesBoundary(commandWord)) {
 		return false;
 	}
 
