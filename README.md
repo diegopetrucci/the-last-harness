@@ -175,6 +175,7 @@ Backup files at the isolated-profile root (`settings.json.backup-*`, `keybinding
 
 - Slash commands reference: [`docs/commands.md`](docs/commands.md)
 - Install, update, uninstall, paths, and undo steps: [`docs/install.md`](docs/install.md)
+- Common failure recovery and conservative troubleshooting: [`docs/troubleshooting.md`](docs/troubleshooting.md)
 - Gnosis, `tk`, native RTK, and TLH workflow integrations: [`docs/integrations.md`](docs/integrations.md)
 - Web search setup, privacy, and opt-out: [`docs/web-search.md`](docs/web-search.md)
 - MCP usage and caveats: [`docs/mcp.md`](docs/mcp.md)

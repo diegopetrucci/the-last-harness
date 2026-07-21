@@ -12,7 +12,9 @@ const {
 	__resetTlhUpdateCheckForTests,
 	__setTlhUpdateCheckTestHooks,
 	buildTlhUpdateNotificationMessage,
+	getTlhHeaderUpdate,
 	maybeNotifyAvailableTlhUpdate,
+	persistTlhLastSeenVersion,
 } = await jiti.import("../extensions/the-last-harness/update-check.ts");
 const { TLH_UPDATE_CHECK_INTERVAL_MS } = await jiti.import("../extensions/the-last-harness/constants.ts");
 const { getTlhVersion, normalizeTlhVersion } = await jiti.import("../extensions/the-last-harness/package-version.ts");
@@ -293,6 +295,44 @@ test("valid older, equal, and latest release responses retain persistence and no
 	}
 });
 
+test("startup header keeps the previous-version notice until deferred lastSeen persistence runs", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-update-check-test-", { cwd: true, test: t });
+	writeSettings(fixture.agent, {});
+	writeStartupState(fixture.agent, {
+		lastSeenVersion: "0.1.0",
+		updateCheck: {
+			checkedAt: "2026-07-17T12:00:00.000Z",
+			latestVersion: LATEST_RELEASE.version,
+			lastNotifiedVersion: "8.8.8",
+		},
+	});
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		assert.deepEqual(getTlhHeaderUpdate(), {
+			version: getTlhVersion(),
+			releasesUrl: "https://github.com/diegopetrucci/the-last-harness/releases",
+		});
+		assert.deepEqual(readStartupState(fixture.agent), {
+			lastSeenVersion: "0.1.0",
+			updateCheck: {
+				checkedAt: "2026-07-17T12:00:00.000Z",
+				latestVersion: LATEST_RELEASE.version,
+				lastNotifiedVersion: "8.8.8",
+			},
+		});
+		persistTlhLastSeenVersion();
+	});
+
+	assert.deepEqual(readStartupState(fixture.agent), {
+		lastSeenVersion: getTlhVersion(),
+		updateCheck: {
+			checkedAt: "2026-07-17T12:00:00.000Z",
+			latestVersion: LATEST_RELEASE.version,
+			lastNotifiedVersion: "8.8.8",
+		},
+	});
+});
+
 test("future checkedAt timestamps are treated as stale clock skew and force a refresh", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-update-check-test-", { cwd: true, test: t });
 	writeSettings(fixture.agent, {});
@@ -419,6 +459,40 @@ test("in-process dedupe suppresses repeat notifications for the same version eve
 	});
 
 	assert.equal(notifications.length, 1);
+});
+
+test("stale callers skip notification while a replacement caller reuses the shared in-flight fetch", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-update-check-test-", { cwd: true, test: t });
+	writeSettings(fixture.agent, {});
+	writeStartupState(fixture.agent, {});
+
+	const staleNotifications = [];
+	const currentNotifications = [];
+	let fetchCalls = 0;
+	const deferred = createDeferred();
+	const now = Date.parse("2026-07-17T12:00:00.000Z");
+	installUpdateCheckHooks(t, {
+		now: () => now,
+		fetchLatestRelease: async () => {
+			fetchCalls += 1;
+			return deferred.promise;
+		},
+	});
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const staleCtx = createCtx(fixture.cwd, staleNotifications);
+		const currentCtx = createCtx(fixture.cwd, currentNotifications);
+		const staleCheck = maybeNotifyAvailableTlhUpdate(staleCtx, { canNotify: () => false });
+		const currentCheck = maybeNotifyAvailableTlhUpdate(currentCtx, { canNotify: () => true });
+		assert.equal(fetchCalls, 1, "replacement callers must reuse the in-flight fetch");
+		deferred.resolve(LATEST_RELEASE);
+		await Promise.all([staleCheck, currentCheck]);
+	});
+
+	assert.deepEqual(staleNotifications, []);
+	assert.equal(currentNotifications.length, 1);
+	assert.equal(fetchCalls, 1);
+	assert.equal(readStartupState(fixture.agent).updateCheck?.lastNotifiedVersion, LATEST_RELEASE.version);
 });
 
 test("concurrent update checks share one fetch and one notification", async (t) => {

@@ -4,14 +4,19 @@ import { fileURLToPath } from "node:url";
 export function packageRoot() {
     return resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 }
+let cachedTlhVersion;
 export function getTlhVersion() {
+    if (cachedTlhVersion) {
+        return cachedTlhVersion;
+    }
     try {
         const packageJson = JSON.parse(readFileSync(join(packageRoot(), "package.json"), "utf8"));
-        return typeof packageJson.version === "string" ? packageJson.version : "0.0.0";
+        cachedTlhVersion = typeof packageJson.version === "string" ? packageJson.version : "0.0.0";
     }
     catch {
-        return "0.0.0";
+        cachedTlhVersion = "0.0.0";
     }
+    return cachedTlhVersion ?? "0.0.0";
 }
 export function normalizeTlhVersion(version) {
     return version.trim().replace(/^v/i, "");

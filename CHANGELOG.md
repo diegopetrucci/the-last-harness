@@ -4,21 +4,9 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
-### Changed
-
-- Bumped TLH's pinned upstream Pi runtime and managed `@earendil-works/pi-coding-agent`/`@earendil-works/pi-tui` pins from `0.80.6` to `0.81.1`, refreshed the synchronized installer/docs/test baselines, and updated TLH's hidden-model compatibility shim to Pi 0.81's `ModelRuntime` snapshot flow.
-- Bumped bundled default extension pins to the reviewed current releases: `mcporter` `npm:@diegopetrucci/pi-mcp-adapter@2.10.2`, `pi-openai-fast` `npm:@diegopetrucci/pi-openai-fast@0.1.10`, `anthropic-auth` `npm:@gotgenes/pi-anthropic-auth@2.0.0`, `fff` `npm:@ff-labs/pi-fff@0.10.1`, `pi-inline-bash` `npm:@diegopetrucci/pi-inline-bash@0.1.5`, `pi-notify` `npm:@diegopetrucci/pi-notify@0.1.11`, `pi-context-inspector` `npm:@diegopetrucci/pi-context-inspector@0.1.7`, `pi-quiet-tools` `npm:@diegopetrucci/pi-quiet-tools@0.1.6`, `pi-dirty-repo-guard` `npm:@diegopetrucci/pi-dirty-repo-guard@0.1.5`, critical `pi-subagents` `npm:@diegopetrucci/pi-subagents@0.31.7`, and critical `pi-intercom` `npm:@diegopetrucci/pi-intercom@0.8.0`.
-- Aligned TLH’s subagent safety and provider-aware model injection with the reviewed `pi-subagents` `0.31.7` contract: safe management actions include `models`, TLH no longer traverses legacy `chain` payloads in its model-facing hooks, and the upstream `0.31.7` async-completion delivery hardening stays within TLH’s existing single/parallel/actions/model-injection safety boundaries.
-- Refreshed the remaining safely updatable direct npm dependencies to `@tailwindcss/browser` `4.3.3`, `monaco-editor` `0.56.0`, `eslint` `10.7.0`, and `typescript-eslint` `8.65.0`, while keeping `typescript` pinned at `6.0.3` because `typescript-eslint` `8.65.0` supports TypeScript only below `6.1`.
-
 ### Added
 
-- Install and update now prune stale settings/keybindings backups (`settings.json.backup-*`, `keybindings.json.backup-*`) from the isolated profile. Backups older than ~28 days are removed, but the two newest are always kept regardless of age. Pruning is scoped strictly to `~/.the-last-harness/agent` and never touches `~/.pi`. To keep a backup indefinitely, copy it outside the isolated profile before it ages out.
-
-### Fixed
-
-- Fixed OpenAI subscription usage footer presentation so an exact normalized seven-day primary window now renders as `weekly` and uses day/hour reset countdowns, without changing weekly-slot visibility semantics.
-- Fixed same-millisecond isolated `settings.json` backup collisions in TLH's shared settings writer by keeping the first timestamp-only backup name, then retrying exclusive `settings.json.bak-<timestamp>-<n>` suffixes under the existing Pi settings lock.
+- OpenAI weekly/daily usage now shows days, not just hours.
 
 ## [0.29.0] - 2026-07-12
 
