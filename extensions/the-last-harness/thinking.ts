@@ -5,7 +5,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { FALLBACK_THINKING_LEVELS, THINKING_LEVEL_DESCRIPTIONS, THINKING_LEVELS } from "./constants.js";
 import type { ReasoningModel, ThinkingLevel } from "./types.js";
 
-// Legacy compatibility alias/cast; Pi 0.80.6 already includes "max" in this API.
+// Legacy compatibility alias/cast; Pi 0.81.1 already includes "max" in this API.
 type RuntimeThinkingLevel = Parameters<ExtensionAPI["setThinkingLevel"]>[0];
 
 export function getAvailableThinkingLevels(model: ReasoningModel | undefined): ThinkingLevel[] {

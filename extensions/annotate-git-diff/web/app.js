@@ -2100,10 +2100,18 @@ function setupMonaco() {
 	}
 
 	window.require(
-		["vs/editor/editor.main"],
-		() => {
+		["vs/index"],
+		(loadedMonacoApi) => {
+			if (!loadedMonacoApi?.editor || !loadedMonacoApi?.languages || typeof loadedMonacoApi.Range !== "function") {
+				clearTimeout(loadTimeoutId);
+				settleFailure(
+					"TLH could not initialize the packaged Monaco editor. Close this window and rerun /annotate-git-diff.",
+					"The packaged vs/index module did not return the expected Monaco API.",
+				);
+				return;
+			}
 			if (!settleSuccess()) return;
-			monacoApi = window.monaco;
+			monacoApi = loadedMonacoApi;
 
 			// GitHub-style diff colors.
 			monacoApi.editor.defineTheme("review-dark", {
