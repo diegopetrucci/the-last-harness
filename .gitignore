@@ -18,5 +18,6 @@ npm-debug.log*
 .pi/prompts/*
 !.pi/prompts/hunk-review.md
 !.pi/prompts/investigate-revalidate-current.md
+!.pi/prompts/bump-all-direct-dependencies-and-open-a-pr.md
 *.tmp
 PLAN.md
