@@ -73,7 +73,7 @@ ${name} content
 	);
 }
 
-function createCtx({ cwd, notifications, hasUI = true, onSetHeader, projectTrusted }) {
+function createCtx({ cwd, notifications, hasUI = true, onSetHeader, onSetFooter, projectTrusted }) {
 	return {
 		hasUI,
 		cwd,
@@ -93,7 +93,9 @@ function createCtx({ cwd, notifications, hasUI = true, onSetHeader, projectTrust
 		getContextUsage: () => undefined,
 		ui: {
 			addAutocompleteProvider() {},
-			setFooter() {},
+			setFooter(factory) {
+				onSetFooter?.(factory);
+			},
 			setHeader(factory) {
 				onSetHeader?.(factory);
 			},
@@ -182,6 +184,7 @@ async function createExtensionHarness({ installState, setupWorkspace, startupRes
 		async startSession({ reason, hasUI = true, projectTrusted } = {}) {
 			const notifications = [];
 			let headerFactory;
+			let footerFactory;
 			let requestRenderCalls = 0;
 			const ctx = createCtx({
 				cwd,
@@ -191,6 +194,9 @@ async function createExtensionHarness({ installState, setupWorkspace, startupRes
 				onSetHeader(factory) {
 					headerFactory = factory;
 				},
+				onSetFooter(factory) {
+					footerFactory = factory;
+				},
 			});
 			for (const handler of sessionStartHandlers) {
 				await handler({ reason }, ctx);
@@ -199,9 +205,15 @@ async function createExtensionHarness({ installState, setupWorkspace, startupRes
 				ctx,
 				notifications,
 				headerFactory,
+				footerFactory,
 				buildHeader() {
 					return headerFactory
 						? headerFactory({ requestRender() { requestRenderCalls += 1; } }, theme)
+						: undefined;
+				},
+				buildFooter() {
+					return footerFactory
+						? footerFactory({ requestRender() {} }, theme, undefined)
 						: undefined;
 				},
 				requestRenderCalls: () => requestRenderCalls,
@@ -228,10 +240,15 @@ async function runSessionStart({ reason, installState, hasUI = true, projectTrus
 		await new Promise((resolve) => setImmediate(resolve));
 		const header = session.buildHeader();
 		const headerLines = header?.render(200);
+		const footer = session.buildFooter();
+		const footerLines = footer?.render(100);
+		footer?.dispose?.();
 		return {
 			notifications: session.notifications,
 			header,
 			headerLines,
+			footer,
+			footerLines,
 			shortcuts: harness.shortcuts,
 			ctx: session.ctx,
 			requestRenderCalls: session.requestRenderCalls,
@@ -539,4 +556,40 @@ test("startup without UI does not show the install-track notice", async () => {
 	const { notifications, headerLines } = await runSessionStart({ reason: "startup", installState: PINNED_TAG_INSTALL_STATE, hasUI: false });
 	assert.deepEqual(notifications, []);
 	assert.equal(headerLines, undefined);
+});
+
+test("production footer wiring: non-release install renders install-track notice as last footer line on startup", async () => {
+	const { footerLines } = await runSessionStart({ reason: "startup", installState: PINNED_TAG_INSTALL_STATE });
+
+	assert.ok(footerLines, "expected a footer to be rendered");
+	const nonEmptyLines = footerLines.filter((line) => line.trim().length > 0);
+	assert.ok(nonEmptyLines.length > 0, "expected at least one non-empty footer line");
+	assert.equal(nonEmptyLines.at(-1), "TLH v0.10.0");
+});
+
+test("production footer wiring: footer always shows install-track notice but header only shows it on startup", async () => {
+	const { footerLines, headerLines } = await runSessionStart({ reason: "resume", installState: PINNED_TAG_INSTALL_STATE });
+
+	assert.ok(footerLines, "expected a footer to be rendered");
+	const nonEmptyFooterLines = footerLines.filter((line) => line.trim().length > 0);
+	assert.ok(nonEmptyFooterLines.length > 0, "expected at least one non-empty footer line");
+	assert.equal(nonEmptyFooterLines.at(-1), "TLH v0.10.0", "footer must always show the install-track notice");
+
+	assert.ok(headerLines, "expected a header to be rendered");
+	assert.equal(
+		headerLines.some((line) => line.startsWith("Warning:")),
+		false,
+		"header must NOT show the install-track warning for non-startup reasons",
+	);
+});
+
+test("production footer wiring: latest-stable install has no TLH track notice in footer", async () => {
+	const { footerLines } = await runSessionStart({ reason: "startup", installState: LATEST_STABLE_INSTALL_STATE });
+
+	assert.ok(footerLines, "expected a footer to be rendered");
+	assert.equal(
+		footerLines.some((line) => line.startsWith("TLH ")),
+		false,
+		"footer must not show a TLH track notice for latest-stable installs",
+	);
 });

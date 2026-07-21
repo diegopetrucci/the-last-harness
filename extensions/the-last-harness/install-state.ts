@@ -1,5 +1,5 @@
 import { TLH_REPO } from "./constants.js";
-import { readTlhInstallState } from "./profile-state.js";
+import { readTlhInstallState, readTlhInstallStateAsync } from "./profile-state.js";
 import type { TlhInstallNotice, TlhInstallState } from "./types.js";
 
 const STABLE_TRACK = "latest-release";
@@ -123,6 +123,10 @@ export function classifyTlhInstallState(state: TlhInstallState | undefined): Tlh
 
 export function readTlhInstallNotice(): TlhInstallNotice | undefined {
 	return classifyTlhInstallState(readTlhInstallState());
+}
+
+export async function readTlhInstallNoticeAsync(): Promise<TlhInstallNotice | undefined> {
+	return classifyTlhInstallState(await readTlhInstallStateAsync());
 }
 
 export function formatTlhInstallNoticeTrackLabel(notice: TlhInstallNotice): string {

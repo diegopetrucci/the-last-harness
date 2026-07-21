@@ -255,10 +255,15 @@ test("subscription usage footer first render stays synchronous before the lazy s
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		process.env.TLH_SKIP_UPDATE_CHECK = "1";
 		mkdirSync(agentDir, { recursive: true });
+		mkdirSync(join(agentDir, "tlh"), { recursive: true });
 		mkdirSync(cwd, { recursive: true });
 		writeFileSync(
 			join(agentDir, "settings.json"),
 			`${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+		);
+		writeFileSync(
+			join(agentDir, "tlh", "install-state.json"),
+			`${JSON.stringify({ repo: "diegopetrucci/the-last-harness", track: "latest-release", ref: "v1.0.0", packageSource: "npm:@diegopetrucci/the-last-harness@1.0.0", packageSourceIsDefault: true }, null, 2)}\n`,
 		);
 
 		globalThis.fetch = async () => {
@@ -329,10 +334,15 @@ test("subscription usage refresh requests a footer render when a runtime overrid
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		process.env.TLH_SKIP_UPDATE_CHECK = "1";
 		mkdirSync(agentDir, { recursive: true });
+		mkdirSync(join(agentDir, "tlh"), { recursive: true });
 		mkdirSync(cwd, { recursive: true });
 		writeFileSync(
 			join(agentDir, "settings.json"),
 			`${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+		);
+		writeFileSync(
+			join(agentDir, "tlh", "install-state.json"),
+			`${JSON.stringify({ repo: "diegopetrucci/the-last-harness", track: "latest-release", ref: "v1.0.0", packageSource: "npm:@diegopetrucci/the-last-harness@1.0.0", packageSourceIsDefault: true }, null, 2)}\n`,
 		);
 
 		globalThis.fetch = async () => {

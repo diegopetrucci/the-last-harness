@@ -775,3 +775,71 @@ test("non-context-cap extension statuses are still rendered in the footer", () =
 	assert.match(lines[2] ?? "", /my-ext: active/);
 });
 
+
+// ---------------------------------------------------------------------------
+// NEW: install notice warning line (last line of footer)
+// ---------------------------------------------------------------------------
+
+function makeInstallNotice(kind, detail) {
+	return { kind, summary: "TLH install notice", detail };
+}
+
+test("footer appends no warning line when no install notice is provided", () => {
+	const ctx = createCtx({ entries: [] });
+	const footer = createTlhFooter(pi, ctx, theme, () => "architect", createFooterData(), {}, null, undefined);
+	const lines = footer.render(WIDTH);
+	assert.doesNotMatch(lines.join("\n"), /running TLH from/);
+});
+
+test("footer warning line is absent when installNotice is undefined", () => {
+	const ctx = createCtx({ entries: [] });
+	const footer = createTlhFooter(pi, ctx, theme, () => "architect", createFooterData(), {}, null, undefined);
+	const lines = footer.render(WIDTH);
+	assert.doesNotMatch(lines.join("\n"), /running TLH from/);
+});
+
+test("footer warning line is the last line when a ref notice is present", () => {
+	const ctx = createCtx({ entries: [] });
+	const notice = makeInstallNotice("ref", "my-branch");
+	const footer = createTlhFooter(pi, ctx, theme, () => "architect", createFooterData(), {}, null, notice);
+	const lines = footer.render(WIDTH);
+	const lastLine = lines.at(-1) ?? "";
+	assert.equal(lastLine, "TLH my-branch");
+});
+
+test("footer warning line is the last line when a pinned-tag notice is present", () => {
+	const ctx = createCtx({ entries: [] });
+	const notice = makeInstallNotice("pinned-tag", "v0.27.0");
+	const footer = createTlhFooter(pi, ctx, theme, () => "architect", createFooterData(), {}, null, notice);
+	const lines = footer.render(WIDTH);
+	const lastLine = lines.at(-1) ?? "";
+	assert.equal(lastLine, "TLH v0.27.0");
+});
+
+test("footer warning line is the last line when an unknown notice is present", () => {
+	const ctx = createCtx({ entries: [] });
+	const notice = makeInstallNotice("unknown");
+	const footer = createTlhFooter(pi, ctx, theme, () => "architect", createFooterData(), {}, null, notice);
+	const lines = footer.render(WIDTH);
+	const lastLine = lines.at(-1) ?? "";
+	assert.equal(lastLine, "TLH unknown");
+});
+
+test("footer install notice line uses dim for 'TLH ' prefix and warning color for the label (color-aware theme)", () => {
+	const ctx = createCtx({ entries: [] });
+	const notice = makeInstallNotice("ref", "main");
+	const footer = createTlhFooter(pi, ctx, colorTheme, () => "architect", createFooterData(), {}, null, notice);
+	const lines = footer.render(COLOR_WIDTH);
+	const lastLine = lines.at(-1) ?? "";
+	assert.match(lastLine, /<dim>TLH <\/dim>/);
+	assert.match(lastLine, /<warning>main<\/warning>/);
+});
+
+test("footer warning line stays within narrow widths", () => {
+	const ctx = createCtx({ entries: [] });
+	const notice = makeInstallNotice("ref", "a-very-long-branch-name-that-should-get-truncated");
+	const footer = createTlhFooter(pi, ctx, theme, () => "architect", createFooterData(), {}, null, notice);
+	const width = 20;
+	const lines = footer.render(width);
+	assert.ok(lines.every((line) => visibleWidth(line) <= width), `all lines must fit in ${width} chars`);
+});
