@@ -24,7 +24,7 @@ function titleFromFixtureId(value) {
 }
 
 function isSensitiveKey(key) {
-	return /(?:token|secret|password|passwd|api[_-]?keys?|auth(?:orization)?|cookie|session)/i.test(normalizeText(key));
+	return /(?:token|secret|password|passwd|api[_-]?keys?|auth(?:orization)?|bearer|cookie|session)/i.test(normalizeText(key));
 }
 
 const ISO_TIMESTAMP_PATTERN = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g;
@@ -32,7 +32,7 @@ const UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{
 const GENERATED_ID_PATTERN = /\b(?:(?:call|msg|req|run|toolu|trace)_(?=[a-z0-9_-]*\d)[a-z0-9_-]{6,}|(?:req|session|trace)-(?=[a-z0-9_-]*\d)[a-z0-9_-]{6,})\b/gi;
 const LONG_HEX_ID_PATTERN = /\b[0-9a-f]{16,}\b/gi;
 const BEARER_PATTERN = /\bBearer\s+[^\s"']+/gi;
-const SECRET_ASSIGNMENT_PATTERN = /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|KEY|AUTH)[A-Z0-9_]*)=([^\s"']+|"[^"]*"|'[^']*')/gi;
+const SECRET_ASSIGNMENT_PATTERN = /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|KEY|AUTH|BEARER)[A-Z0-9_]*)=([^\s"']+|"[^"]*"|'[^']*')/gi;
 const WINDOWS_HOME_PATTERN = /[A-Za-z]:\\Users\\[^\\/:\s]+(?:\\[^\\\s"')\]]+)*/g;
 const WINDOWS_TEMP_PATTERN = /[A-Za-z]:\\(?:Users\\[^\\/:\s]+\\AppData\\Local\\Temp|Temp)(?:\\[^\\\s"')\]]+)*/g;
 const POSIX_HOME_PATTERN = /\/(?:Users|home)\/[^/:\s"')\]]+(?:\/[^\s"')\]]+)*/g;
@@ -360,12 +360,18 @@ function parseTraceInput(text) {
 	return parseJsonLines(normalized);
 }
 
-function extractAgent(source, fallbackAgent) {
-	const directAgent = normalizeText(source?.agent || source?.role || source?.actor);
+function extractAgent(source, fallbackAgent, options = {}) {
+	const directAgent = options.allowRoleFallback
+		? normalizeText(source?.agent || source?.role || source?.actor)
+		: normalizeText(source?.agent);
 	if (directAgent) {
 		return normalizeString(directAgent);
 	}
 	return normalizeString(fallbackAgent || "developer");
+}
+
+function isStandaloneTraceRecord(parsed) {
+	return isRecord(parsed) && normalizeTraceSteps([parsed]).length > 0;
 }
 
 function extractStepRecords(parsed) {
@@ -384,11 +390,15 @@ function extractStepRecords(parsed) {
 	if (Array.isArray(parsed?.messages)) {
 		return parsed.messages;
 	}
+	if (isStandaloneTraceRecord(parsed)) {
+		return [parsed];
+	}
 	throw new Error("trace input does not include a recognizable steps/events/messages array");
 }
 
 export function importTracePolicyFixtureFromText(text, options = {}) {
 	const parsed = parseTraceInput(text);
+	const standaloneTraceRecord = isStandaloneTraceRecord(parsed);
 	const transcriptSource = isRecord(parsed?.transcript) ? parsed.transcript : parsed;
 	const steps = normalizeTraceSteps(extractStepRecords(parsed)).filter(Boolean);
 	if (steps.length === 0) {
@@ -398,7 +408,7 @@ export function importTracePolicyFixtureFromText(text, options = {}) {
 	const fixtureSource = options.id || options.inputPath || "imported-trace";
 	const fixtureSourceName = basename(fixtureSource, extname(fixtureSource));
 	const fixtureId = sanitizeFixtureId(fixtureSourceName);
-	const agent = extractAgent(transcriptSource, options.agent);
+	const agent = extractAgent(transcriptSource, options.agent, { allowRoleFallback: !standaloneTraceRecord });
 	return {
 		id: fixtureId,
 		name: normalizeString(options.name || `imported ${titleFromFixtureId(fixtureId)}`),

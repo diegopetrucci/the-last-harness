@@ -57,7 +57,7 @@ test("trace-policy fixture importer redacts volatile paths ids timestamps and se
 	assert.deepEqual(fixture.transcript.steps[1], {
 		type: "tool",
 		tool: "bash",
-		command: "OPENAI_API_KEY=<REDACTED> password=<REDACTED> api_key=<REDACTED> bearer=unused printenv HOME && cat <TMP>/session-123/output.log && echo Bearer <REDACTED>",
+		command: "OPENAI_API_KEY=<REDACTED> password=<REDACTED> api_key=<REDACTED> bearer=<REDACTED> printenv HOME && cat <TMP>/session-123/output.log && echo Bearer <REDACTED>",
 		path: "<HOME>/project/tests/evals/trace-policy/fixture.json",
 		input: {
 			env: {
@@ -123,6 +123,7 @@ test("trace-policy fixture importer redacts nested sensitive values", () => {
 				input: {
 					apiKeys: ["sk-one", { backup: "sk-two" }],
 					auth: { bearer: "token", nested: { refresh: "secret" } },
+					bearer: "direct-token",
 					cookie: ["a=b", "c=d"],
 					session: { id: "session_abcdef123456", file: "/Users/alice/session.json" },
 					nonSensitive: { path: "/Users/alice/project" },
@@ -134,10 +135,30 @@ test("trace-policy fixture importer redacts nested sensitive values", () => {
 	assert.deepEqual(fixture.transcript.steps[0].input, {
 		apiKeys: "<REDACTED>",
 		auth: "<REDACTED>",
+		bearer: "<REDACTED>",
 		cookie: "<REDACTED>",
 		session: "<REDACTED>",
 		nonSensitive: { path: "<HOME>/project" },
 	});
+});
+
+test("trace-policy fixture importer redacts bearer assignments in normalized strings", () => {
+	const fixture = importTracePolicyFixtureFromText(JSON.stringify({
+		agent: "developer",
+		steps: [
+			{
+				type: "assistant",
+				text: "Set bearer=plain-token and Bearer='quoted-token' before echo Bearer session-token",
+			},
+		],
+	}));
+
+	assert.deepEqual(fixture.transcript.steps, [
+		{
+			type: "assistant",
+			text: "Set bearer=<REDACTED> and Bearer=<REDACTED> before echo Bearer <REDACTED>",
+		},
+	]);
 });
 
 test("trace-policy fixture importer drops snake_case volatile fields and normalizes generated ids", () => {
@@ -163,6 +184,60 @@ test("trace-policy fixture importer drops snake_case volatile fields and normali
 		keptText: "request <ID> and trace <ID> finished",
 	});
 });
+
+test("trace-policy fixture importer accepts standalone assistant, user, and tool records", () => {
+	const cases = [
+		{
+			name: "assistant",
+			input: { type: "assistant", text: "I read /Users/alice/project at 2026-07-07T17:11:04Z" },
+			expectedAgent: "developer",
+			expectedSteps: [{ type: "assistant", text: "I read <HOME>/project at <TIMESTAMP>" }],
+		},
+		{
+			name: "user",
+			input: { role: "user", content: "Please inspect /Users/alice/project" },
+			expectedAgent: "developer",
+			expectedSteps: [{ type: "user", text: "Please inspect <HOME>/project" }],
+		},
+		{
+			name: "tool",
+			input: { type: "tool", tool: "read", path: "/tmp/tlh-live-evals-123/input.json" },
+			expectedAgent: "developer",
+			expectedSteps: [{ type: "tool", tool: "read", path: "<TMP>/tlh-live-evals-123/input.json" }],
+		},
+		{
+			name: "agent override",
+			input: { role: "assistant", agent: "architect", content: "Please inspect /Users/alice/project" },
+			expectedAgent: "architect",
+			expectedSteps: [{ type: "assistant", text: "Please inspect <HOME>/project" }],
+		},
+	];
+
+	for (const { name, input, expectedAgent, expectedSteps } of cases) {
+		const fixture = importTracePolicyFixtureFromText(JSON.stringify(input), { agent: "developer" });
+		assert.equal(fixture.transcript.agent, expectedAgent, `${name} agent`);
+		assert.deepEqual(fixture.transcript.steps, expectedSteps, name);
+	}
+});
+
+
+test("trace-policy fixture importer preserves wrapper-object role-based agent extraction", () => {
+	const fixture = importTracePolicyFixtureFromText(JSON.stringify({
+		transcript: {
+			role: "architect",
+			steps: [{ role: "assistant", content: "Ready" }],
+		},
+	}), { agent: "developer" });
+
+	assert.equal(fixture.transcript.agent, "architect");
+	assert.deepEqual(fixture.transcript.steps, [
+		{
+			type: "assistant",
+			text: "Ready",
+		},
+	]);
+});
+
 
 test("trace-policy fixture importer keeps named assistant messages as assistant steps", () => {
 	const fixture = importTracePolicyFixtureFromText(JSON.stringify({
