@@ -1,16 +1,17 @@
+import { join } from "node:path";
 import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_PRIMARY_AGENT, DISABLED_PRIMARY_AGENT, PRIMARY_AGENT_CYCLE, PRIMARY_AGENT_SESSION_STATE_ENTRY, isEnabledPrimaryAgentSelection, nextPrimaryAgentSelection, primaryAgentDefaultLabel, primaryAgentSelectionFromBranch, resolvePrimaryAgentConfig, } from "../the-last-harness-primary-agent.mjs";
 import { createPrimaryToolState, filterAvailableTools } from "../the-last-harness-primary-tools.mjs";
-import { allowedSubagentsForExperimentalConfig, registerTlhStartupMode, validateSubagentToolInput } from "../the-last-harness-subagent-safety.mjs";
+import { allowedSubagentsForExperimentalConfig, collectSubagentTargets, isEmbeddedSubagentTarget, isExecutionBearingResumeChain, isExperimentalFeatureEnabled, registerTlhStartupMode, validateSubagentToolInput, } from "../the-last-harness-subagent-safety.mjs";
 import { buildTlhCommitAttributionPrompt, getTlhGitCommitAttributionBlockReason, resolveTlhCommitAttribution, } from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME } from "./constants.js";
-import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./experimental.js";
+import { EMBEDDED_SUBAGENTS_FEATURE, buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import { applyProviderAwareSubagentModels, selectProviderAwareAgentDefaults } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
-import { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents, loadSubagentMetadata, } from "./prompts.js";
+import { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadAuthorizedEmbeddedSubagentRuntimeNames, loadPrimaryAgents, loadSubagentMetadata, } from "./prompts.js";
 import { activateTlhTicketRuntime } from "./tickets.js";
 import { tlhSettingsPathForWrite, withLockedTlhSettingsWrite } from "./profile-state.js";
 function getTlhGlobalSettings(cwd) {
@@ -186,19 +187,43 @@ function isSubagentResumeAction(input) {
     return isRecord(input) && matchesSubagentName(input.action, "resume");
 }
 function subagentCallTargetsAgent(input, target) {
-    if (!isRecord(input)) {
-        return false;
-    }
-    if (matchesSubagentName(input.agent, target)) {
-        return true;
-    }
-    return Array.isArray(input.tasks) && input.tasks.some((task) => subagentCallTargetsAgent(task, target));
+    return subagentCallTargetsMatching(input, (agent) => matchesSubagentName(agent, target));
 }
 function rushResumeDelegationReason() {
     return "TLH Rush may not use subagent action=resume because resuming by run id or index can continue a prior developer subagent without an explicit safe target. Rush must edit directly or start a new allowed subagent with an explicit agent target.";
 }
 function rushDeveloperDelegationReason() {
     return "TLH Rush may not delegate implementation to developer. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.";
+}
+function collectSubagentCallTargetsMatching(input, predicate) {
+    return collectSubagentTargets(input).filter((agent) => predicate(agent));
+}
+function subagentCallTargetsMatching(input, predicate) {
+    return collectSubagentCallTargetsMatching(input, predicate).length > 0;
+}
+function isOpaqueSubagentManagementActionInput(input) {
+    if (!isRecord(input) || typeof input.action !== "string" || input.action.trim().length === 0) {
+        return false;
+    }
+    return !isExecutionBearingResumeChain(input);
+}
+function embeddedDelegationBlockedReason(selection, input) {
+    if (isOpaqueSubagentManagementActionInput(input)) {
+        return undefined;
+    }
+    if (!subagentCallTargetsMatching(input, isEmbeddedSubagentTarget)) {
+        return undefined;
+    }
+    if (selection === "rush") {
+        return "TLH Rush may not delegate to embedded subagents. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.";
+    }
+    if (selection === "product") {
+        return "TLH Product may not delegate to embedded subagents. Embedded subagent delegation is reserved for the architect primary agent.";
+    }
+    if (selection === "bug-hunter") {
+        return "TLH Bug-Hunter may not delegate to embedded subagents. Embedded subagent delegation is reserved for the architect primary agent.";
+    }
+    return undefined;
 }
 function registerChildSubagentRuntime(pi, buildChildPrompt, env) {
     pi.on("before_agent_start", async (event, ctx) => {
@@ -234,6 +259,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
     const subagentsByName = new Map(subagentMetadata.map((agent) => [agent.name, agent]));
     let primaryAgentDefaultSelection = DEFAULT_PRIMARY_AGENT;
     let sessionPrimaryAgentOverride;
+    let sessionExperimentalSnapshot;
     function warnOnce(ctx, key, message) {
         if (warned.has(key)) {
             return;
@@ -551,6 +577,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         });
     }
     async function applySessionStart(ctx) {
+        sessionExperimentalSnapshot = getTlhGlobalSettings(ctx.cwd).tlh?.experimental;
         syncPrimaryAgentState(ctx);
         await applyPrimaryDefaults(ctx);
     }
@@ -601,7 +628,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             await applyPrimaryDefaults(ctx);
             const prompts = [
                 event.systemPrompt,
-                buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled, settings.tlh?.experimental),
+                buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled, sessionExperimentalSnapshot),
                 buildPrimaryExperimentalPrompt(activePrimaryAgent(), settings.tlh?.experimental),
                 buildTlhCommitAttributionPrompt(commitAttributionState),
             ];
@@ -639,8 +666,32 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
                 return { block: true, reason: rushDeveloperDelegationReason() };
             }
-            const reason = validateSubagentToolInput(event.input, { allowedSubagents });
-            return reason ? { block: true, reason } : undefined;
+            const embeddedFeatureEnabled = isExperimentalFeatureEnabled(sessionExperimentalSnapshot, EMBEDDED_SUBAGENTS_FEATURE);
+            if (embeddedFeatureEnabled) {
+                const embeddedBlockReason = embeddedDelegationBlockedReason(selection, event.input);
+                if (embeddedBlockReason) {
+                    return { block: true, reason: embeddedBlockReason };
+                }
+            }
+            const allowEmbeddedTargets = embeddedFeatureEnabled && selection === "architect";
+            const reason = validateSubagentToolInput(event.input, { allowedSubagents, allowEmbeddedTargets });
+            if (reason) {
+                return { block: true, reason };
+            }
+            if (allowEmbeddedTargets && !isOpaqueSubagentManagementActionInput(event.input)) {
+                const requestedEmbeddedTargets = collectSubagentCallTargetsMatching(event.input, isEmbeddedSubagentTarget);
+                if (requestedEmbeddedTargets.length > 0) {
+                    const authorizedEmbeddedTargets = new Set(loadAuthorizedEmbeddedSubagentRuntimeNames(getAgentDir()));
+                    const unauthorizedTargets = requestedEmbeddedTargets.filter((target) => !authorizedEmbeddedTargets.has(target));
+                    if (unauthorizedTargets.length > 0) {
+                        return {
+                            block: true,
+                            reason: `TLH architect may delegate to embedded.<slug> only when a valid package: embedded / name: <slug> markdown definition currently exists under ${formatHomePath(join(getAgentDir(), "agents"))}. Unauthorized target(s): ${unauthorizedTargets.join(", ")}.`,
+                        };
+                    }
+                }
+            }
+            return undefined;
         });
     }
     return { applySessionStart, currentPrimaryAgentLabel, activePrimaryAgentPrompt: activePrimaryAgent, registerCommands, registerLifecycleHooks };

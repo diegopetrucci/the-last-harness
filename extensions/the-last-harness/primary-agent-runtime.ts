@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 import { SettingsManager, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import {
@@ -12,7 +14,15 @@ import {
 	resolvePrimaryAgentConfig,
 } from "../the-last-harness-primary-agent.mjs";
 import { createPrimaryToolState, filterAvailableTools } from "../the-last-harness-primary-tools.mjs";
-import { allowedSubagentsForExperimentalConfig, registerTlhStartupMode, validateSubagentToolInput } from "../the-last-harness-subagent-safety.mjs";
+import {
+	allowedSubagentsForExperimentalConfig,
+	collectSubagentTargets,
+	isEmbeddedSubagentTarget,
+	isExecutionBearingResumeChain,
+	isExperimentalFeatureEnabled,
+	registerTlhStartupMode,
+	validateSubagentToolInput,
+} from "../the-last-harness-subagent-safety.mjs";
 import {
 	buildTlhCommitAttributionPrompt,
 	getTlhGitCommitAttributionBlockReason,
@@ -20,7 +30,7 @@ import {
 } from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME } from "./constants.js";
-import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./experimental.js";
+import { EMBEDDED_SUBAGENTS_FEATURE, buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import { applyProviderAwareSubagentModels, selectProviderAwareAgentDefaults } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
@@ -28,6 +38,7 @@ import { isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast } from
 import {
 	buildChildSubagentSystemPrompt,
 	buildTlhSystemPrompt,
+	loadAuthorizedEmbeddedSubagentRuntimeNames,
 	loadPrimaryAgents,
 	loadSubagentMetadata,
 } from "./prompts.js";
@@ -36,6 +47,7 @@ import { tlhSettingsPathForWrite, withLockedTlhSettingsWrite } from "./profile-s
 import type {
 	AgentPrompt,
 	SubagentMetadata,
+	TlhExperimentalConfig,
 	TlhPrimaryAgentConfig,
 	TlhPrimaryAgentSelection,
 	TlhPrimaryAgentSessionState,
@@ -247,13 +259,7 @@ function isSubagentResumeAction(input: unknown): boolean {
 }
 
 function subagentCallTargetsAgent(input: unknown, target: string): boolean {
-	if (!isRecord(input)) {
-		return false;
-	}
-	if (matchesSubagentName(input.agent, target)) {
-		return true;
-	}
-	return Array.isArray(input.tasks) && input.tasks.some((task) => subagentCallTargetsAgent(task, target));
+	return subagentCallTargetsMatching(input, (agent) => matchesSubagentName(agent, target));
 }
 
 function rushResumeDelegationReason(): string {
@@ -262,6 +268,41 @@ function rushResumeDelegationReason(): string {
 
 function rushDeveloperDelegationReason(): string {
 	return "TLH Rush may not delegate implementation to developer. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.";
+}
+
+function collectSubagentCallTargetsMatching(input: unknown, predicate: (agent: string) => boolean): string[] {
+	return collectSubagentTargets(input).filter((agent) => predicate(agent));
+}
+
+function subagentCallTargetsMatching(input: unknown, predicate: (agent: string) => boolean): boolean {
+	return collectSubagentCallTargetsMatching(input, predicate).length > 0;
+}
+
+function isOpaqueSubagentManagementActionInput(input: unknown): boolean {
+	if (!isRecord(input) || typeof input.action !== "string" || input.action.trim().length === 0) {
+		return false;
+	}
+	return !isExecutionBearingResumeChain(input);
+}
+
+function embeddedDelegationBlockedReason(selection: TlhPrimaryAgentSelection, input: unknown): string | undefined {
+	// Opaque management actions stay exempt; resume.chain is treated as new execution.
+	if (isOpaqueSubagentManagementActionInput(input)) {
+		return undefined;
+	}
+	if (!subagentCallTargetsMatching(input, isEmbeddedSubagentTarget)) {
+		return undefined;
+	}
+	if (selection === "rush") {
+		return "TLH Rush may not delegate to embedded subagents. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.";
+	}
+	if (selection === "product") {
+		return "TLH Product may not delegate to embedded subagents. Embedded subagent delegation is reserved for the architect primary agent.";
+	}
+	if (selection === "bug-hunter") {
+		return "TLH Bug-Hunter may not delegate to embedded subagents. Embedded subagent delegation is reserved for the architect primary agent.";
+	}
+	return undefined;
 }
 
 function registerChildSubagentRuntime(
@@ -310,6 +351,7 @@ function createTlhPrimaryAgentRuntime(
 	const subagentsByName = new Map(subagentMetadata.map((agent) => [agent.name, agent]));
 	let primaryAgentDefaultSelection: TlhPrimaryAgentSelection = DEFAULT_PRIMARY_AGENT;
 	let sessionPrimaryAgentOverride: TlhPrimaryAgentSelection | undefined;
+	let sessionExperimentalSnapshot: TlhExperimentalConfig | undefined;
 
 	function warnOnce(ctx: ExtensionContext, key: string, message: string): void {
 		if (warned.has(key)) {
@@ -700,6 +742,7 @@ function createTlhPrimaryAgentRuntime(
 	}
 
 	async function applySessionStart(ctx: ExtensionContext): Promise<void> {
+		sessionExperimentalSnapshot = getTlhGlobalSettings(ctx.cwd).tlh?.experimental;
 		syncPrimaryAgentState(ctx);
 		await applyPrimaryDefaults(ctx);
 	}
@@ -759,7 +802,12 @@ function createTlhPrimaryAgentRuntime(
 			await applyPrimaryDefaults(ctx);
 			const prompts = [
 				event.systemPrompt,
-				buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled, settings.tlh?.experimental),
+				// The embedded-subagents prompt clause uses the once-per-session snapshot so the prompt
+				// policy always matches the session-start embedded delegation gate (documented
+				// next-session-only semantics).
+				buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled, sessionExperimentalSnapshot),
+				// Other experimental prompt guidance (delta-follow-up-reviews, ci-failure-investigation)
+				// reads settings fresh each turn to preserve its pre-existing mid-session behavior.
 				buildPrimaryExperimentalPrompt(activePrimaryAgent(), settings.tlh?.experimental),
 				buildTlhCommitAttributionPrompt(commitAttributionState),
 			];
@@ -800,8 +848,32 @@ function createTlhPrimaryAgentRuntime(
 			if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
 				return { block: true, reason: rushDeveloperDelegationReason() };
 			}
-			const reason = validateSubagentToolInput(event.input, { allowedSubagents });
-			return reason ? { block: true, reason } : undefined;
+			const embeddedFeatureEnabled = isExperimentalFeatureEnabled(sessionExperimentalSnapshot, EMBEDDED_SUBAGENTS_FEATURE);
+			if (embeddedFeatureEnabled) {
+				const embeddedBlockReason = embeddedDelegationBlockedReason(selection, event.input);
+				if (embeddedBlockReason) {
+					return { block: true, reason: embeddedBlockReason };
+				}
+			}
+			const allowEmbeddedTargets = embeddedFeatureEnabled && selection === "architect";
+			const reason = validateSubagentToolInput(event.input, { allowedSubagents, allowEmbeddedTargets });
+			if (reason) {
+				return { block: true, reason };
+			}
+			if (allowEmbeddedTargets && !isOpaqueSubagentManagementActionInput(event.input)) {
+				const requestedEmbeddedTargets = collectSubagentCallTargetsMatching(event.input, isEmbeddedSubagentTarget);
+				if (requestedEmbeddedTargets.length > 0) {
+					const authorizedEmbeddedTargets = new Set(loadAuthorizedEmbeddedSubagentRuntimeNames(getAgentDir()));
+					const unauthorizedTargets = requestedEmbeddedTargets.filter((target) => !authorizedEmbeddedTargets.has(target));
+					if (unauthorizedTargets.length > 0) {
+						return {
+							block: true,
+							reason: `TLH architect may delegate to embedded.<slug> only when a valid package: embedded / name: <slug> markdown definition currently exists under ${formatHomePath(join(getAgentDir(), "agents"))}. Unauthorized target(s): ${unauthorizedTargets.join(", ")}.`,
+						};
+					}
+				}
+			}
+			return undefined;
 		});
 	}
 

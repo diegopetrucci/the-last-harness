@@ -10,12 +10,14 @@ import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
 import { formatCompactTokenCount, formatHomePath, sanitizeStatusText } from "./common.js";
 import type { FooterGitCache } from "./footer-git-cache.js";
+import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
 import { TK_WORKFLOW_STATUS_KEY } from "./ticket-workflow-ui-constants.js";
 import { composeTlhFooterFirstLine } from "./footer-first-line.js";
 import {
 	getTlhSubscriptionUsageFooterState,
 	type TlhFooterSubscriptionUsageOptions,
 } from "./footer-subscription-usage.js";
+import type { TlhInstallNotice } from "./types.js";
 export { formatTlhSubscriptionUsageFooterSegment } from "./footer-subscription-usage.js";
 
 function formatCost(cost: number): string {
@@ -55,6 +57,7 @@ export function createTlhFooter(
 	footerData?: ReadonlyFooterDataProvider,
 	usageOptions: TlhFooterUsageOptions = {},
 	gitCache?: FooterGitCache | null,
+	installNotice?: TlhInstallNotice,
 ) {
 	return {
 		render(width: number): string[] {
@@ -162,6 +165,14 @@ export function createTlhFooter(
 				if (statusLine) {
 					lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
 				}
+			}
+
+			// Install notice line (last line): shown when running from a non-release track.
+			// render() uses the value captured at session start — no file I/O.
+			if (installNotice) {
+				const label = formatTlhInstallNoticeTrackLabel(installNotice);
+				const warningStr = `${theme.fg("dim", "TLH ")}${theme.fg("warning", label)}`;
+				lines.push(truncateToWidth(warningStr, width, theme.fg("dim", "...")));
 			}
 
 			return lines;

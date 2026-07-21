@@ -58,6 +58,8 @@ Use `contrarian` sparingly, usually before ticket creation, when a proposed chan
 
 For review independence, `code-reviewer` and `oracle` intentionally prefer an available opposite provider. `contrarian` uses that same opposite-provider pattern for adversarial challenge passes. Anthropic sessions try to use the OpenAI Codex subscription provider for these subagents when it is available, while OpenAI/OpenAI-Codex sessions try Anthropic. When TLH injects one of those opposite-provider subagent models, it also supplies a same/current-provider fallback candidate for retryable model failures; if that fallback is used, the subagent output includes a notice that review independence is reduced. If you only have regular OpenAI API access and not the Codex subscription provider, TLH does not force `code-reviewer`, `oracle`, or `contrarian` onto unavailable Codex-only defaults. All other bundled subagents — including `developer`, `web-scout`, `repo-scout`, and `librarian` — follow the active primary session provider when TLH injects model defaults.
 
+Advanced users can also add trusted user-owned embedded subagents, gated behind the default-off `embedded-subagents` experimental flag. Only architect may initiate embedded delegation, and only the effective same-name profile definition selected from the active TLH profile's `agents/**/*.md` discovery order can authorize it: the selected file must be a regular non-symlink `.md` with `package: embedded`, a valid `name`, and a non-empty `description`; `.chain.md` files and definitions beneath nested `.agents/skills` paths do not participate. A new session or explicit `/reload` recaptures flag state. Product and Bug-hunter can still opaque-resume an architect-started embedded run in the same session under the accepted issue #330 limitation, but attached `resume.chain` execution is re-checked. See [docs/embedded-subagents.md](docs/embedded-subagents.md).
+
 ## Why this workflow is useful
 
 ### Benefits
@@ -176,6 +178,7 @@ Backup files at the isolated-profile root (`settings.json.backup-*`, `keybinding
 
 - Slash commands reference: [`docs/commands.md`](docs/commands.md)
 - Install, update, uninstall, paths, and undo steps: [`docs/install.md`](docs/install.md)
+- Common failure recovery and conservative troubleshooting: [`docs/troubleshooting.md`](docs/troubleshooting.md)
 - Gnosis, `tk`, native RTK, and TLH workflow integrations: [`docs/integrations.md`](docs/integrations.md)
 - Web search setup, privacy, and opt-out: [`docs/web-search.md`](docs/web-search.md)
 - MCP usage and caveats: [`docs/mcp.md`](docs/mcp.md)
@@ -189,7 +192,7 @@ Backup files at the isolated-profile root (`settings.json.backup-*`, `keybinding
 
 Node.js >=22.19.0 must be available on your `PATH`.
 
-TLH runs its own pinned Pi 0.80.6 from a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. The installer always provisions the private runtime automatically (per-user, no sudo) and hard-fails with an actionable error if it cannot.
+TLH runs its own pinned Pi 0.81.1 from a private runtime at `~/.the-last-harness/runtime` — a global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled.
 
 TLH also manages a pinned native RTK binary for shell-command rewriting at `~/.the-last-harness/agent/bin/rtk` on supported darwin/linux x64/arm64 platforms. Install and update hard-fail if that managed binary cannot be installed or validated. To disable rewriting without removing the binary, set `RTK_DISABLED=1` for a single launch or set `"tlh": { "rtk": { "disabled": true } }` in the isolated profile at `~/.the-last-harness/agent/settings.json`. To remove just the managed binary, delete `~/.the-last-harness/agent/bin/rtk`; to remove the whole isolated RTK/profile setup, remove `~/.the-last-harness` (or use the uninstall script).
 

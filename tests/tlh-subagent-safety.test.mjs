@@ -6,6 +6,7 @@ import {
 	SAFE_SUBAGENT_ACTIONS,
 	SUBAGENT_CHILD_ENV,
 	allowedSubagentsForExperimentalConfig,
+	isEmbeddedSubagentTarget,
 	registerTlhStartupMode,
 	validateSubagentToolInput,
 } from "../extensions/the-last-harness-subagent-safety.mjs";
@@ -189,6 +190,88 @@ test("validateSubagentToolInput allows opaque resume and blocks unsafe scopes/co
 	assert.equal(allowedDeveloperResume.context, "fresh");
 });
 
+
+function dynamicParallelChain(context) {
+	const parallel = { agent: "developer", task: "Implement the fix for {item}." };
+	if (context !== undefined) {
+		parallel.context = context;
+	}
+	return [
+		{
+			agent: "repo-scout",
+			task: "Return affected areas as structured JSON.",
+			as: "inventory",
+			outputSchema: { type: "object", properties: { items: { type: "array", items: { type: "string" } } } },
+		},
+		{
+			expand: { from: { output: "inventory", path: "/items" }, maxItems: 10 },
+			parallel,
+			collect: { as: "implementations" },
+		},
+	];
+}
+
+
+test("validateSubagentToolInput treats object-valued chain.parallel nested contexts like collected targets", () => {
+	const staleNestedContextChain = { chain: dynamicParallelChain("resume") };
+	assert.match(
+		validateSubagentToolInput(staleNestedContextChain),
+		/nested chain\[1\]\.parallel\[0\]\.context may not use context: "resume"/,
+	);
+
+	const freshNestedContextChain = { chain: dynamicParallelChain("fresh") };
+	assertAllowed(freshNestedContextChain);
+	assert.equal(freshNestedContextChain.agentScope, "user");
+	assert.equal(freshNestedContextChain.context, "fresh");
+
+	const omittedNestedContextChain = { chain: dynamicParallelChain() };
+	assertAllowed(omittedNestedContextChain);
+	assert.equal(omittedNestedContextChain.agentScope, "user");
+	assert.equal(omittedNestedContextChain.context, "fresh");
+});
+
+
+test("validateSubagentToolInput treats resume.chain as execution-bearing while preserving resume normalization", () => {
+	const allowedResumeChain = { action: "resume", id: "run-123", chain: [{ agent: "developer", prompt: "Implement the fix" }], agentScope: "both" };
+	assertAllowed(allowedResumeChain);
+	assert.equal(allowedResumeChain.agentScope, "user");
+	assert.equal(allowedResumeChain.context, "fresh");
+
+	const embeddedResumeChain = { action: "resume", id: "run-456", chain: [{ agent: "embedded.my-tool", prompt: "Inspect the repo" }] };
+	assert.match(
+		validateSubagentToolInput(embeddedResumeChain),
+		/Disallowed target\(s\): embedded\.my-tool/,
+	);
+	assert.equal(embeddedResumeChain.agentScope, "user");
+	assert.equal(embeddedResumeChain.context, "fresh");
+
+	const staleArrayContextResumeChain = {
+		action: "resume",
+		id: "run-789",
+		chain: [{ parallel: [{ agent: "developer", prompt: "Implement the fix", context: "resume" }] }],
+	};
+	assert.match(
+		validateSubagentToolInput(staleArrayContextResumeChain),
+		/nested chain\[0\]\.parallel\[0\]\.context may not use context: "resume"/,
+	);
+
+	const staleNestedContextResumeChain = { action: "resume", id: "run-999", chain: dynamicParallelChain("resume") };
+	assert.match(
+		validateSubagentToolInput(staleNestedContextResumeChain),
+		/nested chain\[1\]\.parallel\[0\]\.context may not use context: "resume"/,
+	);
+
+	const freshNestedContextResumeChain = { action: "resume", id: "run-1000", chain: dynamicParallelChain("fresh") };
+	assertAllowed(freshNestedContextResumeChain);
+	assert.equal(freshNestedContextResumeChain.agentScope, "user");
+	assert.equal(freshNestedContextResumeChain.context, "fresh");
+
+	const omittedNestedContextResumeChain = { action: "resume", id: "run-1001", chain: dynamicParallelChain() };
+	assertAllowed(omittedNestedContextResumeChain);
+	assert.equal(omittedNestedContextResumeChain.agentScope, "user");
+	assert.equal(omittedNestedContextResumeChain.context, "fresh");
+});
+
 test("validateSubagentToolInput uses generic primary-agent wording", () => {
 	const reasons = [
 		validateSubagentToolInput(null),
@@ -212,6 +295,167 @@ test("validateSubagentToolInput rejects disallowed agents", () => {
 		validateSubagentToolInput({ tasks: [{ agent: "repo-scout" }, { agent: "root" }] }),
 		/Disallowed target\(s\): root/,
 	);
+	assert.match(
+		validateSubagentToolInput({
+			chain: [
+				{
+					agent: "repo-scout",
+					task: "Return repository areas as structured JSON.",
+					as: "inventory",
+					outputSchema: { type: "object", properties: { items: { type: "array", items: { type: "string" } } } },
+				},
+				{
+					expand: { from: { output: "inventory", path: "/items" }, maxItems: 10 },
+					parallel: { agent: "root", task: "Inspect {item}." },
+					collect: { as: "inspections" },
+				},
+			],
+		}),
+		/Disallowed target\(s\): root/,
+	);
+});
+
+test("isEmbeddedSubagentTarget accepts strict embedded.<slug> names and rejects malformed ones", () => {
+	// Valid patterns
+	assert.equal(isEmbeddedSubagentTarget("embedded.scout"), true);
+	assert.equal(isEmbeddedSubagentTarget("embedded.scout-2"), true);
+	assert.equal(isEmbeddedSubagentTarget("embedded.a"), true);
+	assert.equal(isEmbeddedSubagentTarget("embedded.repo-helper"), true);
+	assert.equal(isEmbeddedSubagentTarget("embedded.0helper"), true);
+
+	// Malformed patterns
+	assert.equal(isEmbeddedSubagentTarget("embedded."), false); // no slug
+	assert.equal(isEmbeddedSubagentTarget("embedded.Scout"), false); // uppercase
+	assert.equal(isEmbeddedSubagentTarget("embedded.Foo"), false); // uppercase
+	assert.equal(isEmbeddedSubagentTarget("embedded.-x"), false); // leading dash
+	assert.equal(isEmbeddedSubagentTarget("embedded.repo.helper"), false); // extra dot
+	assert.equal(isEmbeddedSubagentTarget("embedded.repo_helper"), false); // underscore
+	assert.equal(isEmbeddedSubagentTarget("x.embedded.y"), false); // wrong prefix
+	assert.equal(isEmbeddedSubagentTarget("developer"), false); // no embedded prefix
+	assert.equal(isEmbeddedSubagentTarget(""), false);
+	assert.equal(isEmbeddedSubagentTarget(42), false);
+});
+
+test("validateSubagentToolInput with allowEmbeddedTargets:false (default) rejects embedded names like unknown agents", () => {
+	// Flag off: embedded targets are rejected like any other unknown agent
+	const reason = validateSubagentToolInput({ agent: "embedded.repo-helper" });
+	assert.match(reason, /Disallowed target\(s\): embedded\.repo-helper/);
+
+	// Error message does NOT mention embedded.<slug> when flag is off
+	assert.doesNotMatch(reason, /or embedded\.<slug>/);
+
+	// Malformed embedded names are also rejected
+	assert.match(validateSubagentToolInput({ agent: "embedded.Repo-helper" }), /Disallowed target\(s\): embedded\.Repo-helper/);
+	assert.match(validateSubagentToolInput({ agent: "embedded.repo.helper" }), /Disallowed target\(s\): embedded\.repo\.helper/);
+	assert.match(validateSubagentToolInput({ agent: "embedded.-x" }), /Disallowed target\(s\): embedded\.-x/);
+});
+
+test("validateSubagentToolInput with allowEmbeddedTargets:true allows valid embedded targets in all execution shapes", () => {
+	const opts = { allowEmbeddedTargets: true };
+
+	// single
+	const single = { agent: "embedded.repo-helper", prompt: "inspect the repo" };
+	assertAllowed(single, opts);
+	assert.equal(single.agentScope, "user");
+	assert.equal(single.context, "fresh");
+
+	// tasks (parallel batch)
+	const tasks = { tasks: [{ agent: "embedded.parallel-helper", prompt: "inspect one area" }] };
+	assertAllowed(tasks, opts);
+	assert.equal(tasks.agentScope, "user");
+	assert.equal(tasks.context, "fresh");
+
+	// chain
+	const chain = { chain: [{ agent: "embedded.chain-helper", prompt: "continue the work" }] };
+	assertAllowed(chain, opts);
+	assert.equal(chain.agentScope, "user");
+	assert.equal(chain.context, "fresh");
+
+	// parallel inside chain
+	const parallelInChain = { chain: [{ parallel: [{ agent: "embedded.sub-helper", prompt: "assist" }] }] };
+	assertAllowed(parallelInChain, opts);
+	assert.equal(parallelInChain.agentScope, "user");
+	assert.equal(parallelInChain.context, "fresh");
+
+	// object-valued dynamic parallel inside chain
+	const dynamicParallelInChain = {
+		chain: [
+			{
+				agent: "repo-scout",
+				task: "Return repository areas as structured JSON.",
+				as: "inventory",
+				outputSchema: { type: "object", properties: { items: { type: "array", items: { type: "string" } } } },
+			},
+			{
+				expand: { from: { output: "inventory", path: "/items" }, maxItems: 10 },
+				parallel: {
+					agent: "embedded.dynamic-helper",
+					task: "Inspect {item}.",
+					outputSchema: { type: "object", properties: { agent: { const: "root" } } },
+				},
+				collect: { as: "inspections" },
+			},
+		],
+	};
+	assertAllowed(dynamicParallelInChain, opts);
+	assert.equal(dynamicParallelInChain.agentScope, "user");
+	assert.equal(dynamicParallelInChain.context, "fresh");
+
+	// mixed: bundled + embedded
+	const mixed = { tasks: [{ agent: "developer", prompt: "impl" }, { agent: "embedded.scout", prompt: "scout" }] };
+	assertAllowed(mixed, opts);
+});
+
+test("validateSubagentToolInput with allowEmbeddedTargets:true rejects malformed embedded names", () => {
+	const opts = { allowEmbeddedTargets: true };
+
+	assert.match(validateSubagentToolInput({ agent: "embedded." }, opts), /Disallowed target\(s\): embedded\./);
+	assert.match(validateSubagentToolInput({ agent: "embedded.Scout" }, opts), /Disallowed target\(s\): embedded\.Scout/);
+	assert.match(validateSubagentToolInput({ agent: "embedded.repo.helper" }, opts), /Disallowed target\(s\): embedded\.repo\.helper/);
+	assert.match(validateSubagentToolInput({ agent: "embedded.-x" }, opts), /Disallowed target\(s\): embedded\.-x/);
+	assert.match(validateSubagentToolInput({ agent: "x.embedded.y" }, opts), /Disallowed target\(s\): x\.embedded\.y/);
+});
+
+test("validateSubagentToolInput error messages mention embedded.<slug> only when allowEmbeddedTargets is true", () => {
+	// No targets at all: message with flag off
+	const noTargetOff = validateSubagentToolInput({});
+	assert.match(noTargetOff, /must target one of:/);
+	assert.doesNotMatch(noTargetOff, /or embedded\.<slug>/);
+
+	// No targets at all: message with flag on
+	const noTargetOn = validateSubagentToolInput({}, { allowEmbeddedTargets: true });
+	assert.match(noTargetOn, /must target one of:/);
+	assert.match(noTargetOn, /or embedded\.<slug>/);
+
+	// Disallowed target: message with flag off
+	const disallowedOff = validateSubagentToolInput({ agent: "unknown-agent" });
+	assert.match(disallowedOff, /may delegate only to:/);
+	assert.doesNotMatch(disallowedOff, /or embedded\.<slug>/);
+
+	// Disallowed target: message with flag on
+	const disallowedOn = validateSubagentToolInput({ agent: "unknown-agent" }, { allowEmbeddedTargets: true });
+	assert.match(disallowedOn, /may delegate only to:/);
+	assert.match(disallowedOn, /or embedded\.<slug>/);
+});
+
+test("validateSubagentToolInput: allowEmbeddedTargets does not affect management action validation", () => {
+	const opts = { allowEmbeddedTargets: true };
+
+	// list/get/resume/status/interrupt/doctor behave identically regardless of flag
+	const list = { action: "list" };
+	assertAllowed(list, opts);
+	assert.equal(list.agentScope, "user");
+
+	const get = { action: "get", agentScope: "" };
+	assertAllowed(get, opts);
+	assert.equal(get.agentScope, "user");
+
+	for (const action of ["status", "interrupt", "doctor"]) {
+		assertAllowed({ action }, opts);
+	}
+
+	// Unsafe action still blocked
+	assert.match(validateSubagentToolInput({ action: "delete" }, opts), /may not use subagent management action 'delete'/);
 });
 
 test("validateSubagentToolInput rejects non-fresh top-level and nested contexts", () => {
@@ -228,6 +472,31 @@ test("validateSubagentToolInput rejects non-fresh top-level and nested contexts"
 	assert.match(
 		validateSubagentToolInput({ tasks: [{ agent: "developer", context: "" }] }),
 		/nested tasks\[0\]\.context may not use context: ""/,
+	);
+});
+
+// Regression: upstream v0.34.0 added eject/disable/enable/reset management verbs that mutate
+// agent definitions/overrides. TLH policy forbids runtime agent-definition mutation. These are
+// blocked by the SAFE_SUBAGENT_ACTIONS whitelist on the tool_call path. The RPC path is gated
+// separately (ps-5n7r). This test pins the behavior so a future whitelist change cannot
+// silently allow any of these verbs.
+test("validateSubagentToolInput blocks v0.34.0 agent-mutation verbs (eject/disable/enable/reset)", () => {
+	// Each new verb must be rejected with a block reason.
+	for (const action of ["eject", "disable", "enable", "reset"]) {
+		const reason = validateSubagentToolInput({ action });
+		assert.match(
+			reason,
+			/may not use subagent management action/,
+			`expected block reason for action '${action}'`,
+		);
+		assert.match(reason, new RegExp(`'${action}'`), `reason should name the blocked action '${action}'`);
+	}
+
+	// The whitelist must remain exactly this set — no additions without an explicit policy decision.
+	assert.deepEqual(
+		[...SAFE_SUBAGENT_ACTIONS],
+		["list", "get", "models", "status", "interrupt", "doctor", "resume"],
+		"SAFE_SUBAGENT_ACTIONS whitelist changed — verify TLH policy before widening",
 	);
 });
 

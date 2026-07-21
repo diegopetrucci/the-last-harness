@@ -15,6 +15,7 @@ const extensionSource = readFileSync(new URL("../extensions/the-last-harness.ts"
 const rtkExtensionSource = readFileSync(new URL("../extensions/rtk.ts", import.meta.url), "utf8");
 const rtkExtensionLicenseSource = readFileSync(new URL("../extensions/rtk.APACHE-2.0.txt", import.meta.url), "utf8");
 const annotateGitDiffSource = readFileSync(new URL("../extensions/annotate-git-diff/index.ts", import.meta.url), "utf8");
+const annotateGitDiffUiSource = readFileSync(new URL("../extensions/annotate-git-diff/ui.ts", import.meta.url), "utf8");
 const annotateGitDiffAppSource = readFileSync(new URL("../extensions/annotate-git-diff/web/app.js", import.meta.url), "utf8");
 const annotateGitDiffHtmlSource = readFileSync(new URL("../extensions/annotate-git-diff/web/index.html", import.meta.url), "utf8");
 const attributionSource = readFileSync(new URL("../extensions/the-last-harness/attribution.ts", import.meta.url), "utf8");
@@ -34,6 +35,7 @@ const tokensSource = readFileSync(new URL("../extensions/the-last-harness/tokens
 const usageLimitsSource = readFileSync(new URL("../extensions/the-last-harness/usage-limits.ts", import.meta.url), "utf8");
 const usageLimitsCommandSource = readFileSync(new URL("../extensions/the-last-harness/usage-limits-command.ts", import.meta.url), "utf8");
 const profileStateSource = readFileSync(new URL("../extensions/the-last-harness/profile-state.ts", import.meta.url), "utf8");
+const packageVersionSource = readFileSync(new URL("../extensions/the-last-harness/package-version.ts", import.meta.url), "utf8");
 const typesSource = readFileSync(new URL("../extensions/the-last-harness/types.ts", import.meta.url), "utf8");
 const jiti = createJiti(import.meta.url);
 const { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents, loadSubagentMetadata } = await jiti.import(
@@ -291,8 +293,15 @@ test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs i
 	// Regression guard: no file:// URL pointing into node_modules must appear in the built HTML.
 	assert.doesNotMatch(html, /file:\/\/[^\s'"]*node_modules/, "built HTML must not contain file:// URLs into node_modules");
 
-	// Monaco editor JS is inlined (editor.main.js defines 'vs/editor/editor.main').
-	assert.match(html, /define\("vs\/editor\/editor\.main"/, "editor.main.js content must be inlined");
+	// Monaco 0.56 exports the min/vs/index.js AMD entry but not package.json. The
+	// packaged bootstrap must use that public entry rather than the legacy
+	// editor.main module, whose runtime side effects replace MonacoEnvironment and
+	// dynamically append editor.main.css.
+	assert.match(annotateGitDiffUiSource, /require\.resolve\("monaco-editor"\)/);
+	assert.doesNotMatch(annotateGitDiffUiSource, /require\.resolve\("monaco-editor\/package\.json"\)/);
+	assert.match(html, /define\("vs\/index"/, "the public Monaco vs/index module must be inlined");
+	assert.doesNotMatch(html, /define\("vs\/editor\/editor\.main"/, "editor.main and its runtime side effects must not be inlined");
+	assert.doesNotMatch(html, /document\.createElement\("link"\)/, "Monaco must not dynamically append a CSS link");
 	assert.match(html, /"bootstrapError":null/, "packaged review assets should load without a bootstrap error");
 
 	// Monaco editor CSS is inlined (editor.main.css contains '.monaco-editor').
@@ -305,7 +314,7 @@ test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs i
 	assert.match(workerSource, /\bpostMessage\b/, "editor worker bundle must communicate with the host");
 
 	// No unreplaced template markers.
-	assert.doesNotMatch(html, /__INLINE_MONACO_EDITOR_JS__/);
+	assert.doesNotMatch(html, /__INLINE_MONACO_ENTRY_JS__/);
 	assert.doesNotMatch(html, /__INLINE_MONACO_EDITOR_CSS__/);
 	assert.doesNotMatch(html, /__INLINE_MONACO_WORKER_SOURCE_JSON__/);
 	assert.doesNotMatch(html, /__INLINE_MONACO_BASIC_LANGUAGES_JS__/, "__INLINE_MONACO_BASIC_LANGUAGES_JS__ marker must be replaced");
@@ -325,8 +334,16 @@ test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs i
 		assertRepresentativeMonacoLanguageChunkInlined(runtimeSource, contributionModuleId, language);
 	}
 
-	// The asset config must not expose monacoVsBaseUrl.
+	// The asset config must not expose monacoVsBaseUrl. The app must install TLH's
+	// blob worker environment before loading vs/index, then use the callback module
+	// as the Monaco API instead of relying on editor.main's window.monaco side effect.
 	assert.doesNotMatch(html, /monacoVsBaseUrl/);
+	const setupMonacoSource = sourceSection(annotateGitDiffAppSource, "function setupMonaco()", "\n\nfunction switchScope");
+	assert.ok(setupMonacoSource.indexOf("window.MonacoEnvironment =") < setupMonacoSource.indexOf('["vs/index"]'));
+	assert.match(setupMonacoSource, /\["vs\/index"\],[\s\S]*?\(loadedMonacoApi\)\s*=>/);
+	assert.match(setupMonacoSource, /monacoApi = loadedMonacoApi;/);
+	assert.match(setupMonacoSource, /loadedMonacoApi\?\.editor[\s\S]*loadedMonacoApi\?\.languages[\s\S]*loadedMonacoApi\.Range/);
+	assert.doesNotMatch(setupMonacoSource, /vs\/editor\/editor\.main|monacoApi = window\.monaco/);
 });
 
 test("before_agent_start reapplies primary defaults without a one-shot model gate", () => {
@@ -365,12 +382,19 @@ test("before_agent_start reapplies primary defaults without a one-shot model gat
 test("before_agent_start activates ticket runtime without disabled-ticket prompt branching", () => {
 	const lifecycleHooks = sourceSection(primaryRuntimeSource, "function registerLifecycleHooks()", "\n\n\treturn { applySessionStart");
 	const beforeAgentStart = sourceSection(lifecycleHooks, 'pi.on("before_agent_start"', 'pi.on("tool_call"');
+	const applySessionStart = sourceSection(primaryRuntimeSource, "async function applySessionStart(", "function registerLifecycleHooks()");
 
 	assert.match(primaryRuntimeSource, /function getTlhGlobalSettings\(cwd: string\): TlhSettings/);
 	assert.match(beforeAgentStart, /const settings = getTlhGlobalSettings\(ctx\.cwd\);/);
 	assert.doesNotMatch(beforeAgentStart, /ticketIntegrationEnabled/);
 	assert.match(beforeAgentStart, /activateTlhTicketRuntime\(settings, getAgentDir\(\)\);/);
-	assert.match(beforeAgentStart, /buildTlhSystemPrompt\(activePrimaryAgent\(\), subagentMetadata, primaryEnabled, settings\.tlh\?\.experimental\)/);
+	// The per-turn refresh must NOT be reintroduced in before_agent_start.
+	assert.doesNotMatch(beforeAgentStart, /sessionExperimentalSnapshot =/);
+	// delta/ci prompt guidance reads settings fresh per turn.
+	assert.match(beforeAgentStart, /buildPrimaryExperimentalPrompt\(activePrimaryAgent\(\), settings\.tlh\?\.experimental\)/);
+	assert.match(beforeAgentStart, /buildTlhSystemPrompt\(activePrimaryAgent\(\), subagentMetadata, primaryEnabled, sessionExperimentalSnapshot\)/);
+	// The embedded snapshot is captured once per session in applySessionStart.
+	assert.match(applySessionStart, /sessionExperimentalSnapshot = getTlhGlobalSettings\(ctx\.cwd\)\.tlh\?\.experimental/);
 });
 
 test("primary and child prompts do not include disabled-ticket fallback guidance", () => {
@@ -441,6 +465,69 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 		assert.doesNotMatch(prompt, /## TLH Ticket Integration Disabled/);
 		assert.doesNotMatch(prompt, /non-ticket/i);
 		assert.doesNotMatch(prompt, /ticket integration is disabled/i);
+	}
+});
+
+test("allowed-subagents prompt keeps bundled minor-agent listings and scopes embedded guidance to architect", () => {
+	const primaryAgents = loadPrimaryAgents();
+	const architect = primaryAgents.get("architect");
+	const rush = primaryAgents.get("rush");
+	const product = primaryAgents.get("product");
+	const bugHunter = primaryAgents.get("bug-hunter");
+	const subagents = loadSubagentMetadata();
+
+	const embeddedConfig = { enabledFeatures: ["embedded-subagents"] };
+	const noEmbeddedConfig = { enabledFeatures: [] };
+
+	// Patterns
+	const embeddedClause = /embedded\.<slug>.*subagent.*explicitly names or asks/s;
+	const closingRule = /Do not delegate outside this bundled TLH minor-agent list\./;
+	const managementGuidance = /TLH minor agents are isolated to the user scope/;
+	const sectionHeader = /## TLH Allowed Minor Subagents/;
+
+	// architect + embedded-subagents flag ON: has embedded clause, no closing rule
+	const architectOn = buildTlhSystemPrompt(architect, subagents, true, embeddedConfig);
+	assert.match(architectOn, sectionHeader, "architect+on: section header present");
+	assert.match(architectOn, managementGuidance, "architect+on: management guidance present");
+	assert.match(architectOn, embeddedClause, "architect+on: embedded clause present");
+	assert.doesNotMatch(architectOn, closingRule, "architect+on: no closing rule");
+
+	// architect + embedded-subagents flag OFF: no embedded clause, has closing rule
+	const architectOff = buildTlhSystemPrompt(architect, subagents, true, noEmbeddedConfig);
+	assert.match(architectOff, sectionHeader, "architect+off: section header present");
+	assert.match(architectOff, managementGuidance, "architect+off: management guidance present");
+	assert.doesNotMatch(architectOff, embeddedClause, "architect+off: no embedded clause");
+	assert.match(architectOff, closingRule, "architect+off: closing rule present");
+
+	// architect + undefined config: no embedded clause, has closing rule
+	const architectUndefined = buildTlhSystemPrompt(architect, subagents, true, undefined);
+	assert.doesNotMatch(architectUndefined, embeddedClause, "architect+undefined: no embedded clause");
+	assert.match(architectUndefined, closingRule, "architect+undefined: closing rule present");
+
+	// rush / product / bug-hunter: no embedded clause and has closing rule regardless of flag
+	for (const primary of [rush, product, bugHunter]) {
+		const label = primary?.name ?? "unknown";
+		for (const config of [embeddedConfig, noEmbeddedConfig, undefined]) {
+			const prompt = buildTlhSystemPrompt(primary, subagents, true, config);
+			assert.match(prompt, sectionHeader, `${label}: section header present`);
+			assert.match(prompt, managementGuidance, `${label}: management guidance present`);
+			assert.doesNotMatch(prompt, embeddedClause, `${label}: no embedded clause`);
+			assert.match(prompt, closingRule, `${label}: closing rule present`);
+		}
+	}
+
+	// All variants include bundled agent listings
+	for (const [primary, config] of [
+		[architect, embeddedConfig],
+		[architect, noEmbeddedConfig],
+		[rush, embeddedConfig],
+		[rush, noEmbeddedConfig],
+		[product, embeddedConfig],
+		[bugHunter, embeddedConfig],
+	]) {
+		const prompt = buildTlhSystemPrompt(primary, subagents, true, config);
+		assert.match(prompt, /- developer:/, `${primary?.name}: developer listing present`);
+		assert.match(prompt, /- code-reviewer:/, `${primary?.name}: code-reviewer listing present`);
 	}
 });
 
@@ -528,7 +615,7 @@ test("extension lazy-loads review, tokens, annotate-last-message, and tlh-change
 	assert.doesNotMatch(extensionSource, /import\("\.\/the-last-harness\/(?:effort|thinking|experimental|version|attribution)\.js"\)/);
 });
 
-test("header, footer, and update-check stay on the eager startup path pending benchmark-proven deferment", () => {
+test("header and footer install before deferred update side effects", () => {
 	const sessionStart = sourceSection(extensionSource, 'pi.on("session_start"', "\n\t});\n}");
 
 	assert.match(extensionSource, /from "\.\/the-last-harness\/footer\.js"/);
@@ -537,7 +624,20 @@ test("header, footer, and update-check stay on the eager startup path pending be
 	assert.match(extensionSource, /from "\.\/the-last-harness\/update-check\.js"/);
 	assert.doesNotMatch(extensionSource, /import\("\.\/the-last-harness\/(?:footer|footer-git-cache|header|update-check)\.js"\)/);
 	assert.match(sessionStart, /const headerUpdate = getTlhHeaderUpdate\(\);/);
-	assert.match(sessionStart, /void maybeNotifyAvailableTlhUpdate\(ctx\)\.catch\(\(\) => undefined\);/);
+	assert.match(sessionStart, /void maybeNotifyAvailableTlhUpdate\(ctx, \{[\s\S]*canNotify: \(\) => activeTlhHeaderSessionToken === sessionToken,[\s\S]*\}\)\.catch\(\(\) => undefined\);/);
+	assert.match(sessionStart, /persistTlhLastSeenVersion\(\);/);
+	assert.doesNotMatch(sessionStart, /scheduleDeferredStartupTask\(\(\) => \{\s*if \(event\.reason === "startup"\)/);
+	assert.doesNotMatch(sessionStart, /await (?:collectStartupResources|startupResourceCollector)\(/);
+	assert.match(
+		sessionStart,
+		/if \(typeof ctx\.ui\.setFooter === "function"\) \{[\s\S]*ctx\.ui\.setFooter\([\s\S]*if \(typeof ctx\.ui\.setHeader === "function"\) \{[\s\S]*ctx\.ui\.setHeader\([\s\S]*scheduleDeferredStartupTask\(\(\) => \{[\s\S]*persistTlhLastSeenVersion\(\);[\s\S]*void maybeNotifyAvailableTlhUpdate\(ctx, \{[\s\S]*\}\)\.catch\(\(\) => undefined\);/,
+	);
+});
+
+test("package version lookup caches the manifest result in-process", () => {
+	assert.match(packageVersionSource, /let cachedTlhVersion: string \| undefined;/);
+	assert.match(packageVersionSource, /if \(cachedTlhVersion\) \{\s*return cachedTlhVersion;\s*\}/);
+	assert.match(packageVersionSource, /cachedTlhVersion = typeof packageJson\.version === "string"/);
 });
 
 test("thinking alias shares the effort command thinking-level behavior", () => {
@@ -562,7 +662,7 @@ test("extension delegates launch update and telemetry services to feature module
 	);
 	assert.match(sessionStart, /if \(!ctx\.hasUI\) \{[\s\S]*return;[\s\S]*if \(event\.reason === "startup"\)/);
 	assert.match(sessionStart, /const headerUpdate = getTlhHeaderUpdate\(\);/);
-	assert.match(sessionStart, /void maybeNotifyAvailableTlhUpdate\(ctx\)\.catch\(\(\) => undefined\);/);
+	assert.match(sessionStart, /scheduleDeferredStartupTask\(\(\) => \{[\s\S]*void maybeNotifyAvailableTlhUpdate\(ctx, \{[\s\S]*\}\)\.catch\(\(\) => undefined\);/);
 	assert.doesNotMatch(extensionSource, /function maybeSendTlhLaunchTelemetry/);
 	assert.doesNotMatch(extensionSource, /function fetchLatestTlhRelease/);
 });
@@ -571,6 +671,19 @@ test("extension installs TLH model-visibility, package-update, and new-version-n
 	assert.match(extensionSource, /installTlhModelVisibilityFilter\(\)/);
 	assert.match(extensionSource, /installTlhPackageUpdateNotificationOverride\(\)/);
 	assert.match(extensionSource, /installTlhNewVersionNotificationOverride\(\)/);
+});
+
+test("extension registers synchronous header-session invalidation before async shutdown handlers", () => {
+	const invalidationRegistration = 'pi.on("session_shutdown", () => {';
+	const firstShutdownHandlerIndex = extensionSource.indexOf('pi.on("session_shutdown"');
+	const invalidationHandlerIndex = extensionSource.indexOf(invalidationRegistration);
+	const contextCapRegistrationIndex = extensionSource.indexOf("registerContextCap(pi)");
+	const annotateShutdownIndex = extensionSource.indexOf('pi.on("session_shutdown", async () => {');
+
+	assert.notEqual(invalidationHandlerIndex, -1, "expected a synchronous header-session invalidation handler");
+	assert.equal(firstShutdownHandlerIndex, invalidationHandlerIndex, "header-session invalidation must be the first shutdown handler registered here");
+	assert.ok(invalidationHandlerIndex < contextCapRegistrationIndex, "invalidation must register before context-cap async shutdown work");
+	assert.ok(invalidationHandlerIndex < annotateShutdownIndex, "invalidation must register before annotate async shutdown work");
 });
 
 test("extension runs primary session_start work before UI startup in one handler", () => {
@@ -609,7 +722,15 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 	);
 	assert.match(toolCall, /if \(selection === "rush" && isSubagentResumeAction\(event\.input\)\)/);
 	assert.match(toolCall, /if \(selection === "rush" && subagentCallTargetsAgent\(event\.input, "developer"\)\)/);
-	assert.match(toolCall, /const reason = validateSubagentToolInput\(event\.input, \{ allowedSubagents \}\)/);
+	assert.match(toolCall, /const embeddedFeatureEnabled = isExperimentalFeatureEnabled\(sessionExperimentalSnapshot, EMBEDDED_SUBAGENTS_FEATURE\)/);
+	assert.match(
+		toolCall,
+		/if \(embeddedFeatureEnabled\) \{[\s\S]*const embeddedBlockReason = embeddedDelegationBlockedReason\(selection, event\.input\)/,
+	);
+	assert.match(toolCall, /const allowEmbeddedTargets = embeddedFeatureEnabled && selection === "architect"/);
+	assert.match(toolCall, /const requestedEmbeddedTargets = collectSubagentCallTargetsMatching\(event\.input, isEmbeddedSubagentTarget\)/);
+	assert.match(toolCall, /if \(requestedEmbeddedTargets\.length > 0\) \{[\s\S]*loadAuthorizedEmbeddedSubagentRuntimeNames\(getAgentDir\(\)\)/);
+	assert.match(toolCall, /const reason = validateSubagentToolInput\(event\.input, \{ allowedSubagents, allowEmbeddedTargets \}\)/);
 	assert(
 		toolCall.indexOf('if (event.toolName === "bash")') < toolCall.indexOf("resolveTlhCommitAttribution"),
 		"parent tool_call should resolve attribution only inside the bash branch",
@@ -618,7 +739,7 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 		toolCall.indexOf("applyProviderAwareSubagentModels") < toolCall.indexOf("!isEnabledPrimaryAgentSelection(selection)"),
 		"provider-aware subagent defaults should run before the disabled-primary guard",
 	);
-	const genericValidationIndex = toolCall.indexOf("const reason = validateSubagentToolInput(event.input, { allowedSubagents })");
+	const genericValidationIndex = toolCall.indexOf("const reason = validateSubagentToolInput(event.input, { allowedSubagents, allowEmbeddedTargets })");
 	assert(
 		toolCall.indexOf("isSubagentResumeAction") < genericValidationIndex,
 		"Rush resume guard should run before generic subagent validation",
@@ -626,6 +747,24 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 	assert(
 		toolCall.lastIndexOf('subagentCallTargetsAgent(event.input, "developer")') < genericValidationIndex,
 		"Rush developer guard should run before generic subagent validation",
+	);
+	assert(
+		toolCall.indexOf("embeddedDelegationBlockedReason") < genericValidationIndex,
+		"Embedded delegation block check should run before generic subagent validation",
+	);
+	assert(
+		toolCall.indexOf("allowEmbeddedTargets") < genericValidationIndex,
+		"allowEmbeddedTargets computation should appear before generic subagent validation",
+	);
+	const requestedEmbeddedTargetsIndex = toolCall.indexOf("const requestedEmbeddedTargets = collectSubagentCallTargetsMatching(event.input, isEmbeddedSubagentTarget)");
+	const embeddedAuthorizationScanIndex = toolCall.indexOf("loadAuthorizedEmbeddedSubagentRuntimeNames(getAgentDir())");
+	assert(
+		requestedEmbeddedTargetsIndex < embeddedAuthorizationScanIndex,
+		"Embedded target collection should happen before the authorization scan",
+	);
+	assert(
+		toolCall.indexOf("if (requestedEmbeddedTargets.length > 0)") < embeddedAuthorizationScanIndex,
+		"Embedded authorization scan should be gated behind an actual embedded target request",
 	);
 });
 
@@ -659,7 +798,7 @@ test("extension wires subscription usage to lifecycle refreshes and footer", () 
 	assert.match(sessionStart, /subscriptionUsageService\.registerFooterRenderRequest\(ctx, \(\) => tui\.requestRender\(\)\)/);
 	assert.match(sessionStart, /refreshSubscriptionUsage\(ctx\)/);
 	assert.match(sessionStart, /subscriptionUsage: subscriptionUsageService/);
-	assert.match(sessionStart, /shouldShowTlhUsageWeekly\(getTlhUsageLimitsConfig\(ctx\.cwd\)\)/);
+	assert.match(sessionStart, /shouldShowWeekly: getCachedTlhUsageWeeklyVisibility/);
 	assert.match(sessionStart, /onChange: \(\) => tui\.requestRender\(\)/);
 	assert.match(sessionStart, /typeof footerData\?\.onBranchChange === "function" \? \(cb\) => footerData\.onBranchChange\(cb\) : undefined/);
 	assert.match(subscriptionUsageFacadeSource, /import\("\.\/subscription-usage\.js"\)/);

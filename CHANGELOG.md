@@ -4,21 +4,14 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
-### Changed
-
-- Bumped bundled default extension pins to the reviewed current releases: `mcporter` `npm:@diegopetrucci/pi-mcp-adapter@2.10.2`, `pi-openai-fast` `npm:@diegopetrucci/pi-openai-fast@0.1.9`, `pi-notify` `npm:@diegopetrucci/pi-notify@0.1.10`, `pi-context-inspector` `npm:@diegopetrucci/pi-context-inspector@0.1.6`, critical `pi-subagents` `npm:@diegopetrucci/pi-subagents@0.31.6`, and critical `pi-intercom` `npm:@diegopetrucci/pi-intercom@0.8.0`.
-- Aligned TLH’s subagent safety and provider-aware model injection with the `pi-subagents` `0.31.6` single/parallel contract: safe management actions now include `models`, TLH no longer traverses legacy `chain` payloads in its model-facing hooks, and hidden autocomplete/docs references to `/skill:pi-subagents` were removed.
-- Refreshed the remaining safely updatable direct npm dependencies to `monaco-editor` `0.55.1`, `eslint` `10.7.0`, and `typescript-eslint` `8.64.0`, while keeping `typescript` pinned at `6.0.3` to stay within the supported peer range.
-
 ### Added
 
+- [Experimental] You can now add custom (non built-in) subagents. Ask TLH how to.
 - New `/what-consumed-my-session-limit-and-tokens` command that generates and opens a local, private HTML report attributing token consumption across all TLH sessions (including subagent child sessions, across every project) within the current provider session-limit window (Anthropic 5-hour or OpenAI Codex session window, resolved from the subscription usage snapshot with a trailing-5h fallback). The report ranks sessions by in-window usage with per-provider totals and privacy/accuracy caveats, and embeds no transcript text or tool payloads.
-- Install and update now prune stale settings/keybindings backups (`settings.json.backup-*`, `keybindings.json.backup-*`) from the isolated profile. Backups older than ~28 days are removed, but the two newest are always kept regardless of age. Pruning is scoped strictly to `~/.the-last-harness/agent` and never touches `~/.pi`. To keep a backup indefinitely, copy it outside the isolated profile before it ages out.
 
 ### Fixed
 
-- Fixed OpenAI subscription usage footer presentation so an exact normalized seven-day primary window now renders as `weekly` and uses day/hour reset countdowns, without changing weekly-slot visibility semantics.
-- Fixed same-millisecond isolated `settings.json` backup collisions in TLH's shared settings writer by keeping the first timestamp-only backup name, then retrying exclusive `settings.json.bak-<timestamp>-<n>` suffixes under the existing Pi settings lock.
+- OpenAI weekly/daily usage now shows days, not just hours.
 
 ## [0.29.0] - 2026-07-12
 

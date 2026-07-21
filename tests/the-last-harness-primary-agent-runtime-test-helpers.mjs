@@ -5,7 +5,7 @@ import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
 export const { TLH_DEFAULT_COMMIT_ATTRIBUTION } = await jiti.import("../extensions/the-last-harness/attribution.ts");
-export const { CI_FAILURE_INVESTIGATION_FEATURE, DELTA_FOLLOW_UP_REVIEWS_FEATURE } = await jiti.import(
+export const { CI_FAILURE_INVESTIGATION_FEATURE, DELTA_FOLLOW_UP_REVIEWS_FEATURE, EMBEDDED_SUBAGENTS_FEATURE } = await jiti.import(
 	"../extensions/the-last-harness/experimental.ts",
 );
 export const { registerTlhPrimaryAgentRuntime } = await jiti.import(
@@ -78,7 +78,8 @@ export function registerRuntimeHarness(options = {}) {
 	const toolCall = pi.events.find((event) => event.name === "tool_call")?.handler;
 	assert.equal(typeof beforeAgentStart, "function");
 	assert.equal(typeof toolCall, "function");
-	return { pi, runtime, beforeAgentStart, toolCall };
+	const applySessionStart = (ctx) => runtime?.applySessionStart(ctx);
+	return { pi, runtime, beforeAgentStart, toolCall, applySessionStart };
 }
 
 export function writePrimaryConfig(agentDir, primaryAgent = {}) {

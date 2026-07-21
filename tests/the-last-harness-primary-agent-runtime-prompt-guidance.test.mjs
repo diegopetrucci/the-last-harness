@@ -253,6 +253,36 @@ test("before_agent_start gates ci failure investigation guidance behind isolated
 	});
 });
 
+test("before_agent_start ci-failure-investigation guidance stays per-turn: enabling mid-session takes effect on the next turn", async (t) => {
+	// Guards against regressing prompt-only experimental features to session-start semantics.
+	// Unlike the embedded-subagents gate (once-per-session snapshot), delta-follow-up-reviews and
+	// ci-failure-investigation guidance must read settings fresh each turn, matching pre-feature main.
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { beforeAgentStart, applySessionStart } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const ctx = createToolCallContext([], undefined, { cwd: fixture.cwd });
+
+		// Turn 1: session start + first before_agent_start with the feature OFF (no settings file).
+		await applySessionStart(ctx);
+		const offPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+		assert.doesNotMatch(offPrompt.systemPrompt, /## TLH Experimental Feature: ci-failure-investigation/);
+		assert.doesNotMatch(offPrompt.systemPrompt, /read-only investigation before asking the user whether to proceed/i);
+
+		// Enable the feature mid-session.
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [CI_FAILURE_INVESTIGATION_FEATURE] } } }, null, 2)}\n`,
+		);
+
+		// Turn 2: a second before_agent_start (no new session start) must now surface the guidance,
+		// because prompt-only experimental features read settings fresh every turn.
+		const onPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+		assert.match(onPrompt.systemPrompt, /## TLH Experimental Feature: ci-failure-investigation/);
+		assert.match(onPrompt.systemPrompt, /read-only investigation before asking the user whether to proceed/i);
+	});
+});
+
 test("before_agent_start includes contrarian guidance by default and ignores stale contrarian experimental settings", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const subagentMetadata = [

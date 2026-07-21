@@ -6,11 +6,11 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
-	AuthStorage,
 	createAgentSession,
 	DefaultResourceLoader,
 	defineTool,
 	ModelRegistry,
+	ModelRuntime,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
@@ -499,8 +499,11 @@ test("hermetic core architect workflow runs end-to-end with deterministic subage
 		GIT_CONFIG_KEY_2: "core.hooksPath",
 		GIT_CONFIG_VALUE_2: poisonedHooks,
 	}, async () => setupFixture(t));
-	const authStorage = AuthStorage.create(join(fixture.agentDir, "auth.json"));
-	const modelRegistry = ModelRegistry.inMemory(authStorage);
+	const modelRuntime = await ModelRuntime.create({
+		authPath: join(fixture.agentDir, "auth.json"),
+		allowModelNetwork: false,
+	});
+	const modelRegistry = new ModelRegistry(modelRuntime);
 	const scriptState = { steps: new Map(), ticketId: "tlh-test-1", providerCalls: [] };
 	registerScriptedProviders(modelRegistry, scriptState);
 
@@ -561,7 +564,7 @@ test("hermetic core architect workflow runs end-to-end with deterministic subage
 				return createAgentSession({
 					cwd: fixture.workspace,
 					agentDir: fixture.agentDir,
-					modelRegistry,
+					modelRuntime,
 					model,
 					resourceLoader,
 					sessionManager: SessionManager.inMemory(fixture.workspace),
@@ -613,7 +616,7 @@ test("hermetic core architect workflow runs end-to-end with deterministic subage
 	const { session } = await withEnv(createHermeticRuntimeEnv(fixture), async () => createAgentSession({
 		cwd: fixture.workspace,
 		agentDir: fixture.agentDir,
-		modelRegistry,
+		modelRuntime,
 		model: architectModel,
 		resourceLoader,
 		sessionManager: SessionManager.create(fixture.workspace, join(fixture.agentDir, "sessions")),

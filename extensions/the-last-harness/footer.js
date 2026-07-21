@@ -3,6 +3,7 @@ import { keyText, } from "@earendil-works/pi-coding-agent";
 import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
 import { formatCompactTokenCount, formatHomePath, sanitizeStatusText } from "./common.js";
+import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
 import { TK_WORKFLOW_STATUS_KEY } from "./ticket-workflow-ui-constants.js";
 import { composeTlhFooterFirstLine } from "./footer-first-line.js";
 import { getTlhSubscriptionUsageFooterState, } from "./footer-subscription-usage.js";
@@ -32,7 +33,7 @@ function collectUsageTotals(ctx) {
     }
     return totals;
 }
-export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usageOptions = {}, gitCache) {
+export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usageOptions = {}, gitCache, installNotice) {
     return {
         render(width) {
             const model = ctx.model;
@@ -119,6 +120,11 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                 if (statusLine) {
                     lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
                 }
+            }
+            if (installNotice) {
+                const label = formatTlhInstallNoticeTrackLabel(installNotice);
+                const warningStr = `${theme.fg("dim", "TLH ")}${theme.fg("warning", label)}`;
+                lines.push(truncateToWidth(warningStr, width, theme.fg("dim", "...")));
             }
             return lines;
         },
