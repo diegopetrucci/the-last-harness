@@ -3,18 +3,22 @@ import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
-import {
-	buildReviewEnvelope,
-	decideBranchAction,
-	parseReviewArgs,
-	registerReviewCommand,
-} from "../extensions/the-last-harness/review.ts";
+import { createJiti } from "jiti";
+
 import {
 	cleanupTempDir,
 	createIsolatedProfileFixture,
 	makeTempDir as makeSharedTempDir,
 	withEnv,
 } from "./test-fixture-helpers.mjs";
+
+const jiti = createJiti(import.meta.url);
+const {
+	buildReviewEnvelope,
+	decideBranchAction,
+	parseReviewArgs,
+	registerReviewCommand,
+} = await jiti.import("../extensions/the-last-harness/review.ts");
 
 const reviewEnvRoot = makeSharedTempDir("tlh-review-agent-env-");
 const reviewEnvHome = join(reviewEnvRoot, "home");
