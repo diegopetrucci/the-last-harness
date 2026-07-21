@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
-import { InteractiveMode, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { InteractiveMode, ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
 
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
@@ -20,15 +20,43 @@ const {
 } = await jiti.import("../extensions/the-last-harness/model-visibility.ts");
 
 function createFakeModelRegistry(models) {
-	const registry = Object.create(ModelRegistry.prototype);
-	registry.models = models;
-	registry.hasConfiguredAuth = () => true;
-	registry.refresh = () => {};
-	return registry;
+	const runtime = {
+		getModels: () => models,
+		getAvailableSnapshot: () => models,
+		getModel: (provider, modelId) => models.find((model) => model.provider === provider && model.id === modelId),
+		hasConfiguredAuth: () => true,
+		reloadConfig: async () => {},
+		getError: () => undefined,
+	};
+	return new ModelRegistry(runtime);
 }
 
 function modelKeys(models) {
 	return models.map((model) => `${model.provider}/${model.id}`);
+}
+
+function runtimeModel(id) {
+	return {
+		id,
+		name: id,
+		reasoning: false,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 128_000,
+		maxTokens: 8_192,
+	};
+}
+
+async function createTestModelRuntime(models, refreshModels) {
+	const runtime = await ModelRuntime.create({ allowModelNetwork: false, modelsPath: null });
+	runtime.registerProvider("tlh-test", {
+		baseUrl: "https://tlh-test.example.invalid/v1",
+		apiKey: "test-only",
+		api: "openai-completions",
+		models: models.map(runtimeModel),
+		...(refreshModels ? { refreshModels: async () => refreshModels().map(runtimeModel) } : {}),
+	});
+	return runtime;
 }
 
 test("hidden model defaults stay pinned to the approved ordered list", () => {
@@ -177,6 +205,52 @@ test("installed model visibility filter is idempotent, hides defaults, and prese
 	});
 });
 
+test("ModelRuntime filters async availability and current/refreshed snapshots while preserving the unfiltered escape hatch", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-model-visibility-test-", { test: t });
+	const settingsPath = join(fixture.agent, "settings.json");
+	let refreshedModels = ["hidden-refreshed", "visible-refreshed"];
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(
+			settingsPath,
+			`${JSON.stringify({ tlh: { modelVisibility: { hidden: ["tlh-test/hidden-*"] } } }, null, 2)}\n`,
+		);
+		installTlhModelVisibilityFilter();
+		const patchedGetAvailable = ModelRuntime.prototype.getAvailable;
+		const patchedGetAvailableSnapshot = ModelRuntime.prototype.getAvailableSnapshot;
+		installTlhModelVisibilityFilter();
+		assert.equal(ModelRuntime.prototype.getAvailable, patchedGetAvailable);
+		assert.equal(ModelRuntime.prototype.getAvailableSnapshot, patchedGetAvailableSnapshot);
+
+		const runtime = await createTestModelRuntime(
+			["hidden-current", "visible-current"],
+			() => refreshedModels,
+		);
+		const registry = new ModelRegistry(runtime);
+
+		assert.deepEqual(modelKeys(runtime.getAvailableSnapshot()).filter((key) => key.startsWith("tlh-test/")), ["tlh-test/visible-current"]);
+		assert.deepEqual(modelKeys(await runtime.getAvailable("tlh-test")), ["tlh-test/visible-current"]);
+		assert.deepEqual(modelKeys(registry.getAvailable()).filter((key) => key.startsWith("tlh-test/")), ["tlh-test/visible-current"]);
+		assert.deepEqual(modelKeys(getUnfilteredAvailableModels(runtime)).filter((key) => key.startsWith("tlh-test/")), [
+			"tlh-test/hidden-current",
+			"tlh-test/visible-current",
+		]);
+		assert.deepEqual(modelKeys(getUnfilteredAvailableModels(registry)).filter((key) => key.startsWith("tlh-test/")), [
+			"tlh-test/hidden-current",
+			"tlh-test/visible-current",
+		]);
+
+		refreshedModels = ["hidden-after-refresh", "visible-after-refresh"];
+		await runtime.refresh({ allowNetwork: false, force: true });
+		assert.deepEqual(modelKeys(runtime.getAvailableSnapshot()).filter((key) => key.startsWith("tlh-test/")), ["tlh-test/visible-after-refresh"]);
+		assert.deepEqual(modelKeys(await runtime.getAvailable("tlh-test")), ["tlh-test/visible-after-refresh"]);
+		assert.deepEqual(modelKeys(getUnfilteredAvailableModels(registry)).filter((key) => key.startsWith("tlh-test/")), [
+			"tlh-test/hidden-after-refresh",
+			"tlh-test/visible-after-refresh",
+		]);
+	});
+});
+
 test("installed model visibility filter keeps getAll direct lookup unfiltered while getAvailable stays filtered", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-model-visibility-test-", { test: t });
 	const settingsPath = join(fixture.agent, "settings.json");
@@ -203,30 +277,40 @@ test("installed model visibility filter keeps getAll direct lookup unfiltered wh
 	});
 });
 
-test("exact /model provider/model lookup can resolve hidden models without unfiltering normal availability", async (t) => {
+test("exact /model provider/model lookup uses the unfiltered ModelRuntime snapshot without bypassing scoped models", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-model-visibility-test-", { test: t });
 	const settingsPath = join(fixture.agent, "settings.json");
-	const registry = createFakeModelRegistry([
-		{ provider: "anthropic", id: "claude-opus-4-6" },
-		{ provider: "anthropic", id: "claude-sonnet-4-6" },
-		{ provider: "openai-codex", id: "gpt-5.5" },
-	]);
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		writeFileSync(settingsPath, `${JSON.stringify({}, null, 2)}\n`);
+		writeFileSync(
+			settingsPath,
+			`${JSON.stringify({ tlh: { modelVisibility: { hidden: ["tlh-test/hidden-*"] } } }, null, 2)}\n`,
+		);
 		installTlhModelVisibilityFilter();
-
+		const runtime = await createTestModelRuntime(["hidden-exact", "hidden-scoped", "visible"]);
+		const registry = new ModelRegistry(runtime);
 		const interactiveMode = Object.create(InteractiveMode.prototype);
-		interactiveMode.runtimeHost = { session: { scopedModels: [], modelRegistry: registry } };
+		interactiveMode.runtimeHost = {
+			session: {
+				scopedModels: [],
+				modelRegistry: registry,
+				modelRuntime: runtime,
+			},
+		};
+
 		const hiddenExactMatch = await InteractiveMode.prototype.findExactModelMatch.call(
 			interactiveMode,
-			"anthropic/claude-opus-4-6",
+			"tlh-test/hidden-exact",
 		);
-		assert.deepEqual(hiddenExactMatch, { provider: "anthropic", id: "claude-opus-4-6" });
-		assert.equal(await InteractiveMode.prototype.findExactModelMatch.call(interactiveMode, "claude-opus-4-6"), undefined);
-		assert.deepEqual(modelKeys(registry.getAvailable()), ["openai-codex/gpt-5.5"]);
+		assert.equal(`${hiddenExactMatch?.provider}/${hiddenExactMatch?.id}`, "tlh-test/hidden-exact");
+		assert.equal(await InteractiveMode.prototype.findExactModelMatch.call(interactiveMode, "hidden-exact"), undefined);
+		assert.deepEqual(modelKeys(runtime.getAvailableSnapshot()).filter((key) => key.startsWith("tlh-test/")), ["tlh-test/visible"]);
 
-		interactiveMode.runtimeHost.session.scopedModels = [{ model: { provider: "anthropic", id: "claude-sonnet-4-6" } }];
-		assert.equal(await InteractiveMode.prototype.findExactModelMatch.call(interactiveMode, "anthropic/claude-opus-4-6"), undefined);
+		interactiveMode.runtimeHost.session.scopedModels = [
+			{ model: runtime.getModel("tlh-test", "hidden-scoped") },
+		];
+		assert.equal(await InteractiveMode.prototype.findExactModelMatch.call(interactiveMode, "tlh-test/hidden-exact"), undefined);
+		const scopedMatch = await InteractiveMode.prototype.findExactModelMatch.call(interactiveMode, "tlh-test/hidden-scoped");
+		assert.equal(`${scopedMatch?.provider}/${scopedMatch?.id}`, "tlh-test/hidden-scoped");
 	});
 });

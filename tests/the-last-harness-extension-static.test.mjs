@@ -15,6 +15,7 @@ const extensionSource = readFileSync(new URL("../extensions/the-last-harness.ts"
 const rtkExtensionSource = readFileSync(new URL("../extensions/rtk.ts", import.meta.url), "utf8");
 const rtkExtensionLicenseSource = readFileSync(new URL("../extensions/rtk.APACHE-2.0.txt", import.meta.url), "utf8");
 const annotateGitDiffSource = readFileSync(new URL("../extensions/annotate-git-diff/index.ts", import.meta.url), "utf8");
+const annotateGitDiffUiSource = readFileSync(new URL("../extensions/annotate-git-diff/ui.ts", import.meta.url), "utf8");
 const annotateGitDiffAppSource = readFileSync(new URL("../extensions/annotate-git-diff/web/app.js", import.meta.url), "utf8");
 const annotateGitDiffHtmlSource = readFileSync(new URL("../extensions/annotate-git-diff/web/index.html", import.meta.url), "utf8");
 const attributionSource = readFileSync(new URL("../extensions/the-last-harness/attribution.ts", import.meta.url), "utf8");
@@ -292,8 +293,15 @@ test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs i
 	// Regression guard: no file:// URL pointing into node_modules must appear in the built HTML.
 	assert.doesNotMatch(html, /file:\/\/[^\s'"]*node_modules/, "built HTML must not contain file:// URLs into node_modules");
 
-	// Monaco editor JS is inlined (editor.main.js defines 'vs/editor/editor.main').
-	assert.match(html, /define\("vs\/editor\/editor\.main"/, "editor.main.js content must be inlined");
+	// Monaco 0.56 exports the min/vs/index.js AMD entry but not package.json. The
+	// packaged bootstrap must use that public entry rather than the legacy
+	// editor.main module, whose runtime side effects replace MonacoEnvironment and
+	// dynamically append editor.main.css.
+	assert.match(annotateGitDiffUiSource, /require\.resolve\("monaco-editor"\)/);
+	assert.doesNotMatch(annotateGitDiffUiSource, /require\.resolve\("monaco-editor\/package\.json"\)/);
+	assert.match(html, /define\("vs\/index"/, "the public Monaco vs/index module must be inlined");
+	assert.doesNotMatch(html, /define\("vs\/editor\/editor\.main"/, "editor.main and its runtime side effects must not be inlined");
+	assert.doesNotMatch(html, /document\.createElement\("link"\)/, "Monaco must not dynamically append a CSS link");
 	assert.match(html, /"bootstrapError":null/, "packaged review assets should load without a bootstrap error");
 
 	// Monaco editor CSS is inlined (editor.main.css contains '.monaco-editor').
@@ -306,7 +314,7 @@ test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs i
 	assert.match(workerSource, /\bpostMessage\b/, "editor worker bundle must communicate with the host");
 
 	// No unreplaced template markers.
-	assert.doesNotMatch(html, /__INLINE_MONACO_EDITOR_JS__/);
+	assert.doesNotMatch(html, /__INLINE_MONACO_ENTRY_JS__/);
 	assert.doesNotMatch(html, /__INLINE_MONACO_EDITOR_CSS__/);
 	assert.doesNotMatch(html, /__INLINE_MONACO_WORKER_SOURCE_JSON__/);
 	assert.doesNotMatch(html, /__INLINE_MONACO_BASIC_LANGUAGES_JS__/, "__INLINE_MONACO_BASIC_LANGUAGES_JS__ marker must be replaced");
@@ -326,8 +334,16 @@ test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs i
 		assertRepresentativeMonacoLanguageChunkInlined(runtimeSource, contributionModuleId, language);
 	}
 
-	// The asset config must not expose monacoVsBaseUrl.
+	// The asset config must not expose monacoVsBaseUrl. The app must install TLH's
+	// blob worker environment before loading vs/index, then use the callback module
+	// as the Monaco API instead of relying on editor.main's window.monaco side effect.
 	assert.doesNotMatch(html, /monacoVsBaseUrl/);
+	const setupMonacoSource = sourceSection(annotateGitDiffAppSource, "function setupMonaco()", "\n\nfunction switchScope");
+	assert.ok(setupMonacoSource.indexOf("window.MonacoEnvironment =") < setupMonacoSource.indexOf('["vs/index"]'));
+	assert.match(setupMonacoSource, /\["vs\/index"\],[\s\S]*?\(loadedMonacoApi\)\s*=>/);
+	assert.match(setupMonacoSource, /monacoApi = loadedMonacoApi;/);
+	assert.match(setupMonacoSource, /loadedMonacoApi\?\.editor[\s\S]*loadedMonacoApi\?\.languages[\s\S]*loadedMonacoApi\.Range/);
+	assert.doesNotMatch(setupMonacoSource, /vs\/editor\/editor\.main|monacoApi = window\.monaco/);
 });
 
 test("before_agent_start reapplies primary defaults without a one-shot model gate", () => {
