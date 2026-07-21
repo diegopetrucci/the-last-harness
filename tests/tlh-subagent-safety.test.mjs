@@ -46,12 +46,12 @@ test("ALLOWED_SUBAGENTS exposes bundled minor agents", () => {
 });
 
 test("validateSubagentToolInput allows bundled read-only delegation targets", () => {
-	const webScout = { agent: "web-scout", prompt: "research the general web for upstream release notes" };
+	const webScout = { agent: "web-scout", task: "research the general web for upstream release notes" };
 	assertAllowed(webScout);
 	assert.equal(webScout.agentScope, "user");
 	assert.equal(webScout.context, "fresh");
 
-	const contrarian = { agent: "contrarian", prompt: "stress-test this plan by steelmanning the strongest opposing case" };
+	const contrarian = { agent: "contrarian", task: "stress-test this plan by steelmanning the strongest opposing case" };
 	assertAllowed(contrarian);
 	assert.equal(contrarian.agentScope, "user");
 	assert.equal(contrarian.context, "fresh");
@@ -62,12 +62,12 @@ test("experimental allowlist keeps contrarian enabled by default and treats stal
 	assert.deepEqual(allowedSubagentsForExperimentalConfig({ enabledFeatures: [" Contrarian "] }), ALLOWED_SUBAGENTS);
 	assert.deepEqual(allowedSubagentsForExperimentalConfig({ enabledFeatures: ["Contrarian", 123] }), ALLOWED_SUBAGENTS);
 
-	const defaultAllowed = { agent: "contrarian", prompt: "stress-test this plan" };
+	const defaultAllowed = { agent: "contrarian", task: "stress-test this plan" };
 	assert.equal(validateSubagentToolInput(defaultAllowed), undefined);
 	assert.equal(defaultAllowed.agentScope, "user");
 	assert.equal(defaultAllowed.context, "fresh");
 
-	const allowedWithLegacyFlag = { agent: "contrarian", prompt: "stress-test this plan" };
+	const allowedWithLegacyFlag = { agent: "contrarian", task: "stress-test this plan" };
 	assert.equal(
 		validateSubagentToolInput(allowedWithLegacyFlag, {
 			allowedSubagents: allowedSubagentsForExperimentalConfig({ enabledFeatures: ["contrarian"] }),
@@ -80,53 +80,51 @@ test("experimental allowlist keeps contrarian enabled by default and treats stal
 
 
 test("custom allowlists are bounded to canonical bundled subagents", () => {
-	const customEnabled = { agent: "contrarian", prompt: "stress-test this plan" };
+	const customEnabled = { agent: "contrarian", task: "stress-test this plan" };
 	assertAllowed(customEnabled, { allowedSubagents: [" Developer ", " CONTRARIAN ", "root"] });
 	assert.equal(customEnabled.agentScope, "user");
 	assert.equal(customEnabled.context, "fresh");
 
 	assert.match(
-		validateSubagentToolInput({ agent: "root", prompt: "do something unsafe" }, { allowedSubagents: ["developer", "root"] }),
+		validateSubagentToolInput({ agent: "root", task: "do something unsafe" }, { allowedSubagents: ["developer", "root"] }),
 		/Disallowed target\(s\): root/,
 	);
 
-	const emptyFallbackAllowed = { agent: "contrarian", prompt: "stress-test this plan" };
+	const emptyFallbackAllowed = { agent: "contrarian", task: "stress-test this plan" };
 	assertAllowed(emptyFallbackAllowed, { allowedSubagents: [] });
 	assert.equal(emptyFallbackAllowed.agentScope, "user");
 	assert.equal(emptyFallbackAllowed.context, "fresh");
 
-	const fallbackAllowed = { agent: "contrarian", prompt: "stress-test this plan" };
+	const fallbackAllowed = { agent: "contrarian", task: "stress-test this plan" };
 	assertAllowed(fallbackAllowed, { allowedSubagents: ["root", "system", ""] });
 	assert.equal(fallbackAllowed.agentScope, "user");
 	assert.equal(fallbackAllowed.context, "fresh");
 });
 
 test("validateSubagentToolInput allows approved execution and forces fresh user context", () => {
-	const single = { agent: "developer", prompt: "implement the ticket" };
+	const single = { agent: "developer", task: "implement the ticket" };
 	assertAllowed(single);
 	assert.equal(single.agentScope, "user");
 	assert.equal(single.context, "fresh");
 
 	const batched = {
 		tasks: [
-			{ agent: "repo-scout", prompt: "map the repo" },
-			{ agent: "librarian", prompt: "research upstream docs" },
-			{ agent: "code-reviewer", prompt: "review the diff", context: "fresh" },
-		],
-		chain: [
-			{ agent: "diff-summarizer", prompt: "summarize" },
-			{ agent: "oracle", prompt: "provide a second opinion", context: "fresh" },
-			{
-				parallel: [
-					{ agent: "developer", prompt: "fix one issue" },
-					{ agent: "repo-scout", prompt: "inspect one area", context: "fresh" },
-				],
-			},
+			{ agent: "repo-scout", task: "map the repo" },
+			{ agent: "librarian", task: "research upstream docs" },
+			{ agent: "code-reviewer", task: "review the diff", context: "fresh" },
+			{ agent: "diff-summarizer", task: "summarize" },
+			{ agent: "oracle", task: "provide a second opinion", context: "fresh" },
+			{ agent: "developer", task: "fix one issue" },
+			{ agent: "repo-scout", task: "inspect one area", context: "fresh" },
 		],
 	};
 	assertAllowed(batched);
 	assert.equal(batched.agentScope, "user");
 	assert.equal(batched.context, "fresh");
+});
+
+test("SAFE_SUBAGENT_ACTIONS exposes exactly the supported management contract", () => {
+	assert.deepEqual(SAFE_SUBAGENT_ACTIONS, ["list", "get", "models", "status", "interrupt", "doctor", "resume"]);
 });
 
 test("validateSubagentToolInput allows approved management calls and keeps enabled resume normalization", () => {
@@ -156,7 +154,7 @@ test("validateSubagentToolInput allows approved management calls and keeps enabl
 	assert.equal(resumeBoth.agentScope, "user");
 	assert.equal(resumeBoth.context, "fresh");
 
-	for (const action of ["status", "interrupt", "doctor"]) {
+	for (const action of ["models", "status", "interrupt", "doctor"]) {
 		assertAllowed({ action });
 	}
 });
@@ -238,7 +236,7 @@ test("validateSubagentToolInput rejects disallowed agents", () => {
 		/Disallowed target\(s\): planner/,
 	);
 	assert.match(
-		validateSubagentToolInput({ chain: [{ parallel: [{ agent: "repo-scout" }, { agent: "root" }] }] }),
+		validateSubagentToolInput({ tasks: [{ agent: "repo-scout" }, { agent: "root" }] }),
 		/Disallowed target\(s\): root/,
 	);
 	assert.match(
@@ -414,14 +412,7 @@ test("validateSubagentToolInput rejects non-fresh top-level and nested contexts"
 		validateSubagentToolInput({ tasks: [{ agent: "developer", context: "resume" }] }),
 		/nested tasks\[0\]\.context may not use context: "resume"/,
 	);
-	assert.match(
-		validateSubagentToolInput({ chain: [{ agent: "developer", context: "parent" }] }),
-		/nested chain\[0\]\.context may not use context: "parent"/,
-	);
-	assert.match(
-		validateSubagentToolInput({ chain: [{ parallel: [{ agent: "developer", context: "resume" }] }] }),
-		/nested chain\[0\]\.parallel\[0\]\.context may not use context: "resume"/,
-	);
+
 	assert.match(
 		validateSubagentToolInput({ tasks: [{ agent: "developer", context: "" }] }),
 		/nested tasks\[0\]\.context may not use context: ""/,
@@ -448,7 +439,7 @@ test("validateSubagentToolInput blocks v0.34.0 agent-mutation verbs (eject/disab
 	// The whitelist must remain exactly this set — no additions without an explicit policy decision.
 	assert.deepEqual(
 		[...SAFE_SUBAGENT_ACTIONS],
-		["list", "get", "status", "interrupt", "doctor", "resume"],
+		["list", "get", "models", "status", "interrupt", "doctor", "resume"],
 		"SAFE_SUBAGENT_ACTIONS whitelist changed — verify TLH policy before widening",
 	);
 });

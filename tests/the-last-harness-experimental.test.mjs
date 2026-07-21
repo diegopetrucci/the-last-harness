@@ -395,6 +395,53 @@ test("experimental enable is idempotent, preserves settings, and does not clobbe
 	});
 });
 
+test("experimental enable then disable in one frozen millisecond creates collision-safe backups", SERIAL_TEST, async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
+	const settingsPath = join(fixture.agent, "settings.json");
+	const initialSettings = `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [LEGACY_UNKNOWN_FEATURE] } } }, null, 2)}\n`;
+	writeFileSync(settingsPath, initialSettings);
+	const frozenIso = "2026-07-19T16:17:18.901Z";
+	const realDate = globalThis.Date;
+	class FrozenDate extends Date {
+		constructor(value) {
+			super(value ?? frozenIso);
+		}
+		static now() {
+			return new realDate(frozenIso).getTime();
+		}
+	}
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		globalThis.Date = FrozenDate;
+		t.after(() => {
+			globalThis.Date = realDate;
+		});
+
+		const command = registeredExperimentalCommand();
+
+		let { ctx, notifications } = createCommandContext(fixture.dir);
+		await command.handler(`enable ${TICKET_WORKFLOW_UI_FEATURE}`, ctx);
+		assert.match(notifications.at(-1)?.message ?? "", /settings\.json\.bak-2026-07-19T16-17-18-901Z/);
+
+		({ ctx, notifications } = createCommandContext(fixture.dir));
+		await command.handler(`disable ${TICKET_WORKFLOW_UI_FEATURE}`, ctx);
+		assert.match(notifications.at(-1)?.message ?? "", /settings\.json\.bak-2026-07-19T16-17-18-901Z-1/);
+	});
+
+	const written = JSON.parse(readFileSync(settingsPath, "utf8"));
+	assert.deepEqual(written.tlh.experimental.enabledFeatures, [LEGACY_UNKNOWN_FEATURE]);
+
+	const backups = readdirSync(fixture.agent)
+		.filter((entry) => entry.startsWith("settings.json.bak-"))
+		.sort();
+	assert.deepEqual(backups, ["settings.json.bak-2026-07-19T16-17-18-901Z", "settings.json.bak-2026-07-19T16-17-18-901Z-1"]);
+	assert.equal(readFileSync(join(fixture.agent, backups[0]), "utf8"), initialSettings);
+	assert.equal(
+		readFileSync(join(fixture.agent, backups[1]), "utf8"),
+		`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [LEGACY_UNKNOWN_FEATURE, TICKET_WORKFLOW_UI_FEATURE] } } }, null, 2)}\n`,
+	);
+});
+
 test("experimental disable and normal-Pi refusal follow isolated settings rules", SERIAL_TEST, async (t) => {
 	const disableFixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
 	const disableSettingsPath = join(disableFixture.agent, "settings.json");

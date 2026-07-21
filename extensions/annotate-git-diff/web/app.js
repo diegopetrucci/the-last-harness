@@ -812,10 +812,6 @@ function clearFileRequestStateByPrefixes(prefixes) {
 	}
 }
 
-function clearCommitScopedState(sha) {
-	clearFileRequestStateByPrefixes([`commits:${sha}:`]);
-}
-
 function clearRefreshableFileState() {
 	const prefixes = ["branch:", "all:"];
 	for (const commit of reviewData.commits) {
@@ -824,26 +820,6 @@ function clearRefreshableFileState() {
 		}
 	}
 	clearFileRequestStateByPrefixes(prefixes);
-}
-
-function clearWorkingTreeReviewArtifacts(sha) {
-	state.comments = state.comments.filter((comment) => !(comment.scope === "commits" && comment.commitSha === sha));
-	const previousFiles = state.commitFilesBySha[sha] ?? [];
-	for (const file of previousFiles) {
-		delete state.reviewedFiles[file.id];
-		delete state.scrollPositions[scrollKey("commits", file.id, sha)];
-	}
-}
-
-function clearWorkingTreeCommitState() {
-	for (const commit of reviewData.commits) {
-		if (commit.kind !== "working-tree") continue;
-		clearWorkingTreeReviewArtifacts(commit.sha);
-		clearCommitScopedState(commit.sha);
-		delete state.commitFilesBySha[commit.sha];
-		delete state.commitErrors[commit.sha];
-		delete state.commitRequestIds[commit.sha];
-	}
 }
 
 function requestLatestReviewData() {
@@ -1922,10 +1898,11 @@ window.__reviewReceive = (message) => {
 
 	if (message.type === "review-data") {
 		if (state.reviewDataRequestId !== message.requestId) return;
+		const nextCommits = Array.isArray(message.commits) ? message.commits : [];
 		clearRefreshableFileState();
-		clearWorkingTreeCommitState();
+		window.__reconcileReviewCommitState(state, reviewData.commits, nextCommits);
 		reviewData.files = Array.isArray(message.files) ? message.files : [];
-		reviewData.commits = Array.isArray(message.commits) ? message.commits : [];
+		reviewData.commits = nextCommits;
 		reviewData.branchBaseRef = message.branchBaseRef ?? null;
 		reviewData.branchMergeBaseSha = message.branchMergeBaseSha ?? null;
 		reviewData.repositoryHasHead = message.repositoryHasHead === true;

@@ -23,8 +23,10 @@ test("enabled primary mode allows approved delegation targets and forces safe to
 	const event = {
 		toolName: "subagent",
 		input: {
-			tasks: [{ agent: "repo-scout", prompt: "Map the repository" }],
-			chain: [{ parallel: [{ agent: "web-scout", prompt: "Research upstream release notes" }] }],
+			tasks: [
+				{ agent: "repo-scout", task: "Map the repository" },
+				{ agent: "web-scout", task: "Research upstream release notes" },
+			],
 		},
 	};
 	const ctx = createToolCallContext([
@@ -53,7 +55,7 @@ test("enabled primary mode allows contrarian by default and stale contrarian set
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata });
-		const defaultEvent = { toolName: "subagent", input: { agent: "contrarian", prompt: "stress-test this plan" } };
+		const defaultEvent = { toolName: "subagent", input: { agent: "contrarian", task: "stress-test this plan" } };
 		assert.equal(await toolCall(defaultEvent, blockedCtx), undefined);
 		assert.equal(defaultEvent.input.model, "anthropic/claude-opus-4-8");
 		assert.equal(defaultEvent.input.agentScope, "user");
@@ -63,7 +65,7 @@ test("enabled primary mode allows contrarian by default and stale contrarian set
 			join(fixture.agent, "settings.json"),
 			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: ["contrarian"] } } }, null, 2)}\n`,
 		);
-		const legacyFlagEvent = { toolName: "subagent", input: { agent: "contrarian", prompt: "stress-test this plan" } };
+		const legacyFlagEvent = { toolName: "subagent", input: { agent: "contrarian", task: "stress-test this plan" } };
 		assert.equal(await toolCall(legacyFlagEvent, blockedCtx), undefined);
 		assert.equal(legacyFlagEvent.input.model, "anthropic/claude-opus-4-8");
 		assert.equal(legacyFlagEvent.input.agentScope, "user");
@@ -71,7 +73,7 @@ test("enabled primary mode allows contrarian by default and stale contrarian set
 	});
 });
 
-test("enabled primary mode blocks disallowed nested delegation targets after forcing safe defaults", async (t) => {
+test("enabled primary mode blocks disallowed task delegation targets after forcing safe defaults", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const ctx = createToolCallContext(
 		[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
@@ -84,8 +86,10 @@ test("enabled primary mode blocks disallowed nested delegation targets after for
 		const event = {
 			toolName: "subagent",
 			input: {
-				tasks: [{ agent: "repo-scout", prompt: "Inspect the repo" }],
-				chain: [{ parallel: [{ agent: "planner", prompt: "Plan the work" }] }],
+				tasks: [
+					{ agent: "repo-scout", task: "Inspect the repo" },
+					{ agent: "planner", task: "Plan the work" },
+				],
 			},
 		};
 
@@ -167,18 +171,14 @@ test("Rush blocks subagent resume with a Rush-specific reason", async () => {
 	});
 });
 
-test("Rush blocks developer delegation even inside nested subagent plans", async () => {
+test("Rush blocks developer delegation in task-based subagent plans", async () => {
 	const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
 	const event = {
 		toolName: "subagent",
 		input: {
-			chain: [
-				{
-					parallel: [
-						{ agent: "code-reviewer", prompt: "Review the diff" },
-						{ agent: "developer", prompt: "Implement the fix" },
-					],
-				},
+			tasks: [
+				{ agent: "code-reviewer", task: "Review the diff" },
+				{ agent: "developer", task: "Implement the fix" },
 			],
 		},
 	};

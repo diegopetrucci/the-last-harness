@@ -72,6 +72,16 @@ function usage({ input, output, cacheRead = 0, cacheWrite = 0, cost, turns = 0, 
 	};
 }
 
+function analyzeSingleSubagentResult(details) {
+	return analyzeSessionEntries([
+		assistantEntry("a1", null, "2026-06-16T00:00:00Z", {
+			stopReason: "tool_use",
+			content: [{ type: "toolCall", id: "call-subagent-1", name: "subagent", arguments: { task: "task" } }],
+		}),
+		toolResultEntry("tr1", "a1", "2026-06-16T00:00:01Z", "subagent", details),
+	], { toolCatalog });
+}
+
 const toolCatalog = [
 	{
 		name: "bash",
@@ -545,6 +555,253 @@ test("direct MCP tools count toward estimated MCP attribution when the current t
 	assert.equal(analysis.tools.mcpDirectCalls, 1);
 	assert.equal(analysis.tools.byTool[0]?.source.kind, "mcp-direct");
 	assert.equal(analysis.tools.bySource[0]?.source.kind, "mcp-direct");
+});
+
+test("discovery traversal tolerates cycles and processes the exact depth without reading its children", () => {
+	const root = { cycle: null };
+	root.cycle = root;
+	let current = root;
+	for (let depth = 1; depth <= 7; depth += 1) {
+		current.next = depth === 7
+			? {
+				agent: "developer",
+				sessionFile: "/Users/me/.the-last-harness/agent/sessions/--repo--/run-depth/within.jsonl",
+			}
+			: {};
+		current = current.next;
+	}
+	Object.defineProperty(current, "deeper", {
+		enumerable: true,
+		get() {
+			throw new Error("exact-depth child should not be read");
+		},
+	});
+
+	const analysis = analyzeSingleSubagentResult(root);
+
+	assert.equal(analysis.subagents.runCount, 1);
+	assert.deepEqual(
+		analysis.references.sessions.map((reference) => reference.label),
+		["run-depth/within.jsonl"],
+	);
+});
+
+test("self- and cross-referential arrays are read once per edge with cycle dedupe", () => {
+	let edgeReads = 0;
+	const left = new Array(2);
+	const right = new Array(2);
+	for (const [array, edges] of [
+		[left, [left, right]],
+		[right, [right, left]],
+	]) {
+		for (const [index, edge] of edges.entries()) {
+			Object.defineProperty(array, index, {
+				enumerable: true,
+				get() {
+					edgeReads += 1;
+					return edge;
+				},
+			});
+		}
+	}
+
+	const analysis = analyzeSingleSubagentResult({
+		branches: left,
+		artifactPath: "/Users/me/.the-last-harness/agent/artifacts/run-array-cycles/finished.md",
+	});
+
+	assert.deepEqual(
+		analysis.references.artifacts.map((reference) => reference.label),
+		["run-array-cycles/finished.md"],
+	);
+	assert.equal(edgeReads, 4);
+});
+
+test("preferred results and steps arrays keep their exact independent fast-path bounds", () => {
+	for (const key of ["results", "steps"]) {
+		const nested = Array.from({ length: 64 }, (_, index) => ({
+			agent: `${key}-agent-${index}`,
+			sessionFile: `/Users/me/.the-last-harness/agent/sessions/--repo--/run-${key}/${key}-agent-${index}.jsonl`,
+		}));
+		Object.defineProperty(nested, "64", {
+			enumerable: true,
+			get() {
+				throw new Error(`${key}[64] should not be read`);
+			},
+		});
+		nested.length = 65;
+
+		const analysis = analyzeSingleSubagentResult({ mode: "parallel", [key]: nested });
+
+		assert.equal(analysis.subagents.runCount, 64);
+		assert.ok(analysis.subagents.runs.some((run) => run.agent === `${key}-agent-63`));
+		assert.ok(!analysis.subagents.runs.some((run) => run.agent === `${key}-agent-64`));
+	}
+});
+
+test("discovery traversal keeps the exact object-property boundary and does not touch later getters", () => {
+	const details = {
+		within: {
+			artifactPath: "/Users/me/.the-last-harness/agent/artifacts/run-props/within.md",
+		},
+	};
+	for (let index = 1; index < 64; index += 1) {
+		details[`filler${index}`] = index;
+	}
+	Object.defineProperty(details, "overflow", {
+		enumerable: true,
+		get() {
+			throw new Error("overflow property should not be read");
+		},
+	});
+
+	const analysis = analyzeSingleSubagentResult(details);
+
+	assert.deepEqual(
+		analysis.references.artifacts.map((reference) => reference.label),
+		["run-props/within.md"],
+	);
+});
+
+test("discovery traversal caps inherited for-in enumeration work at the same exact boundary", () => {
+	const prototype = {};
+	for (let index = 0; index < 4; index += 1) {
+		prototype[`inherited${index}`] = index;
+	}
+	const details = Object.create(prototype);
+	details.within = {
+		artifactPath: "/Users/me/.the-last-harness/agent/artifacts/run-prototype/within.md",
+	};
+	for (let index = 1; index < 63; index += 1) {
+		details[`filler${index}`] = index;
+	}
+
+	const originalHasOwn = Object.hasOwn;
+	let detailHasOwnCalls = 0;
+	Object.hasOwn = function patchedHasOwn(target, key) {
+		if (target === details) {
+			detailHasOwnCalls += 1;
+			if (detailHasOwnCalls > 64) {
+				throw new Error(`prototype traversal exceeded boundary at ${String(key)}`);
+			}
+		}
+		return originalHasOwn(target, key);
+	};
+
+	try {
+		const analysis = analyzeSingleSubagentResult(details);
+
+		assert.equal(detailHasOwnCalls, 64);
+		assert.deepEqual(
+			analysis.references.artifacts.map((reference) => reference.label),
+			["run-prototype/within.md"],
+		);
+	} finally {
+		Object.hasOwn = originalHasOwn;
+	}
+});
+
+test("discovery traversal keeps exact attemptedModels and agents boundaries", () => {
+	const attemptedModels = Array.from({ length: 64 }, (_, index) => `provider/model-${index}`);
+	Object.defineProperty(attemptedModels, "64", {
+		enumerable: true,
+		get() {
+			throw new Error("attemptedModels[64] should not be read");
+		},
+	});
+	attemptedModels.length = 65;
+
+	const agents = Array.from({ length: 64 }, (_, index) => `agent-${index}`);
+	Object.defineProperty(agents, "64", {
+		enumerable: true,
+		get() {
+			throw new Error("agents[64] should not be read");
+		},
+	});
+	agents.length = 65;
+
+	const analysis = analyzeSingleSubagentResult({
+		agent: "developer",
+		sessionFile: "/Users/me/.the-last-harness/agent/sessions/--repo--/run-strings/developer.jsonl",
+		attemptedModels,
+		agents,
+	});
+	const run = analysis.subagents.runs[0];
+
+	assert.equal(run.attemptedModels.length, 64);
+	assert.equal(run.attemptedModels.at(-1), "provider/model-63");
+	assert.equal(run.agents.length, 65);
+	assert.equal(run.agents[0], "developer");
+	assert.equal(run.agents.at(-1), "agent-63");
+});
+
+test("artifactPaths keeps array and object-map compatibility while enforcing the exact boundary", () => {
+	for (const { form, createArtifactPaths } of [
+		{
+			form: "array",
+			createArtifactPaths: (paths) => [...paths],
+		},
+		{
+			form: "object-map",
+			createArtifactPaths: (paths) => Object.fromEntries(paths.map((path, index) => [`path${index}`, path])),
+		},
+	]) {
+		const runId = `run-${form}-paths`;
+		const paths = Array.from(
+			{ length: 64 },
+			(_, index) => `/Users/me/.the-last-harness/agent/artifacts/${runId}/artifact-${index}.md`,
+		);
+		const artifactPaths = createArtifactPaths(paths);
+		const overflowKey = Array.isArray(artifactPaths) ? "64" : "overflow";
+		Object.defineProperty(artifactPaths, overflowKey, {
+			enumerable: true,
+			get() {
+				throw new Error(`${form} artifactPaths entry past the boundary should not be read`);
+			},
+		});
+		if (Array.isArray(artifactPaths)) {
+			artifactPaths.length = 65;
+		}
+
+		const analysis = analyzeSingleSubagentResult({ agent: "developer", artifactPaths });
+		const labels = analysis.references.artifacts.map((reference) => reference.label);
+
+		assert.equal(labels.length, 64, `${form} should retain exactly 64 artifact paths`);
+		assert.ok(labels.includes(`${runId}/artifact-0.md`));
+		assert.ok(labels.includes(`${runId}/artifact-63.md`));
+	}
+});
+
+test("discovery traversal processes the exact container-budget boundary without reading another child", () => {
+	const groups = [];
+	for (let groupIndex = 0; groupIndex < 8; groupIndex += 1) {
+		const items = [];
+		for (let itemIndex = 0; itemIndex < 64; itemIndex += 1) {
+			items.push({ note: `${groupIndex}:${itemIndex}` });
+		}
+		groups.push({ items });
+	}
+	const boundaryItem = groups[7].items[44];
+	boundaryItem.artifactPath = "/Users/me/.the-last-harness/agent/artifacts/run-objects/included.md";
+	Object.defineProperty(boundaryItem, "child", {
+		enumerable: true,
+		get() {
+			throw new Error("exact-budget child property should not be read");
+		},
+	});
+	Object.defineProperty(groups[7].items, "45", {
+		enumerable: true,
+		get() {
+			throw new Error("array index after the container budget should not be read");
+		},
+	});
+
+	const analysis = analyzeSingleSubagentResult({ groups });
+
+	assert.deepEqual(
+		analysis.references.artifacts.map((reference) => reference.label),
+		["run-objects/included.md"],
+	);
 });
 
 // ---------------------------------------------------------------------------

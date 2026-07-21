@@ -761,6 +761,11 @@ test("extension wires TLH changelog lazy facade and release-notes rendering", ()
 });
 
 test("extension keeps TLH experimental command wiring with registered ticket, ci, and review feature flags", () => {
+	const backupWriteHelper = sourceSection(
+		profileStateSource,
+		"const SETTINGS_BACKUP_SUFFIX_RETRY_LIMIT = 32;",
+		"function getSettingsStorageForWrite",
+	);
 	const lockedWriteHelper = sourceSection(
 		profileStateSource,
 		"export function withLockedTlhSettingsWrite",
@@ -832,9 +837,16 @@ test("extension keeps TLH experimental command wiring with registered ticket, ci
 	assert.doesNotMatch(usageLimitsCommandSource, /assertSafeTlhSettingsPath\(settingsPath\)/);
 	assert.match(lockedWriteHelper, /const settingsPath = tlhSettingsPathForWrite\(\);/);
 	assert.match(lockedWriteHelper, /assertSafeTlhSettingsPath\(settingsPath\);/);
+	assert.match(backupWriteHelper, /const SETTINGS_BACKUP_SUFFIX_RETRY_LIMIT = 32;/);
+	assert.match(backupWriteHelper, /function writeCollisionSafeSettingsBackup\(settingsPath: string, current: string\): string \{/);
+	assert.match(backupWriteHelper, /const timestamp = settingsBackupTimestamp\(\);/);
+	assert.match(backupWriteHelper, /suffix === 0 \? `\$\{settingsPath\}\.bak-\$\{timestamp\}` : `\$\{settingsPath\}\.bak-\$\{timestamp\}-\$\{suffix\}`/);
+	assert.match(backupWriteHelper, /writeFileSync\(backupPath, current, \{ encoding: "utf8", flag: "wx", mode: 0o600 \}\);/);
+	assert.match(backupWriteHelper, /if \(!isRecord\(error\) \|\| error\.code !== "EEXIST"\) \{/);
+	assert.match(backupWriteHelper, /throw error;/);
+	assert.match(backupWriteHelper, /Could not create a unique TLH settings backup after \$\{SETTINGS_BACKUP_SUFFIX_RETRY_LIMIT \+ 1\} attempts/);
 	assert.match(lockedWriteHelper, /if \(current\) \{/);
-	assert.match(lockedWriteHelper, /const backupPath = `\$\{settingsPath\}\.bak-\$\{settingsBackupTimestamp\(\)\}`;/);
-	assert.match(lockedWriteHelper, /writeFileSync\(backupPath, current, \{ encoding: "utf8", flag: "wx", mode: 0o600 \}\);/);
+	assert.match(lockedWriteHelper, /const backupPath = writeCollisionSafeSettingsBackup\(settingsPath, current\);/);
 	assert.match(usageLimitsCommandSource, /settings\.tlh\.usageLimits\.showWeekly = showWeekly/);
 	assert.match(usageLimitsCommandSource, /showWeekly === true/);
 });
