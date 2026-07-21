@@ -174,6 +174,14 @@ function isLegacyAgentSkillPath(rootDir, filePath) {
 export function loadAuthorizedEmbeddedSubagentRuntimeNames(agentDir) {
     const authorizationByRuntimeName = new Map();
     const agentsDir = join(agentDir, "agents");
+    try {
+        if (lstatSync(agentsDir).isSymbolicLink()) {
+            return [];
+        }
+    }
+    catch {
+        return [];
+    }
     for (const filePath of readMarkdownFilesRecursive(agentsDir)) {
         if (filePath.endsWith(".chain.md") || isLegacyAgentSkillPath(agentsDir, filePath)) {
             continue;

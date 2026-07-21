@@ -174,9 +174,10 @@ function validateNestedFreshSubagentContexts(input) {
 			const step = input.chain[chainIndex];
 			const stepReason = validateNestedFreshContext(step, `chain[${chainIndex}].context`);
 			if (stepReason) return stepReason;
-			if (!isRecord(step) || !Array.isArray(step.parallel)) continue;
-			for (let parallelIndex = 0; parallelIndex < step.parallel.length; parallelIndex += 1) {
-				const reason = validateNestedFreshContext(step.parallel[parallelIndex], `chain[${chainIndex}].parallel[${parallelIndex}].context`);
+			if (!isRecord(step) || step.parallel === undefined) continue;
+			const parallelTasks = Array.isArray(step.parallel) ? step.parallel : [step.parallel];
+			for (let parallelIndex = 0; parallelIndex < parallelTasks.length; parallelIndex += 1) {
+				const reason = validateNestedFreshContext(parallelTasks[parallelIndex], `chain[${chainIndex}].parallel[${parallelIndex}].context`);
 				if (reason) return reason;
 			}
 		}

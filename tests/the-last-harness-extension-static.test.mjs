@@ -685,6 +685,8 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 		/if \(embeddedFeatureEnabled\) \{[\s\S]*const embeddedBlockReason = embeddedDelegationBlockedReason\(selection, event\.input\)/,
 	);
 	assert.match(toolCall, /const allowEmbeddedTargets = embeddedFeatureEnabled && selection === "architect"/);
+	assert.match(toolCall, /const requestedEmbeddedTargets = collectSubagentCallTargetsMatching\(event\.input, isEmbeddedSubagentTarget\)/);
+	assert.match(toolCall, /if \(requestedEmbeddedTargets\.length > 0\) \{[\s\S]*loadAuthorizedEmbeddedSubagentRuntimeNames\(getAgentDir\(\)\)/);
 	assert.match(toolCall, /const reason = validateSubagentToolInput\(event\.input, \{ allowedSubagents, allowEmbeddedTargets \}\)/);
 	assert(
 		toolCall.indexOf('if (event.toolName === "bash")') < toolCall.indexOf("resolveTlhCommitAttribution"),
@@ -710,6 +712,16 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 	assert(
 		toolCall.indexOf("allowEmbeddedTargets") < genericValidationIndex,
 		"allowEmbeddedTargets computation should appear before generic subagent validation",
+	);
+	const requestedEmbeddedTargetsIndex = toolCall.indexOf("const requestedEmbeddedTargets = collectSubagentCallTargetsMatching(event.input, isEmbeddedSubagentTarget)");
+	const embeddedAuthorizationScanIndex = toolCall.indexOf("loadAuthorizedEmbeddedSubagentRuntimeNames(getAgentDir())");
+	assert(
+		requestedEmbeddedTargetsIndex < embeddedAuthorizationScanIndex,
+		"Embedded target collection should happen before the authorization scan",
+	);
+	assert(
+		toolCall.indexOf("if (requestedEmbeddedTargets.length > 0)") < embeddedAuthorizationScanIndex,
+		"Embedded authorization scan should be gated behind an actual embedded target request",
 	);
 });
 

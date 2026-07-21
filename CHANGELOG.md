@@ -13,7 +13,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Added
 
 - Install and update now prune stale settings/keybindings backups (`settings.json.backup-*`, `keybindings.json.backup-*`) from the isolated profile. Backups older than ~28 days are removed, but the two newest are always kept regardless of age. Pruning is scoped strictly to `~/.the-last-harness/agent` and never touches `~/.pi`. To keep a backup indefinitely, copy it outside the isolated profile before it ages out.
-- (Beta) Added a new default-off `embedded-subagents` /experimental flag that lets user add their own custom subagents.
+- (Beta) Added a new default-off `embedded-subagents` /experimental flag that lets users add their own custom subagents.
 
 ### Fixed
 

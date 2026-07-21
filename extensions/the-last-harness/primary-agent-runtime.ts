@@ -861,14 +861,16 @@ function createTlhPrimaryAgentRuntime(
 				return { block: true, reason };
 			}
 			if (allowEmbeddedTargets && !isOpaqueSubagentManagementActionInput(event.input)) {
-				const authorizedEmbeddedTargets = new Set(loadAuthorizedEmbeddedSubagentRuntimeNames(getAgentDir()));
 				const requestedEmbeddedTargets = collectSubagentCallTargetsMatching(event.input, isEmbeddedSubagentTarget);
-				const unauthorizedTargets = requestedEmbeddedTargets.filter((target) => !authorizedEmbeddedTargets.has(target));
-				if (unauthorizedTargets.length > 0) {
-					return {
-						block: true,
-						reason: `TLH architect may delegate to embedded.<slug> only when a valid package: embedded / name: <slug> markdown definition currently exists under ${formatHomePath(join(getAgentDir(), "agents"))}. Unauthorized target(s): ${unauthorizedTargets.join(", ")}.`,
-					};
+				if (requestedEmbeddedTargets.length > 0) {
+					const authorizedEmbeddedTargets = new Set(loadAuthorizedEmbeddedSubagentRuntimeNames(getAgentDir()));
+					const unauthorizedTargets = requestedEmbeddedTargets.filter((target) => !authorizedEmbeddedTargets.has(target));
+					if (unauthorizedTargets.length > 0) {
+						return {
+							block: true,
+							reason: `TLH architect may delegate to embedded.<slug> only when a valid package: embedded / name: <slug> markdown definition currently exists under ${formatHomePath(join(getAgentDir(), "agents"))}. Unauthorized target(s): ${unauthorizedTargets.join(", ")}.`,
+						};
+					}
 				}
 			}
 			return undefined;

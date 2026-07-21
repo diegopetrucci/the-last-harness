@@ -906,6 +906,41 @@ test("embedded subagents: same-name external agents stay blocked when the profil
 	});
 });
 
+test("embedded subagents: a symlinked profile agents root cannot authorize embedded targets", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const externalAgentsDir = join(fixture.dir, "external-agents");
+	const profileAgentsDir = join(fixture.agent, "agents");
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({
+				tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } },
+				subagents: { agentDirs: [externalAgentsDir] },
+			}, null, 2)}\n`,
+		);
+		writeEmbeddedAgent(
+			externalAgentsDir,
+			"fallback.md",
+			"---\nname: fallback\npackage: embedded\ndescription: External helper\n---",
+		);
+		symlinkSync(externalAgentsDir, profileAgentsDir, "dir");
+		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const ctx = createToolCallContext(
+			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
+			undefined,
+			{ cwd: fixture.cwd },
+		);
+		await applySessionStart(ctx);
+
+		const blockedEvent = { toolName: "subagent", input: { agent: "embedded.fallback", prompt: "do something" } };
+		const blockedResult = await toolCall(blockedEvent, ctx);
+		assert.equal(blockedResult?.block, true);
+		assert.match(blockedResult?.reason ?? "", /Unauthorized target\(s\): embedded\.fallback/);
+		assert.match(blockedResult?.reason ?? "", /currently exists under/);
+	});
+});
+
 test("embedded subagents: later same-name profile symlink collisions use upstream package normalization and block descriptions", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 

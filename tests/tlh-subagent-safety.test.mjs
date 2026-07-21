@@ -191,6 +191,46 @@ test("validateSubagentToolInput allows opaque resume and blocks unsafe scopes/co
 });
 
 
+function dynamicParallelChain(context) {
+	const parallel = { agent: "developer", task: "Implement the fix for {item}." };
+	if (context !== undefined) {
+		parallel.context = context;
+	}
+	return [
+		{
+			agent: "repo-scout",
+			task: "Return affected areas as structured JSON.",
+			as: "inventory",
+			outputSchema: { type: "object", properties: { items: { type: "array", items: { type: "string" } } } },
+		},
+		{
+			expand: { from: { output: "inventory", path: "/items" }, maxItems: 10 },
+			parallel,
+			collect: { as: "implementations" },
+		},
+	];
+}
+
+
+test("validateSubagentToolInput treats object-valued chain.parallel nested contexts like collected targets", () => {
+	const staleNestedContextChain = { chain: dynamicParallelChain("resume") };
+	assert.match(
+		validateSubagentToolInput(staleNestedContextChain),
+		/nested chain\[1\]\.parallel\[0\]\.context may not use context: "resume"/,
+	);
+
+	const freshNestedContextChain = { chain: dynamicParallelChain("fresh") };
+	assertAllowed(freshNestedContextChain);
+	assert.equal(freshNestedContextChain.agentScope, "user");
+	assert.equal(freshNestedContextChain.context, "fresh");
+
+	const omittedNestedContextChain = { chain: dynamicParallelChain() };
+	assertAllowed(omittedNestedContextChain);
+	assert.equal(omittedNestedContextChain.agentScope, "user");
+	assert.equal(omittedNestedContextChain.context, "fresh");
+});
+
+
 test("validateSubagentToolInput treats resume.chain as execution-bearing while preserving resume normalization", () => {
 	const allowedResumeChain = { action: "resume", id: "run-123", chain: [{ agent: "developer", prompt: "Implement the fix" }], agentScope: "both" };
 	assertAllowed(allowedResumeChain);
@@ -205,15 +245,31 @@ test("validateSubagentToolInput treats resume.chain as execution-bearing while p
 	assert.equal(embeddedResumeChain.agentScope, "user");
 	assert.equal(embeddedResumeChain.context, "fresh");
 
-	const staleNestedContextResumeChain = {
+	const staleArrayContextResumeChain = {
 		action: "resume",
 		id: "run-789",
 		chain: [{ parallel: [{ agent: "developer", prompt: "Implement the fix", context: "resume" }] }],
 	};
 	assert.match(
-		validateSubagentToolInput(staleNestedContextResumeChain),
+		validateSubagentToolInput(staleArrayContextResumeChain),
 		/nested chain\[0\]\.parallel\[0\]\.context may not use context: "resume"/,
 	);
+
+	const staleNestedContextResumeChain = { action: "resume", id: "run-999", chain: dynamicParallelChain("resume") };
+	assert.match(
+		validateSubagentToolInput(staleNestedContextResumeChain),
+		/nested chain\[1\]\.parallel\[0\]\.context may not use context: "resume"/,
+	);
+
+	const freshNestedContextResumeChain = { action: "resume", id: "run-1000", chain: dynamicParallelChain("fresh") };
+	assertAllowed(freshNestedContextResumeChain);
+	assert.equal(freshNestedContextResumeChain.agentScope, "user");
+	assert.equal(freshNestedContextResumeChain.context, "fresh");
+
+	const omittedNestedContextResumeChain = { action: "resume", id: "run-1001", chain: dynamicParallelChain() };
+	assertAllowed(omittedNestedContextResumeChain);
+	assert.equal(omittedNestedContextResumeChain.agentScope, "user");
+	assert.equal(omittedNestedContextResumeChain.context, "fresh");
 });
 
 test("validateSubagentToolInput uses generic primary-agent wording", () => {
