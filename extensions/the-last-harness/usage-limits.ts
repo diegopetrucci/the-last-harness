@@ -19,6 +19,8 @@ type TlhUsageCommandFacadeOptions = {
 	loadModule?: () => Promise<UsageLimitsCommandModule>;
 };
 
+let cachedTlhUsageWeeklyVisibility: boolean | undefined;
+
 function createRetryableLazyImport<TModule>(loader: () => Promise<TModule>): () => Promise<TModule> {
 	let modulePromise: Promise<TModule> | undefined;
 	return () => {
@@ -43,6 +45,19 @@ export function getTlhUsageLimitsConfig(cwd: string): TlhUsageLimitsConfig | und
 
 export function shouldShowTlhUsageWeekly(config: TlhUsageLimitsConfig | undefined): boolean | undefined {
 	return config?.showWeekly;
+}
+
+export function getCachedTlhUsageWeeklyVisibility(): boolean | undefined {
+	return cachedTlhUsageWeeklyVisibility;
+}
+
+export function refreshCachedTlhUsageWeeklyVisibility(cwd: string): boolean | undefined {
+	cachedTlhUsageWeeklyVisibility = shouldShowTlhUsageWeekly(getTlhUsageLimitsConfig(cwd));
+	return cachedTlhUsageWeeklyVisibility;
+}
+
+export function setCachedTlhUsageWeeklyVisibility(showWeekly: boolean | undefined): void {
+	cachedTlhUsageWeeklyVisibility = showWeekly;
 }
 
 function usageCommandCompletions(prefix: string) {

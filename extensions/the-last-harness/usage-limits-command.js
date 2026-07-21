@@ -1,6 +1,6 @@
 import { formatHomePath, isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
-import { getTlhUsageLimitsConfig, shouldShowTlhUsageWeekly, USAGE_COMMAND_HELP } from "./usage-limits.js";
+import { getCachedTlhUsageWeeklyVisibility, refreshCachedTlhUsageWeeklyVisibility, setCachedTlhUsageWeeklyVisibility, USAGE_COMMAND_HELP, } from "./usage-limits.js";
 function validateTlhUsageLimitsSettings(settings) {
     if (!isRecord(settings)) {
         throw new Error("settings.json must contain a JSON object");
@@ -79,14 +79,15 @@ export async function handleUsageCommand(args, ctx) {
         ctx.ui.notify(USAGE_COMMAND_HELP, "error");
         return;
     }
-    const currentShowWeekly = shouldShowTlhUsageWeekly(getTlhUsageLimitsConfig(ctx.cwd));
     if (command.type === "status") {
+        const currentShowWeekly = refreshCachedTlhUsageWeeklyVisibility(ctx.cwd);
         ctx.ui.notify(formatUsageWeeklyStatus(currentShowWeekly), "info");
         return;
     }
-    const nextShowWeekly = nextWeeklyPreference(currentShowWeekly === true, command.action);
+    const nextShowWeekly = nextWeeklyPreference(getCachedTlhUsageWeeklyVisibility() === true, command.action);
     try {
         const result = writeTlhUsageWeeklyPreference(ctx.cwd, nextShowWeekly);
+        setCachedTlhUsageWeeklyVisibility(nextShowWeekly);
         const changedLabel = result.changed ? "Updated" : "No change to";
         const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
         ctx.ui.notify(`${changedLabel} TLH usage weekly-window preference at ${formatHomePath(result.settingsPath)}. ${formatUsageWeeklyStatus(nextShowWeekly)}${backupLabel}`, "info");

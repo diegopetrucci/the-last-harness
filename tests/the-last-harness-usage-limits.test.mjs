@@ -9,6 +9,11 @@ import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mj
 
 const jiti = createJiti(import.meta.url);
 const { registerUsageCommand, shouldShowTlhUsageWeekly } = await jiti.import("../extensions/the-last-harness/usage-limits.ts");
+const {
+	getCachedTlhUsageWeeklyVisibility,
+	refreshCachedTlhUsageWeeklyVisibility,
+	setCachedTlhUsageWeeklyVisibility,
+} = await import("../extensions/the-last-harness/usage-limits.js");
 
 function createPiHarness() {
 	const commands = new Map();
@@ -156,6 +161,29 @@ test("usage weekly on skips backups for empty existing settings files", async (t
 	});
 });
 
+test("usage status refreshes the cached weekly preference so manual edits become visible", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
+	const settingsPath = join(fixture.agent, "settings.json");
+	writeFileSync(settingsPath, `${JSON.stringify({ tlh: { usageLimits: { showWeekly: true } } }, null, 2)}\n`);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const command = registeredUsageCommand();
+		const { ctx, notifications } = createCommandContext(fixture.dir);
+
+		setCachedTlhUsageWeeklyVisibility(undefined);
+		assert.equal(getCachedTlhUsageWeeklyVisibility(), undefined);
+
+		await command.handler("status", ctx);
+		assert.equal(getCachedTlhUsageWeeklyVisibility(), true);
+		assert.match(notifications.at(-1)?.message ?? "", /shown/);
+
+		writeFileSync(settingsPath, `${JSON.stringify({ tlh: { usageLimits: { showWeekly: false } } }, null, 2)}\n`);
+		await command.handler("status", ctx);
+		assert.equal(getCachedTlhUsageWeeklyVisibility(), false);
+		assert.match(notifications.at(-1)?.message ?? "", /hidden/);
+	});
+});
+
 test("usage weekly off and toggle persist explicit preferences", async (t) => {
 	const offFixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
 	const offSettingsPath = join(offFixture.agent, "settings.json");
@@ -198,6 +226,27 @@ test("usage weekly off and toggle persist explicit preferences", async (t) => {
 		assert.equal(notice?.type, "info");
 		assert.match(notice?.message ?? "", /shown/);
 		assert.match(notice?.message ?? "", /\/usage weekly off/);
+	});
+});
+
+test("usage weekly writes update the cache only after successful persistence", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
+	const settingsPath = join(fixture.agent, "settings.json");
+	writeFileSync(settingsPath, `${JSON.stringify({ tlh: { usageLimits: { showWeekly: false } } }, null, 2)}\n`);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const command = registeredUsageCommand();
+		const { ctx } = createCommandContext(fixture.dir);
+
+		refreshCachedTlhUsageWeeklyVisibility(fixture.dir);
+		assert.equal(getCachedTlhUsageWeeklyVisibility(), false);
+
+		await command.handler("weekly on", ctx);
+		assert.equal(getCachedTlhUsageWeeklyVisibility(), true);
+
+		writeFileSync(settingsPath, "{\n", "utf8");
+		await command.handler("weekly off", ctx);
+		assert.equal(getCachedTlhUsageWeeklyVisibility(), true);
 	});
 });
 
