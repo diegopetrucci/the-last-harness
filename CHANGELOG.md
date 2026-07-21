@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- The footer now shows a persistent `TLH <track>` line (dim `TLH ` prefix, warning-colored track label) at the bottom when TLH is running from a non-release track (pinned tag, ref, custom source, or unknown install). The notice is read once at session start (off the render path) so the footer never does file I/O while rendering.
+
 ### Experimental
 
 - You can now add custom (non built-in) subagents. Ask TLH how to.
