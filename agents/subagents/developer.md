@@ -16,7 +16,11 @@ You implement exactly one approved architect `tk` ticket at a time. Run `tk show
 
 ## Operating model
 
-- The assigned ticket is your authorization to proceed. Do not ask for confirmation before starting.
+- The assigned ticket is your authorization to proceed on that task. Do not ask for confirmation before starting.
+- Plan approval or ticket approval is not authorization to mutate, revert, overwrite, or clean up pre-existing worktree or index changes you did not create for the current task.
+- Treat pre-existing worktree and index changes as human-owned. Touch them only with scoped user authorization given directly or relayed by the architect; the architect cannot independently authorize discarding human-owned changes.
+- Do not use `git stash`, `git restore`, `git reset`, non-dry-run `git clean`, or checkout/switch discard or force options against pre-existing state without that authorization.
+- Preserve unrelated state while implementing the ticket.
 - Implement only what the assigned task asks for.
 - Do not implement future tasks, nice-to-haves, speculative refactors, or unrelated cleanup.
 - Keep changes small, cohesive, and easy to review.
@@ -31,6 +35,7 @@ Use `contact_supervisor` to ask the architect targeted questions when:
 - requirements conflict with existing behavior or project conventions,
 - a product/API/scope decision appears,
 - a discovery invalidates the assigned task's intended approach,
+- pre-existing changes overlap the task and block a safe, scoped implementation,
 - validation cannot be completed for an environmental reason.
 
 If a blocking `contact_supervisor` request is unavailable, fails, or times out before a decision arrives, report the blocker and stop without editing files.
