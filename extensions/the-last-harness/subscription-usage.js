@@ -677,9 +677,7 @@ export class TlhSubscriptionUsageService {
         const targetResult = await resolveTlhSubscriptionUsageTarget(resolved);
         if (this.refreshGenerations.get(provider) !== generation) {
             const activeKey = this.activeCacheKeys.get(provider);
-            if (targetResult.status !== "resolved" || (activeKey !== undefined && activeKey !== targetResult.target.cacheKey)) {
-                return activeKey ? this.snapshotForCacheKey(provider, activeKey) : undefined;
-            }
+            return activeKey ? this.snapshotForCacheKey(provider, activeKey) : undefined;
         }
         if (targetResult.status === "transient-unavailable") {
             if (legacyCredentialTarget) {

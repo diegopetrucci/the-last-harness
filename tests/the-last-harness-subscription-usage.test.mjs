@@ -821,6 +821,11 @@ test("service does not fetch when a runtime key differs from the stored OAuth ac
 });
 
 test("service dedupes concurrent refresh() calls via the in-flight registry", async () => {
+	// With the strict generation guard, two concurrent refresh() calls with no
+	// prior active state are treated as an older (gen 1) and newer (gen 2) call.
+	// Gen 1 is superseded by gen 2 and bails with undefined (no active snapshot
+	// yet). Gen 2 is the authoritative caller; it issues exactly one network
+	// request. The key invariant is fetchCalls === 1.
 	const accessToken = randomUUID();
 	const credential = { type: "oauth", access: accessToken, accountId: "acct_concurrent" };
 	let fetchCalls = 0;
@@ -846,27 +851,29 @@ test("service dedupes concurrent refresh() calls via the in-flight registry", as
 		},
 	};
 
-	// Issue two concurrent refresh() calls without awaiting between them so
-	// both reach the in-flight check before the network request resolves.
+	// Issue two concurrent refresh() calls without awaiting between them.
+	// Gen 1 (first) will be superseded by gen 2 (second) and bail before fetching.
 	const firstPromise = service.refresh(ctx);
 	const secondPromise = service.refresh(ctx);
 
-	// Drain pending microtasks so each refresh() advances past its internal
-	// awaits (credential resolution) and either populates or observes the
-	// in-flight entry. The deferred fetch promise keeps both calls parked
-	// until we explicitly resolve it below, so this is deterministic.
+	// Drain pending microtasks so both refreshes advance past their credential
+	// resolution awaits. Gen 2 proceeds to the fetch; gen 1 has already bailed.
 	await new Promise((resolve) => setImmediate(resolve));
 
-	assert.equal(fetchCalls, 1, "fetch is invoked exactly once for concurrent refreshes");
+	assert.equal(fetchCalls, 1, "fetch is invoked exactly once — gen 2 is the sole authoritative caller");
 
 	deferred.resolve({ ok: true, json: async () => openAiUsage(50) });
 
 	const [first, second] = await Promise.all([firstPromise, secondPromise]);
 
 	assert.equal(fetchCalls, 1, "no additional fetch occurs after the deferred resolves");
-	assert.ok(first, "first refresh produced a snapshot");
-	assert.equal(first, second, "both refresh() calls resolve to the same snapshot instance");
-	assert.equal(first?.windows.session.used, 50);
+	// Gen 2 (second) is the authoritative result; it produced the snapshot.
+	assert.ok(second, "second (newer) refresh produced a snapshot");
+	assert.equal(second?.windows.session.used, 50);
+	// Gen 1 (first) was superseded; no active snapshot existed yet so it returns undefined.
+	assert.equal(first, undefined, "first (superseded) refresh returns undefined — no active snapshot at bail time");
+	// The service state reflects the newer refresh.
+	assert.equal(service.getSnapshot("openai-codex"), second);
 });
 
 // ---------------------------------------------------------------------------
@@ -1452,4 +1459,86 @@ test("generation guard: older concurrent refresh for different account does not 
 	if (olderResult !== undefined) {
 		assert.notEqual(olderResult.windows.session.used, 11, "older refresh did not return tokenA's stale data");
 	}
+});
+
+test("generation guard: older eligible refresh superseded by newer ineligible refresh does not reactivate cleared credential", async () => {
+	// Regression for Codex P2 (second finding on PR #372):
+	// An older eligible refresh is suspended inside getApiKeyForProvider.
+	// A newer refresh() observes the provider is now ineligible (isUsingOAuth
+	// returns false), calls clearProvider(), and returns.
+	// When the older lookup eventually resolves, the generation mismatch guard
+	// must bail immediately — zero state mutations and no fetch — because the
+	// same-account fall-through carve-out has been removed.
+	const accessToken = randomUUID();
+	const deferredKey = createDeferred(); // gates the older refresh's getApiKeyForProvider
+
+	let isOAuth = true; // newer refresh will set this to false
+	let fetchCount = 0;
+	let olderKeyCallResolved = false;
+
+	const service = createTlhSubscriptionUsageService({
+		now: () => NOW_MS,
+		cacheTtlMs: 0,
+		minFetchIntervalMs: 0,
+		timeoutMs: 0,
+		fetch: async () => {
+			fetchCount++;
+			return { ok: true, json: async () => ({ five_hour: { used: 99, limit: 100 } }) };
+		},
+	});
+
+	let keyCallIndex = 0;
+	const ctx = {
+		model: { provider: "anthropic" },
+		modelRegistry: {
+			get isUsingOAuth() {
+				// Capture current isOAuth value at call time
+				return (model) => isOAuth && model?.provider === "anthropic";
+			},
+			getProviderAuthStatus: () => ({ configured: true, source: "stored" }),
+			getApiKeyForProvider: async (provider) => {
+				if (provider !== "anthropic") return undefined;
+				const myIndex = keyCallIndex++;
+				if (myIndex === 0) {
+					// Older refresh — suspend until we allow it to continue
+					await deferredKey.promise;
+					olderKeyCallResolved = true;
+					return accessToken;
+				}
+				// Should not be called again in this test
+				return accessToken;
+			},
+		},
+	};
+
+	// Start the older refresh (generation 1) — it suspends inside getApiKeyForProvider
+	const olderRefreshPromise = service.refresh(ctx, { force: true });
+
+	// Drain microtasks so the older refresh advances to its getApiKeyForProvider await point
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(keyCallIndex, 1, "older refresh has called getApiKeyForProvider and is suspended");
+	assert.equal(fetchCount, 0, "no fetch yet");
+
+	// Now flip isOAuth to false — the provider is no longer eligible
+	isOAuth = false;
+
+	// Run the newer refresh (generation 2): provider now ineligible → clearProvider() + return undefined
+	const newerResult = await service.refresh(ctx, { force: true });
+	assert.equal(newerResult, undefined, "newer refresh returns undefined for ineligible provider");
+	assert.equal(service.activeCacheKeys.has("anthropic"), false, "clearProvider removed activeCacheKeys entry");
+	assert.equal(fetchCount, 0, "newer ineligible refresh performed no fetch");
+
+	// Let the older refresh's getApiKeyForProvider resolve with the eligible token
+	deferredKey.resolve();
+	const olderResult = await olderRefreshPromise;
+
+	assert.equal(olderKeyCallResolved, true, "older key lookup did resolve");
+
+	// Generation guard must have bailed: no state mutations, no fetch
+	assert.equal(service.activeCacheKeys.has("anthropic"), false, "activeCacheKeys still has no entry after superseded older refresh");
+	assert.equal(service.getSnapshot("anthropic"), undefined, "getSnapshot returns undefined — credential was not reactivated");
+	assert.equal(fetchCount, 0, "superseded older refresh performed NO fetch");
+
+	// The older refresh returns undefined (no active key after clearProvider)
+	assert.equal(olderResult, undefined, "older superseded refresh returns undefined");
 });

@@ -893,14 +893,12 @@ export class TlhSubscriptionUsageService {
 		const nowMs = this.now();
 		const targetResult = await resolveTlhSubscriptionUsageTarget(resolved);
 		if (this.refreshGenerations.get(provider) !== generation) {
+			// Superseded by a newer refresh — always bail with zero state mutations
+			// and no fetch. The newest refresh (whose generation matches) proceeds
+			// normally; returning the current active snapshot or undefined is
+			// sufficient because the facade re-reads service state after render.
 			const activeKey = this.activeCacheKeys.get(provider);
-			// Bail only when a newer refresh has already established a different active
-			// account, or when resolution did not produce a concrete target.
-			// For same-account concurrent refreshes (same cacheKey, no active key yet),
-			// fall through so the existing in-flight deduplication path handles it.
-			if (targetResult.status !== "resolved" || (activeKey !== undefined && activeKey !== targetResult.target.cacheKey)) {
-				return activeKey ? this.snapshotForCacheKey(provider, activeKey) : undefined;
-			}
+			return activeKey ? this.snapshotForCacheKey(provider, activeKey) : undefined;
 		}
 		if (targetResult.status === "transient-unavailable") {
 			if (legacyCredentialTarget) {
