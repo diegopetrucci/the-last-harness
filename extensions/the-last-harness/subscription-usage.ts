@@ -37,6 +37,7 @@ type TlhSubscriptionUsageContext = {
 type TlhSubscriptionUsageModelRegistry = {
 	isUsingOAuth?(model: unknown): boolean;
 	getApiKeyForProvider?(provider: string): Promise<unknown> | unknown;
+	getProviderAuthStatus?(provider: string): { configured?: boolean; source?: string; label?: string } | undefined;
 	authStorage?: unknown;
 };
 type EligibleProviderContext = {
@@ -44,7 +45,7 @@ type EligibleProviderContext = {
 	model: TlhSubscriptionUsageContext["model"];
 	provider: TlhSubscriptionUsageProvider;
 	modelRegistry: TlhSubscriptionUsageModelRegistry;
-	credential: JsonRecord;
+	credential?: JsonRecord; // undefined in Pi 0.81 path (no authStorage)
 };
 type ResolvedProviderContext =
 	| EligibleProviderContext
@@ -121,6 +122,56 @@ function pickString(source: JsonRecord | undefined, keys: readonly string[]): st
 		}
 	}
 	return undefined;
+}
+
+// Decode the payload of a JWT (header.payload.signature) without signature
+// verification or network access. Returns the parsed JSON object or undefined
+// if the token is not a well-formed JWT with a base64url payload segment.
+// Requires exactly 3 dot-separated segments and validates the payload against
+// the base64url alphabet before decoding (header-safety hardening: the decoded
+// account id flows into the ChatGPT-Account-Id request header).
+function decodeJwtPayload(token: string): JsonRecord | undefined {
+	try {
+		const parts = token.split(".");
+		if (parts.length !== 3) {
+			return undefined;
+		}
+		const segment = parts[1] ?? "";
+		// Validate: only base64url alphabet (A–Z a–z 0–9 - _), no padding chars.
+		if (!/^[A-Za-z0-9_-]+$/.test(segment)) {
+			return undefined;
+		}
+		// Reject impossible length: len % 4 === 1 is never a valid base64url block.
+		if (segment.length % 4 === 1) {
+			return undefined;
+		}
+		// base64url → base64
+		const base64 = segment.replace(/-/g, "+").replace(/_/g, "/");
+		const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+		const json = Buffer.from(padded, "base64").toString("utf8");
+		return asObject(JSON.parse(json));
+	} catch {
+		return undefined;
+	}
+}
+
+// Extract a ChatGPT account ID from a JWT access-token payload.
+// Checks the nested `https://api.openai.com/auth` claim first, then
+// top-level ACCOUNT_ID_KEYS variants. Returns undefined if absent.
+// Raw token is never stored or logged.
+function accountIdFromJwt(token: string): string | undefined {
+	const payload = decodeJwtPayload(token);
+	if (!payload) {
+		return undefined;
+	}
+	const authClaim = asObject(payload["https://api.openai.com/auth"]);
+	if (authClaim) {
+		const id = pickString(authClaim, ACCOUNT_ID_KEYS);
+		if (id) {
+			return id;
+		}
+	}
+	return pickString(payload, ACCOUNT_ID_KEYS);
 }
 
 // Stable, one-way fingerprint of a bearer access token. Used in cache keys
@@ -401,6 +452,30 @@ function hasRuntimeCredentialOverride(
 	}
 }
 
+// Checks for a runtime credential override in either Pi 0.81
+// (getProviderAuthStatus.source === "runtime") or legacy Pi <= 0.80
+// (authStorage.runtimeOverrides Map).
+// The legacy map is consulted first because on Pi 0.80.x getAuthStatus()
+// returns source "stored" even when a runtime --api-key override is also active
+// (the stored-credential check runs before the runtimeOverrides check in that
+// version). Without the legacy-first order, an override on 0.80.x would be
+// missed and stale subscription usage would be shown.
+function isRuntimeCredentialOverride(
+	modelRegistry: TlhSubscriptionUsageModelRegistry | undefined,
+	provider: TlhSubscriptionUsageProvider,
+): boolean {
+	// Pi <= 0.80 path: authoritative when the runtimeOverrides Map is present.
+	if (hasRuntimeCredentialOverride(modelRegistry, provider)) {
+		return true;
+	}
+	// Pi 0.81 path: no authStorage map — rely on source === "runtime".
+	try {
+		return modelRegistry?.getProviderAuthStatus?.(provider)?.source === "runtime";
+	} catch {
+		return false;
+	}
+}
+
 function openAiHeaders(accessToken: string, accountId: string | undefined): Record<string, string> {
 	const headers: Record<string, string> = {
 		Accept: "application/json",
@@ -475,6 +550,13 @@ function resolveTlhSubscriptionUsageProviderContext(ctx: TlhSubscriptionUsageCon
 		return { status: "transient-unavailable", provider };
 	}
 
+	// Pi 0.81 path: no authStorage — skip synchronous credential check.
+	// Token resolution happens asynchronously in resolveTlhSubscriptionUsageTarget.
+	if (!modelRegistry.authStorage) {
+		return { status: "eligible", model, provider, modelRegistry };
+	}
+
+	// Legacy Pi <= 0.80 path: read credential from authStorage.
 	const credentialResult = readOauthCredentialFromRegistry(modelRegistry, provider);
 	if (credentialResult.status !== "ok") {
 		return { status: "transient-unavailable", provider };
@@ -514,14 +596,24 @@ function credentialCacheTarget(
 	};
 }
 
+// Resolves the display-target cache key for the legacy Pi <= 0.80 path only
+// (modelRegistry.authStorage present). For Pi 0.81, display-target resolution
+// lives on the service instance (resolveDisplayCacheKey) because it needs
+// activeCacheKeys.
 function resolveTlhSubscriptionUsageDisplayTarget(
 	ctx: TlhSubscriptionUsageContext | undefined,
 ): CredentialCacheTarget | undefined {
 	const resolved = resolveTlhSubscriptionUsageProvider(ctx);
-	if (!resolved || hasRuntimeCredentialOverride(resolved.modelRegistry, resolved.provider)) {
+	if (!resolved) {
 		return undefined;
 	}
-
+	if (isRuntimeCredentialOverride(resolved.modelRegistry, resolved.provider)) {
+		return undefined;
+	}
+	if (!resolved.credential) {
+		// Pi 0.81 path — caller must use the instance method instead.
+		return undefined;
+	}
 	return credentialCacheTarget(resolved.provider, resolved.credential);
 }
 
@@ -539,6 +631,34 @@ async function resolveTlhSubscriptionUsageTarget(resolved: EligibleProviderConte
 		return { status: "transient-unavailable" };
 	}
 
+	// Pi 0.81 path: no authStorage — derive cache key from token directly.
+	if (!modelRegistry.authStorage) {
+		// For openai-codex, try to decode account ID from the JWT access-token
+		// payload (best-effort, no signature verification, no network).
+		let accountId: string | undefined;
+		if (provider === "openai-codex") {
+			accountId = accountIdFromJwt(normalizedAccessToken);
+		}
+		const fp = accessTokenFingerprint(normalizedAccessToken);
+		const identity = accountId ? `account:${accountId}` : fp ? `fingerprint:${fp}` : undefined;
+		if (!identity) {
+			return { status: "ineligible" };
+		}
+		return {
+			status: "resolved",
+			target: {
+				provider,
+				accessToken: normalizedAccessToken,
+				// Only pass accountId for openai-codex; it is used for the
+				// ChatGPT-Account-Id request header.
+				accountId: provider === "openai-codex" ? accountId : undefined,
+				cacheKey: subscriptionUsageCacheKey(provider, identity),
+			},
+		};
+	}
+
+	// Legacy Pi <= 0.80 path: verify the runtime key matches the stored OAuth
+	// credential to guard against runtime override scenarios.
 	const credentialResult = readOauthCredentialFromRegistry(modelRegistry, provider);
 	if (credentialResult.status !== "ok") {
 		return { status: "transient-unavailable" };
@@ -581,6 +701,7 @@ export class TlhSubscriptionUsageService {
 	inFlight: Map<string, Promise<TlhSubscriptionUsageSnapshot | undefined>>;
 	activeCacheKeys: Map<TlhSubscriptionUsageProvider, string>;
 	ineligibleCacheKeys: Map<TlhSubscriptionUsageProvider, string>;
+	refreshGenerations: Map<TlhSubscriptionUsageProvider, number>;
 
 	constructor(options: TlhSubscriptionUsageServiceOptions = {}) {
 		this.fetch = options.fetch;
@@ -593,6 +714,7 @@ export class TlhSubscriptionUsageService {
 		this.inFlight = new Map();
 		this.activeCacheKeys = new Map();
 		this.ineligibleCacheKeys = new Map();
+		this.refreshGenerations = new Map();
 	}
 
 	snapshotForCacheKey(provider: TlhSubscriptionUsageProvider, cacheKey: string): TlhSubscriptionUsageSnapshot | undefined {
@@ -613,8 +735,50 @@ export class TlhSubscriptionUsageService {
 			.sort((a, b) => b.fetchedAt - a.fetchedAt)[0];
 	}
 
+	// Resolves the provider and cache key for sync display reads.
+	// For Pi 0.81 (no authStorage) the cache key comes from activeCacheKeys
+	// (recorded by the last refresh()); for legacy Pi <= 0.80 it is derived
+	// synchronously from the stored OAuth credential.
+	resolveDisplayCacheKey(
+		ctx: TlhSubscriptionUsageContext | undefined,
+	): { provider: TlhSubscriptionUsageProvider; cacheKey: string } | undefined {
+		const model = ctx?.model;
+		const provider = model?.provider;
+		const modelRegistry = ctx?.modelRegistry;
+		if (!isSupportedTlhSubscriptionUsageProvider(provider)) {
+			return undefined;
+		}
+		if (!modelRegistry || typeof modelRegistry.isUsingOAuth !== "function") {
+			return undefined;
+		}
+		try {
+			if (!modelRegistry.isUsingOAuth(model)) {
+				return undefined;
+			}
+		} catch {
+			return undefined;
+		}
+		if (isRuntimeCredentialOverride(modelRegistry, provider)) {
+			return undefined;
+		}
+		// Legacy path: derive cache key synchronously from stored credential.
+		if (modelRegistry.authStorage) {
+			const legacyTarget = resolveTlhSubscriptionUsageDisplayTarget(ctx);
+			if (!legacyTarget) {
+				return undefined;
+			}
+			return { provider, cacheKey: legacyTarget.cacheKey };
+		}
+		// Pi 0.81 path: cache key recorded asynchronously by refresh().
+		const cacheKey = this.activeCacheKeys.get(provider);
+		if (!cacheKey) {
+			return undefined;
+		}
+		return { provider, cacheKey };
+	}
+
 	getSnapshotForContext(ctx: TlhSubscriptionUsageContext | undefined): TlhSubscriptionUsageSnapshot | undefined {
-		const target = resolveTlhSubscriptionUsageDisplayTarget(ctx);
+		const target = this.resolveDisplayCacheKey(ctx);
 		if (!target) {
 			return undefined;
 		}
@@ -625,6 +789,29 @@ export class TlhSubscriptionUsageService {
 		if (typeof target === "string") {
 			return isSupportedTlhSubscriptionUsageProvider(target) && this.activeCacheKeys.has(target);
 		}
+		// Pi 0.81 path: eligibility is determined entirely by the sync registry
+		// checks (isUsingOAuth + not-runtime-override). No credential or
+		// ineligibleCacheKeys check needed — mismatch cannot arise without authStorage.
+		const modelRegistry = target?.modelRegistry;
+		if (modelRegistry && !modelRegistry.authStorage) {
+			const model = target?.model;
+			const provider = model?.provider;
+			if (!isSupportedTlhSubscriptionUsageProvider(provider)) {
+				return false;
+			}
+			if (typeof modelRegistry.isUsingOAuth !== "function") {
+				return false;
+			}
+			try {
+				if (!modelRegistry.isUsingOAuth(model)) {
+					return false;
+				}
+			} catch {
+				return false;
+			}
+			return !isRuntimeCredentialOverride(modelRegistry, provider);
+		}
+		// Legacy path: use displayTarget + ineligibleCacheKeys.
 		const displayTarget = resolveTlhSubscriptionUsageDisplayTarget(target);
 		return Boolean(displayTarget && this.ineligibleCacheKeys.get(displayTarget.provider) !== displayTarget.cacheKey);
 	}
@@ -665,6 +852,7 @@ export class TlhSubscriptionUsageService {
 		this.inFlight.clear();
 		this.activeCacheKeys.clear();
 		this.ineligibleCacheKeys.clear();
+		this.refreshGenerations.clear();
 	}
 
 	async refresh(
@@ -676,6 +864,9 @@ export class TlhSubscriptionUsageService {
 			return undefined;
 		}
 
+		const generation = (this.refreshGenerations.get(provider) ?? 0) + 1;
+		this.refreshGenerations.set(provider, generation);
+
 		const resolved = resolveTlhSubscriptionUsageProviderContext(ctx);
 		if (resolved.status === "transient-unavailable") {
 			return undefined;
@@ -684,30 +875,49 @@ export class TlhSubscriptionUsageService {
 			this.clearProvider(provider);
 			return undefined;
 		}
-		if (hasRuntimeCredentialOverride(resolved.modelRegistry, provider)) {
+		if (isRuntimeCredentialOverride(resolved.modelRegistry, provider)) {
 			this.clearProvider(provider);
 			return undefined;
 		}
 
-		const credentialTarget = credentialCacheTarget(provider, resolved.credential);
-		if (!credentialTarget) {
+		// Legacy Pi <= 0.80: compute a sync credential target for transient-
+		// unavailable fallback and mismatch detection.
+		const legacyCredentialTarget = resolved.credential
+			? credentialCacheTarget(provider, resolved.credential)
+			: undefined;
+		if (resolved.credential && !legacyCredentialTarget) {
+			// Credential present but unparseable — clear and bail.
 			this.clearProvider(provider);
 			return undefined;
 		}
 		const nowMs = this.now();
 		const targetResult = await resolveTlhSubscriptionUsageTarget(resolved);
-		const resolvedActiveCacheKey = this.activeCacheKeys.get(provider);
-		const credentialCacheKeyChanged = resolvedActiveCacheKey && resolvedActiveCacheKey !== credentialTarget.cacheKey;
+		if (this.refreshGenerations.get(provider) !== generation) {
+			// Superseded by a newer refresh — always bail with zero state mutations
+			// and no fetch. The newest refresh (whose generation matches) proceeds
+			// normally; returning the current active snapshot or undefined is
+			// sufficient because the facade re-reads service state after render.
+			const activeKey = this.activeCacheKeys.get(provider);
+			return activeKey ? this.snapshotForCacheKey(provider, activeKey) : undefined;
+		}
 		if (targetResult.status === "transient-unavailable") {
-			if (credentialCacheKeyChanged) {
-				this.clearProvider(provider);
+			if (legacyCredentialTarget) {
+				// Legacy path: check whether the stored credential has changed
+				// identity while the async call was in flight.
+				const resolvedActiveCacheKey = this.activeCacheKeys.get(provider);
+				if (resolvedActiveCacheKey && resolvedActiveCacheKey !== legacyCredentialTarget.cacheKey) {
+					this.clearProvider(provider);
+				}
+				return this.snapshotForCacheKey(provider, legacyCredentialTarget.cacheKey);
 			}
-			return this.snapshotForCacheKey(provider, credentialTarget.cacheKey);
+			// Pi 0.81 path: fall back to whatever is currently cached.
+			const activeCacheKey = this.activeCacheKeys.get(provider);
+			return activeCacheKey ? this.snapshotForCacheKey(provider, activeCacheKey) : undefined;
 		}
 		if (targetResult.status !== "resolved") {
 			this.clearProvider(provider);
-			if (targetResult.status === "mismatch") {
-				this.ineligibleCacheKeys.set(provider, credentialTarget.cacheKey);
+			if (targetResult.status === "mismatch" && legacyCredentialTarget) {
+				this.ineligibleCacheKeys.set(provider, legacyCredentialTarget.cacheKey);
 			}
 			return undefined;
 		}
