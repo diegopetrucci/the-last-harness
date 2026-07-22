@@ -148,8 +148,9 @@ export function copyTlhSubagentPrompts(
  *
  * Revert path: to disable compact descriptions, open
  * <agentDir>/extensions/subagent/config.json and set
- * "toolDescriptionMode": "full", or remove the key entirely. Either change
- * will be preserved on subsequent installer runs.
+ * "toolDescriptionMode": "full". That value will be preserved on subsequent
+ * installer runs. Removing the key is only a temporary revert — the installer
+ * will re-provision "compact" on the next install or update run.
  *
  * Runtime note: toolDescriptionMode requires pi-subagents >= v0.33.0
  * (fork feature). Older builds simply ignore the unknown key.
