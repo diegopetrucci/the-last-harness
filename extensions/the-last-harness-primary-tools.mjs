@@ -6,6 +6,31 @@ function sameToolSet(left, right) {
 	return left.every((tool) => rightSet.has(tool));
 }
 
+function mergeMissingTools(baseTools, additionalTools) {
+	const seen = new Set(baseTools);
+	const mergedTools = [...baseTools];
+	for (const tool of additionalTools) {
+		if (seen.has(tool)) {
+			continue;
+		}
+		seen.add(tool);
+		mergedTools.push(tool);
+	}
+	return mergedTools;
+}
+
+function additiveLateTools(currentTools, appliedTools) {
+	if (!currentTools || !appliedTools) {
+		return undefined;
+	}
+	const currentToolSet = new Set(currentTools);
+	if (!appliedTools.every((tool) => currentToolSet.has(tool))) {
+		return undefined;
+	}
+	const appliedToolSet = new Set(appliedTools);
+	return currentTools.filter((tool) => !appliedToolSet.has(tool));
+}
+
 function toolNameSet(toolNames) {
 	const resolvedToolNames = typeof toolNames === "function" ? toolNames() : toolNames;
 	return resolvedToolNames instanceof Set ? resolvedToolNames : new Set(resolvedToolNames);
@@ -31,9 +56,14 @@ export function createPrimaryToolState() {
 		},
 		apply(validTools, currentTools) {
 			if (prePrimaryActiveTools === undefined) {
-				prePrimaryActiveTools = currentTools;
+				prePrimaryActiveTools = [...currentTools];
+			} else if (appliedPrimaryTools) {
+				const lateTools = additiveLateTools(currentTools, appliedPrimaryTools);
+				if (lateTools && lateTools.length > 0) {
+					prePrimaryActiveTools = mergeMissingTools(prePrimaryActiveTools, lateTools);
+				}
 			}
-			appliedPrimaryTools = validTools;
+			appliedPrimaryTools = [...validTools];
 			return validTools;
 		},
 		restoreIfAppropriate(currentTools, availableToolNames) {
@@ -41,8 +71,14 @@ export function createPrimaryToolState() {
 				return undefined;
 			}
 			if (appliedPrimaryTools && !sameToolSet(currentTools, appliedPrimaryTools)) {
-				clear();
-				return undefined;
+				const lateTools = additiveLateTools(currentTools, appliedPrimaryTools);
+				if (lateTools === undefined) {
+					clear();
+					return undefined;
+				}
+				if (lateTools.length > 0) {
+					prePrimaryActiveTools = mergeMissingTools(prePrimaryActiveTools, lateTools);
+				}
 			}
 			const restoredTools = filterAvailableTools(prePrimaryActiveTools, availableToolNames);
 			clear();

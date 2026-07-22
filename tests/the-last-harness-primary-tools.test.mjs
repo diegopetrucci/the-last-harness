@@ -48,3 +48,20 @@ test("disabled primary mode does not overwrite active tools changed after primar
 
 	assert.deepEqual(activeTools, ["bash"]);
 });
+
+test("disabled primary mode restores additive late-registered tools captured after the first primary pass", () => {
+	const availableTools = new Set(["bash", "edit", "grep", "intercom", "read", "subagent_supervisor"]);
+	const primaryToolState = createPrimaryToolState();
+	let activeTools = ["bash", "edit"];
+
+	primaryToolState.apply(["read", "grep"], activeTools);
+	activeTools = ["read", "grep", "subagent_supervisor", "intercom"];
+	activeTools = primaryToolState.apply(["read", "grep", "subagent_supervisor"], activeTools);
+
+	const restoredTools = primaryToolState.restoreIfAppropriate(activeTools, availableTools);
+	if (restoredTools) {
+		activeTools = restoredTools;
+	}
+
+	assert.deepEqual(activeTools, ["bash", "edit", "subagent_supervisor", "intercom"]);
+});

@@ -238,6 +238,68 @@ test("non-locked primary (architect) honors global applyThinking=false override"
 	});
 });
 
+test("primary runtime defers missing-tool startup warnings and restores late supervisor tools when primary mode is disabled", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const primaryAgents = new Map([
+		[
+			"architect",
+			createPrimaryPrompt("architect", {
+				tools: ["read", "grep", "find", "ls", "bash", "subagent", "subagent_supervisor"],
+				applyModel: false,
+				applyThinking: false,
+			}),
+		],
+	]);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const notifications = [];
+		const { pi, runtime, beforeAgentStart } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		assert.ok(runtime, "runtime should register outside child sessions");
+
+		pi.allTools = ["read", "grep", "find", "ls", "bash", "subagent"].map((name) => ({ name }));
+		pi.activeTools = ["read", "grep", "find", "ls", "bash", "subagent"];
+
+		const makeCtx = (branch = []) => ({
+			cwd: fixture.cwd,
+			sessionManager: { getBranch: () => branch },
+			ui: {
+				notify(message, type = "info") {
+					notifications.push({ message, type });
+				},
+			},
+			modelRegistry: { getAvailable: () => [] },
+			model: { provider: "openai-codex", id: "gpt-5.4" },
+		});
+
+		await runtime.applySessionStart(makeCtx());
+		assert.equal(
+			notifications.some(({ message }) => message.includes("subagent_supervisor")),
+			false,
+			"session_start should not warn about supervisor tools that register later in the lifecycle",
+		);
+
+		pi.allTools = ["read", "grep", "find", "ls", "bash", "subagent", "subagent_supervisor", "intercom"].map((name) => ({ name }));
+		pi.activeTools = [...pi.activeTools, "subagent_supervisor", "intercom"];
+
+		await beforeAgentStart({ systemPrompt: "base prompt" }, makeCtx());
+		assert.deepEqual(
+			pi.activeTools,
+			["read", "grep", "find", "ls", "bash", "subagent", "subagent_supervisor"],
+			"enabled primary mode must keep subagent_supervisor while excluding the unrestricted intercom alias",
+		);
+
+		await beforeAgentStart(
+			{ systemPrompt: "base prompt" },
+			makeCtx([{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "disabled" } }]),
+		);
+		assert.deepEqual(
+			pi.activeTools,
+			["read", "grep", "find", "ls", "bash", "subagent", "subagent_supervisor", "intercom"],
+			"disabled primary mode must restore late-registered supervisor tools alongside the unrestricted tool set",
+		);
+	});
+});
+
 // --- tlh-3mb3: per-primary model override tests ---
 
 function createPiHarnessWithFiringModelSelect(getCtx) {

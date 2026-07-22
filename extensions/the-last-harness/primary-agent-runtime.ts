@@ -449,19 +449,19 @@ function createTlhPrimaryAgentRuntime(
 		});
 	}
 
-	function getValidPrimaryTools(ctx: ExtensionContext, primary: AgentPrompt): string[] {
+	function getValidPrimaryTools(ctx: ExtensionContext, primary: AgentPrompt, warnOnMissing = true): string[] {
 		const desiredTools = primaryToolAllowlist(primary);
 		const allToolNames = new Set(pi.getAllTools().map((tool) => tool.name));
 		const validTools = filterAvailableTools(desiredTools, allToolNames);
 		const missingTools = desiredTools.filter((tool) => !allToolNames.has(tool));
-		if (missingTools.length > 0) {
+		if (warnOnMissing && missingTools.length > 0) {
 			warnOnce(ctx, `missing-primary-tools-${primary.name}`, `TLH primary agent tools are not available yet: ${missingTools.join(", ")}`);
 		}
 		return validTools;
 	}
 
-	function applyPrimaryTools(ctx: ExtensionContext, primary: AgentPrompt): void {
-		const validTools = getValidPrimaryTools(ctx, primary);
+	function applyPrimaryTools(ctx: ExtensionContext, primary: AgentPrompt, warnOnMissing = true): void {
+		const validTools = getValidPrimaryTools(ctx, primary, warnOnMissing);
 		if (validTools.length === 0) {
 			return;
 		}
@@ -528,7 +528,8 @@ function createTlhPrimaryAgentRuntime(
 		setExtensionThinkingLevel(pi, thinking);
 	}
 
-	async function applyPrimaryDefaults(ctx: ExtensionContext): Promise<void> {
+	async function applyPrimaryDefaults(ctx: ExtensionContext, options: { warnOnMissing?: boolean } = {}): Promise<void> {
+		const { warnOnMissing = true } = options;
 		const selection = currentPrimaryAgentSelection();
 		if (!isEnabledPrimaryAgentSelection(selection)) {
 			restorePrimaryToolsIfAppropriate();
@@ -541,7 +542,7 @@ function createTlhPrimaryAgentRuntime(
 			return;
 		}
 
-		applyPrimaryTools(ctx, primary);
+		applyPrimaryTools(ctx, primary, warnOnMissing);
 
 		const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
 		const forceApply = shouldForceApplyForLock(primary);
@@ -744,7 +745,7 @@ function createTlhPrimaryAgentRuntime(
 	async function applySessionStart(ctx: ExtensionContext): Promise<void> {
 		sessionExperimentalSnapshot = getTlhGlobalSettings(ctx.cwd).tlh?.experimental;
 		syncPrimaryAgentState(ctx);
-		await applyPrimaryDefaults(ctx);
+		await applyPrimaryDefaults(ctx, { warnOnMissing: false });
 	}
 
 	function registerLifecycleHooks(): void {
