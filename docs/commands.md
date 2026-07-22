@@ -193,7 +193,6 @@ These commands are registered and fully functional, but deliberately excluded fr
 | Command | Description |
 |---------|-------------|
 | `/skill:librarian` | Load the bundled librarian skill by name without surfacing it in TLH autocomplete |
-| `/skill:pi-intercom` | Load the bundled intercom skill by name without surfacing it in TLH autocomplete |
 
 ### Hidden bundled extension commands
 
@@ -203,7 +202,6 @@ These commands are registered and fully functional, but deliberately excluded fr
 | `/fff-health` | `pi-fff` | Show FFF file finder health and status |
 | `/fff-mode` | `pi-fff` | Show or set FFF mode (`tools-and-ui`, `tools-only`, `override`) |
 | `/fff-rescan` | `pi-fff` | Trigger FFF to rescan files |
-| `/intercom` | `pi-intercom` | Open the session intercom overlay (internal subagent communication) |
 | `/quiet-tools` | `pi-quiet-tools` | Toggle one-line collapsed invocations for built-in tool rows |
 | `/search` | `pi-web-access` | Browse stored web search results |
 | `/subagents-check-profile` | `pi-subagents` | Check whether a saved profile still points to usable models |

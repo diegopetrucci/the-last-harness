@@ -326,6 +326,10 @@ const FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES = Object.freeze([
     "npm:pi-rtk",
     "npm:@sherif-fanous/pi-rtk",
     "git:github.com/sherif-fanous/pi-rtk",
+    "npm:@diegopetrucci/pi-intercom",
+    "npm:pi-intercom",
+    "git:github.com/nicobailon/pi-intercom",
+    "git:github.com/diegopetrucci/pi-intercom",
 ]);
 function purgeForceRemovedRetiredDefaultExtensionPackages(settings, changes) {
     if (!Array.isArray(settings.packages))
@@ -374,6 +378,18 @@ function pruneRtkDisabledDefaultExtension(settings, changes) {
         return;
     settings.tlh.disabledDefaultExtensions = nextValues;
     changes.push("remove stale rtk opt-out from tlh.disabledDefaultExtensions");
+}
+function pruneIntercomDisabledDefaultExtension(settings, changes) {
+    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
+        return;
+    const values = settings.tlh.disabledDefaultExtensions;
+    if (!Array.isArray(values))
+        return;
+    const nextValues = values.filter((value) => !(typeof value === "string" && ["intercom", "pi-intercom"].includes(value.trim())));
+    if (nextValues.length === values.length)
+        return;
+    settings.tlh.disabledDefaultExtensions = nextValues;
+    changes.push("remove stale intercom opt-out from tlh.disabledDefaultExtensions");
 }
 function scrubGnosisSettings(settings, changes) {
     if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
@@ -603,6 +619,7 @@ function main() {
     pruneContextCapDisabledDefaultExtension(next, changes);
     pruneOracleDisabledDefaultExtension(next, changes);
     pruneRtkDisabledDefaultExtension(next, changes);
+    pruneIntercomDisabledDefaultExtension(next, changes);
     syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
     log(args, `Pi settings: ${settingsPath}`);
     if (changes.length === 0) {

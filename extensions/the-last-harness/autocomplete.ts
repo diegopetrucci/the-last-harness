@@ -10,7 +10,6 @@ const HIDDEN_SLASH_COMMANDS = new Set([
 	"subagents-check-profile",
 	"subagents-models",
 	"skill:librarian",
-	"skill:pi-intercom",
 	"websearch",
 	"curator",
 	"search",
@@ -18,7 +17,6 @@ const HIDDEN_SLASH_COMMANDS = new Set([
 	"fff-health",
 	"fff-rescan",
 	"fff-mode",
-	"intercom",
 ]);
 
 function stripAutocompleteSourceTag(description: string | undefined): string | undefined {

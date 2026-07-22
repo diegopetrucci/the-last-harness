@@ -172,7 +172,7 @@ function writeTlhPrimaryAgentDefault(cwd, selection) {
 function primaryToolAllowlist(primary) {
     return primary?.tools.length
         ? primary.tools
-        : ["read", "grep", "find", "ls", "bash", "subagent", "intercom"];
+        : ["read", "grep", "find", "ls", "bash", "subagent", "subagent_supervisor"];
 }
 function primaryAgentLabel(selection) {
     return selection;
