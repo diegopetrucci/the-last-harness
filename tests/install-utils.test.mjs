@@ -15,6 +15,7 @@ import {
 	defaultTlhKeybindingsPath,
 	defaultTlhSettingsPath,
 	expandHomePath,
+	isTlhOwnedBackupFilename,
 	parseBackupTimestamp,
 	pathIsInNormalPiConfig,
 	readJsonFile,
@@ -254,4 +255,53 @@ test("selectExpiredBackups: mixed parseable and unparseable filenames, all fresh
 	const unknownFile = "settings.json.bak-unknown";
 
 	assert.deepEqual(selectExpiredBackups([freshFile, unknownFile], { now }), []);
+});
+
+test("isTlhOwnedBackupFilename: accepts all four known TLH marker forms", () => {
+	// Empty marker (no milliseconds)
+	assert.equal(isTlhOwnedBackupFilename("settings.json.backup-2026-07-11T17-01-16Z", "settings.json"), true);
+	// Empty marker (with milliseconds)
+	assert.equal(isTlhOwnedBackupFilename("settings.json.backup-2026-07-11T17-01-16-155Z", "settings.json"), true);
+	// before-install marker
+	assert.equal(isTlhOwnedBackupFilename("settings.json.backup-before-install-2026-07-10T20-58-04Z", "settings.json"), true);
+	// tlh-defaults marker
+	assert.equal(isTlhOwnedBackupFilename("settings.json.backup-tlh-defaults-2026-07-10T09-42-45-504Z", "settings.json"), true);
+	// tlh-tickets marker
+	assert.equal(isTlhOwnedBackupFilename("settings.json.backup-tlh-tickets-2026-07-10T09-42-45-504Z", "settings.json"), true);
+	// keybindings base name
+	assert.equal(isTlhOwnedBackupFilename("keybindings.json.backup-2026-07-11T17-01-16-155Z", "keybindings.json"), true);
+});
+
+test("isTlhOwnedBackupFilename: rejects unknown marker even with a parseable trailing timestamp", () => {
+	// Core regression case: unknown marker "my-personal-copy" + valid timestamp
+	assert.equal(
+		isTlhOwnedBackupFilename("settings.json.backup-my-personal-copy-2026-07-11T17-01-16-155Z", "settings.json"),
+		false,
+		"unknown marker with valid timestamp must be rejected",
+	);
+	// Another unknown marker
+	assert.equal(isTlhOwnedBackupFilename("settings.json.backup-work-project-2026-07-11T17-01-16Z", "settings.json"), false);
+});
+
+test("isTlhOwnedBackupFilename: rejects filenames with no timestamp or wrong base", () => {
+	assert.equal(isTlhOwnedBackupFilename("settings.json.backup-mynotes", "settings.json"), false);
+	assert.equal(isTlhOwnedBackupFilename("settings.json", "settings.json"), false);
+	assert.equal(isTlhOwnedBackupFilename("settings.json.backup-2026-07-11T17-01-16-155Z", "keybindings.json"), false);
+	assert.equal(isTlhOwnedBackupFilename("", "settings.json"), false);
+});
+
+test("isTlhOwnedBackupFilename: rejects shape-valid but semantically invalid timestamps", () => {
+	// Month 99 and hour 99 are shape-valid (pass BACKUP_TIMESTAMP_FULL) but not
+	// calendar-valid — parseBackupTimestamp returns undefined for them, so
+	// isTlhOwnedBackupFilename must return false (regression guard).
+	assert.equal(
+		isTlhOwnedBackupFilename("settings.json.backup-2026-99-99T99-99-99Z", "settings.json"),
+		false,
+		"shape-valid but semantically invalid timestamp (no marker) must be rejected",
+	);
+	assert.equal(
+		isTlhOwnedBackupFilename("settings.json.backup-before-install-2026-99-99T99-99-99Z", "settings.json"),
+		false,
+		"shape-valid but semantically invalid timestamp (known marker) must be rejected",
+	);
 });

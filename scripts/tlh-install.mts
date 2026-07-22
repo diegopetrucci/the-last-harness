@@ -38,7 +38,7 @@ import {
 import {
 	assignRequiredEqualsValue,
 	backupPathWithTimestamp,
-	parseBackupTimestamp,
+	isTlhOwnedBackupFilename,
 	renderShellWords,
 	requiredValue,
 	selectExpiredBackups,
@@ -1117,15 +1117,11 @@ export function cleanupOldSettingsBackups(config: InstallConfig): void {
 	// Keep only filenames that match TLH backup patterns AND carry a parseable
 	// TLH timestamp. Files like `settings.json.backup-mynotes` share the prefix
 	// but have no timestamp, so they must never be treated as deletion candidates.
-	const settingsCandidates = entries.filter(
-		(name) =>
-			name.startsWith("settings.json.backup") &&
-			parseBackupTimestamp(name) !== undefined,
+	const settingsCandidates = entries.filter((name) =>
+		isTlhOwnedBackupFilename(name, "settings.json"),
 	);
-	const keybindingsCandidates = entries.filter(
-		(name) =>
-			name.startsWith("keybindings.json.backup") &&
-			parseBackupTimestamp(name) !== undefined,
+	const keybindingsCandidates = entries.filter((name) =>
+		isTlhOwnedBackupFilename(name, "keybindings.json"),
 	);
 
 	if (settingsCandidates.length === 0 && keybindingsCandidates.length === 0) return;
