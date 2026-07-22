@@ -34,6 +34,7 @@ const expectedTlhCommands = [
 	"effort",
 	"experimental",
 	"review",
+	"subagent-settings",
 	"switch-primary-agent",
 	"thinking",
 	"tlh-changelog",
