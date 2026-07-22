@@ -52,7 +52,7 @@ type OpenCommand = {
 	args: string[];
 };
 
-type TokensReportSessionManager = Pick<ExtensionContext["sessionManager"], "getSessionDir" | "getSessionFile">;
+export type TokensReportSessionManager = Pick<ExtensionContext["sessionManager"], "getSessionDir" | "getSessionFile">;
 
 export function createTokensCommandHandler(pi: ExtensionAPI, dependencies: TokensCommandDependencies = {}) {
 	const openReport = dependencies.openReport ?? openLocalReport;
@@ -214,11 +214,11 @@ export function buildTokensReportHtml(analysis: TlhSessionUsageAnalysis, options
 	].join("");
 }
 
-function renderSection(title: string, body: string): string {
+export function renderSection(title: string, body: string): string {
 	return `<section class="section"><h2>${escapeHtml(title)}</h2>${body}</section>`;
 }
 
-function renderMetricCard(title: string, value: string, detail: string): string {
+export function renderMetricCard(title: string, value: string, detail: string): string {
 	return [
 		'<article class="card">',
 		`<p class="card-label">${escapeHtml(title)}</p>`,
@@ -228,7 +228,7 @@ function renderMetricCard(title: string, value: string, detail: string): string 
 	].join("");
 }
 
-function renderKeyValueGrid(items: Array<[string, string]>): string {
+export function renderKeyValueGrid(items: Array<[string, string]>): string {
 	return [
 		'<dl class="kv-grid">',
 		...items.flatMap(([label, value]) => [`<dt>${escapeHtml(label)}</dt>`, `<dd>${escapeHtml(value)}</dd>`]),
@@ -465,7 +465,7 @@ function renderIntercomSummary(targets: string[]): string {
 	].join("");
 }
 
-function renderTable(headers: string[], rows: string[][], emptyMessage: string): string {
+export function renderTable(headers: string[], rows: string[][], emptyMessage: string): string {
 	if (rows.length === 0) {
 		return `<p class="empty">${escapeHtml(emptyMessage)}</p>`;
 	}
@@ -480,9 +480,9 @@ function renderTable(headers: string[], rows: string[][], emptyMessage: string):
 	].join("");
 }
 
-function writeLocalTokensReport(sessionManager: TokensReportSessionManager, html: string): LocalTokensReport {
+export function writeLocalTokensReport(sessionManager: TokensReportSessionManager, html: string, fileName: string = REPORT_FILE_NAME): LocalTokensReport {
 	const reportDirectory = createPrivateReportDirectory(preferredReportParent(sessionManager));
-	const reportPath = join(reportDirectory, REPORT_FILE_NAME);
+	const reportPath = join(reportDirectory, fileName);
 	writeFileSync(reportPath, html, { encoding: "utf8", flag: "wx", mode: 0o600 });
 	setPrivateMode(reportPath, 0o600);
 	return { path: reportPath, directory: reportDirectory };
@@ -519,7 +519,7 @@ function createPrivateReportDirectory(preferredParent?: string): string {
 	throw lastError instanceof Error ? lastError : new Error("Could not create a private local report directory.");
 }
 
-async function openLocalReport(path: string): Promise<void> {
+export async function openLocalReport(path: string): Promise<void> {
 	let lastError: unknown;
 	for (const command of buildOpenReportCommands(path)) {
 		try {
@@ -648,7 +648,7 @@ function formatErrorRate(errors: number, results: number): string {
 	return PERCENT_FORMATTER.format(errors / results);
 }
 
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
 	return value
 		.replaceAll("&", "&amp;")
 		.replaceAll("<", "&lt;")
@@ -657,7 +657,7 @@ function escapeHtml(value: string): string {
 		.replaceAll("'", "&#39;");
 }
 
-const TOKENS_REPORT_CSS = `
+export const TOKENS_REPORT_CSS = `
 :root {
 	color-scheme: light dark;
 	font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;

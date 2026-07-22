@@ -42,6 +42,7 @@ const expectedTlhCommands = [
 	"tokens",
 	"usage",
 	"version",
+	"what-consumed-my-session-limit-and-tokens",
 ];
 
 function inspectLoad() {
