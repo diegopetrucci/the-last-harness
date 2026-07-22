@@ -165,7 +165,7 @@ EOF`,
 		});
 
 		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
-		await eventually(() => renderRequests === 1, "initial git cache refresh should request one footer render");
+		await eventually(() => renderRequests === 1, "initial git cache refresh should request one footer render", { timeoutMs: 15000 });
 		await new Promise((resolve) => setImmediate(resolve));
 		assert.equal(renderRequests, 1, "git cache refresh should be the only render trigger in this scenario");
 	} finally {

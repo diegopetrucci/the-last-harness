@@ -64,9 +64,9 @@ export function createToolCallContext(branchEntries = [], notifications, overrid
 			},
 		},
 		modelRegistry: {
-			getAvailable: () => [{ provider: "openai-codex", id: "gpt-5.4" }],
+			getAvailable: () => [{ provider: "openai-codex", id: "gpt-5.4", reasoning: true }],
 		},
-		model: { provider: "openai-codex", id: "gpt-5.4" },
+		model: { provider: "openai-codex", id: "gpt-5.4", reasoning: true },
 		...overrides,
 	};
 }
