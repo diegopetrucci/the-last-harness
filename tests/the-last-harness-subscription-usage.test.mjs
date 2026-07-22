@@ -868,3 +868,460 @@ test("service dedupes concurrent refresh() calls via the in-flight registry", as
 	assert.equal(first, second, "both refresh() calls resolve to the same snapshot instance");
 	assert.equal(first?.windows.session.used, 50);
 });
+
+// ---------------------------------------------------------------------------
+// Pi 0.81 modelRegistry API tests (no authStorage)
+// ---------------------------------------------------------------------------
+
+// Creates a minimal base64url-encoded JWT with the given payload object.
+// No real signing — used only to exercise the JWT-decode path in tests.
+function makeFakeJwt(payload) {
+	const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
+	const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+	return `${header}.${body}.fakesig`;
+}
+
+test("Pi 0.81: eligible Anthropic OAuth session produces snapshot after refresh()", async () => {
+	const accessToken = randomUUID();
+	const fingerprint = tokenFingerprint(accessToken);
+	let fetchCalls = 0;
+	const service = createTlhSubscriptionUsageService({
+		now: () => NOW_MS,
+		cacheTtlMs: 0,
+		minFetchIntervalMs: 0,
+		timeoutMs: 0,
+		fetch: async () => {
+			fetchCalls += 1;
+			return {
+				ok: true,
+				json: async () => ({ five_hour: { used: 8, limit: 20 } }),
+			};
+		},
+	});
+	const ctx = {
+		model: { provider: "anthropic" },
+		modelRegistry: {
+			// Pi 0.81: no authStorage
+			isUsingOAuth: (model) => model?.provider === "anthropic",
+			getProviderAuthStatus: (provider) => (provider === "anthropic" ? { configured: true, source: "stored" } : { configured: false }),
+			getApiKeyForProvider: async (provider) => (provider === "anthropic" ? accessToken : undefined),
+		},
+	};
+
+	// Before first refresh, isEligible is true (sync registry confirms OAuth).
+	// suppressCost should be honoured even before usage data arrives.
+	assert.equal(service.isEligible(ctx), true);
+	assert.equal(service.getSnapshotForContext(ctx), undefined, "no snapshot yet before refresh");
+
+	const snapshot = await service.refresh(ctx, { force: true });
+
+	assert.ok(snapshot, "refresh produced a snapshot");
+	assert.equal(snapshot?.provider, "anthropic");
+	assert.equal(snapshot?.windows.session.used, 8);
+	assert.equal(fetchCalls, 1);
+
+	// Cache key is fingerprint-based (no account ID for Anthropic).
+	assert.deepEqual(Array.from(service.snapshots.keys()), [`anthropic\tfingerprint:${fingerprint}`]);
+	assert.doesNotMatch(Array.from(service.snapshots.keys())[0], new RegExp(accessToken));
+
+	// Sync display path picks up the snapshot recorded by refresh().
+	assert.equal(service.getSnapshotForContext(ctx), snapshot);
+	assert.equal(service.isEligible(ctx), true);
+	assertNoCredentialMaterial(snapshot);
+});
+
+test("Pi 0.81: runtime-override (AuthStatus.source === \"runtime\") suppresses usage segment", async () => {
+	const accessToken = randomUUID();
+	let fetchCalls = 0;
+	const service = createTlhSubscriptionUsageService({
+		now: () => NOW_MS,
+		cacheTtlMs: 0,
+		minFetchIntervalMs: 0,
+		timeoutMs: 0,
+		fetch: async () => {
+			fetchCalls += 1;
+			throw new Error("unexpected usage fetch");
+		},
+	});
+
+	let authSource = "stored";
+	const ctx = {
+		model: { provider: "anthropic" },
+		modelRegistry: {
+			isUsingOAuth: (model) => model?.provider === "anthropic",
+			getProviderAuthStatus: () => ({ configured: true, source: authSource }),
+			getApiKeyForProvider: async () => accessToken,
+			// No authStorage — Pi 0.81 shape
+		},
+	};
+
+	// With stored source, refresh should succeed.
+	const noOverrideService = createTlhSubscriptionUsageService({
+		now: () => NOW_MS,
+		cacheTtlMs: 0,
+		minFetchIntervalMs: 0,
+		timeoutMs: 0,
+		fetch: async () => ({
+			ok: true,
+			json: async () => ({ five_hour: { used: 3, limit: 10 } }),
+		}),
+	});
+	const storedCtx = { ...ctx, modelRegistry: { ...ctx.modelRegistry, getProviderAuthStatus: () => ({ configured: true, source: "stored" }) } };
+	const storedSnapshot = await noOverrideService.refresh(storedCtx, { force: true });
+	assert.ok(storedSnapshot);
+	assert.equal(noOverrideService.isEligible(storedCtx), true);
+
+	// Switch to runtime source — usage should be suppressed.
+	authSource = "runtime";
+	assert.equal(service.isEligible(ctx), false, "runtime override makes isEligible false");
+	const result = await service.refresh(ctx, { force: true });
+	assert.equal(result, undefined);
+	assert.equal(fetchCalls, 0, "no fetch should occur with runtime override");
+	assert.equal(service.getSnapshotForContext(ctx), undefined);
+});
+
+test("Pi 0.81: openai-codex JWT account-id decode sets ChatGPT-Account-Id header and account-based cache key", async () => {
+	const accountId = "acct_jwt_decoded";
+	// Create a JWT with the nested OpenAI auth claim.
+	const jwtToken = makeFakeJwt({
+		"https://api.openai.com/auth": { chatgpt_account_id: accountId },
+		sub: "user_test",
+	});
+	const requests = [];
+	const service = createTlhSubscriptionUsageService({
+		now: () => NOW_MS,
+		cacheTtlMs: 0,
+		minFetchIntervalMs: 0,
+		timeoutMs: 0,
+		fetch: async (url, init) => {
+			requests.push({ url, init });
+			return {
+				ok: true,
+				json: async () => openAiUsage(30),
+			};
+		},
+	});
+	const ctx = {
+		model: { provider: "openai-codex" },
+		modelRegistry: {
+			isUsingOAuth: (model) => model?.provider === "openai-codex",
+			getProviderAuthStatus: () => ({ configured: true, source: "stored" }),
+			getApiKeyForProvider: async (provider) => (provider === "openai-codex" ? jwtToken : undefined),
+			// No authStorage — Pi 0.81 shape
+		},
+	};
+
+	const snapshot = await service.refresh(ctx, { force: true });
+
+	assert.ok(snapshot);
+	assert.equal(snapshot?.windows.session.used, 30);
+	assert.equal(requests.length, 1);
+	assert.equal(requests[0]?.init.headers["ChatGPT-Account-Id"], accountId, "decoded account ID included in request header");
+	// Cache key uses account identity, not fingerprint.
+	assert.deepEqual(Array.from(service.snapshots.keys()), [`openai-codex\taccount:${accountId}`]);
+	assert.doesNotMatch(requests[0]?.init.headers.Authorization, new RegExp(accountId), "account ID not present in auth header");
+	assertNoCredentialMaterial(snapshot);
+});
+
+test("Pi 0.81: openai-codex without decodable account-id falls back to fingerprint cache key", async () => {
+	// Plain UUID is not a JWT — decode will fail and fingerprint is used.
+	const accessToken = randomUUID();
+	const fingerprint = tokenFingerprint(accessToken);
+	const requests = [];
+	const service = createTlhSubscriptionUsageService({
+		now: () => NOW_MS,
+		cacheTtlMs: 0,
+		minFetchIntervalMs: 0,
+		timeoutMs: 0,
+		fetch: async (url, init) => {
+			requests.push({ url, init });
+			return {
+				ok: true,
+				json: async () => openAiUsage(15),
+			};
+		},
+	});
+	const ctx = {
+		model: { provider: "openai-codex" },
+		modelRegistry: {
+			isUsingOAuth: (model) => model?.provider === "openai-codex",
+			getProviderAuthStatus: () => ({ configured: true, source: "stored" }),
+			getApiKeyForProvider: async () => accessToken,
+			// No authStorage — Pi 0.81 shape
+		},
+	};
+
+	const snapshot = await service.refresh(ctx, { force: true });
+
+	assert.ok(snapshot);
+	assert.equal(snapshot?.windows.session.used, 15);
+	// No ChatGPT-Account-Id when account ID could not be decoded.
+	assert.equal(requests[0]?.init.headers["ChatGPT-Account-Id"], undefined);
+	assert.deepEqual(Array.from(service.snapshots.keys()), [`openai-codex\tfingerprint:${fingerprint}`]);
+	assertNoCredentialMaterial(snapshot);
+});
+
+test("Pi 0.81: JWT top-level account_id claim is also accepted", async () => {
+	const accountId = "acct_toplevel";
+	// JWT with top-level chatgpt_account_id (no nested auth claim).
+	const jwtToken = makeFakeJwt({ chatgpt_account_id: accountId, sub: "user_test" });
+	const requests = [];
+	const service = createTlhSubscriptionUsageService({
+		now: () => NOW_MS,
+		cacheTtlMs: 0,
+		minFetchIntervalMs: 0,
+		timeoutMs: 0,
+		fetch: async (url, init) => {
+			requests.push({ url, init });
+			return {
+				ok: true,
+				json: async () => openAiUsage(20),
+			};
+		},
+	});
+	const ctx = {
+		model: { provider: "openai-codex" },
+		modelRegistry: {
+			isUsingOAuth: (model) => model?.provider === "openai-codex",
+			getProviderAuthStatus: () => ({ configured: true, source: "stored" }),
+			getApiKeyForProvider: async () => jwtToken,
+		},
+	};
+
+	const snapshot = await service.refresh(ctx, { force: true });
+
+	assert.ok(snapshot);
+	assert.equal(requests[0]?.init.headers["ChatGPT-Account-Id"], accountId);
+	assert.deepEqual(Array.from(service.snapshots.keys()), [`openai-codex\taccount:${accountId}`]);
+});
+
+test("Pi 0.81: transient-unavailable getApiKeyForProvider preserves existing cached snapshot", async () => {
+	const accessToken = randomUUID();
+	let keyMode = "ok";
+	let fetchCalls = 0;
+	const service = createTlhSubscriptionUsageService({
+		now: () => NOW_MS,
+		cacheTtlMs: 0,
+		minFetchIntervalMs: 0,
+		timeoutMs: 0,
+		fetch: async () => {
+			fetchCalls += 1;
+			return {
+				ok: true,
+				json: async () => ({ five_hour: { used: 5, limit: 10 } }),
+			};
+		},
+	});
+	const ctx = {
+		model: { provider: "anthropic" },
+		modelRegistry: {
+			isUsingOAuth: (model) => model?.provider === "anthropic",
+			getProviderAuthStatus: () => ({ configured: true, source: "stored" }),
+			getApiKeyForProvider: async () => {
+				if (keyMode === "throw") throw new Error("transient");
+				return keyMode === "ok" ? accessToken : undefined;
+			},
+		},
+	};
+
+	const first = await service.refresh(ctx, { force: true });
+	assert.ok(first);
+	assert.equal(fetchCalls, 1);
+	assert.equal(service.getSnapshotForContext(ctx), first);
+
+	keyMode = "undefined";
+	const staleUndefined = await service.refresh(ctx, { force: true });
+	assert.equal(staleUndefined, first, "undefined key returns stale snapshot");
+	assert.equal(fetchCalls, 1);
+
+	keyMode = "throw";
+	const staleThrow = await service.refresh(ctx, { force: true });
+	assert.equal(staleThrow, first, "thrown key error returns stale snapshot");
+	assert.equal(fetchCalls, 1);
+	assert.equal(service.getSnapshotForContext(ctx), first);
+});
+
+test("Pi 0.81: legacy authStorage fallback: authStorage.get credential still drives the cache key", async () => {
+	// Regression: Pi <= 0.80 modelRegistry with authStorage should follow the
+	// existing credential-based path unchanged.
+	const accessToken = randomUUID();
+	const credential = { type: "oauth", access: accessToken, accountId: "acct_legacy" };
+	const requests = [];
+	const service = createTlhSubscriptionUsageService({
+		now: () => NOW_MS,
+		cacheTtlMs: 0,
+		minFetchIntervalMs: 0,
+		timeoutMs: 0,
+		fetch: async (url, init) => {
+			requests.push({ url, init });
+			return {
+				ok: true,
+				json: async () => openAiUsage(12),
+			};
+		},
+	});
+	const ctx = {
+		model: { provider: "openai-codex" },
+		modelRegistry: {
+			isUsingOAuth: (model) => model?.provider === "openai-codex",
+			getApiKeyForProvider: async () => accessToken,
+			// Legacy authStorage present — Pi <= 0.80 shape
+			authStorage: {
+				get: (provider) => (provider === "openai-codex" ? credential : undefined),
+			},
+		},
+	};
+
+	const snapshot = await service.refresh(ctx, { force: true });
+
+	assert.ok(snapshot);
+	assert.equal(snapshot?.windows.session.used, 12);
+	// Cache key is account-based (from authStorage credential).
+	assert.deepEqual(Array.from(service.snapshots.keys()), ["openai-codex\taccount:acct_legacy"]);
+	assert.equal(requests[0]?.init.headers["ChatGPT-Account-Id"], "acct_legacy");
+	assert.equal(service.isEligible(ctx), true);
+	assertNoCredentialMaterial(snapshot);
+});
+
+// ---------------------------------------------------------------------------
+// Pi 0.80 hybrid regression: runtimeOverrides map must win over stored source
+// ---------------------------------------------------------------------------
+
+test("Pi 0.80 hybrid: runtimeOverrides map override is detected even when getProviderAuthStatus returns source stored", async () => {
+	// Regression for FINDING 1: on Pi 0.80.x getAuthStatus() returns
+	// source "stored" when a stored OAuth credential exists, even when a
+	// runtime --api-key override is also active. The legacy runtimeOverrides
+	// Map check must be consulted first to correctly detect the override.
+	const oauthToken = randomUUID();
+	const runtimeToken = `sk-${randomUUID()}`;
+	let fetchCalls = 0;
+	const service = createTlhSubscriptionUsageService({
+		now: () => NOW_MS,
+		cacheTtlMs: 0,
+		minFetchIntervalMs: 0,
+		timeoutMs: 0,
+		fetch: async () => {
+			fetchCalls += 1;
+			throw new Error("unexpected usage fetch — runtime override should suppress this");
+		},
+	});
+
+	const storedCredential = { type: "oauth", access: oauthToken, accountId: "acct_pi80" };
+	const authStorage = {
+		// runtimeOverrides Map has the provider key set (runtime --api-key active)
+		runtimeOverrides: new Map([["anthropic", runtimeToken]]),
+		get: (provider) => (provider === "anthropic" ? storedCredential : undefined),
+	};
+	const ctx = {
+		model: { provider: "anthropic" },
+		modelRegistry: {
+			isUsingOAuth: (model) => model?.provider === "anthropic",
+			// Pi 0.80 shape: getProviderAuthStatus returns source "stored" (not
+			// "runtime") despite the runtime override being active — this is the
+			// bug scenario that motivated FINDING 1.
+			getProviderAuthStatus: (provider) =>
+				provider === "anthropic" ? { configured: true, source: "stored" } : { configured: false },
+			getApiKeyForProvider: async () => runtimeToken,
+			authStorage,
+		},
+	};
+
+	// isEligible must be false: runtimeOverrides map reveals the override.
+	assert.equal(service.isEligible(ctx), false, "Pi 0.80 runtimeOverrides override must be detected despite stored authStatus");
+
+	// refresh() must clear and return undefined without fetching.
+	const result = await service.refresh(ctx, { force: true });
+	assert.equal(result, undefined, "usage segment must be suppressed when runtimeOverrides map is set");
+	assert.equal(fetchCalls, 0, "no fetch should occur with a runtime override");
+	assert.equal(service.getSnapshot("anthropic"), undefined);
+	assert.equal(service.getSnapshotForContext(ctx), undefined);
+});
+
+// ---------------------------------------------------------------------------
+// decodeJwtPayload hardening: malformed JWT inputs must not surface
+// a ChatGPT-Account-Id header and must never throw
+// ---------------------------------------------------------------------------
+
+test("Pi 0.81: malformed JWT tokens do not set ChatGPT-Account-Id header and do not throw", async () => {
+	// Regression for FINDING 3: decodeJwtPayload must reject tokens that do not
+	// have exactly 3 dot-separated segments or whose payload contains characters
+	// outside the base64url alphabet.
+	const requests = [];
+	function makeService() {
+		return createTlhSubscriptionUsageService({
+			now: () => NOW_MS,
+			cacheTtlMs: 0,
+			minFetchIntervalMs: 0,
+			timeoutMs: 0,
+			fetch: async (url, init) => {
+				requests.push({ url, init });
+				return { ok: true, json: async () => openAiUsage(5) };
+			},
+		});
+	}
+	function makeCtx(accessToken) {
+		return {
+			model: { provider: "openai-codex" },
+			modelRegistry: {
+				isUsingOAuth: (model) => model?.provider === "openai-codex",
+				getProviderAuthStatus: () => ({ configured: true, source: "stored" }),
+				getApiKeyForProvider: async () => accessToken,
+				// No authStorage — Pi 0.81 shape
+			},
+		};
+	}
+
+	// Wrong segment count: only 2 segments (missing signature)
+	const twoSegmentToken = "aGVhZGVy.cGF5bG9hZA";
+	const s1 = makeService();
+	const snap1 = await s1.refresh(makeCtx(twoSegmentToken), { force: true });
+	assert.ok(snap1, "two-segment token still produces a snapshot via fingerprint fallback");
+	assert.equal(
+		requests.find((r) => r.init.headers["ChatGPT-Account-Id"] !== undefined),
+		undefined,
+		"two-segment token: no ChatGPT-Account-Id header",
+	);
+
+	requests.length = 0;
+
+	// Wrong segment count: 4 segments
+	const fourSegmentToken = "a.b.c.d";
+	const s2 = makeService();
+	const snap2 = await s2.refresh(makeCtx(fourSegmentToken), { force: true });
+	assert.ok(snap2, "four-segment token still produces a snapshot via fingerprint fallback");
+	assert.equal(
+		requests.find((r) => r.init.headers["ChatGPT-Account-Id"] !== undefined),
+		undefined,
+		"four-segment token: no ChatGPT-Account-Id header",
+	);
+
+	requests.length = 0;
+
+	// Invalid base64url chars in payload segment (contains '+' which is base64
+	// but not base64url, and spaces)
+	const invalidBase64UrlToken = "aGVhZGVy.cGF5b G9h ZA==.fakesig";
+	const s3 = makeService();
+	const snap3 = await s3.refresh(makeCtx(invalidBase64UrlToken), { force: true });
+	assert.ok(snap3, "invalid base64url payload token still produces a snapshot via fingerprint fallback");
+	assert.equal(
+		requests.find((r) => r.init.headers["ChatGPT-Account-Id"] !== undefined),
+		undefined,
+		"invalid base64url chars: no ChatGPT-Account-Id header",
+	);
+
+	requests.length = 0;
+
+	// Impossible padding length: segment.length % 4 === 1
+	// A base64url segment of length 1 mod 4 is structurally invalid.
+	const header = Buffer.from(JSON.stringify({ alg: "RS256" })).toString("base64url");
+	const badLenPayload = "A"; // length 1, 1 % 4 === 1 → impossible
+	const impossibleLenToken = `${header}.${badLenPayload}.fakesig`;
+	const s4 = makeService();
+	const snap4 = await s4.refresh(makeCtx(impossibleLenToken), { force: true });
+	assert.ok(snap4, "impossible-length payload token still produces a snapshot via fingerprint fallback");
+	assert.equal(
+		requests.find((r) => r.init.headers["ChatGPT-Account-Id"] !== undefined),
+		undefined,
+		"impossible payload length: no ChatGPT-Account-Id header",
+	);
+});

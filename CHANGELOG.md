@@ -14,6 +14,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Restored Anthropic and OpenAI Codex subscription usage in the footer, which disappeared under Pi 0.81 when upstream removed the auth-storage API the usage service depended on.
 - OpenAI weekly/daily usage now shows days, not just hours.
 
 ## [0.29.0] - 2026-07-12

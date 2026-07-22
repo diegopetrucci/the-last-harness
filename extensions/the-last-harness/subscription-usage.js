@@ -53,6 +53,42 @@ function pickString(source, keys) {
     }
     return undefined;
 }
+function decodeJwtPayload(token) {
+    try {
+        const parts = token.split(".");
+        if (parts.length !== 3) {
+            return undefined;
+        }
+        const segment = parts[1] ?? "";
+        if (!/^[A-Za-z0-9_-]+$/.test(segment)) {
+            return undefined;
+        }
+        if (segment.length % 4 === 1) {
+            return undefined;
+        }
+        const base64 = segment.replace(/-/g, "+").replace(/_/g, "/");
+        const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+        const json = Buffer.from(padded, "base64").toString("utf8");
+        return asObject(JSON.parse(json));
+    }
+    catch {
+        return undefined;
+    }
+}
+function accountIdFromJwt(token) {
+    const payload = decodeJwtPayload(token);
+    if (!payload) {
+        return undefined;
+    }
+    const authClaim = asObject(payload["https://api.openai.com/auth"]);
+    if (authClaim) {
+        const id = pickString(authClaim, ACCOUNT_ID_KEYS);
+        if (id) {
+            return id;
+        }
+    }
+    return pickString(payload, ACCOUNT_ID_KEYS);
+}
 function accessTokenFingerprint(accessToken) {
     if (typeof accessToken !== "string" || !accessToken) {
         return undefined;
@@ -279,6 +315,17 @@ function hasRuntimeCredentialOverride(modelRegistry, provider) {
         return false;
     }
 }
+function isRuntimeCredentialOverride(modelRegistry, provider) {
+    if (hasRuntimeCredentialOverride(modelRegistry, provider)) {
+        return true;
+    }
+    try {
+        return modelRegistry?.getProviderAuthStatus?.(provider)?.source === "runtime";
+    }
+    catch {
+        return false;
+    }
+}
 function openAiHeaders(accessToken, accountId) {
     const headers = {
         Accept: "application/json",
@@ -346,6 +393,9 @@ function resolveTlhSubscriptionUsageProviderContext(ctx) {
     catch {
         return { status: "transient-unavailable", provider };
     }
+    if (!modelRegistry.authStorage) {
+        return { status: "eligible", model, provider, modelRegistry };
+    }
     const credentialResult = readOauthCredentialFromRegistry(modelRegistry, provider);
     if (credentialResult.status !== "ok") {
         return { status: "transient-unavailable", provider };
@@ -380,7 +430,13 @@ function credentialCacheTarget(provider, credential) {
 }
 function resolveTlhSubscriptionUsageDisplayTarget(ctx) {
     const resolved = resolveTlhSubscriptionUsageProvider(ctx);
-    if (!resolved || hasRuntimeCredentialOverride(resolved.modelRegistry, resolved.provider)) {
+    if (!resolved) {
+        return undefined;
+    }
+    if (isRuntimeCredentialOverride(resolved.modelRegistry, resolved.provider)) {
+        return undefined;
+    }
+    if (!resolved.credential) {
         return undefined;
     }
     return credentialCacheTarget(resolved.provider, resolved.credential);
@@ -397,6 +453,26 @@ async function resolveTlhSubscriptionUsageTarget(resolved) {
     const normalizedAccessToken = typeof accessToken === "string" ? accessToken.trim() : "";
     if (!normalizedAccessToken) {
         return { status: "transient-unavailable" };
+    }
+    if (!modelRegistry.authStorage) {
+        let accountId;
+        if (provider === "openai-codex") {
+            accountId = accountIdFromJwt(normalizedAccessToken);
+        }
+        const fp = accessTokenFingerprint(normalizedAccessToken);
+        const identity = accountId ? `account:${accountId}` : fp ? `fingerprint:${fp}` : undefined;
+        if (!identity) {
+            return { status: "ineligible" };
+        }
+        return {
+            status: "resolved",
+            target: {
+                provider,
+                accessToken: normalizedAccessToken,
+                accountId: provider === "openai-codex" ? accountId : undefined,
+                cacheKey: subscriptionUsageCacheKey(provider, identity),
+            },
+        };
     }
     const credentialResult = readOauthCredentialFromRegistry(modelRegistry, provider);
     if (credentialResult.status !== "ok") {
@@ -465,8 +541,42 @@ export class TlhSubscriptionUsageService {
             .filter((snapshot) => Boolean(snapshot))
             .sort((a, b) => b.fetchedAt - a.fetchedAt)[0];
     }
+    resolveDisplayCacheKey(ctx) {
+        const model = ctx?.model;
+        const provider = model?.provider;
+        const modelRegistry = ctx?.modelRegistry;
+        if (!isSupportedTlhSubscriptionUsageProvider(provider)) {
+            return undefined;
+        }
+        if (!modelRegistry || typeof modelRegistry.isUsingOAuth !== "function") {
+            return undefined;
+        }
+        try {
+            if (!modelRegistry.isUsingOAuth(model)) {
+                return undefined;
+            }
+        }
+        catch {
+            return undefined;
+        }
+        if (isRuntimeCredentialOverride(modelRegistry, provider)) {
+            return undefined;
+        }
+        if (modelRegistry.authStorage) {
+            const legacyTarget = resolveTlhSubscriptionUsageDisplayTarget(ctx);
+            if (!legacyTarget) {
+                return undefined;
+            }
+            return { provider, cacheKey: legacyTarget.cacheKey };
+        }
+        const cacheKey = this.activeCacheKeys.get(provider);
+        if (!cacheKey) {
+            return undefined;
+        }
+        return { provider, cacheKey };
+    }
     getSnapshotForContext(ctx) {
-        const target = resolveTlhSubscriptionUsageDisplayTarget(ctx);
+        const target = this.resolveDisplayCacheKey(ctx);
         if (!target) {
             return undefined;
         }
@@ -475,6 +585,26 @@ export class TlhSubscriptionUsageService {
     isEligible(target) {
         if (typeof target === "string") {
             return isSupportedTlhSubscriptionUsageProvider(target) && this.activeCacheKeys.has(target);
+        }
+        const modelRegistry = target?.modelRegistry;
+        if (modelRegistry && !modelRegistry.authStorage) {
+            const model = target?.model;
+            const provider = model?.provider;
+            if (!isSupportedTlhSubscriptionUsageProvider(provider)) {
+                return false;
+            }
+            if (typeof modelRegistry.isUsingOAuth !== "function") {
+                return false;
+            }
+            try {
+                if (!modelRegistry.isUsingOAuth(model)) {
+                    return false;
+                }
+            }
+            catch {
+                return false;
+            }
+            return !isRuntimeCredentialOverride(modelRegistry, provider);
         }
         const displayTarget = resolveTlhSubscriptionUsageDisplayTarget(target);
         return Boolean(displayTarget && this.ineligibleCacheKeys.get(displayTarget.provider) !== displayTarget.cacheKey);
@@ -527,29 +657,34 @@ export class TlhSubscriptionUsageService {
             this.clearProvider(provider);
             return undefined;
         }
-        if (hasRuntimeCredentialOverride(resolved.modelRegistry, provider)) {
+        if (isRuntimeCredentialOverride(resolved.modelRegistry, provider)) {
             this.clearProvider(provider);
             return undefined;
         }
-        const credentialTarget = credentialCacheTarget(provider, resolved.credential);
-        if (!credentialTarget) {
+        const legacyCredentialTarget = resolved.credential
+            ? credentialCacheTarget(provider, resolved.credential)
+            : undefined;
+        if (resolved.credential && !legacyCredentialTarget) {
             this.clearProvider(provider);
             return undefined;
         }
         const nowMs = this.now();
         const targetResult = await resolveTlhSubscriptionUsageTarget(resolved);
-        const resolvedActiveCacheKey = this.activeCacheKeys.get(provider);
-        const credentialCacheKeyChanged = resolvedActiveCacheKey && resolvedActiveCacheKey !== credentialTarget.cacheKey;
         if (targetResult.status === "transient-unavailable") {
-            if (credentialCacheKeyChanged) {
-                this.clearProvider(provider);
+            if (legacyCredentialTarget) {
+                const resolvedActiveCacheKey = this.activeCacheKeys.get(provider);
+                if (resolvedActiveCacheKey && resolvedActiveCacheKey !== legacyCredentialTarget.cacheKey) {
+                    this.clearProvider(provider);
+                }
+                return this.snapshotForCacheKey(provider, legacyCredentialTarget.cacheKey);
             }
-            return this.snapshotForCacheKey(provider, credentialTarget.cacheKey);
+            const activeCacheKey = this.activeCacheKeys.get(provider);
+            return activeCacheKey ? this.snapshotForCacheKey(provider, activeCacheKey) : undefined;
         }
         if (targetResult.status !== "resolved") {
             this.clearProvider(provider);
-            if (targetResult.status === "mismatch") {
-                this.ineligibleCacheKeys.set(provider, credentialTarget.cacheKey);
+            if (targetResult.status === "mismatch" && legacyCredentialTarget) {
+                this.ineligibleCacheKeys.set(provider, legacyCredentialTarget.cacheKey);
             }
             return undefined;
         }
