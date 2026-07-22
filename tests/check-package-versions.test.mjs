@@ -7,6 +7,12 @@ import test from "node:test";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const checkPackageVersionsScript = join(repoRoot, "scripts", "check-package-versions.mjs");
+const FIXTURE_MANAGED_PI_VERSION = "9.8.7";
+const FIXTURE_MANAGED_PI_DRIFT_VERSION = "9.8.6";
+const FIXTURE_MANAGED_GNOSIS_VERSION = "4.5.6";
+const FIXTURE_MANAGED_GNOSIS_DRIFT_VERSION = "4.5.5";
+const FIXTURE_MANAGED_RTK_VERSION = "7.8.9";
+const FIXTURE_MANAGED_RTK_DRIFT_VERSION = "7.8.8";
 
 function tempFixture({
 	packageVersion,
@@ -14,22 +20,22 @@ function tempFixture({
 	rootPackageVersion = packageVersion,
 	dependencies = {},
 	devDependencies = {
-		"@earendil-works/pi-coding-agent": "0.80.6",
-		"@earendil-works/pi-tui": "0.80.6",
+		"@earendil-works/pi-coding-agent": FIXTURE_MANAGED_PI_VERSION,
+		"@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
 	},
 	peerDependencies = {
-		"@earendil-works/pi-coding-agent": "0.80.6",
-		"@earendil-works/pi-tui": "0.80.6",
+		"@earendil-works/pi-coding-agent": FIXTURE_MANAGED_PI_VERSION,
+		"@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
 	},
 	overrides = {},
 	defaultExtensions = [{ id: "helper", source: "npm:helper@1.2.3" }],
-	gnosisVersion = "0.5.4",
+	gnosisVersion = FIXTURE_MANAGED_GNOSIS_VERSION,
 	gnosisMtsVersion = gnosisVersion,
 	installVersion = gnosisVersion,
-	installShPiVersion = "0.80.6",
+	installShPiVersion = FIXTURE_MANAGED_PI_VERSION,
 	installMtsPiVersion = installShPiVersion,
 	installMjsPiVersion = installShPiVersion,
-	rtkVersion = "0.43.0",
+	rtkVersion = FIXTURE_MANAGED_RTK_VERSION,
 	includeLatestReleaseUrl = true,
 } = {}) {
 	const dir = mkdtempSync(join(tmpdir(), "tlh-check-package-versions-test-"));
@@ -49,13 +55,13 @@ function tempFixture({
 		version: packageVersion,
 		dependencies,
 		devDependencies: {
-			"@earendil-works/pi-coding-agent": "0.80.6",
-			"@earendil-works/pi-tui": "0.80.6",
+			"@earendil-works/pi-coding-agent": FIXTURE_MANAGED_PI_VERSION,
+			"@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
 			...devDependencies,
 		},
 		peerDependencies: {
-			"@earendil-works/pi-coding-agent": "0.80.6",
-			"@earendil-works/pi-tui": "0.80.6",
+			"@earendil-works/pi-coding-agent": FIXTURE_MANAGED_PI_VERSION,
+			"@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
 			...peerDependencies,
 		},
 		overrides,
@@ -133,8 +139,8 @@ test("check-package-versions passes with pinned dependency exceptions and ignore
 			sshHelper: "git+ssh://git@github.com/example/ssh-helper.git#abcdef1234567",
 		},
 		peerDependencies: {
-			"@earendil-works/pi-coding-agent": "0.80.6",
-			"@earendil-works/pi-tui": "0.80.6",
+			"@earendil-works/pi-coding-agent": FIXTURE_MANAGED_PI_VERSION,
+			"@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
 		},
 		overrides: {
 			dompurify: "3.4.11",
@@ -316,15 +322,15 @@ test("check-package-versions rejects latest as the managed Gnosis default", () =
 test("check-package-versions rejects managed Gnosis version drift in the TypeScript source", () => {
 	const fixture = tempFixture({
 		packageVersion: "1.2.3",
-		gnosisMtsVersion: "0.5.3",
+		gnosisMtsVersion: FIXTURE_MANAGED_GNOSIS_DRIFT_VERSION,
 	});
 
 	const result = runCheckPackageVersions(fixture);
 
 	assert.equal(result.status, 1);
 	assert.match(result.stderr, /Managed Gnosis defaults must stay in sync:/);
-	assert.match(result.stderr, /tlh-gnosis\.mts: "0\.5\.3"/);
-	assert.match(result.stderr, /tlh-gnosis\.mjs: "0\.5\.4"/);
+	assert.match(result.stderr, /tlh-gnosis\.mts: "4\.5\.5"/);
+	assert.match(result.stderr, /tlh-gnosis\.mjs: "4\.5\.6"/);
 });
 
 test("check-package-versions rejects latest as the managed RTK defaults", () => {
@@ -343,43 +349,43 @@ test("check-package-versions rejects latest as the managed RTK defaults", () => 
 test("check-package-versions rejects managed RTK version drift in the TypeScript source", () => {
 	const fixture = tempFixture({
 		packageVersion: "1.2.3",
-		rtkVersion: "0.43.0",
+		rtkVersion: FIXTURE_MANAGED_RTK_VERSION,
 	});
-	writeFileSync(fixture.rtkScriptMtsPath, 'const DEFAULT_RTK_VERSION = "0.42.0";\n');
+	writeFileSync(fixture.rtkScriptMtsPath, `const DEFAULT_RTK_VERSION = ${JSON.stringify(FIXTURE_MANAGED_RTK_DRIFT_VERSION)};\n`);
 
 	const result = runCheckPackageVersions(fixture);
 
 	assert.equal(result.status, 1);
 	assert.match(result.stderr, /Managed RTK defaults must stay in sync:/);
-	assert.match(result.stderr, /tlh-rtk\.mts: "0\.42\.0"/);
-	assert.match(result.stderr, /tlh-rtk\.mjs: "0\.43\.0"/);
+	assert.match(result.stderr, /tlh-rtk\.mts: "7\.8\.8"/);
+	assert.match(result.stderr, /tlh-rtk\.mjs: "7\.8\.9"/);
 });
 
 test("check-package-versions rejects managed Pi pin drift across package metadata and install sources", () => {
 	const fixture = tempFixture({
 		packageVersion: "1.2.3",
-		installMtsPiVersion: "0.80.7",
+		installMtsPiVersion: FIXTURE_MANAGED_PI_DRIFT_VERSION,
 	});
 
 	const result = runCheckPackageVersions(fixture);
 
 	assert.equal(result.status, 1);
 	assert.match(result.stderr, /Managed Pi pins must stay in sync:/);
-	assert.match(result.stderr, /package\.json#peerDependencies\.@earendil-works\/pi-coding-agent: "0\.80\.6"/);
-	assert.match(result.stderr, /tlh-install\.mts#PINNED_PI_VERSION: "0\.80\.7"/);
+	assert.match(result.stderr, /package\.json#peerDependencies\.@earendil-works\/pi-coding-agent: "9\.8\.7"/);
+	assert.match(result.stderr, /tlh-install\.mts#PINNED_PI_VERSION: "9\.8\.6"/);
 });
 
 test("check-package-versions rejects non-exact managed Pi package pins", () => {
 	const fixture = tempFixture({
 		packageVersion: "1.2.3",
 		peerDependencies: {
-			"@earendil-works/pi-coding-agent": "^0.80.6",
-			"@earendil-works/pi-tui": "0.80.6",
+			"@earendil-works/pi-coding-agent": `^${FIXTURE_MANAGED_PI_VERSION}`,
+			"@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
 		},
 	});
 
 	const result = runCheckPackageVersions(fixture);
 
 	assert.equal(result.status, 1);
-	assert.match(result.stderr, /package\.json#peerDependencies\.@earendil-works\/pi-coding-agent must use an exact version, found "\^0\.80\.6"/);
+	assert.match(result.stderr, /package\.json#peerDependencies\.@earendil-works\/pi-coding-agent must use an exact version, found "\^9\.8\.7"/);
 });

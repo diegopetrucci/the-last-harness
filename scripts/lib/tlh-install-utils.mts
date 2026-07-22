@@ -241,6 +241,139 @@ export function backupPathWithTimestamp(
 	return `${path}.backup${markerText}-${backupTimestampSuffix(date, { includeMilliseconds })}`;
 }
 
+// ---------------------------------------------------------------------------
+// Backup-retention helpers (pure / deterministic)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the ISO-8601-derived timestamp embedded in a backup filename produced
+ * by backupPathWithTimestamp. Handles all four naming variants:
+ *   <base>.backup-<YYYY-MM-DDTHH-MM-SS-mmmZ>          (no marker, with ms)
+ *   <base>.backup-<YYYY-MM-DDTHH-MM-SSZ>              (no marker, no ms)
+ *   <base>.backup-<marker>-<YYYY-MM-DDTHH-MM-SS-mmmZ> (marker, with ms)
+ *   <base>.backup-<marker>-<YYYY-MM-DDTHH-MM-SSZ>     (marker, no ms)
+ *
+ * Returns undefined when no recognisable timestamp is found or parsing fails.
+ */
+export function parseBackupTimestamp(filename: string): Date | undefined {
+	// The timestamp always appears at the end of the filename and matches the
+	// pattern produced by backupTimestampSuffix: YYYY-MM-DDTHH-MM-SS[-mmmZ|Z].
+	const match = /(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})(?:-(\d{3}))?Z$/.exec(filename);
+	if (!match) return undefined;
+	const [, datePart, hh, mm, ss, ms] = match;
+	const iso = ms
+		? `${datePart}T${hh}:${mm}:${ss}.${ms}Z`
+		: `${datePart}T${hh}:${mm}:${ss}Z`;
+	const date = new Date(iso);
+	if (Number.isNaN(date.getTime())) return undefined;
+	return date;
+}
+
+/**
+ * The exact marker strings that TLH produces via backupPathWithTimestamp.
+ * Any marker not in this set belongs to a user-created or third-party file
+ * and must never be selected for automatic cleanup.
+ */
+const TLH_BACKUP_MARKERS = new Set(["", "tlh-tickets", "tlh-defaults", "before-install"]);
+
+/** Timestamp suffix pattern produced by backupTimestampSuffix (full-string match). */
+const BACKUP_TIMESTAMP_FULL = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(?:-\d{3})?Z$/;
+
+/**
+ * Returns true only when `filename` is an exact TLH-owned backup for `baseName`:
+ *   `<baseName>.backup-<timestamp>`               (empty/no marker)
+ *   `<baseName>.backup-<knownMarker>-<timestamp>`  (named marker)
+ *
+ * Ownership requires **both**:
+ *   1. The timestamp occupies the exact expected position with the correct shape
+ *      (guaranteed by BACKUP_TIMESTAMP_FULL – shape-only regex anchored to the
+ *      full suffix so no marker prefix can bleed into the match).
+ *   2. The timestamp is semantically valid (i.e. parseBackupTimestamp returns a
+ *      Date, ruling out impossible calendar values like month 99).
+ *
+ * A file with any other marker segment – e.g.
+ *   `settings.json.backup-my-personal-copy-2026-07-11T17-01-16-155Z`
+ * – returns false and must not be touched by stale-backup cleanup.
+ */
+export function isTlhOwnedBackupFilename(filename: string, baseName: string): boolean {
+	const backupPrefix = `${baseName}.backup-`;
+	if (!filename.startsWith(backupPrefix)) return false;
+	const rest = filename.slice(backupPrefix.length); // everything after "<baseName>.backup-"
+
+	for (const marker of TLH_BACKUP_MARKERS) {
+		const markerPrefix = marker ? `${marker}-` : "";
+		if (rest.startsWith(markerPrefix)) {
+			const tsPart = rest.slice(markerPrefix.length);
+			if (BACKUP_TIMESTAMP_FULL.test(tsPart) && parseBackupTimestamp(filename) !== undefined) return true;
+		}
+	}
+	return false;
+}
+
+export interface SelectExpiredBackupsOptions {
+	/** Maximum age in ms before a backup becomes eligible for deletion.
+	 *  Default: 28 days. */
+	maxAgeMs?: number;
+	/** Always retain at least this many of the newest backups regardless of age.
+	 *  Default: 2. */
+	keepNewest?: number;
+	/** Reference point for age calculation (injectable for determinism). */
+	now?: Date;
+	/**
+	 * Per-file mtime fallback (epoch ms) used when the filename timestamp cannot
+	 * be parsed. Return undefined to treat the file as maximally recent (age = 0).
+	 */
+	mtimeFallback?: (filename: string) => number | undefined;
+}
+
+/**
+ * Given a list of backup-filename candidates, return the subset that should be
+ * deleted according to the retention policy:
+ *
+ *   1. Sort candidates newest-first by effective timestamp.
+ *   2. Always retain the newest `keepNewest` files regardless of age.
+ *   3. Of the remaining files, mark those strictly older than `maxAgeMs` for
+ *      deletion.
+ *
+ * This function is pure and performs no filesystem I/O.
+ */
+export function selectExpiredBackups(
+	candidates: readonly string[],
+	{
+		maxAgeMs = 28 * 24 * 60 * 60 * 1000,
+		keepNewest = 2,
+		now = new Date(),
+		mtimeFallback,
+	}: SelectExpiredBackupsOptions = {},
+): string[] {
+	if (candidates.length === 0) return [];
+
+	const nowMs = now.getTime();
+
+	type Candidate = { filename: string; ts: number };
+	const withTimestamps: Candidate[] = candidates.map((filename) => {
+		const parsed = parseBackupTimestamp(filename);
+		if (parsed !== undefined) return { filename, ts: parsed.getTime() };
+		// Fall back to the caller-supplied mtime, or treat as age 0 (very new)
+		// so that files with unknown provenance are not accidentally deleted.
+		const mtime = mtimeFallback?.(filename);
+		return { filename, ts: mtime !== undefined ? mtime : nowMs };
+	});
+
+	// Sort newest-first so keepNewest is a simple prefix guard.
+	withTimestamps.sort((a, b) => b.ts - a.ts);
+
+	const toDelete: string[] = [];
+	for (let i = 0; i < withTimestamps.length; i++) {
+		if (i < keepNewest) continue; // unconditionally retained
+		const ageMs = nowMs - withTimestamps[i].ts;
+		if (ageMs > maxAgeMs) {
+			toDelete.push(withTimestamps[i].filename);
+		}
+	}
+	return toDelete;
+}
+
 export function pathIsInNormalPiConfig(
 	path: string,
 	{ homeDir = homedir(), alreadyNormalized = false }: { homeDir?: string; alreadyNormalized?: boolean } = {},

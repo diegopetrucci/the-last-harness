@@ -6,13 +6,14 @@ import {
 	TLH_UPDATE_CHECK_INTERVAL_MS,
 	TLH_UPDATE_CHECK_TIMEOUT_MS,
 } from "./constants.js";
-import { getTlhVersion, isNewerTlhVersion, normalizeTlhVersion } from "./package-version.js";
+import { compareTlhVersions, getTlhVersion, isNewerTlhVersion, normalizeTlhVersion } from "./package-version.js";
 import {
 	readTlhInstallState,
 	readTlhStartupState,
 	tlhStartupStatePath,
 	updateTlhStartupState,
 } from "./profile-state.js";
+import { isRecord } from "./common.js";
 import type {
 	TlhHeaderUpdate,
 	TlhInstallState,
@@ -22,6 +23,28 @@ import type {
 	TlhUpdateCheckConfig,
 } from "./types.js";
 
+type TlhUpdateCheckTestHooks = {
+	now?: () => number;
+	fetchLatestRelease?: (currentVersion: string) => Promise<TlhLatestRelease | undefined>;
+};
+
+type MaybeNotifyAvailableTlhUpdateOptions = {
+	canNotify?: () => boolean;
+};
+
+type TlhUpdateCheckResult = {
+	currentVersion: string;
+	latestRelease?: TlhLatestRelease;
+};
+
+const defaultTlhUpdateCheckHooks: Required<TlhUpdateCheckTestHooks> = {
+	now: () => Date.now(),
+	fetchLatestRelease: fetchLatestTlhRelease,
+};
+
+let tlhUpdateCheckHooks: Required<TlhUpdateCheckTestHooks> = defaultTlhUpdateCheckHooks;
+let maybeNotifyAvailableTlhUpdateInFlight: Promise<TlhUpdateCheckResult> | undefined;
+const notifiedTlhUpdateVersions = new Set<string>();
 let checkedTlhHeaderUpdate = false;
 let cachedTlhHeaderUpdate: TlhHeaderUpdate | undefined;
 
@@ -34,9 +57,6 @@ export function getTlhHeaderUpdate(): TlhHeaderUpdate | undefined {
 	const currentVersion = getTlhVersion();
 	const lastSeenVersion = readTlhStartupState().lastSeenVersion;
 
-	if (lastSeenVersion !== currentVersion) {
-		updateTlhStartupState({ lastSeenVersion: currentVersion });
-	}
 	if (typeof lastSeenVersion === "string" && lastSeenVersion.length > 0 && lastSeenVersion !== currentVersion) {
 		cachedTlhHeaderUpdate = { version: currentVersion, releasesUrl: TLH_RELEASES_URL };
 	}
@@ -44,24 +64,45 @@ export function getTlhHeaderUpdate(): TlhHeaderUpdate | undefined {
 	return cachedTlhHeaderUpdate;
 }
 
-function getCachedTlhLatestRelease(state: TlhStartupState): TlhLatestRelease | undefined {
-	const latestVersion = state.updateCheck?.latestVersion;
-	if (typeof latestVersion !== "string" || !latestVersion.trim()) {
+function getTlhUpdateCheckState(state: TlhStartupState): Record<string, unknown> {
+	return isRecord(state.updateCheck) ? state.updateCheck : {};
+}
+
+function normalizeValidTlhVersion(value: unknown): string | undefined {
+	if (typeof value !== "string" || !value.trim()) {
 		return undefined;
 	}
-	const version = normalizeTlhVersion(latestVersion);
-	const tagName = state.updateCheck?.latestTagName || `v${version}`;
-	return {
-		version,
-		tagName,
-		releaseUrl: state.updateCheck?.latestReleaseUrl || `${TLH_RELEASES_URL}/tag/${tagName}`,
-	};
+	const version = normalizeTlhVersion(value);
+	return compareTlhVersions(version, version) === 0 ? version : undefined;
+}
+
+function getCachedTlhLatestRelease(state: TlhStartupState): TlhLatestRelease | undefined {
+	const updateCheck = getTlhUpdateCheckState(state);
+	const version = normalizeValidTlhVersion(updateCheck.latestVersion);
+	if (!version) {
+		return undefined;
+	}
+	if (updateCheck.latestTagName !== undefined) {
+		const tagVersion = normalizeValidTlhVersion(updateCheck.latestTagName);
+		if (!tagVersion || compareTlhVersions(tagVersion, version) !== 0) {
+			return undefined;
+		}
+	}
+	if (updateCheck.latestReleaseUrl !== undefined && (typeof updateCheck.latestReleaseUrl !== "string" || !updateCheck.latestReleaseUrl.trim())) {
+		return undefined;
+	}
+	const tagName = typeof updateCheck.latestTagName === "string" ? updateCheck.latestTagName.trim() : `v${version}`;
+	const releaseUrl = typeof updateCheck.latestReleaseUrl === "string"
+		? updateCheck.latestReleaseUrl.trim()
+		: `${TLH_RELEASES_URL}/tag/${tagName}`;
+	return { version, tagName, releaseUrl };
 }
 
 function shouldRefreshTlhLatestRelease(state: TlhStartupState): boolean {
-	const checkedAt = state.updateCheck?.checkedAt;
+	const checkedAt = getTlhUpdateCheckState(state).checkedAt;
 	const checkedAtMs = typeof checkedAt === "string" ? Date.parse(checkedAt) : Number.NaN;
-	return !Number.isFinite(checkedAtMs) || Date.now() - checkedAtMs >= TLH_UPDATE_CHECK_INTERVAL_MS;
+	const now = tlhUpdateCheckHooks.now();
+	return !Number.isFinite(checkedAtMs) || checkedAtMs > now || now - checkedAtMs >= TLH_UPDATE_CHECK_INTERVAL_MS;
 }
 
 function shouldSkipTlhUpdateCheck(cwd: string): boolean {
@@ -84,11 +125,11 @@ async function fetchLatestTlhRelease(currentVersion: string): Promise<TlhLatestR
 	}
 
 	const data = (await response.json()) as { tag_name?: unknown; html_url?: unknown };
-	if (typeof data.tag_name !== "string" || !data.tag_name.trim()) {
+	const tagName = typeof data.tag_name === "string" ? data.tag_name.trim() : "";
+	const version = normalizeValidTlhVersion(tagName);
+	if (!tagName || !version) {
 		return undefined;
 	}
-	const tagName = data.tag_name.trim();
-	const version = normalizeTlhVersion(tagName);
 	const releaseUrl = typeof data.html_url === "string" && data.html_url.trim() ? data.html_url.trim() : `${TLH_RELEASES_URL}/tag/${tagName}`;
 	return { version, tagName, releaseUrl };
 }
@@ -125,22 +166,38 @@ export function buildTlhUpdateNotificationMessage(
 	return `The Last Harness update available. Run \`tlh update\` to get on version ${latestLabel}.`;
 }
 
-function notifyTlhUpdate(ctx: ExtensionContext, _currentVersion: string, latestRelease: TlhLatestRelease): void {
+function canNotifyTlhUpdate(options: MaybeNotifyAvailableTlhUpdateOptions): boolean {
+	return options.canNotify?.() ?? true;
+}
+
+function notifyTlhUpdate(ctx: ExtensionContext, latestRelease: TlhLatestRelease): void {
 	ctx.ui.notify(buildTlhUpdateNotificationMessage(latestRelease), "warning");
 }
 
-function maybeNotifyCachedTlhUpdate(ctx: ExtensionContext, currentVersion: string, state: TlhStartupState): boolean {
+function notifiedTlhUpdateKey(version: string): string {
+	return `${tlhStartupStatePath() || "no-startup-state"}:${version}`;
+}
+
+function maybeNotifyCachedTlhUpdate(
+	ctx: ExtensionContext,
+	currentVersion: string,
+	state: TlhStartupState,
+	options: MaybeNotifyAvailableTlhUpdateOptions = {},
+): boolean {
 	const latestRelease = getCachedTlhLatestRelease(state);
 	if (!latestRelease || !isNewerTlhVersion(latestRelease.version, currentVersion)) {
 		return false;
 	}
-	if (state.updateCheck?.lastNotifiedVersion === latestRelease.version) {
+	const updateCheck = getTlhUpdateCheckState(state);
+	const notificationKey = notifiedTlhUpdateKey(latestRelease.version);
+	if (updateCheck.lastNotifiedVersion === latestRelease.version || notifiedTlhUpdateVersions.has(notificationKey) || !canNotifyTlhUpdate(options)) {
 		return false;
 	}
-	notifyTlhUpdate(ctx, currentVersion, latestRelease);
+	notifyTlhUpdate(ctx, latestRelease);
+	notifiedTlhUpdateVersions.add(notificationKey);
 	updateTlhStartupState({
 		updateCheck: {
-			...state.updateCheck,
+			...updateCheck,
 			latestVersion: latestRelease.version,
 			latestTagName: latestRelease.tagName,
 			latestReleaseUrl: latestRelease.releaseUrl,
@@ -150,57 +207,83 @@ function maybeNotifyCachedTlhUpdate(ctx: ExtensionContext, currentVersion: strin
 	return true;
 }
 
-export async function maybeNotifyAvailableTlhUpdate(ctx: ExtensionContext): Promise<void> {
-	if (shouldSkipTlhUpdateCheck(ctx.cwd)) {
-		return;
-	}
-
+async function runMaybeNotifyAvailableTlhUpdate(): Promise<TlhUpdateCheckResult> {
 	const currentVersion = getTlhVersion();
 	let state = readTlhStartupState();
 	if (!shouldRefreshTlhLatestRelease(state)) {
-		maybeNotifyCachedTlhUpdate(ctx, currentVersion, state);
-		return;
+		return {
+			currentVersion,
+			latestRelease: getCachedTlhLatestRelease(state),
+		};
 	}
 
 	updateTlhStartupState({
 		updateCheck: {
-			...state.updateCheck,
-			checkedAt: new Date().toISOString(),
+			...getTlhUpdateCheckState(state),
+			checkedAt: new Date(tlhUpdateCheckHooks.now()).toISOString(),
 		},
 	});
 
 	let latestRelease: TlhLatestRelease | undefined;
 	try {
-		latestRelease = await fetchLatestTlhRelease(currentVersion);
+		latestRelease = await tlhUpdateCheckHooks.fetchLatestRelease(currentVersion);
 	} catch {
-		return;
+		return { currentVersion };
 	}
 	if (!latestRelease) {
-		return;
+		return { currentVersion };
 	}
 
 	state = readTlhStartupState();
 	updateTlhStartupState({
 		updateCheck: {
-			...state.updateCheck,
+			...getTlhUpdateCheckState(state),
 			latestVersion: latestRelease.version,
 			latestTagName: latestRelease.tagName,
 			latestReleaseUrl: latestRelease.releaseUrl,
 		},
 	});
 
-	state = readTlhStartupState();
-	if (!isNewerTlhVersion(latestRelease.version, currentVersion) || state.updateCheck?.lastNotifiedVersion === latestRelease.version) {
+	return { currentVersion, latestRelease };
+}
+
+export function persistTlhLastSeenVersion(): void {
+	const currentVersion = getTlhVersion();
+	if (readTlhStartupState().lastSeenVersion !== currentVersion) {
+		updateTlhStartupState({ lastSeenVersion: currentVersion });
+	}
+}
+
+export async function maybeNotifyAvailableTlhUpdate(
+	ctx: ExtensionContext,
+	options: MaybeNotifyAvailableTlhUpdateOptions = {},
+): Promise<void> {
+	if (shouldSkipTlhUpdateCheck(ctx.cwd)) {
 		return;
 	}
-
-	notifyTlhUpdate(ctx, currentVersion, latestRelease);
-	updateTlhStartupState({
-		updateCheck: {
-			...state.updateCheck,
-			lastNotifiedVersion: latestRelease.version,
-		},
+	const inFlight = maybeNotifyAvailableTlhUpdateInFlight ?? runMaybeNotifyAvailableTlhUpdate().finally(() => {
+		if (maybeNotifyAvailableTlhUpdateInFlight === inFlight) {
+			maybeNotifyAvailableTlhUpdateInFlight = undefined;
+		}
 	});
+	maybeNotifyAvailableTlhUpdateInFlight = inFlight;
+	const result = await inFlight;
+	maybeNotifyCachedTlhUpdate(ctx, result.currentVersion, readTlhStartupState(), options);
+}
+
+export function __setTlhUpdateCheckTestHooks(hooks: TlhUpdateCheckTestHooks = {}): void {
+	tlhUpdateCheckHooks = {
+		...defaultTlhUpdateCheckHooks,
+		...hooks,
+	};
+}
+
+export function __resetTlhUpdateCheckForTests(): void {
+	__setTlhUpdateCheckTestHooks();
+	maybeNotifyAvailableTlhUpdateInFlight = undefined;
+	notifiedTlhUpdateVersions.clear();
+	checkedTlhHeaderUpdate = false;
+	cachedTlhHeaderUpdate = undefined;
 }
 
 function getTlhUpdateCheckConfig(cwd: string): TlhUpdateCheckConfig | undefined {

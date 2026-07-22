@@ -54,23 +54,23 @@ function parseArgs(argv) {
 			continue;
 		}
 		if (arg.startsWith("--tag=")) {
-			args.tag = arg.slice("--tag=".length);
+			args.tag = requireOptionValue(arg.slice("--tag=".length), "--tag");
 			continue;
 		}
 		if (arg.startsWith("--changelog=")) {
-			args.changelogPath = arg.slice("--changelog=".length);
+			args.changelogPath = requireOptionValue(arg.slice("--changelog=".length), "--changelog");
 			continue;
 		}
 		if (arg.startsWith("--output=")) {
-			args.outputPath = arg.slice("--output=".length);
+			args.outputPath = requireOptionValue(arg.slice("--output=".length), "--output");
 			continue;
 		}
 		if (arg.startsWith("--repository=")) {
-			args.repository = arg.slice("--repository=".length);
+			args.repository = requireOptionValue(arg.slice("--repository=".length), "--repository");
 			continue;
 		}
 		if (arg.startsWith("--ref=")) {
-			args.ref = arg.slice("--ref=".length);
+			args.ref = requireOptionValue(arg.slice("--ref=".length), "--ref");
 			continue;
 		}
 		throw new Error(`Unknown argument: ${arg}`);
@@ -91,17 +91,29 @@ function escapeRegExp(value) {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function requireOptionValue(value, flag) {
+	if (value === "") {
+		throw new Error(`${flag} requires a value.`);
+	}
+	return value;
+}
+
 function versionFromTag(tag) {
-	if (!tag) {
+	const rawTag = String(tag ?? "");
+	if (rawTag.trim() === "") {
 		throw new Error("Missing release tag. Pass --tag or set GITHUB_REF_NAME.");
 	}
-	return tag.startsWith("v") ? tag.slice(1) : tag;
+	const version = rawTag.startsWith("v") ? rawTag.slice(1) : rawTag;
+	if (version.trim() === "") {
+		throw new Error("Release tag must include a version after any leading v.");
+	}
+	return version;
 }
 
 function extractChangelogSection(changelog, version) {
 	const normalized = changelog.replace(/\r\n/g, "\n");
 	const escapedVersion = escapeRegExp(version);
-	const headingPattern = new RegExp(`^##\\s+\\[?${escapedVersion}\\]?(?:\\s+-\\s+[^\\n]+)?\\s*$`, "m");
+	const headingPattern = new RegExp(`^##[ \\t]+(?:\\[${escapedVersion}\\]|${escapedVersion})(?:[ \\t]+-[ \\t]+[^\\n]+)?[ \\t]*$`, "m");
 	const match = headingPattern.exec(normalized);
 	if (!match) {
 		throw new Error(`CHANGELOG.md is missing a section for ${version}. Expected a heading like "## [${version}] - YYYY-MM-DD".`);
@@ -109,7 +121,7 @@ function extractChangelogSection(changelog, version) {
 
 	const sectionStart = match.index + match[0].length;
 	const remaining = normalized.slice(sectionStart);
-	const nextSectionOffset = remaining.search(/^##\s+/m);
+	const nextSectionOffset = remaining.search(/^##(?:[ \t]+|$)/m);
 	const section = (nextSectionOffset === -1 ? remaining : remaining.slice(0, nextSectionOffset)).trim();
 	if (!section) {
 		throw new Error(`CHANGELOG.md section for ${version} is empty.`);

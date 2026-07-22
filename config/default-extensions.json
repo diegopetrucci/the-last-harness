@@ -1,12 +1,12 @@
 [
   {
     "id": "openai-fast",
-    "source": "npm:@diegopetrucci/pi-openai-fast@0.1.6",
+    "source": "npm:@diegopetrucci/pi-openai-fast@0.1.10",
     "description": "Enable optional OpenAI Codex Fast mode commands for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions."
   },
   {
     "id": "anthropic-auth",
-    "source": "npm:@gotgenes/pi-anthropic-auth@1.0.0",
+    "source": "npm:@gotgenes/pi-anthropic-auth@2.0.0",
     "description": "Improve compatibility with Anthropic Claude Pro/Max OAuth while preserving normal API-key behavior."
   },
   {
@@ -14,7 +14,7 @@
     "aliases": ["pi-mcp-adapter", "mcp-adapter"],
     "replaces": ["npm:pi-mcp-adapter", "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1"],
     "migrateReplacements": true,
-    "source": "npm:@diegopetrucci/pi-mcp-adapter@2.10.1",
+    "source": "npm:@diegopetrucci/pi-mcp-adapter@2.10.2",
     "description": "Connect tlh to MCP servers with the upstream adapter."
   },
   {
@@ -26,34 +26,34 @@
   },
   {
     "id": "fff",
-    "source": "npm:@ff-labs/pi-fff@0.9.6",
+    "source": "npm:@ff-labs/pi-fff@0.10.1",
     "description": "FFF-powered fuzzy file and content search."
   },
   {
     "id": "inline-bash",
-    "source": "npm:@diegopetrucci/pi-inline-bash@0.1.3",
+    "source": "npm:@diegopetrucci/pi-inline-bash@0.1.5",
     "description": "Expand inline bash commands in user prompts."
   },
   {
     "id": "notify",
-    "source": "npm:@diegopetrucci/pi-notify@0.1.7",
+    "source": "npm:@diegopetrucci/pi-notify@0.1.11",
     "description": "Send a notification when an agent turn finishes."
   },
   {
     "id": "context-inspector",
-    "source": "npm:@diegopetrucci/pi-context-inspector@0.1.4",
+    "source": "npm:@diegopetrucci/pi-context-inspector@0.1.7",
     "description": "Open a local HTML dashboard explaining where the current session context is going."
   },
   {
     "id": "quiet-tools",
     "aliases": ["compact-bash"],
     "replaces": ["npm:@diegopetrucci/pi-compact-bash"],
-    "source": "npm:@diegopetrucci/pi-quiet-tools@0.1.4",
+    "source": "npm:@diegopetrucci/pi-quiet-tools@0.1.6",
     "description": "Compact collapsed built-in tool output in the TUI without changing model-visible results."
   },
   {
     "id": "dirty-repo-guard",
-    "source": "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.4",
+    "source": "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.5",
     "description": "Prompt before session changes when the current git repo has uncommitted changes."
   },
   {
@@ -62,7 +62,7 @@
     "replaces": ["npm:pi-subagents", "git:github.com/nicobailon/pi-subagents", "git:github.com/diegopetrucci/pi-subagents"],
     "migrateReplacements": true,
     "critical": true,
-    "source": "npm:@diegopetrucci/pi-subagents@0.31.4",
+    "source": "npm:@diegopetrucci/pi-subagents@0.31.8",
     "description": "Delegate work to isolated TLH-profile subagents."
   },
   {
@@ -71,7 +71,7 @@
     "replaces": ["npm:pi-intercom", "git:github.com/nicobailon/pi-intercom", "git:github.com/diegopetrucci/pi-intercom"],
     "migrateReplacements": true,
     "critical": true,
-    "source": "npm:@diegopetrucci/pi-intercom@0.7.0",
+    "source": "npm:@diegopetrucci/pi-intercom@0.8.0",
     "description": "Allow child subagents to escalate questions to the supervising session."
   }
 ]

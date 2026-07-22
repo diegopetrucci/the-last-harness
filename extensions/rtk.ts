@@ -1,5 +1,6 @@
 // Vendored from rtk-ai/rtk v0.42.4 (hooks/pi/rtk.ts), Apache-2.0.
 // See ./rtk.APACHE-2.0.txt for the upstream license text and provenance.
+// See ../docs/upstream-sync-inventory.md for TLH sync/review guidance.
 // TLH adaptations:
 // - keep native RTK rewrite-only with no /rtk command UI
 // - prefer normal PATH lookup, then fall back to the managed <agent>/bin/rtk when needed

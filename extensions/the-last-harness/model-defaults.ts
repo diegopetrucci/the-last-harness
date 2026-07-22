@@ -1,6 +1,8 @@
 import { getAvailableThinkingLevels, isThinkingLevel } from "./thinking.js";
 import type { ReasoningModel, ThinkingLevel, TlhSubagentOverride } from "./types.js";
 
+import { isRecord } from "./common.js";
+
 export type ProviderModelReference = {
 	provider: string;
 	id: string;
@@ -43,10 +45,6 @@ const ANTHROPIC_PROVIDERS = new Set(["anthropic"]);
 const MODEL_SUFFIX_THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
 const OPPOSITE_PROVIDER_FALLBACK_NOTICE =
 	"TLH fell back to a same-provider review model; review independence is reduced.";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 
 export function parseProviderModelReference(model: string | undefined): ProviderModelReference | undefined {
 	const slash = model?.indexOf("/") ?? -1;
@@ -488,21 +486,6 @@ export function applyProviderAwareSubagentModels(
 	if (Array.isArray(input.tasks)) {
 		for (const task of input.tasks) {
 			mutations += applyModelToRunnableTarget(task, agents, availableModels, currentProvider, currentModel, options);
-		}
-	}
-
-	if (Array.isArray(input.chain)) {
-		for (const step of input.chain) {
-			if (!isRecord(step)) {
-				continue;
-			}
-			if (Array.isArray(step.parallel)) {
-				for (const task of step.parallel) {
-					mutations += applyModelToRunnableTarget(task, agents, availableModels, currentProvider, currentModel, options);
-				}
-				continue;
-			}
-			mutations += applyModelToRunnableTarget(step, agents, availableModels, currentProvider, currentModel, options);
 		}
 	}
 

@@ -30,7 +30,7 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 | `/name` | Set the session display name |
 | `/new` | Start a new session |
 | `/quit` | Quit the TLH TUI |
-| `/reload` | Reload keybindings, extensions, skills, prompts, and themes |
+| `/reload` | Reload keybindings, extensions, skills, prompts, and themes; also recapture TLH experimental-flag state for the active session |
 | `/resume` | Resume a different session |
 | `/scoped-models` | Enable or disable models for Ctrl+P cycling — **hidden from TLH autocomplete** |
 | `/session` | Show session info and stats |
@@ -48,7 +48,7 @@ These commands are registered by the TLH extension bundled with this profile.
 |---------|-------------|
 | `/thinking` | Pick the model thinking level, subject to the active primary-agent thinking constraints |
 | `/effort` | Supported alias for `/thinking`, subject to the same active primary-agent thinking constraints |
-| `/experimental` | Open the TLH experimental-feature picker in TUI, or list/change TLH experimental features via typed subcommands (`delta-follow-up-reviews`, `ci-failure-investigation`, and `ticket-workflow-ui` are currently registered) |
+| `/experimental` | Open the TLH experimental-feature picker in TUI, or list/change TLH experimental features via typed subcommands (`delta-follow-up-reviews`, `ci-failure-investigation`, `ticket-workflow-ui`, and `embedded-subagents` are currently registered) |
 | `/review` | Open an interactive code-review mode picker (requires the architect primary agent) |
 | `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
 | `/subagent-settings` | Show or edit persisted TLH bundled minor-agent model and effort overrides |
@@ -65,7 +65,7 @@ Both `/thinking` and `/effort` are subject to the active primary-agent thinking 
 
 ### `/experimental`
 
-`/experimental` currently registers `delta-follow-up-reviews`, `ci-failure-investigation`, and `ticket-workflow-ui`. In the interactive TLH TUI, running `/experimental` with no arguments opens a picker that shows current feature state and lets you toggle flags; outside the TUI it falls back to the status list. Typed subcommands remain available: `/experimental list`, `/experimental status [feature]`, `/experimental enable <feature>`, `/experimental disable <feature>`, and `/experimental toggle <feature>`. `contrarian` is a bundled default minor subagent for sparing pre-ticket planning stress-tests when a proposed change genuinely warrants an adversarial brief; it is not part of the `/experimental` toggle surface, not the routine `code-reviewer` diff pass, and not the broader `oracle` second-opinion path. `delta-follow-up-reviews` is an opt-in flag that adds architect and `code-reviewer` guidance for delta-scoped follow-up reviews after fixes. `ci-failure-investigation` is an opt-in flag that lets the architect primary agent do read-only failed CI/status-check investigation after TLH opens a PR, then summarize and ask whether to proceed before any edits, commits, pushes, reruns, PR changes, or other follow-up changes. `ticket-workflow-ui` is an experimental, default-off, read-only ticket workflow surface backed by the `tk` CLI. Enable it with `/experimental enable ticket-workflow-ui` when you want the UI, and undo it with `/experimental disable ticket-workflow-ui`. All three flags are disabled by default. Stale `run-tests-last` values in `tlh.experimental.enabledFeatures` do not re-enable retired behavior.
+`/experimental` currently registers `delta-follow-up-reviews`, `ci-failure-investigation`, `ticket-workflow-ui`, and `embedded-subagents`. In the interactive TLH TUI, running `/experimental` with no arguments opens a picker that shows current feature state and lets you toggle flags; outside the TUI it falls back to the status list. Typed subcommands remain available: `/experimental list`, `/experimental status [feature]`, `/experimental enable <feature>`, `/experimental disable <feature>`, and `/experimental toggle <feature>`. `contrarian` is a bundled default minor subagent for sparing pre-ticket planning stress-tests when a proposed change genuinely warrants an adversarial brief; it is not part of the `/experimental` toggle surface, not the routine `code-reviewer` diff pass, and not the broader `oracle` second-opinion path. `delta-follow-up-reviews` is an opt-in flag that adds architect and `code-reviewer` guidance for delta-scoped follow-up reviews after fixes. `ci-failure-investigation` is an opt-in flag that lets the architect primary agent do read-only failed CI/status-check investigation after TLH opens a PR, then summarize and ask whether to proceed before any edits, commits, pushes, reruns, PR changes, or other follow-up changes. `ticket-workflow-ui` is an experimental, default-off, read-only ticket workflow surface backed by the `tk` CLI. Enable it with `/experimental enable ticket-workflow-ui` when you want the UI, and undo it with `/experimental disable ticket-workflow-ui`. `embedded-subagents` is a default-off flag that gates architect-initiated delegation to trusted user-owned `embedded.<slug>` subagents placed in the isolated TLH profile. A new session or explicit `/reload` recaptures flag state; enabling or disabling the flag does not affect the active runtime until one of those activation boundaries. Enable it with `/experimental enable embedded-subagents` and undo it with `/experimental disable embedded-subagents`, then start a new session or run `/reload`. Only valid regular non-symlink `.md` agent definitions with `package: embedded`, a valid `name`, and a non-empty `description` authorize; `.chain.md` files do not. See [embedded-subagents.md](embedded-subagents.md) for the full setup guide. All four flags are disabled by default. Stale `run-tests-last` values in `tlh.experimental.enabledFeatures` do not re-enable retired behavior.
 
 ### `/subagent-settings`
 
@@ -220,7 +220,6 @@ These commands are registered and fully functional, but deliberately excluded fr
 |---------|-------------|
 | `/skill:librarian` | Load the bundled librarian skill by name without surfacing it in TLH autocomplete |
 | `/skill:pi-intercom` | Load the bundled intercom skill by name without surfacing it in TLH autocomplete |
-| `/skill:pi-subagents` | Load the bundled subagents skill by name without surfacing it in TLH autocomplete |
 
 ### Hidden bundled extension commands
 

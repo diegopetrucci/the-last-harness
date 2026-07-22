@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
@@ -173,6 +174,62 @@ EOF`,
 	}
 });
 
+test("session start refreshes weekly visibility once and repeated footer renders use the cached value", async () => {
+	const tempDir = mkdtempSync(join(tmpdir(), "tlh-usage-weekly-cache-"));
+	const agentDir = join(tempDir, "agent");
+	const cwd = join(tempDir, "workspace");
+	const previousEnv = {
+		PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+		TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
+	};
+	const originalCreate = SettingsManager.create;
+
+	let footer;
+	let settingsReads = 0;
+
+	try {
+		delete process.env.PI_SUBAGENT_CHILD;
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		process.env.TLH_SKIP_UPDATE_CHECK = "1";
+		mkdirSync(agentDir, { recursive: true });
+		mkdirSync(cwd, { recursive: true });
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			`${JSON.stringify({ tlh: { usageLimits: { showWeekly: true }, primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+		);
+
+		SettingsManager.create = (...args) => {
+			settingsReads += 1;
+			return originalCreate(...args);
+		};
+
+		const pi = createPi();
+		theLastHarness(pi);
+		const ctx = createCtx({
+			cwd,
+			provider: "openai-codex",
+			authStorage: { runtimeOverrides: new Map(), get: () => undefined },
+			isUsingOAuth: () => false,
+		});
+		ctx.ui.setFooter = (factory) => {
+			footer = factory({ requestRender() {} }, theme, footerData);
+		};
+
+		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
+		const readsAfterSessionStart = settingsReads;
+		assert.ok(readsAfterSessionStart >= 1, "session start should refresh the weekly-visibility cache");
+		assert.ok(footer, "session start should install a footer");
+		footer.render(100);
+		footer.render(100);
+		assert.equal(settingsReads, readsAfterSessionStart, "footer renders must not reread settings");
+	} finally {
+		SettingsManager.create = originalCreate;
+		restoreEnv(previousEnv);
+		rmSync(tempDir, { recursive: true, force: true });
+	}
+});
+
 test("subscription usage footer first render stays synchronous before the lazy service loads", async () => {
 	const tempDir = mkdtempSync(join(tmpdir(), "tlh-usage-first-render-"));
 	const agentDir = join(tempDir, "agent");
@@ -198,10 +255,15 @@ test("subscription usage footer first render stays synchronous before the lazy s
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		process.env.TLH_SKIP_UPDATE_CHECK = "1";
 		mkdirSync(agentDir, { recursive: true });
+		mkdirSync(join(agentDir, "tlh"), { recursive: true });
 		mkdirSync(cwd, { recursive: true });
 		writeFileSync(
 			join(agentDir, "settings.json"),
 			`${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+		);
+		writeFileSync(
+			join(agentDir, "tlh", "install-state.json"),
+			`${JSON.stringify({ repo: "diegopetrucci/the-last-harness", track: "latest-release", ref: "v1.0.0", packageSource: "npm:@diegopetrucci/the-last-harness@1.0.0", packageSourceIsDefault: true }, null, 2)}\n`,
 		);
 
 		globalThis.fetch = async () => {
@@ -272,10 +334,15 @@ test("subscription usage refresh requests a footer render when a runtime overrid
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		process.env.TLH_SKIP_UPDATE_CHECK = "1";
 		mkdirSync(agentDir, { recursive: true });
+		mkdirSync(join(agentDir, "tlh"), { recursive: true });
 		mkdirSync(cwd, { recursive: true });
 		writeFileSync(
 			join(agentDir, "settings.json"),
 			`${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+		);
+		writeFileSync(
+			join(agentDir, "tlh", "install-state.json"),
+			`${JSON.stringify({ repo: "diegopetrucci/the-last-harness", track: "latest-release", ref: "v1.0.0", packageSource: "npm:@diegopetrucci/the-last-harness@1.0.0", packageSourceIsDefault: true }, null, 2)}\n`,
 		);
 
 		globalThis.fetch = async () => {

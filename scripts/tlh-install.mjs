@@ -9,15 +9,15 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { criticalGitSourceSpec, gitSourceInstallSource, packageSourceInstallDir, } from "./lib/tlh-install-package-source.mjs";
 import { assertProfilePathWithinAgent, assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, validateInstallerTargets, validateProfileRelativePath, } from "./lib/tlh-install-paths.mjs";
 import { packageIdentity, } from "./lib/default-extensions.mjs";
-import { assignRequiredEqualsValue, backupPathWithTimestamp, renderShellWords, requiredValue, shellWord, } from "./lib/tlh-install-utils.mjs";
-import { TLH_SUBAGENT_PROMPTS, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, missingTlhSubagentPrompts, settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
+import { assignRequiredEqualsValue, backupPathWithTimestamp, isTlhOwnedBackupFilename, renderShellWords, requiredValue, selectExpiredBackups, shellWord, } from "./lib/tlh-install-utils.mjs";
+import { TLH_SUBAGENT_PROMPTS, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, missingTlhSubagentPrompts, provisionSubagentExtensionConfig, settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts, subagentExtensionConfigNeedsProvisioning, } from "./lib/tlh-install-subagents.mjs";
 import { assertGitSourceTargetSafe, refreshGitCheckout, } from "./lib/tlh-install-git.mjs";
 import { findLocalRepoDir, ensureSupportFilesPrepared, installableSupportFilesArePrepared, preflightRuntimeSupportFiles, } from "./lib/tlh-install-support-files.mjs";
 import { formatSupportFileManifest, installableSupportFiles, supportFileManifest, } from "./lib/tlh-install-support-manifest.mjs";
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
-const PINNED_PI_VERSION = "0.80.6";
+const PINNED_PI_VERSION = "0.81.1";
 const PI_PACKAGE_SPEC = `${PI_PACKAGE_NAME}@${PINNED_PI_VERSION}`;
 // Keep in sync with TLH_MIN_NODE_VERSION and TLH_PINNED_PI_VERSION in install.sh.
 const MIN_NODE_VERSION = "22.19.0";
@@ -43,7 +43,7 @@ const VALID_UPDATE_TRACKS = ["latest-release", "pinned-tag", "ref", "custom"];
 const RUNTIME_MARKER_FILENAME = ".tlh-runtime-owned";
 const RUNTIME_MARKER_SCHEMA_VERSION = 1;
 // npm 11.x --prefix layout; empirically confirmed: npm 11.16.0 +
-// @earendil-works/pi-coding-agent@0.80.6.  Mirrors the advisory exclusivity
+// @earendil-works/pi-coding-agent@0.81.1.  Mirrors the advisory exclusivity
 // tripwire in uninstall.sh (demoted from gate): the only top-level entries a
 // TLH-owned runtime prefix should contain are those created by
 // npm install -g --ignore-scripts --prefix, plus the TLH runtime ownership
@@ -103,16 +103,20 @@ an isolated Pi profile and installer-owned helper commands.
 Requirements:
   Node.js >= ${MIN_NODE_VERSION} on PATH
   Upstream Pi ${PINNED_PI_VERSION} (installed per-user into a private TLH runtime prefix,
-  default: ~/.the-last-harness/runtime; install or repair failures stop with an actionable error)
+  default: ~/.the-last-harness/runtime (release) or ~/.the-last-harness-main/runtime (main);
+  install or repair failures stop with an actionable error)
 
 Options:
   --dry-run                  Print actions and settings/keybinding changes without writing
   --force                    Allow scalar isolated defaults and installer wrapper overwrite
   --no-settings              Install the package but skip isolated settings/keybinding merge
   --no-wrapper               Skip creating the tlh wrapper command
-  --agent-dir DIR            Isolated Pi agent dir (default: ~/.the-last-harness/agent)
+  --agent-dir DIR            Isolated Pi agent dir
+                             (default for main: ~/.the-last-harness-main/agent;
+                              default for release tags: ~/.the-last-harness/agent)
   --bin-dir DIR              Wrapper install dir (default: ~/.local/bin)
-  --wrapper-name N           Wrapper command name (default: tlh)
+  --wrapper-name N           Wrapper command name
+                             (default for main: tlh-main; default for release tags: tlh)
   --ref REF                  Install The Last Harness from a branch, tag, or commit
   --track TRACK              Update track for future tlh update: latest-release, pinned-tag, ref, custom
   --quiet                    Suppress installer progress output
@@ -121,9 +125,9 @@ Options:
   -h, --help                 Show this help
 
 Environment overrides:
-  TLH_AGENT_DIR        Isolated Pi agent dir
+  TLH_AGENT_DIR        Isolated Pi agent dir (explicit; overrides the ref-derived default)
   TLH_BIN_DIR          Wrapper install dir
-  TLH_WRAPPER_NAME     Wrapper command name
+  TLH_WRAPPER_NAME     Wrapper command name (explicit; overrides the ref-derived default)
   TLH_REPO             GitHub repo, owner/name (default: diegopetrucci/the-last-harness)
   TLH_REF              Raw-file ref and package ref (default: main in source; release assets pin this to their tag)
   TLH_UPDATE_TRACK     Update track for future tlh update
@@ -162,8 +166,12 @@ function parseArgs(argv, env = process.env) {
         updateTrackInput: env.TLH_UPDATE_TRACK || "",
         rawBaseInput: env.TLH_RAW_BASE || "",
         agentDirInput: defaultAgentDir(env),
+        // Track whether each of these was explicitly provided so that
+        // buildInstallConfig() can apply ref-derived defaults for the main ref.
+        agentDirExplicit: !!env.TLH_AGENT_DIR,
         binDirInput: defaultBinDir(env),
         wrapperName: env.TLH_WRAPPER_NAME || DEFAULT_WRAPPER_NAME,
+        wrapperNameExplicit: !!env.TLH_WRAPPER_NAME,
         printSupportManifest: false,
         help: false,
         piInstalledByTlhOverride: undefined,
@@ -226,6 +234,7 @@ function parseArgs(argv, env = process.env) {
         }
         if (arg === "--agent-dir") {
             args.agentDirInput = requiredValue(argv, ++index, arg);
+            args.agentDirExplicit = true;
             continue;
         }
         if (arg === "--bin-dir") {
@@ -234,6 +243,7 @@ function parseArgs(argv, env = process.env) {
         }
         if (arg === "--wrapper-name") {
             args.wrapperName = requiredValue(argv, ++index, arg);
+            args.wrapperNameExplicit = true;
             continue;
         }
         if (arg === "--ref") {
@@ -246,6 +256,7 @@ function parseArgs(argv, env = process.env) {
         }
         if (arg.startsWith("--agent-dir=")) {
             assignRequiredEqualsValue(args, "agentDirInput", arg.slice("--agent-dir=".length), "--agent-dir");
+            args.agentDirExplicit = true;
             continue;
         }
         if (arg.startsWith("--bin-dir=")) {
@@ -254,6 +265,7 @@ function parseArgs(argv, env = process.env) {
         }
         if (arg.startsWith("--wrapper-name=")) {
             assignRequiredEqualsValue(args, "wrapperName", arg.slice("--wrapper-name=".length), "--wrapper-name");
+            args.wrapperNameExplicit = true;
             continue;
         }
         if (arg.startsWith("--ref=")) {
@@ -274,9 +286,21 @@ function isSemverTag(ref) {
 function buildInstallConfig(parsedArgs, env = process.env) {
     // piInstalledByTlhOverride is set when an explicit --pi-installed-by-tlh flag was passed
     // (e.g. tlh-update.mjs carries through the preserved value from an existing install-state).
-    const agentDir = resolve(expandPath(parsedArgs.agentDirInput));
+    //
+    // Main-ref auto-defaults: when installing from the default ref ('main') and the user has
+    // NOT explicitly provided a wrapper name or agent dir (via env or CLI), use separate
+    // named defaults so that main-track installs don't collide with release-tag installs.
+    // Explicit values (tracked via parsedArgs.*Explicit booleans) always win.
+    const isMainRef = parsedArgs.ref === DEFAULT_REF;
+    const effectiveWrapperName = (isMainRef && !parsedArgs.wrapperNameExplicit)
+        ? "tlh-main"
+        : parsedArgs.wrapperName;
+    const effectiveAgentDirInput = (isMainRef && !parsedArgs.agentDirExplicit)
+        ? join(homedir(), ".the-last-harness-main", "agent")
+        : parsedArgs.agentDirInput;
+    const agentDir = resolve(expandPath(effectiveAgentDirInput));
     const binDir = resolve(expandPath(parsedArgs.binDirInput));
-    const wrapperPath = join(binDir, parsedArgs.wrapperName);
+    const wrapperPath = join(binDir, effectiveWrapperName);
     let packageSource = parsedArgs.packageSourceInput;
     let packageSourceIsDefault = false;
     if (!packageSource) {
@@ -311,6 +335,7 @@ function buildInstallConfig(parsedArgs, env = process.env) {
         binDir,
         settingsPath: join(agentDir, "settings.json"),
         keybindingsPath: join(agentDir, "keybindings.json"),
+        wrapperName: effectiveWrapperName,
         supportDir: join(agentDir, "tlh"),
         statePath: join(agentDir, "tlh", "install-state.json"),
         wrapperPath,
@@ -585,7 +610,7 @@ function writeRuntimeMarker(config, prefix, origin) {
     }
 }
 function assertSupportedPiVersion(config, { piCommand = "pi", sourceDescription = "existing pi on PATH", versionCommandDisplay = "pi --version", } = {}) {
-    // `pi --version` prints a bare semver (e.g. "0.80.6") on stdout. Older builds may
+    // `pi --version` prints a bare semver (e.g. "0.81.1") on stdout. Older builds may
     // differ, so we extract the first semver-shaped substring rather than match strictly.
     const result = spawnCapture(config, [piCommand, "--version"], {
         allowFailure: true,
@@ -869,6 +894,78 @@ export function cleanupRetiredProfileFiles(config) {
         }
     }
 }
+export function cleanupOldSettingsBackups(config) {
+    // Skip entirely when agentDir itself is a symlink — same safety posture as cleanupRetiredProfileFiles.
+    if (isSymlink(config.agentDir)) {
+        warn(`Skipping stale settings backup cleanup: agentDir is a symlink: ${config.agentDir}`);
+        return;
+    }
+    // Gather candidate filenames from the agent-dir root (non-recursive).
+    if (!existsSync(config.agentDir))
+        return;
+    let entries;
+    try {
+        entries = readdirSync(config.agentDir);
+    }
+    catch (error) {
+        warn(`Skipping stale settings backup cleanup: cannot read agentDir: ${error instanceof Error ? error.message : String(error)}`);
+        return;
+    }
+    // Keep only filenames that match TLH backup patterns AND carry a parseable
+    // TLH timestamp. Files like `settings.json.backup-mynotes` share the prefix
+    // but have no timestamp, so they must never be treated as deletion candidates.
+    const settingsCandidates = entries.filter((name) => isTlhOwnedBackupFilename(name, "settings.json"));
+    const keybindingsCandidates = entries.filter((name) => isTlhOwnedBackupFilename(name, "keybindings.json"));
+    if (settingsCandidates.length === 0 && keybindingsCandidates.length === 0)
+        return;
+    // Determine which candidates are eligible for removal.
+    // Each file type (settings vs keybindings) gets its own independent keepNewest:2
+    // floor so that two recent settings backups cannot consume the floor and cause
+    // the only keybindings backup (however old) to be deleted.
+    // All candidates have a parseable timestamp, so mtimeFallback is a defensive
+    // safety net only — it should never be reached in normal operation.
+    const mtimeFallback = (filename) => {
+        try {
+            const stat = lstatSync(join(config.agentDir, filename));
+            return stat.mtimeMs;
+        }
+        catch {
+            return undefined;
+        }
+    };
+    const toDelete = [
+        ...selectExpiredBackups(settingsCandidates, { mtimeFallback }),
+        ...selectExpiredBackups(keybindingsCandidates, { mtimeFallback }),
+    ];
+    for (const filename of toDelete) {
+        const target = join(config.agentDir, filename);
+        // Assert target stays within the isolated agent dir and outside ~/.pi.
+        try {
+            assertProfilePathWithinAgent(config, target, "stale settings backup");
+        }
+        catch (error) {
+            warn(`Skipping stale settings backup cleanup (unsafe path): ${target}: ${error instanceof Error ? error.message : String(error)}`);
+            continue;
+        }
+        if (isSymlink(target))
+            continue; // Conservative: never remove or follow symlinks
+        if (!existsSync(target))
+            continue; // Idempotent: absent is fine
+        if (!lstatSync(target).isFile())
+            continue; // Conservative: only regular files
+        if (config.dryRun) {
+            log(config, `Would remove stale settings backup: ${target}`);
+            continue;
+        }
+        try {
+            rmSync(target);
+            detailLog(config, `Removed stale settings backup: ${target}`);
+        }
+        catch (error) {
+            warn(`failed to remove stale settings backup ${target}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+}
 function backupExistingSettingsBeforePiInstall(config) {
     assertSafeSettingsTarget(config);
     if (!existsSync(config.settingsPath))
@@ -1017,6 +1114,12 @@ async function installSupportFilesToProfile(config) {
         else {
             log(config, "Would skip TLH subagent prompts because this ref does not enable bundled subagents in settings.");
         }
+        if (subagentExtensionConfigNeedsProvisioning(config)) {
+            log(config, "Would provision subagent extension config (extensions/subagent/config.json) with toolDescriptionMode: compact.");
+        }
+        else {
+            log(config, "Would leave existing subagent extension config (extensions/subagent/config.json) untouched.");
+        }
         return;
     }
     ensureSafeProfileDir(config, "tlh", "TLH support directory");
@@ -1025,6 +1128,7 @@ async function installSupportFilesToProfile(config) {
         if (sourcePath)
             copySafeProfileFile(config, sourcePath, `tlh/${file.installName}`, `TLH support file ${file.installName}`);
     }
+    provisionSubagentExtensionConfig(config);
     if (!requireSubagentPrompts)
         return;
     if (!subagentsSrc) {
@@ -1486,6 +1590,8 @@ async function runInstallFlow(config) {
     await mergeSettings(config);
     if (!config.noSettings)
         cleanupRetiredProfileFiles(config);
+    if (!config.noSettings)
+        cleanupOldSettingsBackups(config);
     configureRtk(config);
     await writeInstallState(config);
     installDefaultExtensions(config);

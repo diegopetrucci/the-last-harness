@@ -1,53 +1,146 @@
 // TLH first-party /annotate-git-diff extension.
 // Adapted from @ryan_nookpi/pi-extension-diff-review (MIT), itself inspired by
-// badlogic/pi-diff-review. See ./README.md for attribution details.
+// badlogic/pi-diff-review. See ./README.md for attribution details and
+// ../../docs/upstream-sync-inventory.md for sync/review guidance.
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { readSystemClipboard, writeSystemClipboard } from "./clipboard.js";
-import { getCommitFiles, getReviewWindowData, isWorkingTreeCommitSha, loadReviewFileContents } from "./git.js";
+import { getCommitFiles, getReviewWindowData, loadReviewFileContents } from "./git.js";
 import { composeReviewPrompt } from "./prompt.js";
 import { openQuietGlimpse, type QuietGlimpseWindow } from "../shared/quiet-glimpse.js";
 import type {
+	CommentSide,
+	DiffReviewComment,
 	ReviewCancelPayload,
 	ReviewClipboardReadPayload,
 	ReviewClipboardWritePayload,
+	ReviewCommitKind,
 	ReviewFile,
 	ReviewFileContents,
 	ReviewHostMessage,
 	ReviewRequestCommitPayload,
 	ReviewRequestFilePayload,
 	ReviewRequestReviewDataPayload,
+	ReviewScope,
 	ReviewSubmitPayload,
 	ReviewWindowMessage,
 } from "./types.js";
 import { buildReviewHtml } from "./ui.js";
 import { createRepoChangeWatcher, type RepoChangeWatcher } from "./watch.js";
 
-function isSubmitPayload(value: ReviewWindowMessage): value is ReviewSubmitPayload {
-	return value.type === "submit";
+interface AnnotateGitDiffDependencies {
+	readClipboard?: typeof readSystemClipboard;
+	writeClipboard?: typeof writeSystemClipboard;
+	getReviewWindowData?: typeof getReviewWindowData;
+	getCommitFiles?: typeof getCommitFiles;
+	loadReviewFileContents?: typeof loadReviewFileContents;
+	composeReviewPrompt?: typeof composeReviewPrompt;
+	openReviewWindow?: typeof openQuietGlimpse;
+	buildReviewHtml?: typeof buildReviewHtml;
+	createRepoChangeWatcher?: typeof createRepoChangeWatcher;
+	setTimeoutFn?: typeof setTimeout;
+	clearTimeoutFn?: typeof clearTimeout;
 }
 
-function isCancelPayload(value: ReviewWindowMessage): value is ReviewCancelPayload {
-	return value.type === "cancel";
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
 }
 
-function isRequestFilePayload(value: ReviewWindowMessage): value is ReviewRequestFilePayload {
-	return value.type === "request-file";
+function isString(value: unknown): value is string {
+	return typeof value === "string";
 }
 
-function isRequestCommitPayload(value: ReviewWindowMessage): value is ReviewRequestCommitPayload {
-	return value.type === "request-commit";
+function isNullableString(value: unknown): value is string | null | undefined {
+	return value == null || typeof value === "string";
 }
 
-function isRequestReviewDataPayload(value: ReviewWindowMessage): value is ReviewRequestReviewDataPayload {
-	return value.type === "request-review-data";
+function isCommentSide(value: unknown): value is CommentSide {
+	return value === "original" || value === "modified" || value === "file";
 }
 
-function isClipboardReadPayload(value: ReviewWindowMessage): value is ReviewClipboardReadPayload {
-	return value.type === "clipboard-read";
+function isReviewScope(value: unknown): value is ReviewScope {
+	return value === "branch" || value === "commits" || value === "all";
 }
 
-function isClipboardWritePayload(value: ReviewWindowMessage): value is ReviewClipboardWritePayload {
-	return value.type === "clipboard-write";
+function isReviewCommitKind(value: unknown): value is ReviewCommitKind | null | undefined {
+	return value == null || value === "commit" || value === "working-tree";
+}
+
+function hasNullableInteger(value: Record<string, unknown>, key: string): boolean {
+	if (!Object.prototype.hasOwnProperty.call(value, key)) return false;
+	const field = value[key];
+	return field === null || (typeof field === "number" && Number.isInteger(field));
+}
+
+function isDiffReviewComment(value: unknown): value is DiffReviewComment {
+	if (!isRecord(value)) return false;
+	return (
+		isString(value.id) &&
+		isString(value.fileId) &&
+		isReviewScope(value.scope) &&
+		isNullableString(value.commitSha) &&
+		isNullableString(value.commitShort) &&
+		isReviewCommitKind(value.commitKind) &&
+		isCommentSide(value.side) &&
+		hasNullableInteger(value, "startLine") &&
+		hasNullableInteger(value, "endLine") &&
+		isString(value.body)
+	);
+}
+
+function parseWindowMessage(data: unknown): ReviewWindowMessage | null {
+	if (!isRecord(data) || !isString(data.type)) return null;
+
+	switch (data.type) {
+		case "submit":
+			if (!isString(data.overallComment) || !Array.isArray(data.comments) || !data.comments.every(isDiffReviewComment)) {
+				return null;
+			}
+			return {
+				type: "submit",
+				overallComment: data.overallComment,
+				comments: data.comments,
+			};
+		case "cancel":
+			return { type: "cancel" };
+		case "request-file":
+			if (!isString(data.requestId) || !isString(data.fileId) || !isReviewScope(data.scope) || !isNullableString(data.commitSha)) {
+				return null;
+			}
+			return {
+				type: "request-file",
+				requestId: data.requestId,
+				fileId: data.fileId,
+				scope: data.scope,
+				commitSha: data.commitSha ?? null,
+			};
+		case "request-commit":
+			if (!isString(data.requestId) || !isString(data.sha)) return null;
+			return {
+				type: "request-commit",
+				requestId: data.requestId,
+				sha: data.sha,
+			};
+		case "request-review-data":
+			if (!isString(data.requestId)) return null;
+			return {
+				type: "request-review-data",
+				requestId: data.requestId,
+			};
+		case "clipboard-read":
+			if (!isString(data.requestId)) return null;
+			return {
+				type: "clipboard-read",
+				requestId: data.requestId,
+			};
+		case "clipboard-write":
+			if (!isString(data.text)) return null;
+			return {
+				type: "clipboard-write",
+				text: data.text,
+			};
+		default:
+			return null;
+	}
 }
 
 function escapeForInlineScript(value: string): string {
@@ -63,9 +156,29 @@ function appendReviewPrompt(ctx: ExtensionCommandContext, prompt: string): void 
 	ctx.ui.pasteToEditor(`${prefix}${prompt}`);
 }
 
-export default function (pi: ExtensionAPI) {
+export function createAnnotateGitDiffController(
+	pi: ExtensionAPI,
+	dependencies: AnnotateGitDiffDependencies = {},
+): {
+	handler: (_args: string, ctx: ExtensionCommandContext) => Promise<void>;
+	shutdown: () => void;
+} {
+	const readClipboard = dependencies.readClipboard ?? readSystemClipboard;
+	const writeClipboard = dependencies.writeClipboard ?? writeSystemClipboard;
+	const loadReviewWindowData = dependencies.getReviewWindowData ?? getReviewWindowData;
+	const loadCommitFileList = dependencies.getCommitFiles ?? getCommitFiles;
+	const loadFileContents = dependencies.loadReviewFileContents ?? loadReviewFileContents;
+	const composePrompt = dependencies.composeReviewPrompt ?? composeReviewPrompt;
+	const openReviewWindow = dependencies.openReviewWindow ?? openQuietGlimpse;
+	const buildHtml = dependencies.buildReviewHtml ?? buildReviewHtml;
+	const startRepoChangeWatcher = dependencies.createRepoChangeWatcher ?? createRepoChangeWatcher;
+	const setTimer = dependencies.setTimeoutFn ?? setTimeout;
+	const clearTimer = dependencies.clearTimeoutFn ?? clearTimeout;
+
 	let activeWindow: QuietGlimpseWindow | null = null;
 	let activeWatcher: RepoChangeWatcher | null = null;
+	let lifecycleGeneration = 0;
+	let openingGeneration: number | null = null;
 	const suppressedWindows = new WeakSet<QuietGlimpseWindow>();
 
 	function stopActiveWatcher(): void {
@@ -89,39 +202,132 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	async function reviewRepository(ctx: ExtensionCommandContext): Promise<void> {
-		if (activeWindow != null) {
+	const handler = async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
+		if (activeWindow != null || openingGeneration != null) {
 			ctx.ui.notify("A review window is already open.", "warning");
 			return;
 		}
 
+		const generation = lifecycleGeneration;
+		openingGeneration = generation;
 		try {
-			let reviewData = await getReviewWindowData(pi, ctx.cwd);
+			let reviewData = await loadReviewWindowData(pi, ctx.cwd);
+			if (generation !== lifecycleGeneration) return;
 			const { repoRoot } = reviewData;
 			if (reviewData.files.length === 0 && reviewData.commits.length === 0) {
 				ctx.ui.notify("No reviewable files found.", "info");
 				return;
 			}
 
-			const html = buildReviewHtml(reviewData);
-			const window = await openQuietGlimpse(html, {
+			const html = buildHtml(reviewData);
+			const window = await openReviewWindow(html, {
 				width: 1680,
 				height: 1020,
 				title: "TLH annotate-git-diff",
 			});
+			if (generation !== lifecycleGeneration) {
+				suppressedWindows.add(window);
+				try {
+					window.close();
+				} catch {
+					// Window is already closing; ignore shutdown races.
+				}
+				return;
+			}
 			activeWindow = window;
+			openingGeneration = null;
 
-			const fileMap = new Map(reviewData.files.map((file) => [file.id, file]));
-			const commitFileCache = new Map<string, Promise<ReviewFile[]>>();
-			const contentCache = new Map<string, Promise<ReviewFileContents>>();
+			let reviewSnapshotVersion = 0;
+			let latestRefreshRequestSequence = 0;
 
-			const clearRefreshableCaches = (): void => {
-				contentCache.clear();
-				for (const sha of commitFileCache.keys()) {
-					if (isWorkingTreeCommitSha(sha)) {
-						commitFileCache.delete(sha);
+			type ReviewSnapshotState = {
+				version: number;
+				reviewData: typeof reviewData;
+				allFiles: Map<string, ReviewFile>;
+				branchFiles: Map<string, ReviewFile>;
+				commitFilesBySha: Map<string, Map<string, ReviewFile>>;
+				commitFileCache: Map<string, Promise<ReviewFile[]>>;
+				contentCache: Map<string, Promise<ReviewFileContents>>;
+			};
+
+			const retainedImmutablePromiseVersions = new WeakMap<Promise<unknown>, number>();
+
+			const buildSnapshotState = (
+				nextReviewData: typeof reviewData,
+				previousSnapshot?: ReviewSnapshotState,
+			): ReviewSnapshotState => {
+				const version = ++reviewSnapshotVersion;
+				const allFiles = new Map(nextReviewData.files.map((file) => [file.id, file]));
+				const branchFiles = new Map(
+					nextReviewData.files.filter((file) => file.inGitDiff).map((file) => [file.id, file]),
+				);
+				const immutableCommitShas = new Set(
+					nextReviewData.commits.filter((commit) => commit.kind !== "working-tree").map((commit) => commit.sha),
+				);
+				const commitFilesBySha = new Map<string, Map<string, ReviewFile>>();
+				const commitFileCache = new Map<string, Promise<ReviewFile[]>>();
+				const contentCache = new Map<string, Promise<ReviewFileContents>>();
+
+				if (previousSnapshot != null) {
+					for (const sha of immutableCommitShas) {
+						const commitFiles = previousSnapshot.commitFilesBySha.get(sha);
+						if (commitFiles != null) commitFilesBySha.set(sha, commitFiles);
+						const commitPromise = previousSnapshot.commitFileCache.get(sha);
+						if (commitPromise != null) {
+							commitFileCache.set(sha, commitPromise);
+							retainedImmutablePromiseVersions.set(commitPromise, version);
+						}
+						const contentPrefix = `commits:${sha}:`;
+						for (const [cacheKey, contentPromise] of previousSnapshot.contentCache) {
+							if (!cacheKey.startsWith(contentPrefix)) continue;
+							contentCache.set(cacheKey, contentPromise);
+							retainedImmutablePromiseVersions.set(contentPromise, version);
+						}
 					}
 				}
+
+				return {
+					version,
+					reviewData: nextReviewData,
+					allFiles,
+					branchFiles,
+					commitFilesBySha,
+					commitFileCache,
+					contentCache,
+				};
+			};
+
+			let snapshot = buildSnapshotState(reviewData);
+
+			const advertisedCommitShas = (): Set<string> => new Set(snapshot.reviewData.commits.map((commit) => commit.sha));
+			const isAllowedCommitSha = (sha: string): boolean => advertisedCommitShas().has(sha);
+			const isImmutableCommitSha = (sha: string): boolean =>
+				snapshot.reviewData.commits.some((commit) => commit.sha === sha && commit.kind !== "working-tree");
+			const isCurrentSnapshot = (version: number): boolean => snapshot.version === version;
+
+			const getAuthorizedFile = (
+				requestScope: ReviewRequestFilePayload["scope"],
+				fileId: string,
+				commitSha: string | null,
+			): ReviewFile | null => {
+				if (requestScope === "all") {
+					return snapshot.allFiles.get(fileId) ?? null;
+				}
+				if (requestScope === "branch") {
+					return snapshot.branchFiles.get(fileId) ?? null;
+				}
+				if (commitSha == null) return null;
+				return snapshot.commitFilesBySha.get(commitSha)?.get(fileId) ?? null;
+			};
+
+			const getPromptFiles = (): ReviewFile[] => {
+				const files = new Map(snapshot.allFiles);
+				for (const commitFiles of snapshot.commitFilesBySha.values()) {
+					for (const [fileId, file] of commitFiles) {
+						files.set(fileId, file);
+					}
+				}
+				return [...files.values()];
 			};
 
 			const sendWindowMessage = (message: ReviewHostMessage): void => {
@@ -131,7 +337,7 @@ export default function (pi: ExtensionAPI) {
 			};
 
 			let watcherWarningShown = false;
-			activeWatcher = createRepoChangeWatcher(
+			activeWatcher = startRepoChangeWatcher(
 				repoRoot,
 				() => {
 					sendWindowMessage({ type: "working-tree-changed", changedAt: Date.now() });
@@ -146,221 +352,305 @@ export default function (pi: ExtensionAPI) {
 			);
 
 			const loadCommitFiles = (sha: string): Promise<ReviewFile[]> => {
-				const cached = commitFileCache.get(sha);
+				const cached = snapshot.commitFileCache.get(sha);
 				if (cached != null) return cached;
-				const pending = getCommitFiles(pi, repoRoot, sha);
-				commitFileCache.set(sha, pending);
-				pending
-					.then((commitFiles) => {
-						for (const cf of commitFiles) fileMap.set(cf.id, cf);
-					})
-					.catch(() => {});
+				const pending = loadCommitFileList(pi, repoRoot, sha).catch((error) => {
+					if (snapshot.commitFileCache.get(sha) === pending) {
+						snapshot.commitFileCache.delete(sha);
+					}
+					throw error;
+				});
+				snapshot.commitFileCache.set(sha, pending);
 				return pending;
 			};
+
+			const contentCacheKey = (
+				file: ReviewFile,
+				scope: ReviewRequestFilePayload["scope"],
+				commitSha: string | null,
+			): string => `${scope}:${commitSha ?? ""}:${file.id}`;
 
 			const loadContents = (
 				file: ReviewFile,
 				scope: ReviewRequestFilePayload["scope"],
 				commitSha: string | null,
 			): Promise<ReviewFileContents> => {
-				const cacheKey = `${scope}:${commitSha ?? ""}:${file.id}`;
-				const cached = contentCache.get(cacheKey);
+				const cacheKey = contentCacheKey(file, scope, commitSha);
+				const cached = snapshot.contentCache.get(cacheKey);
 				if (cached != null) return cached;
 
-				const pending = loadReviewFileContents(pi, repoRoot, file, scope, commitSha, reviewData.branchMergeBaseSha);
-				contentCache.set(cacheKey, pending);
+				const pending = loadFileContents(
+					pi,
+					repoRoot,
+					file,
+					scope,
+					commitSha,
+					snapshot.reviewData.branchMergeBaseSha,
+				).catch((error) => {
+					if (snapshot.contentCache.get(cacheKey) === pending) {
+						snapshot.contentCache.delete(cacheKey);
+					}
+					throw error;
+				});
+				snapshot.contentCache.set(cacheKey, pending);
 				return pending;
 			};
 
-			const terminalMessagePromise = new Promise<ReviewSubmitPayload | ReviewCancelPayload | null>(
-				(resolve, reject) => {
-					let settled = false;
-					let closeTimer: ReturnType<typeof setTimeout> | null = null;
+			const terminalMessagePromise = new Promise<ReviewSubmitPayload | ReviewCancelPayload | null>((resolve, reject) => {
+				let settled = false;
+				let closeTimer: ReturnType<typeof setTimeout> | null = null;
 
-					const cleanup = (): void => {
-						if (closeTimer != null) {
-							clearTimeout(closeTimer);
-							closeTimer = null;
-						}
-						window.removeListener("message", onMessage);
-						window.removeListener("closed", onClosed);
-						window.removeListener("error", onError);
-						if (activeWindow === window) {
-							activeWindow = null;
-							stopActiveWatcher();
-						}
-					};
+				const cleanup = (): void => {
+					if (closeTimer != null) {
+						clearTimer(closeTimer);
+						closeTimer = null;
+					}
+					window.removeListener("message", onMessage);
+					window.removeListener("closed", onClosed);
+					window.removeListener("error", onError);
+					if (activeWindow === window) {
+						activeWindow = null;
+						stopActiveWatcher();
+					}
+				};
 
-					const settle = (value: ReviewSubmitPayload | ReviewCancelPayload | null): void => {
-						if (settled) return;
-						settled = true;
-						cleanup();
-						resolve(value);
-					};
+				const settle = (value: ReviewSubmitPayload | ReviewCancelPayload | null): void => {
+					if (settled) return;
+					settled = true;
+					cleanup();
+					resolve(value);
+				};
 
-					const handleRequestFile = async (message: ReviewRequestFilePayload): Promise<void> => {
-						const file = fileMap.get(message.fileId);
-						if (file == null) {
+				const handleRequestFile = async (message: ReviewRequestFilePayload): Promise<void> => {
+					if (message.scope === "commits") {
+						if (message.commitSha == null || !isAllowedCommitSha(message.commitSha)) {
 							sendWindowMessage({
 								type: "file-error",
 								requestId: message.requestId,
 								fileId: message.fileId,
 								scope: message.scope,
 								commitSha: message.commitSha ?? null,
-								message: "Unknown file requested.",
+								message: "Unknown commit requested.",
 							});
 							return;
 						}
+					} else if (message.commitSha != null) {
+						sendWindowMessage({
+							type: "file-error",
+							requestId: message.requestId,
+							fileId: message.fileId,
+							scope: message.scope,
+							commitSha: message.commitSha,
+							message: "Unexpected commit requested for this scope.",
+						});
+						return;
+					}
 
-						try {
-							const contents = await loadContents(file, message.scope, message.commitSha ?? null);
-							sendWindowMessage({
-								type: "file-data",
-								requestId: message.requestId,
-								fileId: message.fileId,
-								scope: message.scope,
-								commitSha: message.commitSha ?? null,
-								originalContent: contents.originalContent,
-								modifiedContent: contents.modifiedContent,
-								kind: contents.kind,
-								mimeType: contents.mimeType,
-								originalExists: contents.originalExists,
-								modifiedExists: contents.modifiedExists,
-								originalPreviewUrl: contents.originalPreviewUrl,
-								modifiedPreviewUrl: contents.modifiedPreviewUrl,
-							});
-						} catch (error) {
-							const messageText = error instanceof Error ? error.message : String(error);
-							sendWindowMessage({
-								type: "file-error",
-								requestId: message.requestId,
-								fileId: message.fileId,
-								scope: message.scope,
-								commitSha: message.commitSha ?? null,
-								message: messageText,
-							});
+					const requestCommitSha = message.commitSha ?? null;
+					const snapshotVersion = snapshot.version;
+					const file = getAuthorizedFile(message.scope, message.fileId, requestCommitSha);
+					if (file == null) {
+						sendWindowMessage({
+							type: "file-error",
+							requestId: message.requestId,
+							fileId: message.fileId,
+							scope: message.scope,
+							commitSha: requestCommitSha,
+							message: "Unknown file requested.",
+						});
+						return;
+					}
+
+					const cacheKey = contentCacheKey(file, message.scope, requestCommitSha);
+					const pendingContents = loadContents(file, message.scope, requestCommitSha);
+					const canFinishRequest = (allowRetainedRejection = false): boolean => {
+						if (getAuthorizedFile(message.scope, message.fileId, requestCommitSha) !== file) return false;
+						if (isCurrentSnapshot(snapshotVersion)) return true;
+						if (message.scope !== "commits" || requestCommitSha == null || !isImmutableCommitSha(requestCommitSha)) {
+							return false;
 						}
+						return (
+							snapshot.contentCache.get(cacheKey) === pendingContents ||
+							(allowRetainedRejection && retainedImmutablePromiseVersions.get(pendingContents) === snapshot.version)
+						);
 					};
 
-					const handleRequestCommit = async (message: ReviewRequestCommitPayload): Promise<void> => {
-						try {
-							const commitFiles = await loadCommitFiles(message.sha);
-							sendWindowMessage({
-								type: "commit-data",
-								requestId: message.requestId,
-								sha: message.sha,
-								files: commitFiles,
-							});
-						} catch (error) {
-							const messageText = error instanceof Error ? error.message : String(error);
-							sendWindowMessage({
-								type: "commit-error",
-								requestId: message.requestId,
-								sha: message.sha,
-								message: messageText,
-							});
-						}
+					try {
+						const contents = await pendingContents;
+						if (!canFinishRequest()) return;
+						sendWindowMessage({
+							type: "file-data",
+							requestId: message.requestId,
+							fileId: message.fileId,
+							scope: message.scope,
+							commitSha: requestCommitSha,
+							originalContent: contents.originalContent,
+							modifiedContent: contents.modifiedContent,
+							kind: contents.kind,
+							mimeType: contents.mimeType,
+							originalExists: contents.originalExists,
+							modifiedExists: contents.modifiedExists,
+							originalPreviewUrl: contents.originalPreviewUrl,
+							modifiedPreviewUrl: contents.modifiedPreviewUrl,
+						});
+					} catch (error) {
+						if (!canFinishRequest(true)) return;
+						const messageText = error instanceof Error ? error.message : String(error);
+						sendWindowMessage({
+							type: "file-error",
+							requestId: message.requestId,
+							fileId: message.fileId,
+							scope: message.scope,
+							commitSha: requestCommitSha,
+							message: messageText,
+						});
+					}
+				};
+
+				const handleRequestCommit = async (message: ReviewRequestCommitPayload): Promise<void> => {
+					if (!isAllowedCommitSha(message.sha)) {
+						sendWindowMessage({
+							type: "commit-error",
+							requestId: message.requestId,
+							sha: message.sha,
+							message: "Unknown commit requested.",
+						});
+						return;
+					}
+
+					const snapshotVersion = snapshot.version;
+					const pendingCommitFiles = loadCommitFiles(message.sha);
+					const canFinishRequest = (allowRetainedRejection = false): boolean => {
+						if (!isAllowedCommitSha(message.sha)) return false;
+						if (isCurrentSnapshot(snapshotVersion)) return true;
+						if (!isImmutableCommitSha(message.sha)) return false;
+						return (
+							snapshot.commitFileCache.get(message.sha) === pendingCommitFiles ||
+							(allowRetainedRejection && retainedImmutablePromiseVersions.get(pendingCommitFiles) === snapshot.version)
+						);
 					};
 
-					const handleRequestReviewData = async (message: ReviewRequestReviewDataPayload): Promise<void> => {
-						try {
-							const nextReviewData = await getReviewWindowData(pi, repoRoot);
-							clearRefreshableCaches();
-							reviewData = nextReviewData;
-							for (const file of reviewData.files) fileMap.set(file.id, file);
-							sendWindowMessage({
-								type: "review-data",
-								requestId: message.requestId,
-								files: reviewData.files,
-								commits: reviewData.commits,
-								branchBaseRef: reviewData.branchBaseRef,
-								branchMergeBaseSha: reviewData.branchMergeBaseSha,
-								repositoryHasHead: reviewData.repositoryHasHead,
-							});
-						} catch (error) {
-							const messageText = error instanceof Error ? error.message : String(error);
-							sendWindowMessage({
-								type: "review-data-error",
-								requestId: message.requestId,
-								message: messageText,
-							});
-						}
-					};
+					try {
+						const commitFiles = await pendingCommitFiles;
+						if (!canFinishRequest()) return;
+						snapshot.commitFilesBySha.set(message.sha, new Map(commitFiles.map((file) => [file.id, file])));
+						sendWindowMessage({
+							type: "commit-data",
+							requestId: message.requestId,
+							sha: message.sha,
+							files: commitFiles,
+						});
+					} catch (error) {
+						if (!canFinishRequest(true)) return;
+						const messageText = error instanceof Error ? error.message : String(error);
+						sendWindowMessage({
+							type: "commit-error",
+							requestId: message.requestId,
+							sha: message.sha,
+							message: messageText,
+						});
+					}
+				};
 
-					const handleClipboardRead = (message: ReviewClipboardReadPayload): void => {
-						try {
-							sendWindowMessage({
-								type: "clipboard-data",
-								requestId: message.requestId,
-								text: readSystemClipboard(),
-							});
-						} catch (error) {
-							const messageText = error instanceof Error ? error.message : String(error);
-							sendWindowMessage({
-								type: "clipboard-data",
-								requestId: message.requestId,
-								text: "",
-								message: messageText,
-							});
-						}
-					};
+				const handleRequestReviewData = async (message: ReviewRequestReviewDataPayload): Promise<void> => {
+					const refreshRequestSequence = ++latestRefreshRequestSequence;
+					try {
+						const nextReviewData = await loadReviewWindowData(pi, repoRoot);
+						if (refreshRequestSequence !== latestRefreshRequestSequence) return;
+						reviewData = nextReviewData;
+						snapshot = buildSnapshotState(nextReviewData, snapshot);
+						sendWindowMessage({
+							type: "review-data",
+							requestId: message.requestId,
+							files: snapshot.reviewData.files,
+							commits: snapshot.reviewData.commits,
+							branchBaseRef: snapshot.reviewData.branchBaseRef,
+							branchMergeBaseSha: snapshot.reviewData.branchMergeBaseSha,
+							repositoryHasHead: snapshot.reviewData.repositoryHasHead,
+						});
+					} catch (error) {
+						if (refreshRequestSequence !== latestRefreshRequestSequence) return;
+						const messageText = error instanceof Error ? error.message : String(error);
+						sendWindowMessage({
+							type: "review-data-error",
+							requestId: message.requestId,
+							message: messageText,
+						});
+					}
+				};
 
-					const handleClipboardWrite = (message: ReviewClipboardWritePayload): void => {
-						try {
-							writeSystemClipboard(message.text);
-						} catch (error) {
-							const messageText = error instanceof Error ? error.message : String(error);
-							ctx.ui.notify(`Failed to copy from review window: ${messageText}`, "warning");
-						}
-					};
+				const handleClipboardRead = (message: ReviewClipboardReadPayload): void => {
+					try {
+						sendWindowMessage({
+							type: "clipboard-data",
+							requestId: message.requestId,
+							text: readClipboard(),
+						});
+					} catch (error) {
+						const messageText = error instanceof Error ? error.message : String(error);
+						sendWindowMessage({
+							type: "clipboard-data",
+							requestId: message.requestId,
+							text: "",
+							message: messageText,
+						});
+					}
+				};
 
-					const onMessage = (data: unknown): void => {
-						const message = data as ReviewWindowMessage;
-						if (isRequestFilePayload(message)) {
-							void handleRequestFile(message);
-							return;
-						}
-						if (isRequestCommitPayload(message)) {
-							void handleRequestCommit(message);
-							return;
-						}
-						if (isRequestReviewDataPayload(message)) {
-							void handleRequestReviewData(message);
-							return;
-						}
-						if (isClipboardReadPayload(message)) {
-							handleClipboardRead(message);
-							return;
-						}
-						if (isClipboardWritePayload(message)) {
-							handleClipboardWrite(message);
-							return;
-						}
-						if (isSubmitPayload(message) || isCancelPayload(message)) {
-							settle(message);
-						}
-					};
+				const handleClipboardWrite = (message: ReviewClipboardWritePayload): void => {
+					try {
+						writeClipboard(message.text);
+					} catch (error) {
+						const messageText = error instanceof Error ? error.message : String(error);
+						ctx.ui.notify(`Failed to copy from review window: ${messageText}`, "warning");
+					}
+				};
 
-					const onClosed = (): void => {
-						if (settled || closeTimer != null) return;
-						closeTimer = setTimeout(() => {
-							closeTimer = null;
-							settle(null);
-						}, 250);
-					};
+				const onMessage = (data: unknown): void => {
+					const message = parseWindowMessage(data);
+					if (message == null) return;
+					if (message.type === "request-file") {
+						void handleRequestFile(message);
+						return;
+					}
+					if (message.type === "request-commit") {
+						void handleRequestCommit(message);
+						return;
+					}
+					if (message.type === "request-review-data") {
+						void handleRequestReviewData(message);
+						return;
+					}
+					if (message.type === "clipboard-read") {
+						handleClipboardRead(message);
+						return;
+					}
+					if (message.type === "clipboard-write") {
+						handleClipboardWrite(message);
+						return;
+					}
+					settle(message);
+				};
 
-					const onError = (error: Error): void => {
-						if (settled) return;
-						settled = true;
-						cleanup();
-						reject(error);
-					};
+				const onClosed = (): void => {
+					if (settled || closeTimer != null) return;
+					closeTimer = setTimer(() => {
+						closeTimer = null;
+						settle(null);
+					}, 250);
+				};
 
-					window.on("message", onMessage);
-					window.on("closed", onClosed);
-					window.on("error", onError);
-				},
-			);
+				const onError = (error: Error): void => {
+					if (settled) return;
+					settled = true;
+					cleanup();
+					reject(error);
+				};
+
+				window.on("message", onMessage);
+				window.on("closed", onClosed);
+				window.on("error", onError);
+			});
 
 			void (async () => {
 				try {
@@ -373,7 +663,7 @@ export default function (pi: ExtensionAPI) {
 					}
 					if (!hasReviewFeedback(message)) return;
 
-					const prompt = composeReviewPrompt([...fileMap.values()], message);
+					const prompt = composePrompt(getPromptFiles(), message);
 					appendReviewPrompt(ctx, prompt);
 					ctx.ui.notify("Appended review feedback to the editor.", "info");
 				} catch (error) {
@@ -385,20 +675,39 @@ export default function (pi: ExtensionAPI) {
 
 			ctx.ui.notify("Opened native review window.", "info");
 		} catch (error) {
+			if (generation !== lifecycleGeneration) return;
 			closeActiveWindow({ suppressResults: true });
 			const message = error instanceof Error ? error.message : String(error);
 			ctx.ui.notify(`Review failed: ${message}`, "error");
+		} finally {
+			if (openingGeneration === generation) {
+				openingGeneration = null;
+			}
 		}
-	}
+	};
 
+	return {
+		handler,
+		shutdown: () => {
+			lifecycleGeneration += 1;
+			openingGeneration = null;
+			closeActiveWindow({ suppressResults: true });
+		},
+	};
+}
+
+export function registerAnnotateGitDiff(pi: ExtensionAPI, dependencies: AnnotateGitDiffDependencies = {}): void {
+	const controller = createAnnotateGitDiffController(pi, dependencies);
 	pi.registerCommand("annotate-git-diff", {
 		description: "Open a native review window with branch, per-commit, and all-files scopes",
-		handler: async (_args, ctx) => {
-			await reviewRepository(ctx);
-		},
+		handler: controller.handler,
 	});
 
 	pi.on("session_shutdown", async () => {
-		closeActiveWindow({ suppressResults: true });
+		controller.shutdown();
 	});
+}
+
+export default function registerAnnotateGitDiffDefault(pi: ExtensionAPI) {
+	registerAnnotateGitDiff(pi);
 }

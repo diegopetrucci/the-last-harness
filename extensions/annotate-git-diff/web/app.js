@@ -812,10 +812,6 @@ function clearFileRequestStateByPrefixes(prefixes) {
 	}
 }
 
-function clearCommitScopedState(sha) {
-	clearFileRequestStateByPrefixes([`commits:${sha}:`]);
-}
-
 function clearRefreshableFileState() {
 	const prefixes = ["branch:", "all:"];
 	for (const commit of reviewData.commits) {
@@ -824,26 +820,6 @@ function clearRefreshableFileState() {
 		}
 	}
 	clearFileRequestStateByPrefixes(prefixes);
-}
-
-function clearWorkingTreeReviewArtifacts(sha) {
-	state.comments = state.comments.filter((comment) => !(comment.scope === "commits" && comment.commitSha === sha));
-	const previousFiles = state.commitFilesBySha[sha] ?? [];
-	for (const file of previousFiles) {
-		delete state.reviewedFiles[file.id];
-		delete state.scrollPositions[scrollKey("commits", file.id, sha)];
-	}
-}
-
-function clearWorkingTreeCommitState() {
-	for (const commit of reviewData.commits) {
-		if (commit.kind !== "working-tree") continue;
-		clearWorkingTreeReviewArtifacts(commit.sha);
-		clearCommitScopedState(commit.sha);
-		delete state.commitFilesBySha[commit.sha];
-		delete state.commitErrors[commit.sha];
-		delete state.commitRequestIds[commit.sha];
-	}
 }
 
 function requestLatestReviewData() {
@@ -1922,10 +1898,11 @@ window.__reviewReceive = (message) => {
 
 	if (message.type === "review-data") {
 		if (state.reviewDataRequestId !== message.requestId) return;
+		const nextCommits = Array.isArray(message.commits) ? message.commits : [];
 		clearRefreshableFileState();
-		clearWorkingTreeCommitState();
+		window.__reconcileReviewCommitState(state, reviewData.commits, nextCommits);
 		reviewData.files = Array.isArray(message.files) ? message.files : [];
-		reviewData.commits = Array.isArray(message.commits) ? message.commits : [];
+		reviewData.commits = nextCommits;
 		reviewData.branchBaseRef = message.branchBaseRef ?? null;
 		reviewData.branchMergeBaseSha = message.branchMergeBaseSha ?? null;
 		reviewData.repositoryHasHead = message.repositoryHasHead === true;
@@ -2123,10 +2100,18 @@ function setupMonaco() {
 	}
 
 	window.require(
-		["vs/editor/editor.main"],
-		() => {
+		["vs/index"],
+		(loadedMonacoApi) => {
+			if (!loadedMonacoApi?.editor || !loadedMonacoApi?.languages || typeof loadedMonacoApi.Range !== "function") {
+				clearTimeout(loadTimeoutId);
+				settleFailure(
+					"TLH could not initialize the packaged Monaco editor. Close this window and rerun /annotate-git-diff.",
+					"The packaged vs/index module did not return the expected Monaco API.",
+				);
+				return;
+			}
 			if (!settleSuccess()) return;
-			monacoApi = window.monaco;
+			monacoApi = loadedMonacoApi;
 
 			// GitHub-style diff colors.
 			monacoApi.editor.defineTheme("review-dark", {
@@ -2149,6 +2134,18 @@ function setupMonaco() {
 			});
 			monacoApi.editor.setTheme("review-dark");
 
+			// SECURITY NOTE (DOMPurify advisory — risk-accepted 2026):
+			// Both editors below are read-only plain-text diff views (readOnly: true,
+			// originalEditable: false). No MarkdownString, renderMarkdown, hover
+			// providers, completion providers, setModelMarkers, or trusted-HTML paths
+			// are used anywhere in this extension. Monaco's bundled DOMPurify is only
+			// exercised through those paths (hover-tooltip HTML, completion docs,
+			// trusted-type widgets). Because none of them are active here, the
+			// advisories GHSA-vxr8-fq34-vvx9, GHSA-cmwh-pvxp-8882, and
+			// GHSA-c2j3-45gr-mqc4 (dompurify <=3.4.11 via monaco-editor@0.56.0) are
+			// not reachable in this usage. Do NOT add MarkdownString, hover/completion
+			// rendering, or trusted-HTML support without first re-evaluating the
+			// DOMPurify advisory and updating docs/dependency-risk.md.
 			diffEditor = monacoApi.editor.createDiffEditor(diffEditorHostEl, {
 				automaticLayout: true,
 				renderSideBySide: activeFileShowsDiff(),

@@ -84,6 +84,39 @@ test("librarian prompt keeps REST-first GitHub research quota guidance", () => {
 	assertBodyPattern(agent, "REST fallback on GraphQL failure", /fall back to `gh api` GET requests against REST endpoints or to local `git` evidence when possible/i);
 });
 
+test("architect prompt preserves pre-existing changes without weakening the no-edit boundary", () => {
+	const agent = readAgentPrompt("primary", "architect");
+
+	assertIncludesAllTerms(agent, "architect preservation guidance", [
+		"Do not directly edit source files. Implementation belongs to `developer`.",
+		"Preserve pre-existing worktree and index changes as human-owned state.",
+		"Do not discard, overwrite, revert, stage, or otherwise clean them up on your own.",
+		"`git stash`",
+		"`git restore`",
+		"`git reset`",
+		"non-dry-run `git clean`",
+		"checkout/switch discard or force options when they would affect pre-existing state",
+		"ask the user how to proceed instead.",
+	]);
+});
+
+test("developer prompt preserves human-owned changes and limits escalation to blocking overlap", () => {
+	const agent = readAgentPrompt("subagents", "developer");
+
+	assertIncludesAllTerms(agent, "developer preservation guidance", [
+		"Plan approval or ticket approval is not authorization to mutate, revert, overwrite, or clean up pre-existing worktree or index changes you did not create for the current task.",
+		"Touch them only with scoped user authorization given directly or relayed by the architect",
+		"the architect cannot independently authorize discarding human-owned changes.",
+		"`git stash`",
+		"`git restore`",
+		"`git reset`",
+		"non-dry-run `git clean`",
+		"checkout/switch discard or force options against pre-existing state without that authorization.",
+		"Preserve unrelated state while implementing the ticket.",
+		"pre-existing changes overlap the task and block a safe, scoped implementation",
+	]);
+});
+
 test("code-reviewer prompt matches current review-only guidance without removed quota sections", () => {
 	const agent = readAgentPrompt("subagents", "code-reviewer");
 

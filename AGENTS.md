@@ -45,6 +45,7 @@ bash -n install.sh
 node --check scripts/tlh-gnosis.mjs
 bash install.sh --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -d)"
 bash -s -- --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -d)" < install.sh
+npm run lint:sh
 ```
 
 For installer tests, prefer temporary `--agent-dir` and `--bin-dir` values. Do not run a real install into home directories unless the user explicitly asks.
@@ -68,6 +69,10 @@ For installer tests, prefer temporary `--agent-dir` and `--bin-dir` values. Do n
 git diff --cached --stat
 git diff --cached
 ```
+
+## Github issues and projects
+
+- If a Github issue is picked up, move it to `In Progress` in the [TLH Roadmap](https://github.com/users/diegopetrucci/projects/1/views/1?layout=board). Assign an area if needed. Once work is merged, move it to `Ready for release`. If released, tag it with the release it went out with, and move it to `Done`.
 
 ## Miscellaneous
 

@@ -39,6 +39,8 @@ EOF_FAKE_GIT
   assert_contains "${combined_file}" "Would download pinned wedow/ticket source:"
   assert_contains "${combined_file}" "Would verify SHA256:"
   assert_contains "${combined_file}" "Ticket CLI integration: enabled (${agent_dir}/bin/tk)"
+  # single-quoted node -e script is a JS template literal passed verbatim; not a bash expansion
+  # shellcheck disable=SC2016
   if node -e 'process.exit(["darwin-arm64","darwin-x64","linux-arm64","linux-x64"].includes(`${process.platform}-${process.arch}`) ? 0 : 1)'; then
     assert_contains "${combined_file}" "Would install RTK"
     assert_contains "${combined_file}" "${agent_dir}/bin/rtk"
@@ -75,6 +77,8 @@ EOF_FAKE_RELATIVE_GIT
   chmod +x "${fakebin}/sh" "${fakebin}/npm" "${fakebin}/git"
   make_fake_present_pi "${fakebin}"
 
+  # literal '~/poisoned-package' is intentional; smoke test verifies the installer rejects unexpanded tilde package sources
+  # shellcheck disable=SC2088
   (cd "${run_dir}" && \
     export PI_CODING_AGENT_DIR="${home_dir}/.pi/agent" TLH_AGENT_DIR="${home_dir}/.pi/agent" TLH_BIN_DIR="${home_dir}/.pi/agent" TLH_PACKAGE_SOURCE="~/poisoned-package" TLH_REPO="poisoned/repo" TLH_REF="poisoned-ref" TLH_UPDATE_TRACK="custom" && \
     run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 HOME="${home_dir}" PATH="${fakebin}:${PATH}" node "${ROOT_DIR}/scripts/tlh-install.mjs" --dry-run --agent-dir .pi/agent --bin-dir bin >"${stdout_file}" 2>"${stderr_file}")
@@ -113,6 +117,7 @@ run_stage1_staged_cwd_isolation_smoke() {
   cp scripts/lib/tlh-install-utils.mjs "${stage_scripts_dir}/lib/tlh-install-utils.mjs"
   cp scripts/lib/tlh-install-git.mjs "${stage_scripts_dir}/lib/tlh-install-git.mjs"
   cp scripts/lib/tlh-install-subagents.mjs "${stage_scripts_dir}/lib/tlh-install-subagents.mjs"
+  cp scripts/lib/tlh-safe-profile-write.mjs "${stage_scripts_dir}/lib/tlh-safe-profile-write.mjs"
   cp scripts/lib/tlh-install-support-files.mjs "${stage_scripts_dir}/lib/tlh-install-support-files.mjs"
   cp scripts/lib/tlh-install-support-manifest.mjs "${stage_scripts_dir}/lib/tlh-install-support-manifest.mjs"
   cp scripts/lib/default-extensions.mjs "${stage_scripts_dir}/lib/default-extensions.mjs"
@@ -321,6 +326,8 @@ run_stdin_dry_run_smoke() {
   : >"${stdout_file}"
   : >"${stderr_file}"
   set +e
+  # literal '~/.pi/agent' is intentional; smoke test exercises the alias guard that rejects unexpanded tildes
+  # shellcheck disable=SC2088
   (cd "${case_dir}" && run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --dry-run --agent-dir "~/.pi/agent" --bin-dir "${bin_dir}" < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e
@@ -338,6 +345,8 @@ run_stdin_dry_run_smoke() {
   : >"${stdout_file}"
   : >"${stderr_file}"
   set +e
+  # literal '~/.pi/agent' is intentional; smoke test exercises the alias guard that rejects unexpanded tildes
+  # shellcheck disable=SC2088
   (cd "${case_dir}" && run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --agent-dir "~/.pi/agent" --bin-dir "${bin_dir}" < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e

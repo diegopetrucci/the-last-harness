@@ -14,6 +14,7 @@ const jiti = createJiti(import.meta.url);
 const {
 	CI_FAILURE_INVESTIGATION_FEATURE,
 	DELTA_FOLLOW_UP_REVIEWS_FEATURE,
+	EMBEDDED_SUBAGENTS_FEATURE,
 	TICKET_WORKFLOW_UI_FEATURE,
 	buildPrimaryExperimentalPrompt,
 	getTlhExperimentalConfig,
@@ -74,7 +75,7 @@ function registeredExperimentalCommand() {
 	return command;
 }
 
-test("experimental command registers ticket workflow, delta follow-up review, and architect-only ci failure investigation flags as default-off", SERIAL_TEST, async (t) => {
+test("experimental command registers ticket workflow, delta follow-up review, architect-only ci failure investigation, and embedded subagents flags as default-off", SERIAL_TEST, async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -85,6 +86,7 @@ test("experimental command registers ticket workflow, delta follow-up review, an
 				`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
 				`enable ${CI_FAILURE_INVESTIGATION_FEATURE}`,
 				`enable ${TICKET_WORKFLOW_UI_FEATURE}`,
+				`enable ${EMBEDDED_SUBAGENTS_FEATURE}`,
 			],
 		);
 		assert.deepEqual(
@@ -94,6 +96,7 @@ test("experimental command registers ticket workflow, delta follow-up review, an
 				`status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
 				`status ${CI_FAILURE_INVESTIGATION_FEATURE}`,
 				`status ${TICKET_WORKFLOW_UI_FEATURE}`,
+				`status ${EMBEDDED_SUBAGENTS_FEATURE}`,
 			],
 		);
 		assert.equal(await command.getArgumentCompletions("unknown"), null);
@@ -113,6 +116,9 @@ test("experimental command registers ticket workflow, delta follow-up review, an
 		assert.match(notifications.at(-1)?.message ?? "", /ticket-workflow-ui/);
 		assert.match(notifications.at(-1)?.message ?? "", /experimental ticket workflow ui/i);
 		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable ticket-workflow-ui/);
+		assert.match(notifications.at(-1)?.message ?? "", /embedded-subagents/);
+		assert.match(notifications.at(-1)?.message ?? "", /embedded\.<slug> subagents/);
+		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable embedded-subagents/);
 		assert.doesNotMatch(notifications.at(-1)?.message ?? "", /run-tests-last/);
 	});
 });
@@ -387,6 +393,53 @@ test("experimental enable is idempotent, preserves settings, and does not clobbe
 		assert.match(notifications.at(-1)?.message ?? "", /No change to TLH experimental feature delta-follow-up-reviews/);
 		assert.doesNotMatch(notifications.at(-1)?.message ?? "", /Backup:/);
 	});
+});
+
+test("experimental enable then disable in one frozen millisecond creates collision-safe backups", SERIAL_TEST, async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
+	const settingsPath = join(fixture.agent, "settings.json");
+	const initialSettings = `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [LEGACY_UNKNOWN_FEATURE] } } }, null, 2)}\n`;
+	writeFileSync(settingsPath, initialSettings);
+	const frozenIso = "2026-07-19T16:17:18.901Z";
+	const realDate = globalThis.Date;
+	class FrozenDate extends Date {
+		constructor(value) {
+			super(value ?? frozenIso);
+		}
+		static now() {
+			return new realDate(frozenIso).getTime();
+		}
+	}
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		globalThis.Date = FrozenDate;
+		t.after(() => {
+			globalThis.Date = realDate;
+		});
+
+		const command = registeredExperimentalCommand();
+
+		let { ctx, notifications } = createCommandContext(fixture.dir);
+		await command.handler(`enable ${TICKET_WORKFLOW_UI_FEATURE}`, ctx);
+		assert.match(notifications.at(-1)?.message ?? "", /settings\.json\.bak-2026-07-19T16-17-18-901Z/);
+
+		({ ctx, notifications } = createCommandContext(fixture.dir));
+		await command.handler(`disable ${TICKET_WORKFLOW_UI_FEATURE}`, ctx);
+		assert.match(notifications.at(-1)?.message ?? "", /settings\.json\.bak-2026-07-19T16-17-18-901Z-1/);
+	});
+
+	const written = JSON.parse(readFileSync(settingsPath, "utf8"));
+	assert.deepEqual(written.tlh.experimental.enabledFeatures, [LEGACY_UNKNOWN_FEATURE]);
+
+	const backups = readdirSync(fixture.agent)
+		.filter((entry) => entry.startsWith("settings.json.bak-"))
+		.sort();
+	assert.deepEqual(backups, ["settings.json.bak-2026-07-19T16-17-18-901Z", "settings.json.bak-2026-07-19T16-17-18-901Z-1"]);
+	assert.equal(readFileSync(join(fixture.agent, backups[0]), "utf8"), initialSettings);
+	assert.equal(
+		readFileSync(join(fixture.agent, backups[1]), "utf8"),
+		`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [LEGACY_UNKNOWN_FEATURE, TICKET_WORKFLOW_UI_FEATURE] } } }, null, 2)}\n`,
+	);
 });
 
 test("experimental disable and normal-Pi refusal follow isolated settings rules", SERIAL_TEST, async (t) => {

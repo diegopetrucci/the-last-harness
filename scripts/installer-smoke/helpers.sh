@@ -381,12 +381,12 @@ EOF_FAKE_PRESENT_PI
 make_fake_stage1_support_root() {
   local root="$1"
   local manifest_file="${root}/.fake-stage1-support-manifest"
-  local requirement relative_path
+  local _ relative_path
   mkdir -p "${root}"
   cp "${ROOT_DIR}/install.sh" "${root}/install.sh"
   chmod +x "${root}/install.sh"
   extract_stage0_support_manifest false >"${manifest_file}"
-  while IFS='|' read -r requirement relative_path; do
+  while IFS='|' read -r _ relative_path; do
     [[ -n "${relative_path}" ]] || continue
     mkdir -p "${root}/$(dirname "${relative_path}")"
     : >"${root}/${relative_path}"
@@ -424,7 +424,7 @@ NODE_STAGE0_VARIANT
 make_fake_remote_stage1_support_root() {
   local root="$1"
   local manifest_file="${root}/.fake-remote-stage1-support-manifest"
-  local requirement relative_path
+  local _ relative_path
   local -a compatibility_paths=(
     "config/librarian.defaults.json"
     "scripts/tlh-install-query.mjs"
@@ -436,7 +436,7 @@ make_fake_remote_stage1_support_root() {
   chmod +x "${root}/install.sh"
 
   extract_stage0_support_manifest false >"${manifest_file}"
-  while IFS='|' read -r requirement relative_path; do
+  while IFS='|' read -r _ relative_path; do
     [[ -n "${relative_path}" ]] || continue
     mkdir -p "${root}/$(dirname "${relative_path}")"
     cp "${ROOT_DIR}/${relative_path}" "${root}/${relative_path}"

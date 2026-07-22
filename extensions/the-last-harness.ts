@@ -1,5 +1,7 @@
-import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { registerTlhActivityReporters } from "./the-last-harness/activity-reporters.js";
+import { registerTlhEffectiveActivityTracker } from "./the-last-harness/activity-tracker.js";
 import { registerToggleTlhGitAttributionCommand } from "./the-last-harness/attribution.js";
 import { TLH_HEADER_TOGGLE_SHORTCUT } from "./the-last-harness/constants.js";
 import { createTlhAutocompleteProvider } from "./the-last-harness/autocomplete.js";
@@ -19,13 +21,18 @@ import { getTlhStartupTip } from "./the-last-harness/startup-tip.js";
 import { createLazyTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage-facade.js";
 import { registerSubagentSettingsCommand } from "./the-last-harness/subagent-settings.js";
 import { registerLazyTlhTicketWorkflowUi } from "./the-last-harness/ticket-workflow-ui-facade.js";
-import { getTlhUsageLimitsConfig, registerUsageCommand, shouldShowTlhUsageWeekly } from "./the-last-harness/usage-limits.js";
-import { getTlhHeaderUpdate, maybeNotifyAvailableTlhUpdate } from "./the-last-harness/update-check.js";
+import {
+	getCachedTlhUsageWeeklyVisibility,
+	refreshCachedTlhUsageWeeklyVisibility,
+	registerUsageCommand,
+} from "./the-last-harness/usage-limits.js";
+import { getTlhHeaderUpdate, maybeNotifyAvailableTlhUpdate, persistTlhLastSeenVersion } from "./the-last-harness/update-check.js";
 import { registerVersionCommand } from "./the-last-harness/version.js";
 import type { StartupResources, TlhUsageRefreshOptions } from "./the-last-harness/types.js";
 
 const REVIEW_COMMAND_DESCRIPTION = "Review code changes via an interactive mode picker";
 const TOKENS_COMMAND_DESCRIPTION = "Generate and open a local TLH token-spend report";
+const SESSION_LIMIT_REPORT_COMMAND_DESCRIPTION = "Generate and open a local TLH session-limit usage report across all in-window sessions";
 const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION = "Open a native annotation window for the latest assistant message";
 const TLH_CHANGELOG_COMMAND_DESCRIPTION = "Show TLH release notes from the packaged changelog";
 
@@ -47,9 +54,50 @@ function createRetryableLazyImport<TModule>(loader: () => Promise<TModule>): () 
 	};
 }
 
+const EMPTY_STARTUP_RESOURCES: StartupResources = { context: [], skills: [], prompts: [], extensions: [], themes: [] };
+
+type DeferredStartupTaskScheduler = (task: () => void) => void;
+type StartupResourceCollector = typeof collectStartupResources;
+
+let scheduleDeferredStartupTask: DeferredStartupTaskScheduler = (task) => {
+	setImmediate(task);
+};
+let startupResourceCollector: StartupResourceCollector = collectStartupResources;
+
+export const __testing = {
+	setDeferredStartupTaskSchedulerForTests(scheduler: DeferredStartupTaskScheduler) {
+		scheduleDeferredStartupTask = scheduler;
+	},
+	setStartupResourceCollectorForTests(collector: StartupResourceCollector) {
+		startupResourceCollector = collector;
+	},
+	reset() {
+		scheduleDeferredStartupTask = (task) => {
+			setImmediate(task);
+		};
+		startupResourceCollector = collectStartupResources;
+	},
+};
+
 export default function theLastHarness(pi: ExtensionAPI) {
+	let activeTlhHeader: ReturnType<typeof createTlhHeader> | undefined;
+	let activeTlhHeaderSessionToken = 0;
+	let activeTlhHeaderComponentId = 0;
+	let tlhHeaderComponentGeneration = 0;
+	const invalidateActiveTlhHeaderSession = () => {
+		activeTlhHeaderSessionToken += 1;
+		activeTlhHeader = undefined;
+		activeTlhHeaderComponentId = 0;
+		return activeTlhHeaderSessionToken;
+	};
+	pi.on("session_shutdown", () => {
+		invalidateActiveTlhHeaderSession();
+	});
+
 	installTlhModelVisibilityFilter();
 	registerContextCap(pi);
+	const activityTracker = registerTlhEffectiveActivityTracker(pi);
+	registerTlhActivityReporters(pi, activityTracker);
 
 	const primaryAgentRuntime = registerTlhPrimaryAgentRuntime(pi, { env: process.env });
 	if (!primaryAgentRuntime) {
@@ -61,10 +109,12 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	registerToggleTlhGitAttributionCommand(pi);
 	const loadReviewModule = createRetryableLazyImport(() => import("./the-last-harness/review.js"));
 	const loadTokensModule = createRetryableLazyImport(() => import("./the-last-harness/tokens.js"));
+	const loadSessionLimitReportModule = createRetryableLazyImport(() => import("./the-last-harness/session-limit-report.js"));
 	const loadAnnotateLastMessageModule = createRetryableLazyImport(() => import("./the-last-harness/annotate-last-message.js"));
 	const loadTlhChangelogModule = createRetryableLazyImport(() => import("./the-last-harness/changelog.js"));
 	let reviewCommandHandlerPromise: Promise<ReturnType<(typeof import("./the-last-harness/review.js"))["createReviewCommandHandler"]>> | undefined;
 	let tokensCommandHandlerPromise: Promise<ReturnType<(typeof import("./the-last-harness/tokens.js"))["createTokensCommandHandler"]>> | undefined;
+	let sessionLimitReportCommandHandlerPromise: Promise<ReturnType<(typeof import("./the-last-harness/session-limit-report.js"))["createSessionLimitReportCommandHandler"]>> | undefined;
 	let annotateLastMessageCommandPromise: Promise<ReturnType<(typeof import("./the-last-harness/annotate-last-message.js"))["buildAnnotateLastMessageCommand"]>> | undefined;
 	let tlhChangelogCommandHandlerPromise: Promise<(typeof import("./the-last-harness/changelog.js"))["handleTlhChangelogCommand"]> | undefined;
 	const getReviewCommandHandler = () => {
@@ -81,13 +131,28 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	const getTokensCommandHandler = () => {
 		if (!tokensCommandHandlerPromise) {
 			tokensCommandHandlerPromise = loadTokensModule()
-				.then((module) => module.createTokensCommandHandler(pi))
+				.then((module) => module.createTokensCommandHandler(pi, { getPrimaryAgentLabel: () => primaryAgentRuntime.currentPrimaryAgentLabel() }))
 				.catch((error) => {
 					tokensCommandHandlerPromise = undefined;
 					throw error;
 				});
 		}
 		return tokensCommandHandlerPromise;
+	};
+	const getSessionLimitReportCommandHandler = () => {
+		if (!sessionLimitReportCommandHandlerPromise) {
+			sessionLimitReportCommandHandlerPromise = loadSessionLimitReportModule()
+				.then((module) =>
+					module.createSessionLimitReportCommandHandler(pi, {
+						getSnapshot: (ctx) => subscriptionUsageService.getSnapshotForContext(ctx),
+					}),
+				)
+				.catch((error) => {
+					sessionLimitReportCommandHandlerPromise = undefined;
+					throw error;
+				});
+		}
+		return sessionLimitReportCommandHandlerPromise;
 	};
 	const getAnnotateLastMessageCommand = () => {
 		if (!annotateLastMessageCommandPromise) {
@@ -155,9 +220,15 @@ export default function theLastHarness(pi: ExtensionAPI) {
 			await handler(args, ctx);
 		},
 	});
+	pi.registerCommand("what-consumed-my-session-limit-and-tokens", {
+		description: SESSION_LIMIT_REPORT_COMMAND_DESCRIPTION,
+		handler: async (args, ctx) => {
+			const handler = await getSessionLimitReportCommandHandler();
+			await handler(args, ctx);
+		},
+	});
 	registerUsageCommand(pi);
 	registerVersionCommand(pi);
-	let activeTlhHeader: ReturnType<typeof createTlhHeader> | undefined;
 	pi.registerShortcut(TLH_HEADER_TOGGLE_SHORTCUT, {
 		description: "Toggle TLH startup header resources",
 		handler: (ctx) => {
@@ -185,7 +256,9 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", async (event, ctx) => {
+		const sessionToken = invalidateActiveTlhHeaderSession();
 		await primaryAgentRuntime.applySessionStart(ctx);
+		refreshCachedTlhUsageWeeklyVisibility(ctx.cwd);
 
 		if (!ctx.hasUI) {
 			return;
@@ -201,18 +274,14 @@ export default function theLastHarness(pi: ExtensionAPI) {
 
 		ctx.ui.addAutocompleteProvider(createTlhAutocompleteProvider);
 
-		let resources: StartupResources = { context: [], skills: [], prompts: [], extensions: [], themes: [] };
-		try {
-			resources = await collectStartupResources(ctx.cwd, {
-				projectTrusted: getActiveProjectTrustDecision(ctx),
-			});
-		} catch {
-			// Keep startup resilient. The header can still render without resource details.
-		}
-
+		const sessionState: {
+			resources: StartupResources;
+			header?: ReturnType<typeof createTlhHeader>;
+			requestRender?: () => void;
+		} = { resources: EMPTY_STARTUP_RESOURCES };
 		const headerUpdate = getTlhHeaderUpdate();
-		const installNotice = event.reason === "startup" ? readTlhInstallNotice() : undefined;
 		const startupTip = event.reason === "startup" ? getTlhStartupTip() : undefined;
+		const installNotice = readTlhInstallNotice();
 
 		if (typeof ctx.ui.setFooter === "function") {
 			ctx.ui.setFooter((tui, theme, footerData) => {
@@ -225,22 +294,54 @@ export default function theLastHarness(pi: ExtensionAPI) {
 				});
 				return createTlhFooter(pi, ctx, theme, () => primaryAgentRuntime.currentPrimaryAgentLabel(), footerData, {
 					subscriptionUsage: subscriptionUsageService,
-					shouldShowWeekly: () => shouldShowTlhUsageWeekly(getTlhUsageLimitsConfig(ctx.cwd)),
-				}, gitCache);
+					shouldShowWeekly: getCachedTlhUsageWeeklyVisibility,
+				}, gitCache, installNotice);
 			});
 		}
 		if (typeof ctx.ui.setHeader === "function") {
 			ctx.ui.setHeader((tui, theme) => {
-				const header = createTlhHeader(theme, resources, headerUpdate, installNotice, {
-					requestRender: () => tui.requestRender(),
+				const componentId = ++tlhHeaderComponentGeneration;
+				const requestRender = () => {
+					if (activeTlhHeaderSessionToken !== sessionToken || activeTlhHeaderComponentId !== componentId) {
+						return;
+					}
+					tui.requestRender();
+				};
+				const header = createTlhHeader(theme, sessionState.resources, headerUpdate, event.reason === "startup" ? installNotice : undefined, {
+					requestRender,
 					startupTip,
 				});
-				activeTlhHeader = header;
+				sessionState.header = header;
+				sessionState.requestRender = requestRender;
+				if (activeTlhHeaderSessionToken === sessionToken) {
+					activeTlhHeader = header;
+					activeTlhHeaderComponentId = componentId;
+				}
 				return header;
 			});
 		}
 
+		scheduleDeferredStartupTask(() => {
+			persistTlhLastSeenVersion();
+			void maybeNotifyAvailableTlhUpdate(ctx, {
+				canNotify: () => activeTlhHeaderSessionToken === sessionToken,
+			}).catch(() => undefined);
+			void startupResourceCollector(ctx.cwd, {
+				projectTrusted: getActiveProjectTrustDecision(ctx),
+			})
+				.then((resources) => {
+					if (activeTlhHeaderSessionToken !== sessionToken) {
+						return;
+					}
+					sessionState.resources = resources;
+					sessionState.header?.setResources(resources);
+					sessionState.requestRender?.();
+				})
+				.catch(() => {
+					// Keep startup resilient. The header can still render without resource details.
+				});
+		});
+
 		refreshSubscriptionUsage(ctx);
-		void maybeNotifyAvailableTlhUpdate(ctx).catch(() => undefined);
 	});
 }
