@@ -21,4 +21,6 @@ npm-debug.log*
 !.pi/prompts/bump-all-direct-dependencies-and-open-a-pr.md
 *.tmp
 PLAN.md
+
+# Local subagent orchestration artifacts (transient, not shipped)
 .pi-subagents/
