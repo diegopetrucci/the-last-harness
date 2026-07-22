@@ -141,6 +141,46 @@ test("subagent-settings set preserves unrelated settings and applies on the next
 	});
 });
 
+test("subagent tool-call runtime honors persisted false model and thinking sentinels", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
+	const pi = createPiHarness();
+	registerTlhPrimaryAgentRuntime(pi, { env: {} });
+	const toolCall = subagentToolHandler(pi);
+	assert.equal(typeof toolCall, "function");
+	writeFileSync(
+		join(fixture.agent, "settings.json"),
+		`${JSON.stringify({
+			subagents: {
+				agentOverrides: {
+					developer: { model: false },
+					librarian: { thinking: false },
+				},
+			},
+		}, null, 2)}\n`,
+	);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { ctx, notifications } = createCommandContext({ cwd: fixture.cwd });
+		const runtimeCtx = {
+			cwd: fixture.cwd,
+			sessionManager: { getBranch: () => [] },
+			ui: ctx.ui,
+			modelRegistry: ctx.modelRegistry,
+			model: ctx.model,
+		};
+		const inheritedEvent = { toolName: "subagent", input: { agent: "developer", prompt: "Implement" } };
+		await toolCall(inheritedEvent, runtimeCtx);
+		assert.equal(Object.hasOwn(inheritedEvent.input, "model"), false);
+		assert.equal(Object.hasOwn(inheritedEvent.input, "fallbackModels"), false);
+		assert.equal(Object.hasOwn(inheritedEvent.input, "modelFallbackNotice"), false);
+
+		const disabledThinkingEvent = { toolName: "subagent", input: { agent: "librarian", prompt: "Research" } };
+		await toolCall(disabledThinkingEvent, runtimeCtx);
+		assert.equal(disabledThinkingEvent.input.model, "openai-codex/gpt-5.4:off");
+		assert.deepEqual(notifications, []);
+	});
+});
+
 test("subagent-settings status reports effective overrides and fixed-model independence risk", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
 	const pi = createPiHarness();
@@ -408,6 +448,88 @@ test("interactive model changes validate the persisted effort before writing", a
 	});
 });
 
+test("subagent-settings status and picker show false sentinels with inherited model and effective off", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
+	const pi = createPiHarness();
+	registerSubagentSettingsCommand(pi);
+	const command = pi.commands.get("subagent-settings");
+	writeFileSync(
+		join(fixture.agent, "settings.json"),
+		`${JSON.stringify({
+			subagents: {
+				agentOverrides: {
+					developer: { model: false, note: "keep" },
+					librarian: { model: false, thinking: false },
+				},
+			},
+		}, null, 2)}\n`,
+	);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const inheritedRun = createCommandContext({ cwd: fixture.cwd });
+		await command.handler("status developer", inheritedRun.ctx);
+		const inheritedMessage = inheritedRun.notifications.at(-1)?.message ?? "";
+		assert.match(inheritedMessage, /override model=disabled \(false\), effort=default/);
+		assert.match(inheritedMessage, /effective openai-codex\/gpt-5\.4:medium/);
+
+		const disabledRun = createCommandContext({ cwd: fixture.cwd });
+		await command.handler("status librarian", disabledRun.ctx);
+		const disabledMessage = disabledRun.notifications.at(-1)?.message ?? "";
+		assert.match(disabledMessage, /override model=disabled \(false\), effort=disabled \(false\)/);
+		assert.match(disabledMessage, /effective openai-codex\/gpt-5\.4:off/);
+		assert.doesNotMatch(disabledMessage, /ignored unsupported|independence is reduced/i);
+
+		const pickerRun = createCommandContext({ cwd: fixture.cwd });
+		await command.handler("", pickerRun.ctx);
+		const developerOption = pickerRun.selects[0]?.options.find((option) => option.includes("developer"));
+		const librarianOption = pickerRun.selects[0]?.options.find((option) => option.includes("librarian"));
+		assert.match(developerOption ?? "", /^● developer — openai-codex\/gpt-5\.4:medium$/);
+		assert.match(librarianOption ?? "", /^● librarian — openai-codex\/gpt-5\.4:off$/);
+	});
+});
+
+test("subagent-settings set and field reset preserve unrelated false sentinels", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
+	const pi = createPiHarness();
+	registerSubagentSettingsCommand(pi);
+	const command = pi.commands.get("subagent-settings");
+	const settingsPath = join(fixture.agent, "settings.json");
+	writeFileSync(
+		settingsPath,
+		`${JSON.stringify({
+			subagents: {
+				agentOverrides: {
+					developer: { model: false, note: "keep-model" },
+					"code-reviewer": { thinking: false, note: "keep-thinking" },
+				},
+			},
+		}, null, 2)}\n`,
+	);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { ctx } = createCommandContext({ cwd: fixture.cwd });
+		await command.handler("set developer effort high", ctx);
+		await command.handler("set code-reviewer model anthropic/claude-opus-4-8", ctx);
+		let settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+		assert.deepEqual(settings.subagents.agentOverrides.developer, {
+			model: false,
+			thinking: "high",
+			note: "keep-model",
+		});
+		assert.deepEqual(settings.subagents.agentOverrides["code-reviewer"], {
+			model: "anthropic/claude-opus-4-8",
+			thinking: false,
+			note: "keep-thinking",
+		});
+
+		await command.handler("reset developer effort", ctx);
+		await command.handler("reset code-reviewer model", ctx);
+		settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+		assert.deepEqual(settings.subagents.agentOverrides.developer, { model: false, note: "keep-model" });
+		assert.deepEqual(settings.subagents.agentOverrides["code-reviewer"], { thinking: false, note: "keep-thinking" });
+	});
+});
+
 test("subagent-settings status distinguishes stored nonstandard values from defaults", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
 	const pi = createPiHarness();
@@ -422,7 +544,7 @@ test("subagent-settings status distinguishes stored nonstandard values from defa
 		const { ctx, notifications } = createCommandContext({ cwd: fixture.cwd });
 		await command.handler("status developer", ctx);
 		const message = notifications.at(-1)?.message ?? "";
-		assert.match(message, /override model=stored nonstandard\/disabled \(false\)/);
+		assert.match(message, /override model=disabled \(false\)/);
 		assert.match(message, /effort=stored nonstandard\/disabled \("turbo"\)/);
 		assert.doesNotMatch(message, /override model=default, effort=default/);
 		const settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));

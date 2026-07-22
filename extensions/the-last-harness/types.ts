@@ -123,8 +123,8 @@ export type TlhRtkConfig = {
 };
 
 export type TlhSubagentOverride = {
-	model?: string;
-	thinking?: string;
+	model?: string | false;
+	thinking?: string | false;
 };
 
 export type TlhSubagentsConfig = {

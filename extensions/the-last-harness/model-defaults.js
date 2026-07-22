@@ -5,8 +5,11 @@ const ANTHROPIC_PROVIDERS = new Set(["anthropic"]);
 const MODEL_SUFFIX_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
 const OPPOSITE_PROVIDER_FALLBACK_NOTICE = "TLH fell back to a same-provider review model; review independence is reduced.";
 export function parseProviderModelReference(model) {
-    const slash = model?.indexOf("/") ?? -1;
-    if (!model || slash <= 0 || slash === model.length - 1) {
+    if (typeof model !== "string") {
+        return undefined;
+    }
+    const slash = model.indexOf("/");
+    if (slash <= 0 || slash === model.length - 1) {
         return undefined;
     }
     return { provider: model.slice(0, slash), id: model.slice(slash + 1) };
@@ -57,6 +60,9 @@ export function findAvailableProviderModel(availableModels, model) {
     const exactModel = findAvailableProviderModelReference(availableModels, parseProviderModelReference(model));
     if (exactModel) {
         return exactModel;
+    }
+    if (typeof model !== "string") {
+        return undefined;
     }
     const parsed = parseProviderModelReference(splitKnownThinkingSuffix(model).baseModel);
     if (!parsed) {
@@ -176,14 +182,16 @@ function selectThinkingForProvider(agent, provider) {
 function resolveStoredSubagentThinking(agent, model, override) {
     const rawThinking = override?.thinking;
     const bundledThinking = rawThinking === undefined ? selectThinkingForProvider(agent, model?.provider) : undefined;
-    const thinking = rawThinking && isThinkingLevel(rawThinking)
-        ? rawThinking
-        : bundledThinking;
+    const thinking = rawThinking === false
+        ? "off"
+        : typeof rawThinking === "string" && isThinkingLevel(rawThinking)
+            ? rawThinking
+            : bundledThinking;
     if (!thinking) {
         return rawThinking === undefined
             ? {}
             : {
-                warning: `TLH ignored unsupported stored minor-agent effort "${rawThinking}" for ${agent?.name ?? "this subagent"}; using bundled defaults for this run.`,
+                warning: `TLH ignored unsupported stored minor-agent effort "${String(rawThinking)}" for ${agent?.name ?? "this subagent"}; using bundled defaults for this run.`,
             };
     }
     if (!model) {
@@ -244,6 +252,16 @@ export function resolveProviderAwareSubagentResolution(agent, availableModels, c
             model: overrideModel,
             thinking: thinkingResolution.thinking,
             independence: resolveIndependence(agent, overrideModel, currentProvider),
+            warning: thinkingResolution.warning,
+        };
+    }
+    if (override?.model === false) {
+        const inheritedModel = findAvailableProviderModelReference(availableModels, currentModel);
+        const thinkingResolution = resolveStoredSubagentThinking(agent, inheritedModel, override);
+        return {
+            model: inheritedModel,
+            thinking: thinkingResolution.thinking,
+            independence: resolveIndependence(agent, inheritedModel, currentProvider),
             warning: thinkingResolution.warning,
         };
     }
@@ -319,6 +337,9 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
         }
         target.model = modelWithThinking;
         return 1;
+    }
+    if (override?.model === false && override.thinking === undefined) {
+        return 0;
     }
     const resolution = resolveProviderAwareSubagentResolution(agent, availableModels, currentProvider, currentModel, override);
     if (resolution.warning && agentName) {

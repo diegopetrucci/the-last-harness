@@ -96,7 +96,7 @@ function availableEditableThinkingLevels(model: AvailableModel | undefined): Edi
 }
 
 function fixedModelWarning(agentName: string, override: TlhSubagentOverride | undefined): string | undefined {
-	return override?.model && INDEPENDENCE_SENSITIVE_AGENTS.has(agentName) ? INDEPENDENCE_WARNING : undefined;
+	return typeof override?.model === "string" && INDEPENDENCE_SENSITIVE_AGENTS.has(agentName) ? INDEPENDENCE_WARNING : undefined;
 }
 
 function notifyWriteResult(
@@ -273,13 +273,13 @@ function effectiveModelForEffort(
 	models: readonly AvailableModel[],
 	ctx: StatusContext,
 ): AvailableModel | undefined {
-	if (override?.model) {
-		const overrideModel = findAvailableProviderModel(models, override.model);
-		if (overrideModel) {
-			return overrideModel;
-		}
-	}
-	return resolveProviderAwareSubagentResolution(agent, models, ctx.model?.provider, currentModelReference(ctx)).model;
+	return resolveProviderAwareSubagentResolution(
+		agent,
+		models,
+		ctx.model?.provider,
+		currentModelReference(ctx),
+		override,
+	).model;
 }
 
 function formatEffectiveModelAndThinking(model: ProviderModelReference | undefined, thinking: string | undefined): string {
@@ -295,6 +295,9 @@ function formatStoredOverrideValue(override: TlhSubagentOverride | undefined, fi
 		return "default";
 	}
 	const value = override[field];
+	if (value === false) {
+		return "disabled (false)";
+	}
 	const isStandard = field === "model"
 		? typeof value === "string" && parseProviderModelReference(value) !== undefined
 		: typeof value === "string" && isEditableThinkingLevel(value);
@@ -308,13 +311,13 @@ function formatStoredOverrideValue(override: TlhSubagentOverride | undefined, fi
 function formatStatusForAgent(agent: SubagentMetadata, override: TlhSubagentOverride | undefined, ctx: StatusContext): string {
 	const models = availableModels(ctx);
 	const baseResolution = resolveProviderAwareSubagentResolution(agent, models, ctx.model?.provider, currentModelReference(ctx));
-	const resolvableOverride: TlhSubagentOverride | undefined = override
-		? {
-			model: typeof override.model === "string" ? override.model : undefined,
-			thinking: typeof override.thinking === "string" ? override.thinking : undefined,
-		}
-		: undefined;
-	const overrideResolution = resolveProviderAwareSubagentResolution(agent, models, ctx.model?.provider, currentModelReference(ctx), resolvableOverride);
+	const overrideResolution = resolveProviderAwareSubagentResolution(
+		agent,
+		models,
+		ctx.model?.provider,
+		currentModelReference(ctx),
+		override,
+	);
 	const overrideModel = formatStoredOverrideValue(override, "model");
 	const overrideThinking = formatStoredOverrideValue(override, "thinking");
 	const warnings = [fixedModelWarning(agent.name, override), overrideResolution.warning].filter(
@@ -433,7 +436,8 @@ function subagentPickerOption(agent: SubagentMetadata, override: TlhSubagentOver
 	const models = availableModels(ctx);
 	const effective = resolveProviderAwareSubagentResolution(agent, models, ctx.model?.provider, currentModelReference(ctx), override);
 	const effectiveLabel = formatEffectiveModelAndThinking(effective.model, effective.thinking);
-	const overrideMarker = override?.model || override?.thinking ? "●" : "○";
+	const hasOverride = Boolean(override && (Object.hasOwn(override, "model") || Object.hasOwn(override, "thinking")));
+	const overrideMarker = hasOverride ? "●" : "○";
 	const riskMarker = fixedModelWarning(agent.name, override) ? " ⚠ independence" : "";
 	return `${overrideMarker} ${agent.name} — ${effectiveLabel}${riskMarker}`;
 }
@@ -541,8 +545,13 @@ async function runInteractivePicker(
 
 		const model = effectiveModelForEffort(agent, override, models, ctx);
 		const supportedLevels = availableEditableThinkingLevels(model);
+		const currentThinkingOverride = override?.thinking === false
+			? "off"
+			: typeof override?.thinking === "string"
+				? override.thinking
+				: undefined;
 		const optionToThinking = new Map(
-			supportedLevels.map((level) => [thinkingPickerOption(level, typeof override?.thinking === "string" ? override.thinking : undefined), level] as const),
+			supportedLevels.map((level) => [thinkingPickerOption(level, currentThinkingOverride), level] as const),
 		);
 		const selectedThinkingOption = await ctx.ui.select(`Pick effort for ${agentName}`, [...optionToThinking.keys()]);
 		if (!selectedThinkingOption) {

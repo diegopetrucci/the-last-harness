@@ -499,6 +499,95 @@ test("explicit known thinking suffix wins over persisted thinking", () => {
 });
 
 
+test("model false leaves an implicit dispatch and caller fallback fields untouched", () => {
+	const input = {
+		agent: "code-reviewer",
+		task: "Review",
+		fallbackModels: ["custom/reviewer"],
+		modelFallbackNotice: "caller notice",
+	};
+	assert.equal(
+		applyProviderAwareSubagentModels(
+			input,
+			agents,
+			[...reasoningAnthropicAvailable, ...reasoningCodexAvailable],
+			"anthropic",
+			{ provider: "anthropic", id: "claude-opus-4-8" },
+			{ agentOverrides: new Map([["code-reviewer", { model: false }]]) },
+		),
+		0,
+	);
+	assert.equal(Object.hasOwn(input, "model"), false);
+	assert.deepEqual(input.fallbackModels, ["custom/reviewer"]);
+	assert.equal(input.modelFallbackNotice, "caller notice");
+});
+
+
+test("false and saved thinking use the inherited current model when model is false", () => {
+	for (const [thinking, suffix] of [[false, "off"], ["high", "high"]]) {
+		const warnings = [];
+		const input = { agent: "developer", task: "Implement", fallbackModels: ["caller/fallback"] };
+		assert.equal(
+			applyProviderAwareSubagentModels(
+				input,
+				agents,
+				reasoningCodexAvailable,
+				"openai-codex",
+				{ provider: "openai-codex", id: "gpt-5.4" },
+				{
+					agentOverrides: new Map([["developer", { model: false, thinking }]]),
+					onWarning: (warning) => warnings.push(warning.message),
+				},
+			),
+			1,
+		);
+		assert.equal(input.model, `openai-codex/gpt-5.4:${suffix}`);
+		assert.deepEqual(input.fallbackModels, ["caller/fallback"]);
+		assert.deepEqual(warnings, []);
+	}
+});
+
+
+test("thinking false applies off without warning while explicit caller model and suffix precedence remain intact", () => {
+	const warnings = [];
+	const implicitInput = { agent: "developer", task: "Implement" };
+	assert.equal(
+		applyProviderAwareSubagentModels(implicitInput, agents, reasoningCodexAvailable, "openai-codex", undefined, {
+			agentOverrides: new Map([["developer", { thinking: false }]]),
+			onWarning: (warning) => warnings.push(warning.message),
+		}),
+		1,
+	);
+	assert.equal(implicitInput.model, "openai-codex/gpt-5.4:off");
+
+	const explicitInput = {
+		agent: "developer",
+		task: "Implement",
+		model: "openai-codex/gpt-5.4",
+		fallbackModels: ["caller/fallback"],
+	};
+	assert.equal(
+		applyProviderAwareSubagentModels(explicitInput, agents, reasoningCodexAvailable, "openai-codex", undefined, {
+			agentOverrides: new Map([["developer", { model: false, thinking: false }]]),
+			onWarning: (warning) => warnings.push(warning.message),
+		}),
+		1,
+	);
+	assert.equal(explicitInput.model, "openai-codex/gpt-5.4:off");
+	assert.deepEqual(explicitInput.fallbackModels, ["caller/fallback"]);
+
+	const suffixedInput = { agent: "developer", task: "Implement", model: "openai-codex/gpt-5.4:high" };
+	assert.equal(
+		applyProviderAwareSubagentModels(suffixedInput, agents, reasoningCodexAvailable, "openai-codex", undefined, {
+			agentOverrides: new Map([["developer", { thinking: false }]]),
+		}),
+		0,
+	);
+	assert.equal(suffixedInput.model, "openai-codex/gpt-5.4:high");
+	assert.deepEqual(warnings, []);
+});
+
+
 test("persisted minor-agent overrides win over bundled defaults and apply supported thinking suffixes", () => {
 	const overrideAgents = new Map([[developer.name, developer]]);
 	const input = { agent: "developer", task: "Implement the ticket" };
