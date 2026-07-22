@@ -289,3 +289,19 @@ test("isTlhOwnedBackupFilename: rejects filenames with no timestamp or wrong bas
 	assert.equal(isTlhOwnedBackupFilename("settings.json.backup-2026-07-11T17-01-16-155Z", "keybindings.json"), false);
 	assert.equal(isTlhOwnedBackupFilename("", "settings.json"), false);
 });
+
+test("isTlhOwnedBackupFilename: rejects shape-valid but semantically invalid timestamps", () => {
+	// Month 99 and hour 99 are shape-valid (pass BACKUP_TIMESTAMP_FULL) but not
+	// calendar-valid — parseBackupTimestamp returns undefined for them, so
+	// isTlhOwnedBackupFilename must return false (regression guard).
+	assert.equal(
+		isTlhOwnedBackupFilename("settings.json.backup-2026-99-99T99-99-99Z", "settings.json"),
+		false,
+		"shape-valid but semantically invalid timestamp (no marker) must be rejected",
+	);
+	assert.equal(
+		isTlhOwnedBackupFilename("settings.json.backup-before-install-2026-99-99T99-99-99Z", "settings.json"),
+		false,
+		"shape-valid but semantically invalid timestamp (known marker) must be rejected",
+	);
+});

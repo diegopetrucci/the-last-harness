@@ -284,6 +284,13 @@ const BACKUP_TIMESTAMP_FULL = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(?:-\d{3})?Z$
  *   `<baseName>.backup-<timestamp>`               (empty/no marker)
  *   `<baseName>.backup-<knownMarker>-<timestamp>`  (named marker)
  *
+ * Ownership requires **both**:
+ *   1. The timestamp occupies the exact expected position with the correct shape
+ *      (guaranteed by BACKUP_TIMESTAMP_FULL – shape-only regex anchored to the
+ *      full suffix so no marker prefix can bleed into the match).
+ *   2. The timestamp is semantically valid (i.e. parseBackupTimestamp returns a
+ *      Date, ruling out impossible calendar values like month 99).
+ *
  * A file with any other marker segment – e.g.
  *   `settings.json.backup-my-personal-copy-2026-07-11T17-01-16-155Z`
  * – returns false and must not be touched by stale-backup cleanup.
@@ -297,7 +304,7 @@ export function isTlhOwnedBackupFilename(filename: string, baseName: string): bo
 		const markerPrefix = marker ? `${marker}-` : "";
 		if (rest.startsWith(markerPrefix)) {
 			const tsPart = rest.slice(markerPrefix.length);
-			if (BACKUP_TIMESTAMP_FULL.test(tsPart)) return true;
+			if (BACKUP_TIMESTAMP_FULL.test(tsPart) && parseBackupTimestamp(filename) !== undefined) return true;
 		}
 	}
 	return false;

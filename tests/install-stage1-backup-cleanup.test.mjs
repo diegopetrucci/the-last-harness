@@ -277,6 +277,39 @@ test("cleanupOldSettingsBackups does not delete user files with no parseable tim
 	assert.ok(existsSync(join(agentDir, newer2)), "second-newest timestamped backup should be retained");
 });
 
+test("cleanupOldSettingsBackups does not delete user file with shape-valid but semantically invalid timestamp (PR-376 regression)", (t) => {
+	// Regression: a filename like `settings.json.backup-2026-99-99T99-99-99Z` passes
+	// the BACKUP_TIMESTAMP_FULL shape regex but parseBackupTimestamp returns undefined
+	// for it (month 99 is not a real calendar date). Before the fix, isTlhOwnedBackupFilename
+	// returned true for such filenames, making them cleanup candidates; because the
+	// timestamp was unparseable, selectExpiredBackups fell back to the file's mtime,
+	// potentially deleting an old user file.
+	const root = makeTempDir("tlh-backup-cleanup-invalid-ts-");
+	const agentDir = join(root, "agent");
+	mkdirSync(agentDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	// User-created file: correct shape but impossible calendar values.
+	const invalidTsFile = "settings.json.backup-2026-99-99T99-99-99Z";
+	writeFileSync(join(agentDir, invalidTsFile), "{\"custom\": true}", "utf8");
+
+	// Two newer TLH-owned backups that would push the invalid-ts file
+	// beyond keepNewest=2 under the old (broken) candidacy logic.
+	const newer1 = recentBackupName("settings.json", 1);
+	const newer2 = recentBackupName("settings.json", 2);
+	writeFileSync(join(agentDir, newer1), "{}", "utf8");
+	writeFileSync(join(agentDir, newer2), "{}", "utf8");
+
+	cleanupOldSettingsBackups(makeConfig(agentDir));
+
+	assert.ok(
+		existsSync(join(agentDir, invalidTsFile)),
+		"user file with shape-valid but semantically invalid timestamp must not be removed",
+	);
+	assert.ok(existsSync(join(agentDir, newer1)), "newest TLH backup should be retained");
+	assert.ok(existsSync(join(agentDir, newer2)), "second-newest TLH backup should be retained");
+});
+
 test("cleanupOldSettingsBackups does not delete user file with unknown marker and parseable trailing timestamp (Finding 1 regression)", (t) => {
 	// Regression for gh-368 Finding 1 (High): a file like
 	// `settings.json.backup-my-personal-copy-<timestamp>` previously matched the
