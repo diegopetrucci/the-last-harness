@@ -12,6 +12,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Fixed
 
 - OpenAI weekly/daily usage now shows days, not just hours.
+- Installer backup cleanup now only removes backups it created (exact TLH filename forms with an empty/`tlh-tickets`/`tlh-defaults`/`before-install` marker and a TLH timestamp), so a user-created file such as `settings.json.backup-my-personal-copy-<timestamp>` is no longer eligible for automatic deletion.
 
 ## [0.29.0] - 2026-07-12
 

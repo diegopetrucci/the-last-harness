@@ -865,8 +865,15 @@ function gitCheckoutPositionalArguments(args, shortOptionsWithValues = new Set()
 
 function gitCheckoutHasDestructivePathMode(args) {
 	const branchOptionsWithValues = new Set(["b", "B"]);
+	const positionals = gitCheckoutPositionalArguments(args, branchOptionsWithValues);
+	// '.' and '..' are unambiguous path operands — they cannot be branch names.
+	// Classify a checkout destructive when any positional is exactly '.' or '..'.
+	// Generic single bare operands (e.g. 'main', 'my-branch') remain ambiguous
+	// and are NOT classified destructive; only the >= 2-positional rule covers them.
+	const hasDotPath = positionals.some((p) => p === "." || p === "..");
 	return gitCheckoutHasPathspec(args)
-		|| gitCheckoutPositionalArguments(args, branchOptionsWithValues).length >= 2
+		|| hasDotPath
+		|| positionals.length >= 2
 		|| gitArgsContainFlag(args, "p", "--patch", branchOptionsWithValues)
 		|| ["--ours", "--theirs", "--pathspec-from-file"].some((flag) => (
 			gitArgsContainLongFlag(args, flag, branchOptionsWithValues)

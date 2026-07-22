@@ -276,3 +276,38 @@ test("cleanupOldSettingsBackups does not delete user files with no parseable tim
 	assert.ok(existsSync(join(agentDir, newer1)), "newest timestamped backup should be retained");
 	assert.ok(existsSync(join(agentDir, newer2)), "second-newest timestamped backup should be retained");
 });
+
+test("cleanupOldSettingsBackups does not delete user file with unknown marker and parseable trailing timestamp (Finding 1 regression)", (t) => {
+	// Regression for gh-368 Finding 1 (High): a file like
+	// `settings.json.backup-my-personal-copy-<timestamp>` previously matched the
+	// startsWith("settings.json.backup") + parseBackupTimestamp() filter because
+	// the timestamp regex is end-anchored and matches regardless of the marker.
+	// The stricter isTlhOwnedBackupFilename guard must reject any marker not in
+	// the known TLH set, even when a valid timestamp follows it.
+	const root = makeTempDir("tlh-backup-cleanup-unknown-marker-");
+	const agentDir = join(root, "agent");
+	mkdirSync(agentDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	// Personal backup: unknown marker "my-personal-copy" + a real TLH timestamp
+	// (old enough to be eligible by age if the filter were not strict).
+	const tsOld = oldBackupName("settings.json", 40).slice("settings.json.backup-".length);
+	const personalFile = `settings.json.backup-my-personal-copy-${tsOld}`;
+	writeFileSync(join(agentDir, personalFile), "{\"mine\": true}", "utf8");
+
+	// Two newer TLH-owned backups push the personal file beyond keepNewest=2
+	// in the old (broken) candidacy logic.
+	const newer1 = recentBackupName("settings.json", 1);
+	const newer2 = recentBackupName("settings.json", 2);
+	writeFileSync(join(agentDir, newer1), "{}", "utf8");
+	writeFileSync(join(agentDir, newer2), "{}", "utf8");
+
+	cleanupOldSettingsBackups(makeConfig(agentDir));
+
+	assert.ok(
+		existsSync(join(agentDir, personalFile)),
+		"personal backup with unknown marker must never be removed by cleanup",
+	);
+	assert.ok(existsSync(join(agentDir, newer1)), "newest TLH backup should be retained");
+	assert.ok(existsSync(join(agentDir, newer2)), "second-newest TLH backup should be retained");
+});

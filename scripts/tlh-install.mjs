@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { criticalGitSourceSpec, gitSourceInstallSource, packageSourceInstallDir, } from "./lib/tlh-install-package-source.mjs";
 import { assertProfilePathWithinAgent, assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, validateInstallerTargets, validateProfileRelativePath, } from "./lib/tlh-install-paths.mjs";
 import { packageIdentity, } from "./lib/default-extensions.mjs";
-import { assignRequiredEqualsValue, backupPathWithTimestamp, parseBackupTimestamp, renderShellWords, requiredValue, selectExpiredBackups, shellWord, } from "./lib/tlh-install-utils.mjs";
+import { assignRequiredEqualsValue, backupPathWithTimestamp, isTlhOwnedBackupFilename, renderShellWords, requiredValue, selectExpiredBackups, shellWord, } from "./lib/tlh-install-utils.mjs";
 import { TLH_SUBAGENT_PROMPTS, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, missingTlhSubagentPrompts, settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
 import { assertGitSourceTargetSafe, refreshGitCheckout, } from "./lib/tlh-install-git.mjs";
 import { findLocalRepoDir, ensureSupportFilesPrepared, installableSupportFilesArePrepared, preflightRuntimeSupportFiles, } from "./lib/tlh-install-support-files.mjs";
@@ -914,10 +914,8 @@ export function cleanupOldSettingsBackups(config) {
     // Keep only filenames that match TLH backup patterns AND carry a parseable
     // TLH timestamp. Files like `settings.json.backup-mynotes` share the prefix
     // but have no timestamp, so they must never be treated as deletion candidates.
-    const settingsCandidates = entries.filter((name) => name.startsWith("settings.json.backup") &&
-        parseBackupTimestamp(name) !== undefined);
-    const keybindingsCandidates = entries.filter((name) => name.startsWith("keybindings.json.backup") &&
-        parseBackupTimestamp(name) !== undefined);
+    const settingsCandidates = entries.filter((name) => isTlhOwnedBackupFilename(name, "settings.json"));
+    const keybindingsCandidates = entries.filter((name) => isTlhOwnedBackupFilename(name, "keybindings.json"));
     if (settingsCandidates.length === 0 && keybindingsCandidates.length === 0)
         return;
     // Determine which candidates are eligible for removal.
