@@ -1,5 +1,5 @@
 import { TLH_REPO } from "./constants.js";
-import { readTlhInstallState } from "./profile-state.js";
+import { readTlhInstallState, readTlhInstallStateAsync } from "./profile-state.js";
 const STABLE_TRACK = "latest-release";
 const VALID_TRACKS = new Set([STABLE_TRACK, "pinned-tag", "ref", "custom"]);
 const REF_REQUIRED_TRACKS = new Set([STABLE_TRACK, "pinned-tag", "ref"]);
@@ -107,6 +107,9 @@ export function classifyTlhInstallState(state) {
 }
 export function readTlhInstallNotice() {
     return classifyTlhInstallState(readTlhInstallState());
+}
+export async function readTlhInstallNoticeAsync() {
+    return classifyTlhInstallState(await readTlhInstallStateAsync());
 }
 export function formatTlhInstallNoticeTrackLabel(notice) {
     if (notice.kind === "unknown") {

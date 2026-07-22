@@ -221,8 +221,8 @@ export default function theLastHarness(pi) {
         ctx.ui.addAutocompleteProvider(createTlhAutocompleteProvider);
         const sessionState = { resources: EMPTY_STARTUP_RESOURCES };
         const headerUpdate = getTlhHeaderUpdate();
-        const installNotice = event.reason === "startup" ? readTlhInstallNotice() : undefined;
         const startupTip = event.reason === "startup" ? getTlhStartupTip() : undefined;
+        const installNotice = readTlhInstallNotice();
         if (typeof ctx.ui.setFooter === "function") {
             ctx.ui.setFooter((tui, theme, footerData) => {
                 subscriptionUsageService.registerFooterRenderRequest(ctx, () => tui.requestRender());
@@ -234,7 +234,7 @@ export default function theLastHarness(pi) {
                 return createTlhFooter(pi, ctx, theme, () => primaryAgentRuntime.currentPrimaryAgentLabel(), footerData, {
                     subscriptionUsage: subscriptionUsageService,
                     shouldShowWeekly: getCachedTlhUsageWeeklyVisibility,
-                }, gitCache);
+                }, gitCache, installNotice);
             });
         }
         if (typeof ctx.ui.setHeader === "function") {
@@ -246,7 +246,7 @@ export default function theLastHarness(pi) {
                     }
                     tui.requestRender();
                 };
-                const header = createTlhHeader(theme, sessionState.resources, headerUpdate, installNotice, {
+                const header = createTlhHeader(theme, sessionState.resources, headerUpdate, event.reason === "startup" ? installNotice : undefined, {
                     requestRender,
                     startupTip,
                 });
