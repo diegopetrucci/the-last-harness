@@ -271,6 +271,7 @@ function aggregateFile(
 			const existing = providerUsageMap.get(currentProvider);
 			if (existing) {
 				addUsage(existing.usage, usage, { turns: 1, assistantMessages: 1 });
+				existing.modelId = currentModelId;
 			} else {
 				const providerTotals = createUsageTotals();
 				addUsage(providerTotals, usage, { turns: 1, assistantMessages: 1 });
