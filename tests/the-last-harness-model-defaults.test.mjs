@@ -512,6 +512,54 @@ test("persisted minor-agent overrides win over bundled defaults and apply suppor
 });
 
 
+test("model-only overrides keep bundled effort only when the selected model supports it", () => {
+	const mediumDeveloper = { ...developer, thinking: "medium" };
+	const mediumDeveloperAgents = new Map([[mediumDeveloper.name, mediumDeveloper]]);
+	const available = [
+		{ provider: "openai-codex", id: "plain", reasoning: false },
+		{ provider: "openai-codex", id: "gpt-5.4", reasoning: true },
+	];
+
+	const nonReasoningResolution = resolveProviderAwareSubagentResolution(
+		mediumDeveloper,
+		available,
+		"openai-codex",
+		undefined,
+		{ model: "openai-codex/plain" },
+	);
+	assert.equal(nonReasoningResolution.model, available[0]);
+	assert.equal(nonReasoningResolution.thinking, "off");
+
+	const nonReasoningInput = { agent: "developer", task: "Implement the ticket" };
+	assert.equal(
+		applyProviderAwareSubagentModels(nonReasoningInput, mediumDeveloperAgents, available, "openai-codex", undefined, {
+			agentOverrides: new Map([["developer", { model: "openai-codex/plain" }]]),
+		}),
+		1,
+	);
+	assert.equal(nonReasoningInput.model, "openai-codex/plain:off");
+
+	const reasoningResolution = resolveProviderAwareSubagentResolution(
+		mediumDeveloper,
+		available,
+		"openai-codex",
+		undefined,
+		{ model: "openai-codex/gpt-5.4" },
+	);
+	assert.equal(reasoningResolution.model, available[1]);
+	assert.equal(reasoningResolution.thinking, "medium");
+
+	const reasoningInput = { agent: "developer", task: "Implement the ticket" };
+	assert.equal(
+		applyProviderAwareSubagentModels(reasoningInput, mediumDeveloperAgents, available, "openai-codex", undefined, {
+			agentOverrides: new Map([["developer", { model: "openai-codex/gpt-5.4" }]]),
+		}),
+		1,
+	);
+	assert.equal(reasoningInput.model, "openai-codex/gpt-5.4:medium");
+});
+
+
 test("persisted thinking suffix is applied to opposite-provider fallbacks", () => {
 	const input = { agent: "code-reviewer", task: "Review the diff" };
 	assert.equal(

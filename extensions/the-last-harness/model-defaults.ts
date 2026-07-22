@@ -296,11 +296,10 @@ function resolveStoredSubagentThinking<T extends ReasoningProviderModelReference
 	override: TlhSubagentOverride | undefined,
 ): { thinking?: ThinkingLevel; warning?: string } {
 	const rawThinking = override?.thinking;
+	const bundledThinking = rawThinking === undefined ? selectThinkingForProvider(agent, model?.provider) : undefined;
 	const thinking = rawThinking && isThinkingLevel(rawThinking)
 		? rawThinking
-		: rawThinking === undefined
-			? selectThinkingForProvider(agent, model?.provider)
-			: undefined;
+		: bundledThinking;
 	if (!thinking) {
 		return rawThinking === undefined
 			? {}
@@ -308,10 +307,18 @@ function resolveStoredSubagentThinking<T extends ReasoningProviderModelReference
 				warning: `TLH ignored unsupported stored minor-agent effort "${rawThinking}" for ${agent?.name ?? "this subagent"}; using bundled defaults for this run.`,
 			};
 	}
-	if (!override?.thinking || !model) {
+	if (!model) {
 		return { thinking };
 	}
-	if (!getAvailableThinkingLevels(model).includes(thinking) || !MODEL_SUFFIX_THINKING_LEVELS.includes(thinking)) {
+	const supportedLevels = getAvailableThinkingLevels(model);
+	if (rawThinking === undefined) {
+		return supportedLevels.includes(thinking) && MODEL_SUFFIX_THINKING_LEVELS.includes(thinking)
+			? { thinking }
+			: supportedLevels.includes("off")
+				? { thinking: "off" }
+				: {};
+	}
+	if (!supportedLevels.includes(thinking) || !MODEL_SUFFIX_THINKING_LEVELS.includes(thinking)) {
 		return {
 			warning: `TLH stored minor-agent effort "${thinking}" is not supported by ${formatProviderModelReference(model)}; using bundled defaults for this run.`,
 		};

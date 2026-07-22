@@ -163,6 +163,35 @@ test("subagent-settings status reports effective overrides and fixed-model indep
 	});
 });
 
+
+test("subagent-settings status shows effective off for model-only overrides on non-reasoning models", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
+	const pi = createPiHarness();
+	registerSubagentSettingsCommand(pi);
+	const command = pi.commands.get("subagent-settings");
+	assert.ok(command, "subagent-settings command should register");
+
+	writeFileSync(
+		join(fixture.agent, "settings.json"),
+		`${JSON.stringify({ subagents: { agentOverrides: { developer: { model: "openai-codex/plain" } } } }, null, 2)}\n`,
+	);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { ctx, notifications } = createCommandContext({
+			cwd: fixture.cwd,
+			modelRegistry: {
+				getAvailable: () => [
+					{ provider: "openai-codex", id: "gpt-5.4", reasoning: true },
+					{ provider: "openai-codex", id: "plain", reasoning: false },
+				],
+			},
+		});
+		await command.handler("status developer", ctx);
+		assert.match(notifications[0]?.message ?? "", /override model=openai-codex\/plain, effort=default/i);
+		assert.match(notifications[0]?.message ?? "", /effective openai-codex\/plain:off/i);
+	});
+});
+
 test("subagent-settings reset and reset-all only clear bundled model and effort fields", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
 	const pi = createPiHarness();
