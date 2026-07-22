@@ -9,7 +9,7 @@ during the `@diegopetrucci/pi-subagents` v0.34.0 intake and its follow-ups, and 
 still need a **live-session runtime check** on the bumped pin.
 
 The pin lives at `config/default-extensions.json` (`npm:@diegopetrucci/pi-subagents@0.31.8`)
-with mirroring assertions in `tests/default-extensions.test.mjs`. The pin has already been bumped
+with manifest-consistency/migration assertions in `tests/default-extensions.test.mjs` (the test derives its expected value from the manifest, so it would still pass if only the manifest changed). The pin has already been bumped
 (PRs #347 → 0.31.5, #367 → 0.31.7, #370 → 0.31.8); the live-session pass is what remains.
 
 Mark each item `[x]` once verified in a real TLH session on the bumped pin.
