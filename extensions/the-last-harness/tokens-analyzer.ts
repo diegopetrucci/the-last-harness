@@ -1402,3 +1402,29 @@ function resultContentChars(content: unknown): number {
 	}
 	return total;
 }
+
+// ---------------------------------------------------------------------------
+// Targeted exports for consumers (e.g. session-limit-report-aggregator)
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a zeroed {@link TlhUsageTotals} record.
+ * Exported for use by sibling modules that need to accumulate usage without
+ * duplicating the shape definition.
+ */
+export { createUsageTotals };
+
+/**
+ * Mutate `target` by adding the values in `usage`.
+ * Exported for use by sibling modules; see {@link TlhUsageTotals}.
+ */
+export { addUsage };
+
+/**
+ * Parse a raw `message.usage` value from a session entry into a
+ * {@link TlhUsageTotals}, normalising the many field-name variants produced
+ * by different providers. Returns `undefined` when `value` contains no
+ * recognisable usage fields.
+ * Exported for use by sibling modules.
+ */
+export { normalizeUsage };

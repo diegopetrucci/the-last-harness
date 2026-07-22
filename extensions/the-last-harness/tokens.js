@@ -147,10 +147,10 @@ export function buildTokensReportHtml(analysis, options = {}) {
         "</html>",
     ].join("");
 }
-function renderSection(title, body) {
+export function renderSection(title, body) {
     return `<section class="section"><h2>${escapeHtml(title)}</h2>${body}</section>`;
 }
-function renderMetricCard(title, value, detail) {
+export function renderMetricCard(title, value, detail) {
     return [
         '<article class="card">',
         `<p class="card-label">${escapeHtml(title)}</p>`,
@@ -159,7 +159,7 @@ function renderMetricCard(title, value, detail) {
         "</article>",
     ].join("");
 }
-function renderKeyValueGrid(items) {
+export function renderKeyValueGrid(items) {
     return [
         '<dl class="kv-grid">',
         ...items.flatMap(([label, value]) => [`<dt>${escapeHtml(label)}</dt>`, `<dd>${escapeHtml(value)}</dd>`]),
@@ -341,7 +341,7 @@ function renderIntercomSummary(targets) {
             : '<p class="empty">None observed.</p>',
     ].join("");
 }
-function renderTable(headers, rows, emptyMessage) {
+export function renderTable(headers, rows, emptyMessage) {
     if (rows.length === 0) {
         return `<p class="empty">${escapeHtml(emptyMessage)}</p>`;
     }
@@ -353,9 +353,9 @@ function renderTable(headers, rows, emptyMessage) {
         "</tbody></table></div>",
     ].join("");
 }
-function writeLocalTokensReport(sessionManager, html) {
+export function writeLocalTokensReport(sessionManager, html, fileName = REPORT_FILE_NAME) {
     const reportDirectory = createPrivateReportDirectory(preferredReportParent(sessionManager));
-    const reportPath = join(reportDirectory, REPORT_FILE_NAME);
+    const reportPath = join(reportDirectory, fileName);
     writeFileSync(reportPath, html, { encoding: "utf8", flag: "wx", mode: 0o600 });
     setPrivateMode(reportPath, 0o600);
     return { path: reportPath, directory: reportDirectory };
@@ -390,7 +390,7 @@ function createPrivateReportDirectory(preferredParent) {
     }
     throw lastError instanceof Error ? lastError : new Error("Could not create a private local report directory.");
 }
-async function openLocalReport(path) {
+export async function openLocalReport(path) {
     let lastError;
     for (const command of buildOpenReportCommands(path)) {
         try {
@@ -505,7 +505,7 @@ function formatErrorRate(errors, results) {
     }
     return PERCENT_FORMATTER.format(errors / results);
 }
-function escapeHtml(value) {
+export function escapeHtml(value) {
     return value
         .replaceAll("&", "&amp;")
         .replaceAll("<", "&lt;")
@@ -513,7 +513,7 @@ function escapeHtml(value) {
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#39;");
 }
-const TOKENS_REPORT_CSS = `
+export const TOKENS_REPORT_CSS = `
 :root {
 	color-scheme: light dark;
 	font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;

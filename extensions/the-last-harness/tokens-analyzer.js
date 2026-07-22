@@ -967,3 +967,6 @@ function resultContentChars(content) {
     }
     return total;
 }
+export { createUsageTotals };
+export { addUsage };
+export { normalizeUsage };

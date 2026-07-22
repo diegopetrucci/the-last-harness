@@ -23,6 +23,7 @@ import { getTlhHeaderUpdate, maybeNotifyAvailableTlhUpdate, persistTlhLastSeenVe
 import { registerVersionCommand } from "./the-last-harness/version.js";
 const REVIEW_COMMAND_DESCRIPTION = "Review code changes via an interactive mode picker";
 const TOKENS_COMMAND_DESCRIPTION = "Generate and open a local TLH token-spend report";
+const SESSION_LIMIT_REPORT_COMMAND_DESCRIPTION = "Generate and open a local TLH session-limit usage report across all in-window sessions";
 const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION = "Open a native annotation window for the latest assistant message";
 const TLH_CHANGELOG_COMMAND_DESCRIPTION = "Show TLH release notes from the packaged changelog";
 function getActiveProjectTrustDecision(ctx) {
@@ -87,10 +88,12 @@ export default function theLastHarness(pi) {
     registerToggleTlhGitAttributionCommand(pi);
     const loadReviewModule = createRetryableLazyImport(() => import("./the-last-harness/review.js"));
     const loadTokensModule = createRetryableLazyImport(() => import("./the-last-harness/tokens.js"));
+    const loadSessionLimitReportModule = createRetryableLazyImport(() => import("./the-last-harness/session-limit-report.js"));
     const loadAnnotateLastMessageModule = createRetryableLazyImport(() => import("./the-last-harness/annotate-last-message.js"));
     const loadTlhChangelogModule = createRetryableLazyImport(() => import("./the-last-harness/changelog.js"));
     let reviewCommandHandlerPromise;
     let tokensCommandHandlerPromise;
+    let sessionLimitReportCommandHandlerPromise;
     let annotateLastMessageCommandPromise;
     let tlhChangelogCommandHandlerPromise;
     const getReviewCommandHandler = () => {
@@ -114,6 +117,19 @@ export default function theLastHarness(pi) {
             });
         }
         return tokensCommandHandlerPromise;
+    };
+    const getSessionLimitReportCommandHandler = () => {
+        if (!sessionLimitReportCommandHandlerPromise) {
+            sessionLimitReportCommandHandlerPromise = loadSessionLimitReportModule()
+                .then((module) => module.createSessionLimitReportCommandHandler(pi, {
+                getSnapshot: (ctx) => subscriptionUsageService.getSnapshotForContext(ctx),
+            }))
+                .catch((error) => {
+                sessionLimitReportCommandHandlerPromise = undefined;
+                throw error;
+            });
+        }
+        return sessionLimitReportCommandHandlerPromise;
     };
     const getAnnotateLastMessageCommand = () => {
         if (!annotateLastMessageCommandPromise) {
@@ -177,6 +193,13 @@ export default function theLastHarness(pi) {
         description: TOKENS_COMMAND_DESCRIPTION,
         handler: async (args, ctx) => {
             const handler = await getTokensCommandHandler();
+            await handler(args, ctx);
+        },
+    });
+    pi.registerCommand("what-consumed-my-session-limit-and-tokens", {
+        description: SESSION_LIMIT_REPORT_COMMAND_DESCRIPTION,
+        handler: async (args, ctx) => {
+            const handler = await getSessionLimitReportCommandHandler();
             await handler(args, ctx);
         },
     });

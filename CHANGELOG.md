@@ -6,15 +6,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
-- The footer now shows a persistent `TLH <track>` line (dim `TLH ` prefix, warning-colored track label) at the bottom when TLH is running from a non-release track (pinned tag, ref, custom source, or unknown install). The notice is read once at session start (off the render path) so the footer never does file I/O while rendering.
-
-### Experimental
-
-- You can now add custom (non built-in) subagents. Ask TLH how to.
-
-### Changed
-
-- Bumped the critical `pi-subagents` pin to `npm:@diegopetrucci/pi-subagents@0.31.8`: the subagent tool is now fail-closed to the 8 TLH actions for every caller, `steer` is restored as the supported parent→child guidance action (groundwork for retiring `pi-intercom`), and the unused scheduler is unwired from startup.
+- [Experimental] You can now add custom (non built-in) subagents. Ask TLH how to.
+- New `/what-consumed-my-session-limit-and-tokens` command that generates and opens a local, private HTML report attributing token consumption across all TLH sessions (including subagent child sessions, across every project) within the current provider session-limit window (Anthropic 5-hour or OpenAI Codex session window, resolved from the subscription usage snapshot with a trailing-5h fallback). The report ranks sessions by in-window usage with per-provider totals and privacy/accuracy caveats, and embeds no transcript text or tool payloads.
 
 ### Fixed
 
