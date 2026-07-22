@@ -513,6 +513,7 @@ export class TlhSubscriptionUsageService {
     inFlight;
     activeCacheKeys;
     ineligibleCacheKeys;
+    refreshGenerations;
     constructor(options = {}) {
         this.fetch = options.fetch;
         this.now = typeof options.now === "function" ? options.now : () => Date.now();
@@ -524,6 +525,7 @@ export class TlhSubscriptionUsageService {
         this.inFlight = new Map();
         this.activeCacheKeys = new Map();
         this.ineligibleCacheKeys = new Map();
+        this.refreshGenerations = new Map();
     }
     snapshotForCacheKey(provider, cacheKey) {
         return this.activeCacheKeys.get(provider) === cacheKey ? this.snapshots.get(cacheKey) : undefined;
@@ -643,12 +645,15 @@ export class TlhSubscriptionUsageService {
         this.inFlight.clear();
         this.activeCacheKeys.clear();
         this.ineligibleCacheKeys.clear();
+        this.refreshGenerations.clear();
     }
     async refresh(ctx, options = {}) {
         const provider = ctx?.model?.provider;
         if (!isSupportedTlhSubscriptionUsageProvider(provider)) {
             return undefined;
         }
+        const generation = (this.refreshGenerations.get(provider) ?? 0) + 1;
+        this.refreshGenerations.set(provider, generation);
         const resolved = resolveTlhSubscriptionUsageProviderContext(ctx);
         if (resolved.status === "transient-unavailable") {
             return undefined;
@@ -670,6 +675,12 @@ export class TlhSubscriptionUsageService {
         }
         const nowMs = this.now();
         const targetResult = await resolveTlhSubscriptionUsageTarget(resolved);
+        if (this.refreshGenerations.get(provider) !== generation) {
+            const activeKey = this.activeCacheKeys.get(provider);
+            if (targetResult.status !== "resolved" || (activeKey !== undefined && activeKey !== targetResult.target.cacheKey)) {
+                return activeKey ? this.snapshotForCacheKey(provider, activeKey) : undefined;
+            }
+        }
         if (targetResult.status === "transient-unavailable") {
             if (legacyCredentialTarget) {
                 const resolvedActiveCacheKey = this.activeCacheKeys.get(provider);

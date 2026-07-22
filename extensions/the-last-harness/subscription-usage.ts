@@ -701,6 +701,7 @@ export class TlhSubscriptionUsageService {
 	inFlight: Map<string, Promise<TlhSubscriptionUsageSnapshot | undefined>>;
 	activeCacheKeys: Map<TlhSubscriptionUsageProvider, string>;
 	ineligibleCacheKeys: Map<TlhSubscriptionUsageProvider, string>;
+	refreshGenerations: Map<TlhSubscriptionUsageProvider, number>;
 
 	constructor(options: TlhSubscriptionUsageServiceOptions = {}) {
 		this.fetch = options.fetch;
@@ -713,6 +714,7 @@ export class TlhSubscriptionUsageService {
 		this.inFlight = new Map();
 		this.activeCacheKeys = new Map();
 		this.ineligibleCacheKeys = new Map();
+		this.refreshGenerations = new Map();
 	}
 
 	snapshotForCacheKey(provider: TlhSubscriptionUsageProvider, cacheKey: string): TlhSubscriptionUsageSnapshot | undefined {
@@ -850,6 +852,7 @@ export class TlhSubscriptionUsageService {
 		this.inFlight.clear();
 		this.activeCacheKeys.clear();
 		this.ineligibleCacheKeys.clear();
+		this.refreshGenerations.clear();
 	}
 
 	async refresh(
@@ -860,6 +863,9 @@ export class TlhSubscriptionUsageService {
 		if (!isSupportedTlhSubscriptionUsageProvider(provider)) {
 			return undefined;
 		}
+
+		const generation = (this.refreshGenerations.get(provider) ?? 0) + 1;
+		this.refreshGenerations.set(provider, generation);
 
 		const resolved = resolveTlhSubscriptionUsageProviderContext(ctx);
 		if (resolved.status === "transient-unavailable") {
@@ -886,6 +892,16 @@ export class TlhSubscriptionUsageService {
 		}
 		const nowMs = this.now();
 		const targetResult = await resolveTlhSubscriptionUsageTarget(resolved);
+		if (this.refreshGenerations.get(provider) !== generation) {
+			const activeKey = this.activeCacheKeys.get(provider);
+			// Bail only when a newer refresh has already established a different active
+			// account, or when resolution did not produce a concrete target.
+			// For same-account concurrent refreshes (same cacheKey, no active key yet),
+			// fall through so the existing in-flight deduplication path handles it.
+			if (targetResult.status !== "resolved" || (activeKey !== undefined && activeKey !== targetResult.target.cacheKey)) {
+				return activeKey ? this.snapshotForCacheKey(provider, activeKey) : undefined;
+			}
+		}
 		if (targetResult.status === "transient-unavailable") {
 			if (legacyCredentialTarget) {
 				// Legacy path: check whether the stored credential has changed

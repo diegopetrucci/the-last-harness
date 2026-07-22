@@ -1325,3 +1325,131 @@ test("Pi 0.81: malformed JWT tokens do not set ChatGPT-Account-Id header and do 
 		"impossible payload length: no ChatGPT-Account-Id header",
 	);
 });
+
+// ---------------------------------------------------------------------------
+// Generation guard: out-of-order async credential resolution
+// ---------------------------------------------------------------------------
+
+test("generation guard: single refresh activates and caches correctly (sanity)", async () => {
+	const accessToken = randomUUID();
+	let fetchCalls = 0;
+	const service = createTlhSubscriptionUsageService({
+		now: () => NOW_MS,
+		cacheTtlMs: 60_000,
+		minFetchIntervalMs: 0,
+		timeoutMs: 0,
+		fetch: async () => {
+			fetchCalls++;
+			return { ok: true, json: async () => ({ five_hour: { used: 33, limit: 100 } }) };
+		},
+	});
+	const ctx = {
+		model: { provider: "anthropic" },
+		modelRegistry: {
+			isUsingOAuth: (model) => model?.provider === "anthropic",
+			getProviderAuthStatus: () => ({ configured: true, source: "stored" }),
+			getApiKeyForProvider: async () => accessToken,
+		},
+	};
+
+	const snapshot = await service.refresh(ctx, { force: true });
+	assert.ok(snapshot, "single refresh produces a snapshot");
+	assert.equal(snapshot?.windows.session.used, 33);
+	assert.equal(fetchCalls, 1);
+	assert.equal(service.activeCacheKeys.get("anthropic"), `anthropic\tfingerprint:${tokenFingerprint(accessToken)}`);
+	assert.equal(service.getSnapshotForContext(ctx), snapshot);
+
+	// Cached second refresh does not re-fetch
+	const cached = await service.refresh(ctx);
+	assert.equal(cached, snapshot);
+	assert.equal(fetchCalls, 1, "no redundant fetch for cached refresh");
+});
+
+test("generation guard: older concurrent refresh for different account does not clobber newer account state", async () => {
+	const tokenA = randomUUID(); // older invocation's token — resolves LAST
+	const tokenB = randomUUID(); // newer invocation's token — resolves FIRST
+
+	const deferredA = createDeferred(); // gate for the first (older) call to getApiKeyForProvider
+	const deferredB = createDeferred(); // gate for the second (newer) call to getApiKeyForProvider
+
+	let callIndex = 0;
+	let fetchCount = 0;
+
+	const service = createTlhSubscriptionUsageService({
+		now: () => NOW_MS,
+		cacheTtlMs: 0,
+		minFetchIntervalMs: 0,
+		timeoutMs: 0,
+		fetch: async (url, init) => {
+			fetchCount++;
+			const auth = init?.headers?.Authorization ?? "";
+			// Return different used counts so we can distinguish which account's fetch ran
+			const used = auth.includes(tokenB) ? 22 : 11;
+			return { ok: true, json: async () => ({ five_hour: { used, limit: 100 } }) };
+		},
+	});
+
+	// Pi 0.81 shape (no authStorage)
+	const ctx = {
+		model: { provider: "anthropic" },
+		modelRegistry: {
+			isUsingOAuth: (model) => model?.provider === "anthropic",
+			getProviderAuthStatus: () => ({ configured: true, source: "stored" }),
+			getApiKeyForProvider: async () => {
+				const myCall = callIndex++;
+				if (myCall === 0) {
+					// first (older) refresh — waits on deferredA, resolves LAST
+					await deferredA.promise;
+					return tokenA;
+				}
+				// second (newer) refresh — waits on deferredB, resolves FIRST
+				await deferredB.promise;
+				return tokenB;
+			},
+		},
+	};
+
+	// Start older refresh (generation 1) then newer refresh (generation 2)
+	const olderRefreshPromise = service.refresh(ctx, { force: true });
+	const newerRefreshPromise = service.refresh(ctx, { force: true });
+
+	// Drain microtasks so both refreshes advance to their getApiKeyForProvider await points
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(callIndex, 2, "both refreshes have called getApiKeyForProvider");
+	assert.equal(fetchCount, 0, "no fetches yet — both are waiting for token resolution");
+
+	// Resolve the NEWER refresh first (tokenB) — it gets generation 2 and should win
+	deferredB.resolve();
+	// Drain to let the newer refresh advance past resolveTlhSubscriptionUsageTarget and set activeCacheKeys
+	await new Promise((resolve) => setImmediate(resolve));
+	await new Promise((resolve) => setImmediate(resolve));
+
+	// Resolve the OLDER refresh (tokenA) — it has generation 1, current gen is 2 → superseded
+	deferredA.resolve();
+
+	const [olderResult, newerResult] = await Promise.all([olderRefreshPromise, newerRefreshPromise]);
+
+	// Newer refresh produced the correct snapshot for tokenB
+	assert.equal(newerResult?.windows.session.used, 22, "newer refresh (tokenB) produced the correct snapshot");
+
+	// Final activeCacheKeys reflects tokenB (newer account), not tokenA (older)
+	const activeCacheKey = service.activeCacheKeys.get("anthropic");
+	const expectedCacheKey = `anthropic\tfingerprint:${tokenFingerprint(tokenB)}`;
+	assert.equal(activeCacheKey, expectedCacheKey, "activeCacheKeys reflects the newer account (B), not the older (A)");
+
+	// getSnapshotForContext also reflects the newer account
+	const contextSnapshot = service.getSnapshotForContext(ctx);
+	assert.equal(contextSnapshot?.windows.session.used, 22, "getSnapshotForContext returns the newer account's snapshot");
+
+	// Only one network fetch was issued — the older refresh was bailed before it could fetch
+	assert.equal(fetchCount, 1, "only the newer refresh issued a network fetch; the older was superseded before fetching");
+
+	// TokenA's cache entry was never written
+	const aKey = `anthropic\tfingerprint:${tokenFingerprint(tokenA)}`;
+	assert.equal(service.snapshots.has(aKey), false, "older account (tokenA) snapshot was never stored");
+
+	// The older refresh result must not be tokenA's data (it was either the active snapshot or undefined)
+	if (olderResult !== undefined) {
+		assert.notEqual(olderResult.windows.session.used, 11, "older refresh did not return tokenA's stale data");
+	}
+});
