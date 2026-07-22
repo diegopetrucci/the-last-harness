@@ -35,8 +35,9 @@ export type ParsedSessionFileInput = {
  * Per-provider usage totals within the aggregation window.
  */
 export type SessionProviderTotals = {
-	/** Provider identifier (e.g. `"anthropic"`, `"openai-codex"`), or `"unknown"` when no
-	 *  model_change entry was seen before the first assistant message. */
+	/** Provider identifier (e.g. `"anthropic"`, `"openai-codex"`).  Resolved from the
+	 *  per-message `provider` field when present; otherwise from the most recent
+	 *  `model_change` entry, or `"unknown"` when neither is available. */
 	provider: string;
 	/** Model identifier at the time of the last assistant message for this provider key,
 	 *  or `undefined` when not available. */
@@ -267,17 +268,24 @@ function aggregateFile(
 		if (usage) {
 			coverage.withUsage += 1;
 
+			// Prefer per-message provider/model (authoritative, branch-aware); fall back
+			// to the most recent model_change tracking when the message fields are absent.
+			const msgProvider = typeof message.provider === "string" && (message.provider as string).length > 0 ? message.provider as string : undefined;
+			const msgModel = typeof message.model === "string" && (message.model as string).length > 0 ? message.model as string : undefined;
+			const turnProvider = msgProvider ?? currentProvider;
+			const turnModelId = msgModel ?? currentModelId;
+
 			// Accumulate into per-provider totals.
-			const existing = providerUsageMap.get(currentProvider);
+			const existing = providerUsageMap.get(turnProvider);
 			if (existing) {
 				addUsage(existing.usage, usage, { turns: 1, assistantMessages: 1 });
-				existing.modelId = currentModelId;
+				existing.modelId = turnModelId;
 			} else {
 				const providerTotals = createUsageTotals();
 				addUsage(providerTotals, usage, { turns: 1, assistantMessages: 1 });
-				providerUsageMap.set(currentProvider, {
-					provider: currentProvider,
-					modelId: currentModelId,
+				providerUsageMap.set(turnProvider, {
+					provider: turnProvider,
+					modelId: turnModelId,
 					usage: providerTotals,
 				});
 			}

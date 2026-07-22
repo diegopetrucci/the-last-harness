@@ -83,17 +83,21 @@ function aggregateFile(window, sessionsRoot, file, caveats) {
         const usage = normalizeUsage(message.usage);
         if (usage) {
             coverage.withUsage += 1;
-            const existing = providerUsageMap.get(currentProvider);
+            const msgProvider = typeof message.provider === "string" && message.provider.length > 0 ? message.provider : undefined;
+            const msgModel = typeof message.model === "string" && message.model.length > 0 ? message.model : undefined;
+            const turnProvider = msgProvider ?? currentProvider;
+            const turnModelId = msgModel ?? currentModelId;
+            const existing = providerUsageMap.get(turnProvider);
             if (existing) {
                 addUsage(existing.usage, usage, { turns: 1, assistantMessages: 1 });
-                existing.modelId = currentModelId;
+                existing.modelId = turnModelId;
             }
             else {
                 const providerTotals = createUsageTotals();
                 addUsage(providerTotals, usage, { turns: 1, assistantMessages: 1 });
-                providerUsageMap.set(currentProvider, {
-                    provider: currentProvider,
-                    modelId: currentModelId,
+                providerUsageMap.set(turnProvider, {
+                    provider: turnProvider,
+                    modelId: turnModelId,
                     usage: providerTotals,
                 });
             }

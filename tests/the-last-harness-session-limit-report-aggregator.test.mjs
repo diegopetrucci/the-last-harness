@@ -53,6 +53,17 @@ function assistantMsg(timestampIso, { input = 100, output = 50, cacheRead = 0, c
 	};
 }
 
+/**
+ * Build an assistant message entry with per-message provider/model fields.
+ * These are the authoritative per-turn attribution fields read by the aggregator.
+ */
+function assistantMsgWithAttribution(timestampIso, provider, model, usageOpts = {}) {
+	const msg = assistantMsg(timestampIso, usageOpts);
+	msg.message.provider = provider;
+	msg.message.model = model;
+	return msg;
+}
+
 /** Build an assistant message entry WITHOUT usage data. */
 function assistantMsgNoUsage(timestampIso) {
 	return {
@@ -548,4 +559,120 @@ test("aggregateSessionUsage: projectLabel falls back to dir-name decode when no 
 	]);
 	// --Users-foo-my-project-- → last segment → "project"
 	assert.equal(result.rows[0].projectLabel, "project");
+});
+
+// ---------------------------------------------------------------------------
+// Per-message provider/model attribution — wins over stale model_change
+// ---------------------------------------------------------------------------
+
+test("aggregateSessionUsage: per-message provider wins over stale model_change", () => {
+	// A leading model_change sets "stale-provider", but each assistant message
+	// carries its own provider/model fields — those should govern attribution.
+	const entries = [
+		modelChange("stale-provider", "stale-model"),
+		assistantMsgWithAttribution(TS_INSIDE, "anthropic", "claude-opus-4", { input: 100, output: 50 }),
+		assistantMsgWithAttribution(TS_INSIDE, "openai", "gpt-5", { input: 200, output: 80 }),
+	];
+	const result = aggregateSessionUsage(WINDOW, SESSIONS_ROOT, [
+		{ filePath: PRIMARY_FILE, entries, malformedLineCount: 0 },
+	]);
+
+	const row = result.rows[0];
+	// Should have two provider buckets from per-message fields — not "stale-provider".
+	assert.equal(row.providerTotals.length, 2, "expected two per-message providers");
+
+	const anthropicPt = row.providerTotals.find((p) => p.provider === "anthropic");
+	const openaiPt = row.providerTotals.find((p) => p.provider === "openai");
+	const stalePt = row.providerTotals.find((p) => p.provider === "stale-provider");
+
+	assert.ok(anthropicPt, "anthropic provider totals must exist from per-message field");
+	assert.ok(openaiPt, "openai provider totals must exist from per-message field");
+	assert.equal(stalePt, undefined, "stale-provider must not appear when per-message fields are present");
+
+	assert.equal(anthropicPt.usage.inputTokens, 100);
+	assert.equal(anthropicPt.usage.outputTokens, 50);
+	assert.equal(anthropicPt.modelId, "claude-opus-4");
+
+	assert.equal(openaiPt.usage.inputTokens, 200);
+	assert.equal(openaiPt.usage.outputTokens, 80);
+	assert.equal(openaiPt.modelId, "gpt-5");
+
+	assert.equal(result.grandTotals.inputTokens, 300);
+	assert.equal(result.grandTotals.turns, 2);
+});
+
+test("aggregateSessionUsage: per-message provider groups multiple messages into same bucket", () => {
+	// Two messages both carry provider="anthropic" (matching per-message field) despite
+	// a mid-session model_change to "openai-codex" between them.
+	const entries = [
+		modelChange("anthropic", "claude-3-5-sonnet"),
+		assistantMsgWithAttribution(TS_INSIDE, "anthropic", "claude-opus-4", { input: 100, output: 50 }),
+		modelChange("openai-codex", "gpt-5.5"),
+		// This message carries anthropic per-message fields — should still go to anthropic bucket.
+		assistantMsgWithAttribution(TS_INSIDE, "anthropic", "claude-opus-4", { input: 200, output: 80 }),
+	];
+	const result = aggregateSessionUsage(WINDOW, SESSIONS_ROOT, [
+		{ filePath: PRIMARY_FILE, entries, malformedLineCount: 0 },
+	]);
+
+	const row = result.rows[0];
+	assert.equal(row.providerTotals.length, 1, "only anthropic bucket from per-message fields");
+	assert.equal(row.providerTotals[0].provider, "anthropic");
+	assert.equal(row.providerTotals[0].modelId, "claude-opus-4");
+	assert.equal(row.providerTotals[0].usage.inputTokens, 300);
+	assert.equal(row.providerTotals[0].usage.turns, 2);
+});
+
+test("aggregateSessionUsage: per-message modelId is reflected in providerTotals.modelId", () => {
+	// Multiple messages for the same provider with different model values —
+	// last one should win for modelId (matches existing accumulation semantics).
+	const entries = [
+		assistantMsgWithAttribution(TS_INSIDE, "anthropic", "claude-3-5-sonnet", { input: 50, output: 25 }),
+		assistantMsgWithAttribution(TS_INSIDE, "anthropic", "claude-opus-4", { input: 100, output: 50 }),
+	];
+	const result = aggregateSessionUsage(WINDOW, SESSIONS_ROOT, [
+		{ filePath: PRIMARY_FILE, entries, malformedLineCount: 0 },
+	]);
+
+	const row = result.rows[0];
+	assert.equal(row.providerTotals.length, 1);
+	assert.equal(row.providerTotals[0].provider, "anthropic");
+	// Last per-message model wins.
+	assert.equal(row.providerTotals[0].modelId, "claude-opus-4");
+	assert.equal(row.providerTotals[0].usage.inputTokens, 150);
+});
+
+// ---------------------------------------------------------------------------
+// Fallback to model_change when no per-message provider/model
+// ---------------------------------------------------------------------------
+
+test("aggregateSessionUsage: falls back to model_change when message has no provider/model fields", () => {
+	// Standard shape without per-message provider/model — must still use model_change.
+	const entries = [
+		modelChange("anthropic", "claude-3-5-sonnet"),
+		assistantMsg(TS_INSIDE, { input: 100, output: 50 }),
+	];
+	const result = aggregateSessionUsage(WINDOW, SESSIONS_ROOT, [
+		{ filePath: PRIMARY_FILE, entries, malformedLineCount: 0 },
+	]);
+
+	const row = result.rows[0];
+	assert.equal(row.providerTotals.length, 1);
+	assert.equal(row.providerTotals[0].provider, "anthropic");
+	assert.equal(row.providerTotals[0].modelId, "claude-3-5-sonnet");
+	assert.equal(row.providerTotals[0].usage.inputTokens, 100);
+});
+
+test("aggregateSessionUsage: falls back to 'unknown' when neither per-message nor model_change is present", () => {
+	// No model_change, no per-message fields — must fall back to 'unknown'.
+	const entries = [
+		assistantMsg(TS_INSIDE, { input: 50, output: 20 }),
+	];
+	const result = aggregateSessionUsage(WINDOW, SESSIONS_ROOT, [
+		{ filePath: PRIMARY_FILE, entries, malformedLineCount: 0 },
+	]);
+
+	const row = result.rows[0];
+	assert.equal(row.providerTotals.length, 1);
+	assert.equal(row.providerTotals[0].provider, "unknown");
 });

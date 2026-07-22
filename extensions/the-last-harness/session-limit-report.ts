@@ -133,7 +133,10 @@ export function createSessionLimitReportCommandHandler(
  *   - `"session"` and `"session_info"`: header metadata (id, name, cwd, timestamp).
  *   - `"model_change"`: provider / model tracking.
  *   - `"message"` with `role === "assistant"`: usage accounting only; content and
- *     thinking payloads are stripped, keeping just `{ type, timestamp, message: { role, usage } }`.
+ *     thinking payloads are stripped, keeping just
+ *     `{ type, timestamp, message: { role, usage, provider, model } }`.  `provider`
+ *     and `model` are short identifier strings retained for authoritative per-turn
+ *     attribution (they are not transcript content).
  *
  * All other entry types (user messages, tool calls, etc.) are discarded.
  * This bounds peak memory and guarantees that no transcript text reaches later stages.
@@ -157,7 +160,7 @@ function slimEntries(entries: RawSessionEntry[]): RawSessionEntry[] {
 				result.push({
 					type: entry.type,
 					timestamp: entry.timestamp,
-					message: { role: msg.role, usage: msg.usage },
+					message: { role: msg.role, usage: msg.usage, provider: msg.provider, model: msg.model },
 				} as RawSessionEntry);
 			}
 		}

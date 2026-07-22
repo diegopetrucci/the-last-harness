@@ -95,7 +95,7 @@ function slimEntries(entries) {
                 result.push({
                     type: entry.type,
                     timestamp: entry.timestamp,
-                    message: { role: msg.role, usage: msg.usage },
+                    message: { role: msg.role, usage: msg.usage, provider: msg.provider, model: msg.model },
                 });
             }
         }
