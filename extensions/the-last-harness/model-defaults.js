@@ -169,7 +169,7 @@ function selectThinkingForProvider(agent, provider) {
         ? agent.tlhOpenaiThinking
         : agent?.thinking;
 }
-function resolveSubagentThinking(agent, model, fallbackModels, override) {
+function resolveStoredSubagentThinking(agent, model, override) {
     const rawThinking = override?.thinking;
     const thinking = rawThinking && isThinkingLevel(rawThinking)
         ? rawThinking
@@ -183,16 +183,13 @@ function resolveSubagentThinking(agent, model, fallbackModels, override) {
                 warning: `TLH ignored unsupported stored minor-agent effort "${rawThinking}" for ${agent?.name ?? "this subagent"}; using bundled defaults for this run.`,
             };
     }
-    if (!override?.thinking) {
+    if (!override?.thinking || !model) {
         return { thinking };
     }
-    const candidates = model ? [model, ...fallbackModels] : [];
-    for (const candidate of candidates) {
-        if (!getAvailableThinkingLevels(candidate).includes(thinking) || !MODEL_SUFFIX_THINKING_LEVELS.includes(thinking)) {
-            return {
-                warning: `TLH stored minor-agent effort "${thinking}" is not supported by ${formatProviderModelReference(candidate)}; using bundled defaults for this run.`,
-            };
-        }
+    if (!getAvailableThinkingLevels(model).includes(thinking) || !MODEL_SUFFIX_THINKING_LEVELS.includes(thinking)) {
+        return {
+            warning: `TLH stored minor-agent effort "${thinking}" is not supported by ${formatProviderModelReference(model)}; using bundled defaults for this run.`,
+        };
     }
     return { thinking };
 }
@@ -231,7 +228,7 @@ export function selectProviderAwareAgentModelId(agent, availableModels, currentP
 export function resolveProviderAwareSubagentResolution(agent, availableModels, currentProvider, currentModel, override) {
     const overrideModel = findAvailableProviderModel(availableModels, override?.model);
     if (overrideModel) {
-        const thinkingResolution = resolveSubagentThinking(agent, overrideModel, [], override);
+        const thinkingResolution = resolveStoredSubagentThinking(agent, overrideModel, override);
         return {
             model: overrideModel,
             thinking: thinkingResolution.thinking,
@@ -240,7 +237,7 @@ export function resolveProviderAwareSubagentResolution(agent, availableModels, c
         };
     }
     const oppositeProviderModel = selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider);
-    const selectedModel = oppositeProviderModel
+    let selectedModel = oppositeProviderModel
         ?? (agent?.preferCurrentOpenaiModel
             ? currentProviderOpenaiCandidate(agent, availableModels, currentProvider)
                 ?? selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider)
@@ -248,17 +245,39 @@ export function resolveProviderAwareSubagentResolution(agent, availableModels, c
     const fallbackModel = oppositeProviderModel
         ? selectOppositeProviderFallbackModel(agent, availableModels, currentProvider, currentModel)
         : undefined;
+    let currentSessionThinkingResolution;
+    if (!selectedModel && override?.thinking !== undefined) {
+        const currentSessionModel = findAvailableProviderModelReference(availableModels, currentModel);
+        if (currentSessionModel) {
+            currentSessionThinkingResolution = resolveStoredSubagentThinking(agent, currentSessionModel, override);
+            if (currentSessionThinkingResolution.thinking) {
+                selectedModel = currentSessionModel;
+            }
+        }
+    }
+    const primaryThinkingResolution = selectedModel
+        ? resolveStoredSubagentThinking(agent, selectedModel, override)
+        : currentSessionThinkingResolution ?? {};
     const fallbackModels = fallbackModel && (!selectedModel || formatProviderModelReference(fallbackModel) !== formatProviderModelReference(selectedModel))
         ? [fallbackModel]
         : [];
-    const thinkingResolution = resolveSubagentThinking(agent, selectedModel, fallbackModels, override);
+    const resolvedFallbackModels = fallbackModels.map((model) => ({
+        model,
+        thinking: resolveStoredSubagentThinking(agent, model, override).thinking,
+    }));
+    const fallbackWarning = override?.thinking !== undefined
+        ? resolvedFallbackModels.find((entry) => entry.thinking === undefined)?.model
+        : undefined;
     return {
         model: selectedModel,
-        fallbackModels,
-        modelFallbackNotice: fallbackModels.length > 0 ? OPPOSITE_PROVIDER_FALLBACK_NOTICE : undefined,
-        thinking: thinkingResolution.thinking,
+        fallbackModels: resolvedFallbackModels,
+        modelFallbackNotice: resolvedFallbackModels.length > 0 ? OPPOSITE_PROVIDER_FALLBACK_NOTICE : undefined,
+        thinking: primaryThinkingResolution.thinking,
         independence: resolveIndependence(agent, selectedModel, currentProvider),
-        warning: thinkingResolution.warning,
+        warning: primaryThinkingResolution.warning,
+        fallbackWarning: !primaryThinkingResolution.warning && fallbackWarning
+            ? `TLH stored minor-agent effort "${override?.thinking}" is not supported by generated fallback ${formatProviderModelReference(fallbackWarning)}; that fallback will use bundled effort behavior for this run.`
+            : undefined,
     };
 }
 function hasExplicitModel(target) {
@@ -279,7 +298,7 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
             return 0;
         }
         const explicitModel = findAvailableProviderModel(availableModels, target.model);
-        const thinkingResolution = resolveSubagentThinking(agent, explicitModel, [], override);
+        const thinkingResolution = resolveStoredSubagentThinking(agent, explicitModel, override);
         if (thinkingResolution.warning && agentName) {
             options.onWarning?.({ agent: agentName, message: thinkingResolution.warning });
         }
@@ -294,16 +313,20 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
     if (resolution.warning && agentName) {
         options.onWarning?.({ agent: agentName, message: resolution.warning });
     }
+    const usesGeneratedFallback = !Object.hasOwn(target, "fallbackModels") || target.fallbackModels === undefined;
+    if (usesGeneratedFallback && resolution.fallbackWarning && agentName) {
+        options.onWarning?.({ agent: agentName, message: resolution.fallbackWarning });
+    }
     const selectedModel = resolution.model ? applyThinkingSuffix(formatProviderModelReference(resolution.model), resolution.thinking) : undefined;
     if (!selectedModel || selectedModel === agent?.model) {
         return 0;
     }
     target.model = selectedModel;
     const fallbackModels = resolution.fallbackModels
-        ?.map((fallbackModel) => applyThinkingSuffix(formatProviderModelReference(fallbackModel), resolution.thinking))
+        ?.map((fallbackModel) => applyThinkingSuffix(formatProviderModelReference(fallbackModel.model), fallbackModel.thinking))
         .filter((model) => Boolean(model));
     if (fallbackModels?.length) {
-        if (!Object.hasOwn(target, "fallbackModels") || target.fallbackModels === undefined) {
+        if (usesGeneratedFallback) {
             target.fallbackModels = fallbackModels;
         }
         if (!Object.hasOwn(target, "modelFallbackNotice") || target.modelFallbackNotice === undefined) {

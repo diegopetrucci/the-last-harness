@@ -86,9 +86,14 @@ const openaiAvailable = [
 
 const reasoningAnthropicAvailable = anthropicAvailable.map((model) => ({ ...model, reasoning: true }));
 const reasoningCodexAvailable = codexAvailable.map((model) => ({ ...model, reasoning: true }));
+const reasoningOpenaiAvailable = openaiAvailable.map((model) => ({ ...model, reasoning: true }));
 const limitedReasoningAvailable = [
 	{ provider: "anthropic", id: "claude-opus-4-8", reasoning: true, thinkingLevelMap: { xhigh: null } },
 	{ provider: "openai-codex", id: "gpt-5.6-sol", reasoning: true, thinkingLevelMap: { xhigh: null } },
+];
+const primaryOnlyReasoningAvailable = [
+	{ provider: "anthropic", id: "claude-opus-4-8", reasoning: true, thinkingLevelMap: { high: null } },
+	{ provider: "openai-codex", id: "gpt-5.6-sol", reasoning: true },
 ];
 
 const reducedIndependenceNotice = "TLH fell back to a same-provider review model; review independence is reduced.";
@@ -130,6 +135,85 @@ test("provider-aware model resolver does not auto-inject OpenAI API models", () 
 	assert.equal(selectProviderAwareAgentModelId(codeReviewer, openaiAvailable, "openai"), undefined);
 	assert.equal(applyProviderAwareSubagentModels(input, agents, openaiAvailable, "openai"), 0);
 	assert.equal(input.model, undefined);
+});
+
+
+test("saved effort can use the current OpenAI session model without making it a bundled default", () => {
+	const input = { agent: "developer", task: "Implement the ticket" };
+	assert.equal(
+		applyProviderAwareSubagentModels(
+			input,
+			agents,
+			reasoningOpenaiAvailable,
+			"openai",
+			{ provider: "openai", id: "gpt-5.4" },
+			{ agentOverrides: new Map([["developer", { thinking: "high" }]]) },
+		),
+		1,
+	);
+	assert.equal(input.model, "openai/gpt-5.4:high");
+});
+
+
+test("saved effort can use the current custom-provider session model only when needed", () => {
+	const available = [{ provider: "custom-provider", id: "reasoner", reasoning: true }];
+	const input = { agent: "developer", task: "Implement the ticket" };
+	assert.equal(
+		applyProviderAwareSubagentModels(
+			input,
+			agents,
+			available,
+			"custom-provider",
+			{ provider: "custom-provider", id: "reasoner" },
+			{ agentOverrides: new Map([["developer", { thinking: "high" }]]) },
+		),
+		1,
+	);
+	assert.equal(input.model, "custom-provider/reasoner:high");
+
+	const noEffortInput = { agent: "developer", task: "Implement the ticket" };
+	assert.equal(
+		applyProviderAwareSubagentModels(
+			noEffortInput,
+			agents,
+			available,
+			"custom-provider",
+			{ provider: "custom-provider", id: "reasoner" },
+		),
+		0,
+	);
+	assert.equal(noEffortInput.model, undefined);
+
+	const unsupportedCurrentModel = [{ provider: "custom-provider", id: "limited", reasoning: true, thinkingLevelMap: { high: null } }];
+	const unsupportedInput = { agent: "developer", task: "Implement the ticket" };
+	const warnings = [];
+	assert.equal(
+		applyProviderAwareSubagentModels(
+			unsupportedInput,
+			agents,
+			unsupportedCurrentModel,
+			"custom-provider",
+			{ provider: "custom-provider", id: "limited" },
+			{
+				agentOverrides: new Map([["developer", { thinking: "high" }]]),
+				onWarning: (warning) => warnings.push(warning.message),
+			},
+		),
+		0,
+	);
+	assert.equal(unsupportedInput.model, undefined);
+	assert.equal(warnings.length, 1);
+	assert.match(warnings[0], /not supported by custom-provider\/limited/i);
+	const unsupportedResolution = resolveProviderAwareSubagentResolution(
+		developer,
+		unsupportedCurrentModel,
+		"custom-provider",
+		{ provider: "custom-provider", id: "limited" },
+		{ thinking: "high" },
+	);
+	assert.equal(unsupportedResolution.model, undefined);
+	assert.equal(unsupportedResolution.thinking, undefined);
+	assert.match(unsupportedResolution.warning, /not supported by custom-provider\/limited/i);
 });
 
 test("provider-aware model resolver keeps Codex defaults even when regular OpenAI models are also available", () => {
@@ -436,6 +520,58 @@ test("unsupported stored effort warns and falls back for that run", () => {
 	assert.equal(warnings.length, 1);
 	assert.match(warnings[0], /stored minor-agent effort/i);
 	assert.match(warnings[0], /openai-codex\/gpt-5\.6-sol/i);
+});
+
+
+test("supported primary saved effort survives an incompatible generated fallback", () => {
+	const warnings = [];
+	const input = { agent: "code-reviewer", task: "Review the diff" };
+	assert.equal(
+		applyProviderAwareSubagentModels(
+			input,
+			agents,
+			primaryOnlyReasoningAvailable,
+			"anthropic",
+			undefined,
+			{
+				agentOverrides: new Map([["code-reviewer", { thinking: "high" }]]),
+				onWarning: (warning) => warnings.push(warning.message),
+			},
+		),
+		1,
+	);
+	assert.equal(input.model, "openai-codex/gpt-5.6-sol:high");
+	assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-4-8"]);
+	assert.equal(warnings.length, 1);
+	assert.match(warnings[0], /generated fallback anthropic\/claude-opus-4-8/i);
+	assert.match(warnings[0], /bundled effort behavior/i);
+});
+
+
+test("caller-supplied fallbacks suppress warnings for an unused generated fallback", () => {
+	const warnings = [];
+	const input = {
+		agent: "code-reviewer",
+		task: "Review the diff",
+		fallbackModels: ["custom/provider-model"],
+	};
+	assert.equal(
+		applyProviderAwareSubagentModels(
+			input,
+			agents,
+			primaryOnlyReasoningAvailable,
+			"anthropic",
+			undefined,
+			{
+				agentOverrides: new Map([["code-reviewer", { thinking: "high" }]]),
+				onWarning: (warning) => warnings.push(warning.message),
+			},
+		),
+		1,
+	);
+	assert.equal(input.model, "openai-codex/gpt-5.6-sol:high");
+	assert.deepEqual(input.fallbackModels, ["custom/provider-model"]);
+	assert.deepEqual(warnings, []);
 });
 
 
