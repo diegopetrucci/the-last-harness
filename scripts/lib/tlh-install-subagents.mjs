@@ -116,6 +116,25 @@ export function copyTlhSubagentPrompts(config, sourceDir, { prompts = TLH_SUBAGE
  * Runtime note: toolDescriptionMode requires pi-subagents >= v0.33.0
  * (fork feature). Older builds simply ignore the unknown key.
  */
+/**
+ * Returns true when provisionSubagentExtensionConfig would write to disk,
+ * false when it would leave the existing file untouched (already has the key,
+ * is a non-object JSON value, or is unreadable).
+ */
+export function subagentExtensionConfigNeedsProvisioning(config) {
+    const configPath = join(config.agentDir, "extensions/subagent/config.json");
+    if (!existsSync(configPath))
+        return true;
+    try {
+        const parsed = readJsonFile(configPath, { missingValue: {} });
+        if (!isPlainObject(parsed))
+            return false;
+        return !("toolDescriptionMode" in parsed);
+    }
+    catch {
+        return false;
+    }
+}
 export function provisionSubagentExtensionConfig(config) {
     const relativePath = "extensions/subagent/config.json";
     const configPath = join(config.agentDir, relativePath);
@@ -125,6 +144,8 @@ export function provisionSubagentExtensionConfig(config) {
             const parsed = readJsonFile(configPath, { missingValue: {} });
             if (isPlainObject(parsed))
                 existing = parsed;
+            else
+                return; // Valid JSON but not a plain object (e.g. null, array, scalar) — preserve untouched.
         }
         catch {
             // Unable to read/parse existing config — leave it untouched.

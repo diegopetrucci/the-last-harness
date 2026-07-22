@@ -836,3 +836,29 @@ test("provisionSubagentExtensionConfig sets toolDescriptionMode compact and is i
 	assert.equal(afterExtraKey.toolDescriptionMode, "compact", "compact added when key missing");
 	assert.equal(afterExtraKey.asyncByDefault, true, "pre-existing user keys are preserved");
 });
+
+test("provisionSubagentExtensionConfig preserves byte-for-byte a valid non-object config (null, array, scalar)", (t) => {
+	const agentDir = tempFixture(t, "tlh-ext-config-noobj-");
+	const config = { agentDir };
+	const configDir = join(agentDir, "extensions", "subagent");
+	mkdirSync(configDir, { recursive: true });
+	const configPath = join(configDir, "config.json");
+
+	// Array value — must be left byte-for-byte untouched.
+	const arrayContent = "[]\n";
+	writeFileSync(configPath, arrayContent);
+	provisionSubagentExtensionConfig(config);
+	assert.equal(readFileSync(configPath, "utf8"), arrayContent, "array config preserved byte-for-byte");
+
+	// null value — must be left byte-for-byte untouched.
+	const nullContent = "null\n";
+	writeFileSync(configPath, nullContent);
+	provisionSubagentExtensionConfig(config);
+	assert.equal(readFileSync(configPath, "utf8"), nullContent, "null config preserved byte-for-byte");
+
+	// Scalar value — must be left byte-for-byte untouched.
+	const scalarContent = "42\n";
+	writeFileSync(configPath, scalarContent);
+	provisionSubagentExtensionConfig(config);
+	assert.equal(readFileSync(configPath, "utf8"), scalarContent, "scalar config preserved byte-for-byte");
+});
