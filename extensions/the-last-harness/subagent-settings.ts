@@ -349,10 +349,17 @@ function validateAgentName(agentName: string, subagents: ReadonlyMap<string, Sub
 }
 
 function parseAvailableModel(models: readonly AvailableModel[], modelRef: string): AvailableModel {
-	if (modelRef.includes(":")) {
-		throw new Error("Model overrides must omit any :effort suffix. Use the effort field separately.");
+	const parsed = parseProviderModelReference(modelRef);
+	if (parsed) {
+		const exactModel = models.find((entry) => entry.provider === parsed.provider && entry.id === parsed.id);
+		if (exactModel) {
+			return exactModel;
+		}
 	}
 	const model = findAvailableProviderModel(models, modelRef);
+	if (model && modelRef.includes(":")) {
+		throw new Error("Model overrides must omit any :effort suffix. Use the effort field separately.");
+	}
 	if (!model) {
 		throw new Error(`Model "${modelRef}" is not currently available.`);
 	}
@@ -515,8 +522,9 @@ async function runInteractivePicker(
 				ctx.ui.notify("Unknown model picker selection.", "error");
 				continue;
 			}
-			const selectedModel = parseAvailableModel(models, model);
+			let selectedModel: AvailableModel;
 			try {
+				selectedModel = parseAvailableModel(models, model);
 				validateModelEffortPair(selectedModel, override?.thinking);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);

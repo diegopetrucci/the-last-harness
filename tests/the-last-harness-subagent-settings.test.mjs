@@ -230,6 +230,86 @@ test("interactive subagent-settings flow requires confirmation before setting fi
 	});
 });
 
+test("subagent-settings accepts exact colon-bearing model IDs for typed and interactive model overrides", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
+	const pi = createPiHarness();
+	registerSubagentSettingsCommand(pi);
+	const command = pi.commands.get("subagent-settings");
+	const colonModels = {
+		getAvailable: () => [
+			{ provider: "openrouter", id: "reasoner", reasoning: true },
+			{ provider: "openrouter", id: "reasoner:high", reasoning: true },
+			{ provider: "openai-codex", id: "gpt-5.4", reasoning: true },
+		],
+	};
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const typed = createCommandContext({ cwd: fixture.cwd, modelRegistry: colonModels });
+		await command.handler("set developer model openrouter/reasoner:high", typed.ctx);
+		assert.match(typed.notifications.at(-1)?.message ?? "", /Updated TLH minor-agent settings/i);
+		let settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
+		assert.equal(settings.subagents.agentOverrides.developer.model, "openrouter/reasoner:high");
+
+		const interactive = createCommandContext({ cwd: fixture.cwd, modelRegistry: colonModels });
+		const selections = [
+			(options) => options.find((option) => option.includes("developer")),
+			(options) => options.find((option) => option === "set model"),
+			(options) => options.find((option) => option.startsWith("openrouter/reasoner:high")),
+			() => undefined,
+		];
+		interactive.ctx.ui.select = async (_title, options) => selections.shift()?.(options);
+		await command.handler("", interactive.ctx);
+		assert.match(interactive.notifications.at(-1)?.message ?? "", /No change to TLH minor-agent settings|Updated TLH minor-agent settings/i);
+		settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
+		assert.equal(settings.subagents.agentOverrides.developer.model, "openrouter/reasoner:high");
+	});
+});
+
+
+test("subagent-settings keeps suffix guidance for non-exact recognized effort suffixes", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
+	const pi = createPiHarness();
+	registerSubagentSettingsCommand(pi);
+	const command = pi.commands.get("subagent-settings");
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { ctx, notifications } = createCommandContext({ cwd: fixture.cwd });
+		await command.handler("set developer model openai-codex/gpt-5.4:high", ctx);
+		assert.match(notifications.at(-1)?.message ?? "", /Model overrides must omit any :effort suffix/i);
+		assert.equal(existsSync(join(fixture.agent, "settings.json")), false);
+	});
+});
+
+
+test("interactive subagent-settings reports model parse failures through notifications", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
+	const pi = createPiHarness();
+	registerSubagentSettingsCommand(pi);
+	const command = pi.commands.get("subagent-settings");
+	const selectedModel = { provider: "openrouter", id: "available-while-picked", reasoning: true };
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { ctx, notifications } = createCommandContext({
+			cwd: fixture.cwd,
+			modelRegistry: { getAvailable: () => [selectedModel] },
+		});
+		const selections = [
+			(options) => options.find((option) => option.includes("developer")),
+			(options) => options.find((option) => option === "set model"),
+			(options) => {
+				const picked = options.find((option) => option.startsWith("openrouter/available-while-picked"));
+				selectedModel.id = "unavailable-after-pick";
+				return picked;
+			},
+			() => undefined,
+		];
+		ctx.ui.select = async (_title, options) => selections.shift()?.(options);
+		await command.handler("", ctx);
+		assert.match(notifications.at(-1)?.message ?? "", /Model "openrouter\/available-while-picked" is not currently available/i);
+		assert.equal(existsSync(join(fixture.agent, "settings.json")), false);
+	});
+});
+
 test("subagent-settings validates the final model and effort independent of set argument order", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
 	const pi = createPiHarness();

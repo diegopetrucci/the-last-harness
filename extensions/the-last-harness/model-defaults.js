@@ -54,6 +54,10 @@ function providerFamily(provider) {
     return undefined;
 }
 export function findAvailableProviderModel(availableModels, model) {
+    const exactModel = findAvailableProviderModelReference(availableModels, parseProviderModelReference(model));
+    if (exactModel) {
+        return exactModel;
+    }
     const parsed = parseProviderModelReference(splitKnownThinkingSuffix(model).baseModel);
     if (!parsed) {
         return undefined;

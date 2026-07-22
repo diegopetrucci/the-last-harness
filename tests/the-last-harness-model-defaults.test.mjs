@@ -5,6 +5,7 @@ import { createJiti } from "jiti";
 const jiti = createJiti(import.meta.url);
 const {
 	applyProviderAwareSubagentModels,
+	findAvailableProviderModel,
 	resolveProviderAwareSubagentResolution,
 	selectProviderAwareAgentDefaults,
 	selectProviderAwareAgentModelId,
@@ -135,6 +136,39 @@ test("provider-aware model resolver does not auto-inject OpenAI API models", () 
 	assert.equal(selectProviderAwareAgentModelId(codeReviewer, openaiAvailable, "openai"), undefined);
 	assert.equal(applyProviderAwareSubagentModels(input, agents, openaiAvailable, "openai"), 0);
 	assert.equal(input.model, undefined);
+});
+
+
+test("exact suffix-like model IDs win shared lookup, resolution, and mutation", () => {
+	const available = [
+		{ provider: "openrouter", id: "reasoner", reasoning: true },
+		{ provider: "openrouter", id: "reasoner:high", reasoning: true },
+	];
+	assert.equal(findAvailableProviderModel(available, "openrouter/reasoner:high"), available[1]);
+
+	const resolution = resolveProviderAwareSubagentResolution(
+		developer,
+		available,
+		"openrouter",
+		undefined,
+		{ model: "openrouter/reasoner:high" },
+	);
+	assert.equal(resolution.model, available[1]);
+
+	const input = { agent: "developer", task: "Implement the ticket" };
+	assert.equal(
+		applyProviderAwareSubagentModels(input, agents, available, "openrouter", undefined, {
+			agentOverrides: new Map([["developer", { model: "openrouter/reasoner:high" }]]),
+		}),
+		1,
+	);
+	assert.equal(input.model, "openrouter/reasoner:high");
+});
+
+
+test("shared lookup still treats a non-exact recognized suffix as base-model effort", () => {
+	const available = [{ provider: "openrouter", id: "reasoner", reasoning: true }];
+	assert.equal(findAvailableProviderModel(available, "openrouter/reasoner:high"), available[0]);
 });
 
 

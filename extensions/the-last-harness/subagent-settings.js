@@ -295,10 +295,17 @@ function validateAgentName(agentName, subagents) {
     return agent;
 }
 function parseAvailableModel(models, modelRef) {
-    if (modelRef.includes(":")) {
-        throw new Error("Model overrides must omit any :effort suffix. Use the effort field separately.");
+    const parsed = parseProviderModelReference(modelRef);
+    if (parsed) {
+        const exactModel = models.find((entry) => entry.provider === parsed.provider && entry.id === parsed.id);
+        if (exactModel) {
+            return exactModel;
+        }
     }
     const model = findAvailableProviderModel(models, modelRef);
+    if (model && modelRef.includes(":")) {
+        throw new Error("Model overrides must omit any :effort suffix. Use the effort field separately.");
+    }
     if (!model) {
         throw new Error(`Model "${modelRef}" is not currently available.`);
     }
@@ -431,8 +438,9 @@ async function runInteractivePicker(ctx, subagents, subagentMap) {
                 ctx.ui.notify("Unknown model picker selection.", "error");
                 continue;
             }
-            const selectedModel = parseAvailableModel(models, model);
+            let selectedModel;
             try {
+                selectedModel = parseAvailableModel(models, model);
                 validateModelEffortPair(selectedModel, override?.thinking);
             }
             catch (error) {

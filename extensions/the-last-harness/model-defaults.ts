@@ -112,6 +112,10 @@ export function findAvailableProviderModel<T extends ProviderModelReference>(
 	availableModels: readonly T[],
 	model: string | undefined,
 ): T | undefined {
+	const exactModel = findAvailableProviderModelReference(availableModels, parseProviderModelReference(model));
+	if (exactModel) {
+		return exactModel;
+	}
 	const parsed = parseProviderModelReference(splitKnownThinkingSuffix(model).baseModel);
 	if (!parsed) {
 		return undefined;
