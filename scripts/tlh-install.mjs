@@ -10,7 +10,7 @@ import { criticalGitSourceSpec, gitSourceInstallSource, packageSourceInstallDir,
 import { assertProfilePathWithinAgent, assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, validateInstallerTargets, validateProfileRelativePath, } from "./lib/tlh-install-paths.mjs";
 import { packageIdentity, } from "./lib/default-extensions.mjs";
 import { assignRequiredEqualsValue, backupPathWithTimestamp, parseBackupTimestamp, renderShellWords, requiredValue, selectExpiredBackups, shellWord, } from "./lib/tlh-install-utils.mjs";
-import { TLH_SUBAGENT_PROMPTS, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, missingTlhSubagentPrompts, settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
+import { TLH_SUBAGENT_PROMPTS, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, missingTlhSubagentPrompts, provisionSubagentExtensionConfig, settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts, subagentExtensionConfigNeedsProvisioning, } from "./lib/tlh-install-subagents.mjs";
 import { assertGitSourceTargetSafe, refreshGitCheckout, } from "./lib/tlh-install-git.mjs";
 import { findLocalRepoDir, ensureSupportFilesPrepared, installableSupportFilesArePrepared, preflightRuntimeSupportFiles, } from "./lib/tlh-install-support-files.mjs";
 import { formatSupportFileManifest, installableSupportFiles, supportFileManifest, } from "./lib/tlh-install-support-manifest.mjs";
@@ -1116,6 +1116,12 @@ async function installSupportFilesToProfile(config) {
         else {
             log(config, "Would skip TLH subagent prompts because this ref does not enable bundled subagents in settings.");
         }
+        if (subagentExtensionConfigNeedsProvisioning(config)) {
+            log(config, "Would provision subagent extension config (extensions/subagent/config.json) with toolDescriptionMode: compact.");
+        }
+        else {
+            log(config, "Would leave existing subagent extension config (extensions/subagent/config.json) untouched.");
+        }
         return;
     }
     ensureSafeProfileDir(config, "tlh", "TLH support directory");
@@ -1124,6 +1130,7 @@ async function installSupportFilesToProfile(config) {
         if (sourcePath)
             copySafeProfileFile(config, sourcePath, `tlh/${file.installName}`, `TLH support file ${file.installName}`);
     }
+    provisionSubagentExtensionConfig(config);
     if (!requireSubagentPrompts)
         return;
     if (!subagentsSrc) {

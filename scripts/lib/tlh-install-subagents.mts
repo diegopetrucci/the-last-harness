@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { packageSourceInstallDir } from "./tlh-install-package-source.mjs";
 import { copySafeProfileFile, ensureSafeProfileDir } from "./tlh-install-paths.mjs";
 import { readJsonFile } from "./tlh-install-utils.mjs";
+import { writeSafeProfileFile } from "./tlh-safe-profile-write.mjs";
 
 interface PlainObject {
 	[key: string]: unknown;
@@ -135,4 +136,62 @@ export function copyTlhSubagentPrompts(
 		copySafeProfileFile(config, join(sourceDir, prompt), `tlh/agents/subagents/${prompt}`, `TLH subagent prompt ${prompt}`);
 	}
 	return supportSubagentsDir;
+}
+
+/**
+ * Provision the subagent extension config at extensions/subagent/config.json
+ * with TLH-preferred defaults.
+ *
+ * Idempotency: if toolDescriptionMode is already present (set to any value,
+ * including a user-chosen override such as "full"), it is left untouched.
+ * Re-running the installer is therefore safe and will not clobber user edits.
+ *
+ * Revert path: to disable compact descriptions, open
+ * <agentDir>/extensions/subagent/config.json and set
+ * "toolDescriptionMode": "full". That value will be preserved on subsequent
+ * installer runs. Removing the key is only a temporary revert — the installer
+ * will re-provision "compact" on the next install or update run.
+ *
+ * Runtime note: toolDescriptionMode requires pi-subagents >= v0.33.0
+ * (fork feature). Older builds simply ignore the unknown key.
+ */
+/**
+ * Returns true when provisionSubagentExtensionConfig would write to disk,
+ * false when it would leave the existing file untouched (already has the key,
+ * is a non-object JSON value, or is unreadable).
+ */
+export function subagentExtensionConfigNeedsProvisioning(config: { agentDir: string }): boolean {
+	const configPath = join(config.agentDir, "extensions/subagent/config.json");
+	if (!existsSync(configPath)) return true;
+	try {
+		const parsed = readJsonFile<unknown>(configPath, { missingValue: {} as unknown });
+		if (!isPlainObject(parsed)) return false;
+		return !("toolDescriptionMode" in parsed);
+	} catch {
+		return false;
+	}
+}
+
+export function provisionSubagentExtensionConfig(config: { agentDir: string }): void {
+	const relativePath = "extensions/subagent/config.json";
+	const configPath = join(config.agentDir, relativePath);
+
+	let existing: PlainObject = {};
+	if (existsSync(configPath)) {
+		try {
+			const parsed = readJsonFile<unknown>(configPath, { missingValue: {} as unknown });
+			if (isPlainObject(parsed)) existing = parsed;
+			else return; // Valid JSON but not a plain object (e.g. null, array, scalar) — preserve untouched.
+		} catch {
+			// Unable to read/parse existing config — leave it untouched.
+			return;
+		}
+	}
+
+	// Preserve any value the user has already set (including explicit "full").
+	if ("toolDescriptionMode" in existing) return;
+
+	ensureSafeProfileDir(config, "extensions/subagent", "TLH subagent extension config directory");
+	const updated: PlainObject = { toolDescriptionMode: "compact", ...existing };
+	writeSafeProfileFile(config, relativePath, JSON.stringify(updated, null, 2) + "\n", "TLH subagent extension config");
 }
