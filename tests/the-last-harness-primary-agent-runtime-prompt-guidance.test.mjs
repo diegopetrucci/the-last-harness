@@ -16,6 +16,23 @@ import {
 	contrarianMetadata,
 } from "./the-last-harness-primary-agent-runtime-test-helpers.mjs";
 
+test("child runtime scopes tickets at session start", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TICKETS_DIR: undefined }, async () => {
+		const pi = createPiHarness();
+		const runtime = registerTlhPrimaryAgentRuntime(pi, {
+			env: { PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_CHILD_AGENT: "developer" },
+		});
+		assert.equal(runtime, undefined);
+		const sessionStart = pi.events.find((event) => event.name === "session_start")?.handler;
+		assert.equal(typeof sessionStart, "function");
+
+		await sessionStart({}, { cwd: fixture.cwd });
+		assert.equal(process.env.TICKETS_DIR, join(fixture.cwd, ".tickets"));
+	});
+});
+
 test("disabled primary mode still injects provider-aware subagent models", async () => {
 	const { toolCall } = registerRuntimeHarness();
 	const event = { toolName: "subagent", input: { agent: "developer", context: "resume" } };
@@ -333,7 +350,7 @@ test("child mode keeps parent-only controls disabled while applying commit attri
 		assert.deepEqual([...pi.shortcuts.keys()], []);
 		assert.deepEqual(
 			pi.events.map((event) => event.name),
-			["before_agent_start", "tool_call"],
+			["session_start", "before_agent_start", "tool_call"],
 		);
 
 		const beforeAgentStart = pi.events.find((event) => event.name === "before_agent_start")?.handler;

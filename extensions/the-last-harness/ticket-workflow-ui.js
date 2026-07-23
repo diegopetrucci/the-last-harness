@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { isTlhExperimentalFeatureEnabled, TICKET_WORKFLOW_UI_FEATURE, TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT, } from "./experimental.js";
 import { isRecord } from "./common.js";
-import { findValidTlhTicketCommand } from "./tickets.js";
+import { activateTlhTicketSessionScope, findValidTlhTicketCommand } from "./tickets.js";
 import { TK_WORKFLOW_STATUS_KEY, TK_WORKFLOW_WIDGET_KEY } from "./ticket-workflow-ui-constants.js";
 const TK_STATUS_COMMAND = "tk-status";
 const TK_COMMAND_TIMEOUT_MS = 4000;
@@ -28,7 +28,8 @@ function firstOutputLine(result) {
         .find(Boolean);
 }
 function isNoRepoMessage(message) {
-    return typeof message === "string" && /no \.tickets directory found/i.test(message);
+    return (typeof message === "string" &&
+        (/no \.tickets directory found/i.test(message) || /tickets directory ['"].+['"] does not exist/i.test(message)));
 }
 function runTkCommand(command, cwd, args) {
     return spawnSync(command, args, {
@@ -50,10 +51,45 @@ function parseListLines(output) {
         .map((line) => line.trim())
         .filter(Boolean);
 }
+function extractTicketTitleFromShowOutput(output) {
+    const lines = output.split(/\r?\n/);
+    let inFrontmatter = false;
+    let frontmatterComplete = false;
+    for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!frontmatterComplete && line === "---") {
+            if (!inFrontmatter) {
+                inFrontmatter = true;
+                continue;
+            }
+            frontmatterComplete = true;
+            continue;
+        }
+        if (inFrontmatter && !frontmatterComplete) {
+            continue;
+        }
+        if (!line) {
+            continue;
+        }
+        if (line.startsWith("# ")) {
+            return line.slice(2).trim() || undefined;
+        }
+        return line;
+    }
+    return undefined;
+}
+function getInProgressTicketTitle(command, cwd, ticketId) {
+    const showResult = runTkCommand(command, cwd, ["show", ticketId]);
+    if (showResult.error || showResult.status !== 0) {
+        return undefined;
+    }
+    return extractTicketTitleFromShowOutput(showResult.stdout || "");
+}
 function getTkWorkflowSnapshot(cwd) {
     if (!isTicketWorkflowUiEnabled(cwd)) {
         return { kind: "disabled" };
     }
+    activateTlhTicketSessionScope(cwd);
     const settings = getTlhGlobalSettings(cwd);
     const command = findValidTlhTicketCommand(settings, getAgentDir());
     if (!command) {
@@ -100,12 +136,19 @@ function getTkWorkflowSnapshot(cwd) {
             : { kind: "unavailable", message: failure ?? "tk blocked failed." };
     }
     const active = tickets.filter((ticket) => ticket.status === "open" || ticket.status === "in_progress").length;
+    const inProgress = tickets
+        .filter((ticket) => ticket.status === "in_progress")
+        .map((ticket) => ticket.id?.trim())
+        .filter((ticketId) => Boolean(ticketId));
+    const currentTitle = inProgress.length === 1 ? getInProgressTicketTitle(command, cwd, inProgress[0]) : undefined;
     return {
         kind: "ok",
         total: tickets.length,
         active,
         ready: parseListLines(readyResult.stdout || ""),
         blocked: parseListLines(blockedResult.stdout || ""),
+        inProgress,
+        currentTitle,
     };
 }
 function isTerminalControlCharCode(code) {
@@ -154,21 +197,11 @@ function stripTerminalControlSequences(text) {
     }
     return sanitized;
 }
-function extractNextReadyTicketTitle(snapshot) {
-    const nextReady = snapshot.ready[0]?.trim();
-    if (!nextReady) {
-        return undefined;
-    }
-    const titleSeparatorIndex = nextReady.indexOf(" - ");
-    const title = titleSeparatorIndex >= 0 ? nextReady.slice(titleSeparatorIndex + 3).trim() : "";
-    return title || nextReady;
-}
 function formatTkWorkflowFooterStatus(snapshot) {
-    if (snapshot.kind !== "ok") {
+    if (snapshot.kind !== "ok" || snapshot.inProgress.length !== 1) {
         return undefined;
     }
-    const title = extractNextReadyTicketTitle(snapshot);
-    const safeTitle = title ? stripTerminalControlSequences(title).trim() : undefined;
+    const safeTitle = snapshot.currentTitle ? stripTerminalControlSequences(snapshot.currentTitle).trim() : undefined;
     return safeTitle ? `${TK_WORKING_ON_PREFIX}${safeTitle}\n${TK_STATUS_HELP}` : undefined;
 }
 function formatTkWorkflowDetails(snapshot) {
@@ -185,8 +218,19 @@ function formatTkWorkflowDetails(snapshot) {
         return "tk: no tickets in this repo.";
     }
     const lines = [
-        `tk: ${snapshot.ready.length} ready • ${snapshot.blocked.length} blocked • ${snapshot.active} active • ${snapshot.total} total`,
+        `tk: ${snapshot.ready.length} ready • ${snapshot.blocked.length} blocked • ${snapshot.inProgress.length} in progress • ${snapshot.active} active • ${snapshot.total} total`,
     ];
+    if (snapshot.inProgress.length === 0) {
+        lines.push("In progress: none. Footer stays quiet.");
+    }
+    else if (snapshot.inProgress.length === 1) {
+        const ticketId = snapshot.inProgress[0];
+        const title = snapshot.currentTitle ? stripTerminalControlSequences(snapshot.currentTitle).trim() : undefined;
+        lines.push(`In progress: ${title ? `${ticketId} - ${title}` : ticketId}`);
+    }
+    else {
+        lines.push(`In progress is ambiguous (${snapshot.inProgress.length} tickets). Footer stays quiet.`, ...snapshot.inProgress.slice(0, 3).map((ticketId) => `- ${ticketId}`));
+    }
     if (snapshot.ready.length > 0) {
         lines.push("Ready:", ...snapshot.ready.slice(0, 3).map((line) => `- ${line}`));
     }
@@ -290,6 +334,7 @@ export function registerTlhTicketWorkflowUi(pi) {
         runtime.handleExperimentalFeatureChange(event);
     });
     pi.on("session_start", async (_event, ctx) => {
+        activateTlhTicketSessionScope(ctx.cwd, { refresh: true });
         runtime.applyCurrentSettings(ctx);
     });
     pi.on("user_bash", (event, ctx) => {

@@ -8,7 +8,7 @@ import {
 	TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT,
 } from "./experimental.js";
 import { isRecord } from "./common.js";
-import { findValidTlhTicketCommand } from "./tickets.js";
+import { activateTlhTicketSessionScope, findValidTlhTicketCommand } from "./tickets.js";
 import { TK_WORKFLOW_STATUS_KEY, TK_WORKFLOW_WIDGET_KEY } from "./ticket-workflow-ui-constants.js";
 import type { TlhSettings } from "./types.js";
 
@@ -17,6 +17,8 @@ const TK_COMMAND_TIMEOUT_MS = 4000;
 const TK_USER_BASH_REFRESH_DELAY_MS = 250;
 const TK_STATUS_HELP = "Use /tk-status for details.";
 const TK_WORKING_ON_PREFIX = "working on tk: ";
+
+type TkWorkflowTicket = { id?: string; status?: string };
 
 type TkWorkflowSnapshot =
 	| { kind: "disabled" }
@@ -29,6 +31,8 @@ type TkWorkflowSnapshot =
 			active: number;
 			ready: string[];
 			blocked: string[];
+			inProgress: string[];
+			currentTitle?: string;
 		};
 
 type TkCommandResult = SpawnSyncReturns<string>;
@@ -54,7 +58,10 @@ function firstOutputLine(result: TkCommandResult): string | undefined {
 }
 
 function isNoRepoMessage(message: string | undefined): boolean {
-	return typeof message === "string" && /no \.tickets directory found/i.test(message);
+	return (
+		typeof message === "string" &&
+		(/no \.tickets directory found/i.test(message) || /tickets directory ['"].+['"] does not exist/i.test(message))
+	);
 }
 
 function runTkCommand(command: string, cwd: string, args: string[]): TkCommandResult {
@@ -65,12 +72,12 @@ function runTkCommand(command: string, cwd: string, args: string[]): TkCommandRe
 	});
 }
 
-function parseJsonLines(output: string): Array<{ status?: string }> {
+function parseJsonLines(output: string): TkWorkflowTicket[] {
 	const lines = output
 		.split(/\r?\n/)
 		.map((line) => line.trim())
 		.filter(Boolean);
-	return lines.map((line) => JSON.parse(line) as { status?: string });
+	return lines.map((line) => JSON.parse(line) as TkWorkflowTicket);
 }
 
 function parseListLines(output: string): string[] {
@@ -80,11 +87,50 @@ function parseListLines(output: string): string[] {
 		.filter(Boolean);
 }
 
+function extractTicketTitleFromShowOutput(output: string): string | undefined {
+	const lines = output.split(/\r?\n/);
+	let inFrontmatter = false;
+	let frontmatterComplete = false;
+
+	for (const rawLine of lines) {
+		const line = rawLine.trim();
+		if (!frontmatterComplete && line === "---") {
+			if (!inFrontmatter) {
+				inFrontmatter = true;
+				continue;
+			}
+			frontmatterComplete = true;
+			continue;
+		}
+		if (inFrontmatter && !frontmatterComplete) {
+			continue;
+		}
+		if (!line) {
+			continue;
+		}
+		if (line.startsWith("# ")) {
+			return line.slice(2).trim() || undefined;
+		}
+		return line;
+	}
+
+	return undefined;
+}
+
+function getInProgressTicketTitle(command: string, cwd: string, ticketId: string): string | undefined {
+	const showResult = runTkCommand(command, cwd, ["show", ticketId]);
+	if (showResult.error || showResult.status !== 0) {
+		return undefined;
+	}
+	return extractTicketTitleFromShowOutput(showResult.stdout || "");
+}
+
 function getTkWorkflowSnapshot(cwd: string): TkWorkflowSnapshot {
 	if (!isTicketWorkflowUiEnabled(cwd)) {
 		return { kind: "disabled" };
 	}
 
+	activateTlhTicketSessionScope(cwd);
 	const settings = getTlhGlobalSettings(cwd);
 	const command = findValidTlhTicketCommand(settings, getAgentDir());
 	if (!command) {
@@ -102,7 +148,7 @@ function getTkWorkflowSnapshot(cwd: string): TkWorkflowSnapshot {
 			: { kind: "unavailable", message: queryFailure ?? "tk query failed." };
 	}
 
-	let tickets: Array<{ status?: string }>;
+	let tickets: TkWorkflowTicket[];
 	try {
 		tickets = parseJsonLines(queryResult.stdout || "");
 	} catch {
@@ -135,12 +181,20 @@ function getTkWorkflowSnapshot(cwd: string): TkWorkflowSnapshot {
 	}
 
 	const active = tickets.filter((ticket) => ticket.status === "open" || ticket.status === "in_progress").length;
+	const inProgress = tickets
+		.filter((ticket) => ticket.status === "in_progress")
+		.map((ticket) => ticket.id?.trim())
+		.filter((ticketId): ticketId is string => Boolean(ticketId));
+	const currentTitle =
+		inProgress.length === 1 ? getInProgressTicketTitle(command, cwd, inProgress[0]) : undefined;
 	return {
 		kind: "ok",
 		total: tickets.length,
 		active,
 		ready: parseListLines(readyResult.stdout || ""),
 		blocked: parseListLines(blockedResult.stdout || ""),
+		inProgress,
+		currentTitle,
 	};
 }
 
@@ -194,22 +248,11 @@ function stripTerminalControlSequences(text: string): string {
 	return sanitized;
 }
 
-function extractNextReadyTicketTitle(snapshot: Extract<TkWorkflowSnapshot, { kind: "ok" }>): string | undefined {
-	const nextReady = snapshot.ready[0]?.trim();
-	if (!nextReady) {
-		return undefined;
-	}
-	const titleSeparatorIndex = nextReady.indexOf(" - ");
-	const title = titleSeparatorIndex >= 0 ? nextReady.slice(titleSeparatorIndex + 3).trim() : "";
-	return title || nextReady;
-}
-
 function formatTkWorkflowFooterStatus(snapshot: TkWorkflowSnapshot): string | undefined {
-	if (snapshot.kind !== "ok") {
+	if (snapshot.kind !== "ok" || snapshot.inProgress.length !== 1) {
 		return undefined;
 	}
-	const title = extractNextReadyTicketTitle(snapshot);
-	const safeTitle = title ? stripTerminalControlSequences(title).trim() : undefined;
+	const safeTitle = snapshot.currentTitle ? stripTerminalControlSequences(snapshot.currentTitle).trim() : undefined;
 	return safeTitle ? `${TK_WORKING_ON_PREFIX}${safeTitle}\n${TK_STATUS_HELP}` : undefined;
 }
 
@@ -228,8 +271,20 @@ function formatTkWorkflowDetails(snapshot: TkWorkflowSnapshot): string {
 	}
 
 	const lines = [
-		`tk: ${snapshot.ready.length} ready • ${snapshot.blocked.length} blocked • ${snapshot.active} active • ${snapshot.total} total`,
+		`tk: ${snapshot.ready.length} ready • ${snapshot.blocked.length} blocked • ${snapshot.inProgress.length} in progress • ${snapshot.active} active • ${snapshot.total} total`,
 	];
+	if (snapshot.inProgress.length === 0) {
+		lines.push("In progress: none. Footer stays quiet.");
+	} else if (snapshot.inProgress.length === 1) {
+		const ticketId = snapshot.inProgress[0];
+		const title = snapshot.currentTitle ? stripTerminalControlSequences(snapshot.currentTitle).trim() : undefined;
+		lines.push(`In progress: ${title ? `${ticketId} - ${title}` : ticketId}`);
+	} else {
+		lines.push(
+			`In progress is ambiguous (${snapshot.inProgress.length} tickets). Footer stays quiet.`,
+			...snapshot.inProgress.slice(0, 3).map((ticketId) => `- ${ticketId}`),
+		);
+	}
 	if (snapshot.ready.length > 0) {
 		lines.push("Ready:", ...snapshot.ready.slice(0, 3).map((line) => `- ${line}`));
 	}
@@ -349,6 +404,7 @@ export function registerTlhTicketWorkflowUi(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		activateTlhTicketSessionScope(ctx.cwd, { refresh: true });
 		runtime.applyCurrentSettings(ctx);
 	});
 

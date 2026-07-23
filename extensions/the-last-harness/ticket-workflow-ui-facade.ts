@@ -8,6 +8,7 @@ import {
 	TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT,
 } from "./experimental.js";
 import type { TlhTicketWorkflowUiRuntime } from "./ticket-workflow-ui.js";
+import { activateTlhTicketSessionScope } from "./tickets.js";
 
 type TicketWorkflowUiModule = {
 	createTlhTicketWorkflowUiRuntime(pi: ExtensionAPI): TlhTicketWorkflowUiRuntime;
@@ -112,6 +113,7 @@ export function registerLazyTlhTicketWorkflowUi(pi: ExtensionAPI, options: TlhTi
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		activateTlhTicketSessionScope(ctx.cwd, { refresh: true });
 		activeContext = ctx;
 		applyCurrentSettings(ctx);
 	});
