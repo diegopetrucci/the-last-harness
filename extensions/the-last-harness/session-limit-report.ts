@@ -327,7 +327,6 @@ function renderProviderTotalsTable(result: SessionAggregateResult): string {
 	const rows: string[][] = [
 		...perProviderTotals.map((pt) => [
 			pt.provider,
-			pt.modelId ?? "—",
 			formatInteger(pt.usage.inputTokens),
 			formatInteger(pt.usage.outputTokens),
 			formatInteger(pt.usage.cacheReadTokens),
@@ -339,7 +338,6 @@ function renderProviderTotalsTable(result: SessionAggregateResult): string {
 		// Grand totals row
 		[
 			"All providers",
-			"—",
 			formatInteger(grandTotals.inputTokens),
 			formatInteger(grandTotals.outputTokens),
 			formatInteger(grandTotals.cacheReadTokens),
@@ -350,7 +348,7 @@ function renderProviderTotalsTable(result: SessionAggregateResult): string {
 		],
 	];
 	return renderTable(
-		["Provider", "Model", "Input", "Output", "Cache read", "Cache write", "Total", "Cost (USD)", "Turns"],
+		["Provider", "Input", "Output", "Cache read", "Cache write", "Total", "Cost (USD)", "Turns"],
 		rows,
 		"No provider usage data.",
 	);

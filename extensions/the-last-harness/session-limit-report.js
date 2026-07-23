@@ -220,7 +220,6 @@ function renderProviderTotalsTable(result) {
     const rows = [
         ...perProviderTotals.map((pt) => [
             pt.provider,
-            pt.modelId ?? "—",
             formatInteger(pt.usage.inputTokens),
             formatInteger(pt.usage.outputTokens),
             formatInteger(pt.usage.cacheReadTokens),
@@ -231,7 +230,6 @@ function renderProviderTotalsTable(result) {
         ]),
         [
             "All providers",
-            "—",
             formatInteger(grandTotals.inputTokens),
             formatInteger(grandTotals.outputTokens),
             formatInteger(grandTotals.cacheReadTokens),
@@ -241,7 +239,7 @@ function renderProviderTotalsTable(result) {
             formatInteger(grandTotals.turns),
         ],
     ];
-    return renderTable(["Provider", "Model", "Input", "Output", "Cache read", "Cache write", "Total", "Cost (USD)", "Turns"], rows, "No provider usage data.");
+    return renderTable(["Provider", "Input", "Output", "Cache read", "Cache write", "Total", "Cost (USD)", "Turns"], rows, "No provider usage data.");
 }
 function formatInteger(value) {
     return INTEGER_FORMATTER.format(value);
