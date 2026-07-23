@@ -71,7 +71,7 @@ test("lazy ticket workflow facade skips runtime import by default and loads it o
 	const runtimeCalls = [];
 	const runtime = {
 		applyCurrentSettings(ctx) {
-			runtimeCalls.push(["applyCurrentSettings", ctx.cwd]);
+			runtimeCalls.push(["applyCurrentSettings", ctx.cwd, process.env.TICKETS_DIR]);
 		},
 		handleExperimentalFeatureChange(event) {
 			runtimeCalls.push(["handleExperimentalFeatureChange", event.enabled]);
@@ -84,7 +84,7 @@ test("lazy ticket workflow facade skips runtime import by default and loads it o
 		},
 	};
 
-	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TICKETS_DIR: undefined }, async () => {
 		const pi = createPiHarness();
 		registerLazyTlhTicketWorkflowUi(pi, {
 			loadModule: async () => {
@@ -107,7 +107,7 @@ test("lazy ticket workflow facade skips runtime import by default and loads it o
 		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
 		await flushAsyncWork();
 		assert.deepEqual(loadCalls, ["load"]);
-		assert.deepEqual(runtimeCalls, [["applyCurrentSettings", fixture.cwd]]);
+		assert.deepEqual(runtimeCalls, [["applyCurrentSettings", fixture.cwd, join(fixture.cwd, ".tickets")]]);
 
 		await fireAll(pi, "user_bash", { command: "tk ready" }, ctx);
 		await fireAll(pi, "tool_result", { toolName: "bash", input: { command: "tk ready" } }, ctx);
@@ -129,7 +129,7 @@ test("lazy ticket workflow facade refreshes a loaded runtime for later disabled 
 	const runtimeCalls = [];
 	let activeCtx;
 
-	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TICKETS_DIR: undefined }, async () => {
 		const pi = createPiHarness();
 		registerLazyTlhTicketWorkflowUi(pi, {
 			loadModule: async () => {
@@ -184,7 +184,7 @@ test("lazy ticket workflow facade retries runtime import after a current-session
 	let attempts = 0;
 	const runtimeCalls = [];
 
-	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TICKETS_DIR: undefined }, async () => {
 		const pi = createPiHarness();
 		registerLazyTlhTicketWorkflowUi(pi, {
 			loadModule: async () => {

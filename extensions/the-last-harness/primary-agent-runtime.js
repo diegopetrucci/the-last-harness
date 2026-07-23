@@ -12,7 +12,7 @@ import { applyProviderAwareSubagentModels, selectProviderAwareAgentDefaults } fr
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
 import { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadAuthorizedEmbeddedSubagentRuntimeNames, loadPrimaryAgents, loadSubagentMetadata, } from "./prompts.js";
-import { activateTlhTicketRuntime } from "./tickets.js";
+import { activateTlhTicketRuntime, activateTlhTicketSessionScope } from "./tickets.js";
 import { tlhSettingsPathForWrite, withLockedTlhSettingsWrite } from "./profile-state.js";
 function getTlhGlobalSettings(cwd) {
     try {
@@ -226,6 +226,9 @@ function embeddedDelegationBlockedReason(selection, input) {
     return undefined;
 }
 function registerChildSubagentRuntime(pi, buildChildPrompt, env) {
+    pi.on("session_start", async (_event, ctx) => {
+        activateTlhTicketSessionScope(ctx.cwd, { refresh: true });
+    });
     pi.on("before_agent_start", async (event, ctx) => {
         const settings = getTlhGlobalSettings(ctx.cwd);
         const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
@@ -577,6 +580,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         });
     }
     async function applySessionStart(ctx) {
+        activateTlhTicketSessionScope(ctx.cwd, { refresh: true });
         sessionExperimentalSnapshot = getTlhGlobalSettings(ctx.cwd).tlh?.experimental;
         syncPrimaryAgentState(ctx);
         await applyPrimaryDefaults(ctx);
@@ -624,7 +628,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             syncPrimaryAgentState(ctx);
             const selection = currentPrimaryAgentSelection();
             const primaryEnabled = isEnabledPrimaryAgentSelection(selection);
-            activateTlhTicketRuntime(settings, getAgentDir());
+            activateTlhTicketRuntime(settings, getAgentDir(), ctx.cwd);
             await applyPrimaryDefaults(ctx);
             const prompts = [
                 event.systemPrompt,

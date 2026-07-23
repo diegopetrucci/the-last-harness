@@ -42,7 +42,7 @@ import {
 	loadPrimaryAgents,
 	loadSubagentMetadata,
 } from "./prompts.js";
-import { activateTlhTicketRuntime } from "./tickets.js";
+import { activateTlhTicketRuntime, activateTlhTicketSessionScope } from "./tickets.js";
 import { tlhSettingsPathForWrite, withLockedTlhSettingsWrite } from "./profile-state.js";
 import type {
 	AgentPrompt,
@@ -310,6 +310,10 @@ function registerChildSubagentRuntime(
 	buildChildPrompt: () => string,
 	env: Record<string, string | undefined>,
 ): void {
+	pi.on("session_start", async (_event, ctx) => {
+		activateTlhTicketSessionScope(ctx.cwd, { refresh: true });
+	});
+
 	pi.on("before_agent_start", async (event, ctx) => {
 		const settings = getTlhGlobalSettings(ctx.cwd);
 		const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
@@ -742,6 +746,7 @@ function createTlhPrimaryAgentRuntime(
 	}
 
 	async function applySessionStart(ctx: ExtensionContext): Promise<void> {
+		activateTlhTicketSessionScope(ctx.cwd, { refresh: true });
 		sessionExperimentalSnapshot = getTlhGlobalSettings(ctx.cwd).tlh?.experimental;
 		syncPrimaryAgentState(ctx);
 		await applyPrimaryDefaults(ctx);
@@ -798,7 +803,7 @@ function createTlhPrimaryAgentRuntime(
 			syncPrimaryAgentState(ctx);
 			const selection = currentPrimaryAgentSelection();
 			const primaryEnabled = isEnabledPrimaryAgentSelection(selection);
-			activateTlhTicketRuntime(settings, getAgentDir());
+			activateTlhTicketRuntime(settings, getAgentDir(), ctx.cwd);
 			await applyPrimaryDefaults(ctx);
 			const prompts = [
 				event.systemPrompt,

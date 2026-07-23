@@ -11,8 +11,8 @@ const jiti = createJiti(import.meta.url);
 const { registerTlhTicketWorkflowUi } = await jiti.import("../extensions/the-last-harness/ticket-workflow-ui.ts");
 const { TICKET_WORKFLOW_UI_FEATURE } = await jiti.import("../extensions/the-last-harness/experimental.ts");
 
-const READY_TICKET_TITLE = "Implement read-only - ticket workflow status UI";
-const READY_TICKET_FOOTER_STATUS = `working on tk: ${READY_TICKET_TITLE}\nUse /tk-status for details.`;
+const IN_PROGRESS_TICKET_TITLE = "Implement scoped ticket footer selection";
+const IN_PROGRESS_TICKET_FOOTER_STATUS = `working on tk: ${IN_PROGRESS_TICKET_TITLE}\nUse /tk-status for details.`;
 
 function createPiHarness() {
 	const commands = new Map();
@@ -96,15 +96,30 @@ case "\${1:-}" in
     echo "Tickets stored as markdown files in .tickets/"
     ;;
   query)
-    if [[ ! -d .tickets ]]; then
-      echo "no .tickets directory found" >&2
+    tickets_dir="\${TICKETS_DIR:-.tickets}"
+    if [[ ! -d "$tickets_dir" ]]; then
+      echo "Error: tickets directory '$tickets_dir' does not exist" >&2
       exit 1
     fi
     case "$state" in
-      default|ansi)
+      default|ansi|blocked-in-progress)
         cat <<'EOF'
 {"id":"tlhf-16ll","status":"open"}
-{"id":"tlhf-7rd2","status":"open"}
+{"id":"tlhf-7rd2","status":"in_progress"}
+{"id":"tlhf-xeww","status":"closed"}
+EOF
+        ;;
+      multiple-in-progress)
+        cat <<'EOF'
+{"id":"tlhf-16ll","status":"in_progress"}
+{"id":"tlhf-7rd2","status":"in_progress"}
+{"id":"tlhf-xeww","status":"open"}
+EOF
+        ;;
+      show-fails)
+        cat <<'EOF'
+{"id":"tlhf-16ll","status":"open"}
+{"id":"tlhf-7rd2","status":"in_progress"}
 {"id":"tlhf-xeww","status":"closed"}
 EOF
         ;;
@@ -120,31 +135,87 @@ EOF
     esac
     ;;
   ready)
-    if [[ ! -d .tickets ]]; then
-      echo "no .tickets directory found" >&2
+    tickets_dir="\${TICKETS_DIR:-.tickets}"
+    if [[ ! -d "$tickets_dir" ]]; then
+      echo "Error: tickets directory '$tickets_dir' does not exist" >&2
       exit 1
     fi
     case "$state" in
-      default)
-        echo "tlhf-7rd2 [P2][open] - ${READY_TICKET_TITLE}"
+      default|ansi|updated|blocked-in-progress|show-fails)
+        echo "tlhf-16ll [P1][open] - Higher priority open ticket"
         ;;
-      ansi)
-        printf 'tlhf-7rd2 [P2][open] - Implement \\033[31mread-only\\033[0m ticket workflow\\a status UI\\n'
+      multiple-in-progress)
+        echo "tlhf-xeww [P2][open] - Open ticket that should not own the footer"
         ;;
-      updated|empty)
+      empty)
         ;;
     esac
     ;;
   blocked)
-    if [[ ! -d .tickets ]]; then
-      echo "no .tickets directory found" >&2
+    tickets_dir="\${TICKETS_DIR:-.tickets}"
+    if [[ ! -d "$tickets_dir" ]]; then
+      echo "Error: tickets directory '$tickets_dir' does not exist" >&2
       exit 1
     fi
     case "$state" in
-      default|updated|ansi)
-        echo "tlhf-16ll [P2][open] - Document and validate ticket workflow UI experiment <- [tlhf-7rd2]"
+      default|updated|ansi|show-fails)
+        echo "tlhf-16ll [P1][open] - Higher priority open ticket <- [tlhf-7rd2]"
+        ;;
+      blocked-in-progress)
+        echo "tlhf-7rd2 [P2][in_progress] - ${IN_PROGRESS_TICKET_TITLE} <- [tlhf-16ll]"
+        ;;
+      multiple-in-progress)
+        echo "tlhf-16ll [P2][in_progress] - First in-progress ticket <- [tlhf-xeww]"
         ;;
       empty)
+        ;;
+    esac
+    ;;
+  show)
+    tickets_dir="\${TICKETS_DIR:-.tickets}"
+    if [[ ! -d "$tickets_dir" ]]; then
+      echo "Error: tickets directory '$tickets_dir' does not exist" >&2
+      exit 1
+    fi
+    case "$state:$2" in
+      default:tlhf-7rd2|updated:tlhf-7rd2|blocked-in-progress:tlhf-7rd2)
+        cat <<'EOF'
+---
+id: tlhf-7rd2
+status: in_progress
+---
+# ${IN_PROGRESS_TICKET_TITLE}
+EOF
+        ;;
+      ansi:tlhf-7rd2)
+        printf '%s\n' '---' 'id: tlhf-7rd2' 'status: in_progress' '---'
+        printf '%b\n' '# Implement scoped\\033[31m ticket\\033[0m footer\\a selection'
+        ;;
+      show-fails:tlhf-7rd2)
+        echo "ticket metadata unavailable" >&2
+        exit 1
+        ;;
+      multiple-in-progress:tlhf-16ll)
+        cat <<'EOF'
+---
+id: tlhf-16ll
+status: in_progress
+---
+# First in-progress ticket
+EOF
+        ;;
+      multiple-in-progress:tlhf-7rd2)
+        cat <<'EOF'
+---
+id: tlhf-7rd2
+status: in_progress
+---
+# Second in-progress ticket
+EOF
+        ;;
+      *)
+        echo "ticket not found" >&2
+        exit 1
         ;;
     esac
     ;;
@@ -178,7 +249,7 @@ test("ticket workflow UI stays completely disabled by default", async (t) => {
 	});
 });
 
-test("enabled ticket workflow UI publishes footer status, ignores unrelated bash results, refreshes after tk bash and user_bash results, and exposes /tk-status", async (t) => {
+test("enabled ticket workflow UI shows the sole in-progress footer even with a higher-priority open ticket and exposes read-only /tk-status details", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
 	mkdirSync(join(fixture.cwd, ".tickets"));
 	const statePath = join(fixture.dir, "tk-state");
@@ -198,18 +269,12 @@ test("enabled ticket workflow UI publishes footer status, ignores unrelated bash
 		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
 
 		assert.equal(pi.commands.has("tk-status"), true);
-		assert.equal(
-			uiHarness.statusUpdates.at(-1)?.text,
-			READY_TICKET_FOOTER_STATUS,
-		);
+		assert.equal(uiHarness.statusUpdates.at(-1)?.text, IN_PROGRESS_TICKET_FOOTER_STATUS);
 		assert.equal(uiHarness.widgetUpdates.at(-1)?.content, undefined);
 
 		writeFileSync(statePath, "updated\n");
 		await fireAll(pi, "tool_result", { toolName: "bash", input: { command: "git status" } }, ctx);
-		assert.equal(
-			uiHarness.statusUpdates.at(-1)?.text,
-			READY_TICKET_FOOTER_STATUS,
-		);
+		assert.equal(uiHarness.statusUpdates.at(-1)?.text, IN_PROGRESS_TICKET_FOOTER_STATUS);
 
 		await fireAll(pi, "tool_result", { toolName: "bash", input: { command: "tk close tlhf-7rd2" } }, ctx);
 		assert.equal(uiHarness.statusUpdates.at(-1)?.text, undefined);
@@ -220,21 +285,47 @@ test("enabled ticket workflow UI publishes footer status, ignores unrelated bash
 		const userBashResult = userBashHandler({ command: "tk ready", cwd: fixture.cwd }, ctx);
 		assert.equal(userBashResult, undefined);
 		await delay(300);
-		assert.equal(
-			uiHarness.statusUpdates.at(-1)?.text,
-			READY_TICKET_FOOTER_STATUS,
-		);
+		assert.equal(uiHarness.statusUpdates.at(-1)?.text, IN_PROGRESS_TICKET_FOOTER_STATUS);
 
 		writeFileSync(statePath, "updated\n");
 		await pi.commands.get("tk-status").handler("", ctx);
 		assert.equal(uiHarness.notifications.at(-1)?.type, "info");
-		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /tk: 0 ready • 1 blocked • 1 active • 3 total/);
+		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /tk: 1 ready • 1 blocked • 0 in progress • 1 active • 3 total/);
+		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /In progress: none\. Footer stays quiet\./);
+		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /Ready:/);
 		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /Blocked:/);
 		assert.doesNotMatch(uiHarness.notifications.at(-1)?.message ?? "", /start|close .*tlhf-/i);
 	});
 });
 
-test("ticket workflow UI strips ANSI and control sequences from the ready ticket footer title", async (t) => {
+test("ticket workflow UI stays quiet when the sole in-progress ticket title is unavailable while /tk-status still reports its id without mutation guidance", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
+	mkdirSync(join(fixture.cwd, ".tickets"));
+	const statePath = join(fixture.dir, "tk-state");
+	writeFileSync(statePath, "show-fails\n");
+	installFakeTk(fixture.agent, statePath);
+	writeFileSync(
+		join(fixture.agent, "settings.json"),
+		`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [TICKET_WORKFLOW_UI_FEATURE] } } }, null, 2)}\n`,
+	);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const pi = createPiHarness();
+		registerTlhTicketWorkflowUi(pi);
+		const uiHarness = createUiHarness();
+		const ctx = createCtx(fixture.cwd, uiHarness.ui);
+
+		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
+		assert.equal(uiHarness.statusUpdates.at(-1)?.text, undefined);
+
+		await pi.commands.get("tk-status").handler("", ctx);
+		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /tk: 1 ready • 1 blocked • 1 in progress • 2 active • 3 total/);
+		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /In progress: tlhf-7rd2/);
+		assert.doesNotMatch(uiHarness.notifications.at(-1)?.message ?? "", /start|close .*tlhf-/i);
+	});
+});
+
+test("ticket workflow UI strips ANSI and control sequences from the sole in-progress footer title", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
 	mkdirSync(join(fixture.cwd, ".tickets"));
 	const statePath = join(fixture.dir, "tk-state");
@@ -254,14 +345,66 @@ test("ticket workflow UI strips ANSI and control sequences from the ready ticket
 		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
 
 		const statusText = uiHarness.statusUpdates.at(-1)?.text ?? "";
-		assert.equal(
-			statusText,
-			"working on tk: Implement read-only ticket workflow status UI\nUse /tk-status for details.",
-		);
+		assert.equal(statusText, "working on tk: Implement scoped ticket footer selection\nUse /tk-status for details.");
 		for (const character of statusText) {
 			const code = character.charCodeAt(0);
 			assert.equal(((code >= 0x00 && code <= 0x1f) && code !== 0x0a) || (code >= 0x7f && code <= 0x9f), false);
 		}
+	});
+});
+
+test("ticket workflow UI still shows a sole blocked in-progress ticket in the footer", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
+	mkdirSync(join(fixture.cwd, ".tickets"));
+	const statePath = join(fixture.dir, "tk-state");
+	writeFileSync(statePath, "blocked-in-progress\n");
+	installFakeTk(fixture.agent, statePath);
+	writeFileSync(
+		join(fixture.agent, "settings.json"),
+		`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [TICKET_WORKFLOW_UI_FEATURE] } } }, null, 2)}\n`,
+	);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const pi = createPiHarness();
+		registerTlhTicketWorkflowUi(pi);
+		const uiHarness = createUiHarness();
+		const ctx = createCtx(fixture.cwd, uiHarness.ui);
+
+		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
+		assert.equal(uiHarness.statusUpdates.at(-1)?.text, IN_PROGRESS_TICKET_FOOTER_STATUS);
+
+		await pi.commands.get("tk-status").handler("", ctx);
+		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /tk: 1 ready • 1 blocked • 1 in progress • 2 active • 3 total/);
+		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /In progress: tlhf-7rd2 - Implement scoped ticket footer selection/);
+		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /Blocked:/);
+	});
+});
+
+test("ticket workflow UI stays quiet for multiple in-progress tickets while /tk-status explains the ambiguity", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
+	mkdirSync(join(fixture.cwd, ".tickets"));
+	const statePath = join(fixture.dir, "tk-state");
+	writeFileSync(statePath, "multiple-in-progress\n");
+	installFakeTk(fixture.agent, statePath);
+	writeFileSync(
+		join(fixture.agent, "settings.json"),
+		`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [TICKET_WORKFLOW_UI_FEATURE] } } }, null, 2)}\n`,
+	);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const pi = createPiHarness();
+		registerTlhTicketWorkflowUi(pi);
+		const uiHarness = createUiHarness();
+		const ctx = createCtx(fixture.cwd, uiHarness.ui);
+
+		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
+		assert.equal(uiHarness.statusUpdates.at(-1)?.text, undefined);
+
+		await pi.commands.get("tk-status").handler("", ctx);
+		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /tk: 1 ready • 1 blocked • 2 in progress • 3 active • 3 total/);
+		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /In progress is ambiguous \(2 tickets\)\. Footer stays quiet\./);
+		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /- tlhf-16ll/);
+		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /- tlhf-7rd2/);
 	});
 });
 
@@ -292,10 +435,7 @@ test("ticket workflow UI reacts to current-session experimental enable and disab
 		});
 
 		assert.equal(pi.commands.has("tk-status"), true);
-		assert.equal(
-			uiHarness.statusUpdates.at(-1)?.text,
-			READY_TICKET_FOOTER_STATUS,
-		);
+		assert.equal(uiHarness.statusUpdates.at(-1)?.text, IN_PROGRESS_TICKET_FOOTER_STATUS);
 		assert.equal(uiHarness.widgetUpdates.at(-1)?.content, undefined);
 
 		writeFileSync(settingsPath, `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [] } } }, null, 2)}\n`);

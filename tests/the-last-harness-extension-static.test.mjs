@@ -387,7 +387,7 @@ test("before_agent_start activates ticket runtime without disabled-ticket prompt
 	assert.match(primaryRuntimeSource, /function getTlhGlobalSettings\(cwd: string\): TlhSettings/);
 	assert.match(beforeAgentStart, /const settings = getTlhGlobalSettings\(ctx\.cwd\);/);
 	assert.doesNotMatch(beforeAgentStart, /ticketIntegrationEnabled/);
-	assert.match(beforeAgentStart, /activateTlhTicketRuntime\(settings, getAgentDir\(\)\);/);
+	assert.match(beforeAgentStart, /activateTlhTicketRuntime\(settings, getAgentDir\(\), ctx\.cwd\);/);
 	// The per-turn refresh must NOT be reintroduced in before_agent_start.
 	assert.doesNotMatch(beforeAgentStart, /sessionExperimentalSnapshot =/);
 	// delta/ci prompt guidance reads settings fresh per turn.
@@ -691,7 +691,7 @@ test("extension runs primary session_start work before UI startup in one handler
 	const lifecycleHooks = sourceSection(primaryRuntimeSource, "function registerLifecycleHooks()", "\n\n\treturn { applySessionStart");
 
 	assert.match(sessionStart, /await primaryAgentRuntime\.applySessionStart\(ctx\);[\s\S]*if \(!ctx\.hasUI\)/);
-	assert.match(primaryRuntimeSource, /async function applySessionStart\(ctx: ExtensionContext\): Promise<void>/);
+	assert.match(primaryRuntimeSource, /async function applySessionStart\(ctx: ExtensionContext\): Promise<void>[\s\S]*activateTlhTicketSessionScope\(ctx\.cwd, \{ refresh: true \}\);/);
 	assert.match(primaryRuntimeSource, /return \{ applySessionStart, currentPrimaryAgentLabel, activePrimaryAgentPrompt: activePrimaryAgent, registerCommands, registerLifecycleHooks \};/);
 	assert.doesNotMatch(lifecycleHooks, /pi\.on\("session_start"/);
 });

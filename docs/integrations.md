@@ -28,6 +28,8 @@ tlh tickets enable
 
 Legacy `settings.tlh.tickets.enabled=false` values are re-enabled during install/update because ticket support is required. The wrapper includes the managed `<agent>/bin` directory on `PATH` for the wrapped upstream Pi process, so subagents and shells launched from inside TLH can find a managed `tk` when TLH supplied one.
 
+At TLH session start, TLH also scopes `tk` to one ticket store for that session by exporting `TICKETS_DIR` before the ticket UI or agent prompts run. If `TICKETS_DIR` is already set, TLH preserves it. Otherwise TLH points `tk` at `<git-worktree-root>/.tickets`; outside Git it falls back to `<session-cwd>/.tickets`. This keeps architect sessions, child sessions, `/tk-status`, and Bash-launched `tk` commands on the same repo-local ticket store without touching ancestor stores such as `~/Developer/.tickets`.
+
 If TLH cannot validate a configured/existing `tk` and cannot install the managed copy, install or update fails with an actionable error instead of starting with an incomplete workflow. To recover, provide a valid `tk` command and run `tlh tickets enable --install-path /path/to/tk`, or rerun the installer/update once the managed download can succeed.
 
 Removing `~/.the-last-harness` removes any managed `tk` copy. To remove only the managed `tk` binary while keeping the rest of the profile, delete `~/.the-last-harness/agent/bin/tk`; the next install/update will recreate it if no other valid `tk` is configured. Running `tlh tickets enable` without a managed reinstall clears the recorded SHA-256, so the next install/update refreshes the managed binary when the managed path is in use.

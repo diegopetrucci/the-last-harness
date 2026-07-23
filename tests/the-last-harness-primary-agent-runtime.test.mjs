@@ -39,6 +39,25 @@ test("primary runtime applies OpenAI Rush-like metadata defaults with no setting
 	}
 });
 
+test("primary runtime scopes tickets during session start before later session work", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TICKETS_DIR: undefined }, async () => {
+		const { runtime } = registerRuntimeHarness({ subagentMetadata: [] });
+		assert.ok(runtime, "runtime should register outside child sessions");
+
+		await runtime.applySessionStart({
+			cwd: fixture.cwd,
+			sessionManager: { getBranch: () => [] },
+			ui: { notify() {} },
+			modelRegistry: { getAvailable: () => [{ provider: "openai-codex", id: "gpt-5.4" }] },
+			model: { provider: "openai-codex", id: "gpt-5.4" },
+		});
+
+		assert.equal(process.env.TICKETS_DIR, join(fixture.cwd, ".tickets"));
+	});
+});
+
 test("primary runtime falls back to Anthropic Rush-like metadata defaults when only Anthropic is available", async () => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true });
 	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
