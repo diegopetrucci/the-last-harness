@@ -204,6 +204,67 @@ test("subagent-settings status reports effective overrides and fixed-model indep
 });
 
 
+test("subagent-settings status shows saved effort after the full exact suffix-like model identity", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
+	const pi = createPiHarness();
+	registerSubagentSettingsCommand(pi);
+	const command = pi.commands.get("subagent-settings");
+	assert.ok(command, "subagent-settings command should register");
+
+	writeFileSync(
+		join(fixture.agent, "settings.json"),
+		`${JSON.stringify({ subagents: { agentOverrides: { developer: { model: "openrouter/reasoner:high", thinking: "low" } } } }, null, 2)}\n`,
+	);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { ctx, notifications } = createCommandContext({
+			cwd: fixture.cwd,
+			modelRegistry: {
+				getAvailable: () => [
+					{ provider: "openrouter", id: "reasoner:high", reasoning: true },
+					{ provider: "openai-codex", id: "gpt-5.4", reasoning: true },
+				],
+			},
+		});
+		await command.handler("status developer", ctx);
+		assert.match(notifications[0]?.message ?? "", /override model=openrouter\/reasoner:high, effort=low/i);
+		assert.match(notifications[0]?.message ?? "", /effective openrouter\/reasoner:high:low/i);
+	});
+});
+
+
+test("subagent-settings status reports unavailable stored pins and update/reset guidance", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
+	const pi = createPiHarness();
+	registerSubagentSettingsCommand(pi);
+	const command = pi.commands.get("subagent-settings");
+	assert.ok(command, "subagent-settings command should register");
+
+	writeFileSync(
+		join(fixture.agent, "settings.json"),
+		`${JSON.stringify({ subagents: { agentOverrides: { "code-reviewer": { model: "openai-codex/gpt-5.999", thinking: "turbo", note: "keep" } } } }, null, 2)}\n`,
+	);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { ctx, notifications } = createCommandContext({ cwd: fixture.cwd });
+		await command.handler("status code-reviewer", ctx);
+		const message = notifications[0]?.message ?? "";
+		assert.match(message, /override model=openai-codex\/gpt-5\.999, effort=stored nonstandard\/disabled \("turbo"\)/i);
+		assert.match(message, /effective openai-codex\/gpt-5\.999/i);
+		assert.match(message, new RegExp(INDEPENDENCE_WARNING.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+		assert.match(message, /not currently available; forwarding the saved pin unchanged/i);
+		assert.match(message, /set code-reviewer model <provider\/id>/i);
+		assert.match(message, /reset code-reviewer model/i);
+		assert.match(message, /ignored unsupported stored minor-agent effort "turbo"/i);
+		assert.equal(message.match(/not currently available/gi)?.length, 1);
+		const settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
+		assert.equal(settings.subagents.agentOverrides["code-reviewer"].model, "openai-codex/gpt-5.999");
+		assert.equal(settings.subagents.agentOverrides["code-reviewer"].thinking, "turbo");
+		assert.equal(settings.subagents.agentOverrides["code-reviewer"].note, "keep");
+	});
+});
+
+
 test("subagent-settings status shows effective off for model-only overrides on non-reasoning models", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
 	const pi = createPiHarness();

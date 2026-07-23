@@ -166,6 +166,73 @@ test("exact suffix-like model IDs win shared lookup, resolution, and mutation", 
 });
 
 
+test("saved effort appends after the exact saved model identity", () => {
+	const available = [{ provider: "openrouter", id: "reasoner:high", reasoning: true }];
+	const input = { agent: "developer", task: "Implement the ticket" };
+	assert.equal(
+		applyProviderAwareSubagentModels(input, agents, available, "openrouter", undefined, {
+			agentOverrides: new Map([["developer", { model: "openrouter/reasoner:high", thinking: "low" }]]),
+		}),
+		1,
+	);
+	assert.equal(input.model, "openrouter/reasoner:high:low");
+});
+
+
+test("saved effort appends after exact suffix-like primary and generated fallback model IDs", () => {
+	const exactSuffixReviewer = {
+		name: "exact-suffix-reviewer",
+		tlhOpenaiModels: ["openai-codex/gpt-5.6-sol:high"],
+		tlhAnthropicModels: ["anthropic/claude-opus-4-8:high"],
+		preferOppositeProvider: true,
+	};
+	const exactSuffixAgents = new Map([[exactSuffixReviewer.name, exactSuffixReviewer]]);
+	const available = [
+		{ provider: "openai-codex", id: "gpt-5.6-sol:high", reasoning: true },
+		{ provider: "anthropic", id: "claude-opus-4-8:high", reasoning: true },
+	];
+	const input = { agent: exactSuffixReviewer.name, task: "Review the diff" };
+	assert.equal(
+		applyProviderAwareSubagentModels(
+			input,
+			exactSuffixAgents,
+			available,
+			"anthropic",
+			{ provider: "anthropic", id: "claude-opus-4-8:high" },
+			{ agentOverrides: new Map([[exactSuffixReviewer.name, { thinking: "low" }]]) },
+		),
+		1,
+	);
+	assert.equal(input.model, "openai-codex/gpt-5.6-sol:high:low");
+	assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-4-8:high:low"]);
+});
+
+
+test("model-only exact suffix-like IDs receive bundled effort after the full model identity", () => {
+	const mediumExactSuffixDeveloper = { ...developer, thinking: "medium" };
+	const mediumExactSuffixAgents = new Map([[mediumExactSuffixDeveloper.name, mediumExactSuffixDeveloper]]);
+	const available = [{ provider: "openrouter", id: "reasoner:high", reasoning: true }];
+	const resolution = resolveProviderAwareSubagentResolution(
+		mediumExactSuffixDeveloper,
+		available,
+		"openrouter",
+		undefined,
+		{ model: "openrouter/reasoner:high" },
+	);
+	assert.equal(resolution.model, available[0]);
+	assert.equal(resolution.thinking, "medium");
+
+	const input = { agent: "developer", task: "Implement the ticket" };
+	assert.equal(
+		applyProviderAwareSubagentModels(input, mediumExactSuffixAgents, available, "openrouter", undefined, {
+			agentOverrides: new Map([["developer", { model: "openrouter/reasoner:high" }]]),
+		}),
+		1,
+	);
+	assert.equal(input.model, "openrouter/reasoner:high:medium");
+});
+
+
 test("shared lookup still treats a non-exact recognized suffix as base-model effort", () => {
 	const available = [{ provider: "openrouter", id: "reasoner", reasoning: true }];
 	assert.equal(findAvailableProviderModel(available, "openrouter/reasoner:high"), available[0]);
@@ -598,6 +665,137 @@ test("persisted minor-agent overrides win over bundled defaults and apply suppor
 		1,
 	);
 	assert.equal(input.model, "anthropic/claude-sonnet-5:high");
+});
+
+
+test("unavailable persisted string pins stay authoritative and fail closed without generated fallbacks", () => {
+	const warnings = [];
+	const input = { agent: "code-reviewer", task: "Review the diff" };
+	assert.equal(
+		applyProviderAwareSubagentModels(
+			input,
+			agents,
+			[...reasoningAnthropicAvailable, ...reasoningCodexAvailable],
+			"anthropic",
+			undefined,
+			{
+				agentOverrides: new Map([["code-reviewer", { model: "openai-codex/gpt-5.999", thinking: "high" }]]),
+				onWarning: (warning) => warnings.push(warning.message),
+			},
+		),
+		1,
+	);
+	assert.equal(input.model, "openai-codex/gpt-5.999");
+	assert.equal(Object.hasOwn(input, "fallbackModels"), false);
+	assert.equal(Object.hasOwn(input, "modelFallbackNotice"), false);
+	assert.equal(warnings.length, 1);
+	assert.match(warnings[0], /saved minor-agent model override "openai-codex\/gpt-5\.999"/i);
+	assert.match(warnings[0], /forwarding the saved pin unchanged/i);
+	assert.match(warnings[0], /this dispatch will fail closed/i);
+	assert.match(warnings[0], /no nonempty caller-supplied fallbackModels list/i);
+	assert.match(warnings[0], /reset code-reviewer model/i);
+
+	const resolution = resolveProviderAwareSubagentResolution(
+		codeReviewer,
+		[...reasoningAnthropicAvailable, ...reasoningCodexAvailable],
+		"anthropic",
+		undefined,
+		{ model: "openai-codex/gpt-5.999", thinking: "high" },
+	);
+	assert.equal(resolution.unavailableModel, "openai-codex/gpt-5.999");
+	assert.deepEqual(resolution.fallbackModels, undefined);
+	assert.equal(resolution.modelFallbackNotice, undefined);
+	assert.equal(resolution.independence, "preferred");
+});
+
+
+test("unavailable persisted string pins preserve caller-owned fallback fields and direct-dispatch precedence", () => {
+	const callerWarnings = [];
+	const callerFallbackInput = {
+		agent: "code-reviewer",
+		task: "Review",
+		fallbackModels: ["caller/fallback"],
+		modelFallbackNotice: "caller notice",
+	};
+	assert.equal(
+		applyProviderAwareSubagentModels(
+			callerFallbackInput,
+			agents,
+			[...reasoningAnthropicAvailable, ...reasoningCodexAvailable],
+			"anthropic",
+			undefined,
+			{
+				agentOverrides: new Map([["code-reviewer", { model: "openai-codex/gpt-5.999" }]]),
+				onWarning: (warning) => callerWarnings.push(warning.message),
+			},
+		),
+		1,
+	);
+	assert.equal(callerFallbackInput.model, "openai-codex/gpt-5.999");
+	assert.deepEqual(callerFallbackInput.fallbackModels, ["caller/fallback"]);
+	assert.equal(callerFallbackInput.modelFallbackNotice, "caller notice");
+	assert.equal(callerWarnings.length, 1);
+	assert.match(callerWarnings[0], /only the caller-supplied fallbackModels may run/i);
+	assert.doesNotMatch(callerWarnings[0], /dispatch will fail closed/i);
+
+	const emptyFallbackWarnings = [];
+	const emptyFallbackInput = { agent: "code-reviewer", task: "Review", fallbackModels: [] };
+	assert.equal(
+		applyProviderAwareSubagentModels(
+			emptyFallbackInput,
+			agents,
+			[...reasoningAnthropicAvailable, ...reasoningCodexAvailable],
+			"anthropic",
+			undefined,
+			{
+				agentOverrides: new Map([["code-reviewer", { model: "openai-codex/gpt-5.999" }]]),
+				onWarning: (warning) => emptyFallbackWarnings.push(warning.message),
+			},
+		),
+		1,
+	);
+	assert.equal(emptyFallbackInput.model, "openai-codex/gpt-5.999");
+	assert.deepEqual(emptyFallbackInput.fallbackModels, []);
+	assert.equal(emptyFallbackWarnings.length, 1);
+	assert.match(emptyFallbackWarnings[0], /this dispatch will fail closed/i);
+
+	const explicitWarnings = [];
+	const explicitInput = { agent: "code-reviewer", task: "Review", model: "anthropic/claude-opus-4-8" };
+	assert.equal(
+		applyProviderAwareSubagentModels(
+			explicitInput,
+			agents,
+			[...reasoningAnthropicAvailable, ...reasoningCodexAvailable],
+			"anthropic",
+			undefined,
+			{
+				agentOverrides: new Map([["code-reviewer", { model: "openai-codex/gpt-5.999", thinking: "high" }]]),
+				onWarning: (warning) => explicitWarnings.push(warning.message),
+			},
+		),
+		1,
+	);
+	assert.equal(explicitInput.model, "anthropic/claude-opus-4-8:high");
+	assert.deepEqual(explicitWarnings, []);
+
+	const falseWarnings = [];
+	const falseInput = { agent: "code-reviewer", task: "Review" };
+	assert.equal(
+		applyProviderAwareSubagentModels(
+			falseInput,
+			agents,
+			[...reasoningAnthropicAvailable, ...reasoningCodexAvailable],
+			"anthropic",
+			{ provider: "anthropic", id: "claude-opus-4-8" },
+			{
+				agentOverrides: new Map([["code-reviewer", { model: false }]]),
+				onWarning: (warning) => falseWarnings.push(warning.message),
+			},
+		),
+		0,
+	);
+	assert.equal(Object.hasOwn(falseInput, "model"), false);
+	assert.deepEqual(falseWarnings, []);
 });
 
 

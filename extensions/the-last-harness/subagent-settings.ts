@@ -4,6 +4,8 @@ import { formatHomePath, isRecord } from "./common.js";
 import {
 	findAvailableProviderModel,
 	formatProviderModelReference,
+	formatResolvedProviderModelReference,
+	formatUnavailableStoredModelWarning,
 	parseProviderModelReference,
 	resolveProviderAwareSubagentResolution,
 	type ProviderModelReference,
@@ -12,7 +14,7 @@ import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { loadSubagentMetadata } from "./prompts.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
 import { getAvailableThinkingLevels, isThinkingLevel } from "./thinking.js";
-import type { ReasoningModel, SubagentMetadata, TlhSettings, TlhSubagentOverride } from "./types.js";
+import type { ReasoningModel, SubagentMetadata, ThinkingLevel, TlhSettings, TlhSubagentOverride } from "./types.js";
 
 const SUBAGENT_SETTINGS_COMMAND = "subagent-settings";
 const INDEPENDENCE_SENSITIVE_AGENTS = new Set(["code-reviewer", "oracle", "contrarian"]);
@@ -282,12 +284,14 @@ function effectiveModelForEffort(
 	).model;
 }
 
-function formatEffectiveModelAndThinking(model: ProviderModelReference | undefined, thinking: string | undefined): string {
+function formatEffectiveModelAndThinking(model: ProviderModelReference | string | undefined, thinking: ThinkingLevel | undefined): string {
 	if (!model) {
 		return thinking ? `no model (effort ${thinking})` : "no model";
 	}
-	const modelLabel = formatProviderModelReference(model);
-	return thinking ? `${modelLabel}:${thinking}` : modelLabel;
+	if (typeof model === "string") {
+		return model;
+	}
+	return formatResolvedProviderModelReference(model, thinking);
 }
 
 function formatStoredOverrideValue(override: TlhSubagentOverride | undefined, field: "model" | "thinking"): string {
@@ -320,11 +324,17 @@ function formatStatusForAgent(agent: SubagentMetadata, override: TlhSubagentOver
 	);
 	const overrideModel = formatStoredOverrideValue(override, "model");
 	const overrideThinking = formatStoredOverrideValue(override, "thinking");
-	const warnings = [fixedModelWarning(agent.name, override), overrideResolution.warning].filter(
-		(warning): warning is string => Boolean(warning),
-	);
+	const warnings = [
+		fixedModelWarning(agent.name, override),
+		overrideResolution.unavailableModel
+			? formatUnavailableStoredModelWarning(agent.name, overrideResolution.unavailableModel, "status")
+			: undefined,
+		overrideResolution.warning,
+	].filter((warning): warning is string => Boolean(warning));
+	const effectiveModel = overrideResolution.unavailableModel ?? overrideResolution.model;
+	const effectiveThinking = overrideResolution.unavailableModel ? undefined : overrideResolution.thinking;
 	const lines = [
-		`- ${agent.name}: default ${formatEffectiveModelAndThinking(baseResolution.model, baseResolution.thinking)}; override model=${overrideModel}, effort=${overrideThinking}; effective ${formatEffectiveModelAndThinking(overrideResolution.model, overrideResolution.thinking)}.`,
+		`- ${agent.name}: default ${formatEffectiveModelAndThinking(baseResolution.model, baseResolution.thinking)}; override model=${overrideModel}, effort=${overrideThinking}; effective ${formatEffectiveModelAndThinking(effectiveModel, effectiveThinking)}.`,
 		...warnings.map((warning) => `  ${warning}`),
 	];
 	return lines.join("\n");
@@ -435,7 +445,10 @@ async function confirmFixedModelOverride(
 function subagentPickerOption(agent: SubagentMetadata, override: TlhSubagentOverride | undefined, ctx: StatusContext): string {
 	const models = availableModels(ctx);
 	const effective = resolveProviderAwareSubagentResolution(agent, models, ctx.model?.provider, currentModelReference(ctx), override);
-	const effectiveLabel = formatEffectiveModelAndThinking(effective.model, effective.thinking);
+	const effectiveLabel = formatEffectiveModelAndThinking(
+		effective.unavailableModel ?? effective.model,
+		effective.unavailableModel ? undefined : effective.thinking,
+	);
 	const hasOverride = Boolean(override && (Object.hasOwn(override, "model") || Object.hasOwn(override, "thinking")));
 	const overrideMarker = hasOverride ? "●" : "○";
 	const riskMarker = fixedModelWarning(agent.name, override) ? " ⚠ independence" : "";

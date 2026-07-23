@@ -31,6 +31,7 @@ export type ProviderAwareSubagentFallback<T extends ProviderModelReference = Pro
 
 export type ProviderAwareSubagentResolution<T extends ProviderModelReference = ProviderModelReference> = {
 	model?: T;
+	unavailableModel?: string;
 	fallbackModels?: ProviderAwareSubagentFallback<T>[];
 	modelFallbackNotice?: string;
 	thinking?: ThinkingLevel;
@@ -65,6 +66,16 @@ export function parseProviderModelReference(model: unknown): ProviderModelRefere
 
 export function formatProviderModelReference(model: ProviderModelReference): string {
 	return `${model.provider}/${model.id}`;
+}
+
+export function formatResolvedProviderModelReference(
+	model: ProviderModelReference,
+	thinking: ThinkingLevel | undefined,
+): string {
+	if (!thinking || !MODEL_SUFFIX_THINKING_LEVELS.includes(thinking)) {
+		return formatProviderModelReference(model);
+	}
+	return `${formatProviderModelReference(model)}:${thinking}`;
 }
 
 export function splitKnownThinkingSuffix(model: string | undefined): { baseModel: string | undefined; thinkingSuffix: string } {
@@ -386,6 +397,23 @@ export function selectProviderAwareAgentModelId(
 	return model ? formatProviderModelReference(model) : undefined;
 }
 
+export type UnavailableStoredModelWarningContext = "status" | "caller-fallbacks" | "fail-closed";
+
+export function formatUnavailableStoredModelWarning(
+	agentName: string | undefined,
+	model: string,
+	context: UnavailableStoredModelWarningContext,
+): string {
+	const roleLabel = agentName ?? "this minor-agent role";
+	const dispatchResult = context === "caller-fallbacks"
+		? " Only the caller-supplied fallbackModels may run if that saved pin fails."
+		: context === "fail-closed"
+			? " This dispatch will fail closed because it has no nonempty caller-supplied fallbackModels list."
+			: "";
+	const action = ` Update it with /subagent-settings set ${roleLabel} model <provider/id> or clear it with /subagent-settings reset ${roleLabel} model.`;
+	return `TLH saved minor-agent model override "${model}" for ${roleLabel} is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults.${dispatchResult}${action}`;
+}
+
 export function resolveProviderAwareSubagentResolution<T extends ReasoningProviderModelReference>(
 	agent: AgentModelDefaults | undefined,
 	availableModels: readonly T[],
@@ -400,6 +428,16 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
 			model: overrideModel,
 			thinking: thinkingResolution.thinking,
 			independence: resolveIndependence(agent, overrideModel, currentProvider),
+			warning: thinkingResolution.warning,
+		};
+	}
+
+	if (typeof override?.model === "string") {
+		const parsedOverrideModel = parseProviderModelReference(splitKnownThinkingSuffix(override.model).baseModel);
+		const thinkingResolution = resolveStoredSubagentThinking(agent, undefined, override);
+		return {
+			unavailableModel: override.model,
+			independence: resolveIndependence(agent, parsedOverrideModel, currentProvider),
 			warning: thinkingResolution.warning,
 		};
 	}
@@ -468,6 +506,13 @@ function agentNameForTarget(target: Record<string, unknown>): string | undefined
 	return typeof target.agent === "string" ? target.agent : undefined;
 }
 
+function formatEffectiveModelAndThinking(model: ProviderModelReference | string | undefined, thinking: ThinkingLevel | undefined): string | undefined {
+	if (!model) {
+		return undefined;
+	}
+	return typeof model === "string" ? model : formatResolvedProviderModelReference(model, thinking);
+}
+
 function applyModelToRunnableTarget(
 	target: unknown,
 	agents: ReadonlyMap<string, AgentModelDefaults>,
@@ -503,6 +548,18 @@ function applyModelToRunnableTarget(
 		return 0;
 	}
 	const resolution = resolveProviderAwareSubagentResolution(agent, availableModels, currentProvider, currentModel, override);
+	if (resolution.unavailableModel && agentName) {
+		const hasCallerFallbacks = Array.isArray(target.fallbackModels)
+			&& target.fallbackModels.some((fallback) => typeof fallback === "string" && fallback.trim().length > 0);
+		options.onWarning?.({
+			agent: agentName,
+			message: formatUnavailableStoredModelWarning(
+				agentName,
+				resolution.unavailableModel,
+				hasCallerFallbacks ? "caller-fallbacks" : "fail-closed",
+			),
+		});
+	}
 	if (resolution.warning && agentName) {
 		options.onWarning?.({ agent: agentName, message: resolution.warning });
 	}
@@ -510,14 +567,14 @@ function applyModelToRunnableTarget(
 	if (usesGeneratedFallback && resolution.fallbackWarning && agentName) {
 		options.onWarning?.({ agent: agentName, message: resolution.fallbackWarning });
 	}
-	const selectedModel = resolution.model ? applyThinkingSuffix(formatProviderModelReference(resolution.model), resolution.thinking) : undefined;
-	if (!selectedModel || selectedModel === agent?.model) {
+	const selectedModel = formatEffectiveModelAndThinking(resolution.unavailableModel ?? resolution.model, resolution.unavailableModel ? undefined : resolution.thinking);
+	if (!selectedModel || (!resolution.unavailableModel && selectedModel === agent?.model)) {
 		return 0;
 	}
 
 	target.model = selectedModel;
 	const fallbackModels = resolution.fallbackModels
-		?.map((fallbackModel) => applyThinkingSuffix(formatProviderModelReference(fallbackModel.model), fallbackModel.thinking))
+		?.map((fallbackModel) => formatResolvedProviderModelReference(fallbackModel.model, fallbackModel.thinking))
 		.filter((model): model is string => Boolean(model));
 	if (fallbackModels?.length) {
 		if (usesGeneratedFallback) {
