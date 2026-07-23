@@ -10,10 +10,6 @@ All notable changes to The Last Harness will be documented in this file.
 - [Experimental] You can now add custom (non built-in) subagents. Ask TLH how to.
 - New `/what-consumed-my-session-limit-and-tokens` command that generates and opens a local, private HTML report attributing token consumption across all TLH sessions (including subagent child sessions, across every project) within the current provider session-limit window (Anthropic 5-hour or OpenAI Codex session window, resolved from the subscription usage snapshot with a trailing-5h fallback). The report ranks sessions by in-window usage with per-provider totals and privacy/accuracy caveats, and embeds no transcript text or tool payloads.
 
-### Changed
-
-- Bumped the bundled critical `pi-subagents` default extension pin from `npm:@diegopetrucci/pi-subagents@0.31.8` to `npm:@diegopetrucci/pi-subagents@0.31.9`, picking up native foreground result ownership, transcript-safe async receipts, and removal of hidden maintenance slash commands.
-
 ### Fixed
 
 - Restored Anthropic and OpenAI Codex subscription usage in the footer, which disappeared under Pi 0.81 when upstream removed the auth-storage API the usage service depended on.
