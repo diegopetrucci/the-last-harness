@@ -1,5 +1,6 @@
 import { isRecord } from "./common.js";
 import { getTlhExperimentalConfig, isTlhExperimentalFeatureEnabled, TICKET_WORKFLOW_UI_FEATURE, TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT, } from "./experimental.js";
+import { activateTlhTicketSessionScope } from "./tickets.js";
 function createRetryableLazyImport(loader) {
     let modulePromise;
     return () => {
@@ -87,8 +88,17 @@ export function registerLazyTlhTicketWorkflowUi(pi, options = {}) {
         runtime?.handleExperimentalFeatureChange(event);
     });
     pi.on("session_start", async (_event, ctx) => {
+        activateTlhTicketSessionScope(ctx.cwd);
         activeContext = ctx;
         applyCurrentSettings(ctx);
+    });
+    pi.on("session_shutdown", () => {
+        activeContext = undefined;
+        if (runtime) {
+            runtime.handleSessionShutdown();
+            return;
+        }
+        void runtimePromise?.then((loadedRuntime) => loadedRuntime.handleSessionShutdown()).catch(() => undefined);
     });
     pi.on("user_bash", (event, ctx) => {
         if (runtime) {

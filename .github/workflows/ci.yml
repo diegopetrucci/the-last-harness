@@ -30,7 +30,7 @@ jobs:
           node-version: '22.19.0'
 
       - name: Install dependencies
-        run: npm install --no-package-lock --legacy-peer-deps
+        run: npm ci
 
       - name: Run validation checks
         env:

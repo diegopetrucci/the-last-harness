@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -37,6 +37,55 @@ test("primary runtime applies OpenAI Rush-like metadata defaults with no setting
 	} finally {
 		cleanupTempDir(fixture);
 	}
+});
+
+test("primary runtime scopes tickets during session start before later session work", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TICKETS_DIR: undefined }, async () => {
+		const { runtime } = registerRuntimeHarness({ subagentMetadata: [] });
+		assert.ok(runtime, "runtime should register outside child sessions");
+
+		await runtime.applySessionStart({
+			cwd: fixture.cwd,
+			sessionManager: { getBranch: () => [] },
+			ui: { notify() {} },
+			modelRegistry: { getAvailable: () => [{ provider: "openai-codex", id: "gpt-5.4" }] },
+			model: { provider: "openai-codex", id: "gpt-5.4" },
+		});
+
+		assert.equal(process.env.TICKETS_DIR, join(fixture.cwd, ".tickets"));
+	});
+});
+
+test("primary runtime before_agent_start restores the revisited session's auto-scoped tickets dir", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { test: t });
+	const repoA = join(fixture.dir, "repo-a");
+	const repoB = join(fixture.dir, "repo-b");
+	mkdirSync(repoA, { recursive: true });
+	mkdirSync(repoB, { recursive: true });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TICKETS_DIR: undefined }, async () => {
+		const { runtime, beforeAgentStart } = registerRuntimeHarness({ subagentMetadata: [] });
+		assert.ok(runtime, "runtime should register outside child sessions");
+
+		const createCtx = (cwd) => ({
+			cwd,
+			sessionManager: { getBranch: () => [] },
+			ui: { notify() {} },
+			modelRegistry: { getAvailable: () => [{ provider: "openai-codex", id: "gpt-5.4" }] },
+			model: { provider: "openai-codex", id: "gpt-5.4" },
+		});
+
+		await runtime.applySessionStart(createCtx(repoA));
+		assert.equal(process.env.TICKETS_DIR, join(repoA, ".tickets"));
+
+		await runtime.applySessionStart(createCtx(repoB));
+		assert.equal(process.env.TICKETS_DIR, join(repoB, ".tickets"));
+
+		await beforeAgentStart({ systemPrompt: "base prompt" }, createCtx(repoA));
+		assert.equal(process.env.TICKETS_DIR, join(repoA, ".tickets"));
+	});
 });
 
 test("primary runtime falls back to Anthropic Rush-like metadata defaults when only Anthropic is available", async () => {

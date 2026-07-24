@@ -638,6 +638,33 @@ test("buildSessionLimitReportHtml renders sessions table with token breakdown an
 	assert.match(html, /Cost \(USD\)/);
 });
 
+test("buildSessionLimitReportHtml omits model attribution from provider totals while preserving mixed-model provider totals", () => {
+	const window = { startMs: 0, endMs: Date.now() + 1_000_000, source: "snapshot" };
+	const result = {
+		rows: [],
+		perProviderTotals: [
+			{
+				provider: "anthropic",
+				modelId: "claude-opus-4-1",
+				usage: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 40, cacheWriteTokens: 10, totalTokens: 1550, costUsd: 0.0456, turns: 7, assistantMessages: 7 },
+			},
+		],
+		grandTotals: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 40, cacheWriteTokens: 10, totalTokens: 1550, costUsd: 0.0456, turns: 7, assistantMessages: 7 },
+		caveats: [],
+	};
+	const html = buildSessionLimitReportHtml(window, result, makeSnapshot(), Date.now(), {
+		generatedAt: "2026-05-01T00:00:00Z",
+	});
+
+	assert.match(html, /<h2>Per-provider totals<\/h2>/);
+	assert.match(html, /<th>Provider<\/th>/);
+	assert.doesNotMatch(html, /<th>Model<\/th>/);
+	assert.match(html, />anthropic</);
+	assert.match(html, /1,550/);
+	assert.match(html, /\$0\.0456/);
+	assert.doesNotMatch(html, /claude-opus-4-1/);
+});
+
 test("buildSessionLimitReportHtml renders session rows ranked by total tokens", () => {
 	const window = { startMs: 0, endMs: Date.now() + 1_000_000, source: "snapshot" };
 	// rows are passed in descending order (as aggregateSessionUsage would produce them)

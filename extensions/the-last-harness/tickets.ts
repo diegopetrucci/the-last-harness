@@ -6,6 +6,9 @@ import type { TlhSettings, TlhTicketsConfig } from "./types.js";
 
 const TK_VALIDATION_TIMEOUT_MS = 5000;
 
+let autoScopedTicketsDir: string | undefined;
+let autoScopedCwd: string | undefined;
+
 function configuredTicketInstallPath(config: TlhTicketsConfig | undefined): string | undefined {
 	const installPath = config?.installPath;
 	if (typeof installPath !== "string" || !installPath.trim()) {
@@ -49,6 +52,42 @@ function prependProcessPath(dir: string): void {
 	process.env.PATH = [dir, ...entries].join(delimiter);
 }
 
+function resolveGitWorktreeRoot(cwd: string): string | undefined {
+	const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+		cwd,
+		encoding: "utf8",
+		timeout: TK_VALIDATION_TIMEOUT_MS,
+	});
+	if (result.error || result.status !== 0) {
+		return undefined;
+	}
+	const root = (result.stdout || "").trim();
+	return root ? resolve(root) : undefined;
+}
+
+function resolveDefaultTicketsDir(cwd: string): string {
+	return join(resolveGitWorktreeRoot(cwd) ?? resolve(cwd), ".tickets");
+}
+
+export function activateTlhTicketSessionScope(cwd: string): string {
+	const normalizedCwd = resolve(cwd);
+	const current = process.env.TICKETS_DIR?.trim();
+	if (current) {
+		const currentIsAutoScoped = current === autoScopedTicketsDir;
+		if (!currentIsAutoScoped) {
+			return current;
+		}
+		if (normalizedCwd === autoScopedCwd) {
+			return current;
+		}
+	}
+	const scopedDir = resolveDefaultTicketsDir(normalizedCwd);
+	process.env.TICKETS_DIR = scopedDir;
+	autoScopedTicketsDir = scopedDir;
+	autoScopedCwd = normalizedCwd;
+	return scopedDir;
+}
+
 export function findValidTlhTicketCommand(
 	settings: TlhSettings,
 	agentDir: string,
@@ -65,6 +104,9 @@ export function findValidTlhTicketCommand(
 	return undefined;
 }
 
-export function activateTlhTicketRuntime(settings: TlhSettings, agentDir: string): string | undefined {
+export function activateTlhTicketRuntime(settings: TlhSettings, agentDir: string, cwd?: string): string | undefined {
+	if (cwd) {
+		activateTlhTicketSessionScope(cwd);
+	}
 	return findValidTlhTicketCommand(settings, agentDir, { prependPath: true });
 }

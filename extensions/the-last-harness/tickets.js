@@ -2,6 +2,8 @@ import { spawnSync } from "node:child_process";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { expandHomePath } from "./common.js";
 const TK_VALIDATION_TIMEOUT_MS = 5000;
+let autoScopedTicketsDir;
+let autoScopedCwd;
 function configuredTicketInstallPath(config) {
     const installPath = config?.installPath;
     if (typeof installPath !== "string" || !installPath.trim()) {
@@ -42,6 +44,39 @@ function prependProcessPath(dir) {
     const entries = currentPath.split(delimiter).filter(Boolean).filter((entry) => entry !== dir);
     process.env.PATH = [dir, ...entries].join(delimiter);
 }
+function resolveGitWorktreeRoot(cwd) {
+    const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+        cwd,
+        encoding: "utf8",
+        timeout: TK_VALIDATION_TIMEOUT_MS,
+    });
+    if (result.error || result.status !== 0) {
+        return undefined;
+    }
+    const root = (result.stdout || "").trim();
+    return root ? resolve(root) : undefined;
+}
+function resolveDefaultTicketsDir(cwd) {
+    return join(resolveGitWorktreeRoot(cwd) ?? resolve(cwd), ".tickets");
+}
+export function activateTlhTicketSessionScope(cwd) {
+    const normalizedCwd = resolve(cwd);
+    const current = process.env.TICKETS_DIR?.trim();
+    if (current) {
+        const currentIsAutoScoped = current === autoScopedTicketsDir;
+        if (!currentIsAutoScoped) {
+            return current;
+        }
+        if (normalizedCwd === autoScopedCwd) {
+            return current;
+        }
+    }
+    const scopedDir = resolveDefaultTicketsDir(normalizedCwd);
+    process.env.TICKETS_DIR = scopedDir;
+    autoScopedTicketsDir = scopedDir;
+    autoScopedCwd = normalizedCwd;
+    return scopedDir;
+}
 export function findValidTlhTicketCommand(settings, agentDir, options = {}) {
     for (const candidate of ticketCommandCandidates(settings, agentDir)) {
         if (!hasTkCommandName(candidate))
@@ -55,6 +90,9 @@ export function findValidTlhTicketCommand(settings, agentDir, options = {}) {
     }
     return undefined;
 }
-export function activateTlhTicketRuntime(settings, agentDir) {
+export function activateTlhTicketRuntime(settings, agentDir, cwd) {
+    if (cwd) {
+        activateTlhTicketSessionScope(cwd);
+    }
     return findValidTlhTicketCommand(settings, agentDir, { prependPath: true });
 }
