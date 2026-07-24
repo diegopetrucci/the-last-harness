@@ -1,12 +1,12 @@
 [
   {
     "id": "openai-fast",
-    "source": "npm:@diegopetrucci/pi-openai-fast@0.1.10",
+    "source": "npm:@diegopetrucci/pi-openai-fast@0.1.11",
     "description": "Enable optional OpenAI Codex Fast mode commands for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions."
   },
   {
     "id": "anthropic-auth",
-    "source": "npm:@gotgenes/pi-anthropic-auth@2.0.0",
+    "source": "npm:@gotgenes/pi-anthropic-auth@2.0.1",
     "description": "Improve compatibility with Anthropic Claude Pro/Max OAuth while preserving normal API-key behavior."
   },
   {
@@ -31,29 +31,29 @@
   },
   {
     "id": "inline-bash",
-    "source": "npm:@diegopetrucci/pi-inline-bash@0.1.5",
+    "source": "npm:@diegopetrucci/pi-inline-bash@0.1.6",
     "description": "Expand inline bash commands in user prompts."
   },
   {
     "id": "notify",
-    "source": "npm:@diegopetrucci/pi-notify@0.1.11",
+    "source": "npm:@diegopetrucci/pi-notify@0.1.12",
     "description": "Send a notification when an agent turn finishes."
   },
   {
     "id": "context-inspector",
-    "source": "npm:@diegopetrucci/pi-context-inspector@0.1.7",
+    "source": "npm:@diegopetrucci/pi-context-inspector@0.1.8",
     "description": "Open a local HTML dashboard explaining where the current session context is going."
   },
   {
     "id": "quiet-tools",
     "aliases": ["compact-bash"],
     "replaces": ["npm:@diegopetrucci/pi-compact-bash"],
-    "source": "npm:@diegopetrucci/pi-quiet-tools@0.1.6",
+    "source": "npm:@diegopetrucci/pi-quiet-tools@0.1.7",
     "description": "Compact collapsed built-in tool output in the TUI without changing model-visible results."
   },
   {
     "id": "dirty-repo-guard",
-    "source": "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.5",
+    "source": "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.6",
     "description": "Prompt before session changes when the current git repo has uncommitted changes."
   },
   {
