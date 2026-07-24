@@ -228,6 +228,58 @@ esac
 	chmodSync(tkPath, 0o755);
 }
 
+function installScopeAwareFakeTk(agentDir, repoATicketsDir, repoBTicketsDir) {
+	const binDir = join(agentDir, "bin");
+	mkdirSync(binDir, { recursive: true });
+	const tkPath = join(binDir, "tk");
+	writeFileSync(
+		tkPath,
+		`#!/usr/bin/env bash
+set -euo pipefail
+repo_a=${JSON.stringify(repoATicketsDir)}
+repo_b=${JSON.stringify(repoBTicketsDir)}
+tickets_dir="\${TICKETS_DIR:-.tickets}"
+if [[ ! -d "$tickets_dir" ]]; then
+  echo "Error: tickets directory '$tickets_dir' does not exist" >&2
+  exit 1
+fi
+case "$tickets_dir" in
+  "$repo_a")
+    ticket_id="repo-a-ticket"
+    ticket_title="Repo A ticket title"
+    ;;
+  "$repo_b")
+    ticket_id="repo-b-ticket"
+    ticket_title="Repo B ticket title"
+    ;;
+  *)
+    echo "unexpected tickets dir: $tickets_dir" >&2
+    exit 1
+    ;;
+esac
+case "\${1:-}" in
+  help|--help|-h)
+    echo "tk - test ticket system"
+    echo "Usage: tk <command> [args]"
+    echo "Tickets stored as markdown files in .tickets/"
+    ;;
+  query)
+    printf '{"id":"%s","status":"in_progress"}\n' "$ticket_id"
+    ;;
+  ready|blocked)
+    ;;
+  show)
+    printf '%s\n' '---' "id: $ticket_id" 'status: in_progress' '---' "# $ticket_title"
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`,
+	);
+	chmodSync(tkPath, 0o755);
+}
+
 test("ticket workflow UI stays completely disabled by default", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
 	writeFileSync(
@@ -246,6 +298,41 @@ test("ticket workflow UI stays completely disabled by default", async (t) => {
 		assert.equal(pi.commands.has("tk-status"), false);
 		assert.deepEqual(uiHarness.statusUpdates, [{ key: "tlh-ticket-workflow", text: undefined }]);
 		assert.deepEqual(uiHarness.widgetUpdates, [{ key: "tlh-ticket-workflow", content: undefined, options: undefined }]);
+	});
+});
+
+test("enabled ticket workflow UI restores the revisited session's auto-scoped tickets dir for status reads", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { test: t });
+	const repoA = join(fixture.dir, "repo-a");
+	const repoB = join(fixture.dir, "repo-b");
+	const repoATicketsDir = join(repoA, ".tickets");
+	const repoBTicketsDir = join(repoB, ".tickets");
+	mkdirSync(repoATicketsDir, { recursive: true });
+	mkdirSync(repoBTicketsDir, { recursive: true });
+	installScopeAwareFakeTk(fixture.agent, repoATicketsDir, repoBTicketsDir);
+	writeFileSync(
+		join(fixture.agent, "settings.json"),
+		`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [TICKET_WORKFLOW_UI_FEATURE] } } }, null, 2)}\n`,
+	);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TICKETS_DIR: undefined }, async () => {
+		const pi = createPiHarness();
+		registerTlhTicketWorkflowUi(pi);
+		const uiHarness = createUiHarness();
+		const ctxA = createCtx(repoA, uiHarness.ui);
+		const ctxB = createCtx(repoB, uiHarness.ui);
+
+		await fireAll(pi, "session_start", { reason: "restore" }, ctxA);
+		assert.equal(process.env.TICKETS_DIR, repoATicketsDir);
+		assert.equal(uiHarness.statusUpdates.at(-1)?.text, "working on tk: Repo A ticket title\nUse /tk-status for details.");
+
+		await fireAll(pi, "session_start", { reason: "restore" }, ctxB);
+		assert.equal(process.env.TICKETS_DIR, repoBTicketsDir);
+		assert.equal(uiHarness.statusUpdates.at(-1)?.text, "working on tk: Repo B ticket title\nUse /tk-status for details.");
+
+		await pi.commands.get("tk-status").handler("", ctxA);
+		assert.equal(process.env.TICKETS_DIR, repoATicketsDir);
+		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /In progress: repo-a-ticket - Repo A ticket title/);
 	});
 });
 
@@ -462,7 +549,7 @@ test("enabled ticket workflow UI stays quiet without a .tickets repo while /tk-s
 		`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [TICKET_WORKFLOW_UI_FEATURE] } } }, null, 2)}\n`,
 	);
 
-	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TICKETS_DIR: undefined }, async () => {
 		const pi = createPiHarness();
 		registerTlhTicketWorkflowUi(pi);
 		const uiHarness = createUiHarness();

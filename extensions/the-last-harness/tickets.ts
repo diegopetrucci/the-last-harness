@@ -73,14 +73,19 @@ export function activateTlhTicketSessionScope(cwd: string, options: { refresh?: 
 	const normalizedCwd = resolve(cwd);
 	const current = process.env.TICKETS_DIR?.trim();
 	if (current) {
-		if (!options.refresh) {
-			return current;
-		}
-		if (current !== autoScopedTicketsDir) {
+		const currentIsAutoScoped = current === autoScopedTicketsDir;
+		if (!currentIsAutoScoped) {
 			return current;
 		}
 		if (normalizedCwd === autoScopedCwd) {
 			return current;
+		}
+		if (!options.refresh) {
+			const restoredScopedDir = resolveDefaultTicketsDir(normalizedCwd);
+			process.env.TICKETS_DIR = restoredScopedDir;
+			autoScopedTicketsDir = restoredScopedDir;
+			autoScopedCwd = normalizedCwd;
+			return restoredScopedDir;
 		}
 	}
 	const scopedDir = resolveDefaultTicketsDir(normalizedCwd);
