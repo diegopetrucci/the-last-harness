@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
 
-import { makeTempDir } from "./install-stage1-test-helpers.mjs";
+import { makeTempDir, readPiLogRecords } from "./install-stage1-test-helpers.mjs";
 import {
 	TLH_PINNED_PI_VERSION,
 	escapeRegExp,
@@ -447,12 +447,37 @@ test("stage-1 derives packageRoot from custom package source install dirs", (t) 
 	assert.equal(homeLocalConfig.packageRoot, join(homeDir, "local-package"));
 	assert.equal(homeLocalConfig.packageHelperRoot, homeLocalConfig.packageRoot);
 
+	const fileLocalSource = `file:${join(root, "file-package")}`;
+	const fileLocalConfig = configFor(fileLocalSource);
+	assert.equal(fileLocalConfig.packageRoot, join(root, "file-package"));
+	assert.equal(fileLocalConfig.packageHelperRoot, fileLocalConfig.packageRoot);
+	assert.equal(fileLocalConfig.packageSource, fileLocalSource);
+
 	const unsupportedConfig = configFor("github:owner/repo");
 	assert.equal(
 		unsupportedConfig.packageRoot,
 		join(agentDir, "git", "github.com", "diegopetrucci", "the-last-harness"),
 	);
 	assert.equal(unsupportedConfig.packageHelperRoot, "");
+});
+
+test("stage-1 normalizes absolute file: sources for Pi while preserving raw install metadata", (t) => {
+	const filePackageSource = `file:${repoRoot}`;
+	const { result, agentDir, piLog } = runStage1LocalPackageInstall(t, {
+		envOverrides: { TLH_PACKAGE_SOURCE: filePackageSource },
+	});
+	const output = `${result.stdout}\n${result.stderr}`;
+
+	assert.equal(result.status, 0, output);
+	assert.deepEqual(readPiLogRecords(piLog).map((record) => record.command).slice(0, 3), [
+		"--version",
+		`install ${repoRoot}`,
+		`update ${repoRoot}`,
+	]);
+	assert.equal(readJson(join(agentDir, "tlh", "install-state.json")).packageSource, filePackageSource);
+	const settings = readJson(join(agentDir, "settings.json"));
+	assert.equal(settings.packages[0], repoRoot);
+	assert.equal(settings.packages.includes(filePackageSource), false);
 });
 
 // (tlh update / tlh recovery update tests moved to install-stage1-update.test.mjs)

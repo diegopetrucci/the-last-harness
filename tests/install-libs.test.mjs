@@ -23,6 +23,7 @@ import {
 	criticalGitSourceSpec,
 	gitSourceInstallSource,
 	packageSourceInstallDir,
+	packageSourcePiSource,
 	parseGitSource,
 } from "../scripts/lib/tlh-install-package-source.mjs";
 import { assertGitSourceTargetSafe, refreshGitCheckout } from "../scripts/lib/tlh-install-git.mjs";
@@ -139,6 +140,19 @@ test("package-source parsing resolves git, hash-pinned, and local package source
 	);
 	assert.equal(packageSourceInstallDir("../local-package", { agentDir, homeDir }), resolve(agentDir, "../local-package"));
 	assert.equal(packageSourceInstallDir("~/local-package", { agentDir, homeDir }), join(homeDir, "local-package"));
+	const checkoutDir = resolve(root, "checkout");
+	assert.equal(packageSourceInstallDir(`file:${checkoutDir}`, { agentDir, homeDir }), checkoutDir);
+	assert.equal(packageSourceInstallDir(`file://${checkoutDir}`, { agentDir, homeDir }), checkoutDir);
+	assert.equal(packageSourceInstallDir(`file://localhost${checkoutDir}`, { agentDir, homeDir }), checkoutDir);
+	assert.equal(
+		packageSourceInstallDir(`file://remotehost${checkoutDir}`, { agentDir, homeDir }),
+		resolve(agentDir, `file://remotehost${checkoutDir}`),
+	);
+	assert.equal(packageSourcePiSource(`file:${checkoutDir}`, { agentDir, homeDir }), checkoutDir);
+	assert.equal(packageSourcePiSource(`file://localhost${checkoutDir}`, { agentDir, homeDir }), checkoutDir);
+	assert.equal(packageSourcePiSource(`file://remotehost${checkoutDir}`, { agentDir, homeDir }), `file://remotehost${checkoutDir}`);
+	assert.equal(packageSourcePiSource("../local-package", { agentDir, homeDir }), "../local-package");
+	assert.equal(packageSourceInstallDir("file:../local-package", { agentDir, homeDir }), resolve(agentDir, "file:../local-package"));
 	assert.equal(packageSourceInstallDir("github:owner/repo", { agentDir, homeDir }), "");
 });
 
