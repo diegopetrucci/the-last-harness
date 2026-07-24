@@ -49,7 +49,7 @@ TLH subagents are fresh child sessions, not a giant shared swarm. They get the t
 - `diff-summarizer` for change overviews
 - `developer` for implementation
 - `code-reviewer` for review
-- `librarian` for read-only GitHub repository research (uses `gh` CLI and `git`)
+- `librarian` for read-only GitHub repository research (uses `gh` CLI and `git`; TLH caps librarian-bearing subagent runs at five minutes unless the caller already set a stricter timeout)
 - `web-scout` for web research
 - `oracle` for a deeper second opinion
 - `contrarian` as a bundled default minor subagent for sparing adversarial stress-tests.
