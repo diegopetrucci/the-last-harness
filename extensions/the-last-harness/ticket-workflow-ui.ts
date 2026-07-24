@@ -323,6 +323,7 @@ function shouldRefreshFromBashCommand(command: string): boolean {
 export type TlhTicketWorkflowUiRuntime = {
 	applyCurrentSettings(ctx: ExtensionContext): void;
 	handleExperimentalFeatureChange(event: unknown): void;
+	handleSessionShutdown(): void;
 	handleUserBash(event: { command: string }, ctx: ExtensionContext): void;
 	handleToolResult(event: { toolName: string; input: { command?: unknown } }, ctx: ExtensionContext): void;
 };
@@ -330,6 +331,7 @@ export type TlhTicketWorkflowUiRuntime = {
 export function createTlhTicketWorkflowUiRuntime(pi: ExtensionAPI): TlhTicketWorkflowUiRuntime {
 	let commandRegistered = false;
 	let activeContext: ExtensionContext | undefined;
+	const pendingUserBashRefreshes = new Set<ReturnType<typeof setTimeout>>();
 
 	const refresh = (ctx: ExtensionContext) => {
 		if (!ctx.hasUI) {
@@ -376,11 +378,22 @@ export function createTlhTicketWorkflowUiRuntime(pi: ExtensionAPI): TlhTicketWor
 			}
 			applyCurrentSettings(activeContext);
 		},
+		handleSessionShutdown() {
+			for (const timeout of pendingUserBashRefreshes) {
+				clearTimeout(timeout);
+			}
+			pendingUserBashRefreshes.clear();
+			activeContext = undefined;
+		},
 		handleUserBash(event: { command: string }, ctx: ExtensionContext) {
 			if (!ctx.hasUI || !isTicketWorkflowUiEnabled(ctx.cwd) || !shouldRefreshFromBashCommand(event.command)) {
 				return;
 			}
-			const timeout = setTimeout(() => refresh(ctx), TK_USER_BASH_REFRESH_DELAY_MS);
+			const timeout = setTimeout(() => {
+				pendingUserBashRefreshes.delete(timeout);
+				refresh(ctx);
+			}, TK_USER_BASH_REFRESH_DELAY_MS);
+			pendingUserBashRefreshes.add(timeout);
 			timeout.unref?.();
 		},
 		handleToolResult(event: { toolName: string; input: { command?: unknown } }, ctx: ExtensionContext) {
@@ -404,8 +417,12 @@ export function registerTlhTicketWorkflowUi(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
-		activateTlhTicketSessionScope(ctx.cwd, { refresh: true });
+		activateTlhTicketSessionScope(ctx.cwd);
 		runtime.applyCurrentSettings(ctx);
+	});
+
+	pi.on("session_shutdown", () => {
+		runtime.handleSessionShutdown();
 	});
 
 	pi.on("user_bash", (event, ctx) => {

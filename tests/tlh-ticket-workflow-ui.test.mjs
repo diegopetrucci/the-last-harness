@@ -11,6 +11,13 @@ const jiti = createJiti(import.meta.url);
 const { registerTlhTicketWorkflowUi } = await jiti.import("../extensions/the-last-harness/ticket-workflow-ui.ts");
 const { TICKET_WORKFLOW_UI_FEATURE } = await jiti.import("../extensions/the-last-harness/experimental.ts");
 
+function resetTicketWorkflowTestState() {
+	delete process.env.TICKETS_DIR;
+}
+
+test.beforeEach(resetTicketWorkflowTestState);
+test.afterEach(resetTicketWorkflowTestState);
+
 const IN_PROGRESS_TICKET_TITLE = "Implement scoped ticket footer selection";
 const IN_PROGRESS_TICKET_FOOTER_STATUS = `working on tk: ${IN_PROGRESS_TICKET_TITLE}\nUse /tk-status for details.`;
 
@@ -301,7 +308,7 @@ test("ticket workflow UI stays completely disabled by default", async (t) => {
 	});
 });
 
-test("enabled ticket workflow UI restores the revisited session's auto-scoped tickets dir for status reads", async (t) => {
+test("enabled ticket workflow UI ignores stale delayed refreshes from a superseded session while later restores still rescope correctly", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { test: t });
 	const repoA = join(fixture.dir, "repo-a");
 	const repoB = join(fixture.dir, "repo-b");
@@ -316,21 +323,37 @@ test("enabled ticket workflow UI restores the revisited session's auto-scoped ti
 	);
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TICKETS_DIR: undefined }, async () => {
-		const pi = createPiHarness();
-		registerTlhTicketWorkflowUi(pi);
 		const uiHarness = createUiHarness();
 		const ctxA = createCtx(repoA, uiHarness.ui);
 		const ctxB = createCtx(repoB, uiHarness.ui);
+		const piA = createPiHarness();
+		registerTlhTicketWorkflowUi(piA);
 
-		await fireAll(pi, "session_start", { reason: "restore" }, ctxA);
+		await fireAll(piA, "session_start", { reason: "restore" }, ctxA);
 		assert.equal(process.env.TICKETS_DIR, repoATicketsDir);
 		assert.equal(uiHarness.statusUpdates.at(-1)?.text, "working on tk: Repo A ticket title\nUse /tk-status for details.");
 
-		await fireAll(pi, "session_start", { reason: "restore" }, ctxB);
+		await fireAll(piA, "user_bash", { command: "tk ready" }, ctxA);
+		await fireAll(piA, "session_shutdown", {}, ctxA);
+
+		const piB = createPiHarness();
+		registerTlhTicketWorkflowUi(piB);
+		await fireAll(piB, "session_start", { reason: "restore" }, ctxB);
 		assert.equal(process.env.TICKETS_DIR, repoBTicketsDir);
 		assert.equal(uiHarness.statusUpdates.at(-1)?.text, "working on tk: Repo B ticket title\nUse /tk-status for details.");
 
-		await pi.commands.get("tk-status").handler("", ctxA);
+		await delay(300);
+		assert.equal(process.env.TICKETS_DIR, repoBTicketsDir);
+		assert.equal(uiHarness.statusUpdates.at(-1)?.text, "working on tk: Repo B ticket title\nUse /tk-status for details.");
+
+		await fireAll(piB, "session_shutdown", {}, ctxB);
+		const piARestored = createPiHarness();
+		registerTlhTicketWorkflowUi(piARestored);
+		await fireAll(piARestored, "session_start", { reason: "restore" }, ctxA);
+		assert.equal(process.env.TICKETS_DIR, repoATicketsDir);
+		assert.equal(uiHarness.statusUpdates.at(-1)?.text, "working on tk: Repo A ticket title\nUse /tk-status for details.");
+
+		await piARestored.commands.get("tk-status").handler("", ctxA);
 		assert.equal(process.env.TICKETS_DIR, repoATicketsDir);
 		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /In progress: repo-a-ticket - Repo A ticket title/);
 	});

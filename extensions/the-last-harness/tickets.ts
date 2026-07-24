@@ -69,7 +69,7 @@ function resolveDefaultTicketsDir(cwd: string): string {
 	return join(resolveGitWorktreeRoot(cwd) ?? resolve(cwd), ".tickets");
 }
 
-export function activateTlhTicketSessionScope(cwd: string, options: { refresh?: boolean } = {}): string {
+export function activateTlhTicketSessionScope(cwd: string): string {
 	const normalizedCwd = resolve(cwd);
 	const current = process.env.TICKETS_DIR?.trim();
 	if (current) {
@@ -79,13 +79,6 @@ export function activateTlhTicketSessionScope(cwd: string, options: { refresh?: 
 		}
 		if (normalizedCwd === autoScopedCwd) {
 			return current;
-		}
-		if (!options.refresh) {
-			const restoredScopedDir = resolveDefaultTicketsDir(normalizedCwd);
-			process.env.TICKETS_DIR = restoredScopedDir;
-			autoScopedTicketsDir = restoredScopedDir;
-			autoScopedCwd = normalizedCwd;
-			return restoredScopedDir;
 		}
 	}
 	const scopedDir = resolveDefaultTicketsDir(normalizedCwd);

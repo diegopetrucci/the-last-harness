@@ -59,7 +59,7 @@ function resolveGitWorktreeRoot(cwd) {
 function resolveDefaultTicketsDir(cwd) {
     return join(resolveGitWorktreeRoot(cwd) ?? resolve(cwd), ".tickets");
 }
-export function activateTlhTicketSessionScope(cwd, options = {}) {
+export function activateTlhTicketSessionScope(cwd) {
     const normalizedCwd = resolve(cwd);
     const current = process.env.TICKETS_DIR?.trim();
     if (current) {
@@ -69,13 +69,6 @@ export function activateTlhTicketSessionScope(cwd, options = {}) {
         }
         if (normalizedCwd === autoScopedCwd) {
             return current;
-        }
-        if (!options.refresh) {
-            const restoredScopedDir = resolveDefaultTicketsDir(normalizedCwd);
-            process.env.TICKETS_DIR = restoredScopedDir;
-            autoScopedTicketsDir = restoredScopedDir;
-            autoScopedCwd = normalizedCwd;
-            return restoredScopedDir;
         }
     }
     const scopedDir = resolveDefaultTicketsDir(normalizedCwd);

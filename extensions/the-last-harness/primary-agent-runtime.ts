@@ -311,7 +311,7 @@ function registerChildSubagentRuntime(
 	env: Record<string, string | undefined>,
 ): void {
 	pi.on("session_start", async (_event, ctx) => {
-		activateTlhTicketSessionScope(ctx.cwd, { refresh: true });
+		activateTlhTicketSessionScope(ctx.cwd);
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
@@ -746,7 +746,7 @@ function createTlhPrimaryAgentRuntime(
 	}
 
 	async function applySessionStart(ctx: ExtensionContext): Promise<void> {
-		activateTlhTicketSessionScope(ctx.cwd, { refresh: true });
+		activateTlhTicketSessionScope(ctx.cwd);
 		sessionExperimentalSnapshot = getTlhGlobalSettings(ctx.cwd).tlh?.experimental;
 		syncPrimaryAgentState(ctx);
 		await applyPrimaryDefaults(ctx);
