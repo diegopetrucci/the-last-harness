@@ -201,11 +201,22 @@ function collectSubagentCallTargetsMatching(input, predicate) {
 function subagentCallTargetsMatching(input, predicate) {
     return collectSubagentCallTargetsMatching(input, predicate).length > 0;
 }
+const LIBRARIAN_MAX_TIMEOUT_MS = 300_000;
 function isOpaqueSubagentManagementActionInput(input) {
     if (!isRecord(input) || typeof input.action !== "string" || input.action.trim().length === 0) {
         return false;
     }
     return !isExecutionBearingResumeChain(input);
+}
+function capLibrarianSubagentTimeout(input) {
+    if (!isRecord(input) || isOpaqueSubagentManagementActionInput(input) || !subagentCallTargetsAgent(input, "librarian")) {
+        return;
+    }
+    const { timeoutMs } = input;
+    if (typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs <= LIBRARIAN_MAX_TIMEOUT_MS) {
+        return;
+    }
+    input.timeoutMs = LIBRARIAN_MAX_TIMEOUT_MS;
 }
 function embeddedDelegationBlockedReason(selection, input) {
     if (isOpaqueSubagentManagementActionInput(input)) {
@@ -654,6 +665,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
                 return undefined;
             }
             applyProviderAwareSubagentModels(event.input, subagentsByName, getUnfilteredAvailableModels(ctx.modelRegistry), ctx.model?.provider, ctx.model);
+            capLibrarianSubagentTimeout(event.input);
             syncPrimaryAgentState(ctx);
             const selection = currentPrimaryAgentSelection();
             const allowedSubagents = allowedSubagentsForExperimentalConfig(getTlhGlobalSettings(ctx.cwd).tlh?.experimental);
