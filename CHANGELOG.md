@@ -22,10 +22,6 @@ All notable changes to The Last Harness will be documented in this file.
 - Release telemetry now reports only the `on`/`off` state of registered TLH experimental flags; unknown or custom experimental values remain ignored and unsent.
 - TLH's architect/developer ticket workflow guidance now explicitly protects pre-existing user-owned worktree and index changes from being overwritten or discarded during scoped implementation tasks.
 
-### Changed
-
-- Bumped the bundled critical `pi-subagents` default extension pin from `npm:@diegopetrucci/pi-subagents@0.31.9` to `npm:@diegopetrucci/pi-subagents@0.31.10`. This release adds per-agent acceptance roles (`acceptanceRole`) and a paused-resume acceptance contract, records paused/interrupted runs as `skipped` (not `rejected`) acceptance, never infers `reviewed` acceptance, gates idle "needs attention" notices on in-flight tool calls, and includes the upstream nicobailon/pi-subagents#514/#524 status-cache-invalidation and management-output-collapse intakes.
-
 ### Fixed
 
 - Restored Anthropic and OpenAI Codex subscription usage in the footer, which disappeared under Pi 0.81 when upstream removed the auth-storage API the usage service depended on.
