@@ -691,7 +691,7 @@ test("extension runs primary session_start work before UI startup in one handler
 	const lifecycleHooks = sourceSection(primaryRuntimeSource, "function registerLifecycleHooks()", "\n\n\treturn { applySessionStart");
 
 	assert.match(sessionStart, /await primaryAgentRuntime\.applySessionStart\(ctx\);[\s\S]*if \(!ctx\.hasUI\)/);
-	assert.match(primaryRuntimeSource, /async function applySessionStart\(ctx: ExtensionContext\): Promise<void>[\s\S]*activateTlhTicketSessionScope\(ctx\.cwd, \{ refresh: true \}\);/);
+	assert.match(primaryRuntimeSource, /async function applySessionStart\(ctx: ExtensionContext\): Promise<void>[\s\S]*activateTlhTicketSessionScope\(ctx\.cwd\);/);
 	assert.match(primaryRuntimeSource, /return \{ applySessionStart, currentPrimaryAgentLabel, activePrimaryAgentPrompt: activePrimaryAgent, registerCommands, registerLifecycleHooks \};/);
 	assert.doesNotMatch(lifecycleHooks, /pi\.on\("session_start"/);
 });

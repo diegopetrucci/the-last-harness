@@ -227,7 +227,7 @@ function embeddedDelegationBlockedReason(selection, input) {
 }
 function registerChildSubagentRuntime(pi, buildChildPrompt, env) {
     pi.on("session_start", async (_event, ctx) => {
-        activateTlhTicketSessionScope(ctx.cwd, { refresh: true });
+        activateTlhTicketSessionScope(ctx.cwd);
     });
     pi.on("before_agent_start", async (event, ctx) => {
         const settings = getTlhGlobalSettings(ctx.cwd);
@@ -580,7 +580,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         });
     }
     async function applySessionStart(ctx) {
-        activateTlhTicketSessionScope(ctx.cwd, { refresh: true });
+        activateTlhTicketSessionScope(ctx.cwd);
         sessionExperimentalSnapshot = getTlhGlobalSettings(ctx.cwd).tlh?.experimental;
         syncPrimaryAgentState(ctx);
         await applyPrimaryDefaults(ctx);

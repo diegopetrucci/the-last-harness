@@ -9,6 +9,13 @@ import { createJiti } from "jiti";
 const jiti = createJiti(import.meta.url);
 const { activateTlhTicketRuntime, activateTlhTicketSessionScope } = await jiti.import("../extensions/the-last-harness/tickets.ts");
 
+function resetTicketRuntimeTestState() {
+	delete process.env.TICKETS_DIR;
+}
+
+test.beforeEach(resetTicketRuntimeTestState);
+test.afterEach(resetTicketRuntimeTestState);
+
 function tempFixture() {
 	const dir = mkdtempSync(join(tmpdir(), "tlh-ticket-runtime-test-"));
 	const agent = join(dir, "agent");
@@ -123,7 +130,7 @@ test("ticket session scope falls back to cwd outside git and preserves explicit 
 	});
 });
 
-test("ticket session scope refresh reuses the same cwd but updates for a different cwd", { skip: process.platform === "win32" }, () => {
+test("ticket session scope reuses the same cwd but updates for a different cwd", { skip: process.platform === "win32" }, () => {
 	const fixture = tempFixture();
 	const firstRepo = join(fixture.dir, "repo-one");
 	const secondRepo = join(fixture.dir, "repo-two");
@@ -147,17 +154,17 @@ test("ticket session scope refresh reuses the same cwd but updates for a differe
 		withPath([fakeBin, process.env.PATH || ""].filter(Boolean).join(delimiter), () => {
 			const firstRealNestedCwd = realpathSync(firstNestedCwd);
 			const secondRealNestedCwd = realpathSync(secondNestedCwd);
-			assert.equal(activateTlhTicketSessionScope(firstNestedCwd, { refresh: true }), firstExpected);
-			assert.equal(activateTlhTicketSessionScope(firstNestedCwd, { refresh: true }), firstExpected);
+			assert.equal(activateTlhTicketSessionScope(firstNestedCwd), firstExpected);
+			assert.equal(activateTlhTicketSessionScope(firstNestedCwd), firstExpected);
 			assert.deepEqual(readFileSync(gitLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [firstRealNestedCwd]);
 
-			assert.equal(activateTlhTicketSessionScope(secondNestedCwd, { refresh: true }), secondExpected);
+			assert.equal(activateTlhTicketSessionScope(secondNestedCwd), secondExpected);
 			assert.deepEqual(readFileSync(gitLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [firstRealNestedCwd, secondRealNestedCwd]);
 		});
 	});
 });
 
-test("ticket session scope refresh updates prior auto-scoped dirs but preserves explicit TICKETS_DIR", { skip: process.platform === "win32" }, () => {
+test("ticket session scope updates prior auto-scoped dirs but preserves explicit TICKETS_DIR", { skip: process.platform === "win32" }, () => {
 	const fixture = tempFixture();
 	const firstRepo = join(fixture.dir, "repo-one");
 	const secondRepo = join(fixture.dir, "repo-two");
@@ -181,12 +188,12 @@ test("ticket session scope refresh updates prior auto-scoped dirs but preserves 
 		assert.equal(activateTlhTicketSessionScope(firstNestedCwd), firstExpected);
 		assert.equal(process.env.TICKETS_DIR, firstExpected);
 
-		assert.equal(activateTlhTicketSessionScope(secondNestedCwd, { refresh: true }), secondExpected);
+		assert.equal(activateTlhTicketSessionScope(secondNestedCwd), secondExpected);
 		assert.equal(process.env.TICKETS_DIR, secondExpected);
 	});
 
 	withTicketsDir(explicitTicketsDir, () => {
-		assert.equal(activateTlhTicketSessionScope(firstNestedCwd, { refresh: true }), explicitTicketsDir);
+		assert.equal(activateTlhTicketSessionScope(firstNestedCwd), explicitTicketsDir);
 		assert.equal(process.env.TICKETS_DIR, explicitTicketsDir);
 	});
 });

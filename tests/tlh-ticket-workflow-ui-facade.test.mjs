@@ -16,6 +16,13 @@ const {
 	TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT,
 } = await jiti.import("../extensions/the-last-harness/experimental.ts");
 
+function resetTicketWorkflowFacadeTestState() {
+	delete process.env.TICKETS_DIR;
+}
+
+test.beforeEach(resetTicketWorkflowFacadeTestState);
+test.afterEach(resetTicketWorkflowFacadeTestState);
+
 function createPiHarness() {
 	const commands = new Map();
 	const handlers = new Map();
@@ -76,6 +83,9 @@ test("lazy ticket workflow facade skips runtime import by default and loads it o
 		handleExperimentalFeatureChange(event) {
 			runtimeCalls.push(["handleExperimentalFeatureChange", event.enabled]);
 		},
+		handleSessionShutdown() {
+			runtimeCalls.push(["handleSessionShutdown"]);
+		},
 		handleUserBash(event, ctx) {
 			runtimeCalls.push(["handleUserBash", event.command, ctx.cwd]);
 		},
@@ -111,9 +121,11 @@ test("lazy ticket workflow facade skips runtime import by default and loads it o
 
 		await fireAll(pi, "user_bash", { command: "tk ready" }, ctx);
 		await fireAll(pi, "tool_result", { toolName: "bash", input: { command: "tk ready" } }, ctx);
+		await fireAll(pi, "session_shutdown", {}, ctx);
 		assert.deepEqual(runtimeCalls.slice(1), [
 			["handleUserBash", "tk ready", fixture.cwd],
 			["handleToolResult", "tk ready", fixture.cwd],
+			["handleSessionShutdown"],
 		]);
 	});
 });
@@ -143,6 +155,9 @@ test("lazy ticket workflow facade refreshes a loaded runtime for later disabled 
 							},
 							handleExperimentalFeatureChange(event) {
 								runtimeCalls.push(["handleExperimentalFeatureChange", event.enabled, activeCtx?.cwd]);
+							},
+							handleSessionShutdown() {
+								runtimeCalls.push(["handleSessionShutdown"]);
 							},
 							handleUserBash() {},
 							handleToolResult() {},
@@ -200,6 +215,9 @@ test("lazy ticket workflow facade retries runtime import after a current-session
 							},
 							handleExperimentalFeatureChange(event) {
 								runtimeCalls.push(["handleExperimentalFeatureChange", event.enabled]);
+							},
+							handleSessionShutdown() {
+								runtimeCalls.push(["handleSessionShutdown"]);
 							},
 							handleUserBash() {},
 							handleToolResult() {},

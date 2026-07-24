@@ -113,9 +113,18 @@ export function registerLazyTlhTicketWorkflowUi(pi: ExtensionAPI, options: TlhTi
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
-		activateTlhTicketSessionScope(ctx.cwd, { refresh: true });
+		activateTlhTicketSessionScope(ctx.cwd);
 		activeContext = ctx;
 		applyCurrentSettings(ctx);
+	});
+
+	pi.on("session_shutdown", () => {
+		activeContext = undefined;
+		if (runtime) {
+			runtime.handleSessionShutdown();
+			return;
+		}
+		void runtimePromise?.then((loadedRuntime) => loadedRuntime.handleSessionShutdown()).catch(() => undefined);
 	});
 
 	pi.on("user_bash", (event, ctx) => {

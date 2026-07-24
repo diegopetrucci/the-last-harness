@@ -267,6 +267,7 @@ function shouldRefreshFromBashCommand(command) {
 export function createTlhTicketWorkflowUiRuntime(pi) {
     let commandRegistered = false;
     let activeContext;
+    const pendingUserBashRefreshes = new Set();
     const refresh = (ctx) => {
         if (!ctx.hasUI) {
             return;
@@ -309,11 +310,22 @@ export function createTlhTicketWorkflowUiRuntime(pi) {
             }
             applyCurrentSettings(activeContext);
         },
+        handleSessionShutdown() {
+            for (const timeout of pendingUserBashRefreshes) {
+                clearTimeout(timeout);
+            }
+            pendingUserBashRefreshes.clear();
+            activeContext = undefined;
+        },
         handleUserBash(event, ctx) {
             if (!ctx.hasUI || !isTicketWorkflowUiEnabled(ctx.cwd) || !shouldRefreshFromBashCommand(event.command)) {
                 return;
             }
-            const timeout = setTimeout(() => refresh(ctx), TK_USER_BASH_REFRESH_DELAY_MS);
+            const timeout = setTimeout(() => {
+                pendingUserBashRefreshes.delete(timeout);
+                refresh(ctx);
+            }, TK_USER_BASH_REFRESH_DELAY_MS);
+            pendingUserBashRefreshes.add(timeout);
             timeout.unref?.();
         },
         handleToolResult(event, ctx) {
@@ -334,8 +346,11 @@ export function registerTlhTicketWorkflowUi(pi) {
         runtime.handleExperimentalFeatureChange(event);
     });
     pi.on("session_start", async (_event, ctx) => {
-        activateTlhTicketSessionScope(ctx.cwd, { refresh: true });
+        activateTlhTicketSessionScope(ctx.cwd);
         runtime.applyCurrentSettings(ctx);
+    });
+    pi.on("session_shutdown", () => {
+        runtime.handleSessionShutdown();
     });
     pi.on("user_bash", (event, ctx) => {
         runtime.handleUserBash(event, ctx);
