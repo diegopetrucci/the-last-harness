@@ -14,7 +14,7 @@ import { makeTempDir } from "./install-stage1-test-helpers.mjs";
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const repoNodeModulesBin = join(repoRoot, "node_modules", ".bin");
 export const TLH_NON_PINNED_PI_VERSION = "0.80.1";
-export const TLH_PINNED_PI_VERSION = "0.81.1";
+export const TLH_PINNED_PI_VERSION = "0.82.1";
 export const TLH_PI_PACKAGE_SPEC = `@earendil-works/pi-coding-agent@${TLH_PINNED_PI_VERSION}`;
 export const managedRtkSupportedTestPlatform =
 	["darwin", "linux"].includes(process.platform) && ["x64", "arm64"].includes(process.arch);

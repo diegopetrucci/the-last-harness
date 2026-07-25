@@ -1,6 +1,6 @@
 {
   "name": "the-last-harness",
-  "version": "0.29.0",
+  "version": "0.30.0",
   "description": "The Last Harness Pi package",
   "license": "MIT",
   "type": "module",
@@ -73,8 +73,8 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "0.81.1",
-    "@earendil-works/pi-tui": "0.81.1"
+    "@earendil-works/pi-coding-agent": "0.82.1",
+    "@earendil-works/pi-tui": "0.82.1"
   },
   "dependencies": {
     "@tailwindcss/browser": "4.3.3",
@@ -82,8 +82,8 @@
     "monaco-editor": "0.56.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.81.1",
-    "@earendil-works/pi-tui": "0.81.1",
+    "@earendil-works/pi-coding-agent": "0.82.1",
+    "@earendil-works/pi-tui": "0.82.1",
     "@eslint/js": "10.0.1",
     "@types/node": "26.1.1",
     "eslint": "10.7.0",

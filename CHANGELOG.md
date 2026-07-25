@@ -4,11 +4,27 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Bumped Pi to 0.82.1.
+
+## [0.30.0] - 2026-07-24
+
 ### Added
 
-- The installer now provisions `extensions/subagent/config.json` with `toolDescriptionMode: "compact"` during install and update. This setting reduces token overhead in subagent tool descriptions (requires pi-subagents ≥ v0.33.0; older builds ignore the key). Idempotent: any existing user value (including `"full"`) is preserved on re-runs. Revert path: set `"toolDescriptionMode": "full"` in `<agentDir>/extensions/subagent/config.json` — this value is preserved on subsequent installer runs. Removing the key is only a temporary revert; the installer will re-provision `"compact"` on the next install or update run.
-- [Experimental] You can now add custom (non built-in) subagents. Ask TLH how to.
+- [Experimental] TLH can now run trusted custom embedded subagents from user-owned markdown definitions after you opt into the `embedded-subagents` experimental flag.
 - New `/what-consumed-my-session-limit-and-tokens` command that generates and opens a local, private HTML report attributing token consumption across all TLH sessions (including subagent child sessions, across every project) within the current provider session-limit window (Anthropic 5-hour or OpenAI Codex session window, resolved from the subscription usage snapshot with a trailing-5h fallback). The report ranks sessions by in-window usage with per-provider totals and privacy/accuracy caveats, and embeds no transcript text or tool payloads.
+- Added a troubleshooting guide with conservative recovery steps for common wrapper, private-runtime, subagent, install, update, and integration failures without touching normal `~/.pi/agent` configuration.
+
+### Changed
+
+- TLH now renders its initial startup header before slower resource collection, update-check, and usage-refresh work completes, then fills in those details asynchronously for a more responsive startup experience.
+- TLH ticket workflows now scope `tk` to the current worktree by default (`<git-worktree-root>/.tickets`, or `<session-cwd>/.tickets` outside Git), keeping architect sessions, child sessions, `/tk-status`, and Bash-launched `tk` commands on the same repo-local ticket store. Interleaved ticket UI actions now restore that scope correctly instead of accidentally drifting to another store.
+- The installer now provisions `extensions/subagent/config.json` with `toolDescriptionMode: "compact"` during install and update. This reduces token overhead in subagent tool descriptions while preserving any existing user override such as `"full"`.
+- Non-latest-release installs now keep a visible track warning naming the active install track, instead of only surfacing that state transiently during startup.
+- Refreshed bundled default-extension pins, including the managed subagent stack (`pi-subagents` 0.31.9 and `pi-intercom` 0.8.0) plus the bundled optional OpenAI/Auth/MCP/search defaults, so fresh installs and managed updates pick up newer upstream fixes and compatibility updates.
+- Release telemetry now reports only the `on`/`off` state of registered TLH experimental flags; unknown or custom experimental values remain ignored and unsent.
+- TLH's architect/developer ticket workflow guidance now explicitly protects pre-existing user-owned worktree and index changes from being overwritten or discarded during scoped implementation tasks.
 
 ### Changed
 
@@ -18,6 +34,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Restored Anthropic and OpenAI Codex subscription usage in the footer, which disappeared under Pi 0.81 when upstream removed the auth-storage API the usage service depended on.
 - OpenAI weekly/daily usage now shows days, not just hours.
+- Provider totals in `/what-consumed-my-session-limit-and-tokens` now stay provider-scoped instead of repeating model attribution in the totals row.
 - Installer backup cleanup now only removes backups it created (exact TLH filename forms with an empty/`tlh-tickets`/`tlh-defaults`/`before-install` marker and a TLH timestamp), so a user-created file such as `settings.json.backup-my-personal-copy-<timestamp>` is no longer eligible for automatic deletion.
 
 ## [0.29.0] - 2026-07-12

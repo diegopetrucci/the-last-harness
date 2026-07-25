@@ -49,7 +49,7 @@ TLH subagents are fresh child sessions, not a giant shared swarm. They get the t
 - `diff-summarizer` for change overviews
 - `developer` for implementation
 - `code-reviewer` for review
-- `librarian` for read-only GitHub repository research (uses `gh` CLI and `git`)
+- `librarian` for read-only GitHub repository research (uses `gh` CLI and `git`; TLH caps librarian-bearing subagent runs at five minutes unless the caller already set a stricter timeout)
 - `web-scout` for web research
 - `oracle` for a deeper second opinion
 - `contrarian` as a bundled default minor subagent for sparing adversarial stress-tests.
@@ -192,7 +192,7 @@ Backup files at the isolated-profile root (`settings.json.backup-*`, `keybinding
 
 Node.js >=22.19.0 must be available on your `PATH`.
 
-TLH runs its own pinned Pi 0.81.1 from a private runtime at `~/.the-last-harness/runtime` — a global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled.
+TLH runs its own pinned Pi 0.82.1 from a private runtime at `~/.the-last-harness/runtime` — a global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled.
 
 TLH also manages a pinned native RTK binary for shell-command rewriting at `~/.the-last-harness/agent/bin/rtk` on supported darwin/linux x64/arm64 platforms. Install and update hard-fail if that managed binary cannot be installed or validated. To disable rewriting without removing the binary, set `RTK_DISABLED=1` for a single launch or set `"tlh": { "rtk": { "disabled": true } }` in the isolated profile at `~/.the-last-harness/agent/settings.json`. To remove just the managed binary, delete `~/.the-last-harness/agent/bin/rtk`; to remove the whole isolated RTK/profile setup, remove `~/.the-last-harness` (or use the uninstall script).
 

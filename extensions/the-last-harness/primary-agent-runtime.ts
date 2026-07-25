@@ -278,11 +278,26 @@ function subagentCallTargetsMatching(input: unknown, predicate: (agent: string) 
 	return collectSubagentCallTargetsMatching(input, predicate).length > 0;
 }
 
+const LIBRARIAN_MAX_TIMEOUT_MS = 300_000;
+
 function isOpaqueSubagentManagementActionInput(input: unknown): boolean {
 	if (!isRecord(input) || typeof input.action !== "string" || input.action.trim().length === 0) {
 		return false;
 	}
 	return !isExecutionBearingResumeChain(input);
+}
+
+function capLibrarianSubagentTimeout(input: unknown): void {
+	if (!isRecord(input) || isOpaqueSubagentManagementActionInput(input) || !subagentCallTargetsAgent(input, "librarian")) {
+		return;
+	}
+	const { timeoutMs } = input;
+	if (typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs <= LIBRARIAN_MAX_TIMEOUT_MS) {
+		return;
+	}
+	// The current subagent API exposes only a run-level timeout, so any batch containing
+	// librarian must cap the whole execution request.
+	input.timeoutMs = LIBRARIAN_MAX_TIMEOUT_MS;
 }
 
 function embeddedDelegationBlockedReason(selection: TlhPrimaryAgentSelection, input: unknown): string | undefined {
@@ -838,6 +853,7 @@ function createTlhPrimaryAgentRuntime(
 				return undefined;
 			}
 			applyProviderAwareSubagentModels(event.input, subagentsByName, getUnfilteredAvailableModels(ctx.modelRegistry), ctx.model?.provider, ctx.model);
+			capLibrarianSubagentTimeout(event.input);
 			syncPrimaryAgentState(ctx);
 			const selection = currentPrimaryAgentSelection();
 			const allowedSubagents = allowedSubagentsForExperimentalConfig(getTlhGlobalSettings(ctx.cwd).tlh?.experimental);

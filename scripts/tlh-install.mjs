@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { criticalGitSourceSpec, gitSourceInstallSource, packageSourceInstallDir, } from "./lib/tlh-install-package-source.mjs";
+import { criticalGitSourceSpec, packageSourceInstallDir, packageSourcePiSource, } from "./lib/tlh-install-package-source.mjs";
 import { assertProfilePathWithinAgent, assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, validateInstallerTargets, validateProfileRelativePath, } from "./lib/tlh-install-paths.mjs";
 import { packageIdentity, } from "./lib/default-extensions.mjs";
 import { assignRequiredEqualsValue, backupPathWithTimestamp, isTlhOwnedBackupFilename, renderShellWords, requiredValue, selectExpiredBackups, shellWord, } from "./lib/tlh-install-utils.mjs";
@@ -17,7 +17,7 @@ import { formatSupportFileManifest, installableSupportFiles, supportFileManifest
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
-const PINNED_PI_VERSION = "0.81.1";
+const PINNED_PI_VERSION = "0.82.1";
 const PI_PACKAGE_SPEC = `${PI_PACKAGE_NAME}@${PINNED_PI_VERSION}`;
 // Keep in sync with TLH_MIN_NODE_VERSION and TLH_PINNED_PI_VERSION in install.sh.
 const MIN_NODE_VERSION = "22.19.0";
@@ -43,7 +43,7 @@ const VALID_UPDATE_TRACKS = ["latest-release", "pinned-tag", "ref", "custom"];
 const RUNTIME_MARKER_FILENAME = ".tlh-runtime-owned";
 const RUNTIME_MARKER_SCHEMA_VERSION = 1;
 // npm 11.x --prefix layout; empirically confirmed: npm 11.16.0 +
-// @earendil-works/pi-coding-agent@0.81.1.  Mirrors the advisory exclusivity
+// @earendil-works/pi-coding-agent@0.82.1.  Mirrors the advisory exclusivity
 // tripwire in uninstall.sh (demoted from gate): the only top-level entries a
 // TLH-owned runtime prefix should contain are those created by
 // npm install -g --ignore-scripts --prefix, plus the TLH runtime ownership
@@ -610,7 +610,7 @@ function writeRuntimeMarker(config, prefix, origin) {
     }
 }
 function assertSupportedPiVersion(config, { piCommand = "pi", sourceDescription = "existing pi on PATH", versionCommandDisplay = "pi --version", } = {}) {
-    // `pi --version` prints a bare semver (e.g. "0.81.1") on stdout. Older builds may
+    // `pi --version` prints a bare semver (e.g. "0.82.1") on stdout. Older builds may
     // differ, so we extract the first semver-shaped substring rather than match strictly.
     const result = spawnCapture(config, [piCommand, "--version"], {
         allowFailure: true,
@@ -1018,9 +1018,9 @@ function installHarnessPackage(config) {
     backupExistingSettingsBeforePiInstall(config);
     log(config, "Installing The Last Harness package...");
     verboseLog(config, `Package source: ${config.packageSource}`);
-    const installSource = gitSourceInstallSource(config.packageSource, { agentDir: config.agentDir });
+    const piPackageSource = packageSourcePiSource(config.packageSource, { agentDir: config.agentDir });
     assertGitSourceTargetSafe(config, config.packageSource, "The Last Harness package checkout", gitCheckoutIo());
-    runIsolatedPi(config, [absolutePiCmd(config), "install", installSource]);
+    runIsolatedPi(config, [absolutePiCmd(config), "install", piPackageSource]);
     refreshHarnessPackageCheckout(config);
     if (config.packageSourceIsDefault)
         return;
@@ -1030,10 +1030,10 @@ function installHarnessPackage(config) {
         return;
     }
     if (config.dryRun) {
-        log(config, `Would refresh custom package source if it is already installed: PI_CODING_AGENT_DIR=${config.agentDir} ${absolutePiCmd(config)} update ${config.packageSource}`);
+        log(config, `Would refresh custom package source if it is already installed: PI_CODING_AGENT_DIR=${config.agentDir} ${absolutePiCmd(config)} update ${piPackageSource}`);
         return;
     }
-    runIsolatedPi(config, [absolutePiCmd(config), "update", config.packageSource]);
+    runIsolatedPi(config, [absolutePiCmd(config), "update", piPackageSource]);
 }
 async function mergeSettings(config) {
     if (config.noSettings) {
@@ -1048,7 +1048,7 @@ async function mergeSettings(config) {
         "--settings",
         config.settingsPath,
         "--package-source",
-        config.packageSource,
+        packageSourcePiSource(config.packageSource, { agentDir: config.agentDir }),
     ];
     if (config.supportFilePaths.DEFAULT_EXTENSIONS_FILE) {
         args.push("--default-extensions", config.supportFilePaths.DEFAULT_EXTENSIONS_FILE);
@@ -1248,7 +1248,7 @@ function preflightCriticalDefaultExtensionTargets(config, sources) {
 }
 function installCriticalDefaultExtension(config, source) {
     verboseLog(config, `Installing critical bundled default extension package: ${source}`);
-    const installSource = gitSourceInstallSource(source, { agentDir: config.agentDir });
+    const installSource = packageSourcePiSource(source, { agentDir: config.agentDir });
     assertGitSourceTargetSafe(config, source, "critical default extension package checkout", gitCheckoutIo());
     try {
         runIsolatedPi(config, [absolutePiCmd(config), "install", installSource]);

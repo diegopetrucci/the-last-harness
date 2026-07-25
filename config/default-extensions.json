@@ -1,7 +1,7 @@
 [
   {
     "id": "openai-fast",
-    "source": "npm:@diegopetrucci/pi-openai-fast@0.1.11",
+    "source": "npm:@diegopetrucci/pi-openai-fast@0.1.13",
     "description": "Enable optional OpenAI Codex Fast mode commands for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions."
   },
   {
@@ -14,7 +14,7 @@
     "aliases": ["pi-mcp-adapter", "mcp-adapter"],
     "replaces": ["npm:pi-mcp-adapter", "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1"],
     "migrateReplacements": true,
-    "source": "npm:@diegopetrucci/pi-mcp-adapter@2.10.2",
+    "source": "npm:@diegopetrucci/pi-mcp-adapter@2.11.0",
     "description": "Connect tlh to MCP servers with the upstream adapter."
   },
   {
@@ -31,29 +31,29 @@
   },
   {
     "id": "inline-bash",
-    "source": "npm:@diegopetrucci/pi-inline-bash@0.1.6",
+    "source": "npm:@diegopetrucci/pi-inline-bash@0.1.8",
     "description": "Expand inline bash commands in user prompts."
   },
   {
     "id": "notify",
-    "source": "npm:@diegopetrucci/pi-notify@0.1.12",
+    "source": "npm:@diegopetrucci/pi-notify@0.1.14",
     "description": "Send a notification when an agent turn finishes."
   },
   {
     "id": "context-inspector",
-    "source": "npm:@diegopetrucci/pi-context-inspector@0.1.8",
+    "source": "npm:@diegopetrucci/pi-context-inspector@0.1.10",
     "description": "Open a local HTML dashboard explaining where the current session context is going."
   },
   {
     "id": "quiet-tools",
     "aliases": ["compact-bash"],
     "replaces": ["npm:@diegopetrucci/pi-compact-bash"],
-    "source": "npm:@diegopetrucci/pi-quiet-tools@0.1.7",
+    "source": "npm:@diegopetrucci/pi-quiet-tools@0.1.9",
     "description": "Compact collapsed built-in tool output in the TUI without changing model-visible results."
   },
   {
     "id": "dirty-repo-guard",
-    "source": "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.6",
+    "source": "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.8",
     "description": "Prompt before session changes when the current git repo has uncommitted changes."
   },
   {
@@ -62,7 +62,7 @@
     "replaces": ["npm:pi-subagents", "git:github.com/nicobailon/pi-subagents", "git:github.com/diegopetrucci/pi-subagents"],
     "migrateReplacements": true,
     "critical": true,
-    "source": "npm:@diegopetrucci/pi-subagents@0.31.9",
+    "source": "npm:@diegopetrucci/pi-subagents@0.31.10",
     "description": "Delegate work to isolated TLH-profile subagents."
   }
 ]

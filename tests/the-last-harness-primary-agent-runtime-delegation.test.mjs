@@ -18,6 +18,8 @@ import {
 	EMBEDDED_SUBAGENTS_FEATURE,
 } from "./the-last-harness-primary-agent-runtime-test-helpers.mjs";
 
+const LIBRARIAN_MAX_TIMEOUT_MS = 300_000;
+
 test("enabled primary mode allows approved delegation targets and forces safe top-level defaults", async () => {
 	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
 	const event = {
@@ -36,6 +38,95 @@ test("enabled primary mode allows approved delegation targets and forces safe to
 	assert.equal(await toolCall(event, ctx), undefined);
 	assert.equal(event.input.agentScope, "user");
 	assert.equal(event.input.context, "fresh");
+});
+
+test("tool_call caps librarian execution timeouts without affecting stricter or non-librarian calls", async () => {
+	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
+	const ctx = createToolCallContext([
+		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
+	]);
+	const cases = [
+		{
+			name: "missing timeout",
+			event: { toolName: "subagent", input: { agent: "librarian", task: "Research upstream docs" } },
+			expectedTimeoutMs: LIBRARIAN_MAX_TIMEOUT_MS,
+		},
+		{
+			name: "longer timeout",
+			event: { toolName: "subagent", input: { agent: "librarian", task: "Research upstream docs", timeoutMs: 360_000 } },
+			expectedTimeoutMs: LIBRARIAN_MAX_TIMEOUT_MS,
+		},
+		{
+			name: "stricter timeout",
+			event: { toolName: "subagent", input: { agent: "librarian", task: "Research upstream docs", timeoutMs: 120_000 } },
+			expectedTimeoutMs: 120_000,
+		},
+		{
+			name: "async execution",
+			event: { toolName: "subagent", input: { agent: "librarian", task: "Research upstream docs", async: true } },
+			expectedTimeoutMs: LIBRARIAN_MAX_TIMEOUT_MS,
+		},
+		{
+			name: "mixed batch containing librarian",
+			event: {
+				toolName: "subagent",
+				input: {
+					tasks: [
+						{ agent: "repo-scout", task: "Map the repo" },
+						{ agent: "librarian", task: "Research upstream docs" },
+					],
+					timeoutMs: 420_000,
+				},
+			},
+			expectedTimeoutMs: LIBRARIAN_MAX_TIMEOUT_MS,
+		},
+		{
+			name: "non-librarian execution",
+			event: { toolName: "subagent", input: { agent: "repo-scout", task: "Map the repo", timeoutMs: 420_000 } },
+			expectedTimeoutMs: 420_000,
+		},
+	];
+
+	for (const { name, event, expectedTimeoutMs } of cases) {
+		assert.equal(await toolCall(event, ctx), undefined, name);
+		assert.equal(event.input.timeoutMs, expectedTimeoutMs, name);
+	}
+});
+
+test("tool_call caps librarian resume-chain executions but leaves opaque management timeouts unchanged", async () => {
+	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
+	const ctx = createToolCallContext([
+		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
+	]);
+	const resumeChainEvent = {
+		toolName: "subagent",
+		input: {
+			action: "resume",
+			id: "run-123",
+			message: "Continue the approved ticket.",
+			chain: [
+				{ agent: "repo-scout", task: "Refresh repo context" },
+				{ parallel: [{ agent: "librarian", task: "Research upstream issue history" }] },
+			],
+			timeoutMs: 420_000,
+		},
+	};
+	const listEvent = { toolName: "subagent", input: { action: "list", timeoutMs: 420_000 } };
+	const opaqueResumeEvent = {
+		toolName: "subagent",
+		input: { action: "resume", id: "run-456", message: "Continue the approved ticket.", timeoutMs: 420_000 },
+	};
+
+	assert.equal(await toolCall(resumeChainEvent, ctx), undefined);
+	assert.equal(resumeChainEvent.input.timeoutMs, LIBRARIAN_MAX_TIMEOUT_MS);
+	assert.equal(resumeChainEvent.input.agentScope, "user");
+	assert.equal(resumeChainEvent.input.context, "fresh");
+
+	assert.equal(await toolCall(listEvent, ctx), undefined);
+	assert.equal(listEvent.input.timeoutMs, 420_000);
+
+	assert.equal(await toolCall(opaqueResumeEvent, ctx), undefined);
+	assert.equal(opaqueResumeEvent.input.timeoutMs, 420_000);
 });
 
 test("enabled primary mode allows contrarian by default and stale contrarian settings stay harmless", async (t) => {
