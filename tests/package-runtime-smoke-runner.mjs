@@ -10,7 +10,7 @@ assert.ok(packageRoot && cwd && agentDir, "usage: package-runtime-smoke-runner.m
 
 const piEntryPath = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
 const piPackage = JSON.parse(readFileSync(join(dirname(piEntryPath), "..", "package.json"), "utf8"));
-assert.equal(piPackage.version, "0.82.0");
+assert.equal(piPackage.version, "0.82.1");
 
 const settingsManager = SettingsManager.create(cwd, agentDir);
 const resourceLoader = new DefaultResourceLoader({

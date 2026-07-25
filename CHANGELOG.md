@@ -7,7 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Changed
 
 - Bumped the bundled critical `pi-subagents` default extension pin from `npm:@diegopetrucci/pi-subagents@0.31.9` to `npm:@diegopetrucci/pi-subagents@0.31.10`. This release adds per-agent acceptance roles (`acceptanceRole`) and a paused-resume acceptance contract, records paused/interrupted runs as `skipped` (not `rejected`) acceptance, never infers `reviewed` acceptance, gates idle "needs attention" notices on in-flight tool calls, and includes the upstream nicobailon/pi-subagents#514/#524 status-cache-invalidation and management-output-collapse intakes.
-- Bumped TLH's pinned private Pi/TUI runtime from 0.81.1 to 0.82.0, keeping debug and crash logs inside the isolated profile while picking up upstream model-matching, resource-discovery, catalog-refresh, and dependency-security fixes (including `protobufjs` 7.6.5).
+- Bumped TLH's pinned private Pi/TUI runtime from 0.81.1 to 0.82.1, keeping debug and crash logs inside the isolated profile while picking up upstream model-matching, resource-discovery, catalog-refresh, and dependency-security fixes (including `protobufjs` 7.6.5).
 
 ### Fixed
 
