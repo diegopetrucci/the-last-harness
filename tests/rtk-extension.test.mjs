@@ -200,6 +200,69 @@ test("RTK extension leaves commands unchanged when rtk rewrite reports no native
 	});
 });
 
+test("RTK extension leaves unsupported native find commands unchanged before calling rewrite", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-rtk-extension-", { cwd: true, test: t });
+	writeSettings(fixture.agent, {});
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, RTK_DISABLED: undefined }, async () => {
+		const cases = [
+			"find . -name '*.ts' -o -name '*.js'",
+			"find . -type f -a -name '*.ts'",
+			"find . -not -name '*.test.ts'",
+			"find . ! -name '*.test.ts'",
+			"find . -name '*.ts' , -name '*.js'",
+			"find . \\( -name '*.ts' -o -name '*.js' \\)",
+			"find . -name '*.ts' -print",
+			"sudo find . -not -name '*.test.ts'",
+			"env find . ! -name '*.test.ts'",
+			"ls && find . -name '*.ts' -o -name '*.js'",
+		];
+
+		for (const command of cases) {
+			const pi = createPiHarness({ rewriteOutput: "rtk find . -name '*.ts'" });
+			await registerRtk(pi);
+
+			const event = { toolName: "bash", input: { command } };
+			await pi.handlers.get("tool_call")?.[0]?.(event, createToolCallContext(fixture.cwd));
+
+			assert.equal(event.input.command, command);
+			assert.deepEqual(pi.execCalls.map((call) => call.args[0]), ["--version"]);
+		}
+	});
+});
+
+test("RTK extension still rewrites simple native find commands", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-rtk-extension-", { cwd: true, test: t });
+	writeSettings(fixture.agent, {});
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, RTK_DISABLED: undefined }, async () => {
+		const pi = createPiHarness({ rewriteOutput: "rtk find . -name '*.ts'" });
+		await registerRtk(pi);
+
+		const event = { toolName: "bash", input: { command: "find . -name '*.ts'" } };
+		await pi.handlers.get("tool_call")?.[0]?.(event, createToolCallContext(fixture.cwd));
+
+		assert.equal(event.input.command, "rtk find . -name '*.ts'");
+		assert.deepEqual(pi.execCalls.map((call) => call.args[0]), ["--version", "rewrite"]);
+	});
+});
+
+test("RTK extension still accepts rewrite exit code 3 for non-find commands", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-rtk-extension-", { cwd: true, test: t });
+	writeSettings(fixture.agent, {});
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, RTK_DISABLED: undefined }, async () => {
+		const pi = createPiHarness({ rewriteStatus: 3, rewriteOutput: "rtk git status" });
+		await registerRtk(pi);
+
+		const event = { toolName: "bash", input: { command: "git status" } };
+		await pi.handlers.get("tool_call")?.[0]?.(event, createToolCallContext(fixture.cwd));
+
+		assert.equal(event.input.command, "rtk git status");
+		assert.deepEqual(pi.execCalls.map((call) => call.args[0]), ["--version", "rewrite"]);
+	});
+});
+
 test("RTK extension duplicate-load guard keeps a single tool_call handler per session", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-rtk-extension-", { cwd: true, test: t });
 	writeSettings(fixture.agent, {});

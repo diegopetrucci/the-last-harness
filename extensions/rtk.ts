@@ -97,6 +97,22 @@ function describeUnusableRtk(probe: FailedRtkCommandProbeResult, label: string):
 	return `${label} is unavailable`;
 }
 
+function containsNativeFindCommandToken(cmd: string): boolean {
+	return /(?:^|[\s;&|])find(?=\s|$)/.test(cmd);
+}
+
+function hasUnsupportedNativeFindConstruct(cmd: string): boolean {
+	if (!containsNativeFindCommandToken(cmd)) return false;
+
+	return [
+		/(?:^|\s)-(?:a|and|not|o|or)(?=\s|$)/,
+		/(?:^|\s)!(?=\s|$)/,
+		/(?:^|\s),(?=\s|$)/,
+		/(?:^|\s)(?:\\\(|\\\)|\(|\))(?=\s|$)/,
+		/(?:^|\s)-(?:delete|exec|execdir|fls|fprint|fprint0|fprintf|ls|ok|okdir|print|print0|printf|prune|quit)(?=\s|$)/,
+	].some((pattern) => pattern.test(cmd));
+}
+
 async function resolveRtkCommand(pi: ExtensionAPI): Promise<string | null> {
 	const pathProbe = await probeRtkCommand(pi, "rtk");
 	if (pathProbe.ok) {
@@ -160,6 +176,8 @@ export default async function rtk(pi: ExtensionAPI): Promise<void> {
 				if (cmd === "rtk" || cmd.startsWith("rtk ")) return;
 				if (process.env.RTK_DISABLED === "1") return;
 				if (isRtkSettingDisabled(ctx.cwd)) return;
+
+				if (hasUnsupportedNativeFindConstruct(cmd)) return;
 
 				// Delegate to RTK.
 				const rewritten = await rewriteCommand(pi, rtkCommand, cmd, ctx.signal);
