@@ -61,7 +61,7 @@ export function setupTicketsEnabledWrapperFixture(t) {
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
 	writeFakePi(fakebin, [
-		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.81.1\\n'; exit 0; fi",
+		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.82.0\\n'; exit 0; fi",
 		"printf 'path=%s\\n' \"${PATH:-}\" >\"${PI_WRAPPER_LOG}\"",
 	].join("\n"));
 
