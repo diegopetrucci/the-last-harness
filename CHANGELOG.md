@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- The currently worked on `tk` ticket now shows in the footer.
 - Bumped Pi to 0.82.1.
 
 ## [0.30.0] - 2026-07-24
