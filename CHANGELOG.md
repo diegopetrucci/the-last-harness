@@ -7,6 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Changed
 
 - Bumped Pi to 0.82.1.
+- Promoted the read-only tk-backed ticket workflow UI to a permanent default TLH surface: the footer now shows `ticket: <title> (/tickets)` for one titled in-progress ticket, `/tickets` replaces `/tk-status` for the read-only detail view, and `/experimental` no longer lists or toggles the old `ticket-workflow-ui` flag.
 
 ## [0.30.0] - 2026-07-24
 

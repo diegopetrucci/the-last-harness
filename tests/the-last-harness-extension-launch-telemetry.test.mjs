@@ -10,7 +10,7 @@ import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mj
 
 const jiti = createJiti(import.meta.url);
 const { TLH_NAME, TLH_TELEMETRY_EVENT_TYPE, TLH_TELEMETRY_STATE_SCHEMA_VERSION } = await jiti.import("../extensions/the-last-harness/constants.ts");
-const { CI_FAILURE_INVESTIGATION_FEATURE, DELTA_FOLLOW_UP_REVIEWS_FEATURE, TICKET_WORKFLOW_UI_FEATURE } = await jiti.import(
+const { CI_FAILURE_INVESTIGATION_FEATURE, DELTA_FOLLOW_UP_REVIEWS_FEATURE, EMBEDDED_SUBAGENTS_FEATURE } = await jiti.import(
 	"../extensions/the-last-harness/experimental.ts",
 );
 const { sendTlhLaunchTelemetry } = await jiti.import("../extensions/the-last-harness/launch-telemetry.ts");
@@ -81,7 +81,7 @@ test("launch telemetry sends allowlisted experimental feature states and reuses 
 	assert.equal(event.payload["Tlh.Runtime.model"], "gpt-4o");
 	assert.equal(event.payload[`Tlh.Experimental.${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`], "on");
 	assert.equal(event.payload[`Tlh.Experimental.${CI_FAILURE_INVESTIGATION_FEATURE}`], "off");
-	assert.equal(event.payload[`Tlh.Experimental.${TICKET_WORKFLOW_UI_FEATURE}`], "off");
+	assert.equal(event.payload[`Tlh.Experimental.${EMBEDDED_SUBAGENTS_FEATURE}`], "off");
 	assert.equal(Object.hasOwn(event.payload, "Tlh.Experimental.legacy-flag"), false);
 	assert.equal(readFileSync(telemetryStatePath(fixture), "utf8"), originalState);
 });

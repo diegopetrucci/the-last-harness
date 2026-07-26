@@ -2,7 +2,6 @@ import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { normalizeEnabledExperimentalFeatures, normalizeExperimentalFeatureId, readEnabledExperimentalFeatures, } from "../the-last-harness-subagent-safety.mjs";
 export const DELTA_FOLLOW_UP_REVIEWS_FEATURE = "delta-follow-up-reviews";
 export const CI_FAILURE_INVESTIGATION_FEATURE = "ci-failure-investigation";
-export const TICKET_WORKFLOW_UI_FEATURE = "ticket-workflow-ui";
 export const EMBEDDED_SUBAGENTS_FEATURE = "embedded-subagents";
 export const TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT = "tlh:experimental-feature-changed";
 export const EXPERIMENTAL_COMMAND_HELP = [
@@ -61,10 +60,6 @@ export const TLH_EXPERIMENTAL_FEATURES = [
         primaryAgentPrompts: {
             architect: CI_FAILURE_INVESTIGATION_ARCHITECT_PROMPT.trim(),
         },
-    },
-    {
-        id: TICKET_WORKFLOW_UI_FEATURE,
-        description: "Enables the experimental ticket workflow UI as a read-only tk-backed surface.",
     },
     {
         id: EMBEDDED_SUBAGENTS_FEATURE,

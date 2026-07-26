@@ -838,7 +838,7 @@ test("extension keeps TLH experimental command wiring with registered ticket, ci
 	assert.match(experimentalSource, /import\("\.\/experimental-command\.js"\)/);
 	assert.match(experimentalSource, /delta-follow-up-reviews/);
 	assert.match(experimentalSource, /ci-failure-investigation/);
-	assert.match(experimentalSource, /ticket-workflow-ui/);
+	assert.doesNotMatch(experimentalSource, /ticket-workflow-ui/);
 	assert.doesNotMatch(experimentalSource, /## TLH Experimental Feature: contrarian/);
 	assert.doesNotMatch(experimentalSource, /Enables the contrarian minor agent and primary-agent guidance/);
 	assert.doesNotMatch(experimentalSource, /run-tests-last/);

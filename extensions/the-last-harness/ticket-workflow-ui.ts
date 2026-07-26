@@ -2,26 +2,20 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 
 import { SettingsManager, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import {
-	isTlhExperimentalFeatureEnabled,
-	TICKET_WORKFLOW_UI_FEATURE,
-	TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT,
-} from "./experimental.js";
 import { isRecord } from "./common.js";
 import { activateTlhTicketSessionScope, findValidTlhTicketCommand } from "./tickets.js";
 import { TK_WORKFLOW_STATUS_KEY, TK_WORKFLOW_WIDGET_KEY } from "./ticket-workflow-ui-constants.js";
 import type { TlhSettings } from "./types.js";
 
-const TK_STATUS_COMMAND = "tk-status";
+const TK_STATUS_COMMAND = "tickets";
 const TK_COMMAND_TIMEOUT_MS = 4000;
 const TK_USER_BASH_REFRESH_DELAY_MS = 250;
-const TK_STATUS_HELP = "Use /tk-status for details.";
-const TK_WORKING_ON_PREFIX = "working on tk: ";
+const TK_STATUS_HINT = " (/tickets)";
+const TK_WORKING_ON_PREFIX = "ticket: ";
 
 type TkWorkflowTicket = { id?: string; status?: string };
 
 type TkWorkflowSnapshot =
-	| { kind: "disabled" }
 	| { kind: "unavailable"; message: string }
 	| { kind: "no-repo"; message: string }
 	| { kind: "no-tickets" }
@@ -44,10 +38,6 @@ function getTlhGlobalSettings(cwd: string): TlhSettings {
 	} catch {
 		return {};
 	}
-}
-
-function isTicketWorkflowUiEnabled(cwd: string): boolean {
-	return isTlhExperimentalFeatureEnabled(getTlhGlobalSettings(cwd).tlh?.experimental, TICKET_WORKFLOW_UI_FEATURE);
 }
 
 function firstOutputLine(result: TkCommandResult): string | undefined {
@@ -126,10 +116,6 @@ function getInProgressTicketTitle(command: string, cwd: string, ticketId: string
 }
 
 function getTkWorkflowSnapshot(cwd: string): TkWorkflowSnapshot {
-	if (!isTicketWorkflowUiEnabled(cwd)) {
-		return { kind: "disabled" };
-	}
-
 	activateTlhTicketSessionScope(cwd);
 	const settings = getTlhGlobalSettings(cwd);
 	const command = findValidTlhTicketCommand(settings, getAgentDir());
@@ -253,13 +239,10 @@ function formatTkWorkflowFooterStatus(snapshot: TkWorkflowSnapshot): string | un
 		return undefined;
 	}
 	const safeTitle = snapshot.currentTitle ? stripTerminalControlSequences(snapshot.currentTitle).trim() : undefined;
-	return safeTitle ? `${TK_WORKING_ON_PREFIX}${safeTitle}\n${TK_STATUS_HELP}` : undefined;
+	return safeTitle ? `${TK_WORKING_ON_PREFIX}${safeTitle}${TK_STATUS_HINT}` : undefined;
 }
 
 function formatTkWorkflowDetails(snapshot: TkWorkflowSnapshot): string {
-	if (snapshot.kind === "disabled") {
-		return `Ticket workflow UI is disabled. Enable it with /experimental enable ${TICKET_WORKFLOW_UI_FEATURE}.`;
-	}
 	if (snapshot.kind === "unavailable") {
 		return `Ticket workflow status unavailable: ${snapshot.message}`;
 	}
@@ -322,7 +305,6 @@ function shouldRefreshFromBashCommand(command: string): boolean {
 
 export type TlhTicketWorkflowUiRuntime = {
 	applyCurrentSettings(ctx: ExtensionContext): void;
-	handleExperimentalFeatureChange(event: unknown): void;
 	handleSessionShutdown(): void;
 	handleUserBash(event: { command: string }, ctx: ExtensionContext): void;
 	handleToolResult(event: { toolName: string; input: { command?: unknown } }, ctx: ExtensionContext): void;
@@ -330,7 +312,6 @@ export type TlhTicketWorkflowUiRuntime = {
 
 export function createTlhTicketWorkflowUiRuntime(pi: ExtensionAPI): TlhTicketWorkflowUiRuntime {
 	let commandRegistered = false;
-	let activeContext: ExtensionContext | undefined;
 	const pendingUserBashRefreshes = new Set<ReturnType<typeof setTimeout>>();
 
 	const refresh = (ctx: ExtensionContext) => {
@@ -357,36 +338,20 @@ export function createTlhTicketWorkflowUiRuntime(pi: ExtensionAPI): TlhTicketWor
 		if (!ctx.hasUI) {
 			return;
 		}
-		activeContext = ctx;
-		const enabled = isTicketWorkflowUiEnabled(ctx.cwd);
-		if (!enabled) {
-			setTkWorkflowUi(ctx, { kind: "disabled" });
-			return;
-		}
 		ensureCommandRegistered();
 		refresh(ctx);
 	};
 
 	return {
 		applyCurrentSettings,
-		handleExperimentalFeatureChange(event: unknown) {
-			if (!isRecord(event) || event.featureId !== TICKET_WORKFLOW_UI_FEATURE || !activeContext?.hasUI) {
-				return;
-			}
-			if (typeof event.cwd === "string" && event.cwd !== activeContext.cwd) {
-				return;
-			}
-			applyCurrentSettings(activeContext);
-		},
 		handleSessionShutdown() {
 			for (const timeout of pendingUserBashRefreshes) {
 				clearTimeout(timeout);
 			}
 			pendingUserBashRefreshes.clear();
-			activeContext = undefined;
 		},
 		handleUserBash(event: { command: string }, ctx: ExtensionContext) {
-			if (!ctx.hasUI || !isTicketWorkflowUiEnabled(ctx.cwd) || !shouldRefreshFromBashCommand(event.command)) {
+			if (!ctx.hasUI || !shouldRefreshFromBashCommand(event.command)) {
 				return;
 			}
 			const timeout = setTimeout(() => {
@@ -397,7 +362,7 @@ export function createTlhTicketWorkflowUiRuntime(pi: ExtensionAPI): TlhTicketWor
 			timeout.unref?.();
 		},
 		handleToolResult(event: { toolName: string; input: { command?: unknown } }, ctx: ExtensionContext) {
-			if (!ctx.hasUI || !isTicketWorkflowUiEnabled(ctx.cwd) || event.toolName !== "bash") {
+			if (!ctx.hasUI || event.toolName !== "bash") {
 				return;
 			}
 			const command = typeof event.input.command === "string" ? event.input.command : undefined;
@@ -411,10 +376,6 @@ export function createTlhTicketWorkflowUiRuntime(pi: ExtensionAPI): TlhTicketWor
 
 export function registerTlhTicketWorkflowUi(pi: ExtensionAPI): void {
 	const runtime = createTlhTicketWorkflowUiRuntime(pi);
-
-	pi.events?.on?.(TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT, (event: unknown) => {
-		runtime.handleExperimentalFeatureChange(event);
-	});
 
 	pi.on("session_start", async (_event, ctx) => {
 		activateTlhTicketSessionScope(ctx.cwd);
