@@ -1584,7 +1584,7 @@ function evaluateWebScout(transcript, addViolation) {
 
 	for (const [index, step] of transcript.steps.entries()) {
 		const name = toolName(step);
-		if (["write", "edit", "bash", "subagent", "intercom", "oracle"].includes(name)) {
+		if (["write", "edit", "bash", "subagent", "intercom", "subagent_supervisor", "oracle"].includes(name)) {
 			addViolation(
 				"web-scout.read_only_tools_only",
 				index,
@@ -1663,7 +1663,7 @@ function evaluateWebScout(transcript, addViolation) {
 function evaluateOracle(transcript, addViolation) {
 	for (const [index, step] of transcript.steps.entries()) {
 		const name = toolName(step);
-		if (["write", "edit", "subagent", "intercom", "web_search", "fetch_content", "get_search_content", "oracle"].includes(name)) {
+		if (["write", "edit", "subagent", "intercom", "subagent_supervisor", "web_search", "fetch_content", "get_search_content", "oracle"].includes(name)) {
 			addViolation(
 				"oracle.read_only",
 				index,

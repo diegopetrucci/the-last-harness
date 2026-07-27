@@ -64,14 +64,5 @@
     "critical": true,
     "source": "npm:@diegopetrucci/pi-subagents@0.31.11",
     "description": "Delegate work to isolated TLH-profile subagents."
-  },
-  {
-    "id": "intercom",
-    "aliases": ["pi-intercom"],
-    "replaces": ["npm:pi-intercom", "git:github.com/nicobailon/pi-intercom", "git:github.com/diegopetrucci/pi-intercom"],
-    "migrateReplacements": true,
-    "critical": true,
-    "source": "npm:@diegopetrucci/pi-intercom@0.8.0",
-    "description": "Allow child subagents to escalate questions to the supervising session."
   }
 ]

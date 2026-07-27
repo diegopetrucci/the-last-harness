@@ -7,7 +7,7 @@ thinking: high
 applyModel: true
 applyThinking: true
 minThinking: medium
-tools: read, write, edit, grep, find, ls, bash, subagent, intercom, mcp
+tools: read, write, edit, grep, find, ls, bash, subagent, subagent_supervisor, mcp
 systemPromptMode: append
 inheritProjectContext: true
 inheritSkills: false

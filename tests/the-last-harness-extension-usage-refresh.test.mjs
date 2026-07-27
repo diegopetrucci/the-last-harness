@@ -22,7 +22,7 @@ const footerData = {
 
 function createPi() {
 	const handlers = new Map();
-	let activeTools = ["read", "grep", "find", "ls", "bash", "subagent", "intercom"];
+	let activeTools = ["read", "grep", "find", "ls", "bash", "subagent", "subagent_supervisor"];
 	return {
 		handlers,
 		on(event, handler) {

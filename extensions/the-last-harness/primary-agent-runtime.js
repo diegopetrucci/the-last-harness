@@ -172,7 +172,7 @@ function writeTlhPrimaryAgentDefault(cwd, selection) {
 function primaryToolAllowlist(primary) {
     return primary?.tools.length
         ? primary.tools
-        : ["read", "grep", "find", "ls", "bash", "subagent", "intercom"];
+        : ["read", "grep", "find", "ls", "bash", "subagent", "subagent_supervisor"];
 }
 function primaryAgentLabel(selection) {
     return selection;
@@ -348,18 +348,18 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             selected: selection,
         });
     }
-    function getValidPrimaryTools(ctx, primary) {
+    function getValidPrimaryTools(ctx, primary, warnOnMissing = true) {
         const desiredTools = primaryToolAllowlist(primary);
         const allToolNames = new Set(pi.getAllTools().map((tool) => tool.name));
         const validTools = filterAvailableTools(desiredTools, allToolNames);
         const missingTools = desiredTools.filter((tool) => !allToolNames.has(tool));
-        if (missingTools.length > 0) {
+        if (warnOnMissing && missingTools.length > 0) {
             warnOnce(ctx, `missing-primary-tools-${primary.name}`, `TLH primary agent tools are not available yet: ${missingTools.join(", ")}`);
         }
         return validTools;
     }
-    function applyPrimaryTools(ctx, primary) {
-        const validTools = getValidPrimaryTools(ctx, primary);
+    function applyPrimaryTools(ctx, primary, warnOnMissing = true) {
+        const validTools = getValidPrimaryTools(ctx, primary, warnOnMissing);
         if (validTools.length === 0) {
             return;
         }
@@ -414,7 +414,8 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         }
         setExtensionThinkingLevel(pi, thinking);
     }
-    async function applyPrimaryDefaults(ctx) {
+    async function applyPrimaryDefaults(ctx, options = {}) {
+        const { warnOnMissing = true } = options;
         const selection = currentPrimaryAgentSelection();
         if (!isEnabledPrimaryAgentSelection(selection)) {
             restorePrimaryToolsIfAppropriate();
@@ -425,7 +426,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             restorePrimaryToolsIfAppropriate();
             return;
         }
-        applyPrimaryTools(ctx, primary);
+        applyPrimaryTools(ctx, primary, warnOnMissing);
         const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
         const forceApply = shouldForceApplyForLock(primary);
         const shouldApplyModel = forceApply || resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyModel");
@@ -594,7 +595,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         activateTlhTicketSessionScope(ctx.cwd);
         sessionExperimentalSnapshot = getTlhGlobalSettings(ctx.cwd).tlh?.experimental;
         syncPrimaryAgentState(ctx);
-        await applyPrimaryDefaults(ctx);
+        await applyPrimaryDefaults(ctx, { warnOnMissing: false });
     }
     function registerLifecycleHooks() {
         pi.on("model_select", async (event, ctx) => {
