@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-07-27
+
 ### Changed
 
 - The currently worked on `tk` ticket now shows in the footer.
