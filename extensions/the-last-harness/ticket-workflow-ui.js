@@ -1,14 +1,13 @@
 import { spawnSync } from "node:child_process";
 import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { isTlhExperimentalFeatureEnabled, TICKET_WORKFLOW_UI_FEATURE, TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT, } from "./experimental.js";
 import { isRecord } from "./common.js";
 import { activateTlhTicketSessionScope, findValidTlhTicketCommand } from "./tickets.js";
 import { TK_WORKFLOW_STATUS_KEY, TK_WORKFLOW_WIDGET_KEY } from "./ticket-workflow-ui-constants.js";
-const TK_STATUS_COMMAND = "tk-status";
+const TK_STATUS_COMMAND = "tickets";
 const TK_COMMAND_TIMEOUT_MS = 4000;
 const TK_USER_BASH_REFRESH_DELAY_MS = 250;
-const TK_STATUS_HELP = "Use /tk-status for details.";
-const TK_WORKING_ON_PREFIX = "working on tk: ";
+const TK_STATUS_HINT = " (/tickets)";
+const TK_WORKING_ON_PREFIX = "ticket: ";
 function getTlhGlobalSettings(cwd) {
     try {
         const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings();
@@ -17,9 +16,6 @@ function getTlhGlobalSettings(cwd) {
     catch {
         return {};
     }
-}
-function isTicketWorkflowUiEnabled(cwd) {
-    return isTlhExperimentalFeatureEnabled(getTlhGlobalSettings(cwd).tlh?.experimental, TICKET_WORKFLOW_UI_FEATURE);
 }
 function firstOutputLine(result) {
     return `${result.stdout || ""}\n${result.stderr || ""}`
@@ -86,9 +82,6 @@ function getInProgressTicketTitle(command, cwd, ticketId) {
     return extractTicketTitleFromShowOutput(showResult.stdout || "");
 }
 function getTkWorkflowSnapshot(cwd) {
-    if (!isTicketWorkflowUiEnabled(cwd)) {
-        return { kind: "disabled" };
-    }
     activateTlhTicketSessionScope(cwd);
     const settings = getTlhGlobalSettings(cwd);
     const command = findValidTlhTicketCommand(settings, getAgentDir());
@@ -202,12 +195,9 @@ function formatTkWorkflowFooterStatus(snapshot) {
         return undefined;
     }
     const safeTitle = snapshot.currentTitle ? stripTerminalControlSequences(snapshot.currentTitle).trim() : undefined;
-    return safeTitle ? `${TK_WORKING_ON_PREFIX}${safeTitle}\n${TK_STATUS_HELP}` : undefined;
+    return safeTitle ? `${TK_WORKING_ON_PREFIX}${safeTitle}${TK_STATUS_HINT}` : undefined;
 }
 function formatTkWorkflowDetails(snapshot) {
-    if (snapshot.kind === "disabled") {
-        return `Ticket workflow UI is disabled. Enable it with /experimental enable ${TICKET_WORKFLOW_UI_FEATURE}.`;
-    }
     if (snapshot.kind === "unavailable") {
         return `Ticket workflow status unavailable: ${snapshot.message}`;
     }
@@ -266,7 +256,6 @@ function shouldRefreshFromBashCommand(command) {
 }
 export function createTlhTicketWorkflowUiRuntime(pi) {
     let commandRegistered = false;
-    let activeContext;
     const pendingUserBashRefreshes = new Set();
     const refresh = (ctx) => {
         if (!ctx.hasUI) {
@@ -290,35 +279,19 @@ export function createTlhTicketWorkflowUiRuntime(pi) {
         if (!ctx.hasUI) {
             return;
         }
-        activeContext = ctx;
-        const enabled = isTicketWorkflowUiEnabled(ctx.cwd);
-        if (!enabled) {
-            setTkWorkflowUi(ctx, { kind: "disabled" });
-            return;
-        }
         ensureCommandRegistered();
         refresh(ctx);
     };
     return {
         applyCurrentSettings,
-        handleExperimentalFeatureChange(event) {
-            if (!isRecord(event) || event.featureId !== TICKET_WORKFLOW_UI_FEATURE || !activeContext?.hasUI) {
-                return;
-            }
-            if (typeof event.cwd === "string" && event.cwd !== activeContext.cwd) {
-                return;
-            }
-            applyCurrentSettings(activeContext);
-        },
         handleSessionShutdown() {
             for (const timeout of pendingUserBashRefreshes) {
                 clearTimeout(timeout);
             }
             pendingUserBashRefreshes.clear();
-            activeContext = undefined;
         },
         handleUserBash(event, ctx) {
-            if (!ctx.hasUI || !isTicketWorkflowUiEnabled(ctx.cwd) || !shouldRefreshFromBashCommand(event.command)) {
+            if (!ctx.hasUI || !shouldRefreshFromBashCommand(event.command)) {
                 return;
             }
             const timeout = setTimeout(() => {
@@ -329,7 +302,7 @@ export function createTlhTicketWorkflowUiRuntime(pi) {
             timeout.unref?.();
         },
         handleToolResult(event, ctx) {
-            if (!ctx.hasUI || !isTicketWorkflowUiEnabled(ctx.cwd) || event.toolName !== "bash") {
+            if (!ctx.hasUI || event.toolName !== "bash") {
                 return;
             }
             const command = typeof event.input.command === "string" ? event.input.command : undefined;
@@ -342,9 +315,6 @@ export function createTlhTicketWorkflowUiRuntime(pi) {
 }
 export function registerTlhTicketWorkflowUi(pi) {
     const runtime = createTlhTicketWorkflowUiRuntime(pi);
-    pi.events?.on?.(TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT, (event) => {
-        runtime.handleExperimentalFeatureChange(event);
-    });
     pi.on("session_start", async (_event, ctx) => {
         activateTlhTicketSessionScope(ctx.cwd);
         runtime.applyCurrentSettings(ctx);

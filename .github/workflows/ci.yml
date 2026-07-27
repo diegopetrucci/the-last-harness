@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   validation:
-    name: Repository validation (${{ matrix.os }})
+    name: Non-test validation (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -32,10 +32,51 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run validation checks
+      - name: Run non-test validation checks
         env:
           HOME: ${{ runner.temp }}/tlh-home
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           mkdir -p "${HOME}"
-          npm run validate
+          npm run check:package-versions
+          npm run typecheck
+          npm run typecheck:runtime
+          npm run check:runtime
+          bash scripts/check-installer-smoke.sh
+          npm run lint
+          npm run lint:sh
+          node scripts/merge-settings.mjs --dry-run
+          npm pack --dry-run
+
+  tests:
+    name: Tests (${{ matrix.os }}, shard ${{ matrix.shard }}/2)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+        shard:
+          - 1
+          - 2
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22.19.0'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run test shard
+        env:
+          HOME: ${{ runner.temp }}/tlh-home
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "${HOME}"
+          node --test --test-reporter=dot --test-shard=${{ matrix.shard }}/2 "tests/**/*.test.mjs"

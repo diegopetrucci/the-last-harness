@@ -6,7 +6,7 @@ import { createJiti } from "jiti";
 const jiti = createJiti(import.meta.url);
 const { registerToggleTlhGitAttributionCommand } = await jiti.import("../extensions/the-last-harness/attribution.ts");
 const { registerEffortCommand } = await jiti.import("../extensions/the-last-harness/effort.ts");
-const { registerExperimentalCommand, TICKET_WORKFLOW_UI_FEATURE } = await jiti.import("../extensions/the-last-harness/experimental.ts");
+const { registerExperimentalCommand, DELTA_FOLLOW_UP_REVIEWS_FEATURE } = await jiti.import("../extensions/the-last-harness/experimental.ts");
 const { registerUsageCommand } = await jiti.import("../extensions/the-last-harness/usage-limits.ts");
 
 function createPiHarness() {
@@ -107,10 +107,14 @@ test("experimental facade keeps command completions without loading the heavy co
 	});
 	const command = pi.commands.get("experimental");
 	assert.equal(loadCount, 0);
-	assert.ok(command.getArgumentCompletions(`toggle ${TICKET_WORKFLOW_UI_FEATURE}`)?.some((item) => item.value === `toggle ${TICKET_WORKFLOW_UI_FEATURE}`));
+	assert.ok(
+		command
+			.getArgumentCompletions(`toggle ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`)
+			?.some((item) => item.value === `toggle ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`),
+	);
 	assert.equal(loadCount, 0);
 	const run = createCtx();
-	await command.handler(`status ${TICKET_WORKFLOW_UI_FEATURE}`, run.ctx);
+	await command.handler(`status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, run.ctx);
 	assert.equal(loadCount, 1);
 	assert.deepEqual(run.notifications, [{ message: "experimental handled", type: "info" }]);
 });
