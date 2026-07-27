@@ -7,6 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Changed
 
 - Bumped the bundled critical `pi-subagents` default extension pin from `npm:@diegopetrucci/pi-subagents@0.31.10` to `npm:@diegopetrucci/pi-subagents@0.31.11`.
+- **pi-intercom retired:** the `pi-intercom` default remains force-removed from isolated settings on update. With bundled `pi-subagents` 0.31.11, child-session escalations should use `contact_supervisor`. Blocking requests durably pause and are resolved with `subagent` resume or interrupt. `subagent_supervisor` provides pending/status inspection and legacy live-session reply compatibility when available. Use `steer` for non-blocking guidance. The `/intercom` overlay, `Alt+M` keybind, and peer-session ask/reply are no longer available.
 
 ## [0.31.0] - 2026-07-27
 
@@ -32,10 +33,6 @@ All notable changes to The Last Harness will be documented in this file.
 - Refreshed bundled default-extension pins, including the managed subagent stack (`pi-subagents` 0.31.9 and `pi-intercom` 0.8.0) plus the bundled optional OpenAI/Auth/MCP/search defaults, so fresh installs and managed updates pick up newer upstream fixes and compatibility updates.
 - Release telemetry now reports only the `on`/`off` state of registered TLH experimental flags; unknown or custom experimental values remain ignored and unsent.
 - TLH's architect/developer ticket workflow guidance now explicitly protects pre-existing user-owned worktree and index changes from being overwritten or discarded during scoped implementation tasks.
-
-### Changed
-
-- **pi-intercom retired:** the `pi-intercom` default is force-removed from isolated settings on update. Primary agents now reply to child escalations via the native `subagent_supervisor` tool. The `/intercom` overlay, `Alt+M` keybind, and peer-session ask/reply are no longer available. The supported escalation path is `contact_supervisor`, `subagent_supervisor` reply, and `steer`.
 
 ### Fixed
 
