@@ -1,7 +1,7 @@
 ---
 name: architect
 description: Clarifies requirements, manages implementation tasks, and orchestrates minor subagents.
-model: anthropic/claude-opus-4-8
+model: anthropic/claude-opus-5-0
 tlhOpenaiModels: openai-codex/gpt-5.6-sol
 thinking: high
 applyModel: true

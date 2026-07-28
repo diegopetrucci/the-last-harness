@@ -18,22 +18,22 @@ const developer = {
 const codeReviewer = {
 	name: "code-reviewer",
 	tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
-	tlhAnthropicModels: ["anthropic/claude-opus-4-8"],
+	tlhAnthropicModels: ["anthropic/claude-opus-5-0"],
 	preferOppositeProvider: true,
 };
 
 const oracle = {
 	name: "oracle",
 	tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
-	tlhAnthropicModels: ["anthropic/claude-opus-4-8"],
+	tlhAnthropicModels: ["anthropic/claude-opus-5-0"],
 	preferOppositeProvider: true,
 };
 
 const anthropicParentPrefersCodexReviewer = {
 	name: "anthropic-parent-prefers-codex-reviewer",
-	model: "anthropic/claude-opus-4-8",
+	model: "anthropic/claude-opus-5-0",
 	tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
-	tlhAnthropicModels: ["anthropic/claude-opus-4-8"],
+	tlhAnthropicModels: ["anthropic/claude-opus-5-0"],
 	preferOppositeProvider: true,
 };
 
@@ -41,7 +41,7 @@ const openaiParentPrefersAnthropicReviewer = {
 	name: "openai-parent-prefers-anthropic-reviewer",
 	model: "openai-codex/gpt-5.6-sol",
 	tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
-	tlhAnthropicModels: ["anthropic/claude-opus-4-8"],
+	tlhAnthropicModels: ["anthropic/claude-opus-5-0"],
 	preferOppositeProvider: true,
 };
 
@@ -69,6 +69,7 @@ const agents = new Map([
 const anthropicAvailable = [
 	{ provider: "anthropic", id: "claude-sonnet-5" },
 	{ provider: "anthropic", id: "claude-sonnet-4-6" },
+	{ provider: "anthropic", id: "claude-opus-5-0" },
 	{ provider: "anthropic", id: "claude-opus-4-8" },
 ];
 
@@ -142,7 +143,7 @@ test("provider-aware opposite-provider preference picks Codex for opted-in Anthr
 	const input = { agent: anthropicParentPrefersCodexReviewer.name, task: "Review the diff" };
 	assert.equal(applyProviderAwareSubagentModels(input, agents, available, "anthropic"), 1);
 	assert.equal(input.model, "openai-codex/gpt-5.6-sol");
-	assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-4-8"]);
+	assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-5-0"]);
 	assert.equal(input.modelFallbackNotice, reducedIndependenceNotice);
 });
 
@@ -152,16 +153,16 @@ test("provider-aware opposite-provider preference picks Anthropic for opted-in O
 
 	assert.equal(
 		selectProviderAwareAgentModelId(openaiParentPrefersAnthropicReviewer, available, "openai"),
-		"anthropic/claude-opus-4-8",
+		"anthropic/claude-opus-5-0",
 	);
 	assert.equal(
 		selectProviderAwareAgentModelId(openaiParentPrefersAnthropicReviewer, available, "openai-codex"),
-		"anthropic/claude-opus-4-8",
+		"anthropic/claude-opus-5-0",
 	);
 
 	const input = { agent: openaiParentPrefersAnthropicReviewer.name, task: "Review the diff" };
 	assert.equal(applyProviderAwareSubagentModels(input, agents, available, "openai-codex"), 1);
-	assert.equal(input.model, "anthropic/claude-opus-4-8");
+	assert.equal(input.model, "anthropic/claude-opus-5-0");
 	assert.deepEqual(input.fallbackModels, ["openai-codex/gpt-5.6-sol"]);
 	assert.equal(input.modelFallbackNotice, reducedIndependenceNotice);
 });
@@ -181,12 +182,12 @@ test("provider-aware subagent mutation gives code-reviewer the opposite availabl
 	const anthropicInput = { agent: "code-reviewer" };
 	assert.equal(applyProviderAwareSubagentModels(anthropicInput, agents, available, "anthropic"), 1);
 	assert.equal(anthropicInput.model, "openai-codex/gpt-5.6-sol");
-	assert.deepEqual(anthropicInput.fallbackModels, ["anthropic/claude-opus-4-8"]);
+	assert.deepEqual(anthropicInput.fallbackModels, ["anthropic/claude-opus-5-0"]);
 	assert.equal(anthropicInput.modelFallbackNotice, reducedIndependenceNotice);
 
 	const codexInput = { agent: "code-reviewer" };
 	assert.equal(applyProviderAwareSubagentModels(codexInput, agents, available, "openai-codex"), 1);
-	assert.equal(codexInput.model, "anthropic/claude-opus-4-8");
+	assert.equal(codexInput.model, "anthropic/claude-opus-5-0");
 	assert.deepEqual(codexInput.fallbackModels, ["openai-codex/gpt-5.6-sol"]);
 	assert.equal(codexInput.modelFallbackNotice, reducedIndependenceNotice);
 
@@ -226,7 +227,7 @@ test("provider-aware subagent mutation gives code-reviewer and oracle current-se
 		),
 		1,
 	);
-	assert.equal(oracleInput.model, "anthropic/claude-opus-4-8");
+	assert.equal(oracleInput.model, "anthropic/claude-opus-5-0");
 	assert.deepEqual(oracleInput.fallbackModels, ["openai-codex/gpt-5.4"]);
 	assert.equal(oracleInput.modelFallbackNotice, reducedIndependenceNotice);
 });
@@ -363,7 +364,7 @@ test("provider-aware subagent mutation injects model but preserves caller-suppli
 	// TLH auto-adds fallbackModels, caller-provided modelFallbackNotice kept.
 	const withFallbackNotice = { agent: "oracle", modelFallbackNotice: "custom fallback notice" };
 	assert.equal(applyProviderAwareSubagentModels(withFallbackNotice, agents, available, "openai-codex"), 1);
-	assert.equal(withFallbackNotice.model, "anthropic/claude-opus-4-8");
+	assert.equal(withFallbackNotice.model, "anthropic/claude-opus-5-0");
 	assert.deepEqual(withFallbackNotice.fallbackModels, ["openai-codex/gpt-5.6-sol"]);
 	assert.equal(withFallbackNotice.modelFallbackNotice, "custom fallback notice");
 

@@ -111,14 +111,14 @@ export function contrarianMetadata() {
 		name: "contrarian",
 		description: "Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case.",
 		tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
-		tlhAnthropicModels: ["anthropic/claude-opus-4-8"],
+		tlhAnthropicModels: ["anthropic/claude-opus-5-0"],
 		preferOppositeProvider: true,
 	};
 }
 
 export function rushLikePrimary(name = "architect") {
 	return createPrimaryPrompt(name, {
-		model: "anthropic/claude-opus-4-8",
+		model: "anthropic/claude-opus-5-0",
 		tlhOpenaiModels: ["openai-codex/gpt-5.5"],
 		thinking: "low",
 		tlhOpenaiThinking: "off",

@@ -55,7 +55,7 @@ test("disabled primary mode allows contrarian by default and ignores stale contr
 		modelRegistry: {
 			getAvailable: () => [
 				{ provider: "openai-codex", id: "gpt-5.4" },
-				{ provider: "anthropic", id: "claude-opus-4-8" },
+				{ provider: "anthropic", id: "claude-opus-5-0" },
 			],
 		},
 		model: { provider: "openai-codex", id: "gpt-5.4" },
@@ -68,7 +68,7 @@ test("disabled primary mode allows contrarian by default and ignores stale contr
 			input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "project", context: "resume" },
 		};
 		assert.equal(await toolCall(defaultEvent, ctx), undefined);
-		assert.equal(defaultEvent.input.model, "anthropic/claude-opus-4-8");
+		assert.equal(defaultEvent.input.model, "anthropic/claude-opus-5-0");
 		assert.equal(defaultEvent.input.agentScope, "project");
 		assert.equal(defaultEvent.input.context, "resume");
 
@@ -82,7 +82,7 @@ test("disabled primary mode allows contrarian by default and ignores stale contr
 				input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "project", context: "resume" },
 			};
 			assert.equal(await toolCall(staleEvent, ctx), undefined);
-			assert.equal(staleEvent.input.model, "anthropic/claude-opus-4-8");
+			assert.equal(staleEvent.input.model, "anthropic/claude-opus-5-0");
 			assert.equal(staleEvent.input.agentScope, "project");
 			assert.equal(staleEvent.input.context, "resume");
 		}
