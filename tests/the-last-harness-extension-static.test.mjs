@@ -403,7 +403,10 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	const rush = primaryAgents.get("rush");
 	assert.ok(architect, "architect primary prompt should load");
 	assert.ok(rush, "Rush primary prompt should load");
+	assert.equal(architect.model, "anthropic/claude-opus-5-0");
+	assert.equal(architect.thinking, "high");
 	assert.deepEqual(architect.tlhOpenaiModels, ["openai-codex/gpt-5.6-sol"]);
+	assert.equal(rush.model, "anthropic/claude-opus-4-8");
 	assert.deepEqual(rush.tlhOpenaiModels, ["openai-codex/gpt-5.5"]);
 	assert.equal(rush.thinking, "low");
 	assert.equal(rush.tlhOpenaiThinking, "off");
@@ -419,33 +422,30 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 
 	const product = primaryAgents.get("product");
 	assert.ok(product, "product primary prompt should load");
+	assert.equal(product.model, "anthropic/claude-opus-5-0");
+	assert.equal(product.thinking, "high");
 	assert.equal(product.applyModel, true);
 	assert.equal(product.applyThinking, true);
 	assert.equal(product.lockThinking, true);
 
 	const bugHunter = primaryAgents.get("bug-hunter");
 	assert.ok(bugHunter, "bug-hunter primary prompt should load");
+	assert.equal(bugHunter.model, "anthropic/claude-opus-5-0");
+	assert.equal(bugHunter.thinking, "high");
 	assert.equal(bugHunter.applyModel, true);
 	assert.equal(bugHunter.applyThinking, true);
 	assert.equal(bugHunter.lockThinking, true);
 
 	assert.match(rush.systemPrompt, /Do not delegate implementation to `developer`/);
-	assert.deepEqual(
-		loadSubagentMetadata().find((agent) => agent.name === "developer")?.tlhOpenaiModels,
-		["openai-codex/gpt-5.4"],
-	);
-	assert.deepEqual(
-		loadSubagentMetadata().find((agent) => agent.name === "code-reviewer")?.tlhOpenaiModels,
-		["openai-codex/gpt-5.6-sol"],
-	);
-	assert.deepEqual(
-		loadSubagentMetadata().find((agent) => agent.name === "oracle")?.tlhOpenaiModels,
-		["openai-codex/gpt-5.6-sol"],
-	);
-	assert.deepEqual(
-		loadSubagentMetadata().find((agent) => agent.name === "contrarian")?.tlhOpenaiModels,
-		["openai-codex/gpt-5.6-sol"],
-	);
+	const subagentMetadata = loadSubagentMetadata();
+	const developer = subagentMetadata.find((agent) => agent.name === "developer");
+	assert.deepEqual(developer?.tlhAnthropicModels, ["anthropic/claude-sonnet-4-6"]);
+	assert.deepEqual(developer?.tlhOpenaiModels, ["openai-codex/gpt-5.4"]);
+	for (const name of ["code-reviewer", "oracle", "contrarian"]) {
+		const agent = subagentMetadata.find((candidate) => candidate.name === name);
+		assert.deepEqual(agent?.tlhAnthropicModels, ["anthropic/claude-opus-5-0"], `${name} Anthropic default`);
+		assert.deepEqual(agent?.tlhOpenaiModels, ["openai-codex/gpt-5.6-sol"], `${name} OpenAI default`);
+	}
 
 	const primaryPrompt = buildTlhSystemPrompt(rush, loadSubagentMetadata(), true);
 	const legacyFlagPrimaryPrompt = buildTlhSystemPrompt(rush, loadSubagentMetadata(), true, {
