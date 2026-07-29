@@ -21,6 +21,8 @@ const theme = {
 
 const pi = {
 	getThinkingLevel: () => "medium",
+	getActiveTools: () => [],
+	getAllTools: () => [],
 };
 
 function createFooterData(options = {}) {
@@ -116,6 +118,8 @@ function createCtx(options = {}) {
 		},
 		sessionManager: {
 			getEntries: () => options.entries ?? [assistantCostEntry(1.25)],
+			buildContextEntries: () => options.contextEntries ?? options.entries ?? [assistantCostEntry(1.25)],
+			getLeafId: () => options.leafId ?? "leaf-1",
 			getCwd: () => "/tmp/the-last-harness",
 			getSessionName: () => options.sessionName,
 		},
@@ -124,6 +128,21 @@ function createCtx(options = {}) {
 			getEditorText: () => options.editorText ?? "",
 		},
 		isIdle: () => options.idle ?? true,
+	};
+}
+
+function createToolInfo(name, source = "built-in", path = `/tmp/${name}.ts`) {
+	return {
+		name,
+		description: `${name} description`,
+		parameters: { type: "object", properties: { value: { type: "string" } } },
+		promptGuidelines: [`Use ${name}`],
+		sourceInfo: {
+			source,
+			path,
+			scope: "project",
+			origin: "top-level",
+		},
 	};
 }
 
@@ -841,4 +860,306 @@ test("footer warning line stays within narrow widths", () => {
 	const width = 20;
 	const lines = footer.render(width);
 	assert.ok(lines.every((line) => visibleWidth(line) <= width), `all lines must fit in ${width} chars`);
+});
+
+function renderMcpStatus({ activeTools = [], allTools = [], contextEntries = [], contextTokens = 100000, status = "MCP: 0/1 servers" } = {}) {
+	const mcpPi = {
+		...pi,
+		getActiveTools: () => activeTools,
+		getAllTools: () => allTools,
+	};
+	const ctx = createCtx({
+		entries: [],
+		contextUsage: { tokens: contextTokens, contextWindow: 200000, percent: 50 },
+		contextEntries,
+	});
+	const footerData = {
+		...createFooterData(),
+		getExtensionStatuses: () => new Map([["mcp-status", status]]),
+	};
+	return createTlhFooter(mcpPi, ctx, theme, () => "architect", footerData, {}).render(WIDTH).at(-1) ?? "";
+}
+
+function mcpStatusPercent(options) {
+	return Number(renderMcpStatus(options).match(/\((\d+\.\d)% of context\)$/)?.[1]);
+}
+
+test("footer appends a one-decimal MCP context estimate to the existing status", () => {
+	const status = renderMcpStatus({
+		activeTools: ["mcp"],
+		allTools: [createToolInfo("mcp", "mcp-proxy")],
+		contextTokens: 1000,
+	});
+	assert.equal(status, "MCP: 0/1 servers • (3.8% of context)");
+});
+
+test("footer independently attributes proxy and direct MCP definitions, arguments, and results", () => {
+	const proxyTool = { ...createToolInfo("mcp", "npm:pi-mcp-adapter", "extensions/mcp.mjs"), description: "p".repeat(4000) };
+	const directTool = {
+		...createToolInfo("jiraSearch", "npm:@diegopetrucci/pi-mcp-adapter@2.10.1", "extensions/direct-tools/jira.mjs"),
+		description: "d".repeat(4000),
+	};
+	const allTools = [proxyTool, directTool];
+	const baseline = mcpStatusPercent({ allTools });
+	const proxyDefinition = mcpStatusPercent({ activeTools: ["mcp"], allTools });
+	const directDefinition = mcpStatusPercent({ activeTools: ["jiraSearch"], allTools });
+
+	assert.equal(proxyDefinition - baseline, 1, "proxy definition contributes independently");
+	assert.equal(directDefinition - baseline, 1, "direct definition contributes independently");
+
+	const proxyCall = mcpStatusPercent({
+		activeTools: ["mcp"],
+		allTools,
+		contextEntries: [
+			{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "mcp", arguments: { payload: "x".repeat(4000) } }] } },
+		],
+	});
+	const directCall = mcpStatusPercent({
+		activeTools: ["jiraSearch"],
+		allTools,
+		contextEntries: [
+			{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "jiraSearch", arguments: { payload: "x".repeat(4000) } }] } },
+		],
+	});
+	assert.equal(proxyCall - proxyDefinition, 1, "proxy call arguments contribute independently");
+	assert.equal(directCall - directDefinition, 1, "direct call arguments contribute independently");
+
+	const proxyResult = mcpStatusPercent({
+		activeTools: ["mcp"],
+		allTools,
+		contextEntries: [
+			{ type: "message", message: { role: "toolResult", toolName: "mcp", content: [{ type: "text", text: "x".repeat(4000) }] } },
+		],
+	});
+	const directResult = mcpStatusPercent({
+		activeTools: ["jiraSearch"],
+		allTools,
+		contextEntries: [
+			{ type: "message", message: { role: "toolResult", toolName: "jiraSearch", content: [{ type: "text", text: "x".repeat(4000) }] } },
+		],
+	});
+	assert.equal(proxyResult - proxyDefinition, 1, "proxy result content contributes independently");
+	assert.equal(directResult - directDefinition, 1, "direct result content contributes independently");
+});
+
+test("footer ignores unrelated non-adapter provenance even when source paths include mcp", () => {
+	const misleadingTool = createToolInfo("jiraSearch", "npm:acme-helper", "extensions/mcp-utils/jira.mjs");
+	const baseline = mcpStatusPercent({ allTools: [misleadingTool] });
+	const definition = mcpStatusPercent({ activeTools: ["jiraSearch"], allTools: [misleadingTool] });
+	const call = mcpStatusPercent({
+		activeTools: ["jiraSearch"],
+		allTools: [misleadingTool],
+		contextEntries: [
+			{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "jiraSearch", arguments: { payload: "x".repeat(4000) } }] } },
+		],
+	});
+	const result = mcpStatusPercent({
+		activeTools: ["jiraSearch"],
+		allTools: [misleadingTool],
+		contextEntries: [
+			{ type: "message", message: { role: "toolResult", toolName: "jiraSearch", content: [{ type: "text", text: "x".repeat(4000) }] } },
+		],
+	});
+
+	assert.equal(baseline, 0);
+	assert.equal(definition, 0);
+	assert.equal(call, 0);
+	assert.equal(result, 0);
+});
+
+test("footer releases all pending cold-catalog direct calls after real adapter provenance is established", () => {
+	const recovered = mcpStatusPercent({
+		activeTools: ["jira_search_issues"],
+		allTools: [],
+		contextEntries: [
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "call-1", name: "jira_search_issues", arguments: { payload: "x".repeat(4000) } },
+						{ type: "toolCall", id: "call-2", name: "jira_search_issues", arguments: { payload: "x".repeat(4000) } },
+					],
+				},
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "jira_search_issues",
+					toolCallId: "call-1",
+					details: { server: "jira", tool: "search_issues" },
+					content: [{ type: "text", text: "x".repeat(4000) }],
+				},
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "jira_search_issues",
+					toolCallId: "call-2",
+					details: { error: "tool_error", server: "jira" },
+					content: [{ type: "text", text: "x".repeat(4000) }],
+				},
+			},
+		],
+	});
+
+	assert.equal(recovered, 4);
+});
+
+test("footer rejects generic paired server/tool details that do not match adapter direct-tool naming", () => {
+	const lookalike = mcpStatusPercent({
+		activeTools: ["jiraSearch"],
+		allTools: [],
+		contextEntries: [
+			{
+				type: "message",
+				message: { role: "assistant", content: [{ type: "toolCall", id: "other-call", name: "jiraSearch", arguments: { payload: "x".repeat(4000) } }] },
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "jiraSearch",
+					toolCallId: "other-call",
+					details: { server: "jira", tool: "search_issues" },
+					content: [{ type: "text", text: "x".repeat(4000) }],
+				},
+			},
+		],
+	});
+
+	assert.equal(lookalike, 0);
+});
+
+test("footer clamps MCP context share to a finite 0–100% range", () => {
+	const tool = createToolInfo("mcp", "mcp-proxy");
+	assert.equal(
+		renderMcpStatus({ activeTools: ["mcp"], allTools: [tool], contextTokens: 1 }),
+		"MCP: 0/1 servers • (100.0% of context)",
+	);
+	assert.equal(renderMcpStatus({ activeTools: ["mcp"], allTools: [tool], contextTokens: Number.NaN }), "MCP: 0/1 servers");
+});
+
+test("footer MCP context estimate counts each tool-result image as 1200 tokens", () => {
+	const mcpPi = {
+		...pi,
+		getActiveTools: () => ["mcp"],
+		getAllTools: () => [createToolInfo("mcp", "mcp-proxy")],
+	};
+	const footerData = {
+		...createFooterData(),
+		getExtensionStatuses: () => new Map([["mcp-status", "MCP: 1/1 servers"]]),
+	};
+	const renderPercent = (content) => {
+		const ctx = createCtx({
+			entries: [],
+			contextUsage: { tokens: 120000, contextWindow: 200000, percent: 60 },
+			contextEntries: [{ type: "message", message: { role: "toolResult", toolName: "mcp", content } }],
+		});
+		const status = createTlhFooter(mcpPi, ctx, theme, () => "architect", footerData, {}).render(WIDTH).at(-1) ?? "";
+		return Number(status.match(/\((\d+\.\d)% of context\)$/)?.[1]);
+	};
+
+	const withoutImage = renderPercent([{ type: "text", text: "ok" }]);
+	const withImage = renderPercent([
+		{ type: "text", text: "ok" },
+		{ type: "image", data: "ignored-base64-data", mimeType: "image/png" },
+	]);
+	assert.equal(withImage - withoutImage, 1);
+});
+
+test("footer MCP context estimate uses active compaction-aware entries and omits unknown context totals", () => {
+	const mcpPi = {
+		...pi,
+		getActiveTools: () => ["mcp"],
+		getAllTools: () => [createToolInfo("mcp", "mcp-proxy")],
+	};
+	const archivedPayload = "x".repeat(800);
+	const activePayload = "ok";
+	const footerData = {
+		...createFooterData(),
+		getExtensionStatuses: () => new Map([["mcp-status", "MCP: 1/1 servers"]]),
+	};
+	const ctx = createCtx({
+		entries: [
+			{ type: "message", message: { role: "toolResult", toolName: "mcp", content: [{ type: "text", text: archivedPayload }] } },
+		],
+		contextEntries: [
+			{ type: "compaction", summary: "older history compacted" },
+			{ type: "message", message: { role: "toolResult", toolName: "mcp", content: [{ type: "text", text: activePayload }] } },
+		],
+		contextUsage: { tokens: 1000, contextWindow: 200000, percent: 12.3 },
+	});
+	const lines = createTlhFooter(mcpPi, ctx, theme, () => "architect", footerData, {}).render(WIDTH);
+	assert.match(lines.at(-1) ?? "", /MCP: 1\/1 servers • \(3\.9% of context\)$/);
+
+	const unknownContextCtx = createCtx({
+		entries: [],
+		contextEntries: ctx.sessionManager.buildContextEntries(),
+		contextUsage: { tokens: null, contextWindow: 200000, percent: null },
+	});
+	const unknownLines = createTlhFooter(mcpPi, unknownContextCtx, theme, () => "architect", footerData, {}).render(WIDTH);
+	assert.equal(unknownLines.at(-1), "MCP: 1/1 servers");
+});
+
+test("footer caches repeated MCP context estimates until the active context changes", () => {
+	let getAllToolsCalls = 0;
+	let buildContextEntriesCalls = 0;
+	const leafState = { current: "leaf-1" };
+	const mcpPi = {
+		...pi,
+		getActiveTools: () => ["mcp"],
+		getAllTools: () => {
+			getAllToolsCalls += 1;
+			return [createToolInfo("mcp", "mcp-proxy")];
+		},
+	};
+	const ctx = createCtx({
+		entries: [],
+		leafId: leafState.current,
+		contextUsage: { tokens: 1000, contextWindow: 200000, percent: 12.3 },
+		contextEntries: [{ type: "message", message: { role: "toolResult", toolName: "mcp", content: [{ type: "text", text: "ok" }] } }],
+	});
+	ctx.sessionManager.getLeafId = () => leafState.current;
+	ctx.sessionManager.buildContextEntries = () => {
+		buildContextEntriesCalls += 1;
+		return [{ type: "message", message: { role: "toolResult", toolName: "mcp", content: [{ type: "text", text: "ok" }] } }];
+	};
+	const footerData = {
+		...createFooterData(),
+		getExtensionStatuses: () => new Map([["mcp-status", "MCP: 1/1 servers"]]),
+	};
+	const footer = createTlhFooter(mcpPi, ctx, theme, () => "architect", footerData, {});
+
+	footer.render(WIDTH);
+	footer.render(WIDTH);
+	assert.equal(getAllToolsCalls, 1);
+	assert.equal(buildContextEntriesCalls, 1);
+
+	leafState.current = "leaf-2";
+	footer.render(WIDTH);
+	assert.equal(getAllToolsCalls, 2);
+	assert.equal(buildContextEntriesCalls, 2);
+});
+
+test("footer keeps the MCP status estimate within narrow widths", () => {
+	const mcpPi = {
+		...pi,
+		getActiveTools: () => ["mcp"],
+		getAllTools: () => [createToolInfo("mcp", "mcp-proxy")],
+	};
+	const footerData = {
+		...createFooterData(),
+		getExtensionStatuses: () => new Map([["mcp-status", "MCP: 0/1 servers"]]),
+	};
+	const ctx = createCtx({
+		entries: [],
+		contextUsage: { tokens: 1000, contextWindow: 200000, percent: 12.3 },
+		contextEntries: [{ type: "message", message: { role: "toolResult", toolName: "mcp", content: [{ type: "text", text: "ok" }] } }],
+	});
+	const lines = createTlhFooter(mcpPi, ctx, theme, () => "architect", footerData, {}).render(24);
+	assert.ok(lines.every((line) => visibleWidth(line) <= 24));
+	assert.match(lines.at(-1) ?? "", /\.\.\./);
 });
