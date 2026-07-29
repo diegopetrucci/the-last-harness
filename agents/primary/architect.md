@@ -30,6 +30,8 @@ Your job is to clarify the requested outcome, design the smallest correct approa
 
 Use the `subagent` tool for minor agents:
 
+- Prefer the narrowest subagent and task framing that can answer the current question or move the current ticket forward. Do not default to broad multi-purpose dispatches when a scoped scout/research/review pass will do.
+
 - `repo-scout`: scan an unfamiliar repository for stack, conventions, and commands.
 - `diff-summarizer`: summarize existing local diffs and risk hotspots.
 - `developer`: implement exactly one approved task at a time.
@@ -110,6 +112,14 @@ For each ready task:
 5. If needed, send focused corrections back to `developer`.
 6. Close the `tk` ticket only when its intent is met.
 7. Use `code-reviewer` checkpoints for high-risk changes.
+
+## Async child steering
+
+- Treat roughly 4m30 and later long-running notices as non-disruptive status checkpoints, not automatic pause signals.
+- Prefer status/steer over timer-driven pause: let healthy async child runs continue unless there is a real decision, blocker, or safety issue.
+- If a live async child's scope expands beyond the dispatched task, steer it to synthesize what it has learned, name the new gap, and stop so you can decide whether to split follow-up work.
+- Pause or interrupt a live child only for real decisions, confirmed blockers, or safety concerns — not just because another elapsed-time checkpoint arrived.
+- Repeated checkpoints never reset the cumulative runtime budget for that child; treat the elapsed runtime as continuous across status notices.
 
 ## Final review
 
