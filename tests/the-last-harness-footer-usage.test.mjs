@@ -131,7 +131,7 @@ function createCtx(options = {}) {
 	};
 }
 
-function createToolInfo(name, source = "built-in") {
+function createToolInfo(name, source = "built-in", path = `/tmp/${name}.ts`) {
 	return {
 		name,
 		description: `${name} description`,
@@ -139,7 +139,7 @@ function createToolInfo(name, source = "built-in") {
 		promptGuidelines: [`Use ${name}`],
 		sourceInfo: {
 			source,
-			path: `/tmp/${name}.ts`,
+			path,
 			scope: "project",
 			origin: "top-level",
 		},
@@ -894,8 +894,11 @@ test("footer appends a one-decimal MCP context estimate to the existing status",
 });
 
 test("footer independently attributes proxy and direct MCP definitions, arguments, and results", () => {
-	const proxyTool = { ...createToolInfo("mcp", "mcp-proxy"), description: "p".repeat(4000) };
-	const directTool = { ...createToolInfo("jiraSearch", "acme-mcp"), description: "d".repeat(4000) };
+	const proxyTool = { ...createToolInfo("mcp", "npm:pi-mcp-adapter", "extensions/mcp.mjs"), description: "p".repeat(4000) };
+	const directTool = {
+		...createToolInfo("jiraSearch", "npm:@diegopetrucci/pi-mcp-adapter@2.10.1", "extensions/direct-tools/jira.mjs"),
+		description: "d".repeat(4000),
+	};
 	const allTools = [proxyTool, directTool];
 	const baseline = mcpStatusPercent({ allTools });
 	const proxyDefinition = mcpStatusPercent({ activeTools: ["mcp"], allTools });
@@ -937,6 +940,97 @@ test("footer independently attributes proxy and direct MCP definitions, argument
 	});
 	assert.equal(proxyResult - proxyDefinition, 1, "proxy result content contributes independently");
 	assert.equal(directResult - directDefinition, 1, "direct result content contributes independently");
+});
+
+test("footer ignores unrelated non-adapter provenance even when source paths include mcp", () => {
+	const misleadingTool = createToolInfo("jiraSearch", "npm:acme-helper", "extensions/mcp-utils/jira.mjs");
+	const baseline = mcpStatusPercent({ allTools: [misleadingTool] });
+	const definition = mcpStatusPercent({ activeTools: ["jiraSearch"], allTools: [misleadingTool] });
+	const call = mcpStatusPercent({
+		activeTools: ["jiraSearch"],
+		allTools: [misleadingTool],
+		contextEntries: [
+			{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "jiraSearch", arguments: { payload: "x".repeat(4000) } }] } },
+		],
+	});
+	const result = mcpStatusPercent({
+		activeTools: ["jiraSearch"],
+		allTools: [misleadingTool],
+		contextEntries: [
+			{ type: "message", message: { role: "toolResult", toolName: "jiraSearch", content: [{ type: "text", text: "x".repeat(4000) }] } },
+		],
+	});
+
+	assert.equal(baseline, 0);
+	assert.equal(definition, 0);
+	assert.equal(call, 0);
+	assert.equal(result, 0);
+});
+
+test("footer releases all pending cold-catalog direct calls after real adapter provenance is established", () => {
+	const recovered = mcpStatusPercent({
+		activeTools: ["jira_search_issues"],
+		allTools: [],
+		contextEntries: [
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "call-1", name: "jira_search_issues", arguments: { payload: "x".repeat(4000) } },
+						{ type: "toolCall", id: "call-2", name: "jira_search_issues", arguments: { payload: "x".repeat(4000) } },
+					],
+				},
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "jira_search_issues",
+					toolCallId: "call-1",
+					details: { server: "jira", tool: "search_issues" },
+					content: [{ type: "text", text: "x".repeat(4000) }],
+				},
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "jira_search_issues",
+					toolCallId: "call-2",
+					details: { error: "tool_error", server: "jira" },
+					content: [{ type: "text", text: "x".repeat(4000) }],
+				},
+			},
+		],
+	});
+
+	assert.equal(recovered, 4);
+});
+
+test("footer rejects generic paired server/tool details that do not match adapter direct-tool naming", () => {
+	const lookalike = mcpStatusPercent({
+		activeTools: ["jiraSearch"],
+		allTools: [],
+		contextEntries: [
+			{
+				type: "message",
+				message: { role: "assistant", content: [{ type: "toolCall", id: "other-call", name: "jiraSearch", arguments: { payload: "x".repeat(4000) } }] },
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "jiraSearch",
+					toolCallId: "other-call",
+					details: { server: "jira", tool: "search_issues" },
+					content: [{ type: "text", text: "x".repeat(4000) }],
+				},
+			},
+		],
+	});
+
+	assert.equal(lookalike, 0);
 });
 
 test("footer clamps MCP context share to a finite 0–100% range", () => {

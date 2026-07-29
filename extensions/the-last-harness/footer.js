@@ -11,6 +11,11 @@ export { formatTlhSubscriptionUsageFooterSegment } from "./footer-subscription-u
 const CHARS_PER_TOKEN = 4;
 const ESTIMATED_IMAGE_CHARS = 4800;
 const MCP_STATUS_PREFIX = /^MCP:\s/i;
+const KNOWN_PI_MCP_ADAPTER_SOURCES = [
+    "npm:pi-mcp-adapter",
+    "npm:@diegopetrucci/pi-mcp-adapter",
+    "git:github.com/diegopetrucci/pi-mcp-adapter",
+];
 function formatCost(cost) {
     return cost < 0.001 ? "<$0.001" : `$${cost.toFixed(3)}`;
 }
@@ -68,14 +73,30 @@ function resultContentChars(content) {
 function estimateTokensFromChars(charCount) {
     return charCount > 0 ? Math.ceil(charCount / CHARS_PER_TOKEN) : 0;
 }
+function hasKnownPiMcpAdapterSource(source) {
+    return (typeof source === "string" &&
+        KNOWN_PI_MCP_ADAPTER_SOURCES.some((knownSource) => source === knownSource || source.startsWith(`${knownSource}@`)));
+}
+function hasPersistedDirectMcpResultDetails(toolName, details) {
+    if (!details || typeof details !== "object") {
+        return false;
+    }
+    const candidate = details;
+    if (typeof candidate.server !== "string" ||
+        candidate.server.length === 0 ||
+        typeof candidate.tool !== "string" ||
+        candidate.tool.length === 0) {
+        return false;
+    }
+    const serverPrefix = candidate.server.replaceAll("-", "_");
+    const shortPrefix = candidate.server.replace(/-?mcp$/i, "").replaceAll("-", "_") || "mcp";
+    return new Set([candidate.tool, `${serverPrefix}_${candidate.tool}`, `${shortPrefix}_${candidate.tool}`]).has(toolName);
+}
 function getMcpToolKind(toolName, toolInfo) {
     if (toolName === "mcp") {
         return "proxy";
     }
-    const sourceHint = [toolInfo?.sourceInfo?.source, toolInfo?.sourceInfo?.path]
-        .filter((value) => typeof value === "string")
-        .join(" ");
-    return sourceHint && /mcp/i.test(sourceHint) ? "direct" : undefined;
+    return hasKnownPiMcpAdapterSource(toolInfo?.sourceInfo?.source) ? "direct" : undefined;
 }
 function estimateMcpDefinitionTokens(toolInfo) {
     return estimateTokensFromChars(safeJsonLength({
@@ -100,11 +121,19 @@ function getMcpContextEstimateSuffix(pi, ctx, contextUsage, cache) {
         return cache;
     }
     const allTools = pi.getAllTools();
-    const activeMcpTools = activeToolNames
-        .map((toolName) => allTools.find((candidate) => candidate.name === toolName))
-        .filter((toolInfo) => Boolean(toolInfo?.name))
-        .filter((toolInfo) => getMcpToolKind(toolInfo.name, toolInfo) !== undefined);
     const toolCatalogByName = new Map(allTools.map((toolInfo) => [toolInfo.name, toolInfo]));
+    const knownDirectMcpToolNames = new Set();
+    const activeMcpTools = activeToolNames
+        .map((toolName) => toolCatalogByName.get(toolName))
+        .filter((toolInfo) => Boolean(toolInfo?.name))
+        .filter((toolInfo) => {
+        const kind = getMcpToolKind(toolInfo.name, toolInfo);
+        if (kind === "direct") {
+            knownDirectMcpToolNames.add(toolInfo.name);
+        }
+        return kind !== undefined;
+    });
+    const pendingToolCallsById = new Map();
     let mcpTokens = activeMcpTools.reduce((sum, toolInfo) => sum + estimateMcpDefinitionTokens(toolInfo), 0);
     for (const entry of ctx.sessionManager.buildContextEntries()) {
         if (entry.type !== "message") {
@@ -116,16 +145,38 @@ function getMcpContextEstimateSuffix(pi, ctx, contextUsage, cache) {
                 if (block?.type !== "toolCall" || typeof block.name !== "string") {
                     continue;
                 }
-                if (!getMcpToolKind(block.name, toolCatalogByName.get(block.name))) {
+                const catalogKind = getMcpToolKind(block.name, toolCatalogByName.get(block.name));
+                if (catalogKind === "direct") {
+                    knownDirectMcpToolNames.add(block.name);
+                }
+                const kind = catalogKind ?? (knownDirectMcpToolNames.has(block.name) ? "direct" : undefined);
+                const argumentTokens = estimateTokensFromChars(safeJsonLength(block.arguments));
+                if (kind) {
+                    mcpTokens += argumentTokens;
                     continue;
                 }
-                mcpTokens += estimateTokensFromChars(safeJsonLength(block.arguments));
+                if (typeof block.id === "string") {
+                    pendingToolCallsById.set(block.id, { toolName: block.name, tokens: argumentTokens });
+                }
             }
             continue;
         }
         if (message.role === "toolResult" && typeof message.toolName === "string") {
-            if (!getMcpToolKind(message.toolName, toolCatalogByName.get(message.toolName))) {
+            const pendingCall = typeof message.toolCallId === "string" ? pendingToolCallsById.get(message.toolCallId) : undefined;
+            const hasPairedDirectResultProvenance = message.toolName !== "mcp" &&
+                pendingCall?.toolName === message.toolName &&
+                hasPersistedDirectMcpResultDetails(message.toolName, message.details);
+            const kind = getMcpToolKind(message.toolName, toolCatalogByName.get(message.toolName)) ??
+                (knownDirectMcpToolNames.has(message.toolName) || hasPairedDirectResultProvenance ? "direct" : undefined);
+            if (!kind) {
                 continue;
+            }
+            if (kind === "direct") {
+                knownDirectMcpToolNames.add(message.toolName);
+                if (pendingCall?.toolName === message.toolName && typeof message.toolCallId === "string") {
+                    mcpTokens += pendingCall.tokens;
+                    pendingToolCallsById.delete(message.toolCallId);
+                }
             }
             mcpTokens += estimateTokensFromChars(resultContentChars(message.content));
         }
