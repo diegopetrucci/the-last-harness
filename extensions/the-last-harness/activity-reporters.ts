@@ -9,6 +9,7 @@ const HERDR_SOURCE = "herdr:tlh";
 const HERDR_AGENT = "pi";
 const CMUX_STATUS_KEY = "tlh";
 const DEFAULT_IDLE_DEBOUNCE_MS = 250;
+const HERDR_SOCKET_ATTEMPT_TIMEOUTS_MS = [500, 1500] as const;
 
 type TimeoutHandle = ReturnType<typeof setTimeout>;
 
@@ -32,12 +33,15 @@ type TlhActivityReporterOptions = {
 };
 
 type HerdrRequestSender = (request: unknown) => Promise<void>;
+type HerdrSocket = Pick<ReturnType<typeof createConnection>, "on" | "removeListener" | "write" | "destroy">;
+type HerdrSocketFactory = (path: string) => HerdrSocket;
 
 type HerdrActivityReporterOptions = TlhActivityReporterOptions & {
 	env?: NodeJS.ProcessEnv;
 	sendRequest?: HerdrRequestSender;
 	now?: () => number;
 	agentDir?: string;
+	createSocket?: HerdrSocketFactory;
 };
 
 type CommandRunner = (command: string, args: readonly string[]) => Promise<void>;
@@ -174,36 +178,81 @@ function withSessionRef(params: Record<string, unknown>, sessionRef: ActivitySes
 	return params;
 }
 
-function defaultHerdrRequestSender(env: NodeJS.ProcessEnv): HerdrRequestSender {
+function createHerdrSocketAttempt(
+	socketPath: string,
+	request: unknown,
+	timeoutMs: number,
+	options: {
+		createSocket?: HerdrSocketFactory;
+		timers?: Partial<TimerApi>;
+	},
+): Promise<boolean> {
+	const timers: TimerApi = {
+		setTimeout: options.timers?.setTimeout ?? setTimeout,
+		clearTimeout: options.timers?.clearTimeout ?? clearTimeout,
+	};
+	const payload = `${JSON.stringify(request)}\n`;
+	const createSocket = options.createSocket ?? ((path: string) => createConnection(path));
+	return new Promise<boolean>((resolve) => {
+		let settled = false;
+		let socket: HerdrSocket | undefined;
+		let timeout: TimeoutHandle | undefined;
+		const finish = (delivered: boolean) => {
+			if (settled) return;
+			settled = true;
+			if (timeout) {
+				timers.clearTimeout(timeout);
+				timeout = undefined;
+			}
+			socket?.removeListener?.("error", handleError);
+			socket?.removeListener?.("connect", handleConnect);
+			socket?.removeListener?.("data", handleData);
+			socket?.removeListener?.("end", handleEnd);
+			try {
+				socket?.destroy();
+			} catch {
+				// Ignore teardown failures.
+			}
+			resolve(delivered);
+		};
+		const handleError = () => finish(false);
+		const handleConnect = () => {
+			try {
+				socket?.write(payload);
+			} catch {
+				finish(false);
+			}
+		};
+		const handleData = () => finish(true);
+		const handleEnd = () => finish(false);
+		try {
+			socket = createSocket(socketPath);
+		} catch {
+			finish(false);
+			return;
+		}
+		socket.on("error", handleError);
+		socket.on("connect", handleConnect);
+		socket.on("data", handleData);
+		socket.on("end", handleEnd);
+		timeout = timers.setTimeout(() => finish(false), timeoutMs);
+		(timeout as { unref?: () => void }).unref?.();
+	});
+}
+
+function defaultHerdrRequestSender(
+	env: NodeJS.ProcessEnv,
+	options: Pick<HerdrActivityReporterOptions, "createSocket" | "timers"> = {},
+): HerdrRequestSender {
 	return async (request) => {
 		const socketPath = env.HERDR_SOCKET_PATH;
 		if (!socketPath) return;
-		await new Promise<void>((resolve) => {
-			let settled = false;
-			let socket: ReturnType<typeof createConnection> | undefined;
-			const finish = () => {
-				if (settled) return;
-				settled = true;
-				try {
-					socket?.destroy();
-				} catch {
-					// Ignore teardown failures.
-				}
-				resolve();
-			};
-			try {
-				socket = createConnection(socketPath);
-			} catch {
-				finish();
+		for (const timeoutMs of HERDR_SOCKET_ATTEMPT_TIMEOUTS_MS) {
+			const delivered = await createHerdrSocketAttempt(socketPath, request, timeoutMs, options);
+			if (delivered) {
 				return;
 			}
-			socket.on("error", finish);
-			socket.on("connect", () => socket?.write(`${JSON.stringify(request)}\n`));
-			socket.on("data", finish);
-			socket.on("end", finish);
-			const timeout = setTimeout(finish, 500);
-			timeout.unref?.();
-		});
+		}
 	};
 }
 
@@ -220,7 +269,7 @@ export function createHerdrActivityReporter(options: HerdrActivityReporterOption
 	if (agentDir && existsSync(join(agentDir, "extensions", "herdr-agent-state.ts"))) {
 		return createNoopReporter();
 	}
-	const sendRequest = options.sendRequest ?? defaultHerdrRequestSender(env);
+	const sendRequest = options.sendRequest ?? defaultHerdrRequestSender(env, options);
 	const now = options.now ?? Date.now;
 	let reportSeq = now() * 1000;
 	let sessionRef: ActivitySessionRef = {};
