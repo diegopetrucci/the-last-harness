@@ -6,6 +6,7 @@ const HERDR_SOURCE = "herdr:tlh";
 const HERDR_AGENT = "pi";
 const CMUX_STATUS_KEY = "tlh";
 const DEFAULT_IDLE_DEBOUNCE_MS = 250;
+const HERDR_SOCKET_ATTEMPT_TIMEOUTS_MS = [500, 1500];
 function parseDurationEnv(env, name, fallback) {
     const raw = env[name];
     if (!raw)
@@ -123,39 +124,73 @@ function withSessionRef(params, sessionRef) {
     }
     return params;
 }
-function defaultHerdrRequestSender(env) {
+function createHerdrSocketAttempt(socketPath, request, timeoutMs, options) {
+    const timers = {
+        setTimeout: options.timers?.setTimeout ?? setTimeout,
+        clearTimeout: options.timers?.clearTimeout ?? clearTimeout,
+    };
+    const payload = `${JSON.stringify(request)}\n`;
+    const createSocket = options.createSocket ?? ((path) => createConnection(path));
+    return new Promise((resolve) => {
+        let settled = false;
+        let socket;
+        let timeout;
+        const finish = (delivered) => {
+            if (settled)
+                return;
+            settled = true;
+            if (timeout) {
+                timers.clearTimeout(timeout);
+                timeout = undefined;
+            }
+            socket?.removeListener?.("error", handleError);
+            socket?.removeListener?.("connect", handleConnect);
+            socket?.removeListener?.("data", handleData);
+            socket?.removeListener?.("end", handleEnd);
+            try {
+                socket?.destroy();
+            }
+            catch {
+            }
+            resolve(delivered);
+        };
+        const handleError = () => finish(false);
+        const handleConnect = () => {
+            try {
+                socket?.write(payload);
+            }
+            catch {
+                finish(false);
+            }
+        };
+        const handleData = () => finish(true);
+        const handleEnd = () => finish(false);
+        try {
+            socket = createSocket(socketPath);
+        }
+        catch {
+            finish(false);
+            return;
+        }
+        socket.on("error", handleError);
+        socket.on("connect", handleConnect);
+        socket.on("data", handleData);
+        socket.on("end", handleEnd);
+        timeout = timers.setTimeout(() => finish(false), timeoutMs);
+        timeout.unref?.();
+    });
+}
+function defaultHerdrRequestSender(env, options = {}) {
     return async (request) => {
         const socketPath = env.HERDR_SOCKET_PATH;
         if (!socketPath)
             return;
-        await new Promise((resolve) => {
-            let settled = false;
-            let socket;
-            const finish = () => {
-                if (settled)
-                    return;
-                settled = true;
-                try {
-                    socket?.destroy();
-                }
-                catch {
-                }
-                resolve();
-            };
-            try {
-                socket = createConnection(socketPath);
-            }
-            catch {
-                finish();
+        for (const timeoutMs of HERDR_SOCKET_ATTEMPT_TIMEOUTS_MS) {
+            const delivered = await createHerdrSocketAttempt(socketPath, request, timeoutMs, options);
+            if (delivered) {
                 return;
             }
-            socket.on("error", finish);
-            socket.on("connect", () => socket?.write(`${JSON.stringify(request)}\n`));
-            socket.on("data", finish);
-            socket.on("end", finish);
-            const timeout = setTimeout(finish, 500);
-            timeout.unref?.();
-        });
+        }
     };
 }
 export function createHerdrActivityReporter(options = {}) {
@@ -171,7 +206,7 @@ export function createHerdrActivityReporter(options = {}) {
     if (agentDir && existsSync(join(agentDir, "extensions", "herdr-agent-state.ts"))) {
         return createNoopReporter();
     }
-    const sendRequest = options.sendRequest ?? defaultHerdrRequestSender(env);
+    const sendRequest = options.sendRequest ?? defaultHerdrRequestSender(env, options);
     const now = options.now ?? Date.now;
     let reportSeq = now() * 1000;
     let sessionRef = {};

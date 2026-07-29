@@ -9,6 +9,10 @@ All notable changes to The Last Harness will be documented in this file.
 - Bumped the bundled critical `pi-subagents` default extension pin from `npm:@diegopetrucci/pi-subagents@0.31.10` to `npm:@diegopetrucci/pi-subagents@0.31.11`.
 - **pi-intercom retired:** the `pi-intercom` default remains force-removed from isolated settings on update. With bundled `pi-subagents` 0.31.11, child-session escalations should use `contact_supervisor`. Blocking requests durably pause and are resolved with `subagent` resume or interrupt. `subagent_supervisor` provides pending/status inspection and legacy live-session reply compatibility when available. Use `steer` for non-blocking guidance. The `/intercom` overlay, `Alt+M` keybind, and peer-session ask/reply are no longer available.
 
+### Fixed
+
+- TLH's Herdr activity reporter now retries one failed socket delivery attempt with the same bounded timeout sequence Herdr 0.7.5 expects, while preserving TLH-owned reporter source/session sequencing and external Herdr configuration.
+
 ## [0.31.0] - 2026-07-27
 
 ### Changed
