@@ -1,3 +1,5 @@
+import type { ProviderModelReference } from "./model-defaults.js";
+
 export type StartupResources = {
 	context: string[];
 	skills: string[];
@@ -188,7 +190,22 @@ export type TlhTelemetryState = {
 
 export type TlhTelemetrySnapshot = {
 	version: string;
+	providerId?: string;
 	modelId?: string;
+	primaryAgentName?: string;
+	/** Primary-agent thinking level, captured from ctx.thinkingLevel at schedule time (after applySessionStart). */
+	thinkingLevel?: string;
+	/**
+	 * Available models captured from ctx.modelRegistry at schedule time via getUnfilteredAvailableModels.
+	 * Used to resolve the effective model for each bundled subagent against the real registry.
+	 * When absent or empty the subagent model fields are resolved as-is (bare model names only).
+	 */
+	availableModels?: readonly ProviderModelReference[];
+};
+
+export type TlhTelemetryEnvelope = {
+	type: string;
+	payload: Record<string, string>;
 };
 
 export type TlhOsMetadata = {
