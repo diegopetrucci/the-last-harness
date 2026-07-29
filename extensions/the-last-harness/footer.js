@@ -8,6 +8,9 @@ import { TK_WORKFLOW_STATUS_KEY } from "./ticket-workflow-ui-constants.js";
 import { composeTlhFooterFirstLine } from "./footer-first-line.js";
 import { getTlhSubscriptionUsageFooterState, } from "./footer-subscription-usage.js";
 export { formatTlhSubscriptionUsageFooterSegment } from "./footer-subscription-usage.js";
+const CHARS_PER_TOKEN = 4;
+const ESTIMATED_IMAGE_CHARS = 4800;
+const MCP_STATUS_PREFIX = /^MCP:\s/i;
 function formatCost(cost) {
     return cost < 0.001 ? "<$0.001" : `$${cost.toFixed(3)}`;
 }
@@ -33,7 +36,115 @@ function collectUsageTotals(ctx) {
     }
     return totals;
 }
+function safeJsonLength(value) {
+    if (value == null) {
+        return 0;
+    }
+    try {
+        return JSON.stringify(value).length;
+    }
+    catch {
+        return 0;
+    }
+}
+function resultContentChars(content) {
+    if (!Array.isArray(content)) {
+        return 0;
+    }
+    let total = 0;
+    for (const item of content) {
+        if (!item || typeof item !== "object" || !("type" in item)) {
+            continue;
+        }
+        if (item.type === "text" && "text" in item && typeof item.text === "string") {
+            total += item.text.length;
+        }
+        else if (item.type === "image") {
+            total += ESTIMATED_IMAGE_CHARS;
+        }
+    }
+    return total;
+}
+function estimateTokensFromChars(charCount) {
+    return charCount > 0 ? Math.ceil(charCount / CHARS_PER_TOKEN) : 0;
+}
+function getMcpToolKind(toolName, toolInfo) {
+    if (toolName === "mcp") {
+        return "proxy";
+    }
+    const sourceHint = [toolInfo?.sourceInfo?.source, toolInfo?.sourceInfo?.path]
+        .filter((value) => typeof value === "string")
+        .join(" ");
+    return sourceHint && /mcp/i.test(sourceHint) ? "direct" : undefined;
+}
+function estimateMcpDefinitionTokens(toolInfo) {
+    return estimateTokensFromChars(safeJsonLength({
+        name: toolInfo.name,
+        description: toolInfo.description,
+        parameters: toolInfo.parameters,
+        promptGuidelines: toolInfo.promptGuidelines,
+    }));
+}
+function buildMcpContextEstimateCacheKey(activeToolNames, ctx, contextTokens) {
+    const leafId = ctx.sessionManager.getLeafId?.() ?? "";
+    return `${leafId}::${contextTokens}::${activeToolNames.join("|")}`;
+}
+function getMcpContextEstimateSuffix(pi, ctx, contextUsage, cache) {
+    const contextTokens = contextUsage?.tokens;
+    if (typeof contextTokens !== "number" || !Number.isFinite(contextTokens) || contextTokens <= 0) {
+        return { key: "no-context", suffix: undefined };
+    }
+    const activeToolNames = pi.getActiveTools();
+    const cacheKey = buildMcpContextEstimateCacheKey(activeToolNames, ctx, contextTokens);
+    if (cache?.key === cacheKey) {
+        return cache;
+    }
+    const allTools = pi.getAllTools();
+    const activeMcpTools = activeToolNames
+        .map((toolName) => allTools.find((candidate) => candidate.name === toolName))
+        .filter((toolInfo) => Boolean(toolInfo?.name))
+        .filter((toolInfo) => getMcpToolKind(toolInfo.name, toolInfo) !== undefined);
+    const toolCatalogByName = new Map(allTools.map((toolInfo) => [toolInfo.name, toolInfo]));
+    let mcpTokens = activeMcpTools.reduce((sum, toolInfo) => sum + estimateMcpDefinitionTokens(toolInfo), 0);
+    for (const entry of ctx.sessionManager.buildContextEntries()) {
+        if (entry.type !== "message") {
+            continue;
+        }
+        const message = entry.message;
+        if (message.role === "assistant" && Array.isArray(message.content)) {
+            for (const block of message.content) {
+                if (block?.type !== "toolCall" || typeof block.name !== "string") {
+                    continue;
+                }
+                if (!getMcpToolKind(block.name, toolCatalogByName.get(block.name))) {
+                    continue;
+                }
+                mcpTokens += estimateTokensFromChars(safeJsonLength(block.arguments));
+            }
+            continue;
+        }
+        if (message.role === "toolResult" && typeof message.toolName === "string") {
+            if (!getMcpToolKind(message.toolName, toolCatalogByName.get(message.toolName))) {
+                continue;
+            }
+            mcpTokens += estimateTokensFromChars(resultContentChars(message.content));
+        }
+    }
+    const rawPercent = (mcpTokens / contextTokens) * 100;
+    const percent = Number.isFinite(rawPercent) ? Math.min(100, Math.max(0, rawPercent)) : 0;
+    return {
+        key: cacheKey,
+        suffix: ` • (${percent.toFixed(1)}% of context)`,
+    };
+}
+function appendMcpContextEstimate(statusText, suffix) {
+    if (!suffix || !MCP_STATUS_PREFIX.test(statusText) || statusText.includes("% of context)")) {
+        return statusText;
+    }
+    return `${statusText}${suffix}`;
+}
 export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usageOptions = {}, gitCache, installNotice) {
+    let mcpContextEstimateCache;
     return {
         render(width) {
             const model = ctx.model;
@@ -88,6 +199,12 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
             const line3 = line3Parts.length > 0 ? line3Parts.join(" · ") : undefined;
             const lines = [pwdLine, agentLine2];
             const extensionStatuses = footerData?.getExtensionStatuses?.();
+            const hasMcpStatus = extensionStatuses
+                ? Array.from(extensionStatuses.values()).some((status) => MCP_STATUS_PREFIX.test(sanitizeStatusText(status)))
+                : false;
+            if (hasMcpStatus) {
+                mcpContextEstimateCache = getMcpContextEstimateSuffix(pi, ctx, contextUsage, mcpContextEstimateCache);
+            }
             const tkWorkflowStatus = extensionStatuses?.get(TK_WORKFLOW_STATUS_KEY);
             if (tkWorkflowStatus) {
                 const tkWorkflowLines = tkWorkflowStatus
@@ -114,7 +231,7 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                     .filter(([key]) => key !== TK_WORKFLOW_STATUS_KEY)
                     .sort(([a], [b]) => a.localeCompare(b));
                 const statusLine = visibleStatuses
-                    .map(([, text]) => sanitizeStatusText(text))
+                    .map(([, text]) => appendMcpContextEstimate(sanitizeStatusText(text), mcpContextEstimateCache?.suffix))
                     .filter(Boolean)
                     .join(" ");
                 if (statusLine) {
