@@ -1,6 +1,6 @@
 # Integrations
 
-TLH includes managed integrations for project memory and ticketed workflows. Gnosis project memory and `tk` ticket support are required for standard architect/product workflows; Rush keeps that tooling available but handles small bounded tasks with direct edits instead of the default `tk` loop. RTK is retired as an active TLH feature.
+TLH includes managed integrations for project memory and ticketed workflows. Gnosis project memory and `tk` ticket support are required for standard architect/product workflows; Rush keeps that tooling available but handles small bounded tasks with direct edits instead of the default `tk` loop.
 
 ## Gnosis integration
 
@@ -37,14 +37,6 @@ If TLH cannot validate a configured/existing `tk` and cannot install the managed
 Removing `~/.the-last-harness` removes any managed `tk` copy. To remove only the managed `tk` binary while keeping the rest of the profile, delete `~/.the-last-harness/agent/bin/tk`; the next install/update will recreate it if no other valid `tk` is configured. Running `tlh tickets enable` without a managed reinstall clears the recorded SHA-256, so the next install/update refreshes the managed binary when the managed path is in use.
 
 Managed installs download the pinned `wedow/ticket` source tarball (`v0.3.2`) and verify its SHA-256 before extracting the `ticket` script; inherited environment variables cannot override those installer-owned source pins. TLH also records the SHA-256 of the managed binary in `settings.tlh.tickets.installedSha256`. When a future TLH release bumps the pinned SHA, the next `tlh update` or installer rerun reinstalls the managed binary and refreshes the recorded value. Custom (non-managed) `installPath` values are unaffected by this check.
-
-## Retired RTK cleanup
-
-RTK is no longer an active TLH integration. Current TLH releases do not expose `/rtk`, `RTK_DISABLED`, or `tlh.rtk.disabled` as supported workflow controls.
-
-Instead, full install/update conservatively remove the two exact legacy regular-file artifacts `~/.the-last-harness/agent/bin/rtk` and `~/.the-last-harness/agent/tlh/tlh-rtk.mjs` when they are clearly TLH-managed. Install, update, and `tlh doctor --repair` also scrub stale RTK settings/package markers such as `tlh.rtk` and old `rtk`/`pi-rtk` default-extension opt-outs.
-
-This cleanup is limited to the TLH isolated profile. It does not touch normal `~/.pi/agent`, and it does not remove unrelated user-owned tools you installed elsewhere.
 
 ## Terminal activity bridge
 

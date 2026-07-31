@@ -226,5 +226,3 @@ tlh defaults enable <id>   # re-enable a disabled extension
 ```
 
 Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions, not first-party packaged commands like `/annotate-last-message` or `/annotate-git-diff`.
-
-`tlh defaults` no longer manages RTK. If an older profile still contains RTK-era opt-out markers, current install/update/repair flows scrub those stale settings/package markers conservatively; only full install/update removes the old `bin/rtk` and `tlh/tlh-rtk.mjs` files.
