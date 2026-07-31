@@ -176,7 +176,6 @@ These commands are provided by bundled default extensions and are visible in TLH
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
 | `/subagents-doctor` | `pi-subagents` | Show subagent diagnostics |
 
-TLH does not register `/rtk`. RTK is retired as an active TLH feature; current releases may only remove the two exact legacy RTK files on full install/update and scrub stale RTK settings/package markers from older installs.
 
 ---
 
