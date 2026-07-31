@@ -19,6 +19,26 @@ const userFacingDocs = [
 	"docs/releasing.md",
 ];
 
+const retiredRtkDocs = [
+	"README.md",
+	"docs/install.md",
+	"docs/commands.md",
+	"docs/integrations.md",
+	"docs/upstream-sync-inventory.md",
+	"AGENTS.md",
+];
+
+const activeRtkGuidancePatterns = [
+	/managed native RTK/i,
+	/pinned managed RTK/i,
+	/RTK_DISABLED=1 tlh/,
+	/## Managed RTK/,
+	/## Native RTK integration/,
+	/RTK hook/,
+	/RTK Pi hook/,
+	/ticket\/RTK helpers/,
+];
+
 const legacyTicketGuidancePatterns = [
 	/--with-tickets/,
 	/--without-tickets/,
@@ -40,6 +60,15 @@ test("user-facing docs and installer help do not advertise legacy ticket opt-out
 	for (const path of sources) {
 		const source = readRepoFile(path);
 		for (const pattern of legacyTicketGuidancePatterns) {
+			assert.doesNotMatch(source, pattern, `${path} still matches ${pattern}`);
+		}
+	}
+});
+
+test("current docs do not advertise RTK as an active TLH feature", () => {
+	for (const path of retiredRtkDocs) {
+		const source = readRepoFile(path);
+		for (const pattern of activeRtkGuidancePatterns) {
 			assert.doesNotMatch(source, pattern, `${path} still matches ${pattern}`);
 		}
 	}
@@ -67,7 +96,6 @@ test("upstream-sync inventory documents required provenance caveats and exclusio
 test("tracked upstream-sync source files point readers to the inventory", () => {
 	for (const path of [
 		"extensions/annotate-git-diff/index.ts",
-		"extensions/rtk.ts",
 		"extensions/shared/quiet-glimpse.ts",
 		"extensions/the-last-harness/model-visibility.ts",
 		"extensions/the-last-harness/new-version-notice.ts",

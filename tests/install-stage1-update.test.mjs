@@ -6,13 +6,8 @@ import test from "node:test";
 
 import { makeTempDir } from "./install-stage1-test-helpers.mjs";
 import {
-	escapeRegExp,
-	managedRtkSpawnPreload,
-	managedRtkSupportedTestPlatform,
-	readJsonLines,
 	repoRoot,
 	scrubInstallerEnv,
-	withNodeImport,
 	writeFakePi,
 	writeVersionedWrapperPi,
 } from "./install-stage1-core-test-helpers.mjs";
@@ -84,12 +79,7 @@ test("tlh update --extensions dry-run prints the isolated package update plan an
 	assert.match(defaultResult.stdout, /Would run: PI_CODING_AGENT_DIR='/);
 	assert.match(defaultResult.stdout, /'update' '--extensions'/);
 	assert.equal(defaultResult.stdout.includes(join(homeDir, ".pi", "agent")), false);
-	if (managedRtkSupportedTestPlatform) {
-		assert.match(defaultResult.stderr, /Would install RTK/);
-		assert.match(defaultResult.stderr, new RegExp(escapeRegExp(join(agentDir, "bin", "rtk"))));
-	} else {
-		assert.equal(defaultResult.stderr, "");
-	}
+	assert.equal(defaultResult.stderr, "");
 	assert.equal(existsSync(dryRunPiLog), false);
 
 	const unsupportedFlags = [
@@ -217,7 +207,6 @@ test("tlh update --extensions uses the absolute private runtime pi binary and do
 	const piLog = join(root, "pi.txt");
 	const pathPiLog = join(root, "path-pi.log");
 	const isolatedPiLog = join(root, "isolated-pi.log");
-	const rtkLog = join(root, "rtk.jsonl");
 	mkdirSync(homeDir, { recursive: true });
 	mkdirSync(agentBin, { recursive: true });
 	mkdirSync(cwdDir, { recursive: true });
@@ -237,15 +226,14 @@ test("tlh update --extensions uses the absolute private runtime pi binary and do
 	poisonedPathEntries.push(pathPiDir, process.env.PATH || "");
 	const result = spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-update.mjs"), "--extensions", "--agent-dir", agentDir, "--quiet"], {
 		cwd: cwdDir,
-		env: withNodeImport(scrubInstallerEnv({
+		env: scrubInstallerEnv({
 			HOME: homeDir,
 			PATH: poisonedPathEntries.join(":"),
 			PI_WRAPPER_LOG: piLog,
 			PATH_PI_LOG: pathPiLog,
 			ISOLATED_PI_LOG: isolatedPiLog,
 			PI_CODING_AGENT_DIR: join(homeDir, ".pi", "agent"),
-			TLH_TEST_RTK_LOG: rtkLog,
-		}), managedRtkSpawnPreload),
+		}),
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 	});
@@ -264,14 +252,6 @@ test("tlh update --extensions uses the absolute private runtime pi binary and do
 	// PATH-based and isolated pi must not have been called.
 	assert.equal(existsSync(pathPiLog), false);
 	assert.equal(existsSync(isolatedPiLog), false);
-	if (managedRtkSupportedTestPlatform) {
-		const rtkCalls = readJsonLines(rtkLog);
-		assert.equal(rtkCalls.length, 1);
-		assert.deepEqual(rtkCalls[0]?.args, [join(repoRoot, "scripts", "tlh-rtk.mjs"), "--agent-dir", agentDir, "--target", join(agentDir, "bin", "rtk"), "--quiet", "install-managed"]);
-		assert.equal(rtkCalls[0]?.env?.PI_CODING_AGENT_DIR, agentDir);
-	} else {
-		assert.equal(existsSync(rtkLog), false);
-	}
 });
 
 test("tlh update removes isolated bin and skips non-file bash candidates before running bash", (t) => {
@@ -357,70 +337,6 @@ test("tlh update removes isolated bin and skips non-file bash candidates before 
 	}
 });
 
-test("tlh update --extensions fails when managed RTK installation fails after package update", { skip: !managedRtkSupportedTestPlatform }, (t) => {
-	const root = makeTempDir();
-	const homeDir = join(root, "home");
-	const agentDir = join(root, "agent");
-	const runtimeBinDir = join(root, "runtime", "bin");
-	const piLog = join(root, "pi.txt");
-	const rtkLog = join(root, "rtk.jsonl");
-	mkdirSync(homeDir, { recursive: true });
-	mkdirSync(agentDir, { recursive: true });
-	t.after(() => rmSync(root, { recursive: true, force: true }));
-
-	writeVersionedWrapperPi(runtimeBinDir, piLog);
-	const result = spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-update.mjs"), "--extensions", "--agent-dir", agentDir, "--quiet"], {
-		cwd: repoRoot,
-		env: withNodeImport(scrubInstallerEnv({
-			HOME: homeDir,
-			PATH: process.env.PATH || "",
-			PI_WRAPPER_LOG: piLog,
-			TLH_TEST_RTK_LOG: rtkLog,
-			TLH_TEST_RTK_STATUS: "23",
-			TLH_TEST_RTK_STDERR: "tlh-rtk: installed RTK binary did not validate\n",
-		}), managedRtkSpawnPreload),
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "pipe"],
-	});
-
-	assert.notEqual(result.status, 0);
-	assert.match(result.stderr, /installed RTK binary did not validate/);
-	const rtkCalls = readJsonLines(rtkLog);
-	assert.equal(rtkCalls.length, 1);
-	assert.deepEqual(rtkCalls[0]?.args, [join(repoRoot, "scripts", "tlh-rtk.mjs"), "--agent-dir", agentDir, "--target", join(agentDir, "bin", "rtk"), "--quiet", "install-managed"]);
-});
-
-test("tlh recovery update --extensions runs managed RTK installation after the package update", { skip: !managedRtkSupportedTestPlatform }, (t) => {
-	const root = makeTempDir();
-	const homeDir = join(root, "home");
-	const agentDir = join(root, "agent");
-	const runtimeBinDir = join(root, "runtime", "bin");
-	const piLog = join(root, "pi.txt");
-	const rtkLog = join(root, "rtk.jsonl");
-	mkdirSync(homeDir, { recursive: true });
-	mkdirSync(agentDir, { recursive: true });
-	t.after(() => rmSync(root, { recursive: true, force: true }));
-
-	writeVersionedWrapperPi(runtimeBinDir, piLog);
-	const result = spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-recover-update.mjs"), "--extensions", "--agent-dir", agentDir, "--quiet"], {
-		cwd: repoRoot,
-		env: withNodeImport(scrubInstallerEnv({
-			HOME: homeDir,
-			PATH: process.env.PATH || "",
-			PI_WRAPPER_LOG: piLog,
-			TLH_TEST_RTK_LOG: rtkLog,
-		}), managedRtkSpawnPreload),
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "pipe"],
-	});
-
-	assert.equal(result.status, 0, result.stderr);
-	const rtkCalls = readJsonLines(rtkLog);
-	assert.equal(rtkCalls.length, 1);
-	assert.deepEqual(rtkCalls[0]?.args, [join(repoRoot, "scripts", "tlh-rtk.mjs"), "--agent-dir", agentDir, "--target", join(agentDir, "bin", "rtk"), "--quiet", "install-managed"]);
-	assert.equal(rtkCalls[0]?.env?.PI_CODING_AGENT_DIR, agentDir);
-});
-
 test("tlh update --extensions uses absolute private runtime pi and hard-fails when missing", (t) => {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");
@@ -429,7 +345,6 @@ test("tlh update --extensions uses absolute private runtime pi and hard-fails wh
 	const pathPiDir = join(root, "path-pi"); // PATH-based pi that must NOT be used
 	const piLog = join(root, "pi.txt");
 	const pathPiLog = join(root, "path-pi.log");
-	const rtkLog = join(root, "rtk.jsonl");
 	mkdirSync(homeDir, { recursive: true });
 	mkdirSync(agentDir, { recursive: true });
 	t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -440,13 +355,12 @@ test("tlh update --extensions uses absolute private runtime pi and hard-fails wh
 
 	const result = spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-update.mjs"), "--extensions", "--agent-dir", agentDir, "--quiet"], {
 		cwd: repoRoot,
-		env: withNodeImport(scrubInstallerEnv({
+		env: scrubInstallerEnv({
 			HOME: homeDir,
 			PATH: `${pathPiDir}:${process.env.PATH || ""}`,
 			PI_WRAPPER_LOG: piLog,
 			PATH_PI_LOG: pathPiLog,
-			TLH_TEST_RTK_LOG: rtkLog,
-		}), managedRtkSpawnPreload),
+		}),
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 	});
@@ -472,11 +386,10 @@ test("tlh update --extensions uses absolute private runtime pi and hard-fails wh
 	// No private runtime pi created at root2/runtime/bin/pi.
 	const missingResult = spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-update.mjs"), "--extensions", "--agent-dir", agentDir2], {
 		cwd: repoRoot,
-		env: withNodeImport(scrubInstallerEnv({
+		env: scrubInstallerEnv({
 			HOME: homeDir2,
 			PATH: `${pathPiDir}:${process.env.PATH || ""}`,
-			TLH_TEST_RTK_LOG: rtkLog,
-		}), managedRtkSpawnPreload),
+		}),
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 	});
@@ -487,23 +400,14 @@ test("tlh update --extensions uses absolute private runtime pi and hard-fails wh
 	// Dry-run must NOT hard-fail even when the binary is absent.
 	const dryRunResult = spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-update.mjs"), "--extensions", "--dry-run", "--agent-dir", agentDir2], {
 		cwd: repoRoot,
-		env: withNodeImport(scrubInstallerEnv({
+		env: scrubInstallerEnv({
 			HOME: homeDir2,
 			PATH: process.env.PATH || "",
-			TLH_TEST_RTK_LOG: rtkLog,
-		}), managedRtkSpawnPreload),
+		}),
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	assert.equal(dryRunResult.status, 0, `dry-run must succeed even without runtime pi: ${dryRunResult.stderr}`);
 	assert.match(dryRunResult.stdout, /Would run:/);
 	assert.match(dryRunResult.stdout, new RegExp(join(root2, "runtime", "bin", "pi").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-	if (managedRtkSupportedTestPlatform) {
-		const rtkCalls = readJsonLines(rtkLog);
-		assert.equal(rtkCalls.length, 2);
-		assert.deepEqual(rtkCalls[0]?.args, [join(repoRoot, "scripts", "tlh-rtk.mjs"), "--agent-dir", agentDir, "--target", join(agentDir, "bin", "rtk"), "--quiet", "install-managed"]);
-		assert.deepEqual(rtkCalls[1]?.args, [join(repoRoot, "scripts", "tlh-rtk.mjs"), "--agent-dir", agentDir2, "--target", join(agentDir2, "bin", "rtk"), "--dry-run", "--detail", "install-managed"]);
-	} else {
-		assert.equal(existsSync(rtkLog), false);
-	}
 });

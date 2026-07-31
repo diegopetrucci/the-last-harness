@@ -322,7 +322,7 @@ test("merge force-removes legacy pi-rtk packages and prunes stale rtk opt-outs",
 			"git:github.com/sherif-fanous/pi-rtk@v0.5.0",
 			"npm:helper",
 		],
-		tlh: { disabledDefaultExtensions: ["rtk", "pi-rtk", "helper"] },
+		tlh: { rtk: { disabled: true }, disabledDefaultExtensions: ["rtk", "pi-rtk", "helper"] },
 	}, null, 2));
 
 	runNode(mergeScript, [
@@ -335,6 +335,7 @@ test("merge force-removes legacy pi-rtk packages and prunes stale rtk opt-outs",
 	const settings = readJson(fixture.settings);
 	assert.deepEqual(settings.packages, [harnessPackage]);
 	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["helper"]);
+	assert.equal(Object.hasOwn(settings.tlh, "rtk"), false);
 });
 
 test("merge no longer reorders quiet-tools around retired rtk packages", () => {
@@ -527,7 +528,7 @@ test("tlh-defaults prunes legacy rtk opt-outs while mutating other defaults", ()
 	], null, 2));
 	writeFileSync(fixture.settings, JSON.stringify({
 		packages: ["npm:helper"],
-		tlh: { disabledDefaultExtensions: ["rtk", "pi-rtk"] },
+		tlh: { rtk: { disabled: true }, disabledDefaultExtensions: ["rtk", "pi-rtk"] },
 	}, null, 2));
 
 	runNode(defaultsScript, [
@@ -539,6 +540,42 @@ test("tlh-defaults prunes legacy rtk opt-outs while mutating other defaults", ()
 	const settings = readJson(fixture.settings);
 	assert.deepEqual(settings.packages, []);
 	assert.deepEqual(settings.tlh?.disabledDefaultExtensions ?? [], ["helper"]);
+	assert.equal(Object.hasOwn(settings.tlh, "rtk"), false);
+});
+
+test("tlh-defaults persists retired tlh.rtk cleanup even when disable is otherwise a no-op", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "helper",
+			source: "npm:helper",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		tlh: {
+			rtk: { disabled: true },
+			disabledDefaultExtensions: ["helper"],
+		},
+	}, null, 2));
+
+	const output = runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"disable", "helper",
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings, {
+		packages: [],
+		tlh: {
+			disabledDefaultExtensions: ["helper"],
+			defaultExtensionProvenance: {
+				managedPackageIdentities: [],
+			},
+		},
+	});
+	assert.equal(backupFiles(fixture.settings).length, 1);
+	assert.doesNotMatch(output, /No settings changes were needed\./);
 });
 
 test("merge updates critical package pins without --force", () => {

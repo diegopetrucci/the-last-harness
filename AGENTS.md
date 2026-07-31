@@ -7,7 +7,7 @@ This repository packages **The Last Harness** as an isolated profile for the ups
 ## Project Structure
 
 - Installer entrypoints: `install.sh` performs install/update bootstrap work and creates the `tlh` wrapper; `uninstall.sh` removes the isolated profile and managed wrapper artifacts.
-- Installer/runtime scripts: `scripts/` contains installer, update, doctor, wrapper, merge, runtime-TypeScript, release-notes, and ticket/RTK helpers; `scripts/lib/` holds shared installer modules; `scripts/installer-smoke/` contains staged smoke-test helpers; `scripts/check-installer-smoke.sh`, `scripts/check-package-versions.mjs`, and `scripts/check-startup-performance.mjs` are contributor-facing validation checks.
+- Installer/runtime scripts: `scripts/` contains installer, update, doctor, wrapper, merge, runtime-TypeScript, release-notes, ticket helpers, and legacy-profile cleanup support; `scripts/lib/` holds shared installer modules; `scripts/installer-smoke/` contains staged smoke-test helpers; `scripts/check-installer-smoke.sh`, `scripts/check-package-versions.mjs`, and `scripts/check-startup-performance.mjs` are contributor-facing validation checks.
 - Packaged profile defaults: `config/` contains installer-owned settings, keybindings, librarian defaults, bundled extension manifests, and appended system prompt text for the isolated profile.
 - Packaged resources: `extensions/`, `prompts/`, and `themes/` are published package resources; `skills/` is an intentional future package placeholder and is not currently present in this repository (per Gnosis `zeqwga`).
 - Agent definitions: `agents/primary/` and `agents/subagents/` hold packaged primary-agent and subagent prompt specs used by tlh.
