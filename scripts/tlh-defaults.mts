@@ -319,7 +319,15 @@ function writeExistingProfileBackup(settingsPath: string, backupPath: string): v
 	);
 }
 
+function scrubRetiredTlhSettings(settings: Settings): boolean {
+	if (!isPlainObject(settings.tlh)) return false;
+	if (!Object.hasOwn(settings.tlh, "rtk")) return false;
+	delete settings.tlh.rtk;
+	return true;
+}
+
 function writeSettings(settingsPath: string, value: Settings, previousRaw: string): string | undefined {
+	scrubRetiredTlhSettings(value);
 	const formatted = `${JSON.stringify(value, null, 2)}\n`;
 	if (formatted === previousRaw) return undefined;
 
@@ -467,7 +475,8 @@ function main(): void {
 		const before = JSON.stringify(settings);
 		const warningChanged = commandDisable(settings, defaultExtensions, id);
 		syncDefaultExtensionProvenance(settings, defaultExtensions);
-		const changed = before !== JSON.stringify(settings);
+		const scrubbedRetiredSettings = scrubRetiredTlhSettings(settings);
+		const changed = scrubbedRetiredSettings || before !== JSON.stringify(settings);
 		const backupPath = changed ? writeSettings(settingsPath, settings, previousRaw) : undefined;
 		console.log(`${id} is disabled for the tlh profile.`);
 		if (warningChanged) console.log("Restored upstream warnings.anthropicExtraUsage default (warning will reappear).");
@@ -482,7 +491,8 @@ function main(): void {
 		const before = JSON.stringify(settings);
 		const warningChanged = commandEnable(settings, defaultExtensions, id);
 		syncDefaultExtensionProvenance(settings, defaultExtensions);
-		const changed = before !== JSON.stringify(settings);
+		const scrubbedRetiredSettings = scrubRetiredTlhSettings(settings);
+		const changed = scrubbedRetiredSettings || before !== JSON.stringify(settings);
 		const backupPath = changed ? writeSettings(settingsPath, settings, previousRaw) : undefined;
 		console.log(`${id} is enabled for the tlh profile.`);
 		if (warningChanged) console.log("Suppressed warnings.anthropicExtraUsage (tlh default).");

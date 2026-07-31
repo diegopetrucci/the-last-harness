@@ -399,6 +399,14 @@ function scrubGnosisSettings(settings, changes) {
     delete settings.tlh.gnosis;
     changes.push("remove tlh.gnosis (one-time cleanup)");
 }
+function scrubRtkSettings(settings, changes) {
+    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
+        return;
+    if (!Object.hasOwn(settings.tlh, "rtk"))
+        return;
+    delete settings.tlh.rtk;
+    changes.push("remove tlh.rtk (one-time cleanup)");
+}
 function removeCriticalDisabledDefaultExtensionOptOuts(settings, defaultExtensions, changes) {
     if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
         return;
@@ -615,6 +623,7 @@ function main() {
     applyDefaultExtensionLoadOrder(next, defaultExtensions, disabledIds, changes);
     removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
     scrubGnosisSettings(next, changes);
+    scrubRtkSettings(next, changes);
     purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
     pruneContextCapDisabledDefaultExtension(next, changes);
     pruneOracleDisabledDefaultExtension(next, changes);

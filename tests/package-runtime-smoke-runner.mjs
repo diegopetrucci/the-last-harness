@@ -26,7 +26,6 @@ const resourceLoader = new DefaultResourceLoader({
 
 const expectedEntrypoints = [
 	"extensions/annotate-git-diff/index.js",
-	"extensions/rtk.js",
 	"extensions/the-last-harness.js",
 ];
 const expectedTlhCommands = [
@@ -54,9 +53,8 @@ function inspectLoad() {
 	);
 	assert.equal(result.extensions.some((extension) => extension.resolvedPath.endsWith(".ts")), false);
 
-	const [annotateExtension, rtkExtension, tlhExtension] = result.extensions;
+	const [annotateExtension, tlhExtension] = result.extensions;
 	assert.deepEqual([...annotateExtension.commands.keys()], ["annotate-git-diff"]);
-	assert.equal(rtkExtension.handlers.get("tool_call")?.length, 1);
 	assert.deepEqual([...tlhExtension.commands.keys()].sort(), expectedTlhCommands);
 
 	const allCommandNames = result.extensions.flatMap((extension) => [...extension.commands.keys()]);
@@ -125,10 +123,8 @@ await resourceLoader.reload();
 const second = inspectLoad();
 assert.notEqual(second.result.extensions[0], first.result.extensions[0]);
 assert.notEqual(second.result.extensions[1], first.result.extensions[1]);
-assert.notEqual(second.result.extensions[2], first.result.extensions[2]);
 assert.notEqual(second.result.extensions[0].commands, first.result.extensions[0].commands);
-assert.notEqual(second.result.extensions[1].handlers, first.result.extensions[1].handlers);
-assert.notEqual(second.result.extensions[2].commands, first.result.extensions[2].commands);
+assert.notEqual(second.result.extensions[1].commands, first.result.extensions[1].commands);
 await runSessionStart(second.tlhExtension);
 
 const sentMessages = [];

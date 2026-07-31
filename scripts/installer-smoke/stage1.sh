@@ -39,12 +39,6 @@ EOF_FAKE_GIT
   assert_contains "${combined_file}" "Would download pinned wedow/ticket source:"
   assert_contains "${combined_file}" "Would verify SHA256:"
   assert_contains "${combined_file}" "Ticket CLI integration: enabled (${agent_dir}/bin/tk)"
-  # single-quoted node -e script is a JS template literal passed verbatim; not a bash expansion
-  # shellcheck disable=SC2016
-  if node -e 'process.exit(["darwin-arm64","darwin-x64","linux-arm64","linux-x64"].includes(`${process.platform}-${process.arch}`) ? 0 : 1)'; then
-    assert_contains "${combined_file}" "Would install RTK"
-    assert_contains "${combined_file}" "${agent_dir}/bin/rtk"
-  fi
 }
 
 run_stage1_relative_path_canonicalization_smoke() {
@@ -244,8 +238,6 @@ run_stdin_dry_run_smoke() {
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"
   assert_contains "${combined_file}" "Would fetch installer support files from"
-  assert_contains "${combined_file}" "Would fetch tlh RTK support files."
-  assert_contains "${combined_file}" "Would install managed RTK into isolated profile: ${agent_dir}/bin/rtk"
   assert_contains "${combined_file}" "Dry run only; no support files were downloaded."
   assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   assert_not_contains "${combined_file}" "fake curl was invoked"

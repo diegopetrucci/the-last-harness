@@ -1006,7 +1006,7 @@ test("merge force-removes legacy pi-rtk packages and prunes stale rtk opt-outs i
 				retiredSherifGitRtkPackage,
 				"npm:keep",
 			],
-			tlh: { disabledDefaultExtensions: ["rtk", "pi-rtk", "notify"] },
+			tlh: { rtk: { disabled: true }, disabledDefaultExtensions: ["rtk", "pi-rtk", "notify"] },
 		},
 	);
 
@@ -1016,10 +1016,12 @@ test("merge force-removes legacy pi-rtk packages and prunes stale rtk opt-outs i
 
 	assert.deepEqual(firstSettings.packages, [harnessPackage, "npm:keep"]);
 	assert.deepEqual(firstSettings.tlh.disabledDefaultExtensions, ["notify"]);
+	assert.equal(Object.hasOwn(firstSettings.tlh, "rtk"), false);
 	assert.match(firstOutput, /force-remove retired default extension package: git:github\.com\/diegopetrucci\/pi-rtk/);
 	assert.match(firstOutput, /force-remove retired default extension package: npm:pi-rtk/);
 	assert.match(firstOutput, /force-remove retired default extension package: npm:@sherif-fanous\/pi-rtk/);
 	assert.match(firstOutput, /force-remove retired default extension package: git:github\.com\/sherif-fanous\/pi-rtk/);
+	assert.match(firstOutput, /remove tlh\.rtk \(one-time cleanup\)/);
 	assert.match(firstOutput, /remove stale rtk opt-out from tlh\.disabledDefaultExtensions/);
 
 	const secondOutput = runMerge(fixture, { quiet: false });

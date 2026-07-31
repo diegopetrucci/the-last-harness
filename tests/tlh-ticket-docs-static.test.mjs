@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -18,6 +18,25 @@ const userFacingDocs = [
 	"docs/local-development.md",
 	"docs/releasing.md",
 ];
+
+const historicalRtkDocs = new Set([
+	"docs/pi-startup-investigation-2026-07-15.md",
+]);
+
+function listMarkdownFiles(rootPath, basePath = rootPath) {
+	const results = [];
+	for (const entry of readdirSync(rootPath, { withFileTypes: true })) {
+		const entryPath = join(rootPath, entry.name);
+		if (entry.isDirectory()) {
+			results.push(...listMarkdownFiles(entryPath, basePath));
+			continue;
+		}
+		if (entry.isFile() && entry.name.endsWith(".md")) {
+			results.push(entryPath.slice(basePath.length + 1).replaceAll("\\", "/"));
+		}
+	}
+	return results;
+}
 
 const legacyTicketGuidancePatterns = [
 	/--with-tickets/,
@@ -45,6 +64,31 @@ test("user-facing docs and installer help do not advertise legacy ticket opt-out
 	}
 });
 
+test("current README and active docs contain no RTK references", () => {
+	const currentDocs = [
+		"README.md",
+		...listMarkdownFiles(join(repoRoot, "docs")).map((path) => `docs/${path}`),
+	].filter((path, index, paths) => paths.indexOf(path) === index && !historicalRtkDocs.has(path));
+
+	for (const path of currentDocs) {
+		assert.doesNotMatch(readRepoFile(path), /rtk/i, `${path} still references RTK`);
+	}
+});
+
+test("Unreleased changelog keeps only a concise RTK removal note", () => {
+	const changelog = readRepoFile("CHANGELOG.md");
+	const unreleasedMatch = changelog.match(/## \[Unreleased\][\s\S]*?(?=\n## \[|$)/);
+	assert.ok(unreleasedMatch, "missing Unreleased changelog section");
+	const unreleased = unreleasedMatch[0];
+	const rtkLines = unreleased
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => /rtk/i.test(line));
+
+	assert.deepEqual(rtkLines, ["- Removed RTK from TLH."]);
+	assert.doesNotMatch(unreleased, /bin\/rtk|tlh-rtk|RTK_DISABLED|tlh\.rtk|pi-rtk|legacy regular-file artifact|default-extension opt-out/i);
+});
+
 test("contributing guide links to the upstream-sync inventory", () => {
 	const source = readRepoFile("CONTRIBUTING.md");
 	assert.match(source, /docs\/upstream-sync-inventory\.md/);
@@ -67,7 +111,6 @@ test("upstream-sync inventory documents required provenance caveats and exclusio
 test("tracked upstream-sync source files point readers to the inventory", () => {
 	for (const path of [
 		"extensions/annotate-git-diff/index.ts",
-		"extensions/rtk.ts",
 		"extensions/shared/quiet-glimpse.ts",
 		"extensions/the-last-harness/model-visibility.ts",
 		"extensions/the-last-harness/new-version-notice.ts",

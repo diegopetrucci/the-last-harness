@@ -184,7 +184,6 @@ These commands are provided by bundled default extensions and are visible in TLH
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
 | `/subagents-doctor` | `pi-subagents` | Show subagent diagnostics |
 
-RTK shell-command rewriting is now a managed native integration rather than a slash-command UI. TLH does not register `/rtk`; use `RTK_DISABLED=1` for a single launch or set `"tlh": { "rtk": { "disabled": true } }` in the isolated TLH profile to disable rewriting.
 
 ---
 
@@ -235,5 +234,3 @@ tlh defaults enable <id>   # re-enable a disabled extension
 ```
 
 Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions, not first-party packaged commands like `/annotate-last-message` or `/annotate-git-diff`.
-
-RTK is separate from `tlh defaults`: TLH manages the pinned native binary at `<agent>/bin/rtk`, there is no `/rtk` command surface anymore, and the persistent opt-out is `tlh.rtk.disabled` rather than `tlh defaults disable rtk`. To remove only the managed RTK binary while keeping the rest of the profile, delete `<agent>/bin/rtk`; the next install or `tlh update` recreates it.

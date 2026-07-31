@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Removed RTK from TLH.
 - Bumped the bundled critical `pi-subagents` default extension pin from `npm:@diegopetrucci/pi-subagents@0.31.10` to `npm:@diegopetrucci/pi-subagents@0.31.11`.
 - Bumped bundled Anthropic defaults for Architect, Product, Bug-hunter, `code-reviewer`, `oracle`, and `contrarian` to Claude Opus 5.0; Architect, `code-reviewer`, `oracle`, and `contrarian` now prefer OpenAI Codex GPT-5.6 Sol on the OpenAI Codex path.
 - **pi-intercom retired:** the `pi-intercom` default remains force-removed from isolated settings on update. With bundled `pi-subagents` 0.31.11, child-session escalations should use `contact_supervisor`. Blocking requests durably pause and are resolved with `subagent` resume or interrupt. `subagent_supervisor` provides pending/status inspection and legacy live-session reply compatibility when available. Use `steer` for non-blocking guidance. The `/intercom` overlay, `Alt+M` keybind, and peer-session ask/reply are no longer available.
