@@ -13,7 +13,7 @@ const developer = {
 	name: "developer",
 	tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
 	tlhAnthropicModels: ["anthropic/claude-sonnet-4-6"],
-	thinking: "medium",
+	thinking: "max",
 	tlhOpenaiThinking: "max",
 };
 
@@ -100,7 +100,7 @@ test("provider-aware model resolver follows active provider for non-review subag
 	const codexInput = { agent: "developer", task: "Implement the ticket" };
 	assert.equal(applyProviderAwareSubagentModels(codexInput, agents, available, "openai-codex"), 1);
 	assert.equal(codexInput.model, "openai-codex/gpt-5.6-luna");
-	assert.equal(codexInput.thinking, "max");
+	assert.equal(Object.hasOwn(codexInput, "thinking"), false);
 
 	// Anthropic is active → picks Anthropic model
 	assert.equal(selectProviderAwareAgentModelId(developer, available, "anthropic"), "anthropic/claude-sonnet-4-6");
@@ -116,7 +116,7 @@ test("provider-aware model resolver picks OpenAI Codex when Anthropic is unavail
 	const input = { agent: "developer", task: "Implement the ticket" };
 	assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 1);
 	assert.equal(input.model, "openai-codex/gpt-5.6-luna");
-	assert.equal(input.thinking, "max");
+	assert.equal(Object.hasOwn(input, "thinking"), false);
 });
 
 test("provider-aware model resolver does not auto-inject OpenAI API models", () => {
@@ -339,7 +339,7 @@ test("tlhAnthropicModels: regression – agents with only tlhOpenaiModels are un
 	const input = { agent: "developer", task: "Implement the ticket" };
 	assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 1);
 	assert.equal(input.model, "openai-codex/gpt-5.6-luna");
-	assert.equal(input.thinking, "max");
+	assert.equal(Object.hasOwn(input, "thinking"), false);
 	assert.equal(Object.hasOwn(input, "fallbackModels"), false);
 	assert.equal(Object.hasOwn(input, "modelFallbackNotice"), false);
 });

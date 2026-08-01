@@ -5,6 +5,7 @@ tools: read, grep, find, ls, bash, contact_supervisor
 tlhOpenaiModels: openai-codex/gpt-5.4-mini
 tlhAnthropicModels: anthropic/claude-haiku-4-5
 thinking: high
+toolBudget: {"soft":12,"hard":20}
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
@@ -21,6 +22,12 @@ If the caller provides an explicit diff, use it. Otherwise collect the local dif
 1. Collect `git diff --no-color`, `git diff --cached --no-color`, and `git status --short --untracked-files=all`.
 2. If relevant untracked new files appear, inspect those files as needed so the summary covers them.
 3. If diff collection fails, ask the architect for a diff or instructions.
+
+## Scope and stop rules
+
+- Stay limited to the supplied diff or current local change set.
+- Focus on user-visible behavior, requirements fit, and review risk; do not drift into implementation planning, architecture redesign, or exhaustive file narration.
+- Stop once the main behavior changes, risky areas, and requirement status are covered.
 
 ## Analysis
 

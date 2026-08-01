@@ -278,7 +278,8 @@ function subagentCallTargetsMatching(input: unknown, predicate: (agent: string) 
 	return collectSubagentCallTargetsMatching(input, predicate).length > 0;
 }
 
-const LIBRARIAN_MAX_TIMEOUT_MS = 300_000;
+const SCOUT_RUN_MAX_TIMEOUT_MS = 360_000;
+const SCOUT_TIMEOUT_CAPPED_SUBAGENTS = new Set(["librarian", "web-scout", "repo-scout", "diff-summarizer"]);
 
 function isOpaqueSubagentManagementActionInput(input: unknown): boolean {
 	if (!isRecord(input) || typeof input.action !== "string" || input.action.trim().length === 0) {
@@ -287,21 +288,28 @@ function isOpaqueSubagentManagementActionInput(input: unknown): boolean {
 	return !isExecutionBearingResumeChain(input);
 }
 
-function capLibrarianSubagentTimeout(input: unknown): void {
-	if (!isRecord(input) || isOpaqueSubagentManagementActionInput(input) || !subagentCallTargetsAgent(input, "librarian")) {
+function capScoutSubagentTimeout(input: unknown): void {
+	if (
+		!isRecord(input) ||
+		isOpaqueSubagentManagementActionInput(input) ||
+		// pi-subagents 0.31.11 does not reliably propagate resume timeouts end to end, so TLH leaves
+		// resume timeouts unchanged for now, even when resume.chain includes capped scout targets.
+		isSubagentResumeAction(input) ||
+		!subagentCallTargetsMatching(input, (agent) => SCOUT_TIMEOUT_CAPPED_SUBAGENTS.has(agent.trim().toLowerCase()))
+	) {
 		return;
 	}
 	const { timeoutMs } = input;
-	if (typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs <= LIBRARIAN_MAX_TIMEOUT_MS) {
+	if (typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs <= SCOUT_RUN_MAX_TIMEOUT_MS) {
 		return;
 	}
-	// The current subagent API exposes only a run-level timeout, so any batch containing
-	// librarian must cap the whole execution request.
-	input.timeoutMs = LIBRARIAN_MAX_TIMEOUT_MS;
+	// The current subagent API exposes only a run-level timeout, so any execution batch containing
+	// a capped scout target must cap the whole execution request.
+	input.timeoutMs = SCOUT_RUN_MAX_TIMEOUT_MS;
 }
 
 function embeddedDelegationBlockedReason(selection: TlhPrimaryAgentSelection, input: unknown): string | undefined {
-	// Opaque management actions stay exempt; resume.chain is treated as new execution.
+	// Opaque management actions stay exempt; resume.chain is still treated as new execution.
 	if (isOpaqueSubagentManagementActionInput(input)) {
 		return undefined;
 	}
@@ -853,7 +861,7 @@ function createTlhPrimaryAgentRuntime(
 				return undefined;
 			}
 			applyProviderAwareSubagentModels(event.input, subagentsByName, getUnfilteredAvailableModels(ctx.modelRegistry), ctx.model?.provider, ctx.model);
-			capLibrarianSubagentTimeout(event.input);
+			capScoutSubagentTimeout(event.input);
 			syncPrimaryAgentState(ctx);
 			const selection = currentPrimaryAgentSelection();
 			const allowedSubagents = allowedSubagentsForExperimentalConfig(getTlhGlobalSettings(ctx.cwd).tlh?.experimental);

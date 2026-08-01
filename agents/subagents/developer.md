@@ -4,7 +4,7 @@ description: Implements exactly one approved architect task at a time.
 tools: read, write, edit, grep, find, ls, bash, contact_supervisor
 tlhOpenaiModels: openai-codex/gpt-5.6-luna
 tlhAnthropicModels: anthropic/claude-sonnet-4-6
-thinking: medium
+thinking: max
 tlhOpenaiThinking: max
 systemPromptMode: replace
 inheritProjectContext: true
