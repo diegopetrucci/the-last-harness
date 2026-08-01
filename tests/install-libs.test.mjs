@@ -813,7 +813,7 @@ test("settings defaults declare when bundled subagent prompts are required", (t)
 	assert.equal(settingsRequireTlhSubagentPrompts(defaults), false);
 });
 
-test("provisionSubagentExtensionConfig sets toolDescriptionMode compact and is idempotent", (t) => {
+test("provisionSubagentExtensionConfig sets TLH defaults independently and is idempotent", (t) => {
 	const agentDir = tempFixture(t, "tlh-ext-config-test-");
 	const config = { agentDir };
 	const configPath = join(agentDir, "extensions", "subagent", "config.json");
@@ -823,27 +823,48 @@ test("provisionSubagentExtensionConfig sets toolDescriptionMode compact and is i
 	assert.ok(existsSync(configPath), "config.json created on first run");
 	const created = JSON.parse(readFileSync(configPath, "utf8"));
 	assert.equal(created.toolDescriptionMode, "compact", "toolDescriptionMode set to compact");
+	assert.deepEqual(created.control, { activeNoticeAfterMs: 270000 }, "active notice default set to 4m30");
 
-	// Idempotent re-run: existing value must not change.
+	// Idempotent re-run: existing values must not change.
 	provisionSubagentExtensionConfig(config);
 	const afterRerun = JSON.parse(readFileSync(configPath, "utf8"));
-	assert.equal(afterRerun.toolDescriptionMode, "compact", "unchanged on re-run");
+	assert.deepEqual(afterRerun, created, "re-running leaves the completed config unchanged");
 
-	// User edit preserved: user sets toolDescriptionMode to \"full\".
-	writeFileSync(configPath, JSON.stringify({ toolDescriptionMode: "full" }) + "\n");
+	// A user override is preserved while the independently missing default is added.
+	writeFileSync(configPath, JSON.stringify({
+		control: { activeNoticeAfterMs: 123456, nestedKey: "preserve" },
+		topLevelKey: true,
+	}) + "\n");
 	provisionSubagentExtensionConfig(config);
-	const afterUserEdit = JSON.parse(readFileSync(configPath, "utf8"));
-	assert.equal(afterUserEdit.toolDescriptionMode, "full", "user override to full is preserved");
+	const afterActiveNoticeOverride = JSON.parse(readFileSync(configPath, "utf8"));
+	assert.equal(afterActiveNoticeOverride.toolDescriptionMode, "compact", "compact added when toolDescriptionMode is missing");
+	assert.equal(afterActiveNoticeOverride.control.activeNoticeAfterMs, 123456, "active notice override is preserved");
+	assert.equal(afterActiveNoticeOverride.control.nestedKey, "preserve", "nested control keys are preserved");
+	assert.equal(afterActiveNoticeOverride.topLevelKey, true, "top-level user keys are preserved");
 
-	// Other config keys preserved when toolDescriptionMode is absent.
-	writeFileSync(configPath, JSON.stringify({ asyncByDefault: true }) + "\n");
+	// The other direction is independent too: an existing tool override does not block
+	// provisioning the missing active-notice default.
+	writeFileSync(configPath, JSON.stringify({
+		toolDescriptionMode: "full",
+		control: { nestedKey: "preserve" },
+	}) + "\n");
 	provisionSubagentExtensionConfig(config);
-	const afterExtraKey = JSON.parse(readFileSync(configPath, "utf8"));
-	assert.equal(afterExtraKey.toolDescriptionMode, "compact", "compact added when key missing");
-	assert.equal(afterExtraKey.asyncByDefault, true, "pre-existing user keys are preserved");
+	const afterToolDescriptionOverride = JSON.parse(readFileSync(configPath, "utf8"));
+	assert.equal(afterToolDescriptionOverride.toolDescriptionMode, "full", "tool description override is preserved");
+	assert.equal(afterToolDescriptionOverride.control.activeNoticeAfterMs, 270000, "active notice added independently");
+	assert.equal(afterToolDescriptionOverride.control.nestedKey, "preserve", "existing nested control keys remain");
+
+	// A malformed nested control value is preserved while the independently writable
+	// tool-description default is still added.
+	writeFileSync(configPath, JSON.stringify({ control: null, topLevelKey: "preserve" }) + "\n");
+	provisionSubagentExtensionConfig(config);
+	const afterNonObjectControl = JSON.parse(readFileSync(configPath, "utf8"));
+	assert.equal(afterNonObjectControl.toolDescriptionMode, "compact", "compact added with a non-object control value");
+	assert.equal(afterNonObjectControl.control, null, "non-object control value is preserved");
+	assert.equal(afterNonObjectControl.topLevelKey, "preserve", "top-level key remains preserved");
 });
 
-test("provisionSubagentExtensionConfig preserves byte-for-byte a valid non-object config (null, array, scalar)", (t) => {
+test("provisionSubagentExtensionConfig preserves byte-for-byte non-object and unreadable configs", (t) => {
 	const agentDir = tempFixture(t, "tlh-ext-config-noobj-");
 	const config = { agentDir };
 	const configDir = join(agentDir, "extensions", "subagent");
@@ -867,4 +888,10 @@ test("provisionSubagentExtensionConfig preserves byte-for-byte a valid non-objec
 	writeFileSync(configPath, scalarContent);
 	provisionSubagentExtensionConfig(config);
 	assert.equal(readFileSync(configPath, "utf8"), scalarContent, "scalar config preserved byte-for-byte");
+
+	// Invalid JSON is unreadable and must also be left untouched.
+	const invalidContent = "{ not-json\n";
+	writeFileSync(configPath, invalidContent);
+	provisionSubagentExtensionConfig(config);
+	assert.equal(readFileSync(configPath, "utf8"), invalidContent, "unreadable config preserved byte-for-byte");
 });

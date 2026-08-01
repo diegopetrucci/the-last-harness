@@ -1117,7 +1117,7 @@ async function installSupportFilesToProfile(config) {
             log(config, "Would skip TLH subagent prompts because this ref does not enable bundled subagents in settings.");
         }
         if (subagentExtensionConfigNeedsProvisioning(config)) {
-            log(config, "Would provision subagent extension config (extensions/subagent/config.json) with toolDescriptionMode: compact.");
+            log(config, "Would provision missing TLH subagent extension defaults (extensions/subagent/config.json): toolDescriptionMode: compact; control.activeNoticeAfterMs: 270000 (4m30).");
         }
         else {
             log(config, "Would leave existing subagent extension config (extensions/subagent/config.json) untouched.");

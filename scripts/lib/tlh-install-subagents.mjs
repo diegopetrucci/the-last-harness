@@ -101,25 +101,37 @@ export function copyTlhSubagentPrompts(config, sourceDir, { prompts = TLH_SUBAGE
 }
 /**
  * Provision the subagent extension config at extensions/subagent/config.json
- * with TLH-preferred defaults.
+ * with TLH-preferred defaults: compact tool descriptions and a first active
+ * long-running notice after 270000ms (4m30).
  *
- * Idempotency: if toolDescriptionMode is already present (set to any value,
- * including a user-chosen override such as "full"), it is left untouched.
- * Re-running the installer is therefore safe and will not clobber user edits.
+ * Each default is added independently when its setting is missing. Existing
+ * user values, including a user-chosen toolDescriptionMode such as "full" or
+ * an activeNoticeAfterMs override, are left untouched. Re-running the
+ * installer is therefore safe and will not clobber user edits.
  *
- * Revert path: to disable compact descriptions, open
- * <agentDir>/extensions/subagent/config.json and set
- * "toolDescriptionMode": "full". That value will be preserved on subsequent
- * installer runs. Removing the key is only a temporary revert — the installer
- * will re-provision "compact" on the next install or update run.
+ * Revert path: open <agentDir>/extensions/subagent/config.json and set either
+ * "toolDescriptionMode" or "control.activeNoticeAfterMs" to the value you
+ * want. Existing values are preserved on subsequent installer runs. To return
+ * a setting to the managed default, remove that key and rerun install or
+ * update; missing defaults are re-provisioned. Valid non-object or unreadable
+ * config files are preserved untouched.
  *
  * Runtime note: toolDescriptionMode requires pi-subagents >= v0.33.0
  * (fork feature). Older builds simply ignore the unknown key.
  */
+const TLH_TOOL_DESCRIPTION_MODE = "compact";
+const TLH_ACTIVE_NOTICE_AFTER_MS = 270000;
+function activeNoticeCanBeProvisioned(existing) {
+    return !("control" in existing) || isPlainObject(existing.control);
+}
+function activeNoticeIsMissing(existing) {
+    return activeNoticeCanBeProvisioned(existing)
+        && (!isPlainObject(existing.control) || !("activeNoticeAfterMs" in existing.control));
+}
 /**
  * Returns true when provisionSubagentExtensionConfig would write to disk,
- * false when it would leave the existing file untouched (already has the key,
- * is a non-object JSON value, or is unreadable).
+ * false when it would leave the existing file untouched (all writable defaults
+ * are present, the config has a non-object JSON value, or it is unreadable).
  */
 export function subagentExtensionConfigNeedsProvisioning(config) {
     const configPath = join(config.agentDir, "extensions/subagent/config.json");
@@ -129,7 +141,7 @@ export function subagentExtensionConfigNeedsProvisioning(config) {
         const parsed = readJsonFile(configPath, { missingValue: {} });
         if (!isPlainObject(parsed))
             return false;
-        return !("toolDescriptionMode" in parsed);
+        return !("toolDescriptionMode" in parsed) || activeNoticeIsMissing(parsed);
     }
     catch {
         return false;
@@ -152,10 +164,17 @@ export function provisionSubagentExtensionConfig(config) {
             return;
         }
     }
-    // Preserve any value the user has already set (including explicit "full").
-    if ("toolDescriptionMode" in existing)
+    const missingToolDescriptionMode = !("toolDescriptionMode" in existing);
+    const missingActiveNotice = activeNoticeIsMissing(existing);
+    if (!missingToolDescriptionMode && !missingActiveNotice)
         return;
     ensureSafeProfileDir(config, "extensions/subagent", "TLH subagent extension config directory");
-    const updated = { toolDescriptionMode: "compact", ...existing };
+    const updated = { ...existing };
+    if (missingToolDescriptionMode)
+        updated.toolDescriptionMode = TLH_TOOL_DESCRIPTION_MODE;
+    if (missingActiveNotice) {
+        const existingControl = isPlainObject(existing.control) ? existing.control : {};
+        updated.control = { activeNoticeAfterMs: TLH_ACTIVE_NOTICE_AFTER_MS, ...existingControl };
+    }
     writeSafeProfileFile(config, relativePath, JSON.stringify(updated, null, 2) + "\n", "TLH subagent extension config");
 }
