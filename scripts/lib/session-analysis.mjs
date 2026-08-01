@@ -43,22 +43,6 @@ function assertNotRunHistory(filePath) {
             `Resolve using a session-specific path instead. Attempted path: ${filePath}`);
     }
 }
-/**
- * Return the best available timestamp from a message entry.
- *
- * The real corpus stores `timestamp` on `.message` (the assistant message
- * object).  Some fixtures and edge-cases store it on the outer entry.
- * Accept both to remain tolerant.
- */
-function resolveTimestamp(entry, message) {
-    if (typeof message["timestamp"] === "string" && message["timestamp"]) {
-        return message["timestamp"];
-    }
-    if (typeof entry["timestamp"] === "string" && entry["timestamp"]) {
-        return entry["timestamp"];
-    }
-    return null;
-}
 /** Tolerant streaming JSONL line reader.  Does not load whole files. */
 async function* readJsonlLines(filePath) {
     assertNotRunHistory(filePath);

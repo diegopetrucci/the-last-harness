@@ -16,7 +16,7 @@ import { createReadStream, realpathSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { createInterface } from "node:readline";
 import { pairToolCalls } from "../../extensions/the-last-harness/tool-pairing.js";
-import type { SubagentDetails, SubagentResultEntry, ToolPair } from "../../extensions/the-last-harness/tool-pairing.js";
+import type { ToolPair } from "../../extensions/the-last-harness/tool-pairing.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -167,26 +167,6 @@ function assertNotRunHistory(filePath: string): void {
 				`Resolve using a session-specific path instead. Attempted path: ${filePath}`,
 		);
 	}
-}
-
-/**
- * Return the best available timestamp from a message entry.
- *
- * The real corpus stores `timestamp` on `.message` (the assistant message
- * object).  Some fixtures and edge-cases store it on the outer entry.
- * Accept both to remain tolerant.
- */
-function resolveTimestamp(
-	entry: Record<string, unknown>,
-	message: Record<string, unknown>,
-): string | null {
-	if (typeof message["timestamp"] === "string" && message["timestamp"]) {
-		return message["timestamp"];
-	}
-	if (typeof entry["timestamp"] === "string" && entry["timestamp"]) {
-		return entry["timestamp"];
-	}
-	return null;
 }
 
 /** Tolerant streaming JSONL line reader.  Does not load whole files. */

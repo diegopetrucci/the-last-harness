@@ -501,7 +501,7 @@ test("tlh-sessions: default provenance contains no path or username substrings",
 		);
 		// profileId must be hex only — no slashes or path separators
 		assert.ok(
-			!/[\/\\]/.test(output.provenance.profileId),
+			!/[/\\]/.test(output.provenance.profileId),
 			"profileId must not contain path separators",
 		);
 	}

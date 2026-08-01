@@ -580,7 +580,7 @@ test("readSessionHeader: returns null for file with no session header", async (t
 // aggregateCoverage tests
 // ---------------------------------------------------------------------------
 
-test("aggregateCoverage: sums fields across multiple scan results", (t) => {
+test("aggregateCoverage: sums fields across multiple scan results", () => {
 	// Construct minimal fake scan results (no need to read real files)
 	const results = [
 		{
@@ -635,7 +635,7 @@ test("aggregateCoverage: sums fields across multiple scan results", (t) => {
 	assert.equal(coverage.unreadableDirectories, 0);
 });
 
-test("aggregateCoverage: extra data overrides defaults", (t) => {
+test("aggregateCoverage: extra data overrides defaults", () => {
 	const coverage = aggregateCoverage([], {
 		filesDiscovered: 10,
 		failedScans: 3,
