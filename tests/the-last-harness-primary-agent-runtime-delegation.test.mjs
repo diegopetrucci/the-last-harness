@@ -168,7 +168,7 @@ test("enabled primary mode allows contrarian by default and stale contrarian set
 		modelRegistry: {
 			getAvailable: () => [
 				{ provider: "openai-codex", id: "gpt-5.4" },
-				{ provider: "anthropic", id: "claude-opus-5-0" },
+				{ provider: "anthropic", id: "claude-opus-5" },
 			],
 		},
 		model: { provider: "openai-codex", id: "gpt-5.4" },
@@ -178,7 +178,7 @@ test("enabled primary mode allows contrarian by default and stale contrarian set
 		const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata });
 		const defaultEvent = { toolName: "subagent", input: { agent: "contrarian", task: "stress-test this plan" } };
 		assert.equal(await toolCall(defaultEvent, blockedCtx), undefined);
-		assert.equal(defaultEvent.input.model, "anthropic/claude-opus-5-0");
+		assert.equal(defaultEvent.input.model, "anthropic/claude-opus-5");
 		assert.equal(defaultEvent.input.agentScope, "user");
 		assert.equal(defaultEvent.input.context, "fresh");
 
@@ -188,7 +188,7 @@ test("enabled primary mode allows contrarian by default and stale contrarian set
 		);
 		const legacyFlagEvent = { toolName: "subagent", input: { agent: "contrarian", task: "stress-test this plan" } };
 		assert.equal(await toolCall(legacyFlagEvent, blockedCtx), undefined);
-		assert.equal(legacyFlagEvent.input.model, "anthropic/claude-opus-5-0");
+		assert.equal(legacyFlagEvent.input.model, "anthropic/claude-opus-5");
 		assert.equal(legacyFlagEvent.input.agentScope, "user");
 		assert.equal(legacyFlagEvent.input.context, "fresh");
 	});
@@ -370,7 +370,7 @@ test("/switch-primary-agent model reset clears the active primary model override
 			modelRegistry: {
 				getAvailable: () => [
 					{ provider: "openai-codex", id: "gpt-5.5" },
-					{ provider: "anthropic", id: "claude-opus-5-0" },
+					{ provider: "anthropic", id: "claude-opus-5" },
 				],
 			},
 			model: { provider: "openai-codex", id: "gpt-5.4" },
@@ -379,7 +379,7 @@ test("/switch-primary-agent model reset clears the active primary model override
 
 		const written = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
 		assert.equal(written.tlh.primaryAgent.modelOverrides, undefined);
-		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-5-0" });
+		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-5" });
 		assert.equal(reset.notifications.at(-1)?.type, "info");
 		assert.match(reset.notifications.at(-1)?.message ?? "", /Cleared model override for architect/);
 	});

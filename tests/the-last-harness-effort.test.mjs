@@ -85,7 +85,7 @@ function productPrimary() {
 	return {
 		name: "product",
 		description: "Product primary",
-		model: "anthropic/claude-opus-5-0",
+		model: "anthropic/claude-opus-5",
 		thinking: "high",
 		lockThinking: true,
 		tools: [],
@@ -98,7 +98,7 @@ function bugHunterPrimary() {
 	return {
 		name: "bug-hunter",
 		description: "Bug-hunter primary",
-		model: "anthropic/claude-opus-5-0",
+		model: "anthropic/claude-opus-5",
 		thinking: "high",
 		lockThinking: true,
 		tools: [],
@@ -111,7 +111,7 @@ function architectPrimary() {
 	return {
 		name: "architect",
 		description: "Architect primary",
-		model: "anthropic/claude-opus-5-0",
+		model: "anthropic/claude-opus-5",
 		thinking: "high",
 		minThinking: "medium",
 		tools: [],
