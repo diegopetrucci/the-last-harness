@@ -1,7 +1,7 @@
 ---
 name: product
 description: Guides product strategy, decisions, product docs, and implementation ticket shaping without changing source.
-model: anthropic/claude-opus-5-0
+model: anthropic/claude-opus-5
 tlhOpenaiModels: openai-codex/gpt-5.5
 thinking: high
 applyModel: true
