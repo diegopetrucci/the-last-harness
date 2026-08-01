@@ -83,6 +83,7 @@ extensions/the-last-harness/ticket-workflow-ui.js linguist-generated=true
 extensions/the-last-harness/tickets.js linguist-generated=true
 extensions/the-last-harness/tokens-analyzer.js linguist-generated=true
 extensions/the-last-harness/tokens.js linguist-generated=true
+extensions/the-last-harness/tool-pairing.js linguist-generated=true
 extensions/the-last-harness/types.js linguist-generated=true
 extensions/the-last-harness/update-check.js linguist-generated=true
 extensions/the-last-harness/usage-limits-command.js linguist-generated=true

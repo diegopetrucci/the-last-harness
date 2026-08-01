@@ -1,3 +1,4 @@
+import { pairToolCalls } from "./tool-pairing.js";
 const NOISE_FLOOR_TOKENS = 1024;
 const BUILT_IN_TOOL_NAMES = new Set(["bash", "read", "edit", "write", "grep", "find", "ls"]);
 const CHARS_PER_TOKEN = 4;
@@ -312,6 +313,27 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
     }));
     const combinedTotals = cloneUsageTotals(primaryTotals);
     addUsage(combinedTotals, subagentTotals);
+    const pairing = pairToolCalls(entries);
+    const latencyMsByTool = new Map();
+    for (const pair of pairing.toolPairs) {
+        const bucket = latencyMsByTool.get(pair.toolName);
+        if (bucket) {
+            bucket.push(pair.observedLatencyMs);
+        }
+        else {
+            latencyMsByTool.set(pair.toolName, [pair.observedLatencyMs]);
+        }
+    }
+    for (const [toolName, latencies] of latencyMsByTool) {
+        const toolEntry = toolUsage.get(toolName);
+        if (!toolEntry) {
+            continue;
+        }
+        latencies.sort((left, right) => left - right);
+        const medianMs = latencies[Math.floor((latencies.length - 1) / 2)] ?? 0;
+        const maxMs = latencies[latencies.length - 1] ?? 0;
+        toolEntry.observedLatency = { medianMs, maxMs, pairedCount: latencies.length };
+    }
     const worstMisses = [...cacheMissEvents]
         .sort((a, b) => b.missedTokens - a.missedTokens)
         .slice(0, 10);

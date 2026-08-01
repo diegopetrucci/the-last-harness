@@ -15,6 +15,8 @@
 import { createReadStream, realpathSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { createInterface } from "node:readline";
+import { pairToolCalls } from "../../extensions/the-last-harness/tool-pairing.js";
+import type { SubagentDetails, SubagentResultEntry, ToolPair } from "../../extensions/the-last-harness/tool-pairing.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -49,38 +51,8 @@ export interface MessageUsage {
 	cost: MessageUsageCost;
 }
 
-/** One entry in the `results` array of a subagent tool result's details. */
-export interface SubagentResultEntry {
-	agent?: string | undefined;
-	sessionFile?: string | undefined;
-}
-
-/** The `details` object present on tool result messages where toolName == "subagent". */
-export interface SubagentDetails {
-	runId?: string | undefined;
-	results?: SubagentResultEntry[] | undefined;
-}
-
-/**
- * A matched pair of an assistant tool-call and its corresponding tool-result,
- * keyed on toolCallId.
- *
- * `observedLatencyMs` is the wall-clock interval between the assistant message
- * timestamp and the tool-result message timestamp.  It includes queueing,
- * subprocess startup, streaming, supervisor pauses, and in-tool retries.
- * It is intentionally named `observedLatencyMs` (never `durationMs`) because
- * the real corpus contains intervals exceeding 8 million ms for paused runs.
- */
-export interface ToolPair {
-	toolCallId: string;
-	toolName: string;
-	callTimestamp: string;
-	resultTimestamp: string;
-	/** Wall-clock ms between the assistant call and the tool result. */
-	observedLatencyMs: number;
-	isError: boolean;
-	details?: SubagentDetails | undefined;
-}
+// Re-export pairing types so this module's public API is unchanged.
+export type { SubagentDetails, SubagentResultEntry, ToolPair } from "../../extensions/the-last-harness/tool-pairing.js";
 
 /** Result of scanning a single session JSONL file. */
 export interface SessionScanResult {
@@ -268,17 +240,7 @@ export async function scanSessionFile(filePath: string): Promise<SessionScanResu
 
 	let sessionHeader: SessionHeader | null = null;
 	let malformedLines = 0;
-	let observedToolCallCount = 0;
-	let duplicateToolCallIdCount = 0;
-	let invalidTimestampPairCount = 0;
-
-	// pending tool calls: toolCallId -> { toolName, callTimestamp }
-	const pendingCalls = new Map<string, { toolName: string; callTimestamp: string }>();
-	// pending tool results: toolCallId -> { resultTimestamp, isError, details }
-	const pendingResults = new Map<
-		string,
-		{ resultTimestamp: string; isError: boolean; details?: SubagentDetails }
-	>();
+	const entries: unknown[] = [];
 
 	for await (const parsed of readJsonlLines(filePath)) {
 		if (!isObject(parsed)) {
@@ -320,120 +282,19 @@ export async function scanSessionFile(filePath: string): Promise<SessionScanResu
 			continue;
 		}
 
-		const role = message["role"];
-
-		if (role === "assistant") {
-			const ts = resolveTimestamp(parsed, message);
-			if (!ts) continue;
-
-			const content = message["content"];
-			if (!Array.isArray(content)) continue;
-
-			for (const item of content) {
-				if (!isObject(item)) continue;
-				if (item["type"] !== "toolCall") continue;
-
-				// Accept both "toolCallId" (corpus) and "id" (some fixtures)
-				const toolCallId =
-					typeof item["toolCallId"] === "string"
-						? item["toolCallId"]
-						: typeof item["id"] === "string"
-							? item["id"]
-							: null;
-				if (!toolCallId) continue;
-
-				// Accept both "toolName" (corpus) and "name" (some fixtures)
-				const toolName =
-					typeof item["toolName"] === "string"
-						? item["toolName"]
-						: typeof item["name"] === "string"
-							? item["name"]
-							: "";
-
-				// Fix 4: count every occurrence; track duplicates explicitly.
-				observedToolCallCount++;
-				if (pendingCalls.has(toolCallId)) {
-					duplicateToolCallIdCount++;
-				}
-				pendingCalls.set(toolCallId, { toolName, callTimestamp: ts });
-			}
-			continue;
-		}
-
-		if (role === "toolResult") {
-			// Accept both "toolCallId" (corpus) and fallback
-			const toolCallId = typeof message["toolCallId"] === "string" ? message["toolCallId"] : null;
-			if (!toolCallId) continue;
-
-			const ts = resolveTimestamp(parsed, message);
-			if (!ts) continue;
-
-			const isError = Boolean(message["isError"]);
-
-			let details: SubagentDetails | undefined;
-			if (isObject(message["details"])) {
-				const rawDetails = message["details"] as Record<string, unknown>;
-				details = {};
-				if (typeof rawDetails["runId"] === "string") {
-					details.runId = rawDetails["runId"];
-				}
-				if (Array.isArray(rawDetails["results"])) {
-					details.results = (rawDetails["results"] as unknown[])
-						.filter(isObject)
-						.map((r) => ({
-							agent: typeof r["agent"] === "string" ? r["agent"] : undefined,
-							sessionFile:
-								typeof r["sessionFile"] === "string" ? r["sessionFile"] : undefined,
-						}));
-				}
-			}
-
-			pendingResults.set(toolCallId, { resultTimestamp: ts, isError, details });
-		}
+		entries.push(parsed);
 	}
 
 	const sizeAfter = safeFileSize(filePath);
 
-	// Pair calls with results
-	const toolPairs: ToolPair[] = [];
-	let unmatchedToolCallCount = 0;
-	let unmatchedToolResultCount = 0;
-
-	for (const [toolCallId, call] of pendingCalls) {
-		const result = pendingResults.get(toolCallId);
-		if (result) {
-			// Fix 6: validate timestamps before computing latency.
-			const callMs = new Date(call.callTimestamp).getTime();
-			const resultMs = new Date(result.resultTimestamp).getTime();
-			if (!isFinite(callMs) || !isFinite(resultMs)) {
-				invalidTimestampPairCount++;
-				continue;
-			}
-			const latencyMs = resultMs - callMs;
-			if (latencyMs < 0) {
-				// Negative latency is physically impossible; count as invalid.
-				invalidTimestampPairCount++;
-				continue;
-			}
-			toolPairs.push({
-				toolCallId,
-				toolName: call.toolName,
-				callTimestamp: call.callTimestamp,
-				resultTimestamp: result.resultTimestamp,
-				observedLatencyMs: latencyMs,
-				isError: result.isError,
-				details: result.details,
-			});
-		} else {
-			unmatchedToolCallCount++;
-		}
-	}
-
-	for (const toolCallId of pendingResults.keys()) {
-		if (!pendingCalls.has(toolCallId)) {
-			unmatchedToolResultCount++;
-		}
-	}
+	const {
+		toolPairs,
+		unmatchedToolCallCount,
+		unmatchedToolResultCount,
+		observedToolCallCount,
+		duplicateToolCallIdCount,
+		invalidTimestampPairCount,
+	} = pairToolCalls(entries);
 
 	return {
 		filePath,

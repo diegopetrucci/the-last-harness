@@ -14,6 +14,7 @@
 import { createReadStream, realpathSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { createInterface } from "node:readline";
+import { pairToolCalls } from "../../extensions/the-last-harness/tool-pairing.js";
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -107,13 +108,7 @@ export async function scanSessionFile(filePath) {
     const sizeBefore = safeFileSize(filePath);
     let sessionHeader = null;
     let malformedLines = 0;
-    let observedToolCallCount = 0;
-    let duplicateToolCallIdCount = 0;
-    let invalidTimestampPairCount = 0;
-    // pending tool calls: toolCallId -> { toolName, callTimestamp }
-    const pendingCalls = new Map();
-    // pending tool results: toolCallId -> { resultTimestamp, isError, details }
-    const pendingResults = new Map();
+    const entries = [];
     for await (const parsed of readJsonlLines(filePath)) {
         if (!isObject(parsed)) {
             malformedLines++;
@@ -147,110 +142,10 @@ export async function scanSessionFile(filePath) {
             malformedLines++;
             continue;
         }
-        const role = message["role"];
-        if (role === "assistant") {
-            const ts = resolveTimestamp(parsed, message);
-            if (!ts)
-                continue;
-            const content = message["content"];
-            if (!Array.isArray(content))
-                continue;
-            for (const item of content) {
-                if (!isObject(item))
-                    continue;
-                if (item["type"] !== "toolCall")
-                    continue;
-                // Accept both "toolCallId" (corpus) and "id" (some fixtures)
-                const toolCallId = typeof item["toolCallId"] === "string"
-                    ? item["toolCallId"]
-                    : typeof item["id"] === "string"
-                        ? item["id"]
-                        : null;
-                if (!toolCallId)
-                    continue;
-                // Accept both "toolName" (corpus) and "name" (some fixtures)
-                const toolName = typeof item["toolName"] === "string"
-                    ? item["toolName"]
-                    : typeof item["name"] === "string"
-                        ? item["name"]
-                        : "";
-                // Fix 4: count every occurrence; track duplicates explicitly.
-                observedToolCallCount++;
-                if (pendingCalls.has(toolCallId)) {
-                    duplicateToolCallIdCount++;
-                }
-                pendingCalls.set(toolCallId, { toolName, callTimestamp: ts });
-            }
-            continue;
-        }
-        if (role === "toolResult") {
-            // Accept both "toolCallId" (corpus) and fallback
-            const toolCallId = typeof message["toolCallId"] === "string" ? message["toolCallId"] : null;
-            if (!toolCallId)
-                continue;
-            const ts = resolveTimestamp(parsed, message);
-            if (!ts)
-                continue;
-            const isError = Boolean(message["isError"]);
-            let details;
-            if (isObject(message["details"])) {
-                const rawDetails = message["details"];
-                details = {};
-                if (typeof rawDetails["runId"] === "string") {
-                    details.runId = rawDetails["runId"];
-                }
-                if (Array.isArray(rawDetails["results"])) {
-                    details.results = rawDetails["results"]
-                        .filter(isObject)
-                        .map((r) => ({
-                        agent: typeof r["agent"] === "string" ? r["agent"] : undefined,
-                        sessionFile: typeof r["sessionFile"] === "string" ? r["sessionFile"] : undefined,
-                    }));
-                }
-            }
-            pendingResults.set(toolCallId, { resultTimestamp: ts, isError, details });
-        }
+        entries.push(parsed);
     }
     const sizeAfter = safeFileSize(filePath);
-    // Pair calls with results
-    const toolPairs = [];
-    let unmatchedToolCallCount = 0;
-    let unmatchedToolResultCount = 0;
-    for (const [toolCallId, call] of pendingCalls) {
-        const result = pendingResults.get(toolCallId);
-        if (result) {
-            // Fix 6: validate timestamps before computing latency.
-            const callMs = new Date(call.callTimestamp).getTime();
-            const resultMs = new Date(result.resultTimestamp).getTime();
-            if (!isFinite(callMs) || !isFinite(resultMs)) {
-                invalidTimestampPairCount++;
-                continue;
-            }
-            const latencyMs = resultMs - callMs;
-            if (latencyMs < 0) {
-                // Negative latency is physically impossible; count as invalid.
-                invalidTimestampPairCount++;
-                continue;
-            }
-            toolPairs.push({
-                toolCallId,
-                toolName: call.toolName,
-                callTimestamp: call.callTimestamp,
-                resultTimestamp: result.resultTimestamp,
-                observedLatencyMs: latencyMs,
-                isError: result.isError,
-                details: result.details,
-            });
-        }
-        else {
-            unmatchedToolCallCount++;
-        }
-    }
-    for (const toolCallId of pendingResults.keys()) {
-        if (!pendingCalls.has(toolCallId)) {
-            unmatchedToolResultCount++;
-        }
-    }
+    const { toolPairs, unmatchedToolCallCount, unmatchedToolResultCount, observedToolCallCount, duplicateToolCallIdCount, invalidTimestampPairCount, } = pairToolCalls(entries);
     return {
         filePath,
         sessionHeader,
