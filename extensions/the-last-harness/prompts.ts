@@ -102,6 +102,8 @@ export function loadSubagentMetadata(): SubagentMetadata[] {
 			model: agent.model,
 			tlhOpenaiModels: agent.tlhOpenaiModels,
 			tlhAnthropicModels: agent.tlhAnthropicModels,
+			thinking: agent.thinking,
+			tlhOpenaiThinking: agent.tlhOpenaiThinking,
 			preferOppositeProvider: agent.preferOppositeProvider,
 		}))
 		.sort((a, b) => a.name.localeCompare(b.name));

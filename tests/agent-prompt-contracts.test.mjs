@@ -154,12 +154,13 @@ test("developer prompt preserves human-owned changes and limits escalation to bl
 	]);
 });
 
-test("developer prompt pins max thinking without changing provider model lists", () => {
+test("developer prompt pins the Luna model and max thinking defaults", () => {
 	const agent = readAgentPrompt("subagents", "developer");
 
-	assert.match(agent, /^tlhOpenaiModels: openai-codex\/gpt-5\.4$/m);
+	assert.match(agent, /^tlhOpenaiModels: openai-codex\/gpt-5\.6-luna$/m);
 	assert.match(agent, /^tlhAnthropicModels: anthropic\/claude-sonnet-4-6$/m);
 	assert.match(agent, /^thinking: max$/m);
+	assert.match(agent, /^tlhOpenaiThinking: max$/m);
 });
 
 test("code-reviewer prompt matches current review-only guidance without removed quota sections", () => {

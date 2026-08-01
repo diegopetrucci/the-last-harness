@@ -152,6 +152,9 @@ export function selectProviderAwareAgentModelId(agent, availableModels, currentP
 function hasExplicitModel(target) {
     return Object.hasOwn(target, "model") && target.model !== undefined;
 }
+function hasExplicitThinking(target) {
+    return Object.hasOwn(target, "thinking") && target.thinking !== undefined;
+}
 function agentNameForTarget(target) {
     return typeof target.agent === "string" ? target.agent : undefined;
 }
@@ -161,13 +164,17 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
     }
     const agentName = agentNameForTarget(target);
     const agent = agentName ? agents.get(agentName) : undefined;
+    const defaults = selectProviderAwareAgentDefaults(agent, availableModels, currentProvider);
+    const selectedModel = defaults.model ? formatProviderModelReference(defaults.model) : undefined;
+    if (!selectedModel || selectedModel === agent?.model) {
+        return 0;
+    }
+    target.model = selectedModel;
+    if (!hasExplicitThinking(target) && defaults.thinking && defaults.thinking !== agent?.thinking) {
+        target.thinking = defaults.thinking;
+    }
     const oppositeProviderModel = selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider);
     if (oppositeProviderModel) {
-        const selectedModel = formatProviderModelReference(oppositeProviderModel);
-        if (selectedModel === agent?.model) {
-            return 0;
-        }
-        target.model = selectedModel;
         const fallbackModel = selectOppositeProviderFallbackModel(agent, availableModels, currentProvider, currentModel);
         const fallbackModelId = fallbackModel ? formatProviderModelReference(fallbackModel) : undefined;
         if (fallbackModelId && fallbackModelId !== selectedModel) {
@@ -178,14 +185,7 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
                 target.modelFallbackNotice = OPPOSITE_PROVIDER_FALLBACK_NOTICE;
             }
         }
-        return 1;
     }
-    const standardModel = selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider);
-    const selectedModel = standardModel ? formatProviderModelReference(standardModel) : undefined;
-    if (!selectedModel || selectedModel === agent?.model) {
-        return 0;
-    }
-    target.model = selectedModel;
     return 1;
 }
 export function applyProviderAwareSubagentModels(input, agents, availableModels, currentProvider, currentModel) {

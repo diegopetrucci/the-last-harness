@@ -7,7 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Changed
 
 - Removed RTK from TLH.
-- The bundled `developer` subagent now defaults to `thinking: max`; its provider model lists are unchanged.
+- The bundled `developer` subagent now defaults to OpenAI Codex `openai-codex/gpt-5.6-luna` and Anthropic `anthropic/claude-sonnet-4-6`, with max thinking on both providers.
 - The installer now provisions missing isolated subagent defaults for compact tool descriptions and `control.activeNoticeAfterMs: 270000` (4m30), while preserving existing overrides and unrelated configuration.
 - Bumped the bundled critical `pi-subagents` default extension pin from `npm:@diegopetrucci/pi-subagents@0.31.10` to `npm:@diegopetrucci/pi-subagents@0.31.11`.
 - Bumped bundled Anthropic defaults for Architect, Product, Bug-hunter, `code-reviewer`, `oracle`, and `contrarian` to Claude Opus 5.0; Architect, `code-reviewer`, `oracle`, and `contrarian` now prefer OpenAI Codex GPT-5.6 Sol on the OpenAI Codex path.
