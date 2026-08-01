@@ -224,6 +224,8 @@ export type SubagentMetadata = {
 	model?: string;
 	tlhOpenaiModels?: string[];
 	tlhAnthropicModels?: string[];
+	thinking?: ThinkingLevel;
+	tlhOpenaiThinking?: ThinkingLevel;
 	preferOppositeProvider?: boolean;
 };
 
