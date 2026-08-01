@@ -20,10 +20,6 @@ const DEFAULT_PI_INSTALL_SCRIPT_PATHS = Object.freeze([
 	"scripts/tlh-install.mts",
 	"scripts/tlh-install.mjs",
 ]);
-const DEFAULT_RTK_SCRIPT_PATHS = Object.freeze([
-	"scripts/tlh-rtk.mts",
-	"scripts/tlh-rtk.mjs",
-]);
 const DEFAULT_INSTALL_SH_PATH = "install.sh";
 const MANAGED_PI_DEPENDENCIES = Object.freeze([
 	{ field: "peerDependencies", name: "@earendil-works/pi-coding-agent" },
@@ -49,7 +45,6 @@ Options:
   --install-sh <path>          install.sh path for TLH_PINNED_PI_VERSION validation (default: install.sh)
   --gnosis-script <path>       Managed Gnosis script to validate (repeatable; defaults: scripts/tlh-gnosis.mts, scripts/tlh-gnosis.mjs, scripts/tlh-install.mjs)
   --pi-install-script <path>   TLH install script to validate PINNED_PI_VERSION in (repeatable; defaults: scripts/tlh-install.mts, scripts/tlh-install.mjs)
-  --rtk-script <path>          Managed RTK script to validate (repeatable; defaults: scripts/tlh-rtk.mts, scripts/tlh-rtk.mjs)
   -h, --help                   Show this help
 `;
 }
@@ -62,12 +57,10 @@ function parseArgs(argv) {
 		installShPath: DEFAULT_INSTALL_SH_PATH,
 		gnosisScriptPaths: [...DEFAULT_GNOSIS_SCRIPT_PATHS],
 		piInstallScriptPaths: [...DEFAULT_PI_INSTALL_SCRIPT_PATHS],
-		rtkScriptPaths: [...DEFAULT_RTK_SCRIPT_PATHS],
 		help: false,
 	};
 	let customGnosisScripts = false;
 	let customPiInstallScripts = false;
-	let customRtkScripts = false;
 
 	for (let index = 0; index < argv.length; index += 1) {
 		const arg = argv[index];
@@ -113,15 +106,6 @@ function parseArgs(argv) {
 			index += 1;
 			continue;
 		}
-		if (arg === "--rtk-script") {
-			if (!customRtkScripts) {
-				args.rtkScriptPaths = [];
-				customRtkScripts = true;
-			}
-			args.rtkScriptPaths.push(requiredValue(argv, index + 1, arg));
-			index += 1;
-			continue;
-		}
 		if (arg.startsWith("--package=")) {
 			args.packagePath = arg.slice("--package=".length);
 			if (!args.packagePath) throw new Error("--package requires a value");
@@ -160,16 +144,6 @@ function parseArgs(argv) {
 				customPiInstallScripts = true;
 			}
 			args.piInstallScriptPaths.push(value);
-			continue;
-		}
-		if (arg.startsWith("--rtk-script=")) {
-			const value = arg.slice("--rtk-script=".length);
-			if (!value) throw new Error("--rtk-script requires a value");
-			if (!customRtkScripts) {
-				args.rtkScriptPaths = [];
-				customRtkScripts = true;
-			}
-			args.rtkScriptPaths.push(value);
 			continue;
 		}
 		throw new Error(`Unknown argument: ${arg}`);
@@ -537,7 +511,6 @@ function collectProblems(args) {
 	validateManagedPiPins(args, packageJson, problems);
 	validateDefaultExtensionPins(args.defaultExtensionsPath, problems);
 	validatePinnedManagedScriptDefaults(args.gnosisScriptPaths, "DEFAULT_GNOSIS_VERSION", "Managed Gnosis", problems);
-	validatePinnedManagedScriptDefaults(args.rtkScriptPaths, "DEFAULT_RTK_VERSION", "Managed RTK", problems);
 
 	return { version, problems };
 }

@@ -234,10 +234,6 @@ function ticketsScript(packageRoot: string): string {
 	return join(packageRoot, "scripts", "tlh-tickets.mjs");
 }
 
-function rtkScript(packageRoot: string): string {
-	return join(packageRoot, "scripts", "tlh-rtk.mjs");
-}
-
 function runtimeDirForAgent(agentDir: string): string {
 	return join(dirname(agentDir), "runtime");
 }
@@ -433,15 +429,6 @@ function addTicketsCheck(results: CheckResult[], packageRoot: string, agentDir: 
 		return;
 	}
 	recordCheck(results, "WARN", "managed tk validation", `ticket integration inactive (${command || "not found"})`);
-}
-
-function addRtkCheck(results: CheckResult[], packageRoot: string, agentDir: string, env: NodeJS.ProcessEnv): void {
-	const result = runCommand(process.execPath, [rtkScript(packageRoot), "validate", "--agent-dir", agentDir], { env });
-	if (result.status === 0) {
-		recordCheck(results, "OK", "managed rtk validation", `validated ${(String(result.stdout || "").trim() || "rtk")}`);
-		return;
-	}
-	recordCheck(results, "WARN", "managed rtk validation", `no valid rtk command found (${commandFailureSummary(result)})`);
 }
 
 function addGhCheck(results: CheckResult[], env: NodeJS.ProcessEnv): void {
@@ -690,7 +677,6 @@ function collectHealthResults(agentDir: string, packageRoot: string, settingsPat
 		if (!settingsPathIsProtected) {
 			addTicketsCheck(results, packageRoot, agentDir, settingsPath, env);
 		}
-		addRtkCheck(results, packageRoot, agentDir, env);
 	}
 	if (!agentDirIsProtected) {
 		addGhCheck(results, env);
@@ -721,7 +707,6 @@ function runRepairMode(agentDir: string, packageRoot: string, settingsPath: stri
 		repairBundledSubagentPrompts(packageRoot, agentDir),
 		repairManagedHelper("managed gn install", gnosisScript(packageRoot), ["configure-install", "--agent-dir", agentDir], env),
 		repairManagedHelper("managed tk install", ticketsScript(packageRoot), ["configure-install", "--agent-dir", agentDir, "--settings", settingsPath], env),
-		repairManagedHelper("managed rtk install", rtkScript(packageRoot), ["install-managed", "--agent-dir", agentDir], env),
 		repairAction("WARN", "private runtime", "runtime replacement stays manual; run `tlh update` if runtime drift remains"),
 		repairAction("WARN", "user-owned prerequisites", "gh auth, EXA keys, and MCP config remain manual"),
 	];

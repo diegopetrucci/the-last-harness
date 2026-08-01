@@ -118,9 +118,6 @@ export type TlhModelVisibilityConfig = {
 	unhide?: string[];
 };
 
-export type TlhRtkConfig = {
-	disabled?: boolean;
-};
 
 export type TlhSettings = {
 	tlh?: {
@@ -133,7 +130,6 @@ export type TlhSettings = {
 		experimental?: TlhExperimentalConfig;
 		contextCap?: TlhContextCapConfig;
 		modelVisibility?: TlhModelVisibilityConfig;
-		rtk?: TlhRtkConfig;
 	};
 };
 

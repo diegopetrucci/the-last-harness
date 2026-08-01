@@ -37,6 +37,7 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 | `/settings` | Open the settings menu |
 | `/share` | Share the session as a secret GitHub gist |
 | `/tree` | Navigate the session tree and switch branches |
+| `/trust` | Save the current project trust decision for future sessions |
 
 ---
 
@@ -54,6 +55,7 @@ These commands are registered by the TLH extension bundled with this profile.
 | `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
 | `/tlh-changelog` | Show TLH release notes from the packaged `CHANGELOG.md` |
 | `/tokens` | Generate and open a single no-flags local HTML token-spend report for the current session |
+| `/what-consumed-my-session-limit-and-tokens` | Generate and open a local HTML session-limit usage report across all in-window TLH sessions |
 | `/toggle-context-cap` | Toggle the 200k effective context-window cap for auto-compaction |
 | `/toggle-tlh-git-attribution` | Toggle the TLH commit attribution footer for agent-created git commits |
 | `/usage` | Show or change TLH subscription usage-limit footer preferences |
@@ -76,6 +78,12 @@ Both `/thinking` and `/effort` are subject to the active primary-agent thinking 
 `/tokens` takes no flags or subcommands. Run it as `/tokens` to generate one local HTML token-spend report for the current session and open it on your machine.
 
 The report is built from sanitized session analysis only. It omits raw transcript text, raw tool arguments, and raw tool-result payloads, and TLH tells you where the private local report directory lives so you can delete it when you no longer need the report.
+
+### `/what-consumed-my-session-limit-and-tokens`
+
+`/what-consumed-my-session-limit-and-tokens` takes no flags or subcommands. Run it to generate a local HTML report covering TLH sessions within the current provider session-limit window across all projects under the same session root.
+
+The report is built from sanitized session analysis only. It omits raw transcript text, raw tool arguments, and raw tool-result payloads. It uses the current subscription usage snapshot when available, with a trailing five-hour fallback when TLH cannot resolve an exact provider window.
 
 ---
 
@@ -176,7 +184,6 @@ These commands are provided by bundled default extensions and are visible in TLH
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
 | `/subagents-doctor` | `pi-subagents` | Show subagent diagnostics |
 
-RTK shell-command rewriting is now a managed native integration rather than a slash-command UI. TLH does not register `/rtk`; use `RTK_DISABLED=1` for a single launch or set `"tlh": { "rtk": { "disabled": true } }` in the isolated TLH profile to disable rewriting.
 
 ---
 
@@ -227,5 +234,3 @@ tlh defaults enable <id>   # re-enable a disabled extension
 ```
 
 Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions, not first-party packaged commands like `/annotate-last-message` or `/annotate-git-diff`.
-
-RTK is separate from `tlh defaults`: TLH manages the pinned native binary at `<agent>/bin/rtk`, there is no `/rtk` command surface anymore, and the persistent opt-out is `tlh.rtk.disabled` rather than `tlh defaults disable rtk`. To remove only the managed RTK binary while keeping the rest of the profile, delete `<agent>/bin/rtk`; the next install or `tlh update` recreates it.

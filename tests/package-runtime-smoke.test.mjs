@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, globSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { globSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -11,7 +11,6 @@ const repoRoot = join(testsDir, "..");
 const runnerPath = join(testsDir, "package-runtime-smoke-runner.mjs");
 const expectedEntrypoints = [
 	"./extensions/annotate-git-diff/index.js",
-	"./extensions/rtk.js",
 	"./extensions/the-last-harness.js",
 ];
 const requiredPackedAssets = [
@@ -34,7 +33,6 @@ function isolatedEnv(root, agentDir) {
 		if (
 			key === "PI_CODING_AGENT_DIR"
 			|| key === "PI_SUBAGENT_CHILD"
-			|| key.startsWith("RTK_")
 			|| key.startsWith("TLH_")
 		) {
 			delete env[key];
@@ -53,18 +51,14 @@ function isolatedEnv(root, agentDir) {
 
 test("packed TLH generated JavaScript loads and reloads through pinned Pi 0.82.1", (t) => {
 	const root = mkdtempSync(join(tmpdir(), "tlh-package-runtime-smoke-"));
-	const binDir = join(root, "bin");
 	const packDir = join(root, "pack");
 	const extractDir = join(root, "extract");
 	const cwd = join(root, "workspace");
 	const agentDir = join(root, "agent");
 	const homeDir = join(root, "home");
 	t.after(() => rmSync(root, { recursive: true, force: true }));
-	for (const path of [binDir, packDir, extractDir, cwd, agentDir, homeDir]) mkdirSync(path, { recursive: true });
+	for (const path of [packDir, extractDir, cwd, agentDir, homeDir]) mkdirSync(path, { recursive: true });
 
-	const rtkStubPath = join(binDir, "rtk");
-	writeFileSync(rtkStubPath, "#!/usr/bin/env bash\nset -euo pipefail\nif [[ ${1:-} == --version ]]; then\n\techo 'rtk 0.23.0'\n\texit 0\nfi\nexit 1\n");
-	chmodSync(rtkStubPath, 0o755);
 
 	writeFileSync(
 		join(agentDir, "settings.json"),
@@ -78,7 +72,6 @@ test("packed TLH generated JavaScript loads and reloads through pinned Pi 0.82.1
 	);
 
 	const env = isolatedEnv(root, agentDir);
-	env.PATH = [binDir, env.PATH || ""].filter(Boolean).join(":");
 	const packResult = spawnSync("npm", ["pack", "--json", "--pack-destination", packDir], {
 		cwd: repoRoot,
 		encoding: "utf8",
@@ -93,7 +86,7 @@ test("packed TLH generated JavaScript loads and reloads through pinned Pi 0.82.1
 		.filter((path) => !path.endsWith(".d.ts"))
 		.map((path) => path.replace(/\.ts$/, ".js"))
 		.sort();
-	assert.equal(generatedExtensionPaths.length, 69);
+	assert.equal(generatedExtensionPaths.length, 68);
 	for (const generatedPath of generatedExtensionPaths) {
 		assert.ok(packedPaths.has(generatedPath), `npm pack omitted generated extension module ${generatedPath}`);
 	}

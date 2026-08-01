@@ -183,7 +183,6 @@ test("runtime TypeScript helper tracks converted top-level CLIs", () => {
 		"scripts/tlh-gnosis",
 		"scripts/tlh-install",
 		"scripts/tlh-recover-update",
-		"scripts/tlh-rtk",
 		"scripts/tlh-tickets",
 		"scripts/tlh-update",
 		"scripts/tlh-wrapper",
@@ -376,7 +375,6 @@ test("package manifest lists only the ordered generated JS extension entrypoints
 	const pkg = readPackageJson();
 	assert.deepEqual(pkg.pi.extensions, [
 		"./extensions/annotate-git-diff/index.js",
-		"./extensions/rtk.js",
 		"./extensions/the-last-harness.js",
 	]);
 });

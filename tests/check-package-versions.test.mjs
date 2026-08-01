@@ -11,8 +11,6 @@ const FIXTURE_MANAGED_PI_VERSION = "9.8.7";
 const FIXTURE_MANAGED_PI_DRIFT_VERSION = "9.8.6";
 const FIXTURE_MANAGED_GNOSIS_VERSION = "4.5.6";
 const FIXTURE_MANAGED_GNOSIS_DRIFT_VERSION = "4.5.5";
-const FIXTURE_MANAGED_RTK_VERSION = "7.8.9";
-const FIXTURE_MANAGED_RTK_DRIFT_VERSION = "7.8.8";
 
 function tempFixture({
 	packageVersion,
@@ -35,7 +33,6 @@ function tempFixture({
 	installShPiVersion = FIXTURE_MANAGED_PI_VERSION,
 	installMtsPiVersion = installShPiVersion,
 	installMjsPiVersion = installShPiVersion,
-	rtkVersion = FIXTURE_MANAGED_RTK_VERSION,
 	includeLatestReleaseUrl = true,
 } = {}) {
 	const dir = mkdtempSync(join(tmpdir(), "tlh-check-package-versions-test-"));
@@ -47,8 +44,6 @@ function tempFixture({
 	const gnosisScriptPath = join(dir, "tlh-gnosis.mjs");
 	const installMtsPath = join(dir, "tlh-install.mts");
 	const installMjsPath = join(dir, "tlh-install.mjs");
-	const rtkScriptMtsPath = join(dir, "tlh-rtk.mts");
-	const rtkScriptPath = join(dir, "tlh-rtk.mjs");
 
 	writeFileSync(packagePath, `${JSON.stringify({
 		name: "fixture",
@@ -93,10 +88,8 @@ function tempFixture({
 			: "",
 		"",
 	].join("\n"));
-	writeFileSync(rtkScriptMtsPath, `const DEFAULT_RTK_VERSION = ${JSON.stringify(rtkVersion)};\n`);
-	writeFileSync(rtkScriptPath, `const DEFAULT_RTK_VERSION = ${JSON.stringify(rtkVersion)};\n`);
 
-	return { packagePath, lockfilePath, defaultExtensionsPath, installShPath, gnosisScriptMtsPath, gnosisScriptPath, installMtsPath, installMjsPath, rtkScriptMtsPath, rtkScriptPath };
+	return { packagePath, lockfilePath, defaultExtensionsPath, installShPath, gnosisScriptMtsPath, gnosisScriptPath, installMtsPath, installMjsPath };
 }
 
 function runCheckPackageVersions(fixture) {
@@ -111,8 +104,6 @@ function runCheckPackageVersions(fixture) {
 		"--gnosis-script", fixture.installMjsPath,
 		"--pi-install-script", fixture.installMtsPath,
 		"--pi-install-script", fixture.installMjsPath,
-		"--rtk-script", fixture.rtkScriptMtsPath,
-		"--rtk-script", fixture.rtkScriptPath,
 	], {
 		cwd: repoRoot,
 		encoding: "utf8",
@@ -333,33 +324,6 @@ test("check-package-versions rejects managed Gnosis version drift in the TypeScr
 	assert.match(result.stderr, /tlh-gnosis\.mjs: "4\.5\.6"/);
 });
 
-test("check-package-versions rejects latest as the managed RTK defaults", () => {
-	const fixture = tempFixture({
-		packageVersion: "1.2.3",
-		rtkVersion: "latest",
-	});
-
-	const result = runCheckPackageVersions(fixture);
-
-	assert.equal(result.status, 1);
-	assert.match(result.stderr, /tlh-rtk\.mts#DEFAULT_RTK_VERSION must use an exact version, found "latest"/);
-	assert.match(result.stderr, /tlh-rtk\.mjs#DEFAULT_RTK_VERSION must use an exact version, found "latest"/);
-});
-
-test("check-package-versions rejects managed RTK version drift in the TypeScript source", () => {
-	const fixture = tempFixture({
-		packageVersion: "1.2.3",
-		rtkVersion: FIXTURE_MANAGED_RTK_VERSION,
-	});
-	writeFileSync(fixture.rtkScriptMtsPath, `const DEFAULT_RTK_VERSION = ${JSON.stringify(FIXTURE_MANAGED_RTK_DRIFT_VERSION)};\n`);
-
-	const result = runCheckPackageVersions(fixture);
-
-	assert.equal(result.status, 1);
-	assert.match(result.stderr, /Managed RTK defaults must stay in sync:/);
-	assert.match(result.stderr, /tlh-rtk\.mts: "7\.8\.8"/);
-	assert.match(result.stderr, /tlh-rtk\.mjs: "7\.8\.9"/);
-});
 
 test("check-package-versions rejects managed Pi pin drift across package metadata and install sources", () => {
 	const fixture = tempFixture({

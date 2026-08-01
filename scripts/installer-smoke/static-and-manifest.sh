@@ -30,7 +30,6 @@ run_static_checks() {
   node --check scripts/tlh-defaults.mjs
   node --check scripts/tlh-gnosis.mjs
   node --check scripts/tlh-tickets.mjs
-  node --check scripts/tlh-rtk.mjs
   node --check scripts/tlh-update.mjs
   node --check scripts/tlh-wrapper.mjs
   node --check scripts/tlh-install-state.mjs

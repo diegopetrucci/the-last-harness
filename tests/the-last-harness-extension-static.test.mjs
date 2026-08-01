@@ -12,8 +12,6 @@ const PI_EXTENSION_FILE_ENTRYPOINT_EXTENSIONS = new Set([".ts", ".js"]);
 const PI_EXTENSION_DIRECTORY_ENTRYPOINT_FILES = ["package.json", "index.ts", "index.js"];
 
 const extensionSource = readFileSync(new URL("../extensions/the-last-harness.ts", import.meta.url), "utf8");
-const rtkExtensionSource = readFileSync(new URL("../extensions/rtk.ts", import.meta.url), "utf8");
-const rtkExtensionLicenseSource = readFileSync(new URL("../extensions/rtk.APACHE-2.0.txt", import.meta.url), "utf8");
 const annotateGitDiffSource = readFileSync(new URL("../extensions/annotate-git-diff/index.ts", import.meta.url), "utf8");
 const annotateGitDiffUiSource = readFileSync(new URL("../extensions/annotate-git-diff/ui.ts", import.meta.url), "utf8");
 const annotateGitDiffAppSource = readFileSync(new URL("../extensions/annotate-git-diff/web/app.js", import.meta.url), "utf8");
@@ -189,7 +187,6 @@ function parseInlineJsonStringAssignment(source, assignmentName) {
 test("package manifest selects only the ordered generated JS entrypoints", () => {
 	assert.deepEqual(packageJson.pi?.extensions, [
 		"./extensions/annotate-git-diff/index.js",
-		"./extensions/rtk.js",
 		"./extensions/the-last-harness.js",
 	]);
 	assert.deepEqual(existingNestedExtensionEntrypoints("the-last-harness"), []);
@@ -200,31 +197,11 @@ test("package manifest selects only the ordered generated JS entrypoints", () =>
 	assert.deepEqual(discoverPiExtensionEntrypoints(extensionsDir), [
 		"annotate-git-diff/index.js",
 		"annotate-git-diff/index.ts",
-		"rtk.js",
-		"rtk.ts",
 		"the-last-harness.js",
 		"the-last-harness.ts",
 	]);
 });
 
-
-test("vendored RTK extension records Apache provenance and stays rewrite-only", () => {
-	assert.match(rtkExtensionSource, /Vendored from rtk-ai\/rtk v0\.42\.4 \(hooks\/pi\/rtk\.ts\), Apache-2\.0\./);
-	assert.match(rtkExtensionSource, /See \.\/rtk\.APACHE-2\.0\.txt for the upstream license text and provenance\./);
-	assert.match(rtkExtensionLicenseSource, /This file applies to the vendored extension source at extensions\/rtk\.ts\./);
-	assert.match(rtkExtensionLicenseSource, /Upstream project: https:\/\/github\.com\/rtk-ai\/rtk/);
-	assert.match(rtkExtensionLicenseSource, /Upstream tag: v0\.42\.4/);
-	assert.match(rtkExtensionLicenseSource, /Upstream path: hooks\/pi\/rtk\.ts/);
-	assert.match(rtkExtensionLicenseSource, /Apache License\s+Version 2\.0, January 2004/);
-	assert.match(rtkExtensionSource, /RTK_DISABLED=1 and the isolated-profile setting tlh\.rtk\.disabled/);
-	assert.match(rtkExtensionSource, /join\(getAgentDir\(\), "bin", "rtk"\)/);
-	assert.match(rtkExtensionSource, /pi\.exec\(command, \["--version"\]/);
-	assert.match(rtkExtensionSource, /pi\.exec\(rtkCommand, \["rewrite", cmd\]/);
-	assert.doesNotMatch(rtkExtensionSource, /pi\.registerCommand\(/);
-	assert.doesNotMatch(rtkExtensionSource, /"\/rtk"/);
-	assert.match(typesSource, /export type TlhRtkConfig = \{[\s\S]*disabled\?: boolean;/);
-	assert.match(typesSource, /rtk\?: TlhRtkConfig;/);
-});
 
 test("annotate-git-diff source registers the renamed command without a legacy alias", () => {
 	assert.match(annotateGitDiffSource, /pi\.registerCommand\("annotate-git-diff"/);

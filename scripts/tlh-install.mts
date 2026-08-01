@@ -82,7 +82,6 @@ const MIN_NODE_VERSION = "22.19.0";
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
 const DEFAULT_GNOSIS_VERSION = "0.5.4";
 const DEFAULT_WRAPPER_NAME = "tlh";
-const MANAGED_RTK_SUPPORTED_PLATFORMS = new Set(["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"]);
 const VALID_UPDATE_TRACKS = ["latest-release", "pinned-tag", "ref", "custom"] as const;
 // Ownership marker file written into the runtime prefix by TLH on every
 // successful provision/repair/reuse.  Authoritative ownership carrier; written
@@ -138,6 +137,13 @@ interface ParsedArgs extends Record<string, unknown> {
 	printSupportManifest: boolean;
 	help: boolean;
 	piInstalledByTlhOverride: boolean | undefined;
+}
+
+interface ProfileCleanupConfig {
+	agentDir: string;
+	dryRun: boolean;
+	quiet: boolean;
+	verbose: boolean;
 }
 
 interface InstallConfig extends ParsedArgs {
@@ -536,7 +542,7 @@ function validateInputs(config: InstallConfig): void {
 	validateInstallerTargets(config, { validUpdateTracks: VALID_UPDATE_TRACKS });
 }
 
-function log(config: InstallConfig, message = ""): void {
+function log(config: Pick<InstallConfig, "quiet">, message = ""): void {
 	if (!config.quiet) console.log(message);
 }
 
@@ -544,7 +550,7 @@ function verboseLog(config: InstallConfig, message: string): void {
 	if (config.verbose && !config.quiet) console.log(message);
 }
 
-function detailLog(config: InstallConfig, message: string): void {
+function detailLog(config: Pick<InstallConfig, "dryRun" | "quiet" | "verbose">, message: string): void {
 	if (!config.quiet && (config.verbose || config.dryRun)) console.log(message);
 }
 
@@ -997,9 +1003,76 @@ function installPiIfNeeded(config: InstallConfig): PiInstallResult {
 // Retired files that TLH seeded in older isolated profiles.
 // Each path is relative to config.agentDir and must not contain '..' components.
 // The cleanup is idempotent: absent files are silently skipped.
+export const LEGACY_MANAGED_PROFILE_ARTIFACTS = Object.freeze([
+	"bin/rtk",
+	"tlh/tlh-rtk.mjs",
+]);
+
 export const RETIRED_PROFILE_FILES = Object.freeze([
 	"extensions/librarian.json",
 ]);
+
+function cleanupRelativeProfileFiles(config: ProfileCleanupConfig, relativePaths: readonly string[]): void {
+	for (const relativePath of relativePaths) {
+		try {
+			validateProfileRelativePath(relativePath, "retired profile path");
+		} catch {
+			warn(`Skipping invalid retired profile path: ${relativePath}`);
+			continue;
+		}
+
+		if (isSymlink(config.agentDir)) {
+			warn(`Skipping retired profile file cleanup: agentDir is a symlink: ${config.agentDir}`);
+			continue;
+		}
+
+		const components = relativePath.split("/");
+		const parentComponents = components.slice(0, -1);
+		const fileName = components[components.length - 1];
+
+		let cursor = config.agentDir;
+		let skipThis = false;
+		for (const component of parentComponents) {
+			cursor = join(cursor, component);
+			if (isSymlink(cursor)) {
+				warn(`Skipping retired profile file cleanup through symlinked parent: ${cursor}`);
+				skipThis = true;
+				break;
+			}
+			if (!existsSync(cursor)) {
+				skipThis = true;
+				break;
+			}
+		}
+		if (skipThis) continue;
+
+		const target = join(cursor, fileName);
+		try {
+			assertProfilePathWithinAgent(config, target, "retired profile file");
+		} catch (error) {
+			warn(`Skipping retired profile file cleanup (unsafe path): ${target}: ${error instanceof Error ? error.message : String(error)}`);
+			continue;
+		}
+
+		if (isSymlink(target)) continue;
+		if (!existsSync(target)) continue;
+		if (!lstatSync(target).isFile()) continue;
+		if (config.dryRun) {
+			log(config, `Would remove retired profile file: ${target}`);
+			continue;
+		}
+		try {
+			rmSync(target);
+			detailLog(config, `Removed retired profile file: ${target}`);
+		} catch (error) {
+			warn(`failed to remove retired profile file ${target}: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+}
+
+export function cleanupLegacyManagedProfileArtifacts(config: ProfileCleanupConfig): void {
+	cleanupRelativeProfileFiles(config, LEGACY_MANAGED_PROFILE_ARTIFACTS);
+}
 
 export function cleanupRetiredProfileFiles(config: InstallConfig): void {
 	// FIX 2: Read post-merge settings to decide whether to keep managed files.
@@ -1018,12 +1091,8 @@ export function cleanupRetiredProfileFiles(config: InstallConfig): void {
 	}
 
 	for (const relativePath of RETIRED_PROFILE_FILES) {
-		// FIX 2: Skip extensions/librarian.json when a librarian package survived settings migration.
-		// This mirrors the package-level managed-only behavior: a user-added librarian package
-		// is preserved by the migration, so the companion config file should also be kept.
 		if (relativePath === "extensions/librarian.json") {
 			if (postMergePackages === null) {
-				// Cannot read settings; fail safe and skip removal.
 				if (config.dryRun) log(config, `Would skip removal of retired profile file (settings unreadable, fail safe): ${join(config.agentDir, relativePath)}`);
 				continue;
 			}
@@ -1034,66 +1103,7 @@ export function cleanupRetiredProfileFiles(config: InstallConfig): void {
 				continue;
 			}
 		}
-
-		// FIX 1: Validate the relative path has no unsafe components.
-		try {
-			validateProfileRelativePath(relativePath, "retired profile path");
-		} catch {
-			warn(`Skipping invalid retired profile path: ${relativePath}`);
-			continue;
-		}
-
-		// FIX 1: Reject if agentDir itself is a symlink.
-		if (isSymlink(config.agentDir)) {
-			warn(`Skipping retired profile file cleanup: agentDir is a symlink: ${config.agentDir}`);
-			continue;
-		}
-
-		// FIX 1: Walk each parent component of the relative path and reject if any is a symlink.
-		// Do NOT create directories as a side effect — this is a read-only/cleanup operation.
-		const components = relativePath.split("/");
-		const parentComponents = components.slice(0, -1);
-		const fileName = components[components.length - 1];
-
-		let cursor = config.agentDir;
-		let skipThis = false;
-		for (const component of parentComponents) {
-			cursor = join(cursor, component);
-			if (isSymlink(cursor)) {
-				warn(`Skipping retired profile file cleanup through symlinked parent: ${cursor}`);
-				skipThis = true;
-				break;
-			}
-			if (!existsSync(cursor)) {
-				skipThis = true; // parent dir absent → target can't exist; skip silently (idempotent)
-				break;
-			}
-		}
-		if (skipThis) continue;
-
-		const target = join(cursor, fileName);
-
-		// FIX 1: Assert the resolved real target stays within the isolated profile and outside ~/.pi.
-		try {
-			assertProfilePathWithinAgent(config, target, "retired profile file");
-		} catch (error) {
-			warn(`Skipping retired profile file cleanup (unsafe path): ${target}: ${error instanceof Error ? error.message : String(error)}`);
-			continue;
-		}
-
-		if (isSymlink(target)) continue; // Conservative: never remove or follow symlinks
-		if (!existsSync(target)) continue; // Idempotent: absent is fine
-		if (!lstatSync(target).isFile()) continue; // Conservative: only regular files
-		if (config.dryRun) {
-			log(config, `Would remove retired profile file: ${target}`);
-			continue;
-		}
-		try {
-			rmSync(target);
-			detailLog(config, `Removed retired profile file: ${target}`);
-		} catch (error) {
-			warn(`failed to remove retired profile file ${target}: ${error instanceof Error ? error.message : String(error)}`);
-		}
+		cleanupRelativeProfileFiles(config, [relativePath]);
 	}
 }
 
@@ -1570,45 +1580,6 @@ function gnosisInstallSkippedByEnv(config: InstallConfig): boolean {
 	return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
 }
 
-function managedRtkSupportedPlatform(): boolean {
-	return MANAGED_RTK_SUPPORTED_PLATFORMS.has(`${process.platform}-${process.arch}`);
-}
-
-function configureRtk(config: InstallConfig): void {
-	if (!managedRtkSupportedPlatform()) return;
-	if (!config.supportFilePaths.TLH_RTK_SCRIPT || !existsSync(config.supportFilePaths.TLH_RTK_SCRIPT)) {
-		if (config.dryRun && config.supportFilesDryRunSkipped) {
-			log(config, "Would install required managed RTK after fetching support files.");
-			return;
-		}
-		throw new Error(`required managed RTK support script not found for ref ${config.ref}; re-run the installer from a release that includes scripts/tlh-rtk.mjs`);
-	}
-
-	const args: string[] = [
-		"--agent-dir",
-		config.agentDir,
-		"--target",
-		join(config.agentDir, "bin", "rtk"),
-		"install-managed",
-	];
-	if (config.dryRun) args.push("--dry-run", "--detail");
-	else if (config.verbose) args.push("--detail");
-	if (config.quiet) args.push("--quiet");
-
-	const result = spawnSync(process.execPath, [config.supportFilePaths.TLH_RTK_SCRIPT, ...args], {
-		env: inheritedCommandEnv(config, { PI_CODING_AGENT_DIR: config.agentDir }),
-		encoding: "utf8",
-		maxBuffer: COMMAND_MAX_BUFFER,
-		stdio: ["ignore", "pipe", "pipe"],
-	});
-	if (result.stderr) process.stderr.write(result.stderr);
-	if (result.error || result.status !== 0) {
-		const status = result.status ?? result.signal ?? spawnErrorCode(result.error) ?? 1;
-		const output = `${result.stderr || ""}${result.stdout || ""}`.trim();
-		throw new Error(output || `failed to install managed RTK (exit ${status})`);
-	}
-}
-
 function configureGnosis(config: InstallConfig): void {
 	if (gnosisInstallSkippedByEnv(config)) {
 		log(config, "Skipping Gnosis integration (TLH_SKIP_GNOSIS_INSTALL is set).");
@@ -1786,9 +1757,9 @@ async function runInstallFlow(config: InstallConfig): Promise<void> {
 	installHarnessPackage(config);
 	await installSupportFilesToProfile(config);
 	await mergeSettings(config);
+	cleanupLegacyManagedProfileArtifacts(config);
 	if (!config.noSettings) cleanupRetiredProfileFiles(config);
 	if (!config.noSettings) cleanupOldSettingsBackups(config);
-	configureRtk(config);
 	await writeInstallState(config);
 	installDefaultExtensions(config);
 	configureGnosis(config);
