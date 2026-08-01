@@ -292,6 +292,9 @@ function capScoutSubagentTimeout(input: unknown): void {
 	if (
 		!isRecord(input) ||
 		isOpaqueSubagentManagementActionInput(input) ||
+		// pi-subagents 0.31.11 does not reliably propagate resume timeouts end to end, so TLH leaves
+		// resume timeouts unchanged for now, even when resume.chain includes capped scout targets.
+		isSubagentResumeAction(input) ||
 		!subagentCallTargetsMatching(input, (agent) => SCOUT_TIMEOUT_CAPPED_SUBAGENTS.has(agent.trim().toLowerCase()))
 	) {
 		return;
@@ -306,7 +309,7 @@ function capScoutSubagentTimeout(input: unknown): void {
 }
 
 function embeddedDelegationBlockedReason(selection: TlhPrimaryAgentSelection, input: unknown): string | undefined {
-	// Opaque management actions stay exempt; resume.chain is treated as new execution.
+	// Opaque management actions stay exempt; resume.chain is still treated as new execution.
 	if (isOpaqueSubagentManagementActionInput(input)) {
 		return undefined;
 	}

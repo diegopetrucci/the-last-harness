@@ -108,7 +108,7 @@ test("tool_call caps targeted scout execution timeouts without affecting stricte
 	}
 });
 
-test("tool_call caps targeted scout resume-chain executions but leaves opaque management timeouts unchanged", async () => {
+test("tool_call leaves every resume timeout unchanged while still defaulting scope for resume-chain execution", async () => {
 	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
 	const ctx = createToolCallContext([
 		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
@@ -126,6 +126,16 @@ test("tool_call caps targeted scout resume-chain executions but leaves opaque ma
 			timeoutMs: 420_000,
 		},
 	};
+	const stricterResumeChainEvent = {
+		toolName: "subagent",
+		input: {
+			action: "resume",
+			id: "run-124",
+			message: "Continue the approved ticket.",
+			chain: [{ agent: "repo-scout", task: "Map the repository" }],
+			timeoutMs: 120_000,
+		},
+	};
 	const listEvent = { toolName: "subagent", input: { action: "list", timeoutMs: 420_000 } };
 	const opaqueResumeEvent = {
 		toolName: "subagent",
@@ -133,9 +143,14 @@ test("tool_call caps targeted scout resume-chain executions but leaves opaque ma
 	};
 
 	assert.equal(await toolCall(resumeChainEvent, ctx), undefined);
-	assert.equal(resumeChainEvent.input.timeoutMs, SCOUT_RUN_MAX_TIMEOUT_MS);
+	assert.equal(resumeChainEvent.input.timeoutMs, 420_000);
 	assert.equal(resumeChainEvent.input.agentScope, "user");
 	assert.equal(resumeChainEvent.input.context, "fresh");
+
+	assert.equal(await toolCall(stricterResumeChainEvent, ctx), undefined);
+	assert.equal(stricterResumeChainEvent.input.timeoutMs, 120_000);
+	assert.equal(stricterResumeChainEvent.input.agentScope, "user");
+	assert.equal(stricterResumeChainEvent.input.context, "fresh");
 
 	assert.equal(await toolCall(listEvent, ctx), undefined);
 	assert.equal(listEvent.input.timeoutMs, 420_000);

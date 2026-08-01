@@ -212,6 +212,7 @@ function isOpaqueSubagentManagementActionInput(input) {
 function capScoutSubagentTimeout(input) {
     if (!isRecord(input) ||
         isOpaqueSubagentManagementActionInput(input) ||
+        isSubagentResumeAction(input) ||
         !subagentCallTargetsMatching(input, (agent) => SCOUT_TIMEOUT_CAPPED_SUBAGENTS.has(agent.trim().toLowerCase()))) {
         return;
     }
