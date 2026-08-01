@@ -32,7 +32,7 @@ const RUN_HISTORY_FILENAME = "run-history.jsonl";
 // ---------------------------------------------------------------------------
 // Fix 3: correct the usage string — this is contributor tooling, not a tlh subcommand.
 function usage() {
-    return `Usage: node scripts/tlh-sessions.mjs [options]
+    return `Usage: tlh sessions [options]
 
 Read-only session analysis. Emits JSON to stdout.
 

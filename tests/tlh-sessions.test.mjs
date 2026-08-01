@@ -407,12 +407,12 @@ test("tlh-sessions: per-tool rollup aggregates tool calls across sessions", (t) 
 // Tests: error handling
 // ---------------------------------------------------------------------------
 
-// Fix 3: usage string must say "node scripts/tlh-sessions.mjs", not "tlh sessions"
+// The usage string now says "tlh sessions" — the CLI is exposed as a wrapper subcommand.
 test("tlh-sessions: --help prints usage with correct invocation and exits 0", (t) => {
 	const { agentDir } = makeAgentFixture(t);
 	const result = runSessions(agentDir, ["--help"]);
 	assert.equal(result.status, 0);
-	assert.ok(result.stdout.includes("node scripts/tlh-sessions.mjs"), "usage must show correct node invocation");
+	assert.ok(result.stdout.includes("tlh sessions"), "usage must show 'tlh sessions' as the invocation");
 	assert.ok(result.stdout.includes("per-session"), "usage must mention per-session");
 	assert.ok(result.stdout.includes("per-tool"), "usage must mention per-tool");
 	// Fix 7: --include-content must not be advertised

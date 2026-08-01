@@ -6,7 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
-- New read-only `scripts/tlh-sessions.mjs` CLI for inspecting local session data. Run with `--mode per-session` or `--mode per-tool` to get a JSON summary; the active isolated profile is resolved automatically. Raw paths, cwd values, and project labels are omitted by default and only included when `--include-paths` is passed. The script never reads `run-history.jsonl` and never writes to session files.
+- New read-only `tlh sessions` subcommand for inspecting local session data. Run `tlh sessions --mode per-session` or `tlh sessions --mode per-tool` to get a JSON summary; the active isolated profile is resolved automatically. Raw paths, cwd values, and project labels are omitted by default and only included when `--include-paths` is passed. The subcommand never reads `run-history.jsonl` and never writes to session files. Backed by `scripts/tlh-sessions.mjs`.
 - `/tokens` now reports median observed wall-clock latency per tool alongside the existing cost and token data. Latency is the interval between the recorded call and result events and includes any queueing or paused-run time.
 
 ### Changed

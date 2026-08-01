@@ -7,16 +7,16 @@ Use the session analysis CLI as the primary path — it resolves the active prof
 
 ```sh
 # Per-session summary (tool-pair statistics, coverage)
-node scripts/tlh-sessions.mjs --mode per-session | jq '.'
+tlh sessions --mode per-session | jq '.'
 
 # Last 7 days only — startedAt is ISO 8601, so string comparison is correct
-node scripts/tlh-sessions.mjs --mode per-session | jq --arg cutoff "$(node -e 'process.stdout.write(new Date(Date.now() - 7*864e5).toISOString())')" '[.sessions[] | select(.startedAt >= $cutoff)]'
+tlh sessions --mode per-session | jq --arg cutoff "$(node -e 'process.stdout.write(new Date(Date.now() - 7*864e5).toISOString())')" '[.sessions[] | select(.startedAt >= $cutoff)]'
 
 # Per-tool aggregation across all sessions (not time-filtered)
-node scripts/tlh-sessions.mjs --mode per-tool | jq '.'
+tlh sessions --mode per-tool | jq '.'
 
 # Add file references when concrete evidence is needed
-node scripts/tlh-sessions.mjs --mode per-session --include-paths | jq '.'
+tlh sessions --mode per-session --include-paths | jq '.'
 ```
 
 Output is JSON with `schemaVersion`, `provenance`, and `coverage` fields. Default output omits raw paths; pass `--include-paths` when you need them to cite evidence. Raw session files remain readable directly when the CLI's fixed modes are insufficient — the CLI is the fast path, not a hard restriction.
