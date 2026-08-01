@@ -101,61 +101,87 @@ export function copyTlhSubagentPrompts(config, sourceDir, { prompts = TLH_SUBAGE
 }
 /**
  * Provision the subagent extension config at extensions/subagent/config.json
- * with TLH-preferred defaults.
+ * with TLH-preferred defaults: compact tool descriptions and a first active
+ * long-running notice after 270000ms (4m30).
  *
- * Idempotency: if toolDescriptionMode is already present (set to any value,
- * including a user-chosen override such as "full"), it is left untouched.
- * Re-running the installer is therefore safe and will not clobber user edits.
+ * Each default is added independently when its setting is missing. Existing
+ * user values, including a user-chosen toolDescriptionMode such as "full" or
+ * an activeNoticeAfterMs override, are left untouched. Re-running the
+ * installer is therefore safe and will not clobber user edits.
  *
- * Revert path: to disable compact descriptions, open
- * <agentDir>/extensions/subagent/config.json and set
- * "toolDescriptionMode": "full". That value will be preserved on subsequent
- * installer runs. Removing the key is only a temporary revert — the installer
- * will re-provision "compact" on the next install or update run.
+ * Revert path: open <agentDir>/extensions/subagent/config.json and set either
+ * "toolDescriptionMode" or "control.activeNoticeAfterMs" to the value you
+ * want. Existing values are preserved on subsequent installer runs. To return
+ * a setting to the managed default, remove that key and rerun install or
+ * update; missing defaults are re-provisioned. Valid non-object or unreadable
+ * config files are preserved untouched.
  *
  * Runtime note: toolDescriptionMode requires pi-subagents >= v0.33.0
  * (fork feature). Older builds simply ignore the unknown key.
  */
-/**
- * Returns true when provisionSubagentExtensionConfig would write to disk,
- * false when it would leave the existing file untouched (already has the key,
- * is a non-object JSON value, or is unreadable).
- */
-export function subagentExtensionConfigNeedsProvisioning(config) {
+const TLH_TOOL_DESCRIPTION_MODE = "compact";
+const TLH_ACTIVE_NOTICE_AFTER_MS = 270000;
+function activeNoticeCanBeProvisioned(existing) {
+    return !("control" in existing) || isPlainObject(existing.control);
+}
+function activeNoticeIsMissing(existing) {
+    return activeNoticeCanBeProvisioned(existing)
+        && (!isPlainObject(existing.control) || !("activeNoticeAfterMs" in existing.control));
+}
+function readExistingSubagentExtensionConfig(config) {
     const configPath = join(config.agentDir, "extensions/subagent/config.json");
     if (!existsSync(configPath))
-        return true;
+        return {};
     try {
         const parsed = readJsonFile(configPath, { missingValue: {} });
-        if (!isPlainObject(parsed))
-            return false;
-        return !("toolDescriptionMode" in parsed);
+        return isPlainObject(parsed) ? parsed : null;
     }
     catch {
-        return false;
+        return null;
     }
+}
+function missingSubagentExtensionDefaultLabels(existing) {
+    const missingDefaults = [];
+    if (!("toolDescriptionMode" in existing))
+        missingDefaults.push(`toolDescriptionMode: ${TLH_TOOL_DESCRIPTION_MODE}`);
+    if (activeNoticeIsMissing(existing)) {
+        missingDefaults.push(`control.activeNoticeAfterMs: ${TLH_ACTIVE_NOTICE_AFTER_MS} (4m30)`);
+    }
+    return missingDefaults;
+}
+/**
+ * Returns the display labels for defaults that provisionSubagentExtensionConfig
+ * can write. An empty result means the existing config is complete, a valid
+ * non-object JSON value, or unreadable.
+ */
+export function subagentExtensionConfigMissingDefaults(config) {
+    const existing = readExistingSubagentExtensionConfig(config);
+    return existing ? missingSubagentExtensionDefaultLabels(existing) : [];
+}
+/**
+ * Returns true when provisionSubagentExtensionConfig would write to disk,
+ * false when it would leave the existing file untouched (all writable defaults
+ * are present, the config has a non-object JSON value, or it is unreadable).
+ */
+export function subagentExtensionConfigNeedsProvisioning(config) {
+    return subagentExtensionConfigMissingDefaults(config).length > 0;
 }
 export function provisionSubagentExtensionConfig(config) {
     const relativePath = "extensions/subagent/config.json";
-    const configPath = join(config.agentDir, relativePath);
-    let existing = {};
-    if (existsSync(configPath)) {
-        try {
-            const parsed = readJsonFile(configPath, { missingValue: {} });
-            if (isPlainObject(parsed))
-                existing = parsed;
-            else
-                return; // Valid JSON but not a plain object (e.g. null, array, scalar) — preserve untouched.
-        }
-        catch {
-            // Unable to read/parse existing config — leave it untouched.
-            return;
-        }
-    }
-    // Preserve any value the user has already set (including explicit "full").
-    if ("toolDescriptionMode" in existing)
+    const existing = readExistingSubagentExtensionConfig(config);
+    if (!existing)
+        return;
+    const missingToolDescriptionMode = !("toolDescriptionMode" in existing);
+    const missingActiveNotice = activeNoticeIsMissing(existing);
+    if (!missingToolDescriptionMode && !missingActiveNotice)
         return;
     ensureSafeProfileDir(config, "extensions/subagent", "TLH subagent extension config directory");
-    const updated = { toolDescriptionMode: "compact", ...existing };
+    const updated = { ...existing };
+    if (missingToolDescriptionMode)
+        updated.toolDescriptionMode = TLH_TOOL_DESCRIPTION_MODE;
+    if (missingActiveNotice) {
+        const existingControl = isPlainObject(existing.control) ? existing.control : {};
+        updated.control = { activeNoticeAfterMs: TLH_ACTIVE_NOTICE_AFTER_MS, ...existingControl };
+    }
     writeSafeProfileFile(config, relativePath, JSON.stringify(updated, null, 2) + "\n", "TLH subagent extension config");
 }

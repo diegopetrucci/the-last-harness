@@ -12,9 +12,13 @@ All notable changes to The Last Harness will be documented in this file.
 ### Changed
 
 - Removed RTK from TLH.
+- The bundled `developer` subagent now defaults to OpenAI Codex `openai-codex/gpt-5.6-luna` and Anthropic `anthropic/claude-sonnet-4-6`, with max thinking on both providers.
+- The installer now provisions missing isolated subagent defaults for compact tool descriptions and `control.activeNoticeAfterMs: 270000` (4m30), while preserving existing overrides and unrelated configuration.
 - Bumped the bundled critical `pi-subagents` default extension pin from `npm:@diegopetrucci/pi-subagents@0.31.10` to `npm:@diegopetrucci/pi-subagents@0.31.11`.
 - Bumped bundled Anthropic defaults for Architect, Product, Bug-hunter, `code-reviewer`, `oracle`, and `contrarian` to Claude Opus 5.0; Architect, `code-reviewer`, `oracle`, and `contrarian` now prefer OpenAI Codex GPT-5.6 Sol on the OpenAI Codex path.
 - **pi-intercom retired:** the `pi-intercom` default remains force-removed from isolated settings on update. With bundled `pi-subagents` 0.31.11, child-session escalations should use `contact_supervisor`. Blocking requests durably pause and are resolved with `subagent` resume or interrupt. `subagent_supervisor` provides pending/status inspection and legacy live-session reply compatibility when available. Use `steer` for non-blocking guidance. The `/intercom` overlay, `Alt+M` keybind, and peer-session ask/reply are no longer available.
+- Primary-agent runtime now hard-caps new execution-bearing librarian, web-scout, repo-scout, and diff-summarizer runs at 360000ms, including mixed batches, while preserving stricter caller-provided timeouts, leaving `resume` timeouts unchanged (including resume chains), and leaving other opaque management actions unchanged.
+- Packaged librarian, web-scout, repo-scout, and diff-summarizer guidance now defines scoped stop rules, architect async steering via `steer`, and per-agent tool-call budgets: soft tool-call thresholds provide an advisory wrap-up nudge, while at hard thresholds bundled `pi-subagents` 0.31.11's omitted block list blocks only `read`, `grep`, `find`, and `ls`, leaving `bash` and web research tools available.
 - The MCP footer status now appends an approximate retained-context estimate for active MCP usage, shown inline with the existing `MCP: ... servers` status.
 
 ### Fixed

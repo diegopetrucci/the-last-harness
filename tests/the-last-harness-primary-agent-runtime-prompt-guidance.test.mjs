@@ -42,7 +42,7 @@ test("disabled primary mode still injects provider-aware subagent models", async
 
 	assert.equal(await toolCall(event, ctx), undefined);
 	assert.equal(event.input.model, "openai-codex/gpt-5.6-luna");
-	assert.equal(event.input.thinking, "max");
+	assert.equal(Object.hasOwn(event.input, "thinking"), false);
 	assert.equal(event.input.agentScope, undefined);
 	assert.equal(event.input.context, "resume");
 });
@@ -133,7 +133,7 @@ test("enabled primary mode validates subagent input after injecting provider-awa
 			'TLH primary-agent subagent execution may not use context: "resume". TLH child sessions must start fresh so parent primary-agent/Gnosis context is not leaked.',
 	});
 	assert.equal(event.input.model, "openai-codex/gpt-5.6-luna");
-	assert.equal(event.input.thinking, "max");
+	assert.equal(Object.hasOwn(event.input, "thinking"), false);
 	assert.equal(event.input.agentScope, "user");
 });
 
