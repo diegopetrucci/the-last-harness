@@ -242,7 +242,7 @@ function writeFakeTk(path) {
 
 function registerScriptedProviders(modelRegistry, scriptState) {
 	const models = {
-		anthropic: ["claude-opus-5-0", "claude-sonnet-4-6"],
+		anthropic: ["claude-opus-5", "claude-sonnet-4-6"],
 		"openai-codex": ["gpt-5.4", "gpt-5.5", "gpt-5.6-sol"],
 	};
 	for (const [provider, ids] of Object.entries(models)) {
@@ -272,7 +272,7 @@ function currentRole() {
 }
 
 function scriptedRoleForModel(model) {
-	if (model.provider === "anthropic" && model.id === "claude-opus-5-0") {
+	if (model.provider === "anthropic" && model.id === "claude-opus-5") {
 		return "architect";
 	}
 	if (model.provider === "openai-codex" && model.id === "gpt-5.4") {
@@ -610,7 +610,7 @@ test("hermetic core architect workflow runs end-to-end with deterministic subage
 		appendSystemPrompt: [],
 	});
 	await resourceLoader.reload();
-	const architectModel = modelRegistry.find("anthropic", "claude-opus-5-0");
+	const architectModel = modelRegistry.find("anthropic", "claude-opus-5");
 	assert.ok(architectModel);
 
 	const { session } = await withEnv(createHermeticRuntimeEnv(fixture), async () => createAgentSession({
