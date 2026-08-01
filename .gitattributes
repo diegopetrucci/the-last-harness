@@ -1,6 +1,7 @@
 # Generated runtime outputs compiled from TypeScript sources.
 # Hand-written .mjs/.js runtime files are intentionally absent from this list.
 scripts/lib/default-extensions.mjs linguist-generated=true
+scripts/lib/session-analysis.mjs linguist-generated=true
 scripts/lib/tlh-install-git.mjs linguist-generated=true
 scripts/lib/tlh-install-package-source.mjs linguist-generated=true
 scripts/lib/tlh-install-paths.mjs linguist-generated=true
@@ -16,6 +17,7 @@ scripts/tlh-doctor.mjs linguist-generated=true
 scripts/tlh-gnosis.mjs linguist-generated=true
 scripts/tlh-install.mjs linguist-generated=true
 scripts/tlh-recover-update.mjs linguist-generated=true
+scripts/tlh-sessions.mjs linguist-generated=true
 scripts/tlh-tickets.mjs linguist-generated=true
 scripts/tlh-update.mjs linguist-generated=true
 scripts/tlh-wrapper.mjs linguist-generated=true
