@@ -348,7 +348,10 @@ test("before_agent_start reapplies primary defaults without a one-shot model gat
 	assert.match(applyPrimaryThinking, /currentThinkingSatisfiesPrimaryFloor\(primary, currentThinking\)/);
 	assert.match(promptsSource, /preferCurrentOpenaiModel: parseBooleanValue\(frontmatter\.preferCurrentOpenaiModel\)/);
 	assert.match(promptsSource, /preferOppositeProvider: parseBooleanValue\(frontmatter\.preferOppositeProvider\)/);
+	assert.match(promptsSource, /thinking: agent\.thinking/);
+	assert.match(promptsSource, /tlhOpenaiThinking: agent\.tlhOpenaiThinking/);
 	assert.match(promptsSource, /preferOppositeProvider: agent\.preferOppositeProvider/);
+	assert.match(typesSource, /tlhOpenaiThinking\?: ThinkingLevel;/);
 	assert.match(typesSource, /preferOppositeProvider\?: boolean;/);
 	assert.match(promptsSource, /applyModel: parseBooleanValue\(frontmatter\.applyModel\)/);
 	assert.match(promptsSource, /applyThinking: parseBooleanValue\(frontmatter\.applyThinking\)/);
@@ -383,10 +386,10 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	assert.equal(architect.model, "anthropic/claude-opus-5");
 	assert.equal(architect.thinking, "high");
 	assert.deepEqual(architect.tlhOpenaiModels, ["openai-codex/gpt-5.6-sol"]);
-	assert.equal(rush.model, "anthropic/claude-opus-4-8");
-	assert.deepEqual(rush.tlhOpenaiModels, ["openai-codex/gpt-5.5"]);
+	assert.equal(rush.model, "anthropic/claude-sonnet-4-6");
+	assert.deepEqual(rush.tlhOpenaiModels, ["openai-codex/gpt-5.6-luna"]);
 	assert.equal(rush.thinking, "low");
-	assert.equal(rush.tlhOpenaiThinking, "off");
+	assert.equal(rush.tlhOpenaiThinking, "medium");
 	assert.equal(rush.preferCurrentOpenaiModel, true);
 	assert.equal(architect.preferCurrentOpenaiModel, undefined);
 	assert.equal(rush.applyModel, true);
@@ -400,6 +403,7 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	const product = primaryAgents.get("product");
 	assert.ok(product, "product primary prompt should load");
 	assert.equal(product.model, "anthropic/claude-opus-5");
+	assert.deepEqual(product.tlhOpenaiModels, ["openai-codex/gpt-5.6-sol"]);
 	assert.equal(product.thinking, "high");
 	assert.equal(product.applyModel, true);
 	assert.equal(product.applyThinking, true);
@@ -408,6 +412,7 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	const bugHunter = primaryAgents.get("bug-hunter");
 	assert.ok(bugHunter, "bug-hunter primary prompt should load");
 	assert.equal(bugHunter.model, "anthropic/claude-opus-5");
+	assert.deepEqual(bugHunter.tlhOpenaiModels, ["openai-codex/gpt-5.6-sol"]);
 	assert.equal(bugHunter.thinking, "high");
 	assert.equal(bugHunter.applyModel, true);
 	assert.equal(bugHunter.applyThinking, true);
@@ -417,7 +422,8 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	const subagentMetadata = loadSubagentMetadata();
 	const developer = subagentMetadata.find((agent) => agent.name === "developer");
 	assert.deepEqual(developer?.tlhAnthropicModels, ["anthropic/claude-sonnet-4-6"]);
-	assert.deepEqual(developer?.tlhOpenaiModels, ["openai-codex/gpt-5.4"]);
+	assert.deepEqual(developer?.tlhOpenaiModels, ["openai-codex/gpt-5.6-luna"]);
+	assert.equal(developer?.tlhOpenaiThinking, "max");
 	for (const name of ["code-reviewer", "oracle", "contrarian"]) {
 		const agent = subagentMetadata.find((candidate) => candidate.name === name);
 		assert.deepEqual(agent?.tlhAnthropicModels, ["anthropic/claude-opus-5"], `${name} Anthropic default`);

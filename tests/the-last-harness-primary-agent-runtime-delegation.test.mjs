@@ -326,7 +326,7 @@ test("/switch-primary-agent model reset clears the active primary model override
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
 	const initialSettings = `${JSON.stringify({
-		tlh: { primaryAgent: { modelOverrides: { architect: "openai-codex/gpt-5.5" } } },
+		tlh: { primaryAgent: { modelOverrides: { architect: "openai-codex/gpt-5.6-luna" } } },
 	}, null, 2)}\n`;
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -339,17 +339,17 @@ test("/switch-primary-agent model reset clears the active primary model override
 			cwd: fixture.cwd,
 			modelRegistry: {
 				getAvailable: () => [
-					{ provider: "openai-codex", id: "gpt-5.5" },
-					{ provider: "anthropic", id: "claude-opus-5" },
+					{ provider: "openai-codex", id: "gpt-5.6-luna" },
+					{ provider: "anthropic", id: "claude-sonnet-4-6" },
 				],
 			},
-			model: { provider: "openai-codex", id: "gpt-5.4" },
+			model: { provider: "openai-codex", id: "gpt-5.6-luna" },
 		});
 		await command.handler("model reset", reset.ctx);
 
 		const written = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
 		assert.equal(written.tlh.primaryAgent.modelOverrides, undefined);
-		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-5" });
+		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-sonnet-4-6" });
 		assert.equal(reset.notifications.at(-1)?.type, "info");
 		assert.match(reset.notifications.at(-1)?.message ?? "", /Cleared model override for architect/);
 	});
@@ -391,7 +391,7 @@ test("/switch-primary-agent status hides stale overrides for locked primaries", 
 	const primaryAgents = new Map([["rush", lockedRushPrimary()]]);
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		writePrimaryConfig(fixture.agent, { modelOverrides: { rush: "anthropic/claude-sonnet-4-6" } });
+		writePrimaryConfig(fixture.agent, { modelOverrides: { rush: "anthropic/claude-opus-5" } });
 		const { pi } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
 		const command = pi.commands.get("switch-primary-agent");
 		assert.ok(command, "registers /switch-primary-agent");
@@ -404,7 +404,7 @@ test("/switch-primary-agent status hides stale overrides for locked primaries", 
 		assert.equal(status.notifications.at(-1)?.type, "info");
 		assert.match(status.notifications.at(-1)?.message ?? "", /Primary agent: rush\./);
 		assert.match(status.notifications.at(-1)?.message ?? "", /Model override: none\./);
-		assert.doesNotMatch(status.notifications.at(-1)?.message ?? "", /claude-sonnet-4-6/);
+		assert.doesNotMatch(status.notifications.at(-1)?.message ?? "", /claude-opus-5/);
 	});
 });
 
@@ -412,7 +412,7 @@ test("/switch-primary-agent model reset clears a stale locked-primary model over
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const primaryAgents = new Map([["rush", lockedRushPrimary()]]);
 	const initialSettings = `${JSON.stringify({
-		tlh: { primaryAgent: { modelOverrides: { rush: "anthropic/claude-sonnet-4-6" } } },
+		tlh: { primaryAgent: { modelOverrides: { rush: "anthropic/claude-opus-5" } } },
 	}, null, 2)}\n`;
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -425,14 +425,14 @@ test("/switch-primary-agent model reset clears a stale locked-primary model over
 			{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
 		], {
 			cwd: fixture.cwd,
-			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-8" }] },
-			model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-sonnet-4-6" }] },
+			model: { provider: "anthropic", id: "claude-opus-5" },
 		});
 		await command.handler("model reset", reset.ctx);
 
 		const written = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
 		assert.equal(written.tlh.primaryAgent.modelOverrides, undefined);
-		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-4-8" });
+		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-sonnet-4-6" });
 		assert.equal(reset.notifications.at(-1)?.type, "info");
 		assert.match(reset.notifications.at(-1)?.message ?? "", /Cleared stale ignored model override for rush/);
 	});

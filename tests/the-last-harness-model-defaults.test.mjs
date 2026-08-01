@@ -11,8 +11,10 @@ const {
 
 const developer = {
 	name: "developer",
-	tlhOpenaiModels: ["openai-codex/gpt-5.4"],
-	tlhAnthropicModels: ["anthropic/claude-sonnet-5"],
+	tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
+	tlhAnthropicModels: ["anthropic/claude-sonnet-4-6"],
+	thinking: "medium",
+	tlhOpenaiThinking: "max",
 };
 
 const codeReviewer = {
@@ -47,10 +49,10 @@ const openaiParentPrefersAnthropicReviewer = {
 
 const rushLikePrimary = {
 	name: "rush",
-	model: "anthropic/claude-opus-4-8",
-	tlhOpenaiModels: ["openai-codex/gpt-5.5"],
+	model: "anthropic/claude-sonnet-4-6",
+	tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
 	thinking: "low",
-	tlhOpenaiThinking: "off",
+	tlhOpenaiThinking: "medium",
 	preferCurrentOpenaiModel: true,
 };
 
@@ -67,55 +69,54 @@ const agents = new Map([
 ]);
 
 const anthropicAvailable = [
-	{ provider: "anthropic", id: "claude-sonnet-5" },
 	{ provider: "anthropic", id: "claude-sonnet-4-6" },
 	{ provider: "anthropic", id: "claude-opus-5" },
-	{ provider: "anthropic", id: "claude-opus-4-8" },
 ];
 
 const codexAvailable = [
-	{ provider: "openai-codex", id: "gpt-5.4" },
-	{ provider: "openai-codex", id: "gpt-5.5" },
+	{ provider: "openai-codex", id: "gpt-5.6-luna" },
 	{ provider: "openai-codex", id: "gpt-5.6-sol" },
 ];
 
 const openaiAvailable = [
-	{ provider: "openai", id: "gpt-5.4" },
-	{ provider: "openai", id: "gpt-5.5" },
+	{ provider: "openai", id: "gpt-5.6" },
 ];
 
 const reducedIndependenceNotice = "TLH fell back to a same-provider review model; review independence is reduced.";
 
 test("provider-aware model resolver follows active Anthropic provider for non-review subagents", () => {
-	assert.equal(selectProviderAwareAgentModelId(developer, anthropicAvailable, "anthropic"), "anthropic/claude-sonnet-5");
+	assert.equal(selectProviderAwareAgentModelId(developer, anthropicAvailable, "anthropic"), "anthropic/claude-sonnet-4-6");
 
 	const input = { agent: "developer", task: "Implement the ticket" };
 	assert.equal(applyProviderAwareSubagentModels(input, agents, anthropicAvailable, "anthropic"), 1);
-	assert.equal(input.model, "anthropic/claude-sonnet-5");
+	assert.equal(input.model, "anthropic/claude-sonnet-4-6");
 });
 
 test("provider-aware model resolver follows active provider for non-review subagents when both providers are available", () => {
 	const available = [...anthropicAvailable, ...codexAvailable];
 
 	// OpenAI-Codex is active → picks codex model, not Anthropic (the key fix)
-	assert.equal(selectProviderAwareAgentModelId(developer, available, "openai-codex"), "openai-codex/gpt-5.4");
+	assert.equal(selectProviderAwareAgentModelId(developer, available, "openai-codex"), "openai-codex/gpt-5.6-luna");
 	const codexInput = { agent: "developer", task: "Implement the ticket" };
 	assert.equal(applyProviderAwareSubagentModels(codexInput, agents, available, "openai-codex"), 1);
-	assert.equal(codexInput.model, "openai-codex/gpt-5.4");
+	assert.equal(codexInput.model, "openai-codex/gpt-5.6-luna");
+	assert.equal(codexInput.thinking, "max");
 
 	// Anthropic is active → picks Anthropic model
-	assert.equal(selectProviderAwareAgentModelId(developer, available, "anthropic"), "anthropic/claude-sonnet-5");
+	assert.equal(selectProviderAwareAgentModelId(developer, available, "anthropic"), "anthropic/claude-sonnet-4-6");
 	const anthropicInput = { agent: "developer", task: "Implement the ticket" };
 	assert.equal(applyProviderAwareSubagentModels(anthropicInput, agents, available, "anthropic"), 1);
-	assert.equal(anthropicInput.model, "anthropic/claude-sonnet-5");
+	assert.equal(anthropicInput.model, "anthropic/claude-sonnet-4-6");
+	assert.equal(Object.hasOwn(anthropicInput, "thinking"), false);
 });
 
 test("provider-aware model resolver picks OpenAI Codex when Anthropic is unavailable", () => {
-	assert.equal(selectProviderAwareAgentModelId(developer, codexAvailable, "openai-codex"), "openai-codex/gpt-5.4");
+	assert.equal(selectProviderAwareAgentModelId(developer, codexAvailable, "openai-codex"), "openai-codex/gpt-5.6-luna");
 
 	const input = { agent: "developer", task: "Implement the ticket" };
 	assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 1);
-	assert.equal(input.model, "openai-codex/gpt-5.4");
+	assert.equal(input.model, "openai-codex/gpt-5.6-luna");
+	assert.equal(input.thinking, "max");
 });
 
 test("provider-aware model resolver does not auto-inject OpenAI API models", () => {
@@ -127,8 +128,8 @@ test("provider-aware model resolver does not auto-inject OpenAI API models", () 
 
 test("provider-aware model resolver keeps Codex defaults even when regular OpenAI models are also available", () => {
 	const available = [...codexAvailable, ...openaiAvailable];
-	assert.equal(selectProviderAwareAgentModelId(developer, available, "openai"), "openai-codex/gpt-5.4");
-	assert.equal(selectProviderAwareAgentModelId(developer, available, "openai-codex"), "openai-codex/gpt-5.4");
+	assert.equal(selectProviderAwareAgentModelId(developer, available, "openai"), "openai-codex/gpt-5.6-luna");
+	assert.equal(selectProviderAwareAgentModelId(developer, available, "openai-codex"), "openai-codex/gpt-5.6-luna");
 });
 
 test("provider-aware opposite-provider preference picks Codex for opted-in Anthropic-session reviewers", () => {
@@ -223,23 +224,23 @@ test("provider-aware subagent mutation gives code-reviewer and oracle current-se
 			agents,
 			available,
 			"openai-codex",
-			{ provider: "openai-codex", id: "gpt-5.4" },
+			{ provider: "openai-codex", id: "gpt-5.6-luna" },
 		),
 		1,
 	);
 	assert.equal(oracleInput.model, "anthropic/claude-opus-5");
-	assert.deepEqual(oracleInput.fallbackModels, ["openai-codex/gpt-5.4"]);
+	assert.deepEqual(oracleInput.fallbackModels, ["openai-codex/gpt-5.6-luna"]);
 	assert.equal(oracleInput.modelFallbackNotice, reducedIndependenceNotice);
 });
 
-test("provider-aware primary defaults switch Rush-like thinking off for bundled Codex models", () => {
+test("provider-aware primary defaults switch Rush-like thinking to the bundled Codex level", () => {
 	assert.deepEqual(selectProviderAwareAgentDefaults(rushLikePrimary, codexAvailable, "openai-codex"), {
-		model: { provider: "openai-codex", id: "gpt-5.5" },
-		thinking: "off",
+		model: { provider: "openai-codex", id: "gpt-5.6-luna" },
+		thinking: "medium",
 	});
 	assert.deepEqual(selectProviderAwareAgentDefaults(rushLikePrimary, [...codexAvailable, ...openaiAvailable], "openai"), {
-		model: { provider: "openai-codex", id: "gpt-5.5" },
-		thinking: "off",
+		model: { provider: "openai-codex", id: "gpt-5.6-luna" },
+		thinking: "medium",
 	});
 });
 
@@ -247,33 +248,32 @@ test("provider-aware primary defaults keep Anthropic when regular OpenAI is avai
 	const mixedOpenaiAvailable = [...anthropicAvailable, ...openaiAvailable];
 
 	assert.deepEqual(selectProviderAwareAgentDefaults(rushLikePrimary, mixedOpenaiAvailable, "openai"), {
-		model: { provider: "anthropic", id: "claude-opus-4-8" },
+		model: { provider: "anthropic", id: "claude-sonnet-4-6" },
 		thinking: "low",
 	});
 });
-
 
 test("provider-aware primary defaults keep the Anthropic default first without the Rush-only opt-in", () => {
 	const mixedCodexAvailable = [...anthropicAvailable, ...codexAvailable];
 	const mixedOpenaiAvailable = [...anthropicAvailable, ...openaiAvailable];
 
 	assert.deepEqual(selectProviderAwareAgentDefaults(anthropicFirstPrimary, mixedCodexAvailable, "openai-codex"), {
-		model: { provider: "anthropic", id: "claude-opus-4-8" },
+		model: { provider: "anthropic", id: "claude-sonnet-4-6" },
 		thinking: "low",
 	});
 	assert.deepEqual(selectProviderAwareAgentDefaults(anthropicFirstPrimary, mixedOpenaiAvailable, "openai"), {
-		model: { provider: "anthropic", id: "claude-opus-4-8" },
+		model: { provider: "anthropic", id: "claude-sonnet-4-6" },
 		thinking: "low",
 	});
 });
 
 test("provider-aware primary defaults fall back to Anthropic thinking when OpenAI models are unavailable", () => {
 	assert.deepEqual(selectProviderAwareAgentDefaults(rushLikePrimary, anthropicAvailable, "openai-codex"), {
-		model: { provider: "anthropic", id: "claude-opus-4-8" },
+		model: { provider: "anthropic", id: "claude-sonnet-4-6" },
 		thinking: "low",
 	});
 	assert.deepEqual(selectProviderAwareAgentDefaults({ ...rushLikePrimary, tlhOpenaiThinking: undefined }, codexAvailable, "openai-codex"), {
-		model: { provider: "openai-codex", id: "gpt-5.5" },
+		model: { provider: "openai-codex", id: "gpt-5.6-luna" },
 		thinking: "low",
 	});
 });
@@ -283,7 +283,7 @@ test("provider-aware primary defaults fall back to Anthropic thinking when OpenA
 test("tlhAnthropicModels: selects Anthropic fallback when primary OpenAI model is absent from registry", () => {
 	const agentWithAnthropicFallback = {
 		name: "test-agent",
-		model: "openai/gpt-5.5",
+		model: "openai/gpt-5.6",
 		tlhAnthropicModels: ["anthropic/claude-sonnet-4-6"],
 	};
 	// No currentProvider given — iterates tlhAnthropicModels and finds the Anthropic model
@@ -301,14 +301,14 @@ test("tlhAnthropicModels: selects Anthropic fallback when primary OpenAI model i
 test("tlhAnthropicModels: current-provider Anthropic candidate preferred on Anthropic session", () => {
 	const agentWithBothFallbacks = {
 		name: "test-agent",
-		model: "openai/gpt-5.5",
-		tlhOpenaiModels: ["openai-codex/gpt-5.5"],
-		tlhAnthropicModels: ["anthropic/claude-opus-4-8", "anthropic/claude-sonnet-4-6"],
+		model: "openai/gpt-5.6",
+		tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
+		tlhAnthropicModels: ["anthropic/claude-opus-5", "anthropic/claude-sonnet-4-6"],
 	};
 	// currentProvider="anthropic": step-2 current-provider check picks first matching entry
 	assert.equal(
 		selectProviderAwareAgentModelId(agentWithBothFallbacks, anthropicAvailable, "anthropic"),
-		"anthropic/claude-opus-4-8",
+		"anthropic/claude-opus-5",
 	);
 	// When only the second candidate is available the fallback iteration finds it
 	const sonetOnly = [{ provider: "anthropic", id: "claude-sonnet-4-6" }];
@@ -321,32 +321,40 @@ test("tlhAnthropicModels: current-provider Anthropic candidate preferred on Anth
 test("tlhAnthropicModels: regression – agents with only tlhOpenaiModels are unaffected", () => {
 	const agentOpenaiOnly = {
 		name: "openai-only",
-		model: "openai/gpt-5.5",
-		tlhOpenaiModels: ["openai-codex/gpt-5.4"],
+		model: "openai/gpt-5.6",
+		tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
 		// no tlhAnthropicModels
 	};
 	// Codex available: selects the OpenAI fallback
 	assert.equal(
 		selectProviderAwareAgentModelId(agentOpenaiOnly, codexAvailable, "openai-codex"),
-		"openai-codex/gpt-5.4",
+		"openai-codex/gpt-5.6-luna",
 	);
 	// Anthropic-only environment: no tlhAnthropicModels declared → returns undefined
 	assert.equal(
 		selectProviderAwareAgentModelId(agentOpenaiOnly, anthropicAvailable, "anthropic"),
 		undefined,
 	);
-	// applyProviderAwareSubagentModels: existing developer agent still works exactly as before
+	// applyProviderAwareSubagentModels: developer still gets the provider-aware Codex default.
 	const input = { agent: "developer", task: "Implement the ticket" };
 	assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 1);
-	assert.equal(input.model, "openai-codex/gpt-5.4");
+	assert.equal(input.model, "openai-codex/gpt-5.6-luna");
+	assert.equal(input.thinking, "max");
 	assert.equal(Object.hasOwn(input, "fallbackModels"), false);
 	assert.equal(Object.hasOwn(input, "modelFallbackNotice"), false);
 });
 
 test("provider-aware subagent mutation preserves explicit user-supplied model values", () => {
-	const input = { agent: "developer", task: "Implement the ticket", model: "openai/gpt-5.4" };
+	const input = { agent: "developer", task: "Implement the ticket", model: "openai/gpt-5.6" };
 	assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 0);
-	assert.equal(input.model, "openai/gpt-5.4");
+	assert.equal(input.model, "openai/gpt-5.6");
+});
+
+test("provider-aware subagent mutation preserves caller-supplied thinking", () => {
+	const input = { agent: "developer", task: "Implement the ticket", thinking: "high" };
+	assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 1);
+	assert.equal(input.model, "openai-codex/gpt-5.6-luna");
+	assert.equal(input.thinking, "high");
 });
 
 test("provider-aware subagent mutation injects model but preserves caller-supplied fallback fields", () => {
@@ -369,9 +377,9 @@ test("provider-aware subagent mutation injects model but preserves caller-suppli
 	assert.equal(withFallbackNotice.modelFallbackNotice, "custom fallback notice");
 
 	// Explicit model still prevents all injection regardless of other fallback fields.
-	const withExplicitModel = { agent: "code-reviewer", model: "anthropic/claude-opus-4-8", fallbackModels: ["my/fallback"] };
+	const withExplicitModel = { agent: "code-reviewer", model: "anthropic/claude-sonnet-4-6", fallbackModels: ["my/fallback"] };
 	assert.equal(applyProviderAwareSubagentModels(withExplicitModel, agents, available, "anthropic"), 0);
-	assert.equal(withExplicitModel.model, "anthropic/claude-opus-4-8");
+	assert.equal(withExplicitModel.model, "anthropic/claude-sonnet-4-6");
 	assert.deepEqual(withExplicitModel.fallbackModels, ["my/fallback"]);
 });
 
@@ -379,14 +387,14 @@ test("provider-aware subagent mutation handles parallel tasks", () => {
 	const input = {
 		tasks: [
 			{ agent: "developer", task: "Implement" },
-			{ agent: "code-reviewer", task: "Review", model: "anthropic/claude-opus-4-8" },
+			{ agent: "code-reviewer", task: "Review", model: "anthropic/claude-sonnet-4-6" },
 			{ agent: "unknown", task: "Leave alone" },
 		],
 	};
 
 	assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 1);
-	assert.equal(input.tasks[0].model, "openai-codex/gpt-5.4");
-	assert.equal(input.tasks[1].model, "anthropic/claude-opus-4-8");
+	assert.equal(input.tasks[0].model, "openai-codex/gpt-5.6-luna");
+	assert.equal(input.tasks[1].model, "anthropic/claude-sonnet-4-6");
 	assert.equal(input.tasks[2].model, undefined);
 });
 
@@ -397,7 +405,7 @@ test("provider-aware subagent mutation ignores legacy chain payloads", () => {
 			{
 				parallel: [
 					{ agent: "code-reviewer", task: "Review {previous}" },
-					{ agent: "developer", task: "Smoke test {previous}", model: "openai/gpt-5.4" },
+					{ agent: "developer", task: "Smoke test {previous}", model: "openai/gpt-5.6" },
 				],
 			},
 		],
@@ -406,5 +414,5 @@ test("provider-aware subagent mutation ignores legacy chain payloads", () => {
 	assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 0);
 	assert.equal(input.chain[0].model, undefined);
 	assert.equal(input.chain[1].parallel[0].model, undefined);
-	assert.equal(input.chain[1].parallel[1].model, "openai/gpt-5.4");
+	assert.equal(input.chain[1].parallel[1].model, "openai/gpt-5.6");
 });

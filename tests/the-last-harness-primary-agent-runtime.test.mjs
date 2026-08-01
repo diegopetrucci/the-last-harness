@@ -27,12 +27,12 @@ test("primary runtime applies OpenAI Rush-like metadata defaults with no setting
 				cwd: fixture.cwd,
 				sessionManager: { getBranch: () => [] },
 				ui: { notify() {} },
-				modelRegistry: { getAvailable: () => [{ provider: "openai-codex", id: "gpt-5.5" }] },
+				modelRegistry: { getAvailable: () => [{ provider: "openai-codex", id: "gpt-5.6-luna" }] },
 				model: { provider: "openai-codex", id: "gpt-5.4" },
 			});
 
-			assert.deepEqual(pi.model, { provider: "openai-codex", id: "gpt-5.5" });
-			assert.equal(pi.thinkingLevel, "off");
+			assert.deepEqual(pi.model, { provider: "openai-codex", id: "gpt-5.6-luna" });
+			assert.equal(pi.thinkingLevel, "medium");
 		});
 	} finally {
 		cleanupTempDir(fixture);
@@ -101,11 +101,11 @@ test("primary runtime falls back to Anthropic Rush-like metadata defaults when o
 				cwd: fixture.cwd,
 				sessionManager: { getBranch: () => [] },
 				ui: { notify() {} },
-				modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-5" }] },
+				modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-sonnet-4-6" }] },
 				model: { provider: "openai-codex", id: "gpt-5.4" },
 			});
 
-			assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-5" });
+			assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-sonnet-4-6" });
 			assert.equal(pi.thinkingLevel, "low");
 		});
 	} finally {
@@ -127,7 +127,7 @@ test("primary runtime respects explicit false settings over Rush-like metadata d
 				cwd: fixture.cwd,
 				sessionManager: { getBranch: () => [] },
 				ui: { notify() {} },
-				modelRegistry: { getAvailable: () => [{ provider: "openai-codex", id: "gpt-5.5" }] },
+				modelRegistry: { getAvailable: () => [{ provider: "openai-codex", id: "gpt-5.6-luna" }] },
 				model: { provider: "openai-codex", id: "gpt-5.4" },
 			});
 
@@ -381,10 +381,10 @@ function createPiHarnessWithFiringModelSelect(getCtx) {
 test("model override resolution: stored override is applied when the model is in the registry", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
-	// Bundled default for rushLikePrimary on Anthropic is anthropic/claude-opus-5.
+	// Bundled default for rushLikePrimary on Anthropic is anthropic/claude-sonnet-4-6.
 	// Store a different available Anthropic model so override precedence is observable.
 	const initialSettings = JSON.stringify({
-		tlh: { primaryAgent: { modelOverrides: { architect: "anthropic/claude-sonnet-4-6" } } },
+		tlh: { primaryAgent: { modelOverrides: { architect: "anthropic/claude-opus-5" } } },
 	}, null, 2) + "\n";
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -398,15 +398,15 @@ test("model override resolution: stored override is applied when the model is in
 			ui: { notify() {} },
 			modelRegistry: {
 				getAvailable: () => [
-					{ provider: "anthropic", id: "claude-opus-5" },
 					{ provider: "anthropic", id: "claude-sonnet-4-6" },
+					{ provider: "anthropic", id: "claude-opus-5" },
 				],
 			},
 			model: { provider: "anthropic", id: "claude-haiku-4-5" },
 		});
 
-		// Override should win over the bundled anthropic/claude-opus-5 default.
-		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-sonnet-4-6" });
+		// Override should win over the bundled anthropic/claude-sonnet-4-6 default.
+		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-5" });
 	});
 });
 
@@ -414,7 +414,7 @@ test("model override resolution: falls back to bundled default when override mod
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
 	const initialSettings = JSON.stringify({
-		tlh: { primaryAgent: { modelOverrides: { architect: "openai-codex/gpt-5.5" } } },
+		tlh: { primaryAgent: { modelOverrides: { architect: "openai-codex/gpt-5.6-luna" } } },
 	}, null, 2) + "\n";
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -426,52 +426,52 @@ test("model override resolution: falls back to bundled default when override mod
 			cwd: fixture.cwd,
 			sessionManager: { getBranch: () => [] },
 			ui: { notify() {} },
-			// Override model (openai-codex/gpt-5.5) is NOT in the registry
-			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-5" }] },
-			model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+			// Override model (openai-codex/gpt-5.6-luna) is NOT in the registry
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-sonnet-4-6" }] },
+			model: { provider: "anthropic", id: "claude-opus-5" },
 		});
 
 		// Falls back to bundled Anthropic default
-		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-5" });
+		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-sonnet-4-6" });
 	});
 });
 
 test("model_select listener writes override to settings when user picks a non-default model", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
-	// rushLikePrimary has model: "anthropic/claude-opus-5".
+	// rushLikePrimary has model: "anthropic/claude-sonnet-4-6".
 	// The user picks a different Anthropic model that is NOT the bundled default for the architect primary.
-	// Available: both claude-opus-5 (bundled default) and claude-sonnet-4-6 (non-default).
+	// Available: both claude-sonnet-4-6 (bundled default) and claude-opus-5 (non-default).
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const { pi } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
 		const modelSelectHandler = pi.events.find((e) => e.name === "model_select")?.handler;
 		assert.ok(modelSelectHandler, "model_select handler must be registered");
 
-		// User picks a non-default model: anthropic/claude-sonnet-4-6
-		const overrideModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
+		// User picks a non-default model: anthropic/claude-opus-5
+		const overrideModel = { provider: "anthropic", id: "claude-opus-5" };
 		const ctx = {
 			cwd: fixture.cwd,
 			sessionManager: { getBranch: () => [] },
 			ui: { notify() {} },
-			// Registry includes the bundled default (claude-opus-5) and the override target (claude-sonnet-4-6)
+			// Registry includes the bundled default (claude-sonnet-4-6) and the override target (claude-opus-5)
 			modelRegistry: {
 				getAvailable: () => [
-					{ provider: "anthropic", id: "claude-opus-5" },
 					{ provider: "anthropic", id: "claude-sonnet-4-6" },
+					{ provider: "anthropic", id: "claude-opus-5" },
 				],
 			},
 			model: overrideModel,
 		};
-		// bundledKey for provider "anthropic" with rushLikePrimary: "anthropic/claude-opus-5" (the primary's .model field)
-		// chosenKey: "anthropic/claude-sonnet-4-6" → different → should write override
+		// bundledKey for provider "anthropic" with rushLikePrimary: "anthropic/claude-sonnet-4-6" (the primary's .model field)
+		// chosenKey: "anthropic/claude-opus-5" → different → should write override
 		await modelSelectHandler(
 			{ type: "model_select", model: overrideModel, previousModel: undefined, source: "set" },
 			ctx,
 		);
 
 		const written = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
-		assert.equal(written.tlh.primaryAgent.modelOverrides.architect, "anthropic/claude-sonnet-4-6");
+		assert.equal(written.tlh.primaryAgent.modelOverrides.architect, "anthropic/claude-opus-5");
 	});
 });
 
@@ -479,7 +479,7 @@ test("model_select listener clears override when user reselects the primary's bu
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
 	const initialSettings = JSON.stringify({
-		tlh: { primaryAgent: { modelOverrides: { architect: "openai-codex/gpt-5.5" } } },
+		tlh: { primaryAgent: { modelOverrides: { architect: "openai-codex/gpt-5.6-luna" } } },
 	}, null, 2) + "\n";
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -488,13 +488,13 @@ test("model_select listener clears override when user reselects the primary's bu
 		const modelSelectHandler = pi.events.find((e) => e.name === "model_select")?.handler;
 		assert.ok(modelSelectHandler, "model_select handler must be registered");
 
-		// rushLikePrimary with only anthropic available: bundled default is anthropic/claude-opus-5
-		const bundledDefaultModel = { provider: "anthropic", id: "claude-opus-5" };
+		// rushLikePrimary with only anthropic available: bundled default is anthropic/claude-sonnet-4-6
+		const bundledDefaultModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
 		const ctx = {
 			cwd: fixture.cwd,
 			sessionManager: { getBranch: () => [] },
 			ui: { notify() {} },
-			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-5" }] },
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-sonnet-4-6" }] },
 			model: bundledDefaultModel,
 		};
 		await modelSelectHandler(
@@ -512,8 +512,8 @@ test("locked primary does not write model override when model_select fires for a
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	// rush has lockThinking: true → shouldForceApplyForLock returns true → listener must skip override.
 	const lockedRush = createPrimaryPrompt("rush", {
-		model: "anthropic/claude-opus-4-8",
-		tlhOpenaiModels: ["openai-codex/gpt-5.5"],
+		model: "anthropic/claude-sonnet-4-6",
+		tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
 		thinking: "low",
 		applyModel: true,
 		applyThinking: true,
@@ -526,7 +526,7 @@ test("locked primary does not write model override when model_select fires for a
 		const modelSelectHandler = pi.events.find((e) => e.name === "model_select")?.handler;
 		assert.ok(modelSelectHandler, "model_select handler must be registered");
 
-		const nonDefaultModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
+		const nonDefaultModel = { provider: "anthropic", id: "claude-opus-5" };
 		const ctx = {
 			cwd: fixture.cwd,
 			sessionManager: {
@@ -537,8 +537,8 @@ test("locked primary does not write model override when model_select fires for a
 			ui: { notify() {} },
 			modelRegistry: {
 				getAvailable: () => [
-					{ provider: "anthropic", id: "claude-opus-4-8" },
 					{ provider: "anthropic", id: "claude-sonnet-4-6" },
+					{ provider: "anthropic", id: "claude-opus-5" },
 				],
 			},
 			model: nonDefaultModel,
@@ -577,8 +577,8 @@ test("echo guard: TLH's own applyPrimaryModel does not record a model override",
 			cwd: fixture.cwd,
 			sessionManager: { getBranch: () => [] },
 			ui: { notify() {} },
-			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-8" }] },
-			model: { provider: "anthropic", id: "claude-sonnet-4-6" }, // different from bundled default
+			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-sonnet-4-6" }] },
+			model: { provider: "anthropic", id: "claude-opus-5" }, // different from bundled default
 		};
 		capturedCtx = applyCtx;
 
