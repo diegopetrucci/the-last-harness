@@ -170,38 +170,49 @@ function activeNoticeIsMissing(existing: PlainObject): boolean {
 		&& (!isPlainObject(existing.control) || !("activeNoticeAfterMs" in existing.control));
 }
 
+function readExistingSubagentExtensionConfig(config: { agentDir: string }): PlainObject | null {
+	const configPath = join(config.agentDir, "extensions/subagent/config.json");
+	if (!existsSync(configPath)) return {};
+	try {
+		const parsed = readJsonFile<unknown>(configPath, { missingValue: {} as unknown });
+		return isPlainObject(parsed) ? parsed : null;
+	} catch {
+		return null;
+	}
+}
+
+function missingSubagentExtensionDefaultLabels(existing: PlainObject): string[] {
+	const missingDefaults: string[] = [];
+	if (!("toolDescriptionMode" in existing)) missingDefaults.push(`toolDescriptionMode: ${TLH_TOOL_DESCRIPTION_MODE}`);
+	if (activeNoticeIsMissing(existing)) {
+		missingDefaults.push(`control.activeNoticeAfterMs: ${TLH_ACTIVE_NOTICE_AFTER_MS} (4m30)`);
+	}
+	return missingDefaults;
+}
+
+/**
+ * Returns the display labels for defaults that provisionSubagentExtensionConfig
+ * can write. An empty result means the existing config is complete, a valid
+ * non-object JSON value, or unreadable.
+ */
+export function subagentExtensionConfigMissingDefaults(config: { agentDir: string }): string[] {
+	const existing = readExistingSubagentExtensionConfig(config);
+	return existing ? missingSubagentExtensionDefaultLabels(existing) : [];
+}
+
 /**
  * Returns true when provisionSubagentExtensionConfig would write to disk,
  * false when it would leave the existing file untouched (all writable defaults
  * are present, the config has a non-object JSON value, or it is unreadable).
  */
 export function subagentExtensionConfigNeedsProvisioning(config: { agentDir: string }): boolean {
-	const configPath = join(config.agentDir, "extensions/subagent/config.json");
-	if (!existsSync(configPath)) return true;
-	try {
-		const parsed = readJsonFile<unknown>(configPath, { missingValue: {} as unknown });
-		if (!isPlainObject(parsed)) return false;
-		return !("toolDescriptionMode" in parsed) || activeNoticeIsMissing(parsed);
-	} catch {
-		return false;
-	}
+	return subagentExtensionConfigMissingDefaults(config).length > 0;
 }
 
 export function provisionSubagentExtensionConfig(config: { agentDir: string }): void {
 	const relativePath = "extensions/subagent/config.json";
-	const configPath = join(config.agentDir, relativePath);
-
-	let existing: PlainObject = {};
-	if (existsSync(configPath)) {
-		try {
-			const parsed = readJsonFile<unknown>(configPath, { missingValue: {} as unknown });
-			if (isPlainObject(parsed)) existing = parsed;
-			else return; // Valid JSON but not a plain object (e.g. null, array, scalar) — preserve untouched.
-		} catch {
-			// Unable to read/parse existing config — leave it untouched.
-			return;
-		}
-	}
+	const existing = readExistingSubagentExtensionConfig(config);
+	if (!existing) return;
 
 	const missingToolDescriptionMode = !("toolDescriptionMode" in existing);
 	const missingActiveNotice = activeNoticeIsMissing(existing);

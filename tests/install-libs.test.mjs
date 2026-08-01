@@ -42,6 +42,7 @@ import {
 	missingTlhSubagentPrompts,
 	provisionSubagentExtensionConfig,
 	restoreNeededTlhSubagentPrompts,
+	subagentExtensionConfigMissingDefaults,
 	settingsRequireTlhSubagentPrompts,
 } from "../scripts/lib/tlh-install-subagents.mjs";
 import {
@@ -811,6 +812,28 @@ test("settings defaults declare when bundled subagent prompts are required", (t)
 
 	writeFileSync(defaults, "not json");
 	assert.equal(settingsRequireTlhSubagentPrompts(defaults), false);
+});
+
+test("subagentExtensionConfigMissingDefaults describes only writable defaults", (t) => {
+	const agentDir = tempFixture(t, "tlh-ext-config-notice-");
+	const config = { agentDir };
+	const configPath = join(agentDir, "extensions", "subagent", "config.json");
+
+	assert.deepEqual(subagentExtensionConfigMissingDefaults(config), [
+		"toolDescriptionMode: compact",
+		"control.activeNoticeAfterMs: 270000 (4m30)",
+	], "missing config reports both defaults");
+
+	mkdirSync(join(agentDir, "extensions", "subagent"), { recursive: true });
+	writeFileSync(configPath, JSON.stringify({ control: null }) + "\n");
+	assert.deepEqual(
+		subagentExtensionConfigMissingDefaults(config),
+		["toolDescriptionMode: compact"],
+		"non-object control reports only the writable tool-description default",
+	);
+
+	writeFileSync(configPath, JSON.stringify({ toolDescriptionMode: "full", control: null }) + "\n");
+	assert.deepEqual(subagentExtensionConfigMissingDefaults(config), [], "complete writable defaults report no provisioning");
 });
 
 test("provisionSubagentExtensionConfig sets TLH defaults independently and is idempotent", (t) => {
