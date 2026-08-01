@@ -71,6 +71,32 @@ export interface PairingResult {
 }
 
 // ---------------------------------------------------------------------------
+// Shared statistical helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the median of a sorted or unsorted array of numbers.
+ *
+ * Returns `null` for empty input so callers can distinguish "no data" from
+ * a zero result.  For even-sized arrays the two middle values are averaged,
+ * matching the standard statistical definition.
+ *
+ * This is the single authoritative median implementation shared between
+ * the `/tokens` extension command and the `tlh-sessions` CLI.  Both callers
+ * adapt the `null` empty-input contract at their own call site:
+ * - `/tokens` yields `0` via `computeMedian(latencies) ?? 0`
+ * - CLI yields `null` directly
+ */
+export function computeMedian(values: number[]): number | null {
+	if (values.length === 0) return null;
+	const sorted = [...values].sort((a, b) => a - b);
+	const mid = Math.floor(sorted.length / 2);
+	return sorted.length % 2 === 0
+		? ((sorted[mid - 1]! + sorted[mid]!) / 2)
+		: sorted[mid]!;
+}
+
+// ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 

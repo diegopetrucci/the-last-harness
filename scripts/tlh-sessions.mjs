@@ -15,6 +15,7 @@ import { join, resolve } from "node:path";
 import process from "node:process";
 import { aggregateCoverage, extractSubagentCorrelations, scanSessionFile, } from "./lib/session-analysis.mjs";
 import { resolveTlhAgentDir } from "./lib/tlh-install-utils.mjs";
+import { computeMedian } from "../extensions/the-last-harness/tool-pairing.js";
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -132,15 +133,6 @@ function findSessionFiles(dir) {
 // ---------------------------------------------------------------------------
 // Statistics
 // ---------------------------------------------------------------------------
-function computeMedian(values) {
-    if (values.length === 0)
-        return null;
-    const sorted = [...values].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 0
-        ? ((sorted[mid - 1] + sorted[mid]) / 2)
-        : sorted[mid];
-}
 function computePercentile(values, p) {
     if (values.length === 0)
         return null;

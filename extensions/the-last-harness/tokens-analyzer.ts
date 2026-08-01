@@ -1,5 +1,5 @@
 import type { ExtensionContext, SessionEntry, ToolInfo } from "@earendil-works/pi-coding-agent";
-import { pairToolCalls } from "./tool-pairing.js";
+import { computeMedian, pairToolCalls } from "./tool-pairing.js";
 
 // Cache-miss detection ported from pi-coding-agent@0.80.6 core/cache-stats.
 // See ../../docs/upstream-sync-inventory.md for sync/review guidance.
@@ -667,7 +667,7 @@ export function analyzeSessionEntries(
 			continue;
 		}
 		latencies.sort((left, right) => left - right);
-		const medianMs = latencies[Math.floor((latencies.length - 1) / 2)] ?? 0;
+		const medianMs = computeMedian(latencies) ?? 0;
 		const maxMs = latencies[latencies.length - 1] ?? 0;
 		toolEntry.observedLatency = { medianMs, maxMs, pairedCount: latencies.length };
 	}

@@ -1,4 +1,4 @@
-import { pairToolCalls } from "./tool-pairing.js";
+import { computeMedian, pairToolCalls } from "./tool-pairing.js";
 const NOISE_FLOOR_TOKENS = 1024;
 const BUILT_IN_TOOL_NAMES = new Set(["bash", "read", "edit", "write", "grep", "find", "ls"]);
 const CHARS_PER_TOKEN = 4;
@@ -330,7 +330,7 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
             continue;
         }
         latencies.sort((left, right) => left - right);
-        const medianMs = latencies[Math.floor((latencies.length - 1) / 2)] ?? 0;
+        const medianMs = computeMedian(latencies) ?? 0;
         const maxMs = latencies[latencies.length - 1] ?? 0;
         toolEntry.observedLatency = { medianMs, maxMs, pairedCount: latencies.length };
     }

@@ -10,7 +10,7 @@ Use the session analysis CLI as the primary path — it resolves the active prof
 node scripts/tlh-sessions.mjs --mode per-session | jq '.'
 
 # Last 7 days only — startedAt is ISO 8601, so string comparison is correct
-node scripts/tlh-sessions.mjs --mode per-session | jq --arg cutoff "$(date -u -v-7d +%Y-%m-%dT%H:%M:%SZ)" '[.sessions[] | select(.startedAt >= $cutoff)]'
+node scripts/tlh-sessions.mjs --mode per-session | jq --arg cutoff "$(node -e 'process.stdout.write(new Date(Date.now() - 7*864e5).toISOString())')" '[.sessions[] | select(.startedAt >= $cutoff)]'
 
 # Per-tool aggregation across all sessions (not time-filtered)
 node scripts/tlh-sessions.mjs --mode per-tool | jq '.'

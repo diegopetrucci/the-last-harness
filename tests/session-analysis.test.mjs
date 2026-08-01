@@ -685,3 +685,78 @@ test("scanSessionFile: accepts fixture-style timestamps at entry level (not mess
 	assert.equal(result.toolPairs[0]?.observedLatencyMs, 1000);
 	assert.equal(result.malformedLines, 0);
 });
+
+// ---------------------------------------------------------------------------
+// Finding 3: path-boundary hardening — traversal and symlink
+// ---------------------------------------------------------------------------
+
+test("extractSubagentCorrelations: refuses path traversal escaping sessionsDir without throwing", async (t) => {
+	const { mkdirSync } = await import("node:fs");
+	const dir = makeTempDir("session-analysis-traversal-", t);
+
+	// Create a real file outside sessionsDir that the traversal would reach.
+	const outsideDir = join(dir, "outside");
+	mkdirSync(outsideDir, { recursive: true });
+	writeFileSync(join(outsideDir, "session.jsonl"), sessionHeader("outside-id", "/x") + "\n", "utf8");
+
+	const sessionsDir = join(dir, "sessions");
+	mkdirSync(sessionsDir, { recursive: true });
+
+	// Construct a path that starts under sessionsDir but traverses out via "..".
+	// e.g. <sessionsDir>/sub/../../outside/session.jsonl → resolves outside
+	const traversalPath = join(sessionsDir, "sub", "..", "..", "outside", "session.jsonl");
+
+	const filePath = writeFixture(t, [
+		sessionHeader("p-traversal"),
+		assistantMessageLine("2026-01-01T00:00:00.000Z", [{ toolCallId: "tc-trav", toolName: "subagent" }]),
+		toolResultLine("2026-01-01T00:00:01.000Z", "tc-trav", "subagent", {
+			details: {
+				runId: "run-trav",
+				results: [{ agent: "attacker", sessionFile: traversalPath }],
+			},
+		}),
+	]);
+
+	const scan = await scanSessionFile(filePath);
+	// Must not throw; traversal path must be refused (childResolved = false).
+	const correlations = await extractSubagentCorrelations(scan, sessionsDir);
+	assert.equal(correlations.length, 1);
+	assert.equal(correlations[0]?.childResolved, false, "traversal path must not be resolved");
+	assert.equal(correlations[0]?.childSessionId, undefined);
+});
+
+test("extractSubagentCorrelations: refuses symlink pointing outside sessionsDir without throwing", async (t) => {
+	const { mkdirSync } = await import("node:fs");
+	const dir = makeTempDir("session-analysis-symlink-escape-", t);
+
+	// Create real target outside sessionsDir.
+	const outsideDir = join(dir, "outside");
+	mkdirSync(outsideDir, { recursive: true });
+	const realTarget = join(outsideDir, "session.jsonl");
+	writeFileSync(realTarget, sessionHeader("outside-sym-id", "/x") + "\n", "utf8");
+
+	const sessionsDir = join(dir, "sessions");
+	mkdirSync(sessionsDir, { recursive: true });
+
+	// Symlink inside sessionsDir pointing to the outside target.
+	const linkPath = join(sessionsDir, "escape-link.jsonl");
+	symlinkSync(realTarget, linkPath);
+
+	const filePath = writeFixture(t, [
+		sessionHeader("p-symlink"),
+		assistantMessageLine("2026-01-01T00:00:00.000Z", [{ toolCallId: "tc-sym", toolName: "subagent" }]),
+		toolResultLine("2026-01-01T00:00:01.000Z", "tc-sym", "subagent", {
+			details: {
+				runId: "run-sym",
+				results: [{ agent: "escaper", sessionFile: linkPath }],
+			},
+		}),
+	]);
+
+	const scan = await scanSessionFile(filePath);
+	// Must not throw; symlink escape must be refused (childResolved = false).
+	const correlations = await extractSubagentCorrelations(scan, sessionsDir);
+	assert.equal(correlations.length, 1);
+	assert.equal(correlations[0]?.childResolved, false, "symlink pointing outside sessionsDir must not be resolved");
+	assert.equal(correlations[0]?.childSessionId, undefined);
+});

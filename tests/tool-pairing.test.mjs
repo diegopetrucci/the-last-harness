@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { pairToolCalls } from "../extensions/the-last-harness/tool-pairing.js";
+import { computeMedian, pairToolCalls } from "../extensions/the-last-harness/tool-pairing.js";
 
 // ---------------------------------------------------------------------------
 // Entry-builder helpers
@@ -283,4 +283,44 @@ test("pairToolCalls: includes subagent details on paired result", () => {
 	assert.equal(pair?.details?.runId, "run-xyz");
 	assert.equal(pair?.details?.results?.[0]?.agent, "code-agent");
 	assert.equal(pair?.details?.results?.[0]?.sessionFile, "/sessions/child/session.jsonl");
+});
+
+// ---------------------------------------------------------------------------
+// computeMedian
+// ---------------------------------------------------------------------------
+
+test("computeMedian: returns null for empty array", () => {
+	assert.equal(computeMedian([]), null);
+});
+
+test("computeMedian: returns the single value for a one-element array", () => {
+	assert.equal(computeMedian([42]), 42);
+});
+
+test("computeMedian: returns the middle value for an odd-sized array", () => {
+	assert.equal(computeMedian([3, 1, 2]), 2);
+});
+
+test("computeMedian: averages the two middle values for an even-sized array", () => {
+	// 1, 100 → mid = 1 → (1 + 100) / 2 = 50.5
+	assert.equal(computeMedian([1, 100]), 50.5);
+	// 1, 2, 3, 4 → mid = 2 → (2 + 3) / 2 = 2.5
+	assert.equal(computeMedian([1, 2, 3, 4]), 2.5);
+});
+
+test("computeMedian: sorts before computing (input order does not matter)", () => {
+	// Unsorted: 100, 1 → sorted: 1, 100 → (1 + 100) / 2 = 50.5
+	assert.equal(computeMedian([100, 1]), 50.5);
+});
+
+test("computeMedian and tokens-analyzer agree on the same even-sized latency sample", () => {
+	// 1 000 ms and 100 000 ms.  The old tokens-analyzer formula would pick
+	// latencies[Math.floor((2-1)/2)] = latencies[0] = 1000.
+	// The correct average-of-two-middles formula must yield 50 500.
+	const latencies = [1000, 100000];
+	const median = computeMedian(latencies);
+	assert.equal(median, 50500, "even-sized sample must average the two middle values");
+	// CLI caller preserves null for empty, tokens caller coerces null to 0.
+	assert.equal(computeMedian([]) ?? 0, 0, "tokens caller: empty yields 0 via ?? 0");
+	assert.equal(computeMedian([]), null, "CLI caller: empty yields null");
 });

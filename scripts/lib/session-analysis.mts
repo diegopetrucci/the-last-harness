@@ -110,7 +110,7 @@ export interface SubagentCorrelation {
 
 /** Coverage summary aggregated across multiple scan results. */
 export interface ScanCoverage {
-	/** Total JSONL files discovered (before filtering run-history.jsonl). */
+	/** Total JSONL files discovered (run-history.jsonl is excluded during enumeration). */
 	filesDiscovered: number;
 	/** Files successfully scanned (toolPairs + malformed lines accumulated). */
 	filesScanned: number;
@@ -356,8 +356,21 @@ export async function extractSubagentCorrelations(
 			if (!r.sessionFile) continue;
 
 			// Fix 2: safety boundary — only resolve paths under sessionsDir.
-			const underSessionsDir =
-				sessionsDir !== undefined && r.sessionFile.startsWith(sessionsDir + "/");
+			// Canonicalize both paths via realpathSync so traversal sequences
+			// (e.g. "/../outside") and symlinks pointing outside the tree are
+			// rejected.  If the path does not exist yet, realpathSync throws;
+			// treat that as "not under sessionsDir" (same as childResolved=false).
+			let underSessionsDir = false;
+			if (sessionsDir !== undefined) {
+				try {
+					const realChild = realpathSync(r.sessionFile);
+					const realSessions = realpathSync(sessionsDir);
+					underSessionsDir = realChild.startsWith(realSessions + "/");
+				} catch {
+					// Non-existent path or permission error — not resolvable.
+					underSessionsDir = false;
+				}
+			}
 
 			let childResolved = false;
 			let childSessionId: string | undefined;
