@@ -6,24 +6,26 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
-- New read-only `tlh sessions` subcommand for inspecting local session data. Run `tlh sessions --mode per-session` or `tlh sessions --mode per-tool` to get a JSON summary; the active isolated profile is resolved automatically. Raw paths, cwd values, and project labels are omitted by default and only included when `--include-paths` is passed. The subcommand never reads `run-history.jsonl` and never writes to session files. Backed by `scripts/tlh-sessions.mjs`.
-- `/tokens` now reports median observed wall-clock latency per tool alongside the existing cost and token data. Latency is the interval between the recorded call and result events and includes any queueing or paused-run time.
+- In the footer, TLH now shows how much context MCPs are consuming.
 
-### Changed
+### Model defaults
 
-- Removed RTK from TLH.
-- The bundled `developer` subagent now defaults to OpenAI Codex `openai-codex/gpt-5.6-luna` and Anthropic `anthropic/claude-sonnet-4-6`, with max thinking on both providers.
-- The installer now provisions missing isolated subagent defaults for compact tool descriptions and `control.activeNoticeAfterMs: 270000` (4m30), while preserving existing overrides and unrelated configuration.
-- Bumped the bundled critical `pi-subagents` default extension pin from `npm:@diegopetrucci/pi-subagents@0.31.10` to `npm:@diegopetrucci/pi-subagents@0.31.11`.
-- Bumped bundled Anthropic defaults for Architect, Product, Bug-hunter, `code-reviewer`, `oracle`, and `contrarian` to Claude Opus 5.0; Architect, `code-reviewer`, `oracle`, and `contrarian` now prefer OpenAI Codex GPT-5.6 Sol on the OpenAI Codex path.
-- **pi-intercom retired:** the `pi-intercom` default remains force-removed from isolated settings on update. With bundled `pi-subagents` 0.31.11, child-session escalations should use `contact_supervisor`. Blocking requests durably pause and are resolved with `subagent` resume or interrupt. `subagent_supervisor` provides pending/status inspection and legacy live-session reply compatibility when available. Use `steer` for non-blocking guidance. The `/intercom` overlay, `Alt+M` keybind, and peer-session ask/reply are no longer available.
-- Primary-agent runtime now hard-caps new execution-bearing librarian, web-scout, repo-scout, and diff-summarizer runs at 360000ms, including mixed batches, while preserving stricter caller-provided timeouts, leaving `resume` timeouts unchanged (including resume chains), and leaving other opaque management actions unchanged.
-- Packaged librarian, web-scout, repo-scout, and diff-summarizer guidance now defines scoped stop rules, architect async steering via `steer`, and per-agent tool-call budgets: soft tool-call thresholds provide an advisory wrap-up nudge, while at hard thresholds bundled `pi-subagents` 0.31.11's omitted block list blocks only `read`, `grep`, `find`, and `ls`, leaving `bash` and web research tools available.
-- The MCP footer status now appends an approximate retained-context estimate for active MCP usage, shown inline with the existing `MCP: ... servers` status.
+- The `developer` subagent now defaults to `gpt-5.6-luna max` for OpenAI, `sonnet-4-6 medium` for Anthropic.
+- The Architect, Product, Bug-hunter, `code-reviewer`, `oracle`, and `contrarian` now use `opus-5.0 high` for Anthropic, `gpt-5.6-sol high` for OpenAI.
+
+### Removed
+
+- Removed RTK from TLH (see [this analysis as to why](https://www.stet.sh/blog/gpt-56-token-saving-modes)).
+- Removed the pi-intercom dependency. The little we used of it is now folded into pi-subagents. This also reduces how many tokens TLH consumes.
 
 ### Fixed
 
-- TLH's Herdr activity reporter now retries one failed socket delivery attempt with the same bounded timeout sequence Herdr 0.7.5 expects, while preserving TLH-owned reporter source/session sequencing and external Herdr configuration.
+- Subagents now have two timeout caps: a soft one at ~4m30s where the architect checks on them, and a hard one with a bigger timeout that pauses them. They also support steering, and have tighter system prompts. This should make them much more responsive.
+- TLH now works a bit better with Herdr.
+
+### Other minor things
+
+- `/tokens` now reports median observed wall-clock latency per tool alongside the existing cost and token data. Latency is the interval between the recorded call and result events and includes any queueing or paused-run time.
 
 ## [0.31.0] - 2026-07-27
 
