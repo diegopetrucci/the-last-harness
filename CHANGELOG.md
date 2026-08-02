@@ -11,6 +11,9 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- `/annotate-last-message` now sends submitted feedback directly to the agent as a follow-up message instead of appending it to the TLH editor buffer; existing editor text is left untouched. It still does not auto-apply changes or rewrite the old message.
+- Blank and whitespace-only lines in `/annotate-last-message` are no longer annotatable — they remain visible and numbered, but the inline-note control is not shown for them.
+- `/annotate-git-diff` now sends review feedback to the agent when you click Submit. Closing the review window with unsent comments still appends a recovery draft to the editor instead of sending, so an accidental close cannot trigger an agent turn.
 - Removed RTK from TLH.
 - The bundled `developer` subagent now defaults to OpenAI Codex `openai-codex/gpt-5.6-luna` and Anthropic `anthropic/claude-sonnet-4-6`, with max thinking on both providers.
 - The installer now provisions missing isolated subagent defaults for compact tool descriptions and `control.activeNoticeAfterMs: 270000` (4m30), while preserving existing overrides and unrelated configuration.

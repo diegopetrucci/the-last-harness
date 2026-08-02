@@ -54,6 +54,7 @@ function parseWindowMessage(data) {
                 type: "submit",
                 overallComment: data.overallComment,
                 comments: data.comments,
+                draft: data.draft !== false,
             };
         case "cancel":
             return { type: "cancel" };
@@ -562,8 +563,14 @@ export function createAnnotateGitDiffController(pi, dependencies = {}) {
                     if (!hasReviewFeedback(message))
                         return;
                     const prompt = composePrompt(getPromptFiles(), message);
-                    appendReviewPrompt(ctx, prompt);
-                    ctx.ui.notify("Appended review feedback to the editor.", "info");
+                    if (message.draft === true) {
+                        appendReviewPrompt(ctx, prompt);
+                        ctx.ui.notify("Appended review feedback to the editor.", "info");
+                    }
+                    else {
+                        pi.sendUserMessage(prompt, { deliverAs: "followUp" });
+                        ctx.ui.notify("Review feedback sent to the agent.", "info");
+                    }
                 }
                 catch (error) {
                     if (suppressedWindows.has(window))

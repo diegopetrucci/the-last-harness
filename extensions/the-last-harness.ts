@@ -156,7 +156,11 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	const getAnnotateLastMessageCommand = () => {
 		if (!annotateLastMessageCommandPromise) {
 			annotateLastMessageCommandPromise = loadAnnotateLastMessageModule()
-				.then((module) => module.buildAnnotateLastMessageCommand())
+				.then((module) =>
+					module.buildAnnotateLastMessageCommand({
+						sendUserMessage: (message, options) => pi.sendUserMessage(message, options),
+					}),
+				)
 				.catch((error) => {
 					annotateLastMessageCommandPromise = undefined;
 					throw error;

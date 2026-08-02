@@ -140,7 +140,7 @@ TLH also aims to make the day-to-day session experience calmer and safer:
 - isolated profile installation so your normal Pi setup stays separate,
 - quieter UI defaults so tools and bash output do not constantly fight for attention,
 - a lightweight first-party `/annotate-last-message` command that opens a native annotation window for the latest assistant reply and turns submitted notes into agent feedback,
-- a first-party `/annotate-git-diff` command that opens a native review window and pastes submitted feedback back into the editor as a prompt,
+- a first-party `/annotate-git-diff` command that opens a native review window — clicking Submit sends review feedback directly to the agent; closing with unsent comments pastes a draft to the editor instead,
 - a first-party `/tokens` command that generates a local HTML token-spend report for the current session from sanitized session analysis,
 - a first-party `/what-consumed-my-session-limit-and-tokens` command that generates a local HTML report showing which TLH sessions across all your projects consumed tokens within the current session-limit window, with per-session and per-provider breakdowns,
 - bundled web-search support for research-heavy work,

@@ -12,7 +12,7 @@ From that window you can leave:
 - section comments for larger chunks of the message, and
 - inline notes tied to individual lines.
 
-When you submit, TLH appends a structured planning-oriented feedback prompt to the current editor buffer so you can send that feedback back to the active agent. It does not auto-apply changes or rewrite the old message in place.
+When you submit, TLH sends the feedback directly to the agent as a follow-up message. Your existing editor text is left untouched. Blank lines cannot be annotated inline; the inline-note button is not shown for empty lines. It does not auto-apply changes or rewrite the old message in place.
 
 This is TLH's first-party replacement for the older Plannotator-based last-message annotation flow. Use `/annotate-last-message` directly; this workflow does not require Plannotator.
 

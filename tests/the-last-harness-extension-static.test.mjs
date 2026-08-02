@@ -35,6 +35,7 @@ const usageLimitsCommandSource = readFileSync(new URL("../extensions/the-last-ha
 const profileStateSource = readFileSync(new URL("../extensions/the-last-harness/profile-state.ts", import.meta.url), "utf8");
 const packageVersionSource = readFileSync(new URL("../extensions/the-last-harness/package-version.ts", import.meta.url), "utf8");
 const typesSource = readFileSync(new URL("../extensions/the-last-harness/types.ts", import.meta.url), "utf8");
+const annotateLastMessageSource = readFileSync(new URL("../extensions/the-last-harness/annotate-last-message.ts", import.meta.url), "utf8");
 const jiti = createJiti(import.meta.url);
 const { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents, loadSubagentMetadata } = await jiti.import(
 	"../extensions/the-last-harness/prompts.ts",
@@ -593,10 +594,37 @@ test("extension lazy-loads review, tokens, annotate-last-message, and tlh-change
 	assert.match(extensionSource, /pi\.registerCommand\("tokens", \{[\s\S]*const handler = await getTokensCommandHandler\(\);/);
 	assert.match(extensionSource, /pi\.registerCommand\("annotate-last-message", \{[\s\S]*const command = await getAnnotateLastMessageCommand\(\);/);
 	assert.match(extensionSource, /pi\.registerCommand\("tlh-changelog", \{[\s\S]*const handler = await getTlhChangelogCommandHandler\(\);[\s\S]*await handler\(pi, args, ctx\);/);
-	assert.match(extensionSource, /annotateLastMessageCommandPromise = loadAnnotateLastMessageModule\(\)[\s\S]*buildAnnotateLastMessageCommand\(\)/);
+	assert.match(
+		extensionSource,
+		/annotateLastMessageCommandPromise = loadAnnotateLastMessageModule\(\)[\s\S]*?buildAnnotateLastMessageCommand\(\{/,
+	);
 	assert.match(extensionSource, /tlhChangelogCommandHandlerPromise = loadTlhChangelogModule\(\)[\s\S]*handleTlhChangelogCommand/);
 	assert.match(extensionSource, /pi\.on\("session_shutdown", async \(\) => \{[\s\S]*if \(!annotateLastMessageCommandPromise\) \{[\s\S]*return;[\s\S]*const command = await annotateLastMessageCommandPromise;[\s\S]*command\.handleSessionShutdown\(\);/);
 	assert.doesNotMatch(extensionSource, /import\("\.\/the-last-harness\/(?:effort|thinking|experimental|version|attribution)\.js"\)/);
+});
+
+test("production annotate-last-message facade wires sendUserMessage through to the command builder", () => {
+	// Regression guard: registerAnnotateLastMessageCommand is unused by the shipped extension.
+	// The lazy-load facade below is the only production construction path, so it must supply
+	// sendUserMessage or submitted annotation feedback is silently dropped.
+	const facade = sourceSection(
+		extensionSource,
+		"const getAnnotateLastMessageCommand = () => {",
+		"\n\t};",
+	);
+	assert.match(facade, /module\.buildAnnotateLastMessageCommand\(\{/);
+	assert.match(facade, /sendUserMessage: \(message, options\) => pi\.sendUserMessage\(message, options\),/);
+
+	// The dependency must be required, so a build site that cannot send fails typecheck.
+	assert.match(
+		annotateLastMessageSource,
+		/export type AnnotateLastMessageDependencies = \{\n\tsendUserMessage: \(message: string, options: \{ deliverAs: "followUp" \}\) => void;/,
+	);
+	assert.match(annotateLastMessageSource, /dependencies: AnnotateLastMessageDependencies,\n\): AnnotateLastMessageCommand \{/);
+	assert.doesNotMatch(annotateLastMessageSource, /dependencies: AnnotateLastMessageDependencies = \{\}/);
+	// No optional-call guard papering over a missing dependency.
+	assert.match(annotateLastMessageSource, /\n\t\t\t\t\tsendUserMessage\(prompt, \{ deliverAs: "followUp" \}\);/);
+	assert.doesNotMatch(annotateLastMessageSource, /sendUserMessage\?\.\(/);
 });
 
 test("header and footer install before deferred update side effects", () => {
