@@ -8,7 +8,9 @@ import { createJiti } from "jiti";
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
-const { registerTlhTicketWorkflowUi } = await jiti.import("../extensions/the-last-harness/ticket-workflow-ui.ts");
+const { createTlhTicketWorkflowUiRuntime, registerTlhTicketWorkflowUi } = await jiti.import(
+	"../extensions/the-last-harness/ticket-workflow-ui.ts",
+);
 
 function resetTicketWorkflowTestState() {
 	delete process.env.TICKETS_DIR;
@@ -422,6 +424,53 @@ test("ticket workflow UI falls back to the ticket id when the sole in-progress t
 	});
 });
 
+test("ticket workflow UI sanitizes decoded terminal controls from fallback ticket ids in the footer and /tickets", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
+	mkdirSync(join(fixture.cwd, ".tickets"));
+	const statePath = join(fixture.dir, "tk-state");
+	writeFileSync(statePath, "default\n");
+	installFakeTk(fixture.agent, statePath);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const decodedUnsafeTicketId = "tlhf-safe\u001b[31m-red\u001b[0m\u0007";
+		let showCalls = 0;
+		const runner = (_command, _cwd, args) => {
+			switch (args[0]) {
+				case "query":
+					return {
+						status: 0,
+						stdout: `${JSON.stringify({ id: decodedUnsafeTicketId, status: "in_progress" })}\n`,
+						stderr: "",
+					};
+				case "ready":
+				case "blocked":
+					return { status: 0, stdout: "", stderr: "" };
+				case "show":
+					showCalls += 1;
+					assert.equal(args[1], decodedUnsafeTicketId);
+					return { status: 1, stdout: "", stderr: "ticket metadata unavailable" };
+				default:
+					return assert.fail(`unexpected tk command: ${args.join(" ")}`);
+			}
+		};
+
+		const pi = createPiHarness();
+		const runtime = createTlhTicketWorkflowUiRuntime(pi, { runner });
+		const uiHarness = createUiHarness();
+		const ctx = createCtx(fixture.cwd, uiHarness.ui);
+
+		runtime.applyCurrentSettings(ctx);
+		assert.equal(uiHarness.statusUpdates.at(-1)?.text, "ticket: tlhf-safe-red (/tickets)");
+
+		await pi.commands.get("tickets").handler("", ctx);
+		assert.equal(showCalls, 2);
+		assert.equal(
+			uiHarness.notifications.at(-1)?.message,
+			"tk: 0 ready • 0 blocked • 1 in progress • 1 active • 1 total\nIn progress: tlhf-safe-red",
+		);
+	});
+});
+
 test("ticket workflow UI strips ANSI and control sequences from the sole in-progress footer title", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
 	mkdirSync(join(fixture.cwd, ".tickets"));
@@ -496,6 +545,77 @@ test("ticket workflow UI renders every in-progress ticket on its own footer line
 			/In progress:\n- tlhf-16ll - First in-progress ticket\n- tlhf-7rd2 - Second in-progress ticket/,
 		);
 		assert.doesNotMatch(details, /ambiguous|Footer stays quiet/i);
+	});
+});
+
+test("ticket workflow UI bounds multi-ticket title lookups to one overall timeout budget", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
+	mkdirSync(join(fixture.cwd, ".tickets"));
+	const statePath = join(fixture.dir, "tk-state");
+	writeFileSync(statePath, "default\n");
+	installFakeTk(fixture.agent, statePath);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		let nowMs = 0;
+		const showCalls = [];
+		const runner = (_command, _cwd, args, timeoutMs) => {
+			switch (args[0]) {
+				case "query":
+					return {
+						status: 0,
+						stdout: [
+							'{"id":"tlhf-first","status":"in_progress"}',
+							'{"id":"tlhf-slow","status":"in_progress"}',
+							'{"id":"tlhf-unattempted","status":"in_progress"}',
+						].join("\n"),
+						stderr: "",
+					};
+				case "ready":
+				case "blocked":
+					return { status: 0, stdout: "", stderr: "" };
+				case "show": {
+					const ticketId = args[1];
+					showCalls.push({ ticketId, timeoutMs });
+					if (ticketId === "tlhf-first") {
+						nowMs += 1000;
+						return {
+							status: 0,
+							stdout: "---\nid: tlhf-first\nstatus: in_progress\n---\n# Resolved first title\n",
+							stderr: "",
+						};
+					}
+					if (ticketId === "tlhf-slow") {
+						nowMs += timeoutMs;
+						return {
+							status: null,
+							stdout: "",
+							stderr: "",
+							error: Object.assign(new Error("title lookup timed out"), { code: "ETIMEDOUT" }),
+						};
+					}
+					return assert.fail(`title lookup exceeded the overall budget: ${ticketId}`);
+				}
+				default:
+					assert.fail(`unexpected tk command: ${args.join(" ")}`);
+			}
+		};
+
+		const pi = createPiHarness();
+		const runtime = createTlhTicketWorkflowUiRuntime(pi, { runner, now: () => nowMs });
+		const uiHarness = createUiHarness();
+		const ctx = createCtx(fixture.cwd, uiHarness.ui);
+
+		runtime.applyCurrentSettings(ctx);
+
+		assert.deepEqual(showCalls, [
+			{ ticketId: "tlhf-first", timeoutMs: 4000 },
+			{ ticketId: "tlhf-slow", timeoutMs: 3000 },
+		]);
+		assert.equal(nowMs, 4000);
+		assert.equal(
+			uiHarness.statusUpdates.at(-1)?.text,
+			"ticket: Resolved first title (/tickets)\nticket: tlhf-slow (/tickets)\nticket: tlhf-unattempted (/tickets)",
+		);
 	});
 });
 

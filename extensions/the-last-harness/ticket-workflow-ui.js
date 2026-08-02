@@ -1,10 +1,12 @@
 import { spawnSync } from "node:child_process";
+import { performance } from "node:perf_hooks";
 import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { isRecord } from "./common.js";
 import { activateTlhTicketSessionScope, findValidTlhTicketCommand } from "./tickets.js";
 import { TK_WORKFLOW_STATUS_KEY, TK_WORKFLOW_WIDGET_KEY } from "./ticket-workflow-ui-constants.js";
 const TK_STATUS_COMMAND = "tickets";
 const TK_COMMAND_TIMEOUT_MS = 4000;
+const TK_TITLE_RESOLUTION_BUDGET_MS = TK_COMMAND_TIMEOUT_MS;
 const TK_USER_BASH_REFRESH_DELAY_MS = 250;
 const TK_STATUS_HINT = " (/tickets)";
 const TK_WORKING_ON_PREFIX = "ticket: ";
@@ -27,11 +29,11 @@ function isNoRepoMessage(message) {
     return (typeof message === "string" &&
         (/no \.tickets directory found/i.test(message) || /tickets directory ['"].+['"] does not exist/i.test(message)));
 }
-function runTkCommand(command, cwd, args) {
+function runTkCommand(command, cwd, args, timeoutMs) {
     return spawnSync(command, args, {
         cwd,
         encoding: "utf8",
-        timeout: TK_COMMAND_TIMEOUT_MS,
+        timeout: timeoutMs,
     });
 }
 function parseJsonLines(output) {
@@ -74,21 +76,31 @@ function extractTicketTitleFromShowOutput(output) {
     }
     return undefined;
 }
-function getInProgressTicketTitle(command, cwd, ticketId) {
-    const showResult = runTkCommand(command, cwd, ["show", ticketId]);
+function getInProgressTicketTitle(command, cwd, ticketId, timeoutMs, runner) {
+    const showResult = runner(command, cwd, ["show", ticketId], timeoutMs);
     if (showResult.error || showResult.status !== 0) {
         return undefined;
     }
     return extractTicketTitleFromShowOutput(showResult.stdout || "");
 }
-function getTkWorkflowSnapshot(cwd) {
+function resolveInProgressTickets(command, cwd, ticketIds, runner, now) {
+    const deadlineMs = now() + TK_TITLE_RESOLUTION_BUDGET_MS;
+    return ticketIds.map((ticketId) => {
+        const timeoutMs = Math.floor(deadlineMs - now());
+        const title = timeoutMs > 0 ? getInProgressTicketTitle(command, cwd, ticketId, timeoutMs, runner) : undefined;
+        return { id: ticketId, title };
+    });
+}
+function getTkWorkflowSnapshot(cwd, options) {
     activateTlhTicketSessionScope(cwd);
     const settings = getTlhGlobalSettings(cwd);
     const command = findValidTlhTicketCommand(settings, getAgentDir());
     if (!command) {
         return { kind: "unavailable", message: "tk is unavailable for this TLH profile." };
     }
-    const queryResult = runTkCommand(command, cwd, ["query"]);
+    const runner = options.runner ?? runTkCommand;
+    const now = options.now ?? (() => performance.now());
+    const queryResult = runner(command, cwd, ["query"], TK_COMMAND_TIMEOUT_MS);
     const queryFailure = firstOutputLine(queryResult);
     if (queryResult.error) {
         return { kind: "unavailable", message: queryResult.error.message };
@@ -108,7 +120,7 @@ function getTkWorkflowSnapshot(cwd) {
     if (tickets.length === 0) {
         return { kind: "no-tickets" };
     }
-    const readyResult = runTkCommand(command, cwd, ["ready"]);
+    const readyResult = runner(command, cwd, ["ready"], TK_COMMAND_TIMEOUT_MS);
     if (readyResult.error) {
         return { kind: "unavailable", message: readyResult.error.message };
     }
@@ -118,7 +130,7 @@ function getTkWorkflowSnapshot(cwd) {
             ? { kind: "no-repo", message: "No .tickets directory found for this repo." }
             : { kind: "unavailable", message: failure ?? "tk ready failed." };
     }
-    const blockedResult = runTkCommand(command, cwd, ["blocked"]);
+    const blockedResult = runner(command, cwd, ["blocked"], TK_COMMAND_TIMEOUT_MS);
     if (blockedResult.error) {
         return { kind: "unavailable", message: blockedResult.error.message };
     }
@@ -129,11 +141,11 @@ function getTkWorkflowSnapshot(cwd) {
             : { kind: "unavailable", message: failure ?? "tk blocked failed." };
     }
     const active = tickets.filter((ticket) => ticket.status === "open" || ticket.status === "in_progress").length;
-    const inProgress = tickets
+    const inProgressTicketIds = tickets
         .filter((ticket) => ticket.status === "in_progress")
         .map((ticket) => ticket.id?.trim())
-        .filter((ticketId) => Boolean(ticketId))
-        .map((ticketId) => ({ id: ticketId, title: getInProgressTicketTitle(command, cwd, ticketId) }));
+        .filter((ticketId) => Boolean(ticketId));
+    const inProgress = resolveInProgressTickets(command, cwd, inProgressTicketIds, runner, now);
     return {
         kind: "ok",
         total: tickets.length,
@@ -189,6 +201,9 @@ function stripTerminalControlSequences(text) {
     }
     return sanitized;
 }
+function getSafeInProgressTicketId(ticket) {
+    return stripTerminalControlSequences(ticket.id).trim();
+}
 function getSafeInProgressTicketTitle(ticket) {
     const safeTitle = ticket.title ? stripTerminalControlSequences(ticket.title).trim() : undefined;
     return safeTitle || undefined;
@@ -199,7 +214,7 @@ function formatTkWorkflowFooterStatus(snapshot) {
     }
     return snapshot.inProgress
         .map((ticket) => {
-        const label = getSafeInProgressTicketTitle(ticket) ?? ticket.id;
+        const label = getSafeInProgressTicketTitle(ticket) ?? getSafeInProgressTicketId(ticket);
         return `${TK_WORKING_ON_PREFIX}${label}${TK_STATUS_HINT}`;
     })
         .join("\n");
@@ -222,13 +237,15 @@ function formatTkWorkflowDetails(snapshot) {
     }
     else if (snapshot.inProgress.length === 1) {
         const [ticket] = snapshot.inProgress;
+        const id = getSafeInProgressTicketId(ticket);
         const title = getSafeInProgressTicketTitle(ticket);
-        lines.push(`In progress: ${title ? `${ticket.id} - ${title}` : ticket.id}`);
+        lines.push(`In progress: ${title ? `${id} - ${title}` : id}`);
     }
     else {
         lines.push("In progress:", ...snapshot.inProgress.map((ticket) => {
+            const id = getSafeInProgressTicketId(ticket);
             const title = getSafeInProgressTicketTitle(ticket);
-            return `- ${title ? `${ticket.id} - ${title}` : ticket.id}`;
+            return `- ${title ? `${id} - ${title}` : id}`;
         }));
     }
     if (snapshot.ready.length > 0) {
@@ -264,14 +281,14 @@ function shouldRefreshFromBashCommand(command) {
     }
     return false;
 }
-export function createTlhTicketWorkflowUiRuntime(pi) {
+export function createTlhTicketWorkflowUiRuntime(pi, options = {}) {
     let commandRegistered = false;
     const pendingUserBashRefreshes = new Set();
     const refresh = (ctx) => {
         if (!ctx.hasUI) {
             return;
         }
-        setTkWorkflowUi(ctx, getTkWorkflowSnapshot(ctx.cwd));
+        setTkWorkflowUi(ctx, getTkWorkflowSnapshot(ctx.cwd, options));
     };
     const ensureCommandRegistered = () => {
         if (commandRegistered) {
@@ -280,7 +297,7 @@ export function createTlhTicketWorkflowUiRuntime(pi) {
         pi.registerCommand(TK_STATUS_COMMAND, {
             description: "Show TLH ticket workflow status",
             handler: async (_args, commandCtx) => {
-                commandCtx.ui.notify(formatTkWorkflowDetails(getTkWorkflowSnapshot(commandCtx.cwd)), "info");
+                commandCtx.ui.notify(formatTkWorkflowDetails(getTkWorkflowSnapshot(commandCtx.cwd, options)), "info");
             },
         });
         commandRegistered = true;
