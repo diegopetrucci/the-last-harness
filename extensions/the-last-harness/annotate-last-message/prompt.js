@@ -39,6 +39,10 @@ export function composeAnnotateLastMessagePrompt(message, payload) {
     const sectionMap = new Map(message.sections.map((section) => [section.id, section]));
     const inlineComments = payload.inlineComments
         .filter((comment) => comment.body.trim().length > 0)
+        .filter((comment) => {
+        const line = lineMap.get(comment.line);
+        return line === undefined || line.text.trim().length > 0;
+    })
         .sort((left, right) => left.line - right.line);
     const sectionComments = payload.sectionComments
         .filter((comment) => comment.body.trim().length > 0)

@@ -58,11 +58,6 @@ function isCancelPayload(value: unknown): value is AnnotateLastMessageCancelPayl
 	return typeof value === "object" && value != null && "type" in value && value.type === "cancel";
 }
 
-function appendPrompt(ctx: ExtensionCommandContext, prompt: string): void {
-	const prefix = ctx.ui.getEditorText().trim().length > 0 ? "\n\n" : "";
-	ctx.ui.pasteToEditor(`${prefix}${prompt}`);
-}
-
 export const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION = "Open a native annotation window for the latest assistant message";
 
 export type AnnotateLastMessageCommand = {
@@ -71,17 +66,19 @@ export type AnnotateLastMessageCommand = {
 };
 
 export type AnnotateLastMessageDependencies = {
+	sendUserMessage: (message: string, options: { deliverAs: "followUp" }) => void;
 	openAnnotationWindow?: typeof openQuietGlimpse;
 	setTimeoutFn?: typeof setTimeout;
 	clearTimeoutFn?: typeof clearTimeout;
 };
 
 export function buildAnnotateLastMessageCommand(
-	dependencies: AnnotateLastMessageDependencies = {},
+	dependencies: AnnotateLastMessageDependencies,
 ): AnnotateLastMessageCommand {
 	const openAnnotationWindow = dependencies.openAnnotationWindow ?? openQuietGlimpse;
 	const setTimer = dependencies.setTimeoutFn ?? setTimeout;
 	const clearTimer = dependencies.clearTimeoutFn ?? clearTimeout;
+	const sendUserMessage = dependencies.sendUserMessage;
 
 	let activeWindow: QuietGlimpseWindow | null = null;
 	let lifecycleGeneration = 0;
@@ -211,8 +208,8 @@ export function buildAnnotateLastMessageCommand(
 					}
 
 					const prompt = composeAnnotateLastMessagePrompt(sourceData, result);
-					appendPrompt(ctx, prompt);
-					ctx.ui.notify("Appended annotation feedback to the editor.", "info");
+					sendUserMessage(prompt, { deliverAs: "followUp" });
+					ctx.ui.notify("Annotation feedback sent to the agent.", "info");
 				} catch (error) {
 					if (suppressedWindows.has(windowMessageSource)) return;
 					if (windowLifecycleGeneration !== lifecycleGeneration) return;
@@ -249,7 +246,9 @@ export function buildAnnotateLastMessageCommand(
 }
 
 export function registerAnnotateLastMessageCommand(pi: ExtensionAPI): void {
-	const command = buildAnnotateLastMessageCommand();
+	const command = buildAnnotateLastMessageCommand({
+		sendUserMessage: (message, options) => pi.sendUserMessage(message, options),
+	});
 	pi.registerCommand("annotate-last-message", {
 		description: ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION,
 		handler: command.handler,

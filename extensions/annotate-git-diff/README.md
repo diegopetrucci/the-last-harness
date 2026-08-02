@@ -19,9 +19,9 @@ This extension adapts the MIT-licensed `@ryan_nookpi/pi-extension-diff-review` i
 - Monaco-based review UI
 - branch diff, per-commit (including working tree), and all-files review scopes
 - inline, file-level, and overall review comments
-- submit-to-editor feedback prompt insertion
+- explicit Submit sends review feedback directly to the agent; closing the window with unsent comments pastes a draft prompt to the editor instead
 
-Submitting feedback does not auto-apply code changes. TLH appends a structured review prompt to the current editor buffer so you can hand that feedback back to the active agent.
+Submitting feedback does not auto-apply code changes. Clicking **Submit** sends a structured review prompt directly to the active agent. If you close the window with comments not yet submitted, TLH pastes the draft feedback into the editor instead, so an accidental window close cannot fire a new agent turn.
 
 ## Troubleshooting and recovery
 
