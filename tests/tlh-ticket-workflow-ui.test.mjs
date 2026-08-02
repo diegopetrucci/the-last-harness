@@ -399,7 +399,7 @@ test("ticket workflow UI shows the sole in-progress footer even with a higher-pr
 	});
 });
 
-test("ticket workflow UI stays quiet when the sole in-progress ticket title is unavailable while /tickets still reports its id without mutation guidance", async (t) => {
+test("ticket workflow UI falls back to the ticket id when the sole in-progress ticket title is unavailable", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
 	mkdirSync(join(fixture.cwd, ".tickets"));
 	const statePath = join(fixture.dir, "tk-state");
@@ -413,7 +413,7 @@ test("ticket workflow UI stays quiet when the sole in-progress ticket title is u
 		const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
 		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
-		assert.equal(uiHarness.statusUpdates.at(-1)?.text, undefined);
+		assert.equal(uiHarness.statusUpdates.at(-1)?.text, "ticket: tlhf-7rd2 (/tickets)");
 
 		await pi.commands.get("tickets").handler("", ctx);
 		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /tk: 1 ready • 1 blocked • 1 in progress • 2 active • 3 total/);
@@ -469,7 +469,7 @@ test("ticket workflow UI still shows a sole blocked in-progress ticket in the fo
 	});
 });
 
-test("ticket workflow UI stays quiet for multiple in-progress tickets while /tickets explains the ambiguity", async (t) => {
+test("ticket workflow UI renders every in-progress ticket on its own footer line and lists each one in /tickets", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
 	mkdirSync(join(fixture.cwd, ".tickets"));
 	const statePath = join(fixture.dir, "tk-state");
@@ -483,13 +483,19 @@ test("ticket workflow UI stays quiet for multiple in-progress tickets while /tic
 		const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
 		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
-		assert.equal(uiHarness.statusUpdates.at(-1)?.text, undefined);
+		assert.equal(
+			uiHarness.statusUpdates.at(-1)?.text,
+			"ticket: First in-progress ticket (/tickets)\nticket: Second in-progress ticket (/tickets)",
+		);
 
 		await pi.commands.get("tickets").handler("", ctx);
-		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /tk: 1 ready • 1 blocked • 2 in progress • 3 active • 3 total/);
-		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /In progress is ambiguous \(2 tickets\)\. Footer stays quiet\./);
-		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /- tlhf-16ll/);
-		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /- tlhf-7rd2/);
+		const details = uiHarness.notifications.at(-1)?.message ?? "";
+		assert.match(details, /tk: 1 ready • 1 blocked • 2 in progress • 3 active • 3 total/);
+		assert.match(
+			details,
+			/In progress:\n- tlhf-16ll - First in-progress ticket\n- tlhf-7rd2 - Second in-progress ticket/,
+		);
+		assert.doesNotMatch(details, /ambiguous|Footer stays quiet/i);
 	});
 });
 
