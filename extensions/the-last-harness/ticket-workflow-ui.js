@@ -132,8 +132,8 @@ function getTkWorkflowSnapshot(cwd) {
     const inProgress = tickets
         .filter((ticket) => ticket.status === "in_progress")
         .map((ticket) => ticket.id?.trim())
-        .filter((ticketId) => Boolean(ticketId));
-    const currentTitle = inProgress.length === 1 ? getInProgressTicketTitle(command, cwd, inProgress[0]) : undefined;
+        .filter((ticketId) => Boolean(ticketId))
+        .map((ticketId) => ({ id: ticketId, title: getInProgressTicketTitle(command, cwd, ticketId) }));
     return {
         kind: "ok",
         total: tickets.length,
@@ -141,7 +141,6 @@ function getTkWorkflowSnapshot(cwd) {
         ready: parseListLines(readyResult.stdout || ""),
         blocked: parseListLines(blockedResult.stdout || ""),
         inProgress,
-        currentTitle,
     };
 }
 function isTerminalControlCharCode(code) {
@@ -190,12 +189,20 @@ function stripTerminalControlSequences(text) {
     }
     return sanitized;
 }
+function getSafeInProgressTicketTitle(ticket) {
+    const safeTitle = ticket.title ? stripTerminalControlSequences(ticket.title).trim() : undefined;
+    return safeTitle || undefined;
+}
 function formatTkWorkflowFooterStatus(snapshot) {
-    if (snapshot.kind !== "ok" || snapshot.inProgress.length !== 1) {
+    if (snapshot.kind !== "ok" || snapshot.inProgress.length === 0) {
         return undefined;
     }
-    const safeTitle = snapshot.currentTitle ? stripTerminalControlSequences(snapshot.currentTitle).trim() : undefined;
-    return safeTitle ? `${TK_WORKING_ON_PREFIX}${safeTitle}${TK_STATUS_HINT}` : undefined;
+    return snapshot.inProgress
+        .map((ticket) => {
+        const label = getSafeInProgressTicketTitle(ticket) ?? ticket.id;
+        return `${TK_WORKING_ON_PREFIX}${label}${TK_STATUS_HINT}`;
+    })
+        .join("\n");
 }
 function formatTkWorkflowDetails(snapshot) {
     if (snapshot.kind === "unavailable") {
@@ -214,12 +221,15 @@ function formatTkWorkflowDetails(snapshot) {
         lines.push("In progress: none. Footer stays quiet.");
     }
     else if (snapshot.inProgress.length === 1) {
-        const ticketId = snapshot.inProgress[0];
-        const title = snapshot.currentTitle ? stripTerminalControlSequences(snapshot.currentTitle).trim() : undefined;
-        lines.push(`In progress: ${title ? `${ticketId} - ${title}` : ticketId}`);
+        const [ticket] = snapshot.inProgress;
+        const title = getSafeInProgressTicketTitle(ticket);
+        lines.push(`In progress: ${title ? `${ticket.id} - ${title}` : ticket.id}`);
     }
     else {
-        lines.push(`In progress is ambiguous (${snapshot.inProgress.length} tickets). Footer stays quiet.`, ...snapshot.inProgress.slice(0, 3).map((ticketId) => `- ${ticketId}`));
+        lines.push("In progress:", ...snapshot.inProgress.map((ticket) => {
+            const title = getSafeInProgressTicketTitle(ticket);
+            return `- ${title ? `${ticket.id} - ${title}` : ticket.id}`;
+        }));
     }
     if (snapshot.ready.length > 0) {
         lines.push("Ready:", ...snapshot.ready.slice(0, 3).map((line) => `- ${line}`));

@@ -14,6 +14,7 @@ const TK_STATUS_HINT = " (/tickets)";
 const TK_WORKING_ON_PREFIX = "ticket: ";
 
 type TkWorkflowTicket = { id?: string; status?: string };
+type TkWorkflowInProgressTicket = { id: string; title?: string };
 
 type TkWorkflowSnapshot =
 	| { kind: "unavailable"; message: string }
@@ -25,8 +26,7 @@ type TkWorkflowSnapshot =
 			active: number;
 			ready: string[];
 			blocked: string[];
-			inProgress: string[];
-			currentTitle?: string;
+			inProgress: TkWorkflowInProgressTicket[];
 		};
 
 type TkCommandResult = SpawnSyncReturns<string>;
@@ -170,9 +170,8 @@ function getTkWorkflowSnapshot(cwd: string): TkWorkflowSnapshot {
 	const inProgress = tickets
 		.filter((ticket) => ticket.status === "in_progress")
 		.map((ticket) => ticket.id?.trim())
-		.filter((ticketId): ticketId is string => Boolean(ticketId));
-	const currentTitle =
-		inProgress.length === 1 ? getInProgressTicketTitle(command, cwd, inProgress[0]) : undefined;
+		.filter((ticketId): ticketId is string => Boolean(ticketId))
+		.map((ticketId) => ({ id: ticketId, title: getInProgressTicketTitle(command, cwd, ticketId) }));
 	return {
 		kind: "ok",
 		total: tickets.length,
@@ -180,7 +179,6 @@ function getTkWorkflowSnapshot(cwd: string): TkWorkflowSnapshot {
 		ready: parseListLines(readyResult.stdout || ""),
 		blocked: parseListLines(blockedResult.stdout || ""),
 		inProgress,
-		currentTitle,
 	};
 }
 
@@ -234,12 +232,21 @@ function stripTerminalControlSequences(text: string): string {
 	return sanitized;
 }
 
+function getSafeInProgressTicketTitle(ticket: TkWorkflowInProgressTicket): string | undefined {
+	const safeTitle = ticket.title ? stripTerminalControlSequences(ticket.title).trim() : undefined;
+	return safeTitle || undefined;
+}
+
 function formatTkWorkflowFooterStatus(snapshot: TkWorkflowSnapshot): string | undefined {
-	if (snapshot.kind !== "ok" || snapshot.inProgress.length !== 1) {
+	if (snapshot.kind !== "ok" || snapshot.inProgress.length === 0) {
 		return undefined;
 	}
-	const safeTitle = snapshot.currentTitle ? stripTerminalControlSequences(snapshot.currentTitle).trim() : undefined;
-	return safeTitle ? `${TK_WORKING_ON_PREFIX}${safeTitle}${TK_STATUS_HINT}` : undefined;
+	return snapshot.inProgress
+		.map((ticket) => {
+			const label = getSafeInProgressTicketTitle(ticket) ?? ticket.id;
+			return `${TK_WORKING_ON_PREFIX}${label}${TK_STATUS_HINT}`;
+		})
+		.join("\n");
 }
 
 function formatTkWorkflowDetails(snapshot: TkWorkflowSnapshot): string {
@@ -259,13 +266,16 @@ function formatTkWorkflowDetails(snapshot: TkWorkflowSnapshot): string {
 	if (snapshot.inProgress.length === 0) {
 		lines.push("In progress: none. Footer stays quiet.");
 	} else if (snapshot.inProgress.length === 1) {
-		const ticketId = snapshot.inProgress[0];
-		const title = snapshot.currentTitle ? stripTerminalControlSequences(snapshot.currentTitle).trim() : undefined;
-		lines.push(`In progress: ${title ? `${ticketId} - ${title}` : ticketId}`);
+		const [ticket] = snapshot.inProgress;
+		const title = getSafeInProgressTicketTitle(ticket);
+		lines.push(`In progress: ${title ? `${ticket.id} - ${title}` : ticket.id}`);
 	} else {
 		lines.push(
-			`In progress is ambiguous (${snapshot.inProgress.length} tickets). Footer stays quiet.`,
-			...snapshot.inProgress.slice(0, 3).map((ticketId) => `- ${ticketId}`),
+			"In progress:",
+			...snapshot.inProgress.map((ticket) => {
+				const title = getSafeInProgressTicketTitle(ticket);
+				return `- ${title ? `${ticket.id} - ${title}` : ticket.id}`;
+			}),
 		);
 	}
 	if (snapshot.ready.length > 0) {
