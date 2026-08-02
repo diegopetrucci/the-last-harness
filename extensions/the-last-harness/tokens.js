@@ -253,7 +253,8 @@ function renderToolSourceTable(sources) {
 function renderToolTable(tools) {
     return [
         "<h3>Tools</h3>",
-        renderTable(["Tool", "Source", "Calls", "Results", "Errors", "MCP", "Est. tokens"], tools.map((tool) => [
+        `<p class="section-note">${escapeHtml("Obs. wall-clock latency is the elapsed time between the tool-call event and its result event in the session log — not tool execution time. It includes idle periods, supervisor pauses, and human hold time. Values exceeding several minutes usually indicate the run was paused awaiting input, not that the tool itself was slow. \u2018Med.\u2019 is the median across matched call/result pairs; \u2018\u2014\u2019 means no matched pairs (e.g. session still active or IDs unmatched).")}</p>`,
+        renderTable(["Tool", "Source", "Calls", "Results", "Errors", "MCP", "Est. tokens", "Med. obs. wall-clock latency"], tools.map((tool) => [
             tool.toolName,
             tool.source.label,
             formatInteger(tool.callCount),
@@ -261,6 +262,7 @@ function renderToolTable(tools) {
             formatInteger(tool.errorCount),
             tool.mcp ? "yes" : "no",
             formatInteger(tool.approxTokens),
+            formatToolLatency(tool.observedLatency),
         ]), "No tool calls recorded."),
     ].join("");
 }
@@ -492,6 +494,24 @@ function formatCacheShare(cacheTokens, totalTokens) {
         return "0%";
     }
     return PERCENT_FORMATTER.format(cacheTokens / totalTokens);
+}
+function formatToolLatency(latency) {
+    if (!latency || latency.pairedCount === 0) {
+        return "\u2014";
+    }
+    return formatWallClockMs(latency.medianMs);
+}
+function formatWallClockMs(ms) {
+    if (ms < 1_000) {
+        return `${ms}ms`;
+    }
+    if (ms < 60_000) {
+        return `${Math.round(ms / 100) / 10}s`;
+    }
+    if (ms < 3_600_000) {
+        return `${Math.round(ms / 60_000)}min`;
+    }
+    return `${Math.round((ms / 3_600_000) * 10) / 10}h`;
 }
 function formatIdleMs(ms) {
     if (ms < 60_000) {

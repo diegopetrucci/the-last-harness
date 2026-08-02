@@ -86,7 +86,7 @@ test("packed TLH generated JavaScript loads and reloads through pinned Pi 0.82.1
 		.filter((path) => !path.endsWith(".d.ts"))
 		.map((path) => path.replace(/\.ts$/, ".js"))
 		.sort();
-	assert.equal(generatedExtensionPaths.length, 68);
+	assert.equal(generatedExtensionPaths.length, 69);
 	for (const generatedPath of generatedExtensionPaths) {
 		assert.ok(packedPaths.has(generatedPath), `npm pack omitted generated extension module ${generatedPath}`);
 	}

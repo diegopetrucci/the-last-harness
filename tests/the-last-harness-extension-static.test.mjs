@@ -423,6 +423,7 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	const developer = subagentMetadata.find((agent) => agent.name === "developer");
 	assert.deepEqual(developer?.tlhAnthropicModels, ["anthropic/claude-sonnet-4-6"]);
 	assert.deepEqual(developer?.tlhOpenaiModels, ["openai-codex/gpt-5.6-luna"]);
+	assert.equal(developer?.thinking, "max");
 	assert.equal(developer?.tlhOpenaiThinking, "max");
 	for (const name of ["code-reviewer", "oracle", "contrarian"]) {
 		const agent = subagentMetadata.find((candidate) => candidate.name === name);

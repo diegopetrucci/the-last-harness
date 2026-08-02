@@ -52,7 +52,7 @@ import {
 	missingTlhSubagentPrompts,
 	provisionSubagentExtensionConfig,
 	settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts,
-	subagentExtensionConfigNeedsProvisioning,
+	subagentExtensionConfigMissingDefaults,
 } from "./lib/tlh-install-subagents.mjs";
 import {
 	assertGitSourceTargetSafe,
@@ -1328,8 +1328,9 @@ async function installSupportFilesToProfile(config: InstallConfig): Promise<void
 		} else {
 			log(config, "Would skip TLH subagent prompts because this ref does not enable bundled subagents in settings.");
 		}
-		if (subagentExtensionConfigNeedsProvisioning(config)) {
-			log(config, "Would provision subagent extension config (extensions/subagent/config.json) with toolDescriptionMode: compact.");
+		const missingSubagentExtensionDefaults = subagentExtensionConfigMissingDefaults(config);
+		if (missingSubagentExtensionDefaults.length > 0) {
+			log(config, `Would provision missing TLH subagent extension defaults (extensions/subagent/config.json): ${missingSubagentExtensionDefaults.join("; ")}.`);
 		} else {
 			log(config, "Would leave existing subagent extension config (extensions/subagent/config.json) untouched.");
 		}

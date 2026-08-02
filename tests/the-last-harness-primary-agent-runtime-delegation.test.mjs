@@ -18,7 +18,7 @@ import {
 	EMBEDDED_SUBAGENTS_FEATURE,
 } from "./the-last-harness-primary-agent-runtime-test-helpers.mjs";
 
-const LIBRARIAN_MAX_TIMEOUT_MS = 300_000;
+const SCOUT_RUN_MAX_TIMEOUT_MS = 360_000;
 
 test("enabled primary mode allows approved delegation targets and forces safe top-level defaults", async () => {
 	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
@@ -40,49 +40,64 @@ test("enabled primary mode allows approved delegation targets and forces safe to
 	assert.equal(event.input.context, "fresh");
 });
 
-test("tool_call caps librarian execution timeouts without affecting stricter or non-librarian calls", async () => {
+test("tool_call caps targeted scout execution timeouts without affecting stricter or non-target calls", async () => {
 	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
 	const ctx = createToolCallContext([
 		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
 	]);
 	const cases = [
 		{
-			name: "missing timeout",
+			name: "missing timeout for librarian",
 			event: { toolName: "subagent", input: { agent: "librarian", task: "Research upstream docs" } },
-			expectedTimeoutMs: LIBRARIAN_MAX_TIMEOUT_MS,
+			expectedTimeoutMs: SCOUT_RUN_MAX_TIMEOUT_MS,
 		},
 		{
-			name: "longer timeout",
-			event: { toolName: "subagent", input: { agent: "librarian", task: "Research upstream docs", timeoutMs: 360_000 } },
-			expectedTimeoutMs: LIBRARIAN_MAX_TIMEOUT_MS,
+			name: "missing timeout for web-scout",
+			event: { toolName: "subagent", input: { agent: "web-scout", task: "Research upstream docs" } },
+			expectedTimeoutMs: SCOUT_RUN_MAX_TIMEOUT_MS,
 		},
 		{
-			name: "stricter timeout",
-			event: { toolName: "subagent", input: { agent: "librarian", task: "Research upstream docs", timeoutMs: 120_000 } },
+			name: "missing timeout for repo-scout",
+			event: { toolName: "subagent", input: { agent: "repo-scout", task: "Map the repo" } },
+			expectedTimeoutMs: SCOUT_RUN_MAX_TIMEOUT_MS,
+		},
+		{
+			name: "missing timeout for diff-summarizer",
+			event: { toolName: "subagent", input: { agent: "diff-summarizer", task: "Summarize the diff" } },
+			expectedTimeoutMs: SCOUT_RUN_MAX_TIMEOUT_MS,
+		},
+		{
+			name: "overly long timeout is capped",
+			event: { toolName: "subagent", input: { agent: "librarian", task: "Research upstream docs", timeoutMs: 420_000 } },
+			expectedTimeoutMs: SCOUT_RUN_MAX_TIMEOUT_MS,
+		},
+		{
+			name: "stricter timeout is preserved",
+			event: { toolName: "subagent", input: { agent: "repo-scout", task: "Map the repo", timeoutMs: 120_000 } },
 			expectedTimeoutMs: 120_000,
 		},
 		{
-			name: "async execution",
-			event: { toolName: "subagent", input: { agent: "librarian", task: "Research upstream docs", async: true } },
-			expectedTimeoutMs: LIBRARIAN_MAX_TIMEOUT_MS,
+			name: "async execution is capped",
+			event: { toolName: "subagent", input: { agent: "web-scout", task: "Research upstream docs", async: true } },
+			expectedTimeoutMs: SCOUT_RUN_MAX_TIMEOUT_MS,
 		},
 		{
-			name: "mixed batch containing librarian",
+			name: "mixed batch uses run-level cap when any targeted scout is present",
 			event: {
 				toolName: "subagent",
 				input: {
 					tasks: [
-						{ agent: "repo-scout", task: "Map the repo" },
-						{ agent: "librarian", task: "Research upstream docs" },
+						{ agent: "developer", task: "Implement the change" },
+						{ agent: "diff-summarizer", task: "Summarize the diff" },
 					],
 					timeoutMs: 420_000,
 				},
 			},
-			expectedTimeoutMs: LIBRARIAN_MAX_TIMEOUT_MS,
+			expectedTimeoutMs: SCOUT_RUN_MAX_TIMEOUT_MS,
 		},
 		{
-			name: "non-librarian execution",
-			event: { toolName: "subagent", input: { agent: "repo-scout", task: "Map the repo", timeoutMs: 420_000 } },
+			name: "non-target execution is unchanged",
+			event: { toolName: "subagent", input: { agent: "developer", task: "Implement the change", timeoutMs: 420_000 } },
 			expectedTimeoutMs: 420_000,
 		},
 	];
@@ -93,7 +108,7 @@ test("tool_call caps librarian execution timeouts without affecting stricter or 
 	}
 });
 
-test("tool_call caps librarian resume-chain executions but leaves opaque management timeouts unchanged", async () => {
+test("tool_call leaves every resume timeout unchanged while still defaulting scope for resume-chain execution", async () => {
 	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
 	const ctx = createToolCallContext([
 		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
@@ -105,10 +120,20 @@ test("tool_call caps librarian resume-chain executions but leaves opaque managem
 			id: "run-123",
 			message: "Continue the approved ticket.",
 			chain: [
-				{ agent: "repo-scout", task: "Refresh repo context" },
-				{ parallel: [{ agent: "librarian", task: "Research upstream issue history" }] },
+				{ agent: "developer", task: "Refresh repo context" },
+				{ parallel: [{ agent: "web-scout", task: "Research upstream issue history" }] },
 			],
 			timeoutMs: 420_000,
+		},
+	};
+	const stricterResumeChainEvent = {
+		toolName: "subagent",
+		input: {
+			action: "resume",
+			id: "run-124",
+			message: "Continue the approved ticket.",
+			chain: [{ agent: "repo-scout", task: "Map the repository" }],
+			timeoutMs: 120_000,
 		},
 	};
 	const listEvent = { toolName: "subagent", input: { action: "list", timeoutMs: 420_000 } };
@@ -118,9 +143,14 @@ test("tool_call caps librarian resume-chain executions but leaves opaque managem
 	};
 
 	assert.equal(await toolCall(resumeChainEvent, ctx), undefined);
-	assert.equal(resumeChainEvent.input.timeoutMs, LIBRARIAN_MAX_TIMEOUT_MS);
+	assert.equal(resumeChainEvent.input.timeoutMs, 420_000);
 	assert.equal(resumeChainEvent.input.agentScope, "user");
 	assert.equal(resumeChainEvent.input.context, "fresh");
+
+	assert.equal(await toolCall(stricterResumeChainEvent, ctx), undefined);
+	assert.equal(stricterResumeChainEvent.input.timeoutMs, 120_000);
+	assert.equal(stricterResumeChainEvent.input.agentScope, "user");
+	assert.equal(stricterResumeChainEvent.input.context, "fresh");
 
 	assert.equal(await toolCall(listEvent, ctx), undefined);
 	assert.equal(listEvent.input.timeoutMs, 420_000);

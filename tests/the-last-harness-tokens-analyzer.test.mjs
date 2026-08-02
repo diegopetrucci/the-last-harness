@@ -1188,3 +1188,162 @@ test("cacheMisses: analyzeCurrentSessionUsage accepts optional priceSource and f
 		"priceSource with non-zero cacheRead rate should not increase missedCost",
 	);
 });
+
+// ---------------------------------------------------------------------------
+// observedLatency tests (ts-j1k4)
+// ---------------------------------------------------------------------------
+
+test("analyzeSessionEntries populates observedLatency on byTool entries when toolCallIds match, and does not change token or cost values", () => {
+	// Entries where call-side toolCallId matches result-side toolCallId.
+	// bash: result at +2s (2000ms). read: result at +15s (15000ms).
+	const entries = [
+		userEntry("u1", null, "2026-07-10T10:00:00.000Z", "user prompt"),
+		{
+			type: "message",
+			id: "a1",
+			parentId: "u1",
+			timestamp: "2026-07-10T10:00:10.000Z",
+			message: {
+				role: "assistant",
+				provider: "openai",
+				model: "gpt-5",
+				stopReason: "tool_use",
+				content: [
+					{ type: "toolCall", toolCallId: "tc-bash-1", name: "bash", arguments: { command: "echo hi" } },
+					{ type: "toolCall", toolCallId: "tc-read-1", name: "read", arguments: { path: "/tmp/file" } },
+				],
+				usage: usage({ input: 100, output: 20, cost: 0.3 }),
+			},
+		},
+		{
+			type: "message",
+			id: "tr1",
+			parentId: "a1",
+			timestamp: "2026-07-10T10:00:12.000Z",
+			message: {
+				role: "toolResult",
+				toolName: "bash",
+				toolCallId: "tc-bash-1",
+				isError: false,
+				content: [{ type: "text", text: "hi" }],
+			},
+		},
+		{
+			type: "message",
+			id: "tr2",
+			parentId: "a1",
+			timestamp: "2026-07-10T10:00:25.000Z",
+			message: {
+				role: "toolResult",
+				toolName: "read",
+				toolCallId: "tc-read-1",
+				isError: false,
+				content: [{ type: "text", text: "file content" }],
+			},
+		},
+		assistantEntry("a2", "tr2", "2026-07-10T10:00:30.000Z", {
+			text: "Done.",
+			usage: usage({ input: 50, output: 10, cost: 0.1 }),
+		}),
+	];
+
+	const analysis = analyzeSessionEntries(entries, { activeLeafId: "a2" });
+
+	// Token and cost values must not change as a result of adding latency.
+	assert.equal(analysis.totals.primary.totalTokens, 180, "primary totalTokens unchanged");
+	assert.equal(analysis.totals.primary.inputTokens, 150, "primary inputTokens unchanged");
+	assert.equal(analysis.totals.primary.outputTokens, 30, "primary outputTokens unchanged");
+	assert.ok(Math.abs(analysis.totals.primary.costUsd - 0.4) < 1e-9, "primary costUsd unchanged");
+
+	// bash should have a 2000ms observed latency.
+	const bashTool = analysis.tools.byTool.find((t) => t.toolName === "bash");
+	assert.ok(bashTool, "bash tool present in byTool");
+	assert.ok(bashTool.observedLatency, "bash tool has observedLatency");
+	assert.equal(bashTool.observedLatency.pairedCount, 1, "bash: 1 paired call");
+	assert.equal(bashTool.observedLatency.medianMs, 2000, "bash: median 2000ms");
+	assert.equal(bashTool.observedLatency.maxMs, 2000, "bash: max 2000ms");
+
+	// read should have a 15000ms observed latency.
+	const readTool = analysis.tools.byTool.find((t) => t.toolName === "read");
+	assert.ok(readTool, "read tool present in byTool");
+	assert.ok(readTool.observedLatency, "read tool has observedLatency");
+	assert.equal(readTool.observedLatency.pairedCount, 1, "read: 1 paired call");
+	assert.equal(readTool.observedLatency.medianMs, 15000, "read: median 15000ms");
+	assert.equal(readTool.observedLatency.maxMs, 15000, "read: max 15000ms");
+});
+
+test("analyzeSessionEntries computes median observedLatency correctly across multiple pairs for the same tool", () => {
+	// Three bash calls from the same assistant turn:
+	// tc1 result at +1s (1000ms), tc2 at +3s (3000ms), tc3 at +5s (5000ms).
+	// Sorted: [1000, 3000, 5000] → median at floor((3-1)/2)=1 → 3000ms.
+	const entries = [
+		userEntry("u1", null, "2026-07-10T11:00:00.000Z", "user prompt"),
+		{
+			type: "message",
+			id: "a1",
+			parentId: "u1",
+			timestamp: "2026-07-10T11:00:00.000Z",
+			message: {
+				role: "assistant",
+				provider: "anthropic",
+				model: "claude-4",
+				stopReason: "tool_use",
+				content: [
+					{ type: "toolCall", toolCallId: "tc1", name: "bash", arguments: { command: "echo 1" } },
+					{ type: "toolCall", toolCallId: "tc2", name: "bash", arguments: { command: "echo 2" } },
+					{ type: "toolCall", toolCallId: "tc3", name: "bash", arguments: { command: "echo 3" } },
+				],
+				usage: usage({ input: 100, output: 10, cost: 0.2 }),
+			},
+		},
+		{
+			type: "message",
+			id: "tr1",
+			parentId: "a1",
+			timestamp: "2026-07-10T11:00:01.000Z",
+			message: { role: "toolResult", toolName: "bash", toolCallId: "tc1", isError: false, content: [{ type: "text", text: "1" }] },
+		},
+		{
+			type: "message",
+			id: "tr2",
+			parentId: "a1",
+			timestamp: "2026-07-10T11:00:03.000Z",
+			message: { role: "toolResult", toolName: "bash", toolCallId: "tc2", isError: false, content: [{ type: "text", text: "2" }] },
+		},
+		{
+			type: "message",
+			id: "tr3",
+			parentId: "a1",
+			timestamp: "2026-07-10T11:00:05.000Z",
+			message: { role: "toolResult", toolName: "bash", toolCallId: "tc3", isError: false, content: [{ type: "text", text: "3" }] },
+		},
+		assistantEntry("a2", "tr3", "2026-07-10T11:00:10.000Z", { text: "done.", usage: usage({ input: 50, output: 5, cost: 0.1 }) }),
+	];
+
+	const analysis = analyzeSessionEntries(entries, { activeLeafId: "a2" });
+	const bashTool = analysis.tools.byTool.find((t) => t.toolName === "bash");
+	assert.ok(bashTool?.observedLatency, "bash tool has observedLatency");
+	assert.equal(bashTool.observedLatency.pairedCount, 3, "3 paired calls");
+	assert.equal(bashTool.observedLatency.medianMs, 3000, "median is middle value (3000ms)");
+	assert.equal(bashTool.observedLatency.maxMs, 5000, "max is largest value (5000ms)");
+});
+
+test("analyzeSessionEntries leaves observedLatency absent when no toolCallId pairs match", () => {
+	// The standard toolResultEntry helper uses mismatched IDs (${id}-call vs the call's id),
+	// so pairToolCalls finds no pairs. observedLatency must be absent in that case.
+	const entries = [
+		assistantEntry("a1", null, "2026-07-10T12:00:00.000Z", {
+			stopReason: "tool_use",
+			content: [{ type: "toolCall", id: "call-bash-1", name: "bash", arguments: { command: "ls" } }],
+			usage: usage({ input: 50, output: 5, cost: 0.1 }),
+		}),
+		toolResultEntry("tr1", "a1", "2026-07-10T12:00:01.000Z", "bash", {}, false, "ok"),
+		assistantEntry("a2", "tr1", "2026-07-10T12:00:05.000Z", { text: "done.", usage: usage({ input: 30, output: 5, cost: 0.05 }) }),
+	];
+	const analysis = analyzeSessionEntries(entries, { activeLeafId: "a2" });
+	const bashTool = analysis.tools.byTool.find((t) => t.toolName === "bash");
+	assert.ok(bashTool, "bash tool is present");
+	assert.equal(bashTool.observedLatency, undefined, "observedLatency is absent when no toolCallId pairs match");
+	// Token values must still be correct.
+	assert.equal(analysis.totals.primary.totalTokens, 90, "totalTokens unchanged");
+});

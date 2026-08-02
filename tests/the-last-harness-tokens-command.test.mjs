@@ -826,3 +826,68 @@ test("buildTokensReportHtml renders Cache misses empty state when missCount is 0
 	assert.doesNotMatch(html, /<th>Idle gap<\/th>/);
 	assert.doesNotMatch(html, /<th>Model changed<\/th>/);
 });
+
+// ---------------------------------------------------------------------------
+// observedLatency HTML rendering (ts-j1k4)
+// ---------------------------------------------------------------------------
+
+test("buildTokensReportHtml renders Med. obs. wall-clock latency column and section-note in the tools table when pairs exist", () => {
+	// Entries with matching toolCallIds so that pairToolCalls can build pairs.
+	// bash: +2s (2000ms). read: +7200s (7200000ms = 2h, simulating a paused run).
+	const entries = [
+		userEntry("u1", null, "2026-07-11T08:00:00.000Z", "user prompt"),
+		{
+			type: "message",
+			id: "a1",
+			parentId: "u1",
+			timestamp: "2026-07-11T08:00:00.000Z",
+			message: {
+				role: "assistant",
+				provider: "openai",
+				model: "gpt-5",
+				stopReason: "tool_use",
+				content: [
+					{ type: "toolCall", toolCallId: "tc-bash-x", name: "bash", arguments: { command: "ls" } },
+					{ type: "toolCall", toolCallId: "tc-read-x", name: "read", arguments: { path: "/tmp/file" } },
+				],
+				usage: usage({ input: 100, output: 10, cost: 0.2 }),
+			},
+		},
+		{
+			type: "message",
+			id: "tr1",
+			parentId: "a1",
+			timestamp: "2026-07-11T08:00:02.000Z",
+			message: { role: "toolResult", toolName: "bash", toolCallId: "tc-bash-x", isError: false, content: [{ type: "text", text: "ok" }] },
+		},
+		{
+			type: "message",
+			id: "tr2",
+			parentId: "a1",
+			timestamp: "2026-07-11T10:00:00.000Z",
+			message: { role: "toolResult", toolName: "read", toolCallId: "tc-read-x", isError: false, content: [{ type: "text", text: "content" }] },
+		},
+		assistantEntry("a2", "tr2", "2026-07-11T10:00:05.000Z", { text: "Done.", usage: usage({ input: 50, output: 5, cost: 0.1 }) }),
+	];
+
+	const analysis = analyzeSessionEntries(entries, { activeLeafId: "a2" });
+	const html = buildTokensReportHtml(analysis, { generatedAt: "2026-07-11T10:00:10.000Z" });
+
+	// Column header must be present in the tools table.
+	assert.match(html, /Med\. obs\. wall-clock latency/, "column header present");
+
+	// Section note must explain the wall-clock / paused-run semantics.
+	assert.match(html, /Obs\. wall-clock latency is the elapsed time/, "section-note text present");
+	assert.match(html, /supervisor pauses/, "section-note mentions supervisor pauses");
+	assert.match(html, /paused awaiting input/, "section-note mentions paused runs");
+
+	// bash: 2000ms → formatted as 2s
+	assert.match(html, /2s/, "bash 2s latency rendered");
+
+	// read: 7200000ms = 2h → formatted as 2h
+	assert.match(html, /2h/, "read 2h latency rendered (large value indicating paused run)");
+
+	// Token and cost values must still be correct and untouched (combined total 165 tokens, $0.30 cost).
+	assert.match(html, /\$0\.30/, "combined cost untouched in report");
+	assert.match(html, /<td>165<\/td>/, "combined total tokens untouched in report");
+});
