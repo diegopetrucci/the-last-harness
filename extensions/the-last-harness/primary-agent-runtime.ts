@@ -292,8 +292,9 @@ function capScoutSubagentTimeout(input: unknown): void {
 	if (
 		!isRecord(input) ||
 		isOpaqueSubagentManagementActionInput(input) ||
-		// pi-subagents 0.31.11 does not reliably propagate resume timeouts end to end, so TLH leaves
-		// resume timeouts unchanged for now, even when resume.chain includes capped scout targets.
+		// pi-subagents 0.31.12 fixed resume timeout propagation end to end (fork issue #112) and made
+		// agent ceilings cumulative across resume segments. TLH deliberately retains this resume
+		// exemption pending live-session re-evaluation; see issue #420 for that investigation.
 		isSubagentResumeAction(input) ||
 		!subagentCallTargetsMatching(input, (agent) => SCOUT_TIMEOUT_CAPPED_SUBAGENTS.has(agent.trim().toLowerCase()))
 	) {

@@ -444,7 +444,7 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
 });
 
 // Regression (tlht-5php, blocker): piInstalledByTlh=true, private runtime ABSENT at start,
-// user-owned ~/.local/bin/pi@0.82.1 present.  The installer must provision the private
+// user-owned ~/.local/bin/pi@0.83.0 present.  The installer must provision the private
 // runtime and succeed — without removing or executing ~/.local/bin/pi.
 test("stage-1 regression (tlht-5php): installer never removes or execs user-owned ~/.local/bin/pi when piInstalledByTlh=true and private runtime is absent", (t) => {
 	const root = makeTempDir();
@@ -480,7 +480,7 @@ test("stage-1 regression (tlht-5php): installer never removes or execs user-owne
 		piInstalledByTlh: true,
 	}, null, 2));
 
-	// User-owned ~/.local/bin/pi@0.82.1 — must NOT be removed or invoked by the installer.
+	// User-owned ~/.local/bin/pi@0.83.0 — must NOT be removed or invoked by the installer.
 	writeFakePi(legacyBin, [
 		`printf '%s\\n' "$*" >>"${legacyPiInvocationLog}"`,
 		`if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_PINNED_PI_VERSION}\\n'; exit 0; fi`,
@@ -570,7 +570,7 @@ test("uninstall.sh does not remove legacy ~/.local/bin/pi without --force-includ
 	}, null, 2));
 
 	// User-owned legacy pi at ~/.local/bin/pi.
-	writeFileSync(join(legacyBin, "pi"), "#!/bin/sh\nprintf '0.82.1\\n'\n", "utf8");
+	writeFileSync(join(legacyBin, "pi"), "#!/bin/sh\nprintf '0.83.0\\n'\n", "utf8");
 	chmodSync(join(legacyBin, "pi"), 0o755);
 
 	// ── (d1) dry-run without --force-include-pi: hint printed, pi NOT removed ──
