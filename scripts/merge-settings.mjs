@@ -391,6 +391,18 @@ function pruneIntercomDisabledDefaultExtension(settings, changes) {
     settings.tlh.disabledDefaultExtensions = nextValues;
     changes.push("remove stale intercom opt-out from tlh.disabledDefaultExtensions");
 }
+function pruneFffDisabledDefaultExtension(settings, changes) {
+    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
+        return;
+    const values = settings.tlh.disabledDefaultExtensions;
+    if (!Array.isArray(values))
+        return;
+    const nextValues = values.filter((value) => !(typeof value === "string" && ["fff", "pi-fff"].includes(value.trim())));
+    if (nextValues.length === values.length)
+        return;
+    settings.tlh.disabledDefaultExtensions = nextValues;
+    changes.push("remove stale fff opt-out from tlh.disabledDefaultExtensions");
+}
 function scrubGnosisSettings(settings, changes) {
     if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
         return;
@@ -629,6 +641,7 @@ function main() {
     pruneOracleDisabledDefaultExtension(next, changes);
     pruneRtkDisabledDefaultExtension(next, changes);
     pruneIntercomDisabledDefaultExtension(next, changes);
+    pruneFffDisabledDefaultExtension(next, changes);
     syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
     log(args, `Pi settings: ${settingsPath}`);
     if (changes.length === 0) {

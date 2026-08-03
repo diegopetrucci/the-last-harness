@@ -12,9 +12,6 @@ const HIDDEN_SLASH_COMMANDS = new Set([
     "curator",
     "search",
     "quiet-tools",
-    "fff-health",
-    "fff-rescan",
-    "fff-mode",
 ]);
 function stripAutocompleteSourceTag(description) {
     if (!description) {

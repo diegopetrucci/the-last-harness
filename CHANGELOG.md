@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Removed
+
+- **fff (`npm:@ff-labs/pi-fff`) is no longer a bundled default extension.** TLH-installed copies are automatically removed from the isolated profile on the next `tlh install` or `tlh update` run. TLH determines ownership from the profile's `tlh.defaultExtensionProvenance` metadata: on profiles carrying that metadata (TLH 0.17.0 and later), only copies TLH originally installed are removed and any manually added copy is preserved. On older pre-provenance profiles (TLH 0.16.x and earlier, where fff was a bundled default anyway), TLH infers ownership from the installed package identity and removes it even if it was added manually. Settings are backed up before any write. If you have leftover files under `~/.the-last-harness/agent/npm/node_modules/@ff-labs/`, you may delete that directory manually.
+
 ## [0.32.0] - 2026-08-03
 
 ### Added

@@ -27,7 +27,6 @@ const previousPiWebAccessSource = "git:github.com/diegopetrucci/pi-web-access@tl
 const expectedBundledNpmPackageIdentities = new Map([
 	["openai-fast", "npm:@diegopetrucci/pi-openai-fast"],
 	["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth"],
-	["fff", "npm:@ff-labs/pi-fff"],
 	["inline-bash", "npm:@diegopetrucci/pi-inline-bash"],
 	["notify", "npm:@diegopetrucci/pi-notify"],
 	["context-inspector", "npm:@diegopetrucci/pi-context-inspector"],
@@ -1343,6 +1342,108 @@ test("bundled merge force-removes legacy TLH intercom git installs via the retir
 		settings.packages.some((entry) => (typeof entry === "string" ? entry : entry.source).includes("pi-intercom")),
 		false,
 		"no pi-intercom source should remain after bundled merge",
+	);
+});
+
+// ── fff retirement tests ─────────────────────────────────────────────────────
+
+test("bundled manifest has no fff entry after retirement", () => {
+	const fff = bundledExtensions.find(({ id }) => id === "fff");
+	assert.equal(fff, undefined, "bundled fff entry should be absent after retirement");
+});
+
+test("bundled merge removes a TLH-managed fff package (provenance-gated, legacy profile)", () => {
+	// A legacy profile with no provenance block: withLegacyRetiredDefaultPackageIdentities
+	// treats any retired package present as managed and enqueues it for removal.
+	const fixture = tempFixture();
+	const bundledPath = bundledExtensionsPath;
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [
+			harnessPackage,
+			"npm:@ff-labs/pi-fff@0.10.1",
+			"npm:@diegopetrucci/pi-notify@0.1.14",
+		],
+	}, null, 2));
+
+	const output = runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", bundledPath,
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.match(output, /Will remove retired TLH default package: npm:@ff-labs\/pi-fff/);
+	assert.equal(
+		settings.packages.some((entry) => packageIdentity(entry) === "npm:@ff-labs/pi-fff"),
+		false,
+		"TLH-managed fff package must be removed",
+	);
+	assert.equal(
+		settings.packages.some((entry) => packageIdentity(entry) === "npm:@diegopetrucci/pi-notify"),
+		true,
+		"unrelated managed package must be preserved",
+	);
+});
+
+test("bundled merge preserves a manually added fff package (provenance block exists, not managed)", () => {
+	// A modern profile with a provenance block: withLegacyRetiredDefaultPackageIdentities
+	// skips the legacy carry-over path. A fff package not listed in managedPackageIdentities
+	// is treated as user-added and must be preserved.
+	const fixture = tempFixture();
+	const bundledPath = bundledExtensionsPath;
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [
+			harnessPackage,
+			"npm:@ff-labs/pi-fff@0.10.1",
+		],
+		tlh: {
+			defaultExtensionProvenance: {
+				managedPackageIdentities: [], // provenance exists but fff is NOT managed
+			},
+		},
+	}, null, 2));
+
+	const output = runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", bundledPath,
+		"--quiet",
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.equal(
+		settings.packages.some((entry) => packageIdentity(entry) === "npm:@ff-labs/pi-fff"),
+		true,
+		"manually added fff package must be preserved",
+	);
+	assert.equal(output.includes("pi-fff"), false, "merge must not log any fff removal");
+});
+
+test("bundled merge prunes stale fff and pi-fff opt-outs from tlh.disabledDefaultExtensions", () => {
+	const fixture = tempFixture();
+	const bundledPath = bundledExtensionsPath;
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [harnessPackage],
+		tlh: { disabledDefaultExtensions: ["fff", "pi-fff", "notify"] },
+	}, null, 2));
+
+	const output = runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", bundledPath,
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.match(output, /remove stale fff opt-out from tlh\.disabledDefaultExtensions/);
+	assert.equal(
+		(settings.tlh?.disabledDefaultExtensions ?? []).some((v) => v === "fff" || v === "pi-fff"),
+		false,
+		"stale fff opt-outs must be removed",
+	);
+	assert.equal(
+		(settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
+		true,
+		"unrelated opt-out must be preserved",
 	);
 });
 
