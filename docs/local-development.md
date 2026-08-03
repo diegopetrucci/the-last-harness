@@ -4,7 +4,7 @@ Run these commands from the repository root with Node.js >=22.19.0. Prefer tempo
 
 ## Run validation
 
-Run the aggregate validation script, which covers the main TypeScript `tsc --noEmit` check, the runtime TypeScript check for `scripts/**/*.mts` and authoritative `extensions/**/*.ts`, the generated-output freshness check for `scripts/**/*.mjs` plus same-layout `extensions/**/*.js`, installer smoke checks, test suite, lint, settings merge dry-run, and package dry-run:
+Run the aggregate validation script, which covers the main TypeScript 7 check (`npm run typecheck` invokes `node node_modules/typescript/bin/tsc --noEmit`), the runtime TypeScript check for `scripts/**/*.mts` and authoritative `extensions/**/*.ts`, the generated-output freshness check for `scripts/**/*.mjs` plus same-layout `extensions/**/*.js`, installer smoke checks, test suite, lint, settings merge dry-run, and package dry-run:
 
 ```sh
 npm run validate
@@ -26,7 +26,7 @@ npm run check:runtime
 npm run build
 ```
 
-Use `npm run typecheck` for the main repository TypeScript check, `npm run typecheck:runtime` for the focused runtime TypeScript check covering `scripts/**/*.mts` and authoritative `extensions/**/*.ts`, `npm run check:runtime` to verify the generated `scripts/**/*.mjs` and same-layout `extensions/**/*.js` outputs are already fresh without rewriting them, and `npm run build` only when you intentionally want to refresh those generated runtime files. Review and edit the TypeScript sources rather than the generated `.mjs`/`.js` mirrors.
+Use `npm run typecheck` for the main repository TypeScript 7 check; it invokes the root compiler directly rather than the workspace bins. The workspace `node_modules/.bin/tsc` and `node_modules/.bin/tsserver` are the TypeScript 6 compatibility bins installed through `@typescript/typescript6`, currently pinned internally to 6.0.3. Use `npm run typecheck:runtime` for the focused runtime TypeScript check covering `scripts/**/*.mts` and authoritative `extensions/**/*.ts`, `npm run check:runtime` to verify the generated `scripts/**/*.mjs` and same-layout `extensions/**/*.js` outputs are already fresh without rewriting them, and `npm run build` only when you intentionally want to refresh those generated runtime files. Review and edit the TypeScript sources rather than the generated `.mjs`/`.js` mirrors.
 
 ## Refresh the Understand Anything graph
 

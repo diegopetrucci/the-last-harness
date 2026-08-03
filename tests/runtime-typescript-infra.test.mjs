@@ -136,7 +136,7 @@ function assertNoTemporaryCheckOutputs(tempDir) {
 test("runtime TypeScript package scripts stay wired into validation before tests and pack", () => {
 	const pkg = readPackageJson();
 	assert.equal(pkg.scripts.build, "npm run build:runtime");
-	assert.equal(pkg.scripts.typecheck, "tsc --noEmit");
+	assert.equal(pkg.scripts.typecheck, "node node_modules/typescript/bin/tsc --noEmit");
 	assert.equal(pkg.scripts["build:runtime"], "node scripts/runtime-typescript.mjs build");
 	assert.equal(pkg.scripts["check:runtime"], "node scripts/runtime-typescript.mjs check");
 	assert.equal(pkg.scripts["typecheck:runtime"], "node scripts/runtime-typescript.mjs typecheck");
