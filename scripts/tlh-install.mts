@@ -75,7 +75,7 @@ import {
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
-const PINNED_PI_VERSION = "0.82.1";
+const PINNED_PI_VERSION = "0.83.0";
 const PI_PACKAGE_SPEC = `${PI_PACKAGE_NAME}@${PINNED_PI_VERSION}`;
 // Keep in sync with TLH_MIN_NODE_VERSION and TLH_PINNED_PI_VERSION in install.sh.
 const MIN_NODE_VERSION = "22.19.0";
@@ -100,7 +100,7 @@ const VALID_UPDATE_TRACKS = ["latest-release", "pinned-tag", "ref", "custom"] as
 const RUNTIME_MARKER_FILENAME = ".tlh-runtime-owned";
 const RUNTIME_MARKER_SCHEMA_VERSION = 1;
 // npm 11.x --prefix layout; empirically confirmed: npm 11.16.0 +
-// @earendil-works/pi-coding-agent@0.82.1.  Mirrors the advisory exclusivity
+// @earendil-works/pi-coding-agent@0.83.0.  Mirrors the advisory exclusivity
 // tripwire in uninstall.sh (demoted from gate): the only top-level entries a
 // TLH-owned runtime prefix should contain are those created by
 // npm install -g --ignore-scripts --prefix, plus the TLH runtime ownership
@@ -809,7 +809,7 @@ function assertSupportedPiVersion(
 		versionCommandDisplay = "pi --version",
 	}: SupportedPiVersionOptions = {},
 ): void {
-	// `pi --version` prints a bare semver (e.g. "0.82.1") on stdout. Older builds may
+	// `pi --version` prints a bare semver (e.g. "0.83.0") on stdout. Older builds may
 	// differ, so we extract the first semver-shaped substring rather than match strictly.
 	const result = spawnCapture(config, [piCommand, "--version"], {
 		allowFailure: true,

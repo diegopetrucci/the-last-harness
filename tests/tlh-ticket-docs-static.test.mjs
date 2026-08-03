@@ -85,7 +85,9 @@ test("Unreleased changelog keeps only a concise RTK removal note", () => {
 		.map((line) => line.trim())
 		.filter((line) => /rtk/i.test(line));
 
-	assert.deepEqual(rtkLines, ["- Removed RTK from TLH."]);
+	assert.strictEqual(rtkLines.length, 1, `expected exactly one RTK-mentioning line in [Unreleased], got: ${JSON.stringify(rtkLines)}`);
+	assert.match(rtkLines[0], /^- Removed RTK from TLH/, `RTK line must start with '- Removed RTK from TLH', got: ${JSON.stringify(rtkLines[0])}`);
+
 	assert.doesNotMatch(unreleased, /bin\/rtk|tlh-rtk|RTK_DISABLED|tlh\.rtk|pi-rtk|legacy regular-file artifact|default-extension opt-out/i);
 });
 
