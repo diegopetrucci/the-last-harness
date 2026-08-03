@@ -1170,3 +1170,146 @@ test("merge librarian retirement cleanup is idempotent after first run", () => {
 	assert.match(secondOutput, /No settings changes needed\./);
 	assert.equal(readFileSync(fixture.settings, "utf8"), afterFirst, "settings unchanged on second run");
 });
+
+// ── fff retirement tests ───────────────────────────────────────────────────
+
+const retiredFffPackage = "npm:@ff-labs/pi-fff";
+
+test("merge removes the TLH-managed fff package from isolated settings and logs it", () => {
+	// A profile with NO defaultExtensionProvenance is treated as a legacy install
+	// where fff was TLH-seeded. withLegacyRetiredDefaultPackageIdentities adds it
+	// to managedPackageIdentities, causing applyRetiredTlhDefaultPackageCleanup to remove it.
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				retiredFffPackage,
+				"npm:unrelated-package",
+			],
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+	const settings = readJson(fixture.settings);
+
+	assert.match(output, /Will remove retired TLH default package: npm:@ff-labs\/pi-fff/);
+	assert.deepEqual(settings.packages, [
+		harnessPackage,
+		"npm:unrelated-package",
+	]);
+	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, []);
+});
+
+test("merge preserves a user-added fff package that TLH did not install", () => {
+	// A profile WITH defaultExtensionProvenance set causes withLegacyRetiredDefaultPackageIdentities
+	// to skip the legacy carry-over path, so a fff package not in managedPackageIdentities
+	// is treated as user-added and must be preserved.
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				retiredFffPackage,
+			],
+			tlh: {
+				defaultExtensionProvenance: {
+					managedPackageIdentities: [], // provenance exists but fff is NOT managed
+				},
+			},
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+	const settings = readJson(fixture.settings);
+
+	assert.ok(
+		settings.packages.includes(retiredFffPackage),
+		"user-added fff package must be preserved",
+	);
+	assert.doesNotMatch(output, /pi-fff/);
+});
+
+test("merge removes TLH-managed fff from a modern profile where provenance already records it as managed", () => {
+	// Dominant real-world migration case: a user who received fff as a TLH default
+	// before retirement. Their profile is MODERN (defaultExtensionProvenance exists)
+	// and the fff identity IS already in managedPackageIdentities.
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				retiredFffPackage,
+				"npm:unrelated-package",
+			],
+			tlh: {
+				defaultExtensionProvenance: {
+					managedPackageIdentities: [retiredFffPackage],
+				},
+			},
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+	const settings = readJson(fixture.settings);
+
+	assert.match(output, /Will remove retired TLH default package: npm:@ff-labs\/pi-fff/);
+	assert.ok(
+		!settings.packages.some((entry) => (typeof entry === "string" ? entry : entry.source) === retiredFffPackage),
+		"fff must be removed from packages",
+	);
+	assert.ok(settings.packages.includes("npm:unrelated-package"), "unrelated package must be preserved");
+
+	const resynced = settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [];
+	assert.ok(
+		!resynced.includes(retiredFffPackage),
+		"resynced provenance must not list the retired fff identity",
+	);
+});
+
+test("merge prunes stale fff and pi-fff opt-outs from tlh.disabledDefaultExtensions", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [harnessPackage],
+			tlh: { disabledDefaultExtensions: ["fff", "pi-fff", "notify"] },
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+	const settings = readJson(fixture.settings);
+
+	assert.match(output, /remove stale fff opt-out from tlh\.disabledDefaultExtensions/);
+	assert.equal(
+		(settings.tlh?.disabledDefaultExtensions ?? []).some((v) => v === "fff" || v === "pi-fff"),
+		false,
+		"stale fff opt-outs must be removed",
+	);
+	assert.equal(
+		(settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
+		true,
+		"unrelated opt-out must be preserved",
+	);
+});
+
+test("merge fff retirement cleanup is idempotent after first run", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				retiredFffPackage,
+			],
+		},
+	);
+
+	runMerge(fixture);
+
+	const afterFirst = readFileSync(fixture.settings, "utf8");
+	const firstSettings = readJson(fixture.settings);
+	assert.ok(!firstSettings.packages.includes(retiredFffPackage), "fff removed on first run");
+
+	const secondOutput = runMerge(fixture, { quiet: false });
+	assert.match(secondOutput, /No settings changes needed\./);
+	assert.equal(readFileSync(fixture.settings, "utf8"), afterFirst, "settings unchanged on second run");
+});
