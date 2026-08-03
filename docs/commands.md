@@ -224,6 +224,16 @@ These commands are registered and fully functional, but deliberately excluded fr
 
 ---
 
+## TLH CLI subcommands
+
+These are `tlh` command-line subcommands, distinct from the `/slash commands` used inside a TLH session.
+
+### `tlh sessions`
+
+`tlh sessions` is a read-only session analysis tool. It emits JSON to stdout so you can pipe to `jq`. Run `tlh sessions --mode per-session` for a per-session summary of tool-pair statistics and coverage, or `tlh sessions --mode per-tool` for aggregated per-tool statistics across all sessions. Raw paths, cwd values, and project labels are omitted by default; pass `--include-paths` only when you need them for concrete evidence. `tlh sessions` never reads `run-history.jsonl` and never writes to session files.
+
+---
+
 ## Managing bundled extensions
 
 Individual bundled extensions can be disabled without affecting the others. Use `tlh defaults` to list and manage opt-outs:
