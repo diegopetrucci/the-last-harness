@@ -4,7 +4,8 @@ description: Scans a repository and reports stack, conventions, commands, and ho
 tools: read, grep, find, ls, bash, contact_supervisor
 tlhOpenaiModels: openai-codex/gpt-5.4-mini
 tlhAnthropicModels: anthropic/claude-haiku-4-5
-thinking: high
+tlhAnthropicThinking: high
+tlhOpenaiThinking: high
 toolBudget: {"soft":20,"hard":30}
 systemPromptMode: replace
 inheritProjectContext: true

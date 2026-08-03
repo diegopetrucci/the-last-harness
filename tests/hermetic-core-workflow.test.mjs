@@ -559,7 +559,9 @@ test("hermetic core architect workflow runs end-to-end with deterministic subage
 					: role === "developer"
 						? ["openai-codex", "gpt-5.4"]
 						: ["openai-codex", "gpt-5.6-sol"];
-				const model = modelRegistry.find(modelKey[0], modelKey[1]);
+				// Strip thinking suffix (e.g. ':max') appended by TLH before registry lookup
+				const registryId = modelKey[1]?.includes(":") ? modelKey[1].split(":")[0] : modelKey[1];
+				const model = modelRegistry.find(modelKey[0], registryId);
 				assert.ok(model, `expected subagent model ${modelKey.join("/")}`);
 				return createAgentSession({
 					cwd: fixture.workspace,

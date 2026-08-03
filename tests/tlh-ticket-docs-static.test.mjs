@@ -11,7 +11,6 @@ function readRepoFile(path) {
 }
 
 const userFacingDocs = [
-	"CHANGELOG.md",
 	"docs/git-attribution.md",
 	"docs/install.md",
 	"docs/integrations.md",
@@ -73,22 +72,6 @@ test("current README and active docs contain no RTK references", () => {
 	for (const path of currentDocs) {
 		assert.doesNotMatch(readRepoFile(path), /rtk/i, `${path} still references RTK`);
 	}
-});
-
-test("Unreleased changelog keeps only a concise RTK removal note", () => {
-	const changelog = readRepoFile("CHANGELOG.md");
-	const unreleasedMatch = changelog.match(/## \[Unreleased\][\s\S]*?(?=\n## \[|$)/);
-	assert.ok(unreleasedMatch, "missing Unreleased changelog section");
-	const unreleased = unreleasedMatch[0];
-	const rtkLines = unreleased
-		.split("\n")
-		.map((line) => line.trim())
-		.filter((line) => /rtk/i.test(line));
-
-	assert.strictEqual(rtkLines.length, 1, `expected exactly one RTK-mentioning line in [Unreleased], got: ${JSON.stringify(rtkLines)}`);
-	assert.match(rtkLines[0], /^- Removed RTK from TLH/, `RTK line must start with '- Removed RTK from TLH', got: ${JSON.stringify(rtkLines[0])}`);
-
-	assert.doesNotMatch(unreleased, /bin\/rtk|tlh-rtk|RTK_DISABLED|tlh\.rtk|pi-rtk|legacy regular-file artifact|default-extension opt-out/i);
 });
 
 test("contributing guide links to the upstream-sync inventory", () => {

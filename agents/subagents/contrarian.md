@@ -5,7 +5,8 @@ tools: read, grep, find, ls, bash, contact_supervisor
 tlhOpenaiModels: openai-codex/gpt-5.6-sol
 tlhAnthropicModels: anthropic/claude-opus-5
 preferOppositeProvider: true
-thinking: high
+tlhAnthropicThinking: high
+tlhOpenaiThinking: high
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
