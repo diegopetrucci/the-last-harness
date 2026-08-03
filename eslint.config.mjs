@@ -1,14 +1,6 @@
 import js from "@eslint/js";
 import globals from "globals";
-import { registerHooks } from "node:module";
-
-// typescript-eslint 8 needs the TypeScript 6 API; project typechecks still use root TypeScript 7.
-registerHooks({
-	resolve(specifier, context, nextResolve) {
-		return nextResolve(specifier === "typescript" ? "@typescript/typescript6" : specifier, context);
-	},
-});
-const { default: tseslint } = await import("typescript-eslint");
+import tseslint from "typescript-eslint";
 
 const targetFiles = ["scripts/**/*.{js,mjs,ts,mts}", "tests/**/*.{js,mjs,ts,mts}", "extensions/**/*.{js,mjs,ts,mts}"];
 const typescriptFiles = ["scripts/**/*.{ts,mts}", "tests/**/*.{ts,mts}", "extensions/**/*.{ts,mts}"];

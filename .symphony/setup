@@ -6,11 +6,8 @@ repo_root="$(cd "$script_dir/.." && pwd)"
 
 cd "$repo_root"
 
-# The root typecheck uses TypeScript 7 while typescript-eslint@8.65.0 still declares
-# a TypeScript <6.1 peer for its compatibility path. Remove this flag when the
-# tooling supports TypeScript 7 and the @typescript/typescript6 shim is removed.
 if [[ -f package-lock.json || -f npm-shrinkwrap.json ]]; then
-  npm ci --legacy-peer-deps
+  npm ci
 else
-  npm install --no-package-lock --legacy-peer-deps
+  npm install --no-package-lock
 fi

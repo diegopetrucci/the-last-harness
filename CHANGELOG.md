@@ -25,6 +25,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Installing TLH from `main` no longer fails npm peer-dependency resolution; repository tooling now consistently uses the TypeScript version supported by `typescript-eslint`.
 - Subagents now have two timeout caps: a soft one at ~4m30s where the architect checks on them, and a hard one with a bigger timeout that pauses them. They also support steering, and have tighter system prompts. This should make them much more responsive.
 - TLH now works a bit better with Herdr.
 
