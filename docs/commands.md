@@ -93,8 +93,8 @@ These commands ship inside the TLH package itself rather than through separately
 
 | Command | Extension | Description |
 |---------|-----------|-------------|
-| `/annotate-last-message` | `the-last-harness` | Open a native annotation window for the latest assistant message and paste submitted feedback into the editor |
-| `/annotate-git-diff` | `annotate-git-diff` | Open a native git-diff review window and paste submitted review feedback into the editor |
+| `/annotate-last-message` | `the-last-harness` | Open a native annotation window for the latest assistant message and send submitted feedback to the agent |
+| `/annotate-git-diff` | `annotate-git-diff` | Open a native git-diff review window; clicking Submit sends review feedback to the agent, closing with unsent comments pastes a draft to the editor |
 
 ### `/annotate-last-message`
 
@@ -112,7 +112,8 @@ These commands ship inside the TLH package itself rather than through separately
 
 - Finds the latest completed assistant message on the active session branch and shows it with line numbers plus section-level grouping.
 - Lets you leave overall, section, and inline comments in one lightweight first-party TLH window.
-- When you submit, TLH inserts a structured planning-oriented feedback prompt into the current editor buffer so you can send it back to the agent.
+- When you submit, TLH sends a structured planning-oriented feedback prompt directly to the agent as a follow-up message. Your existing editor text is left untouched.
+- Blank lines cannot be annotated inline; the inline-note button is not shown for empty lines.
 - It does not auto-apply code changes or silently mutate prior messages.
 - Use `/annotate-last-message` directly when you want to annotate the latest assistant reply.
 
@@ -145,7 +146,7 @@ See [`extensions/the-last-harness/annotate-last-message/README.md`](../extension
 
 - Review branch diffs, individual commits (including working-tree changes), or the full file snapshot from one window.
 - Leave inline, file-level, and overall comments.
-- When you submit, TLH inserts a review-feedback prompt into the current editor buffer. It does not auto-apply code changes or mutate your normal Pi profile.
+- Clicking **Submit** sends a structured review-feedback prompt directly to the agent. If you close the window with comments not yet submitted, TLH pastes the draft prompt into the editor instead — so an accidental window close cannot fire a new agent turn. It does not auto-apply code changes or mutate your normal Pi profile.
 
 #### Attribution
 

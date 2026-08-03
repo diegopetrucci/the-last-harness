@@ -26,6 +26,8 @@ All notable changes to The Last Harness will be documented in this file.
 ### Other minor things
 
 - `/tokens` now reports median observed wall-clock latency per tool alongside the existing cost and token data. Latency is the interval between the recorded call and result events and includes any queueing or paused-run time.
+- `/annotate-last-message` now sends submitted feedback directly to the agent as a follow-up message instead of appending it to the TLH editor buffer.
+- `/annotate-git-diff` now sends review feedback to the agent when you click Submit. Closing the review window with unsent comments still appends a recovery draft to the editor instead of sending, so an accidental close cannot trigger an agent turn.
 - Bumped the bundled Pi to `0.83.0`.
 
 ## [0.31.0] - 2026-07-27

@@ -47,23 +47,15 @@ function messageEntry(role, content, stopReason = "stop") {
 	};
 }
 
-function createContext({ branch = [], editorText = "" } = {}) {
+function createContext({ branch = [] } = {}) {
 	const notifications = [];
-	const pasted = [];
 	return {
 		notifications,
-		pasted,
 		ctx: {
 			hasUI: true,
 			ui: {
 				notify(message, level) {
 					notifications.push({ message, level });
-				},
-				getEditorText() {
-					return editorText;
-				},
-				pasteToEditor(text) {
-					pasted.push(text);
 				},
 			},
 			sessionManager: {
@@ -73,6 +65,12 @@ function createContext({ branch = [], editorText = "" } = {}) {
 			},
 		},
 	};
+}
+
+function createSendUserMessage() {
+	const sent = [];
+	const sendUserMessage = (message, options) => sent.push({ message, options });
+	return { sent, sendUserMessage };
 }
 
 async function flushAsyncWork() {
@@ -99,7 +97,7 @@ test("registerAnnotateLastMessageCommand reuses the exported command builder and
 	assert.equal(typeof registeredCommand.handler, "function");
 	assert.equal(typeof sessionShutdownHandler, "function");
 
-	const builtCommand = buildAnnotateLastMessageCommand();
+	const builtCommand = buildAnnotateLastMessageCommand({ sendUserMessage: () => {} });
 	assert.equal(typeof builtCommand.handler, "function");
 	assert.equal(typeof builtCommand.handleSessionShutdown, "function");
 	assert.doesNotThrow(() => builtCommand.handleSessionShutdown());
@@ -241,6 +239,40 @@ test("composeAnnotateLastMessagePrompt trims and orders overall, section, inline
 	);
 });
 
+test("composeAnnotateLastMessagePrompt excludes inline comments targeting known blank lines but keeps unknown-line comments", () => {
+	const message = {
+		text: "Alpha\n\nBeta",
+		lines: [
+			{ number: 1, text: "Alpha" },
+			{ number: 2, text: "" },
+			{ number: 3, text: "Beta" },
+		],
+		sections: [],
+	};
+
+	const prompt = composeAnnotateLastMessagePrompt(message, {
+		type: "submit",
+		overallComment: "",
+		sectionComments: [],
+		inlineComments: [
+			{ line: 2, body: "Note on blank line — should be excluded." },
+			{ line: 3, body: "Note on Beta — should be included." },
+			{ line: 99, body: "Note on unknown line — should be included." },
+		],
+	});
+
+	// blank-line comment (line 2) is excluded
+	assert.doesNotMatch(prompt, /Note on blank line/);
+	assert.doesNotMatch(prompt, /line 2/);
+	// non-blank line comment (line 3) is present
+	assert.match(prompt, /Note on Beta/);
+	assert.match(prompt, /line 3/);
+	// unknown-line comment (line 99) is present and shows (blank line) fallback
+	assert.match(prompt, /Note on unknown line/);
+	assert.match(prompt, /line 99/);
+	assert.match(prompt, /\(blank line\)/);
+});
+
 test("hasAnnotateLastMessageFeedback ignores whitespace-only feedback and accepts trimmed comments", () => {
 	assert.equal(
 		hasAnnotateLastMessageFeedback({
@@ -265,8 +297,10 @@ test("hasAnnotateLastMessageFeedback ignores whitespace-only feedback and accept
 
 test("annotate-last-message ignores malformed and primitive window messages", async () => {
 	const window = new FakeWindow();
+	const { sent, sendUserMessage } = createSendUserMessage();
 	const command = buildAnnotateLastMessageCommand({
 		openAnnotationWindow: async () => window,
+		sendUserMessage,
 	});
 	const context = createContext({ branch: [messageEntry("assistant", [{ type: "text", text: "Latest reply" }])] });
 
@@ -295,7 +329,7 @@ test("annotate-last-message ignores malformed and primitive window messages", as
 	}
 
 	await flushAsyncWork();
-	assert.deepEqual(context.pasted, []);
+	assert.deepEqual(sent, []);
 	assert.deepEqual(context.notifications, [{ message: "Opened native annotation window.", level: "info" }]);
 	command.handleSessionShutdown();
 });
@@ -382,8 +416,10 @@ test("annotate-last-message suppresses terminal results settled immediately befo
 	for (const terminalEvent of terminalEvents) {
 		await t.test(terminalEvent.name, async () => {
 			const window = new FakeWindow();
+			const { sent, sendUserMessage } = createSendUserMessage();
 			const command = buildAnnotateLastMessageCommand({
 				openAnnotationWindow: async () => window,
+				sendUserMessage,
 			});
 			const context = createContext({ branch: [messageEntry("assistant", [{ type: "text", text: "Latest reply" }])] });
 
@@ -393,7 +429,7 @@ test("annotate-last-message suppresses terminal results settled immediately befo
 			await flushAsyncWork();
 
 			assert.equal(window.closeCalls, 0);
-			assert.deepEqual(context.pasted, []);
+			assert.deepEqual(sent, []);
 			assert.deepEqual(context.notifications, [{ message: "Opened native annotation window.", level: "info" }]);
 		});
 	}
@@ -402,8 +438,10 @@ test("annotate-last-message suppresses terminal results settled immediately befo
 test("annotate-last-message suppresses late submit and error events after shutdown", async () => {
 	const timers = [];
 	const window = new FakeWindow();
+	const { sent, sendUserMessage } = createSendUserMessage();
 	const command = buildAnnotateLastMessageCommand({
 		openAnnotationWindow: async () => window,
+		sendUserMessage,
 		setTimeoutFn: (fn) => {
 			timers.push(fn);
 			return timers.length;
@@ -427,18 +465,19 @@ test("annotate-last-message suppresses late submit and error events after shutdo
 	await flushAsyncWork();
 
 	assert.equal(window.closeCalls, 1);
-	assert.deepEqual(context.pasted, []);
+	assert.deepEqual(sent, []);
 	assert.deepEqual(context.notifications, [{ message: "Opened native annotation window.", level: "info" }]);
 });
 
-test("annotate-last-message appends feedback with a separating blank line when the editor already has text", async () => {
+test("annotate-last-message sends feedback to the agent via sendUserMessage with deliverAs followUp", async () => {
 	const window = new FakeWindow();
+	const { sent, sendUserMessage } = createSendUserMessage();
 	const command = buildAnnotateLastMessageCommand({
 		openAnnotationWindow: async () => window,
+		sendUserMessage,
 	});
 	const context = createContext({
 		branch: [messageEntry("assistant", [{ type: "text", text: "Alpha\n\nBeta" }])],
-		editorText: "Existing draft",
 	});
 
 	await command.handler("", context.ctx);
@@ -450,7 +489,8 @@ test("annotate-last-message appends feedback with a separating blank line when t
 	});
 	await flushAsyncWork();
 
-	assert.equal(context.pasted.length, 1);
-	assert.match(context.pasted[0], /^\n\nPlease revisit your last assistant message/);
-	assert.equal(context.notifications.at(-1)?.message, "Appended annotation feedback to the editor.");
+	assert.equal(sent.length, 1);
+	assert.match(sent[0].message, /^Please revisit your last assistant message/);
+	assert.deepEqual(sent[0].options, { deliverAs: "followUp" });
+	assert.equal(context.notifications.at(-1)?.message, "Annotation feedback sent to the agent.");
 });
