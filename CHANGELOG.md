@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-08-03
+
 ### Added
 
 - In the footer, TLH now shows how much context MCPs are consuming.
