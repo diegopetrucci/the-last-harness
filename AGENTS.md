@@ -72,7 +72,8 @@ git diff --cached
 
 ## Github issues and projects
 
-- If a Github issue is picked up, move it to `In Progress` in the [TLH Roadmap](https://github.com/users/diegopetrucci/projects/1/views/1?layout=board). Assign an area if needed. Once work is merged, move it to `Ready for release`. If released, tag it with the release it went out with, and move it to `Done`.
+- Every GitHub issue should carry a type label (`bug`/`enhancement`/`documentation`) plus an `area/*` label, and be tracked in the TLH Roadmap project.
+- If a Github issue is picked up, move it to `In Progress` in the [TLH Roadmap](https://github.com/users/diegopetrucci/projects/1/views/1?layout=board). Once work is merged, move it to `Ready for release`. If released, tag it with the release it went out with, and move it to `Done`.
 
 ## Miscellaneous
 
