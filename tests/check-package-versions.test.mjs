@@ -135,8 +135,9 @@ test("check-package-versions passes with pinned dependency exceptions and ignore
 		},
 		overrides: {
 			dompurify: "3.4.11",
-			"@typescript/typescript6": {
-				"@typescript/old": "npm:typescript@6.0.3",
+			"parent-package": {
+				"child-package": "1.2.3",
+				"aliased-child-package": "npm:replacement-package@1.2.3",
 			},
 		},
 		defaultExtensions: [
@@ -183,8 +184,9 @@ test("check-package-versions rejects loose dependencies, devDependencies, and ov
 		},
 		overrides: {
 			dompurify: "^3.4.11",
-			"@typescript/typescript6": {
-				"@typescript/old": "npm:typescript@^6",
+			"parent-package": {
+				"child-package": "^1.2.3",
+				"aliased-child-package": "npm:replacement-package@^1.2.3",
 			},
 		},
 	});
@@ -195,7 +197,8 @@ test("check-package-versions rejects loose dependencies, devDependencies, and ov
 	assert.match(result.stderr, /package\.json#dependencies\.eslint must use an exact version or pinned non-registry source, found "\^9\.39\.4"/);
 	assert.match(result.stderr, /package\.json#devDependencies\.typescript must use an exact version or pinned non-registry source, found "latest"/);
 	assert.match(result.stderr, /package\.json#overrides\.dompurify must use an exact version or pinned non-registry source, found "\^3\.4\.11"/);
-	assert.match(result.stderr, /package\.json#overrides\.@typescript\/typescript6\.@typescript\/old must use an exact version or pinned non-registry source, found "npm:typescript@\^6"/);
+	assert.match(result.stderr, /package\.json#overrides\.parent-package\.child-package must use an exact version or pinned non-registry source, found "\^1\.2\.3"/);
+	assert.match(result.stderr, /package\.json#overrides\.parent-package\.aliased-child-package must use an exact version or pinned non-registry source, found "npm:replacement-package@\^1\.2\.3"/);
 	assert.doesNotMatch(result.stderr, /peerDependencies/);
 });
 

@@ -17,10 +17,8 @@ Thanks for helping improve The Last Harness (`tlh`). Keep changes small, safe, a
 Use Node.js >=22.19.0 from the repository root. Install dependencies with:
 
 ```sh
-npm install --no-package-lock --legacy-peer-deps
+npm install --no-package-lock
 ```
-
-The `--legacy-peer-deps` flag is intentional: `npm run typecheck` uses TypeScript 7, while `typescript-eslint@8.65.0` declares a TypeScript `<6.1` peer and the TS6 compatibility package supplies that API for lint/tests. Remove the flag when `typescript-eslint` supports TypeScript 7 and the compatibility shim is removed.
 
 Prefer temporary directories for installer and wrapper checks so local testing does not touch a real `tlh` profile or normal Pi profile.
 

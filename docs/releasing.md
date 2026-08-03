@@ -34,12 +34,10 @@ Before validation, update release-sensitive docs that include concrete versioned
 Then run the aggregate validation script and release-notes check:
 
 ```sh
-npm install --no-package-lock --legacy-peer-deps
+npm install --no-package-lock
 npm run validate
 node scripts/release-notes.mjs --tag "v$version" --output /tmp/tlh-release-notes.md
 ```
-
-`--legacy-peer-deps` is required while the root validation compiler is TypeScript 7 but `typescript-eslint@8.65.0` declares a TypeScript `<6.1` peer for the TS6 compatibility path. Remove it when `typescript-eslint` supports TypeScript 7 and the `@typescript/typescript6` shim is removed.
 
 Then run the startup performance checker as release-tier manual validation:
 

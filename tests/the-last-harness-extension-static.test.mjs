@@ -4,7 +4,7 @@ import { extname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
-import ts from "@typescript/typescript6";
+import ts from "typescript";
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const extensionsDir = fileURLToPath(new URL("../extensions/", import.meta.url));
