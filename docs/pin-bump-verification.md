@@ -8,9 +8,9 @@ Running checklist of behaviors that could **only be unit-tested / statically ver
 during the `@diegopetrucci/pi-subagents` v0.34.0 intake and its follow-ups, and therefore
 still need a **live-session runtime check** on the bumped pin.
 
-The pin lives at `config/default-extensions.json` (`npm:@diegopetrucci/pi-subagents@0.31.12`)
+The pin lives at `config/default-extensions.json` (`npm:@diegopetrucci/pi-subagents@0.31.14`)
 with manifest-consistency/migration assertions in `tests/default-extensions.test.mjs` (the test derives its expected value from the manifest, so it would still pass if only the manifest changed). Previous pin bumps landed in
-PRs #347 → 0.31.5, #367 → 0.31.7, #370 → 0.31.8, #386 → 0.31.9, and #390 → 0.31.10, plus direct commit `7e4deba` → 0.31.11. The current checkout advances the pin to 0.31.12; the live-session pass is what remains.
+PRs #347 → 0.31.5, #367 → 0.31.7, #370 → 0.31.8, #386 → 0.31.9, and #390 → 0.31.10, plus direct commit `7e4deba` → 0.31.11, and PR #427 → 0.31.12. The current checkout advances the pin to 0.31.14; the live-session pass is what remains.
 
 Mark each item `[x]` once verified in a real TLH session on the bumped pin.
 
@@ -50,3 +50,4 @@ Mark each item `[x]` once verified in a real TLH session on the bumped pin.
   only if a new slash command delegates a user-supplied `agent`/`task`, or `pi-prompt-template-model`
   is installed.
 - Windows-only behaviors (e.g. the fork's win32 E2E skip) are out of scope — TLH targets macOS/Linux.
+- 0.31.13 (async widget presentation wording) and 0.31.14 (thinking-level allowlist fix) add no new verification surface beyond confirming that a `:max` thinking badge renders correctly in a live session. All five pending items above carry over unchanged.

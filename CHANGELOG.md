@@ -8,6 +8,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 - In the footer, TLH now shows how much context MCPs are consuming.
 
+### Changed
+
+- Bumped the bundled critical `pi-subagents` default extension pin from `npm:@diegopetrucci/pi-subagents@0.31.12` to `npm:@diegopetrucci/pi-subagents@0.31.14`, delivering the max thinking level fix so the `:max` thinking badge renders correctly.
+
 ### Model defaults
 
 - The `developer` subagent now defaults to `gpt-5.6-luna max` for OpenAI, `sonnet-4-6 medium` for Anthropic.
