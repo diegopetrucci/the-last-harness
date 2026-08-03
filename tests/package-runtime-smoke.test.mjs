@@ -49,7 +49,7 @@ function isolatedEnv(root, agentDir) {
 	};
 }
 
-test("packed TLH generated JavaScript loads and reloads through pinned Pi 0.82.1", (t) => {
+test("packed TLH generated JavaScript loads and reloads through pinned Pi 0.83.0", (t) => {
 	const root = mkdtempSync(join(tmpdir(), "tlh-package-runtime-smoke-"));
 	const packDir = join(root, "pack");
 	const extractDir = join(root, "extract");
@@ -100,8 +100,8 @@ test("packed TLH generated JavaScript loads and reloads through pinned Pi 0.82.1
 	const packageRoot = join(extractDir, "package");
 	const packedManifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 	assert.deepEqual(packedManifest.pi.extensions, expectedEntrypoints);
-	assert.equal(packedManifest.peerDependencies["@earendil-works/pi-coding-agent"], "0.82.1");
-	assert.equal(packedManifest.peerDependencies["@earendil-works/pi-tui"], "0.82.1");
+	assert.equal(packedManifest.peerDependencies["@earendil-works/pi-coding-agent"], "0.83.0");
+	assert.equal(packedManifest.peerDependencies["@earendil-works/pi-tui"], "0.83.0");
 
 	// npm pack intentionally excludes installed dependencies. Link the checkout's already-pinned,
 	// offline node_modules into the disposable package so Pi can execute the packed artifact.
@@ -114,7 +114,7 @@ test("packed TLH generated JavaScript loads and reloads through pinned Pi 0.82.1
 	});
 	assert.equal(runtimeResult.status, 0, runtimeResult.stderr || runtimeResult.stdout);
 	const runtimeEvidence = JSON.parse(runtimeResult.stdout.trim());
-	assert.equal(runtimeEvidence.piVersion, "0.82.1");
+	assert.equal(runtimeEvidence.piVersion, "0.83.0");
 	assert.deepEqual(runtimeEvidence.entrypoints, expectedEntrypoints.map((path) => path.slice(2)));
 	assert.equal(runtimeEvidence.factoryExecutions, 2);
 	assert.ok(runtimeEvidence.changelogBytes > 1000);

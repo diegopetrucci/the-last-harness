@@ -72,8 +72,8 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "0.82.1",
-    "@earendil-works/pi-tui": "0.82.1"
+    "@earendil-works/pi-coding-agent": "0.83.0",
+    "@earendil-works/pi-tui": "0.83.0"
   },
   "dependencies": {
     "@tailwindcss/browser": "4.3.3",
@@ -81,12 +81,12 @@
     "monaco-editor": "0.56.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.82.1",
-    "@earendil-works/pi-tui": "0.82.1",
+    "@earendil-works/pi-coding-agent": "0.83.0",
+    "@earendil-works/pi-tui": "0.83.0",
     "@eslint/js": "10.0.1",
-    "@types/node": "26.1.1",
-    "eslint": "10.7.0",
-    "globals": "17.7.0",
+    "@types/node": "26.1.2",
+    "eslint": "10.8.0",
+    "globals": "17.9.0",
     "jiti": "2.7.0",
     "shellcheck": "4.1.0",
     "typescript": "6.0.3",

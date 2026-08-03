@@ -194,7 +194,7 @@ Backup files at the isolated-profile root (`settings.json.backup-*`, `keybinding
 
 Node.js >=22.19.0 must be available on your `PATH`.
 
-TLH runs its own pinned Pi 0.82.1 from a private runtime at `~/.the-last-harness/runtime` — a global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled.
+TLH runs its own pinned Pi 0.83.0 from a private runtime at `~/.the-last-harness/runtime` — a global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled.
 
 The installer writes an ownership marker (`.tlh-runtime-owned`) into the runtime prefix on every successful install or repair. Ownership is determined by this marker, not by directory shape alone — `npm install --prefix` produces an identical `bin/lib` layout regardless of who ran it, so shape alone is not a reliable signal. Accordingly, the installer refuses a non-empty unmarked runtime prefix that has no recorded TLH provenance; this matters most when using a non-default `--agent-dir` whose sibling `runtime/` directory could belong to a separate installation. Older TLH installs from before the marker was introduced gain it automatically on the next `tlh update` or installer rerun — no action required.
 

@@ -1038,10 +1038,10 @@ test("wrapper update --extensions helper prepends the pinned private runtime dir
 	mkdirSync(cwdDir, { recursive: true });
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
-	// Pinned pi at 0.82.1 — still prepended for --extensions.
+	// Pinned pi at 0.83.0 — still prepended for --extensions.
 	writeFakePi(pinnedPiDir, [
 		`printf '%s\\n' "$*" >>"${pinnedPiCallLog}"`,
-		`if [[ "\${1:-}" == "--version" ]]; then printf '0.82.1\\n'; exit 0; fi`,
+		`if [[ "\${1:-}" == "--version" ]]; then printf '0.83.0\\n'; exit 0; fi`,
 		"exit 85",
 	].join("\n"));
 	writeFileSync(join(agentDir, "tlh", "recover-update.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst pi = spawnSync("pi", ["--version"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, pi: { status: pi.status, stdout: pi.stdout, stderr: pi.stderr, error: pi.error?.message } }));\nprocess.exit(pi.status ?? (pi.error ? 1 : 0));\n`, "utf8");
