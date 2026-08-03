@@ -12,6 +12,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 - The `developer` subagent now defaults to `gpt-5.6-luna max` for OpenAI, `sonnet-4-6 medium` for Anthropic.
 - The Architect, Product, Bug-hunter, `code-reviewer`, `oracle`, and `contrarian` now use `opus-5.0 high` for Anthropic, `gpt-5.6-sol high` for OpenAI.
+- All 12 bundled agents now declare thinking levels independently per provider instead of sharing a single level.
 
 ### Removed
 

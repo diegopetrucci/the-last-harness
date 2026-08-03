@@ -159,7 +159,7 @@ test("developer prompt pins the Luna model and max thinking defaults", () => {
 
 	assert.match(agent, /^tlhOpenaiModels: openai-codex\/gpt-5\.6-luna$/m);
 	assert.match(agent, /^tlhAnthropicModels: anthropic\/claude-sonnet-4-6$/m);
-	assert.match(agent, /^thinking: max$/m);
+	assert.match(agent, /^tlhAnthropicThinking: medium$/m);
 	assert.match(agent, /^tlhOpenaiThinking: max$/m);
 });
 

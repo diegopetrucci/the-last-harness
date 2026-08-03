@@ -63,6 +63,7 @@ function parseAgentPrompt(filePath) {
         tlhAnthropicModels: splitCommaList(frontmatter.tlhAnthropicModels),
         thinking: parseThinkingLevelValue(frontmatter.thinking),
         tlhOpenaiThinking: parseThinkingLevelValue(frontmatter.tlhOpenaiThinking),
+        tlhAnthropicThinking: parseThinkingLevelValue(frontmatter.tlhAnthropicThinking),
         preferCurrentOpenaiModel: parseBooleanValue(frontmatter.preferCurrentOpenaiModel),
         preferOppositeProvider: parseBooleanValue(frontmatter.preferOppositeProvider),
         applyModel: parseBooleanValue(frontmatter.applyModel),
@@ -93,6 +94,7 @@ export function loadSubagentMetadata() {
         tlhAnthropicModels: agent.tlhAnthropicModels,
         thinking: agent.thinking,
         tlhOpenaiThinking: agent.tlhOpenaiThinking,
+        tlhAnthropicThinking: agent.tlhAnthropicThinking,
         preferOppositeProvider: agent.preferOppositeProvider,
     }))
         .sort((a, b) => a.name.localeCompare(b.name));
