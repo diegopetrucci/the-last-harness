@@ -120,8 +120,18 @@ function relativeRepoPath(path, repoRoot) {
 	return normalizeRepoRelativePath(relative(repoRoot, path));
 }
 
+function resolveTscEntrypoint() {
+	const typescriptPackagePath = require.resolve("typescript/package.json");
+	const typescriptPackage = JSON.parse(readFileSync(typescriptPackagePath, "utf8"));
+	const tscBinPath = typeof typescriptPackage.bin === "string" ? typescriptPackage.bin : typescriptPackage.bin?.tsc;
+	if (!tscBinPath) {
+		throw new Error("The installed TypeScript package does not declare a tsc executable.");
+	}
+	return resolve(dirname(typescriptPackagePath), tscBinPath);
+}
+
 function spawnTsc(config, target, args, stdio = "inherit") {
-	const tscEntrypoint = require.resolve("typescript/bin/tsc");
+	const tscEntrypoint = resolveTscEntrypoint();
 	const result = spawnSync(process.execPath, [tscEntrypoint, "--project", target.tsconfigPath, ...args], {
 		cwd: config.repoRoot,
 		stdio,

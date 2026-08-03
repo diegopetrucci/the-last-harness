@@ -341,23 +341,33 @@ function isPinnedDependencySpec(spec) {
 	return isPinnedGitLikeDependencySpec(trimmed);
 }
 
+function validatePinnedDependencyMap(value, label, problems, allowNested) {
+	if (!isPlainObject(value)) {
+		problems.push(`${label} must be an object`);
+		return;
+	}
+
+	for (const [name, spec] of Object.entries(value)) {
+		const dependencyLabel = `${label}.${name}`;
+		if (allowNested && isPlainObject(spec)) {
+			validatePinnedDependencyMap(spec, dependencyLabel, problems, true);
+			continue;
+		}
+		if (typeof spec !== "string" || spec.trim().length === 0) {
+			problems.push(`Missing string dependency spec at ${dependencyLabel}`);
+			continue;
+		}
+		if (!isPinnedDependencySpec(spec)) {
+			problems.push(`${dependencyLabel} must use an exact version or pinned non-registry source, found ${JSON.stringify(spec)}`);
+		}
+	}
+}
+
 function validatePinnedDependencies(packageJson, packagePath, problems) {
 	for (const field of ["dependencies", "devDependencies", "overrides"]) {
 		const value = packageJson[field];
 		if (value === undefined) continue;
-		if (!isPlainObject(value)) {
-			problems.push(`${packagePath}#${field} must be an object`);
-			continue;
-		}
-		for (const [name, spec] of Object.entries(value)) {
-			if (typeof spec !== "string" || spec.trim().length === 0) {
-				problems.push(`Missing string dependency spec at ${packagePath}#${field}.${name}`);
-				continue;
-			}
-			if (!isPinnedDependencySpec(spec)) {
-				problems.push(`${packagePath}#${field}.${name} must use an exact version or pinned non-registry source, found ${JSON.stringify(spec)}`);
-			}
-		}
+		validatePinnedDependencyMap(value, `${packagePath}#${field}`, problems, field === "overrides");
 	}
 }
 

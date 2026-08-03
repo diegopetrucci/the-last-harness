@@ -38,7 +38,7 @@
     "lint:sh": "git ls-files '*.sh' | xargs shellcheck",
     "test": "node --test --test-reporter=dot \"tests/**/*.test.mjs\"",
     "test:verbose": "node --test \"tests/**/*.test.mjs\"",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
     "typecheck:runtime": "node scripts/runtime-typescript.mjs typecheck",
     "validate": "npm run check:package-versions && npm run typecheck && npm run typecheck:runtime && npm run check:runtime && bash scripts/check-installer-smoke.sh && npm test && npm run lint && npm run lint:sh && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
   },
@@ -85,11 +85,17 @@
     "@earendil-works/pi-tui": "0.83.0",
     "@eslint/js": "10.0.1",
     "@types/node": "26.1.2",
+    "@typescript/typescript6": "6.0.2",
     "eslint": "10.8.0",
     "globals": "17.9.0",
     "jiti": "2.7.0",
     "shellcheck": "4.1.0",
-    "typescript": "6.0.3",
+    "typescript": "7.0.2",
     "typescript-eslint": "8.65.0"
+  },
+  "overrides": {
+    "@typescript/typescript6": {
+      "@typescript/old": "npm:typescript@6.0.3"
+    }
   }
 }

@@ -43,7 +43,9 @@ jobs:
           fi
 
       - name: Install test dependencies
-        run: npm ci
+        # The root check uses TypeScript 7 while typescript-eslint@8.65.0 declares a TS <6.1 peer.
+        # Remove the flag when the tooling supports TS7 and the @typescript/typescript6 shim is removed.
+        run: npm ci --legacy-peer-deps
 
       - name: Run release checks
         run: npm run validate
