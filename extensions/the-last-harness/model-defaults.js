@@ -133,6 +133,17 @@ export function selectProviderAwareAgentModel(agent, availableModels, currentPro
     return selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider)
         ?? selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider);
 }
+function resolveThinkingForProvider(agent, provider) {
+    if (!agent)
+        return undefined;
+    if (isOpenaiProvider(provider) && agent.tlhOpenaiThinking) {
+        return agent.tlhOpenaiThinking;
+    }
+    if (isAnthropicProvider(provider) && agent.tlhAnthropicThinking) {
+        return agent.tlhAnthropicThinking;
+    }
+    return agent.thinking;
+}
 export function selectProviderAwareAgentDefaults(agent, availableModels, currentProvider) {
     const oppositeProviderModel = selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider);
     const standardModel = agent?.preferCurrentOpenaiModel
@@ -140,9 +151,7 @@ export function selectProviderAwareAgentDefaults(agent, availableModels, current
             ?? selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider)
         : selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider);
     const model = oppositeProviderModel ?? standardModel;
-    const thinking = isOpenaiProvider(model?.provider ?? currentProvider) && agent?.tlhOpenaiThinking
-        ? agent.tlhOpenaiThinking
-        : agent?.thinking;
+    const thinking = resolveThinkingForProvider(agent, model?.provider ?? currentProvider);
     return { model, thinking };
 }
 export function selectProviderAwareAgentModelId(agent, availableModels, currentProvider) {
@@ -151,9 +160,6 @@ export function selectProviderAwareAgentModelId(agent, availableModels, currentP
 }
 function hasExplicitModel(target) {
     return Object.hasOwn(target, "model") && target.model !== undefined;
-}
-function hasExplicitThinking(target) {
-    return Object.hasOwn(target, "thinking") && target.thinking !== undefined;
 }
 function agentNameForTarget(target) {
     return typeof target.agent === "string" ? target.agent : undefined;
@@ -169,15 +175,15 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
     if (!selectedModel || selectedModel === agent?.model) {
         return 0;
     }
-    target.model = selectedModel;
-    if (!hasExplicitThinking(target) && defaults.thinking && defaults.thinking !== agent?.thinking) {
-        target.thinking = defaults.thinking;
-    }
+    const thinking = defaults.thinking;
+    target.model = thinking ? `${selectedModel}:${thinking}` : selectedModel;
     const oppositeProviderModel = selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider);
     if (oppositeProviderModel) {
         const fallbackModel = selectOppositeProviderFallbackModel(agent, availableModels, currentProvider, currentModel);
-        const fallbackModelId = fallbackModel ? formatProviderModelReference(fallbackModel) : undefined;
-        if (fallbackModelId && fallbackModelId !== selectedModel) {
+        const fallbackModelBase = fallbackModel ? formatProviderModelReference(fallbackModel) : undefined;
+        if (fallbackModelBase && fallbackModelBase !== selectedModel) {
+            const fallbackThinking = resolveThinkingForProvider(agent, fallbackModel.provider);
+            const fallbackModelId = fallbackThinking ? `${fallbackModelBase}:${fallbackThinking}` : fallbackModelBase;
             if (!Object.hasOwn(target, "fallbackModels") || target.fallbackModels === undefined) {
                 target.fallbackModels = [fallbackModelId];
             }

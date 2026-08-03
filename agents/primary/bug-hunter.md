@@ -3,7 +3,8 @@ name: bug-hunter
 description: Investigates reported bugs, identifies root causes, and recommends fixes without changing code.
 model: anthropic/claude-opus-5
 tlhOpenaiModels: openai-codex/gpt-5.6-sol
-thinking: high
+tlhAnthropicThinking: high
+tlhOpenaiThinking: high
 applyModel: true
 applyThinking: true
 lockThinking: true

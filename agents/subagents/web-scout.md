@@ -4,7 +4,8 @@ description: Performs Exa-backed web research and URL fetch in an isolated read-
 tools: web_search, fetch_content, get_search_content, read, grep, find, ls, contact_supervisor
 tlhOpenaiModels: openai-codex/gpt-5.4-mini
 tlhAnthropicModels: anthropic/claude-haiku-4-5
-thinking: high
+tlhAnthropicThinking: high
+tlhOpenaiThinking: high
 toolBudget: {"soft":5,"hard":7}
 systemPromptMode: replace
 inheritProjectContext: true

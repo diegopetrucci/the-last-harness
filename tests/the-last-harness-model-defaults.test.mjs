@@ -13,7 +13,7 @@ const developer = {
 	name: "developer",
 	tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
 	tlhAnthropicModels: ["anthropic/claude-sonnet-4-6"],
-	thinking: "max",
+	tlhAnthropicThinking: "medium",
 	tlhOpenaiThinking: "max",
 };
 
@@ -89,7 +89,7 @@ test("provider-aware model resolver follows active Anthropic provider for non-re
 
 	const input = { agent: "developer", task: "Implement the ticket" };
 	assert.equal(applyProviderAwareSubagentModels(input, agents, anthropicAvailable, "anthropic"), 1);
-	assert.equal(input.model, "anthropic/claude-sonnet-4-6");
+	assert.equal(input.model, "anthropic/claude-sonnet-4-6:medium");
 });
 
 test("provider-aware model resolver follows active provider for non-review subagents when both providers are available", () => {
@@ -99,14 +99,14 @@ test("provider-aware model resolver follows active provider for non-review subag
 	assert.equal(selectProviderAwareAgentModelId(developer, available, "openai-codex"), "openai-codex/gpt-5.6-luna");
 	const codexInput = { agent: "developer", task: "Implement the ticket" };
 	assert.equal(applyProviderAwareSubagentModels(codexInput, agents, available, "openai-codex"), 1);
-	assert.equal(codexInput.model, "openai-codex/gpt-5.6-luna");
+	assert.equal(codexInput.model, "openai-codex/gpt-5.6-luna:max");
 	assert.equal(Object.hasOwn(codexInput, "thinking"), false);
 
 	// Anthropic is active → picks Anthropic model
 	assert.equal(selectProviderAwareAgentModelId(developer, available, "anthropic"), "anthropic/claude-sonnet-4-6");
 	const anthropicInput = { agent: "developer", task: "Implement the ticket" };
 	assert.equal(applyProviderAwareSubagentModels(anthropicInput, agents, available, "anthropic"), 1);
-	assert.equal(anthropicInput.model, "anthropic/claude-sonnet-4-6");
+	assert.equal(anthropicInput.model, "anthropic/claude-sonnet-4-6:medium");
 	assert.equal(Object.hasOwn(anthropicInput, "thinking"), false);
 });
 
@@ -115,7 +115,7 @@ test("provider-aware model resolver picks OpenAI Codex when Anthropic is unavail
 
 	const input = { agent: "developer", task: "Implement the ticket" };
 	assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 1);
-	assert.equal(input.model, "openai-codex/gpt-5.6-luna");
+	assert.equal(input.model, "openai-codex/gpt-5.6-luna:max");
 	assert.equal(Object.hasOwn(input, "thinking"), false);
 });
 
@@ -338,7 +338,7 @@ test("tlhAnthropicModels: regression – agents with only tlhOpenaiModels are un
 	// applyProviderAwareSubagentModels: developer still gets the provider-aware Codex default.
 	const input = { agent: "developer", task: "Implement the ticket" };
 	assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 1);
-	assert.equal(input.model, "openai-codex/gpt-5.6-luna");
+	assert.equal(input.model, "openai-codex/gpt-5.6-luna:max");
 	assert.equal(Object.hasOwn(input, "thinking"), false);
 	assert.equal(Object.hasOwn(input, "fallbackModels"), false);
 	assert.equal(Object.hasOwn(input, "modelFallbackNotice"), false);
@@ -353,7 +353,7 @@ test("provider-aware subagent mutation preserves explicit user-supplied model va
 test("provider-aware subagent mutation preserves caller-supplied thinking", () => {
 	const input = { agent: "developer", task: "Implement the ticket", thinking: "high" };
 	assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 1);
-	assert.equal(input.model, "openai-codex/gpt-5.6-luna");
+	assert.equal(input.model, "openai-codex/gpt-5.6-luna:max");
 	assert.equal(input.thinking, "high");
 });
 
@@ -393,7 +393,7 @@ test("provider-aware subagent mutation handles parallel tasks", () => {
 	};
 
 	assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 1);
-	assert.equal(input.tasks[0].model, "openai-codex/gpt-5.6-luna");
+	assert.equal(input.tasks[0].model, "openai-codex/gpt-5.6-luna:max");
 	assert.equal(input.tasks[1].model, "anthropic/claude-sonnet-4-6");
 	assert.equal(input.tasks[2].model, undefined);
 });
@@ -415,4 +415,116 @@ test("provider-aware subagent mutation ignores legacy chain payloads", () => {
 	assert.equal(input.chain[0].model, undefined);
 	assert.equal(input.chain[1].parallel[0].model, undefined);
 	assert.equal(input.chain[1].parallel[1].model, "openai/gpt-5.6");
+});
+
+// --- tlhAnthropicThinking: model suffix injection (ticket tlhm-r6b8) ---
+
+const developerWithAnthropicThinking = {
+	name: "developer",
+	tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
+	tlhAnthropicModels: ["anthropic/claude-sonnet-4-6"],
+	thinking: "low",
+	tlhOpenaiThinking: "max",
+	tlhAnthropicThinking: "medium",
+};
+
+const reviewerWithThinking = {
+	name: "reviewer-with-thinking",
+	tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
+	tlhAnthropicModels: ["anthropic/claude-opus-5"],
+	tlhOpenaiThinking: "max",
+	tlhAnthropicThinking: "medium",
+	preferOppositeProvider: true,
+};
+
+test("tlhAnthropicThinking: resolveThinkingForProvider picks Anthropic level for Anthropic session", () => {
+	const result = selectProviderAwareAgentDefaults(developerWithAnthropicThinking, anthropicAvailable, "anthropic");
+	assert.deepEqual(result, {
+		model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+		thinking: "medium",
+	});
+});
+
+test("tlhAnthropicThinking: resolveThinkingForProvider picks OpenAI level for OpenAI-Codex session", () => {
+	const result = selectProviderAwareAgentDefaults(developerWithAnthropicThinking, codexAvailable, "openai-codex");
+	assert.deepEqual(result, {
+		model: { provider: "openai-codex", id: "gpt-5.6-luna" },
+		thinking: "max",
+	});
+});
+
+test("tlhAnthropicThinking: falls back to agent.thinking when neither provider-specific field is set", () => {
+	const agentFallbackOnly = {
+		name: "fallback-only",
+		tlhAnthropicModels: ["anthropic/claude-sonnet-4-6"],
+		thinking: "low",
+	};
+	const result = selectProviderAwareAgentDefaults(agentFallbackOnly, anthropicAvailable, "anthropic");
+	assert.deepEqual(result, {
+		model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+		thinking: "low",
+	});
+});
+
+test("tlhAnthropicThinking: 'max' suffix round-trips correctly through model string injection", () => {
+	const agentMaxAnthropicThinking = {
+		name: "dev-max-anthropic",
+		tlhAnthropicModels: ["anthropic/claude-sonnet-4-6"],
+		tlhAnthropicThinking: "max",
+	};
+	const agentsMap = new Map([[agentMaxAnthropicThinking.name, agentMaxAnthropicThinking]]);
+	const input = { agent: agentMaxAnthropicThinking.name, task: "Do something" };
+	assert.equal(applyProviderAwareSubagentModels(input, agentsMap, anthropicAvailable, "anthropic"), 1);
+	assert.equal(input.model, "anthropic/claude-sonnet-4-6:max");
+	// The target must NOT have a separate 'thinking' property injected by TLH.
+	assert.equal(Object.hasOwn(input, "thinking"), false);
+});
+
+test("tlhAnthropicThinking: injects suffixed model string for Anthropic session", () => {
+	const agentsMap = new Map([[developerWithAnthropicThinking.name, developerWithAnthropicThinking]]);
+	const input = { agent: developerWithAnthropicThinking.name, task: "Implement" };
+	assert.equal(applyProviderAwareSubagentModels(input, agentsMap, anthropicAvailable, "anthropic"), 1);
+	assert.equal(input.model, "anthropic/claude-sonnet-4-6:medium");
+	assert.equal(Object.hasOwn(input, "thinking"), false);
+});
+
+test("tlhAnthropicThinking: injects suffixed model string for OpenAI-Codex session", () => {
+	const agentsMap = new Map([[developerWithAnthropicThinking.name, developerWithAnthropicThinking]]);
+	const input = { agent: developerWithAnthropicThinking.name, task: "Implement" };
+	assert.equal(applyProviderAwareSubagentModels(input, agentsMap, codexAvailable, "openai-codex"), 1);
+	assert.equal(input.model, "openai-codex/gpt-5.6-luna:max");
+	assert.equal(Object.hasOwn(input, "thinking"), false);
+});
+
+test("tlhAnthropicThinking: opposite-provider fallback carries the fallback provider's thinking level", () => {
+	const available = [...anthropicAvailable, ...codexAvailable];
+	const agentsMap = new Map([[reviewerWithThinking.name, reviewerWithThinking]]);
+
+	// Anthropic session → primary is Codex (opposite) with OpenAI thinking,
+	// fallback is Anthropic (same) with Anthropic thinking.
+	const anthropicInput = { agent: reviewerWithThinking.name, task: "Review" };
+	assert.equal(applyProviderAwareSubagentModels(anthropicInput, agentsMap, available, "anthropic"), 1);
+	assert.equal(anthropicInput.model, "openai-codex/gpt-5.6-sol:max");
+	assert.deepEqual(anthropicInput.fallbackModels, ["anthropic/claude-opus-5:medium"]);
+	assert.equal(anthropicInput.modelFallbackNotice, reducedIndependenceNotice);
+
+	// Codex session → primary is Anthropic (opposite) with Anthropic thinking,
+	// fallback is Codex (same) with OpenAI thinking.
+	const codexInput = { agent: reviewerWithThinking.name, task: "Review" };
+	assert.equal(applyProviderAwareSubagentModels(codexInput, agentsMap, available, "openai-codex"), 1);
+	assert.equal(codexInput.model, "anthropic/claude-opus-5:medium");
+	assert.deepEqual(codexInput.fallbackModels, ["openai-codex/gpt-5.6-sol:max"]);
+	assert.equal(codexInput.modelFallbackNotice, reducedIndependenceNotice);
+});
+
+test("tlhAnthropicThinking: no thinking suffix when thinking is undefined for agent", () => {
+	const agentNoThinking = {
+		name: "no-thinking",
+		tlhAnthropicModels: ["anthropic/claude-sonnet-4-6"],
+	};
+	const agentsMap = new Map([[agentNoThinking.name, agentNoThinking]]);
+	const input = { agent: agentNoThinking.name, task: "Do something" };
+	assert.equal(applyProviderAwareSubagentModels(input, agentsMap, anthropicAvailable, "anthropic"), 1);
+	assert.equal(input.model, "anthropic/claude-sonnet-4-6");
+	assert.equal(Object.hasOwn(input, "thinking"), false);
 });
