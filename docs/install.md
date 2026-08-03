@@ -189,6 +189,22 @@ This removes the isolated agent dir, the private Pi runtime at `~/.the-last-harn
 npm uninstall -g --ignore-scripts --prefix "$HOME/.local" @earendil-works/pi-coding-agent
 ```
 
+## Backup retention
+
+Backup files at the isolated-profile root (`settings.json.backup-*`, `keybindings.json.backup-*`) are pruned automatically on install and update: any backup older than ~28 days is removed, but the two newest backups are always kept regardless of age. This pruning is scoped strictly to the isolated profile (`~/.the-last-harness/agent`) and never touches `~/.pi`. If you want to keep a particular backup indefinitely, copy it to a location outside the isolated profile before it ages out.
+
+## Subagent extension configuration
+
+The installer provisions the isolated subagent extension config at `~/.the-last-harness/agent/extensions/subagent/config.json` with missing TLH defaults: compact tool descriptions and `control.activeNoticeAfterMs: 270000` (4m30). To override the notice checkpoint, edit that file and set `control.activeNoticeAfterMs` to your preferred number of milliseconds; existing values and unrelated top-level or nested keys are preserved on later installs and updates. Setting `control.activeNoticeAfterMs` to `240000` restores pi-subagents' four-minute behavior and is preserved. Removing that key and rerunning `tlh update` (or the installer) restores TLH's managed `270000`/4m30 default. This only changes the isolated TLH profile and never the normal `~/.pi/agent` configuration.
+
+### Scout run timeout cap
+
+TLH caps new execution-bearing `librarian`, `web-scout`, `repo-scout`, and `diff-summarizer` runs at six minutes (`360000` ms) unless the caller already set a stricter timeout. `resume` timeouts are left unchanged.
+
+## gh CLI prerequisite (for librarian)
+
+The `librarian` subagent performs read-only GitHub research using the `gh` CLI and `git`. Install `gh` from <https://cli.github.com/> and authenticate with `gh auth login` before using librarian. Run `gh auth status` to confirm. Without an authenticated `gh`, librarian reports what it could not verify rather than silently failing.
+
 ## Security note
 
 The one-line installer and `tlh update` run shell commands on your machine, install the upstream Pi npm package per-user into a private runtime at `~/.the-last-harness/runtime` and bundled default extensions, install managed Gnosis and `tk` binaries into the isolated TLH profile when needed, create an isolated Pi profile, and write a wrapper command. Managed bundled npm extension sources are pinned to explicit versions in `config/default-extensions.json`; managed Gnosis defaults to the pinned `v0.5.4` release unless you override it. Managed `tk` is copied from the pinned `wedow/ticket` source tarball (`v0.3.2`) only after SHA-256 verification; TLH does not install `tk` globally or through Homebrew. Review `install.sh` and the stage-1 helper it fetches (`scripts/tlh-install.mjs`) before piping to `bash` if you prefer. At launch, TLH may contact GitHub Releases to check for new TLH versions unless disabled with the update-check opt-outs above. This repo does not create, read, or modify API keys or auth files.
