@@ -74,7 +74,7 @@ Enabling the flag and placing the agent file in the supported location is what a
 
 The "only when the user explicitly names or asks for it" rule in the architect system prompt is still **prompt policy, not a runtime gate** — the runtime does not verify that the user typed the agent name.
 
-**Known limitation — opaque resume is not re-checked against the architect-only rule.** TLH now treats `subagent({ action: "resume", chain: [...] })` as fresh execution and re-runs the normal embedded-target gates. The remaining accepted issue #330 limitation applies only to *opaque* resume calls that continue an already-started run by id/index without an attached execution chain. If architect starts an embedded subagent run and the user then switches the primary agent (via `/switch-primary-agent`) to `product` or `bug-hunter` within the same session, that non-architect primary can still opaque-`resume` the already-started embedded run; the runtime does not re-check the resumed run's initiating agent against the architect-only rule. This is a known, accepted defense-in-depth gap, not a sandbox escape: embedded subagents are trusted, user-owned agents (as noted below), so this is a defense-in-depth boundary rather than isolation of untrusted code. It is tracked for a proper fix (threading the resumed run's agent identity into the gate) in issue #330.
+**Known limitation — opaque resume and opaque steer are not re-checked against the architect-only rule.** All resume and steer calls are opaque; TLH does not re-run the embedded-target gates on resume or steer. If architect starts an embedded subagent run and the user then switches the primary agent (via `/switch-primary-agent`) to `product` or `bug-hunter` within the same session, that non-architect primary can still opaque-`resume` or opaque-`steer` the already-started embedded run; the runtime does not re-check the run's initiating agent against the architect-only rule. `rush` is not covered by this gap — it is blocked from both opaque resume and opaque steer at runtime. This is a known, accepted defense-in-depth gap, not a sandbox escape: embedded subagents are trusted, user-owned agents (as noted below), so this is a defense-in-depth boundary rather than isolation of untrusted code. It is tracked for a proper fix (threading the run's agent identity into the gate) in issue #330.
 
 ## Least-privilege starter
 
@@ -148,7 +148,7 @@ Use embedded.repo-helper to inspect the auth flow.
 Use my trusted embedded.repo-developer agent for this small fix.
 ```
 
-The `rush`, `product`, and `bug-hunter` primaries are blocked from **initiating** delegation to embedded targets at runtime — including `resume.chain` attached execution. The accepted issue #330 opaque-resume limitation described above still applies to already-started runs.
+The `rush`, `product`, and `bug-hunter` primaries are blocked from **initiating** delegation to embedded targets at runtime. `rush` is additionally blocked from opaque resume and opaque steer of already-started runs, so the accepted issue #330 limitation described above applies only to `product` and `bug-hunter`.
 
 When flag is **off** (the default), any `embedded.*` target is blocked the same way an unknown agent name would be. No embedded-specific behavior exists.
 
@@ -159,7 +159,7 @@ When flag is **off** (the default), any `embedded.*` target is blocked the same 
 - Authorization comes only from the last effective same-name valid profile-owned definition under the active TLH profile's `agents/**/*.md` tree outside nested `.agents/skills` paths, and that selected definition must be a regular non-symlink `.md` file; `.chain.md` files, installed-package agents, and `subagents.agentDirs` do not authorize `embedded.*` runtime names for TLH-primary delegation.
 - `embedded.*` is for **trusted, user-owned** agents. Do not treat it as a way to safely run repo-controlled prompts from untrusted repositories.
 - Project-scoped `.pi/agents/**/*.md` embedded agents are **not** a supported path for TLH-primary embedded delegation.
-- `rush`, `product`, and `bug-hunter` cannot initiate `embedded.*` runs, including via `resume.chain`; architect is the only TLH primary that can initiate them. See the accepted issue #330 opaque-resume limitation above for already-started runs.
+- `rush`, `product`, and `bug-hunter` cannot initiate `embedded.*` runs; architect is the only TLH primary that can initiate them. `rush` is also blocked from opaque resume and opaque steer of already-started runs. See the accepted issue #330 limitation above for the residual gap that applies only to `product` and `bug-hunter`.
 - If you disable TLH primaries, upstream subagent behavior still exists, but this guide documents only the supported primaries-enabled TLH flow above.
 
 ## Undo or remove an embedded agent

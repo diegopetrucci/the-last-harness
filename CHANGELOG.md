@@ -4,6 +4,11 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Removed stale `/subagents-profiles`, `/subagents-check-profile`, and `/subagents-models` from `HIDDEN_SLASH_COMMANDS` and from `docs/commands.md`; these commands were removed in `pi-subagents` 0.31.14. Added `/subagents-fleet` to the visible bundled-extension command table. Hid `/subagent-cost` via `HIDDEN_SLASH_COMMANDS` because `/tokens` is the TLH-native token report; true removal requires a fork-side change in `pi-subagents`.
+- Architect steering of async child runs now actually works at runtime. The 0.32.0 changelog entry claimed steering support, but `steer` was missing from the allowed action set at that time; it is now included. Steer calls require an explicit `id` and `message`; execution fields (`agent`, `tasks`, `chain`, `context`, `agentScope`) and non-integer `index` values are rejected. `rush` is blocked from `steer` outright because an opaque steer carries no `agent` field, so TLH cannot verify the steered child is not a `developer` subagent. `product` and `bug-hunter` can steer already-started runs — see the accepted issue #330 note in `docs/embedded-subagents.md`.
+
 ## [0.32.0] - 2026-08-03
 
 ### Added

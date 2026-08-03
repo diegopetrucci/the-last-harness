@@ -108,7 +108,7 @@ test("tool_call caps targeted scout execution timeouts without affecting stricte
 	}
 });
 
-test("tool_call leaves every resume timeout unchanged while still defaulting scope for resume-chain execution", async () => {
+test("tool_call leaves every resume timeout unchanged while still normalizing scope and context", async () => {
 	const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
 	const ctx = createToolCallContext([
 		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
@@ -119,10 +119,6 @@ test("tool_call leaves every resume timeout unchanged while still defaulting sco
 			action: "resume",
 			id: "run-123",
 			message: "Continue the approved ticket.",
-			chain: [
-				{ agent: "developer", task: "Refresh repo context" },
-				{ parallel: [{ agent: "web-scout", task: "Research upstream issue history" }] },
-			],
 			timeoutMs: 420_000,
 		},
 	};
@@ -132,7 +128,6 @@ test("tool_call leaves every resume timeout unchanged while still defaulting sco
 			action: "resume",
 			id: "run-124",
 			message: "Continue the approved ticket.",
-			chain: [{ agent: "repo-scout", task: "Map the repository" }],
 			timeoutMs: 120_000,
 		},
 	};
@@ -289,6 +284,24 @@ test("Rush blocks subagent resume with a Rush-specific reason", async () => {
 		block: true,
 		reason:
 			"TLH Rush may not use subagent action=resume because resuming by run id or index can continue a prior developer subagent without an explicit safe target. Rush must edit directly or start a new allowed subagent with an explicit agent target.",
+	});
+});
+
+test("Rush blocks subagent steer with a Rush-specific reason", async () => {
+	const { toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+	const event = {
+		toolName: "subagent",
+		input: { action: "steer", id: "run-123", message: "Please wrap up the current subtask." },
+	};
+	const ctx = createToolCallContext([
+		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
+	]);
+
+	const result = await toolCall(event, ctx);
+	assert.deepEqual(result, {
+		block: true,
+		reason:
+			"TLH Rush may not use subagent action=steer because an opaque steer carries no agent field, so TLH cannot prove the steered child is not a developer subagent. Rush must edit directly.",
 	});
 });
 
@@ -523,22 +536,6 @@ function standardDisallowedTargetReason(target) {
 	return `TLH primary agents may delegate only to: ${ALLOWED_SUBAGENTS.join(", ")}. Disallowed target(s): ${target}.`;
 }
 
-function dynamicFanoutChain(dynamicAgent, sequentialAgent = "repo-scout") {
-	return [
-		{
-			agent: sequentialAgent,
-			task: "Return repository areas as structured JSON.",
-			as: "inventory",
-			outputSchema: { type: "object", properties: { items: { type: "array", items: { type: "string" } } } },
-		},
-		{
-			expand: { from: { output: "inventory", path: "/items" }, maxItems: 10 },
-			parallel: { agent: dynamicAgent, task: "Inspect {item}." },
-			collect: { as: "inspections" },
-		},
-	];
-}
-
 function writeEmbeddedAgent(agentDir, relativePath, frontmatter) {
 	const filePath = join(agentDir, "agents", relativePath);
 	mkdirSync(dirname(filePath), { recursive: true });
@@ -562,9 +559,6 @@ test("embedded subagents: flag off blocks embedded targets for architect with st
 		for (const input of [
 			{ agent: "embedded.my-tool", prompt: "do something" },
 			{ tasks: [{ agent: "embedded.my-tool", prompt: "step 1" }] },
-			{ chain: [{ agent: "embedded.my-tool", prompt: "chain step" }] },
-			{ chain: [{ parallel: [{ agent: "embedded.my-tool", prompt: "parallel" }] }] },
-			{ action: "resume", id: "run-123", chain: [{ agent: "embedded.my-tool", prompt: "resume chain step" }] },
 		]) {
 			const result = await toolCall({ toolName: "subagent", input }, ctx);
 			assert.equal(result?.block, true, `expected block for input: ${JSON.stringify(input)}`);
@@ -605,28 +599,6 @@ test("embedded subagents: flag off + rush and product get the standard disallowe
 });
 
 
-test("embedded subagents: flag off blocks object-valued dynamic chain parallel embedded targets even with an allowed sibling", async (t) => {
-	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-
-	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
-		const ctx = createToolCallContext(
-			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
-			undefined,
-			{ cwd: fixture.cwd },
-		);
-		await applySessionStart(ctx);
-
-		const event = {
-			toolName: "subagent",
-			input: { chain: dynamicFanoutChain("embedded.my-tool") },
-		};
-		const result = await toolCall(event, ctx);
-		assert.equal(result?.block, true);
-		assert.equal(result?.reason, standardDisallowedTargetReason("embedded.my-tool"));
-	});
-});
-
 test("embedded subagents: flag on + architect allows only profile-authorized embedded targets", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
@@ -656,70 +628,11 @@ test("embedded subagents: flag on + architect allows only profile-authorized emb
 		const tasksEvent = { toolName: "subagent", input: { tasks: [{ agent: "embedded.my-tool", prompt: "step 1" }] } };
 		assert.equal(await toolCall(tasksEvent, ctx), undefined, "tasks embedded target should be allowed for architect");
 
-		const chainEvent = { toolName: "subagent", input: { chain: [{ agent: "embedded.my-tool", prompt: "chain step" }] } };
-		assert.equal(await toolCall(chainEvent, ctx), undefined, "chain embedded target should be allowed for architect");
-
-		const parallelEvent = {
-			toolName: "subagent",
-			input: { chain: [{ parallel: [{ agent: "embedded.my-tool", prompt: "parallel" }] }] },
-		};
-		assert.equal(await toolCall(parallelEvent, ctx), undefined, "parallel-in-chain embedded target should be allowed for architect");
-
-		const resumeChainEvent = {
-			toolName: "subagent",
-			input: { action: "resume", id: "run-123", chain: [{ agent: "embedded.my-tool", prompt: "resume chain step" }] },
-		};
-		assert.equal(await toolCall(resumeChainEvent, ctx), undefined, "resume.chain embedded target should be allowed for architect when profile-authorized");
-		assert.equal(resumeChainEvent.input.agentScope, "user");
-		assert.equal(resumeChainEvent.input.context, "fresh");
-
 		const missingEvent = { toolName: "subagent", input: { agent: "embedded.missing-tool", prompt: "blocked" } };
 		const missingResult = await toolCall(missingEvent, ctx);
 		assert.equal(missingResult?.block, true);
 		assert.match(missingResult?.reason ?? "", /valid package: embedded \/ name: <slug>/);
 		assert.match(missingResult?.reason ?? "", /embedded\.missing-tool/);
-
-		const missingResumeChainEvent = {
-			toolName: "subagent",
-			input: { action: "resume", id: "run-456", chain: [{ agent: "embedded.missing-tool", prompt: "blocked" }] },
-		};
-		const missingResumeChainResult = await toolCall(missingResumeChainEvent, ctx);
-		assert.equal(missingResumeChainResult?.block, true);
-		assert.match(missingResumeChainResult?.reason ?? "", /valid package: embedded \/ name: <slug>/);
-		assert.match(missingResumeChainResult?.reason ?? "", /Unauthorized target\(s\): embedded\.missing-tool/);
-	});
-});
-
-
-test("embedded subagents: flag on + architect rejects missing object-valued dynamic chain parallel embedded targets even with an authorized sibling", async (t) => {
-	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-
-	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		writeFileSync(
-			join(fixture.agent, "settings.json"),
-			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
-		);
-		writeEmbeddedAgent(
-			fixture.agent,
-			"trusted/my-tool.md",
-			"---\nname: my-tool\npackage: embedded\ndescription: Trusted helper\n---",
-		);
-		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
-		const ctx = createToolCallContext(
-			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
-			undefined,
-			{ cwd: fixture.cwd },
-		);
-		await applySessionStart(ctx);
-
-		const event = {
-			toolName: "subagent",
-			input: { chain: dynamicFanoutChain("embedded.missing-tool", "embedded.my-tool") },
-		};
-		const result = await toolCall(event, ctx);
-		assert.equal(result?.block, true);
-		assert.match(result?.reason ?? "", /valid package: embedded \/ name: <slug>/);
-		assert.match(result?.reason ?? "", /Unauthorized target\(s\): embedded\.missing-tool/);
 	});
 });
 
@@ -778,7 +691,7 @@ test("embedded subagents: flag on keeps opaque resume issue #330 behavior for pr
 	});
 });
 
-test("embedded subagents: flag on + product blocks embedded targets with product-specific reason, including resume.chain", async (t) => {
+test("embedded subagents: flag on + product blocks embedded targets with product-specific reason", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -796,7 +709,7 @@ test("embedded subagents: flag on + product blocks embedded targets with product
 
 		for (const input of [
 			{ agent: "embedded.my-tool", prompt: "do something" },
-			{ action: "resume", id: "run-123", chain: [{ agent: "embedded.my-tool", prompt: "resume chain step" }] },
+			{ tasks: [{ agent: "embedded.my-tool", prompt: "step 1" }] },
 		]) {
 			const result = await toolCall({ toolName: "subagent", input }, ctx);
 			assert.equal(result?.block, true);
@@ -806,7 +719,7 @@ test("embedded subagents: flag on + product blocks embedded targets with product
 	});
 });
 
-test("embedded subagents: flag on + bug-hunter blocks embedded targets with bug-hunter-specific reason, including resume.chain", async (t) => {
+test("embedded subagents: flag on + bug-hunter blocks embedded targets with bug-hunter-specific reason", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -824,46 +737,12 @@ test("embedded subagents: flag on + bug-hunter blocks embedded targets with bug-
 
 		for (const input of [
 			{ agent: "embedded.my-tool", prompt: "do something" },
-			{ action: "resume", id: "run-123", chain: [{ agent: "embedded.my-tool", prompt: "resume chain step" }] },
+			{ tasks: [{ agent: "embedded.my-tool", prompt: "step 1" }] },
 		]) {
 			const result = await toolCall({ toolName: "subagent", input }, ctx);
 			assert.equal(result?.block, true);
 			assert.match(result?.reason ?? "", /Bug-Hunter may not delegate to embedded/i);
 			assert.match(result?.reason ?? "", /reserved for the architect/i);
-		}
-	});
-});
-
-
-test("embedded subagents: flag on keeps rush/product/bug-hunter object-valued dynamic chain parallel embedded blocks fail-closed with an allowed sibling", async (t) => {
-	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-
-	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		writeFileSync(
-			join(fixture.agent, "settings.json"),
-			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
-		);
-
-		for (const [selected, expectedReason] of [
-			["rush", /Rush may not delegate to embedded/i],
-			["product", /Product may not delegate to embedded/i],
-			["bug-hunter", /Bug-Hunter may not delegate to embedded/i],
-		]) {
-			const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
-			const ctx = createToolCallContext(
-				[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected } }],
-				undefined,
-				{ cwd: fixture.cwd },
-			);
-			await applySessionStart(ctx);
-
-			const event = {
-				toolName: "subagent",
-				input: { chain: dynamicFanoutChain("embedded.my-tool", "code-reviewer") },
-			};
-			const result = await toolCall(event, ctx);
-			assert.equal(result?.block, true, `expected fail-closed block for ${selected}`);
-			assert.match(result?.reason ?? "", expectedReason);
 		}
 	});
 });
