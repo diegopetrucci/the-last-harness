@@ -135,6 +135,9 @@ test("check-package-versions passes with pinned dependency exceptions and ignore
 		},
 		overrides: {
 			dompurify: "3.4.11",
+			"@typescript/typescript6": {
+				"@typescript/old": "npm:typescript@6.0.3",
+			},
 		},
 		defaultExtensions: [
 			{ id: "helper", source: "npm:helper@1.2.3" },
@@ -180,6 +183,9 @@ test("check-package-versions rejects loose dependencies, devDependencies, and ov
 		},
 		overrides: {
 			dompurify: "^3.4.11",
+			"@typescript/typescript6": {
+				"@typescript/old": "npm:typescript@^6",
+			},
 		},
 	});
 
@@ -189,6 +195,7 @@ test("check-package-versions rejects loose dependencies, devDependencies, and ov
 	assert.match(result.stderr, /package\.json#dependencies\.eslint must use an exact version or pinned non-registry source, found "\^9\.39\.4"/);
 	assert.match(result.stderr, /package\.json#devDependencies\.typescript must use an exact version or pinned non-registry source, found "latest"/);
 	assert.match(result.stderr, /package\.json#overrides\.dompurify must use an exact version or pinned non-registry source, found "\^3\.4\.11"/);
+	assert.match(result.stderr, /package\.json#overrides\.@typescript\/typescript6\.@typescript\/old must use an exact version or pinned non-registry source, found "npm:typescript@\^6"/);
 	assert.doesNotMatch(result.stderr, /peerDependencies/);
 });
 
