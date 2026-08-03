@@ -30,9 +30,6 @@ test("autocomplete hides configured slash commands only in slash-command-name co
 			{ value: "curator", label: "/curator" },
 			{ value: "search", label: "/search" },
 			{ value: "quiet-tools", label: "/quiet-tools" },
-			{ value: "fff-health", label: "/fff-health" },
-			{ value: "fff-rescan", label: "/fff-rescan" },
-			{ value: "fff-mode", label: "/fff-mode" },
 			{ value: "investigate-revalidate-current", label: "/investigate-revalidate-current" },
 			{ value: "tlh-changelog", label: "/tlh-changelog" },
 			{ value: "agent", label: "/agent" },
@@ -58,7 +55,6 @@ test("autocomplete keeps hidden commands outside slash-command-name context", as
 			{ value: "curator", label: "/curator" },
 			{ value: "search", label: "/search" },
 			{ value: "quiet-tools", label: "/quiet-tools" },
-			{ value: "fff-health", label: "/fff-health" },
 			{ value: "investigate-revalidate-current", label: "/investigate-revalidate-current" },
 			{ value: "agent", label: "/agent" },
 		],
@@ -83,13 +79,10 @@ test("autocomplete returns null when filtering removes every slash-command sugge
 			{ value: "curator", label: "/curator" },
 			{ value: "search", label: "/search" },
 			{ value: "quiet-tools", label: "/quiet-tools" },
-			{ value: "fff-health", label: "/fff-health" },
-			{ value: "fff-rescan", label: "/fff-rescan" },
-			{ value: "fff-mode", label: "/fff-mode" },
 		],
 	}));
 
-	const result = await provider.getSuggestions(["/fff-health"], 0, 11, { signal: AbortSignal.abort() });
+	const result = await provider.getSuggestions(["/quiet-tools"], 0, 13, { signal: AbortSignal.abort() });
 
 	assert.equal(result, null);
 });

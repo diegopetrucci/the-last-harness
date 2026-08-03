@@ -213,9 +213,6 @@ These commands are registered and fully functional, but deliberately excluded fr
 | Command | Extension | Description |
 |---------|-----------|-------------|
 | `/curator` | `pi-web-access` | Toggle or configure the search curator workflow |
-| `/fff-health` | `pi-fff` | Show FFF file finder health and status |
-| `/fff-mode` | `pi-fff` | Show or set FFF mode (`tools-and-ui`, `tools-only`, `override`) |
-| `/fff-rescan` | `pi-fff` | Trigger FFF to rescan files |
 | `/quiet-tools` | `pi-quiet-tools` | Toggle one-line collapsed invocations for built-in tool rows |
 | `/search` | `pi-web-access` | Browse stored web search results |
 | `/subagent-cost` | `pi-subagents` | Show parent and subagent child usage cost for this session; hidden because `/tokens` provides the TLH-native token report |
@@ -239,7 +236,7 @@ Individual bundled extensions can be disabled without affecting the others. Use 
 
 ```sh
 tlh defaults list        # show installed defaults and opt-out status
-tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disable fff)
+tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disable notify)
 tlh defaults enable <id>   # re-enable a disabled extension
 ```
 
