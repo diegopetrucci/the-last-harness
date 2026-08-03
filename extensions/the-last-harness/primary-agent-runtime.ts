@@ -18,7 +18,6 @@ import {
 	allowedSubagentsForExperimentalConfig,
 	collectSubagentTargets,
 	isEmbeddedSubagentTarget,
-	isExecutionBearingResumeChain,
 	isExperimentalFeatureEnabled,
 	registerTlhStartupMode,
 	validateSubagentToolInput,
@@ -258,12 +257,20 @@ function isSubagentResumeAction(input: unknown): boolean {
 	return isRecord(input) && matchesSubagentName(input.action, "resume");
 }
 
+function isSubagentSteerAction(input: unknown): boolean {
+	return isRecord(input) && matchesSubagentName(input.action, "steer");
+}
+
 function subagentCallTargetsAgent(input: unknown, target: string): boolean {
 	return subagentCallTargetsMatching(input, (agent) => matchesSubagentName(agent, target));
 }
 
 function rushResumeDelegationReason(): string {
 	return "TLH Rush may not use subagent action=resume because resuming by run id or index can continue a prior developer subagent without an explicit safe target. Rush must edit directly or start a new allowed subagent with an explicit agent target.";
+}
+
+function rushSteerDelegationReason(): string {
+	return "TLH Rush may not use subagent action=steer because an opaque steer carries no agent field, so TLH cannot prove the steered child is not a developer subagent. Rush must edit directly.";
 }
 
 function rushDeveloperDelegationReason(): string {
@@ -282,10 +289,7 @@ const SCOUT_RUN_MAX_TIMEOUT_MS = 360_000;
 const SCOUT_TIMEOUT_CAPPED_SUBAGENTS = new Set(["librarian", "web-scout", "repo-scout", "diff-summarizer"]);
 
 function isOpaqueSubagentManagementActionInput(input: unknown): boolean {
-	if (!isRecord(input) || typeof input.action !== "string" || input.action.trim().length === 0) {
-		return false;
-	}
-	return !isExecutionBearingResumeChain(input);
+	return isRecord(input) && typeof input.action === "string" && input.action.trim().length > 0;
 }
 
 function capScoutSubagentTimeout(input: unknown): void {
@@ -310,7 +314,7 @@ function capScoutSubagentTimeout(input: unknown): void {
 }
 
 function embeddedDelegationBlockedReason(selection: TlhPrimaryAgentSelection, input: unknown): string | undefined {
-	// Opaque management actions stay exempt; resume.chain is still treated as new execution.
+	// Opaque management actions (including resume) stay exempt from embedded-target checks.
 	if (isOpaqueSubagentManagementActionInput(input)) {
 		return undefined;
 	}
@@ -875,6 +879,9 @@ function createTlhPrimaryAgentRuntime(
 			}
 			if (selection === "rush" && isSubagentResumeAction(event.input)) {
 				return { block: true, reason: rushResumeDelegationReason() };
+			}
+			if (selection === "rush" && isSubagentSteerAction(event.input)) {
+				return { block: true, reason: rushSteerDelegationReason() };
 			}
 			if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
 				return { block: true, reason: rushDeveloperDelegationReason() };

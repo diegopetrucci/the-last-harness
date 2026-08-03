@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_PRIMARY_AGENT, DISABLED_PRIMARY_AGENT, PRIMARY_AGENT_CYCLE, PRIMARY_AGENT_SESSION_STATE_ENTRY, isEnabledPrimaryAgentSelection, nextPrimaryAgentSelection, primaryAgentDefaultLabel, primaryAgentSelectionFromBranch, resolvePrimaryAgentConfig, } from "../the-last-harness-primary-agent.mjs";
 import { createPrimaryToolState, filterAvailableTools } from "../the-last-harness-primary-tools.mjs";
-import { allowedSubagentsForExperimentalConfig, collectSubagentTargets, isEmbeddedSubagentTarget, isExecutionBearingResumeChain, isExperimentalFeatureEnabled, registerTlhStartupMode, validateSubagentToolInput, } from "../the-last-harness-subagent-safety.mjs";
+import { allowedSubagentsForExperimentalConfig, collectSubagentTargets, isEmbeddedSubagentTarget, isExperimentalFeatureEnabled, registerTlhStartupMode, validateSubagentToolInput, } from "../the-last-harness-subagent-safety.mjs";
 import { buildTlhCommitAttributionPrompt, getTlhGitCommitAttributionBlockReason, resolveTlhCommitAttribution, } from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME } from "./constants.js";
@@ -186,11 +186,17 @@ function matchesSubagentName(value, target) {
 function isSubagentResumeAction(input) {
     return isRecord(input) && matchesSubagentName(input.action, "resume");
 }
+function isSubagentSteerAction(input) {
+    return isRecord(input) && matchesSubagentName(input.action, "steer");
+}
 function subagentCallTargetsAgent(input, target) {
     return subagentCallTargetsMatching(input, (agent) => matchesSubagentName(agent, target));
 }
 function rushResumeDelegationReason() {
     return "TLH Rush may not use subagent action=resume because resuming by run id or index can continue a prior developer subagent without an explicit safe target. Rush must edit directly or start a new allowed subagent with an explicit agent target.";
+}
+function rushSteerDelegationReason() {
+    return "TLH Rush may not use subagent action=steer because an opaque steer carries no agent field, so TLH cannot prove the steered child is not a developer subagent. Rush must edit directly.";
 }
 function rushDeveloperDelegationReason() {
     return "TLH Rush may not delegate implementation to developer. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.";
@@ -204,10 +210,7 @@ function subagentCallTargetsMatching(input, predicate) {
 const SCOUT_RUN_MAX_TIMEOUT_MS = 360_000;
 const SCOUT_TIMEOUT_CAPPED_SUBAGENTS = new Set(["librarian", "web-scout", "repo-scout", "diff-summarizer"]);
 function isOpaqueSubagentManagementActionInput(input) {
-    if (!isRecord(input) || typeof input.action !== "string" || input.action.trim().length === 0) {
-        return false;
-    }
-    return !isExecutionBearingResumeChain(input);
+    return isRecord(input) && typeof input.action === "string" && input.action.trim().length > 0;
 }
 function capScoutSubagentTimeout(input) {
     if (!isRecord(input) ||
@@ -683,6 +686,9 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             }
             if (selection === "rush" && isSubagentResumeAction(event.input)) {
                 return { block: true, reason: rushResumeDelegationReason() };
+            }
+            if (selection === "rush" && isSubagentSteerAction(event.input)) {
+                return { block: true, reason: rushSteerDelegationReason() };
             }
             if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
                 return { block: true, reason: rushDeveloperDelegationReason() };

@@ -184,6 +184,7 @@ These commands are provided by bundled default extensions and are visible in TLH
 | `/mcp` | `pi-mcp-adapter` | Show MCP server status |
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
 | `/subagents-doctor` | `pi-subagents` | Show subagent diagnostics |
+| `/subagents-fleet` | `pi-subagents` | Show active subagent fleet status and transcript commands |
 
 
 ---
@@ -214,9 +215,7 @@ These commands are registered and fully functional, but deliberately excluded fr
 | `/curator` | `pi-web-access` | Toggle or configure the search curator workflow |
 | `/quiet-tools` | `pi-quiet-tools` | Toggle one-line collapsed invocations for built-in tool rows |
 | `/search` | `pi-web-access` | Browse stored web search results |
-| `/subagents-check-profile` | `pi-subagents` | Check whether a saved profile still points to usable models |
-| `/subagents-models` | `pi-subagents` | Show runtime-loaded builtin subagent models |
-| `/subagents-profiles` | `pi-subagents` | List saved subagent profiles |
+| `/subagent-cost` | `pi-subagents` | Show parent and subagent child usage cost for this session; hidden because `/tokens` provides the TLH-native token report |
 | `/websearch` | `pi-web-access` | Open the web search curator |
 
 ---

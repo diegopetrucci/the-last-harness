@@ -9,7 +9,7 @@
  */
 
 export const ALLOWED_SUBAGENTS = Object.freeze(["developer", "code-reviewer", "repo-scout", "diff-summarizer", "librarian", "web-scout", "oracle", "contrarian"]);
-export const SAFE_SUBAGENT_ACTIONS = Object.freeze(["list", "get", "models", "status", "interrupt", "doctor", "resume"]);
+export const SAFE_SUBAGENT_ACTIONS = Object.freeze(["list", "get", "models", "status", "interrupt", "doctor", "resume", "steer"]);
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 
 const DEFAULT_ALLOWED_SUBAGENTS = ALLOWED_SUBAGENTS;
@@ -74,15 +74,6 @@ function normalizeAllowedSubagents(allowedSubagents) {
 	return normalized.length > 0 ? normalized : DEFAULT_ALLOWED_SUBAGENTS;
 }
 
-function collectParallelTargets(parallel, targets) {
-	const tasks = Array.isArray(parallel) ? parallel : [parallel];
-	for (const task of tasks) {
-		if (!isRecord(task)) continue;
-		const agent = stringField(task.agent);
-		if (agent) targets.push(agent);
-	}
-}
-
 export function collectSubagentTargets(input) {
 	if (!isRecord(input)) {
 		return [];
@@ -99,15 +90,6 @@ export function collectSubagentTargets(input) {
 			if (!isRecord(task)) continue;
 			const agent = stringField(task.agent);
 			if (agent) targets.push(agent);
-		}
-	}
-
-	if (Array.isArray(input.chain)) {
-		for (const step of input.chain) {
-			if (!isRecord(step)) continue;
-			const agent = stringField(step.agent);
-			if (agent) targets.push(agent);
-			collectParallelTargets(step.parallel, targets);
 		}
 	}
 
@@ -169,25 +151,7 @@ function validateNestedFreshSubagentContexts(input) {
 		}
 	}
 
-	if (Array.isArray(input.chain)) {
-		for (let chainIndex = 0; chainIndex < input.chain.length; chainIndex += 1) {
-			const step = input.chain[chainIndex];
-			const stepReason = validateNestedFreshContext(step, `chain[${chainIndex}].context`);
-			if (stepReason) return stepReason;
-			if (!isRecord(step) || step.parallel === undefined) continue;
-			const parallelTasks = Array.isArray(step.parallel) ? step.parallel : [step.parallel];
-			for (let parallelIndex = 0; parallelIndex < parallelTasks.length; parallelIndex += 1) {
-				const reason = validateNestedFreshContext(parallelTasks[parallelIndex], `chain[${chainIndex}].parallel[${parallelIndex}].context`);
-				if (reason) return reason;
-			}
-		}
-	}
-
 	return undefined;
-}
-
-export function isExecutionBearingResumeChain(input) {
-	return isRecord(input) && stringField(input.action) === "resume" && Array.isArray(input.chain) && input.chain.length > 0;
 }
 
 function validateExecutionBearingTargets(input, allowedSubagents, allowedSubagentSet, allowEmbeddedTargets) {
@@ -207,6 +171,30 @@ function validateExecutionBearingTargets(input, allowedSubagents, allowedSubagen
 		return `TLH primary agents may delegate only to: ${allowedSubagents.join(", ")}${embeddedSuffix}. Disallowed target(s): ${disallowed.join(", ")}.`;
 	}
 
+	return undefined;
+}
+
+const STEER_EXECUTION_FIELDS = ["agent", "tasks", "chain", "context", "agentScope"];
+
+function validateSteerAction(input) {
+	const id = stringField(input.id);
+	if (!id) {
+		return "TLH primary agents may not call steer without a non-empty string id.";
+	}
+	const message = stringField(input.message);
+	if (!message) {
+		return "TLH primary agents may not call steer without a non-empty string message. Steer intent must be explicit; the fork's task-as-message fallback is not allowed.";
+	}
+	for (const field of STEER_EXECUTION_FIELDS) {
+		if (input[field] !== undefined) {
+			return `TLH primary agents may not include '${field}' on a steer call. Steer is a control-channel message, not an execution request.`;
+		}
+	}
+	if (input.index !== undefined) {
+		if (typeof input.index !== "number" || !Number.isInteger(input.index) || input.index < 0) {
+			return "TLH primary agents may not call steer with a non-integer or negative index.";
+		}
+	}
 	return undefined;
 }
 
@@ -235,10 +223,10 @@ export function validateSubagentToolInput(input, options = {}) {
 			if (contextReason) {
 				return contextReason;
 			}
-			if (!isExecutionBearingResumeChain(input)) {
-				return undefined;
-			}
-			return validateExecutionBearingTargets(input, allowedSubagents, allowedSubagentSet, Boolean(options.allowEmbeddedTargets));
+			return undefined;
+		}
+		if (action === "steer") {
+			return validateSteerAction(input);
 		}
 		return undefined;
 	}
