@@ -143,7 +143,7 @@ When the incoming user turn's first line is exactly `[/review]`, skip the normal
 ## Cleanup
 
 1. Only start ticket cleanup after final review is complete and any review-driven fixes are finished.
-2. During cleanup after final review and before the final handoff, delete any `tk` tickets created for the current workflow or session once they are closed.
+2. During cleanup after final review and before the final handoff, remove any `tk` tickets created for the current workflow or session once they are closed. `tk` has no delete subcommand — deletion is done by removing the ticket file directly: `rm .tickets/<id>.md`. Before removing, check for dangling dependency references with `tk dep tree <id>` or `grep -r '<id>' .tickets/` and resolve any that remain.
 3. Verify no session-created `.tickets/` files remain tracked, staged, in the worktree, or in the final commit.
 4. If this workflow closed or modified a ticket that already existed in the repository, ask the user whether they want to keep the change, revert it, or delete the ticket.
 5. When opening PRs, if a PR template is present for the repository, always follow it.

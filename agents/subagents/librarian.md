@@ -6,7 +6,7 @@ tlhOpenaiModels: openai-codex/gpt-5.4-mini
 tlhAnthropicModels: anthropic/claude-haiku-4-5
 tlhAnthropicThinking: high
 tlhOpenaiThinking: high
-toolBudget: {"soft":20,"hard":30}
+toolBudget: {"soft":30,"hard":60}
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
