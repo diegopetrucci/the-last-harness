@@ -248,6 +248,9 @@ export function cleanupManagedRetiredSubagentPackages(config, candidates) {
             continue;
         }
         if (install.kind === "npm") {
+            if (!npmPackageStillDeclared(install.path, install.packageName) && !npmPackageStillInstalled(install.path, install.packageName)) {
+                continue;
+            }
             if (config.dryRun) {
                 cleanupResult.plannedNpmPackages.push(install.packageName);
                 logRetiredSubagentCleanup(config, `Would uninstall retired TLH subagent npm package: ${install.packageName} from ${install.path}`);

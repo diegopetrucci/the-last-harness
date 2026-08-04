@@ -1130,6 +1130,29 @@ test("cleanupManagedRetiredSubagentPackages is a no-op when npm install root doe
 	assert.equal(called, false);
 });
 
+test("cleanupManagedRetiredSubagentPackages skips pnpm when the npm root is already converged", (t) => {
+	const root = tempFixture(t, "tlh-subagents-cleanup-converged-");
+	const agentDir = join(root, "agent");
+	const installRoot = join(agentDir, "npm");
+	mkdirSync(join(installRoot, "node_modules"), { recursive: true });
+	writeFileSync(join(installRoot, "package.json"), JSON.stringify({ dependencies: { keep: "1.0.0" } }, null, 2));
+	let called = false;
+
+	const cleanup = cleanupManagedRetiredSubagentPackages(
+		{
+			agentDir,
+			npmCommand: ["corepack", "--", "pnpm"],
+			quiet: true,
+			runPackageManager: () => { called = true; throw new Error("package manager must not run for converged state"); },
+		},
+		[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
+	);
+
+	assert.equal(called, false);
+	assert.deepEqual(cleanup.uninstalledNpmPackages, [], "already-absent package must not be reported as newly uninstalled");
+	assert.deepEqual(cleanup.plannedNpmPackages, [], "already-absent package must not be reported as planned cleanup");
+});
+
 test("cleanupManagedRetiredSubagentPackages fails before refresh when package-manager uninstall fails", (t) => {
 	const root = tempFixture(t, "tlh-subagents-cleanup-failure-");
 	const agentDir = join(root, "agent");
