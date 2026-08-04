@@ -1,5 +1,6 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, readdirSync, rmdirSync, rmSync } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 
 import {
 	RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES,
@@ -47,10 +48,33 @@ export interface RetiredSubagentPackageCandidate {
 	identity: string;
 }
 
+interface PackageManagerRunResult {
+	status: number | null;
+	stdout?: string;
+	stderr?: string;
+	error?: Error;
+}
+
+interface PackageManagerRunOptions {
+	cwd: string;
+	env: NodeJS.ProcessEnv;
+}
+
 interface RetiredSubagentCleanupConfig {
 	agentDir: string;
+	settingsPath?: string;
+	npmCommand?: readonly string[];
+	env?: NodeJS.ProcessEnv;
 	dryRun?: boolean;
 	quiet?: boolean;
+	runPackageManager?: (command: string, args: readonly string[], options: PackageManagerRunOptions) => PackageManagerRunResult;
+}
+
+export interface RetiredSubagentCleanupResult {
+	uninstalledNpmPackages: string[];
+	removedGitPaths: string[];
+	plannedNpmPackages: string[];
+	plannedGitPaths: string[];
 }
 
 function logRetiredSubagentCleanup(config: RetiredSubagentCleanupConfig, message: string): void {
@@ -72,12 +96,16 @@ function packageNameFromNpmSource(source: string): string | undefined {
 	return separator === -1 ? spec : spec.slice(0, separator);
 }
 
-function sourceInstallPath(agentDir: string, source: string): { path: string; kind: "npm" | "git"; packageName?: string } | undefined {
+type RetiredSubagentInstall =
+	| { kind: "npm"; path: string; packageName: string }
+	| { kind: "git"; path: string };
+
+function sourceInstallPath(agentDir: string, source: string): RetiredSubagentInstall | undefined {
 	const trimmed = source.trim();
 	if (trimmed.startsWith("npm:")) {
 		const packageName = packageNameFromNpmSource(trimmed);
 		if (!packageName) return undefined;
-		return { path: join(agentDir, "npm", "node_modules", packageName), kind: "npm", packageName };
+		return { path: join(agentDir, "npm"), kind: "npm", packageName };
 	}
 	const spec = criticalGitSourceSpec(trimmed, { agentDir });
 	if (!spec) return undefined;
@@ -100,14 +128,102 @@ function hasSymlinkedParent(root: string, target: string): boolean {
 	return false;
 }
 
-function packageInstallationIsOwned(path: string, kind: "npm" | "git", packageName?: string): boolean {
+function gitInstallationIsOwned(path: string): boolean {
 	try {
-		if (!lstatSync(path).isDirectory()) return false;
-		if (kind === "git") return existsSync(join(path, ".git"));
-		const packageJson = readJsonFile<{ name?: unknown }>(join(path, "package.json"));
-		return packageJson.name === packageName;
+		return lstatSync(path).isDirectory() && existsSync(join(path, ".git"));
 	} catch {
 		return false;
+	}
+}
+
+function configuredNpmCommand(settings: unknown): string[] | undefined {
+	if (!isPlainObject(settings) || settings.npmCommand === undefined) return undefined;
+	if (!Array.isArray(settings.npmCommand) || settings.npmCommand.some((value) => typeof value !== "string")) {
+		throw new Error("invalid npmCommand in isolated settings: expected an array of strings");
+	}
+	if (settings.npmCommand.length === 0) return undefined;
+	const command = settings.npmCommand as string[];
+	if (!command[0]) throw new Error("invalid npmCommand in isolated settings: first entry must be a non-empty command");
+	return [...command];
+}
+
+/** Read the package-manager command that was active before settings migration. */
+export function captureRetiredSubagentNpmCommand(settingsPath: string): string[] | undefined {
+	if (!settingsPath || !existsSync(settingsPath)) return undefined;
+	try {
+		return configuredNpmCommand(readJsonFile(settingsPath));
+	} catch (error) {
+		if (error instanceof SyntaxError) return undefined;
+		throw error;
+	}
+}
+
+function packageManagerCommand(config: RetiredSubagentCleanupConfig): { command: string; args: string[]; name: string } {
+	const configured = config.npmCommand ?? (config.settingsPath ? captureRetiredSubagentNpmCommand(config.settingsPath) : undefined);
+	const values = configured && configured.length > 0 ? [...configured] : ["npm"];
+	const [command, ...args] = values;
+	if (!command) throw new Error("invalid npmCommand: first entry must be a non-empty command");
+	const separatorIndex = values.lastIndexOf("--");
+	const packageManagerExecutable = separatorIndex >= 0 ? values[separatorIndex + 1] : command;
+	const name = packageManagerExecutable ? basename(packageManagerExecutable).replace(/\.(cmd|exe)$/i, "") : "";
+	return { command, args, name };
+}
+
+function packageManagerUninstallArgs(packageName: string, installRoot: string, packageManagerName: string): string[] {
+	if (packageManagerName === "bun") {
+		return ["uninstall", packageName, "--cwd", installRoot];
+	}
+	const args = ["uninstall", packageName, "--prefix", installRoot];
+	if (packageManagerName !== "pnpm") args.push("--legacy-peer-deps");
+	return args;
+}
+
+function defaultPackageManagerRunner(command: string, args: readonly string[], options: PackageManagerRunOptions): PackageManagerRunResult {
+	const result = spawnSync(command, args, {
+		cwd: options.cwd,
+		env: options.env,
+		encoding: "utf8",
+		maxBuffer: 20 * 1024 * 1024,
+	});
+	return {
+		status: result.status,
+		stdout: result.stdout || "",
+		stderr: result.stderr || "",
+		error: result.error,
+	};
+}
+
+function commandFailureSummary(result: PackageManagerRunResult): string {
+	if (result.error) return result.error.message;
+	const lines = `${result.stderr || ""}\n${result.stdout || ""}`
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter(Boolean);
+	const conciseLines = lines.length > 8 ? [...lines.slice(0, 4), ...lines.slice(-4)] : lines;
+	return conciseLines.join(" | ") || `exit ${result.status ?? "unknown"}`;
+}
+
+function npmPackageStillDeclared(installRoot: string, packageName: string): boolean {
+	const packageJsonPath = join(installRoot, "package.json");
+	if (!existsSync(packageJsonPath)) return false;
+	try {
+		const packageJson = readJsonFile<Record<string, unknown>>(packageJsonPath);
+		return ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"].some((field) => {
+			const dependencies = packageJson[field];
+			return isPlainObject(dependencies) && Object.hasOwn(dependencies, packageName);
+		});
+	} catch {
+		return true;
+	}
+}
+
+function npmPackageStillInstalled(installRoot: string, packageName: string): boolean {
+	const packagePath = join(installRoot, "node_modules", packageName);
+	if (!existsSync(packagePath)) return false;
+	try {
+		return readJsonFile<{ name?: unknown }>(join(packagePath, "package.json")).name === packageName;
+	} catch {
+		return true;
 	}
 }
 
@@ -149,18 +265,27 @@ export function captureManagedRetiredSubagentPackages(settingsPath: string): Ret
 }
 
 /**
- * Remove only package-manager installations corresponding to captured managed
- * entries.  The checks deliberately reject symlinked paths, foreign paths,
- * malformed npm metadata, and non-git directories before any recursive delete.
+ * Physically remove entries captured before settings merge, after the settings
+ * backup/write and before the subsequent extension refresh. npm entries use the same configured
+ * package-manager command semantics as Pi so package.json, lockfiles, and
+ * node_modules converge together. Git entries retain the guarded filesystem
+ * cleanup because their package-manager state lives in settings.json.
  */
 export function cleanupManagedRetiredSubagentPackages(
 	config: RetiredSubagentCleanupConfig,
 	candidates: readonly RetiredSubagentPackageCandidate[],
-): void {
+): RetiredSubagentCleanupResult {
+	const cleanupResult: RetiredSubagentCleanupResult = {
+		uninstalledNpmPackages: [],
+		removedGitPaths: [],
+		plannedNpmPackages: [],
+		plannedGitPaths: [],
+	};
 	if (!config.agentDir || isSymlink(config.agentDir)) {
 		if (candidates.length > 0) warnRetiredSubagentCleanup(`skipping retired subagent package cleanup for unsafe agent dir: ${config.agentDir}`);
-		return;
+		return cleanupResult;
 	}
+
 	for (const candidate of candidates) {
 		const install = sourceInstallPath(config.agentDir, candidate.source);
 		if (!install) continue;
@@ -168,41 +293,80 @@ export function cleanupManagedRetiredSubagentPackages(
 			warnRetiredSubagentCleanup(`skipping retired subagent package cleanup for unsafe path: ${install.path}`);
 			continue;
 		}
-		if (!existsSync(install.path) || !packageInstallationIsOwned(install.path, install.kind, install.packageName)) continue;
+		if (!existsSync(install.path)) continue;
 		try {
+			if (!lstatSync(install.path).isDirectory()) {
+				warnRetiredSubagentCleanup(`skipping retired subagent package cleanup for non-directory path: ${install.path}`);
+				continue;
+			}
 			assertProfilePathWithinAgent({ agentDir: config.agentDir }, install.path, "retired subagent package");
 		} catch (error) {
 			warnRetiredSubagentCleanup(`skipping retired subagent package cleanup for unsafe path: ${install.path}: ${error instanceof Error ? error.message : String(error)}`);
 			continue;
 		}
+
+		if (install.kind === "npm") {
+			if (config.dryRun) {
+				cleanupResult.plannedNpmPackages.push(install.packageName);
+				logRetiredSubagentCleanup(config, `Would uninstall retired TLH subagent npm package: ${install.packageName} from ${install.path}`);
+				continue;
+			}
+
+			const npmCommand = packageManagerCommand(config);
+			const args = [...npmCommand.args, ...packageManagerUninstallArgs(install.packageName, install.path, npmCommand.name)];
+			const runner = config.runPackageManager ?? defaultPackageManagerRunner;
+			const commandResult = runner(npmCommand.command, args, {
+				cwd: config.agentDir,
+				env: {
+					...process.env,
+					...config.env,
+					NPM_CONFIG_AUDIT: "false",
+					NPM_CONFIG_FUND: "false",
+					NPM_CONFIG_LOGLEVEL: "error",
+				},
+			});
+			if (commandResult.status !== 0) {
+				throw new Error(`failed to uninstall retired TLH subagent npm package ${install.packageName}: ${commandFailureSummary(commandResult)}`);
+			}
+			if (npmPackageStillDeclared(install.path, install.packageName) || npmPackageStillInstalled(install.path, install.packageName)) {
+				throw new Error(`package manager reported success but retired TLH subagent npm package remains installed: ${install.packageName}`);
+			}
+			cleanupResult.uninstalledNpmPackages.push(install.packageName);
+			logRetiredSubagentCleanup(config, `Uninstalled retired TLH subagent npm package: ${install.packageName} from ${install.path}`);
+			continue;
+		}
+
+		if (!gitInstallationIsOwned(install.path)) continue;
 		if (config.dryRun) {
-			logRetiredSubagentCleanup(config, `Would remove retired TLH subagent package installation: ${install.path}`);
+			cleanupResult.plannedGitPaths.push(install.path);
+			logRetiredSubagentCleanup(config, `Would remove retired TLH subagent git package installation: ${install.path}`);
 			continue;
 		}
 		try {
 			rmSync(install.path, { recursive: true, force: true });
-			logRetiredSubagentCleanup(config, `Removed retired TLH subagent package installation: ${install.path}`);
+			cleanupResult.removedGitPaths.push(install.path);
+			logRetiredSubagentCleanup(config, `Removed retired TLH subagent git package installation: ${install.path}`);
 		} catch (error) {
-			warnRetiredSubagentCleanup(`failed to remove retired subagent package installation ${install.path}: ${error instanceof Error ? error.message : String(error)}`);
+			warnRetiredSubagentCleanup(`failed to remove retired subagent git package installation ${install.path}: ${error instanceof Error ? error.message : String(error)}`);
 			continue;
 		}
-		if (install.kind === "git") {
-			const gitRoot = join(config.agentDir, "git");
-			let parent = dirname(install.path);
-			while (pathWithin(gitRoot, parent) && parent !== gitRoot) {
-				if (isSymlink(parent)) break;
-				try {
-					if (readdirSync(parent).length !== 0) break;
-					// rmdirSync removes empty directories atomically and fails with
-					// ENOTEMPTY if the directory becomes non-empty concurrently.
-					rmdirSync(parent);
-				} catch {
-					break;
-				}
-				parent = dirname(parent);
+
+		const gitRoot = join(config.agentDir, "git");
+		let parent = dirname(install.path);
+		while (pathWithin(gitRoot, parent) && parent !== gitRoot) {
+			if (isSymlink(parent)) break;
+			try {
+				if (readdirSync(parent).length !== 0) break;
+				// rmdirSync removes empty directories atomically and fails with
+				// ENOTEMPTY if the directory becomes non-empty concurrently.
+				rmdirSync(parent);
+			} catch {
+				break;
 			}
+			parent = dirname(parent);
 		}
 	}
+	return cleanupResult;
 }
 
 export function settingsRequireTlhSubagentPrompts(defaultsFile: string, { noSettings = false }: { noSettings?: boolean } = {}): boolean {

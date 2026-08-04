@@ -16,7 +16,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { defineTool, keyText, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, defineTool, getAgentDir, keyText, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Spacer, Text, isKeyRelease, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
 import { discoverAgents } from "../agents/agents.ts";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
@@ -24,6 +24,10 @@ import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { handlePauseAllShortcut } from "./pause-all-shortcut.ts";
 import { handleSubagentLiveDetailShortcut } from "./live-detail-shortcut.ts";
+import {
+	externalSubagentCoexistenceWarning,
+	findConfiguredExternalSubagentPackages,
+} from "./external-package-guard.ts";
 import { cleanupRuntimeDirs } from "./runtime-cleanup.ts";
 import {
 	createSubagentLiveDetailController,
@@ -329,6 +333,23 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	if (process.env[SUBAGENT_CHILD_ENV] === "1") {
 		return;
 	}
+
+	const externalPackages = findConfiguredExternalSubagentPackages({
+		agentDir: getAgentDir(),
+		cwd: process.cwd(),
+		configDirName: CONFIG_DIR_NAME,
+	});
+	if (externalPackages.length > 0) {
+		const warning = externalSubagentCoexistenceWarning(externalPackages);
+		let warned = false;
+		pi.on("session_start", (_event, ctx) => {
+			if (warned) return;
+			warned = true;
+			ctx.ui.notify(warning, "warning");
+		});
+		return;
+	}
+
 	const globalStore = globalThis as Record<string, unknown>;
 	const runtimeCleanupStoreKey = "__piSubagentRuntimeCleanup";
 	const previousRuntimeCleanup = globalStore[runtimeCleanupStoreKey];

@@ -38,6 +38,7 @@ import { writeSafeProfileFile } from "../scripts/lib/tlh-safe-profile-write.mjs"
 import {
 	TLH_SUBAGENT_PROMPTS,
 	captureManagedRetiredSubagentPackages,
+	captureRetiredSubagentNpmCommand,
 	cleanupManagedRetiredSubagentPackages,
 	copyTlhSubagentPrompts,
 	findTlhSubagentsDir,
@@ -1008,82 +1009,167 @@ test("captureManagedRetiredSubagentPackages reads candidates from a real setting
 
 // ── cleanupManagedRetiredSubagentPackages unit tests ───────────────────────
 
-test("cleanupManagedRetiredSubagentPackages removes an owned npm package installation", (t) => {
+function createRetiredNpmState(agentDir, packageName = "@diegopetrucci/pi-subagents") {
+	const installRoot = join(agentDir, "npm");
+	const packageDir = join(installRoot, "node_modules", packageName);
+	mkdirSync(packageDir, { recursive: true });
+	writeFileSync(join(packageDir, "package.json"), JSON.stringify({ name: packageName }));
+	writeFileSync(join(installRoot, "package.json"), JSON.stringify({ dependencies: { [packageName]: "^0.31.10", keep: "1.0.0" } }, null, 2));
+	writeFileSync(join(installRoot, "package-lock.json"), JSON.stringify({
+		packages: {
+			"": { dependencies: { [packageName]: "^0.31.10", keep: "1.0.0" } },
+			[`node_modules/${packageName}`]: { version: "0.31.14" },
+		},
+	}, null, 2));
+	return { installRoot, packageDir };
+}
+
+function uninstallingPackageManager(calls) {
+	return (command, args) => {
+		calls.push({ command, args: [...args] });
+		const uninstallIndex = args.indexOf("uninstall");
+		const packageName = args[uninstallIndex + 1];
+		const rootFlagIndex = Math.max(args.indexOf("--prefix"), args.indexOf("--cwd"));
+		const installRoot = args[rootFlagIndex + 1];
+		const packageJsonPath = join(installRoot, "package.json");
+		const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+		delete packageJson.dependencies?.[packageName];
+		writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+		const packageLockPath = join(installRoot, "package-lock.json");
+		if (existsSync(packageLockPath)) {
+			const packageLock = JSON.parse(readFileSync(packageLockPath, "utf8"));
+			delete packageLock.packages?.[""]?.dependencies?.[packageName];
+			delete packageLock.packages?.[`node_modules/${packageName}`];
+			writeFileSync(packageLockPath, JSON.stringify(packageLock, null, 2));
+		}
+		rmSync(join(installRoot, "node_modules", packageName), { recursive: true, force: true });
+		return { status: 0, stdout: "", stderr: "" };
+	};
+}
+
+test("captureRetiredSubagentNpmCommand reads configured package-manager command", (t) => {
+	const root = tempFixture(t, "tlh-subagents-npm-command-");
+	const settingsPath = join(root, "settings.json");
+	writeFileSync(settingsPath, JSON.stringify({ npmCommand: ["corepack", "--", "pnpm"] }));
+	assert.deepEqual(captureRetiredSubagentNpmCommand(settingsPath), ["corepack", "--", "pnpm"]);
+});
+
+test("cleanupManagedRetiredSubagentPackages uses npm uninstall and converges manifest, lock, and node_modules", (t) => {
 	const root = tempFixture(t, "tlh-subagents-cleanup-npm-");
 	const agentDir = join(root, "agent");
 	const packageName = "@diegopetrucci/pi-subagents";
-	const packageDir = join(agentDir, "npm", "node_modules", packageName);
-	mkdirSync(packageDir, { recursive: true });
-	writeFileSync(join(packageDir, "package.json"), JSON.stringify({ name: packageName }));
+	const { installRoot, packageDir } = createRetiredNpmState(agentDir, packageName);
+	const calls = [];
 
-	const warnings = [];
-	const origErr = console.error;
-	console.error = (msg) => warnings.push(msg);
-	try {
-		cleanupManagedRetiredSubagentPackages(
-			{ agentDir, dryRun: false, quiet: false },
-			[{ source: "npm:@diegopetrucci/pi-subagents@0.31.14", identity: "npm:@diegopetrucci/pi-subagents" }],
-		);
-	} finally {
-		console.error = origErr;
-	}
-
-	assert.equal(existsSync(packageDir), false, "owned npm package dir must be removed");
-	assert.deepEqual(warnings, [], "no warnings expected for normal cleanup");
-});
-
-test("cleanupManagedRetiredSubagentPackages is a no-op when npm package dir does not exist", (t) => {
-	const root = tempFixture(t, "tlh-subagents-cleanup-missing-");
-	const agentDir = join(root, "agent");
-	mkdirSync(agentDir, { recursive: true });
-
-	// Should not throw even though the package dir doesn't exist.
-	assert.doesNotThrow(() =>
-		cleanupManagedRetiredSubagentPackages(
-			{ agentDir, dryRun: false, quiet: true },
-			[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
-		)
+	const cleanup = cleanupManagedRetiredSubagentPackages(
+		{ agentDir, dryRun: false, quiet: true, runPackageManager: uninstallingPackageManager(calls) },
+		[{ source: "npm:@diegopetrucci/pi-subagents@0.31.14", identity: "npm:@diegopetrucci/pi-subagents" }],
 	);
+
+	assert.deepEqual(calls, [{
+		command: "npm",
+		args: ["uninstall", packageName, "--prefix", installRoot, "--legacy-peer-deps"],
+	}]);
+	assert.deepEqual(cleanup.uninstalledNpmPackages, [packageName]);
+	assert.equal(existsSync(packageDir), false, "package-manager uninstall must remove node_modules package");
+	assert.equal(Object.hasOwn(JSON.parse(readFileSync(join(installRoot, "package.json"), "utf8")).dependencies, packageName), false);
+	assert.equal(Object.hasOwn(JSON.parse(readFileSync(join(installRoot, "package-lock.json"), "utf8")).packages[""].dependencies, packageName), false);
 });
 
-test("cleanupManagedRetiredSubagentPackages skips package with mismatched package.json name", (t) => {
-	const root = tempFixture(t, "tlh-subagents-cleanup-mismatch-");
+test("cleanupManagedRetiredSubagentPackages honors configured pnpm command semantics", (t) => {
+	const root = tempFixture(t, "tlh-subagents-cleanup-pnpm-");
 	const agentDir = join(root, "agent");
 	const packageName = "@diegopetrucci/pi-subagents";
-	const packageDir = join(agentDir, "npm", "node_modules", packageName);
-	mkdirSync(packageDir, { recursive: true });
-	writeFileSync(join(packageDir, "package.json"), JSON.stringify({ name: "some-other-package" }));
+	const { installRoot } = createRetiredNpmState(agentDir, packageName);
+	const calls = [];
 
 	cleanupManagedRetiredSubagentPackages(
-		{ agentDir, dryRun: false, quiet: true },
+		{
+			agentDir,
+			npmCommand: ["corepack", "--", "pnpm"],
+			quiet: true,
+			runPackageManager: uninstallingPackageManager(calls),
+		},
 		[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
 	);
 
-	assert.ok(existsSync(packageDir), "mismatched-name package dir must NOT be removed");
+	assert.deepEqual(calls, [{
+		command: "corepack",
+		args: ["--", "pnpm", "uninstall", packageName, "--prefix", installRoot],
+	}]);
 });
 
-test("cleanupManagedRetiredSubagentPackages dry-run logs would-remove without deleting", (t) => {
+test("cleanupManagedRetiredSubagentPackages honors configured bun command semantics", (t) => {
+	const root = tempFixture(t, "tlh-subagents-cleanup-bun-");
+	const agentDir = join(root, "agent");
+	const packageName = "@diegopetrucci/pi-subagents";
+	const { installRoot } = createRetiredNpmState(agentDir, packageName);
+	const calls = [];
+
+	cleanupManagedRetiredSubagentPackages(
+		{ agentDir, npmCommand: ["bun"], quiet: true, runPackageManager: uninstallingPackageManager(calls) },
+		[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
+	);
+
+	assert.deepEqual(calls, [{
+		command: "bun",
+		args: ["uninstall", packageName, "--cwd", installRoot],
+	}]);
+});
+
+test("cleanupManagedRetiredSubagentPackages is a no-op when npm install root does not exist", (t) => {
+	const root = tempFixture(t, "tlh-subagents-cleanup-missing-");
+	const agentDir = join(root, "agent");
+	mkdirSync(agentDir, { recursive: true });
+	let called = false;
+
+	cleanupManagedRetiredSubagentPackages(
+		{ agentDir, quiet: true, runPackageManager: () => { called = true; return { status: 0 }; } },
+		[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
+	);
+	assert.equal(called, false);
+});
+
+test("cleanupManagedRetiredSubagentPackages fails before refresh when package-manager uninstall fails", (t) => {
+	const root = tempFixture(t, "tlh-subagents-cleanup-failure-");
+	const agentDir = join(root, "agent");
+	const packageName = "@diegopetrucci/pi-subagents";
+	createRetiredNpmState(agentDir, packageName);
+
+	assert.throws(
+		() => cleanupManagedRetiredSubagentPackages(
+			{ agentDir, quiet: true, runPackageManager: () => ({ status: 42, stderr: "uninstall failed" }) },
+			[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
+		),
+		/failed to uninstall retired TLH subagent npm package.*uninstall failed/,
+	);
+});
+
+test("cleanupManagedRetiredSubagentPackages dry-run logs uninstall without invoking package manager", (t) => {
 	const root = tempFixture(t, "tlh-subagents-cleanup-dryrun-");
 	const agentDir = join(root, "agent");
 	const packageName = "@diegopetrucci/pi-subagents";
-	const packageDir = join(agentDir, "npm", "node_modules", packageName);
-	mkdirSync(packageDir, { recursive: true });
-	writeFileSync(join(packageDir, "package.json"), JSON.stringify({ name: packageName }));
-
+	const { packageDir } = createRetiredNpmState(agentDir, packageName);
 	const logged = [];
 	const origLog = console.log;
 	console.log = (msg) => logged.push(msg);
 	try {
-		cleanupManagedRetiredSubagentPackages(
-			{ agentDir, dryRun: true, quiet: false },
+		const cleanup = cleanupManagedRetiredSubagentPackages(
+			{
+				agentDir,
+				dryRun: true,
+				quiet: false,
+				runPackageManager: () => { throw new Error("package manager must not run during dry-run"); },
+			},
 			[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
 		);
+		assert.deepEqual(cleanup.plannedNpmPackages, [packageName]);
 	} finally {
 		console.log = origLog;
 	}
 
 	assert.ok(existsSync(packageDir), "dry-run must not delete the package dir");
-	assert.ok(logged.some((msg) => msg.includes("Would remove")), "dry-run must log a would-remove message");
+	assert.ok(logged.some((msg) => msg.includes("Would uninstall")), "dry-run must log a would-uninstall message");
 });
 
 test("cleanupManagedRetiredSubagentPackages skips when agentDir is a symlink and emits a warning", (t) => {

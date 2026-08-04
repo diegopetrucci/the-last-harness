@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { defineTool, keyText } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, defineTool, getAgentDir, keyText } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Spacer, Text, isKeyRelease, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { discoverAgents } from "../agents/agents.js";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.js";
@@ -9,6 +9,7 @@ import { resolveCurrentSessionId } from "../shared/session-identity.js";
 import { cleanupOldChainDirs } from "../shared/settings.js";
 import { handlePauseAllShortcut } from "./pause-all-shortcut.js";
 import { handleSubagentLiveDetailShortcut } from "./live-detail-shortcut.js";
+import { externalSubagentCoexistenceWarning, findConfiguredExternalSubagentPackages, } from "./external-package-guard.js";
 import { cleanupRuntimeDirs } from "./runtime-cleanup.js";
 import { createSubagentLiveDetailController, SUBAGENT_LIVE_DETAIL_SHORTCUT, SUBAGENT_PAUSE_ALL_SHORTCUT, } from "../shared/subagent-shortcuts.js";
 import { clearLegacyResultAnimationTimer, renderWidget, renderSubagentResult } from "../tui/render.js";
@@ -231,6 +232,22 @@ export function promptTemplateDelegationParams(request) {
 }
 export default function registerSubagentExtension(pi) {
     if (process.env[SUBAGENT_CHILD_ENV] === "1") {
+        return;
+    }
+    const externalPackages = findConfiguredExternalSubagentPackages({
+        agentDir: getAgentDir(),
+        cwd: process.cwd(),
+        configDirName: CONFIG_DIR_NAME,
+    });
+    if (externalPackages.length > 0) {
+        const warning = externalSubagentCoexistenceWarning(externalPackages);
+        let warned = false;
+        pi.on("session_start", (_event, ctx) => {
+            if (warned)
+                return;
+            warned = true;
+            ctx.ui.notify(warning, "warning");
+        });
         return;
     }
     const globalStore = globalThis;

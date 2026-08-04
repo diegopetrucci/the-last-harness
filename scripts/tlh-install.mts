@@ -47,6 +47,7 @@ import {
 import {
 	TLH_SUBAGENT_PROMPTS,
 	captureManagedRetiredSubagentPackages,
+	captureRetiredSubagentNpmCommand,
 	cleanupManagedRetiredSubagentPackages,
 	copyTlhSubagentPrompts,
 	defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall,
@@ -1762,9 +1763,15 @@ async function runInstallFlow(config: InstallConfig): Promise<void> {
 	const retiredSubagentPackages = config.noSettings
 		? []
 		: captureManagedRetiredSubagentPackages(config.settingsPath);
+	const retiredSubagentNpmCommand = config.noSettings
+		? undefined
+		: captureRetiredSubagentNpmCommand(config.settingsPath);
 	await mergeSettings(config);
 	if (!config.noSettings) {
-		cleanupManagedRetiredSubagentPackages(config, retiredSubagentPackages);
+		cleanupManagedRetiredSubagentPackages(
+			{ ...config, npmCommand: retiredSubagentNpmCommand },
+			retiredSubagentPackages,
+		);
 	}
 	cleanupLegacyManagedProfileArtifacts(config);
 	if (!config.noSettings) cleanupRetiredProfileFiles(config);
