@@ -7,6 +7,7 @@
     "fullHistoryRepository": "https://github.com/diegopetrucci/pi-subagents.git",
     "sourceCommit": "0eb7e255e5f9a3bfc694762ad09ebbcee38e11ff",
     "sourceTree": "7d728e04290a89e6febe435c9ab0212ea6c81500",
+    "tlhImportCommit": "4b7e052ff0ea6ccf63407085dd53a9dc6ba237de",
     "sourceCommitDate": "2026-08-04T16:39:14+01:00",
     "sourceCommitSubject": "Add macOS test CI",
     "gitObjectFormat": "sha1"
@@ -21,6 +22,9 @@
     "historicalArchiveRoot": "docs/subagents-history/source/",
     "historicalArchivePreservesSourceRelativePaths": true,
     "historicalArchiveIsActiveConfiguration": false,
+    "mappedDestinationParityReference": "snapshot.tlhImportCommit",
+    "currentFunctionalFilesMayBeAdapted": true,
+    "currentHistoricalArchiveMustMatchImport": true,
     "sourceGitHistoryImported": false,
     "gitBundleIncluded": false,
     "sourceRefsOrTagsImported": false
@@ -114,10 +118,13 @@
     "instructions": "docs/subagents-history/HISTORY.md#verification",
     "environment": {
       "SOURCE_REPO": "/absolute/path/to/a-verified-pi-subagents-checkout",
-      "SOURCE_COMMIT": "0eb7e255e5f9a3bfc694762ad09ebbcee38e11ff"
+      "SOURCE_COMMIT": "0eb7e255e5f9a3bfc694762ad09ebbcee38e11ff",
+      "TLH_IMPORT_COMMIT": "4b7e052ff0ea6ccf63407085dd53a9dc6ba237de"
     },
     "commands": [
       "test \"$(git -C \"$SOURCE_REPO\" rev-parse \"$SOURCE_COMMIT^{commit}\")\" = \"$SOURCE_COMMIT\"",
+      "test \"$(git rev-parse \"$TLH_IMPORT_COMMIT^{commit}\")\" = \"$TLH_IMPORT_COMMIT\"",
+      "git merge-base --is-ancestor \"$TLH_IMPORT_COMMIT\" HEAD",
       "git -C \"$SOURCE_REPO\" archive --format=tar \"$SOURCE_COMMIT\" | shasum -a 256",
       "node docs/subagents-history/verify-import.mjs \"$SOURCE_REPO\""
     ]

@@ -7,10 +7,11 @@ This directory records the exact first-party import checkpoint for the former st
 - Owned history repository: <https://github.com/diegopetrucci/pi-subagents.git>
 - Source commit: `0eb7e255e5f9a3bfc694762ad09ebbcee38e11ff`
 - Source tree: `7d728e04290a89e6febe435c9ab0212ea6c81500`
+- TLH import checkpoint commit: `4b7e052ff0ea6ccf63407085dd53a9dc6ba237de`
 - Commit date: `2026-08-04T16:39:14+01:00`
 - Commit subject: `Add macOS test CI`
 
-The owned source repository remains the reference for the complete pre-import history. TLH imported file blobs only: no source commit ancestry, Git bundle, refs, or tags were grafted into this repository. The TLH commit containing this file is the dedicated, single-parent snapshot checkpoint; compatibility work belongs in later commits.
+The owned source repository remains the reference for the complete pre-import history. TLH imported file blobs only: no source commit ancestry, Git bundle, refs, or tags were grafted into this repository. The anchored TLH commit above is the dedicated, single-parent snapshot checkpoint; compatibility work belongs in later commits.
 
 ## Imported layout
 
@@ -36,12 +37,15 @@ From the TLH repository root, point `SOURCE_REPO` at a checkout that contains th
 ```sh
 export SOURCE_REPO=/absolute/path/to/a-verified-pi-subagents-checkout
 export SOURCE_COMMIT=0eb7e255e5f9a3bfc694762ad09ebbcee38e11ff
+export TLH_IMPORT_COMMIT=4b7e052ff0ea6ccf63407085dd53a9dc6ba237de
 
 test "$(git -C "$SOURCE_REPO" rev-parse "$SOURCE_COMMIT^{commit}")" = "$SOURCE_COMMIT"
+test "$(git rev-parse "$TLH_IMPORT_COMMIT^{commit}")" = "$TLH_IMPORT_COMMIT"
+git merge-base --is-ancestor "$TLH_IMPORT_COMMIT" HEAD
 node docs/subagents-history/verify-import.mjs "$SOURCE_REPO"
 ```
 
-The verifier checks the source commit/tree, the complete include/exclude partition, source blob OIDs, SHA-256 values, mapped destination bytes and modes, ledger entry counts, and that no commit in the source checkpoint's ancestry is reachable from TLH refs.
+The verifier checks the source commit/tree, the complete include/exclude partition, source blob OIDs, SHA-256 values, mapped destination bytes and modes stored in the anchored TLH import commit, ledger entry counts, and that no commit in the source checkpoint's ancestry is reachable from TLH refs. It also requires the import commit to be an ancestor of current `HEAD`. Later functional adaptations may change `extensions/subagents/{src,agents,test}/`; parity is always evaluated at the immutable import commit, while the current historical archive under `source/` must remain unchanged.
 
 The deterministic checksum for the complete 263-file source tree—including excluded paths—is the SHA-256 of the unprefixed tar stream produced by `git archive`:
 
