@@ -40,9 +40,6 @@ export function handlePauseAllShortcut(state: SubagentState, ctx: ExtensionConte
 		};
 	}
 
-	if (ctx.hasUI) {
-		ctx.ui.notify(result.message, result.level);
-		ctx.ui.requestRender?.();
-	}
+	if (ctx.hasUI) ctx.ui.notify(result.message, result.level);
 	return result;
 }

@@ -4,6 +4,7 @@
 
 import * as os from "node:os";
 import * as path from "node:path";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import type { FSWatcher } from "node:fs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -24,6 +25,9 @@ export type OutputMode = "inline" | "file-only";
 export type AcceptanceRole = "read-only" | "writer";
 
 export type JsonSchemaObject = Record<string, unknown>;
+
+/** Internal result shape retained until the Pi 0.83 tool-result hook applies the error flag. */
+export type SubagentToolResult<T> = AgentToolResult<T> & { isError?: boolean };
 
 export interface ChainOutputMapEntry {
 	text: string;
@@ -1032,7 +1036,7 @@ export interface RunSyncOptions {
 	allowIntercomDetach?: boolean;
 	pauseBlockingSupervisor?: boolean;
 	intercomEvents?: IntercomEventBus;
-	onUpdate?: (r: import("@earendil-works/pi-agent-core").AgentToolResult<Details>) => void;
+	onUpdate?: (r: SubagentToolResult<Details>) => void;
 	onControlEvent?: (event: ControlEvent) => void;
 	onDetachedExit?: (result: SingleResult) => void;
 	controlConfig?: ResolvedControlConfig;

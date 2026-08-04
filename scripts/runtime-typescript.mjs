@@ -17,6 +17,10 @@ function resolveOverridePath(value, fallback) {
 	return value ? resolve(value) : fallback;
 }
 
+function existingRealpaths(paths) {
+	return paths.filter((path) => existsSync(path)).map((path) => realpathSync(path));
+}
+
 function resolveConfiguredTargets(repoRoot) {
 	const configuredTargetIds = (process.env.TLH_RUNTIME_TYPESCRIPT_TARGETS ?? "scripts,extensions,subagents")
 		.split(",")
@@ -72,7 +76,7 @@ function resolveConfiguredTargets(repoRoot) {
 			),
 			sourceExtension: ".ts",
 			outputExtension: ".js",
-			excludedSourceDirs: [join(repoRoot, "extensions/subagents")],
+			excludedSourceDirs: existingRealpaths([join(repoRoot, "extensions/subagents")]),
 		};
 	});
 }

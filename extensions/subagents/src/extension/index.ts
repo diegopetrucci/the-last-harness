@@ -51,6 +51,7 @@ import { buildSubagentToolDescription } from "./tool-description.ts";
 import {
 	type Details,
 	type SubagentState,
+	type SubagentToolResult,
 	ASYNC_DIR,
 	DEFAULT_ARTIFACT_CONFIG,
 	RESULTS_DIR,
@@ -70,6 +71,35 @@ import {
 } from "./control-notices.ts";
 
 export { loadConfig } from "./config.ts";
+
+type PiToolWithInternalFailure = "subagent" | "wait";
+
+/**
+ * Pi 0.83 represents tool failure separately from AgentToolResult. Keep the
+ * extension's rich internal result until execute() returns, then strip the
+ * private flag and restore it through the supported tool_result patch hook.
+ */
+export function createSubagentToolResultBridge() {
+	const failedResults = new Map<string, { toolName: PiToolWithInternalFailure; details: unknown }>();
+
+	return {
+		normalize<T>(toolCallId: string, toolName: PiToolWithInternalFailure, result: SubagentToolResult<T>): AgentToolResult<T> {
+			const { isError, ...normalized } = result;
+			if (isError === true) failedResults.set(toolCallId, { toolName, details: normalized.details });
+			else failedResults.delete(toolCallId);
+			return normalized;
+		},
+		errorPatch(toolCallId: string, toolName: string, details: unknown): { isError: true } | undefined {
+			const failed = failedResults.get(toolCallId);
+			if (!failed || failed.toolName !== toolName) return undefined;
+			failedResults.delete(toolCallId);
+			return failed.details === details ? { isError: true } : undefined;
+		},
+		clear(): void {
+			failedResults.clear();
+		},
+	};
+}
 
 /**
  * Derive subagent session base directory from parent session file.
@@ -153,7 +183,7 @@ function isStaleExtensionContextError(error: unknown): boolean {
 
 function rebuildSlashResultContainer(
 	container: Container,
-	result: AgentToolResult<Details>,
+	result: SubagentToolResult<Details>,
 	expanded: boolean,
 	theme: ExtensionContext["ui"]["theme"],
 ): void {
@@ -343,6 +373,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			clear: () => {},
 		},
 	};
+	const toolResultBridge = createSubagentToolResultBridge();
 
 	const toggleLiveDetail = (ctx: ExtensionContext): void => {
 		handleSubagentLiveDetailShortcut(
@@ -387,6 +418,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const runtimeCleanup = () => {
 		removeLiveDetailTerminalInput();
 		liveDetailController.clearToolRows();
+		toolResultBridge.clear();
 		stopResultWatcher();
 		supervisorChannel.dispose();
 		clearPendingForegroundControlNotices(state);
@@ -480,7 +512,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		return new SubagentControlNoticeComponent({ ...details, noticeText: formatSubagentControlNotice(details, content) }, theme);
 	});
 
-	const executeSubagent = (id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => {
+	const executeSubagent = (id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((result: SubagentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => {
 		return executor.execute(id, params, signal, onUpdate, ctx);
 	};
 
@@ -532,9 +564,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		description: buildSubagentToolDescription(config),
 		parameters,
 
-		execute(id, params, signal, onUpdate, ctx) {
+		async execute(id, params, signal, onUpdate, ctx) {
 			if (!signal) throw new Error("Subagent tool execution requires an abort signal.");
-			return executeSubagent(id, params as SubagentParamsLike, signal, onUpdate, ctx);
+			const result = await executeSubagent(id, params as SubagentParamsLike, signal, onUpdate, ctx);
+			return toolResultBridge.normalize(id, "subagent", result);
 		},
 
 		renderCall(args, theme) {
@@ -580,7 +613,12 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			}
 			const frame = (context.state as { frame?: number } | undefined)?.frame ?? 0;
 			const expanded = isLiveToolRow ? liveDetailController.isExpanded() : options.expanded;
-			return renderSubagentResult(result, { expanded }, theme, frame);
+			return renderSubagentResult(
+				{ ...result, ...(context.isError ? { isError: true } : {}) },
+				{ expanded },
+				theme,
+				frame,
+			);
 		},
 
 	});
@@ -611,8 +649,9 @@ Use this after launching async subagents when you have no independent work left 
 
 wait also returns when a run needs attention (a child that went idle or blocked for a decision), not only on completion — so a stuck child never stalls the loop; the summary names the run(s) to inspect/nudge/resume/interrupt. It wakes the instant a completion or control event arrives (subscribed to Pi's event bus, with a poll fallback that reconciles crashed runners), keeps the turn alive for normal notification delivery, and resolves early if the turn is aborted.${waitToolConfig.enabled ? "" : "\n\nConfigured behavior: wait is disabled by config.waitTool or PI_SUBAGENT_WAIT_TOOL_ENABLED and returns immediately without blocking."}`,
 		parameters: WaitParams,
-		execute(_id, params, signal, _onUpdate, _ctx) {
-			return waitForSubagents(params, signal, { state, events: pi.events, enabled: waitToolConfig.enabled });
+		async execute(id, params, signal, _onUpdate, _ctx) {
+			const result = await waitForSubagents(params, signal, { state, events: pi.events, enabled: waitToolConfig.enabled });
+			return toolResultBridge.normalize(id, "wait", result);
 		},
 	});
 	pi.registerTool(waitTool);
@@ -654,14 +693,16 @@ wait also returns when a run needs attention (a child that went idle or blocked 
 	globalStore[eventUnsubscribeStoreKey] = eventUnsubscribes;
 
 	pi.on("tool_result", (event, ctx) => {
-		if (event.toolName !== "subagent") return;
-		if (!ctx.hasUI) return;
-		state.lastUiContext = ctx;
-		if (state.asyncJobs.size > 0) {
-			renderWidget(ctx, Array.from(state.asyncJobs.values()), liveDetailController);
-			ctx.ui.requestRender?.();
-			ensurePoller();
+		if (event.toolName !== "subagent" && event.toolName !== "wait") return;
+		const errorPatch = toolResultBridge.errorPatch(event.toolCallId, event.toolName, event.details);
+		if (event.toolName === "subagent" && ctx.hasUI) {
+			state.lastUiContext = ctx;
+			if (state.asyncJobs.size > 0) {
+				renderWidget(ctx, Array.from(state.asyncJobs.values()), liveDetailController);
+				ensurePoller();
+			}
 		}
+		return errorPatch;
 	});
 
 	const cleanupSessionArtifacts = (ctx: ExtensionContext) => {
@@ -676,6 +717,7 @@ wait also returns when a run needs attention (a child that went idle or blocked 
 	};
 
 	const resetSessionState = (ctx: ExtensionContext) => {
+		toolResultBridge.clear();
 		state.baseCwd = ctx.cwd;
 		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
 		// Set PI_SUBAGENT_PARENT_SESSION for permission-system forwarding.
@@ -718,6 +760,7 @@ wait also returns when a run needs attention (a child that went idle or blocked 
 
 	pi.on("session_shutdown", () => {
 		removeLiveDetailTerminalInput();
+		toolResultBridge.clear();
 		delete process.env[SUBAGENT_PARENT_SESSION_ENV];
 		for (const unsubscribe of eventUnsubscribes) {
 			try {

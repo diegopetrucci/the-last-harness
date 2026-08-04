@@ -122,6 +122,11 @@ test("packed TLH generated JavaScript loads and reloads through pinned Pi 0.83.0
 	assert.equal(runtimeEvidence.piVersion, "0.83.0");
 	assert.deepEqual(runtimeEvidence.entrypoints, expectedEntrypoints.map((path) => path.slice(2)));
 	assert.equal(runtimeEvidence.factoryExecutions, 2);
+	assert.equal(runtimeEvidence.failedSubagentPatched, true);
+	assert.deepEqual(runtimeEvidence.childExtensionPaths, [
+		"extensions/subagents/src/runs/shared/subagent-prompt-runtime.js",
+		"extensions/subagents/src/extension/fanout-child.js",
+	]);
 	assert.ok(runtimeEvidence.changelogBytes > 1000);
 	assert.ok(runtimeEvidence.reviewHtmlBytes > 100_000);
 	assert.ok(runtimeEvidence.annotateHtmlBytes > 1000);

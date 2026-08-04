@@ -31,6 +31,29 @@ import { buildSubagentToolDescription } from "./tool-description.js";
 import { ASYNC_DIR, DEFAULT_ARTIFACT_CONFIG, RESULTS_DIR, SLASH_RESULT_TYPE, SLASH_TEXT_RESULT_TYPE, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_CONTROL_EVENT, WIDGET_KEY, } from "../shared/types.js";
 import { clearPendingForegroundControlNotices, formatSubagentControlNotice, handleSubagentControlNotice, SUBAGENT_CONTROL_MESSAGE_TYPE, } from "./control-notices.js";
 export { loadConfig } from "./config.js";
+export function createSubagentToolResultBridge() {
+    const failedResults = new Map();
+    return {
+        normalize(toolCallId, toolName, result) {
+            const { isError, ...normalized } = result;
+            if (isError === true)
+                failedResults.set(toolCallId, { toolName, details: normalized.details });
+            else
+                failedResults.delete(toolCallId);
+            return normalized;
+        },
+        errorPatch(toolCallId, toolName, details) {
+            const failed = failedResults.get(toolCallId);
+            if (!failed || failed.toolName !== toolName)
+                return undefined;
+            failedResults.delete(toolCallId);
+            return failed.details === details ? { isError: true } : undefined;
+        },
+        clear() {
+            failedResults.clear();
+        },
+    };
+}
 function getSubagentSessionRoot(parentSessionFile) {
     if (parentSessionFile) {
         const baseName = path.basename(parentSessionFile, ".jsonl");
@@ -251,6 +274,7 @@ export default function registerSubagentExtension(pi) {
             clear: () => { },
         },
     };
+    const toolResultBridge = createSubagentToolResultBridge();
     const toggleLiveDetail = (ctx) => {
         handleSubagentLiveDetailShortcut(liveDetailController, ctx, () => renderWidget(ctx, Array.from(state.asyncJobs.values()), liveDetailController));
     };
@@ -285,6 +309,7 @@ export default function registerSubagentExtension(pi) {
     const runtimeCleanup = () => {
         removeLiveDetailTerminalInput();
         liveDetailController.clearToolRows();
+        toolResultBridge.clear();
         stopResultWatcher();
         supervisorChannel.dispose();
         clearPendingForegroundControlNotices(state);
@@ -415,10 +440,11 @@ export default function registerSubagentExtension(pi) {
         label: "Subagent",
         description: buildSubagentToolDescription(config),
         parameters,
-        execute(id, params, signal, onUpdate, ctx) {
+        async execute(id, params, signal, onUpdate, ctx) {
             if (!signal)
                 throw new Error("Subagent tool execution requires an abort signal.");
-            return executeSubagent(id, params, signal, onUpdate, ctx);
+            const result = await executeSubagent(id, params, signal, onUpdate, ctx);
+            return toolResultBridge.normalize(id, "subagent", result);
         },
         renderCall(args, theme) {
             if (args.action) {
@@ -448,7 +474,7 @@ export default function registerSubagentExtension(pi) {
             }
             const frame = context.state?.frame ?? 0;
             const expanded = isLiveToolRow ? liveDetailController.isExpanded() : options.expanded;
-            return renderSubagentResult(result, { expanded }, theme, frame);
+            return renderSubagentResult({ ...result, ...(context.isError ? { isError: true } : {}) }, { expanded }, theme, frame);
         },
     });
     pi.registerTool(tool);
@@ -476,8 +502,9 @@ Use this after launching async subagents when you have no independent work left 
 
 wait also returns when a run needs attention (a child that went idle or blocked for a decision), not only on completion — so a stuck child never stalls the loop; the summary names the run(s) to inspect/nudge/resume/interrupt. It wakes the instant a completion or control event arrives (subscribed to Pi's event bus, with a poll fallback that reconciles crashed runners), keeps the turn alive for normal notification delivery, and resolves early if the turn is aborted.${waitToolConfig.enabled ? "" : "\n\nConfigured behavior: wait is disabled by config.waitTool or PI_SUBAGENT_WAIT_TOOL_ENABLED and returns immediately without blocking."}`,
         parameters: WaitParams,
-        execute(_id, params, signal, _onUpdate, _ctx) {
-            return waitForSubagents(params, signal, { state, events: pi.events, enabled: waitToolConfig.enabled });
+        async execute(id, params, signal, _onUpdate, _ctx) {
+            const result = await waitForSubagents(params, signal, { state, events: pi.events, enabled: waitToolConfig.enabled });
+            return toolResultBridge.normalize(id, "wait", result);
         },
     });
     pi.registerTool(waitTool);
@@ -516,16 +543,17 @@ wait also returns when a run needs attention (a child that went idle or blocked 
     ];
     globalStore[eventUnsubscribeStoreKey] = eventUnsubscribes;
     pi.on("tool_result", (event, ctx) => {
-        if (event.toolName !== "subagent")
+        if (event.toolName !== "subagent" && event.toolName !== "wait")
             return;
-        if (!ctx.hasUI)
-            return;
-        state.lastUiContext = ctx;
-        if (state.asyncJobs.size > 0) {
-            renderWidget(ctx, Array.from(state.asyncJobs.values()), liveDetailController);
-            ctx.ui.requestRender?.();
-            ensurePoller();
+        const errorPatch = toolResultBridge.errorPatch(event.toolCallId, event.toolName, event.details);
+        if (event.toolName === "subagent" && ctx.hasUI) {
+            state.lastUiContext = ctx;
+            if (state.asyncJobs.size > 0) {
+                renderWidget(ctx, Array.from(state.asyncJobs.values()), liveDetailController);
+                ensurePoller();
+            }
         }
+        return errorPatch;
     });
     const cleanupSessionArtifacts = (ctx) => {
         try {
@@ -538,6 +566,7 @@ wait also returns when a run needs attention (a child that went idle or blocked 
         }
     };
     const resetSessionState = (ctx) => {
+        toolResultBridge.clear();
         state.baseCwd = ctx.cwd;
         state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
         if (!process.env[SUBAGENT_CHILD_ENV]) {
@@ -570,6 +599,7 @@ wait also returns when a run needs attention (a child that went idle or blocked 
     });
     pi.on("session_shutdown", () => {
         removeLiveDetailTerminalInput();
+        toolResultBridge.clear();
         delete process.env[SUBAGENT_PARENT_SESSION_ENV];
         for (const unsubscribe of eventUnsubscribes) {
             try {

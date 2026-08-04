@@ -36,7 +36,6 @@
  * only ends the sleep early. With no bus, `wait` degrades to pure polling.
  */
 
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 import {
 	ASYNC_DIR,
@@ -45,6 +44,7 @@ import {
 	SUBAGENT_CONTROL_EVENT,
 	type Details,
 	type SubagentState,
+	type SubagentToolResult,
 	type WaitToolConfig,
 } from "../../shared/types.ts";
 import { formatDuration } from "../../shared/formatters.ts";
@@ -245,7 +245,7 @@ function summarizeTerminalRuns(runs: AsyncRunSummary[]): string {
 	return parts.join(", ");
 }
 
-function result(text: string, isError = false): AgentToolResult<Details> {
+function result(text: string, isError = false): SubagentToolResult<Details> {
 	return {
 		content: [{ type: "text", text }],
 		...(isError ? { isError: true } : {}),
@@ -261,7 +261,7 @@ export async function waitForSubagents(
 	params: WaitParams,
 	signal: AbortSignal | undefined,
 	deps: WaitDeps,
-): Promise<AgentToolResult<Details>> {
+): Promise<SubagentToolResult<Details>> {
 	if (deps.enabled === false) {
 		return result("Wait tool is disabled by config.waitTool or PI_SUBAGENT_WAIT_TOOL_ENABLED; returning immediately without blocking background subagent runs. Active runs keep going, and you can inspect them with subagent({ action: \"status\" }) or wait for completion notifications.");
 	}

@@ -47,7 +47,6 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	const restoreWarningDedupe = new Set<string>();
 	const rerenderWidget = (ctx: ExtensionContext, jobs = Array.from(state.asyncJobs.values())) => {
 		renderWidget(ctx, jobs, state.liveDetailController);
-		ctx.ui.requestRender?.();
 	};
 	const restoredControlEventCursor = (asyncDir: string) => {
 		try {

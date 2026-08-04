@@ -9,6 +9,8 @@ const repoRoot = resolve(import.meta.dirname, "..");
 const checkPackageVersionsScript = join(repoRoot, "scripts", "check-package-versions.mjs");
 const FIXTURE_MANAGED_PI_VERSION = "9.8.7";
 const FIXTURE_MANAGED_PI_DRIFT_VERSION = "9.8.6";
+const FIXTURE_MANAGED_TYPEBOX_VERSION = "1.3.7";
+const FIXTURE_MANAGED_TYPEBOX_DRIFT_VERSION = "1.3.6";
 const FIXTURE_MANAGED_GNOSIS_VERSION = "4.5.6";
 const FIXTURE_MANAGED_GNOSIS_DRIFT_VERSION = "4.5.5";
 
@@ -33,6 +35,7 @@ function tempFixture({
 	installShPiVersion = FIXTURE_MANAGED_PI_VERSION,
 	installMtsPiVersion = installShPiVersion,
 	installMjsPiVersion = installShPiVersion,
+	piTypeboxVersion = FIXTURE_MANAGED_TYPEBOX_VERSION,
 	includeLatestReleaseUrl = true,
 } = {}) {
 	const dir = mkdtempSync(join(tmpdir(), "tlh-check-package-versions-test-"));
@@ -48,8 +51,13 @@ function tempFixture({
 	writeFileSync(packagePath, `${JSON.stringify({
 		name: "fixture",
 		version: packageVersion,
-		dependencies,
+		dependencies: {
+			typebox: FIXTURE_MANAGED_TYPEBOX_VERSION,
+			...dependencies,
+		},
 		devDependencies: {
+			"@earendil-works/pi-agent-core": FIXTURE_MANAGED_PI_VERSION,
+			"@earendil-works/pi-ai": FIXTURE_MANAGED_PI_VERSION,
 			"@earendil-works/pi-coding-agent": FIXTURE_MANAGED_PI_VERSION,
 			"@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
 			...devDependencies,
@@ -69,6 +77,10 @@ function tempFixture({
 			"": {
 				name: "fixture",
 				version: rootPackageVersion,
+			},
+			"node_modules/@earendil-works/pi-coding-agent": {
+				version: FIXTURE_MANAGED_PI_VERSION,
+				dependencies: { typebox: piTypeboxVersion },
 			},
 		},
 	}, null, 2)}\n`);
@@ -347,6 +359,37 @@ test("check-package-versions rejects managed Pi pin drift across package metadat
 	assert.match(result.stderr, /Managed Pi pins must stay in sync:/);
 	assert.match(result.stderr, /package\.json#peerDependencies\.@earendil-works\/pi-coding-agent: "9\.8\.7"/);
 	assert.match(result.stderr, /tlh-install\.mts#PINNED_PI_VERSION: "9\.8\.6"/);
+});
+
+test("check-package-versions manages direct Pi type dependencies with the shared Pi pin", () => {
+	const fixture = tempFixture({
+		packageVersion: "1.2.3",
+		devDependencies: {
+			"@earendil-works/pi-agent-core": FIXTURE_MANAGED_PI_DRIFT_VERSION,
+			"@earendil-works/pi-ai": FIXTURE_MANAGED_PI_VERSION,
+		},
+	});
+
+	const result = runCheckPackageVersions(fixture);
+
+	assert.equal(result.status, 1);
+	assert.match(result.stderr, /Managed Pi pins must stay in sync:/);
+	assert.match(result.stderr, /package\.json#devDependencies\.@earendil-works\/pi-agent-core: "9\.8\.6"/);
+	assert.match(result.stderr, /package\.json#devDependencies\.@earendil-works\/pi-ai: "9\.8\.7"/);
+});
+
+test("check-package-versions ties direct typebox to Pi's pinned typebox version", () => {
+	const fixture = tempFixture({
+		packageVersion: "1.2.3",
+		dependencies: { typebox: FIXTURE_MANAGED_TYPEBOX_DRIFT_VERSION },
+	});
+
+	const result = runCheckPackageVersions(fixture);
+
+	assert.equal(result.status, 1);
+	assert.match(result.stderr, /TLH's direct typebox dependency must match Pi's pinned typebox version:/);
+	assert.match(result.stderr, /package\.json#dependencies\.typebox: "1\.3\.6"/);
+	assert.match(result.stderr, /package-lock\.json#packages\["node_modules\/@earendil-works\/pi-coding-agent"\]\.dependencies\.typebox: "1\.3\.7"/);
 });
 
 test("check-package-versions rejects non-exact managed Pi package pins", () => {

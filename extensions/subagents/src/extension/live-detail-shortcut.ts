@@ -12,9 +12,6 @@ export function handleSubagentLiveDetailShortcut(
 	rerenderWidget?: () => void,
 ): boolean {
 	const expanded = controller.toggle();
-	if (ctx.hasUI) {
-		rerenderWidget?.();
-		ctx.ui.requestRender?.();
-	}
+	if (ctx.hasUI) rerenderWidget?.();
 	return expanded;
 }

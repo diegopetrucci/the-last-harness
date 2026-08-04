@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -7,6 +7,7 @@ import { DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-codin
 
 const [packageRoot, cwd, agentDir] = process.argv.slice(2);
 assert.ok(packageRoot && cwd && agentDir, "usage: package-runtime-smoke-runner.mjs <package-root> <cwd> <agent-dir>");
+const realPackageRoot = realpathSync(packageRoot);
 
 const piEntryPath = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
 const piPackage = JSON.parse(readFileSync(join(dirname(piEntryPath), "..", "package.json"), "utf8"));
@@ -134,8 +135,34 @@ assert.notEqual(second.result.extensions[0], first.result.extensions[0]);
 assert.notEqual(second.result.extensions[1], first.result.extensions[1]);
 assert.notEqual(second.result.extensions[0].commands, first.result.extensions[0].commands);
 assert.notEqual(second.result.extensions[1].commands, first.result.extensions[1].commands);
-await runSessionStart(second.tlhExtension, second.result.extensions[2]);
-assert.equal(second.result.extensions[2].resolvedPath.endsWith("extensions/subagents/src/extension/index.js"), true);
+const secondSession = await runSessionStart(second.tlhExtension, second.result.extensions[2]);
+const subagentExtension = second.result.extensions[2];
+assert.equal(subagentExtension.resolvedPath.endsWith("extensions/subagents/src/extension/index.js"), true);
+
+second.result.runtime.getSessionName = () => undefined;
+const subagentTool = subagentExtension.tools.get("subagent").definition;
+const failedSubagentResult = await subagentTool.execute(
+	"package-smoke-failure",
+	{ agent: "__tlh_missing_agent__", task: "exercise Pi 0.83 failure patch" },
+	new AbortController().signal,
+	undefined,
+	secondSession.context,
+);
+assert.equal(Object.hasOwn(failedSubagentResult, "isError"), false);
+assert.match(failedSubagentResult.content[0].text, /Unknown agent/);
+assert.equal(failedSubagentResult.details.mode, "single");
+const [subagentToolResultHandler] = subagentExtension.handlers.get("tool_result") ?? [];
+assert.equal(typeof subagentToolResultHandler, "function");
+const failedSubagentPatch = await subagentToolResultHandler({
+	type: "tool_result",
+	toolName: "subagent",
+	toolCallId: "package-smoke-failure",
+	input: { agent: "__tlh_missing_agent__", task: "exercise Pi 0.83 failure patch" },
+	content: failedSubagentResult.content,
+	details: failedSubagentResult.details,
+	isError: false,
+}, secondSession.context);
+assert.deepEqual(failedSubagentPatch, { isError: true });
 
 const sentMessages = [];
 second.result.runtime.sendMessage = (message) => sentMessages.push(message);
@@ -155,6 +182,22 @@ assert.match(sentMessages[0].content, /^# Changelog/m);
 
 const reviewUiPath = join(packageRoot, "extensions", "annotate-git-diff", "ui.js");
 const annotateUiPath = join(packageRoot, "extensions", "the-last-harness", "annotate-last-message", "ui.js");
+const piArgsPath = join(packageRoot, "extensions", "subagents", "src", "runs", "shared", "pi-args.js");
+const { buildPiArgs } = await import(pathToFileURL(piArgsPath).href);
+const childPiArgs = buildPiArgs({
+	baseArgs: [],
+	task: "packaged child path smoke",
+	sessionEnabled: false,
+	inheritProjectContext: false,
+	inheritSkills: false,
+	tools: ["subagent"],
+}).args;
+const childExtensionPaths = childPiArgs.flatMap((arg, index) => arg === "--extension" ? [childPiArgs[index + 1]] : []);
+assert.equal(childExtensionPaths.length, 2);
+assert.equal(childExtensionPaths.every((path) => path.endsWith(".js") && path.startsWith(realPackageRoot)), true);
+assert.equal(childExtensionPaths.some((path) => path.endsWith("subagent-prompt-runtime.js")), true);
+assert.equal(childExtensionPaths.some((path) => path.endsWith("fanout-child.js")), true);
+
 const { buildReviewHtml } = await import(pathToFileURL(reviewUiPath).href);
 const { buildAnnotateLastMessageHtml } = await import(pathToFileURL(annotateUiPath).href);
 const reviewHtml = buildReviewHtml({ files: [], scope: { mode: "all" } });
@@ -169,6 +212,8 @@ process.stdout.write(`${JSON.stringify({
 	entrypoints: expectedEntrypoints,
 	commands: expectedTlhCommands,
 	factoryExecutions: 2,
+	failedSubagentPatched: failedSubagentPatch.isError,
+	childExtensionPaths: childExtensionPaths.map((path) => relative(realPackageRoot, path).replaceAll("\\", "/")),
 	changelogBytes: sentMessages[0].content.length,
 	reviewHtmlBytes: reviewHtml.length,
 	annotateHtmlBytes: annotateHtml.length,

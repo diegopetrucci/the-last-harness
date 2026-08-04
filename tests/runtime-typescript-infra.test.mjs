@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, globSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, globSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -280,6 +280,35 @@ test("runtime TypeScript helper builds and checks temporary extension fixtures w
 		assert.equal(checkResult.status, 0, checkResult.stderr || checkResult.stdout);
 		assert.match(checkResult.stdout, /Generated runtime outputs are fresh/);
 		assertNoTemporaryCheckOutputs(fixture.tempDir);
+	} finally {
+		fixture.cleanup();
+	}
+});
+
+test("generic extension target realpath-normalizes a subagents exclusion beneath a symlinked source root", () => {
+	const fixture = createRuntimeFixture({
+		targetId: "extensions",
+		sourceRootName: "extensions-real",
+		sourceRelativePath: "fixture/index.ts",
+		sourceContent: "export const included = true;\n",
+		tsconfigFileName: "tsconfig.runtime-extensions.json",
+		includeGlob: "extensions-real/**/*.ts",
+		sourceExtension: ".ts",
+		outputExtension: ".js",
+	});
+	const excludedSourcePath = join(fixture.fixtureRoot, "extensions-real/subagents/should-not-build.ts");
+	const excludedOutputPath = excludedSourcePath.replace(/\.ts$/, ".js");
+	mkdirSync(dirname(excludedSourcePath), { recursive: true });
+	writeFileSync(excludedSourcePath, "export const excluded = true;\n");
+	const logicalExtensionsRoot = join(fixture.fixtureRoot, "extensions");
+	symlinkSync(fixture.sourceRoot, logicalExtensionsRoot, process.platform === "win32" ? "junction" : "dir");
+	fixture.sourceRoot = logicalExtensionsRoot;
+
+	try {
+		const buildResult = runRuntimeTypescript("build", fixture);
+		assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+		assert.equal(existsSync(fixture.outputPath), true);
+		assert.equal(existsSync(excludedOutputPath), false);
 	} finally {
 		fixture.cleanup();
 	}

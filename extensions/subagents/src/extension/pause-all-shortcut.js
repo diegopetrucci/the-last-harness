@@ -34,9 +34,7 @@ export function handlePauseAllShortcut(state, ctx) {
             message: `${formatRunCount(interruptedTotal, summary.foregroundRunIds.length, summary.asyncRunIds.length)}${notes.length > 0 ? ` ${notes.join(" · ")}.` : ""}`,
         };
     }
-    if (ctx.hasUI) {
+    if (ctx.hasUI)
         ctx.ui.notify(result.message, result.level);
-        ctx.ui.requestRender?.();
-    }
     return result;
 }

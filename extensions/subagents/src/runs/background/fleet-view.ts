@@ -1,6 +1,5 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
 import {
@@ -13,6 +12,7 @@ import {
 	type NestedRunSummary,
 	type SubagentRunMode,
 	type SubagentState,
+	type SubagentToolResult,
 } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
@@ -292,7 +292,7 @@ function formatAsyncFleetLines(runs: AsyncRunSummary[]): string[] {
 	return lines;
 }
 
-export function inspectSubagentFleet(_params: FleetViewParams, deps: FleetViewDeps = {}): AgentToolResult<Details> {
+export function inspectSubagentFleet(_params: FleetViewParams, deps: FleetViewDeps = {}): SubagentToolResult<Details> {
 	if (deps.childSafe) {
 		return {
 			content: [{ type: "text", text: "Child-safe subagent fleet view is unavailable without an explicit run id. Use subagent({ action: \"status\", id: \"...\" }) for the delegated run you can see." }],

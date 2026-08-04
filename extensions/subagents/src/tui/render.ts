@@ -3,7 +3,6 @@
  */
 
 import * as path from "node:path";
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { getMarkdownTheme, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text, visibleWidth, type Component } from "@earendil-works/pi-tui";
 import { liveDetailShortcutDisplay, type SubagentLiveDetailController } from "../shared/subagent-shortcuts.ts";
@@ -15,6 +14,7 @@ import {
 	type Details,
 	type NestedRunSummary,
 	type NestedStepSummary,
+	type SubagentToolResult,
 	type WorkflowNodeStatus,
 	MAX_WIDGET_JOBS,
 	WIDGET_KEY,
@@ -1565,7 +1565,7 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
  * Render a subagent result
  */
 export function renderSubagentResult(
-	result: AgentToolResult<Details>,
+	result: SubagentToolResult<Details>,
 	options: { expanded: boolean },
 	theme: Theme,
 	frame?: number,

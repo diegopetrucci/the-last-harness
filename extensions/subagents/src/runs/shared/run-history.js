@@ -53,6 +53,6 @@ export function loadRunsForAgent(agent) {
     catch {
         return undefined;
     } })
-        .filter((entry) => entry !== undefined && entry.agent === agent)
+        .filter((entry) => entry != null && entry.agent === agent)
         .reverse();
 }

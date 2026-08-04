@@ -1,16 +1,15 @@
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
-import { type Details, type SingleResult, type Usage, SLASH_RESULT_TYPE } from "../shared/types.ts";
+import { type Details, type SingleResult, type SubagentToolResult, type Usage, SLASH_RESULT_TYPE } from "../shared/types.ts";
 
 export interface SlashMessageDetails {
 	requestId: string;
-	result: AgentToolResult<Details>;
+	result: SubagentToolResult<Details>;
 }
 
 interface SlashSnapshot {
-	result: AgentToolResult<Details>;
+	result: SubagentToolResult<Details>;
 	version: number;
 }
 
@@ -62,7 +61,7 @@ function createPlaceholderResult(
 	};
 }
 
-function buildParallelInitialResult(params: SubagentParamsLike): AgentToolResult<Details> {
+function buildParallelInitialResult(params: SubagentParamsLike): SubagentToolResult<Details> {
 	const tasks = params.tasks ?? [];
 	return {
 		content: [{ type: "text", text: tasks.map((task) => `${task.agent}: ${task.task}`).join("\n\n") }],
@@ -85,7 +84,7 @@ function buildParallelInitialResult(params: SubagentParamsLike): AgentToolResult
 	};
 }
 
-function buildSingleInitialResult(params: SubagentParamsLike): AgentToolResult<Details> {
+function buildSingleInitialResult(params: SubagentParamsLike): SubagentToolResult<Details> {
 	const agent = params.agent ?? "subagent";
 	const task = params.task ?? "";
 	return {
@@ -170,7 +169,7 @@ export function failSlashResult(requestId: string, params: SubagentParamsLike, m
 		error: message,
 		progress: result.progress ? { ...result.progress, status: "failed" as const } : result.progress,
 	}));
-	const result: AgentToolResult<Details> = {
+	const result: SubagentToolResult<Details> = {
 		content: [{ type: "text", text: message }],
 		details: {
 			...initial.details,

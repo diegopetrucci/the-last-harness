@@ -1,5 +1,4 @@
 import * as path from "node:path";
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type TSchema } from "typebox";
 import { Compile } from "typebox/compile";
@@ -7,7 +6,7 @@ import { resolveAsyncRunLocation } from "../runs/background/async-resume.ts";
 import { deliverTimeoutRequest } from "../runs/background/control-channel.ts";
 import { reconcileAsyncRun } from "../runs/background/stale-run-reconciler.ts";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
-import { type Details, ASYNC_DIR, RESULTS_DIR } from "../shared/types.ts";
+import { type Details, type SubagentToolResult, ASYNC_DIR, RESULTS_DIR } from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
 
@@ -69,9 +68,9 @@ interface RegisterSubagentRpcBridgeOptions {
 		id: string,
 		params: SubagentParamsLike,
 		signal: AbortSignal,
-		onUpdate: ((result: AgentToolResult<Details>) => void) | undefined,
+		onUpdate: ((result: SubagentToolResult<Details>) => void) | undefined,
 		ctx: ExtensionContext,
-	) => Promise<AgentToolResult<Details>>;
+	) => Promise<SubagentToolResult<Details>>;
 	asyncDirRoot?: string;
 	resultsDir?: string;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
@@ -124,14 +123,14 @@ function assertSubagentParams(params: SubagentParamsLike, label: string): void {
 	throw new SubagentRpcError("invalid_params", `${label}: ${messages.join("; ") || "invalid subagent parameters"}`);
 }
 
-function textFromToolResult(result: AgentToolResult<Details>): string {
+function textFromToolResult(result: SubagentToolResult<Details>): string {
 	return result.content
 		.filter((part): part is { type: "text"; text: string } => part.type === "text")
 		.map((part) => part.text)
 		.join("\n");
 }
 
-function dataFromToolResult(result: AgentToolResult<Details>): { text: string; details?: Details; isError?: boolean } {
+function dataFromToolResult(result: SubagentToolResult<Details>): { text: string; details?: Details; isError?: boolean } {
 	return {
 		text: textFromToolResult(result),
 		...(result.details ? { details: result.details } : {}),
@@ -139,7 +138,7 @@ function dataFromToolResult(result: AgentToolResult<Details>): { text: string; d
 	};
 }
 
-function failIfToolError(result: AgentToolResult<Details>): void {
+function failIfToolError(result: SubagentToolResult<Details>): void {
 	if (!result.isError) return;
 	throw new SubagentRpcError("execution_failed", textFromToolResult(result) || "Subagent RPC execution failed.");
 }

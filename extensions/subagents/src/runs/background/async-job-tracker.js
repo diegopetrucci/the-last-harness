@@ -20,7 +20,6 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
     const restoreWarningDedupe = new Set();
     const rerenderWidget = (ctx, jobs = Array.from(state.asyncJobs.values())) => {
         renderWidget(ctx, jobs, state.liveDetailController);
-        ctx.ui.requestRender?.();
     };
     const restoredControlEventCursor = (asyncDir) => {
         try {

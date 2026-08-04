@@ -1,6 +1,5 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	type AgentConfig,
@@ -25,7 +24,7 @@ import { parseFrontmatter } from "./frontmatter.ts";
 import { toModelInfo } from "../shared/model-info.ts";
 import { resolveSubagentModelOverride, type ParentModel } from "../runs/shared/model-fallback.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
-import type { Details, ExtensionConfig, ToolBudgetConfig } from "../shared/types.ts";
+import type { Details, ExtensionConfig, SubagentToolResult, ToolBudgetConfig } from "../shared/types.ts";
 import { getProjectConfigDir } from "../shared/utils.ts";
 
 type ManagementAction = "list" | "get" | "models" | "create" | "update" | "delete" | "eject" | "disable" | "enable" | "reset";
@@ -40,13 +39,13 @@ interface ManagementParams {
 	config?: unknown;
 }
 
-function result(text: string, isError = false): AgentToolResult<Details> {
+function result(text: string, isError = false): SubagentToolResult<Details> {
 	return { content: [{ type: "text", text }], isError, details: { mode: "management", results: [] } };
 }
 
 const SAVED_CHAIN_UNSUPPORTED = "Saved chains are deliberately unsupported in The Last Harness; existing .chain.md/.chain.json files are left untouched.";
 
-function unsupportedSavedChainResult(detail: string): AgentToolResult<Details> {
+function unsupportedSavedChainResult(detail: string): SubagentToolResult<Details> {
 	return result(`${SAVED_CHAIN_UNSUPPORTED} ${detail}`, true);
 }
 
@@ -77,7 +76,7 @@ function asDisambiguationScope(scope: unknown): ManagementScope | undefined {
 	return undefined;
 }
 
-function actionScope(scope: unknown, action: ManagementAction): { scope?: ManagementScope; error?: AgentToolResult<Details> } {
+function actionScope(scope: unknown, action: ManagementAction): { scope?: ManagementScope; error?: SubagentToolResult<Details> } {
 	if (scope === undefined) return { scope: "user" };
 	const parsed = asDisambiguationScope(scope);
 	return parsed ? { scope: parsed } : { error: result(`agentScope must be 'user' or 'project' for ${action}.`, true) };
@@ -375,7 +374,7 @@ function resolveTarget<T extends { source: AgentSource; filePath: string }>(
 	matches: T[],
 	cwd: string,
 	scopeHint?: unknown,
-): (T & { source: ManagementScope }) | AgentToolResult<Details> {
+): (T & { source: ManagementScope }) | SubagentToolResult<Details> {
 	const mutable = matches.filter((m): m is T & { source: ManagementScope } => isMutableSource(m.source));
 	if (mutable.length === 0) {
 		if (matches.length > 0) {
@@ -443,7 +442,7 @@ function formatAgentDetail(agent: AgentConfig): string {
 	return lines.join("\n");
 }
 
-export function handleList(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
+export function handleList(params: ManagementParams, ctx: ManagementContext): SubagentToolResult<Details> {
 	const scope = normalizeListScope(params.agentScope) ?? "both";
 	const d = discoverAgentsAll(ctx.cwd);
 	const scopedAgents = allAgents(d)
@@ -471,7 +470,7 @@ function formatModelSource(agent: AgentConfig, currentModel: ParentModel | undef
 	return "inherit requested, but no current session model is available";
 }
 
-function handleModels(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
+function handleModels(params: ManagementParams, ctx: ManagementContext): SubagentToolResult<Details> {
 	const requestedAgent = params.agent?.trim();
 	if (requestedAgent && !(BUILTIN_AGENT_NAMES as readonly string[]).includes(requestedAgent)) {
 		return result(`Builtin agent '${requestedAgent}' not found. Available: ${BUILTIN_AGENT_NAMES.join(", ")}.`, true);
@@ -540,7 +539,7 @@ function handleModels(params: ManagementParams, ctx: ManagementContext): AgentTo
 	return result(lines.join("\n"));
 }
 
-function handleGet(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
+function handleGet(params: ManagementParams, ctx: ManagementContext): SubagentToolResult<Details> {
 	if (params.chainName) return unsupportedSavedChainResult("Use 'agent' for action='get'; omit chainName.");
 	if (!params.agent) return result("Specify 'agent' for get.", true);
 	const matches = findAgents(params.agent, ctx.cwd, "both");
@@ -550,7 +549,7 @@ function handleGet(params: ManagementParams, ctx: ManagementContext): AgentToolR
 	return result(matches.map(formatAgentDetail).join("\n\n"));
 }
 
-export function handleCreate(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
+export function handleCreate(params: ManagementParams, ctx: ManagementContext): SubagentToolResult<Details> {
 	const parsedConfig = configObject(params.config);
 	if (parsedConfig.error) return result(parsedConfig.error, true);
 	const cfg = parsedConfig.value;
@@ -599,7 +598,7 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 	return result([`Created agent '${runtimeName}' at ${targetPath}.`, ...warnings].join("\n"));
 }
 
-export function handleUpdate(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
+export function handleUpdate(params: ManagementParams, ctx: ManagementContext): SubagentToolResult<Details> {
 	if (params.chainName) return unsupportedSavedChainResult("Update does not support saved chains; omit chainName.");
 	if (!params.agent) return result("Specify 'agent' for update.", true);
 	const parsedConfig = configObject(params.config);
@@ -657,7 +656,7 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 	return result([headline, ...warnings].join("\n"));
 }
 
-function handleDelete(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
+function handleDelete(params: ManagementParams, ctx: ManagementContext): SubagentToolResult<Details> {
 	if (params.chainName) return unsupportedSavedChainResult("Delete does not support saved chains; omit chainName.");
 	if (!params.agent) return result("Specify 'agent' for delete.", true);
 	const scopeHint = asDisambiguationScope(params.agentScope);
@@ -668,7 +667,7 @@ function handleDelete(params: ManagementParams, ctx: ManagementContext): AgentTo
 	return result(`Deleted agent '${target.name}' at ${target.filePath}.`);
 }
 
-function handleEject(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
+function handleEject(params: ManagementParams, ctx: ManagementContext): SubagentToolResult<Details> {
 	if (!params.agent) return result("Specify 'agent' for eject.", true);
 	const raw = params.agent.trim();
 	const sanitized = sanitizeName(raw);
@@ -706,7 +705,7 @@ function handleEject(params: ManagementParams, ctx: ManagementContext): AgentToo
 	return result(`Ejected agent '${runtimeName}' from ${source.source} to ${scope} scope at ${targetPath}. Edit it there to customize; it shadows the bundled ${source.source} agent of the same name.`);
 }
 
-function handleDisable(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
+function handleDisable(params: ManagementParams, ctx: ManagementContext): SubagentToolResult<Details> {
 	if (!params.agent) return result("Specify 'agent' for disable.", true);
 	const raw = params.agent.trim();
 	const parsedScope = actionScope(params.agentScope, "disable");
@@ -729,7 +728,7 @@ function handleDisable(params: ManagementParams, ctx: ManagementContext): AgentT
 	return result(`Wrote a disabled override for '${runtimeName}' at ${settingsPath}, but the agent is still enabled. A higher-precedence ${after?.override?.scope ?? "project"} override is likely winning. Try agentScope: '${after?.override?.scope ?? "project"}'.`, true);
 }
 
-function handleEnable(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
+function handleEnable(params: ManagementParams, ctx: ManagementContext): SubagentToolResult<Details> {
 	if (!params.agent) return result("Specify 'agent' for enable.", true);
 	const raw = params.agent.trim();
 	const parsedScope = actionScope(params.agentScope, "enable");
@@ -756,7 +755,7 @@ function handleEnable(params: ManagementParams, ctx: ManagementContext): AgentTo
 	return result(`Agent '${runtimeName}' is still disabled after removing the ${scope} disabled override. It may be hidden via subagents.disableBuiltins in ${after?.override?.scope ?? scope} settings at ${after?.override?.path ?? settingsPath}.`, true);
 }
 
-function handleReset(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
+function handleReset(params: ManagementParams, ctx: ManagementContext): SubagentToolResult<Details> {
 	if (!params.agent) return result("Specify 'agent' for reset.", true);
 	const raw = params.agent.trim();
 	const sanitized = sanitizeName(raw);
@@ -797,7 +796,7 @@ function handleReset(params: ManagementParams, ctx: ManagementContext): AgentToo
 	return result(lines.join("\n"));
 }
 
-export function handleManagementAction(action: string, params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
+export function handleManagementAction(action: string, params: ManagementParams, ctx: ManagementContext): SubagentToolResult<Details> {
 	switch (action as ManagementAction) {
 		case "list": return handleList(params, ctx);
 		case "get": return handleGet(params, ctx);
