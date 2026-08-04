@@ -1,0 +1,2746 @@
+{
+  "schemaVersion": 1,
+  "snapshot": {
+    "name": "pi-subagents-nether",
+    "purpose": "Exact pre-adaptation first-party TLH subagents snapshot checkpoint.",
+    "sourceRepository": "https://github.com/diegopetrucci/pi-subagents.git",
+    "fullHistoryRepository": "https://github.com/diegopetrucci/pi-subagents.git",
+    "sourceCommit": "0eb7e255e5f9a3bfc694762ad09ebbcee38e11ff",
+    "sourceTree": "7d728e04290a89e6febe435c9ab0212ea6c81500",
+    "sourceCommitDate": "2026-08-04T16:39:14+01:00",
+    "sourceCommitSubject": "Add macOS test CI",
+    "gitObjectFormat": "sha1"
+  },
+  "scope": {
+    "functionalSourcePrefixes": [
+      "src/",
+      "agents/",
+      "test/"
+    ],
+    "functionalDestinationRoot": "extensions/subagents/",
+    "historicalArchiveRoot": "docs/subagents-history/source/",
+    "historicalArchivePreservesSourceRelativePaths": true,
+    "historicalArchiveIsActiveConfiguration": false,
+    "sourceGitHistoryImported": false,
+    "gitBundleIncluded": false,
+    "sourceRefsOrTagsImported": false
+  },
+  "mappingRules": [
+    {
+      "sourcePattern": "src/**",
+      "destinationPattern": "extensions/subagents/src/**",
+      "disposition": "functional-snapshot"
+    },
+    {
+      "sourcePattern": "agents/**",
+      "destinationPattern": "extensions/subagents/agents/**",
+      "disposition": "functional-snapshot"
+    },
+    {
+      "sourcePattern": "test/**",
+      "destinationPattern": "extensions/subagents/test/**",
+      "disposition": "functional-snapshot"
+    },
+    {
+      "sourcePaths": [
+        ".github/workflows/release.yml",
+        ".github/workflows/test.yml",
+        ".gnosis/entries.jsonl",
+        ".npmrc",
+        ".upstream-ledger.jsonl",
+        "AGENTS.md",
+        "CHANGELOG.md",
+        "CLAUDE.md",
+        "README.md",
+        "docs/UPSTREAM-SYNC.md",
+        "docs/tlh-patch-inventory.md",
+        "docs/tlh-trim-phase2.md",
+        "install.mjs",
+        "package-lock.json",
+        "package.json",
+        "scripts/upstream-report.sh",
+        "tsconfig.json"
+      ],
+      "destinationPattern": "docs/subagents-history/source/<sourcePath>",
+      "disposition": "historical-source-archive"
+    },
+    {
+      "sourcePaths": [
+        ".gitignore",
+        ".pi/skills/visual-explainer/LICENSE",
+        ".pi/skills/visual-explainer/PROVENANCE.md",
+        ".pi/skills/visual-explainer/SKILL.md",
+        ".pi/skills/visual-explainer/references/css-patterns.md",
+        ".pi/skills/visual-explainer/references/libraries.md",
+        ".pi/skills/visual-explainer/references/responsive-nav.md",
+        ".pi/skills/visual-explainer/references/slide-patterns.md",
+        ".pi/skills/visual-explainer/templates/architecture.html",
+        ".pi/skills/visual-explainer/templates/data-table.html",
+        ".pi/skills/visual-explainer/templates/mermaid-flowchart.html",
+        ".pi/skills/visual-explainer/templates/slide-deck.html",
+        "banner.png"
+      ],
+      "destinationPattern": null,
+      "disposition": "excluded"
+    }
+  ],
+  "fullSourceArchive": {
+    "scope": "All 263 tracked files at sourceCommit, including paths excluded from the TLH import.",
+    "format": "git archive --format=tar",
+    "pathPrefix": null,
+    "sha256": "c832ad8cdb00db1d6f406c19fea4177e3d26604aa93bb8517cc494282ec24355",
+    "reproductionCommand": "git -C \"$SOURCE_REPO\" archive --format=tar \"$SOURCE_COMMIT\" | shasum -a 256"
+  },
+  "historicalLedgers": {
+    "gnosis": {
+      "destinationPath": "docs/subagents-history/source/.gnosis/entries.jsonl",
+      "entryCount": 29,
+      "activeTlhGnosis": false
+    },
+    "upstreamAdoption": {
+      "destinationPath": "docs/subagents-history/source/.upstream-ledger.jsonl",
+      "entryCount": 6,
+      "activePolicy": false
+    }
+  },
+  "counts": {
+    "trackedSourceFiles": 263,
+    "includedFiles": 250,
+    "functionalSnapshotFiles": 233,
+    "historicalArchiveFiles": 17,
+    "excludedFiles": 13
+  },
+  "verification": {
+    "instructions": "docs/subagents-history/HISTORY.md#verification",
+    "environment": {
+      "SOURCE_REPO": "/absolute/path/to/a-verified-pi-subagents-checkout",
+      "SOURCE_COMMIT": "0eb7e255e5f9a3bfc694762ad09ebbcee38e11ff"
+    },
+    "commands": [
+      "test \"$(git -C \"$SOURCE_REPO\" rev-parse \"$SOURCE_COMMIT^{commit}\")\" = \"$SOURCE_COMMIT\"",
+      "git -C \"$SOURCE_REPO\" archive --format=tar \"$SOURCE_COMMIT\" | shasum -a 256",
+      "node docs/subagents-history/verify-import.mjs \"$SOURCE_REPO\""
+    ]
+  },
+  "includedFiles": [
+    {
+      "sourcePath": ".github/workflows/release.yml",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "b90803874f18fc59b2575424030188569cd7b5a2",
+      "sha256": "bfa1b8d9de63b7913d886e3b2a4051d5c5108f70f5d0b84a608b7887eaeb409c",
+      "destinationPath": "docs/subagents-history/source/.github/workflows/release.yml",
+      "destinationMode": "100644",
+      "category": "historical-source-archive"
+    },
+    {
+      "sourcePath": ".github/workflows/test.yml",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "643e6942e689e9022357e08b813a45caf7c476f7",
+      "sha256": "ced9d54c8121b8f5fdc1cc46a6c3aaa9e59955eeea7dd4d9016358d2f80b722e",
+      "destinationPath": "docs/subagents-history/source/.github/workflows/test.yml",
+      "destinationMode": "100644",
+      "category": "historical-source-archive"
+    },
+    {
+      "sourcePath": ".gnosis/entries.jsonl",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "ce84bf083cd79c563e3054c0849d5032a36b252c",
+      "sha256": "c94da350f1851bb233eecbd574d4514a177d98153cb6960fc0cceeaadbe07586",
+      "destinationPath": "docs/subagents-history/source/.gnosis/entries.jsonl",
+      "destinationMode": "100644",
+      "category": "historical-source-archive"
+    },
+    {
+      "sourcePath": ".npmrc",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "cffe8cdef132f31903a4971117f33f60cd9a56e6",
+      "sha256": "be85cc462e740587626bbcbb1c3ed1c40b26e62ec072e8cbd2768f23915c28e6",
+      "destinationPath": "docs/subagents-history/source/.npmrc",
+      "destinationMode": "100644",
+      "category": "historical-source-archive"
+    },
+    {
+      "sourcePath": ".upstream-ledger.jsonl",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "9da505175467ef58f3745927ddf6d138259dd7ed",
+      "sha256": "e554b1e584f6b95deede704ebae5b3ee8525636f4bba95ef694e12e4b2bd1ce5",
+      "destinationPath": "docs/subagents-history/source/.upstream-ledger.jsonl",
+      "destinationMode": "100644",
+      "category": "historical-source-archive"
+    },
+    {
+      "sourcePath": "AGENTS.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "47d77ad1b409faa01e16644d583f62116db43a7c",
+      "sha256": "af87450e92f8921393bcecc58b26748948c02eb675aa7d67e666664f2e5cc369",
+      "destinationPath": "docs/subagents-history/source/AGENTS.md",
+      "destinationMode": "100644",
+      "category": "historical-source-archive"
+    },
+    {
+      "sourcePath": "CHANGELOG.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "943b39e957fd2d25f6d0a92e1bcda4eab4133e11",
+      "sha256": "c8eb2f42af1ee170dfa1e971071c0d1b82703d906b03af9f57a8d34b4d0a85a9",
+      "destinationPath": "docs/subagents-history/source/CHANGELOG.md",
+      "destinationMode": "100644",
+      "category": "historical-source-archive"
+    },
+    {
+      "sourcePath": "CLAUDE.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "43c994c2d3617f947bcb5adf1933e21dabe46bb5",
+      "sha256": "336cc4fbf19beaada7ccf9986414fa91851a8d7a07dfb3ccbe800a69eed0ab49",
+      "destinationPath": "docs/subagents-history/source/CLAUDE.md",
+      "destinationMode": "100644",
+      "category": "historical-source-archive"
+    },
+    {
+      "sourcePath": "README.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "becece43068875a78961d1a6a090ec1a0afb1ce1",
+      "sha256": "eff93b208692a6951130ea8caf2bada71ad77124a72a3f9b632fba159f9c4071",
+      "destinationPath": "docs/subagents-history/source/README.md",
+      "destinationMode": "100644",
+      "category": "historical-source-archive"
+    },
+    {
+      "sourcePath": "agents/context-builder.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "cb93d64eea9af193faf7e284df44d3da0181b017",
+      "sha256": "d58b1e296a243eb88b97f92a7d2da7a4d6a974296c265edd6e6c3f4f35485b89",
+      "destinationPath": "extensions/subagents/agents/context-builder.md",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "agents/delegate.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "204ae4aac27572d164882c65c3f87c56699a7744",
+      "sha256": "166a61cc5083665ebe0e9c002d3f8ac60cdcdb8c89ae809303ad644909b38934",
+      "destinationPath": "extensions/subagents/agents/delegate.md",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "agents/oracle.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "d09b240de62d1ededf2f00926ecc654aa7324ce7",
+      "sha256": "16be00c11d6d5c522c676beda7d443d06776e89a52d85de553ae2370964b94d6",
+      "destinationPath": "extensions/subagents/agents/oracle.md",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "agents/planner.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "0707b52a9a65f40b98cf1013e3f7e09fb6ee8361",
+      "sha256": "2f18c07463dfdfc2e84b3ca188536e85e4764e3173f29b7ccdc63ad15d997004",
+      "destinationPath": "extensions/subagents/agents/planner.md",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "agents/researcher.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "64baca1460c9ca870b56b7dab112288e8a3eb4a9",
+      "sha256": "3ddb63c29c2f20184cd1fb307d34e4ed00c9aef7b9601691cf548468256df48a",
+      "destinationPath": "extensions/subagents/agents/researcher.md",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "agents/reviewer.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "23906a43502be282d8f7c299f066fc529d63d407",
+      "sha256": "afbc0d62a5c25886929f8c74ba766f4d30d9e2cf7b2b099e540fab8caa44791d",
+      "destinationPath": "extensions/subagents/agents/reviewer.md",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "agents/scout.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "f034a78a8d07a7275cea04dbdb679e855003feeb",
+      "sha256": "9aa9b61130f62a10d578fe153cf0bd93983b49b996c602c76b79eb8b477ae4c9",
+      "destinationPath": "extensions/subagents/agents/scout.md",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "agents/worker.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "946cf1d741d769ab75d2b4537531ef188f713a99",
+      "sha256": "a3d3ee690c61d6eb7409296e3a4893e6f8fc359d2d969a9522360271c530b15a",
+      "destinationPath": "extensions/subagents/agents/worker.md",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "docs/UPSTREAM-SYNC.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "88f5ba36328120ce4bfd8f4a1f621ca03e0798f5",
+      "sha256": "655563e2e9f36e957a3c6bb23c734aefd075dfe37a02e6b06234c037a13ddfb8",
+      "destinationPath": "docs/subagents-history/source/docs/UPSTREAM-SYNC.md",
+      "destinationMode": "100644",
+      "category": "historical-source-archive"
+    },
+    {
+      "sourcePath": "docs/tlh-patch-inventory.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "1ae15fe7779a1bbd9bab448d71a459c11c85eeee",
+      "sha256": "b98b3e5c20aa4df213e13e3692205e1e0b458771a3343b81676051c6030f3b6f",
+      "destinationPath": "docs/subagents-history/source/docs/tlh-patch-inventory.md",
+      "destinationMode": "100644",
+      "category": "historical-source-archive"
+    },
+    {
+      "sourcePath": "docs/tlh-trim-phase2.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "0490cb9a9886e59ea36336a97372cd87274a4fd6",
+      "sha256": "dbe8841dbb05cc6dd115e6c18dc4355c131faa21b36e7178a5c57855d96eb280",
+      "destinationPath": "docs/subagents-history/source/docs/tlh-trim-phase2.md",
+      "destinationMode": "100644",
+      "category": "historical-source-archive"
+    },
+    {
+      "sourcePath": "install.mjs",
+      "sourceMode": "100755",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "6e827f83e58f0ecc3f12c7467498a3204762d2ce",
+      "sha256": "528e7b9fb673e58a48164780eec391642b2f5d251ba9da2fc02114b5d6b375f3",
+      "destinationPath": "docs/subagents-history/source/install.mjs",
+      "destinationMode": "100755",
+      "category": "historical-source-archive"
+    },
+    {
+      "sourcePath": "package-lock.json",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "1c60be993511518a99778377b0671166e2f3ce7d",
+      "sha256": "ddd76b72a42786a73bcd82497273cf38f7c65c06d15aa68134c0525bc2b63540",
+      "destinationPath": "docs/subagents-history/source/package-lock.json",
+      "destinationMode": "100644",
+      "category": "historical-source-archive"
+    },
+    {
+      "sourcePath": "package.json",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "4ae0bcca999211c04ca35cbff13b7329a940d8d1",
+      "sha256": "f84ac5888d37e00328b102151017de24209dd2f5eaefc084d1dc2042e62697e5",
+      "destinationPath": "docs/subagents-history/source/package.json",
+      "destinationMode": "100644",
+      "category": "historical-source-archive"
+    },
+    {
+      "sourcePath": "scripts/upstream-report.sh",
+      "sourceMode": "100755",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "6d5dc3a846c9a3fffa3a23c7d84d50ba7c48f36c",
+      "sha256": "fa8b719b6ea37f27eda1aa96ea82fc000cab625065b2cea79c0f1385ad81b260",
+      "destinationPath": "docs/subagents-history/source/scripts/upstream-report.sh",
+      "destinationMode": "100755",
+      "category": "historical-source-archive"
+    },
+    {
+      "sourcePath": "src/agents/agent-management.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "28fe026a7a3653f7016a79e4cc205df3c76c11c5",
+      "sha256": "46882b72ff7b282f63c542562b21bdcda6204f116bad15b962ea3178fc0c5633",
+      "destinationPath": "extensions/subagents/src/agents/agent-management.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/agents/agent-memory.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "85993d4ea054c7b5a49504e2df148f71e9fa0701",
+      "sha256": "ef4bc855b6512498fb7d763e95737b0ad259eaf40b01fe385b1c338fc28c3b9d",
+      "destinationPath": "extensions/subagents/src/agents/agent-memory.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/agents/agent-scope.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "c2eaba9fda94d59f60d5675a47e8a2793724c04d",
+      "sha256": "22b567ec03196e4f4007957a62ad5b2456154a471786442e24538a997090da0f",
+      "destinationPath": "extensions/subagents/src/agents/agent-scope.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/agents/agent-selection.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "597200464cb2c680478c9d2d70bfbce98f3caa44",
+      "sha256": "937862b01c6ef004708a30b72da85174d7d480511249a790106affd38ace1b8b",
+      "destinationPath": "extensions/subagents/src/agents/agent-selection.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/agents/agent-serializer.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "820bfc9916526addd8beb191330124bd3cda543c",
+      "sha256": "c09bd92666b83bc6c3e90fcfefed05241bc09297667d4ff9db814fbc91071bd0",
+      "destinationPath": "extensions/subagents/src/agents/agent-serializer.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/agents/agents.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "ba3fd1974f4c128ae42f348c9f12c1557150eb64",
+      "sha256": "c514ee8016124550f12d31d1a2b39224fb19e6ae61fe95e16443215c84f3b44e",
+      "destinationPath": "extensions/subagents/src/agents/agents.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/agents/execution-ceiling.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "cc609dbd9f4cdc945c656a01eace41cd1575e8d5",
+      "sha256": "c005093dd8250bb61f5422dbe40e19b13ecd8db5272900dad453c985d63d318f",
+      "destinationPath": "extensions/subagents/src/agents/execution-ceiling.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/agents/frontmatter.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "b5757b447300337e394794f0a1912e0d58f071cb",
+      "sha256": "ea20e078a4b73d14779a734881dbe8fe27461ecca96a8927074d5cb5f1eee9a2",
+      "destinationPath": "extensions/subagents/src/agents/frontmatter.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/agents/identity.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "ddbfa1896682103d0aba1a2bff8ef793a50771db",
+      "sha256": "2b129705c14a5290ffe68d7e7ed984856d8692dfac3d2dccb77908944b6f590f",
+      "destinationPath": "extensions/subagents/src/agents/identity.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/agents/skills.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "4f39b99ae516bf988cb13462148fc169383e6926",
+      "sha256": "29b3a5b5a852148ab837a0cea49e0b6c3a295f4177a9f8ce7ad2327019578858",
+      "destinationPath": "extensions/subagents/src/agents/skills.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/extension/config.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "f117e9e84dd1083345c6b07f44437e598508f483",
+      "sha256": "48cd4d692a2ae4655e77f5305ad3b6ac0992ee2887241a47fb79d340cb7c6994",
+      "destinationPath": "extensions/subagents/src/extension/config.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/extension/control-notices.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "75d67216531a77a60a3f3f070d73d233276c5a46",
+      "sha256": "485c31886788ca1b06cd7ad06158354e718963992a5c63841ef6e68ade41571e",
+      "destinationPath": "extensions/subagents/src/extension/control-notices.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/extension/doctor.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "760d72effdbb96fa6146fcbde41e416eebd44e2e",
+      "sha256": "befd2d8c78b1424e45e7b958f6a6f52e0f2ef764e066d037dc8e3815753b7fcd",
+      "destinationPath": "extensions/subagents/src/extension/doctor.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/extension/fanout-child.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "8efa000d7266cbc1dd240332f8d9b9473a6efc23",
+      "sha256": "a8d8fc477b656c7bed5f30b7c997244ae77b054ed541efb0ecd945c1da1a7308",
+      "destinationPath": "extensions/subagents/src/extension/fanout-child.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/extension/index.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "c0621f8cfd597ea59cc20a0ad4ac40579a3a31ae",
+      "sha256": "7afde86624a97b4e291be92682572208a252cca9a31e9ac4af759f734dc40c90",
+      "destinationPath": "extensions/subagents/src/extension/index.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/extension/live-detail-shortcut.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "ec33287e57a28a5b00fb6eeffdeef1c61a4598f7",
+      "sha256": "def3b5c51d30f45cc46681bbb5c3a6ff36b2bf29a859204a0a19331966ef5a02",
+      "destinationPath": "extensions/subagents/src/extension/live-detail-shortcut.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/extension/pause-all-shortcut.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "041be67192f9e738c8557846e16aee21c2e6b086",
+      "sha256": "e035578add51c202e65707000aa2d8620ea443d7dfee0ea60877c6316546c6c2",
+      "destinationPath": "extensions/subagents/src/extension/pause-all-shortcut.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/extension/rpc.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "47159926acea24cd63c08f651ad90005371fab27",
+      "sha256": "e459983d9059ce92611128131de88ced11377948febf16affe136e4a71c5d448",
+      "destinationPath": "extensions/subagents/src/extension/rpc.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/extension/runtime-cleanup.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "a612ec37e54c3bde98ed63f866f545134dd803ad",
+      "sha256": "f29b5a89b9ad26799d8587c59b2dac605b89826ab78bff30863027bb6e71a6b9",
+      "destinationPath": "extensions/subagents/src/extension/runtime-cleanup.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/extension/schemas.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "b96b9dcc0a7ab0da53d2822a1dcd4c895a3e736a",
+      "sha256": "42af8450e23d5e138d83029dd4ef04772dc593d7d45072600a3acb3a948d8012",
+      "destinationPath": "extensions/subagents/src/extension/schemas.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/extension/tool-description.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "acc7ccba2743ab306a295f118857b2021b56e2be",
+      "sha256": "32e65c3e13bb3cc785ea76f7567ea1623142414e36835beae46b3a7a493616c9",
+      "destinationPath": "extensions/subagents/src/extension/tool-description.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/intercom/intercom-bridge.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "582ae98ff386a4642981a94909d773449724dc84",
+      "sha256": "337f85fc272116f10c7dbca808c3946f48db4945d56582c5f2f38fb56cd6bb03",
+      "destinationPath": "extensions/subagents/src/intercom/intercom-bridge.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/intercom/native-supervisor-channel.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "613995b0d48c3caa1a82659002702c9903862fe0",
+      "sha256": "463ccdd41f8965f68d639e3434001a80e51194670f5dcdf4a8a965432d61ce22",
+      "destinationPath": "extensions/subagents/src/intercom/native-supervisor-channel.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/intercom/result-intercom.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "726fb32eedc771dfcfd877692153d3b1b82c86d4",
+      "sha256": "1ef66bc91a0f889587a4eb6c538137a6bdd7fb2b9b39e7e065a97b92b997fb83",
+      "destinationPath": "extensions/subagents/src/intercom/result-intercom.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/background/async-execution.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "fd4cdecfdbe8cc89108d20198b6ed79cbefa09e6",
+      "sha256": "b6b3936364d4a6639b7989ba060e3f651fa79b9136689898e1cdf2fe5ca2a4c2",
+      "destinationPath": "extensions/subagents/src/runs/background/async-execution.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/background/async-job-tracker.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "14991a9b3eedf04b5f0293e98f629ebaf1e66c28",
+      "sha256": "8af9b4ccce8047f487c822670fe6c0bd62f29841ed4a96adedae24e772d88712",
+      "destinationPath": "extensions/subagents/src/runs/background/async-job-tracker.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/background/async-resume.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "d7416ec005cf626ad34d397f8afcb10715bbc961",
+      "sha256": "489792792494d7f3812cdd26eccb3793dba838dbb17c7a871995b6ba44901f58",
+      "destinationPath": "extensions/subagents/src/runs/background/async-resume.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/background/async-status-corruption.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "02f2c6f68b662673d12e0dbfdad0ad8dacf5b3a8",
+      "sha256": "e67df4940dc1cc7e7da9d7be24ff036b85b561db7d4b0c9ecc8082e1627a703b",
+      "destinationPath": "extensions/subagents/src/runs/background/async-status-corruption.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/background/async-status-quarantine.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "c88367ebadf32ec1c8a24fbc505fc1dee9f2d6e1",
+      "sha256": "ff6932f92273a6bac751d6df7c90d58501f180b15b1fb090d1d3b5bafc41ff82",
+      "destinationPath": "extensions/subagents/src/runs/background/async-status-quarantine.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/background/async-status.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "af95ca1154ed5e62b00d445d0d93c8a23cbc2852",
+      "sha256": "e05b43fb8b72faaaa9910a34a09958cf14c371eefca4d2211eec0f5fa8843e6a",
+      "destinationPath": "extensions/subagents/src/runs/background/async-status.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/background/completion-batcher.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "7628a611df7ac7bbbddad1bed79ffadf7b825f85",
+      "sha256": "43d7c29be60db05edac741445231088166eefdcbaa99aa96fe65ea1bd5366dc6",
+      "destinationPath": "extensions/subagents/src/runs/background/completion-batcher.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/background/completion-dedupe.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "f77c8c33cea63dfac285c4f8c19fd54fd50a9a42",
+      "sha256": "2033090a5c6ad5ee451ec63a9386ab1e8f693acca3c07384204dd7312ad99fb6",
+      "destinationPath": "extensions/subagents/src/runs/background/completion-dedupe.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/background/control-channel.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "b1756073c8793c253e6e47ed1252b6286c2d3e6f",
+      "sha256": "a0cf154304f0c0e5d9cc44b2f1b5038ea866bd1687c152d162677f7613264e39",
+      "destinationPath": "extensions/subagents/src/runs/background/control-channel.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/background/fleet-view.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "2ebcb35d8b78dafd71d46c9e7c3f68ec4706abb7",
+      "sha256": "d7f9a5c2a6d07409731331148d24aa0b3d778f50e882b0a9c15693de22b9dddd",
+      "destinationPath": "extensions/subagents/src/runs/background/fleet-view.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/background/notify.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "81600751df82bf9541bf93a737bb0e134a4e56f2",
+      "sha256": "208ece46833219e20b805702b1e45a3f0d0af12af3054f7c6260ccff82aae89f",
+      "destinationPath": "extensions/subagents/src/runs/background/notify.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/background/parallel-groups.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "87d94ceabf02b8cfc69f0f5c7b11db4e3688c8aa",
+      "sha256": "e4d8323ae801a303d1dcae6eb8235bee92ab98e7017a9e727ef4c5133ba2d1ab",
+      "destinationPath": "extensions/subagents/src/runs/background/parallel-groups.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/background/result-watcher.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "82cd89aa172dd526a6102c52aeaaf01f262ef0ce",
+      "sha256": "38c5579cc65fde8803b0fcaf80ba4f72306f83eee3b1f348ecd3bbf7a5c75fe4",
+      "destinationPath": "extensions/subagents/src/runs/background/result-watcher.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/background/run-id-resolver.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "dcdaacaa5d959b8ce7852801bcdb474de98048e6",
+      "sha256": "efd158750e0b8263280864b97a5ec37ec9cb200781ade8e2fd17b3fbf3f59b4b",
+      "destinationPath": "extensions/subagents/src/runs/background/run-id-resolver.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/background/run-status.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "70a968cb6bc42f66ef2493d6f1097a7f6e9aba5b",
+      "sha256": "7f6bfe27fd0b29227fce74798253c9734e2f514822fd8555a515b38fa4a24d81",
+      "destinationPath": "extensions/subagents/src/runs/background/run-status.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/background/stale-run-reconciler.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "7da08d9910bec621479ed1184a415730dfbc6417",
+      "sha256": "d9d7eb281c07ab91e99e57d1ff7b6e322369187fc3b54beebdfcef09799b08c2",
+      "destinationPath": "extensions/subagents/src/runs/background/stale-run-reconciler.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/background/subagent-runner.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "d1da233071cd23411fe6c031250826ee15e30b66",
+      "sha256": "e7be95abc8320b83685b41abddd9a9293b71d2350a855f635ae2824726a245d0",
+      "destinationPath": "extensions/subagents/src/runs/background/subagent-runner.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/background/top-level-async.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "05f403bb99979dfeb247c44d5fabf2402f65ffe4",
+      "sha256": "dc301d320ea5ad892af05ca1fc6c7f4f56a208f9d633393fb751c8a49b12590e",
+      "destinationPath": "extensions/subagents/src/runs/background/top-level-async.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/background/wait.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "d5cbeb8f3006e507300aeeb27e1dfbbdf90dca12",
+      "sha256": "410aa764198fb69f4289271b6d74a8e4a0c360d03ca55f2613f8a2ddb20d7804",
+      "destinationPath": "extensions/subagents/src/runs/background/wait.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/foreground/execution.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "3ff79de9462ab76978ada48bb820776cdf7cfada",
+      "sha256": "45da8f5e770cd874e4bcbb4a610c6111e29ce45af59603954105a68707ccb8fd",
+      "destinationPath": "extensions/subagents/src/runs/foreground/execution.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/foreground/subagent-executor.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "ef5ce650bbea8eee937068134ee432e4a56f1a70",
+      "sha256": "08ceffa376f04fc5f66e4e6cd5bfc322f0f7e7f2dabc57ba5486386a8e37a35f",
+      "destinationPath": "extensions/subagents/src/runs/foreground/subagent-executor.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/acceptance.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "43d028ac069ffc2a1b56ec6b887968873065396a",
+      "sha256": "f26e001224f6b9f457046c0e6e5d5c9d5dbd7036453902845627098919c7db19",
+      "destinationPath": "extensions/subagents/src/runs/shared/acceptance.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/chain-outputs.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "7fa77bff722bc865b5bd00d4953a53f670e616b6",
+      "sha256": "f7d8b03500c7c7f582673a70a7bc1a7d2fa562c64cb7d2705190663f2e843354",
+      "destinationPath": "extensions/subagents/src/runs/shared/chain-outputs.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/completion-guard.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "2323f8b479f075a30a69a8800343fe8a49cdc967",
+      "sha256": "c9faf1710e19db97bca7c6633b0a043a3ba744afe1084d16125691db96101615",
+      "destinationPath": "extensions/subagents/src/runs/shared/completion-guard.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/deadline-timer.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "d0554b7e734e96cccdcff86761b613f781f63a6e",
+      "sha256": "12eac15ce2fa683b61da6e69379d9fa569e90d43bd24a80c298b43772466f1bc",
+      "destinationPath": "extensions/subagents/src/runs/shared/deadline-timer.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/dynamic-fanout.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "dd1ef71cc7d81c1cb3eedfafbef0b25f3e7fdde7",
+      "sha256": "7fde2be9f2a3bd10694079083ac300f57de481ae33e4751a95549d3d6b3c4b9f",
+      "destinationPath": "extensions/subagents/src/runs/shared/dynamic-fanout.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/foreground-interrupts.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "0ad2dddedc1502eb40b9326c30699f802ac3703d",
+      "sha256": "9bb5e45252528014daf70fd74bd64a6b6021cc7371673663724e575552e9582b",
+      "destinationPath": "extensions/subagents/src/runs/shared/foreground-interrupts.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/lifecycle-privacy.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "01275a37fd9d38fa1aed2acd5063e647a5671127",
+      "sha256": "5015bd1682dd5b238923b46deda37f6f56ba09426afb60098677a4f87afd327e",
+      "destinationPath": "extensions/subagents/src/runs/shared/lifecycle-privacy.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/lifecycle-state.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "68ed4c98fb5e7add6779e22b353086bbb3b1a25a",
+      "sha256": "e5764a3a32640789079bdd95f5c5018142f745b7b945f71332146825ea38307c",
+      "destinationPath": "extensions/subagents/src/runs/shared/lifecycle-state.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/long-running-guard.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "bedfb266d331d8cb0a1c257ab33bd09e6a7abb13",
+      "sha256": "ab69ffd657a8fc0b247f1e7bb358d63abb2c50901e1bf778b5fac59b10558198",
+      "destinationPath": "extensions/subagents/src/runs/shared/long-running-guard.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/mcp-direct-tool-allowlist.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "eafd0b2c422c8722cf70dec37dd53da7c81bb581",
+      "sha256": "e6f93d735407f18235a53cdd42eb2fc90026a5415ce4236f004688463bf20f76",
+      "destinationPath": "extensions/subagents/src/runs/shared/mcp-direct-tool-allowlist.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/model-fallback.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "d3633071dd39491089c9aa77ffdcc508c1bc503c",
+      "sha256": "a3822a6e9859816a92b3307df17583e2ae5b0f408ba3f007ede18b11330bfcd9",
+      "destinationPath": "extensions/subagents/src/runs/shared/model-fallback.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/model-scope.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "3dfed5271a903335e3393e3d369ed229f96422cd",
+      "sha256": "cf5405d4145199b1e1c508e3756ae37ca3a24b4b140aed88770cc132158083ec",
+      "destinationPath": "extensions/subagents/src/runs/shared/model-scope.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/nested-events.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "fefa1e22fbc98246af9aa0869c0886675b98eec2",
+      "sha256": "b3af44697343ebf424b7f170adcdd9041d30cb817ff0badba4c264e28b93ef45",
+      "destinationPath": "extensions/subagents/src/runs/shared/nested-events.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/nested-path.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "22b0d0ea0c6866789b096e49d7ee8ff525be66f7",
+      "sha256": "928b319259a6c20421b661c59ea7c038b338b1457f3d34adcb6d1944bfd67d71",
+      "destinationPath": "extensions/subagents/src/runs/shared/nested-path.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/nested-render.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "404ae25660f9c84b18758ae541f3bef69b397666",
+      "sha256": "9c9ca9fad608079a2b0aeeb8f9e820695ad9ee4e61fa4546a9612efa301d8f71",
+      "destinationPath": "extensions/subagents/src/runs/shared/nested-render.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/parallel-utils.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "f46be4af90d5fada224e3f473a7b3a5de3829607",
+      "sha256": "5bcbb1058941549d532cd367d49bc99b5ae55801368f7a55ce63287f21b0c262",
+      "destinationPath": "extensions/subagents/src/runs/shared/parallel-utils.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/pi-args.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "adac04abb1a099656eb598674252f031355b575d",
+      "sha256": "26db5a59bec49349b4c5920988957beaf6ca5cabef3ad4d87e0e078f8500e951",
+      "destinationPath": "extensions/subagents/src/runs/shared/pi-args.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/pi-spawn.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "fbfd8612e02be0866a195560968c8f1d73361b7c",
+      "sha256": "b9593f817e10ffd61bca9c486871992cc1ecd405af0f8d7cd26dd38225f2244c",
+      "destinationPath": "extensions/subagents/src/runs/shared/pi-spawn.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/process-group-cleanup.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "dcdc58f704a2ced3a1fdf43057b0c289e31e6c25",
+      "sha256": "3ae8cbe1acaf650aa16d707db19e2a43b8ac17ad10ea571b01bdd82133581f51",
+      "destinationPath": "extensions/subagents/src/runs/shared/process-group-cleanup.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/run-history.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "b35ed5e355876b44b4233954b090be8480cfeb1c",
+      "sha256": "f678a62f7daf7ed7d94496e702dcb0591b54902f5cd938f4683f70cac67f1ce3",
+      "destinationPath": "extensions/subagents/src/runs/shared/run-history.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/single-output.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "abfda3562562f512983fcab48c347f8d8581c99c",
+      "sha256": "fb461acd585ee93b2c19df9613490795191331837fb408eec58a8c538b1e7c3a",
+      "destinationPath": "extensions/subagents/src/runs/shared/single-output.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/structured-output.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "baa978575e6b1536918a103ed565d27423fd8f19",
+      "sha256": "5e602b60c8c01e4ddf916ab1b425e2190aabba41358830646d76854030b40196",
+      "destinationPath": "extensions/subagents/src/runs/shared/structured-output.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/subagent-control.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "6b1c5af33acda91b96faff91198da7f70c364b48",
+      "sha256": "4137e175eb997b44227728af92ce36d95fadb8bf5e1252852d4e98227082d2cf",
+      "destinationPath": "extensions/subagents/src/runs/shared/subagent-control.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/subagent-prompt-runtime.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "9d8f2dbc29f855c96129e5b8c3aea8aaeaa351fd",
+      "sha256": "5b740de4ebe70ddbcecc70abdde2f63df47d4fd60fc115271bedc39f4a1ccbee",
+      "destinationPath": "extensions/subagents/src/runs/shared/subagent-prompt-runtime.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/task-intent.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "2c036acf69f41baddd23cf57bad633fdcaf53f9e",
+      "sha256": "1c91742c674091bea68faf0afedcf83ea848504b9117e5ef1aeb906fa120ed96",
+      "destinationPath": "extensions/subagents/src/runs/shared/task-intent.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/tk-ticket.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "c4cd4b39f48edaf78506eb7b00845fc40917f46e",
+      "sha256": "d56e0e9940e7234a177a6c908618c1857023bd25ffe3d13b281321ab98bc5e12",
+      "destinationPath": "extensions/subagents/src/runs/shared/tk-ticket.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/tool-budget.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "ca8fd50c52a564d1cadb4906ca2670ab9536744d",
+      "sha256": "6467429b724bfc7cffbf01b4caad2a392366c432ac764ef5b5f714f26cc9f4a5",
+      "destinationPath": "extensions/subagents/src/runs/shared/tool-budget.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/turn-budget.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "4b4fca52b6755d0bb05debc52de4f029b2c6af11",
+      "sha256": "96b3fafbedf9585ee205e1f8e6cefc50486efc9aa2fa94478006c897a967c805",
+      "destinationPath": "extensions/subagents/src/runs/shared/turn-budget.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/workflow-graph.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "38463a40218fa65fce6a7f4ee798828fce507783",
+      "sha256": "adb710c1f5b4a8ea70ddd90f693a5c216b7423651440291766c5938396932127",
+      "destinationPath": "extensions/subagents/src/runs/shared/workflow-graph.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/runs/shared/worktree.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "388ea46bd4ffbd819e5f7d68f8a8f0af9e195b02",
+      "sha256": "ccbe23bc407b61dfa0bd3a9f5fb58a7fb065a8797413de5c2f00ebaca18fca9d",
+      "destinationPath": "extensions/subagents/src/runs/shared/worktree.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/shared/artifacts.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "1996fcfe00651c5b96bdb068177dfa7740b472d9",
+      "sha256": "fdd37b1a477202571f371a13f67ff494a49128d6293176cb153b0479d574beab",
+      "destinationPath": "extensions/subagents/src/shared/artifacts.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/shared/atomic-json.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "a06f27e95cc2d592f1a498658a554095d5688e04",
+      "sha256": "299b9dfbaca77b7f3e53f27d55aeb5a8ec6334961fec9bd9e19610938aaba1ca",
+      "destinationPath": "extensions/subagents/src/shared/atomic-json.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/shared/child-transcript.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "e3cbda9ca677bac44b2296369a937936834b4d0f",
+      "sha256": "dd42b3980219000ef8fa7017f00ea4301a56754d8e075d18e85fb1ecbe3d6b39",
+      "destinationPath": "extensions/subagents/src/shared/child-transcript.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/shared/config-dir.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "305cc00f0ad6bfba0f64be008a6cbcd142f8b7c8",
+      "sha256": "3a720b8b6fb6e0cb4c1ca10e8164f79b53dde5fba56046c0b9780e548eaa9573",
+      "destinationPath": "extensions/subagents/src/shared/config-dir.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/shared/file-coalescer.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "c1cc5cef6a7a5acfa6a41646bcac1d2a91ffeb12",
+      "sha256": "779473bbfc8d678d0d18045b13ee26112e695a390d8442a4310829374246f23d",
+      "destinationPath": "extensions/subagents/src/shared/file-coalescer.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/shared/foreground-pause.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "ea4e8521d40a5c09ef7a65924d1471592cd87b6e",
+      "sha256": "9937970cb82ab14535da6844b64185753e3d0868bbc457f248c0e690f16fa9d7",
+      "destinationPath": "extensions/subagents/src/shared/foreground-pause.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/shared/fork-context.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "716284a5e5d30e5061d4b17f33fe24ec2e58f5fb",
+      "sha256": "2e383eb43aa737cfdbade390671da1987a8ee8d24df3ddfa1137bd976abe45cd",
+      "destinationPath": "extensions/subagents/src/shared/fork-context.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/shared/formatters.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "61da573c441af31e3b492c699fed57e05433f850",
+      "sha256": "4e51189d9c3a31709021abf69b1b1df21644a956c5f8e168e0b3a00247d312bf",
+      "destinationPath": "extensions/subagents/src/shared/formatters.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/shared/jsonl-writer.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "2d40232e9fcb5a90fb17e615c6baaad8bfb0eba2",
+      "sha256": "b1a18d6447532d55bb681a9b6153ef0510e6dce50a10c437ed22af6411c8b839",
+      "destinationPath": "extensions/subagents/src/shared/jsonl-writer.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/shared/model-info.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "2624dc238b2ee8fae431fd4f2e6f697789e6f9fb",
+      "sha256": "52cbc5c95962f2d33c7bcc9b8b435e8f1d451d1fe91e4a01aebdbc304301527e",
+      "destinationPath": "extensions/subagents/src/shared/model-info.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/shared/post-exit-stdio-guard.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "ef6a795b2f5052b1a0098bfae77d3e19b04a4f07",
+      "sha256": "19cd314075b019a2d0a18ff46b4c1a11cc211dc5d52a3dca40cd8434dc992b14",
+      "destinationPath": "extensions/subagents/src/shared/post-exit-stdio-guard.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/shared/profile.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "4016ab690c9f442d981978997a0887a86debd1a2",
+      "sha256": "4392ececfc9e50b1e5cfdb55c21c708da0ac3221661c5e24461599a738b6dc9a",
+      "destinationPath": "extensions/subagents/src/shared/profile.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/shared/session-identity.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "850120a396387cb36f19c2ad47075b7960934f2a",
+      "sha256": "856d15b4e1afba45e35d9c2fcd82c44403027535d38905629548e22a27803872",
+      "destinationPath": "extensions/subagents/src/shared/session-identity.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/shared/session-tokens.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "3825268b5333fd13d84ff0bcddda3ababd55e9c6",
+      "sha256": "d9ece89188bef1c2dea0d6f92623538d5915f3bb9aadd38acc5317efd6638df7",
+      "destinationPath": "extensions/subagents/src/shared/session-tokens.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/shared/settings.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "b7269726c3626a39c188a5dcb83961f03e7e5912",
+      "sha256": "f8626c1820d89bc299825a6c49f7d26335df5e275ccdc8234119ccbb6f3b47a7",
+      "destinationPath": "extensions/subagents/src/shared/settings.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/shared/status-format.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "06a86c4cf2e39ad519d34aad5be96cdcaae36ce3",
+      "sha256": "79ee85cc01a623875472e35eef3e4a774685d5cfd7bcb59ff79ddee4cd242d98",
+      "destinationPath": "extensions/subagents/src/shared/status-format.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/shared/subagent-shortcuts.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "ff691a261a4e0529557a39142d19e4067618f6ae",
+      "sha256": "7c9b9c89903932ab6e4393caf291e06ff052d070f90afd6719550e0b6a011f04",
+      "destinationPath": "extensions/subagents/src/shared/subagent-shortcuts.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/shared/types.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "0b6419f7d8e461c1f965ea3aa89c618e39a198d9",
+      "sha256": "67ec810c92f425222360c40e945e0c2478e7b089dfe5b1e6d20140127a7f2d28",
+      "destinationPath": "extensions/subagents/src/shared/types.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/shared/utils.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "1bc5eca1178e53915c395c5fac792875733f9fbf",
+      "sha256": "56cd2985b5fa6fef87b54cb1ee6b1457cece2fd2e57f1bf1c5afdc5976db5f55",
+      "destinationPath": "extensions/subagents/src/shared/utils.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/slash/prompt-template-bridge.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "8a3df401cdba0bf42ac6a5e583ba5d9502196ba7",
+      "sha256": "f0bea43362679afaee783e18d633a3e5d15b401e8d8d77569cd3b04d133ec531",
+      "destinationPath": "extensions/subagents/src/slash/prompt-template-bridge.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/slash/slash-bridge.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "e5272a404b054f27bc40df8a17d778852ad1ffa1",
+      "sha256": "f66b78fb42ead52b099c7bf4e8559b0467d01a95ee01e35d174a3dc65e1c09e9",
+      "destinationPath": "extensions/subagents/src/slash/slash-bridge.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/slash/slash-commands.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "f7e5aebbaf801b20a12f26d6cc570181a0ec7f1c",
+      "sha256": "c4e4d0864b0f315eda4b320304c53f07bdbb149a134ac41c0de7acac4e2227a6",
+      "destinationPath": "extensions/subagents/src/slash/slash-commands.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/slash/slash-live-state.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "81837e0efbe9e73a76aca1c117259072f0cb3449",
+      "sha256": "8611489ccd95ec3516be5d6122981900be6251b5279908e47ec1b9b4e470e94e",
+      "destinationPath": "extensions/subagents/src/slash/slash-live-state.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/tui/render-helpers.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "8cc001fe844549c3add754f4413899f86506805f",
+      "sha256": "92e226c5d014decb4dea78813fbb717f9dc9270382466c11dd014667143e80f9",
+      "destinationPath": "extensions/subagents/src/tui/render-helpers.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/tui/render.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "9d9dda848a3d2df61188fcee906917e9b0daab0b",
+      "sha256": "d5f767c0a0e91252db45211e05256b06e4e4a753041706079019d54468d6595f",
+      "destinationPath": "extensions/subagents/src/tui/render.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "src/types/typecheck-compat.d.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "f84db22b9f1ebcbb7773795ae8f69921ead991cb",
+      "sha256": "186ad517fe3d10b1c397cfd53c13cdd4fdc6ca0507af570afa227efe16162264",
+      "destinationPath": "extensions/subagents/src/types/typecheck-compat.d.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/e2e/real-session-subagent.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "b5a43d55b12266a644a4b9ed5ac11311b28d289b",
+      "sha256": "0e060596b9c8b8d3ea9a55e61e66b63f0e60d795add320f15cbfbdfc41611785",
+      "destinationPath": "extensions/subagents/test/e2e/real-session-subagent.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/acceptance-digest-surfacing.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "11881a60c8cb0df0f950393ae76b18afade8835e",
+      "sha256": "4f8c5d82afe4d5e2734d41a189db88081a5da5beec962765c5e6ad7373142eed",
+      "destinationPath": "extensions/subagents/test/integration/acceptance-digest-surfacing.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/async-digest-surfacing.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "268feb7df8fbf902a724d2dff9471398b49af58f",
+      "sha256": "af7a8b8b756372c3d023022aa65f58ed1c26d4b9440956bf5f1c78b844457992",
+      "destinationPath": "extensions/subagents/test/integration/async-digest-surfacing.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/async-execution.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "be50ca1c660804ad477ec407651a80247b02ec22",
+      "sha256": "a5cd7a029dc9ff324000431e5000f87e75413868f704446986a3a93ca8f51ef3",
+      "destinationPath": "extensions/subagents/test/integration/async-execution.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/async-job-tracker.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "ec3332c4411c099431d1f2f5bf0f3619a8e943f9",
+      "sha256": "9f9e06d66c7341923e57a74b4004e8de9030c7e3dc490465079ffcf798d197b7",
+      "destinationPath": "extensions/subagents/test/integration/async-job-tracker.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/async-status.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "6d38ac31427db6929ca643b3ef1ba6a53ac507d0",
+      "sha256": "7562920ee0f78c798aa27a27df94ce95a833e2987a44e6e4a4a5e94eaacc37da",
+      "destinationPath": "extensions/subagents/test/integration/async-status.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/detect-error.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "3d5a7054f615ec50079111f798434b18bba75f65",
+      "sha256": "cdd499e47ccdb14163c3968b13caa169dad69eba24fc8a16c900ab1eab889048",
+      "destinationPath": "extensions/subagents/test/integration/detect-error.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/doctor-executor.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "e590619f9f55af49bb62fd619c996a0bc3a93517",
+      "sha256": "ad353b7bd7f5643d7a8c482c41bf7a69625dea29ca9972c97a03e5897622d3ec",
+      "destinationPath": "extensions/subagents/test/integration/doctor-executor.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/error-handling.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "03b8f22e3b7bd451ecf6a6e59cdbc90a6053e6bd",
+      "sha256": "ba72f27ef3acae5d7ddb3dab7b6e96db0902e516eefddc66d58d30521569dfc3",
+      "destinationPath": "extensions/subagents/test/integration/error-handling.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/foreground-result-size.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "78a2938081dc242cdac30fa5ce6ceeb3abb2d358",
+      "sha256": "e0d4f51e743f5ece3aee8af1b46923e313bd40d56d4547d7f6a445ebb32a9bf7",
+      "destinationPath": "extensions/subagents/test/integration/foreground-result-size.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/fork-context-execution.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "adb7a172c41d58c35adb37f9eed1129fd4f22689",
+      "sha256": "fa86671457b06760516f94fa43d62870cd865e4a76ead580501bbb45b3d4ca75",
+      "destinationPath": "extensions/subagents/test/integration/fork-context-execution.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/intercom-result-delivery.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "c4812ec6280b9ca97b776bf562004be84c622b53",
+      "sha256": "876b17b09bcf01703b47ed070add771bfce30bcb1eeae2ace7c05b288528fde6",
+      "destinationPath": "extensions/subagents/test/integration/intercom-result-delivery.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/parallel-execution.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "3ae4c7d127d37ef5c0ce965e28977b1d664c736e",
+      "sha256": "2894096e362ef3c481bf340bc603c2b9c8f440497b89b826078aaddebc2a73e4",
+      "destinationPath": "extensions/subagents/test/integration/parallel-execution.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/render-fork-badge.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "78beb18d2e8338fb86fd1eb93e2e733df33f625c",
+      "sha256": "951228904bbc267a3a54fa1e7ca0a8057d06ee6878bed1e06af8ddb1dde08883",
+      "destinationPath": "extensions/subagents/test/integration/render-fork-badge.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/render-widget.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "08aced1d4afe20b6e0e88e730ea35abdcd2725fc",
+      "sha256": "66d3c9afb9ae49f574fee8b2c315b244a2551af7622a5fc0d0d95043c6475cae",
+      "destinationPath": "extensions/subagents/test/integration/render-widget.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/result-watcher-notify.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "97d743139839be53a9038b7398ecca6e61b4f154",
+      "sha256": "b057c46673acdf2cf386b5212aedb90eabe87b41d40c614da109947adfbad670",
+      "destinationPath": "extensions/subagents/test/integration/result-watcher-notify.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/result-watcher.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "b764a62038c9054255fe85bc9756748204fb5bc9",
+      "sha256": "013a4adb061e8cc328eb7985f7e598e9f42e2601e61063af101e698acbe87902",
+      "destinationPath": "extensions/subagents/test/integration/result-watcher.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/session-tokens.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "330e416ca0733efda0f3a54cbfe01f3c0f7da5c3",
+      "sha256": "47149ba2dc234f3849e4545bd00428259b4407cd213d3b5f8b521fec539f0f4d",
+      "destinationPath": "extensions/subagents/test/integration/session-tokens.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/single-execution.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "80f90ed52d15a20b212af3afe75060d3e8c401dc",
+      "sha256": "c1b3bba318aca4ab05574d069341c884f111d4bab2ce14aa1e8a496ebc1e3305",
+      "destinationPath": "extensions/subagents/test/integration/single-execution.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/slash-commands.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "08463da6aedb6531abca807466d101734747cba0",
+      "sha256": "e8bec8cbb31e23a1bc43500589629ee8e618bb2a9a20e7ecc79beb5eba60f8fa",
+      "destinationPath": "extensions/subagents/test/integration/slash-commands.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/slash-live-state.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "967fb4a162c8b7cbe36416f357e0512f636f6ddc",
+      "sha256": "8ab361a3048c71539fa2d95258744324a3fc18bf9afbcee62372613f10cbeb9e",
+      "destinationPath": "extensions/subagents/test/integration/slash-live-state.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/template-resolution.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "4ce15738f3ecb317ed64e442aac80ac8cd86012e",
+      "sha256": "d7badc3a58e581788748e2525344840211d3b40db3aa845f55fe6a06fe7869fd",
+      "destinationPath": "extensions/subagents/test/integration/template-resolution.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/integration/top-level-async.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "fb9b3a04c98d003a7ebd990aed24c2d247001008",
+      "sha256": "56a418b28191ffdddfe34be2fb9069ad3cbd6c3a58eeba568c84562870a2a5fb",
+      "destinationPath": "extensions/subagents/test/integration/top-level-async.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/support/helpers.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "539bb75a858a2bc9e4ecd2eb8cb92c491083873c",
+      "sha256": "b4fbd675742c8e22cd5f52cb5849a77d0aa752e9303b232754a7be9b6a0f4cb3",
+      "destinationPath": "extensions/subagents/test/support/helpers.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/support/isolate-temp-root.mjs",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "a6c69ca8faedf8b09d89dc4f968b603676ae0f8d",
+      "sha256": "71b535d59fa6edbdffc07243bf093c26cde4faab6827a52c2d94439ec674e068",
+      "destinationPath": "extensions/subagents/test/support/isolate-temp-root.mjs",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/support/mock-pi-script.mjs",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "349f46497122ee5df3c10294726c1c4e6becaf34",
+      "sha256": "a825af14df3ec6cde1dfdb24d7595b2d59b13a000f703b892ac8b6353d6d89de",
+      "destinationPath": "extensions/subagents/test/support/mock-pi-script.mjs",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/support/mock-pi.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "42d30a095d4a137f2b44e4ca93a9e43b65978b29",
+      "sha256": "288a3a47dfa43c994328bbd183453e6c1ae3030220b4606c06483e6bdb6a2f72",
+      "destinationPath": "extensions/subagents/test/support/mock-pi.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/support/real-session-child-cli.mjs",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "04f55abfda40770de28db178702aa6c475f52b6e",
+      "sha256": "2efc3ecc2579675cc077a44c7407e71e90e1370dfa43f8636be1bf8462811873",
+      "destinationPath": "extensions/subagents/test/support/real-session-child-cli.mjs",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/support/real-session-runner.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "257b9f678f133153baf786ee071e1ebc2215eac6",
+      "sha256": "29c0ead9d028a56cf4fd92a4a4e8b9f5f2e174c5d5b09edf6a983d7eb854f78c",
+      "destinationPath": "extensions/subagents/test/support/real-session-runner.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/support/register-loader.mjs",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "9ad319d9c8639fea1c2c65d87b02144ec34eee3d",
+      "sha256": "8bc0cd3d6bb379f4255e55f978c6a519c8e535a61805253774ee7b694ee5e3b9",
+      "destinationPath": "extensions/subagents/test/support/register-loader.mjs",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/support/ts-loader.mjs",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "6e817991406ddacc0dece496745ea3a75ba65bd7",
+      "sha256": "bdbd2092e63f22d60940ec88b5e582f543cb43d6d6415e59184e4d9a24e63d23",
+      "destinationPath": "extensions/subagents/test/support/ts-loader.mjs",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/acceptance.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "4cbc7bd20ddf57da355e3ac4192a11bed2d99d62",
+      "sha256": "4777b728c9f20e9f169cfc60b20d8c53f6ba1005451aeab26f5637859689de50",
+      "destinationPath": "extensions/subagents/test/unit/acceptance.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/agent-disabled.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "6df9b5d59bf31e7141edb45b29f72180864701c2",
+      "sha256": "36f95480065babe7dfaa8605144b6485380e2f36d076d5d91b9bb7066c9e6d5d",
+      "destinationPath": "extensions/subagents/test/unit/agent-disabled.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/agent-eject-disable.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "5abf114299b4ed1b9002f7e69101d2d66a97b512",
+      "sha256": "5bd7cb8fed7911df4002fc463306c45e05e4a98b945e474174b38efb8c923ab1",
+      "destinationPath": "extensions/subagents/test/unit/agent-eject-disable.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/agent-frontmatter.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "e60c99bbcc4be960dddda29ba2a0c1a4b89ed7a7",
+      "sha256": "efb3c91d5a09e73cf8c6b6d278e77a5f36f7ccf8ccbf8daf320be570b0b8e707",
+      "destinationPath": "extensions/subagents/test/unit/agent-frontmatter.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/agent-management.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "27aacfac4821032f7284d3fd37bb7bd2a707b31f",
+      "sha256": "64ef6dbef423949185bf5690806842a30dd421c800d97276158ae486196cedfa",
+      "destinationPath": "extensions/subagents/test/unit/agent-management.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/agent-memory.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "63f92c82d0801df1e48f0e459f45c59485705b51",
+      "sha256": "53dd9de128cf25360e9275a9d77b411999f36a70003496080431da6859280406",
+      "destinationPath": "extensions/subagents/test/unit/agent-memory.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/agent-overrides.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "530e7621516fb5ac807301bb4d8cb25f963205b9",
+      "sha256": "7ad7d92e9211dc5d41c124d44d378be3d35fda7e261801ef9e78945f34ad6844",
+      "destinationPath": "extensions/subagents/test/unit/agent-overrides.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/agent-scope.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "f4ef8f59f5a5018fd0e7a520622c404d20351e94",
+      "sha256": "e6a3ca0a94c398aefccbfb3b85e31276425bd9764f010707c5a4b3e375983eaa",
+      "destinationPath": "extensions/subagents/test/unit/agent-scope.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/agent-selection.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "8ba4052ac07b273f17c5014b149f8c7315a243a8",
+      "sha256": "3717d41f381af0ba770c6547833441bb5dbd32fb8d7c56cd83444a925277a9ac",
+      "destinationPath": "extensions/subagents/test/unit/agent-selection.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/artifacts.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "37dfa6ab05e31130fc0ce3cf91923ece43bf728c",
+      "sha256": "00f704353166d17d72bb7c7bf8a1d3c7a57f9ba6f13cd8fe22acec398a7f368f",
+      "destinationPath": "extensions/subagents/test/unit/artifacts.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/async-execution.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "768eda0ae9e97eecc823c207f0e1a06c6c7065b0",
+      "sha256": "4d5c60d580cf0990392d5af5f21ed7d9687c93336f6a909c8f4bbf421239041e",
+      "destinationPath": "extensions/subagents/test/unit/async-execution.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/async-interrupt-action.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "9f103ac3026ae80458160e6f70e7b71445abbb6b",
+      "sha256": "9fb3a43aa45e3a8b1a3197a826cd40787110076c0963a62dbf99d34dbe363807",
+      "destinationPath": "extensions/subagents/test/unit/async-interrupt-action.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/async-permission-session.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "fe55608c6bcc38c7d50f8488e601788ab17c192d",
+      "sha256": "fe1de521fc52d6d4500ae14f1486bad1746d27260e6155967f195d9ffb3da349",
+      "destinationPath": "extensions/subagents/test/unit/async-permission-session.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/async-resume.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "cecb2b8768f80cb7ac7a760b611d649490a478df",
+      "sha256": "ce5093891bffa694a8163b5edab36733f156bcabdcabe04904024fbe21ed3532",
+      "destinationPath": "extensions/subagents/test/unit/async-resume.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/async-status-quarantine.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "53c615ef091178bc119b2a79d8aecbc416ac7694",
+      "sha256": "44fae2f77304048c66e6973f63cb12de67f5c346ea126155d5a417f42f682dee",
+      "destinationPath": "extensions/subagents/test/unit/async-status-quarantine.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/atomic-json.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "c31fb539af223eb111e091e0b1c14bac573e7e2e",
+      "sha256": "fe065c422a82187afd73e919bba6f96a6c898f12c0c34e04642ef4629ffea1fb",
+      "destinationPath": "extensions/subagents/test/unit/atomic-json.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/child-transcript.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "b3213792bfbb4bd104114a2def639d7e21ce00a2",
+      "sha256": "1c1a6aa1ad48ea6bf1b7fa48f55e0a5739d7faa7cf37cc36689135b76933ff52",
+      "destinationPath": "extensions/subagents/test/unit/child-transcript.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/close-grace-timer.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "d6657d549bbee0fc34de35535b21eacbed0bc5e9",
+      "sha256": "1dcf72cd04a275a352f916b3425f2aa709d9e1937335d48d8498abae2be006f3",
+      "destinationPath": "extensions/subagents/test/unit/close-grace-timer.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/completion-batcher.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "58919373d50391abde265af3e0da7cec2be08eeb",
+      "sha256": "ac7bc4cc90cb7553a9de373f141bbbf58487152f2d58c9514b4184681d45bca7",
+      "destinationPath": "extensions/subagents/test/unit/completion-batcher.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/completion-dedupe.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "f7f97dc4e0c3d6e87a527418f3114b2d9e412c37",
+      "sha256": "c080302418e5ad5e5a74365e5750c6d1acab0d10b23bb99176aa66e36def4aff",
+      "destinationPath": "extensions/subagents/test/unit/completion-dedupe.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/completion-guard.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "6bf0723936aa68b328eaef7780cbfbe6e928196b",
+      "sha256": "64c093c1c3a477b4e89e2dcecdeac7816b88ff0ed40813d62e55716ac29e843e",
+      "destinationPath": "extensions/subagents/test/unit/completion-guard.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/config-dir-runtime.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "96e8cee330f2e5e3fc749072db5b0387db1f86d2",
+      "sha256": "c049b448572a9c49d8d8a71ac399a4c4051b94f56f2506faa50fcfd5c7fed6dc",
+      "destinationPath": "extensions/subagents/test/unit/config-dir-runtime.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/control-channel.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "6758443167ca6a36d9284d86d695818563886ade",
+      "sha256": "bbc3487cd7c5d7122886e2af2299c6469bdc57ed6fd9b3a6b8fe89a166e707e8",
+      "destinationPath": "extensions/subagents/test/unit/control-channel.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/control-notices.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "b33ef526a04bed15a06281df8b9be1a98b5f7b6e",
+      "sha256": "cda29ed347f07f5b7c49cc185351d411939ba15c8532b5bd8584ff9c34ee9e9e",
+      "destinationPath": "extensions/subagents/test/unit/control-notices.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/deadline-timer.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "98008eeadb507cab34e3d4ffdd215c640c1c8452",
+      "sha256": "ad2d47e5c4b5d8619a05b1af82c20bee9d19c2b0f3d72264f4a1caa428212553",
+      "destinationPath": "extensions/subagents/test/unit/deadline-timer.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/discover-agents-no-chain.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "1d1438b165a17c16e2bc4903a9e21391d96ab9db",
+      "sha256": "58aac69227aa2659fdd6bcd0730fa5525ebd36b4c7f08c1db9909d656576475d",
+      "destinationPath": "extensions/subagents/test/unit/discover-agents-no-chain.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/doctor.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "9c0392ea8efe483b758857549cbd55ed8edfef8a",
+      "sha256": "ed17c67b6219838bf6c34678b7d0af218c21ae9ebd61a2677981e849308b5ff0",
+      "destinationPath": "extensions/subagents/test/unit/doctor.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/dynamic-fanout.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "8688084db4853ffaafa5bc401fb771b0313a8622",
+      "sha256": "e797ea5be8fd1798c79741245d38070e8f35acae161456c2d509b19ed7ded165",
+      "destinationPath": "extensions/subagents/test/unit/dynamic-fanout.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/executor-action-trim.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "146f01dd305436767ca7035ade7a737dc963bad1",
+      "sha256": "9ca24f846fc2f44cf5726790b91bc7b1d05c9787be076aa0ca7c9312d76c3e6f",
+      "destinationPath": "extensions/subagents/test/unit/executor-action-trim.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/extra-agent-dirs.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "ad158ed1359e94bd1ab91f56c6ad9edabd93826f",
+      "sha256": "ea69f01425c4a773cb8fc95041b0ed9204840aa475748fed5ff486c05112537b",
+      "destinationPath": "extensions/subagents/test/unit/extra-agent-dirs.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/file-coalescer.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "a87807a975c797b133f6f7fa179d777ec4c4ee0c",
+      "sha256": "045670aac5cb4cb05b56b9d89e724d2c9a19e55b17033b7af99e83786a6b0fe7",
+      "destinationPath": "extensions/subagents/test/unit/file-coalescer.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/foreground-native-result.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "ecdc125e0714ec4efc0c98bc13df29a35122b078",
+      "sha256": "7d568e95e9b03e75e7225e9e9fa8fe3c1bbef7af0c52267282059222839467ee",
+      "destinationPath": "extensions/subagents/test/unit/foreground-native-result.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/foreground-tool-call-compaction.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "7bd364db2e93aa8701a4b966a0c68faf6d2815aa",
+      "sha256": "7c086db8a2d8746934165198b22d15828600f910f3f8bb4839246c7c5293017a",
+      "destinationPath": "extensions/subagents/test/unit/foreground-tool-call-compaction.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/fork-context.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "5425b191d7fcd79c1a2b32c3438b5fe11f40eb19",
+      "sha256": "27d457a17236893bff82644d0c2853783f5163bc95899e7dd233b807061d5efd",
+      "destinationPath": "extensions/subagents/test/unit/fork-context.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/get-final-output.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "0947fea8d29edfc7ac251e9ba912b6d874acd267",
+      "sha256": "e030c2d5438add1f68380cc86ffd1a2fd34dd49ab4a3377a5be04060252b41e0",
+      "destinationPath": "extensions/subagents/test/unit/get-final-output.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/index-child-registration.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "16e0b1320380896859566d3ac4c38ded7da8305d",
+      "sha256": "39b625252e996e16b5994b1cb1efc8d69a27d086e61d18dcbb1109294067551e",
+      "destinationPath": "extensions/subagents/test/unit/index-child-registration.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/intercom-bridge.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "d014556f2ebbd5243e4e67bd4c1f8b496dcc3f51",
+      "sha256": "47c2b7200712ab121a4a80bd895cba792d4140cf8a3d9778cca82e9a9c747d2b",
+      "destinationPath": "extensions/subagents/test/unit/intercom-bridge.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/jsonl-writer.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "ac002b0f2a48a15d9e02d5d3ad03e6e644438254",
+      "sha256": "2768d7bdbed224a6369ea9e942ca8d28e8fd97633604862891234fa7f2c389b6",
+      "destinationPath": "extensions/subagents/test/unit/jsonl-writer.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/lifecycle-state.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "9955164c9871a47be81cfb5a80670742daf2df55",
+      "sha256": "ccaf1ff10f9ba4bb8e6d99fe7ae16f9078abc1bbeea93b5e145388fc432fda63",
+      "destinationPath": "extensions/subagents/test/unit/lifecycle-state.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/live-async-resume.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "a4232056ebd1db5230348b82e010d5c1df4fb128",
+      "sha256": "4aee15a56a468aa3d260b30836ecc4c646332b5b8760b069ef8a0ed4a55c086a",
+      "destinationPath": "extensions/subagents/test/unit/live-async-resume.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/live-detail-shortcut.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "f070dd5fb8f7a91190552e1bdc0b61e7d892bca5",
+      "sha256": "8cc135afcbe880e4dda77e9795018003d1635ba50c053a58b0cbef865e0e9a28",
+      "destinationPath": "extensions/subagents/test/unit/live-detail-shortcut.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/model-fallback.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "2faabbd19e5403a24f7f33f98e90fc889781d1db",
+      "sha256": "e24817865b96b4d921fd32bc14d5f9a1af24f8ca2309f2a67fd37a6cc06b6633",
+      "destinationPath": "extensions/subagents/test/unit/model-fallback.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/model-info.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "62dd9bdd2a16751fa62cbb22ef8c56b81b931f66",
+      "sha256": "592d1ca08c2701a2918fa133879d5238099d96c3184ad11248c5b14894109ac0",
+      "destinationPath": "extensions/subagents/test/unit/model-info.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/model-scope-settings.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "81f8825888d1c5405e7c3cbfb158ba16fa7c23c5",
+      "sha256": "a4a8b1b6628c23bc8973032c2038d73c9e168cfaaf6119786f88ff02f264c69c",
+      "destinationPath": "extensions/subagents/test/unit/model-scope-settings.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/model-scope.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "47d3057e3949f07d8a41c7ab9e8c7dc16fc4b097",
+      "sha256": "14a808658c79bb88624d08ceb6bb5e84ae0d53df234059818a7054ef59b4ed83",
+      "destinationPath": "extensions/subagents/test/unit/model-scope.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/native-supervisor-channel.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "c26f5e066c121cf554c72be74d8cf05970400857",
+      "sha256": "5fc09d4d0525ab681a4d4d582c79dfae95755a8c937dd2bbf99b60b5e664b894",
+      "destinationPath": "extensions/subagents/test/unit/native-supervisor-channel.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/nested-control.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "17024d1039973e0f9b805ad3d47e5606f5f5fa7c",
+      "sha256": "179a90f1428583189551cc228b21d945a9699f87b1073f06e5c4a2b9f44daf5b",
+      "destinationPath": "extensions/subagents/test/unit/nested-control.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/nested-events.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "c7107708b2c3ca219d103632c612fae8ec8d02cb",
+      "sha256": "baec7566a2e31b6de4a29df4647c4364dd30af96ca80730886f52d693232e908",
+      "destinationPath": "extensions/subagents/test/unit/nested-events.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/no-pi-intercom-regression.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "523046f362b209659938b26f25655d24ebaa5447",
+      "sha256": "792e0680507a204c9e91947a6413333617f5434a8cd01cd1e69d2489eacc1019",
+      "destinationPath": "extensions/subagents/test/unit/no-pi-intercom-regression.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/notify-renderer.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "f7ff42411bf24c26b060c04020ad9ce98bdc50ea",
+      "sha256": "8afac5b5a3b2e7978d52d8647e9756e69dcd820ff0056ec4df3565775dffe695",
+      "destinationPath": "extensions/subagents/test/unit/notify-renderer.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/notify.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "3d5ad9c674cf4ac4aa768f4c1487cacd8c38d175",
+      "sha256": "be145a9fff486c3f76b78fe148da1bd1b334dc8cae7a1f644345a5b7261c0f20",
+      "destinationPath": "extensions/subagents/test/unit/notify.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/package-manifest.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "374aa02a7a0fd423743d048033fe2e2c41ed63ab",
+      "sha256": "f020530c34c99cb0994afa63c7f05ef1066de907ee2fa6f6e0b58c9198b02d68",
+      "destinationPath": "extensions/subagents/test/unit/package-manifest.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/parallel-utils.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "49d1b39109a6067dbc7730b59cfe7f8ce1fcc39d",
+      "sha256": "d27ccf2e08c8fb8ccba3cb538723f3b91b7f4918e540be860e940b9b1f0bcf5a",
+      "destinationPath": "extensions/subagents/test/unit/parallel-utils.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/path-handling.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "9f19b7c77828cb1437e1167b668beb171d323845",
+      "sha256": "8cba9992d8e6bffa57286d793e10fdfcdd7bcc09c5c629af302f54c5c1bc668a",
+      "destinationPath": "extensions/subagents/test/unit/path-handling.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/path-resolution.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "2eb68f8cdf9beaed7f1f073d09212b1737cfe379",
+      "sha256": "a9392c5aa4ca4757d9ba4bf5c225febaf0182fc3b877f493cdb82569f402c372",
+      "destinationPath": "extensions/subagents/test/unit/path-resolution.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/pause-all-shortcut.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "eb5ba9b25fc87b9e09a208a70838327567d4d23e",
+      "sha256": "5a0ded06f24c7676e12bfbe95f50c4d6590c1900feed5a92fae439330ecd6410",
+      "destinationPath": "extensions/subagents/test/unit/pause-all-shortcut.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/pi-args.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "51ea53dde0f6f6d74ba8c3f3a638b762cbb8a470",
+      "sha256": "9e8af8ce62fc92518e5a32d839e7ec832aa137b6a016784f407876e12dec46c0",
+      "destinationPath": "extensions/subagents/test/unit/pi-args.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/pi-coding-agent-dir.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "c93e0fde65c4bf393c53cf630e6de5511d327116",
+      "sha256": "1442494f1cce251b3945d29b62050e8fe0a4996f0e7f5b577497227345d5d39f",
+      "destinationPath": "extensions/subagents/test/unit/pi-coding-agent-dir.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/pi-spawn.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "c49578c7b42dbaa38c858ea60c10a30261b9635d",
+      "sha256": "296411d730581f926597ecbb028bd7f1ba5c6ae84b8ace46719a8c91c56ecada",
+      "destinationPath": "extensions/subagents/test/unit/pi-spawn.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/process-group-cleanup.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "13253de345a7c4684e664243f0d88eaf26434de6",
+      "sha256": "4907f82f03cb04e0f76712aed43802fb801b90a4e2e83d7e63bef32df31a2ab7",
+      "destinationPath": "extensions/subagents/test/unit/process-group-cleanup.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/prompt-template-bridge.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "d400585d1ca617560f1e7397e59b934d96db5fdd",
+      "sha256": "57d3aeb098743e539e68e1937974bb3b84137310849c7ee2c081c6b727a6423e",
+      "destinationPath": "extensions/subagents/test/unit/prompt-template-bridge.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/recursion-guard.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "3bae7b8b5d458b6debc75f904eb504ec066ef7ab",
+      "sha256": "b4251dd2fabd685632a803a4e1cc32748c242a82f8c7bd5c100bfe78b155c0d9",
+      "destinationPath": "extensions/subagents/test/unit/recursion-guard.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/render-helpers.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "68344e0b5db1fd61b2fae972a1f9ad690d72cadd",
+      "sha256": "b8a272500c43941fd43e2f93cdf09df7cfc205ca76571920448d229248daadc5",
+      "destinationPath": "extensions/subagents/test/unit/render-helpers.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/result-intercom.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "556207700980c42ab4059166dde071866744f467",
+      "sha256": "f92b92babc2df123998eda44231f508e96ff865f81b3e7afa2bf2c77d6debe82",
+      "destinationPath": "extensions/subagents/test/unit/result-intercom.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/reviewed-dispatch-routes.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "b20e54e9acd21ee6b171e11b9743c845888874e2",
+      "sha256": "39cd762087c1c9bfbc7eaa3dc426a9ef289ef5fc2cafe741099c14572d4c5ff9",
+      "destinationPath": "extensions/subagents/test/unit/reviewed-dispatch-routes.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/rpc-gate.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "4171e8f9f960cc191d488eacb95ffb56d3ea25e3",
+      "sha256": "7bab8bdbede0528d86b052cf316c874b07b8744d474ce5bcc5e6fbb2e3751251",
+      "destinationPath": "extensions/subagents/test/unit/rpc-gate.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/rpc.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "f440c432fa51cdf1c5f2c1a117970c829e0dd203",
+      "sha256": "5ce883c7af22be26af66cba29614da02ec1a47ed595f7bb4329293e24a76db43",
+      "destinationPath": "extensions/subagents/test/unit/rpc.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/run-history.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "391a5e2946c5ec042a146784c5ab85b5c3c1c134",
+      "sha256": "48095d9c258bf21fb5c972bb3736999c49430e35de705a15615971bb259aad85",
+      "destinationPath": "extensions/subagents/test/unit/run-history.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/run-id-resolver.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "f245379f5e263943e139f3b96458b15d18061f58",
+      "sha256": "7b9223ba8773998fad630c1cadb07589ef20e2a6098c84d3d04402343c0a37ea",
+      "destinationPath": "extensions/subagents/test/unit/run-id-resolver.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/run-status.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "cbae0d2cc528ea663ddde3e8ccee2a27a7223032",
+      "sha256": "44f8e39e305c4f3565efb09975b767d7091f6851e6bbc0409cc94065c862cb55",
+      "destinationPath": "extensions/subagents/test/unit/run-status.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/runtime-cleanup.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "d64cbdff80817e3a264e4b27440402747473c296",
+      "sha256": "613f145e723df20ece68fd60263ffb44e6160cb899a96dd7e7e2164e2406acd1",
+      "destinationPath": "extensions/subagents/test/unit/runtime-cleanup.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/schemas.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "9f807a601222f7dad568814ab50b1af7a06319cd",
+      "sha256": "3be043dfeaf3b6153bf1409d2b2c7058b868fba524234a47ac2886d5750d2fb3",
+      "destinationPath": "extensions/subagents/test/unit/schemas.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/single-output.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "9651c6e72f5d2f2369e4645959d8ea48275688bd",
+      "sha256": "2e0ceab94e0a6627d5240c6882222dba845f6229bbe93e728deb956bbc7a2e86",
+      "destinationPath": "extensions/subagents/test/unit/single-output.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/skills-fallback.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "7a87eed84c5a4868819476b0c856c223eda05dd2",
+      "sha256": "b740c1994659155b388b59a1196ec4d4a3e5b1bc77b87704ad31a9db0bc7e298",
+      "destinationPath": "extensions/subagents/test/unit/skills-fallback.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/slash-bridge.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "a52f824291793011beb310e23d5750f0965009b2",
+      "sha256": "fac0af675f06d7988f9e4b4c0a2f39e8addc9946d89690254083204f47610d7f",
+      "destinationPath": "extensions/subagents/test/unit/slash-bridge.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/stale-run-reconciler.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "1b1ececa7e446272c46a0c20856142f80993432e",
+      "sha256": "8189aca7085441eb762763379b03b3ecb392f4fd9c0d37dfd3001ede5bcb7c87",
+      "destinationPath": "extensions/subagents/test/unit/stale-run-reconciler.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/status-format.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "baf790b92f0cf0cfb3288a9421b9e03de97f3937",
+      "sha256": "d11981bf27b7545ab7e3ae5d416ec98cfd90cfc0a8a3ed0c8bb93d3849bf9bf3",
+      "destinationPath": "extensions/subagents/test/unit/status-format.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/subagent-control.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "043cbcdc8aae81724066e92324b27727cd29c59d",
+      "sha256": "65e5771d0234c67c1457e2aeedce6acf39577d2fc950e989a5e8ad893b4ab167",
+      "destinationPath": "extensions/subagents/test/unit/subagent-control.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/subagent-prompt-runtime.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "c3b5a957b7e4a7f9b45e6d90bf832b23360613c4",
+      "sha256": "6c8bd7939670e60298144d6750e10592e4120822fdecba9aa9ce43299ef6091c",
+      "destinationPath": "extensions/subagents/test/unit/subagent-prompt-runtime.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/task-intent.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "aabb50b7ed89ed8e84428c100cf5881c42993ced",
+      "sha256": "c2e48a7a4a2b1a44fa2bd7deb7c65cae7d0c1cb1281e1aad35583e4af22d47c1",
+      "destinationPath": "extensions/subagents/test/unit/task-intent.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/temp-paths.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "92fec5249260cf804f0f3b8dfb7942630588240b",
+      "sha256": "15fd13ebd889d97f5a0263322df86dd1961a65e4ac7b02051a668328e45ead93",
+      "destinationPath": "extensions/subagents/test/unit/temp-paths.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/tk-ticket.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "6073546a8986fa116b53638aa3931bbaa0b1655b",
+      "sha256": "0031a6b37673e129b61b6d802f11f59ae4a91b0fd4196af3a0a31eb754c57a0c",
+      "destinationPath": "extensions/subagents/test/unit/tk-ticket.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/tool-budget.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "f3cdcb7434752ea5cf4d052d8a511572696bf155",
+      "sha256": "8141dba8bd832143a272a6452585d2a5d0fe100814fd961fd02be54411a5c2db",
+      "destinationPath": "extensions/subagents/test/unit/tool-budget.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/tool-description.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "9e611bef68d8ed1625b14239312b78e0b235b060",
+      "sha256": "69ef62e2827b30a676bc298d0ea7b2c21f487818fad6a08a6dcd7a4052e2611b",
+      "destinationPath": "extensions/subagents/test/unit/tool-description.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/total-cost.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "c758ff8ff860bbfa56442544abffd808dee6a0f5",
+      "sha256": "1e71e4cbc37a731096b0fed5c8ad65cbd590c94a6ca6a140d8bc4b6174c88cee",
+      "destinationPath": "extensions/subagents/test/unit/total-cost.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/ts-loader.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "17a36314d8dc4d1fa7f030595235d418ab0839b5",
+      "sha256": "28ad329a6421ee2a246af8e174119257941552d15c0900168321b32dc81bb8e6",
+      "destinationPath": "extensions/subagents/test/unit/ts-loader.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/turn-budget.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "dae6700d2b6f76e915f46fb0e0819947bc9cacef",
+      "sha256": "12f1cb259cc0d97ba8c43e5511847621022af8a3a65a9ca82c8929451174d732",
+      "destinationPath": "extensions/subagents/test/unit/turn-budget.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/types-fork-preamble.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "1fa41cb25e79dbc9d6e297ccd4d280721250e6ea",
+      "sha256": "09377ff184b11b81cb8aa40c6633534c5eba631c20983f1e9df8381dd2df75e2",
+      "destinationPath": "extensions/subagents/test/unit/types-fork-preamble.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/wait.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "c65f76ed9d11b0114b8f23ddc8e0a0dcbc0e90fe",
+      "sha256": "87672d89914d6afcd592dea89911e246515df1196d4501f81f9645ec1dfa4474",
+      "destinationPath": "extensions/subagents/test/unit/wait.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/widget-nested-render.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "b416eecf0d1d1b455fd8121c70a70b5dbf2f388f",
+      "sha256": "f1e24449f2670c978d975819f88ce7e8fad1688ad0037d4408f299fbd658b9a0",
+      "destinationPath": "extensions/subagents/test/unit/widget-nested-render.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/windows-hide-spawn.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "7a733f379ee98fe3e41aa328b86b0d73c11f9f00",
+      "sha256": "8805caefc0a27fac4a999fd5b5a9c2ce2cdc790bfe44373661519ed44928dfd9",
+      "destinationPath": "extensions/subagents/test/unit/windows-hide-spawn.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/workflow-graph.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "8db8ee9000e1af0ecc64650225d1e49e053a1c98",
+      "sha256": "1f9f63842ecf35f4492d54c0d61d184a709c88e47e90577e70c2aeef2c86dedd",
+      "destinationPath": "extensions/subagents/test/unit/workflow-graph.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "test/unit/worktree.test.ts",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "858fe7de299420a9cbb94748dcad39a03d1af0ca",
+      "sha256": "7ca97f2753a0ec8e77b80c44a87dd1d5bce0722756ddb08a5d3091a4abe98b63",
+      "destinationPath": "extensions/subagents/test/unit/worktree.test.ts",
+      "destinationMode": "100644",
+      "category": "functional-snapshot"
+    },
+    {
+      "sourcePath": "tsconfig.json",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "c35f5c290de348ab435ebf1bfff16a73632b307a",
+      "sha256": "c778d334974ea955c998e15275d3c6dce69826e7980fd152d104e8f76c7225b6",
+      "destinationPath": "docs/subagents-history/source/tsconfig.json",
+      "destinationMode": "100644",
+      "category": "historical-source-archive"
+    }
+  ],
+  "excludedFiles": [
+    {
+      "sourcePath": ".gitignore",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "0ae9083a0c99d9cf53ad6fec5b447f8c5dd2c340",
+      "sha256": "f4ee15ff4d5354ba7f0e57cedd096df86797599b1967a7a9149298247b009d52",
+      "category": "repository-metadata",
+      "reason": "Root VCS/editor ignore policy is not part of the imported snapshot."
+    },
+    {
+      "sourcePath": ".pi/skills/visual-explainer/LICENSE",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "20aff8a343774bbfa8a18d96c928cb275cc558b6",
+      "sha256": "871b3c6c64e030c0647ca33543716bdae9511ae2d6a85d6f4ce63783bab52c8f",
+      "category": "unrelated-pi-skill",
+      "reason": "Contributor-side visual-explainer skill is explicitly outside snapshot scope."
+    },
+    {
+      "sourcePath": ".pi/skills/visual-explainer/PROVENANCE.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "081d1728bbb041155d7edd1df8766fc5f3a4b390",
+      "sha256": "191c91fca1435b284330b85e6471712d46f6b166c6d81832bbe7ffa5c616c7da",
+      "category": "unrelated-pi-skill",
+      "reason": "Contributor-side visual-explainer skill is explicitly outside snapshot scope."
+    },
+    {
+      "sourcePath": ".pi/skills/visual-explainer/SKILL.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "ed59377c44e476aa300c2f02effe3369db6cc757",
+      "sha256": "22f853cb8b77a01625bb657c33bb2130d82c178110bce3fe19e9c07b07a7e08a",
+      "category": "unrelated-pi-skill",
+      "reason": "Contributor-side visual-explainer skill is explicitly outside snapshot scope."
+    },
+    {
+      "sourcePath": ".pi/skills/visual-explainer/references/css-patterns.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "947addc6d884bb4d87351cad160382120930d8c7",
+      "sha256": "a47f8ddcf684acd1955cdc7fa39bc1cb12688094264abc22571f0eee16ec39a7",
+      "category": "unrelated-pi-skill",
+      "reason": "Contributor-side visual-explainer skill is explicitly outside snapshot scope."
+    },
+    {
+      "sourcePath": ".pi/skills/visual-explainer/references/libraries.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "06207e387f70fb9aea1e38ed31d26f1975d83bbd",
+      "sha256": "c8d1694fb598b22aaf14fa489b5748a91541c8c47dbfe7b8c03bed2ef6c79f13",
+      "category": "unrelated-pi-skill",
+      "reason": "Contributor-side visual-explainer skill is explicitly outside snapshot scope."
+    },
+    {
+      "sourcePath": ".pi/skills/visual-explainer/references/responsive-nav.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "75563f459fb679b63269eab7db3dd1b92903ee8e",
+      "sha256": "c2507c5a468632eab14028780898422b1a6d7a2e3d1708933bd294f2cf6989c3",
+      "category": "unrelated-pi-skill",
+      "reason": "Contributor-side visual-explainer skill is explicitly outside snapshot scope."
+    },
+    {
+      "sourcePath": ".pi/skills/visual-explainer/references/slide-patterns.md",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "af066a8954013e00876baa2f9eedb54987644d8f",
+      "sha256": "2ab3b9c8a5d5c54c5c06ae0dd24d691fc010d958a97e47b6b0c3515a59555437",
+      "category": "unrelated-pi-skill",
+      "reason": "Contributor-side visual-explainer skill is explicitly outside snapshot scope."
+    },
+    {
+      "sourcePath": ".pi/skills/visual-explainer/templates/architecture.html",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "edc1b439996dac239e2445de0bf1ba7f7b7022c4",
+      "sha256": "805319310b450b7f7e659cad1aa3b5209acaa64c67777d0a151c565f6eced1d4",
+      "category": "unrelated-pi-skill",
+      "reason": "Contributor-side visual-explainer skill is explicitly outside snapshot scope."
+    },
+    {
+      "sourcePath": ".pi/skills/visual-explainer/templates/data-table.html",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "42ab0691603a3d557769e74212625f16eddfd10b",
+      "sha256": "820468dcfb9edb7fc1fe2b75b105539224f574ff6ddf719f1637b7c189c06e7c",
+      "category": "unrelated-pi-skill",
+      "reason": "Contributor-side visual-explainer skill is explicitly outside snapshot scope."
+    },
+    {
+      "sourcePath": ".pi/skills/visual-explainer/templates/mermaid-flowchart.html",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "170884bb37c3ef7f1e6f39529fc7825e917dfa29",
+      "sha256": "34cb5f9bdb38b431da21e0fd6cddeeaa6843fdb0ffe1c6c1c62c187a36a6388f",
+      "category": "unrelated-pi-skill",
+      "reason": "Contributor-side visual-explainer skill is explicitly outside snapshot scope."
+    },
+    {
+      "sourcePath": ".pi/skills/visual-explainer/templates/slide-deck.html",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "7f6c6a9ccfedb964e903adf3061231d9bed0b9b7",
+      "sha256": "e7ba669dbb1cdd9990bdc4a734e4a695be2b775786c2c7f5cf6d80caa713d67f",
+      "category": "unrelated-pi-skill",
+      "reason": "Contributor-side visual-explainer skill is explicitly outside snapshot scope."
+    },
+    {
+      "sourcePath": "banner.png",
+      "sourceMode": "100644",
+      "sourceObjectType": "blob",
+      "sourceBlobOid": "a2d8610d4a5125c48b1aa5e44debaea04e133e30",
+      "sha256": "985a02bdce575ca45fe2612767164cc578190a2ea1cbf24bfd54c3504399951f",
+      "category": "branding",
+      "reason": "Standalone banner/branding is explicitly outside snapshot scope."
+    }
+  ]
+}
