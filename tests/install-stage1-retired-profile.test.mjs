@@ -6,7 +6,9 @@ import test from "node:test";
 import {
 	LEGACY_MANAGED_PROFILE_ARTIFACTS,
 	RETIRED_PROFILE_FILES,
+	RETIRED_PROFILE_DIRECTORIES,
 	cleanupLegacyManagedProfileArtifacts,
+	cleanupRetiredProfileDirectories,
 	cleanupRetiredProfileFiles,
 } from "../scripts/tlh-install.mjs";
 import { captureConsole, makeTempDir } from "./install-stage1-test-helpers.mjs";
@@ -229,4 +231,69 @@ test("cleanupRetiredProfileFiles removes extensions/librarian.json when libraria
 		false,
 		"extensions/librarian.json must be removed when librarian package is absent from post-merge settings",
 	);
+});
+
+// --- RETIRED_PROFILE_DIRECTORIES / cleanupRetiredProfileDirectories tests ---
+
+test("RETIRED_PROFILE_DIRECTORIES includes 'intercom'", () => {
+	assert.ok(
+		RETIRED_PROFILE_DIRECTORIES.includes("intercom"),
+		"RETIRED_PROFILE_DIRECTORIES must include 'intercom'",
+	);
+});
+
+test("cleanupRetiredProfileDirectories removes intercom/ directory when present", (t) => {
+	const root = makeTempDir("tlh-cleanup-retired-dir-present-");
+	const agentDir = join(root, "agent");
+	const intercomDir = join(agentDir, "intercom");
+	mkdirSync(join(intercomDir, "data"), { recursive: true });
+	writeFileSync(join(intercomDir, "data", "state.json"), "{}", "utf8");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	cleanupRetiredProfileDirectories({ agentDir, dryRun: false, quiet: true, verbose: false });
+
+	assert.equal(existsSync(intercomDir), false, "intercom/ directory should be removed");
+});
+
+test("cleanupRetiredProfileDirectories is idempotent when intercom/ is absent", (t) => {
+	const root = makeTempDir("tlh-cleanup-retired-dir-absent-");
+	const agentDir = join(root, "agent");
+	mkdirSync(agentDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	assert.doesNotThrow(() =>
+		cleanupRetiredProfileDirectories({ agentDir, dryRun: false, quiet: true, verbose: false }),
+	);
+});
+
+test("cleanupRetiredProfileDirectories skips symlinked intercom/ target without error", (t) => {
+	if (process.platform === "win32") return;
+	const root = makeTempDir("tlh-cleanup-retired-dir-symlink-");
+	const agentDir = join(root, "agent");
+	const externalDir = join(root, "external-intercom");
+	mkdirSync(agentDir, { recursive: true });
+	mkdirSync(externalDir, { recursive: true });
+	writeFileSync(join(externalDir, "state.json"), "{}", "utf8");
+	symlinkSync(externalDir, join(agentDir, "intercom"), "dir");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	cleanupRetiredProfileDirectories({ agentDir, dryRun: false, quiet: true, verbose: false });
+
+	assert.ok(existsSync(externalDir), "external directory must not be removed");
+	assert.ok(existsSync(join(agentDir, "intercom")), "symlink itself must be preserved");
+});
+
+test("cleanupRetiredProfileDirectories dry-run logs removal without deleting directory", (t) => {
+	const root = makeTempDir("tlh-cleanup-retired-dir-dryrun-");
+	const agentDir = join(root, "agent");
+	const intercomDir = join(agentDir, "intercom");
+	mkdirSync(intercomDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	const stdout = captureConsole("log", () =>
+		cleanupRetiredProfileDirectories({ agentDir, dryRun: true, quiet: false, verbose: false }),
+	);
+
+	assert.ok(existsSync(intercomDir), "directory should not be removed in dry-run mode");
+	assert.match(stdout, /Would remove retired profile directory.*intercom/);
 });
