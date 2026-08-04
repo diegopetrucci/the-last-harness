@@ -345,7 +345,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		pi.on("session_start", (_event, ctx) => {
 			if (warned) return;
 			warned = true;
-			ctx.ui.notify(warning, "warning");
+			if (ctx.hasUI) ctx.ui.notify(warning, "warning");
+			if (!ctx.hasUI || ctx.mode === "rpc") process.stderr.write(`${warning}\n`);
 		});
 		return;
 	}

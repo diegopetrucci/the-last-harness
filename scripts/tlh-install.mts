@@ -1763,16 +1763,16 @@ async function runInstallFlow(config: InstallConfig): Promise<void> {
 	const retiredSubagentPackages = config.noSettings
 		? []
 		: captureManagedRetiredSubagentPackages(config.settingsPath);
-	const retiredSubagentNpmCommand = config.noSettings
-		? undefined
-		: captureRetiredSubagentNpmCommand(config.settingsPath);
-	await mergeSettings(config);
+	const retiredSubagentNpmCommand = retiredSubagentPackages.length > 0
+		? captureRetiredSubagentNpmCommand(config.settingsPath)
+		: undefined;
 	if (!config.noSettings) {
 		cleanupManagedRetiredSubagentPackages(
 			{ ...config, npmCommand: retiredSubagentNpmCommand },
 			retiredSubagentPackages,
 		);
 	}
+	await mergeSettings(config);
 	cleanupLegacyManagedProfileArtifacts(config);
 	if (!config.noSettings) cleanupRetiredProfileFiles(config);
 	if (!config.noSettings) cleanupOldSettingsBackups(config);

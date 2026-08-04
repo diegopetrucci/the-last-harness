@@ -265,11 +265,12 @@ export function captureManagedRetiredSubagentPackages(settingsPath: string): Ret
 }
 
 /**
- * Physically remove entries captured before settings merge, after the settings
- * backup/write and before the subsequent extension refresh. npm entries use the same configured
- * package-manager command semantics as Pi so package.json, lockfiles, and
- * node_modules converge together. Git entries retain the guarded filesystem
- * cleanup because their package-manager state lives in settings.json.
+ * Physically remove entries captured from settings before merging those settings.
+ * This preserves package ownership evidence when npm uninstall fails, so a later
+ * installer or doctor run can retry. npm entries use the same configured package-
+ * manager semantics as Pi so package.json, lockfiles, and node_modules converge
+ * together. Git entries retain guarded filesystem cleanup because their package-
+ * manager state lives in settings.json.
  */
 export function cleanupManagedRetiredSubagentPackages(
 	config: RetiredSubagentCleanupConfig,

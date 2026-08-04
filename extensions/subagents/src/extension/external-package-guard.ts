@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+// Deliberately limited to the retired npm/git sources TLH previously managed.
+// local:/path entries are outside this migration's ownership evidence and scope.
 export const EXTERNAL_SUBAGENT_PACKAGE_SOURCES = Object.freeze([
 	"npm:@diegopetrucci/pi-subagents",
 	"npm:pi-subagents",
@@ -121,6 +123,8 @@ export function findConfiguredExternalSubagentPackages(options: {
 	configDirName: string;
 }): ExternalSubagentPackageMatch[] {
 	const userSettingsPath = path.join(options.agentDir, "settings.json");
+	// Project trust is only available later through an event context. Conservatively
+	// defer for a configured project entry rather than risk duplicate registration.
 	const projectSettingsPath = path.join(options.cwd, options.configDirName, "settings.json");
 	return [
 		...settingsMatches(userSettingsPath, "user"),

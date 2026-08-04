@@ -19,7 +19,7 @@ function writeExecutable(path, content) {
 	chmodSync(path, 0o755);
 }
 
-test("actual install flow uninstalls managed npm subagents before extension refresh can resurrect it", (t) => {
+test("actual install retries failed managed npm cleanup before merge and cannot resurrect it", (t) => {
 	const root = makeTempDir("tlh-stage1-subagents-retirement-");
 	const homeDir = join(root, "home");
 	const agentDir = join(root, "agent");
@@ -29,6 +29,7 @@ test("actual install flow uninstalls managed npm subagents before extension refr
 	const runtimeDir = join(root, "runtime");
 	const templatePi = join(root, "template-pi");
 	const eventLog = join(root, "events.log");
+	const uninstallAttemptsPath = join(root, "uninstall-attempts.txt");
 	const packageName = "@diegopetrucci/pi-subagents";
 	const npmRoot = join(agentDir, "npm");
 	const packageDirInNodeModules = join(npmRoot, "node_modules", packageName);
@@ -44,6 +45,11 @@ test("actual install flow uninstalls managed npm subagents before extension refr
 		],
 		npmCommand: ["corepack", "--", "pnpm"],
 		userSetting: { keep: true },
+		tlh: {
+			defaultExtensionProvenance: {
+				managedPackageIdentities: ["npm:@diegopetrucci/pi-subagents"],
+			},
+		},
 	}, null, 2));
 	writeFileSync(join(npmRoot, "package.json"), JSON.stringify({
 		dependencies: {
@@ -102,6 +108,14 @@ import { join } from "node:path";
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(eventLog)}, "pm:" + args.join(" ") + "\\n");
 if (args[0] !== "--" || args[1] !== "pnpm" || args[2] !== "uninstall") process.exit(91);
+const previousAttempts = existsSync(${JSON.stringify(uninstallAttemptsPath)})
+  ? Number(readFileSync(${JSON.stringify(uninstallAttemptsPath)}, "utf8"))
+  : 0;
+writeFileSync(${JSON.stringify(uninstallAttemptsPath)}, String(previousAttempts + 1));
+if (previousAttempts === 0) {
+  process.stderr.write("simulated package-manager failure\\n");
+  process.exit(7);
+}
 const packageName = args[3];
 const prefixIndex = args.indexOf("--prefix");
 const installRoot = args[prefixIndex + 1];
@@ -121,26 +135,56 @@ rmSync(join(installRoot, "node_modules", packageName), { recursive: true, force:
 	writeFakeCommand(fakebin, "git", "exit 0");
 	writeFakeTk(fakebin);
 
-	const result = runInstaller([
+	const installArgs = [
 		"--agent-dir", agentDir,
 		"--bin-dir", binDir,
 		"--no-wrapper",
-	], scrubInstallerEnv({
+	];
+	const installEnv = scrubInstallerEnv({
 		HOME: homeDir,
 		PATH: `${fakebin}:${process.env.PATH || ""}`,
 		TLH_PACKAGE_SOURCE: packageDir,
 		TLH_SKIP_GNOSIS_INSTALL: "1",
-	}));
-	const output = `${result.stdout}\n${result.stderr}`;
-	assert.equal(result.status, 0, output);
-	assert.match(output, /Uninstalled retired TLH subagent npm package: @diegopetrucci\/pi-subagents/);
+	});
 
-	const events = readFileSync(eventLog, "utf8").trim().split(/\r?\n/);
-	const uninstallIndex = events.findIndex((line) => line.startsWith("pm:-- pnpm uninstall @diegopetrucci/pi-subagents"));
-	const refreshIndex = events.findIndex((line) => line === "pi:update --extensions");
-	assert.ok(uninstallIndex >= 0, `configured package manager was not called: ${events.join("\n")}`);
-	assert.ok(refreshIndex > uninstallIndex, `extension refresh must run after uninstall: ${events.join("\n")}`);
-	assert.equal(events.some((line) => line.startsWith("resurrected:")), false, "post-merge extension refresh must not resurrect subagents");
+	const firstResult = runInstaller(installArgs, installEnv);
+	const firstOutput = `${firstResult.stdout}\n${firstResult.stderr}`;
+	assert.equal(firstResult.status, 1, firstOutput);
+	assert.match(firstOutput, /failed to uninstall retired TLH subagent npm package.*simulated package-manager failure/);
+
+	const failedSettings = readJson(join(agentDir, "settings.json"));
+	assert.equal(
+		failedSettings.packages.includes("npm:@diegopetrucci/pi-subagents@0.31.14"),
+		true,
+		"failed cleanup must leave the managed package entry available for retry",
+	);
+	assert.equal(
+		failedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities.includes("npm:@diegopetrucci/pi-subagents"),
+		true,
+		"failed cleanup must leave ownership provenance available for retry",
+	);
+	assert.equal(Object.hasOwn(readJson(join(npmRoot, "package.json")).dependencies, packageName), true);
+	assert.equal(existsSync(packageDirInNodeModules), true);
+
+	const firstEvents = readFileSync(eventLog, "utf8").trim().split(/\r?\n/);
+	assert.equal(firstEvents.filter((line) => line.startsWith("pm:-- pnpm uninstall")).length, 1);
+	assert.equal(firstEvents.includes("pi:update --extensions"), false, "failed cleanup must abort before extension refresh");
+
+	// Installer preflight backups use second-resolution names; cross the boundary
+	// so this retry exercises retirement recovery rather than backup collision handling.
+	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1100);
+	const secondResult = runInstaller(installArgs, installEnv);
+	const secondOutput = `${secondResult.stdout}\n${secondResult.stderr}`;
+	assert.equal(secondResult.status, 0, secondOutput);
+	assert.match(secondOutput, /Uninstalled retired TLH subagent npm package: @diegopetrucci\/pi-subagents/);
+
+	const allEvents = readFileSync(eventLog, "utf8").trim().split(/\r?\n/);
+	const secondEvents = allEvents.slice(firstEvents.length);
+	const uninstallIndex = secondEvents.findIndex((line) => line.startsWith("pm:-- pnpm uninstall @diegopetrucci/pi-subagents"));
+	const refreshIndex = secondEvents.findIndex((line) => line === "pi:update --extensions");
+	assert.ok(uninstallIndex >= 0, `configured package manager was not retried: ${secondEvents.join("\n")}`);
+	assert.ok(refreshIndex > uninstallIndex, `extension refresh must run after uninstall and settings merge: ${secondEvents.join("\n")}`);
+	assert.equal(secondEvents.some((line) => line.startsWith("resurrected:")), false, "post-merge extension refresh must not resurrect subagents");
 
 	const npmPackageJson = readJson(join(npmRoot, "package.json"));
 	const npmPackageLock = readJson(join(npmRoot, "package-lock.json"));
@@ -152,7 +196,19 @@ rmSync(join(installRoot, "node_modules", packageName), { recursive: true, force:
 	const settings = readJson(join(agentDir, "settings.json"));
 	assert.equal(settings.packages.some((entry) => String(typeof entry === "string" ? entry : entry.source).includes("pi-subagents")), false);
 	assert.equal(settings.packages.includes("npm:keep-me"), true, "unrelated configured package must survive");
+	assert.equal(settings.tlh.defaultExtensionProvenance.managedPackageIdentities.includes("npm:@diegopetrucci/pi-subagents"), false);
 	assert.deepEqual(settings.userSetting, { keep: true }, "unrelated settings must survive");
 	assert.deepEqual(settings.npmCommand, ["corepack", "--", "pnpm"], "configured package-manager command must survive");
 	assert.ok(existsSync(join(runtimeDir, "bin", "pi")), "installer must complete with the private runtime intact");
+
+	// A malformed command setting is unrelated once no retired candidate remains.
+	settings.npmCommand = "npm";
+	const malformedSettingsRaw = JSON.stringify(settings, null, 2);
+	writeFileSync(join(agentDir, "settings.json"), malformedSettingsRaw);
+	const dryRunResult = runInstaller(["--dry-run", ...installArgs], installEnv);
+	const dryRunOutput = `${dryRunResult.stdout}\n${dryRunResult.stderr}`;
+	assert.equal(dryRunResult.status, 0, dryRunOutput);
+	assert.doesNotMatch(dryRunOutput, /invalid npmCommand/);
+	assert.equal(readFileSync(join(agentDir, "settings.json"), "utf8"), malformedSettingsRaw, "dry-run must not rewrite settings");
+	assert.equal(readFileSync(uninstallAttemptsPath, "utf8"), "2", "no retired candidate means no package-manager invocation");
 });

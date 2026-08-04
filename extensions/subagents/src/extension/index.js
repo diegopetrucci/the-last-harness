@@ -246,7 +246,10 @@ export default function registerSubagentExtension(pi) {
             if (warned)
                 return;
             warned = true;
-            ctx.ui.notify(warning, "warning");
+            if (ctx.hasUI)
+                ctx.ui.notify(warning, "warning");
+            if (!ctx.hasUI || ctx.mode === "rpc")
+                process.stderr.write(`${warning}\n`);
         });
         return;
     }

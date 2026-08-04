@@ -521,20 +521,13 @@ function repairAction(level, label, detail) {
 function repairSettings(packageRoot, agentDir, settingsPath, env) {
     const retiredSubagentPackages = captureManagedRetiredSubagentPackages(settingsPath);
     let npmCommand;
-    try {
-        npmCommand = captureRetiredSubagentNpmCommand(settingsPath);
-    }
-    catch (error) {
-        return repairAction("FAIL", "settings drift", `could not read retired subagent package-manager settings (${error instanceof Error ? error.message : String(error)})`);
-    }
-    const result = runCommand(process.execPath, [
-        mergeSettingsScript(packageRoot),
-        defaultsPath(packageRoot),
-        "--settings", settingsPath,
-        "--default-extensions", defaultExtensionsPath(packageRoot),
-    ], { env });
-    if (result.status !== 0) {
-        return repairAction("FAIL", "settings drift", `could not repair packaged settings drift (${commandFailureSummary(result)})`);
+    if (retiredSubagentPackages.length > 0) {
+        try {
+            npmCommand = captureRetiredSubagentNpmCommand(settingsPath);
+        }
+        catch (error) {
+            return repairAction("FAIL", "settings drift", `could not read retired subagent package-manager settings (${error instanceof Error ? error.message : String(error)})`);
+        }
     }
     let physicalCleanupDetail;
     try {
@@ -549,7 +542,16 @@ function repairSettings(packageRoot, agentDir, settingsPath, env) {
         physicalCleanupDetail = details.length > 0 ? `; ${details.join("; ")}` : "";
     }
     catch (error) {
-        return repairAction("FAIL", "settings drift", `settings repaired, but could not physically remove retired TLH subagent package (${error instanceof Error ? error.message : String(error)})`);
+        return repairAction("FAIL", "settings drift", `could not physically remove retired TLH subagent package; settings remain unchanged for retry (${error instanceof Error ? error.message : String(error)})`);
+    }
+    const result = runCommand(process.execPath, [
+        mergeSettingsScript(packageRoot),
+        defaultsPath(packageRoot),
+        "--settings", settingsPath,
+        "--default-extensions", defaultExtensionsPath(packageRoot),
+    ], { env });
+    if (result.status !== 0) {
+        return repairAction("FAIL", "settings drift", `could not repair packaged settings drift (${commandFailureSummary(result)})${physicalCleanupDetail}`);
     }
     const output = summarizeCommandOutput(result);
     if (output === "No settings changes needed.") {

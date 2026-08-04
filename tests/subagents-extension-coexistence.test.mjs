@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -18,7 +18,7 @@ import {
 const repoRoot = resolve(import.meta.dirname, "..");
 const extensionUrl = pathToFileURL(join(repoRoot, "extensions", "subagents", "src", "extension", "index.js")).href;
 
-function runPackageLoadScenario(t, { scope, packageEntry }) {
+function runPackageLoadScenario(t, { scope, packageEntry, hasUI = true, mode = "tui" }) {
 	const root = mkdtempSync(join(tmpdir(), "tlh-subagents-coexistence-"));
 	const agentDir = join(root, "agent");
 	const projectDir = join(root, "project");
@@ -57,6 +57,8 @@ function runPackageLoadScenario(t, { scope, packageEntry }) {
 				if (registration.event === "session_start") {
 					registration.handler({}, {
 						cwd: process.cwd(),
+						hasUI: ${JSON.stringify(hasUI)},
+						mode: ${JSON.stringify(mode)},
 						ui: { notify(message, level) { warnings.push({ message, level }); } },
 					});
 				}
@@ -70,11 +72,13 @@ function runPackageLoadScenario(t, { scope, packageEntry }) {
 	};
 	delete env.PI_SUBAGENT_CHILD;
 	delete env.PI_SUBAGENT_FANOUT_CHILD;
-	return JSON.parse(execFileSync(process.execPath, ["--input-type=module", "--eval", script], {
+	const child = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
 		cwd: projectDir,
 		env,
 		encoding: "utf8",
-	}));
+	});
+	assert.equal(child.status, 0, `${child.stdout}\n${child.stderr}`);
+	return { ...JSON.parse(child.stdout), stderr: child.stderr };
 }
 
 for (const scenario of [
@@ -94,10 +98,32 @@ for (const scenario of [
 		assert.deepEqual(result.tools, [], "subagent and wait tools must not register");
 		assert.deepEqual(result.calls, ["on:session_start"], "only the supported session-start warning path may register");
 		assert.equal(result.sharedCleanupCalls, 0, "coexistence guard must run before shared runtime cleanup");
-		assert.equal(result.warnings.length, 1, "exactly one warning must be emitted");
+		assert.equal(result.warnings.length, 1, "exactly one UI warning must be emitted");
 		assert.equal(result.warnings[0].level, "warning");
 		assert.match(result.warnings[0].message, /external pi-subagents package remains active/);
 		assert.match(result.warnings[0].message, new RegExp(`${scenario.scope} settings`));
+		assert.equal(result.stderr, "", "interactive TUI warning must not also write to stderr");
+	});
+}
+
+for (const scenario of [
+	{ name: "headless print mode", hasUI: false, mode: "print", expectedUiWarnings: 0 },
+	{ name: "RPC mode with a UI channel", hasUI: true, mode: "rpc", expectedUiWarnings: 1 },
+]) {
+	test(`bundled coexistence guard emits one stderr warning in ${scenario.name}`, (t) => {
+		const result = runPackageLoadScenario(t, {
+			scope: "user",
+			packageEntry: "npm:@diegopetrucci/pi-subagents@0.31.14",
+			hasUI: scenario.hasUI,
+			mode: scenario.mode,
+		});
+		assert.equal(result.warnings.length, scenario.expectedUiWarnings);
+		assert.equal(
+			(result.stderr.match(/TLH bundled subagents did not register/g) ?? []).length,
+			1,
+			"repeated session-start events must not duplicate the stderr warning",
+		);
+		assert.match(result.stderr, /external pi-subagents package remains active in user settings/);
 	});
 }
 
@@ -120,4 +146,7 @@ test("bundled coexistence guard identities stay aligned with installer retiremen
 			`identity parity for ${source}`,
 		);
 	}
+	// Local/path packages do not carry the retired-source ownership evidence this
+	// migration relies on, so they intentionally remain outside the guard allowlist.
+	assert.equal(externalSubagentPackageIdentity("local:../pi-subagents"), undefined);
 });

@@ -549,11 +549,16 @@ test("tlh doctor --repair physically uninstalls legacy managed npm subagents and
 	}, null, 2));
 	writeExecutable(join(fixture.fakebin, "corepack"), `#!/usr/bin/env node
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 const args = process.argv.slice(2);
 if (args[0] !== "--" || args[1] !== "pnpm" || args[2] !== "uninstall") process.exit(91);
 const packageName = args[3];
 const installRoot = args[args.indexOf("--prefix") + 1];
+const settings = JSON.parse(readFileSync(join(dirname(installRoot), "settings.json"), "utf8"));
+if (!settings.packages.some((entry) => String(typeof entry === "string" ? entry : entry.source).includes("pi-subagents"))) {
+  process.stderr.write("doctor merged settings before physical cleanup\\n");
+  process.exit(92);
+}
 const packageJsonPath = join(installRoot, "package.json");
 const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
 delete packageJson.dependencies?.[packageName];
@@ -582,6 +587,28 @@ rmSync(join(installRoot, "node_modules", packageName), { recursive: true, force:
 	const repairedSettings = JSON.parse(readFileSync(settingsPath, "utf8"));
 	assert.equal(repairedSettings.packages.some((entry) => String(typeof entry === "string" ? entry : entry.source).includes("pi-subagents")), false);
 	assert.deepEqual(repairedSettings.npmCommand, ["corepack", "--", "pnpm"]);
+});
+
+test("tlh doctor --repair ignores malformed npmCommand when no retired subagents candidate exists", (t) => {
+	const fixture = configureHealthyFixture(t);
+	const packageRoot = createFakeDoctorPackageRoot(fixture.root);
+	const settingsPath = join(fixture.agentDir, "settings.json");
+	const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+	settings.npmCommand = "npm";
+	writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+
+	const result = runDoctor(["--repair", "--agent-dir", fixture.agentDir, "--package-root", packageRoot], {
+		env: {
+			HOME: fixture.home,
+			PATH: `${fixture.fakebin}:${process.env.PATH}`,
+			EXA_API_KEY: "hidden",
+		},
+	});
+	const output = `${result.stdout}\n${result.stderr}`;
+	assert.equal(result.status, 0, output);
+	assert.doesNotMatch(output, /invalid npmCommand/);
+	assert.equal(JSON.parse(readFileSync(settingsPath, "utf8")).npmCommand, "npm");
+	assert.match(output, /Summary: .*0 FAIL/);
 });
 
 test("tlh doctor --repair repairs malformed subagents containers without --force", (t) => {
