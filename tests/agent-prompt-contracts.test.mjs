@@ -68,7 +68,7 @@ test("scout and research subagent prompts keep bounded scope and tool budgets", 
 	const diffSummarizer = readAgentPrompt("subagents", "diff-summarizer");
 	const webScout = readAgentPrompt("subagents", "web-scout");
 
-	assertBodyPattern(librarian, "librarian tool budget", /toolBudget:\s*\{"soft":20,"hard":30\}/i);
+	assertBodyPattern(librarian, "librarian tool budget", /toolBudget:\s*\{"soft":30,"hard":60\}/i);
 	assertBodyPattern(repoScout, "repo-scout tool budget", /toolBudget:\s*\{"soft":20,"hard":30\}/i);
 	assertBodyPattern(diffSummarizer, "diff-summarizer tool budget", /toolBudget:\s*\{"soft":12,"hard":20\}/i);
 	assertBodyPattern(webScout, "web-scout tool budget", /toolBudget:\s*\{"soft":5,"hard":7\}/i);
