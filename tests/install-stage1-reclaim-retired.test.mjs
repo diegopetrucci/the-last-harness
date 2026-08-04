@@ -334,6 +334,20 @@ test("reclaimRetiredExtensionResidues finding 2: symlinked agentDir blocks all p
 	assert.equal(existsSync(piLog), false, "pi must not be invoked when agentDir is a symlink");
 });
 
+test("reclaimRetiredExtensionResidues finding 2: non-directory agentDir blocks all probes and prevents pi invocation", (t) => {
+	if (process.platform === "win32") return;
+	const { config, agentDir, piLog } = makeConfig(t, {
+		settings: { packages: [] },
+		fakePiBody: `printf '%s|%s|%s\\n' "$PI_CODING_AGENT_DIR" "$PWD" "$*" >>"$PI_LOG"`,
+	});
+	// Replace the agentDir directory with a regular file
+	rmSync(agentDir, { recursive: true });
+	writeFileSync(agentDir, "not-a-directory");
+
+	assert.doesNotThrow(() => captureConsole("error", () => reclaimRetiredExtensionResidues(config)));
+	assert.equal(existsSync(piLog), false, "pi must not be invoked when agentDir is a regular file");
+});
+
 // ---------------------------------------------------------------------------
 // Finding 3: Dry-run gating uses the force-removed list, not pre-merge
 // settings — a force-removed source present in settings AND on disk must
@@ -403,6 +417,33 @@ test("reclaimRetiredExtensionResidues finding 4: present non-array packages fiel
 
 	assert.equal(existsSync(piLog), false, "pi must not be invoked when packages is not an array");
 	assert.match(stderr, /warning:.*invalid schema/);
+});
+
+// ---------------------------------------------------------------------------
+// Non-directory intermediate path components — regression for ENOTDIR crash
+// ---------------------------------------------------------------------------
+
+test("reclaimRetiredExtensionResidues: file at agentDir/npm skips without throwing (ENOTDIR regression)", (t) => {
+	const { config, agentDir, piLog } = makeConfig(t, {
+		settings: { packages: [] },
+		fakePiBody: `printf '%s|%s|%s\\n' "$PI_CODING_AGENT_DIR" "$PWD" "$*" >>"$PI_LOG"`,
+	});
+	// Place a regular FILE at agentDir/npm — simulates a collision with the npm dir
+	writeFileSync(join(agentDir, "npm"), "not-a-directory", "utf8");
+	// Previously threw ENOTDIR when trying to lstat agentDir/npm/node_modules
+	assert.doesNotThrow(() => reclaimRetiredExtensionResidues(config));
+	assert.equal(existsSync(piLog), false, "pi must not be invoked when npm path is not a directory");
+});
+
+test("reclaimRetiredExtensionResidues: file at agentDir/git skips without throwing (ENOTDIR regression)", (t) => {
+	const { config, agentDir, piLog } = makeConfig(t, {
+		settings: { packages: [] },
+		fakePiBody: `printf '%s|%s|%s\\n' "$PI_CODING_AGENT_DIR" "$PWD" "$*" >>"$PI_LOG"`,
+	});
+	// Place a regular FILE at agentDir/git
+	writeFileSync(join(agentDir, "git"), "not-a-directory", "utf8");
+	assert.doesNotThrow(() => reclaimRetiredExtensionResidues(config));
+	assert.equal(existsSync(piLog), false, "pi must not be invoked when git path is not a directory");
 });
 
 test("reclaimRetiredExtensionResidues finding 4: object-form packages entry is preserved (user-owned package not removed)", (t) => {

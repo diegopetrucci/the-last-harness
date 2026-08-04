@@ -283,6 +283,25 @@ test("cleanupRetiredProfileDirectories skips symlinked intercom/ target without 
 	assert.ok(existsSync(join(agentDir, "intercom")), "symlink itself must be preserved");
 });
 
+// ---------------------------------------------------------------------------
+// Non-directory intermediate path components — regression for ENOTDIR crash
+// ---------------------------------------------------------------------------
+
+test("cleanupRetiredProfileFiles: file at agentDir/extensions skips without throwing (ENOTDIR regression)", (t) => {
+	const root = makeTempDir("tlh-cleanup-retired-file-nondir-parent-");
+	const agentDir = join(root, "agent");
+	mkdirSync(agentDir, { recursive: true });
+	// Place a regular FILE where the extensions directory would be
+	writeFileSync(join(agentDir, "extensions"), "not-a-directory", "utf8");
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	const config = { agentDir, dryRun: false, quiet: true, verbose: false };
+	// Previously threw ENOTDIR when trying to lstat agentDir/extensions/librarian.json
+	assert.doesNotThrow(() => cleanupRetiredProfileFiles(config));
+	// The file must be untouched
+	assert.ok(existsSync(join(agentDir, "extensions")), "non-directory file must not be removed");
+});
+
 test("cleanupRetiredProfileDirectories dry-run logs removal without deleting directory", (t) => {
 	const root = makeTempDir("tlh-cleanup-retired-dir-dryrun-");
 	const agentDir = join(root, "agent");

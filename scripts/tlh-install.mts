@@ -1052,6 +1052,7 @@ export const RETIRED_PROFILE_DIRECTORIES = Object.freeze([
  *
  * Returns the resolved target path when safe, or null when blocked:
  *   - agentDir is a symlink → null with a warning
+ *   - agentDir exists but is not a directory → null with a warning
  *   - an intermediate component is a symlink → null with a warning
  *   - an intermediate component does not exist → null (silent; target absent)
  *
@@ -1067,6 +1068,10 @@ function resolveGuardedProfilePath(
 		warn(`Skipping ${label}: agentDir is a symlink: ${agentDir}`);
 		return null;
 	}
+	if (existsSync(agentDir) && !lstatSync(agentDir).isDirectory()) {
+		warn(`Skipping ${label}: agentDir is not a directory: ${agentDir}`);
+		return null;
+	}
 	const components = relativePath.split("/");
 	const parentComponents = components.slice(0, -1);
 	const lastName = components[components.length - 1];
@@ -1079,6 +1084,9 @@ function resolveGuardedProfilePath(
 		}
 		if (!existsSync(cursor)) {
 			return null; // silent: target simply does not exist
+		}
+		if (!lstatSync(cursor).isDirectory()) {
+			return null; // non-directory intermediate: treat as absent, never descend
 		}
 	}
 	return join(cursor, lastName);
