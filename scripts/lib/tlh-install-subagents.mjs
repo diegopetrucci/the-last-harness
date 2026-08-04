@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { packageSourceInstallDir } from "./tlh-install-package-source.mjs";
-import { copySafeProfileFile, ensureSafeProfileDir } from "./tlh-install-paths.mjs";
+import { existsSync, lstatSync, readFileSync, readdirSync, rmdirSync, rmSync } from "node:fs";
+import { dirname, join, resolve, sep } from "node:path";
+import { RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./default-extensions.mjs";
+import { criticalGitSourceSpec, packageSourceInstallDir } from "./tlh-install-package-source.mjs";
+import { assertProfilePathWithinAgent, copySafeProfileFile, ensureSafeProfileDir, isSymlink } from "./tlh-install-paths.mjs";
 import { readJsonFile } from "./tlh-install-utils.mjs";
 import { writeSafeProfileFile } from "./tlh-safe-profile-write.mjs";
 const TLH_SUBAGENT_PROMPTS = Object.freeze([
@@ -18,6 +19,162 @@ function isPlainObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 export { TLH_SUBAGENT_PROMPTS };
+function logRetiredSubagentCleanup(config, message) {
+    if (!config.quiet)
+        console.log(message);
+}
+function warnRetiredSubagentCleanup(message) {
+    console.error(`warning: ${message}`);
+}
+function packageNameFromNpmSource(source) {
+    const spec = source.trim().slice("npm:".length).trim();
+    if (!spec)
+        return undefined;
+    if (spec.startsWith("@")) {
+        const separator = spec.indexOf("@", 1);
+        return separator === -1 ? spec : spec.slice(0, separator);
+    }
+    const separator = spec.indexOf("@");
+    return separator === -1 ? spec : spec.slice(0, separator);
+}
+function sourceInstallPath(agentDir, source) {
+    const trimmed = source.trim();
+    if (trimmed.startsWith("npm:")) {
+        const packageName = packageNameFromNpmSource(trimmed);
+        if (!packageName)
+            return undefined;
+        return { path: join(agentDir, "npm", "node_modules", packageName), kind: "npm", packageName };
+    }
+    const spec = criticalGitSourceSpec(trimmed, { agentDir });
+    if (!spec)
+        return undefined;
+    return { path: spec.targetDir, kind: "git" };
+}
+function pathWithin(root, target) {
+    const normalizedRoot = resolve(root);
+    const normalizedTarget = resolve(target);
+    return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}${sep}`);
+}
+function hasSymlinkedParent(root, target) {
+    let current = dirname(target);
+    const resolvedRoot = resolve(root);
+    while (pathWithin(resolvedRoot, current) && current !== resolvedRoot) {
+        if (isSymlink(current))
+            return true;
+        current = dirname(current);
+    }
+    return false;
+}
+function packageInstallationIsOwned(path, kind, packageName) {
+    try {
+        if (!lstatSync(path).isDirectory())
+            return false;
+        if (kind === "git")
+            return existsSync(join(path, ".git"));
+        const packageJson = readJsonFile(join(path, "package.json"));
+        return packageJson.name === packageName;
+    }
+    catch {
+        return false;
+    }
+}
+/**
+ * Capture package entries that the old TLH default owned before settings merge.
+ * A profile without provenance is treated as a pre-provenance TLH profile, as
+ * with the other retired defaults; a provenance block makes manual ownership
+ * explicit and therefore keeps unlisted external entries safe.
+ */
+export function managedRetiredSubagentPackages(settings) {
+    if (!isPlainObject(settings) || !Array.isArray(settings.packages))
+        return [];
+    const provenance = readDefaultExtensionProvenance(settings).managedPackageIdentities;
+    const managed = withLegacyRetiredDefaultPackageIdentities(settings, provenance, RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES);
+    const candidates = [];
+    const seen = new Set();
+    for (const entry of settings.packages) {
+        const source = packageSourceOf(entry);
+        const identity = packageIdentity(entry);
+        if (!source || !identity || !managed.has(identity) || seen.has(identity))
+            continue;
+        if (!RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES.some((known) => packageIdentity(known) === identity))
+            continue;
+        seen.add(identity);
+        candidates.push({ source, identity });
+    }
+    return candidates;
+}
+/** Read and capture managed retired subagent entries before merge removes them. */
+export function captureManagedRetiredSubagentPackages(settingsPath) {
+    if (!settingsPath || !existsSync(settingsPath))
+        return [];
+    try {
+        return managedRetiredSubagentPackages(readJsonFile(settingsPath));
+    }
+    catch {
+        return [];
+    }
+}
+/**
+ * Remove only package-manager installations corresponding to captured managed
+ * entries.  The checks deliberately reject symlinked paths, foreign paths,
+ * malformed npm metadata, and non-git directories before any recursive delete.
+ */
+export function cleanupManagedRetiredSubagentPackages(config, candidates) {
+    if (!config.agentDir || isSymlink(config.agentDir)) {
+        if (candidates.length > 0)
+            warnRetiredSubagentCleanup(`skipping retired subagent package cleanup for unsafe agent dir: ${config.agentDir}`);
+        return;
+    }
+    for (const candidate of candidates) {
+        const install = sourceInstallPath(config.agentDir, candidate.source);
+        if (!install)
+            continue;
+        if (!pathWithin(config.agentDir, install.path) || hasSymlinkedParent(config.agentDir, install.path) || isSymlink(install.path)) {
+            warnRetiredSubagentCleanup(`skipping retired subagent package cleanup for unsafe path: ${install.path}`);
+            continue;
+        }
+        if (!existsSync(install.path) || !packageInstallationIsOwned(install.path, install.kind, install.packageName))
+            continue;
+        try {
+            assertProfilePathWithinAgent({ agentDir: config.agentDir }, install.path, "retired subagent package");
+        }
+        catch (error) {
+            warnRetiredSubagentCleanup(`skipping retired subagent package cleanup for unsafe path: ${install.path}: ${error instanceof Error ? error.message : String(error)}`);
+            continue;
+        }
+        if (config.dryRun) {
+            logRetiredSubagentCleanup(config, `Would remove retired TLH subagent package installation: ${install.path}`);
+            continue;
+        }
+        try {
+            rmSync(install.path, { recursive: true, force: true });
+            logRetiredSubagentCleanup(config, `Removed retired TLH subagent package installation: ${install.path}`);
+        }
+        catch (error) {
+            warnRetiredSubagentCleanup(`failed to remove retired subagent package installation ${install.path}: ${error instanceof Error ? error.message : String(error)}`);
+            continue;
+        }
+        if (install.kind === "git") {
+            const gitRoot = join(config.agentDir, "git");
+            let parent = dirname(install.path);
+            while (pathWithin(gitRoot, parent) && parent !== gitRoot) {
+                if (isSymlink(parent))
+                    break;
+                try {
+                    if (readdirSync(parent).length !== 0)
+                        break;
+                    // rmdirSync removes empty directories atomically and fails with
+                    // ENOTEMPTY if the directory becomes non-empty concurrently.
+                    rmdirSync(parent);
+                }
+                catch {
+                    break;
+                }
+                parent = dirname(parent);
+            }
+        }
+    }
+}
 export function settingsRequireTlhSubagentPrompts(defaultsFile, { noSettings = false } = {}) {
     if (noSettings || !defaultsFile || !existsSync(defaultsFile))
         return false;

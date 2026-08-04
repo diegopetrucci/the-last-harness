@@ -50,14 +50,5 @@
     "id": "dirty-repo-guard",
     "source": "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.8",
     "description": "Prompt before session changes when the current git repo has uncommitted changes."
-  },
-  {
-    "id": "subagents",
-    "aliases": ["pi-subagents"],
-    "replaces": ["npm:pi-subagents", "git:github.com/nicobailon/pi-subagents", "git:github.com/diegopetrucci/pi-subagents"],
-    "migrateReplacements": true,
-    "critical": true,
-    "source": "npm:@diegopetrucci/pi-subagents@0.31.14",
-    "description": "Delegate work to isolated TLH-profile subagents."
   }
 ]

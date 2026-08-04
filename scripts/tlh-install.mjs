@@ -10,7 +10,7 @@ import { criticalGitSourceSpec, packageSourceInstallDir, packageSourcePiSource, 
 import { assertProfilePathWithinAgent, assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, validateInstallerTargets, validateProfileRelativePath, } from "./lib/tlh-install-paths.mjs";
 import { packageIdentity, } from "./lib/default-extensions.mjs";
 import { assignRequiredEqualsValue, backupPathWithTimestamp, isTlhOwnedBackupFilename, renderShellWords, requiredValue, selectExpiredBackups, shellWord, } from "./lib/tlh-install-utils.mjs";
-import { TLH_SUBAGENT_PROMPTS, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, missingTlhSubagentPrompts, provisionSubagentExtensionConfig, settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts, subagentExtensionConfigMissingDefaults, } from "./lib/tlh-install-subagents.mjs";
+import { TLH_SUBAGENT_PROMPTS, captureManagedRetiredSubagentPackages, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, missingTlhSubagentPrompts, provisionSubagentExtensionConfig, settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts, subagentExtensionConfigMissingDefaults, } from "./lib/tlh-install-subagents.mjs";
 import { assertGitSourceTargetSafe, refreshGitCheckout, } from "./lib/tlh-install-git.mjs";
 import { findLocalRepoDir, ensureSupportFilesPrepared, installableSupportFilesArePrepared, preflightRuntimeSupportFiles, } from "./lib/tlh-install-support-files.mjs";
 import { formatSupportFileManifest, installableSupportFiles, supportFileManifest, } from "./lib/tlh-install-support-manifest.mjs";
@@ -1550,7 +1550,13 @@ async function runInstallFlow(config) {
     config.piCmd = piCmd;
     installHarnessPackage(config);
     await installSupportFilesToProfile(config);
+    const retiredSubagentPackages = config.noSettings
+        ? []
+        : captureManagedRetiredSubagentPackages(config.settingsPath);
     await mergeSettings(config);
+    if (!config.noSettings) {
+        cleanupManagedRetiredSubagentPackages(config, retiredSubagentPackages);
+    }
     cleanupLegacyManagedProfileArtifacts(config);
     if (!config.noSettings)
         cleanupRetiredProfileFiles(config);

@@ -13,6 +13,8 @@ import {
 	type DefaultExtensionEntry,
 } from "./lib/default-extensions.mjs";
 import {
+	captureManagedRetiredSubagentPackages,
+	cleanupManagedRetiredSubagentPackages,
 	copyTlhSubagentPrompts,
 	missingTlhSubagentPrompts,
 	restoreNeededTlhSubagentPrompts,
@@ -596,7 +598,8 @@ function repairAction(level: RepairLevel, label: string, detail: string): Repair
 	return { level, label, detail };
 }
 
-function repairSettings(packageRoot: string, settingsPath: string, env: NodeJS.ProcessEnv): RepairAction {
+function repairSettings(packageRoot: string, agentDir: string, settingsPath: string, env: NodeJS.ProcessEnv): RepairAction {
+	const retiredSubagentPackages = captureManagedRetiredSubagentPackages(settingsPath);
 	const result = runCommand(process.execPath, [
 		mergeSettingsScript(packageRoot),
 		defaultsPath(packageRoot),
@@ -606,6 +609,7 @@ function repairSettings(packageRoot: string, settingsPath: string, env: NodeJS.P
 	if (result.status !== 0) {
 		return repairAction("FAIL", "settings drift", `could not repair packaged settings drift (${commandFailureSummary(result)})`);
 	}
+	cleanupManagedRetiredSubagentPackages({ agentDir, dryRun: false, quiet: true }, retiredSubagentPackages);
 	const output = summarizeCommandOutput(result);
 	if (output === "No settings changes needed.") {
 		return repairAction("OK", "settings drift", "packaged defaults already match the isolated profile");
@@ -703,7 +707,7 @@ function runRepairMode(agentDir: string, packageRoot: string, settingsPath: stri
 	}
 
 	const actions: RepairAction[] = [
-		repairSettings(packageRoot, settingsPath, env),
+		repairSettings(packageRoot, agentDir, settingsPath, env),
 		repairBundledSubagentPrompts(packageRoot, agentDir),
 		repairManagedHelper("managed gn install", gnosisScript(packageRoot), ["configure-install", "--agent-dir", agentDir], env),
 		repairManagedHelper("managed tk install", ticketsScript(packageRoot), ["configure-install", "--agent-dir", agentDir, "--settings", settingsPath], env),

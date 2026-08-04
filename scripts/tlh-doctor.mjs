@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { disabledDefaultExtensionIds, packageIdentity, readDefaultExtensions, } from "./lib/default-extensions.mjs";
-import { copyTlhSubagentPrompts, missingTlhSubagentPrompts, restoreNeededTlhSubagentPrompts, settingsRequireTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
+import { captureManagedRetiredSubagentPackages, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, missingTlhSubagentPrompts, restoreNeededTlhSubagentPrompts, settingsRequireTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
 import { pathWithinOrEqual, realpathForCompare, } from "./lib/tlh-install-paths.mjs";
 import { assignOptionValue, defaultTlhSettingsPath, expandHomePath, pathIsInNormalPiConfig, readJsonFile, resolveTlhAgentDir, } from "./lib/tlh-install-utils.mjs";
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -518,7 +518,8 @@ function summarizeCommandOutput(result) {
 function repairAction(level, label, detail) {
     return { level, label, detail };
 }
-function repairSettings(packageRoot, settingsPath, env) {
+function repairSettings(packageRoot, agentDir, settingsPath, env) {
+    const retiredSubagentPackages = captureManagedRetiredSubagentPackages(settingsPath);
     const result = runCommand(process.execPath, [
         mergeSettingsScript(packageRoot),
         defaultsPath(packageRoot),
@@ -528,6 +529,7 @@ function repairSettings(packageRoot, settingsPath, env) {
     if (result.status !== 0) {
         return repairAction("FAIL", "settings drift", `could not repair packaged settings drift (${commandFailureSummary(result)})`);
     }
+    cleanupManagedRetiredSubagentPackages({ agentDir, dryRun: false, quiet: true }, retiredSubagentPackages);
     const output = summarizeCommandOutput(result);
     if (output === "No settings changes needed.") {
         return repairAction("OK", "settings drift", "packaged defaults already match the isolated profile");
@@ -619,7 +621,7 @@ function runRepairMode(agentDir, packageRoot, settingsPath, env) {
         return 1;
     }
     const actions = [
-        repairSettings(packageRoot, settingsPath, env),
+        repairSettings(packageRoot, agentDir, settingsPath, env),
         repairBundledSubagentPrompts(packageRoot, agentDir),
         repairManagedHelper("managed gn install", gnosisScript(packageRoot), ["configure-install", "--agent-dir", agentDir], env),
         repairManagedHelper("managed tk install", ticketsScript(packageRoot), ["configure-install", "--agent-dir", agentDir, "--settings", settingsPath], env),

@@ -494,6 +494,16 @@ function pruneFffDisabledDefaultExtension(settings: JsonObject, changes: string[
 	changes.push("remove stale fff opt-out from tlh.disabledDefaultExtensions");
 }
 
+function pruneSubagentsDisabledDefaultExtension(settings: JsonObject, changes: string[]): void {
+	if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
+	const values = settings.tlh.disabledDefaultExtensions;
+	if (!Array.isArray(values)) return;
+	const nextValues = values.filter((value: unknown) => !(typeof value === "string" && ["subagents", "pi-subagents"].includes(value.trim())));
+	if (nextValues.length === values.length) return;
+	settings.tlh.disabledDefaultExtensions = nextValues;
+	changes.push("remove stale subagents opt-out from tlh.disabledDefaultExtensions");
+}
+
 function scrubGnosisSettings(settings: JsonObject, changes: string[]): void {
 	if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
 	if (!Object.hasOwn(settings.tlh, "gnosis")) return;
@@ -786,6 +796,7 @@ function main(): void {
 	pruneRtkDisabledDefaultExtension(next, changes);
 	pruneIntercomDisabledDefaultExtension(next, changes);
 	pruneFffDisabledDefaultExtension(next, changes);
+	pruneSubagentsDisabledDefaultExtension(next, changes);
 	syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
 
 	log(args, `Pi settings: ${settingsPath}`);

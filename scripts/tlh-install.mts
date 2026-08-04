@@ -46,6 +46,8 @@ import {
 } from "./lib/tlh-install-utils.mjs";
 import {
 	TLH_SUBAGENT_PROMPTS,
+	captureManagedRetiredSubagentPackages,
+	cleanupManagedRetiredSubagentPackages,
 	copyTlhSubagentPrompts,
 	defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall,
 	findTlhSubagentsDir as findTlhSubagentsDirFromSources,
@@ -1757,7 +1759,13 @@ async function runInstallFlow(config: InstallConfig): Promise<void> {
 	config.piCmd = piCmd;
 	installHarnessPackage(config);
 	await installSupportFilesToProfile(config);
+	const retiredSubagentPackages = config.noSettings
+		? []
+		: captureManagedRetiredSubagentPackages(config.settingsPath);
 	await mergeSettings(config);
+	if (!config.noSettings) {
+		cleanupManagedRetiredSubagentPackages(config, retiredSubagentPackages);
+	}
 	cleanupLegacyManagedProfileArtifacts(config);
 	if (!config.noSettings) cleanupRetiredProfileFiles(config);
 	if (!config.noSettings) cleanupOldSettingsBackups(config);

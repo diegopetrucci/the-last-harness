@@ -1261,33 +1261,30 @@ test("bundled same-identity managed npm pins advance while manual pins stay unto
 	assert.deepEqual(manualPinnedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, []);
 });
 
-test("bundled manifest contains subagents entry with correct critical migration flags and no intercom entry", () => {
+test("bundled manifest has no subagents or intercom entry after retirement", () => {
 	const bundled = bundledExtensions;
 	const subagents = bundled.find(({ id }) => id === "subagents");
 	const intercom = bundled.find(({ id }) => id === "intercom");
 
-	assert.ok(subagents, "bundled subagents entry should exist");
-	assert.equal(subagents.critical, true, "subagents must stay critical");
-	assert.deepEqual(subagents.aliases, ["pi-subagents"]);
-	assert.deepEqual(subagents.replaces, [
-		"npm:pi-subagents",
-		"git:github.com/nicobailon/pi-subagents",
-		"git:github.com/diegopetrucci/pi-subagents",
-	]);
-	assert.equal(subagents.migrateReplacements, true, "subagents replacements must stay enabled");
-
+	assert.equal(subagents, undefined, "bundled subagents entry should be absent after retirement");
 	assert.equal(intercom, undefined, "bundled intercom entry should be absent after retirement");
 });
 
-test("bundled merge migrates legacy upstream and TLH subagents installs to the scoped npm source without duplicates", () => {
+test("bundled merge removes legacy upstream and TLH subagents git installs via retirement list", () => {
+	// The subagents external default has been retired: legacy git packages are cleaned
+	// up by applyRetiredTlhDefaultPackageCleanup (RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES is
+	// included in RETIRED_TLH_DEFAULT_PACKAGE_SOURCES). No npm source is added in their place because
+	// the first-party bundled extension is now registered directly via package.json.
 	const fixture = tempFixture();
 	const bundledPath = bundledExtensionsPath;
 	writeFileSync(fixture.settings, JSON.stringify({
 		packages: [
+			harnessPackage,
 			"git:github.com/nicobailon/pi-subagents@v0.31.0",
 			"git:github.com/diegopetrucci/pi-subagents@tlh-v0.31.1",
+			"npm:unrelated-ext",
 		],
-		tlh: { disabledDefaultExtensions: ["pi-subagents"] },
+		tlh: { disabledDefaultExtensions: ["pi-subagents", "other-ext"] },
 	}, null, 2));
 
 	runNode(mergeScript, [
@@ -1298,21 +1295,92 @@ test("bundled merge migrates legacy upstream and TLH subagents installs to the s
 	]);
 
 	const settings = readJson(fixture.settings);
-	assert.deepEqual(
-		settings.packages.filter((entry) => packageIdentity(entry) === "npm:@diegopetrucci/pi-subagents"),
-		[bundledSource("subagents")],
-	);
+	// Both legacy git installs must be removed.
 	assert.equal(
 		settings.packages.some((entry) => packageIdentity(entry) === "git:github.com/nicobailon/pi-subagents"),
 		false,
+		"legacy nicobailon git install must be removed",
 	);
 	assert.equal(
 		settings.packages.some((entry) => packageIdentity(entry) === "git:github.com/diegopetrucci/pi-subagents"),
 		false,
+		"legacy TLH git install must be removed",
 	);
-	assert.deepEqual(
-		(settings.tlh?.disabledDefaultExtensions ?? []).filter((value) => value === "subagents" || value === "pi-subagents"),
-		[],
+	// No npm replacement must be added.
+	assert.equal(
+		settings.packages.some((entry) => packageIdentity(entry) === "npm:@diegopetrucci/pi-subagents"),
+		false,
+		"no npm subagents source may be added by retirement migration",
+	);
+	// Unrelated package must survive.
+	assert.ok(settings.packages.some((entry) => packageIdentity(entry) === "npm:unrelated-ext"), "unrelated package must be preserved");
+	// pi-subagents opt-out must be pruned; unrelated opt-out must survive.
+	assert.equal(
+		(settings.tlh?.disabledDefaultExtensions ?? []).some((v) => v === "subagents" || v === "pi-subagents"),
+		false,
+		"stale subagents opt-out must be pruned",
+	);
+	assert.ok(
+		(settings.tlh?.disabledDefaultExtensions ?? []).includes("other-ext"),
+		"unrelated opt-out must be preserved",
+	);
+});
+
+test("bundled merge preserves a manually installed subagents npm package (modern profile, not in provenance)", () => {
+	// A modern profile (provenance block exists) where subagents is NOT in managedPackageIdentities:
+	// the package must be treated as user-added and preserved.
+	const fixture = tempFixture();
+	const bundledPath = bundledExtensionsPath;
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [
+			harnessPackage,
+			"npm:@diegopetrucci/pi-subagents@0.31.14",
+		],
+		tlh: {
+			defaultExtensionProvenance: {
+				managedPackageIdentities: [], // provenance exists but subagents is NOT managed
+			},
+		},
+	}, null, 2));
+
+	const output = runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", bundledPath,
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.ok(
+		settings.packages.some((entry) => packageIdentity(entry) === "npm:@diegopetrucci/pi-subagents"),
+		"user-added subagents package must be preserved when not managed",
+	);
+	assert.equal(output.includes("pi-subagents"), false, "merge must not log any subagents removal");
+});
+
+test("bundled merge prunes stale subagents and pi-subagents opt-outs from tlh.disabledDefaultExtensions", () => {
+	const fixture = tempFixture();
+	const bundledPath = bundledExtensionsPath;
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [harnessPackage],
+		tlh: { disabledDefaultExtensions: ["subagents", "pi-subagents", "notify"] },
+	}, null, 2));
+
+	const output = runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", bundledPath,
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.match(output, /remove stale subagents opt-out from tlh\.disabledDefaultExtensions/);
+	assert.equal(
+		(settings.tlh?.disabledDefaultExtensions ?? []).some((v) => v === "subagents" || v === "pi-subagents"),
+		false,
+		"stale subagents opt-outs must be removed",
+	);
+	assert.ok(
+		(settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
+		"unrelated opt-out must be preserved",
 	);
 });
 

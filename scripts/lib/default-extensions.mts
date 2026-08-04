@@ -103,11 +103,22 @@ function gitIdentity(source: string): string {
 	return `git:${value.toLowerCase()}`;
 }
 
+// These sources were previously managed by TLH's external subagent default.
+// Keep this list separate from the active manifest: migration code must still
+// recognize old npm/git spellings after the manifest entry is retired.
+export const RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES = Object.freeze([
+	"npm:@diegopetrucci/pi-subagents",
+	"npm:pi-subagents",
+	"git:github.com/nicobailon/pi-subagents",
+	"git:github.com/diegopetrucci/pi-subagents",
+]);
+
 export const RETIRED_TLH_DEFAULT_PACKAGE_SOURCES = Object.freeze([
 	"npm:@plannotator/pi-extension",
 	"npm:@diegopetrucci/pi-librarian",
 	"npm:@diegopetrucci/pi-triage-comments",
 	"npm:@ff-labs/pi-fff",
+	...RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES,
 ]);
 
 const TARGETED_DEFAULT_EXTENSION_LOAD_ORDER = [] as const;
