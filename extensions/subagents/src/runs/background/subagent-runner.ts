@@ -216,6 +216,7 @@ function eventLogState(filePath: string): AsyncEventLogState {
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
 			// Diagnostic event accounting is best-effort; writes below are also safe.
+			void 0;
 		}
 	}
 	state = { bytes, diagnosticsTruncated: false };
@@ -768,8 +769,8 @@ function runPiStreaming(
 				if (settled) return;
 				closeFallbackTimer = setTimeout(() => {
 					if (settled) return;
-					try { child.stdout?.destroy(); } catch {}
-					try { child.stderr?.destroy(); } catch {}
+					try { child.stdout?.destroy(); } catch { void 0; }
+					try { child.stderr?.destroy(); } catch { void 0; }
 					finalize(exitCodeFromExit, exitSignalFromExit);
 				}, CLOSE_FALLBACK_MS);
 				closeFallbackTimer.unref?.();
@@ -2731,7 +2732,11 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					...(thinkingOverride !== undefined ? {
 						...(model ? { model } : {}),
 						...(thinking ? { thinking } : {}),
-						...(step.parallel.modelCandidates ? { modelCandidates: step.parallel.modelCandidates.map((candidate) => applyThinkingSuffix(candidate, thinkingOverride, true)) } : {}),
+						...(step.parallel.modelCandidates ? {
+							modelCandidates: step.parallel.modelCandidates
+								.map((candidate) => applyThinkingSuffix(candidate, thinkingOverride, true))
+								.filter((candidate): candidate is string => candidate !== undefined),
+						} : {}),
 					} : {}),
 					structuredOutput: undefined,
 					structuredOutputSchema: step.parallel.structuredOutputSchema ?? step.parallel.structuredOutput?.schema,
@@ -2960,7 +2965,11 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					activeRuntimeMs: pr.activeRuntimeMs,
 				});
 			}
-			const collection = collectDynamicResults(step as Parameters<typeof collectDynamicResults>[0], materialized.items, parallelResults);
+			const normalizedParallelResults = parallelResults.map((result) => ({
+				...result,
+				exitCode: result.exitCode ?? 1,
+			}));
+			const collection = collectDynamicResults(step as Parameters<typeof collectDynamicResults>[0], materialized.items, normalizedParallelResults);
 			const failures = parallelResults.filter((result) => result.exitCode !== 0 && result.exitCode !== -1);
 			if (failures.length === 0) {
 				try {
@@ -2978,7 +2987,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 							acceptance: effectiveDynamicGroupAcceptance,
 							output: "",
 							report: aggregateAcceptanceReport({
-								results: parallelResults,
+								results: normalizedParallelResults,
 								notes: `Dynamic fanout collected ${collection.length} result(s) into ${step.collect.as}.`,
 							}),
 							cwd,
@@ -3621,14 +3630,8 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		}
 	}
 
-	if (activityTimer) {
-		clearInterval(activityTimer);
-		activityTimer = undefined;
-	}
-	if (timeoutTimer) {
-		timeoutTimer.cancel();
-		timeoutTimer = undefined;
-	}
+	if (activityTimer) clearInterval(activityTimer);
+	if (timeoutTimer) timeoutTimer.cancel();
 	disposeControlInbox();
 	const effectiveSessionFile = sessionFile ?? latestSessionFile;
 	const runEndedAt = Date.now();

@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowJs": true,
+    "checkJs": false,
+    "strict": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "rewriteRelativeImportExtensions": true,
+    "removeComments": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["extensions/subagents/src/**/*.ts", "extensions/subagents/src/**/*.d.ts"],
+  "exclude": ["node_modules/**", "extensions/subagents/test/**"]
+}

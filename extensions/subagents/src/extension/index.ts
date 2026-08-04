@@ -16,8 +16,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { keyText, type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { TSchema } from "typebox";
+import { defineTool, keyText, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Spacer, Text, isKeyRelease, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
 import { discoverAgents } from "../agents/agents.ts";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
@@ -43,7 +42,6 @@ import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
 import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.ts";
 import { registerSubagentRpcBridge } from "./rpc.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
-import { inspectSubagentStatus } from "../runs/background/run-status.ts";
 import { resolveWaitToolConfig, waitForSubagents } from "../runs/background/wait.ts";
 import registerSubagentNotify, { boundedReference, type SubagentNotifyDetails } from "../runs/background/notify.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
@@ -140,8 +138,8 @@ function ensureSubagentResultAnimation(context: { state: Record<string, unknown>
 	state.subagentResultAnimationTimer = setInterval(() => {
 		state.frame = ((state.frame ?? 0) + 1) % 10;
 		try {
-			context.invalidate();
-		} catch {}
+			context.invalidate?.();
+		} catch { void 0; }
 	}, 80);
 }
 
@@ -527,15 +525,16 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		}, 0);
 	}
 
-	const parameters: TSchema = SubagentParams;
-	const tool = {
+	const parameters = SubagentParams;
+	const tool = defineTool<typeof parameters, Details>({
 		name: "subagent",
 		label: "Subagent",
 		description: buildSubagentToolDescription(config),
 		parameters,
 
 		execute(id, params, signal, onUpdate, ctx) {
-			return executeSubagent(id, params, signal, onUpdate, ctx);
+			if (!signal) throw new Error("Subagent tool execution requires an abort signal.");
+			return executeSubagent(id, params as SubagentParamsLike, signal, onUpdate, ctx);
 		},
 
 		renderCall(args, theme) {
@@ -584,23 +583,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			return renderSubagentResult(result, { expanded }, theme, frame);
 		},
 
-	};
+	});
 
-	const registerTool = (((pi as unknown as Record<string, unknown>).registerTool) as (tool: {
-		name: string;
-		label: string;
-		description: string;
-		parameters: TSchema;
-		execute: (id: string, params: unknown, signal: AbortSignal | undefined, onUpdate: unknown, ctx: unknown) => Promise<unknown>;
-		renderCall?: (args: Record<string, unknown>, theme: ExtensionContext["ui"]["theme"]) => Component;
-		renderResult?: (
-			result: AgentToolResult<Details>,
-			options: { expanded: boolean },
-			theme: ExtensionContext["ui"]["theme"],
-			context: { state?: unknown; toolCallId?: string; invalidate?: () => void },
-		) => Component;
-	}) => void).bind(pi);
-	registerTool(tool);
+	pi.registerTool(tool);
 	pi.registerShortcut(SUBAGENT_LIVE_DETAIL_SHORTCUT, {
 		description: "Toggle subagent live detail",
 		handler: toggleLiveDetail,
@@ -612,7 +597,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	const waitTool: ToolDefinition<typeof WaitParams, Details> = {
+	const waitTool = defineTool({
 		name: "wait",
 		label: "Wait",
 		description: `Block until background (async) subagent runs started in this session finish, then return.
@@ -629,8 +614,8 @@ wait also returns when a run needs attention (a child that went idle or blocked 
 		execute(_id, params, signal, _onUpdate, _ctx) {
 			return waitForSubagents(params, signal, { state, events: pi.events, enabled: waitToolConfig.enabled });
 		},
-	};
-	registerTool(waitTool);
+	});
+	pi.registerTool(waitTool);
 
 	registerSlashCommands(pi, state);
 

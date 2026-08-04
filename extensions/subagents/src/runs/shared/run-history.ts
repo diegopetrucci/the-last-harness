@@ -59,11 +59,11 @@ export function loadRunsForAgent(agent: string): RunEntry[] {
 
 	if (lines.length > ROTATE_READ_THRESHOLD) {
 		lines = lines.slice(-ROTATE_KEEP);
-		try { fs.writeFileSync(historyPath, `${lines.join("\n")}\n`, "utf-8"); } catch {}
+		try { fs.writeFileSync(historyPath, `${lines.join("\n")}\n`, "utf-8"); } catch { void 0; }
 	}
 
 	return lines
 		.map((line) => { try { return JSON.parse(line) as RunEntry; } catch { return undefined; } })
-		.filter((entry): entry is RunEntry => Boolean(entry) && entry.agent === agent)
+		.filter((entry): entry is RunEntry => entry !== undefined && entry.agent === agent)
 		.reverse();
 }

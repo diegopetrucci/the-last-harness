@@ -189,6 +189,7 @@ test("package manifest selects only the ordered generated JS entrypoints", () =>
 	assert.deepEqual(packageJson.pi?.extensions, [
 		"./extensions/annotate-git-diff/index.js",
 		"./extensions/the-last-harness.js",
+		"./extensions/subagents/src/extension/index.js",
 	]);
 	assert.deepEqual(existingNestedExtensionEntrypoints("the-last-harness"), []);
 	assert.deepEqual(existingNestedExtensionEntrypoints("annotate-git-diff"), [

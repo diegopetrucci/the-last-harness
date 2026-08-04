@@ -33,6 +33,7 @@ function waitSync(delayMs: number): void {
 	const end = Date.now() + delayMs;
 	while (Date.now() < end) {
 		// Portable fallback for runtimes where Atomics.wait is unavailable.
+		void 0;
 	}
 }
 

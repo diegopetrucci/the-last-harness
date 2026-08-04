@@ -443,7 +443,6 @@ async function runSingleAttempt(
 	const spawnEnv = { ...process.env, ...sharedEnv, ...getSubagentDepthEnv(options.maxSubagentDepth) };
 	let observedMutationAttempt = false;
 	let supervisorPauseRequested = false;
-	let supervisorPauseCompleted = false;
 
 	const exitCode = await new Promise<number>((resolve) => {
 		const spawnSpec = getPiSpawnCommand(args);
@@ -791,7 +790,7 @@ async function runSingleAttempt(
 		const fireUpdate = () => {
 			if (!options.onUpdate || processClosed) return;
 			progress.durationMs = Date.now() - startTime;
-			const output = (result.timedOut || result.turnBudgetExceeded) && result.finalOutput ? result.finalOutput : getFinalOutput(result.messages);
+			const output = (result.timedOut || result.turnBudgetExceeded) && result.finalOutput ? result.finalOutput : getFinalOutput(result.messages ?? []);
 			emitUpdateSnapshot(output || "(running...)");
 		};
 
@@ -871,7 +870,7 @@ async function runSingleAttempt(
 			}
 
 			if (evt.type === "message_end" && evt.message) {
-				result.messages.push(evt.message);
+				(result.messages ??= []).push(evt.message);
 				if (evt.message.role === "assistant") {
 					result.usage.turns++;
 					progress.turnCount = result.usage.turns;
@@ -905,7 +904,7 @@ async function runSingleAttempt(
 			}
 
 			if (evt.type === "tool_result_end" && evt.message) {
-				result.messages.push(evt.message);
+				(result.messages ??= []).push(evt.message);
 				const resultText = extractTextFromContent(evt.message.content);
 				if (options.toolBudget && pendingToolResult && resultText.includes("Tool budget hard limit reached")) {
 					result.toolBudgetBlocked = true;
@@ -1023,7 +1022,6 @@ async function runSingleAttempt(
 						finish(1);
 						return;
 					}
-					supervisorPauseCompleted = true;
 					result.exitCode = 0;
 					result.interrupted = true;
 					result.error = undefined;
@@ -1084,7 +1082,7 @@ async function runSingleAttempt(
 					tokens: progress.tokens,
 					durationMs: progress.durationMs,
 				};
-				const finalOutput = getFinalOutput(result.messages);
+				const finalOutput = getFinalOutput(result.messages ?? []);
 				result.finalOutput = finalOutput.trim() || result.error || result.finalOutput || "Detached child exited without final output.";
 				if (result.artifactPaths && options.artifactConfig?.enabled !== false && options.artifactConfig?.includeOutput !== false) {
 					try {
@@ -1219,7 +1217,7 @@ async function runSingleAttempt(
 		});
 	}
 	if (result.exitCode === 0 && !result.error) {
-		const errInfo = detectSubagentError(result.messages);
+		const errInfo = detectSubagentError(result.messages ?? []);
 		if (errInfo.hasError) {
 			result.exitCode = errInfo.exitCode ?? 1;
 			result.error = errInfo.details
@@ -1228,7 +1226,7 @@ async function runSingleAttempt(
 		}
 	}
 	if (result.exitCode === 0 && !result.error) {
-		const finalText = getFinalOutput(result.messages);
+		const finalText = getFinalOutput(result.messages ?? []);
 		const missingStructuredOutput = options.structuredOutput
 			? !existsSync(options.structuredOutput.outputPath)
 			: false;
@@ -1268,7 +1266,7 @@ async function runSingleAttempt(
 		durationMs: progress.durationMs,
 	};
 
-	const acceptanceOutput = getFinalOutput(result.messages);
+	const acceptanceOutput = getFinalOutput(result.messages ?? []);
 	const { report: finalAcceptanceReport } = parseAcceptanceReport(acceptanceOutput);
 	let fullOutput = stripAcceptanceReport(acceptanceOutput);
 	if (result.timedOut) {
@@ -1286,7 +1284,7 @@ async function runSingleAttempt(
 		? evaluateCompletionMutationGuard({
 			agent: agent.name,
 			task: shared.originalTask ?? task,
-			messages: result.messages,
+			messages: result.messages ?? [],
 			tools: agent.tools,
 			mcpDirectTools: agent.mcpDirectTools,
 		})

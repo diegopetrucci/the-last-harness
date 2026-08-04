@@ -91,7 +91,7 @@ function readOptionalJsonFile(filePath: string, label: string): unknown {
 		if (code === "ENOENT") return null;
 		const message = error instanceof Error ? error.message : String(error);
 		throw new Error(`Failed to read ${label} '${filePath}': ${message}`, {
-			cause: error instanceof Error ? error : undefined,
+			cause: error,
 		});
 	}
 }
@@ -239,8 +239,8 @@ function parseGitPackagePath(source: string): { host: string; repoPath: string }
 	const spec = source.slice(4).trim();
 	if (!spec) return undefined;
 
-	let host = "";
-	let repoPath = "";
+	let host: string;
+	let repoPath: string;
 	const scpLike = spec.match(/^git@([^:]+):(.+)$/);
 	if (scpLike) {
 		host = scpLike[1] ?? "";
@@ -394,7 +394,7 @@ function maybeReadSkillDescription(filePath: string): string | undefined {
 		const frontmatter = normalized.slice(3, endIndex).trim();
 		const match = frontmatter.match(/^description:\s*(.+)$/m);
 		if (!match) return undefined;
-		return match[1]?.trim().replace(/^['\"]|['\"]$/g, "");
+		return match[1]?.trim().replace(/^['"]|['"]$/g, "");
 	} catch {
 		// Description parsing is best-effort metadata extraction.
 		return undefined;

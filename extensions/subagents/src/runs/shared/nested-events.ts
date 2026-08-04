@@ -657,7 +657,6 @@ export function projectNestedEvents(route: NestedRoute): NestedRegistry {
 		}
 		for (const event of parseNestedEventRecords(content, route)) {
 			registry = applyNestedEvent(registry, event);
-			changed = true;
 		}
 		seen.add(entry);
 		changed = true;
@@ -711,11 +710,15 @@ function parseControlRequest(content: string, route: NestedRoute): NestedControl
 	if (!isSafeNestedId(raw.requestId) || !isSafeNestedId(raw.targetRunId) || !isSafeNestedId(raw.ownerParentRunId)) return undefined;
 	if (raw.action !== "interrupt" && raw.action !== "resume") return undefined;
 	const ownerParentStepIndex = clampNumber(raw.ownerParentStepIndex);
-	if (raw.ownerParentStepIndex !== undefined && (!Number.isInteger(ownerParentStepIndex) || ownerParentStepIndex < 0)) return undefined;
+	if (raw.ownerParentStepIndex !== undefined) {
+		if (ownerParentStepIndex === undefined || !Number.isInteger(ownerParentStepIndex) || ownerParentStepIndex < 0) return undefined;
+	}
 	const deliveryDeadlineAt = clampNumber(raw.deliveryDeadlineAt);
 	if (deliveryDeadlineAt === undefined || deliveryDeadlineAt <= 0) return undefined;
 	const targetIndex = clampNumber(raw.targetIndex);
-	if (raw.targetIndex !== undefined && (!Number.isInteger(targetIndex) || targetIndex < 0)) return undefined;
+	if (raw.targetIndex !== undefined) {
+		if (targetIndex === undefined || !Number.isInteger(targetIndex) || targetIndex < 0) return undefined;
+	}
 	const ts = clampNumber(raw.ts);
 	if (ts === undefined) return undefined;
 	return {

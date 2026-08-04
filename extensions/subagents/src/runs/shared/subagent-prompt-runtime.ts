@@ -267,7 +267,7 @@ function registerSteeringInbox(pi: ExtensionAPI): void {
 		disposed = true;
 		try {
 			watcher?.close();
-		} catch {}
+		} catch { void 0; }
 		if (interval) clearInterval(interval);
 	});
 }
@@ -328,13 +328,17 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		});
 	}
 
-	onRuntimeEvent("context", (event: { messages: unknown[] }) => {
-		const messages = stripParentOnlySubagentMessages(event.messages);
-		if (messages === event.messages) return undefined;
+	onRuntimeEvent("context", (event: unknown) => {
+		if (!event || typeof event !== "object" || !Array.isArray((event as { messages?: unknown }).messages)) return undefined;
+		const contextEvent = event as { messages: unknown[] };
+		const messages = stripParentOnlySubagentMessages(contextEvent.messages);
+		if (messages === contextEvent.messages) return undefined;
 		return { messages };
 	});
 
-	onRuntimeEvent("before_agent_start", async (event: { systemPrompt: string }) => {
+	onRuntimeEvent("before_agent_start", async (event: unknown) => {
+		if (!event || typeof event !== "object" || typeof (event as { systemPrompt?: unknown }).systemPrompt !== "string") return undefined;
+		const startEvent = event as { systemPrompt: string };
 		registerNativeSupervisorFallbackOnce();
 		const intercomSessionName = process.env[SUBAGENT_INTERCOM_SESSION_NAME_ENV]?.trim();
 		if (intercomSessionName && typeof pi.setSessionName === "function") {
@@ -345,12 +349,12 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		const inheritSkills = readBooleanEnv(SUBAGENT_INHERIT_SKILLS_ENV);
 		const fanoutChild = readBooleanEnv(SUBAGENT_FANOUT_CHILD_ENV);
 		if (inheritProjectContext === undefined && inheritSkills === undefined && fanoutChild === undefined) return;
-		const rewritten = rewriteSubagentPrompt(event.systemPrompt, {
+		const rewritten = rewriteSubagentPrompt(startEvent.systemPrompt, {
 			inheritProjectContext: inheritProjectContext ?? true,
 			inheritSkills: inheritSkills ?? true,
 			fanoutChild: fanoutChild === true,
 		});
-		if (rewritten === event.systemPrompt) return;
+		if (rewritten === startEvent.systemPrompt) return;
 		return { systemPrompt: rewritten };
 	});
 }

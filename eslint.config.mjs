@@ -10,6 +10,7 @@ const generatedExtensionJavaScriptFiles = [
 	"extensions/shared/*.js",
 	"extensions/the-last-harness/*.js",
 	"extensions/the-last-harness/annotate-last-message/*.js",
+	"extensions/subagents/src/**/*.js",
 ];
 
 const unusedArgsOptions = { argsIgnorePattern: "^_" };
@@ -21,7 +22,7 @@ const withFiles = (config) => ({
 
 export default tseslint.config(
 	{
-		ignores: ["node_modules/**"],
+		ignores: ["node_modules/**", "extensions/subagents/test/**"],
 	},
 	{
 		files: targetFiles,

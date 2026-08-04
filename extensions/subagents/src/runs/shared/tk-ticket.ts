@@ -6,8 +6,6 @@ import type { TkTicketMetadata } from "../../shared/types.ts";
 
 const TK_SHOW_PATTERN = /\btk\s+show\s+([A-Za-z0-9][A-Za-z0-9-]*)\b/;
 const TK_TICKET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
-const ANSI_ESCAPE_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][\s\S]*?(?:\x07|\x1B\\))/g;
-const UNSAFE_TERMINAL_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g;
 const MAX_TK_TICKET_TITLE_WIDTH = 72;
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
@@ -68,10 +66,40 @@ export function resolveTkTicketTaskContext(input: {
 	return matches.length === 1 ? matches[0] : undefined;
 }
 
+function sanitizeTerminalText(raw: string): string {
+	let cleaned = "";
+	for (let index = 0; index < raw.length; index++) {
+		const code = raw.charCodeAt(index);
+		if (code === 0x1b) {
+			const next = raw.charCodeAt(++index);
+			if (next === 0x5b) {
+				while (++index < raw.length) {
+					const finalCode = raw.charCodeAt(index);
+					if (finalCode >= 0x40 && finalCode <= 0x7e) break;
+				}
+			} else if (next === 0x5d) {
+				while (++index < raw.length) {
+					const sequenceCode = raw.charCodeAt(index);
+					if (sequenceCode === 0x07) break;
+					if (sequenceCode === 0x1b && raw.charCodeAt(index + 1) === 0x5c) {
+						index++;
+						break;
+					}
+				}
+			}
+			continue;
+		}
+		if (code <= 0x08 || code === 0x0b || code === 0x0c || (code >= 0x0e && code <= 0x1f) || (code >= 0x7f && code <= 0x9f)) {
+			cleaned += " ";
+			continue;
+		}
+		cleaned += raw[index];
+	}
+	return cleaned;
+}
+
 export function sanitizeTkTicketTitle(raw: string, maxWidth = MAX_TK_TICKET_TITLE_WIDTH): string | undefined {
-	const cleaned = raw
-		.replace(ANSI_ESCAPE_PATTERN, "")
-		.replace(UNSAFE_TERMINAL_PATTERN, " ")
+	const cleaned = sanitizeTerminalText(raw)
 		.replace(/\s+/g, " ")
 		.trim();
 	if (!cleaned) return undefined;

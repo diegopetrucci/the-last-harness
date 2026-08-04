@@ -68,7 +68,7 @@ export function createJsonlWriter(
 						if (!closed) source.resume();
 					});
 				}
-			} catch {}
+			} catch { void 0; }
 		},
 		async close() {
 			if (!stream || closed) return;

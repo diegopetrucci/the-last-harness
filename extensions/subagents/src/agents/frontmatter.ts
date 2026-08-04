@@ -34,8 +34,6 @@ export function parseFrontmatter(content: string): { frontmatter: Record<string,
 
 	for (const line of lines) {
 		const indent = line.search(/\S|$/); // position of first non-whitespace char
-		const trimmed = line.trim();
-
 		if (currentKey !== null && currentBlockLines !== null && indent > (currentIndent ?? 0)) {
 			// This line is part of the current block value
 			currentBlockLines.push(line);

@@ -55,10 +55,16 @@ interface TransitionLockSnapshot {
 	owner: TransitionLockOwnerRecord;
 }
 
+function replaceControlCharacters(value: string): string {
+	return [...value].map((character) => {
+		const code = character.codePointAt(0) ?? 0;
+		return code <= 0x08 || code === 0x0b || code === 0x0c || (code >= 0x0e && code <= 0x1f) || code === 0x7f ? " " : character;
+	}).join("");
+}
+
 export function boundSupervisorSummary(summary: unknown, maxBytes = DEFAULT_MAX_SUMMARY_BYTES): string | undefined {
 	if (typeof summary !== "string") return undefined;
-	const normalized = summary
-		.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]+/g, " ")
+	const normalized = replaceControlCharacters(summary)
 		.replace(/\s+/g, " ")
 		.trim();
 	if (!normalized) return undefined;
@@ -320,6 +326,7 @@ function waitSync(delayMs: number): void {
 	const end = Date.now() + delayMs;
 	while (Date.now() < end) {
 		// Portable fallback for runtimes where Atomics.wait is unavailable.
+		void 0;
 	}
 }
 
@@ -436,6 +443,7 @@ function acquireTransitionLock(asyncDir: string, options: LifecycleLockOptions =
 			const ownerSummary = transitionLockOwnerSummary(readTransitionLockOwner(asyncDir));
 			throw new Error(
 				`Lifecycle transition rejected for run '${runLabel(asyncDir)}': another transition holds the status lock${ownerSummary ? ` (${ownerSummary})` : ""}. Wait for it to finish or clear the stale lifecycle lock only after verifying the run is idle.`,
+				{ cause: error },
 			);
 		}
 	}

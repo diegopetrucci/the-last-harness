@@ -166,7 +166,7 @@ function resolveWorktreeBaseDir(configuredBaseDir: string | undefined, repoRoot:
 		fs.mkdirSync(resolved, { recursive: true });
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`failed to create worktree base directory ${resolved}: ${message}`);
+		throw new Error(`failed to create worktree base directory ${resolved}: ${message}`, { cause: error });
 	}
 	return resolved;
 }
@@ -279,7 +279,7 @@ function parseWorktreeSetupHookOutput(rawStdout: string): WorktreeSetupHookOutpu
 		parsed = JSON.parse(trimmed);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`worktree setup hook returned invalid JSON: ${message}`);
+		throw new Error(`worktree setup hook returned invalid JSON: ${message}`, { cause: error });
 	}
 	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
 		throw new Error("worktree setup hook stdout must be a JSON object");

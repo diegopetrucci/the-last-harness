@@ -12,6 +12,7 @@ const runnerPath = join(testsDir, "package-runtime-smoke-runner.mjs");
 const expectedEntrypoints = [
 	"./extensions/annotate-git-diff/index.js",
 	"./extensions/the-last-harness.js",
+	"./extensions/subagents/src/extension/index.js",
 ];
 const requiredPackedAssets = [
 	"CHANGELOG.md",
@@ -46,6 +47,7 @@ function isolatedEnv(root, agentDir) {
 		PI_OFFLINE: "1",
 		TLH_SKIP_TELEMETRY: "1",
 		TLH_SKIP_UPDATE_CHECK: "1",
+		PI_SUBAGENTS_RPC_ENABLED: "1",
 	};
 }
 
@@ -82,11 +84,14 @@ test("packed TLH generated JavaScript loads and reloads through pinned Pi 0.83.0
 	assert.equal(pack.name, "the-last-harness");
 
 	const packedPaths = new Set(pack.files.map((file) => file.path));
-	const generatedExtensionPaths = globSync("extensions/**/*.ts", { cwd: repoRoot })
-		.filter((path) => !path.endsWith(".d.ts"))
+	const generatedExtensionPaths = [
+		...globSync("extensions/**/*.ts", { cwd: repoRoot })
+			.filter((path) => !path.endsWith(".d.ts") && !path.startsWith("extensions/subagents/")),
+		...globSync("extensions/subagents/src/**/*.ts", { cwd: repoRoot }).filter((path) => !path.endsWith(".d.ts")),
+	]
 		.map((path) => path.replace(/\.ts$/, ".js"))
 		.sort();
-	assert.equal(generatedExtensionPaths.length, 69);
+	assert.equal(generatedExtensionPaths.length, 169);
 	for (const generatedPath of generatedExtensionPaths) {
 		assert.ok(packedPaths.has(generatedPath), `npm pack omitted generated extension module ${generatedPath}`);
 	}

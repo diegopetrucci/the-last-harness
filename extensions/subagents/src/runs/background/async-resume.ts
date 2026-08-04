@@ -232,7 +232,7 @@ function readResultFile(resultPath: string): AsyncResultFile {
 		raw = fs.readFileSync(resultPath, "utf-8");
 	} catch (error) {
 		throw new Error(`Failed to read async result file '${resultPath}': ${getErrorMessage(error)}`, {
-			cause: error instanceof Error ? error : undefined,
+			cause: error,
 		});
 	}
 	try {

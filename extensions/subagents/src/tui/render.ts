@@ -6,7 +6,7 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { getMarkdownTheme, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text, visibleWidth, type Component } from "@earendil-works/pi-tui";
-import { liveDetailShortcutDisplay, pauseAllShortcutDisplay, subagentRunningHintText, type SubagentLiveDetailController } from "../shared/subagent-shortcuts.ts";
+import { liveDetailShortcutDisplay, type SubagentLiveDetailController } from "../shared/subagent-shortcuts.ts";
 import {
 	type AgentProgress,
 	type AsyncJobState,
@@ -43,6 +43,8 @@ function getTermWidth(): number {
 }
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const ANSI_SGR_PATTERN = new RegExp(`^${String.fromCharCode(0x1b)}\\[[0-9;]*m`);
+const ANSI_ESCAPE = String.fromCharCode(0x1b);
 
 /**
  * Truncate a line to maxWidth, preserving ANSI styling through the ellipsis.
@@ -63,12 +65,12 @@ function truncLine(text: string, maxWidth: number): string {
 	let i = 0;
 
 	while (i < text.length) {
-		const ansiMatch = text.slice(i).match(/^\x1b\[[0-9;]*m/);
+		const ansiMatch = text.slice(i).match(ANSI_SGR_PATTERN);
 		if (ansiMatch) {
 			const code = ansiMatch[0];
 			result += code;
 
-			if (code === "\x1b[0m" || code === "\x1b[m") {
+			if (code === `${ANSI_ESCAPE}[0m` || code === `${ANSI_ESCAPE}[m`) {
 				activeStyles = [];
 			} else {
 				activeStyles.push(code);
@@ -78,7 +80,7 @@ function truncLine(text: string, maxWidth: number): string {
 		}
 
 		let end = i;
-		while (end < text.length && !text.slice(end).match(/^\x1b\[[0-9;]*m/)) {
+		while (end < text.length && !text.slice(end).match(ANSI_SGR_PATTERN)) {
 			end++;
 		}
 

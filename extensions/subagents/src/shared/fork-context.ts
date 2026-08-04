@@ -109,8 +109,8 @@ function readSessionEntries(sessionFile: string): BranchSessionEntry[] {
 		try {
 			return JSON.parse(line) as BranchSessionEntry;
 		} catch (error) {
-			const cause = error instanceof Error ? error : new Error(String(error));
-			throw new Error(`Unable to inspect forked session ${sessionFile}: invalid JSONL on line ${index + 1}: ${cause.message}`, { cause });
+			const message = error instanceof Error ? error.message : String(error);
+			throw new Error(`Unable to inspect forked session ${sessionFile}: invalid JSONL on line ${index + 1}: ${message}`, { cause: error });
 		}
 	});
 }
@@ -176,8 +176,8 @@ export function createForkContextResolver(
 			cachedResolutions.set(index, resolution);
 			return resolution;
 		} catch (error) {
-			const cause = error instanceof Error ? error : new Error(String(error));
-			throw new Error(`Failed to create forked subagent session: ${cause.message}`, { cause });
+			const message = error instanceof Error ? error.message : String(error);
+			throw new Error(`Failed to create forked subagent session: ${message}`, { cause: error });
 		}
 	};
 

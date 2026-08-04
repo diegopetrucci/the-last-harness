@@ -12,7 +12,7 @@ import { handleManagementAction } from "../../agents/agent-management.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
 import { clearPendingForegroundControlNotices } from "../../extension/control-notices.ts";
 import { runSync } from "./execution.ts";
-import { resolveModelCandidate, resolveSubagentModelOverride } from "../shared/model-fallback.ts";
+import { resolveSubagentModelOverride } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { aggregateParallelOutputs } from "../shared/parallel-utils.ts";
 import { clearForegroundInterrupt, registerForegroundInterrupt } from "../shared/foreground-interrupts.ts";
@@ -74,7 +74,6 @@ import {
 	type ControlConfig,
 	type ControlEvent,
 	type AsyncStatus,
-	type ChainOutputMap,
 	type Details,
 	type ExtensionConfig,
 	type IntercomEventBus,
@@ -224,11 +223,6 @@ function indexedLifecycleContinuation(status: AsyncStatus | null | undefined, in
 function isClaimedPausedLifecycle(status: AsyncStatus | null | undefined, index = 0): boolean {
 	const continuation = indexedLifecycleContinuation(status, index);
 	return status?.state === "paused" && typeof continuation?.claimToken === "string" && continuation.claimToken.length > 0;
-}
-
-function isContinuedAwaitingSupervisorLifecycle(status: AsyncStatus | null | undefined, index = 0): boolean {
-	return status?.state === "continued"
-		&& (status?.steps?.[index]?.status === "continued" || (index === 0 && status?.pause?.kind === "awaiting_supervisor"));
 }
 
 function pausedForegroundStatusPath(runId: string): string {
@@ -408,19 +402,6 @@ function buildCohortPauseStep(input: { agent: string; sessionFile?: string; stat
 			},
 		} : {}),
 	};
-}
-
-function mergePausedStepsWithResults(
-	steps: NonNullable<AsyncStatus["steps"]>,
-	results: SingleResult[],
-): NonNullable<AsyncStatus["steps"]> {
-	const now = Date.now();
-	return steps.map((step, index) => {
-		const result = results[index];
-		if (!result) return step;
-		if (result.interrupted && !result.pause && !result.sessionFile) return step;
-		return buildPausedStepFromResult(result, now, { stage: "paused" });
-	});
 }
 
 function persistPausedForegroundSingleRun(input: {
@@ -2133,7 +2114,8 @@ function expandTopLevelTaskCounts(tasks: TaskParam[]): { tasks?: TaskParam[]; er
 		if (rawCount !== undefined && (typeof rawCount !== "number" || !Number.isInteger(rawCount) || rawCount < 1)) {
 			return { error: `tasks[${taskIndex}].count must be an integer >= 1` };
 		}
-		const { count, ...concreteTask } = task;
+		const concreteTask = { ...task };
+		delete concreteTask.count;
 		for (let repeat = 0; repeat < (rawCount ?? 1); repeat++) {
 			expanded.push({ ...concreteTask });
 		}
@@ -2156,7 +2138,8 @@ function expandChainParallelCounts(chain: ChainStep[]): { chain?: ChainStep[]; e
 			if (rawCount !== undefined && (typeof rawCount !== "number" || !Number.isInteger(rawCount) || rawCount < 1)) {
 				return { error: `chain[${stepIndex}].parallel[${taskIndex}].count must be an integer >= 1` };
 			}
-			const { count, ...concreteTask } = task;
+			const concreteTask = { ...task };
+			delete concreteTask.count;
 			for (let repeat = 0; repeat < (rawCount ?? 1); repeat++) {
 				expandedParallel.push({ ...concreteTask });
 			}
@@ -2210,40 +2193,6 @@ function toExecutionErrorResult(params: SubagentParamsLike, error: unknown): Age
 	);
 }
 
-function wrapChainTasksForFork(chain: ChainStep[], contextPolicy: AgentDefaultContextPolicy): ChainStep[] {
-	return chain.map((step, stepIndex) => {
-		if (isParallelStep(step)) {
-			return {
-				...step,
-				parallel: step.parallel.map((task) => ({
-					...task,
-					task: shouldForkAgent(contextPolicy, task.agent)
-						? wrapForkTask(task.task ?? "{previous}")
-						: task.task,
-				})),
-			};
-		}
-		if (isDynamicParallelStep(step)) {
-			return {
-				...step,
-				parallel: {
-					...step.parallel,
-					task: shouldForkAgent(contextPolicy, step.parallel.agent)
-						? wrapForkTask(step.parallel.task ?? "{previous}")
-						: step.parallel.task,
-				},
-			};
-		}
-		const sequential = step as SequentialStep;
-		return {
-			...sequential,
-			task: shouldForkAgent(contextPolicy, sequential.agent)
-				? wrapForkTask(sequential.task ?? (stepIndex === 0 ? "{task}" : "{previous}"))
-				: sequential.task,
-		};
-	});
-}
-
 function preflightForkSessionsForStaticTasks(
 	params: SubagentParamsLike,
 	contextPolicy: AgentDefaultContextPolicy,
@@ -2293,7 +2242,6 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 		ctx,
 		shareEnabled,
 		sessionRoot,
-		sessionFileForIndex,
 		sessionFileForTask,
 		thinkingOverrideForTask,
 		artifactConfig,
@@ -2321,7 +2269,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 
 	if (!isAsyncAvailable()) {
 		return {
-			content: [{ type: "text", text: "Async mode requires upstream jiti for TypeScript execution but it could not be found. Ensure the pi-subagents package dependencies are installed." }],
+			content: [{ type: "text", text: "Async mode requires the detached runner module, but it could not be found. Ensure the generated TLH runtime files are installed." }],
 			isError: true,
 			details: { mode: "single" as const, results: [] },
 		};
@@ -2835,7 +2783,6 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		artifactConfig,
 		artifactsDir,
 		onUpdate,
-		sessionRoot,
 		controlConfig,
 		contextPolicy,
 	} = data;
@@ -2890,7 +2837,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 
 	const currentProvider = ctx.model?.provider;
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
-	let taskTexts = tasks.map((t) => t.task);
+	const taskTexts = tasks.map((t) => t.task);
 	const skillOverrides: (string[] | false | undefined)[] = tasks.map((t) =>
 		normalizeSkillInput(t.skill),
 	);
@@ -3128,7 +3075,6 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		artifactConfig,
 		artifactsDir,
 		onUpdate,
-		sessionRoot,
 		controlConfig,
 		contextPolicy,
 	} = data;
@@ -3151,18 +3097,18 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	let task = params.task ?? "";
 	const tkTicket = resolveTkTicketMetadata(params.task, { cwd: effectiveCwd });
-	let modelOverride: string | undefined = resolveSubagentModelOverride(
+	const modelOverride: string | undefined = resolveSubagentModelOverride(
 		(params.model as string | undefined) ?? agentConfig.model,
 		ctx.model,
 		availableModels,
 		currentProvider,
 		{ scope: data.modelScope, source: (params.model as string | undefined) ? "explicit" : "inherited" },
 	);
-	let skillOverride: string[] | false | undefined = normalizeSkillInput(params.skill);
-	let fallbackModels = params.fallbackModels;
-	let modelFallbackNotice = params.modelFallbackNotice;
+	const skillOverride: string[] | false | undefined = normalizeSkillInput(params.skill);
+	const fallbackModels = params.fallbackModels;
+	const modelFallbackNotice = params.modelFallbackNotice;
 	const rawOutput = params.output !== undefined ? params.output : agentConfig.output;
-	let effectiveOutput = normalizeSingleOutputOverride(rawOutput, agentConfig.output);
+	const effectiveOutput = normalizeSingleOutputOverride(rawOutput, agentConfig.output);
 	const effectiveOutputMode = params.outputMode ?? "inline";
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
 	const maxSubagentDepth = resolveChildMaxSubagentDepth(currentMaxSubagentDepth, agentConfig.maxSubagentDepth);

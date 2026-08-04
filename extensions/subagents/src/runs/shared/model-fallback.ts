@@ -257,10 +257,16 @@ export function buildModelCandidates(
 	return candidates;
 }
 
+function replaceModelNoticeControlCharacters(value: string): string {
+	return [...value].map((character) => {
+		const code = character.codePointAt(0) ?? 0;
+		return code <= 0x1f || code === 0x7f ? " " : character;
+	}).join("");
+}
+
 export function sanitizeModelFallbackNotice(notice: string | undefined): string | undefined {
 	if (typeof notice !== "string") return undefined;
-	const sanitized = notice
-		.replace(/[\u0000-\u001f\u007f]/g, " ")
+	const sanitized = replaceModelNoticeControlCharacters(notice)
 		.replace(/\s+/g, " ")
 		.trim();
 	return sanitized ? sanitized.slice(0, 240) : undefined;

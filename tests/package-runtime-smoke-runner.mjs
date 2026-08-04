@@ -27,6 +27,7 @@ const resourceLoader = new DefaultResourceLoader({
 const expectedEntrypoints = [
 	"extensions/annotate-git-diff/index.js",
 	"extensions/the-last-harness.js",
+	"extensions/subagents/src/extension/index.js",
 ];
 const expectedTlhCommands = [
 	"annotate-last-message",
@@ -53,9 +54,10 @@ function inspectLoad() {
 	);
 	assert.equal(result.extensions.some((extension) => extension.resolvedPath.endsWith(".ts")), false);
 
-	const [annotateExtension, tlhExtension] = result.extensions;
+	const [annotateExtension, tlhExtension, subagentExtension] = result.extensions;
 	assert.deepEqual([...annotateExtension.commands.keys()], ["annotate-git-diff"]);
 	assert.deepEqual([...tlhExtension.commands.keys()].sort(), expectedTlhCommands);
+	assert.deepEqual([...subagentExtension.tools.keys()].sort(), ["subagent", "wait"]);
 
 	const allCommandNames = result.extensions.flatMap((extension) => [...extension.commands.keys()]);
 	assert.equal(new Set(allCommandNames).size, allCommandNames.length, "package commands must not be registered twice");
@@ -82,12 +84,15 @@ function createSessionContext() {
 			getCwd: () => cwd,
 			getSessionName: () => undefined,
 			getBranch: () => [],
+			getSessionId: () => "package-smoke-session",
+			getSessionFile: () => null,
 		},
 		getContextUsage: () => undefined,
 		isIdle: () => true,
 		isProjectTrusted: () => false,
 		ui: {
 			addAutocompleteProvider() {},
+			setWidget() {},
 			setFooter(factory) {
 				installedFactories.footer.push(factory);
 			},
@@ -103,9 +108,12 @@ function createSessionContext() {
 	return { context, installedFactories, notifications };
 }
 
-async function runSessionStart(tlhExtension) {
+async function runSessionStart(tlhExtension, subagentExtension) {
 	const fixture = createSessionContext();
 	for (const handler of tlhExtension.handlers.get("session_start") ?? []) {
+		await handler({ reason: "reload" }, fixture.context);
+	}
+	for (const handler of subagentExtension.handlers.get("session_start") ?? []) {
 		await handler({ reason: "reload" }, fixture.context);
 	}
 	assert.equal(fixture.installedFactories.header.length, 1);
@@ -117,7 +125,8 @@ async function runSessionStart(tlhExtension) {
 
 await resourceLoader.reload();
 const first = inspectLoad();
-await runSessionStart(first.tlhExtension);
+await runSessionStart(first.tlhExtension, first.result.extensions[2]);
+assert.equal(first.result.extensions[2].resolvedPath.endsWith("extensions/subagents/src/extension/index.js"), true);
 
 await resourceLoader.reload();
 const second = inspectLoad();
@@ -125,7 +134,8 @@ assert.notEqual(second.result.extensions[0], first.result.extensions[0]);
 assert.notEqual(second.result.extensions[1], first.result.extensions[1]);
 assert.notEqual(second.result.extensions[0].commands, first.result.extensions[0].commands);
 assert.notEqual(second.result.extensions[1].commands, first.result.extensions[1].commands);
-await runSessionStart(second.tlhExtension);
+await runSessionStart(second.tlhExtension, second.result.extensions[2]);
+assert.equal(second.result.extensions[2].resolvedPath.endsWith("extensions/subagents/src/extension/index.js"), true);
 
 const sentMessages = [];
 second.result.runtime.sendMessage = (message) => sentMessages.push(message);

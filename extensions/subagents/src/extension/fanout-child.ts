@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
 import { discoverAgents } from "../agents/agents.ts";
 import { getArtifactsDir } from "../shared/artifacts.ts";
@@ -13,7 +13,7 @@ import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../runs/shared/pi
 import { claimNestedControlRequest, findNestedRun, nestedControlRequestOwnedBy, NESTED_RUNNER_ACCEPTANCE_TIMEOUT_MS, projectNestedEvents, readNestedControlRequests, resolveNestedAsyncDir, resolveNestedParentAddressFromEnv, resolveNestedRouteFromEnv, writeNestedControlResult, type NestedControlRequestRecord, type NestedRoute } from "../runs/shared/nested-events.ts";
 import { SubagentParams } from "./schemas.ts";
 import { loadConfig } from "./config.ts";
-import { RESULTS_DIR, type Details, type NestedRunSummary, type SubagentState } from "../shared/types.ts";
+import { RESULTS_DIR, type NestedRunSummary, type SubagentState } from "../shared/types.ts";
 
 function getSubagentSessionRoot(parentSessionFile: string | null): string {
 	if (parentSessionFile) {
@@ -187,7 +187,7 @@ function startNestedControlInboxListener(_pi: ExtensionAPI, state: SubagentState
 					return;
 				}
 				pending.delete(request.requestId);
-				try { fs.unlinkSync(claim.claimPath); } catch {}
+				try { fs.unlinkSync(claim.claimPath); } catch { void 0; }
 			} finally {
 				claim.inFlight = false;
 			}
@@ -239,7 +239,7 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 	});
 
 	const parameters: TSchema = SubagentParams;
-	const tool = {
+	const tool = defineTool({
 		name: "subagent",
 		label: "Subagent",
 		description: [
@@ -250,16 +250,10 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 		].join("\n"),
 		parameters,
 		execute(id, params, signal, onUpdate, ctx) {
+			if (!signal) throw new Error("Subagent tool execution requires an abort signal.");
 			return executor.execute(id, params as SubagentParamsLike, signal, onUpdate, ctx);
 		},
-	};
-	const registerTool = (((pi as unknown as Record<string, unknown>).registerTool) as (tool: {
-		name: string;
-		label: string;
-		description: string;
-		parameters: TSchema;
-		execute: (id: string, params: unknown, signal: AbortSignal | undefined, onUpdate: unknown, ctx: unknown) => Promise<unknown>;
-	}) => void).bind(pi);
-	registerTool(tool);
+	});
+	pi.registerTool(tool);
 	startNestedControlInboxListener(pi, state);
 }

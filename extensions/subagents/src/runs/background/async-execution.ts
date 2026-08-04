@@ -4,10 +4,8 @@
 
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { applyThinkingSuffix } from "../shared/pi-args.ts";
@@ -19,7 +17,7 @@ import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } f
 import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
 import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/utils.ts";
-import { buildFallbackModelList, buildModelCandidates, resolveModelCandidate, resolveSubagentModelOverride, type AvailableModelInfo, type ParentModel } from "../shared/model-fallback.ts";
+import { buildFallbackModelList, buildModelCandidates, resolveSubagentModelOverride, type AvailableModelInfo, type ParentModel } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { resolveExpectedWorktreeAgentCwd } from "../shared/worktree.ts";
@@ -51,54 +49,7 @@ import { initialTurnBudgetState } from "../shared/turn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { detectTkTicketId, normalizeTkTicketMetadata, resolveTkTicketMetadata, resolveTkTicketTaskContext } from "../shared/tk-ticket.ts";
 
-const require = createRequire(import.meta.url);
 const piPackageRoot = resolvePiPackageRoot();
-
-function resolveJitiCliFromPackageJson(packageJsonPath: string): string | undefined {
-	if (!fs.existsSync(packageJsonPath)) return undefined;
-	const packageRoot = path.dirname(packageJsonPath);
-	const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8")) as {
-		bin?: string | Record<string, string>;
-	};
-	const binField = pkg.bin;
-	const binPath = typeof binField === "string"
-		? binField
-		: binField?.jiti ?? Object.values(binField ?? {})[0];
-	const candidates = [binPath, "lib/jiti-cli.mjs"].filter((candidate): candidate is string => Boolean(candidate));
-	for (const candidate of candidates) {
-		const cliPath = path.resolve(packageRoot, candidate);
-		if (fs.existsSync(cliPath)) return cliPath;
-	}
-	return undefined;
-}
-
-function resolveJitiCliPath(): string | undefined {
-	const candidates: Array<() => string | undefined> = [
-		() => require.resolve("jiti/package.json"),
-		() => piPackageRoot
-			? createRequire(path.join(piPackageRoot, "package.json")).resolve("jiti/package.json")
-			: undefined,
-		() => {
-			if (!process.argv[1]) return undefined;
-			const piEntry = fs.realpathSync(process.argv[1]);
-			return createRequire(piEntry).resolve("jiti/package.json");
-		},
-		() => piPackageRoot ? path.join(piPackageRoot, "node_modules", "jiti", "package.json") : undefined,
-	];
-	for (const candidate of candidates) {
-		try {
-			const packageJsonPath = candidate();
-			if (!packageJsonPath) continue;
-			const cliPath = resolveJitiCliFromPackageJson(packageJsonPath);
-			if (cliPath) return cliPath;
-		} catch {
-			// Candidate not available in this install, continue probing.
-		}
-	}
-	return undefined;
-}
-
-const jitiCliPath = resolveJitiCliPath();
 
 interface AsyncExecutionContext {
 	pi: ExtensionAPI;
@@ -231,10 +182,18 @@ export function formatAsyncStartedMessage(headline: string): string {
 }
 
 /**
- * Check if jiti is available for async execution
+ * Resolve the detached runner beside this module. Source modules use the
+ * TypeScript runner for development/test loaders; generated runtime modules
+ * always resolve the committed JavaScript runner.
  */
+export function resolveAsyncRunnerModulePath(moduleUrl: string = import.meta.url): string {
+	const modulePath = fileURLToPath(moduleUrl);
+	const runnerExtension = path.extname(modulePath) === ".ts" ? ".ts" : ".js";
+	return path.join(path.dirname(modulePath), `subagent-runner${runnerExtension}`);
+}
+
 export function isAsyncAvailable(): boolean {
-	return jitiCliPath !== undefined;
+	return fs.existsSync(resolveAsyncRunnerModulePath());
 }
 
 function isNodeExecutableName(execPath: string): boolean {
@@ -282,8 +241,9 @@ function closeFd(fd: number | undefined): void {
  * Spawn the async runner process
  */
 function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; error?: string } {
-	if (!jitiCliPath) {
-		return { error: "upstream jiti for TypeScript execution could not be found; ensure package dependencies are installed" };
+	const runner = resolveAsyncRunnerModulePath();
+	if (!fs.existsSync(runner)) {
+		return { error: `async runner module could not be found: ${runner}` };
 	}
 
 	try {
@@ -298,8 +258,10 @@ function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; 
 	fs.mkdirSync(TEMP_ROOT_DIR, { recursive: true });
 	const cfgPath = getAsyncConfigPath(suffix);
 	fs.writeFileSync(cfgPath, JSON.stringify(cfg));
-	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
 	const nodeCommand = resolveAsyncRunnerNodeCommand();
+	const runnerArgs = runner.endsWith(".ts")
+		? ["--experimental-strip-types", runner, cfgPath]
+		: [runner, cfgPath];
 
 	const logPaths = resolveAsyncRunnerLogPaths(cfg);
 	let stdoutFd: number | undefined;
@@ -310,7 +272,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; 
 			stdoutFd = fs.openSync(logPaths.stdoutPath, "a");
 			stderrFd = fs.openSync(logPaths.stderrPath, "a");
 		}
-		const proc = spawn(nodeCommand, [jitiCliPath, runner, cfgPath], {
+		const proc = spawn(nodeCommand, runnerArgs, {
 			cwd,
 			detached: true,
 			stdio: ["ignore", stdoutFd ?? "ignore", stderrFd ?? "ignore"],
@@ -495,9 +457,9 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			cwd: stepCwd,
 			model,
 			thinking: resolveEffectiveThinking(model, effectiveThinking),
-			modelCandidates: buildModelCandidates(primaryModel, fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope }).map((candidate) =>
-				applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined),
-			),
+			modelCandidates: buildModelCandidates(primaryModel, fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope })
+				.map((candidate) => applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined))
+				.filter((candidate): candidate is string => candidate !== undefined),
 			modelFallbackNotice: behavior.modelFallbackNotice,
 			tools: a.tools,
 			extensions: a.extensions,
@@ -696,7 +658,7 @@ export function executeAsyncChain(
 		}
 		return formatAsyncStartError(resultMode, built.error);
 	}
-	const { steps, runnerCwd, workflowGraph, eventChain, originalTask } = built;
+	const { steps, runnerCwd, workflowGraph, eventChain } = built;
 	const ticketTasks = chain.flatMap((step) => {
 		if (isParallelStep(step)) return step.parallel;
 		if (isDynamicParallelStep(step)) return [step.parallel];
@@ -718,7 +680,7 @@ export function executeAsyncChain(
 		return [childIntercomTarget(step.agent, childTargetIndex++)];
 	}) : undefined;
 
-	let spawnResult: { pid?: number; error?: string } = {};
+	let spawnResult: { pid?: number; error?: string };
 	try {
 		spawnResult = spawnRunner(
 			{
@@ -963,7 +925,7 @@ export function executeAsyncSingle(
 		? resolveTkTicketMetadata(task, { cwd: runnerCwd })
 		: normalizeTkTicketMetadata(params.inheritedTkTicket);
 	const initialTurnBudget = params.turnBudget ? initialTurnBudgetState(params.turnBudget) : undefined;
-	let spawnResult: { pid?: number; error?: string } = {};
+	let spawnResult: { pid?: number; error?: string };
 	try {
 		spawnResult = spawnRunner(
 			{
@@ -976,9 +938,9 @@ export function executeAsyncSingle(
 						cwd: runnerCwd,
 						model,
 						thinking: resolveEffectiveThinking(model, effectiveThinking),
-						modelCandidates: buildModelCandidates(primaryModel, fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope }).map((candidate) =>
-							applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined),
-						),
+						modelCandidates: buildModelCandidates(primaryModel, fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope })
+							.map((candidate) => applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined))
+							.filter((candidate): candidate is string => candidate !== undefined),
 						modelFallbackNotice: params.modelFallbackNotice,
 						tools: agentConfig.tools,
 						extensions: agentConfig.extensions,

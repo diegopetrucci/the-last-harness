@@ -189,19 +189,18 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
 			reject(new Error("Supervisor request cancelled."));
 			return;
 		}
-		let timer: ReturnType<typeof setTimeout> | undefined;
+		const timer = setTimeout(() => {
+			cleanup();
+			resolve();
+		}, ms);
 		const cleanup = () => {
-			if (timer) clearTimeout(timer);
+			clearTimeout(timer);
 			signal?.removeEventListener("abort", onAbort);
 		};
 		const onAbort = () => {
 			cleanup();
 			reject(new Error("Supervisor request cancelled."));
 		};
-		timer = setTimeout(() => {
-			cleanup();
-			resolve();
-		}, ms);
 		signal?.addEventListener("abort", onAbort, { once: true });
 	});
 }
@@ -618,7 +617,7 @@ function buildParentIntercomTool(pending: Map<string, PendingSupervisorRequest>,
 			? "Native pi-subagents supervisor channel. Use pending/status to inspect paused child requests, then resume them with subagent resume or cancel them with interrupt; reply remains legacy live-session compatibility only."
 			: "Native pi-subagents supervisor channel. Use pending/status to inspect paused child requests without overriding pi-intercom, then resume them with subagent resume or cancel them with interrupt; reply remains legacy live-session compatibility only.",
 		parameters: IntercomParamsSchema,
-		async execute(_id, params) {
+		async execute(_id: string, params: unknown) {
 			refreshPendingRequests(pending, state, state.lastUiContext ?? undefined);
 			const input = params as IntercomParams;
 			if (input.action === "status") {
@@ -651,13 +650,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 	const seenFiles = new Set<string>();
 	let poller: ReturnType<typeof setInterval> | undefined;
 	let lastStaleCleanupAt = 0;
-	const registerTool = (((pi as unknown as Record<string, unknown>).registerTool) as (tool: {
-		name: string;
-		label: string;
-		description: string;
-		parameters: TSchema;
-		execute: (id: string, params: unknown, signal?: AbortSignal) => Promise<unknown>;
-	}) => void).bind(pi);
+	const registerTool = (((pi as unknown as Record<string, unknown>).registerTool) as (tool: ReturnType<typeof buildParentIntercomTool>) => void).bind(pi);
 
 	const registerParentTools = (): void => {
 		if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) registerTool(buildParentIntercomTool(pending, state, NATIVE_SUPERVISOR_TOOL_NAME));

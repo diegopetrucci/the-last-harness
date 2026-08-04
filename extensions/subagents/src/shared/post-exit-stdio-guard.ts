@@ -36,10 +36,10 @@ export function attachPostExitStdioGuard(
 
 	const destroyUnendedStdio = () => {
 		if (!stdoutEnded) {
-			try { child.stdout?.destroy(); } catch {}
+			try { child.stdout?.destroy(); } catch { void 0; }
 		}
 		if (!stderrEnded) {
-			try { child.stderr?.destroy(); } catch {}
+			try { child.stderr?.destroy(); } catch { void 0; }
 		}
 	};
 

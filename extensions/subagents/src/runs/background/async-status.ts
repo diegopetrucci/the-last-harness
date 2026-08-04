@@ -138,7 +138,7 @@ function isAsyncRunDir(root: string, entry: string): boolean {
 	} catch (error) {
 		if (isNotFoundError(error)) return false;
 		throw new Error(`Failed to inspect async run path '${entryPath}': ${getErrorMessage(error)}`, {
-			cause: error instanceof Error ? error : undefined,
+			cause: error,
 		});
 	}
 }
@@ -150,7 +150,7 @@ function outputFileMtime(outputFile: string | undefined): number | undefined {
 	} catch (error) {
 		if (isNotFoundError(error)) return undefined;
 		throw new Error(`Failed to inspect async output file '${outputFile}': ${getErrorMessage(error)}`, {
-			cause: error instanceof Error ? error : undefined,
+			cause: error,
 		});
 	}
 }
@@ -319,7 +319,7 @@ function listAsyncRunEntries(asyncDirRoot: string): string[] {
 	} catch (error) {
 		if (isNotFoundError(error)) return [];
 		throw new Error(`Failed to list async runs in '${asyncDirRoot}': ${getErrorMessage(error)}`, {
-			cause: error instanceof Error ? error : undefined,
+			cause: error,
 		});
 	}
 }

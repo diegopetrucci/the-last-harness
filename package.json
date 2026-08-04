@@ -59,7 +59,8 @@
   "pi": {
     "extensions": [
       "./extensions/annotate-git-diff/index.js",
-      "./extensions/the-last-harness.js"
+      "./extensions/the-last-harness.js",
+      "./extensions/subagents/src/extension/index.js"
     ],
     "skills": [
       "./skills"
@@ -78,9 +79,12 @@
   "dependencies": {
     "@tailwindcss/browser": "4.3.3",
     "glimpseui": "0.8.1",
-    "monaco-editor": "0.56.0"
+    "monaco-editor": "0.56.0",
+    "typebox": "1.3.7"
   },
   "devDependencies": {
+    "@earendil-works/pi-agent-core": "0.83.0",
+    "@earendil-works/pi-ai": "0.83.0",
     "@earendil-works/pi-coding-agent": "0.83.0",
     "@earendil-works/pi-tui": "0.83.0",
     "@eslint/js": "10.0.1",

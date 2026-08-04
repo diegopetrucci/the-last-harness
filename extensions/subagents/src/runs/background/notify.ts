@@ -125,9 +125,16 @@ function formatSessionLine(details: SubagentNotifyDetails): string | undefined {
 	return details.sessionLabel ? `${details.sessionLabel}: ${value}` : value;
 }
 
+function hasUnsafeIdentifierCharacters(value: string): boolean {
+	return [...value].some((character) => {
+		const code = character.codePointAt(0) ?? 0;
+		return code <= 0x1f || code === 0x7f || code === 0x2028 || code === 0x2029;
+	});
+}
+
 function normalizeAsyncIdentifier(value: unknown): string | undefined {
 	if (typeof value !== "string") return undefined;
-	if (value.trim() === "" || value.length > MAX_ASYNC_ID_CHARS || /[\u0000-\u001f\u007f\u2028\u2029]/.test(value)) return undefined;
+	if (value.trim() === "" || value.length > MAX_ASYNC_ID_CHARS || hasUnsafeIdentifierCharacters(value)) return undefined;
 	if (path.isAbsolute(value) || /[\\/]/.test(value) || value.includes("..")) return undefined;
 	return value;
 }

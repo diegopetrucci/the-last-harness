@@ -258,8 +258,8 @@ function parseGitPackagePath(source: string): { host: string; repoPath: string }
 	const spec = source.slice(4).trim();
 	if (!spec) return undefined;
 
-	let host = "";
-	let repoPath = "";
+	let host: string;
+	let repoPath: string;
 	const scpLike = spec.match(/^git@([^:]+):(.+)$/);
 	if (scpLike) {
 		host = scpLike[1] ?? "";
@@ -1603,7 +1603,7 @@ export function discoverAgentsAll(cwd: string): {
 	const userDirNew = getLegacyGlobalAgentsDir();
 	const userChainDir = getUserChainDir();
 	const { readDirs: projectDirs, preferredDir: projectDir } = resolveNearestProjectAgentDirs(cwd);
-	const { readDirs: projectChainDirs, preferredDir: projectChainDir } = resolveNearestProjectChainDirs(cwd);
+	const { preferredDir: projectChainDir } = resolveNearestProjectChainDirs(cwd);
 	const userSettingsPath = getUserAgentSettingsPath();
 	const projectSettingsPath = getProjectAgentSettingsPath(cwd);
 	const userSettings = readSubagentSettings(userSettingsPath);

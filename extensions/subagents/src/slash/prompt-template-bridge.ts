@@ -148,10 +148,13 @@ function parsePromptTemplateRequest(data: unknown): PromptTemplateDelegationRequ
 	if (!hasSingle && tasks.length === 0) return undefined;
 
 	const fallbackTask = tasks[0];
+	const agent = hasSingle ? value.agent : fallbackTask?.agent;
+	const task = hasSingle ? value.task : fallbackTask?.task;
+	if (typeof agent !== "string" || typeof task !== "string") return undefined;
 	return {
 		requestId: value.requestId,
-		agent: hasSingle ? value.agent : fallbackTask!.agent,
-		task: hasSingle ? value.task : fallbackTask!.task,
+		agent,
+		task,
 		...(tasks.length > 0 ? { tasks } : {}),
 		context: value.context,
 		model: value.model,

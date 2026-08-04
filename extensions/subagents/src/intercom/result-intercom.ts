@@ -497,23 +497,24 @@ export async function deliverSubagentIntercomMessageEvent(
 	if (typeof events.on !== "function" || typeof events.emit !== "function") return false;
 	const requestId = typeof extra.requestId === "string" ? extra.requestId : randomUUID();
 	return new Promise((resolve) => {
+		const cleanupState: { timer?: ReturnType<typeof setTimeout>; unsubscribe?: () => void } = {};
 		let settled = false;
-		let unsubscribe: (() => void) | undefined;
-		let timer: ReturnType<typeof setTimeout> | undefined;
 		const finish = (delivered: boolean) => {
 			if (settled) return;
 			settled = true;
-			if (timer) clearTimeout(timer);
-			unsubscribe?.();
+			if (cleanupState.timer) clearTimeout(cleanupState.timer);
+			cleanupState.unsubscribe?.();
 			resolve(delivered);
 		};
-		unsubscribe = events.on(SUBAGENT_RESULT_INTERCOM_DELIVERY_EVENT, (data) => {
+		const unsubscribe = events.on(SUBAGENT_RESULT_INTERCOM_DELIVERY_EVENT, (data) => {
 			if (!data || typeof data !== "object") return;
 			const delivery = data as { requestId?: unknown; delivered?: unknown };
 			if (delivery.requestId !== requestId) return;
 			finish(delivery.delivered === true);
 		});
-		timer = setTimeout(() => finish(false), timeoutMs);
+		cleanupState.unsubscribe = unsubscribe;
+		const timer = setTimeout(() => finish(false), timeoutMs);
+		cleanupState.timer = timer;
 		try {
 			events.emit(SUBAGENT_RESULT_INTERCOM_EVENT, { ...extra, to, message, requestId });
 		} catch {

@@ -5,7 +5,7 @@ import { RESULTS_DIR, type AsyncParallelGroupStatus, type AsyncStatus, type Nest
 import { createAsyncStatusJsonParseError } from "./async-status-corruption.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent, type NestedRoute } from "../shared/nested-events.ts";
-import { checkPidLiveness, normalizeAsyncLifecycleStatus, recoverStoppedLifecycleOwnership, type PidLiveness } from "../shared/lifecycle-state.ts";
+import { checkPidLiveness, normalizeAsyncLifecycleStatus, recoverStoppedLifecycleOwnership } from "../shared/lifecycle-state.ts";
 
 type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 
@@ -91,7 +91,7 @@ function readStatusFile(asyncDir: string): AsyncStatus | null {
 	} catch (error) {
 		if (isNotFoundError(error)) return null;
 		throw new Error(`Failed to read async status file '${statusPath}': ${getErrorMessage(error)}`, {
-			cause: error instanceof Error ? error : undefined,
+			cause: error,
 		});
 	}
 	try {
@@ -134,7 +134,7 @@ function readResultRepairData(resultPath: string): ResultRepairData | undefined 
 	} catch (error) {
 		if (isNotFoundError(error)) return undefined;
 		throw new Error(`Failed to read async result file '${resultPath}': ${getErrorMessage(error)}`, {
-			cause: error instanceof Error ? error : undefined,
+			cause: error,
 		});
 	}
 }

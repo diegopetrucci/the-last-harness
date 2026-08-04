@@ -152,7 +152,7 @@ function readAsyncStatus(asyncDir: string): AsyncStatusReadResult {
 }
 
 function newestTreeMtimeMs(dirPath: string): number {
-	let newest = 0;
+	let newest: number;
 	try {
 		newest = fs.statSync(dirPath).mtimeMs;
 	} catch {
