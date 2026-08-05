@@ -188,11 +188,6 @@ export interface CompletionBatchConfig {
 	stragglerWindowMs?: number;
 }
 
-export interface WaitToolConfigObject {
-	enabled?: boolean;
-}
-
-export type WaitToolConfig = boolean | WaitToolConfigObject;
 
 export interface ControlEvent {
 	type: ControlEventType;
@@ -1121,7 +1116,6 @@ export interface ExtensionConfig {
 	/** Tool description variant registered for the parent-facing subagent tool. Defaults to full. */
 	toolDescriptionMode?: ToolDescriptionMode;
 	forceTopLevelAsync?: boolean;
-	waitTool?: WaitToolConfig;
 	defaultSessionDir?: string;
 	singleRunOutputBaseDir?: string;
 	maxSubagentDepth?: number;

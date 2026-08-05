@@ -13,7 +13,7 @@ import { externalSubagentCoexistenceWarning, findConfiguredExternalSubagentPacka
 import { cleanupRuntimeDirs } from "./runtime-cleanup.js";
 import { createSubagentLiveDetailController, SUBAGENT_LIVE_DETAIL_SHORTCUT, SUBAGENT_PAUSE_ALL_SHORTCUT, } from "../shared/subagent-shortcuts.js";
 import { clearLegacyResultAnimationTimer, renderWidget, renderSubagentResult } from "../tui/render.js";
-import { SubagentParams, WaitParams } from "./schemas.js";
+import { SubagentParams } from "./schemas.js";
 import { createSubagentExecutor } from "../runs/foreground/subagent-executor.js";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.js";
 import { createResultWatcher } from "../runs/background/result-watcher.js";
@@ -23,7 +23,6 @@ import { registerSlashSubagentBridge } from "../slash/slash-bridge.js";
 import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.js";
 import { registerSubagentRpcBridge } from "./rpc.js";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots } from "../slash/slash-live-state.js";
-import { resolveWaitToolConfig, waitForSubagents } from "../runs/background/wait.js";
 import registerSubagentNotify, { boundedReference } from "../runs/background/notify.js";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.js";
 import { formatDuration, shortenPath } from "../shared/formatters.js";
@@ -268,7 +267,6 @@ export default function registerSubagentExtension(pi) {
     cleanupOldChainDirs();
     cleanupRuntimeDirs();
     const config = loadConfig();
-    const waitToolConfig = resolveWaitToolConfig(config.waitTool);
     const asyncByDefault = config.asyncByDefault === true;
     const tempArtifactsDir = getArtifactsDir(null);
     cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
@@ -508,26 +506,6 @@ export default function registerSubagentExtension(pi) {
             handlePauseAllShortcut(state, ctx);
         },
     });
-    const waitTool = defineTool({
-        name: "wait",
-        label: "Wait",
-        description: `Block until background (async) subagent runs started in this session finish, then return.
-
-Use this after launching async subagents when you have no independent work left and must not end your turn — for example inside a skill that has to run to completion, or any non-interactive run (\`pi -p ...\`) where the whole task is a single turn and ending it would abandon the still-running children.
-
-• { } — return as soon as the FIRST active run finishes (default). Ideal for a rolling fleet: launch N, wait, spawn a replacement for the one that finished, wait again — keeping N in flight.
-• { all: true } — block until EVERY active run in this session is finished.
-• { id: "..." } — wait for one specific run (id or prefix) to finish.
-• { timeoutMs: 600000 } — stop waiting after N ms (the runs keep going regardless; default 30 min)
-
-wait also returns when a run needs attention (a child that went idle or blocked for a decision), not only on completion — so a stuck child never stalls the loop; the summary names the run(s) to inspect/nudge/resume/interrupt. It wakes the instant a completion or control event arrives (subscribed to Pi's event bus, with a poll fallback that reconciles crashed runners), keeps the turn alive for normal notification delivery, and resolves early if the turn is aborted.${waitToolConfig.enabled ? "" : "\n\nConfigured behavior: wait is disabled by config.waitTool or PI_SUBAGENT_WAIT_TOOL_ENABLED and returns immediately without blocking."}`,
-        parameters: WaitParams,
-        async execute(id, params, signal, _onUpdate, _ctx) {
-            const result = await waitForSubagents(params, signal, { state, events: pi.events, enabled: waitToolConfig.enabled });
-            return toolResultBridge.normalize(id, "wait", result);
-        },
-    });
-    pi.registerTool(waitTool);
     registerSlashCommands(pi, state);
     const eventUnsubscribeStoreKey = "__piSubagentEventUnsubscribes";
     const controlNoticeSeenStoreKey = "__piSubagentVisibleControlNotices";

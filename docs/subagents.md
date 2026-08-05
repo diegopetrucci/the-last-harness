@@ -24,13 +24,6 @@ The model-facing `subagent` tool deliberately has a small, fail-closed surface:
 
 The supported actions are `list`, `get`, `models`, `status`, `interrupt`, `resume`, `steer`, and `doctor`. Saved chains and chain dispatch are intentionally not part of the current TLH contract. Mutating agent-management actions such as create/delete/reset are also not exposed through the model-facing schema; user-owned custom agents remain markdown files managed through the documented profile/project paths.
 
-`wait` is a separate tool for turns that genuinely must block on asynchronous work:
-
-- `wait({ id })` waits for one run.
-- `wait({ all: true })` waits until every run active at the start of the wait is terminal.
-- With neither field, it returns on the next terminal or needs-attention event, which supports rolling worker fleets.
-- A wait timeout or aborted wait does **not** stop detached runs. Inspect them with `subagent({ action: "status", id: "..." })`, wait again, or interrupt explicitly.
-
 Keep one writer per working directory. Parallel developers writing the same checkout can race even though their session contexts are isolated; use parallelism for read-only discovery/review or independent workspaces, and keep one owner for edits.
 
 ## Async control, pause, and resume

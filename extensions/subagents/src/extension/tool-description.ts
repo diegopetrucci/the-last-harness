@@ -9,7 +9,7 @@ const CUSTOM_TOOL_DESCRIPTION_MAX_BYTES = 50 * 1024;
 export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
 • Use { action: "list" } before execution and run only agents shown there.
 • Keep execution and actions separate: omit action for SINGLE { agent, task? } or PARALLEL { tasks:[...] }; use action only for list, get, models, status, interrupt, resume, steer, or doctor.
-• Async/background runs: set async:true only when work can continue without waiting. Do not sleep or poll status just to wait; if this turn must block, use the wait tool. Otherwise continue useful work or reply and let completion notifications arrive.
+• Async/background runs: set async:true only when work can continue without waiting. Do not sleep or poll status just to wait; continue useful work or reply and let completion notifications arrive.
 • Child-safety boundary: ordinary child subagents are not orchestrators and must not run subagents. Only explicit fanout children may use the child-safe subagent tool, still bounded by depth/session limits.
 • Writing safety: keep one writer for the same cwd. Use fresh read-only reviewers or validators for independent checks, then have the parent apply edits as the sole writer.
 • Status/artifacts essentials: async runs expose asyncId and asyncDir with status.json, events.jsonl, output logs, and status via { action: "status", id }. Include output paths and residual risks when reporting results.`;
@@ -70,7 +70,7 @@ ACTIONS
 • Paused-awaiting-supervisor status reports that no child process is running and gives exact unchanged resume, guided resume, and cancel commands.
 
 ASYNC / SAFETY
-• async:true launches detached background work. Do not sleep or poll just to wait; use the wait tool only when this turn must block.
+• async:true launches detached background work. Do not sleep or poll just to wait; continue useful work or let completion notifications arrive.
 • Ordinary child subagents are not orchestrators and must not run subagents. Only explicit fanout children may use the child-safe subagent tool.
 • Keep one writer per cwd; use fresh read-only review when needed, then have the parent apply edits.
 • Async status/artifacts live under asyncId/asyncDir with status.json, events.jsonl, output logs, and { action:"status", id:"..." }.`;
