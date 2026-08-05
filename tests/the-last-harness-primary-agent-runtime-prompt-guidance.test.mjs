@@ -16,23 +16,35 @@ import {
 	contrarianMetadata,
 } from "./the-last-harness-primary-agent-runtime-test-helpers.mjs";
 
-test("disabled primary mode still injects provider-aware subagent models", async (t) => {
+test("child runtime scopes tickets at session start", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
-	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const { toolCall } = registerRuntimeHarness();
-		const event = { toolName: "subagent", input: { agent: "developer", context: "resume" } };
-		const ctx = createToolCallContext(
-			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "disabled" } }],
-			undefined,
-			{ cwd: fixture.cwd },
-		);
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TICKETS_DIR: undefined }, async () => {
+		const pi = createPiHarness();
+		const runtime = registerTlhPrimaryAgentRuntime(pi, {
+			env: { PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_CHILD_AGENT: "developer" },
+		});
+		assert.equal(runtime, undefined);
+		const sessionStart = pi.events.find((event) => event.name === "session_start")?.handler;
+		assert.equal(typeof sessionStart, "function");
 
-		assert.equal(await toolCall(event, ctx), undefined);
-		assert.equal(event.input.model, "openai-codex/gpt-5.4:medium");
-		assert.equal(event.input.agentScope, undefined);
-		assert.equal(event.input.context, "resume");
+		await sessionStart({}, { cwd: fixture.cwd });
+		assert.equal(process.env.TICKETS_DIR, join(fixture.cwd, ".tickets"));
 	});
+});
+
+test("disabled primary mode still injects provider-aware subagent models", async () => {
+	const { toolCall } = registerRuntimeHarness();
+	const event = { toolName: "subagent", input: { agent: "developer", context: "resume" } };
+	const ctx = createToolCallContext([
+		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "disabled" } },
+	]);
+
+	assert.equal(await toolCall(event, ctx), undefined);
+	assert.equal(event.input.model, "openai-codex/gpt-5.6-luna:max");
+	assert.equal(Object.hasOwn(event.input, "thinking"), false);
+	assert.equal(event.input.agentScope, undefined);
+	assert.equal(event.input.context, "resume");
 });
 
 test("disabled primary mode allows contrarian by default and ignores stale contrarian experimental settings", async (t) => {
@@ -44,7 +56,7 @@ test("disabled primary mode allows contrarian by default and ignores stale contr
 		modelRegistry: {
 			getAvailable: () => [
 				{ provider: "openai-codex", id: "gpt-5.4" },
-				{ provider: "anthropic", id: "claude-opus-4-8" },
+				{ provider: "anthropic", id: "claude-opus-5" },
 			],
 		},
 		model: { provider: "openai-codex", id: "gpt-5.4" },
@@ -57,7 +69,7 @@ test("disabled primary mode allows contrarian by default and ignores stale contr
 			input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "project", context: "resume" },
 		};
 		assert.equal(await toolCall(defaultEvent, ctx), undefined);
-		assert.equal(defaultEvent.input.model, "anthropic/claude-opus-4-8");
+		assert.equal(defaultEvent.input.model, "anthropic/claude-opus-5");
 		assert.equal(defaultEvent.input.agentScope, "project");
 		assert.equal(defaultEvent.input.context, "resume");
 
@@ -71,7 +83,7 @@ test("disabled primary mode allows contrarian by default and ignores stale contr
 				input: { agent: "contrarian", prompt: "stress-test this plan", agentScope: "project", context: "resume" },
 			};
 			assert.equal(await toolCall(staleEvent, ctx), undefined);
-			assert.equal(staleEvent.input.model, "anthropic/claude-opus-4-8");
+			assert.equal(staleEvent.input.model, "anthropic/claude-opus-5");
 			assert.equal(staleEvent.input.agentScope, "project");
 			assert.equal(staleEvent.input.context, "resume");
 		}
@@ -107,27 +119,22 @@ test("disabled primary mode allows opaque resume regardless of stale contrarian 
 	});
 });
 
-test("enabled primary mode validates subagent input after injecting provider-aware models", async (t) => {
-	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+test("enabled primary mode validates subagent input after injecting provider-aware models", async () => {
+	const { toolCall } = registerRuntimeHarness();
+	const event = { toolName: "subagent", input: { agent: "developer", context: "resume" } };
+	const ctx = createToolCallContext([
+		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
+	]);
 
-	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const { toolCall } = registerRuntimeHarness();
-		const event = { toolName: "subagent", input: { agent: "developer", context: "resume" } };
-		const ctx = createToolCallContext(
-			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
-			undefined,
-			{ cwd: fixture.cwd },
-		);
-
-		const result = await toolCall(event, ctx);
-		assert.deepEqual(result, {
-			block: true,
-			reason:
-				'TLH primary-agent subagent execution may not use context: "resume". TLH child sessions must start fresh so parent primary-agent/Gnosis context is not leaked.',
-		});
-		assert.equal(event.input.model, "openai-codex/gpt-5.4:medium");
-		assert.equal(event.input.agentScope, "user");
+	const result = await toolCall(event, ctx);
+	assert.deepEqual(result, {
+		block: true,
+		reason:
+			'TLH primary-agent subagent execution may not use context: "resume". TLH child sessions must start fresh so parent primary-agent/Gnosis context is not leaked.',
 	});
+	assert.equal(event.input.model, "openai-codex/gpt-5.6-luna:max");
+	assert.equal(Object.hasOwn(event.input, "thinking"), false);
+	assert.equal(event.input.agentScope, "user");
 });
 
 test("before_agent_start adds TLH commit attribution guidance only when enabled", async (t) => {
@@ -345,7 +352,7 @@ test("child mode keeps parent-only controls disabled while applying commit attri
 		assert.deepEqual([...pi.shortcuts.keys()], []);
 		assert.deepEqual(
 			pi.events.map((event) => event.name),
-			["before_agent_start", "tool_call"],
+			["session_start", "before_agent_start", "tool_call"],
 		);
 
 		const beforeAgentStart = pi.events.find((event) => event.name === "before_agent_start")?.handler;

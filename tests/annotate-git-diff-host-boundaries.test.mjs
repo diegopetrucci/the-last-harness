@@ -87,11 +87,15 @@ function createPiHarness() {
 	return {
 		commands: [],
 		events: [],
+		sent: [],
 		on(name, handler) {
 			this.events.push({ name, handler });
 		},
 		registerCommand(name, config) {
 			this.commands.push({ name, config });
+		},
+		sendUserMessage(message, options) {
+			this.sent.push({ message, options });
 		},
 	};
 }
@@ -466,7 +470,7 @@ test("annotate-git-diff binds file authorization to the current scope and exact 
 	};
 	const loadCalls = [];
 	const promptCalls = [];
-	const { controller, context, window } = createController({
+	const { controller, context, window, pi } = createController({
 		getReviewWindowData: async () =>
 			createReviewData({
 				files: [createReviewData().files[0], snapshotFile],
@@ -628,7 +632,7 @@ test("annotate-git-diff binds file authorization to the current scope and exact 
 		},
 	]);
 
-	const submitPayload = { type: "submit", overallComment: "ship it", comments: [] };
+	const submitPayload = { type: "submit", overallComment: "ship it", comments: [], draft: false };
 	window.emit("message", submitPayload);
 	await flushAsyncWork();
 	assert.deepEqual(promptCalls, [
@@ -637,7 +641,10 @@ test("annotate-git-diff binds file authorization to the current scope and exact 
 			payload: submitPayload,
 		},
 	]);
-	assert.deepEqual(context.pasted, ["injected prompt"]);
+	// Explicit submit (draft: false) sends via sendUserMessage, not paste.
+	assert.deepEqual(context.pasted, []);
+	assert.deepEqual(pi.sent, [{ message: "injected prompt", options: { deliverAs: "followUp" } }]);
+	assert.equal(context.notifications.some(({ message }) => message === "Review feedback sent to the agent."), true);
 });
 
 test("annotate-git-diff retains pending immutable commit state across review-data refreshes", async () => {
@@ -679,7 +686,7 @@ test("annotate-git-diff retains pending immutable commit state across review-dat
 			},
 		],
 	});
-	const { controller, context, window } = createController({
+	const { controller, context, window, pi } = createController({
 		getReviewWindowData: async () => reviewData,
 		getCommitFiles: async (_pi, _repoRoot, sha) => {
 			commitLoads.push(sha);
@@ -786,11 +793,15 @@ test("annotate-git-diff retains pending immutable commit state across review-dat
 				body: "immutable metadata",
 			},
 		],
+		draft: false,
 	};
 	window.emit("message", submitPayload);
 	await flushAsyncWork();
 	assert.deepEqual(promptCalls, [{ files: [reviewData.files[0], commitAFile], payload: submitPayload }]);
-	assert.deepEqual(context.pasted, ["retained immutable prompt"]);
+	// Explicit submit (draft: false) sends via sendUserMessage, not paste.
+	assert.deepEqual(context.pasted, []);
+	assert.deepEqual(pi.sent, [{ message: "retained immutable prompt", options: { deliverAs: "followUp" } }]);
+	assert.equal(context.notifications.some(({ message }) => message === "Review feedback sent to the agent."), true);
 });
 
 test("annotate-git-diff suppresses stale commit and file results after review-data refreshes", async () => {
@@ -1006,7 +1017,7 @@ test("annotate-git-diff keeps only the newest overlapping review-data refresh", 
 test("annotate-git-diff suppresses late results after shutdown", async () => {
 	const pendingContents = createDeferred();
 	const timers = [];
-	const { controller, context, window } = createController({
+	const { controller, context, window, pi } = createController({
 		loadReviewFileContents: async () => pendingContents.promise,
 		setTimeoutFn: (fn, _delay) => {
 			timers.push(fn);
@@ -1041,5 +1052,48 @@ test("annotate-git-diff suppresses late results after shutdown", async () => {
 
 	assert.deepEqual(context.pasted, []);
 	assert.deepEqual(parseSentMessages(window), []);
+	assert.deepEqual(pi.sent, []);
 	assert.equal(context.notifications.some(({ message }) => message === "Appended review feedback to the editor."), false);
+	assert.equal(context.notifications.some(({ message }) => message === "Review feedback sent to the agent."), false);
+});
+
+test("annotate-git-diff explicit submit sends via sendUserMessage and does not paste", async () => {
+	const { controller, context, window, pi } = createController({
+		composeReviewPrompt: () => "explicit prompt",
+	});
+	await controller.handler("", context.ctx);
+	window.emit("message", { type: "submit", overallComment: "explicit comment", comments: [], draft: false });
+	await flushAsyncWork();
+	assert.deepEqual(context.pasted, []);
+	assert.deepEqual(pi.sent, [{ message: "explicit prompt", options: { deliverAs: "followUp" } }]);
+	assert.equal(context.notifications.some(({ message }) => message === "Review feedback sent to the agent."), true);
+	assert.equal(context.notifications.some(({ message }) => message === "Appended review feedback to the editor."), false);
+});
+
+test("annotate-git-diff submit payload without draft field defaults to draft (paste) path", async () => {
+	const { controller, context, window, pi } = createController({
+		composeReviewPrompt: () => "undiscriminated prompt",
+	});
+	await controller.handler("", context.ctx);
+	// A payload with no draft discriminator must NOT fire an agent turn.
+	// It routes to the safe paste path instead.
+	window.emit("message", { type: "submit", overallComment: "no discriminator", comments: [] });
+	await flushAsyncWork();
+	assert.deepEqual(context.pasted, ["undiscriminated prompt"]);
+	assert.deepEqual(pi.sent, []);
+	assert.equal(context.notifications.some(({ message }) => message === "Appended review feedback to the editor."), true);
+	assert.equal(context.notifications.some(({ message }) => message === "Review feedback sent to the agent."), false);
+});
+
+test("annotate-git-diff draft-on-close pastes into editor and does not send", async () => {
+	const { controller, context, window, pi } = createController({
+		composeReviewPrompt: () => "draft prompt",
+	});
+	await controller.handler("", context.ctx);
+	window.emit("message", { type: "submit", overallComment: "draft comment", comments: [], draft: true });
+	await flushAsyncWork();
+	assert.deepEqual(context.pasted, ["draft prompt"]);
+	assert.deepEqual(pi.sent, []);
+	assert.equal(context.notifications.some(({ message }) => message === "Appended review feedback to the editor."), true);
+	assert.equal(context.notifications.some(({ message }) => message === "Review feedback sent to the agent."), false);
 });

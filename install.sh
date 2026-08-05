@@ -5,7 +5,7 @@ REPO="${TLH_REPO:-diegopetrucci/the-last-harness}"
 REF="${TLH_REF:-main}"
 # Keep in sync with MIN_NODE_VERSION and PINNED_PI_VERSION in scripts/tlh-install.mjs.
 TLH_MIN_NODE_VERSION="22.19.0"
-TLH_PINNED_PI_VERSION="0.81.1"
+TLH_PINNED_PI_VERSION="0.83.0"
 
 DRY_RUN=false
 NO_SETTINGS=false
@@ -419,7 +419,6 @@ required|scripts/tlh-defaults.mjs
 required|scripts/lib/default-extensions.mjs
 required|scripts/tlh-gnosis.mjs
 required|scripts/tlh-tickets.mjs
-required|scripts/tlh-rtk.mjs
 required|scripts/tlh-recover-update.mjs
 optional|scripts/tlh-update.mjs
 optional|scripts/tlh-wrapper.mjs
@@ -650,8 +649,6 @@ dry_run_without_stage1() {
   fi
   log "Would fetch Gnosis integration support files."
   log "Would fetch tlh tickets support files."
-  log "Would fetch tlh RTK support files."
-  log "Would install managed RTK into isolated profile: ${agent_dir}/bin/rtk"
   log "Would fetch tlh update support files."
   log "Would fetch tlh wrapper support files."
   log "Would fetch tlh install-state support files."

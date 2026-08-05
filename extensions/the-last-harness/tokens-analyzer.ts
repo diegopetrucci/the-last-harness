@@ -1,4 +1,5 @@
 import type { ExtensionContext, SessionEntry, ToolInfo } from "@earendil-works/pi-coding-agent";
+import { computeMedian, pairToolCalls } from "./tool-pairing.js";
 
 // Cache-miss detection ported from pi-coding-agent@0.80.6 core/cache-stats.
 // See ../../docs/upstream-sync-inventory.md for sync/review guidance.
@@ -78,6 +79,24 @@ export type TlhToolSourceEstimate = {
 	estimated: true;
 };
 
+/**
+ * Per-tool observed wall-clock latency statistics derived from paired tool calls and results.
+ *
+ * "Observed wall-clock latency" is the elapsed time between the assistant message that
+ * contained the tool call and the tool-result message, as recorded in the session log.
+ * It is NOT tool execution time: it includes idle time, supervisor pauses, human hold time,
+ * and any queueing between events. Values exceeding minutes or hours usually indicate the
+ * run was paused awaiting a decision, not that the tool itself was slow.
+ */
+export type TlhToolLatency = {
+	/** Median observed wall-clock latency in milliseconds across all paired call/result events. */
+	medianMs: number;
+	/** Maximum observed wall-clock latency in milliseconds. */
+	maxMs: number;
+	/** Number of call/result pairs used to compute these statistics. */
+	pairedCount: number;
+};
+
 export type TlhToolUsage = {
 	toolName: string;
 	callCount: number;
@@ -87,6 +106,12 @@ export type TlhToolUsage = {
 	approxTokens: number;
 	mcp: boolean;
 	source: TlhToolSourceEstimate;
+	/**
+	 * Observed wall-clock latency statistics for this tool, derived from paired call/result
+	 * events. Absent when no matched pairs exist (e.g. the session is still active or all
+	 * call IDs were unmatched). See {@link TlhToolLatency} for the interpretation caveat.
+	 */
+	observedLatency?: TlhToolLatency;
 };
 
 export type TlhToolSourceUsage = {
@@ -622,6 +647,30 @@ export function analyzeSessionEntries(
 
 	const combinedTotals = cloneUsageTotals(primaryTotals);
 	addUsage(combinedTotals, subagentTotals);
+
+	// Compute per-tool observed wall-clock latency from paired call/result events.
+	// pairToolCalls is pure (no I/O) and operates on the same in-memory entries already
+	// available here — no new plumbing or disk reads are required.
+	const pairing = pairToolCalls(entries as unknown[]);
+	const latencyMsByTool = new Map<string, number[]>();
+	for (const pair of pairing.toolPairs) {
+		const bucket = latencyMsByTool.get(pair.toolName);
+		if (bucket) {
+			bucket.push(pair.observedLatencyMs);
+		} else {
+			latencyMsByTool.set(pair.toolName, [pair.observedLatencyMs]);
+		}
+	}
+	for (const [toolName, latencies] of latencyMsByTool) {
+		const toolEntry = toolUsage.get(toolName);
+		if (!toolEntry) {
+			continue;
+		}
+		latencies.sort((left, right) => left - right);
+		const medianMs = computeMedian(latencies) ?? 0;
+		const maxMs = latencies[latencies.length - 1] ?? 0;
+		toolEntry.observedLatency = { medianMs, maxMs, pairedCount: latencies.length };
+	}
 
 	const worstMisses = [...cacheMissEvents]
 		.sort((a, b) => b.missedTokens - a.missedTokens)

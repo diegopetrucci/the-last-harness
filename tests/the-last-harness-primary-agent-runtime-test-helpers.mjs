@@ -64,9 +64,9 @@ export function createToolCallContext(branchEntries = [], notifications, overrid
 			},
 		},
 		modelRegistry: {
-			getAvailable: () => [{ provider: "openai-codex", id: "gpt-5.4", reasoning: true }],
+			getAvailable: () => [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
 		},
-		model: { provider: "openai-codex", id: "gpt-5.4", reasoning: true },
+		model: { provider: "openai-codex", id: "gpt-5.6-luna" },
 		...overrides,
 	};
 }
@@ -111,17 +111,17 @@ export function contrarianMetadata() {
 		name: "contrarian",
 		description: "Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case.",
 		tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
-		tlhAnthropicModels: ["anthropic/claude-opus-4-8"],
+		tlhAnthropicModels: ["anthropic/claude-opus-5"],
 		preferOppositeProvider: true,
 	};
 }
 
 export function rushLikePrimary(name = "architect") {
 	return createPrimaryPrompt(name, {
-		model: "anthropic/claude-opus-4-8",
-		tlhOpenaiModels: ["openai-codex/gpt-5.5"],
+		model: "anthropic/claude-sonnet-4-6",
+		tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
 		thinking: "low",
-		tlhOpenaiThinking: "off",
+		tlhOpenaiThinking: "medium",
 		applyModel: true,
 		applyThinking: true,
 	});
@@ -129,8 +129,10 @@ export function rushLikePrimary(name = "architect") {
 
 export function lockedRushPrimary() {
 	return createPrimaryPrompt("rush", {
-		model: "anthropic/claude-opus-4-8",
+		model: "anthropic/claude-sonnet-4-6",
+		tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
 		thinking: "low",
+		tlhOpenaiThinking: "medium",
 		applyModel: true,
 		applyThinking: true,
 		lockThinking: true,

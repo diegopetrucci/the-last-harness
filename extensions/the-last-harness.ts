@@ -19,7 +19,6 @@ import { registerTlhPrimaryAgentRuntime } from "./the-last-harness/primary-agent
 import { collectStartupResources } from "./the-last-harness/resources.js";
 import { getTlhStartupTip } from "./the-last-harness/startup-tip.js";
 import { createLazyTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage-facade.js";
-import { registerSubagentSettingsCommand } from "./the-last-harness/subagent-settings.js";
 import { registerLazyTlhTicketWorkflowUi } from "./the-last-harness/ticket-workflow-ui-facade.js";
 import {
 	getCachedTlhUsageWeeklyVisibility,
@@ -157,7 +156,11 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	const getAnnotateLastMessageCommand = () => {
 		if (!annotateLastMessageCommandPromise) {
 			annotateLastMessageCommandPromise = loadAnnotateLastMessageModule()
-				.then((module) => module.buildAnnotateLastMessageCommand())
+				.then((module) =>
+					module.buildAnnotateLastMessageCommand({
+						sendUserMessage: (message, options) => pi.sendUserMessage(message, options),
+					}),
+				)
 				.catch((error) => {
 					annotateLastMessageCommandPromise = undefined;
 					throw error;
@@ -196,7 +199,6 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	});
 	registerEffortCommand(pi, primaryAgentRuntime);
 	registerExperimentalCommand(pi);
-	registerSubagentSettingsCommand(pi);
 	registerLazyTlhTicketWorkflowUi(pi);
 	pi.registerCommand("review", {
 		description: REVIEW_COMMAND_DESCRIPTION,

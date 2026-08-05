@@ -6,19 +6,12 @@ const HIDDEN_SLASH_COMMANDS = new Set([
 	"clone",
 	"import",
 	"scoped-models",
-	"subagents-profiles",
-	"subagents-check-profile",
-	"subagents-models",
+	"subagent-cost",
 	"skill:librarian",
-	"skill:pi-intercom",
 	"websearch",
 	"curator",
 	"search",
 	"quiet-tools",
-	"fff-health",
-	"fff-rescan",
-	"fff-mode",
-	"intercom",
 ]);
 
 function stripAutocompleteSourceTag(description: string | undefined): string | undefined {

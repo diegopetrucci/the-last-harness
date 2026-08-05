@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 export function splitGitRef(url) {
     const hashSeparator = url.lastIndexOf("#");
     if (hashSeparator >= 0) {
@@ -125,8 +126,39 @@ export function isLocalPackageSource(source) {
         && !trimmed.startsWith("https:")
         && !trimmed.startsWith("ssh:");
 }
+function resolveSupportedFilePackageSource(source) {
+    if (!source.startsWith("file:"))
+        return "";
+    const filePath = source.slice(5);
+    if (!filePath)
+        return "";
+    if (filePath.startsWith("//")) {
+        try {
+            const parsed = new URL(source);
+            if (parsed.protocol !== "file:" || (parsed.host && parsed.host !== "localhost"))
+                return "";
+            return fileURLToPath(parsed);
+        }
+        catch {
+            return "";
+        }
+    }
+    if (isAbsolute(filePath))
+        return filePath;
+    return "";
+}
+export function packageSourcePiSource(source, options = {}) {
+    const text = String(source ?? "");
+    const supportedFilePath = resolveSupportedFilePackageSource(text);
+    if (supportedFilePath)
+        return supportedFilePath;
+    return gitSourceInstallSource(text, options);
+}
 export function resolveLocalPackageSource(source, { agentDir = "", homeDir = homedir() } = {}) {
     const text = String(source ?? "");
+    const supportedFilePath = resolveSupportedFilePackageSource(text);
+    if (supportedFilePath)
+        return supportedFilePath;
     if (text === "~")
         return homeDir;
     if (text.startsWith("~/"))

@@ -4,14 +4,12 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
 
-import { makeTempDir } from "./install-stage1-test-helpers.mjs";
+import { makeTempDir, readPiLogRecords } from "./install-stage1-test-helpers.mjs";
 import {
 	TLH_PINNED_PI_VERSION,
 	escapeRegExp,
-	managedRtkSupportedTestPlatform,
 	pathWithoutRepoNodeModulesBin,
 	readJson,
-	readJsonLines,
 	repoRoot,
 	runHelper,
 	runStage1LocalPackageInstall,
@@ -34,7 +32,7 @@ test("stage-1 hides PATH-adjustment and refresh fallback detail lines unless --v
 		const runtimeBinDir = join(dirname(agentDir), "runtime", "bin");
 		const runtimePiPath = join(runtimeBinDir, "pi");
 		const pathNotice = `warning: ${runtimePiPath} installed but ${runtimeBinDir} is not on PATH. Added it to PATH for this install; add it to your shell profile with: export PATH="${runtimeBinDir}:$PATH"`;
-		const refreshDetailPattern = /Running settings-wide extension refresh from merged settings; fallback retries only 10 non-critical bundled default source\(s\) individually\./;
+		const refreshDetailPattern = /Running settings-wide extension refresh from merged settings; fallback retries only 9 non-critical bundled default source\(s\) individually\./;
 
 		assert.equal(result.status, 0, output);
 		if (verbose) {
@@ -292,15 +290,15 @@ test("stage-1 --no-settings does not short-circuit Gnosis configure", (t) => {
 	assert.doesNotMatch(output, /Skipping Gnosis integration \(--no-settings\)\./);
 });
 
-test("stage-1 copies only the profile recovery and RTK launchers into the isolated profile", (t) => {
+test("stage-1 copies only the profile recovery launcher into the isolated profile", (t) => {
 	const { result, agentDir } = runStage1LocalPackageInstall(t, { noSettings: true });
 	const output = `${result.stdout}\n${result.stderr}`;
 	const supportDir = join(agentDir, "tlh");
 
 	assert.equal(result.status, 0, output);
 	assert.equal(existsSync(join(supportDir, "recover-update.mjs")), true, "recover-update.mjs");
-	assert.equal(existsSync(join(supportDir, "tlh-rtk.mjs")), true, "tlh-rtk.mjs");
 	for (const relativePath of [
+		"tlh-rtk.mjs",
 		"tlh-defaults.mjs",
 		"tlh-tickets.mjs",
 		"tlh-update.mjs",
@@ -318,58 +316,37 @@ test("stage-1 copies only the profile recovery and RTK launchers into the isolat
 	}
 });
 
-test("stage-1 installs managed RTK into the isolated profile even when settings/default extensions are skipped", { skip: !managedRtkSupportedTestPlatform }, (t) => {
-	const rtkLog = join(makeTempDir("tlh-install-rtk-log-"), "rtk.jsonl");
-	t.after(() => rmSync(dirname(rtkLog), { recursive: true, force: true }));
+test("stage-1 removes legacy managed RTK artifacts even when settings/default extensions are skipped", (t) => {
 	const { result, agentDir } = runStage1LocalPackageInstall(t, {
 		noSettings: true,
-		envOverrides: {
-			TLH_TEST_RTK_LOG: rtkLog,
+		existingSupportFiles: {
+			"tlh-rtk.mjs": "legacy helper\n",
 		},
+		existingManagedRtk: true,
 	});
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	assert.equal(result.status, 0, output);
-	assert.equal(existsSync(join(agentDir, "tlh", "tlh-rtk.mjs")), true);
-	const calls = readJsonLines(rtkLog);
-	assert.equal(calls.length, 1);
-	assert.equal(calls[0]?.command, process.execPath);
-	assert.deepEqual(calls[0]?.args, [join(repoRoot, "scripts", "tlh-rtk.mjs"), "--agent-dir", agentDir, "--target", join(agentDir, "bin", "rtk"), "install-managed"]);
-	assert.equal(calls[0]?.cwd, repoRoot);
-	assert.equal(calls[0]?.env?.PI_CODING_AGENT_DIR, agentDir);
+	assert.equal(existsSync(join(agentDir, "bin", "rtk")), false);
+	assert.equal(existsSync(join(agentDir, "tlh", "tlh-rtk.mjs")), false);
 });
 
-test("stage-1 dry-run forwards the managed RTK dry-run plan without writing", { skip: !managedRtkSupportedTestPlatform }, (t) => {
-	const rtkLog = join(makeTempDir("tlh-install-rtk-dry-run-log-"), "rtk.jsonl");
-	t.after(() => rmSync(dirname(rtkLog), { recursive: true, force: true }));
+test("stage-1 dry-run reports legacy managed RTK cleanup with --no-settings without deleting", (t) => {
 	const { result, agentDir } = runStage1LocalPackageInstall(t, {
 		dryRun: true,
 		noSettings: true,
-		envOverrides: {
-			TLH_TEST_RTK_LOG: rtkLog,
-			TLH_TEST_RTK_STDERR: `Would install RTK ${process.platform}/${process.arch} into isolated profile\n`,
+		existingSupportFiles: {
+			"tlh-rtk.mjs": "legacy helper\n",
 		},
+		existingManagedRtk: true,
 	});
+	const output = `${result.stdout}\n${result.stderr}`;
 
-	assert.equal(result.status, 0, result.stderr);
-	assert.match(result.stderr, /Would install RTK/);
-	const calls = readJsonLines(rtkLog);
-	assert.equal(calls.length, 1);
-	assert.deepEqual(calls[0]?.args, [join(repoRoot, "scripts", "tlh-rtk.mjs"), "--agent-dir", agentDir, "--target", join(agentDir, "bin", "rtk"), "install-managed", "--dry-run", "--detail"]);
-	assert.equal(existsSync(join(agentDir, "bin", "rtk")), false);
-});
-
-test("stage-1 fails hard when managed RTK installation fails", { skip: !managedRtkSupportedTestPlatform }, (t) => {
-	const { result } = runStage1LocalPackageInstall(t, {
-		noSettings: true,
-		envOverrides: {
-			TLH_TEST_RTK_STATUS: "23",
-			TLH_TEST_RTK_STDERR: "tlh-rtk: staged RTK binary did not validate\n",
-		},
-	});
-
-	assert.notEqual(result.status, 0);
-	assert.match(result.stderr, /staged RTK binary did not validate/);
+	assert.equal(result.status, 0, output);
+	assert.match(output, /Would remove retired profile file: .*bin[\\/]rtk/);
+	assert.match(output, /Would remove retired profile file: .*tlh[\\/]tlh-rtk\.mjs/);
+	assert.equal(existsSync(join(agentDir, "bin", "rtk")), true);
+	assert.equal(existsSync(join(agentDir, "tlh", "tlh-rtk.mjs")), true);
 });
 
 test("stage-1 leaves existing install-only TLH support files untouched during install", (t) => {
@@ -447,12 +424,37 @@ test("stage-1 derives packageRoot from custom package source install dirs", (t) 
 	assert.equal(homeLocalConfig.packageRoot, join(homeDir, "local-package"));
 	assert.equal(homeLocalConfig.packageHelperRoot, homeLocalConfig.packageRoot);
 
+	const fileLocalSource = `file:${join(root, "file-package")}`;
+	const fileLocalConfig = configFor(fileLocalSource);
+	assert.equal(fileLocalConfig.packageRoot, join(root, "file-package"));
+	assert.equal(fileLocalConfig.packageHelperRoot, fileLocalConfig.packageRoot);
+	assert.equal(fileLocalConfig.packageSource, fileLocalSource);
+
 	const unsupportedConfig = configFor("github:owner/repo");
 	assert.equal(
 		unsupportedConfig.packageRoot,
 		join(agentDir, "git", "github.com", "diegopetrucci", "the-last-harness"),
 	);
 	assert.equal(unsupportedConfig.packageHelperRoot, "");
+});
+
+test("stage-1 normalizes absolute file: sources for Pi while preserving raw install metadata", (t) => {
+	const filePackageSource = `file:${repoRoot}`;
+	const { result, agentDir, piLog } = runStage1LocalPackageInstall(t, {
+		envOverrides: { TLH_PACKAGE_SOURCE: filePackageSource },
+	});
+	const output = `${result.stdout}\n${result.stderr}`;
+
+	assert.equal(result.status, 0, output);
+	assert.deepEqual(readPiLogRecords(piLog).map((record) => record.command).slice(0, 3), [
+		"--version",
+		`install ${repoRoot}`,
+		`update ${repoRoot}`,
+	]);
+	assert.equal(readJson(join(agentDir, "tlh", "install-state.json")).packageSource, filePackageSource);
+	const settings = readJson(join(agentDir, "settings.json"));
+	assert.equal(settings.packages[0], repoRoot);
+	assert.equal(settings.packages.includes(filePackageSource), false);
 });
 
 // (tlh update / tlh recovery update tests moved to install-stage1-update.test.mjs)

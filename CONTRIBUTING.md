@@ -17,7 +17,7 @@ Thanks for helping improve The Last Harness (`tlh`). Keep changes small, safe, a
 Use Node.js >=22.19.0 from the repository root. Install dependencies with:
 
 ```sh
-npm install --no-package-lock --legacy-peer-deps
+npm install --no-package-lock
 ```
 
 Prefer temporary directories for installer and wrapper checks so local testing does not touch a real `tlh` profile or normal Pi profile.
@@ -98,16 +98,16 @@ Every PR description should end with an `Install this branch` command using the 
 curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/<branch>/install.sh | bash -s -- --ref <branch> --track ref
 ```
 
-**Pin PRs** — PRs that update a `config/default-extensions.json` fork tag (e.g. `tlh-vX.Y.Z-N`) — are manually authored. Use a consistent title and body:
+**Pin PRs** — PRs that update a still-external component's `config/default-extensions.json` fork tag (e.g. `tlh-vX.Y.Z-N`) — are manually authored. Use a consistent title and body:
 
-- **Title:** `Pin <component> to <tag> (<brief note>)` — for example: `Pin pi-subagents to tlh-v0.26.0-11 (forked review-independence fix)`
+- **Title:** `Pin <component> to <tag> (<brief note>)`
 - **Body checklist:**
   - What the new fork tag/pin includes
   - Link to the merged fork PR
   - Before → after pin (e.g. `tlh-vX.Y.Z-M` → `tlh-vX.Y.Z-N`)
   - Validation: `npm run validate` result
 
-The `Install this branch` command above applies to pin PRs too.
+The `Install this branch` command above applies to pin PRs too. Subagents are first-party TLH code under `extensions/subagents/`, so do not open standalone subagent pin, publish, release, or fork-sync PRs; develop and validate that runtime as part of the root package per [docs/local-development.md](docs/local-development.md).
 
 CI runs on `pull_request` and on `push` to `main`. The CI job/status name is `Repository validation`, and current GitHub repository rulesets protect the default branch/main and require that status check before merge. Required-merge enforcement is controlled by repository rules and settings, not by this file.
 

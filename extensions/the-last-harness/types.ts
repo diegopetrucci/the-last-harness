@@ -118,21 +118,8 @@ export type TlhModelVisibilityConfig = {
 	unhide?: string[];
 };
 
-export type TlhRtkConfig = {
-	disabled?: boolean;
-};
-
-export type TlhSubagentOverride = {
-	model?: string | false;
-	thinking?: string | false;
-};
-
-export type TlhSubagentsConfig = {
-	agentOverrides?: Record<string, TlhSubagentOverride>;
-};
 
 export type TlhSettings = {
-	subagents?: TlhSubagentsConfig;
 	tlh?: {
 		usageLimits?: TlhUsageLimitsConfig;
 		attribution?: TlhAttributionConfig;
@@ -143,7 +130,6 @@ export type TlhSettings = {
 		experimental?: TlhExperimentalConfig;
 		contextCap?: TlhContextCapConfig;
 		modelVisibility?: TlhModelVisibilityConfig;
-		rtk?: TlhRtkConfig;
 	};
 };
 
@@ -221,6 +207,7 @@ export type AgentPrompt = {
 	tlhAnthropicModels?: string[];
 	thinking?: ThinkingLevel;
 	tlhOpenaiThinking?: ThinkingLevel;
+	tlhAnthropicThinking?: ThinkingLevel;
 	preferCurrentOpenaiModel?: boolean;
 	preferOppositeProvider?: boolean;
 	applyModel?: boolean;
@@ -240,6 +227,7 @@ export type SubagentMetadata = {
 	tlhAnthropicModels?: string[];
 	thinking?: ThinkingLevel;
 	tlhOpenaiThinking?: ThinkingLevel;
+	tlhAnthropicThinking?: ThinkingLevel;
 	preferOppositeProvider?: boolean;
 };
 

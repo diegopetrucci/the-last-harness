@@ -12,8 +12,6 @@ const PI_EXTENSION_FILE_ENTRYPOINT_EXTENSIONS = new Set([".ts", ".js"]);
 const PI_EXTENSION_DIRECTORY_ENTRYPOINT_FILES = ["package.json", "index.ts", "index.js"];
 
 const extensionSource = readFileSync(new URL("../extensions/the-last-harness.ts", import.meta.url), "utf8");
-const rtkExtensionSource = readFileSync(new URL("../extensions/rtk.ts", import.meta.url), "utf8");
-const rtkExtensionLicenseSource = readFileSync(new URL("../extensions/rtk.APACHE-2.0.txt", import.meta.url), "utf8");
 const annotateGitDiffSource = readFileSync(new URL("../extensions/annotate-git-diff/index.ts", import.meta.url), "utf8");
 const annotateGitDiffUiSource = readFileSync(new URL("../extensions/annotate-git-diff/ui.ts", import.meta.url), "utf8");
 const annotateGitDiffAppSource = readFileSync(new URL("../extensions/annotate-git-diff/web/app.js", import.meta.url), "utf8");
@@ -37,6 +35,7 @@ const usageLimitsCommandSource = readFileSync(new URL("../extensions/the-last-ha
 const profileStateSource = readFileSync(new URL("../extensions/the-last-harness/profile-state.ts", import.meta.url), "utf8");
 const packageVersionSource = readFileSync(new URL("../extensions/the-last-harness/package-version.ts", import.meta.url), "utf8");
 const typesSource = readFileSync(new URL("../extensions/the-last-harness/types.ts", import.meta.url), "utf8");
+const annotateLastMessageSource = readFileSync(new URL("../extensions/the-last-harness/annotate-last-message.ts", import.meta.url), "utf8");
 const jiti = createJiti(import.meta.url);
 const { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents, loadSubagentMetadata } = await jiti.import(
 	"../extensions/the-last-harness/prompts.ts",
@@ -189,8 +188,8 @@ function parseInlineJsonStringAssignment(source, assignmentName) {
 test("package manifest selects only the ordered generated JS entrypoints", () => {
 	assert.deepEqual(packageJson.pi?.extensions, [
 		"./extensions/annotate-git-diff/index.js",
-		"./extensions/rtk.js",
 		"./extensions/the-last-harness.js",
+		"./extensions/subagents/src/extension/index.js",
 	]);
 	assert.deepEqual(existingNestedExtensionEntrypoints("the-last-harness"), []);
 	assert.deepEqual(existingNestedExtensionEntrypoints("annotate-git-diff"), [
@@ -200,31 +199,11 @@ test("package manifest selects only the ordered generated JS entrypoints", () =>
 	assert.deepEqual(discoverPiExtensionEntrypoints(extensionsDir), [
 		"annotate-git-diff/index.js",
 		"annotate-git-diff/index.ts",
-		"rtk.js",
-		"rtk.ts",
 		"the-last-harness.js",
 		"the-last-harness.ts",
 	]);
 });
 
-
-test("vendored RTK extension records Apache provenance and stays rewrite-only", () => {
-	assert.match(rtkExtensionSource, /Vendored from rtk-ai\/rtk v0\.42\.4 \(hooks\/pi\/rtk\.ts\), Apache-2\.0\./);
-	assert.match(rtkExtensionSource, /See \.\/rtk\.APACHE-2\.0\.txt for the upstream license text and provenance\./);
-	assert.match(rtkExtensionLicenseSource, /This file applies to the vendored extension source at extensions\/rtk\.ts\./);
-	assert.match(rtkExtensionLicenseSource, /Upstream project: https:\/\/github\.com\/rtk-ai\/rtk/);
-	assert.match(rtkExtensionLicenseSource, /Upstream tag: v0\.42\.4/);
-	assert.match(rtkExtensionLicenseSource, /Upstream path: hooks\/pi\/rtk\.ts/);
-	assert.match(rtkExtensionLicenseSource, /Apache License\s+Version 2\.0, January 2004/);
-	assert.match(rtkExtensionSource, /RTK_DISABLED=1 and the isolated-profile setting tlh\.rtk\.disabled/);
-	assert.match(rtkExtensionSource, /join\(getAgentDir\(\), "bin", "rtk"\)/);
-	assert.match(rtkExtensionSource, /pi\.exec\(command, \["--version"\]/);
-	assert.match(rtkExtensionSource, /pi\.exec\(rtkCommand, \["rewrite", cmd\]/);
-	assert.doesNotMatch(rtkExtensionSource, /pi\.registerCommand\(/);
-	assert.doesNotMatch(rtkExtensionSource, /"\/rtk"/);
-	assert.match(typesSource, /export type TlhRtkConfig = \{[\s\S]*disabled\?: boolean;/);
-	assert.match(typesSource, /rtk\?: TlhRtkConfig;/);
-});
 
 test("annotate-git-diff source registers the renamed command without a legacy alias", () => {
 	assert.match(annotateGitDiffSource, /pi\.registerCommand\("annotate-git-diff"/);
@@ -371,7 +350,10 @@ test("before_agent_start reapplies primary defaults without a one-shot model gat
 	assert.match(applyPrimaryThinking, /currentThinkingSatisfiesPrimaryFloor\(primary, currentThinking\)/);
 	assert.match(promptsSource, /preferCurrentOpenaiModel: parseBooleanValue\(frontmatter\.preferCurrentOpenaiModel\)/);
 	assert.match(promptsSource, /preferOppositeProvider: parseBooleanValue\(frontmatter\.preferOppositeProvider\)/);
+	assert.match(promptsSource, /thinking: agent\.thinking/);
+	assert.match(promptsSource, /tlhOpenaiThinking: agent\.tlhOpenaiThinking/);
 	assert.match(promptsSource, /preferOppositeProvider: agent\.preferOppositeProvider/);
+	assert.match(typesSource, /tlhOpenaiThinking\?: ThinkingLevel;/);
 	assert.match(typesSource, /preferOppositeProvider\?: boolean;/);
 	assert.match(promptsSource, /applyModel: parseBooleanValue\(frontmatter\.applyModel\)/);
 	assert.match(promptsSource, /applyThinking: parseBooleanValue\(frontmatter\.applyThinking\)/);
@@ -387,7 +369,7 @@ test("before_agent_start activates ticket runtime without disabled-ticket prompt
 	assert.match(primaryRuntimeSource, /function getTlhGlobalSettings\(cwd: string\): TlhSettings/);
 	assert.match(beforeAgentStart, /const settings = getTlhGlobalSettings\(ctx\.cwd\);/);
 	assert.doesNotMatch(beforeAgentStart, /ticketIntegrationEnabled/);
-	assert.match(beforeAgentStart, /activateTlhTicketRuntime\(settings, getAgentDir\(\)\);/);
+	assert.match(beforeAgentStart, /activateTlhTicketRuntime\(settings, getAgentDir\(\), ctx\.cwd\);/);
 	// The per-turn refresh must NOT be reintroduced in before_agent_start.
 	assert.doesNotMatch(beforeAgentStart, /sessionExperimentalSnapshot =/);
 	// delta/ci prompt guidance reads settings fresh per turn.
@@ -403,10 +385,13 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 	const rush = primaryAgents.get("rush");
 	assert.ok(architect, "architect primary prompt should load");
 	assert.ok(rush, "Rush primary prompt should load");
+	assert.equal(architect.model, "anthropic/claude-opus-5");
+	assert.equal(architect.tlhAnthropicThinking, "high");
 	assert.deepEqual(architect.tlhOpenaiModels, ["openai-codex/gpt-5.6-sol"]);
-	assert.deepEqual(rush.tlhOpenaiModels, ["openai-codex/gpt-5.5"]);
-	assert.equal(rush.thinking, "low");
-	assert.equal(rush.tlhOpenaiThinking, "off");
+	assert.equal(rush.model, "anthropic/claude-sonnet-4-6");
+	assert.deepEqual(rush.tlhOpenaiModels, ["openai-codex/gpt-5.6-luna"]);
+	assert.equal(rush.tlhAnthropicThinking, "low");
+	assert.equal(rush.tlhOpenaiThinking, "medium");
 	assert.equal(rush.preferCurrentOpenaiModel, true);
 	assert.equal(architect.preferCurrentOpenaiModel, undefined);
 	assert.equal(rush.applyModel, true);
@@ -419,33 +404,34 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
 
 	const product = primaryAgents.get("product");
 	assert.ok(product, "product primary prompt should load");
+	assert.equal(product.model, "anthropic/claude-opus-5");
+	assert.deepEqual(product.tlhOpenaiModels, ["openai-codex/gpt-5.6-sol"]);
+	assert.equal(product.tlhAnthropicThinking, "high");
 	assert.equal(product.applyModel, true);
 	assert.equal(product.applyThinking, true);
 	assert.equal(product.lockThinking, true);
 
 	const bugHunter = primaryAgents.get("bug-hunter");
 	assert.ok(bugHunter, "bug-hunter primary prompt should load");
+	assert.equal(bugHunter.model, "anthropic/claude-opus-5");
+	assert.deepEqual(bugHunter.tlhOpenaiModels, ["openai-codex/gpt-5.6-sol"]);
+	assert.equal(bugHunter.tlhAnthropicThinking, "high");
 	assert.equal(bugHunter.applyModel, true);
 	assert.equal(bugHunter.applyThinking, true);
 	assert.equal(bugHunter.lockThinking, true);
 
 	assert.match(rush.systemPrompt, /Do not delegate implementation to `developer`/);
-	assert.deepEqual(
-		loadSubagentMetadata().find((agent) => agent.name === "developer")?.tlhOpenaiModels,
-		["openai-codex/gpt-5.4"],
-	);
-	assert.deepEqual(
-		loadSubagentMetadata().find((agent) => agent.name === "code-reviewer")?.tlhOpenaiModels,
-		["openai-codex/gpt-5.6-sol"],
-	);
-	assert.deepEqual(
-		loadSubagentMetadata().find((agent) => agent.name === "oracle")?.tlhOpenaiModels,
-		["openai-codex/gpt-5.6-sol"],
-	);
-	assert.deepEqual(
-		loadSubagentMetadata().find((agent) => agent.name === "contrarian")?.tlhOpenaiModels,
-		["openai-codex/gpt-5.6-sol"],
-	);
+	const subagentMetadata = loadSubagentMetadata();
+	const developer = subagentMetadata.find((agent) => agent.name === "developer");
+	assert.deepEqual(developer?.tlhAnthropicModels, ["anthropic/claude-sonnet-4-6"]);
+	assert.deepEqual(developer?.tlhOpenaiModels, ["openai-codex/gpt-5.6-luna"]);
+	assert.equal(developer?.tlhAnthropicThinking, "medium");
+	assert.equal(developer?.tlhOpenaiThinking, "max");
+	for (const name of ["code-reviewer", "oracle", "contrarian"]) {
+		const agent = subagentMetadata.find((candidate) => candidate.name === name);
+		assert.deepEqual(agent?.tlhAnthropicModels, ["anthropic/claude-opus-5"], `${name} Anthropic default`);
+		assert.deepEqual(agent?.tlhOpenaiModels, ["openai-codex/gpt-5.6-sol"], `${name} OpenAI default`);
+	}
 
 	const primaryPrompt = buildTlhSystemPrompt(rush, loadSubagentMetadata(), true);
 	const legacyFlagPrimaryPrompt = buildTlhSystemPrompt(rush, loadSubagentMetadata(), true, {
@@ -609,10 +595,37 @@ test("extension lazy-loads review, tokens, annotate-last-message, and tlh-change
 	assert.match(extensionSource, /pi\.registerCommand\("tokens", \{[\s\S]*const handler = await getTokensCommandHandler\(\);/);
 	assert.match(extensionSource, /pi\.registerCommand\("annotate-last-message", \{[\s\S]*const command = await getAnnotateLastMessageCommand\(\);/);
 	assert.match(extensionSource, /pi\.registerCommand\("tlh-changelog", \{[\s\S]*const handler = await getTlhChangelogCommandHandler\(\);[\s\S]*await handler\(pi, args, ctx\);/);
-	assert.match(extensionSource, /annotateLastMessageCommandPromise = loadAnnotateLastMessageModule\(\)[\s\S]*buildAnnotateLastMessageCommand\(\)/);
+	assert.match(
+		extensionSource,
+		/annotateLastMessageCommandPromise = loadAnnotateLastMessageModule\(\)[\s\S]*?buildAnnotateLastMessageCommand\(\{/,
+	);
 	assert.match(extensionSource, /tlhChangelogCommandHandlerPromise = loadTlhChangelogModule\(\)[\s\S]*handleTlhChangelogCommand/);
 	assert.match(extensionSource, /pi\.on\("session_shutdown", async \(\) => \{[\s\S]*if \(!annotateLastMessageCommandPromise\) \{[\s\S]*return;[\s\S]*const command = await annotateLastMessageCommandPromise;[\s\S]*command\.handleSessionShutdown\(\);/);
 	assert.doesNotMatch(extensionSource, /import\("\.\/the-last-harness\/(?:effort|thinking|experimental|version|attribution)\.js"\)/);
+});
+
+test("production annotate-last-message facade wires sendUserMessage through to the command builder", () => {
+	// Regression guard: registerAnnotateLastMessageCommand is unused by the shipped extension.
+	// The lazy-load facade below is the only production construction path, so it must supply
+	// sendUserMessage or submitted annotation feedback is silently dropped.
+	const facade = sourceSection(
+		extensionSource,
+		"const getAnnotateLastMessageCommand = () => {",
+		"\n\t};",
+	);
+	assert.match(facade, /module\.buildAnnotateLastMessageCommand\(\{/);
+	assert.match(facade, /sendUserMessage: \(message, options\) => pi\.sendUserMessage\(message, options\),/);
+
+	// The dependency must be required, so a build site that cannot send fails typecheck.
+	assert.match(
+		annotateLastMessageSource,
+		/export type AnnotateLastMessageDependencies = \{\n\tsendUserMessage: \(message: string, options: \{ deliverAs: "followUp" \}\) => void;/,
+	);
+	assert.match(annotateLastMessageSource, /dependencies: AnnotateLastMessageDependencies,\n\): AnnotateLastMessageCommand \{/);
+	assert.doesNotMatch(annotateLastMessageSource, /dependencies: AnnotateLastMessageDependencies = \{\}/);
+	// No optional-call guard papering over a missing dependency.
+	assert.match(annotateLastMessageSource, /\n\t\t\t\t\tsendUserMessage\(prompt, \{ deliverAs: "followUp" \}\);/);
+	assert.doesNotMatch(annotateLastMessageSource, /sendUserMessage\?\.\(/);
 });
 
 test("header and footer install before deferred update side effects", () => {
@@ -691,7 +704,7 @@ test("extension runs primary session_start work before UI startup in one handler
 	const lifecycleHooks = sourceSection(primaryRuntimeSource, "function registerLifecycleHooks()", "\n\n\treturn { applySessionStart");
 
 	assert.match(sessionStart, /await primaryAgentRuntime\.applySessionStart\(ctx\);[\s\S]*if \(!ctx\.hasUI\)/);
-	assert.match(primaryRuntimeSource, /async function applySessionStart\(ctx: ExtensionContext\): Promise<void>/);
+	assert.match(primaryRuntimeSource, /async function applySessionStart\(ctx: ExtensionContext\): Promise<void>[\s\S]*activateTlhTicketSessionScope\(ctx\.cwd\);/);
 	assert.match(primaryRuntimeSource, /return \{ applySessionStart, currentPrimaryAgentLabel, activePrimaryAgentPrompt: activePrimaryAgent, registerCommands, registerLifecycleHooks \};/);
 	assert.doesNotMatch(lifecycleHooks, /pi\.on\("session_start"/);
 });
@@ -713,7 +726,7 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 	assert.doesNotMatch(primaryRuntimeSource, /pi\.registerCommand\("harness"/);
 	assert.match(toolCall, /if \(event\.toolName === "bash"\) \{[\s\S]*resolveTlhCommitAttribution\(getTlhGlobalSettings\(ctx\.cwd\)\.tlh\?\.attribution\)/);
 	assert.match(toolCall, /getTlhGitCommitAttributionBlockReason\(event\.input\.command, commitAttributionState\)/);
-	assert.match(toolCall, /applyProviderAwareSubagentModels\([\s\S]*event\.input,[\s\S]*subagentsByName,[\s\S]*getUnfilteredAvailableModels\(ctx\.modelRegistry\),[\s\S]*ctx\.model\?\.provider,[\s\S]*ctx\.model,[\s\S]*agentOverrides: subagentOverrides/);
+	assert.match(toolCall, /applyProviderAwareSubagentModels\(event\.input, subagentsByName, getUnfilteredAvailableModels\(ctx\.modelRegistry\), ctx\.model\?\.provider, ctx\.model\)/);
 	assert.match(toolCall, /const selection = currentPrimaryAgentSelection\(\)/);
 	assert.match(toolCall, /const allowedSubagents = allowedSubagentsForExperimentalConfig\(getTlhGlobalSettings\(ctx\.cwd\)\.tlh\?\.experimental\)/);
 	assert.match(
@@ -838,7 +851,7 @@ test("extension keeps TLH experimental command wiring with registered ticket, ci
 	assert.match(experimentalSource, /import\("\.\/experimental-command\.js"\)/);
 	assert.match(experimentalSource, /delta-follow-up-reviews/);
 	assert.match(experimentalSource, /ci-failure-investigation/);
-	assert.match(experimentalSource, /ticket-workflow-ui/);
+	assert.doesNotMatch(experimentalSource, /ticket-workflow-ui/);
 	assert.doesNotMatch(experimentalSource, /## TLH Experimental Feature: contrarian/);
 	assert.doesNotMatch(experimentalSource, /Enables the contrarian minor agent and primary-agent guidance/);
 	assert.doesNotMatch(experimentalSource, /run-tests-last/);

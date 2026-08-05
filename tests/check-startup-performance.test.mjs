@@ -322,7 +322,7 @@ done
 			return undefined;
 		}
 		return match[1].trim();
-	}, 15000, "startup checker to create a temp profile and launch the child process group");
+	}, 5000, "startup checker to create a temp profile and launch the child process group");
 	const workspaceRoot = dirname(temporaryProfile);
 	const childPid = Number.parseInt(readFileSync(childPidFile, "utf8"), 10);
 	assert.ok(Number.isInteger(childPid) && childPid > 0, `expected child pid, got ${childPid}`);

@@ -15,7 +15,6 @@ const {
 	CI_FAILURE_INVESTIGATION_FEATURE,
 	DELTA_FOLLOW_UP_REVIEWS_FEATURE,
 	EMBEDDED_SUBAGENTS_FEATURE,
-	TICKET_WORKFLOW_UI_FEATURE,
 	buildPrimaryExperimentalPrompt,
 	getTlhExperimentalConfig,
 	isTlhExperimentalFeatureEnabled,
@@ -75,7 +74,7 @@ function registeredExperimentalCommand() {
 	return command;
 }
 
-test("experimental command registers ticket workflow, delta follow-up review, architect-only ci failure investigation, and embedded subagents flags as default-off", SERIAL_TEST, async (t) => {
+test("experimental command registers delta follow-up review, architect-only ci failure investigation, and embedded subagents flags as default-off", SERIAL_TEST, async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -85,7 +84,6 @@ test("experimental command registers ticket workflow, delta follow-up review, ar
 			[
 				`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
 				`enable ${CI_FAILURE_INVESTIGATION_FEATURE}`,
-				`enable ${TICKET_WORKFLOW_UI_FEATURE}`,
 				`enable ${EMBEDDED_SUBAGENTS_FEATURE}`,
 			],
 		);
@@ -95,7 +93,6 @@ test("experimental command registers ticket workflow, delta follow-up review, ar
 				"status",
 				`status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
 				`status ${CI_FAILURE_INVESTIGATION_FEATURE}`,
-				`status ${TICKET_WORKFLOW_UI_FEATURE}`,
 				`status ${EMBEDDED_SUBAGENTS_FEATURE}`,
 			],
 		);
@@ -113,9 +110,6 @@ test("experimental command registers ticket workflow, delta follow-up review, ar
 		assert.match(notifications.at(-1)?.message ?? "", /ci-failure-investigation/);
 		assert.match(notifications.at(-1)?.message ?? "", /architect-only guidance/i);
 		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable ci-failure-investigation/);
-		assert.match(notifications.at(-1)?.message ?? "", /ticket-workflow-ui/);
-		assert.match(notifications.at(-1)?.message ?? "", /experimental ticket workflow ui/i);
-		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable ticket-workflow-ui/);
 		assert.match(notifications.at(-1)?.message ?? "", /embedded-subagents/);
 		assert.match(notifications.at(-1)?.message ?? "", /embedded\.<slug> subagents/);
 		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable embedded-subagents/);
@@ -307,53 +301,6 @@ test("experimental stale settings fail closed and do not rebuild retired or prom
 	}
 });
 
-test("ticket workflow ui flag status, enable, and disable stay default-off and preserve unrelated isolated settings", SERIAL_TEST, async (t) => {
-	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
-	const settingsPath = join(fixture.agent, "settings.json");
-	const initialSettings = `${JSON.stringify(
-		{
-			tlh: {
-				primaryAgent: { selected: "architect" },
-				experimental: { enabledFeatures: [LEGACY_UNKNOWN_FEATURE] },
-			},
-			theme: "dark",
-		},
-		null,
-		2,
-	)}\n`;
-	writeFileSync(settingsPath, initialSettings);
-
-	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const command = registeredExperimentalCommand();
-
-		let { ctx, notifications } = createCommandContext(fixture.dir);
-		await command.handler(`status ${TICKET_WORKFLOW_UI_FEATURE}`, ctx);
-		assert.match(notifications.at(-1)?.message ?? "", /ticket-workflow-ui: disabled \(default\)/i);
-		assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable ticket-workflow-ui/);
-
-		({ ctx, notifications } = createCommandContext(fixture.dir));
-		await command.handler(`enable ${TICKET_WORKFLOW_UI_FEATURE}`, ctx);
-
-		let written = JSON.parse(readFileSync(settingsPath, "utf8"));
-		assert.equal(written.theme, "dark");
-		assert.deepEqual(written.tlh.primaryAgent, { selected: "architect" });
-		assert.deepEqual(written.tlh.experimental.enabledFeatures, [LEGACY_UNKNOWN_FEATURE, TICKET_WORKFLOW_UI_FEATURE]);
-		assert.equal(isTlhExperimentalFeatureEnabled(getTlhExperimentalConfig(fixture.dir), TICKET_WORKFLOW_UI_FEATURE), true);
-		assert.match(notifications.at(-1)?.message ?? "", /Updated TLH experimental feature ticket-workflow-ui/);
-		assert.match(notifications.at(-1)?.message ?? "", /Undo with \/experimental disable ticket-workflow-ui/);
-
-		({ ctx, notifications } = createCommandContext(fixture.dir));
-		await command.handler(`disable ${TICKET_WORKFLOW_UI_FEATURE}`, ctx);
-
-		written = JSON.parse(readFileSync(settingsPath, "utf8"));
-		assert.equal(written.theme, "dark");
-		assert.deepEqual(written.tlh.primaryAgent, { selected: "architect" });
-		assert.deepEqual(written.tlh.experimental.enabledFeatures, [LEGACY_UNKNOWN_FEATURE]);
-		assert.equal(isTlhExperimentalFeatureEnabled(getTlhExperimentalConfig(fixture.dir), TICKET_WORKFLOW_UI_FEATURE), false);
-		assert.match(notifications.at(-1)?.message ?? "", /It is now disabled/);
-		assert.match(notifications.at(-1)?.message ?? "", /Undo with \/experimental enable ticket-workflow-ui/);
-	});
-});
 
 test("experimental enable is idempotent, preserves settings, and does not clobber other enabled features", SERIAL_TEST, async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
@@ -420,11 +367,11 @@ test("experimental enable then disable in one frozen millisecond creates collisi
 		const command = registeredExperimentalCommand();
 
 		let { ctx, notifications } = createCommandContext(fixture.dir);
-		await command.handler(`enable ${TICKET_WORKFLOW_UI_FEATURE}`, ctx);
+		await command.handler(`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, ctx);
 		assert.match(notifications.at(-1)?.message ?? "", /settings\.json\.bak-2026-07-19T16-17-18-901Z/);
 
 		({ ctx, notifications } = createCommandContext(fixture.dir));
-		await command.handler(`disable ${TICKET_WORKFLOW_UI_FEATURE}`, ctx);
+		await command.handler(`disable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, ctx);
 		assert.match(notifications.at(-1)?.message ?? "", /settings\.json\.bak-2026-07-19T16-17-18-901Z-1/);
 	});
 
@@ -438,7 +385,7 @@ test("experimental enable then disable in one frozen millisecond creates collisi
 	assert.equal(readFileSync(join(fixture.agent, backups[0]), "utf8"), initialSettings);
 	assert.equal(
 		readFileSync(join(fixture.agent, backups[1]), "utf8"),
-		`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [LEGACY_UNKNOWN_FEATURE, TICKET_WORKFLOW_UI_FEATURE] } } }, null, 2)}\n`,
+		`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [DELTA_FOLLOW_UP_REVIEWS_FEATURE, LEGACY_UNKNOWN_FEATURE] } } }, null, 2)}\n`,
 	);
 });
 

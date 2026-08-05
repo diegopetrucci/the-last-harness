@@ -1,6 +1,6 @@
 {
   "name": "the-last-harness",
-  "version": "0.29.0",
+  "version": "0.32.0",
   "description": "The Last Harness Pi package",
   "license": "MIT",
   "type": "module",
@@ -32,15 +32,21 @@
     "build": "npm run build:runtime",
     "build:runtime": "node scripts/runtime-typescript.mjs build",
     "check:package-versions": "node scripts/check-package-versions.mjs",
+    "check:package-contents": "node scripts/check-package-contents.mjs",
     "check:runtime": "node scripts/runtime-typescript.mjs check",
     "check:startup-performance": "node scripts/check-startup-performance.mjs",
     "lint": "eslint \"scripts/**/*.{js,mjs,ts,mts}\" \"tests/**/*.{js,mjs,ts,mts}\" \"extensions/**/*.{js,mjs,ts,mts}\"",
     "lint:sh": "git ls-files '*.sh' | xargs shellcheck",
-    "test": "node --test --test-reporter=dot \"tests/**/*.test.mjs\"",
-    "test:verbose": "node --test \"tests/**/*.test.mjs\"",
+    "test": "node --test --test-reporter=dot \"tests/**/*.test.mjs\" && npm run test:subagents",
+    "test:verbose": "node --test \"tests/**/*.test.mjs\" && npm run test:subagents",
+    "test:subagents": "npm run test:subagents:unit && npm run test:subagents:integration && npm run test:subagents:e2e",
+    "test:subagents:unit": "node scripts/run-subagents-tests.mjs unit",
+    "test:subagents:integration": "node scripts/run-subagents-tests.mjs integration",
+    "test:subagents:e2e": "node scripts/run-subagents-tests.mjs e2e",
     "typecheck": "tsc --noEmit",
+    "typecheck:subagents-test-support": "tsc --noEmit --project tsconfig.subagents-test-support.json",
     "typecheck:runtime": "node scripts/runtime-typescript.mjs typecheck",
-    "validate": "npm run check:package-versions && npm run typecheck && npm run typecheck:runtime && npm run check:runtime && bash scripts/check-installer-smoke.sh && npm test && npm run lint && npm run lint:sh && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
+    "validate": "npm run check:package-versions && npm run check:package-contents && npm run typecheck && npm run typecheck:subagents-test-support && npm run typecheck:runtime && npm run check:runtime && bash scripts/check-installer-smoke.sh && npm test && npm run lint && npm run lint:sh && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
   },
   "files": [
     "agents",
@@ -59,8 +65,8 @@
   "pi": {
     "extensions": [
       "./extensions/annotate-git-diff/index.js",
-      "./extensions/rtk.js",
-      "./extensions/the-last-harness.js"
+      "./extensions/the-last-harness.js",
+      "./extensions/subagents/src/extension/index.js"
     ],
     "skills": [
       "./skills"
@@ -73,21 +79,24 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "0.81.1",
-    "@earendil-works/pi-tui": "0.81.1"
+    "@earendil-works/pi-coding-agent": "0.83.0",
+    "@earendil-works/pi-tui": "0.83.0"
   },
   "dependencies": {
     "@tailwindcss/browser": "4.3.3",
     "glimpseui": "0.8.1",
-    "monaco-editor": "0.56.0"
+    "monaco-editor": "0.56.0",
+    "typebox": "1.3.7"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.81.1",
-    "@earendil-works/pi-tui": "0.81.1",
+    "@earendil-works/pi-agent-core": "0.83.0",
+    "@earendil-works/pi-ai": "0.83.0",
+    "@earendil-works/pi-coding-agent": "0.83.0",
+    "@earendil-works/pi-tui": "0.83.0",
     "@eslint/js": "10.0.1",
-    "@types/node": "26.1.1",
-    "eslint": "10.7.0",
-    "globals": "17.7.0",
+    "@types/node": "26.1.2",
+    "eslint": "10.8.0",
+    "globals": "17.9.0",
     "jiti": "2.7.0",
     "shellcheck": "4.1.0",
     "typescript": "6.0.3",

@@ -241,6 +241,24 @@ test("error: unsupported repo value exits non-zero with message", (t) => {
 	assert.match(result.stderr, /Unsupported GitHub repo value/);
 });
 
+test("dry-run custom file source preserves the raw package source in update plans", (t) => {
+	const { agentDir } = createFixture(t);
+	const packageSource = `file:${repoRoot}`;
+	writeInstallState(agentDir, {
+		schemaVersion: 1,
+		repo: "diegopetrucci/the-last-harness",
+		track: "custom",
+		packageSource,
+		packageSourceIsDefault: false,
+	});
+
+	const output = runUpdate(agentDir, ["--dry-run", "--track", "ref", "--ref", "main", "--package-source", packageSource]);
+
+	assert.match(output, /Track: ref \(main\)/);
+	assert.match(output, new RegExp(`Package source: ${packageSource.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+	assert.match(output, new RegExp(`TLH_PACKAGE_SOURCE='${packageSource.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'`));
+});
+
 // ---------------------------------------------------------------------------
 // 4. --extensions path
 // ---------------------------------------------------------------------------

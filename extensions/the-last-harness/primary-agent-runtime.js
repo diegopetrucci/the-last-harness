@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_PRIMARY_AGENT, DISABLED_PRIMARY_AGENT, PRIMARY_AGENT_CYCLE, PRIMARY_AGENT_SESSION_STATE_ENTRY, isEnabledPrimaryAgentSelection, nextPrimaryAgentSelection, primaryAgentDefaultLabel, primaryAgentSelectionFromBranch, resolvePrimaryAgentConfig, } from "../the-last-harness-primary-agent.mjs";
 import { createPrimaryToolState, filterAvailableTools } from "../the-last-harness-primary-tools.mjs";
-import { allowedSubagentsForExperimentalConfig, collectSubagentTargets, isEmbeddedSubagentTarget, isExecutionBearingResumeChain, isExperimentalFeatureEnabled, registerTlhStartupMode, validateSubagentToolInput, } from "../the-last-harness-subagent-safety.mjs";
+import { allowedSubagentsForExperimentalConfig, collectSubagentTargets, isEmbeddedSubagentTarget, isExperimentalFeatureEnabled, registerTlhStartupMode, validateSubagentToolInput, } from "../the-last-harness-subagent-safety.mjs";
 import { buildTlhCommitAttributionPrompt, getTlhGitCommitAttributionBlockReason, resolveTlhCommitAttribution, } from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME } from "./constants.js";
@@ -12,7 +12,7 @@ import { applyProviderAwareSubagentModels, selectProviderAwareAgentDefaults } fr
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
 import { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadAuthorizedEmbeddedSubagentRuntimeNames, loadPrimaryAgents, loadSubagentMetadata, } from "./prompts.js";
-import { activateTlhTicketRuntime } from "./tickets.js";
+import { activateTlhTicketRuntime, activateTlhTicketSessionScope } from "./tickets.js";
 import { tlhSettingsPathForWrite, withLockedTlhSettingsWrite } from "./profile-state.js";
 function getTlhGlobalSettings(cwd) {
     try {
@@ -25,15 +25,6 @@ function getTlhGlobalSettings(cwd) {
 }
 function getTlhPrimaryAgentConfig(cwd) {
     return getTlhGlobalSettings(cwd).tlh?.primaryAgent;
-}
-function getTlhSubagentOverrides(cwd) {
-    const overrides = getTlhGlobalSettings(cwd).subagents?.agentOverrides;
-    if (!isRecord(overrides)) {
-        return new Map();
-    }
-    return new Map(Object.entries(overrides)
-        .filter(([, value]) => isRecord(value))
-        .map(([agent, value]) => [agent, value]));
 }
 function resolvePrimaryAutoApplySetting(primaryConfig, primary, key) {
     const configured = primaryConfig?.[key];
@@ -181,7 +172,7 @@ function writeTlhPrimaryAgentDefault(cwd, selection) {
 function primaryToolAllowlist(primary) {
     return primary?.tools.length
         ? primary.tools
-        : ["read", "grep", "find", "ls", "bash", "subagent", "intercom"];
+        : ["read", "grep", "find", "ls", "bash", "subagent", "subagent_supervisor"];
 }
 function primaryAgentLabel(selection) {
     return selection;
@@ -195,11 +186,17 @@ function matchesSubagentName(value, target) {
 function isSubagentResumeAction(input) {
     return isRecord(input) && matchesSubagentName(input.action, "resume");
 }
+function isSubagentSteerAction(input) {
+    return isRecord(input) && matchesSubagentName(input.action, "steer");
+}
 function subagentCallTargetsAgent(input, target) {
     return subagentCallTargetsMatching(input, (agent) => matchesSubagentName(agent, target));
 }
 function rushResumeDelegationReason() {
     return "TLH Rush may not use subagent action=resume because resuming by run id or index can continue a prior developer subagent without an explicit safe target. Rush must edit directly or start a new allowed subagent with an explicit agent target.";
+}
+function rushSteerDelegationReason() {
+    return "TLH Rush may not use subagent action=steer because an opaque steer carries no agent field, so TLH cannot prove the steered child is not a developer subagent. Rush must edit directly.";
 }
 function rushDeveloperDelegationReason() {
     return "TLH Rush may not delegate implementation to developer. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.";
@@ -210,11 +207,23 @@ function collectSubagentCallTargetsMatching(input, predicate) {
 function subagentCallTargetsMatching(input, predicate) {
     return collectSubagentCallTargetsMatching(input, predicate).length > 0;
 }
+const SCOUT_RUN_MAX_TIMEOUT_MS = 360_000;
+const SCOUT_TIMEOUT_CAPPED_SUBAGENTS = new Set(["librarian", "web-scout", "repo-scout", "diff-summarizer"]);
 function isOpaqueSubagentManagementActionInput(input) {
-    if (!isRecord(input) || typeof input.action !== "string" || input.action.trim().length === 0) {
-        return false;
+    return isRecord(input) && typeof input.action === "string" && input.action.trim().length > 0;
+}
+function capScoutSubagentTimeout(input) {
+    if (!isRecord(input) ||
+        isOpaqueSubagentManagementActionInput(input) ||
+        isSubagentResumeAction(input) ||
+        !subagentCallTargetsMatching(input, (agent) => SCOUT_TIMEOUT_CAPPED_SUBAGENTS.has(agent.trim().toLowerCase()))) {
+        return;
     }
-    return !isExecutionBearingResumeChain(input);
+    const { timeoutMs } = input;
+    if (typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs <= SCOUT_RUN_MAX_TIMEOUT_MS) {
+        return;
+    }
+    input.timeoutMs = SCOUT_RUN_MAX_TIMEOUT_MS;
 }
 function embeddedDelegationBlockedReason(selection, input) {
     if (isOpaqueSubagentManagementActionInput(input)) {
@@ -235,6 +244,9 @@ function embeddedDelegationBlockedReason(selection, input) {
     return undefined;
 }
 function registerChildSubagentRuntime(pi, buildChildPrompt, env) {
+    pi.on("session_start", async (_event, ctx) => {
+        activateTlhTicketSessionScope(ctx.cwd);
+    });
     pi.on("before_agent_start", async (event, ctx) => {
         const settings = getTlhGlobalSettings(ctx.cwd);
         const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
@@ -343,18 +355,18 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             selected: selection,
         });
     }
-    function getValidPrimaryTools(ctx, primary) {
+    function getValidPrimaryTools(ctx, primary, warnOnMissing = true) {
         const desiredTools = primaryToolAllowlist(primary);
         const allToolNames = new Set(pi.getAllTools().map((tool) => tool.name));
         const validTools = filterAvailableTools(desiredTools, allToolNames);
         const missingTools = desiredTools.filter((tool) => !allToolNames.has(tool));
-        if (missingTools.length > 0) {
+        if (warnOnMissing && missingTools.length > 0) {
             warnOnce(ctx, `missing-primary-tools-${primary.name}`, `TLH primary agent tools are not available yet: ${missingTools.join(", ")}`);
         }
         return validTools;
     }
-    function applyPrimaryTools(ctx, primary) {
-        const validTools = getValidPrimaryTools(ctx, primary);
+    function applyPrimaryTools(ctx, primary, warnOnMissing = true) {
+        const validTools = getValidPrimaryTools(ctx, primary, warnOnMissing);
         if (validTools.length === 0) {
             return;
         }
@@ -409,7 +421,8 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         }
         setExtensionThinkingLevel(pi, thinking);
     }
-    async function applyPrimaryDefaults(ctx) {
+    async function applyPrimaryDefaults(ctx, options = {}) {
+        const { warnOnMissing = true } = options;
         const selection = currentPrimaryAgentSelection();
         if (!isEnabledPrimaryAgentSelection(selection)) {
             restorePrimaryToolsIfAppropriate();
@@ -420,7 +433,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             restorePrimaryToolsIfAppropriate();
             return;
         }
-        applyPrimaryTools(ctx, primary);
+        applyPrimaryTools(ctx, primary, warnOnMissing);
         const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
         const forceApply = shouldForceApplyForLock(primary);
         const shouldApplyModel = forceApply || resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyModel");
@@ -586,9 +599,10 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         });
     }
     async function applySessionStart(ctx) {
+        activateTlhTicketSessionScope(ctx.cwd);
         sessionExperimentalSnapshot = getTlhGlobalSettings(ctx.cwd).tlh?.experimental;
         syncPrimaryAgentState(ctx);
-        await applyPrimaryDefaults(ctx);
+        await applyPrimaryDefaults(ctx, { warnOnMissing: false });
     }
     function registerLifecycleHooks() {
         pi.on("model_select", async (event, ctx) => {
@@ -633,7 +647,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             syncPrimaryAgentState(ctx);
             const selection = currentPrimaryAgentSelection();
             const primaryEnabled = isEnabledPrimaryAgentSelection(selection);
-            activateTlhTicketRuntime(settings, getAgentDir());
+            activateTlhTicketRuntime(settings, getAgentDir(), ctx.cwd);
             await applyPrimaryDefaults(ctx);
             const prompts = [
                 event.systemPrompt,
@@ -658,11 +672,8 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             if (event.toolName !== "subagent") {
                 return undefined;
             }
-            const subagentOverrides = getTlhSubagentOverrides(ctx.cwd);
-            applyProviderAwareSubagentModels(event.input, subagentsByName, getUnfilteredAvailableModels(ctx.modelRegistry), ctx.model?.provider, ctx.model, {
-                agentOverrides: subagentOverrides,
-                onWarning: ({ agent, message }) => warnOnce(ctx, `subagent-override-warning-${agent}-${message}`, message),
-            });
+            applyProviderAwareSubagentModels(event.input, subagentsByName, getUnfilteredAvailableModels(ctx.modelRegistry), ctx.model?.provider, ctx.model);
+            capScoutSubagentTimeout(event.input);
             syncPrimaryAgentState(ctx);
             const selection = currentPrimaryAgentSelection();
             const allowedSubagents = allowedSubagentsForExperimentalConfig(getTlhGlobalSettings(ctx.cwd).tlh?.experimental);
@@ -675,6 +686,9 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             }
             if (selection === "rush" && isSubagentResumeAction(event.input)) {
                 return { block: true, reason: rushResumeDelegationReason() };
+            }
+            if (selection === "rush" && isSubagentSteerAction(event.input)) {
+                return { block: true, reason: rushSteerDelegationReason() };
             }
             if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
                 return { block: true, reason: rushDeveloperDelegationReason() };

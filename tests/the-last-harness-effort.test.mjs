@@ -69,10 +69,10 @@ function rushPrimary() {
 	return {
 		name: "rush",
 		description: "Rush primary",
-		model: "anthropic/claude-opus-4-8",
-		tlhOpenaiModels: ["openai-codex/gpt-5.5"],
+		model: "anthropic/claude-sonnet-4-6",
+		tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
 		thinking: "low",
-		tlhOpenaiThinking: "off",
+		tlhOpenaiThinking: "medium",
 		preferCurrentOpenaiModel: true,
 		lockThinking: true,
 		tools: [],
@@ -85,7 +85,7 @@ function productPrimary() {
 	return {
 		name: "product",
 		description: "Product primary",
-		model: "anthropic/claude-opus-4-6",
+		model: "anthropic/claude-opus-5",
 		thinking: "high",
 		lockThinking: true,
 		tools: [],
@@ -98,7 +98,7 @@ function bugHunterPrimary() {
 	return {
 		name: "bug-hunter",
 		description: "Bug-hunter primary",
-		model: "anthropic/claude-opus-4-8",
+		model: "anthropic/claude-opus-5",
 		thinking: "high",
 		lockThinking: true,
 		tools: [],
@@ -111,7 +111,7 @@ function architectPrimary() {
 	return {
 		name: "architect",
 		description: "Architect primary",
-		model: "anthropic/claude-opus-4-8",
+		model: "anthropic/claude-opus-5",
 		thinking: "high",
 		minThinking: "medium",
 		tools: [],
@@ -170,25 +170,25 @@ test("handler errors with exact message for rush on anthropic (thinking: low)", 
 	});
 });
 
-test("handler errors with 'off' (not 'low') for rush on OpenAI", async () => {
+test("handler errors with 'medium' for rush on OpenAI", async () => {
 	const pi = createPiHarness();
 	registerEffortCommand(pi, createFakeRuntime(rushPrimary()));
 	const { notifications, ctx } = createCtx({ provider: "openai" });
-	await pi.commands.get("effort").handler("medium", ctx);
+	await pi.commands.get("effort").handler("low", ctx);
 	assert.equal(notifications.length, 1);
 	assert.deepEqual(notifications[0], {
-		message: 'Thinking is locked at "off" for the rush primary agent.',
+		message: 'Thinking is locked at "medium" for the rush primary agent.',
 		type: "error",
 	});
 });
 
-test("handler errors with 'off' for rush on openai-codex provider", async () => {
+test("handler errors with 'medium' for rush on openai-codex provider", async () => {
 	const pi = createPiHarness();
 	registerEffortCommand(pi, createFakeRuntime(rushPrimary()));
 	const { notifications, ctx } = createCtx({ provider: "openai-codex" });
 	await pi.commands.get("effort").handler("high", ctx);
 	assert.deepEqual(notifications[0], {
-		message: 'Thinking is locked at "off" for the rush primary agent.',
+		message: 'Thinking is locked at "medium" for the rush primary agent.',
 		type: "error",
 	});
 });

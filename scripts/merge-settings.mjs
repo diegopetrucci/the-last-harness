@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { basename, dirname, join, normalize, parse, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
-import { criticalDefaultExtensionOptOutIds, defaultExtensionPackageIdentities, disabledDefaultExtensionIds, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, repairTargetedDefaultExtensionLoadOrder, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
+import { criticalDefaultExtensionOptOutIds, defaultExtensionPackageIdentities, disabledDefaultExtensionIds, FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, repairTargetedDefaultExtensionLoadOrder, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
 import { assertNotInNormalPiConfig, assignOptionValue, backupPathWithTimestamp, defaultTlhSettingsPath, expandHomePath, readJsonFile, readRegularFileForBackup, } from "./lib/tlh-install-utils.mjs";
 import { writeSafeProfileFile } from "./lib/tlh-safe-profile-write.mjs";
 const __filename = fileURLToPath(import.meta.url);
@@ -314,19 +314,6 @@ function applyDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds
         return;
     changes.push(`reorder targeted default extension packages for load order: ${loadOrderRepair.previous.join(", ")} -> ${loadOrderRepair.next.join(", ")}`);
 }
-// Sources of retired default extensions that TLH now removes unconditionally
-// from isolated settings because they should no longer stay installed after
-// install/update reruns.
-const FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES = Object.freeze([
-    "npm:@diegopetrucci/pi-context-cap",
-    "npm:@diegopetrucci/pi-permission-gate",
-    "npm:@diegopetrucci/pi-confirm-destructive",
-    "npm:@diegopetrucci/pi-oracle",
-    "git:github.com/diegopetrucci/pi-rtk",
-    "npm:pi-rtk",
-    "npm:@sherif-fanous/pi-rtk",
-    "git:github.com/sherif-fanous/pi-rtk",
-]);
 function purgeForceRemovedRetiredDefaultExtensionPackages(settings, changes) {
     if (!Array.isArray(settings.packages))
         return;
@@ -375,6 +362,42 @@ function pruneRtkDisabledDefaultExtension(settings, changes) {
     settings.tlh.disabledDefaultExtensions = nextValues;
     changes.push("remove stale rtk opt-out from tlh.disabledDefaultExtensions");
 }
+function pruneIntercomDisabledDefaultExtension(settings, changes) {
+    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
+        return;
+    const values = settings.tlh.disabledDefaultExtensions;
+    if (!Array.isArray(values))
+        return;
+    const nextValues = values.filter((value) => !(typeof value === "string" && ["intercom", "pi-intercom"].includes(value.trim())));
+    if (nextValues.length === values.length)
+        return;
+    settings.tlh.disabledDefaultExtensions = nextValues;
+    changes.push("remove stale intercom opt-out from tlh.disabledDefaultExtensions");
+}
+function pruneFffDisabledDefaultExtension(settings, changes) {
+    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
+        return;
+    const values = settings.tlh.disabledDefaultExtensions;
+    if (!Array.isArray(values))
+        return;
+    const nextValues = values.filter((value) => !(typeof value === "string" && ["fff", "pi-fff"].includes(value.trim())));
+    if (nextValues.length === values.length)
+        return;
+    settings.tlh.disabledDefaultExtensions = nextValues;
+    changes.push("remove stale fff opt-out from tlh.disabledDefaultExtensions");
+}
+function pruneSubagentsDisabledDefaultExtension(settings, changes) {
+    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
+        return;
+    const values = settings.tlh.disabledDefaultExtensions;
+    if (!Array.isArray(values))
+        return;
+    const nextValues = values.filter((value) => !(typeof value === "string" && ["subagents", "pi-subagents"].includes(value.trim())));
+    if (nextValues.length === values.length)
+        return;
+    settings.tlh.disabledDefaultExtensions = nextValues;
+    changes.push("remove stale subagents opt-out from tlh.disabledDefaultExtensions");
+}
 function scrubGnosisSettings(settings, changes) {
     if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
         return;
@@ -382,6 +405,14 @@ function scrubGnosisSettings(settings, changes) {
         return;
     delete settings.tlh.gnosis;
     changes.push("remove tlh.gnosis (one-time cleanup)");
+}
+function scrubRtkSettings(settings, changes) {
+    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
+        return;
+    if (!Object.hasOwn(settings.tlh, "rtk"))
+        return;
+    delete settings.tlh.rtk;
+    changes.push("remove tlh.rtk (one-time cleanup)");
 }
 function removeCriticalDisabledDefaultExtensionOptOuts(settings, defaultExtensions, changes) {
     if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
@@ -599,10 +630,14 @@ function main() {
     applyDefaultExtensionLoadOrder(next, defaultExtensions, disabledIds, changes);
     removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
     scrubGnosisSettings(next, changes);
+    scrubRtkSettings(next, changes);
     purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
     pruneContextCapDisabledDefaultExtension(next, changes);
     pruneOracleDisabledDefaultExtension(next, changes);
     pruneRtkDisabledDefaultExtension(next, changes);
+    pruneIntercomDisabledDefaultExtension(next, changes);
+    pruneFffDisabledDefaultExtension(next, changes);
+    pruneSubagentsDisabledDefaultExtension(next, changes);
     syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
     log(args, `Pi settings: ${settingsPath}`);
     if (changes.length === 0) {

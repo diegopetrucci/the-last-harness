@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,7 +20,7 @@ function createFakeTimers() {
 		now: () => now,
 		setTimeout(fn, delay = 0) {
 			const id = nextId++;
-			timers.set(id, { fn, at: now + delay });
+			timers.set(id, { fn, at: now + delay, delay });
 			return { id, unref() {} };
 		},
 		clearTimeout(handle) {
@@ -38,7 +39,25 @@ function createFakeTimers() {
 				}
 			}
 		},
+		getPendingDelays() {
+			return [...timers.values()].map((timer) => timer.delay).sort((a, b) => a - b);
+		},
 	};
+}
+
+function createFakeSocket(path) {
+	const socket = new EventEmitter();
+	socket.path = path;
+	socket.writes = [];
+	socket.destroyCalls = 0;
+	socket.write = (chunk) => {
+		socket.writes.push(chunk);
+		return true;
+	};
+	socket.destroy = () => {
+		socket.destroyCalls += 1;
+	};
+	return socket;
 }
 
 async function flushAsyncWork() {
@@ -74,6 +93,89 @@ test("Herdr reporter no-ops without required env and when official reporter is i
 	singleWriterReporter.handleSnapshot({ inProgress: true, primaryReasons: ["primary:agent-loop"], activeAsyncJobIds: [] });
 	await flushAsyncWork();
 	assert.deepEqual(singleWriterCalls, []);
+});
+
+test("Herdr reporter retries timed out activity socket delivery once", async () => {
+	const timers = createFakeTimers();
+	const sockets = [];
+	const reporter = createHerdrActivityReporter({
+		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1" },
+		createSocket: (path) => {
+			const socket = createFakeSocket(path);
+			sockets.push(socket);
+			return socket;
+		},
+		timers,
+		now: timers.now,
+	});
+
+	reporter.handleSessionStart({
+		hasUI: true,
+		sessionManager: { getSessionFile: () => undefined, getSessionId: () => undefined },
+	});
+	reporter.handleSnapshot({ inProgress: true, primaryReasons: ["primary:agent-loop"], activeAsyncJobIds: [] });
+	await flushAsyncWork();
+	assert.equal(sockets.length, 1);
+	assert.deepEqual(timers.getPendingDelays(), [500]);
+
+	sockets[0].emit("connect");
+	assert.equal(sockets[0].writes.length, 1);
+
+	timers.advance(499);
+	await flushAsyncWork();
+	assert.equal(sockets.length, 1);
+	assert.equal(sockets[0].destroyCalls, 0);
+
+	timers.advance(1);
+	await flushAsyncWork();
+	assert.equal(sockets[0].destroyCalls, 1);
+	assert.equal(sockets.length, 2);
+	assert.deepEqual(timers.getPendingDelays(), [1500]);
+
+	sockets[1].emit("connect");
+	assert.equal(sockets[1].writes.length, 1);
+	assert.equal(JSON.parse(sockets[1].writes[0]).method, "pane.report_agent");
+	sockets[1].emit("data", Buffer.from("ok"));
+	await flushAsyncWork();
+	assert.equal(sockets[1].destroyCalls, 1);
+	assert.deepEqual(timers.getPendingDelays(), []);
+	assert.deepEqual(JSON.parse(sockets[0].writes[0]), JSON.parse(sockets[1].writes[0]));
+});
+
+test("Herdr reporter does not retry after first activity socket response", async () => {
+	const timers = createFakeTimers();
+	const sockets = [];
+	const reporter = createHerdrActivityReporter({
+		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1" },
+		createSocket: (path) => {
+			const socket = createFakeSocket(path);
+			sockets.push(socket);
+			return socket;
+		},
+		timers,
+		now: timers.now,
+	});
+
+	reporter.handleSessionStart({
+		hasUI: true,
+		sessionManager: { getSessionFile: () => undefined, getSessionId: () => undefined },
+	});
+	reporter.handleSnapshot({ inProgress: true, primaryReasons: ["primary:agent-loop"], activeAsyncJobIds: [] });
+	await flushAsyncWork();
+	assert.equal(sockets.length, 1);
+	assert.deepEqual(timers.getPendingDelays(), [500]);
+
+	sockets[0].emit("connect");
+	assert.equal(sockets[0].writes.length, 1);
+	sockets[0].emit("data", Buffer.from("ok"));
+	await flushAsyncWork();
+	assert.equal(sockets[0].destroyCalls, 1);
+	assert.deepEqual(timers.getPendingDelays(), []);
+
+	timers.advance(5000);
+	await flushAsyncWork();
+	assert.equal(sockets.length, 1);
+	assert.equal(JSON.parse(sockets[0].writes[0]).method, "pane.report_agent");
 });
 
 test("Herdr reporter sends monotonic working/idle state with session refs", async () => {

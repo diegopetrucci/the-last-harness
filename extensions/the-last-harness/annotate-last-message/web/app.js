@@ -40,7 +40,7 @@ function updateSubmitState() {
 	const count = feedbackCount();
 	elements.submitButton.disabled = count === 0;
 	if (count === 0) {
-		setStatus("Add any feedback you want to send back to the editor.");
+		setStatus("Add any feedback you want to send to the agent.");
 		return;
 	}
 	const noun = count === 1 ? "item" : "items";
@@ -91,6 +91,9 @@ function createLineRow(line) {
 	lineText.className = "line-text";
 	lineText.textContent = line.text.length > 0 ? line.text : " ";
 	row.append(lineText);
+	wrapper.append(row);
+
+	if (line.text.trim().length === 0) return wrapper;
 
 	const toggle = document.createElement("button");
 	toggle.className = "inline-toggle";
@@ -118,7 +121,6 @@ function createLineRow(line) {
 		}
 	});
 
-	wrapper.append(row);
 	wrapper.append(editor.container);
 	syncToggle();
 	return wrapper;

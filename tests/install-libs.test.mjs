@@ -23,6 +23,7 @@ import {
 	criticalGitSourceSpec,
 	gitSourceInstallSource,
 	packageSourceInstallDir,
+	packageSourcePiSource,
 	parseGitSource,
 } from "../scripts/lib/tlh-install-package-source.mjs";
 import { assertGitSourceTargetSafe, refreshGitCheckout } from "../scripts/lib/tlh-install-git.mjs";
@@ -36,11 +37,16 @@ import {
 import { writeSafeProfileFile } from "../scripts/lib/tlh-safe-profile-write.mjs";
 import {
 	TLH_SUBAGENT_PROMPTS,
+	captureManagedRetiredSubagentPackages,
+	captureRetiredSubagentNpmCommand,
+	cleanupManagedRetiredSubagentPackages,
 	copyTlhSubagentPrompts,
 	findTlhSubagentsDir,
+	managedRetiredSubagentPackages,
 	missingTlhSubagentPrompts,
 	provisionSubagentExtensionConfig,
 	restoreNeededTlhSubagentPrompts,
+	subagentExtensionConfigMissingDefaults,
 	settingsRequireTlhSubagentPrompts,
 } from "../scripts/lib/tlh-install-subagents.mjs";
 import {
@@ -139,6 +145,19 @@ test("package-source parsing resolves git, hash-pinned, and local package source
 	);
 	assert.equal(packageSourceInstallDir("../local-package", { agentDir, homeDir }), resolve(agentDir, "../local-package"));
 	assert.equal(packageSourceInstallDir("~/local-package", { agentDir, homeDir }), join(homeDir, "local-package"));
+	const checkoutDir = resolve(root, "checkout");
+	assert.equal(packageSourceInstallDir(`file:${checkoutDir}`, { agentDir, homeDir }), checkoutDir);
+	assert.equal(packageSourceInstallDir(`file://${checkoutDir}`, { agentDir, homeDir }), checkoutDir);
+	assert.equal(packageSourceInstallDir(`file://localhost${checkoutDir}`, { agentDir, homeDir }), checkoutDir);
+	assert.equal(
+		packageSourceInstallDir(`file://remotehost${checkoutDir}`, { agentDir, homeDir }),
+		resolve(agentDir, `file://remotehost${checkoutDir}`),
+	);
+	assert.equal(packageSourcePiSource(`file:${checkoutDir}`, { agentDir, homeDir }), checkoutDir);
+	assert.equal(packageSourcePiSource(`file://localhost${checkoutDir}`, { agentDir, homeDir }), checkoutDir);
+	assert.equal(packageSourcePiSource(`file://remotehost${checkoutDir}`, { agentDir, homeDir }), `file://remotehost${checkoutDir}`);
+	assert.equal(packageSourcePiSource("../local-package", { agentDir, homeDir }), "../local-package");
+	assert.equal(packageSourceInstallDir("file:../local-package", { agentDir, homeDir }), resolve(agentDir, "file:../local-package"));
 	assert.equal(packageSourceInstallDir("github:owner/repo", { agentDir, homeDir }), "");
 });
 
@@ -735,13 +754,6 @@ test("support manifests preserve current-ref packaging while keeping stage-0 boo
 	});
 	assert.equal(manifest.find((file) => file.variable === "TLH_GNOSIS_SCRIPT")?.requirement, "required");
 	assert.equal(manifest.find((file) => file.variable === "TLH_GNOSIS_SCRIPT")?.installName, "");
-	assert.deepEqual(manifest.find((file) => file.variable === "TLH_RTK_SCRIPT"), {
-		variable: "TLH_RTK_SCRIPT",
-		requirement: "required",
-		relativePath: "scripts/tlh-rtk.mjs",
-		tempPath: "tlh-rtk.mjs",
-		installName: "tlh-rtk.mjs",
-	});
 	assert.deepEqual(manifest.find((file) => file.variable === "TLH_RECOVER_UPDATE_SCRIPT"), {
 		variable: "TLH_RECOVER_UPDATE_SCRIPT",
 		requirement: "required",
@@ -761,7 +773,6 @@ test("support manifests preserve current-ref packaging while keeping stage-0 boo
 
 	const installableVariables = new Set(installableSupportFiles().map((file) => file.variable));
 	for (const variable of [
-		"TLH_RTK_SCRIPT",
 		"TLH_RECOVER_UPDATE_SCRIPT",
 	]) {
 		assert.equal(installableVariables.has(variable), true, variable);
@@ -788,7 +799,7 @@ test("support manifests preserve current-ref packaging while keeping stage-0 boo
 	assert.doesNotMatch(bootstrap, /^optional\|scripts\/lib\/tlh-safe-profile-write\.mjs$/m);
 	assert.match(bootstrap, /^required\|scripts\/lib\/tlh-install-utils\.mjs$/m);
 	assert.match(bootstrap, /^required\|scripts\/tlh-gnosis\.mjs$/m);
-	assert.match(bootstrap, /^required\|scripts\/tlh-rtk\.mjs$/m);
+	assert.doesNotMatch(bootstrap, /^required\|scripts\/tlh-rtk\.mjs$/m);
 	assert.match(bootstrap, /^required\|scripts\/tlh-recover-update\.mjs$/m);
 	assert.match(bootstrap, /^optional\|scripts\/tlh-wrapper\.mjs$/m);
 	assert.match(bootstrap, /^optional\|scripts\/tlh-install-state\.mjs$/m);
@@ -807,7 +818,29 @@ test("settings defaults declare when bundled subagent prompts are required", (t)
 	assert.equal(settingsRequireTlhSubagentPrompts(defaults), false);
 });
 
-test("provisionSubagentExtensionConfig sets toolDescriptionMode compact and is idempotent", (t) => {
+test("subagentExtensionConfigMissingDefaults describes only writable defaults", (t) => {
+	const agentDir = tempFixture(t, "tlh-ext-config-notice-");
+	const config = { agentDir };
+	const configPath = join(agentDir, "extensions", "subagent", "config.json");
+
+	assert.deepEqual(subagentExtensionConfigMissingDefaults(config), [
+		"toolDescriptionMode: compact",
+		"control.activeNoticeAfterMs: 270000 (4m30)",
+	], "missing config reports both defaults");
+
+	mkdirSync(join(agentDir, "extensions", "subagent"), { recursive: true });
+	writeFileSync(configPath, JSON.stringify({ control: null }) + "\n");
+	assert.deepEqual(
+		subagentExtensionConfigMissingDefaults(config),
+		["toolDescriptionMode: compact"],
+		"non-object control reports only the writable tool-description default",
+	);
+
+	writeFileSync(configPath, JSON.stringify({ toolDescriptionMode: "full", control: null }) + "\n");
+	assert.deepEqual(subagentExtensionConfigMissingDefaults(config), [], "complete writable defaults report no provisioning");
+});
+
+test("provisionSubagentExtensionConfig sets TLH defaults independently and is idempotent", (t) => {
 	const agentDir = tempFixture(t, "tlh-ext-config-test-");
 	const config = { agentDir };
 	const configPath = join(agentDir, "extensions", "subagent", "config.json");
@@ -817,27 +850,48 @@ test("provisionSubagentExtensionConfig sets toolDescriptionMode compact and is i
 	assert.ok(existsSync(configPath), "config.json created on first run");
 	const created = JSON.parse(readFileSync(configPath, "utf8"));
 	assert.equal(created.toolDescriptionMode, "compact", "toolDescriptionMode set to compact");
+	assert.deepEqual(created.control, { activeNoticeAfterMs: 270000 }, "active notice default set to 4m30");
 
-	// Idempotent re-run: existing value must not change.
+	// Idempotent re-run: existing values must not change.
 	provisionSubagentExtensionConfig(config);
 	const afterRerun = JSON.parse(readFileSync(configPath, "utf8"));
-	assert.equal(afterRerun.toolDescriptionMode, "compact", "unchanged on re-run");
+	assert.deepEqual(afterRerun, created, "re-running leaves the completed config unchanged");
 
-	// User edit preserved: user sets toolDescriptionMode to \"full\".
-	writeFileSync(configPath, JSON.stringify({ toolDescriptionMode: "full" }) + "\n");
+	// A user override is preserved while the independently missing default is added.
+	writeFileSync(configPath, JSON.stringify({
+		control: { activeNoticeAfterMs: 123456, nestedKey: "preserve" },
+		topLevelKey: true,
+	}) + "\n");
 	provisionSubagentExtensionConfig(config);
-	const afterUserEdit = JSON.parse(readFileSync(configPath, "utf8"));
-	assert.equal(afterUserEdit.toolDescriptionMode, "full", "user override to full is preserved");
+	const afterActiveNoticeOverride = JSON.parse(readFileSync(configPath, "utf8"));
+	assert.equal(afterActiveNoticeOverride.toolDescriptionMode, "compact", "compact added when toolDescriptionMode is missing");
+	assert.equal(afterActiveNoticeOverride.control.activeNoticeAfterMs, 123456, "active notice override is preserved");
+	assert.equal(afterActiveNoticeOverride.control.nestedKey, "preserve", "nested control keys are preserved");
+	assert.equal(afterActiveNoticeOverride.topLevelKey, true, "top-level user keys are preserved");
 
-	// Other config keys preserved when toolDescriptionMode is absent.
-	writeFileSync(configPath, JSON.stringify({ asyncByDefault: true }) + "\n");
+	// The other direction is independent too: an existing tool override does not block
+	// provisioning the missing active-notice default.
+	writeFileSync(configPath, JSON.stringify({
+		toolDescriptionMode: "full",
+		control: { nestedKey: "preserve" },
+	}) + "\n");
 	provisionSubagentExtensionConfig(config);
-	const afterExtraKey = JSON.parse(readFileSync(configPath, "utf8"));
-	assert.equal(afterExtraKey.toolDescriptionMode, "compact", "compact added when key missing");
-	assert.equal(afterExtraKey.asyncByDefault, true, "pre-existing user keys are preserved");
+	const afterToolDescriptionOverride = JSON.parse(readFileSync(configPath, "utf8"));
+	assert.equal(afterToolDescriptionOverride.toolDescriptionMode, "full", "tool description override is preserved");
+	assert.equal(afterToolDescriptionOverride.control.activeNoticeAfterMs, 270000, "active notice added independently");
+	assert.equal(afterToolDescriptionOverride.control.nestedKey, "preserve", "existing nested control keys remain");
+
+	// A malformed nested control value is preserved while the independently writable
+	// tool-description default is still added.
+	writeFileSync(configPath, JSON.stringify({ control: null, topLevelKey: "preserve" }) + "\n");
+	provisionSubagentExtensionConfig(config);
+	const afterNonObjectControl = JSON.parse(readFileSync(configPath, "utf8"));
+	assert.equal(afterNonObjectControl.toolDescriptionMode, "compact", "compact added with a non-object control value");
+	assert.equal(afterNonObjectControl.control, null, "non-object control value is preserved");
+	assert.equal(afterNonObjectControl.topLevelKey, "preserve", "top-level key remains preserved");
 });
 
-test("provisionSubagentExtensionConfig preserves byte-for-byte a valid non-object config (null, array, scalar)", (t) => {
+test("provisionSubagentExtensionConfig preserves byte-for-byte non-object and unreadable configs", (t) => {
 	const agentDir = tempFixture(t, "tlh-ext-config-noobj-");
 	const config = { agentDir };
 	const configDir = join(agentDir, "extensions", "subagent");
@@ -861,4 +915,345 @@ test("provisionSubagentExtensionConfig preserves byte-for-byte a valid non-objec
 	writeFileSync(configPath, scalarContent);
 	provisionSubagentExtensionConfig(config);
 	assert.equal(readFileSync(configPath, "utf8"), scalarContent, "scalar config preserved byte-for-byte");
+
+	// Invalid JSON is unreadable and must also be left untouched.
+	const invalidContent = "{ not-json\n";
+	writeFileSync(configPath, invalidContent);
+	provisionSubagentExtensionConfig(config);
+	assert.equal(readFileSync(configPath, "utf8"), invalidContent, "unreadable config preserved byte-for-byte");
+});
+
+// ── managedRetiredSubagentPackages unit tests ──────────────────────────────
+
+test("managedRetiredSubagentPackages returns empty for non-object or missing packages", () => {
+	assert.deepEqual(managedRetiredSubagentPackages(null), []);
+	assert.deepEqual(managedRetiredSubagentPackages({}), []);
+	assert.deepEqual(managedRetiredSubagentPackages({ packages: "not-an-array" }), []);
+});
+
+test("managedRetiredSubagentPackages returns candidate for legacy profile with npm subagents source", () => {
+	// No provenance block → withLegacyRetiredDefaultPackageIdentities treats the
+	// retired npm source as managed (legacy carry-over path).
+	const settings = { packages: ["npm:@diegopetrucci/pi-subagents@0.31.14", "npm:unrelated"] };
+	const result = managedRetiredSubagentPackages(settings);
+	assert.equal(result.length, 1, "one candidate returned");
+	assert.equal(result[0].identity, "npm:@diegopetrucci/pi-subagents");
+	assert.equal(result[0].source, "npm:@diegopetrucci/pi-subagents@0.31.14");
+});
+
+test("managedRetiredSubagentPackages returns candidate for legacy profile with upstream npm source", () => {
+	const settings = { packages: ["npm:pi-subagents@0.29.0"] };
+	const result = managedRetiredSubagentPackages(settings);
+	assert.equal(result.length, 1);
+	assert.equal(result[0].identity, "npm:pi-subagents");
+});
+
+test("managedRetiredSubagentPackages returns candidate for legacy profile with git source", () => {
+	const settings = { packages: ["git:github.com/nicobailon/pi-subagents@v0.31.0"] };
+	const result = managedRetiredSubagentPackages(settings);
+	assert.equal(result.length, 1);
+	assert.equal(result[0].identity, "git:github.com/nicobailon/pi-subagents");
+});
+
+test("managedRetiredSubagentPackages skips unrelated packages in legacy profile", () => {
+	const settings = { packages: ["npm:some-other-package", "npm:@diegopetrucci/pi-notify"] };
+	assert.deepEqual(managedRetiredSubagentPackages(settings), []);
+});
+
+test("managedRetiredSubagentPackages skips subagents if provenance exists but identity not managed", () => {
+	// Modern profile: provenance block exists but subagents is NOT in managedPackageIdentities.
+	// withLegacyRetiredDefaultPackageIdentities does NOT carry it over → treated as user-added.
+	const settings = {
+		packages: ["npm:@diegopetrucci/pi-subagents@0.31.14"],
+		tlh: { defaultExtensionProvenance: { managedPackageIdentities: [] } },
+	};
+	assert.deepEqual(managedRetiredSubagentPackages(settings), []);
+});
+
+test("managedRetiredSubagentPackages returns candidate when provenance lists the identity as managed", () => {
+	const settings = {
+		packages: ["npm:@diegopetrucci/pi-subagents@0.31.14"],
+		tlh: {
+			defaultExtensionProvenance: {
+				managedPackageIdentities: ["npm:@diegopetrucci/pi-subagents"],
+			},
+		},
+	};
+	const result = managedRetiredSubagentPackages(settings);
+	assert.equal(result.length, 1);
+	assert.equal(result[0].identity, "npm:@diegopetrucci/pi-subagents");
+});
+
+test("captureManagedRetiredSubagentPackages returns empty for missing file", (t) => {
+	const dir = tempFixture(t);
+	assert.deepEqual(captureManagedRetiredSubagentPackages(join(dir, "nonexistent.json")), []);
+});
+
+test("captureManagedRetiredSubagentPackages returns empty for non-JSON file", (t) => {
+	const dir = tempFixture(t);
+	const badPath = join(dir, "bad.json");
+	writeFileSync(badPath, "not json");
+	assert.deepEqual(captureManagedRetiredSubagentPackages(badPath), []);
+});
+
+test("captureManagedRetiredSubagentPackages reads candidates from a real settings file", (t) => {
+	const dir = tempFixture(t);
+	const settingsPath = join(dir, "settings.json");
+	writeFileSync(settingsPath, JSON.stringify({
+		packages: ["npm:@diegopetrucci/pi-subagents@0.31.14", "npm:other"],
+	}));
+	const result = captureManagedRetiredSubagentPackages(settingsPath);
+	assert.equal(result.length, 1);
+	assert.equal(result[0].identity, "npm:@diegopetrucci/pi-subagents");
+});
+
+// ── cleanupManagedRetiredSubagentPackages unit tests ───────────────────────
+
+function createRetiredNpmState(agentDir, packageName = "@diegopetrucci/pi-subagents") {
+	const installRoot = join(agentDir, "npm");
+	const packageDir = join(installRoot, "node_modules", packageName);
+	mkdirSync(packageDir, { recursive: true });
+	writeFileSync(join(packageDir, "package.json"), JSON.stringify({ name: packageName }));
+	writeFileSync(join(installRoot, "package.json"), JSON.stringify({ dependencies: { [packageName]: "^0.31.10", keep: "1.0.0" } }, null, 2));
+	writeFileSync(join(installRoot, "package-lock.json"), JSON.stringify({
+		packages: {
+			"": { dependencies: { [packageName]: "^0.31.10", keep: "1.0.0" } },
+			[`node_modules/${packageName}`]: { version: "0.31.14" },
+		},
+	}, null, 2));
+	return { installRoot, packageDir };
+}
+
+function uninstallingPackageManager(calls) {
+	return (command, args) => {
+		calls.push({ command, args: [...args] });
+		const uninstallIndex = args.indexOf("uninstall");
+		const packageName = args[uninstallIndex + 1];
+		const rootFlagIndex = Math.max(args.indexOf("--prefix"), args.indexOf("--cwd"));
+		const installRoot = args[rootFlagIndex + 1];
+		const packageJsonPath = join(installRoot, "package.json");
+		const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+		delete packageJson.dependencies?.[packageName];
+		writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+		const packageLockPath = join(installRoot, "package-lock.json");
+		if (existsSync(packageLockPath)) {
+			const packageLock = JSON.parse(readFileSync(packageLockPath, "utf8"));
+			delete packageLock.packages?.[""]?.dependencies?.[packageName];
+			delete packageLock.packages?.[`node_modules/${packageName}`];
+			writeFileSync(packageLockPath, JSON.stringify(packageLock, null, 2));
+		}
+		rmSync(join(installRoot, "node_modules", packageName), { recursive: true, force: true });
+		return { status: 0, stdout: "", stderr: "" };
+	};
+}
+
+test("captureRetiredSubagentNpmCommand reads configured package-manager command", (t) => {
+	const root = tempFixture(t, "tlh-subagents-npm-command-");
+	const settingsPath = join(root, "settings.json");
+	writeFileSync(settingsPath, JSON.stringify({ npmCommand: ["corepack", "--", "pnpm"] }));
+	assert.deepEqual(captureRetiredSubagentNpmCommand(settingsPath), ["corepack", "--", "pnpm"]);
+});
+
+test("cleanupManagedRetiredSubagentPackages uses npm uninstall and converges manifest, lock, and node_modules", (t) => {
+	const root = tempFixture(t, "tlh-subagents-cleanup-npm-");
+	const agentDir = join(root, "agent");
+	const packageName = "@diegopetrucci/pi-subagents";
+	const { installRoot, packageDir } = createRetiredNpmState(agentDir, packageName);
+	const calls = [];
+
+	const cleanup = cleanupManagedRetiredSubagentPackages(
+		{ agentDir, dryRun: false, quiet: true, runPackageManager: uninstallingPackageManager(calls) },
+		[{ source: "npm:@diegopetrucci/pi-subagents@0.31.14", identity: "npm:@diegopetrucci/pi-subagents" }],
+	);
+
+	assert.deepEqual(calls, [{
+		command: "npm",
+		args: ["uninstall", packageName, "--prefix", installRoot, "--legacy-peer-deps"],
+	}]);
+	assert.deepEqual(cleanup.uninstalledNpmPackages, [packageName]);
+	assert.equal(existsSync(packageDir), false, "package-manager uninstall must remove node_modules package");
+	assert.equal(Object.hasOwn(JSON.parse(readFileSync(join(installRoot, "package.json"), "utf8")).dependencies, packageName), false);
+	assert.equal(Object.hasOwn(JSON.parse(readFileSync(join(installRoot, "package-lock.json"), "utf8")).packages[""].dependencies, packageName), false);
+});
+
+test("cleanupManagedRetiredSubagentPackages honors configured pnpm command semantics", (t) => {
+	const root = tempFixture(t, "tlh-subagents-cleanup-pnpm-");
+	const agentDir = join(root, "agent");
+	const packageName = "@diegopetrucci/pi-subagents";
+	const { installRoot } = createRetiredNpmState(agentDir, packageName);
+	const calls = [];
+
+	cleanupManagedRetiredSubagentPackages(
+		{
+			agentDir,
+			npmCommand: ["corepack", "--", "pnpm"],
+			quiet: true,
+			runPackageManager: uninstallingPackageManager(calls),
+		},
+		[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
+	);
+
+	assert.deepEqual(calls, [{
+		command: "corepack",
+		args: ["--", "pnpm", "uninstall", packageName, "--prefix", installRoot],
+	}]);
+});
+
+test("cleanupManagedRetiredSubagentPackages honors configured bun command semantics", (t) => {
+	const root = tempFixture(t, "tlh-subagents-cleanup-bun-");
+	const agentDir = join(root, "agent");
+	const packageName = "@diegopetrucci/pi-subagents";
+	const { installRoot } = createRetiredNpmState(agentDir, packageName);
+	const calls = [];
+
+	cleanupManagedRetiredSubagentPackages(
+		{ agentDir, npmCommand: ["bun"], quiet: true, runPackageManager: uninstallingPackageManager(calls) },
+		[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
+	);
+
+	assert.deepEqual(calls, [{
+		command: "bun",
+		args: ["uninstall", packageName, "--cwd", installRoot],
+	}]);
+});
+
+test("cleanupManagedRetiredSubagentPackages is a no-op when npm install root does not exist", (t) => {
+	const root = tempFixture(t, "tlh-subagents-cleanup-missing-");
+	const agentDir = join(root, "agent");
+	mkdirSync(agentDir, { recursive: true });
+	let called = false;
+
+	cleanupManagedRetiredSubagentPackages(
+		{ agentDir, quiet: true, runPackageManager: () => { called = true; return { status: 0 }; } },
+		[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
+	);
+	assert.equal(called, false);
+});
+
+test("cleanupManagedRetiredSubagentPackages skips pnpm when the npm root is already converged", (t) => {
+	const root = tempFixture(t, "tlh-subagents-cleanup-converged-");
+	const agentDir = join(root, "agent");
+	const installRoot = join(agentDir, "npm");
+	mkdirSync(join(installRoot, "node_modules"), { recursive: true });
+	writeFileSync(join(installRoot, "package.json"), JSON.stringify({ dependencies: { keep: "1.0.0" } }, null, 2));
+	let called = false;
+
+	const cleanup = cleanupManagedRetiredSubagentPackages(
+		{
+			agentDir,
+			npmCommand: ["corepack", "--", "pnpm"],
+			quiet: true,
+			runPackageManager: () => { called = true; throw new Error("package manager must not run for converged state"); },
+		},
+		[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
+	);
+
+	assert.equal(called, false);
+	assert.deepEqual(cleanup.uninstalledNpmPackages, [], "already-absent package must not be reported as newly uninstalled");
+	assert.deepEqual(cleanup.plannedNpmPackages, [], "already-absent package must not be reported as planned cleanup");
+});
+
+test("cleanupManagedRetiredSubagentPackages fails before refresh when package-manager uninstall fails", (t) => {
+	const root = tempFixture(t, "tlh-subagents-cleanup-failure-");
+	const agentDir = join(root, "agent");
+	const packageName = "@diegopetrucci/pi-subagents";
+	createRetiredNpmState(agentDir, packageName);
+
+	assert.throws(
+		() => cleanupManagedRetiredSubagentPackages(
+			{ agentDir, quiet: true, runPackageManager: () => ({ status: 42, stderr: "uninstall failed" }) },
+			[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
+		),
+		/failed to uninstall retired TLH subagent npm package.*uninstall failed/,
+	);
+});
+
+test("cleanupManagedRetiredSubagentPackages dry-run logs uninstall without invoking package manager", (t) => {
+	const root = tempFixture(t, "tlh-subagents-cleanup-dryrun-");
+	const agentDir = join(root, "agent");
+	const packageName = "@diegopetrucci/pi-subagents";
+	const { packageDir } = createRetiredNpmState(agentDir, packageName);
+	const logged = [];
+	const origLog = console.log;
+	console.log = (msg) => logged.push(msg);
+	try {
+		const cleanup = cleanupManagedRetiredSubagentPackages(
+			{
+				agentDir,
+				dryRun: true,
+				quiet: false,
+				runPackageManager: () => { throw new Error("package manager must not run during dry-run"); },
+			},
+			[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
+		);
+		assert.deepEqual(cleanup.plannedNpmPackages, [packageName]);
+	} finally {
+		console.log = origLog;
+	}
+
+	assert.ok(existsSync(packageDir), "dry-run must not delete the package dir");
+	assert.ok(logged.some((msg) => msg.includes("Would uninstall")), "dry-run must log a would-uninstall message");
+});
+
+test("cleanupManagedRetiredSubagentPackages skips when agentDir is a symlink and emits a warning", (t) => {
+	const root = tempFixture(t, "tlh-subagents-cleanup-symlink-");
+	const realDir = join(root, "real");
+	const symlinkDir = join(root, "agent");
+	mkdirSync(realDir, { recursive: true });
+	symlinkSync(realDir, symlinkDir);
+
+	const warnings = [];
+	const origErr = console.error;
+	console.error = (msg) => warnings.push(msg);
+	try {
+		cleanupManagedRetiredSubagentPackages(
+			{ agentDir: symlinkDir, dryRun: false, quiet: false },
+			[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
+		);
+	} finally {
+		console.error = origErr;
+	}
+
+	assert.ok(warnings.some((w) => w.includes("unsafe agent dir")), "symlinked agentDir must produce a safety warning");
+});
+
+test("cleanupManagedRetiredSubagentPackages removes owned git checkout and empty parent dirs", (t) => {
+	const root = tempFixture(t, "tlh-subagents-cleanup-git-");
+	const agentDir = join(root, "agent");
+	const gitRoot = join(agentDir, "git");
+	const ownerDir = join(gitRoot, "github.com", "nicobailon");
+	const repoDir = join(ownerDir, "pi-subagents");
+	mkdirSync(repoDir, { recursive: true });
+	mkdirSync(join(repoDir, ".git"), { recursive: true }); // simulates a managed git checkout
+
+	cleanupManagedRetiredSubagentPackages(
+		{ agentDir, dryRun: false, quiet: true },
+		[{ source: "git:github.com/nicobailon/pi-subagents@v0.31.0", identity: "git:github.com/nicobailon/pi-subagents" }],
+	);
+
+	assert.equal(existsSync(repoDir), false, "git checkout dir must be removed");
+	// Empty intermediate parent under git root must also be cleaned up.
+	assert.equal(existsSync(ownerDir), false, "empty owner dir under git root must be removed");
+});
+
+test("cleanupManagedRetiredSubagentPackages does not remove non-empty sibling git dirs", (t) => {
+	const root = tempFixture(t, "tlh-subagents-cleanup-git-sibling-");
+	const agentDir = join(root, "agent");
+	const gitRoot = join(agentDir, "git");
+	const ownerDir = join(gitRoot, "github.com", "nicobailon");
+	const repoDir = join(ownerDir, "pi-subagents");
+	const siblingDir = join(ownerDir, "other-repo");
+	mkdirSync(repoDir, { recursive: true });
+	mkdirSync(join(repoDir, ".git"), { recursive: true });
+	mkdirSync(siblingDir, { recursive: true });
+
+	cleanupManagedRetiredSubagentPackages(
+		{ agentDir, dryRun: false, quiet: true },
+		[{ source: "git:github.com/nicobailon/pi-subagents@v0.31.0", identity: "git:github.com/nicobailon/pi-subagents" }],
+	);
+
+	assert.equal(existsSync(repoDir), false, "managed git checkout must be removed");
+	// Owner dir still has the sibling, so it must NOT be removed.
+	assert.ok(existsSync(ownerDir), "non-empty owner dir must be preserved");
+	assert.ok(existsSync(siblingDir), "sibling repo must be preserved");
 });

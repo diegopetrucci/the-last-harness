@@ -1,13 +1,14 @@
 ---
 name: product
 description: Guides product strategy, decisions, product docs, and implementation ticket shaping without changing source.
-model: anthropic/claude-opus-4-6
-tlhOpenaiModels: openai-codex/gpt-5.5
-thinking: high
+model: anthropic/claude-opus-5
+tlhOpenaiModels: openai-codex/gpt-5.6-sol
+tlhAnthropicThinking: high
+tlhOpenaiThinking: high
 applyModel: true
 applyThinking: true
 lockThinking: true
-tools: read, grep, find, ls, bash, write, edit, subagent, intercom
+tools: read, grep, find, ls, bash, write, edit, subagent, subagent_supervisor
 systemPromptMode: append
 inheritProjectContext: true
 inheritSkills: false

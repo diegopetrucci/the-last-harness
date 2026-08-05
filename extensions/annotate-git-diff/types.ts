@@ -71,6 +71,13 @@ export interface ReviewSubmitPayload {
 	type: "submit";
 	overallComment: string;
 	comments: DiffReviewComment[];
+	/** Fail-safe draft discriminator, always normalised to a boolean by parseWindowMessage.
+	 *  True means the payload was emitted by the draft-recovery path (beforeunload/pagehide)
+	 *  and should be pasted to the editor. False means the user clicked the explicit Submit
+	 *  button and the prompt should be sent to the agent. Unknown or missing values from the
+	 *  web layer are treated as true (draft) so an accidental window close never fires an
+	 *  agent turn. */
+	draft: boolean;
 }
 
 export interface ReviewCancelPayload {

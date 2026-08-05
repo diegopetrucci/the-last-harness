@@ -65,7 +65,7 @@ function configureHealthyFixture(t) {
 
 	const runtimeBin = join(fixture.runtimeDir, "bin");
 	mkdirSync(runtimeBin, { recursive: true });
-	writeExecutable(join(runtimeBin, "pi"), "#!/bin/sh\necho 'pi 0.81.1'\n");
+	writeExecutable(join(runtimeBin, "pi"), "#!/bin/sh\necho 'pi 0.83.0'\n");
 	writeFileSync(join(fixture.runtimeDir, ".tlh-runtime-owned"), JSON.stringify({
 		schemaVersion: 1,
 		packageName: "@earendil-works/pi-coding-agent",
@@ -92,22 +92,6 @@ case "$1" in
   help|--help|-h)
     echo 'Usage: tk <command> [args]'
     echo 'ticket system'
-    exit 0
-    ;;
-  *)
-    exit 1
-    ;;
-esac
-`);
-	writeExecutable(join(fixture.fakebin, "rtk"), `#!/bin/sh
-case "$1" in
-  --version)
-    echo 'rtk 0.43.0'
-    exit 0
-    ;;
-  rewrite)
-    shift
-    printf 'rtk %s %s\n' "$1" "$2"
     exit 0
     ;;
   *)
@@ -166,23 +150,6 @@ const marker = ${JSON.stringify(join(root, "tickets-helper.log"))};
 appendFileSync(marker, command + "\\n");
 if (command === "status") {
   process.stdout.write("active: yes\\ncommand: tk\\n");
-}
-`);
-
-	writeExecutable(join(packageRoot, "scripts", "tlh-rtk.mjs"), `#!/usr/bin/env node
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-const args = process.argv.slice(2);
-const command = args[0];
-const agentDir = args[args.indexOf("--agent-dir") + 1];
-const marker = ${JSON.stringify(join(root, "rtk-helper.log"))};
-appendFileSync(marker, command + "\\n");
-if (command === "install-managed") {
-  mkdirSync(join(agentDir, "bin"), { recursive: true });
-  writeFileSync(join(agentDir, "bin", "rtk"), "#!/bin/sh\\nexit 0\\n");
-}
-if (command === "validate") {
-  process.stdout.write(existsSync(join(agentDir, "bin", "rtk")) ? join(agentDir, "bin", "rtk") + "\\n" : "rtk\\n");
 }
 `);
 
@@ -332,10 +299,31 @@ test("tlh doctor returns success for a healthy isolated profile", (t) => {
 	assert.match(output, /OK\s+private runtime marker\/version hints:/);
 	assert.match(output, /OK\s+managed gn validation:/);
 	assert.match(output, /OK\s+managed tk validation:/);
-	assert.match(output, /(OK|WARN)\s+managed rtk validation:/);
 	assert.match(output, /OK\s+gh availability\/auth:/);
 	assert.match(output, /OK\s+MCP\/web-search prerequisites:/);
 	assert.match(output, /Summary: .*0 FAIL/);
+});
+
+test("tlh doctor ignores RTK executables on PATH", (t) => {
+	const fixture = configureHealthyFixture(t);
+	const rtkMarkerPath = join(fixture.root, "rtk-path-ran");
+	writeExecutable(join(fixture.fakebin, "rtk"), `#!/bin/sh
+printf ran >${JSON.stringify(rtkMarkerPath)}
+exit 97
+`);
+
+	const result = runDoctor(["--agent-dir", fixture.agentDir, "--package-root", repoRoot], {
+		env: {
+			HOME: fixture.home,
+			PATH: `${fixture.fakebin}:${process.env.PATH}`,
+			EXA_API_KEY: "hidden",
+		},
+	});
+	const output = `${result.stdout}\n${result.stderr}`;
+
+	assert.equal(result.status, 0, output);
+	assert.equal(existsSync(rtkMarkerPath), false, "doctor must not execute RTK from PATH");
+	assert.doesNotMatch(output, /rtk/i);
 });
 
 test("tlh doctor fails when pointed at normal Pi config without running protected profile helpers", (t) => {
@@ -370,7 +358,6 @@ exit 0
 	assert.doesNotMatch(output, /private runtime marker\/version hints:/);
 	assert.doesNotMatch(output, /managed gn validation:/);
 	assert.doesNotMatch(output, /managed tk validation:/);
-	assert.doesNotMatch(output, /managed rtk validation:/);
 	assert.doesNotMatch(output, /gh availability\/auth:/);
 	assert.equal(existsSync(markerPath), false, "doctor must not execute helpers from protected profile bin");
 	assert.equal(existsSync(ghMarkerPath), false, "doctor must not execute gh from protected profile bin");
@@ -528,7 +515,6 @@ test("tlh doctor --repair restores isolated settings drift, preserves user value
 	assert.equal(readFileSync(stalePromptPath, "utf8"), readFileSync(join(packageRoot, "agents", "subagents", "contrarian.md"), "utf8"));
 	assert.match(readFileSync(join(fixture.root, "gnosis-helper.log"), "utf8"), /configure-install/);
 	assert.match(readFileSync(join(fixture.root, "tickets-helper.log"), "utf8"), /configure-install/);
-	assert.match(readFileSync(join(fixture.root, "rtk-helper.log"), "utf8"), /install-managed/);
 	assert.match(output, /Repair actions:/);
 	assert.match(output, /OK\s+settings drift:/);
 	assert.match(output, /OK\s+bundled subagent resources: restored 1 prompt\(s\) from packaged defaults/);
@@ -536,6 +522,92 @@ test("tlh doctor --repair restores isolated settings drift, preserves user value
 	assert.match(output, /OK\s+profile isolation\/settings:/);
 	assert.match(output, /OK\s+settings drift:/);
 	assert.match(output, /OK\s+bundled subagent resources:/);
+	assert.match(output, /Summary: .*0 FAIL/);
+});
+
+test("tlh doctor --repair physically uninstalls legacy managed npm subagents and reports it", (t) => {
+	const fixture = configureHealthyFixture(t);
+	const packageRoot = createFakeDoctorPackageRoot(fixture.root);
+	const settingsPath = join(fixture.agentDir, "settings.json");
+	const packageName = "@diegopetrucci/pi-subagents";
+	const installRoot = join(fixture.agentDir, "npm");
+	const installedPackageDir = join(installRoot, "node_modules", packageName);
+	const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+	settings.packages.push("npm:@diegopetrucci/pi-subagents@0.31.14");
+	settings.npmCommand = ["corepack", "--", "pnpm"];
+	delete settings.tlh.defaultExtensionProvenance;
+	writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+
+	mkdirSync(installedPackageDir, { recursive: true });
+	writeFileSync(join(installedPackageDir, "package.json"), JSON.stringify({ name: packageName, version: "0.31.14" }));
+	writeFileSync(join(installRoot, "package.json"), JSON.stringify({ dependencies: { [packageName]: "^0.31.10", keep: "1.0.0" } }, null, 2));
+	writeFileSync(join(installRoot, "package-lock.json"), JSON.stringify({
+		packages: {
+			"": { dependencies: { [packageName]: "^0.31.10", keep: "1.0.0" } },
+			[`node_modules/${packageName}`]: { version: "0.31.14" },
+		},
+	}, null, 2));
+	writeExecutable(join(fixture.fakebin, "corepack"), `#!/usr/bin/env node
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+const args = process.argv.slice(2);
+if (args[0] !== "--" || args[1] !== "pnpm" || args[2] !== "uninstall") process.exit(91);
+const packageName = args[3];
+const installRoot = args[args.indexOf("--prefix") + 1];
+const settings = JSON.parse(readFileSync(join(dirname(installRoot), "settings.json"), "utf8"));
+if (!settings.packages.some((entry) => String(typeof entry === "string" ? entry : entry.source).includes("pi-subagents"))) {
+  process.stderr.write("doctor merged settings before physical cleanup\\n");
+  process.exit(92);
+}
+const packageJsonPath = join(installRoot, "package.json");
+const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+delete packageJson.dependencies?.[packageName];
+writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+const lockPath = join(installRoot, "package-lock.json");
+const lock = JSON.parse(readFileSync(lockPath, "utf8"));
+delete lock.packages?.[""]?.dependencies?.[packageName];
+delete lock.packages?.["node_modules/" + packageName];
+writeFileSync(lockPath, JSON.stringify(lock, null, 2));
+rmSync(join(installRoot, "node_modules", packageName), { recursive: true, force: true });
+`);
+
+	const result = runDoctor(["--repair", "--agent-dir", fixture.agentDir, "--package-root", packageRoot], {
+		env: {
+			HOME: fixture.home,
+			PATH: `${fixture.fakebin}:${process.env.PATH}`,
+			EXA_API_KEY: "hidden",
+		},
+	});
+	const output = `${result.stdout}\n${result.stderr}`;
+	assert.equal(result.status, 0, output);
+	assert.match(output, /OK\s+settings drift:.*uninstalled 1 retired TLH subagent npm package\(s\)/);
+	assert.equal(existsSync(installedPackageDir), false);
+	assert.equal(Object.hasOwn(JSON.parse(readFileSync(join(installRoot, "package.json"), "utf8")).dependencies, packageName), false);
+	assert.equal(Object.hasOwn(JSON.parse(readFileSync(join(installRoot, "package-lock.json"), "utf8")).packages[""].dependencies, packageName), false);
+	const repairedSettings = JSON.parse(readFileSync(settingsPath, "utf8"));
+	assert.equal(repairedSettings.packages.some((entry) => String(typeof entry === "string" ? entry : entry.source).includes("pi-subagents")), false);
+	assert.deepEqual(repairedSettings.npmCommand, ["corepack", "--", "pnpm"]);
+});
+
+test("tlh doctor --repair ignores malformed npmCommand when no retired subagents candidate exists", (t) => {
+	const fixture = configureHealthyFixture(t);
+	const packageRoot = createFakeDoctorPackageRoot(fixture.root);
+	const settingsPath = join(fixture.agentDir, "settings.json");
+	const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+	settings.npmCommand = "npm";
+	writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+
+	const result = runDoctor(["--repair", "--agent-dir", fixture.agentDir, "--package-root", packageRoot], {
+		env: {
+			HOME: fixture.home,
+			PATH: `${fixture.fakebin}:${process.env.PATH}`,
+			EXA_API_KEY: "hidden",
+		},
+	});
+	const output = `${result.stdout}\n${result.stderr}`;
+	assert.equal(result.status, 0, output);
+	assert.doesNotMatch(output, /invalid npmCommand/);
+	assert.equal(JSON.parse(readFileSync(settingsPath, "utf8")).npmCommand, "npm");
 	assert.match(output, /Summary: .*0 FAIL/);
 });
 
@@ -612,7 +684,6 @@ test("tlh doctor --repair refuses settings paths outside the isolated profile be
 	assert.equal(readFileSync(outsideSettings, "utf8"), "{ not valid json\n");
 	assert.equal(existsSync(join(fixture.root, "gnosis-helper.log")), false);
 	assert.equal(existsSync(join(fixture.root, "tickets-helper.log")), false);
-	assert.equal(existsSync(join(fixture.root, "rtk-helper.log")), false);
 });
 
 test("tlh doctor --repair refuses normal Pi targets before reading settings or invoking helpers", (t) => {
@@ -637,5 +708,4 @@ test("tlh doctor --repair refuses normal Pi targets before reading settings or i
 	assert.equal(readFileSync(protectedSettings, "utf8"), "{ not valid json\n");
 	assert.equal(existsSync(join(fixture.root, "gnosis-helper.log")), false);
 	assert.equal(existsSync(join(fixture.root, "tickets-helper.log")), false);
-	assert.equal(existsSync(join(fixture.root, "rtk-helper.log")), false);
 });

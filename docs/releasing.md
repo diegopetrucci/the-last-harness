@@ -34,7 +34,7 @@ Before validation, update release-sensitive docs that include concrete versioned
 Then run the aggregate validation script and release-notes check:
 
 ```sh
-npm install --no-package-lock --legacy-peer-deps
+npm install --no-package-lock
 npm run validate
 node scripts/release-notes.mjs --tag "v$version" --output /tmp/tlh-release-notes.md
 ```

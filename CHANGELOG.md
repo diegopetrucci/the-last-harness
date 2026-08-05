@@ -4,16 +4,87 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Architect steering of async child runs now actually works at runtime. The 0.32.0 changelog entry claimed steering support, but `steer` was missing from the allowed action set at that time; it is now included. Steer calls require an explicit `id` and `message`; execution fields (`agent`, `tasks`, `chain`, `context`, `agentScope`) and non-integer `index` values are rejected. `rush` is blocked from `steer` outright because an opaque steer carries no `agent` field, so TLH cannot verify the steered child is not a `developer` subagent. `product` and `bug-hunter` can steer already-started runs — see the accepted issue #330 note in `docs/embedded-subagents.md`.
+- The `librarian` subagent tool budget was raised from soft 20 / hard 30 to soft 30 / hard 60 so external GitHub research tasks are less likely to end early on budget exhaustion.
+- The architect cleanup guidance now spells out how to delete `tk` tickets: `tk` has no delete subcommand, so ticket files are removed directly with `rm .tickets/<id>.md` after checking for dangling dependency references.
+
+### Minor details
+
+- **`tlh update` now automatically reclaims disk space left behind by retired bundled extensions** ([#438](https://github.com/diegopetrucci/the-last-harness/issues/438)). After each settings merge, TLH drives the isolated Pi runtime's own `pi remove` command to uninstall each retired default extension that is absent from the merged settings and still installed on disk. This covers residue from all previously retired defaults — fff, intercom, rtk, oracle, context-cap, plannotator, librarian, and triage-comments — which together account for roughly 35 MB in a typical profile. Cleanup is always owner-driven (Pi performs the npm uninstall and computes the safe transitive-dep closure; TLH never deletes npm files by hand). A package that still appears in your settings — either because you added it manually or because a provenance check found a user-owned copy — keeps its installed files untouched. The operation is skipped entirely when settings are unreadable and is a no-op under `--dry-run`. Retired profile state directories (such as `agent/intercom/`) are also removed on update. This backfills all existing profiles on the next `tlh update` run.
+
+### Removed
+
+- Removed the `wait` tool (`extensions/subagents/src/runs/background/wait.ts`, 390 LOC) and all wiring: `WaitParamsSchema`/`WaitParams` from `schemas.ts`, `WaitToolConfigObject`/`WaitToolConfig`/`waitTool` config field from `types.ts`, and the `waitToolConfig` const plus `pi.registerTool(waitTool)` call from `index.ts`. Removed the `wait` section from `docs/subagents.md`. This is a user-visible removal for any non-TLH consumer; TLH could not reach the tool (TLH's primary-agent tool allowlist excludes it, no TLH agent declares it, TLH never sets `config.waitTool` or `PI_SUBAGENT_WAIT_TOOL_ENABLED`). Test deletions: `wait.test.ts` (whole file) and exactly one `it()` in `index-child-registration.test.ts`.
+- Removed the `mcpDirectTools` allowlist resolver (`extensions/subagents/src/runs/shared/mcp-direct-tool-allowlist.ts`, 365 LOC) and the `mcpDirectTools?: string[]` frontmatter field threading from all call-site files: no TLH agent declares the field. **Kept**: `env.MCP_DIRECT_TOOLS = "__none__"` is still set unconditionally in `pi-args.ts`; the sentinel tells `@diegopetrucci/pi-mcp-adapter` (bundled in TLH) not to bootstrap direct MCP tools in child subagents — an unset var means "bootstrap everything configured" and would silently widen every child's tool surface. This sentinel must not be removed by a future cleanup pass.
+- Removed the `agent-memory` module (`extensions/subagents/src/agents/agent-memory.ts`) and its test (`extensions/subagents/test/unit/agent-memory.test.ts`): no TLH agent declares the `memory` frontmatter field, and TLH is the only consumer. The `AgentMemoryScope` type, `AgentMemoryConfig` interface, and `memory` field are removed from `AgentConfig`; the `buildAgentMemoryInjection` call sites are removed from `execution.ts` and `async-execution.ts`.
+- The **fff (`npm:@ff-labs/pi-fff`)** extension has been removed.
+
+## [0.32.0] - 2026-08-03
+
 ### Added
 
-- The installer now provisions `extensions/subagent/config.json` with `toolDescriptionMode: "compact"` during install and update. This setting reduces token overhead in subagent tool descriptions (requires pi-subagents ≥ v0.33.0; older builds ignore the key). Idempotent: any existing user value (including `"full"`) is preserved on re-runs. Revert path: set `"toolDescriptionMode": "full"` in `<agentDir>/extensions/subagent/config.json` — this value is preserved on subsequent installer runs. Removing the key is only a temporary revert; the installer will re-provision `"compact"` on the next install or update run.
-- [Experimental] You can now add custom (non built-in) subagents. Ask TLH how to.
+- In the footer, TLH now shows how much context MCPs are consuming.
+
+### Changed
+
+- Bumped the bundled critical `pi-subagents` default extension pin from `npm:@diegopetrucci/pi-subagents@0.31.12` to `npm:@diegopetrucci/pi-subagents@0.31.14`, delivering the max thinking level fix so the `:max` thinking badge renders correctly.
+
+### Model defaults
+
+- The `developer` subagent now defaults to `gpt-5.6-luna max` for OpenAI, `sonnet-4-6 medium` for Anthropic.
+- The Architect, Product, Bug-hunter, `code-reviewer`, `oracle`, and `contrarian` now use `opus-5.0 high` for Anthropic, `gpt-5.6-sol high` for OpenAI.
+- All 12 bundled agents now declare thinking levels independently per provider instead of sharing a single level.
+
+### Removed
+
+- Removed RTK from TLH (see [this analysis as to why](https://www.stet.sh/blog/gpt-56-token-saving-modes)).
+- Removed the pi-intercom dependency. The little we used of it is now folded into pi-subagents. This also reduces how many tokens TLH consumes.
+
+### Fixed
+
+- Installing TLH from `main` no longer fails npm peer-dependency resolution; repository tooling now consistently uses the TypeScript version supported by `typescript-eslint`.
+- Subagents now have two timeout caps: a soft one at ~4m30s where the architect checks on them, and a hard one with a bigger timeout that pauses them. They also support steering, and have tighter system prompts. This should make them much more responsive.
+- TLH now works a bit better with Herdr.
+
+### Other minor things
+
+- `/tokens` now reports median observed wall-clock latency per tool alongside the existing cost and token data. Latency is the interval between the recorded call and result events and includes any queueing or paused-run time.
+- `/annotate-last-message` now sends submitted feedback directly to the agent as a follow-up message instead of appending it to the TLH editor buffer.
+- `/annotate-git-diff` now sends review feedback to the agent when you click Submit. Closing the review window with unsent comments still appends a recovery draft to the editor instead of sending, so an accidental close cannot trigger an agent turn.
+- Bumped the bundled Pi to `0.83.0`.
+
+## [0.31.0] - 2026-07-27
+
+### Changed
+
+- The currently worked on `tk` ticket now shows in the footer.
+- Bumped Pi to 0.82.1.
+
+## [0.30.0] - 2026-07-24
+
+### Added
+
+- [Experimental] TLH can now run trusted custom embedded subagents from user-owned markdown definitions after you opt into the `embedded-subagents` experimental flag.
 - New `/what-consumed-my-session-limit-and-tokens` command that generates and opens a local, private HTML report attributing token consumption across all TLH sessions (including subagent child sessions, across every project) within the current provider session-limit window (Anthropic 5-hour or OpenAI Codex session window, resolved from the subscription usage snapshot with a trailing-5h fallback). The report ranks sessions by in-window usage with per-provider totals and privacy/accuracy caveats, and embeds no transcript text or tool payloads.
+- Added a troubleshooting guide with conservative recovery steps for common wrapper, private-runtime, subagent, install, update, and integration failures without touching normal `~/.pi/agent` configuration.
+
+### Changed
+
+- TLH now renders its initial startup header before slower resource collection, update-check, and usage-refresh work completes, then fills in those details asynchronously for a more responsive startup experience.
+- TLH ticket workflows now scope `tk` to the current worktree by default (`<git-worktree-root>/.tickets`, or `<session-cwd>/.tickets` outside Git), keeping architect sessions, child sessions, `/tk-status`, and Bash-launched `tk` commands on the same repo-local ticket store. Interleaved ticket UI actions now restore that scope correctly instead of accidentally drifting to another store.
+- The installer now provisions `extensions/subagent/config.json` with `toolDescriptionMode: "compact"` during install and update. This reduces token overhead in subagent tool descriptions while preserving any existing user override such as `"full"`.
+- Non-latest-release installs now keep a visible track warning naming the active install track, instead of only surfacing that state transiently during startup.
+- Refreshed bundled default-extension pins, including the managed subagent stack (`pi-subagents` 0.31.9 and `pi-intercom` 0.8.0) plus the bundled optional OpenAI/Auth/MCP/search defaults, so fresh installs and managed updates pick up newer upstream fixes and compatibility updates.
+- Release telemetry now reports only the `on`/`off` state of registered TLH experimental flags; unknown or custom experimental values remain ignored and unsent.
+- TLH's architect/developer ticket workflow guidance now explicitly protects pre-existing user-owned worktree and index changes from being overwritten or discarded during scoped implementation tasks.
 
 ### Fixed
 
 - Restored Anthropic and OpenAI Codex subscription usage in the footer, which disappeared under Pi 0.81 when upstream removed the auth-storage API the usage service depended on.
 - OpenAI weekly/daily usage now shows days, not just hours.
+- Provider totals in `/what-consumed-my-session-limit-and-tokens` now stay provider-scoped instead of repeating model attribution in the totals row.
 - Installer backup cleanup now only removes backups it created (exact TLH filename forms with an empty/`tlh-tickets`/`tlh-defaults`/`before-install` marker and a TLH timestamp), so a user-created file such as `settings.json.backup-my-personal-copy-<timestamp>` is no longer eligible for automatic deletion.
 
 ## [0.29.0] - 2026-07-12

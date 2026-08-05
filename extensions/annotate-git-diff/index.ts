@@ -95,10 +95,14 @@ function parseWindowMessage(data: unknown): ReviewWindowMessage | null {
 			if (!isString(data.overallComment) || !Array.isArray(data.comments) || !data.comments.every(isDiffReviewComment)) {
 				return null;
 			}
+			// Fail-safe: treat ONLY an explicit `false` as an intentional submit.
+			// Anything else (true, missing, wrong type) defaults to draft so an
+			// accidental window close can never fire an agent turn.
 			return {
 				type: "submit",
 				overallComment: data.overallComment,
 				comments: data.comments,
+				draft: data.draft !== false,
 			};
 		case "cancel":
 			return { type: "cancel" };
@@ -664,8 +668,13 @@ export function createAnnotateGitDiffController(
 					if (!hasReviewFeedback(message)) return;
 
 					const prompt = composePrompt(getPromptFiles(), message);
-					appendReviewPrompt(ctx, prompt);
-					ctx.ui.notify("Appended review feedback to the editor.", "info");
+					if (message.draft === true) {
+						appendReviewPrompt(ctx, prompt);
+						ctx.ui.notify("Appended review feedback to the editor.", "info");
+					} else {
+						pi.sendUserMessage(prompt, { deliverAs: "followUp" });
+						ctx.ui.notify("Review feedback sent to the agent.", "info");
+					}
 				} catch (error) {
 					if (suppressedWindows.has(window)) return;
 					const message = error instanceof Error ? error.message : String(error);

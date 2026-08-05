@@ -10,21 +10,57 @@ Before considering changes ready, run:
 npm run validate
 ```
 
-This is the standard full validation flow for this repository. It includes the main TypeScript `tsc --noEmit` check, the runtime TypeScript check for `scripts/**/*.mts` and authoritative `extensions/**/*.ts`, and the generated-output freshness check for `scripts/**/*.mjs` plus same-layout `extensions/**/*.js` before the installer smoke checks, tests, lint, and package dry-run. Its default `npm test` phase uses the quiet dot reporter so passing runs stay concise.
+This is the standard full validation flow. It checks managed version pins and package contents; runs the main, subagent-test-support, and runtime TypeScript targets; verifies generated runtime JavaScript freshness; runs installer smoke tests; executes the root and imported subagent test suites; runs JavaScript/TypeScript and shell lint; exercises the settings merge dry-run; and finishes with `npm pack --dry-run`.
 
-## Test output modes
+The default root tests use Node's dot reporter. Imported subagent suites capture TAP so the runner can enforce their counts and print one concise success line; on any failure or invalid summary it relays the full TAP and stderr diagnostics.
 
-Use the default test command for normal local checks:
+## Test suites and output modes
+
+Use the default aggregate command for normal local checks:
 
 ```sh
 npm test
 ```
 
-If you need the full Node test reporter while diagnosing a failure, rerun with:
+The imported suites can be targeted individually:
+
+```sh
+npm run test:subagents:unit
+npm run test:subagents:integration
+npm run test:subagents:e2e
+```
+
+On Node 22.19.0, full imported runs must report every discovered test as passed with zero failures, cancellations, skips, or todo tests. The runner also requires at least 91 unit files, 22 integration files, and 1 E2E file, preventing missing globs or zero-test runs from passing. After removing the agent-memory, mcpDirectTools, and wait-tool tests (61 cases across 2 deleted files plus targeted it() removals), the baseline is 1086 unit tests, 526 integration tests, and 1 E2E test; TLH raises unit coverage by 1 solely with the Node 22 referenced-cleanup-timer regression (which is included in the 1086 count).
+
+CI runs the suites on Linux and macOS with Node 22.19.0. Its unit and integration shards must each execute at least one test and retain the same zero-non-pass requirement; together they cover the full counts.
+
+For expanded output from the root Node tests, use:
 
 ```sh
 npm run test:verbose
 ```
+
+Subagent successes remain concise in that aggregate command. Subagent failures automatically include their full TAP output.
+
+## TypeScript scope
+
+`npm run typecheck` and `npm run typecheck:runtime` cover production subagent sources. `npm run typecheck:subagents-test-support` deliberately covers only typed support modules and focused TLH adaptation regressions. It does **not** claim full imported-test type coverage: legacy fixture mocks are not strict-compatible. The review-time full-tree probe reported 320 TypeScript errors (319 after the required-dependency adaptations in this port). Runtime execution plus ESLint remains authoritative for the rest of the imported fixtures.
+
+For runtime TypeScript changes under `scripts/` or `extensions/`, use `npm run typecheck:runtime` for the focused runtime-only typecheck, `npm run check:runtime` to confirm the generated `scripts/**/*.mjs` and same-layout `extensions/**/*.js` files are fresh without mutating the worktree, and `npm run build` only when you intentionally want to refresh those generated outputs. Review and edit the TypeScript sources rather than the generated `.mjs`/`.js` mirrors.
+
+## First-party subagent packaging and provenance
+
+The subagent runtime is part of the root TLH package, not a separately pinned default extension. `npm run check:package-contents` verifies that the declared first-party runtime entrypoint and `extensions/subagents/LICENSE` are present in `npm pack --dry-run`, while contributor-only imported tests remain excluded. Root tests also verify that `config/default-extensions.json` has no active external subagent default, Nico Bailon's notice is exact, and all 17 files in the immutable historical archive still match the import manifest (including the 29-entry archived Gnosis ledger).
+
+The source-history comparison is intentionally a separate, checkout-dependent verification:
+
+```sh
+node docs/subagents-history/verify-import.mjs /absolute/path/to/a-verified-pi-subagents-checkout
+```
+
+It verifies the exact source repository commit/tree, include/exclude partition, source and imported blob identities, current historical archive bytes/modes, full-tree tar checksum, ledger counts, import ancestry, and absence of grafted source ancestry. It is not part of `npm run validate` because routine clones do not carry the external repository's Git objects. See [docs/subagents-history/HISTORY.md](docs/subagents-history/HISTORY.md) for the pinned values and independent history-inspection commands.
+
+No standalone subagent publish, release, pin-bump, or upstream-sync check is current TLH validation. Those workflows survive only as historical evidence under `docs/subagents-history/source/`; never use that archive as a task `cwd`.
 
 ## Useful targeted checks
 
@@ -45,8 +81,6 @@ npm run lint:sh
 
 This runs ShellCheck over every `*.sh` file tracked by git. It is also included in `npm run validate`.
 
-For runtime TypeScript changes under `scripts/` or `extensions/`, use `npm run typecheck:runtime` for the focused runtime-only typecheck, `npm run check:runtime` to confirm the generated `scripts/**/*.mjs` and same-layout `extensions/**/*.js` files are fresh without mutating the worktree, and `npm run build` only when you intentionally want to refresh those generated outputs. Review and edit the TypeScript sources rather than the generated `.mjs`/`.js` mirrors.
-
 For installer tests, prefer temporary `--agent-dir` and `--bin-dir` values. Do not run a real install into home directories unless explicitly requested.
 
 ## Release-tier manual validation
@@ -58,6 +92,8 @@ npm run check:startup-performance
 ```
 
 This is intentionally separate from `npm run validate`. It launches TLH in a PTY and measures timing, so results are sensitive to the current machine and system load.
+
+Ticket `tlh-2ej0` also owns the remaining first-party subagent live-session smoke. `npm run validate` does not replace these checks: against the packaged release candidate, verify the compact parent-facing tool description (including invalid-mode fallback), native `contact_supervisor` coordination, a supported `:max` thinking badge, and delegation to the eight supported TLH minor agents with non-allowlisted blocking, user-scope/fresh-context enforcement, and an async `status`/`resume` cycle. Record the candidate, profile, session evidence, and outcomes on the ticket. The current checkbox form lives in [docs/pin-bump-verification.md](docs/pin-bump-verification.md); its pin/release workflow is retired even though this live-session debt remains.
 
 Release objective: keep the steady-state first TLH header mean below `1000ms`.
 

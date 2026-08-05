@@ -20,17 +20,16 @@ const DEFAULT_PI_INSTALL_SCRIPT_PATHS = Object.freeze([
 	"scripts/tlh-install.mts",
 	"scripts/tlh-install.mjs",
 ]);
-const DEFAULT_RTK_SCRIPT_PATHS = Object.freeze([
-	"scripts/tlh-rtk.mts",
-	"scripts/tlh-rtk.mjs",
-]);
 const DEFAULT_INSTALL_SH_PATH = "install.sh";
 const MANAGED_PI_DEPENDENCIES = Object.freeze([
 	{ field: "peerDependencies", name: "@earendil-works/pi-coding-agent" },
 	{ field: "devDependencies", name: "@earendil-works/pi-coding-agent" },
+	{ field: "devDependencies", name: "@earendil-works/pi-agent-core" },
+	{ field: "devDependencies", name: "@earendil-works/pi-ai" },
 	{ field: "peerDependencies", name: "@earendil-works/pi-tui" },
 	{ field: "devDependencies", name: "@earendil-works/pi-tui" },
 ]);
+const PI_CODING_AGENT_LOCK_PATH = "node_modules/@earendil-works/pi-coding-agent";
 const ALLOWED_LOCAL_DEPENDENCY_PREFIXES = Object.freeze([
 	"file:",
 	"link:",
@@ -49,7 +48,6 @@ Options:
   --install-sh <path>          install.sh path for TLH_PINNED_PI_VERSION validation (default: install.sh)
   --gnosis-script <path>       Managed Gnosis script to validate (repeatable; defaults: scripts/tlh-gnosis.mts, scripts/tlh-gnosis.mjs, scripts/tlh-install.mjs)
   --pi-install-script <path>   TLH install script to validate PINNED_PI_VERSION in (repeatable; defaults: scripts/tlh-install.mts, scripts/tlh-install.mjs)
-  --rtk-script <path>          Managed RTK script to validate (repeatable; defaults: scripts/tlh-rtk.mts, scripts/tlh-rtk.mjs)
   -h, --help                   Show this help
 `;
 }
@@ -62,12 +60,10 @@ function parseArgs(argv) {
 		installShPath: DEFAULT_INSTALL_SH_PATH,
 		gnosisScriptPaths: [...DEFAULT_GNOSIS_SCRIPT_PATHS],
 		piInstallScriptPaths: [...DEFAULT_PI_INSTALL_SCRIPT_PATHS],
-		rtkScriptPaths: [...DEFAULT_RTK_SCRIPT_PATHS],
 		help: false,
 	};
 	let customGnosisScripts = false;
 	let customPiInstallScripts = false;
-	let customRtkScripts = false;
 
 	for (let index = 0; index < argv.length; index += 1) {
 		const arg = argv[index];
@@ -113,15 +109,6 @@ function parseArgs(argv) {
 			index += 1;
 			continue;
 		}
-		if (arg === "--rtk-script") {
-			if (!customRtkScripts) {
-				args.rtkScriptPaths = [];
-				customRtkScripts = true;
-			}
-			args.rtkScriptPaths.push(requiredValue(argv, index + 1, arg));
-			index += 1;
-			continue;
-		}
 		if (arg.startsWith("--package=")) {
 			args.packagePath = arg.slice("--package=".length);
 			if (!args.packagePath) throw new Error("--package requires a value");
@@ -160,16 +147,6 @@ function parseArgs(argv) {
 				customPiInstallScripts = true;
 			}
 			args.piInstallScriptPaths.push(value);
-			continue;
-		}
-		if (arg.startsWith("--rtk-script=")) {
-			const value = arg.slice("--rtk-script=".length);
-			if (!value) throw new Error("--rtk-script requires a value");
-			if (!customRtkScripts) {
-				args.rtkScriptPaths = [];
-				customRtkScripts = true;
-			}
-			args.rtkScriptPaths.push(value);
 			continue;
 		}
 		throw new Error(`Unknown argument: ${arg}`);
@@ -367,23 +344,33 @@ function isPinnedDependencySpec(spec) {
 	return isPinnedGitLikeDependencySpec(trimmed);
 }
 
+function validatePinnedDependencyMap(value, label, problems, allowNested) {
+	if (!isPlainObject(value)) {
+		problems.push(`${label} must be an object`);
+		return;
+	}
+
+	for (const [name, spec] of Object.entries(value)) {
+		const dependencyLabel = `${label}.${name}`;
+		if (allowNested && isPlainObject(spec)) {
+			validatePinnedDependencyMap(spec, dependencyLabel, problems, true);
+			continue;
+		}
+		if (typeof spec !== "string" || spec.trim().length === 0) {
+			problems.push(`Missing string dependency spec at ${dependencyLabel}`);
+			continue;
+		}
+		if (!isPinnedDependencySpec(spec)) {
+			problems.push(`${dependencyLabel} must use an exact version or pinned non-registry source, found ${JSON.stringify(spec)}`);
+		}
+	}
+}
+
 function validatePinnedDependencies(packageJson, packagePath, problems) {
 	for (const field of ["dependencies", "devDependencies", "overrides"]) {
 		const value = packageJson[field];
 		if (value === undefined) continue;
-		if (!isPlainObject(value)) {
-			problems.push(`${packagePath}#${field} must be an object`);
-			continue;
-		}
-		for (const [name, spec] of Object.entries(value)) {
-			if (typeof spec !== "string" || spec.trim().length === 0) {
-				problems.push(`Missing string dependency spec at ${packagePath}#${field}.${name}`);
-				continue;
-			}
-			if (!isPinnedDependencySpec(spec)) {
-				problems.push(`${packagePath}#${field}.${name} must use an exact version or pinned non-registry source, found ${JSON.stringify(spec)}`);
-			}
-		}
+		validatePinnedDependencyMap(value, `${packagePath}#${field}`, problems, field === "overrides");
 	}
 }
 
@@ -470,6 +457,28 @@ function validatePinnedManagedScriptDefaults(scriptPaths, constantName, label, p
 	}
 }
 
+function validatePiTypeboxPin(args, packageJson, packageLock, problems) {
+	const directSpec = packageJson.dependencies?.typebox;
+	const directLabel = `${args.packagePath}#dependencies.typebox`;
+	const piSpec = packageLock.packages?.[PI_CODING_AGENT_LOCK_PATH]?.dependencies?.typebox;
+	const piLabel = `${args.lockfilePath}#packages[${JSON.stringify(PI_CODING_AGENT_LOCK_PATH)}].dependencies.typebox`;
+
+	if (typeof directSpec !== "string" || directSpec.trim().length === 0) {
+		problems.push(`Missing string dependency spec at ${directLabel}`);
+	}
+	if (typeof piSpec !== "string" || piSpec.trim().length === 0) {
+		problems.push(`Missing pinned Pi typebox dependency spec at ${piLabel}`);
+		return;
+	}
+	if (!isPinnedExactVersion(piSpec)) {
+		problems.push(`${piLabel} must use an exact version, found ${JSON.stringify(piSpec)}`);
+		return;
+	}
+	if (typeof directSpec === "string" && isPinnedExactVersion(directSpec) && directSpec.trim() !== piSpec.trim()) {
+		problems.push(`TLH's direct typebox dependency must match Pi's pinned typebox version:\n  - ${directLabel}: ${JSON.stringify(directSpec.trim())}\n  - ${piLabel}: ${JSON.stringify(piSpec.trim())}`);
+	}
+}
+
 function validateManagedPiPins(args, packageJson, problems) {
 	const versions = [];
 
@@ -535,9 +544,9 @@ function collectProblems(args) {
 
 	validatePinnedDependencies(packageJson, args.packagePath, problems);
 	validateManagedPiPins(args, packageJson, problems);
+	validatePiTypeboxPin(args, packageJson, packageLock, problems);
 	validateDefaultExtensionPins(args.defaultExtensionsPath, problems);
 	validatePinnedManagedScriptDefaults(args.gnosisScriptPaths, "DEFAULT_GNOSIS_VERSION", "Managed Gnosis", problems);
-	validatePinnedManagedScriptDefaults(args.rtkScriptPaths, "DEFAULT_RTK_VERSION", "Managed RTK", problems);
 
 	return { version, problems };
 }

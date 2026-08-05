@@ -27,13 +27,11 @@ const previousPiWebAccessSource = "git:github.com/diegopetrucci/pi-web-access@tl
 const expectedBundledNpmPackageIdentities = new Map([
 	["openai-fast", "npm:@diegopetrucci/pi-openai-fast"],
 	["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth"],
-	["fff", "npm:@ff-labs/pi-fff"],
 	["inline-bash", "npm:@diegopetrucci/pi-inline-bash"],
 	["notify", "npm:@diegopetrucci/pi-notify"],
 	["context-inspector", "npm:@diegopetrucci/pi-context-inspector"],
 	["quiet-tools", "npm:@diegopetrucci/pi-quiet-tools"],
 	["dirty-repo-guard", "npm:@diegopetrucci/pi-dirty-repo-guard"],
-	["intercom", "npm:@diegopetrucci/pi-intercom"],
 ]);
 
 function tempFixture() {
@@ -216,41 +214,26 @@ test("installable support files no longer include the legacy defaults helper tre
 	assert.equal(installableVariables.has("TLH_RECOVER_UPDATE_SCRIPT"), true);
 });
 
-test("merge migrates legacy intercom git installs while cleaning stale critical opt-outs and preserving non-critical opt-outs", () => {
+test("merge force-removes all pi-intercom package identities (string and object entries, duplicates, idempotent)", () => {
 	const fixture = tempFixture();
 	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "subagents",
-			aliases: ["pi-subagents"],
-			replaces: ["git:github.com/upstream/pi-subagents"],
-			migrateReplacements: true,
-			critical: true,
-			source: "git:github.com/tlh/pi-subagents@pinned",
-		},
-		{
-			id: "intercom",
-			aliases: ["pi-intercom"],
-			replaces: [
-				"npm:pi-intercom",
-				"git:github.com/nicobailon/pi-intercom",
-				"git:github.com/diegopetrucci/pi-intercom",
-			],
-			migrateReplacements: true,
-			critical: true,
-			source: "npm:@diegopetrucci/pi-intercom@0.7.0",
-		},
 		{
 			id: "helper",
 			source: "npm:helper",
 		},
 	], null, 2));
+	// Cover all 4 force-removed identities, both string and object forms, and a duplicate entry.
 	writeFileSync(fixture.settings, JSON.stringify({
 		packages: [
-			"git:github.com/upstream/pi-subagents",
+			harnessPackage,
+			"npm:@diegopetrucci/pi-intercom@0.8.0",
+			"npm:pi-intercom@0.7.0",
+			{ source: "git:github.com/nicobailon/pi-intercom@v0.6.0", owner: "preserve" },
+			"git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-6",
 			"git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-6",
 			"npm:helper",
 		],
-		tlh: { disabledDefaultExtensions: ["pi-intercom", "pi-subagents", "helper"] },
+		tlh: { disabledDefaultExtensions: ["intercom", "pi-intercom", "helper"] },
 	}, null, 2));
 
 	runNode(mergeScript, [
@@ -261,12 +244,64 @@ test("merge migrates legacy intercom git installs while cleaning stale critical 
 	]);
 
 	const settings = readJson(fixture.settings);
-	assert(settings.packages.includes("git:github.com/tlh/pi-subagents@pinned"));
-	assert(settings.packages.includes("npm:@diegopetrucci/pi-intercom@0.7.0"));
-	assert(!settings.packages.includes("git:github.com/upstream/pi-subagents"));
-	assert(!settings.packages.includes("git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-6"));
-	assert(!settings.packages.includes("npm:helper"));
+	// All intercom packages must be gone; unrelated packages survive (helper is
+	// removed because it stays opted out via disabledDefaultExtensions).
+	assert.deepEqual(settings.packages, [harnessPackage]);
+	// Stale intercom opt-outs are pruned while unrelated opt-outs survive.
 	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["helper"]);
+
+	// Second merge is idempotent — no changes reported.
+	const secondOutput = runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", fixture.extensions,
+	]);
+	assert.match(secondOutput, /No settings changes needed\./);
+});
+
+test("merge force-removes pi-intercom and post-merge sources/critical-sources contain no intercom entry", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "helper",
+			source: "npm:helper",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [
+			"npm:@diegopetrucci/pi-intercom@0.8.0",
+			"npm:helper",
+		],
+	}, null, 2));
+
+	runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", fixture.extensions,
+		"--quiet",
+	]);
+
+	const sources = runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"sources",
+	]).trim().split("\n").filter(Boolean);
+	assert.equal(
+		sources.some((s) => s.includes("pi-intercom")),
+		false,
+		"sources must not contain any pi-intercom entry after force-removal",
+	);
+
+	const criticalSources = runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"critical-sources",
+	]).trim().split("\n").filter(Boolean);
+	assert.equal(
+		criticalSources.some((s) => s.includes("pi-intercom")),
+		false,
+		"critical-sources must not contain any pi-intercom entry after force-removal",
+	);
 });
 
 test("merge force-removes legacy pi-rtk packages and prunes stale rtk opt-outs", () => {
@@ -286,7 +321,7 @@ test("merge force-removes legacy pi-rtk packages and prunes stale rtk opt-outs",
 			"git:github.com/sherif-fanous/pi-rtk@v0.5.0",
 			"npm:helper",
 		],
-		tlh: { disabledDefaultExtensions: ["rtk", "pi-rtk", "helper"] },
+		tlh: { rtk: { disabled: true }, disabledDefaultExtensions: ["rtk", "pi-rtk", "helper"] },
 	}, null, 2));
 
 	runNode(mergeScript, [
@@ -299,6 +334,7 @@ test("merge force-removes legacy pi-rtk packages and prunes stale rtk opt-outs",
 	const settings = readJson(fixture.settings);
 	assert.deepEqual(settings.packages, [harnessPackage]);
 	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["helper"]);
+	assert.equal(Object.hasOwn(settings.tlh, "rtk"), false);
 });
 
 test("merge no longer reorders quiet-tools around retired rtk packages", () => {
@@ -491,7 +527,7 @@ test("tlh-defaults prunes legacy rtk opt-outs while mutating other defaults", ()
 	], null, 2));
 	writeFileSync(fixture.settings, JSON.stringify({
 		packages: ["npm:helper"],
-		tlh: { disabledDefaultExtensions: ["rtk", "pi-rtk"] },
+		tlh: { rtk: { disabled: true }, disabledDefaultExtensions: ["rtk", "pi-rtk"] },
 	}, null, 2));
 
 	runNode(defaultsScript, [
@@ -503,6 +539,42 @@ test("tlh-defaults prunes legacy rtk opt-outs while mutating other defaults", ()
 	const settings = readJson(fixture.settings);
 	assert.deepEqual(settings.packages, []);
 	assert.deepEqual(settings.tlh?.disabledDefaultExtensions ?? [], ["helper"]);
+	assert.equal(Object.hasOwn(settings.tlh, "rtk"), false);
+});
+
+test("tlh-defaults persists retired tlh.rtk cleanup even when disable is otherwise a no-op", () => {
+	const fixture = tempFixture();
+	writeFileSync(fixture.extensions, JSON.stringify([
+		{
+			id: "helper",
+			source: "npm:helper",
+		},
+	], null, 2));
+	writeFileSync(fixture.settings, JSON.stringify({
+		tlh: {
+			rtk: { disabled: true },
+			disabledDefaultExtensions: ["helper"],
+		},
+	}, null, 2));
+
+	const output = runNode(defaultsScript, [
+		"--settings", fixture.settings,
+		"--defaults", fixture.extensions,
+		"disable", "helper",
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings, {
+		packages: [],
+		tlh: {
+			disabledDefaultExtensions: ["helper"],
+			defaultExtensionProvenance: {
+				managedPackageIdentities: [],
+			},
+		},
+	});
+	assert.equal(backupFiles(fixture.settings).length, 1);
+	assert.doesNotMatch(output, /No settings changes were needed\./);
 });
 
 test("merge updates critical package pins without --force", () => {
@@ -1189,41 +1261,30 @@ test("bundled same-identity managed npm pins advance while manual pins stay unto
 	assert.deepEqual(manualPinnedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, []);
 });
 
-test("bundled manifest contains subagents and intercom entries with correct critical migration flags", () => {
+test("bundled manifest has no subagents or intercom entry after retirement", () => {
 	const bundled = bundledExtensions;
 	const subagents = bundled.find(({ id }) => id === "subagents");
 	const intercom = bundled.find(({ id }) => id === "intercom");
 
-	assert.ok(subagents, "bundled subagents entry should exist");
-	assert.equal(subagents.critical, true, "subagents must stay critical");
-	assert.deepEqual(subagents.aliases, ["pi-subagents"]);
-	assert.deepEqual(subagents.replaces, [
-		"npm:pi-subagents",
-		"git:github.com/nicobailon/pi-subagents",
-		"git:github.com/diegopetrucci/pi-subagents",
-	]);
-	assert.equal(subagents.migrateReplacements, true, "subagents replacements must stay enabled");
-
-	assert.ok(intercom, "bundled intercom entry should exist");
-	assert.equal(intercom.critical, true, "intercom must stay critical");
-	assert.deepEqual(intercom.aliases, ["pi-intercom"]);
-	assert.deepEqual(intercom.replaces, [
-		"npm:pi-intercom",
-		"git:github.com/nicobailon/pi-intercom",
-		"git:github.com/diegopetrucci/pi-intercom",
-	]);
-	assert.equal(intercom.migrateReplacements, true, "intercom replacements must stay enabled");
+	assert.equal(subagents, undefined, "bundled subagents entry should be absent after retirement");
+	assert.equal(intercom, undefined, "bundled intercom entry should be absent after retirement");
 });
 
-test("bundled merge migrates legacy upstream and TLH subagents installs to the scoped npm source without duplicates", () => {
+test("bundled merge removes legacy upstream and TLH subagents git installs via retirement list", () => {
+	// The subagents external default has been retired: legacy git packages are cleaned
+	// up by applyRetiredTlhDefaultPackageCleanup (RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES is
+	// included in RETIRED_TLH_DEFAULT_PACKAGE_SOURCES). No npm source is added in their place because
+	// the first-party bundled extension is now registered directly via package.json.
 	const fixture = tempFixture();
 	const bundledPath = bundledExtensionsPath;
 	writeFileSync(fixture.settings, JSON.stringify({
 		packages: [
+			harnessPackage,
 			"git:github.com/nicobailon/pi-subagents@v0.31.0",
 			"git:github.com/diegopetrucci/pi-subagents@tlh-v0.31.1",
+			"npm:unrelated-ext",
 		],
-		tlh: { disabledDefaultExtensions: ["pi-subagents"] },
+		tlh: { disabledDefaultExtensions: ["pi-subagents", "other-ext"] },
 	}, null, 2));
 
 	runNode(mergeScript, [
@@ -1234,25 +1295,96 @@ test("bundled merge migrates legacy upstream and TLH subagents installs to the s
 	]);
 
 	const settings = readJson(fixture.settings);
-	assert.deepEqual(
-		settings.packages.filter((entry) => packageIdentity(entry) === "npm:@diegopetrucci/pi-subagents"),
-		[bundledSource("subagents")],
-	);
+	// Both legacy git installs must be removed.
 	assert.equal(
 		settings.packages.some((entry) => packageIdentity(entry) === "git:github.com/nicobailon/pi-subagents"),
 		false,
+		"legacy nicobailon git install must be removed",
 	);
 	assert.equal(
 		settings.packages.some((entry) => packageIdentity(entry) === "git:github.com/diegopetrucci/pi-subagents"),
 		false,
+		"legacy TLH git install must be removed",
 	);
-	assert.deepEqual(
-		(settings.tlh?.disabledDefaultExtensions ?? []).filter((value) => value === "subagents" || value === "pi-subagents"),
-		[],
+	// No npm replacement must be added.
+	assert.equal(
+		settings.packages.some((entry) => packageIdentity(entry) === "npm:@diegopetrucci/pi-subagents"),
+		false,
+		"no npm subagents source may be added by retirement migration",
+	);
+	// Unrelated package must survive.
+	assert.ok(settings.packages.some((entry) => packageIdentity(entry) === "npm:unrelated-ext"), "unrelated package must be preserved");
+	// pi-subagents opt-out must be pruned; unrelated opt-out must survive.
+	assert.equal(
+		(settings.tlh?.disabledDefaultExtensions ?? []).some((v) => v === "subagents" || v === "pi-subagents"),
+		false,
+		"stale subagents opt-out must be pruned",
+	);
+	assert.ok(
+		(settings.tlh?.disabledDefaultExtensions ?? []).includes("other-ext"),
+		"unrelated opt-out must be preserved",
 	);
 });
 
-test("bundled merge migrates legacy TLH intercom git installs to the scoped npm source", () => {
+test("bundled merge preserves a manually installed subagents npm package (modern profile, not in provenance)", () => {
+	// A modern profile (provenance block exists) where subagents is NOT in managedPackageIdentities:
+	// the package must be treated as user-added and preserved.
+	const fixture = tempFixture();
+	const bundledPath = bundledExtensionsPath;
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [
+			harnessPackage,
+			"npm:@diegopetrucci/pi-subagents@0.31.14",
+		],
+		tlh: {
+			defaultExtensionProvenance: {
+				managedPackageIdentities: [], // provenance exists but subagents is NOT managed
+			},
+		},
+	}, null, 2));
+
+	const output = runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", bundledPath,
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.ok(
+		settings.packages.some((entry) => packageIdentity(entry) === "npm:@diegopetrucci/pi-subagents"),
+		"user-added subagents package must be preserved when not managed",
+	);
+	assert.equal(output.includes("pi-subagents"), false, "merge must not log any subagents removal");
+});
+
+test("bundled merge prunes stale subagents and pi-subagents opt-outs from tlh.disabledDefaultExtensions", () => {
+	const fixture = tempFixture();
+	const bundledPath = bundledExtensionsPath;
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [harnessPackage],
+		tlh: { disabledDefaultExtensions: ["subagents", "pi-subagents", "notify"] },
+	}, null, 2));
+
+	const output = runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", bundledPath,
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.match(output, /remove stale subagents opt-out from tlh\.disabledDefaultExtensions/);
+	assert.equal(
+		(settings.tlh?.disabledDefaultExtensions ?? []).some((v) => v === "subagents" || v === "pi-subagents"),
+		false,
+		"stale subagents opt-outs must be removed",
+	);
+	assert.ok(
+		(settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
+		"unrelated opt-out must be preserved",
+	);
+});
+
+test("bundled merge force-removes legacy TLH intercom git installs via the retirement list", () => {
 	const fixture = tempFixture();
 	const bundledPath = bundledExtensionsPath;
 	writeFileSync(fixture.settings, JSON.stringify({
@@ -1268,14 +1400,118 @@ test("bundled merge migrates legacy TLH intercom git installs to the scoped npm 
 	]);
 
 	const settings = readJson(fixture.settings);
-	assert(settings.packages.includes(bundledSource("intercom")));
+	// The legacy git install must be force-removed (not migrated to any npm source).
 	assert.equal(
 		settings.packages.some((entry) => packageIdentity(entry) === "git:github.com/diegopetrucci/pi-intercom"),
 		false,
+		"legacy git intercom install must be force-removed",
 	);
-	assert.deepEqual(
-		(settings.tlh?.disabledDefaultExtensions ?? []).filter((value) => value === "intercom" || value === "pi-intercom"),
-		[],
+	assert.equal(
+		settings.packages.some((entry) => (typeof entry === "string" ? entry : entry.source).includes("pi-intercom")),
+		false,
+		"no pi-intercom source should remain after bundled merge",
+	);
+});
+
+// ── fff retirement tests ─────────────────────────────────────────────────────
+
+test("bundled manifest has no fff entry after retirement", () => {
+	const fff = bundledExtensions.find(({ id }) => id === "fff");
+	assert.equal(fff, undefined, "bundled fff entry should be absent after retirement");
+});
+
+test("bundled merge removes a TLH-managed fff package (provenance-gated, legacy profile)", () => {
+	// A legacy profile with no provenance block: withLegacyRetiredDefaultPackageIdentities
+	// treats any retired package present as managed and enqueues it for removal.
+	const fixture = tempFixture();
+	const bundledPath = bundledExtensionsPath;
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [
+			harnessPackage,
+			"npm:@ff-labs/pi-fff@0.10.1",
+			"npm:@diegopetrucci/pi-notify@0.1.14",
+		],
+	}, null, 2));
+
+	const output = runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", bundledPath,
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.match(output, /Will remove retired TLH default package: npm:@ff-labs\/pi-fff/);
+	assert.equal(
+		settings.packages.some((entry) => packageIdentity(entry) === "npm:@ff-labs/pi-fff"),
+		false,
+		"TLH-managed fff package must be removed",
+	);
+	assert.equal(
+		settings.packages.some((entry) => packageIdentity(entry) === "npm:@diegopetrucci/pi-notify"),
+		true,
+		"unrelated managed package must be preserved",
+	);
+});
+
+test("bundled merge preserves a manually added fff package (provenance block exists, not managed)", () => {
+	// A modern profile with a provenance block: withLegacyRetiredDefaultPackageIdentities
+	// skips the legacy carry-over path. A fff package not listed in managedPackageIdentities
+	// is treated as user-added and must be preserved.
+	const fixture = tempFixture();
+	const bundledPath = bundledExtensionsPath;
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [
+			harnessPackage,
+			"npm:@ff-labs/pi-fff@0.10.1",
+		],
+		tlh: {
+			defaultExtensionProvenance: {
+				managedPackageIdentities: [], // provenance exists but fff is NOT managed
+			},
+		},
+	}, null, 2));
+
+	const output = runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", bundledPath,
+		"--quiet",
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.equal(
+		settings.packages.some((entry) => packageIdentity(entry) === "npm:@ff-labs/pi-fff"),
+		true,
+		"manually added fff package must be preserved",
+	);
+	assert.equal(output.includes("pi-fff"), false, "merge must not log any fff removal");
+});
+
+test("bundled merge prunes stale fff and pi-fff opt-outs from tlh.disabledDefaultExtensions", () => {
+	const fixture = tempFixture();
+	const bundledPath = bundledExtensionsPath;
+	writeFileSync(fixture.settings, JSON.stringify({
+		packages: [harnessPackage],
+		tlh: { disabledDefaultExtensions: ["fff", "pi-fff", "notify"] },
+	}, null, 2));
+
+	const output = runNode(mergeScript, [
+		fixture.defaults,
+		"--settings", fixture.settings,
+		"--default-extensions", bundledPath,
+	]);
+
+	const settings = readJson(fixture.settings);
+	assert.match(output, /remove stale fff opt-out from tlh\.disabledDefaultExtensions/);
+	assert.equal(
+		(settings.tlh?.disabledDefaultExtensions ?? []).some((v) => v === "fff" || v === "pi-fff"),
+		false,
+		"stale fff opt-outs must be removed",
+	);
+	assert.equal(
+		(settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
+		true,
+		"unrelated opt-out must be preserved",
 	);
 });
 

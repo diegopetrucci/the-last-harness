@@ -1,6 +1,6 @@
 # Integrations
 
-TLH includes managed integrations for project memory, ticketed workflows, and native RTK shell-command rewriting. Gnosis project memory and `tk` ticket support are required for standard architect/product workflows; Rush keeps that tooling available but handles small bounded tasks with direct edits instead of the default `tk` loop. RTK is also installer-managed now: the old `pi-rtk` package and `/rtk` slash-command UI are gone.
+TLH includes managed integrations for project memory and ticketed workflows. Gnosis project memory and `tk` ticket support are required for standard architect/product workflows; Rush keeps that tooling available but handles small bounded tasks with direct edits instead of the default `tk` loop.
 
 ## Gnosis integration
 
@@ -28,39 +28,15 @@ tlh tickets enable
 
 Legacy `settings.tlh.tickets.enabled=false` values are re-enabled during install/update because ticket support is required. The wrapper includes the managed `<agent>/bin` directory on `PATH` for the wrapped upstream Pi process, so subagents and shells launched from inside TLH can find a managed `tk` when TLH supplied one.
 
+At TLH session start, TLH also scopes `tk` to one ticket store for that session by exporting `TICKETS_DIR` before the ticket UI or agent prompts run. If `TICKETS_DIR` is already set, TLH preserves it. Otherwise TLH points `tk` at `<git-worktree-root>/.tickets`; outside Git it falls back to `<session-cwd>/.tickets`. This keeps architect sessions, child sessions, `/tickets`, and Bash-launched `tk` commands on the same repo-local ticket store without touching ancestor stores such as `~/Developer/.tickets`.
+
+The ticket footer status is on by default and shows one read-only `ticket: <title> (/tickets)` line per in-progress ticket. TLH strips terminal control sequences from titles and falls back to the ticket ID when a title cannot be resolved or is empty after sanitization. `/tickets` shows the workflow counts plus one ID/title detail line for a single in-progress ticket or an `In progress:` list for multiple tickets, using the same title sanitization and ID fallback.
+
 If TLH cannot validate a configured/existing `tk` and cannot install the managed copy, install or update fails with an actionable error instead of starting with an incomplete workflow. To recover, provide a valid `tk` command and run `tlh tickets enable --install-path /path/to/tk`, or rerun the installer/update once the managed download can succeed.
 
 Removing `~/.the-last-harness` removes any managed `tk` copy. To remove only the managed `tk` binary while keeping the rest of the profile, delete `~/.the-last-harness/agent/bin/tk`; the next install/update will recreate it if no other valid `tk` is configured. Running `tlh tickets enable` without a managed reinstall clears the recorded SHA-256, so the next install/update refreshes the managed binary when the managed path is in use.
 
 Managed installs download the pinned `wedow/ticket` source tarball (`v0.3.2`) and verify its SHA-256 before extracting the `ticket` script; inherited environment variables cannot override those installer-owned source pins. TLH also records the SHA-256 of the managed binary in `settings.tlh.tickets.installedSha256`. When a future TLH release bumps the pinned SHA, the next `tlh update` or installer rerun reinstalls the managed binary and refreshes the recorded value. Custom (non-managed) `installPath` values are unaffected by this check.
-
-## Native RTK integration
-
-TLH now bundles RTK as a managed native rewrite integration rather than a separately managed `pi-rtk` extension. There is no `/rtk` command surface anymore: `/rtk enable`, `/rtk disable`, and `/rtk status` are gone.
-
-On supported darwin/linux x64/arm64 platforms, install and update place the pinned managed RTK `v0.43.0` binary at `~/.the-last-harness/agent/bin/rtk`. The wrapper adds `<agent>/bin` to `PATH` for the wrapped upstream Pi process, so TLH sessions and child shells can find that managed binary normally. If TLH cannot install and validate the pinned RTK binary, install or update fails with an actionable error instead of continuing without rewrite support.
-
-To disable RTK rewriting for a single launch, set `RTK_DISABLED=1` before starting TLH:
-
-```sh
-RTK_DISABLED=1 tlh
-```
-
-To disable it persistently for the isolated profile, set `tlh.rtk.disabled` in `~/.the-last-harness/agent/settings.json`:
-
-```json
-{
-  "tlh": {
-    "rtk": {
-      "disabled": true
-    }
-  }
-}
-```
-
-To re-enable rewriting, unset `RTK_DISABLED`, remove `tlh.rtk.disabled`, or set it back to `false`.
-
-Removing `~/.the-last-harness` removes the managed RTK copy along with the rest of the isolated profile. To remove only the managed binary while keeping the rest of TLH, delete `~/.the-last-harness/agent/bin/rtk`; the next install or `tlh update` recreates it. The old `tlh.disabledDefaultExtensions` RTK markers and `tlh defaults disable rtk` flow no longer control RTK after this migration.
 
 ## Terminal activity bridge
 

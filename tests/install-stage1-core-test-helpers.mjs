@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,10 +13,8 @@ import { makeTempDir } from "./install-stage1-test-helpers.mjs";
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const repoNodeModulesBin = join(repoRoot, "node_modules", ".bin");
 export const TLH_NON_PINNED_PI_VERSION = "0.80.1";
-export const TLH_PINNED_PI_VERSION = "0.81.1";
+export const TLH_PINNED_PI_VERSION = "0.83.0";
 export const TLH_PI_PACKAGE_SPEC = `@earendil-works/pi-coding-agent@${TLH_PINNED_PI_VERSION}`;
-export const managedRtkSupportedTestPlatform =
-	["darwin", "linux"].includes(process.platform) && ["x64", "arm64"].includes(process.arch);
 
 // ---------------------------------------------------------------------------
 // Utility helpers
@@ -47,86 +44,18 @@ export function readJson(path) {
 	return JSON.parse(readFileSync(path, "utf8"));
 }
 
-export function readJsonLines(path) {
-	if (!existsSync(path)) return [];
-	return readFileSync(path, "utf8")
-		.trim()
-		.split(/\r?\n/)
-		.filter(Boolean)
-		.map((line) => JSON.parse(line));
-}
-
 export function safeInstallerPath(fakebin) {
 	return [fakebin, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(delimiter);
 }
 
 // ---------------------------------------------------------------------------
-// Managed RTK spawn preload
-// ---------------------------------------------------------------------------
-
-export function writeManagedRtkSpawnPreload() {
-	const dir = mkdtempSync(join(tmpdir(), "tlh-rtk-preload-"));
-	const preload = join(dir, "stub-managed-rtk-spawn.mjs");
-	writeFileSync(preload, `import { appendFileSync } from "node:fs";
-import { basename, join } from "node:path";
-import { createRequire } from "node:module";
-const require = createRequire(import.meta.url);
-const childProcess = require("node:child_process");
-const originalSpawnSync = childProcess.spawnSync;
-function optionEnv(options) {
-  return options && typeof options === "object" && options.env && typeof options.env === "object" ? options.env : {};
-}
-function targetFromArgs(args) {
-  const targetIndex = args.indexOf("--target");
-  if (targetIndex !== -1 && typeof args[targetIndex + 1] === "string" && args[targetIndex + 1]) return args[targetIndex + 1];
-  const agentDirIndex = args.indexOf("--agent-dir");
-  if (agentDirIndex !== -1 && typeof args[agentDirIndex + 1] === "string" && args[agentDirIndex + 1]) return join(args[agentDirIndex + 1], "bin", "rtk");
-  return "";
-}
-childProcess.spawnSync = function patchedSpawnSync(command, args = [], options = {}) {
-  const argv = Array.isArray(args) ? args.map((value) => String(value)) : [];
-  if (command === process.execPath && argv[0] && basename(argv[0]) === "tlh-rtk.mjs") {
-    if (process.env.TLH_TEST_RTK_LOG) {
-      appendFileSync(process.env.TLH_TEST_RTK_LOG, JSON.stringify({
-        command,
-        args: argv,
-        cwd: options.cwd || process.cwd(),
-        env: {
-          PI_CODING_AGENT_DIR: optionEnv(options).PI_CODING_AGENT_DIR,
-          PATH: optionEnv(options).PATH,
-        },
-      }) + "\\n");
-    }
-    const status = Number.parseInt(process.env.TLH_TEST_RTK_STATUS || "0", 10);
-    const stdout = process.env.TLH_TEST_RTK_STDOUT || (status === 0 ? targetFromArgs(argv) + "\\n" : "");
-    const stderr = process.env.TLH_TEST_RTK_STDERR || "";
-    return { pid: 0, output: [null, stdout, stderr], stdout, stderr, status, signal: null, error: undefined };
-  }
-  return originalSpawnSync(command, args, options);
-};
-`, "utf8");
-	return preload;
-}
-
-export const managedRtkSpawnPreload = writeManagedRtkSpawnPreload();
-
-// ---------------------------------------------------------------------------
 // Installer runner helpers
 // ---------------------------------------------------------------------------
-
-export function withNodeImport(env, preloadPath) {
-	const existing = env.NODE_OPTIONS ? String(env.NODE_OPTIONS).trim() : "";
-	const importFlag = `--import=${preloadPath}`;
-	return {
-		...env,
-		NODE_OPTIONS: existing ? `${existing} ${importFlag}` : importFlag,
-	};
-}
 
 export function runInstaller(args, env = scrubInstallerEnv()) {
 	return spawnSync(process.execPath, [join(repoRoot, "scripts/tlh-install.mjs"), ...args], {
 		cwd: repoRoot,
-		env: withNodeImport(env, managedRtkSpawnPreload),
+		env,
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 	});
@@ -211,6 +140,7 @@ export function runStage1LocalPackageInstall(t, {
 	verbose = false,
 	existingSupportFiles,
 	existingLibrarianConfig,
+	existingManagedRtk = false,
 	envOverrides = {},
 } = {}) {
 	const root = makeTempDir();
@@ -244,6 +174,10 @@ export function runStage1LocalPackageInstall(t, {
 			mkdirSync(dirname(target), { recursive: true });
 			writeFileSync(target, content);
 		}
+	}
+	if (existingManagedRtk) {
+		mkdirSync(join(agentDir, "bin"), { recursive: true });
+		writeFileSync(join(agentDir, "bin", "rtk"), "#!/bin/sh\nexit 0\n");
 	}
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 

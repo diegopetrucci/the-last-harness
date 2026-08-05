@@ -62,15 +62,44 @@ test("rush prompt keeps bounded REST CI polling guidance", () => {
 	assertBodyPattern(agent, "rush cleanup guidance", /do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks/i);
 });
 
-test("librarian prompt keeps REST-first GitHub research quota guidance", () => {
-	const agent = readAgentPrompt("subagents", "librarian");
+test("scout and research subagent prompts keep bounded scope and tool budgets", () => {
+	const librarian = readAgentPrompt("subagents", "librarian");
+	const repoScout = readAgentPrompt("subagents", "repo-scout");
+	const diffSummarizer = readAgentPrompt("subagents", "diff-summarizer");
+	const webScout = readAgentPrompt("subagents", "web-scout");
 
-	assertIncludesAllTerms(agent, "shared quota preflight guidance", [
+	assertBodyPattern(librarian, "librarian tool budget", /toolBudget:\s*\{"soft":30,"hard":60\}/i);
+	assertBodyPattern(repoScout, "repo-scout tool budget", /toolBudget:\s*\{"soft":20,"hard":30\}/i);
+	assertBodyPattern(diffSummarizer, "diff-summarizer tool budget", /toolBudget:\s*\{"soft":12,"hard":20\}/i);
+	assertBodyPattern(webScout, "web-scout tool budget", /toolBudget:\s*\{"soft":5,"hard":7\}/i);
+
+	assertIncludesAllTerms(librarian, "librarian bounded scope guidance", [
+		"Stay tightly scoped",
+		"Do not broaden into general web research",
+		"Stop as soon as the question is answered",
+	]);
+	assertIncludesAllTerms(repoScout, "repo-scout bounded scope guidance", [
+		"Stay limited to repository orientation",
+		"Inspect only the minimum representative files needed",
+		"Stop once you can give a confident orientation report",
+	]);
+	assertIncludesAllTerms(diffSummarizer, "diff-summarizer bounded scope guidance", [
+		"Stay limited to the supplied diff or current local change set",
+		"do not drift into implementation planning",
+		"Stop once the main behavior changes, risky areas, and requirement status are covered",
+	]);
+	assertIncludesAllTerms(webScout, "web-scout bounded scope guidance", [
+		"Stay tightly scoped to the architect's stated research question",
+		"Do not broaden into GitHub-specific repository archaeology",
+		"Stop once the question is answered",
+	]);
+
+	assertIncludesAllTerms(librarian, "shared quota preflight guidance", [
 		"gh api rate_limit 2>&1",
 		"all local TLH sessions share the same authenticated GitHub GraphQL quota",
 		"REST/core quota can still remain available after GraphQL is low or exhausted",
 	]);
-	assertOrderedTerms(agent, "REST-first inspection coverage", [
+	assertOrderedTerms(librarian, "REST-first inspection coverage", [
 		"prefer them over GraphQL-backed convenience commands",
 		"PRs",
 		"issues",
@@ -79,12 +108,12 @@ test("librarian prompt keeps REST-first GitHub research quota guidance", () => {
 		"commit statuses",
 		"check-runs",
 	]);
-	assertBodyPattern(agent, "avoid statusCheckRollup", /avoid `?statusCheckRollup`?/i);
-	assertBodyPattern(agent, "ban gh pr checks watch", /avoid `gh pr checks --watch`/i);
-	assertBodyPattern(agent, "REST fallback on GraphQL failure", /fall back to `gh api` GET requests against REST endpoints or to local `git` evidence when possible/i);
+	assertBodyPattern(librarian, "avoid statusCheckRollup", /avoid `?statusCheckRollup`?/i);
+	assertBodyPattern(librarian, "ban gh pr checks watch", /avoid `gh pr checks --watch`/i);
+	assertBodyPattern(librarian, "REST fallback on GraphQL failure", /fall back to `gh api` GET requests against REST endpoints or to local `git` evidence when possible/i);
 });
 
-test("architect prompt preserves pre-existing changes without weakening the no-edit boundary", () => {
+test("architect prompt preserves pre-existing changes and async steering guidance", () => {
 	const agent = readAgentPrompt("primary", "architect");
 
 	assertIncludesAllTerms(agent, "architect preservation guidance", [
@@ -97,6 +126,14 @@ test("architect prompt preserves pre-existing changes without weakening the no-e
 		"non-dry-run `git clean`",
 		"checkout/switch discard or force options when they would affect pre-existing state",
 		"ask the user how to proceed instead.",
+	]);
+	assertIncludesAllTerms(agent, "architect async steering guidance", [
+		"Prefer the narrowest subagent and task framing",
+		"Treat roughly 4m30 and later long-running notices as non-disruptive status checkpoints",
+		"Prefer status/steer over timer-driven pause",
+		"If a live async child's scope expands",
+		"Pause or interrupt a live child only for real decisions",
+		"Repeated checkpoints never reset the cumulative runtime budget",
 	]);
 });
 
@@ -115,6 +152,15 @@ test("developer prompt preserves human-owned changes and limits escalation to bl
 		"Preserve unrelated state while implementing the ticket.",
 		"pre-existing changes overlap the task and block a safe, scoped implementation",
 	]);
+});
+
+test("developer prompt pins the Luna model and max thinking defaults", () => {
+	const agent = readAgentPrompt("subagents", "developer");
+
+	assert.match(agent, /^tlhOpenaiModels: openai-codex\/gpt-5\.6-luna$/m);
+	assert.match(agent, /^tlhAnthropicModels: anthropic\/claude-sonnet-4-6$/m);
+	assert.match(agent, /^tlhAnthropicThinking: medium$/m);
+	assert.match(agent, /^tlhOpenaiThinking: max$/m);
 });
 
 test("code-reviewer prompt matches current review-only guidance without removed quota sections", () => {

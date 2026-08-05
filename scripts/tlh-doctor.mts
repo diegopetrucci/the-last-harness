@@ -13,6 +13,9 @@ import {
 	type DefaultExtensionEntry,
 } from "./lib/default-extensions.mjs";
 import {
+	captureManagedRetiredSubagentPackages,
+	captureRetiredSubagentNpmCommand,
+	cleanupManagedRetiredSubagentPackages,
 	copyTlhSubagentPrompts,
 	missingTlhSubagentPrompts,
 	restoreNeededTlhSubagentPrompts,
@@ -234,10 +237,6 @@ function ticketsScript(packageRoot: string): string {
 	return join(packageRoot, "scripts", "tlh-tickets.mjs");
 }
 
-function rtkScript(packageRoot: string): string {
-	return join(packageRoot, "scripts", "tlh-rtk.mjs");
-}
-
 function runtimeDirForAgent(agentDir: string): string {
 	return join(dirname(agentDir), "runtime");
 }
@@ -435,15 +434,6 @@ function addTicketsCheck(results: CheckResult[], packageRoot: string, agentDir: 
 	recordCheck(results, "WARN", "managed tk validation", `ticket integration inactive (${command || "not found"})`);
 }
 
-function addRtkCheck(results: CheckResult[], packageRoot: string, agentDir: string, env: NodeJS.ProcessEnv): void {
-	const result = runCommand(process.execPath, [rtkScript(packageRoot), "validate", "--agent-dir", agentDir], { env });
-	if (result.status === 0) {
-		recordCheck(results, "OK", "managed rtk validation", `validated ${(String(result.stdout || "").trim() || "rtk")}`);
-		return;
-	}
-	recordCheck(results, "WARN", "managed rtk validation", `no valid rtk command found (${commandFailureSummary(result)})`);
-}
-
 function addGhCheck(results: CheckResult[], env: NodeJS.ProcessEnv): void {
 	const result = runCommand("gh", ["auth", "status"], { env });
 	if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
@@ -609,7 +599,35 @@ function repairAction(level: RepairLevel, label: string, detail: string): Repair
 	return { level, label, detail };
 }
 
-function repairSettings(packageRoot: string, settingsPath: string, env: NodeJS.ProcessEnv): RepairAction {
+function repairSettings(packageRoot: string, agentDir: string, settingsPath: string, env: NodeJS.ProcessEnv): RepairAction {
+	const retiredSubagentPackages = captureManagedRetiredSubagentPackages(settingsPath);
+	let npmCommand: string[] | undefined;
+	if (retiredSubagentPackages.length > 0) {
+		try {
+			npmCommand = captureRetiredSubagentNpmCommand(settingsPath);
+		} catch (error) {
+			return repairAction("FAIL", "settings drift", `could not read retired subagent package-manager settings (${error instanceof Error ? error.message : String(error)})`);
+		}
+	}
+
+	let physicalCleanupDetail: string;
+	try {
+		const cleanup = cleanupManagedRetiredSubagentPackages(
+			{ agentDir, settingsPath, npmCommand, env, dryRun: false, quiet: true },
+			retiredSubagentPackages,
+		);
+		const details: string[] = [];
+		if (cleanup.uninstalledNpmPackages.length > 0) {
+			details.push(`uninstalled ${cleanup.uninstalledNpmPackages.length} retired TLH subagent npm package(s)`);
+		}
+		if (cleanup.removedGitPaths.length > 0) {
+			details.push(`removed ${cleanup.removedGitPaths.length} retired TLH subagent git checkout(s)`);
+		}
+		physicalCleanupDetail = details.length > 0 ? `; ${details.join("; ")}` : "";
+	} catch (error) {
+		return repairAction("FAIL", "settings drift", `could not physically remove retired TLH subagent package; settings remain unchanged for retry (${error instanceof Error ? error.message : String(error)})`);
+	}
+
 	const result = runCommand(process.execPath, [
 		mergeSettingsScript(packageRoot),
 		defaultsPath(packageRoot),
@@ -617,13 +635,14 @@ function repairSettings(packageRoot: string, settingsPath: string, env: NodeJS.P
 		"--default-extensions", defaultExtensionsPath(packageRoot),
 	], { env });
 	if (result.status !== 0) {
-		return repairAction("FAIL", "settings drift", `could not repair packaged settings drift (${commandFailureSummary(result)})`);
+		return repairAction("FAIL", "settings drift", `could not repair packaged settings drift (${commandFailureSummary(result)})${physicalCleanupDetail}`);
 	}
+
 	const output = summarizeCommandOutput(result);
 	if (output === "No settings changes needed.") {
-		return repairAction("OK", "settings drift", "packaged defaults already match the isolated profile");
+		return repairAction("OK", "settings drift", `packaged defaults already match the isolated profile${physicalCleanupDetail}`);
 	}
-	return repairAction("OK", "settings drift", output || "reapplied packaged defaults with existing backup behavior");
+	return repairAction("OK", "settings drift", `${output || "reapplied packaged defaults with existing backup behavior"}${physicalCleanupDetail}`);
 }
 
 function repairBundledSubagentPrompts(packageRoot: string, agentDir: string): RepairAction {
@@ -690,7 +709,6 @@ function collectHealthResults(agentDir: string, packageRoot: string, settingsPat
 		if (!settingsPathIsProtected) {
 			addTicketsCheck(results, packageRoot, agentDir, settingsPath, env);
 		}
-		addRtkCheck(results, packageRoot, agentDir, env);
 	}
 	if (!agentDirIsProtected) {
 		addGhCheck(results, env);
@@ -717,11 +735,10 @@ function runRepairMode(agentDir: string, packageRoot: string, settingsPath: stri
 	}
 
 	const actions: RepairAction[] = [
-		repairSettings(packageRoot, settingsPath, env),
+		repairSettings(packageRoot, agentDir, settingsPath, env),
 		repairBundledSubagentPrompts(packageRoot, agentDir),
 		repairManagedHelper("managed gn install", gnosisScript(packageRoot), ["configure-install", "--agent-dir", agentDir], env),
 		repairManagedHelper("managed tk install", ticketsScript(packageRoot), ["configure-install", "--agent-dir", agentDir, "--settings", settingsPath], env),
-		repairManagedHelper("managed rtk install", rtkScript(packageRoot), ["install-managed", "--agent-dir", agentDir], env),
 		repairAction("WARN", "private runtime", "runtime replacement stays manual; run `tlh update` if runtime drift remains"),
 		repairAction("WARN", "user-owned prerequisites", "gh auth, EXA keys, and MCP config remain manual"),
 	];

@@ -1,0 +1,877 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { BUILTIN_AGENT_NAMES, defaultInheritProjectContext, defaultInheritSkills, defaultSystemPromptMode, discoverAgentsAll, buildRuntimeName, frontmatterNameForConfig, parsePackageName, mergeBuiltinAgentOverride, removeBuiltinAgentOverride, removeBuiltinAgentOverrideFields, } from "./agents.js";
+import { serializeAgent } from "./agent-serializer.js";
+import { isPositiveSafeInteger } from "./execution-ceiling.js";
+import { discoverAvailableSkills } from "./skills.js";
+import { parseFrontmatter } from "./frontmatter.js";
+import { toModelInfo } from "../shared/model-info.js";
+import { resolveSubagentModelOverride } from "../runs/shared/model-fallback.js";
+import { validateToolBudgetConfig } from "../runs/shared/tool-budget.js";
+import { getProjectConfigDir } from "../shared/utils.js";
+function result(text, isError = false) {
+    return { content: [{ type: "text", text }], isError, details: { mode: "management", results: [] } };
+}
+const SAVED_CHAIN_UNSUPPORTED = "Saved chains are deliberately unsupported in The Last Harness; existing .chain.md/.chain.json files are left untouched.";
+function unsupportedSavedChainResult(detail) {
+    return result(`${SAVED_CHAIN_UNSUPPORTED} ${detail}`, true);
+}
+function parseCsv(value) {
+    return [...new Set(value.split(",").map((v) => v.trim()).filter(Boolean))];
+}
+function configObject(config) {
+    let val = config;
+    if (typeof val === "string") {
+        try {
+            val = JSON.parse(val);
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return { error: `config must be valid JSON: ${message}` };
+        }
+    }
+    if (!val || typeof val !== "object" || Array.isArray(val))
+        return {};
+    return { value: val };
+}
+function hasKey(obj, key) {
+    return Object.prototype.hasOwnProperty.call(obj, key);
+}
+function asDisambiguationScope(scope) {
+    if (scope === "user" || scope === "project")
+        return scope;
+    return undefined;
+}
+function actionScope(scope, action) {
+    if (scope === undefined)
+        return { scope: "user" };
+    const parsed = asDisambiguationScope(scope);
+    return parsed ? { scope: parsed } : { error: result(`agentScope must be 'user' or 'project' for ${action}.`, true) };
+}
+function normalizeListScope(scope) {
+    if (scope === undefined)
+        return "both";
+    if (scope === "user" || scope === "project" || scope === "both")
+        return scope;
+    return undefined;
+}
+function sanitizeName(name) {
+    return name.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+}
+function parsePackageConfig(value) {
+    return parsePackageName(value, "config.package");
+}
+function allAgents(d) {
+    return [...d.builtin, ...d.package, ...d.user, ...d.project];
+}
+function availableNames(cwd) {
+    return [...new Set(allAgents(discoverAgentsAll(cwd)).map((agent) => agent.name))].sort((a, b) => a.localeCompare(b));
+}
+function findAgents(name, cwd, scope = "both") {
+    const d = discoverAgentsAll(cwd);
+    const raw = name.trim();
+    const sanitized = sanitizeName(raw);
+    return allAgents(d)
+        .filter((a) => (scope === "both" || a.source === scope) && (a.name === raw || a.name === sanitized))
+        .sort((a, b) => a.source.localeCompare(b.source));
+}
+const AGENT_SOURCE_PRECEDENCE = { builtin: 0, package: 1, user: 2, project: 3 };
+function pickEffectiveAgent(d, name) {
+    const raw = name.trim();
+    const sanitized = sanitizeName(raw);
+    const matches = allAgents(d).filter((a) => a.name === raw || a.name === sanitized);
+    if (matches.length === 0)
+        return undefined;
+    return matches.reduce((best, agent) => (AGENT_SOURCE_PRECEDENCE[agent.source] > AGENT_SOURCE_PRECEDENCE[best.source] ? agent : best));
+}
+function nameExistsInScope(cwd, scope, name, excludePath) {
+    const d = discoverAgentsAll(cwd);
+    for (const a of scope === "user" ? d.user : d.project) {
+        if (a.name === name && a.filePath !== excludePath)
+            return true;
+    }
+    return false;
+}
+function isMutableSource(source) {
+    return source === "user" || source === "project";
+}
+function modelWarning(ctx, model) {
+    if (!model)
+        return undefined;
+    const found = ctx.modelRegistry.getAvailable().some((m) => `${m.provider}/${m.id}` === model || m.id === model);
+    return found ? undefined : `Warning: model '${model}' is not in the current model registry.`;
+}
+function fallbackModelsWarning(ctx, fallbackModels) {
+    if (!fallbackModels || fallbackModels.length === 0)
+        return undefined;
+    const available = new Set(ctx.modelRegistry.getAvailable().flatMap((m) => [`${m.provider}/${m.id}`, m.id]));
+    const missing = fallbackModels.filter((model) => !available.has(model));
+    return missing.length ? `Warning: fallback models not in the current model registry: ${missing.join(", ")}.` : undefined;
+}
+function skillsWarning(cwd, skills) {
+    if (!skills || skills.length === 0)
+        return undefined;
+    const available = new Set(discoverAvailableSkills(cwd).map((s) => s.name));
+    const missing = skills.filter((s) => !available.has(s));
+    return missing.length ? `Warning: skills not found: ${missing.join(", ")}.` : undefined;
+}
+function editableAgentConfig(agent) {
+    const base = agent.override?.base;
+    if (!base)
+        return { ...agent };
+    return {
+        ...agent,
+        model: base.model,
+        fallbackModels: base.fallbackModels ? [...base.fallbackModels] : undefined,
+        thinking: base.thinking,
+        systemPromptMode: base.systemPromptMode,
+        inheritProjectContext: base.inheritProjectContext,
+        inheritSkills: base.inheritSkills,
+        defaultContext: base.defaultContext,
+        acceptanceRole: base.acceptanceRole,
+        disabled: base.disabled,
+        systemPrompt: base.systemPrompt,
+        skills: base.skills ? [...base.skills] : undefined,
+        tools: base.tools ? [...base.tools] : undefined,
+        subagentOnlyExtensions: base.subagentOnlyExtensions ? [...base.subagentOnlyExtensions] : undefined,
+        completionGuard: base.completionGuard,
+        maxExecutionTimeMs: base.maxExecutionTimeMs,
+        override: undefined,
+    };
+}
+function readAgentFrontmatterFields(filePath) {
+    try {
+        const { frontmatter } = parseFrontmatter(fs.readFileSync(filePath, "utf-8"));
+        return new Set(Object.keys(frontmatter));
+    }
+    catch {
+        return new Set();
+    }
+}
+function preservedAgentFrontmatterFields(agent, cfg) {
+    const fields = readAgentFrontmatterFields(agent.filePath);
+    const changed = (...names) => {
+        for (const name of names)
+            fields.delete(name);
+    };
+    if (hasKey(cfg, "name"))
+        changed("name");
+    if (hasKey(cfg, "package"))
+        changed("package");
+    if (hasKey(cfg, "description"))
+        changed("description");
+    if (hasKey(cfg, "systemPrompt"))
+        changed("systemPrompt");
+    if (hasKey(cfg, "model"))
+        changed("model");
+    if (hasKey(cfg, "fallbackModels"))
+        changed("fallbackModels");
+    if (hasKey(cfg, "tools"))
+        changed("tools");
+    if (hasKey(cfg, "skills"))
+        changed("skill", "skills");
+    if (hasKey(cfg, "extensions"))
+        changed("extensions");
+    if (hasKey(cfg, "subagentOnlyExtensions"))
+        changed("subagentOnlyExtensions");
+    if (hasKey(cfg, "thinking")) {
+        changed("thinking");
+        if (cfg.thinking === "off")
+            fields.add("thinking");
+    }
+    if (hasKey(cfg, "systemPromptMode")) {
+        changed("systemPromptMode");
+        fields.add("systemPromptMode");
+    }
+    if (hasKey(cfg, "inheritProjectContext")) {
+        changed("inheritProjectContext");
+        fields.add("inheritProjectContext");
+    }
+    if (hasKey(cfg, "inheritSkills")) {
+        changed("inheritSkills");
+        fields.add("inheritSkills");
+    }
+    if (hasKey(cfg, "defaultContext"))
+        changed("defaultContext");
+    if (hasKey(cfg, "acceptanceRole"))
+        changed("acceptanceRole");
+    if (hasKey(cfg, "output"))
+        changed("output");
+    if (hasKey(cfg, "reads"))
+        changed("defaultReads");
+    if (hasKey(cfg, "progress"))
+        changed("defaultProgress");
+    if (hasKey(cfg, "maxSubagentDepth"))
+        changed("maxSubagentDepth");
+    if (hasKey(cfg, "maxExecutionTimeMs"))
+        changed("maxExecutionTimeMs");
+    if (hasKey(cfg, "completionGuard")) {
+        changed("completionGuard");
+        if (cfg.completionGuard === true)
+            fields.add("completionGuard");
+    }
+    if (hasKey(cfg, "toolBudget"))
+        changed("toolBudget");
+    return fields;
+}
+function parseTools(raw) {
+    const tools = parseCsv(raw).filter((item) => !item.startsWith("mcp:"));
+    return { tools: tools.length ? tools : undefined };
+}
+function applyAgentConfig(target, cfg) {
+    if (hasKey(cfg, "systemPrompt")) {
+        if (cfg.systemPrompt === false || cfg.systemPrompt === "")
+            target.systemPrompt = "";
+        else if (typeof cfg.systemPrompt === "string")
+            target.systemPrompt = cfg.systemPrompt;
+        else
+            return "config.systemPrompt must be a string or false when provided.";
+    }
+    if (hasKey(cfg, "model")) {
+        if (cfg.model === false || cfg.model === "")
+            target.model = undefined;
+        else if (typeof cfg.model === "string")
+            target.model = cfg.model.trim() || undefined;
+        else
+            return "config.model must be a string or false when provided.";
+    }
+    if (hasKey(cfg, "fallbackModels")) {
+        if (cfg.fallbackModels === false || cfg.fallbackModels === "")
+            target.fallbackModels = undefined;
+        else if (typeof cfg.fallbackModels === "string") {
+            const models = parseCsv(cfg.fallbackModels);
+            target.fallbackModels = models.length ? models : undefined;
+        }
+        else if (Array.isArray(cfg.fallbackModels)) {
+            const models = cfg.fallbackModels
+                .filter((value) => typeof value === "string")
+                .map((value) => value.trim())
+                .filter(Boolean);
+            target.fallbackModels = models.length ? [...new Set(models)] : undefined;
+        }
+        else
+            return "config.fallbackModels must be a comma-separated string, string array, or false when provided.";
+    }
+    if (hasKey(cfg, "tools")) {
+        if (cfg.tools === false || cfg.tools === "") {
+            target.tools = undefined;
+        }
+        else if (typeof cfg.tools === "string") {
+            const parsed = parseTools(cfg.tools);
+            target.tools = parsed.tools;
+        }
+        else
+            return "config.tools must be a comma-separated string or false when provided.";
+    }
+    if (hasKey(cfg, "skills")) {
+        if (cfg.skills === false || cfg.skills === "")
+            target.skills = undefined;
+        else if (typeof cfg.skills === "string") {
+            const skills = parseCsv(cfg.skills);
+            target.skills = skills.length ? skills : undefined;
+        }
+        else
+            return "config.skills must be a comma-separated string or false when provided.";
+    }
+    if (hasKey(cfg, "extensions")) {
+        if (cfg.extensions === false)
+            target.extensions = undefined;
+        else if (cfg.extensions === "")
+            target.extensions = [];
+        else if (typeof cfg.extensions === "string")
+            target.extensions = parseCsv(cfg.extensions);
+        else
+            return "config.extensions must be a comma-separated string, empty string, or false when provided.";
+    }
+    if (hasKey(cfg, "subagentOnlyExtensions")) {
+        if (cfg.subagentOnlyExtensions === false)
+            target.subagentOnlyExtensions = undefined;
+        else if (cfg.subagentOnlyExtensions === "")
+            target.subagentOnlyExtensions = [];
+        else if (typeof cfg.subagentOnlyExtensions === "string")
+            target.subagentOnlyExtensions = parseCsv(cfg.subagentOnlyExtensions);
+        else
+            return "config.subagentOnlyExtensions must be a comma-separated string, empty string, or false when provided.";
+    }
+    if (hasKey(cfg, "thinking")) {
+        if (cfg.thinking === false || cfg.thinking === "")
+            target.thinking = undefined;
+        else if (typeof cfg.thinking === "string")
+            target.thinking = cfg.thinking.trim() || undefined;
+        else
+            return "config.thinking must be a string or false when provided.";
+    }
+    if (hasKey(cfg, "systemPromptMode")) {
+        if (cfg.systemPromptMode === "append" || cfg.systemPromptMode === "replace")
+            target.systemPromptMode = cfg.systemPromptMode;
+        else
+            return "config.systemPromptMode must be 'append' or 'replace' when provided.";
+    }
+    if (hasKey(cfg, "inheritProjectContext")) {
+        if (typeof cfg.inheritProjectContext !== "boolean")
+            return "config.inheritProjectContext must be a boolean when provided.";
+        target.inheritProjectContext = cfg.inheritProjectContext;
+    }
+    if (hasKey(cfg, "inheritSkills")) {
+        if (typeof cfg.inheritSkills !== "boolean")
+            return "config.inheritSkills must be a boolean when provided.";
+        target.inheritSkills = cfg.inheritSkills;
+    }
+    if (hasKey(cfg, "defaultContext")) {
+        if (cfg.defaultContext === false || cfg.defaultContext === "")
+            target.defaultContext = undefined;
+        else if (cfg.defaultContext === "fresh" || cfg.defaultContext === "fork")
+            target.defaultContext = cfg.defaultContext;
+        else
+            return "config.defaultContext must be 'fresh', 'fork', or false when provided.";
+    }
+    if (hasKey(cfg, "acceptanceRole")) {
+        if (cfg.acceptanceRole === false || cfg.acceptanceRole === "")
+            target.acceptanceRole = undefined;
+        else if (cfg.acceptanceRole === "read-only" || cfg.acceptanceRole === "writer")
+            target.acceptanceRole = cfg.acceptanceRole;
+        else
+            return "config.acceptanceRole must be 'read-only', 'writer', or false when provided.";
+    }
+    if (hasKey(cfg, "output")) {
+        if (cfg.output === false || cfg.output === "")
+            target.output = undefined;
+        else if (typeof cfg.output === "string")
+            target.output = cfg.output;
+        else
+            return "config.output must be a string or false when provided.";
+    }
+    if (hasKey(cfg, "reads")) {
+        if (cfg.reads === false || cfg.reads === "")
+            target.defaultReads = undefined;
+        else if (typeof cfg.reads === "string") {
+            const reads = parseCsv(cfg.reads);
+            target.defaultReads = reads.length ? reads : undefined;
+        }
+        else
+            return "config.reads must be a comma-separated string or false when provided.";
+    }
+    if (hasKey(cfg, "progress")) {
+        if (typeof cfg.progress !== "boolean")
+            return "config.progress must be a boolean when provided.";
+        target.defaultProgress = cfg.progress;
+    }
+    if (hasKey(cfg, "maxSubagentDepth")) {
+        if (cfg.maxSubagentDepth === false || cfg.maxSubagentDepth === "")
+            target.maxSubagentDepth = undefined;
+        else if (typeof cfg.maxSubagentDepth === "number" && Number.isInteger(cfg.maxSubagentDepth) && cfg.maxSubagentDepth >= 0) {
+            target.maxSubagentDepth = cfg.maxSubagentDepth;
+        }
+        else
+            return "config.maxSubagentDepth must be an integer >= 0 or false when provided.";
+    }
+    if (hasKey(cfg, "maxExecutionTimeMs")) {
+        if (cfg.maxExecutionTimeMs === false || cfg.maxExecutionTimeMs === "")
+            target.maxExecutionTimeMs = undefined;
+        else if (isPositiveSafeInteger(cfg.maxExecutionTimeMs)) {
+            target.maxExecutionTimeMs = cfg.maxExecutionTimeMs;
+        }
+        else
+            return "config.maxExecutionTimeMs must be a positive safe integer or false when provided.";
+    }
+    if (hasKey(cfg, "completionGuard")) {
+        if (typeof cfg.completionGuard !== "boolean")
+            return "config.completionGuard must be a boolean when provided.";
+        target.completionGuard = cfg.completionGuard;
+    }
+    if (hasKey(cfg, "toolBudget")) {
+        if (cfg.toolBudget === false || cfg.toolBudget === "")
+            target.toolBudget = undefined;
+        else {
+            const validation = validateToolBudgetConfig(cfg.toolBudget, "config.toolBudget");
+            if (validation.error)
+                return validation.error;
+            target.toolBudget = cfg.toolBudget;
+        }
+    }
+    return undefined;
+}
+function resolveTarget(name, matches, cwd, scopeHint) {
+    const mutable = matches.filter((m) => isMutableSource(m.source));
+    if (mutable.length === 0) {
+        if (matches.length > 0) {
+            return result(`Agent '${name}' is read-only and cannot be modified. Create a same-named agent in user or project scope to override it.`, true);
+        }
+        const available = availableNames(cwd);
+        return result(`Agent '${name}' not found. Available: ${available.join(", ") || "none"}.`, true);
+    }
+    if (mutable.length === 1)
+        return mutable[0];
+    const scope = asDisambiguationScope(scopeHint);
+    if (!scope) {
+        const paths = mutable.map((m) => `${m.source}: ${m.filePath}`).join("\n");
+        return result(`Agent '${name}' exists in both scopes. Specify agentScope: 'user' or 'project'.\n${paths}`, true);
+    }
+    const scoped = mutable.filter((m) => m.source === scope);
+    if (scoped.length === 0)
+        return result(`Agent '${name}' not found in scope '${scope}'.`, true);
+    if (scoped.length > 1)
+        return result(`Multiple agents named '${name}' found in scope '${scope}': ${scoped.map((m) => m.filePath).join(", ")}`, true);
+    return scoped[0];
+}
+function renamePath(currentPath, newName, scope, cwd) {
+    if (nameExistsInScope(cwd, scope, newName, currentPath))
+        return { error: `Name '${newName}' already exists in ${scope} scope.` };
+    const filePath = path.join(path.dirname(currentPath), `${newName}.md`);
+    if (fs.existsSync(filePath) && filePath !== currentPath) {
+        return { error: `File already exists at ${filePath} but is not a valid agent definition. Remove or rename it first.` };
+    }
+    fs.renameSync(currentPath, filePath);
+    return { filePath };
+}
+function formatAgentDetail(agent) {
+    const tools = [...(agent.tools ?? [])];
+    const lines = [`Agent: ${agent.name} (${agent.source})`, `Path: ${agent.filePath}`, `Description: ${agent.description}`];
+    if (agent.packageName) {
+        lines.push(`Local name: ${frontmatterNameForConfig(agent)}`);
+        lines.push(`Package: ${agent.packageName}`);
+    }
+    if (agent.model)
+        lines.push(`Model: ${agent.model}`);
+    if (agent.fallbackModels?.length)
+        lines.push(`Fallback models: ${agent.fallbackModels.join(", ")}`);
+    if (tools.length)
+        lines.push(`Tools: ${tools.join(", ")}`);
+    if (agent.skills?.length)
+        lines.push(`Skills: ${agent.skills.join(", ")}`);
+    lines.push(`System prompt mode: ${agent.systemPromptMode}`);
+    lines.push(`Inherit project context: ${agent.inheritProjectContext ? "true" : "false"}`);
+    lines.push(`Inherit skills: ${agent.inheritSkills ? "true" : "false"}`);
+    if (agent.defaultContext)
+        lines.push(`Default context: ${agent.defaultContext}`);
+    if (agent.acceptanceRole)
+        lines.push(`Acceptance role: ${agent.acceptanceRole}`);
+    if (agent.source === "builtin")
+        lines.push(`Disabled: ${agent.disabled ? "true" : "false"}`);
+    if (agent.extensions !== undefined)
+        lines.push(`Extensions: ${agent.extensions.length ? agent.extensions.join(", ") : "(none)"}`);
+    if (agent.subagentOnlyExtensions !== undefined)
+        lines.push(`Subagent-only extensions: ${agent.subagentOnlyExtensions.length ? agent.subagentOnlyExtensions.join(", ") : "(none)"}`);
+    if (agent.thinking)
+        lines.push(`Thinking: ${agent.thinking}`);
+    if (agent.output)
+        lines.push(`Output: ${agent.output}`);
+    if (agent.defaultReads?.length)
+        lines.push(`Reads: ${agent.defaultReads.join(", ")}`);
+    if (agent.defaultProgress)
+        lines.push("Progress: true");
+    if (agent.maxSubagentDepth !== undefined)
+        lines.push(`Max subagent depth: ${agent.maxSubagentDepth}`);
+    if (agent.maxExecutionTimeMs !== undefined)
+        lines.push(`Max execution time: ${agent.maxExecutionTimeMs}ms`);
+    if (agent.completionGuard === false)
+        lines.push("Completion guard: false");
+    if (agent.toolBudget)
+        lines.push(`Tool budget: ${JSON.stringify(agent.toolBudget)}`);
+    if (agent.systemPrompt.trim())
+        lines.push("", "System Prompt:", agent.systemPrompt);
+    return lines.join("\n");
+}
+export function handleList(params, ctx) {
+    const scope = normalizeListScope(params.agentScope) ?? "both";
+    const d = discoverAgentsAll(ctx.cwd);
+    const scopedAgents = allAgents(d)
+        .filter((a) => scope === "both" || a.source === "builtin" || a.source === "package" || a.source === scope)
+        .sort((a, b) => a.name.localeCompare(b.name));
+    const agents = scopedAgents.filter((a) => !a.disabled);
+    const lines = [
+        "Executable agents:",
+        ...(agents.length
+            ? agents.map((a) => `- ${a.name} (${a.source}${a.defaultContext ? `, context: ${a.defaultContext}` : ""}): ${a.description}`)
+            : ["- (none)"]),
+    ];
+    return result(lines.join("\n"));
+}
+function formatModelSource(agent, currentModel) {
+    if (agent.override && agent.model !== agent.override.base.model) {
+        return `${agent.override.scope} override`;
+    }
+    if (agent.modelSource?.type === "subagents.defaultModel" && agent.model === agent.modelSource.model) {
+        return `${agent.modelSource.scope} defaultModel`;
+    }
+    if (agent.model)
+        return "builtin agent config";
+    if (currentModel)
+        return "inherits current session model";
+    return "inherit requested, but no current session model is available";
+}
+function handleModels(params, ctx) {
+    const requestedAgent = params.agent?.trim();
+    if (requestedAgent && !BUILTIN_AGENT_NAMES.includes(requestedAgent)) {
+        return result(`Builtin agent '${requestedAgent}' not found. Available: ${BUILTIN_AGENT_NAMES.join(", ")}.`, true);
+    }
+    const discovered = discoverAgentsAll(ctx.cwd);
+    const builtinByName = new Map(discovered.builtin.map((agent) => [agent.name, agent]));
+    const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
+    const currentModel = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined;
+    const preferredProvider = ctx.model?.provider;
+    const names = requestedAgent ? [requestedAgent] : [...BUILTIN_AGENT_NAMES];
+    if (requestedAgent) {
+        const agent = builtinByName.get(requestedAgent);
+        if (!agent)
+            return result(`Builtin agent '${requestedAgent}' not found.`, true);
+        const resolvedModel = resolveSubagentModelOverride(agent.model, currentModel, availableModels, preferredProvider);
+        const lines = [
+            "Builtin subagent model",
+            "",
+            `Agent: ${requestedAgent}`,
+            "Effective model:",
+            `  ${resolvedModel ?? "(unresolved)"}`,
+            `Source: ${formatModelSource(agent, currentModel)}`,
+        ];
+        if (agent.override) {
+            lines.push("Override file:");
+            lines.push(`  ${agent.override.path}`);
+        }
+        if (agent.model && resolvedModel && agent.model !== resolvedModel) {
+            lines.push("Requested model setting:");
+            lines.push(`  ${agent.model}`);
+        }
+        if (agent.disabled)
+            lines.push("Disabled: true");
+        lines.push("Current session model:");
+        lines.push(`  ${currentModel ? `${currentModel.provider}/${currentModel.id}` : "(unavailable)"}`);
+        return result(lines.join("\n"));
+    }
+    const lines = [
+        "Builtin subagent models",
+        "",
+        "Current session model:",
+        `  ${currentModel ? `${currentModel.provider}/${currentModel.id}` : "(unavailable)"}`,
+        "",
+    ];
+    for (const name of names) {
+        const agent = builtinByName.get(name);
+        if (!agent) {
+            lines.push(name);
+            lines.push("  model:");
+            lines.push("    (builtin definition not found)");
+            lines.push("  source: missing");
+            lines.push("");
+            continue;
+        }
+        const resolvedModel = resolveSubagentModelOverride(agent.model, currentModel, availableModels, preferredProvider);
+        const source = `${formatModelSource(agent, currentModel)}${agent.disabled ? "; disabled" : ""}`;
+        lines.push(name);
+        lines.push("  model:");
+        lines.push(`    ${resolvedModel ?? "(unresolved)"}`);
+        lines.push(`  source: ${source}`);
+        lines.push("");
+    }
+    return result(lines.join("\n"));
+}
+function handleGet(params, ctx) {
+    if (params.chainName)
+        return unsupportedSavedChainResult("Use 'agent' for action='get'; omit chainName.");
+    if (!params.agent)
+        return result("Specify 'agent' for get.", true);
+    const matches = findAgents(params.agent, ctx.cwd, "both");
+    if (!matches.length) {
+        return result(`Agent '${params.agent}' not found. Available: ${availableNames(ctx.cwd).join(", ") || "none"}.`, true);
+    }
+    return result(matches.map(formatAgentDetail).join("\n\n"));
+}
+export function handleCreate(params, ctx) {
+    const parsedConfig = configObject(params.config);
+    if (parsedConfig.error)
+        return result(parsedConfig.error, true);
+    const cfg = parsedConfig.value;
+    if (!cfg)
+        return result("config required for create.", true);
+    if (typeof cfg.name !== "string" || !cfg.name.trim())
+        return result("config.name is required and must be a non-empty string.", true);
+    if (typeof cfg.description !== "string" || !cfg.description.trim())
+        return result("config.description is required and must be a non-empty string.", true);
+    const name = sanitizeName(cfg.name);
+    if (!name)
+        return result("config.name is invalid after sanitization. Use letters, numbers, spaces, or hyphens.", true);
+    const parsedPackage = parsePackageConfig(cfg.package);
+    if (parsedPackage.error)
+        return result(parsedPackage.error, true);
+    const runtimeName = buildRuntimeName(name, parsedPackage.packageName);
+    const scopeRaw = cfg.scope ?? "user";
+    if (scopeRaw !== "user" && scopeRaw !== "project")
+        return result("config.scope must be 'user' or 'project'.", true);
+    const scope = scopeRaw;
+    if (hasKey(cfg, "steps"))
+        return unsupportedSavedChainResult("Create does not support saved chains; omit config.steps.");
+    const d = discoverAgentsAll(ctx.cwd);
+    const projectConfigDir = getProjectConfigDir(ctx.cwd);
+    const targetDir = scope === "user" ? d.userDir : d.projectDir ?? path.join(projectConfigDir, "agents");
+    fs.mkdirSync(targetDir, { recursive: true });
+    if (nameExistsInScope(ctx.cwd, scope, runtimeName))
+        return result(`Name '${runtimeName}' already exists in ${scope} scope. Use update instead.`, true);
+    const targetPath = path.join(targetDir, `${runtimeName}.md`);
+    if (fs.existsSync(targetPath))
+        return result(`File already exists at ${targetPath} but is not a valid agent definition. Remove or rename it first.`, true);
+    const warnings = [];
+    if (d.builtin.some((a) => a.name === runtimeName))
+        warnings.push(`Note: this shadows the builtin agent '${runtimeName}'.`);
+    const agent = {
+        name: runtimeName,
+        localName: name,
+        packageName: parsedPackage.packageName,
+        description: cfg.description.trim(),
+        source: scope,
+        filePath: targetPath,
+        systemPrompt: "",
+        systemPromptMode: defaultSystemPromptMode(name),
+        inheritProjectContext: defaultInheritProjectContext(name),
+        inheritSkills: defaultInheritSkills(),
+    };
+    const applyError = applyAgentConfig(agent, cfg);
+    if (applyError)
+        return result(applyError, true);
+    const mw = modelWarning(ctx, agent.model);
+    if (mw)
+        warnings.push(mw);
+    const fmw = fallbackModelsWarning(ctx, agent.fallbackModels);
+    if (fmw)
+        warnings.push(fmw);
+    const sw = skillsWarning(ctx.cwd, agent.skills);
+    if (sw)
+        warnings.push(sw);
+    fs.writeFileSync(targetPath, serializeAgent(agent), "utf-8");
+    return result([`Created agent '${runtimeName}' at ${targetPath}.`, ...warnings].join("\n"));
+}
+export function handleUpdate(params, ctx) {
+    if (params.chainName)
+        return unsupportedSavedChainResult("Update does not support saved chains; omit chainName.");
+    if (!params.agent)
+        return result("Specify 'agent' for update.", true);
+    const parsedConfig = configObject(params.config);
+    if (parsedConfig.error)
+        return result(parsedConfig.error, true);
+    const cfg = parsedConfig.value;
+    if (!cfg)
+        return result("config required for update.", true);
+    const warnings = [];
+    const scopeHint = asDisambiguationScope(params.agentScope);
+    const targetOrError = resolveTarget(params.agent, findAgents(params.agent, ctx.cwd, scopeHint ?? "both"), ctx.cwd, params.agentScope);
+    if ("content" in targetOrError)
+        return targetOrError;
+    const target = targetOrError;
+    const updated = editableAgentConfig(target);
+    const oldName = target.name;
+    if (hasKey(cfg, "name") && (typeof cfg.name !== "string" || !cfg.name.trim()))
+        return result("config.name must be a non-empty string when provided.", true);
+    if (hasKey(cfg, "description") && (typeof cfg.description !== "string" || !cfg.description.trim()))
+        return result("config.description must be a non-empty string when provided.", true);
+    let newLocalName = target.localName ?? frontmatterNameForConfig(target);
+    if (hasKey(cfg, "name")) {
+        newLocalName = sanitizeName(cfg.name);
+        if (!newLocalName)
+            return result("config.name is invalid after sanitization.", true);
+    }
+    let newPackageName = target.packageName;
+    if (hasKey(cfg, "package")) {
+        const parsedPackage = parsePackageConfig(cfg.package);
+        if (parsedPackage.error)
+            return result(parsedPackage.error, true);
+        newPackageName = parsedPackage.packageName;
+    }
+    const applyError = applyAgentConfig(updated, cfg);
+    if (applyError)
+        return result(applyError, true);
+    const preserveFrontmatterFields = preservedAgentFrontmatterFields(target, cfg);
+    updated.localName = newLocalName;
+    updated.packageName = newPackageName;
+    updated.name = buildRuntimeName(newLocalName, newPackageName);
+    if (hasKey(cfg, "description"))
+        updated.description = cfg.description.trim();
+    if (hasKey(cfg, "model")) {
+        const mw = modelWarning(ctx, updated.model);
+        if (mw)
+            warnings.push(mw);
+    }
+    if (hasKey(cfg, "fallbackModels")) {
+        const fmw = fallbackModelsWarning(ctx, updated.fallbackModels);
+        if (fmw)
+            warnings.push(fmw);
+    }
+    if (hasKey(cfg, "skills")) {
+        const sw = skillsWarning(ctx.cwd, updated.skills);
+        if (sw)
+            warnings.push(sw);
+    }
+    if (updated.name !== oldName) {
+        const renamed = renamePath(target.filePath, updated.name, target.source, ctx.cwd);
+        if (renamed.error)
+            return result(renamed.error, true);
+        updated.filePath = renamed.filePath;
+    }
+    fs.writeFileSync(updated.filePath, serializeAgent(updated, { preserveFrontmatterFields }), "utf-8");
+    const headline = updated.name === oldName
+        ? `Updated agent '${updated.name}' at ${updated.filePath}.`
+        : `Updated agent '${oldName}' to '${updated.name}' at ${updated.filePath}.`;
+    return result([headline, ...warnings].join("\n"));
+}
+function handleDelete(params, ctx) {
+    if (params.chainName)
+        return unsupportedSavedChainResult("Delete does not support saved chains; omit chainName.");
+    if (!params.agent)
+        return result("Specify 'agent' for delete.", true);
+    const scopeHint = asDisambiguationScope(params.agentScope);
+    const targetOrError = resolveTarget(params.agent, findAgents(params.agent, ctx.cwd, scopeHint ?? "both"), ctx.cwd, params.agentScope);
+    if ("content" in targetOrError)
+        return targetOrError;
+    const target = targetOrError;
+    fs.unlinkSync(target.filePath);
+    return result(`Deleted agent '${target.name}' at ${target.filePath}.`);
+}
+function handleEject(params, ctx) {
+    if (!params.agent)
+        return result("Specify 'agent' for eject.", true);
+    const raw = params.agent.trim();
+    const sanitized = sanitizeName(raw);
+    const parsedScope = actionScope(params.agentScope, "eject");
+    if (parsedScope.error)
+        return parsedScope.error;
+    const scope = parsedScope.scope;
+    const d = discoverAgentsAll(ctx.cwd);
+    const source = [...d.package, ...d.builtin].find((a) => a.name === raw || a.name === sanitized);
+    if (!source) {
+        return result(`Agent '${raw}' not found or is not a bundled/package agent. eject copies a builtin or package agent to ${scope} scope so it can be customized. Available: ${availableNames(ctx.cwd).join(", ") || "none"}.`, true);
+    }
+    const runtimeName = source.name;
+    const existingCustom = (scope === "user" ? d.user : d.project).find((a) => a.name === runtimeName);
+    if (existingCustom) {
+        return result(`Agent '${runtimeName}' is already a custom ${scope} agent at ${existingCustom.filePath}. Edit it with { action: "update", agent: "${runtimeName}" } or delete it first.`, true);
+    }
+    if (nameExistsInScope(ctx.cwd, scope, runtimeName)) {
+        return result(`An agent or chain named '${runtimeName}' already exists in ${scope} scope. Remove or rename it first.`, true);
+    }
+    const projectConfigDir = getProjectConfigDir(ctx.cwd);
+    const targetDir = scope === "user" ? d.userDir : d.projectDir ?? path.join(projectConfigDir, "agents");
+    fs.mkdirSync(targetDir, { recursive: true });
+    const targetPath = path.join(targetDir, `${runtimeName}.md`);
+    if (fs.existsSync(targetPath)) {
+        return result(`File already exists at ${targetPath} but is not a valid agent definition. Remove or rename it first.`, true);
+    }
+    let content;
+    try {
+        content = fs.readFileSync(source.filePath, "utf-8");
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return result(`Failed to read source agent at ${source.filePath}: ${message}`, true);
+    }
+    fs.writeFileSync(targetPath, content, "utf-8");
+    return result(`Ejected agent '${runtimeName}' from ${source.source} to ${scope} scope at ${targetPath}. Edit it there to customize; it shadows the bundled ${source.source} agent of the same name.`);
+}
+function handleDisable(params, ctx) {
+    if (!params.agent)
+        return result("Specify 'agent' for disable.", true);
+    const raw = params.agent.trim();
+    const parsedScope = actionScope(params.agentScope, "disable");
+    if (parsedScope.error)
+        return parsedScope.error;
+    const scope = parsedScope.scope;
+    const d = discoverAgentsAll(ctx.cwd);
+    if (scope === "project" && d.projectSettingsPath === null) {
+        return result("Project override is not available here: no project config root (.pi or .agents) was found above the cwd. Use agentScope: 'user' or run from inside a project.", true);
+    }
+    const effective = pickEffectiveAgent(d, raw);
+    if (!effective) {
+        return result(`Agent '${raw}' not found. Available: ${availableNames(ctx.cwd).join(", ") || "none"}.`, true);
+    }
+    const runtimeName = effective.name;
+    const settingsPath = mergeBuiltinAgentOverride(ctx.cwd, runtimeName, scope, { disabled: true });
+    const after = pickEffectiveAgent(discoverAgentsAll(ctx.cwd), raw);
+    if (after?.disabled === true) {
+        return result(`Disabled agent '${runtimeName}' via ${scope} settings override at ${settingsPath}. It is now hidden from runtime discovery and { action: "list" }.`);
+    }
+    return result(`Wrote a disabled override for '${runtimeName}' at ${settingsPath}, but the agent is still enabled. A higher-precedence ${after?.override?.scope ?? "project"} override is likely winning. Try agentScope: '${after?.override?.scope ?? "project"}'.`, true);
+}
+function handleEnable(params, ctx) {
+    if (!params.agent)
+        return result("Specify 'agent' for enable.", true);
+    const raw = params.agent.trim();
+    const parsedScope = actionScope(params.agentScope, "enable");
+    if (parsedScope.error)
+        return parsedScope.error;
+    const scope = parsedScope.scope;
+    const d = discoverAgentsAll(ctx.cwd);
+    if (scope === "project" && d.projectSettingsPath === null) {
+        return result("Project override is not available here: no project config root (.pi or .agents) was found above the cwd. Use agentScope: 'user' or run from inside a project.", true);
+    }
+    const effective = pickEffectiveAgent(d, raw);
+    if (!effective) {
+        return result(`Agent '${raw}' not found. Available: ${availableNames(ctx.cwd).join(", ") || "none"}.`, true);
+    }
+    const runtimeName = effective.name;
+    const { path: settingsPath, removed } = removeBuiltinAgentOverrideFields(ctx.cwd, runtimeName, scope, ["disabled"]);
+    const after = pickEffectiveAgent(discoverAgentsAll(ctx.cwd), raw);
+    if (after && after.disabled !== true) {
+        if (removed)
+            return result(`Enabled agent '${runtimeName}' (removed disabled override at ${settingsPath}).`);
+        return result(`Agent '${runtimeName}' is already enabled.`);
+    }
+    if (after?.override?.scope && after.override.scope !== scope) {
+        return result(`Agent '${runtimeName}' is still disabled via a ${after.override.scope} scope override at ${after.override.path}. Specify agentScope: '${after.override.scope}' to enable it.`, true);
+    }
+    return result(`Agent '${runtimeName}' is still disabled after removing the ${scope} disabled override. It may be hidden via subagents.disableBuiltins in ${after?.override?.scope ?? scope} settings at ${after?.override?.path ?? settingsPath}.`, true);
+}
+function handleReset(params, ctx) {
+    if (!params.agent)
+        return result("Specify 'agent' for reset.", true);
+    const raw = params.agent.trim();
+    const sanitized = sanitizeName(raw);
+    const parsedScope = actionScope(params.agentScope, "reset");
+    if (parsedScope.error)
+        return parsedScope.error;
+    const scope = parsedScope.scope;
+    const d = discoverAgentsAll(ctx.cwd);
+    if (scope === "project" && d.projectSettingsPath === null) {
+        return result("Project override is not available here: no project config root (.pi or .agents) was found above the cwd. Use agentScope: 'user' or run from inside a project.", true);
+    }
+    const bundled = [...d.package, ...d.builtin].find((a) => a.name === raw || a.name === sanitized);
+    if (!bundled) {
+        const custom = [...d.user, ...d.project].find((a) => a.name === raw || a.name === sanitized);
+        if (custom) {
+            return result(`Agent '${raw}' has no bundled default to reset to. Use { action: "delete", agent: "${custom.name}" } to remove the custom ${custom.source} agent.`, true);
+        }
+        return result(`Agent '${raw}' not found. Available: ${availableNames(ctx.cwd).join(", ") || "none"}.`, true);
+    }
+    const runtimeName = bundled.name;
+    const custom = (scope === "user" ? d.user : d.project).find((a) => a.name === raw || a.name === sanitized);
+    const lines = [];
+    if (custom) {
+        fs.unlinkSync(custom.filePath);
+        lines.push(`Deleted custom ${scope} agent file at ${custom.filePath}.`);
+    }
+    const overrideRemoval = removeBuiltinAgentOverride(ctx.cwd, runtimeName, scope);
+    if (overrideRemoval.removed)
+        lines.push(`Removed ${scope} settings override at ${overrideRemoval.path}.`);
+    if (lines.length === 0) {
+        const otherScope = scope === "user" ? "project" : "user";
+        const otherCustom = (otherScope === "user" ? d.user : d.project).find((a) => a.name === raw || a.name === sanitized);
+        const hasOtherOverride = bundled.override?.scope === otherScope;
+        const note = (otherCustom || hasOtherOverride)
+            ? ` Customization exists in ${otherScope} scope; specify agentScope: '${otherScope}' to reset it.`
+            : "";
+        return result(`Agent '${runtimeName}' has no ${scope} customization to reset.${note} It is at its bundled ${bundled.source} default.`);
+    }
+    lines.push(`Reset agent '${runtimeName}' to its bundled ${bundled.source} default.`);
+    return result(lines.join("\n"));
+}
+export function handleManagementAction(action, params, ctx) {
+    switch (action) {
+        case "list": return handleList(params, ctx);
+        case "get": return handleGet(params, ctx);
+        case "models": return handleModels(params, ctx);
+        case "create": return handleCreate(params, ctx);
+        case "update": return handleUpdate(params, ctx);
+        case "delete": return handleDelete(params, ctx);
+        case "eject": return handleEject(params, ctx);
+        case "disable": return handleDisable(params, ctx);
+        case "enable": return handleEnable(params, ctx);
+        case "reset": return handleReset(params, ctx);
+        default: return result(`Unknown action: ${action}`, true);
+    }
+}

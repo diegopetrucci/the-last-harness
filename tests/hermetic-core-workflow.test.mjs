@@ -19,7 +19,6 @@ import { withEnv } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
 const { default: theLastHarness } = await jiti.import("../extensions/the-last-harness.ts");
-const { splitKnownThinkingSuffix } = await jiti.import("../extensions/the-last-harness/model-defaults.ts");
 
 class ScriptedEventStream {
 	#queue = [];
@@ -243,7 +242,7 @@ function writeFakeTk(path) {
 
 function registerScriptedProviders(modelRegistry, scriptState) {
 	const models = {
-		anthropic: ["claude-opus-4-8", "claude-sonnet-4-6"],
+		anthropic: ["claude-opus-5", "claude-sonnet-4-6"],
 		"openai-codex": ["gpt-5.4", "gpt-5.5", "gpt-5.6-sol"],
 	};
 	for (const [provider, ids] of Object.entries(models)) {
@@ -273,7 +272,7 @@ function currentRole() {
 }
 
 function scriptedRoleForModel(model) {
-	if (model.provider === "anthropic" && model.id === "claude-opus-4-8") {
+	if (model.provider === "anthropic" && model.id === "claude-opus-5") {
 		return "architect";
 	}
 	if (model.provider === "openai-codex" && model.id === "gpt-5.4") {
@@ -555,13 +554,14 @@ test("hermetic core architect workflow runs end-to-end with deterministic subage
 					appendSystemPrompt: [],
 				});
 				await resourceLoader.reload();
-				const baseModel = splitKnownThinkingSuffix(params.model).baseModel;
-				const modelKey = baseModel?.includes("/")
-					? baseModel.split("/")
+				const modelKey = params.model?.includes("/")
+					? params.model.split("/")
 					: role === "developer"
 						? ["openai-codex", "gpt-5.4"]
 						: ["openai-codex", "gpt-5.6-sol"];
-				const model = modelRegistry.find(modelKey[0], modelKey[1]);
+				// Strip thinking suffix (e.g. ':max') appended by TLH before registry lookup
+				const registryId = modelKey[1]?.includes(":") ? modelKey[1].split(":")[0] : modelKey[1];
+				const model = modelRegistry.find(modelKey[0], registryId);
 				assert.ok(model, `expected subagent model ${modelKey.join("/")}`);
 				return createAgentSession({
 					cwd: fixture.workspace,
@@ -612,7 +612,7 @@ test("hermetic core architect workflow runs end-to-end with deterministic subage
 		appendSystemPrompt: [],
 	});
 	await resourceLoader.reload();
-	const architectModel = modelRegistry.find("anthropic", "claude-opus-4-8");
+	const architectModel = modelRegistry.find("anthropic", "claude-opus-5");
 	assert.ok(architectModel);
 
 	const { session } = await withEnv(createHermeticRuntimeEnv(fixture), async () => createAgentSession({

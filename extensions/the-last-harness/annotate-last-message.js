@@ -37,15 +37,12 @@ function isSubmitPayload(value) {
 function isCancelPayload(value) {
     return typeof value === "object" && value != null && "type" in value && value.type === "cancel";
 }
-function appendPrompt(ctx, prompt) {
-    const prefix = ctx.ui.getEditorText().trim().length > 0 ? "\n\n" : "";
-    ctx.ui.pasteToEditor(`${prefix}${prompt}`);
-}
 export const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION = "Open a native annotation window for the latest assistant message";
-export function buildAnnotateLastMessageCommand(dependencies = {}) {
+export function buildAnnotateLastMessageCommand(dependencies) {
     const openAnnotationWindow = dependencies.openAnnotationWindow ?? openQuietGlimpse;
     const setTimer = dependencies.setTimeoutFn ?? setTimeout;
     const clearTimer = dependencies.clearTimeoutFn ?? clearTimeout;
+    const sendUserMessage = dependencies.sendUserMessage;
     let activeWindow = null;
     let lifecycleGeneration = 0;
     let openingGeneration = null;
@@ -163,8 +160,8 @@ export function buildAnnotateLastMessageCommand(dependencies = {}) {
                         return;
                     }
                     const prompt = composeAnnotateLastMessagePrompt(sourceData, result);
-                    appendPrompt(ctx, prompt);
-                    ctx.ui.notify("Appended annotation feedback to the editor.", "info");
+                    sendUserMessage(prompt, { deliverAs: "followUp" });
+                    ctx.ui.notify("Annotation feedback sent to the agent.", "info");
                 }
                 catch (error) {
                     if (suppressedWindows.has(windowMessageSource))
@@ -203,7 +200,9 @@ export function buildAnnotateLastMessageCommand(dependencies = {}) {
     };
 }
 export function registerAnnotateLastMessageCommand(pi) {
-    const command = buildAnnotateLastMessageCommand();
+    const command = buildAnnotateLastMessageCommand({
+        sendUserMessage: (message, options) => pi.sendUserMessage(message, options),
+    });
     pi.registerCommand("annotate-last-message", {
         description: ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION,
         handler: command.handler,

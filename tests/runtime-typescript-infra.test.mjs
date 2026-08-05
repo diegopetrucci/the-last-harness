@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, globSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, globSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -107,6 +107,21 @@ function createExtensionsFixture(sourceContent, options = {}) {
 	});
 }
 
+function createSubagentsFixture(sourceContent, options = {}) {
+	return createRuntimeFixture({
+		targetId: "subagents",
+		sourceRootName: "extensions/subagents/src",
+		sourceRelativePath: "fixture/index.ts",
+		sourceContent,
+		tsconfigFileName: "tsconfig.runtime-subagents.json",
+		includeGlob: "extensions/subagents/src/**/*.ts",
+		sourceExtension: ".ts",
+		outputExtension: ".js",
+		generatedRegistryEntries: options.generatedRegistryEntries,
+		compilerOptions: { removeComments: true, rewriteRelativeImportExtensions: true, ...options.compilerOptions },
+	});
+}
+
 function runRuntimeTypescript(mode, fixture) {
 	const env = {
 		...process.env,
@@ -117,6 +132,9 @@ function runRuntimeTypescript(mode, fixture) {
 	if (fixture.targetId === "scripts") {
 		env.TLH_RUNTIME_TYPESCRIPT_SCRIPTS_DIR = fixture.sourceRoot;
 		env.TLH_RUNTIME_TYPESCRIPT_SCRIPTS_TSCONFIG = fixture.tsconfigPath;
+	} else if (fixture.targetId === "subagents") {
+		env.TLH_RUNTIME_TYPESCRIPT_SUBAGENTS_DIR = fixture.sourceRoot;
+		env.TLH_RUNTIME_TYPESCRIPT_SUBAGENTS_TSCONFIG = fixture.tsconfigPath;
 	} else {
 		env.TLH_RUNTIME_TYPESCRIPT_EXTENSIONS_DIR = fixture.sourceRoot;
 		env.TLH_RUNTIME_TYPESCRIPT_EXTENSIONS_TSCONFIG = fixture.tsconfigPath;
@@ -140,11 +158,16 @@ test("runtime TypeScript package scripts stay wired into validation before tests
 	assert.equal(pkg.scripts["build:runtime"], "node scripts/runtime-typescript.mjs build");
 	assert.equal(pkg.scripts["check:runtime"], "node scripts/runtime-typescript.mjs check");
 	assert.equal(pkg.scripts["typecheck:runtime"], "node scripts/runtime-typescript.mjs typecheck");
-	assert.equal(pkg.scripts.test, 'node --test --test-reporter=dot "tests/**/*.test.mjs"');
-	assert.equal(pkg.scripts["test:verbose"], 'node --test "tests/**/*.test.mjs"');
+	assert.equal(pkg.scripts["typecheck:subagents-test-support"], "tsc --noEmit --project tsconfig.subagents-test-support.json");
+	assert.equal(pkg.scripts["test:subagents"], "npm run test:subagents:unit && npm run test:subagents:integration && npm run test:subagents:e2e");
+	assert.equal(pkg.scripts["check:package-contents"], "node scripts/check-package-contents.mjs");
+	assert.equal(pkg.scripts.test, 'node --test --test-reporter=dot "tests/**/*.test.mjs" && npm run test:subagents');
+	assert.equal(pkg.scripts["test:verbose"], 'node --test "tests/**/*.test.mjs" && npm run test:subagents');
 
 	const validate = pkg.scripts.validate;
+	assert.match(validate, /npm run check:package-contents/);
 	assert.match(validate, /npm run typecheck/);
+	assert.match(validate, /npm run typecheck:subagents-test-support/);
 	assert.match(validate, /npm run typecheck:runtime/);
 	assert.match(validate, /npm run check:runtime/);
 	assert.match(validate, /npm test/);
@@ -183,7 +206,6 @@ test("runtime TypeScript helper tracks converted top-level CLIs", () => {
 		"scripts/tlh-gnosis",
 		"scripts/tlh-install",
 		"scripts/tlh-recover-update",
-		"scripts/tlh-rtk",
 		"scripts/tlh-tickets",
 		"scripts/tlh-update",
 		"scripts/tlh-wrapper",
@@ -196,13 +218,26 @@ test("runtime TypeScript helper tracks converted top-level CLIs", () => {
 });
 
 test("runtime TypeScript helper tracks generated extension runtime modules", () => {
-	const extensionSources = globSync("extensions/**/*.ts", { cwd: repoRoot }).filter((path) => !path.endsWith(".d.ts"));
-	assert.equal(extensionSources.length > 0, true, "extension TypeScript sources should exist");
+	const extensionSources = globSync("extensions/**/*.ts", { cwd: repoRoot })
+		.filter((path) => !path.endsWith(".d.ts") && !path.startsWith("extensions/subagents/"));
+	assert.equal(extensionSources.length, 69);
 
 	for (const sourcePath of extensionSources) {
 		const outputPath = sourcePath.replace(/\.ts$/, ".js");
 		assert.equal(existsSync(join(repoRoot, outputPath)), true, `${outputPath} should exist`);
 	}
+});
+
+test("dedicated subagents runtime target compiles all production modules and rewrites relative TypeScript imports", () => {
+	const sourcePaths = globSync("extensions/subagents/src/**/*.ts", { cwd: repoRoot }).filter((path) => !path.endsWith(".d.ts"));
+	assert.equal(sourcePaths.length, 98);
+	for (const sourcePath of sourcePaths) {
+		const outputPath = sourcePath.replace(/\.ts$/, ".js");
+		assert.equal(existsSync(join(repoRoot, outputPath)), true, `${outputPath} should exist`);
+	}
+	const entrypoint = readFileSync(join(repoRoot, "extensions/subagents/src/extension/index.js"), "utf8");
+	assert.match(entrypoint, /from ["'][^"']+\.js["']/);
+	assert.doesNotMatch(entrypoint, /from ["'][^"']+\.ts["']/);
 });
 
 test("runtime TypeScript helper builds, checks, and typechecks temporary script fixtures", () => {
@@ -249,6 +284,54 @@ test("runtime TypeScript helper builds and checks temporary extension fixtures w
 		const checkResult = runRuntimeTypescript("check", fixture);
 		assert.equal(checkResult.status, 0, checkResult.stderr || checkResult.stdout);
 		assert.match(checkResult.stdout, /Generated runtime outputs are fresh/);
+		assertNoTemporaryCheckOutputs(fixture.tempDir);
+	} finally {
+		fixture.cleanup();
+	}
+});
+
+test("generic extension target realpath-normalizes a subagents exclusion beneath a symlinked source root", () => {
+	const fixture = createRuntimeFixture({
+		targetId: "extensions",
+		sourceRootName: "extensions-real",
+		sourceRelativePath: "fixture/index.ts",
+		sourceContent: "export const included = true;\n",
+		tsconfigFileName: "tsconfig.runtime-extensions.json",
+		includeGlob: "extensions-real/**/*.ts",
+		sourceExtension: ".ts",
+		outputExtension: ".js",
+	});
+	const excludedSourcePath = join(fixture.fixtureRoot, "extensions-real/subagents/should-not-build.ts");
+	const excludedOutputPath = excludedSourcePath.replace(/\.ts$/, ".js");
+	mkdirSync(dirname(excludedSourcePath), { recursive: true });
+	writeFileSync(excludedSourcePath, "export const excluded = true;\n");
+	const logicalExtensionsRoot = join(fixture.fixtureRoot, "extensions");
+	symlinkSync(fixture.sourceRoot, logicalExtensionsRoot, process.platform === "win32" ? "junction" : "dir");
+	fixture.sourceRoot = logicalExtensionsRoot;
+
+	try {
+		const buildResult = runRuntimeTypescript("build", fixture);
+		assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+		assert.equal(existsSync(fixture.outputPath), true);
+		assert.equal(existsSync(excludedOutputPath), false);
+	} finally {
+		fixture.cleanup();
+	}
+});
+
+test("dedicated subagents runtime target builds same-layout JavaScript and rewrites relative TypeScript imports", () => {
+	const fixture = createSubagentsFixture('import { answer } from "./answer.ts";\nexport const result = answer;\n', {
+		generatedRegistryEntries: ["extensions/subagents/src/fixture/index.js", "extensions/subagents/src/fixture/answer.js"],
+	});
+	writeFileSync(join(fixture.sourceRoot, "fixture/answer.ts"), "export const answer = 42;\n");
+
+	try {
+		const buildResult = runRuntimeTypescript("build", fixture);
+		assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+		assert.equal(existsSync(fixture.outputPath), true);
+		assert.equal(readFileSync(fixture.outputPath, "utf8").includes("./answer.js"), true);
+		const checkResult = runRuntimeTypescript("check", fixture);
+		assert.equal(checkResult.status, 0, checkResult.stderr || checkResult.stdout);
 		assertNoTemporaryCheckOutputs(fixture.tempDir);
 	} finally {
 		fixture.cleanup();
@@ -376,8 +459,8 @@ test("package manifest lists only the ordered generated JS extension entrypoints
 	const pkg = readPackageJson();
 	assert.deepEqual(pkg.pi.extensions, [
 		"./extensions/annotate-git-diff/index.js",
-		"./extensions/rtk.js",
 		"./extensions/the-last-harness.js",
+		"./extensions/subagents/src/extension/index.js",
 	]);
 });
 
@@ -386,9 +469,12 @@ test(".gitattributes linguist-generated entries are in sync with runtime TypeScr
 	assert.ok(existsSync(gitattributesPath), ".gitattributes must exist at repo root");
 
 	const mtsFiles = globSync("scripts/**/*.mts", { cwd: repoRoot }).filter((path) => !path.endsWith(".d.mts"));
-	const tsFiles = globSync("extensions/**/*.ts", { cwd: repoRoot }).filter((path) => !path.endsWith(".d.ts"));
+	const tsFiles = globSync("extensions/**/*.ts", { cwd: repoRoot })
+		.filter((path) => !path.endsWith(".d.ts") && !path.startsWith("extensions/subagents/"));
+	const subagentsFiles = globSync("extensions/subagents/src/**/*.ts", { cwd: repoRoot }).filter((path) => !path.endsWith(".d.ts"));
 	const expectedPaths = new Set([
 		...mtsFiles.map((path) => path.replace(/\.mts$/, ".mjs")),
+		...subagentsFiles.map((path) => path.replace(/\.ts$/, ".js")),
 		...tsFiles.map((path) => path.replace(/\.ts$/, ".js")),
 	]);
 

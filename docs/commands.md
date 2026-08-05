@@ -37,6 +37,7 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 | `/settings` | Open the settings menu |
 | `/share` | Share the session as a secret GitHub gist |
 | `/tree` | Navigate the session tree and switch branches |
+| `/trust` | Save the current project trust decision for future sessions |
 
 ---
 
@@ -48,12 +49,13 @@ These commands are registered by the TLH extension bundled with this profile.
 |---------|-------------|
 | `/thinking` | Pick the model thinking level, subject to the active primary-agent thinking constraints |
 | `/effort` | Supported alias for `/thinking`, subject to the same active primary-agent thinking constraints |
-| `/experimental` | Open the TLH experimental-feature picker in TUI, or list/change TLH experimental features via typed subcommands (`delta-follow-up-reviews`, `ci-failure-investigation`, `ticket-workflow-ui`, and `embedded-subagents` are currently registered) |
+| `/experimental` | Open the TLH experimental-feature picker in TUI, or list/change TLH experimental features via typed subcommands (`delta-follow-up-reviews`, `ci-failure-investigation`, and `embedded-subagents` are currently registered) |
+| `/tickets` | Show the read-only tk-backed TLH ticket workflow details for the current repo/worktree |
 | `/review` | Open an interactive code-review mode picker (requires the architect primary agent) |
 | `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
-| `/subagent-settings` | Show or edit persisted TLH bundled minor-agent model and effort overrides |
 | `/tlh-changelog` | Show TLH release notes from the packaged `CHANGELOG.md` |
 | `/tokens` | Generate and open a single no-flags local HTML token-spend report for the current session |
+| `/what-consumed-my-session-limit-and-tokens` | Generate and open a local HTML session-limit usage report across all in-window TLH sessions |
 | `/toggle-context-cap` | Toggle the 200k effective context-window cap for auto-compaction |
 | `/toggle-tlh-git-attribution` | Toggle the TLH commit attribution footer for agent-created git commits |
 | `/usage` | Show or change TLH subscription usage-limit footer preferences |
@@ -65,38 +67,31 @@ Both `/thinking` and `/effort` are subject to the active primary-agent thinking 
 
 ### `/experimental`
 
-`/experimental` currently registers `delta-follow-up-reviews`, `ci-failure-investigation`, `ticket-workflow-ui`, and `embedded-subagents`. In the interactive TLH TUI, running `/experimental` with no arguments opens a picker that shows current feature state and lets you toggle flags; outside the TUI it falls back to the status list. Typed subcommands remain available: `/experimental list`, `/experimental status [feature]`, `/experimental enable <feature>`, `/experimental disable <feature>`, and `/experimental toggle <feature>`. `contrarian` is a bundled default minor subagent for sparing pre-ticket planning stress-tests when a proposed change genuinely warrants an adversarial brief; it is not part of the `/experimental` toggle surface, not the routine `code-reviewer` diff pass, and not the broader `oracle` second-opinion path. `delta-follow-up-reviews` is an opt-in flag that adds architect and `code-reviewer` guidance for delta-scoped follow-up reviews after fixes. `ci-failure-investigation` is an opt-in flag that lets the architect primary agent do read-only failed CI/status-check investigation after TLH opens a PR, then summarize and ask whether to proceed before any edits, commits, pushes, reruns, PR changes, or other follow-up changes. `ticket-workflow-ui` is an experimental, default-off, read-only ticket workflow surface backed by the `tk` CLI. Enable it with `/experimental enable ticket-workflow-ui` when you want the UI, and undo it with `/experimental disable ticket-workflow-ui`. `embedded-subagents` is a default-off flag that gates architect-initiated delegation to trusted user-owned `embedded.<slug>` subagents placed in the isolated TLH profile. A new session or explicit `/reload` recaptures flag state; enabling or disabling the flag does not affect the active runtime until one of those activation boundaries. Enable it with `/experimental enable embedded-subagents` and undo it with `/experimental disable embedded-subagents`, then start a new session or run `/reload`. Only valid regular non-symlink `.md` agent definitions with `package: embedded`, a valid `name`, and a non-empty `description` authorize; `.chain.md` files do not. See [embedded-subagents.md](embedded-subagents.md) for the full setup guide. All four flags are disabled by default. Stale `run-tests-last` values in `tlh.experimental.enabledFeatures` do not re-enable retired behavior.
+`/experimental` currently registers `delta-follow-up-reviews`, `ci-failure-investigation`, and `embedded-subagents`. In the interactive TLH TUI, running `/experimental` with no arguments opens a picker that shows current feature state and lets you toggle flags; outside the TUI it falls back to the status list. Typed subcommands remain available: `/experimental list`, `/experimental status [feature]`, `/experimental enable <feature>`, `/experimental disable <feature>`, and `/experimental toggle <feature>`. `contrarian` is a bundled default minor subagent for sparing pre-ticket planning stress-tests when a proposed change genuinely warrants an adversarial brief; it is not part of the `/experimental` toggle surface, not the routine `code-reviewer` diff pass, and not the broader `oracle` second-opinion path. `delta-follow-up-reviews` is an opt-in flag that adds architect and `code-reviewer` guidance for delta-scoped follow-up reviews after fixes. `ci-failure-investigation` is an opt-in flag that lets the architect primary agent do read-only failed CI/status-check investigation after TLH opens a PR, then summarize and ask whether to proceed before any edits, commits, pushes, reruns, PR changes, or other follow-up changes. `embedded-subagents` is a default-off flag that gates architect-initiated delegation to trusted user-owned `embedded.<slug>` subagents placed in the isolated TLH profile. A new session or explicit `/reload` recaptures flag state; enabling or disabling the flag does not affect the active runtime until one of those activation boundaries. Enable it with `/experimental enable embedded-subagents` and undo it with `/experimental disable embedded-subagents`, then start a new session or run `/reload`. Only valid regular non-symlink `.md` agent definitions with `package: embedded`, a valid `name`, and a non-empty `description` authorize; `.chain.md` files do not. See [embedded-subagents.md](embedded-subagents.md) for the full setup guide. All three flags are disabled by default. Stale `run-tests-last` values in `tlh.experimental.enabledFeatures` do not re-enable retired behavior.
 
-### `/subagent-settings`
+### `/tickets`
 
-`/subagent-settings` manages persisted model and effort overrides for TLH's bundled minor-agent roles: `code-reviewer`, `contrarian`, `developer`, `diff-summarizer`, `librarian`, `oracle`, `repo-scout`, and `web-scout`.
-
-- Run `/subagent-settings` with no arguments in the interactive TLH TUI to open a picker for per-role status, set, and reset actions.
-- Run `/subagent-settings status` to see all bundled roles, or `/subagent-settings status <role>` for one role.
-- Run `/subagent-settings set <role> model <provider/id>`, `/subagent-settings set <role> effort <off|minimal|low|medium|high|xhigh>`, or combine them in either order, for example `/subagent-settings set developer model openai-codex/gpt-5.4 effort high`.
-- Run `/subagent-settings reset <role> model`, `/subagent-settings reset <role> effort`, or `/subagent-settings reset <role>` to remove saved values for one role.
-- Run `/subagent-settings reset-all` to clear only the saved `model`/`thinking` fields for bundled TLH minor agents. Unrelated per-role keys and non-TLH entries under `subagents.agentOverrides` are preserved.
-
-Overrides are stored in the active isolated TLH profile under `subagents.agentOverrides` in `settings.json` (normally `~/.the-last-harness/agent/settings.json`, or the profile pointed to by `PI_CODING_AGENT_DIR`). TLH writes only the selected role's `model` and `thinking` fields, keeps unrelated settings intact, and creates a `settings.json.bak-*` backup before each write. To undo a persistent change, use the matching reset command or restore the backup path shown in the notification.
-
-Precedence from highest to lowest is:
-
-1. an explicit model and `:effort` suffix on a direct subagent dispatch,
-2. the direct dispatch's explicit model combined with a saved effort when that model has no suffix,
-3. saved `/subagent-settings` model and effort overrides, and
-4. bundled provider-aware role defaults.
-
-Provider-aware defaults still matter when you have not pinned a model. `code-reviewer`, `oracle`, and `contrarian` prefer an available opposite provider for independence; other bundled minor agents follow the current session provider when TLH injects defaults.
-
-Fixed model overrides for `code-reviewer`, `oracle`, and `contrarian` require confirmation because they can reduce provider independence. TLH shows that warning in status output too. In non-UI/headless command contexts, those independence-sensitive fixed-model writes are refused because the confirmation prompt cannot be shown.
-
-Only `off`, `minimal`, `low`, `medium`, `high`, and `xhigh` are supported edit values in v1. If a previously saved effort is still present in `settings.json` but the current effective model no longer supports it, TLH warns and falls back to the bundled default effort for that dispatch until you reset or replace the stored value.
+`/tickets` shows the current repo/worktree's read-only ticket workflow details from `tk`: ready, blocked, in-progress, active, and total counts, followed by one in-progress detail line or an `In progress:` list when multiple tickets are in progress. Each detail includes the ticket ID and its title when available. The footer status is on by default and renders one `ticket: <title> (/tickets)` line per in-progress ticket. In both views, TLH strips terminal control sequences from titles and falls back to the ticket ID when a title cannot be resolved or is empty after sanitization.
 
 ### `/tokens`
 
 `/tokens` takes no flags or subcommands. Run it as `/tokens` to generate one local HTML token-spend report for the current session and open it on your machine.
 
 The report is built from sanitized session analysis only. It omits raw transcript text, raw tool arguments, and raw tool-result payloads, and TLH tells you where the private local report directory lives so you can delete it when you no longer need the report.
+
+### `/what-consumed-my-session-limit-and-tokens`
+
+`/what-consumed-my-session-limit-and-tokens` takes no flags or subcommands. Run it to generate a local HTML report covering TLH sessions within the current provider session-limit window across all projects under the same session root.
+
+The report is built from sanitized session analysis only. It omits raw transcript text, raw tool arguments, and raw tool-result payloads. It uses the current subscription usage snapshot when available, with a trailing five-hour fallback when TLH cannot resolve an exact provider window.
+
+---
+
+## Model-facing subagent tools
+
+TLH ships the `subagent` tool as first-party runtime functionality. It is a model-facing tool, not a slash command you need to invoke manually. `subagent` supports single or parallel execution plus the closed action set `list`, `get`, `models`, `status`, `interrupt`, `resume`, `steer`, and `doctor`. Saved chains and mutating agent-management actions are not in the model-facing TLH contract.
+
+The architect normally handles these tools for you. See [subagents.md](subagents.md) for dispatch fields, fresh-context/user-scope isolation, async control and durable resume behavior, acceptance, artifacts, migration, and undo steps.
 
 ---
 
@@ -106,8 +101,10 @@ These commands ship inside the TLH package itself rather than through separately
 
 | Command | Extension | Description |
 |---------|-----------|-------------|
-| `/annotate-last-message` | `the-last-harness` | Open a native annotation window for the latest assistant message and paste submitted feedback into the editor |
-| `/annotate-git-diff` | `annotate-git-diff` | Open a native git-diff review window and paste submitted review feedback into the editor |
+| `/annotate-last-message` | `the-last-harness` | Open a native annotation window for the latest assistant message and send submitted feedback to the agent |
+| `/annotate-git-diff` | `annotate-git-diff` | Open a native git-diff review window; clicking Submit sends review feedback to the agent, closing with unsent comments pastes a draft to the editor |
+| `/subagents-doctor` | `subagents` | Show first-party subagent runtime diagnostics |
+| `/subagents-fleet` | `subagents` | Show active subagent fleet status and transcript commands |
 
 ### `/annotate-last-message`
 
@@ -125,7 +122,8 @@ These commands ship inside the TLH package itself rather than through separately
 
 - Finds the latest completed assistant message on the active session branch and shows it with line numbers plus section-level grouping.
 - Lets you leave overall, section, and inline comments in one lightweight first-party TLH window.
-- When you submit, TLH inserts a structured planning-oriented feedback prompt into the current editor buffer so you can send it back to the agent.
+- When you submit, TLH sends a structured planning-oriented feedback prompt directly to the agent as a follow-up message. Your existing editor text is left untouched.
+- Blank lines cannot be annotated inline; the inline-note button is not shown for empty lines.
 - It does not auto-apply code changes or silently mutate prior messages.
 - Use `/annotate-last-message` directly when you want to annotate the latest assistant reply.
 
@@ -158,7 +156,7 @@ See [`extensions/the-last-harness/annotate-last-message/README.md`](../extension
 
 - Review branch diffs, individual commits (including working-tree changes), or the full file snapshot from one window.
 - Leave inline, file-level, and overall comments.
-- When you submit, TLH inserts a review-feedback prompt into the current editor buffer. It does not auto-apply code changes or mutate your normal Pi profile.
+- Clicking **Submit** sends a structured review-feedback prompt directly to the agent. If you close the window with comments not yet submitted, TLH pastes the draft prompt into the editor instead — so an accidental window close cannot fire a new agent turn. It does not auto-apply code changes or mutate your normal Pi profile.
 
 #### Attribution
 
@@ -195,9 +193,6 @@ These commands are provided by bundled default extensions and are visible in TLH
 | `/fast` | `pi-openai-fast` | Toggle OpenAI Codex Fast mode (ChatGPT-auth GPT-5.4/GPT-5.5 only) |
 | `/mcp` | `pi-mcp-adapter` | Show MCP server status |
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
-| `/subagents-doctor` | `pi-subagents` | Show subagent diagnostics |
-
-RTK shell-command rewriting is now a managed native integration rather than a slash-command UI. TLH does not register `/rtk`; use `RTK_DISABLED=1` for a single launch or set `"tlh": { "rtk": { "disabled": true } }` in the isolated TLH profile to disable rewriting.
 
 ---
 
@@ -219,23 +214,31 @@ These commands are registered and fully functional, but deliberately excluded fr
 | Command | Description |
 |---------|-------------|
 | `/skill:librarian` | Load the bundled librarian skill by name without surfacing it in TLH autocomplete |
-| `/skill:pi-intercom` | Load the bundled intercom skill by name without surfacing it in TLH autocomplete |
+
+### Hidden first-party extension commands
+
+| Command | Extension | Description |
+|---------|-----------|-------------|
+| `/subagent-cost` | `subagents` | Show parent and child usage cost for this session; hidden because `/tokens` provides the TLH-native token report |
 
 ### Hidden bundled extension commands
 
 | Command | Extension | Description |
 |---------|-----------|-------------|
 | `/curator` | `pi-web-access` | Toggle or configure the search curator workflow |
-| `/fff-health` | `pi-fff` | Show FFF file finder health and status |
-| `/fff-mode` | `pi-fff` | Show or set FFF mode (`tools-and-ui`, `tools-only`, `override`) |
-| `/fff-rescan` | `pi-fff` | Trigger FFF to rescan files |
-| `/intercom` | `pi-intercom` | Open the session intercom overlay (internal subagent communication) |
 | `/quiet-tools` | `pi-quiet-tools` | Toggle one-line collapsed invocations for built-in tool rows |
 | `/search` | `pi-web-access` | Browse stored web search results |
-| `/subagents-check-profile` | `pi-subagents` | Check whether a saved profile still points to usable models |
-| `/subagents-models` | `pi-subagents` | Show runtime-loaded builtin subagent models |
-| `/subagents-profiles` | `pi-subagents` | List saved subagent profiles |
 | `/websearch` | `pi-web-access` | Open the web search curator |
+
+---
+
+## TLH CLI subcommands
+
+These are `tlh` command-line subcommands, distinct from the `/slash commands` used inside a TLH session.
+
+### `tlh sessions`
+
+`tlh sessions` is a read-only session analysis tool. It emits JSON to stdout so you can pipe to `jq`. Run `tlh sessions --mode per-session` for a per-session summary of tool-pair statistics and coverage, or `tlh sessions --mode per-tool` for aggregated per-tool statistics across all sessions. Raw paths, cwd values, and project labels are omitted by default; pass `--include-paths` only when you need them for concrete evidence. `tlh sessions` never reads `run-history.jsonl` and never writes to session files.
 
 ---
 
@@ -245,10 +248,8 @@ Individual bundled extensions can be disabled without affecting the others. Use 
 
 ```sh
 tlh defaults list        # show installed defaults and opt-out status
-tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disable fff)
+tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disable notify)
 tlh defaults enable <id>   # re-enable a disabled extension
 ```
 
 Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions, not first-party packaged commands like `/annotate-last-message` or `/annotate-git-diff`.
-
-RTK is separate from `tlh defaults`: TLH manages the pinned native binary at `<agent>/bin/rtk`, there is no `/rtk` command surface anymore, and the persistent opt-out is `tlh.rtk.disabled` rather than `tlh defaults disable rtk`. To remove only the managed RTK binary while keeping the rest of the profile, delete `<agent>/bin/rtk`; the next install or `tlh update` recreates it.

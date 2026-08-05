@@ -53,8 +53,6 @@ export function supportFileDryRunMessage(variable) {
         return "Would fetch Gnosis integration support files.";
     if (variable === "TLH_TICKETS_SCRIPT")
         return "Would fetch tlh tickets support files.";
-    if (variable === "TLH_RTK_SCRIPT")
-        return "Would fetch tlh RTK support files.";
     if (variable === "TLH_UPDATE_SCRIPT")
         return "Would fetch tlh update support files.";
     if (variable === "TLH_WRAPPER_SCRIPT")

@@ -124,7 +124,8 @@ test("validateSubagentToolInput allows approved execution and forces fresh user 
 });
 
 test("SAFE_SUBAGENT_ACTIONS exposes exactly the supported management contract", () => {
-	assert.deepEqual(SAFE_SUBAGENT_ACTIONS, ["list", "get", "models", "status", "interrupt", "doctor", "resume"]);
+	// steer was added by explicit policy decision (ts-hl1q); rush is blocked from steer as the compensating control.
+	assert.deepEqual(SAFE_SUBAGENT_ACTIONS, ["list", "get", "models", "status", "interrupt", "doctor", "resume", "steer"]);
 });
 
 test("validateSubagentToolInput allows approved management calls and keeps enabled resume normalization", () => {
@@ -191,86 +192,6 @@ test("validateSubagentToolInput allows opaque resume and blocks unsafe scopes/co
 });
 
 
-function dynamicParallelChain(context) {
-	const parallel = { agent: "developer", task: "Implement the fix for {item}." };
-	if (context !== undefined) {
-		parallel.context = context;
-	}
-	return [
-		{
-			agent: "repo-scout",
-			task: "Return affected areas as structured JSON.",
-			as: "inventory",
-			outputSchema: { type: "object", properties: { items: { type: "array", items: { type: "string" } } } },
-		},
-		{
-			expand: { from: { output: "inventory", path: "/items" }, maxItems: 10 },
-			parallel,
-			collect: { as: "implementations" },
-		},
-	];
-}
-
-
-test("validateSubagentToolInput treats object-valued chain.parallel nested contexts like collected targets", () => {
-	const staleNestedContextChain = { chain: dynamicParallelChain("resume") };
-	assert.match(
-		validateSubagentToolInput(staleNestedContextChain),
-		/nested chain\[1\]\.parallel\[0\]\.context may not use context: "resume"/,
-	);
-
-	const freshNestedContextChain = { chain: dynamicParallelChain("fresh") };
-	assertAllowed(freshNestedContextChain);
-	assert.equal(freshNestedContextChain.agentScope, "user");
-	assert.equal(freshNestedContextChain.context, "fresh");
-
-	const omittedNestedContextChain = { chain: dynamicParallelChain() };
-	assertAllowed(omittedNestedContextChain);
-	assert.equal(omittedNestedContextChain.agentScope, "user");
-	assert.equal(omittedNestedContextChain.context, "fresh");
-});
-
-
-test("validateSubagentToolInput treats resume.chain as execution-bearing while preserving resume normalization", () => {
-	const allowedResumeChain = { action: "resume", id: "run-123", chain: [{ agent: "developer", prompt: "Implement the fix" }], agentScope: "both" };
-	assertAllowed(allowedResumeChain);
-	assert.equal(allowedResumeChain.agentScope, "user");
-	assert.equal(allowedResumeChain.context, "fresh");
-
-	const embeddedResumeChain = { action: "resume", id: "run-456", chain: [{ agent: "embedded.my-tool", prompt: "Inspect the repo" }] };
-	assert.match(
-		validateSubagentToolInput(embeddedResumeChain),
-		/Disallowed target\(s\): embedded\.my-tool/,
-	);
-	assert.equal(embeddedResumeChain.agentScope, "user");
-	assert.equal(embeddedResumeChain.context, "fresh");
-
-	const staleArrayContextResumeChain = {
-		action: "resume",
-		id: "run-789",
-		chain: [{ parallel: [{ agent: "developer", prompt: "Implement the fix", context: "resume" }] }],
-	};
-	assert.match(
-		validateSubagentToolInput(staleArrayContextResumeChain),
-		/nested chain\[0\]\.parallel\[0\]\.context may not use context: "resume"/,
-	);
-
-	const staleNestedContextResumeChain = { action: "resume", id: "run-999", chain: dynamicParallelChain("resume") };
-	assert.match(
-		validateSubagentToolInput(staleNestedContextResumeChain),
-		/nested chain\[1\]\.parallel\[0\]\.context may not use context: "resume"/,
-	);
-
-	const freshNestedContextResumeChain = { action: "resume", id: "run-1000", chain: dynamicParallelChain("fresh") };
-	assertAllowed(freshNestedContextResumeChain);
-	assert.equal(freshNestedContextResumeChain.agentScope, "user");
-	assert.equal(freshNestedContextResumeChain.context, "fresh");
-
-	const omittedNestedContextResumeChain = { action: "resume", id: "run-1001", chain: dynamicParallelChain() };
-	assertAllowed(omittedNestedContextResumeChain);
-	assert.equal(omittedNestedContextResumeChain.agentScope, "user");
-	assert.equal(omittedNestedContextResumeChain.context, "fresh");
-});
 
 test("validateSubagentToolInput uses generic primary-agent wording", () => {
 	const reasons = [
@@ -293,24 +214,6 @@ test("validateSubagentToolInput rejects disallowed agents", () => {
 	);
 	assert.match(
 		validateSubagentToolInput({ tasks: [{ agent: "repo-scout" }, { agent: "root" }] }),
-		/Disallowed target\(s\): root/,
-	);
-	assert.match(
-		validateSubagentToolInput({
-			chain: [
-				{
-					agent: "repo-scout",
-					task: "Return repository areas as structured JSON.",
-					as: "inventory",
-					outputSchema: { type: "object", properties: { items: { type: "array", items: { type: "string" } } } },
-				},
-				{
-					expand: { from: { output: "inventory", path: "/items" }, maxItems: 10 },
-					parallel: { agent: "root", task: "Inspect {item}." },
-					collect: { as: "inspections" },
-				},
-			],
-		}),
 		/Disallowed target\(s\): root/,
 	);
 });
@@ -364,42 +267,6 @@ test("validateSubagentToolInput with allowEmbeddedTargets:true allows valid embe
 	assertAllowed(tasks, opts);
 	assert.equal(tasks.agentScope, "user");
 	assert.equal(tasks.context, "fresh");
-
-	// chain
-	const chain = { chain: [{ agent: "embedded.chain-helper", prompt: "continue the work" }] };
-	assertAllowed(chain, opts);
-	assert.equal(chain.agentScope, "user");
-	assert.equal(chain.context, "fresh");
-
-	// parallel inside chain
-	const parallelInChain = { chain: [{ parallel: [{ agent: "embedded.sub-helper", prompt: "assist" }] }] };
-	assertAllowed(parallelInChain, opts);
-	assert.equal(parallelInChain.agentScope, "user");
-	assert.equal(parallelInChain.context, "fresh");
-
-	// object-valued dynamic parallel inside chain
-	const dynamicParallelInChain = {
-		chain: [
-			{
-				agent: "repo-scout",
-				task: "Return repository areas as structured JSON.",
-				as: "inventory",
-				outputSchema: { type: "object", properties: { items: { type: "array", items: { type: "string" } } } },
-			},
-			{
-				expand: { from: { output: "inventory", path: "/items" }, maxItems: 10 },
-				parallel: {
-					agent: "embedded.dynamic-helper",
-					task: "Inspect {item}.",
-					outputSchema: { type: "object", properties: { agent: { const: "root" } } },
-				},
-				collect: { as: "inspections" },
-			},
-		],
-	};
-	assertAllowed(dynamicParallelInChain, opts);
-	assert.equal(dynamicParallelInChain.agentScope, "user");
-	assert.equal(dynamicParallelInChain.context, "fresh");
 
 	// mixed: bundled + embedded
 	const mixed = { tasks: [{ agent: "developer", prompt: "impl" }, { agent: "embedded.scout", prompt: "scout" }] };
@@ -493,11 +360,74 @@ test("validateSubagentToolInput blocks v0.34.0 agent-mutation verbs (eject/disab
 	}
 
 	// The whitelist must remain exactly this set — no additions without an explicit policy decision.
+	// steer was added by explicit policy decision (ts-hl1q); rush is blocked from steer as the compensating control
+	// (rushSteerDelegationReason in primary-agent-runtime.ts) because an opaque steer carries no agent field.
 	assert.deepEqual(
 		[...SAFE_SUBAGENT_ACTIONS],
-		["list", "get", "models", "status", "interrupt", "doctor", "resume"],
+		["list", "get", "models", "status", "interrupt", "doctor", "resume", "steer"],
 		"SAFE_SUBAGENT_ACTIONS whitelist changed — verify TLH policy before widening",
 	);
+});
+
+test("validateSubagentToolInput allows steer with valid id and message", () => {
+	const steer = { action: "steer", id: "run-abc", message: "Please wrap up the current subtask." };
+	assertAllowed(steer);
+});
+
+test("validateSubagentToolInput blocks steer without id", () => {
+	assert.match(
+		validateSubagentToolInput({ action: "steer", message: "Wrap up." }),
+		/may not call steer without a non-empty string id/,
+	);
+	assert.match(
+		validateSubagentToolInput({ action: "steer", id: "", message: "Wrap up." }),
+		/may not call steer without a non-empty string id/,
+	);
+	assert.match(
+		validateSubagentToolInput({ action: "steer", id: 42, message: "Wrap up." }),
+		/may not call steer without a non-empty string id/,
+	);
+});
+
+test("validateSubagentToolInput blocks steer without message", () => {
+	assert.match(
+		validateSubagentToolInput({ action: "steer", id: "run-abc" }),
+		/may not call steer without a non-empty string message/,
+	);
+	assert.match(
+		validateSubagentToolInput({ action: "steer", id: "run-abc", message: "" }),
+		/may not call steer without a non-empty string message/,
+	);
+});
+
+test("validateSubagentToolInput blocks steer with execution-bearing fields", () => {
+	for (const field of ["agent", "tasks", "chain", "context", "agentScope"]) {
+		const input = { action: "steer", id: "run-abc", message: "Wrap up.", [field]: "some-value" };
+		const reason = validateSubagentToolInput(input);
+		assert.match(
+			reason,
+			new RegExp(`may not include '${field}' on a steer call`),
+			`expected steer to reject field '${field}'`,
+		);
+	}
+});
+
+test("validateSubagentToolInput blocks steer with non-integer or negative index", () => {
+	assert.match(
+		validateSubagentToolInput({ action: "steer", id: "run-abc", message: "Wrap up.", index: -1 }),
+		/non-integer or negative index/,
+	);
+	assert.match(
+		validateSubagentToolInput({ action: "steer", id: "run-abc", message: "Wrap up.", index: 1.5 }),
+		/non-integer or negative index/,
+	);
+	assert.match(
+		validateSubagentToolInput({ action: "steer", id: "run-abc", message: "Wrap up.", index: "0" }),
+		/non-integer or negative index/,
+	);
+	// zero and positive integers should be allowed
+	assertAllowed({ action: "steer", id: "run-abc", message: "Wrap up.", index: 0 });
+	assertAllowed({ action: "steer", id: "run-abc", message: "Wrap up.", index: 3 });
 });
 
 test("PI_SUBAGENT_CHILD=1 registers only child prompt behavior", async () => {

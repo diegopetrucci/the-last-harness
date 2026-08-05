@@ -2,9 +2,10 @@
 name: developer
 description: Implements exactly one approved architect task at a time.
 tools: read, write, edit, grep, find, ls, bash, contact_supervisor
-tlhOpenaiModels: openai-codex/gpt-5.4
+tlhOpenaiModels: openai-codex/gpt-5.6-luna
 tlhAnthropicModels: anthropic/claude-sonnet-4-6
-thinking: medium
+tlhAnthropicThinking: medium
+tlhOpenaiThinking: max
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

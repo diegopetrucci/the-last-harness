@@ -1,15 +1,15 @@
 ---
 name: rush
 description: Implements small bounded changes directly with narrow validation and optional review when warranted.
-model: anthropic/claude-opus-4-8
-tlhOpenaiModels: openai-codex/gpt-5.5
-thinking: low
-tlhOpenaiThinking: off
+model: anthropic/claude-sonnet-4-6
+tlhOpenaiModels: openai-codex/gpt-5.6-luna
+tlhAnthropicThinking: low
+tlhOpenaiThinking: medium
 preferCurrentOpenaiModel: true
 applyModel: true
 applyThinking: true
 lockThinking: true
-tools: read, write, edit, grep, find, ls, bash, subagent, intercom
+tools: read, write, edit, grep, find, ls, bash, subagent, subagent_supervisor
 systemPromptMode: append
 inheritProjectContext: true
 inheritSkills: false

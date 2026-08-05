@@ -3,9 +3,10 @@ name: code-reviewer
 description: Reviews diffs against assigned tasks for correctness, security, and maintainability.
 tools: read, grep, find, ls, bash, contact_supervisor
 tlhOpenaiModels: openai-codex/gpt-5.6-sol
-tlhAnthropicModels: anthropic/claude-opus-4-8
+tlhAnthropicModels: anthropic/claude-opus-5
 preferOppositeProvider: true
-thinking: high
+tlhAnthropicThinking: high
+tlhOpenaiThinking: high
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
