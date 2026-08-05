@@ -136,6 +136,14 @@ async function main() {
 
 	try {
 		await loader.reload();
+		const extensionEvidencePath = process.env.PI_SUBAGENTS_E2E_EXTENSIONS_FILE;
+		if (extensionEvidencePath) {
+			const loadedExtensions = loader.getExtensions();
+			fs.writeFileSync(extensionEvidencePath, `${JSON.stringify({
+				errors: loadedExtensions.errors,
+				resolvedPaths: loadedExtensions.extensions.map((extension) => extension.resolvedPath),
+			})}\n`);
+		}
 		const { session } = await createAgentSession({
 			cwd,
 			agentDir,

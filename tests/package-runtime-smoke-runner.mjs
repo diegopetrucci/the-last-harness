@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, realpathSync } from "node:fs";
+import { chmodSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -12,18 +12,6 @@ const realPackageRoot = realpathSync(packageRoot);
 const piEntryPath = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
 const piPackage = JSON.parse(readFileSync(join(dirname(piEntryPath), "..", "package.json"), "utf8"));
 assert.equal(piPackage.version, "0.83.0");
-
-const settingsManager = SettingsManager.create(cwd, agentDir);
-const resourceLoader = new DefaultResourceLoader({
-	cwd,
-	agentDir,
-	settingsManager,
-	additionalExtensionPaths: [packageRoot],
-	noSkills: true,
-	noPromptTemplates: true,
-	noThemes: true,
-	noContextFiles: true,
-});
 
 const expectedEntrypoints = [
 	"extensions/annotate-git-diff/index.js",
@@ -46,6 +34,148 @@ const expectedTlhCommands = [
 	"what-consumed-my-session-limit-and-tokens",
 ];
 
+class FakeEvents {
+	#handlers = new Map();
+
+	on(event, handler) {
+		const handlers = this.#handlers.get(event) ?? [];
+		handlers.push(handler);
+		this.#handlers.set(event, handlers);
+		return () => {
+			const current = this.#handlers.get(event) ?? [];
+			this.#handlers.set(event, current.filter((candidate) => candidate !== handler));
+		};
+	}
+
+	async emit(event, data) {
+		await Promise.all((this.#handlers.get(event) ?? []).map((handler) => handler(data)));
+	}
+
+	listenerCount(event) {
+		return (this.#handlers.get(event) ?? []).length;
+	}
+}
+
+const packagedEvents = new FakeEvents();
+const settingsManager = SettingsManager.create(cwd, agentDir);
+const resourceLoader = new DefaultResourceLoader({
+	cwd,
+	agentDir,
+	settingsManager,
+	eventBus: packagedEvents,
+	additionalExtensionPaths: [packageRoot],
+	noSkills: true,
+	noPromptTemplates: true,
+	noThemes: true,
+	noContextFiles: true,
+});
+const packagedRpcModule = await import(pathToFileURL(join(realPackageRoot, "extensions", "subagents", "src", "extension", "rpc.js")).href);
+
+function waitForEvent(events, event) {
+	return new Promise((resolve) => {
+		const unsubscribe = events.on(event, (data) => {
+			unsubscribe();
+			resolve(data);
+		});
+	});
+}
+
+async function runPackagedRpcSmoke(context) {
+	assert.equal(process.env.PI_SUBAGENTS_RPC_ENABLED, "1");
+	const rpc = packagedRpcModule;
+	const events = new FakeEvents();
+	const options = {
+		events,
+		getContext: () => context,
+		execute: async () => {
+			throw new Error("packaged RPC ping must not execute a subagent");
+		},
+	};
+	const firstBridge = rpc.registerSubagentRpcBridge(options);
+	assert.equal(events.listenerCount(rpc.SUBAGENT_RPC_REQUEST_EVENT), 1);
+	const firstReady = waitForEvent(events, rpc.SUBAGENT_RPC_READY_EVENT);
+	firstBridge.emitReady(context);
+	const readyData = await firstReady;
+	assert.equal(readyData.version, rpc.SUBAGENT_RPC_PROTOCOL_VERSION);
+	assert.deepEqual(readyData.methods, ["ping", "status", "spawn", "interrupt", "stop"]);
+	const firstReply = waitForEvent(events, rpc.subagentRpcReplyEvent("packaged-ping"));
+	await events.emit(rpc.SUBAGENT_RPC_REQUEST_EVENT, {
+		version: rpc.SUBAGENT_RPC_PROTOCOL_VERSION,
+		requestId: "packaged-ping",
+		method: "ping",
+	});
+	const reply = await firstReply;
+	assert.equal(reply.success, true);
+	assert.equal(reply.requestId, "packaged-ping");
+	assert.deepEqual(reply.data.session, {
+		cwd,
+		sessionId: "package-smoke-session",
+		sessionFile: null,
+	});
+	firstBridge.dispose();
+	assert.equal(events.listenerCount(rpc.SUBAGENT_RPC_REQUEST_EVENT), 0);
+
+	const reregisteredBridge = rpc.registerSubagentRpcBridge(options);
+	assert.equal(events.listenerCount(rpc.SUBAGENT_RPC_REQUEST_EVENT), 1);
+	reregisteredBridge.dispose();
+	assert.equal(events.listenerCount(rpc.SUBAGENT_RPC_REQUEST_EVENT), 0);
+	return {
+		ready: true,
+		ping: true,
+		requestListenersAfterReregister: 1,
+		requestListenersAfterDispose: 0,
+	};
+}
+
+function shellQuote(value) {
+	return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function installPackedChildShim() {
+	const shimPath = join(cwd, "packed-pi-shim");
+	const childCliPath = join(
+		dirname(fileURLToPath(import.meta.url)),
+		"..",
+		"extensions",
+		"subagents",
+		"test",
+		"support",
+		"real-session-child-cli.mjs",
+	);
+	writeFileSync(shimPath, `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(childCliPath)} "$@"\n`);
+	chmodSync(shimPath, 0o755);
+	return shimPath;
+}
+
+async function runPackedChildSmoke(subagentExtension, sessionContext) {
+	const marker = "PACKED_FAUX_CHILD_MARKER";
+	const extensionEvidencePath = join(cwd, "packed-child-extensions.json");
+	const shimPath = installPackedChildShim();
+	process.env.PI_SUBAGENT_PI_BINARY = shimPath;
+	process.env.PI_SUBAGENTS_E2E_CHILD_TEXT = marker;
+	process.env.PI_SUBAGENTS_E2E_EXTENSIONS_FILE = extensionEvidencePath;
+	const subagentTool = subagentExtension.tools.get("subagent").definition;
+	const result = await subagentTool.execute(
+		"packed-child-execution",
+		{ agent: "worker", task: "Return the deterministic faux child marker", context: "fresh", agentScope: "user" },
+		new AbortController().signal,
+		undefined,
+		sessionContext,
+	);
+	assert.equal(result.isError, undefined);
+	const text = result.content.filter((entry) => entry.type === "text").map((entry) => entry.text).join("\n");
+	assert.match(text, new RegExp(marker));
+	const evidence = JSON.parse(readFileSync(extensionEvidencePath, "utf8"));
+	assert.deepEqual(evidence.errors, []);
+	const expected = [
+		join(realPackageRoot, "extensions", "subagents", "src", "runs", "shared", "subagent-prompt-runtime.js"),
+		join(realPackageRoot, "extensions", "subagents", "src", "extension", "fanout-child.js"),
+	];
+	assert.deepEqual(evidence.resolvedPaths.map((path) => realpathSync(path)), expected);
+	assert.ok(evidence.resolvedPaths.every((path) => path.startsWith(realPackageRoot) && path.endsWith(".js")));
+	return { marker, childExtensionPaths: evidence.resolvedPaths.map((path) => relative(realPackageRoot, path).replaceAll("\\", "/")) };
+}
+
 function inspectLoad() {
 	const result = resourceLoader.getExtensions();
 	assert.deepEqual(result.errors, []);
@@ -62,7 +192,13 @@ function inspectLoad() {
 
 	const allCommandNames = result.extensions.flatMap((extension) => [...extension.commands.keys()]);
 	assert.equal(new Set(allCommandNames).size, allCommandNames.length, "package commands must not be registered twice");
-	return { result, tlhExtension };
+	const allToolNames = result.extensions.flatMap((extension) => [...extension.tools.keys()]);
+	const toolCounts = {
+		subagent: allToolNames.filter((name) => name === "subagent").length,
+		wait: allToolNames.filter((name) => name === "wait").length,
+	};
+	assert.deepEqual(toolCounts, { subagent: 1, wait: 1 }, "loaded package entrypoints must expose one subagent/wait surface");
+	return { result, tlhExtension, toolCounts };
 }
 
 function createSessionContext() {
@@ -124,22 +260,46 @@ async function runSessionStart(tlhExtension, subagentExtension) {
 	return fixture;
 }
 
+delete process.env.PI_SUBAGENTS_RPC_ENABLED;
+await resourceLoader.reload();
+const defaultOff = inspectLoad();
+assert.equal(packagedEvents.listenerCount(packagedRpcModule.SUBAGENT_RPC_REQUEST_EVENT), 0);
+let defaultOffReadyEvents = 0;
+const unsubscribeDefaultOffReady = packagedEvents.on(packagedRpcModule.SUBAGENT_RPC_READY_EVENT, () => {
+	defaultOffReadyEvents += 1;
+});
+await runSessionStart(defaultOff.tlhExtension, defaultOff.result.extensions[2]);
+unsubscribeDefaultOffReady();
+assert.equal(defaultOffReadyEvents, 0);
+
+process.env.PI_SUBAGENTS_RPC_ENABLED = "1";
 await resourceLoader.reload();
 const first = inspectLoad();
+assert.equal(packagedEvents.listenerCount(packagedRpcModule.SUBAGENT_RPC_REQUEST_EVENT), 1);
+let enabledReadyEvents = 0;
+const unsubscribeEnabledReady = packagedEvents.on(packagedRpcModule.SUBAGENT_RPC_READY_EVENT, () => {
+	enabledReadyEvents += 1;
+});
 await runSessionStart(first.tlhExtension, first.result.extensions[2]);
+unsubscribeEnabledReady();
+assert.equal(enabledReadyEvents, 1);
 assert.equal(first.result.extensions[2].resolvedPath.endsWith("extensions/subagents/src/extension/index.js"), true);
 
 await resourceLoader.reload();
 const second = inspectLoad();
+assert.equal(packagedEvents.listenerCount(packagedRpcModule.SUBAGENT_RPC_REQUEST_EVENT), 1);
 assert.notEqual(second.result.extensions[0], first.result.extensions[0]);
 assert.notEqual(second.result.extensions[1], first.result.extensions[1]);
+assert.notEqual(second.result.extensions[2], first.result.extensions[2]);
 assert.notEqual(second.result.extensions[0].commands, first.result.extensions[0].commands);
 assert.notEqual(second.result.extensions[1].commands, first.result.extensions[1].commands);
+assert.notEqual(second.result.extensions[2].tools, first.result.extensions[2].tools);
 const secondSession = await runSessionStart(second.tlhExtension, second.result.extensions[2]);
 const subagentExtension = second.result.extensions[2];
 assert.equal(subagentExtension.resolvedPath.endsWith("extensions/subagents/src/extension/index.js"), true);
 
 second.result.runtime.getSessionName = () => undefined;
+const packagedRpc = await runPackagedRpcSmoke(secondSession.context);
 const subagentTool = subagentExtension.tools.get("subagent").definition;
 const failedSubagentResult = await subagentTool.execute(
 	"package-smoke-failure",
@@ -163,6 +323,7 @@ const failedSubagentPatch = await subagentToolResultHandler({
 	isError: false,
 }, secondSession.context);
 assert.deepEqual(failedSubagentPatch, { isError: true });
+const packagedChild = await runPackedChildSmoke(subagentExtension, secondSession.context);
 
 const sentMessages = [];
 second.result.runtime.sendMessage = (message) => sentMessages.push(message);
@@ -207,13 +368,33 @@ assert.doesNotMatch(reviewHtml, /__INLINE_(?:DATA|JS|ASSET_CONFIG)__/);
 assert.match(annotateHtml, /packaged generated asset smoke/);
 assert.doesNotMatch(annotateHtml, /__INLINE_(?:DATA|JS)__/);
 
+for (const handler of subagentExtension.handlers.get("session_shutdown") ?? []) {
+	await handler({ type: "session_shutdown", reason: "quit" }, secondSession.context);
+}
+assert.equal(packagedEvents.listenerCount(packagedRpcModule.SUBAGENT_RPC_REQUEST_EVENT), 0);
+const loadedRpcLifecycle = {
+	defaultOffRequestListeners: 0,
+	defaultOffReadyEvents,
+	enabledRequestListeners: 1,
+	enabledReadyEvents,
+	requestListenersAfterReload: 1,
+	requestListenersAfterShutdown: 0,
+};
+
 process.stdout.write(`${JSON.stringify({
 	piVersion: piPackage.version,
 	entrypoints: expectedEntrypoints,
 	commands: expectedTlhCommands,
-	factoryExecutions: 2,
+	toolCounts: second.toolCounts,
+	factoryExecutions: 3,
 	failedSubagentPatched: failedSubagentPatch.isError,
-	childExtensionPaths: childExtensionPaths.map((path) => relative(realPackageRoot, path).replaceAll("\\", "/")),
+	rpc: {
+		packagedBridge: packagedRpc,
+		loadedLifecycle: loadedRpcLifecycle,
+	},
+	childExecution: packagedChild,
+	childExtensionPaths: packagedChild.childExtensionPaths,
+	builtChildExtensionPaths: childExtensionPaths.map((path) => relative(realPackageRoot, path).replaceAll("\\", "/")),
 	changelogBytes: sentMessages[0].content.length,
 	reviewHtmlBytes: reviewHtml.length,
 	annotateHtmlBytes: annotateHtml.length,

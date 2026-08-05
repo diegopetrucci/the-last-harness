@@ -33,7 +33,7 @@ function isolatedEnv(root, agentDir) {
 	for (const key of Object.keys(env)) {
 		if (
 			key === "PI_CODING_AGENT_DIR"
-			|| key === "PI_SUBAGENT_CHILD"
+			|| key.startsWith("PI_SUBAGENT")
 			|| key.startsWith("TLH_")
 		) {
 			delete env[key];
@@ -47,7 +47,6 @@ function isolatedEnv(root, agentDir) {
 		PI_OFFLINE: "1",
 		TLH_SKIP_TELEMETRY: "1",
 		TLH_SKIP_UPDATE_CHECK: "1",
-		PI_SUBAGENTS_RPC_ENABLED: "1",
 	};
 }
 
@@ -70,8 +69,25 @@ test("packed TLH generated JavaScript loads and reloads through pinned Pi 0.83.0
 				telemetry: { enabled: false },
 				updateCheck: { enabled: false },
 			},
+			subagents: {
+				disableBuiltins: true,
+				agentDirs: ["package-smoke-agents"],
+			},
 		}, null, 2)}\n`,
 	);
+	mkdirSync(join(agentDir, "package-smoke-agents"), { recursive: true });
+	writeFileSync(join(agentDir, "package-smoke-agents", "worker.md"), `---
+name: worker
+description: deterministic packed package smoke worker
+tools: read, subagent
+systemPromptMode: replace
+inheritProjectContext: false
+inheritSkills: false
+defaultContext: fresh
+acceptanceRole: read-only
+---
+Return the deterministic faux child marker exactly.
+`);
 
 	const env = isolatedEnv(root, agentDir);
 	const packResult = spawnSync("npm", ["pack", "--json", "--pack-destination", packDir], {
@@ -121,12 +137,34 @@ test("packed TLH generated JavaScript loads and reloads through pinned Pi 0.83.0
 	const runtimeEvidence = JSON.parse(runtimeResult.stdout.trim());
 	assert.equal(runtimeEvidence.piVersion, "0.83.0");
 	assert.deepEqual(runtimeEvidence.entrypoints, expectedEntrypoints.map((path) => path.slice(2)));
-	assert.equal(runtimeEvidence.factoryExecutions, 2);
+	assert.deepEqual(runtimeEvidence.toolCounts, { subagent: 1, wait: 1 });
+	assert.equal(runtimeEvidence.factoryExecutions, 3);
 	assert.equal(runtimeEvidence.failedSubagentPatched, true);
-	assert.deepEqual(runtimeEvidence.childExtensionPaths, [
+	assert.deepEqual(runtimeEvidence.rpc, {
+		packagedBridge: {
+			ready: true,
+			ping: true,
+			requestListenersAfterReregister: 1,
+			requestListenersAfterDispose: 0,
+		},
+		loadedLifecycle: {
+			defaultOffRequestListeners: 0,
+			defaultOffReadyEvents: 0,
+			enabledRequestListeners: 1,
+			enabledReadyEvents: 1,
+			requestListenersAfterReload: 1,
+			requestListenersAfterShutdown: 0,
+		},
+	});
+	const expectedChildExtensionPaths = [
 		"extensions/subagents/src/runs/shared/subagent-prompt-runtime.js",
 		"extensions/subagents/src/extension/fanout-child.js",
-	]);
+	];
+	assert.deepEqual(runtimeEvidence.childExecution, {
+		marker: "PACKED_FAUX_CHILD_MARKER",
+		childExtensionPaths: expectedChildExtensionPaths,
+	});
+	assert.deepEqual(runtimeEvidence.childExtensionPaths, expectedChildExtensionPaths);
 	assert.ok(runtimeEvidence.changelogBytes > 1000);
 	assert.ok(runtimeEvidence.reviewHtmlBytes > 100_000);
 	assert.ok(runtimeEvidence.annotateHtmlBytes > 1000);
