@@ -715,7 +715,9 @@ Review only.
 		});
 
 		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /read-only/);
+		// After removing the write handlers, 'update' is an unknown action rather than a
+		// read-only rejection; the package agent is still protected — just more aggressively.
+		assert.match(result.content[0]?.text ?? "", /Unknown action: update/);
 	}));
 });
 

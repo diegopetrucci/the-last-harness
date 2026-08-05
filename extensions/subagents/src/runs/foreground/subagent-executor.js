@@ -41,7 +41,6 @@ import { inspectSubagentStatus } from "../background/run-status.js";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.js";
 import { cleanupWorktrees, createWorktrees, diffWorktrees, findWorktreeTaskCwdConflict, formatWorktreeDiffSummary, formatWorktreeTaskCwdConflict, } from "../shared/worktree.js";
 import { ASYNC_DIR, DEFAULT_ARTIFACT_CONFIG, RESULTS_DIR, SUBAGENT_ACTIONS, TEMP_ROOT_DIR, SUBAGENT_CONTROL_EVENT, SUBAGENT_CONTROL_INTERCOM_EVENT, checkSubagentDepth, resolveTopLevelParallelConcurrency, resolveTopLevelParallelMaxTasks, resolveChildMaxSubagentDepth, resolveCurrentMaxSubagentDepth, wrapForkTask, } from "../../shared/types.js";
-const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset"]);
 const NESTED_ASYNC_RUNS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-runs");
 const FOREGROUND_LIVE_MESSAGE_INBOXES_DIR = path.join(TEMP_ROOT_DIR, "foreground-live-message-inboxes");
 function resolveRequestedCwd(runtimeCwd, requestedCwd) {
@@ -3188,13 +3187,6 @@ export function createSubagentExecutor(deps) {
             if (!SUBAGENT_ACTIONS.includes(action)) {
                 return {
                     content: [{ type: "text", text: `Unknown action: ${action}. Valid: ${SUBAGENT_ACTIONS.join(", ")}` }],
-                    isError: true,
-                    details: { mode: "management", results: [] },
-                };
-            }
-            if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
-                return {
-                    content: [{ type: "text", text: `Action '${action}' is not available from child-safe subagent fanout mode.` }],
                     isError: true,
                     details: { mode: "management", results: [] },
                 };

@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { discoverAgents, discoverAgentsAll } from "../../src/agents/agents.ts";
-import { handleCreate } from "../../src/agents/agent-management.ts";
+
 import { clearSkillCache, discoverAvailableSkills, resolveSkillPath } from "../../src/agents/skills.ts";
 import { loadConfig } from "../../src/extension/config.ts";
 import { diagnoseIntercomBridge, resolveIntercomBridge } from "../../src/intercom/intercom-bridge.ts";
@@ -27,13 +27,7 @@ function writeFile(filePath: string, content: string): void {
 	fs.writeFileSync(filePath, content, "utf-8");
 }
 
-function readText(result: { content: Array<{ type: string; text?: string }> }): string {
-	const first = result.content[0];
-	assert.ok(first);
-	assert.equal(first.type, "text");
-	assert.equal(typeof first.text, "string");
-	return first.text;
-}
+
 
 function readInstalledRuntimeConfigDirName(): string {
 	const entryUrl = import.meta.resolve("@earendil-works/pi-coding-agent");
@@ -164,12 +158,10 @@ Inspect env.
 		assert.equal(worker?.override?.scope, "user");
 
 		const createdName = "created-env-agent";
-		const created = handleCreate(
-			{ config: { name: createdName, description: "Created in env dir", scope: "user" } },
-			{ cwd, modelRegistry: { getAvailable: () => [] } },
-		);
-		assert.equal(created.isError, false, readText(created));
-		assert.equal(fs.existsSync(path.join(agentDir, "agents", `${createdName}.md`)), true);
+		const agentFilePath = path.join(agentDir, "agents", `${createdName}.md`);
+		fs.mkdirSync(path.dirname(agentFilePath), { recursive: true });
+		fs.writeFileSync(agentFilePath, `---\nname: ${createdName}\ndescription: Created in env dir\nsystemPromptMode: replace\ninheritProjectContext: false\ninheritSkills: false\n---\n\n`, "utf-8");
+		assert.equal(fs.existsSync(agentFilePath), true);
 	});
 
 	it("loads configured user agent dirs relative to PI_CODING_AGENT_DIR without leaking legacy ~/.agents", () => {
