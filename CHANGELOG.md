@@ -16,6 +16,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Removed
 
+- Removed the `mcpDirectTools` allowlist resolver (`extensions/subagents/src/runs/shared/mcp-direct-tool-allowlist.ts`, 365 LOC) and the `mcpDirectTools?: string[]` frontmatter field threading from all call-site files: no TLH agent declares the field. **Kept**: `env.MCP_DIRECT_TOOLS = "__none__"` is still set unconditionally in `pi-args.ts`; the sentinel tells `@diegopetrucci/pi-mcp-adapter` (bundled in TLH) not to bootstrap direct MCP tools in child subagents — an unset var means "bootstrap everything configured" and would silently widen every child's tool surface. This sentinel must not be removed by a future cleanup pass.
 - Removed the `agent-memory` module (`extensions/subagents/src/agents/agent-memory.ts`) and its test (`extensions/subagents/test/unit/agent-memory.test.ts`): no TLH agent declares the `memory` frontmatter field, and TLH is the only consumer. The `AgentMemoryScope` type, `AgentMemoryConfig` interface, and `memory` field are removed from `AgentConfig`; the `buildAgentMemoryInjection` call sites are removed from `execution.ts` and `async-execution.ts`.
 - The **fff (`npm:@ff-labs/pi-fff`)** extension has been removed.
 

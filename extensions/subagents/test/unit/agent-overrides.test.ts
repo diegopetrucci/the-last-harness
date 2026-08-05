@@ -408,7 +408,6 @@ describe("builtin agent overrides", () => {
 		assert.equal(implementer.defaultContext, "fork");
 		assert.equal(implementer.acceptanceRole, "writer");
 		assert.deepEqual(implementer.tools, ["bash"]);
-		assert.deepEqual(implementer.mcpDirectTools, ["xcodebuild_list_sims"]);
 		assert.deepEqual(implementer.skills, ["tdd"]);
 		assert.deepEqual(implementer.subagentOnlyExtensions, ["./tools/child-review.ts"]);
 		assert.equal(implementer.completionGuard, false);
@@ -483,7 +482,6 @@ describe("builtin agent overrides", () => {
 		assert.equal(implementer.model, "google/gemini-3-pro");
 		assert.equal(implementer.thinking, "medium");
 		assert.deepEqual(implementer.tools, ["read"]);
-		assert.deepEqual(implementer.mcpDirectTools, ["local_tool"]);
 		assert.deepEqual(implementer.skills, ["agent-skill"]);
 		assert.equal(implementer.inheritProjectContext, false);
 		assert.equal(implementer.defaultContext, "fresh");
@@ -645,7 +643,6 @@ describe("builtin agent overrides", () => {
 				systemPrompt: "Base prompt",
 				skills: ["safe-bash"],
 				tools: ["bash"],
-				mcpDirectTools: ["xcodebuild_list_sims"],
 				subagentOnlyExtensions: ["./tools/base-child.ts"],
 				completionGuard: false,
 				maxExecutionTimeMs: 1200,
@@ -662,7 +659,6 @@ describe("builtin agent overrides", () => {
 				systemPrompt: "Base prompt",
 				skills: undefined,
 				tools: undefined,
-				mcpDirectTools: undefined,
 				subagentOnlyExtensions: undefined,
 				completionGuard: true,
 				maxExecutionTimeMs: undefined,

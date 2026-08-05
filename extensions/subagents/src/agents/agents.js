@@ -291,27 +291,11 @@ function collectPackageSubagentPaths(cwd, options = { includeUser: true, include
     return { agents };
 }
 function splitToolList(rawTools) {
-    const mcpDirectTools = [];
-    const tools = [];
-    for (const tool of rawTools ?? []) {
-        if (tool.startsWith("mcp:")) {
-            mcpDirectTools.push(tool.slice(4));
-        }
-        else {
-            tools.push(tool);
-        }
-    }
-    return {
-        ...(tools.length > 0 ? { tools } : {}),
-        ...(mcpDirectTools.length > 0 ? { mcpDirectTools } : {}),
-    };
+    const tools = (rawTools ?? []).filter((tool) => !tool.startsWith("mcp:"));
+    return tools.length > 0 ? { tools } : {};
 }
 function joinToolList(config) {
-    const joined = [
-        ...(config.tools ?? []),
-        ...(config.mcpDirectTools ?? []).map((tool) => `mcp:${tool}`),
-    ];
-    return joined.length > 0 ? joined : undefined;
+    return config.tools && config.tools.length > 0 ? [...config.tools] : undefined;
 }
 function arraysEqual(a, b) {
     if (!a && !b)
@@ -349,7 +333,6 @@ function cloneOverrideBase(agent) {
         systemPrompt: agent.systemPrompt,
         skills: agent.skills ? [...agent.skills] : undefined,
         tools: agent.tools ? [...agent.tools] : undefined,
-        mcpDirectTools: agent.mcpDirectTools ? [...agent.mcpDirectTools] : undefined,
         subagentOnlyExtensions: agent.subagentOnlyExtensions ? [...agent.subagentOnlyExtensions] : undefined,
         completionGuard: agent.completionGuard,
         toolBudget: agent.toolBudget,
@@ -706,9 +689,8 @@ function applyBuiltinOverride(agent, override, meta) {
     if (override.skills !== undefined)
         next.skills = override.skills === false ? undefined : [...override.skills];
     if (override.tools !== undefined) {
-        const { tools, mcpDirectTools } = splitToolList(override.tools === false ? [] : override.tools);
+        const { tools } = splitToolList(override.tools === false ? [] : override.tools);
         next.tools = tools;
-        next.mcpDirectTools = mcpDirectTools;
     }
     if (override.subagentOnlyExtensions !== undefined) {
         next.subagentOnlyExtensions = override.subagentOnlyExtensions === false ? undefined : [...override.subagentOnlyExtensions];
@@ -810,10 +792,9 @@ function applyCustomAgentOverride(agent, override, meta) {
         fill("skills", ["skill", "skills"], override.skills === false ? undefined : [...override.skills]);
     }
     if (override.tools !== undefined && !customAgentHasFrontmatterField(agent, "tools")) {
-        const { tools, mcpDirectTools } = splitToolList(override.tools === false ? [] : override.tools);
+        const { tools } = splitToolList(override.tools === false ? [] : override.tools);
         const target = mutable();
         target.tools = tools;
-        target.mcpDirectTools = mcpDirectTools;
         anyFilled = true;
     }
     if (override.subagentOnlyExtensions !== undefined) {
@@ -1054,22 +1035,10 @@ function loadAgentsFromDir(dir, source) {
             continue;
         const packageName = parsedPackage.packageName;
         const runtimeName = buildRuntimeName(localName, packageName);
-        const rawTools = frontmatter.tools
+        const tools = frontmatter.tools
             ?.split(",")
             .map((t) => t.trim())
-            .filter(Boolean);
-        const mcpDirectTools = [];
-        const tools = [];
-        if (rawTools) {
-            for (const tool of rawTools) {
-                if (tool.startsWith("mcp:")) {
-                    mcpDirectTools.push(tool.slice(4));
-                }
-                else {
-                    tools.push(tool);
-                }
-            }
-        }
+            .filter((t) => Boolean(t) && !t.startsWith("mcp:")) ?? [];
         const defaultReads = frontmatter.defaultReads
             ?.split(",")
             .map((f) => f.trim())
@@ -1150,7 +1119,6 @@ function loadAgentsFromDir(dir, source) {
             packageName,
             description: frontmatter.description,
             tools: tools.length > 0 ? tools : undefined,
-            mcpDirectTools: mcpDirectTools.length > 0 ? mcpDirectTools : undefined,
             model: frontmatter.model,
             fallbackModels: fallbackModels && fallbackModels.length > 0 ? fallbackModels : undefined,
             thinking: frontmatter.thinking === "false" ? false : frontmatter.thinking,

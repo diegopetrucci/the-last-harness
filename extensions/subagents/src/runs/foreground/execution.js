@@ -262,7 +262,6 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         extensions: agent.extensions,
         subagentOnlyExtensions: agent.subagentOnlyExtensions,
         systemPrompt: appendTurnBudgetSystemPrompt(shared.systemPrompt, options.turnBudget),
-        mcpDirectTools: agent.mcpDirectTools,
         cwd: options.cwd ?? runtimeCwd,
         promptFileStem: agent.name,
         intercomSessionName: options.intercomSessionName,
@@ -1200,7 +1199,6 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             task: shared.originalTask ?? task,
             messages: result.messages ?? [],
             tools: agent.tools,
-            mcpDirectTools: agent.mcpDirectTools,
         })
         : undefined;
     if (completionGuard?.triggered && !observedMutationAttempt) {
