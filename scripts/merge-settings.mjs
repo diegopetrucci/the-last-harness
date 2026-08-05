@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { basename, dirname, join, normalize, parse, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
-import { criticalDefaultExtensionOptOutIds, defaultExtensionPackageIdentities, disabledDefaultExtensionIds, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, repairTargetedDefaultExtensionLoadOrder, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
+import { criticalDefaultExtensionOptOutIds, defaultExtensionPackageIdentities, disabledDefaultExtensionIds, FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, repairTargetedDefaultExtensionLoadOrder, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
 import { assertNotInNormalPiConfig, assignOptionValue, backupPathWithTimestamp, defaultTlhSettingsPath, expandHomePath, readJsonFile, readRegularFileForBackup, } from "./lib/tlh-install-utils.mjs";
 import { writeSafeProfileFile } from "./lib/tlh-safe-profile-write.mjs";
 const __filename = fileURLToPath(import.meta.url);
@@ -314,23 +314,6 @@ function applyDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds
         return;
     changes.push(`reorder targeted default extension packages for load order: ${loadOrderRepair.previous.join(", ")} -> ${loadOrderRepair.next.join(", ")}`);
 }
-// Sources of retired default extensions that TLH now removes unconditionally
-// from isolated settings because they should no longer stay installed after
-// install/update reruns.
-const FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES = Object.freeze([
-    "npm:@diegopetrucci/pi-context-cap",
-    "npm:@diegopetrucci/pi-permission-gate",
-    "npm:@diegopetrucci/pi-confirm-destructive",
-    "npm:@diegopetrucci/pi-oracle",
-    "git:github.com/diegopetrucci/pi-rtk",
-    "npm:pi-rtk",
-    "npm:@sherif-fanous/pi-rtk",
-    "git:github.com/sherif-fanous/pi-rtk",
-    "npm:@diegopetrucci/pi-intercom",
-    "npm:pi-intercom",
-    "git:github.com/nicobailon/pi-intercom",
-    "git:github.com/diegopetrucci/pi-intercom",
-]);
 function purgeForceRemovedRetiredDefaultExtensionPackages(settings, changes) {
     if (!Array.isArray(settings.packages))
         return;

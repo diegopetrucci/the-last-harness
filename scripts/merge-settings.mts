@@ -8,6 +8,7 @@ import {
 	criticalDefaultExtensionOptOutIds,
 	defaultExtensionPackageIdentities,
 	disabledDefaultExtensionIds,
+	FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES,
 	managedDefaultExtensionPackageIdentities,
 	packageIdentity,
 	packageSourceOf,
@@ -415,23 +416,7 @@ function applyDefaultExtensionLoadOrder(
 	);
 }
 
-// Sources of retired default extensions that TLH now removes unconditionally
-// from isolated settings because they should no longer stay installed after
-// install/update reruns.
-const FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES = Object.freeze([
-	"npm:@diegopetrucci/pi-context-cap",
-	"npm:@diegopetrucci/pi-permission-gate",
-	"npm:@diegopetrucci/pi-confirm-destructive",
-	"npm:@diegopetrucci/pi-oracle",
-	"git:github.com/diegopetrucci/pi-rtk",
-	"npm:pi-rtk",
-	"npm:@sherif-fanous/pi-rtk",
-	"git:github.com/sherif-fanous/pi-rtk",
-	"npm:@diegopetrucci/pi-intercom",
-	"npm:pi-intercom",
-	"git:github.com/nicobailon/pi-intercom",
-	"git:github.com/diegopetrucci/pi-intercom",
-]);
+
 
 function purgeForceRemovedRetiredDefaultExtensionPackages(settings: JsonObject, changes: string[]): void {
 	if (!Array.isArray(settings.packages)) return;

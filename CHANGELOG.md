@@ -4,25 +4,19 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
-### Added
-
-- Subagent orchestration is now first-party TLH functionality: the runtime entrypoint, bundled agents, user/maintainer documentation, immutable source provenance, and Nico Bailon's exact MIT notice ship with the root package. Imported test suites live in this repository and run in CI, but are excluded from the published package.
-
 ### Fixed
 
-- Removed stale `/subagents-profiles`, `/subagents-check-profile`, and `/subagents-models` references after those commands left the imported runtime. `/subagents-fleet` is documented with the visible first-party commands, while `/subagent-cost` remains hidden from autocomplete because `/tokens` is TLH's native token report.
 - Architect steering of async child runs now actually works at runtime. The 0.32.0 changelog entry claimed steering support, but `steer` was missing from the allowed action set at that time; it is now included. Steer calls require an explicit `id` and `message`; execution fields (`agent`, `tasks`, `chain`, `context`, `agentScope`) and non-integer `index` values are rejected. `rush` is blocked from `steer` outright because an opaque steer carries no `agent` field, so TLH cannot verify the steered child is not a `developer` subagent. `product` and `bug-hunter` can steer already-started runs — see the accepted issue #330 note in `docs/embedded-subagents.md`.
-
-### Changed
-
-- Install and update now migrate TLH-managed legacy `pi-subagents` npm/git entries to the first-party runtime, preserve failed npm-cleanup ownership evidence for retry, perform guarded best-effort git-checkout cleanup, preserve provably manual entries, and refuse duplicate runtime registration when a recognized external npm/git copy remains. Local/path copies require manual removal or disabling because migration and coexistence detection cannot identify them. The first-party runtime updates with TLH rather than through `config/default-extensions.json`.
 - The `librarian` subagent tool budget was raised from soft 20 / hard 30 to soft 30 / hard 60 so external GitHub research tasks are less likely to end early on budget exhaustion.
 - The architect cleanup guidance now spells out how to delete `tk` tickets: `tk` has no delete subcommand, so ticket files are removed directly with `rm .tickets/<id>.md` after checking for dangling dependency references.
 
+### Minor details
+
+- **`tlh update` now automatically reclaims disk space left behind by retired bundled extensions** ([#438](https://github.com/diegopetrucci/the-last-harness/issues/438)). After each settings merge, TLH drives the isolated Pi runtime's own `pi remove` command to uninstall each retired default extension that is absent from the merged settings and still installed on disk. This covers residue from all previously retired defaults — fff, intercom, rtk, oracle, context-cap, plannotator, librarian, and triage-comments — which together account for roughly 35 MB in a typical profile. Cleanup is always owner-driven (Pi performs the npm uninstall and computes the safe transitive-dep closure; TLH never deletes npm files by hand). A package that still appears in your settings — either because you added it manually or because a provenance check found a user-owned copy — keeps its installed files untouched. The operation is skipped entirely when settings are unreadable and is a no-op under `--dry-run`. Retired profile state directories (such as `agent/intercom/`) are also removed on update. This backfills all existing profiles on the next `tlh update` run.
+
 ### Removed
 
-- The active standalone subagent pin-bump, package-release, and fork-sync workflow is retired. Historical instructions remain inert under `docs/subagents-history/source/`; this does not claim npm deprecation/unpublishing, repository archival, source deletion, or any hosting change.
-- **fff (`npm:@ff-labs/pi-fff`) is no longer a bundled default extension.** TLH-installed copies are automatically removed from the isolated profile on the next `tlh install` or `tlh update` run. TLH determines ownership from the profile's `tlh.defaultExtensionProvenance` metadata: on profiles carrying that metadata (TLH 0.17.0 and later), only copies TLH originally installed are removed and any manually added copy is preserved. On older pre-provenance profiles (TLH 0.16.x and earlier, where fff was a bundled default anyway), TLH infers ownership from the installed package identity and removes it even if it was added manually. Settings are backed up before any write. If you have leftover files under `~/.the-last-harness/agent/npm/node_modules/@ff-labs/`, you may delete that directory manually.
+- The **fff (`npm:@ff-labs/pi-fff`)** extension has been removed.
 
 ## [0.32.0] - 2026-08-03
 

@@ -6,9 +6,9 @@ import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { criticalGitSourceSpec, packageSourceInstallDir, packageSourcePiSource, } from "./lib/tlh-install-package-source.mjs";
+import { criticalGitSourceSpec, packageSourceInstallDir, packageSourcePiSource, parseGitSource, } from "./lib/tlh-install-package-source.mjs";
 import { assertProfilePathWithinAgent, assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, validateInstallerTargets, validateProfileRelativePath, } from "./lib/tlh-install-paths.mjs";
-import { packageIdentity, } from "./lib/default-extensions.mjs";
+import { FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, packageIdentity, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, } from "./lib/default-extensions.mjs";
 import { assignRequiredEqualsValue, backupPathWithTimestamp, isTlhOwnedBackupFilename, renderShellWords, requiredValue, selectExpiredBackups, shellWord, } from "./lib/tlh-install-utils.mjs";
 import { TLH_SUBAGENT_PROMPTS, captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, missingTlhSubagentPrompts, provisionSubagentExtensionConfig, settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts, subagentExtensionConfigMissingDefaults, } from "./lib/tlh-install-subagents.mjs";
 import { assertGitSourceTargetSafe, refreshGitCheckout, } from "./lib/tlh-install-git.mjs";
@@ -491,6 +491,26 @@ function runIsolatedPi(config, commandArgs) {
         displayArgs,
     });
 }
+/**
+ * Like runIsolatedPi but uses allowFailure: true so that Pi's expected
+ * nonzero exit (when no settings entry remains after the post-merge step)
+ * does not throw.  In dry-run, prints the intended command and returns null
+ * without executing anything.  Success must be determined by the caller by
+ * re-checking whether the on-disk residue is gone.
+ */
+function spawnCaptureIsolatedPi(config, commandArgs) {
+    const displayArgs = ["env", `PI_CODING_AGENT_DIR=${config.agentDir}`, ...commandArgs];
+    if (config.dryRun) {
+        printCommand(displayArgs);
+        return null;
+    }
+    assertSafeSettingsTarget(config);
+    return spawnCapture(config, commandArgs, {
+        cwd: config.agentDir,
+        env: { PI_CODING_AGENT_DIR: config.agentDir },
+        allowFailure: true,
+    });
+}
 function supportFileIo() {
     return {
         log: log,
@@ -800,6 +820,94 @@ export const LEGACY_MANAGED_PROFILE_ARTIFACTS = Object.freeze([
 export const RETIRED_PROFILE_FILES = Object.freeze([
     "extensions/librarian.json",
 ]);
+// Retired state directories left by retired default extensions.
+// Each path is relative to config.agentDir and must not contain '..' components.
+// The cleanup is idempotent: absent directories are silently skipped.
+export const RETIRED_PROFILE_DIRECTORIES = Object.freeze([
+    "intercom",
+]);
+/**
+ * Walk agentDir → relativePath, guarding against symlinks at agentDir and at
+ * every existing intermediate directory component.
+ *
+ * Returns the resolved target path when safe, or null when blocked:
+ *   - agentDir is a symlink → null with a warning
+ *   - agentDir exists but is not a directory → null with a warning
+ *   - an intermediate component is a symlink → null with a warning
+ *   - an intermediate component does not exist → null (silent; target absent)
+ *
+ * The caller is responsible for any assertProfilePathWithinAgent call on the
+ * returned target and for any type / existence check on the target itself.
+ */
+function resolveGuardedProfilePath(agentDir, relativePath, label) {
+    if (isSymlink(agentDir)) {
+        warn(`Skipping ${label}: agentDir is a symlink: ${agentDir}`);
+        return null;
+    }
+    if (existsSync(agentDir) && !lstatSync(agentDir).isDirectory()) {
+        warn(`Skipping ${label}: agentDir is not a directory: ${agentDir}`);
+        return null;
+    }
+    const components = relativePath.split("/");
+    const parentComponents = components.slice(0, -1);
+    const lastName = components[components.length - 1];
+    let cursor = agentDir;
+    for (const component of parentComponents) {
+        cursor = join(cursor, component);
+        if (isSymlink(cursor)) {
+            warn(`Skipping ${label} through symlinked parent: ${cursor}`);
+            return null;
+        }
+        if (!existsSync(cursor)) {
+            return null; // silent: target simply does not exist
+        }
+        if (!lstatSync(cursor).isDirectory()) {
+            return null; // non-directory intermediate: treat as absent, never descend
+        }
+    }
+    return join(cursor, lastName);
+}
+function cleanupRelativeProfileDirs(config, relativePaths) {
+    for (const relativePath of relativePaths) {
+        try {
+            validateProfileRelativePath(relativePath, "retired profile directory path");
+        }
+        catch {
+            warn(`Skipping invalid retired profile directory path: ${relativePath}`);
+            continue;
+        }
+        const target = resolveGuardedProfilePath(config.agentDir, relativePath, "retired profile directory cleanup");
+        if (target === null)
+            continue;
+        try {
+            assertProfilePathWithinAgent(config, target, "retired profile directory");
+        }
+        catch (error) {
+            warn(`Skipping retired profile directory cleanup (unsafe path): ${target}: ${error instanceof Error ? error.message : String(error)}`);
+            continue;
+        }
+        if (isSymlink(target))
+            continue;
+        if (!existsSync(target))
+            continue;
+        if (!lstatSync(target).isDirectory())
+            continue;
+        if (config.dryRun) {
+            log(config, `Would remove retired profile directory: ${target}`);
+            continue;
+        }
+        try {
+            rmSync(target, { recursive: true });
+            detailLog(config, `Removed retired profile directory: ${target}`);
+        }
+        catch (error) {
+            warn(`failed to remove retired profile directory ${target}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+}
+export function cleanupRetiredProfileDirectories(config) {
+    cleanupRelativeProfileDirs(config, RETIRED_PROFILE_DIRECTORIES);
+}
 function cleanupRelativeProfileFiles(config, relativePaths) {
     for (const relativePath of relativePaths) {
         try {
@@ -809,30 +917,9 @@ function cleanupRelativeProfileFiles(config, relativePaths) {
             warn(`Skipping invalid retired profile path: ${relativePath}`);
             continue;
         }
-        if (isSymlink(config.agentDir)) {
-            warn(`Skipping retired profile file cleanup: agentDir is a symlink: ${config.agentDir}`);
+        const target = resolveGuardedProfilePath(config.agentDir, relativePath, "retired profile file cleanup");
+        if (target === null)
             continue;
-        }
-        const components = relativePath.split("/");
-        const parentComponents = components.slice(0, -1);
-        const fileName = components[components.length - 1];
-        let cursor = config.agentDir;
-        let skipThis = false;
-        for (const component of parentComponents) {
-            cursor = join(cursor, component);
-            if (isSymlink(cursor)) {
-                warn(`Skipping retired profile file cleanup through symlinked parent: ${cursor}`);
-                skipThis = true;
-                break;
-            }
-            if (!existsSync(cursor)) {
-                skipThis = true;
-                break;
-            }
-        }
-        if (skipThis)
-            continue;
-        const target = join(cursor, fileName);
         try {
             assertProfilePathWithinAgent(config, target, "retired profile file");
         }
@@ -1525,6 +1612,116 @@ function printSummary(config) {
         detailLog(config, `Uninstall: rm -rf "${config.agentDir}"`);
     }
 }
+function retiredSourceIsOnDisk(source, agentDir) {
+    const trimmed = source.trim();
+    let relativePath;
+    if (trimmed.startsWith("npm:")) {
+        const identity = packageIdentity(trimmed);
+        if (!identity || !identity.startsWith("npm:"))
+            return false;
+        const pkgName = identity.slice("npm:".length);
+        if (!pkgName)
+            return false;
+        relativePath = `npm/node_modules/${pkgName}`;
+    }
+    else {
+        const parsed = parseGitSource(trimmed);
+        if (!parsed)
+            return false;
+        relativePath = `git/${parsed.host}/${parsed.path}`;
+    }
+    const target = resolveGuardedProfilePath(agentDir, relativePath, "retired extension residue probe");
+    if (target === null)
+        return false;
+    if (isSymlink(target))
+        return false;
+    if (!existsSync(target))
+        return false;
+    if (!lstatSync(target).isDirectory())
+        return false;
+    return true;
+}
+export function reclaimRetiredExtensionResidues(config) {
+    // Read post-merge settings. Fail-safe: if settings are unreadable or have
+    // an invalid schema, skip all removals rather than risk removing a user-owned
+    // package. Valid JSON with a non-object root (null, array, etc.) or a present
+    // non-array packages field is treated as an invalid schema.
+    let postMergePackages;
+    if (existsSync(config.settingsPath)) {
+        try {
+            const raw = readFileSync(config.settingsPath, "utf8");
+            const parsed = JSON.parse(raw);
+            if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+                warn("skipping retired extension disk reclaim: settings file has invalid schema");
+                return;
+            }
+            const obj = parsed;
+            if ("packages" in obj && !Array.isArray(obj.packages)) {
+                warn("skipping retired extension disk reclaim: settings file has invalid schema");
+                return;
+            }
+            postMergePackages = Array.isArray(obj.packages) ? obj.packages : [];
+        }
+        catch {
+            warn("skipping retired extension disk reclaim: settings file is unreadable");
+            return;
+        }
+    }
+    else {
+        postMergePackages = [];
+    }
+    // FORCE_REMOVED sources are unconditionally removed from settings by the
+    // merge step, so we do not gate on the pre-merge settings file for them —
+    // the settings check would yield a false preserve in dry-run (where the
+    // merge step prints changes without writing).
+    for (const source of FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES) {
+        if (!retiredSourceIsOnDisk(source, config.agentDir))
+            continue;
+        spawnCaptureIsolatedPi(config, [absolutePiCmd(config), "remove", source]);
+        if (!config.dryRun) {
+            // Determine success by verifying the residue is gone, not by exit code:
+            // Pi exits 1 when no settings entry remains (already removed by merge),
+            // but it deletes the files first, so a missing residue means success.
+            if (retiredSourceIsOnDisk(source, config.agentDir)) {
+                warn(`failed to remove retired extension residue ${source}: residue still present after pi remove`);
+            }
+            else {
+                detailLog(config, `Removed retired extension residue: ${source}`);
+            }
+        }
+    }
+    // RETIRED_TLH_DEFAULT_PACKAGE_SOURCES may be kept by users; skip removal
+    // when the identity is still in the post-merge settings file.
+    //
+    // Known dry-run limitation: these sources are provenance-gated, so we cannot
+    // tell whether the merge WOULD have removed the entry without replicating the
+    // merge's provenance decision here. In --dry-run the merge does not write, so
+    // this gate reads pre-merge settings and a TLH-managed copy still listed there
+    // is treated as preserved, omitting a `pi remove` line that a real run would
+    // print. This under-reports (never over-reports) and was accepted over
+    // duplicating provenance logic in the installer, which would risk diverging
+    // from merge-settings. FORCE_REMOVED sources above are unaffected because
+    // their removal is unconditional and needs no settings gate.
+    for (const source of RETIRED_TLH_DEFAULT_PACKAGE_SOURCES) {
+        const identity = packageIdentity(source);
+        if (!identity)
+            continue;
+        // Skip when user has this identity in their post-merge settings.
+        if (postMergePackages.some((entry) => packageIdentity(entry) === identity))
+            continue;
+        if (!retiredSourceIsOnDisk(source, config.agentDir))
+            continue;
+        spawnCaptureIsolatedPi(config, [absolutePiCmd(config), "remove", source]);
+        if (!config.dryRun) {
+            if (retiredSourceIsOnDisk(source, config.agentDir)) {
+                warn(`failed to remove retired extension residue ${source}: residue still present after pi remove`);
+            }
+            else {
+                detailLog(config, `Removed retired extension residue: ${source}`);
+            }
+        }
+    }
+}
 async function runInstallFlow(config) {
     log(config, "The Last Harness installer");
     detailLog(config, `Isolated profile: ${config.agentDir}`);
@@ -1561,8 +1758,11 @@ async function runInstallFlow(config) {
     }
     await mergeSettings(config);
     cleanupLegacyManagedProfileArtifacts(config);
+    cleanupRetiredProfileDirectories(config);
     if (!config.noSettings)
         cleanupRetiredProfileFiles(config);
+    if (!config.noSettings)
+        reclaimRetiredExtensionResidues(config);
     if (!config.noSettings)
         cleanupOldSettingsBackups(config);
     await writeInstallState(config);

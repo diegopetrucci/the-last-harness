@@ -84,6 +84,23 @@ export const RETIRED_TLH_DEFAULT_PACKAGE_SOURCES = Object.freeze([
     "npm:@ff-labs/pi-fff",
     ...RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES,
 ]);
+// Sources of retired default extensions that TLH now removes unconditionally
+// from isolated settings because they should no longer stay installed after
+// install/update reruns.
+export const FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES = Object.freeze([
+    "npm:@diegopetrucci/pi-context-cap",
+    "npm:@diegopetrucci/pi-permission-gate",
+    "npm:@diegopetrucci/pi-confirm-destructive",
+    "npm:@diegopetrucci/pi-oracle",
+    "git:github.com/diegopetrucci/pi-rtk",
+    "npm:pi-rtk",
+    "npm:@sherif-fanous/pi-rtk",
+    "git:github.com/sherif-fanous/pi-rtk",
+    "npm:@diegopetrucci/pi-intercom",
+    "npm:pi-intercom",
+    "git:github.com/nicobailon/pi-intercom",
+    "git:github.com/diegopetrucci/pi-intercom",
+]);
 const TARGETED_DEFAULT_EXTENSION_LOAD_ORDER = [];
 export function packageSourceOf(entry) {
     if (typeof entry === "string")
