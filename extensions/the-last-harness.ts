@@ -16,6 +16,7 @@ import { installTlhModelVisibilityFilter } from "./the-last-harness/model-visibi
 import { installTlhNewVersionNotificationOverride } from "./the-last-harness/new-version-notice.js";
 import { installTlhPackageUpdateNotificationOverride } from "./the-last-harness/package-update-notice.js";
 import { registerTlhPrimaryAgentRuntime } from "./the-last-harness/primary-agent-runtime.js";
+import { registerSubagentSettingsCommand } from "./the-last-harness/subagent-settings.js";
 import { collectStartupResources } from "./the-last-harness/resources.js";
 import { getTlhStartupTip } from "./the-last-harness/startup-tip.js";
 import { createLazyTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage-facade.js";
@@ -199,6 +200,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	});
 	registerEffortCommand(pi, primaryAgentRuntime);
 	registerExperimentalCommand(pi);
+	registerSubagentSettingsCommand(pi);
 	registerLazyTlhTicketWorkflowUi(pi);
 	pi.registerCommand("review", {
 		description: REVIEW_COMMAND_DESCRIPTION,
