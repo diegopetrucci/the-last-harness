@@ -316,7 +316,7 @@ export function validateDispatchAcceptanceInput(input, pathLabel = "acceptance")
     const normalized = normalizeAcceptanceInput(input);
     if (normalizeLevel(normalized.level) !== "reviewed")
         return [];
-    return [`${pathLabel}.level 'reviewed' is not supported at dispatch in this tlh fork because no independent reviewer result can be supplied. Use 'verified' with verify commands instead, or 'checked' for a self-contained acceptance contract.`];
+    return [`${pathLabel}.level 'reviewed' is not supported at dispatch in this first-party TLH runtime because no independent reviewer result can be supplied. Use 'verified' with verify commands instead, or 'checked' for a self-contained acceptance contract.`];
 }
 function normalizeCriteria(criteria, evidence) {
     return (criteria ?? []).map((criterion, index) => {

@@ -339,7 +339,7 @@ export function validateDispatchAcceptanceInput(input: unknown, pathLabel = "acc
 	if (input === undefined || input === false) return [];
 	const normalized = normalizeAcceptanceInput(input as AcceptanceInput | undefined);
 	if (normalizeLevel(normalized.level) !== "reviewed") return [];
-	return [`${pathLabel}.level 'reviewed' is not supported at dispatch in this tlh fork because no independent reviewer result can be supplied. Use 'verified' with verify commands instead, or 'checked' for a self-contained acceptance contract.`];
+	return [`${pathLabel}.level 'reviewed' is not supported at dispatch in this first-party TLH runtime because no independent reviewer result can be supplied. Use 'verified' with verify commands instead, or 'checked' for a self-contained acceptance contract.`];
 }
 
 function normalizeCriteria(criteria: Array<string | { id?: string; must?: string; evidence?: AcceptanceEvidenceKind[]; severity?: "required" | "recommended" }> | undefined, evidence: AcceptanceEvidenceKind[]): ResolvedAcceptanceGate[] {

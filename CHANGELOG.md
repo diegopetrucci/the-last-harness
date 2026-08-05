@@ -6,7 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
-- Subagent orchestration is now first-party TLH functionality: the runtime entrypoint, bundled agents, imported test suites, user/maintainer documentation, immutable source provenance, and Nico Bailon's exact MIT notice all ship with the root package.
+- Subagent orchestration is now first-party TLH functionality: the runtime entrypoint, bundled agents, user/maintainer documentation, immutable source provenance, and Nico Bailon's exact MIT notice ship with the root package. Imported test suites live in this repository and run in CI, but are excluded from the published package.
 
 ### Fixed
 
@@ -15,7 +15,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
-- Install and update now migrate TLH-managed legacy `pi-subagents` npm/git entries to the first-party runtime, retry failed physical cleanup without losing ownership evidence, preserve provably manual entries, and refuse duplicate runtime registration when an external copy remains. The first-party runtime updates with TLH rather than through `config/default-extensions.json`.
+- Install and update now migrate TLH-managed legacy `pi-subagents` npm/git entries to the first-party runtime, preserve failed npm-cleanup ownership evidence for retry, perform guarded best-effort git-checkout cleanup, preserve provably manual entries, and refuse duplicate runtime registration when a recognized external npm/git copy remains. Local/path copies require manual removal or disabling because migration and coexistence detection cannot identify them. The first-party runtime updates with TLH rather than through `config/default-extensions.json`.
 - The `librarian` subagent tool budget was raised from soft 20 / hard 30 to soft 30 / hard 60 so external GitHub research tasks are less likely to end early on budget exhaustion.
 - The architect cleanup guidance now spells out how to delete `tk` tickets: `tk` has no delete subcommand, so ticket files are removed directly with `rm .tickets/<id>.md` after checking for dangling dependency references.
 

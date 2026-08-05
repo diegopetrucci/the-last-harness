@@ -60,7 +60,7 @@ node docs/subagents-history/verify-import.mjs /absolute/path/to/a-verified-pi-su
 
 It verifies the exact source repository commit/tree, include/exclude partition, source and imported blob identities, current historical archive bytes/modes, full-tree tar checksum, ledger counts, import ancestry, and absence of grafted source ancestry. It is not part of `npm run validate` because routine clones do not carry the external repository's Git objects. See [docs/subagents-history/HISTORY.md](docs/subagents-history/HISTORY.md) for the pinned values and independent history-inspection commands.
 
-No standalone subagent publish, release, pin-bump, or upstream-sync check is current TLH validation. Those workflows survive only as inert historical evidence under `docs/subagents-history/source/`.
+No standalone subagent publish, release, pin-bump, or upstream-sync check is current TLH validation. Those workflows survive only as historical evidence under `docs/subagents-history/source/`; never use that archive as a task `cwd`.
 
 ## Useful targeted checks
 
@@ -92,6 +92,8 @@ npm run check:startup-performance
 ```
 
 This is intentionally separate from `npm run validate`. It launches TLH in a PTY and measures timing, so results are sensitive to the current machine and system load.
+
+Ticket `tlh-2ej0` also owns the remaining first-party subagent live-session smoke. `npm run validate` does not replace these checks: against the packaged release candidate, verify the compact parent-facing tool description (including invalid-mode fallback), native `contact_supervisor` coordination, a supported `:max` thinking badge, and delegation to the eight supported TLH minor agents with non-allowlisted blocking, user-scope/fresh-context enforcement, and an async `status`/`resume` cycle. Record the candidate, profile, session evidence, and outcomes on the ticket. The current checkbox form lives in [docs/pin-bump-verification.md](docs/pin-bump-verification.md); its pin/release workflow is retired even though this live-session debt remains.
 
 Release objective: keep the steady-state first TLH header mean below `1000ms`.
 

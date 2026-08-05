@@ -603,6 +603,7 @@ describe("acceptance gates", () => {
 		assert.match(errors[0] ?? "", /reviewed/);
 		assert.match(errors[0] ?? "", /verified/);
 		assert.match(errors[0] ?? "", /verify commands/);
+		assert.doesNotMatch(errors[0] ?? "", /tlh fork/i);
 		assert.match(errors[0] ?? "", /checked/);
 	});
 

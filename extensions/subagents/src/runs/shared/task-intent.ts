@@ -5,7 +5,7 @@
  * explicit acceptance role is present and task wording should resolve only
  * ambiguous intent.
  *
- * `expectsImplementationMutation` preserves the fork's legacy completion-guard
+ * `expectsImplementationMutation` preserves the imported legacy completion-guard
  * behavior for role-less agents. That path intentionally keeps the narrower
  * main-branch read-only precedence so existing completion checks do not change.
  *

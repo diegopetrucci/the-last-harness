@@ -30,7 +30,7 @@ Use `npm run typecheck` for the main repository TypeScript check, `npm run typec
 
 ## Develop the first-party subagent runtime
 
-`extensions/subagents/src/**/*.ts` is authoritative runtime source; same-layout `.js` files are generated. The runtime entrypoint is `extensions/subagents/src/extension/index.js`, declared directly in the root package's `pi.extensions`. It is not a standalone package dependency and must not be released, published, pinned, or upstream-synced separately from TLH. Historical standalone metadata under `docs/subagents-history/source/` is inert evidence, not contributor instruction.
+`extensions/subagents/src/**/*.ts` is authoritative runtime source; same-layout `.js` files are generated. The runtime entrypoint is `extensions/subagents/src/extension/index.js`, declared directly in the root package's `pi.extensions`. It is not a standalone package dependency and must not be released, published, pinned, or upstream-synced separately from TLH. Historical standalone metadata under `docs/subagents-history/source/` is evidence, not contributor instruction; never launch a task with `cwd` beneath that archive because its preserved `AGENTS.md`/`CLAUDE.md` names can be loaded as project context.
 
 Use the narrow imported suites while iterating, then the full repository validation before handoff:
 

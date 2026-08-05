@@ -29,6 +29,11 @@ The archived paths preserve their source-relative names and bytes. In particular
 - `source/.upstream-ledger.jsonl` is the exact six-entry upstream-adoption ledger and is not active TLH policy.
 - The archived package, lockfile, TypeScript, npm, installer, workflow, sync-policy, and release metadata are historical context only. Nothing under `source/` is active TLH configuration or current install, publish, release, pin-bump, or upstream-sync guidance.
 
+Two handling caveats apply:
+
+- npm's package builder omits `.npmrc` files, including archived `source/.npmrc`, from published tarballs. Exact verification of all 17 historical archive files therefore requires a source checkout; a package install is intentionally insufficient even though the manifest and remaining packaged history are available there.
+- Archived `source/AGENTS.md` and `source/CLAUDE.md` retain instruction filenames for byte fidelity. Pi can load such files as project context when a session's working directory is inside the archive. Never launch TLH/Pi or dispatch a task with `cwd` beneath `docs/subagents-history/source/`; inspect the archive from the repository root with read-only file or Git commands instead.
+
 `import-manifest.json` enumerates all 263 tracked source paths. Each of the 250 included files records its exact destination, source/destination Git mode, source blob OID, and SHA-256. Each of the 13 excluded paths records the source mode, blob OID, SHA-256, category, and reason. The exclusions are limited to root VCS/editor metadata, the unrelated `.pi` visual-explainer skill, and standalone banner artwork.
 
 ## First-party integration lineage
@@ -110,7 +115,7 @@ git merge-base --is-ancestor "$TLH_IMPORT_COMMIT" HEAD
 node docs/subagents-history/verify-import.mjs "$SOURCE_REPO"
 ```
 
-The verifier checks the source commit/tree, the complete include/exclude partition, source blob OIDs, SHA-256 values, mapped destination bytes and modes stored in the anchored TLH import commit, ledger entry counts, and that no commit in the source checkpoint's ancestry is reachable from TLH refs. It also requires the import commit to be an ancestor of current `HEAD`. Later functional adaptations may change `extensions/subagents/{src,agents,test}/`; parity is always evaluated at the immutable import commit, while the current historical archive under `source/` must remain unchanged.
+The verifier checks the source commit/tree, the complete include/exclude partition, source blob OIDs, SHA-256 values, mapped destination bytes and modes stored in the anchored TLH import commit, ledger entry counts, and that no commit in the source checkpoint's ancestry is reachable from TLH refs. It also requires the import commit to be an ancestor of current `HEAD`. Later functional adaptations may change `extensions/subagents/{src,agents,test}/`; parity is always evaluated at the immutable import commit, while the current historical archive under `source/` must remain unchanged. Run this exact 17-file archive check from a source checkout, not an npm-installed package, because npm omits the archived `.npmrc`.
 
 The deterministic checksum for the complete 263-file source tree—including excluded paths—is the SHA-256 of the unprefixed tar stream produced by `git archive`:
 
