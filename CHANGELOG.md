@@ -2,10 +2,19 @@
 
 All notable changes to The Last Harness will be documented in this file.
 
-## [Unreleased]
+## [0.33.0] - 2026-08-05
+
+### Added
+
+- Subagent orchestration is now first-party TLH functionality: the runtime entrypoint, bundled agents, user/maintainer documentation, immutable source provenance, and Nico Bailon's exact MIT notice ship with the root package. Imported test suites live in this repository and run in CI, but are excluded from the published package.
+
+### Changed
+
+- Install and update now migrate TLH-managed legacy `pi-subagents` npm/git entries to the first-party runtime, preserve failed npm-cleanup ownership evidence for retry, perform guarded best-effort git-checkout cleanup, preserve provably manual entries, and refuse duplicate runtime registration when a recognized external npm/git copy remains. Local/path copies require manual removal or disabling because migration and coexistence detection cannot identify them. The first-party runtime updates with TLH rather than through `config/default-extensions.json`. The automatic disk-reclaim step (see Minor details below) handles any residual npm artefacts.
 
 ### Fixed
 
+- Removed stale `/subagents-profiles`, `/subagents-check-profile`, and `/subagents-models` references after those commands left the imported runtime. `/subagents-fleet` is documented with the visible first-party commands, while `/subagent-cost` remains hidden from autocomplete because `/tokens` is TLH's native token report.
 - Architect steering of async child runs now actually works at runtime. The 0.32.0 changelog entry claimed steering support, but `steer` was missing from the allowed action set at that time; it is now included. Steer calls require an explicit `id` and `message`; execution fields (`agent`, `tasks`, `chain`, `context`, `agentScope`) and non-integer `index` values are rejected. `rush` is blocked from `steer` outright because an opaque steer carries no `agent` field, so TLH cannot verify the steered child is not a `developer` subagent. `product` and `bug-hunter` can steer already-started runs — see the accepted issue #330 note in `docs/embedded-subagents.md`.
 - The `librarian` subagent tool budget was raised from soft 20 / hard 30 to soft 30 / hard 60 so external GitHub research tasks are less likely to end early on budget exhaustion.
 - The architect cleanup guidance now spells out how to delete `tk` tickets: `tk` has no delete subcommand, so ticket files are removed directly with `rm .tickets/<id>.md` after checking for dangling dependency references.
