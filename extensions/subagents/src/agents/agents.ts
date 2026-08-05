@@ -16,7 +16,6 @@ import { parseFrontmatter } from "./frontmatter.ts";
 import { buildRuntimeName, parsePackageName } from "./identity.ts";
 import { parseModelScopeConfig, type ModelScopeConfig } from "../runs/shared/model-scope.ts";
 export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.ts";
-import { parseMemoryFrontmatter } from "./agent-memory.ts";
 import { isPositiveSafeInteger } from "./execution-ceiling.ts";
 
 export type AgentScope = "user" | "project" | "both";
@@ -24,13 +23,6 @@ export type AgentScope = "user" | "project" | "both";
 export type AgentSource = "builtin" | "package" | "user" | "project";
 type SystemPromptMode = "append" | "replace";
 export type AgentDefaultContext = "fresh" | "fork";
-
-export type AgentMemoryScope = "project" | "user";
-
-export interface AgentMemoryConfig {
-	scope: AgentMemoryScope;
-	path: string;
-}
 
 export const BUILTIN_AGENT_NAMES = [
 	"context-builder",
@@ -136,7 +128,6 @@ export interface AgentConfig {
 	completionGuard?: boolean;
 	toolBudget?: ToolBudgetConfig;
 	maxExecutionTimeMs?: number;
-	memory?: AgentMemoryConfig;
 	disabled?: boolean;
 	extraFields?: Record<string, string>;
 	override?: BuiltinAgentOverrideInfo;
@@ -1421,7 +1412,6 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			completionGuard,
 			toolBudget,
 			maxExecutionTimeMs,
-			memory: parseMemoryFrontmatter(frontmatter.memory),
 			extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,
 		};
 		agentFrontmatterFields.set(agent, new Set(Object.keys(frontmatter)));

@@ -11,7 +11,6 @@ import { parseFrontmatter } from "./frontmatter.js";
 import { buildRuntimeName, parsePackageName } from "./identity.js";
 import { parseModelScopeConfig } from "../runs/shared/model-scope.js";
 export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.js";
-import { parseMemoryFrontmatter } from "./agent-memory.js";
 import { isPositiveSafeInteger } from "./execution-ceiling.js";
 export const BUILTIN_AGENT_NAMES = [
     "context-builder",
@@ -1176,7 +1175,6 @@ function loadAgentsFromDir(dir, source) {
             completionGuard,
             toolBudget,
             maxExecutionTimeMs,
-            memory: parseMemoryFrontmatter(frontmatter.memory),
             extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,
         };
         agentFrontmatterFields.set(agent, new Set(Object.keys(frontmatter)));

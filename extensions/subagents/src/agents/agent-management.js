@@ -481,8 +481,6 @@ function formatAgentDetail(agent) {
         lines.push("Completion guard: false");
     if (agent.toolBudget)
         lines.push(`Tool budget: ${JSON.stringify(agent.toolBudget)}`);
-    if (agent.memory)
-        lines.push(`Memory: ${agent.memory.scope} scope, path: ${agent.memory.path}`);
     if (agent.systemPrompt.trim())
         lines.push("", "System Prompt:", agent.systemPrompt);
     return lines.join("\n");

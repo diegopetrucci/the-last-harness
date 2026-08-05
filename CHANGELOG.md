@@ -16,6 +16,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Removed
 
+- Removed the `agent-memory` module (`extensions/subagents/src/agents/agent-memory.ts`) and its test (`extensions/subagents/test/unit/agent-memory.test.ts`): no TLH agent declares the `memory` frontmatter field, and TLH is the only consumer. The `AgentMemoryScope` type, `AgentMemoryConfig` interface, and `memory` field are removed from `AgentConfig`; the `buildAgentMemoryInjection` call sites are removed from `execution.ts` and `async-execution.ts`.
 - The **fff (`npm:@ff-labs/pi-fff`)** extension has been removed.
 
 ## [0.32.0] - 2026-08-03

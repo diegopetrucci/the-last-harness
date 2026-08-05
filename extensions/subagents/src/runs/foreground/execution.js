@@ -7,7 +7,6 @@ import { DEFAULT_MAX_OUTPUT, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESP
 import { DEFAULT_CONTROL_CONFIG, buildControlEvent, claimControlNotification, deriveActivityState, shouldNotifyControlEvent, } from "../shared/subagent-control.js";
 import { getFinalOutput, findLatestSessionFile, detectSubagentError, extractToolArgsPreview, extractTextFromContent, formatErrorWithOutput, synthesizeChildExitDiagnostic, } from "../../shared/utils.js";
 import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.js";
-import { buildAgentMemoryInjection } from "../../agents/agent-memory.js";
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.js";
 import { getPiSpawnCommand } from "../shared/pi-spawn.js";
 import { createJsonlWriter } from "../../shared/jsonl-writer.js";
@@ -1324,10 +1323,6 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
     if (resolvedSkills.length > 0) {
         const skillInjection = buildSkillInjection(resolvedSkills);
         systemPrompt = systemPrompt ? `${systemPrompt}\n\n${skillInjection}` : skillInjection;
-    }
-    const memoryInjection = buildAgentMemoryInjection(agent, skillCwd);
-    if (memoryInjection) {
-        systemPrompt = systemPrompt ? `${systemPrompt}\n\n${memoryInjection}` : memoryInjection;
     }
     systemPrompt = injectOutputPathSystemPrompt(systemPrompt, options.outputPath);
     const fallbackModels = buildFallbackModelList(options.fallbackModels, agent.fallbackModels);

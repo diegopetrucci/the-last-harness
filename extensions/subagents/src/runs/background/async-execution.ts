@@ -14,7 +14,6 @@ import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveS
 import type { RunnerStep } from "../shared/parallel-utils.ts";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
-import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
 import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/utils.ts";
 import { buildFallbackModelList, buildModelCandidates, resolveSubagentModelOverride, type AvailableModelInfo, type ParentModel } from "../shared/model-fallback.ts";
@@ -421,10 +420,6 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		if (resolvedSkills.length > 0) {
 			const injection = buildSkillInjection(resolvedSkills);
 			systemPrompt = systemPrompt ? `${systemPrompt}\n\n${injection}` : injection;
-		}
-		const memoryInjection = buildAgentMemoryInjection(a, stepCwd);
-		if (memoryInjection) {
-			systemPrompt = systemPrompt ? `${systemPrompt}\n\n${memoryInjection}` : memoryInjection;
 		}
 
 		const readInstructions = buildChainInstructions({ ...behavior, output: false, progress: false }, instructionCwd, false);
@@ -873,10 +868,6 @@ export function executeAsyncSingle(
 	if (resolvedSkills.length > 0) {
 		const injection = buildSkillInjection(resolvedSkills);
 		systemPrompt = systemPrompt ? `${systemPrompt}\n\n${injection}` : injection;
-	}
-	const memoryInjection = buildAgentMemoryInjection(agentConfig, runnerCwd);
-	if (memoryInjection) {
-		systemPrompt = systemPrompt ? `${systemPrompt}\n\n${memoryInjection}` : memoryInjection;
 	}
 
 	const inheritedNestedRoute = resolveInheritedNestedRouteFromEnv();

@@ -27,7 +27,6 @@ export const KNOWN_FIELDS = new Set([
 	"maxExecutionTimeMs",
 	"completionGuard",
 	"toolBudget",
-	"memory",
 ]);
 
 function joinComma(values: string[] | undefined): string | undefined {
@@ -100,12 +99,6 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 	}
 	if (config.toolBudget || preserve("toolBudget")) {
 		lines.push(`toolBudget: ${config.toolBudget ? JSON.stringify(config.toolBudget) : ""}`);
-	}
-
-	if (config.memory) {
-		lines.push("memory:");
-		lines.push(`  scope: ${config.memory.scope}`);
-		lines.push(`  path: ${config.memory.path}`);
 	}
 
 	if (config.extraFields) {
