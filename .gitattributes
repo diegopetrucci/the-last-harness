@@ -107,7 +107,6 @@ extensions/subagents/src/extension/fanout-child.js linguist-generated=true
 extensions/subagents/src/extension/index.js linguist-generated=true
 extensions/subagents/src/extension/live-detail-shortcut.js linguist-generated=true
 extensions/subagents/src/extension/pause-all-shortcut.js linguist-generated=true
-extensions/subagents/src/extension/rpc.js linguist-generated=true
 extensions/subagents/src/extension/runtime-cleanup.js linguist-generated=true
 extensions/subagents/src/extension/schemas.js linguist-generated=true
 extensions/subagents/src/extension/tool-description.js linguist-generated=true

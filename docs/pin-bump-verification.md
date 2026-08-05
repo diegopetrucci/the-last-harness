@@ -6,7 +6,7 @@ Older TLH releases installed and pinned a separate `@diegopetrucci/pi-subagents`
 
 ## Current validation boundary
 
-The imported unit/integration/E2E suites, focused TLH regressions, package assertions, and provenance checks now run through the root repository. They cover compact-description selection and fallback, the default-off RPC bridge, the closed action surface, bundled-agent safety, async status, steering, and resume mechanics.
+The imported unit/integration/E2E suites, focused TLH regressions, package assertions, and provenance checks now run through the root repository. They cover compact-description selection and fallback, the closed action surface, bundled-agent safety, async status, steering, and resume mechanics.
 
 `npm run validate` does **not** replace the former live-session checks. Rendering and real parent/child coordination still require release-tier validation in an installed TLH session. That remaining debt belongs to ticket `tlh-2ej0`, not to a package pin bump; issue #346 remains a historical tracker for the old delivery mechanism.
 

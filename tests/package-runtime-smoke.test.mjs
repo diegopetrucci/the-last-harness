@@ -92,7 +92,7 @@ Return the deterministic faux child marker exactly.
 	]
 		.map((path) => path.replace(/\.ts$/, ".js"))
 		.sort();
-	assert.equal(generatedExtensionPaths.length, 167);
+	assert.equal(generatedExtensionPaths.length, 166);
 	for (const generatedPath of generatedExtensionPaths) {
 		assert.ok(packedPaths.has(generatedPath), `npm pack omitted generated extension module ${generatedPath}`);
 	}
@@ -147,24 +147,6 @@ Return the deterministic faux child marker exactly.
 	assert.deepEqual(runtimeEvidence.toolCounts, { subagent: 1 });
 	assert.equal(runtimeEvidence.factoryExecutions, 3);
 	assert.equal(runtimeEvidence.failedSubagentPatched, true);
-	assert.deepEqual(runtimeEvidence.rpc, {
-		packagedBridge: {
-			ready: true,
-			ping: true,
-			requestListenersAfterRegister: 1,
-			requestListenersAfterFirstDispose: 0,
-			requestListenersAfterReregister: 1,
-			requestListenersAfterDispose: 0,
-		},
-		loadedLifecycle: {
-			defaultOffRequestListeners: 0,
-			defaultOffReadyEvents: 0,
-			enabledRequestListeners: 1,
-			enabledReadyEvents: 1,
-			requestListenersAfterReload: 1,
-			requestListenersAfterShutdown: 0,
-		},
-	});
 	const expectedExecutedChildExtensionPaths = [
 		"extensions/subagents/src/runs/shared/subagent-prompt-runtime.js",
 	];
