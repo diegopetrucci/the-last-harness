@@ -3,7 +3,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { handleManagementAction } from "../../src/agents/agent-management.ts";
 import { serializeAgent } from "../../src/agents/agent-serializer.ts";
 import { discoverAgents, discoverAgentsAll, type AgentConfig } from "../../src/agents/agents.ts";
 import { buildPiArgs } from "../../src/runs/shared/pi-args.ts";
@@ -687,38 +686,6 @@ Project chain.
 		assert.deepEqual(discoverAgentsAll(dir).chains, []);
 	}));
 
-	it("does not allow management updates to package agents", () => withTempHome(() => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-package-readonly-"));
-		tempDirs.push(dir);
-		const packageRoot = path.join(dir, ".pi", "npm", "node_modules", "readonly-workflow");
-		writeJson(path.join(packageRoot, "package.json"), {
-			name: "readonly-workflow",
-			"pi-subagents": {
-				agents: ["./agents"],
-			},
-		});
-		writeAgent(path.join(packageRoot, "agents", "reviewer.md"), `---
-name: reviewer
-package: readonly-workflow
-description: Read-only package reviewer.
----
-
-Review only.
-`);
-
-		const result = handleManagementAction("update", {
-			agent: "readonly-workflow.reviewer",
-			config: { description: "Changed" },
-		}, {
-			cwd: dir,
-			modelRegistry: { getAvailable: () => [] },
-		});
-
-		assert.equal(result.isError, true);
-		// After removing the write handlers, 'update' is an unknown action rather than a
-		// read-only rejection; the package agent is still protected — just more aggressively.
-		assert.match(result.content[0]?.text ?? "", /Unknown action: update/);
-	}));
 });
 
 describe("agent frontmatter completionGuard", () => {

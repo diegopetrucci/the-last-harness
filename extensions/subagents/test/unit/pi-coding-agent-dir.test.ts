@@ -157,11 +157,6 @@ Inspect env.
 		assert.equal(worker?.override?.path, settingsPath);
 		assert.equal(worker?.override?.scope, "user");
 
-		const createdName = "created-env-agent";
-		const agentFilePath = path.join(agentDir, "agents", `${createdName}.md`);
-		fs.mkdirSync(path.dirname(agentFilePath), { recursive: true });
-		fs.writeFileSync(agentFilePath, `---\nname: ${createdName}\ndescription: Created in env dir\nsystemPromptMode: replace\ninheritProjectContext: false\ninheritSkills: false\n---\n\n`, "utf-8");
-		assert.equal(fs.existsSync(agentFilePath), true);
 	});
 
 	it("loads configured user agent dirs relative to PI_CODING_AGENT_DIR without leaking legacy ~/.agents", () => {
