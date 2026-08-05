@@ -2,6 +2,12 @@
 
 All notable changes to The Last Harness will be documented in this file.
 
+## Unreleased
+
+### Removed
+
+- Removed the seven unreachable mutating agent-management verbs (`create`, `update`, `delete`, `eject`, `disable`, `enable`, `reset`). The subagent tool's `action` schema enum (`extensions/subagents/src/extension/schemas.ts`) admits only `list`, `get`, `models`, `status`, `interrupt`, `resume`, `steer`, and `doctor`; none of the write verbs can be named by any caller. Also removed the now-vestigial `MUTATING_MANAGEMENT_ACTIONS` belt-gate in `subagent-executor.ts`. The `allowMutatingManagementActions` flag is retained; its surviving role (discriminating child-safe fanout mode for nested run-id resolution) is unchanged — renaming is deferred to issue #449.
+
 ## [0.33.0] - 2026-08-05
 
 ### Added
