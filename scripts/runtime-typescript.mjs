@@ -3,11 +3,11 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir as systemTmpDir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const VALID_MODES = new Set(["build", "check", "typecheck"]);
-const VALID_TARGET_IDS = new Set(["scripts", "extensions"]);
+const VALID_TARGET_IDS = new Set(["scripts", "extensions", "subagents"]);
 
 const require = createRequire(import.meta.url);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -17,14 +17,18 @@ function resolveOverridePath(value, fallback) {
 	return value ? resolve(value) : fallback;
 }
 
+function existingRealpaths(paths) {
+	return paths.filter((path) => existsSync(path)).map((path) => realpathSync(path));
+}
+
 function resolveConfiguredTargets(repoRoot) {
-	const configuredTargetIds = (process.env.TLH_RUNTIME_TYPESCRIPT_TARGETS ?? "scripts,extensions")
+	const configuredTargetIds = (process.env.TLH_RUNTIME_TYPESCRIPT_TARGETS ?? "scripts,extensions,subagents")
 		.split(",")
 		.map((value) => value.trim())
 		.filter(Boolean);
 
 	if (configuredTargetIds.length === 0) {
-		throw new Error("TLH_RUNTIME_TYPESCRIPT_TARGETS must include at least one of: scripts, extensions.");
+		throw new Error("TLH_RUNTIME_TYPESCRIPT_TARGETS must include at least one of: scripts, extensions, subagents.");
 	}
 
 	const invalidTargetIds = configuredTargetIds.filter((value) => !VALID_TARGET_IDS.has(value));
@@ -50,6 +54,19 @@ function resolveConfiguredTargets(repoRoot) {
 			};
 		}
 
+		if (targetId === "subagents") {
+			return {
+				id: "subagents",
+				label: "extensions/subagents/src/**/*.ts",
+				sourceDir: realpathSync(resolveOverridePath(process.env.TLH_RUNTIME_TYPESCRIPT_SUBAGENTS_DIR, join(repoRoot, "extensions/subagents/src"))),
+				tsconfigPath: realpathSync(
+					resolveOverridePath(process.env.TLH_RUNTIME_TYPESCRIPT_SUBAGENTS_TSCONFIG, join(repoRoot, "tsconfig.runtime-subagents.json")),
+				),
+				sourceExtension: ".ts",
+				outputExtension: ".js",
+			};
+		}
+
 		return {
 			id: "extensions",
 			label: "extensions/**/*.ts",
@@ -59,6 +76,7 @@ function resolveConfiguredTargets(repoRoot) {
 			),
 			sourceExtension: ".ts",
 			outputExtension: ".js",
+			excludedSourceDirs: existingRealpaths([join(repoRoot, "extensions/subagents")]),
 		};
 	});
 }
@@ -96,13 +114,19 @@ function usage() {
 	console.error("Usage: node scripts/runtime-typescript.mjs <build|check|typecheck>");
 }
 
-function listRuntimeTypescriptSources(dir, sourceExtension) {
+function pathWithinOrEqual(parentPath, childPath) {
+	const childRelativePath = relative(parentPath, childPath);
+	return childRelativePath === "" || (!childRelativePath.startsWith("..") && !isAbsolute(childRelativePath));
+}
+
+function listRuntimeTypescriptSources(dir, sourceExtension, excludedSourceDirs = []) {
 	const entries = readdirSync(dir, { withFileTypes: true });
 	const files = [];
 	for (const entry of entries) {
 		const entryPath = join(dir, entry.name);
+		if (excludedSourceDirs.some((excludedSourceDir) => pathWithinOrEqual(excludedSourceDir, entryPath))) continue;
 		if (entry.isDirectory()) {
-			files.push(...listRuntimeTypescriptSources(entryPath, sourceExtension));
+			files.push(...listRuntimeTypescriptSources(entryPath, sourceExtension, excludedSourceDirs));
 			continue;
 		}
 		if (entry.name.endsWith(sourceExtension) && !entry.name.endsWith(`.d${sourceExtension}`)) {
@@ -167,6 +191,8 @@ function listRegisteredTargetOutputs(config, target) {
 	const targetRootPrefix = `${relativeRepoPath(target.sourceDir, config.repoRoot)}/`;
 	return [...config.generatedOutputRegistry]
 		.filter((relativePath) => relativePath.startsWith(targetRootPrefix) && relativePath.endsWith(target.outputExtension))
+		.filter((relativePath) => !(target.excludedSourceDirs ?? []).some((excludedSourceDir) =>
+			pathWithinOrEqual(excludedSourceDir, join(config.repoRoot, relativePath))))
 		.sort();
 }
 
@@ -329,7 +355,7 @@ function main() {
 	const targetsWithSources = config.targets
 		.map((target) => ({
 			target,
-			sources: listRuntimeTypescriptSources(target.sourceDir, target.sourceExtension),
+			sources: listRuntimeTypescriptSources(target.sourceDir, target.sourceExtension, target.excludedSourceDirs),
 		}))
 		.filter(({ sources }) => sources.length > 0);
 	if (targetsWithSources.length === 0) {

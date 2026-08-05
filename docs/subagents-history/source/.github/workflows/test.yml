@@ -1,0 +1,45 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  typecheck:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Install devDependencies
+        run: npm ci --ignore-scripts
+      - name: Typecheck production source
+        run: npm run typecheck
+
+  test:
+    needs: typecheck
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Install devDependencies
+        run: npm ci --ignore-scripts
+      - name: Unit tests
+        run: npm test
+      - name: Integration tests
+        run: npm run test:integration
+      - name: E2E tests
+        run: npm run test:e2e

@@ -1,7 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { packageSourceInstallDir } from "./tlh-install-package-source.mjs";
-import { copySafeProfileFile, ensureSafeProfileDir } from "./tlh-install-paths.mjs";
+import { spawnSync } from "node:child_process";
+import { existsSync, lstatSync, readFileSync, readdirSync, rmdirSync, rmSync } from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
+import { RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./default-extensions.mjs";
+import { criticalGitSourceSpec, packageSourceInstallDir } from "./tlh-install-package-source.mjs";
+import { assertProfilePathWithinAgent, copySafeProfileFile, ensureSafeProfileDir, isSymlink } from "./tlh-install-paths.mjs";
 import { readJsonFile } from "./tlh-install-utils.mjs";
 import { writeSafeProfileFile } from "./tlh-safe-profile-write.mjs";
 const TLH_SUBAGENT_PROMPTS = Object.freeze([
@@ -18,6 +20,301 @@ function isPlainObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 export { TLH_SUBAGENT_PROMPTS };
+function logRetiredSubagentCleanup(config, message) {
+    if (!config.quiet)
+        console.log(message);
+}
+function warnRetiredSubagentCleanup(message) {
+    console.error(`warning: ${message}`);
+}
+function packageNameFromNpmSource(source) {
+    const spec = source.trim().slice("npm:".length).trim();
+    if (!spec)
+        return undefined;
+    if (spec.startsWith("@")) {
+        const separator = spec.indexOf("@", 1);
+        return separator === -1 ? spec : spec.slice(0, separator);
+    }
+    const separator = spec.indexOf("@");
+    return separator === -1 ? spec : spec.slice(0, separator);
+}
+function sourceInstallPath(agentDir, source) {
+    const trimmed = source.trim();
+    if (trimmed.startsWith("npm:")) {
+        const packageName = packageNameFromNpmSource(trimmed);
+        if (!packageName)
+            return undefined;
+        return { path: join(agentDir, "npm"), kind: "npm", packageName };
+    }
+    const spec = criticalGitSourceSpec(trimmed, { agentDir });
+    if (!spec)
+        return undefined;
+    return { path: spec.targetDir, kind: "git" };
+}
+function pathWithin(root, target) {
+    const normalizedRoot = resolve(root);
+    const normalizedTarget = resolve(target);
+    return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}${sep}`);
+}
+function hasSymlinkedParent(root, target) {
+    let current = dirname(target);
+    const resolvedRoot = resolve(root);
+    while (pathWithin(resolvedRoot, current) && current !== resolvedRoot) {
+        if (isSymlink(current))
+            return true;
+        current = dirname(current);
+    }
+    return false;
+}
+function gitInstallationIsOwned(path) {
+    try {
+        return lstatSync(path).isDirectory() && existsSync(join(path, ".git"));
+    }
+    catch {
+        return false;
+    }
+}
+function configuredNpmCommand(settings) {
+    if (!isPlainObject(settings) || settings.npmCommand === undefined)
+        return undefined;
+    if (!Array.isArray(settings.npmCommand) || settings.npmCommand.some((value) => typeof value !== "string")) {
+        throw new Error("invalid npmCommand in isolated settings: expected an array of strings");
+    }
+    if (settings.npmCommand.length === 0)
+        return undefined;
+    const command = settings.npmCommand;
+    if (!command[0])
+        throw new Error("invalid npmCommand in isolated settings: first entry must be a non-empty command");
+    return [...command];
+}
+/** Read the package-manager command that was active before settings migration. */
+export function captureRetiredSubagentNpmCommand(settingsPath) {
+    if (!settingsPath || !existsSync(settingsPath))
+        return undefined;
+    try {
+        return configuredNpmCommand(readJsonFile(settingsPath));
+    }
+    catch (error) {
+        if (error instanceof SyntaxError)
+            return undefined;
+        throw error;
+    }
+}
+function packageManagerCommand(config) {
+    const configured = config.npmCommand ?? (config.settingsPath ? captureRetiredSubagentNpmCommand(config.settingsPath) : undefined);
+    const values = configured && configured.length > 0 ? [...configured] : ["npm"];
+    const [command, ...args] = values;
+    if (!command)
+        throw new Error("invalid npmCommand: first entry must be a non-empty command");
+    const separatorIndex = values.lastIndexOf("--");
+    const packageManagerExecutable = separatorIndex >= 0 ? values[separatorIndex + 1] : command;
+    const name = packageManagerExecutable ? basename(packageManagerExecutable).replace(/\.(cmd|exe)$/i, "") : "";
+    return { command, args, name };
+}
+function packageManagerUninstallArgs(packageName, installRoot, packageManagerName) {
+    if (packageManagerName === "bun") {
+        return ["uninstall", packageName, "--cwd", installRoot];
+    }
+    const args = ["uninstall", packageName, "--prefix", installRoot];
+    if (packageManagerName !== "pnpm")
+        args.push("--legacy-peer-deps");
+    return args;
+}
+function defaultPackageManagerRunner(command, args, options) {
+    const result = spawnSync(command, args, {
+        cwd: options.cwd,
+        env: options.env,
+        encoding: "utf8",
+        maxBuffer: 20 * 1024 * 1024,
+    });
+    return {
+        status: result.status,
+        stdout: result.stdout || "",
+        stderr: result.stderr || "",
+        error: result.error,
+    };
+}
+function commandFailureSummary(result) {
+    if (result.error)
+        return result.error.message;
+    const lines = `${result.stderr || ""}\n${result.stdout || ""}`
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+    const conciseLines = lines.length > 8 ? [...lines.slice(0, 4), ...lines.slice(-4)] : lines;
+    return conciseLines.join(" | ") || `exit ${result.status ?? "unknown"}`;
+}
+function npmPackageStillDeclared(installRoot, packageName) {
+    const packageJsonPath = join(installRoot, "package.json");
+    if (!existsSync(packageJsonPath))
+        return false;
+    try {
+        const packageJson = readJsonFile(packageJsonPath);
+        return ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"].some((field) => {
+            const dependencies = packageJson[field];
+            return isPlainObject(dependencies) && Object.hasOwn(dependencies, packageName);
+        });
+    }
+    catch {
+        return true;
+    }
+}
+function npmPackageStillInstalled(installRoot, packageName) {
+    const packagePath = join(installRoot, "node_modules", packageName);
+    if (!existsSync(packagePath))
+        return false;
+    try {
+        return readJsonFile(join(packagePath, "package.json")).name === packageName;
+    }
+    catch {
+        return true;
+    }
+}
+/**
+ * Capture package entries that the old TLH default owned before settings merge.
+ * A profile without provenance is treated as a pre-provenance TLH profile, as
+ * with the other retired defaults; a provenance block makes manual ownership
+ * explicit and therefore keeps unlisted external entries safe.
+ */
+export function managedRetiredSubagentPackages(settings) {
+    if (!isPlainObject(settings) || !Array.isArray(settings.packages))
+        return [];
+    const provenance = readDefaultExtensionProvenance(settings).managedPackageIdentities;
+    const managed = withLegacyRetiredDefaultPackageIdentities(settings, provenance, RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES);
+    const candidates = [];
+    const seen = new Set();
+    for (const entry of settings.packages) {
+        const source = packageSourceOf(entry);
+        const identity = packageIdentity(entry);
+        if (!source || !identity || !managed.has(identity) || seen.has(identity))
+            continue;
+        if (!RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES.some((known) => packageIdentity(known) === identity))
+            continue;
+        seen.add(identity);
+        candidates.push({ source, identity });
+    }
+    return candidates;
+}
+/** Read and capture managed retired subagent entries before merge removes them. */
+export function captureManagedRetiredSubagentPackages(settingsPath) {
+    if (!settingsPath || !existsSync(settingsPath))
+        return [];
+    try {
+        return managedRetiredSubagentPackages(readJsonFile(settingsPath));
+    }
+    catch {
+        return [];
+    }
+}
+/**
+ * Physically remove entries captured from settings before merging those settings.
+ * This preserves package ownership evidence when npm uninstall fails, so a later
+ * installer or doctor run can retry. npm entries use the same configured package-
+ * manager semantics as Pi so package.json, lockfiles, and node_modules converge
+ * together. Git entries retain guarded filesystem cleanup because their package-
+ * manager state lives in settings.json.
+ */
+export function cleanupManagedRetiredSubagentPackages(config, candidates) {
+    const cleanupResult = {
+        uninstalledNpmPackages: [],
+        removedGitPaths: [],
+        plannedNpmPackages: [],
+        plannedGitPaths: [],
+    };
+    if (!config.agentDir || isSymlink(config.agentDir)) {
+        if (candidates.length > 0)
+            warnRetiredSubagentCleanup(`skipping retired subagent package cleanup for unsafe agent dir: ${config.agentDir}`);
+        return cleanupResult;
+    }
+    for (const candidate of candidates) {
+        const install = sourceInstallPath(config.agentDir, candidate.source);
+        if (!install)
+            continue;
+        if (!pathWithin(config.agentDir, install.path) || hasSymlinkedParent(config.agentDir, install.path) || isSymlink(install.path)) {
+            warnRetiredSubagentCleanup(`skipping retired subagent package cleanup for unsafe path: ${install.path}`);
+            continue;
+        }
+        if (!existsSync(install.path))
+            continue;
+        try {
+            if (!lstatSync(install.path).isDirectory()) {
+                warnRetiredSubagentCleanup(`skipping retired subagent package cleanup for non-directory path: ${install.path}`);
+                continue;
+            }
+            assertProfilePathWithinAgent({ agentDir: config.agentDir }, install.path, "retired subagent package");
+        }
+        catch (error) {
+            warnRetiredSubagentCleanup(`skipping retired subagent package cleanup for unsafe path: ${install.path}: ${error instanceof Error ? error.message : String(error)}`);
+            continue;
+        }
+        if (install.kind === "npm") {
+            if (!npmPackageStillDeclared(install.path, install.packageName) && !npmPackageStillInstalled(install.path, install.packageName)) {
+                continue;
+            }
+            if (config.dryRun) {
+                cleanupResult.plannedNpmPackages.push(install.packageName);
+                logRetiredSubagentCleanup(config, `Would uninstall retired TLH subagent npm package: ${install.packageName} from ${install.path}`);
+                continue;
+            }
+            const npmCommand = packageManagerCommand(config);
+            const args = [...npmCommand.args, ...packageManagerUninstallArgs(install.packageName, install.path, npmCommand.name)];
+            const runner = config.runPackageManager ?? defaultPackageManagerRunner;
+            const commandResult = runner(npmCommand.command, args, {
+                cwd: config.agentDir,
+                env: {
+                    ...process.env,
+                    ...config.env,
+                    NPM_CONFIG_AUDIT: "false",
+                    NPM_CONFIG_FUND: "false",
+                    NPM_CONFIG_LOGLEVEL: "error",
+                },
+            });
+            if (commandResult.status !== 0) {
+                throw new Error(`failed to uninstall retired TLH subagent npm package ${install.packageName}: ${commandFailureSummary(commandResult)}`);
+            }
+            if (npmPackageStillDeclared(install.path, install.packageName) || npmPackageStillInstalled(install.path, install.packageName)) {
+                throw new Error(`package manager reported success but retired TLH subagent npm package remains installed: ${install.packageName}`);
+            }
+            cleanupResult.uninstalledNpmPackages.push(install.packageName);
+            logRetiredSubagentCleanup(config, `Uninstalled retired TLH subagent npm package: ${install.packageName} from ${install.path}`);
+            continue;
+        }
+        if (!gitInstallationIsOwned(install.path))
+            continue;
+        if (config.dryRun) {
+            cleanupResult.plannedGitPaths.push(install.path);
+            logRetiredSubagentCleanup(config, `Would remove retired TLH subagent git package installation: ${install.path}`);
+            continue;
+        }
+        try {
+            rmSync(install.path, { recursive: true, force: true });
+            cleanupResult.removedGitPaths.push(install.path);
+            logRetiredSubagentCleanup(config, `Removed retired TLH subagent git package installation: ${install.path}`);
+        }
+        catch (error) {
+            warnRetiredSubagentCleanup(`failed to remove retired subagent git package installation ${install.path}: ${error instanceof Error ? error.message : String(error)}`);
+            continue;
+        }
+        const gitRoot = join(config.agentDir, "git");
+        let parent = dirname(install.path);
+        while (pathWithin(gitRoot, parent) && parent !== gitRoot) {
+            if (isSymlink(parent))
+                break;
+            try {
+                if (readdirSync(parent).length !== 0)
+                    break;
+                // rmdirSync removes empty directories atomically and fails with
+                // ENOTEMPTY if the directory becomes non-empty concurrently.
+                rmdirSync(parent);
+            }
+            catch {
+                break;
+            }
+            parent = dirname(parent);
+        }
+    }
+    return cleanupResult;
+}
 export function settingsRequireTlhSubagentPrompts(defaultsFile, { noSettings = false } = {}) {
     if (noSettings || !defaultsFile || !existsSync(defaultsFile))
         return false;
@@ -116,8 +413,8 @@ export function copyTlhSubagentPrompts(config, sourceDir, { prompts = TLH_SUBAGE
  * update; missing defaults are re-provisioned. Valid non-object or unreadable
  * config files are preserved untouched.
  *
- * Runtime note: toolDescriptionMode requires pi-subagents >= v0.33.0
- * (fork feature). Older builds simply ignore the unknown key.
+ * Runtime note: toolDescriptionMode is consumed by TLH's first-party
+ * subagent runtime. Retired external builds may ignore the unknown key.
  */
 const TLH_TOOL_DESCRIPTION_MODE = "compact";
 const TLH_ACTIVE_NOTICE_AFTER_MS = 270000;

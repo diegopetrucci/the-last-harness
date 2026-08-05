@@ -13,6 +13,9 @@ import {
 	type DefaultExtensionEntry,
 } from "./lib/default-extensions.mjs";
 import {
+	captureManagedRetiredSubagentPackages,
+	captureRetiredSubagentNpmCommand,
+	cleanupManagedRetiredSubagentPackages,
 	copyTlhSubagentPrompts,
 	missingTlhSubagentPrompts,
 	restoreNeededTlhSubagentPrompts,
@@ -596,7 +599,35 @@ function repairAction(level: RepairLevel, label: string, detail: string): Repair
 	return { level, label, detail };
 }
 
-function repairSettings(packageRoot: string, settingsPath: string, env: NodeJS.ProcessEnv): RepairAction {
+function repairSettings(packageRoot: string, agentDir: string, settingsPath: string, env: NodeJS.ProcessEnv): RepairAction {
+	const retiredSubagentPackages = captureManagedRetiredSubagentPackages(settingsPath);
+	let npmCommand: string[] | undefined;
+	if (retiredSubagentPackages.length > 0) {
+		try {
+			npmCommand = captureRetiredSubagentNpmCommand(settingsPath);
+		} catch (error) {
+			return repairAction("FAIL", "settings drift", `could not read retired subagent package-manager settings (${error instanceof Error ? error.message : String(error)})`);
+		}
+	}
+
+	let physicalCleanupDetail: string;
+	try {
+		const cleanup = cleanupManagedRetiredSubagentPackages(
+			{ agentDir, settingsPath, npmCommand, env, dryRun: false, quiet: true },
+			retiredSubagentPackages,
+		);
+		const details: string[] = [];
+		if (cleanup.uninstalledNpmPackages.length > 0) {
+			details.push(`uninstalled ${cleanup.uninstalledNpmPackages.length} retired TLH subagent npm package(s)`);
+		}
+		if (cleanup.removedGitPaths.length > 0) {
+			details.push(`removed ${cleanup.removedGitPaths.length} retired TLH subagent git checkout(s)`);
+		}
+		physicalCleanupDetail = details.length > 0 ? `; ${details.join("; ")}` : "";
+	} catch (error) {
+		return repairAction("FAIL", "settings drift", `could not physically remove retired TLH subagent package; settings remain unchanged for retry (${error instanceof Error ? error.message : String(error)})`);
+	}
+
 	const result = runCommand(process.execPath, [
 		mergeSettingsScript(packageRoot),
 		defaultsPath(packageRoot),
@@ -604,13 +635,14 @@ function repairSettings(packageRoot: string, settingsPath: string, env: NodeJS.P
 		"--default-extensions", defaultExtensionsPath(packageRoot),
 	], { env });
 	if (result.status !== 0) {
-		return repairAction("FAIL", "settings drift", `could not repair packaged settings drift (${commandFailureSummary(result)})`);
+		return repairAction("FAIL", "settings drift", `could not repair packaged settings drift (${commandFailureSummary(result)})${physicalCleanupDetail}`);
 	}
+
 	const output = summarizeCommandOutput(result);
 	if (output === "No settings changes needed.") {
-		return repairAction("OK", "settings drift", "packaged defaults already match the isolated profile");
+		return repairAction("OK", "settings drift", `packaged defaults already match the isolated profile${physicalCleanupDetail}`);
 	}
-	return repairAction("OK", "settings drift", output || "reapplied packaged defaults with existing backup behavior");
+	return repairAction("OK", "settings drift", `${output || "reapplied packaged defaults with existing backup behavior"}${physicalCleanupDetail}`);
 }
 
 function repairBundledSubagentPrompts(packageRoot: string, agentDir: string): RepairAction {
@@ -703,7 +735,7 @@ function runRepairMode(agentDir: string, packageRoot: string, settingsPath: stri
 	}
 
 	const actions: RepairAction[] = [
-		repairSettings(packageRoot, settingsPath, env),
+		repairSettings(packageRoot, agentDir, settingsPath, env),
 		repairBundledSubagentPrompts(packageRoot, agentDir),
 		repairManagedHelper("managed gn install", gnosisScript(packageRoot), ["configure-install", "--agent-dir", agentDir], env),
 		repairManagedHelper("managed tk install", ticketsScript(packageRoot), ["configure-install", "--agent-dir", agentDir, "--settings", settingsPath], env),

@@ -13,5 +13,5 @@
     "types": ["node"]
   },
   "include": ["extensions/**/*.ts", "extensions/**/*.d.ts"],
-  "exclude": ["node_modules/**"]
+  "exclude": ["node_modules/**", "extensions/subagents/**"]
 }

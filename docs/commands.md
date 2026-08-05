@@ -87,6 +87,14 @@ The report is built from sanitized session analysis only. It omits raw transcrip
 
 ---
 
+## Model-facing subagent tools
+
+TLH ships the `subagent` and `wait` tools as first-party runtime functionality. They are model-facing tools, not slash commands you need to invoke manually. `subagent` supports single or parallel execution plus the closed action set `list`, `get`, `models`, `status`, `interrupt`, `resume`, `steer`, and `doctor`. `wait` blocks the current turn on one run, all initially active runs, or the next terminal/attention event; timing out a wait leaves detached work running. Saved chains and mutating agent-management actions are not in the model-facing TLH contract.
+
+The architect normally handles these tools for you. See [subagents.md](subagents.md) for dispatch fields, fresh-context/user-scope isolation, async control and durable resume behavior, acceptance, artifacts, migration, and undo steps.
+
+---
+
 ## Packaged first-party extension commands
 
 These commands ship inside the TLH package itself rather than through separately managed default-extension installs.
@@ -95,6 +103,8 @@ These commands ship inside the TLH package itself rather than through separately
 |---------|-----------|-------------|
 | `/annotate-last-message` | `the-last-harness` | Open a native annotation window for the latest assistant message and send submitted feedback to the agent |
 | `/annotate-git-diff` | `annotate-git-diff` | Open a native git-diff review window; clicking Submit sends review feedback to the agent, closing with unsent comments pastes a draft to the editor |
+| `/subagents-doctor` | `subagents` | Show first-party subagent runtime diagnostics |
+| `/subagents-fleet` | `subagents` | Show active subagent fleet status and transcript commands |
 
 ### `/annotate-last-message`
 
@@ -183,9 +193,6 @@ These commands are provided by bundled default extensions and are visible in TLH
 | `/fast` | `pi-openai-fast` | Toggle OpenAI Codex Fast mode (ChatGPT-auth GPT-5.4/GPT-5.5 only) |
 | `/mcp` | `pi-mcp-adapter` | Show MCP server status |
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
-| `/subagents-doctor` | `pi-subagents` | Show subagent diagnostics |
-| `/subagents-fleet` | `pi-subagents` | Show active subagent fleet status and transcript commands |
-
 
 ---
 
@@ -208,6 +215,12 @@ These commands are registered and fully functional, but deliberately excluded fr
 |---------|-------------|
 | `/skill:librarian` | Load the bundled librarian skill by name without surfacing it in TLH autocomplete |
 
+### Hidden first-party extension commands
+
+| Command | Extension | Description |
+|---------|-----------|-------------|
+| `/subagent-cost` | `subagents` | Show parent and child usage cost for this session; hidden because `/tokens` provides the TLH-native token report |
+
 ### Hidden bundled extension commands
 
 | Command | Extension | Description |
@@ -215,7 +228,6 @@ These commands are registered and fully functional, but deliberately excluded fr
 | `/curator` | `pi-web-access` | Toggle or configure the search curator workflow |
 | `/quiet-tools` | `pi-quiet-tools` | Toggle one-line collapsed invocations for built-in tool rows |
 | `/search` | `pi-web-access` | Browse stored web search results |
-| `/subagent-cost` | `pi-subagents` | Show parent and subagent child usage cost for this session; hidden because `/tokens` provides the TLH-native token report |
 | `/websearch` | `pi-web-access` | Open the web search curator |
 
 ---

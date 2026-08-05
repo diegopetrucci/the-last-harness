@@ -24,9 +24,12 @@ const DEFAULT_INSTALL_SH_PATH = "install.sh";
 const MANAGED_PI_DEPENDENCIES = Object.freeze([
 	{ field: "peerDependencies", name: "@earendil-works/pi-coding-agent" },
 	{ field: "devDependencies", name: "@earendil-works/pi-coding-agent" },
+	{ field: "devDependencies", name: "@earendil-works/pi-agent-core" },
+	{ field: "devDependencies", name: "@earendil-works/pi-ai" },
 	{ field: "peerDependencies", name: "@earendil-works/pi-tui" },
 	{ field: "devDependencies", name: "@earendil-works/pi-tui" },
 ]);
+const PI_CODING_AGENT_LOCK_PATH = "node_modules/@earendil-works/pi-coding-agent";
 const ALLOWED_LOCAL_DEPENDENCY_PREFIXES = Object.freeze([
 	"file:",
 	"link:",
@@ -454,6 +457,28 @@ function validatePinnedManagedScriptDefaults(scriptPaths, constantName, label, p
 	}
 }
 
+function validatePiTypeboxPin(args, packageJson, packageLock, problems) {
+	const directSpec = packageJson.dependencies?.typebox;
+	const directLabel = `${args.packagePath}#dependencies.typebox`;
+	const piSpec = packageLock.packages?.[PI_CODING_AGENT_LOCK_PATH]?.dependencies?.typebox;
+	const piLabel = `${args.lockfilePath}#packages[${JSON.stringify(PI_CODING_AGENT_LOCK_PATH)}].dependencies.typebox`;
+
+	if (typeof directSpec !== "string" || directSpec.trim().length === 0) {
+		problems.push(`Missing string dependency spec at ${directLabel}`);
+	}
+	if (typeof piSpec !== "string" || piSpec.trim().length === 0) {
+		problems.push(`Missing pinned Pi typebox dependency spec at ${piLabel}`);
+		return;
+	}
+	if (!isPinnedExactVersion(piSpec)) {
+		problems.push(`${piLabel} must use an exact version, found ${JSON.stringify(piSpec)}`);
+		return;
+	}
+	if (typeof directSpec === "string" && isPinnedExactVersion(directSpec) && directSpec.trim() !== piSpec.trim()) {
+		problems.push(`TLH's direct typebox dependency must match Pi's pinned typebox version:\n  - ${directLabel}: ${JSON.stringify(directSpec.trim())}\n  - ${piLabel}: ${JSON.stringify(piSpec.trim())}`);
+	}
+}
+
 function validateManagedPiPins(args, packageJson, problems) {
 	const versions = [];
 
@@ -519,6 +544,7 @@ function collectProblems(args) {
 
 	validatePinnedDependencies(packageJson, args.packagePath, problems);
 	validateManagedPiPins(args, packageJson, problems);
+	validatePiTypeboxPin(args, packageJson, packageLock, problems);
 	validateDefaultExtensionPins(args.defaultExtensionsPath, problems);
 	validatePinnedManagedScriptDefaults(args.gnosisScriptPaths, "DEFAULT_GNOSIS_VERSION", "Managed Gnosis", problems);
 

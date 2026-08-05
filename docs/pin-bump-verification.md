@@ -1,53 +1,31 @@
-# Fork pin-bump verification tally
+# Retired subagent pin-bump checklist
 
-> **Live tracker:** completion is tracked in GitHub issue
-> [#346](https://github.com/diegopetrucci/the-last-harness/issues/346).
-> This doc is the reference detail; tick items off in the issue.
+> **Historical status:** the standalone package pin checklist is retired now that the subagent runtime is first-party TLH code. It must not be used to publish, release, or pin a subagent package.
 
-Running checklist of behaviors that could **only be unit-tested / statically verified**
-during the `@diegopetrucci/pi-subagents` v0.34.0 intake and its follow-ups, and therefore
-still need a **live-session runtime check** on the bumped pin.
+Older TLH releases installed and pinned a separate `@diegopetrucci/pi-subagents` package. The former live-session checklist and GitHub issue [#346](https://github.com/diegopetrucci/the-last-harness/issues/346) tracked that package's pin bumps. `config/default-extensions.json` no longer contains a subagent package pin, and current TLH install/update does not publish or fetch a standalone subagent release.
 
-The pin lives at `config/default-extensions.json` (`npm:@diegopetrucci/pi-subagents@0.31.14`)
-with manifest-consistency/migration assertions in `tests/default-extensions.test.mjs` (the test derives its expected value from the manifest, so it would still pass if only the manifest changed). Previous pin bumps landed in
-PRs #347 → 0.31.5, #367 → 0.31.7, #370 → 0.31.8, #386 → 0.31.9, and #390 → 0.31.10, plus direct commit `7e4deba` → 0.31.11, and PR #427 → 0.31.12. The current checkout advances the pin to 0.31.14; the live-session pass is what remains.
+## Current validation boundary
 
-Mark each item `[x]` once verified in a real TLH session on the bumped pin.
+The imported unit/integration/E2E suites, focused TLH regressions, package assertions, and provenance checks now run through the root repository. They cover compact-description selection and fallback, the default-off RPC bridge, the closed action surface, bundled-agent safety, async status, steering, and resume mechanics.
 
-## Pending post-pin verification
+`npm run validate` does **not** replace the former live-session checks. Rendering and real parent/child coordination still require release-tier validation in an installed TLH session. That remaining debt belongs to ticket `tlh-2ej0`, not to a package pin bump; issue #346 remains a historical tracker for the old delivery mechanism.
 
-- [ ] **Compact subagent tool description (`ps-fo50`)** — a live session shows the parent-facing
-  subagent tool description in **compact** form while retaining safety-critical delegation
-  guidance; an invalid/unknown `toolDescriptionMode` value falls back to `full`.
-  _Static status:_ installer provisioning in PR #374; unit-tested in
-  `tests/install-libs.test.mjs`. Runtime rendering deferred (requires the bumped pin).
+## Current release-tier live checklist (`tlh-2ej0`)
 
-- [ ] **RPC bridge default-off (`ps-5n7r`, fork PR #59)** — confirm the subagent RPC bridge is
-  **not active** by default: no `subagents:rpc:v1:ready` emitted, and an RPC `spawn` request is
-  ignored. TLH must leave `rpc.enabled` off.
-  _Static status:_ gated + unit-tested in the fork (`test/unit/rpc-gate.test.ts`).
+Run these checks against the packaged TLH release candidate, without creating or changing any standalone subagent pin:
 
-- [ ] **Native supervisor coordination (v0.34.0 Option A)** — `contact_supervisor` escalations
-  from minor agents reach the architect via the **native supervisor channel** (the fork's
-  pi-intercom discovery delta was retired). This is a behavioral cutover worth a live check.
+- [ ] **Compact parent-facing description:** the live `subagent` tool description renders in compact form while retaining its safety-critical delegation guidance; an invalid `toolDescriptionMode` falls back to the full description.
+- [ ] **Native supervisor coordination:** a minor agent's `contact_supervisor` request reaches the architect through the native supervisor channel and the pause/resume choice is delivered correctly.
+- [ ] **Maximum-thinking badge:** a supported `:max` model renders the expected `max` thinking badge in a live child run.
+- [ ] **Delegation and lifecycle smoke:** delegate to the eight supported TLH minor agents, confirm a non-allowlisted target is blocked, confirm primary delegation uses user scope plus fresh context, and exercise an async run through `status` and `resume`.
 
-- [ ] **New management verbs blocked at runtime (`ps-c901`)** — `eject`, `disable`, `enable`,
-  `reset` are rejected for primary agents in a live session.
-  _Static status:_ pinned by `validateSubagentToolInput` regression test in
-  `tests/tlh-subagent-safety.test.mjs` (tool_call path). RPC path covered by the default-off gate.
-  Phase-2a in 0.31.8 additionally fail-closes the executor for all callers (fork
-  `test/unit/executor-action-trim.test.ts` trims `SUBAGENT_ACTIONS` to the 8 supported actions),
-  strengthening the original tool_call-path-only coverage.
+Record the release candidate, profile, session evidence, and outcomes on `tlh-2ej0`. Do not mark this debt complete from static validation alone.
 
-- [ ] **General intake smoke** — core TLH subagent flows still work on the new version:
-  delegation to the 8 allowed minor agents; a non-allow-listed target is blocked; forced
-  `agentScope: user` + `context: fresh`; async run + `status`/`resume`.
+## Current sources
 
-## Notes
+- [subagents.md](subagents.md) for user-visible runtime, migration, diagnostics, and undo behavior;
+- [VALIDATING.md](../VALIDATING.md) for automated checks and the current release-tier live checklist;
+- [subagents-history/HISTORY.md](subagents-history/HISTORY.md) for the exact source checkpoint and integration history;
+- `npm run validate` for the standard repository gate.
 
-- Slash / prompt-template executor-path bypass was audited (`ps-azwi`) and **accepted, not gated**
-  (low/zero real exposure); documented in the fork's `docs/tlh-patch-inventory.md`. Re-evaluate
-  only if a new slash command delegates a user-supplied `agent`/`task`, or `pi-prompt-template-model`
-  is installed.
-- Windows-only behaviors (e.g. the fork's win32 E2E skip) are out of scope — TLH targets macOS/Linux.
-- 0.31.13 (async widget presentation wording) and 0.31.14 (thinking-level allowlist fix) add no new verification surface beyond confirming that a `:max` thinking badge renders correctly in a live session. All five pending items above carry over unchanged.
+The old package-release, pin-bump, and fork-sync procedures are preserved only in the immutable archive under `docs/subagents-history/source/`. They are historical evidence and must not be followed as current TLH instructions. This retirement makes no claim about deprecating or unpublishing any npm package, changing repository hosting state, deleting source, or archiving a GitHub repository.

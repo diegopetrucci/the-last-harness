@@ -1313,3 +1313,148 @@ test("merge fff retirement cleanup is idempotent after first run", () => {
 	assert.match(secondOutput, /No settings changes needed\./);
 	assert.equal(readFileSync(fixture.settings, "utf8"), afterFirst, "settings unchanged on second run");
 });
+
+// ── subagents retirement tests ──────────────────────────────────────────────
+
+const retiredSubagentsNpmPackage = "npm:@diegopetrucci/pi-subagents";
+
+test("merge removes the TLH-managed subagents npm package from isolated settings and logs it", () => {
+	// A profile with NO defaultExtensionProvenance is treated as a legacy install
+	// where the external npm subagents package was TLH-seeded.
+	// withLegacyRetiredDefaultPackageIdentities adds it to managedPackageIdentities,
+	// causing applyRetiredTlhDefaultPackageCleanup to remove it.
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				retiredSubagentsNpmPackage,
+				"npm:unrelated-package",
+			],
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+	const settings = readJson(fixture.settings);
+
+	assert.match(output, /Will remove retired TLH default package: npm:@diegopetrucci\/pi-subagents/);
+	assert.ok(
+		!settings.packages.some((entry) => (typeof entry === "string" ? entry : entry.source) === retiredSubagentsNpmPackage),
+		"TLH-managed subagents npm package must be removed",
+	);
+	assert.ok(settings.packages.includes("npm:unrelated-package"), "unrelated package must be preserved");
+	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, []);
+});
+
+test("merge preserves a user-added subagents npm package that TLH did not install", () => {
+	// A profile WITH defaultExtensionProvenance set and the subagents identity NOT
+	// in managedPackageIdentities: the package is user-added and must be preserved.
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				retiredSubagentsNpmPackage,
+			],
+			tlh: {
+				defaultExtensionProvenance: {
+					managedPackageIdentities: [], // provenance exists but subagents is NOT managed
+				},
+			},
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+	const settings = readJson(fixture.settings);
+
+	assert.ok(
+		settings.packages.includes(retiredSubagentsNpmPackage),
+		"user-added subagents npm package must be preserved",
+	);
+	assert.doesNotMatch(output, /pi-subagents/);
+});
+
+test("merge removes TLH-managed subagents from a modern profile where provenance already records it as managed", () => {
+	// Dominant real-world migration case: a user who received the subagents external
+	// package as a TLH default before retirement. Their profile is MODERN
+	// (defaultExtensionProvenance exists) and the subagents identity IS already
+	// in managedPackageIdentities.
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				retiredSubagentsNpmPackage,
+				"npm:unrelated-package",
+			],
+			tlh: {
+				defaultExtensionProvenance: {
+					managedPackageIdentities: [retiredSubagentsNpmPackage],
+				},
+			},
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+	const settings = readJson(fixture.settings);
+
+	assert.match(output, /Will remove retired TLH default package: npm:@diegopetrucci\/pi-subagents/);
+	assert.ok(
+		!settings.packages.some((entry) => (typeof entry === "string" ? entry : entry.source) === retiredSubagentsNpmPackage),
+		"TLH-managed subagents npm package must be removed",
+	);
+	assert.ok(settings.packages.includes("npm:unrelated-package"), "unrelated package must be preserved");
+
+	const resynced = settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [];
+	assert.ok(
+		!resynced.includes(retiredSubagentsNpmPackage),
+		"resynced provenance must not list the retired subagents npm identity",
+	);
+});
+
+test("merge prunes stale subagents and pi-subagents opt-outs from tlh.disabledDefaultExtensions", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [harnessPackage],
+			tlh: { disabledDefaultExtensions: ["subagents", "pi-subagents", "notify"] },
+		},
+	);
+
+	const output = runMerge(fixture, { quiet: false });
+	const settings = readJson(fixture.settings);
+
+	assert.match(output, /remove stale subagents opt-out from tlh\.disabledDefaultExtensions/);
+	assert.equal(
+		(settings.tlh?.disabledDefaultExtensions ?? []).some((v) => v === "subagents" || v === "pi-subagents"),
+		false,
+		"stale subagents opt-outs must be removed",
+	);
+	assert.equal(
+		(settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
+		true,
+		"unrelated opt-out must be preserved",
+	);
+});
+
+test("merge subagents retirement cleanup is idempotent after first run", () => {
+	const fixture = tempFixture(
+		{ packages: [] },
+		{
+			packages: [
+				harnessPackage,
+				retiredSubagentsNpmPackage,
+			],
+		},
+	);
+
+	runMerge(fixture);
+
+	const afterFirst = readFileSync(fixture.settings, "utf8");
+	const firstSettings = readJson(fixture.settings);
+	assert.ok(!firstSettings.packages.includes(retiredSubagentsNpmPackage), "subagents npm package removed on first run");
+
+	const secondOutput = runMerge(fixture, { quiet: false });
+	assert.match(secondOutput, /No settings changes needed\./);
+	assert.equal(readFileSync(fixture.settings, "utf8"), afterFirst, "settings unchanged on second run");
+});

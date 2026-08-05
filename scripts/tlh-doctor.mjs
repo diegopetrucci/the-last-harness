@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { disabledDefaultExtensionIds, packageIdentity, readDefaultExtensions, } from "./lib/default-extensions.mjs";
-import { copyTlhSubagentPrompts, missingTlhSubagentPrompts, restoreNeededTlhSubagentPrompts, settingsRequireTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
+import { captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, missingTlhSubagentPrompts, restoreNeededTlhSubagentPrompts, settingsRequireTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
 import { pathWithinOrEqual, realpathForCompare, } from "./lib/tlh-install-paths.mjs";
 import { assignOptionValue, defaultTlhSettingsPath, expandHomePath, pathIsInNormalPiConfig, readJsonFile, resolveTlhAgentDir, } from "./lib/tlh-install-utils.mjs";
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -518,7 +518,32 @@ function summarizeCommandOutput(result) {
 function repairAction(level, label, detail) {
     return { level, label, detail };
 }
-function repairSettings(packageRoot, settingsPath, env) {
+function repairSettings(packageRoot, agentDir, settingsPath, env) {
+    const retiredSubagentPackages = captureManagedRetiredSubagentPackages(settingsPath);
+    let npmCommand;
+    if (retiredSubagentPackages.length > 0) {
+        try {
+            npmCommand = captureRetiredSubagentNpmCommand(settingsPath);
+        }
+        catch (error) {
+            return repairAction("FAIL", "settings drift", `could not read retired subagent package-manager settings (${error instanceof Error ? error.message : String(error)})`);
+        }
+    }
+    let physicalCleanupDetail;
+    try {
+        const cleanup = cleanupManagedRetiredSubagentPackages({ agentDir, settingsPath, npmCommand, env, dryRun: false, quiet: true }, retiredSubagentPackages);
+        const details = [];
+        if (cleanup.uninstalledNpmPackages.length > 0) {
+            details.push(`uninstalled ${cleanup.uninstalledNpmPackages.length} retired TLH subagent npm package(s)`);
+        }
+        if (cleanup.removedGitPaths.length > 0) {
+            details.push(`removed ${cleanup.removedGitPaths.length} retired TLH subagent git checkout(s)`);
+        }
+        physicalCleanupDetail = details.length > 0 ? `; ${details.join("; ")}` : "";
+    }
+    catch (error) {
+        return repairAction("FAIL", "settings drift", `could not physically remove retired TLH subagent package; settings remain unchanged for retry (${error instanceof Error ? error.message : String(error)})`);
+    }
     const result = runCommand(process.execPath, [
         mergeSettingsScript(packageRoot),
         defaultsPath(packageRoot),
@@ -526,13 +551,13 @@ function repairSettings(packageRoot, settingsPath, env) {
         "--default-extensions", defaultExtensionsPath(packageRoot),
     ], { env });
     if (result.status !== 0) {
-        return repairAction("FAIL", "settings drift", `could not repair packaged settings drift (${commandFailureSummary(result)})`);
+        return repairAction("FAIL", "settings drift", `could not repair packaged settings drift (${commandFailureSummary(result)})${physicalCleanupDetail}`);
     }
     const output = summarizeCommandOutput(result);
     if (output === "No settings changes needed.") {
-        return repairAction("OK", "settings drift", "packaged defaults already match the isolated profile");
+        return repairAction("OK", "settings drift", `packaged defaults already match the isolated profile${physicalCleanupDetail}`);
     }
-    return repairAction("OK", "settings drift", output || "reapplied packaged defaults with existing backup behavior");
+    return repairAction("OK", "settings drift", `${output || "reapplied packaged defaults with existing backup behavior"}${physicalCleanupDetail}`);
 }
 function repairBundledSubagentPrompts(packageRoot, agentDir) {
     const packagedDefaultsPath = defaultsPath(packageRoot);
@@ -619,7 +644,7 @@ function runRepairMode(agentDir, packageRoot, settingsPath, env) {
         return 1;
     }
     const actions = [
-        repairSettings(packageRoot, settingsPath, env),
+        repairSettings(packageRoot, agentDir, settingsPath, env),
         repairBundledSubagentPrompts(packageRoot, agentDir),
         repairManagedHelper("managed gn install", gnosisScript(packageRoot), ["configure-install", "--agent-dir", agentDir], env),
         repairManagedHelper("managed tk install", ticketsScript(packageRoot), ["configure-install", "--agent-dir", agentDir, "--settings", settingsPath], env),

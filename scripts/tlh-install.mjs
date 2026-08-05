@@ -10,7 +10,7 @@ import { criticalGitSourceSpec, packageSourceInstallDir, packageSourcePiSource, 
 import { assertProfilePathWithinAgent, assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, validateInstallerTargets, validateProfileRelativePath, } from "./lib/tlh-install-paths.mjs";
 import { FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, packageIdentity, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, } from "./lib/default-extensions.mjs";
 import { assignRequiredEqualsValue, backupPathWithTimestamp, isTlhOwnedBackupFilename, renderShellWords, requiredValue, selectExpiredBackups, shellWord, } from "./lib/tlh-install-utils.mjs";
-import { TLH_SUBAGENT_PROMPTS, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, missingTlhSubagentPrompts, provisionSubagentExtensionConfig, settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts, subagentExtensionConfigMissingDefaults, } from "./lib/tlh-install-subagents.mjs";
+import { TLH_SUBAGENT_PROMPTS, captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, missingTlhSubagentPrompts, provisionSubagentExtensionConfig, settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts, subagentExtensionConfigMissingDefaults, } from "./lib/tlh-install-subagents.mjs";
 import { assertGitSourceTargetSafe, refreshGitCheckout, } from "./lib/tlh-install-git.mjs";
 import { findLocalRepoDir, ensureSupportFilesPrepared, installableSupportFilesArePrepared, preflightRuntimeSupportFiles, } from "./lib/tlh-install-support-files.mjs";
 import { formatSupportFileManifest, installableSupportFiles, supportFileManifest, } from "./lib/tlh-install-support-manifest.mjs";
@@ -1747,6 +1747,15 @@ async function runInstallFlow(config) {
     config.piCmd = piCmd;
     installHarnessPackage(config);
     await installSupportFilesToProfile(config);
+    const retiredSubagentPackages = config.noSettings
+        ? []
+        : captureManagedRetiredSubagentPackages(config.settingsPath);
+    const retiredSubagentNpmCommand = retiredSubagentPackages.length > 0
+        ? captureRetiredSubagentNpmCommand(config.settingsPath)
+        : undefined;
+    if (!config.noSettings) {
+        cleanupManagedRetiredSubagentPackages({ ...config, npmCommand: retiredSubagentNpmCommand }, retiredSubagentPackages);
+    }
     await mergeSettings(config);
     cleanupLegacyManagedProfileArtifacts(config);
     cleanupRetiredProfileDirectories(config);
