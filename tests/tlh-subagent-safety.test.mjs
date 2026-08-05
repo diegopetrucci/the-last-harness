@@ -344,8 +344,8 @@ test("validateSubagentToolInput rejects non-fresh top-level and nested contexts"
 
 // Regression: upstream v0.34.0 added eject/disable/enable/reset management verbs that mutate
 // agent definitions/overrides. TLH policy forbids runtime agent-definition mutation. These are
-// blocked by the SAFE_SUBAGENT_ACTIONS whitelist on the tool_call path. The RPC path is gated
-// separately (ps-5n7r). This test pins the behavior so a future whitelist change cannot
+// blocked by the SAFE_SUBAGENT_ACTIONS whitelist on the tool_call path, which is the only way
+// to reach these verbs. This test pins the behavior so a future whitelist change cannot
 // silently allow any of these verbs.
 test("validateSubagentToolInput blocks v0.34.0 agent-mutation verbs (eject/disable/enable/reset)", () => {
 	// Each new verb must be rejected with a block reason.
