@@ -95,7 +95,7 @@ for (const scenario of [
 ]) {
 	test(`bundled subagents package load defers for ${scenario.name}`, (t) => {
 		const result = runPackageLoadScenario(t, scenario);
-		assert.deepEqual(result.tools, [], "subagent and wait tools must not register");
+		assert.deepEqual(result.tools, [], "subagent tool must not register");
 		assert.deepEqual(result.calls, ["on:session_start"], "only the supported session-start warning path may register");
 		assert.equal(result.sharedCleanupCalls, 0, "coexistence guard must run before shared runtime cleanup");
 		assert.equal(result.warnings.length, 1, "exactly one UI warning must be emitted");

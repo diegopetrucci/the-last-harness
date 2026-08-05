@@ -541,10 +541,10 @@ export default function registerSubagentExtension(pi) {
     ];
     globalStore[eventUnsubscribeStoreKey] = eventUnsubscribes;
     pi.on("tool_result", (event, ctx) => {
-        if (event.toolName !== "subagent" && event.toolName !== "wait")
+        if (event.toolName !== "subagent")
             return;
         const errorPatch = toolResultBridge.errorPatch(event.toolCallId, event.toolName, event.details);
-        if (event.toolName === "subagent" && ctx.hasUI) {
+        if (ctx.hasUI) {
             state.lastUiContext = ctx;
             if (state.asyncJobs.size > 0) {
                 renderWidget(ctx, Array.from(state.asyncJobs.values()), liveDetailController);

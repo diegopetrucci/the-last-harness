@@ -75,7 +75,7 @@ import {
 
 export { loadConfig } from "./config.ts";
 
-type PiToolWithInternalFailure = "subagent" | "wait";
+type PiToolWithInternalFailure = "subagent";
 
 /**
  * Pi 0.83 represents tool failure separately from AgentToolResult. Keep the
@@ -692,9 +692,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	globalStore[eventUnsubscribeStoreKey] = eventUnsubscribes;
 
 	pi.on("tool_result", (event, ctx) => {
-		if (event.toolName !== "subagent" && event.toolName !== "wait") return;
+		if (event.toolName !== "subagent") return;
 		const errorPatch = toolResultBridge.errorPatch(event.toolCallId, event.toolName, event.details);
-		if (event.toolName === "subagent" && ctx.hasUI) {
+		if (ctx.hasUI) {
 			state.lastUiContext = ctx;
 			if (state.asyncJobs.size > 0) {
 				renderWidget(ctx, Array.from(state.asyncJobs.values()), liveDetailController);
