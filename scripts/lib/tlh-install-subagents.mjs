@@ -413,8 +413,8 @@ export function copyTlhSubagentPrompts(config, sourceDir, { prompts = TLH_SUBAGE
  * update; missing defaults are re-provisioned. Valid non-object or unreadable
  * config files are preserved untouched.
  *
- * Runtime note: toolDescriptionMode requires pi-subagents >= v0.33.0
- * (fork feature). Older builds simply ignore the unknown key.
+ * Runtime note: toolDescriptionMode is consumed by TLH's first-party
+ * subagent runtime. Retired external builds may ignore the unknown key.
  */
 const TLH_TOOL_DESCRIPTION_MODE = "compact";
 const TLH_ACTIVE_NOTICE_AFTER_MS = 270000;

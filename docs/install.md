@@ -12,9 +12,9 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/dow
 
 On supported platforms (linux/darwin × x64/arm64), it installs [Gnosis](https://github.com/skorokithakis/gnosis) automatically. TLH currently pins the managed default to Gnosis `v0.5.4`; installer-owned `TLH_GNOSIS_VERSION` and `TLH_GNOSIS_REPO` overrides can still point at another release or repository when needed. Installs on unsupported platforms hard-fail. TLH also requires `tk` ticket integration; if no valid configured/existing `tk` is found, TLH installs a managed copy at `~/.the-last-harness/agent/bin/tk`. If TLH cannot validate or install `tk`, install fails with an actionable error instead of creating an incomplete workflow. Once the installation is finished, start `tlh` by running… you guessed it, `tlh`.
 
-Note: if you already have `pi` installed, `tlh` does not replace it — you can keep both, as it uses its own isolated config in `~/.the-last-harness/` and never mutates normal `~/.pi/agent` settings.
+Note: if you already have `pi` installed, `tlh` does not replace it — you can keep both, as it uses its own isolated config in `~/.the-last-harness/` and never mutates normal `~/.pi/agent` settings. The subagent orchestration runtime is first-party TLH code declared by this package, not a separate extension package that users must install or pin.
 
-The installer is split into a stage-0 Bash bootstrapper (`install.sh`) and a stage-1 Node helper (`scripts/tlh-install.mjs`). Stage 0 parses the initial flags, preserves stdin `--dry-run` without downloads, and finds or fetches the matching stage-1 helper/support files from the selected release/ref; stage 1 runs the normal isolated install, settings merge, default-extension install, Gnosis and ticket setup, update metadata, and wrapper creation.
+The installer is split into a stage-0 Bash bootstrapper (`install.sh`) and a stage-1 Node helper (`scripts/tlh-install.mjs`). Stage 0 parses the initial flags, preserves stdin `--dry-run` without downloads, and finds or fetches the matching stage-1 helper/support files from the selected release/ref; stage 1 runs the normal isolated install, settings merge, first-party resource provisioning, default-extension install, Gnosis and ticket setup, update metadata, and wrapper creation.
 
 ## More ways to install
 
@@ -98,9 +98,15 @@ Normal updates keep Gnosis and ticket integration enabled. They install or refre
 
 The updating process is intentionally conservative, and won't replace your custom extensions, themes, and so on. If you spot anything that was overridden, [please open an issue](https://github.com/diegopetrucci/the-last-harness/issues).
 
-TLH now records installer-owned bundled-extension provenance in the isolated settings at `tlh.defaultExtensionProvenance.managedPackageIdentities`. Older installs that do not have this metadata migrate it on the next installer run or `tlh update`: matching legacy bundled defaults are treated as TLH-managed once so retired defaults such as the old Plannotator package can still be cleaned up. After that metadata exists, retired-default cleanup only removes package identities still marked as TLH-managed, so a package you later re-add manually with the same source is left alone.
+TLH now records installer-owned bundled-extension provenance in the isolated settings at `tlh.defaultExtensionProvenance.managedPackageIdentities`. Older installs that do not have this metadata migrate it on the next installer run or `tlh update`: matching legacy bundled defaults are treated as TLH-managed once so retired defaults can still be cleaned up. After that metadata exists, retired-default cleanup only removes package identities still marked as TLH-managed, so a package you later re-add manually with the same source is left alone.
 
-Bundled default-extension opt-outs apply only to non-critical defaults. The TLH subagents default is protected because architect delegation and supervisor escalation depend on it: `tlh defaults disable` rejects that ID and its aliases, and stale manual critical opt-outs are ignored or cleaned. If the critical package install or checkout refresh fails, fix that install/checkout and rerun `tlh update` instead of disabling the default.
+### Migration from the retired external subagent package
+
+Subagent orchestration now ships inside TLH. During install/update, stage 1 captures any retired external subagent entry that TLH owns before settings merge, removes its npm dependency or guarded git checkout, removes the settings/provenance entry, provisions the first-party config and copied minor-agent definitions, and then refreshes the remaining extensions. If physical cleanup fails, the installer stops before merge and keeps the ownership evidence so the next run can retry instead of silently resurrecting the package.
+
+Ownership stays conservative. On a profile with `tlh.defaultExtensionProvenance`, only a matching identity listed there is auto-removed. A pre-provenance profile is treated as a legacy TLH profile for the old default npm/git identities. A matching entry that is provably manual is preserved, and local/path packages are outside the migration allowlist. Stale `subagents` or `pi-subagents` values are removed from `tlh.disabledDefaultExtensions` because the first-party runtime is no longer a default-extension opt-out.
+
+If an external npm/git subagent entry remains in user or project settings, the first-party runtime refuses to register duplicate tools and warns with the scope it found. Remove that manually owned source with `tlh remove <source>` (user scope) or `tlh remove <source> -l` (project scope), run `tlh update`, and restart. Back up and inspect unfamiliar files first. There is no supported `tlh defaults disable subagents` path now; use the full uninstall flow below to remove TLH persistently. See [subagents.md](subagents.md) for runtime behavior and diagnostic details.
 
 At launch, TLH checks GitHub Releases in the background at most once per day and warns once when a newer release is available. It never auto-updates. Set `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `TLH_SKIP_UPDATE_CHECK=1`, or `"tlh": { "updateCheck": { "enabled": false } }` in the isolated settings to disable the check.
 
@@ -108,7 +114,7 @@ Release builds with TelemetryDeck identifiers configured also send at most one p
 
 To opt out persistently, set `"tlh": { "telemetry": { "enabled": false } }` in `~/.the-last-harness/agent/settings.json`. This opt-out is user-owned and survives `tlh update` and installer reruns. Per-run opt-outs are `PI_OFFLINE=1`, `TLH_SKIP_TELEMETRY=1`, `TLH_TELEMETRY_DISABLED=1`, or `PI_TELEMETRY=0`. To reset only the pseudonymous install ID, remove `~/.the-last-harness/agent/tlh/telemetry-state.json`.
 
-Plain `tlh update` also refreshes bundled default extension packages. Bundled npm defaults are installer-pinned to explicit versions from `config/default-extensions.json`, while TLH git-fork defaults stay pinned to their tagged refs; TLH only changes those managed versions when a TLH release updates the bundle. Updates still refresh pinned critical defaults safely before updating other enabled defaults.
+Plain `tlh update` also refreshes bundled default extension packages. Bundled npm defaults are installer-pinned to explicit versions from `config/default-extensions.json`, while any remaining TLH git-fork defaults stay pinned to their tagged refs; TLH only changes those managed versions when a TLH release updates the bundle. The first-party subagent runtime is refreshed with the TLH package itself rather than through this default-extension update path.
 
 ## Doctor
 
@@ -172,7 +178,7 @@ The uninstaller never auto-removes:
 - **Private TLH Pi runtime (when kept)** — if you pass `--keep-pi`, if the runtime has no valid ownership marker (unmarked or pre-marker install), or if install-state is `false`/absent, the runtime at `~/.the-last-harness/runtime` is left in place; remove it manually: `rm -rf ~/.the-last-harness/runtime`.
 - **Separately-installed pi** — any `pi` you installed independently of TLH is left in place and never touched by tlh.
 - **Legacy TLH-owned pi at `~/.local`** — the uninstaller never auto-removes this (to protect user-owned installations). To remove it, pass `--force-include-pi` to the uninstaller, or remove manually: `npm uninstall -g --ignore-scripts --prefix "$HOME/.local" @earendil-works/pi-coding-agent`.
-- **Repo-local `.gnosis/` and `.tickets/` data** — per-repository and managed separately. To remove from a repo: `rm -rf .gnosis .tickets`
+- **Repo-local `.gnosis/`, `.tickets/`, and `.pi-subagents/` data** — per-repository and managed separately. `.pi-subagents/` can contain child artifacts worth inspecting after a failed run. To remove all three from a repo after reviewing them: `rm -rf .gnosis .tickets .pi-subagents`
 
 ### Manual removal
 
@@ -193,9 +199,9 @@ npm uninstall -g --ignore-scripts --prefix "$HOME/.local" @earendil-works/pi-cod
 
 Backup files at the isolated-profile root (`settings.json.backup-*`, `keybindings.json.backup-*`) are pruned automatically on install and update: any backup older than ~28 days is removed, but the two newest backups are always kept regardless of age. This pruning is scoped strictly to the isolated profile (`~/.the-last-harness/agent`) and never touches `~/.pi`. If you want to keep a particular backup indefinitely, copy it to a location outside the isolated profile before it ages out.
 
-## Subagent extension configuration
+## First-party subagent configuration
 
-The installer provisions the isolated subagent extension config at `~/.the-last-harness/agent/extensions/subagent/config.json` with missing TLH defaults: compact tool descriptions and `control.activeNoticeAfterMs: 270000` (4m30). To override the notice checkpoint, edit that file and set `control.activeNoticeAfterMs` to your preferred number of milliseconds; existing values and unrelated top-level or nested keys are preserved on later installs and updates. Setting `control.activeNoticeAfterMs` to `240000` restores pi-subagents' four-minute behavior and is preserved. Removing that key and rerunning `tlh update` (or the installer) restores TLH's managed `270000`/4m30 default. This only changes the isolated TLH profile and never the normal `~/.pi/agent` configuration.
+The installer provisions the first-party runtime's isolated config at `~/.the-last-harness/agent/extensions/subagent/config.json` with missing TLH defaults: compact tool descriptions and `control.activeNoticeAfterMs: 270000` (4m30). To override the notice checkpoint, edit that file and set `control.activeNoticeAfterMs` to your preferred number of milliseconds; existing values and unrelated top-level or nested keys are preserved on later installs and updates. Setting `control.activeNoticeAfterMs` to `240000` restores the runtime's four-minute baseline and is preserved. Removing that key and rerunning `tlh update` (or the installer) restores TLH's managed `270000`/4m30 default. This only changes the isolated TLH profile and never the normal `~/.pi/agent` configuration. See [subagents.md](subagents.md) for dispatch, control, artifact, and acceptance semantics.
 
 ### Scout run timeout cap
 

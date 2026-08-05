@@ -48,6 +48,20 @@ Subagent successes remain concise in that aggregate command. Subagent failures a
 
 For runtime TypeScript changes under `scripts/` or `extensions/`, use `npm run typecheck:runtime` for the focused runtime-only typecheck, `npm run check:runtime` to confirm the generated `scripts/**/*.mjs` and same-layout `extensions/**/*.js` files are fresh without mutating the worktree, and `npm run build` only when you intentionally want to refresh those generated outputs. Review and edit the TypeScript sources rather than the generated `.mjs`/`.js` mirrors.
 
+## First-party subagent packaging and provenance
+
+The subagent runtime is part of the root TLH package, not a separately pinned default extension. `npm run check:package-contents` verifies that the declared first-party runtime entrypoint and `extensions/subagents/LICENSE` are present in `npm pack --dry-run`, while contributor-only imported tests remain excluded. Root tests also verify that `config/default-extensions.json` has no active external subagent default, Nico Bailon's notice is exact, and all 17 files in the immutable historical archive still match the import manifest (including the 29-entry archived Gnosis ledger).
+
+The source-history comparison is intentionally a separate, checkout-dependent verification:
+
+```sh
+node docs/subagents-history/verify-import.mjs /absolute/path/to/a-verified-pi-subagents-checkout
+```
+
+It verifies the exact source repository commit/tree, include/exclude partition, source and imported blob identities, current historical archive bytes/modes, full-tree tar checksum, ledger counts, import ancestry, and absence of grafted source ancestry. It is not part of `npm run validate` because routine clones do not carry the external repository's Git objects. See [docs/subagents-history/HISTORY.md](docs/subagents-history/HISTORY.md) for the pinned values and independent history-inspection commands.
+
+No standalone subagent publish, release, pin-bump, or upstream-sync check is current TLH validation. Those workflows survive only as inert historical evidence under `docs/subagents-history/source/`.
+
 ## Useful targeted checks
 
 When narrowing down installer or script changes, these targeted checks are useful:

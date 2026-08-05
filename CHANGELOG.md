@@ -4,18 +4,24 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Subagent orchestration is now first-party TLH functionality: the runtime entrypoint, bundled agents, imported test suites, user/maintainer documentation, immutable source provenance, and Nico Bailon's exact MIT notice all ship with the root package.
+
 ### Fixed
 
-- Removed stale `/subagents-profiles`, `/subagents-check-profile`, and `/subagents-models` from `HIDDEN_SLASH_COMMANDS` and from `docs/commands.md`; these commands were removed in `pi-subagents` 0.31.14. Added `/subagents-fleet` to the visible bundled-extension command table. Hid `/subagent-cost` via `HIDDEN_SLASH_COMMANDS` because `/tokens` is the TLH-native token report; true removal requires a fork-side change in `pi-subagents`.
+- Removed stale `/subagents-profiles`, `/subagents-check-profile`, and `/subagents-models` references after those commands left the imported runtime. `/subagents-fleet` is documented with the visible first-party commands, while `/subagent-cost` remains hidden from autocomplete because `/tokens` is TLH's native token report.
 - Architect steering of async child runs now actually works at runtime. The 0.32.0 changelog entry claimed steering support, but `steer` was missing from the allowed action set at that time; it is now included. Steer calls require an explicit `id` and `message`; execution fields (`agent`, `tasks`, `chain`, `context`, `agentScope`) and non-integer `index` values are rejected. `rush` is blocked from `steer` outright because an opaque steer carries no `agent` field, so TLH cannot verify the steered child is not a `developer` subagent. `product` and `bug-hunter` can steer already-started runs — see the accepted issue #330 note in `docs/embedded-subagents.md`.
 
 ### Changed
 
+- Install and update now migrate TLH-managed legacy `pi-subagents` npm/git entries to the first-party runtime, retry failed physical cleanup without losing ownership evidence, preserve provably manual entries, and refuse duplicate runtime registration when an external copy remains. The first-party runtime updates with TLH rather than through `config/default-extensions.json`.
 - The `librarian` subagent tool budget was raised from soft 20 / hard 30 to soft 30 / hard 60 so external GitHub research tasks are less likely to end early on budget exhaustion.
 - The architect cleanup guidance now spells out how to delete `tk` tickets: `tk` has no delete subcommand, so ticket files are removed directly with `rm .tickets/<id>.md` after checking for dangling dependency references.
 
 ### Removed
 
+- The active standalone subagent pin-bump, package-release, and fork-sync workflow is retired. Historical instructions remain inert under `docs/subagents-history/source/`; this does not claim npm deprecation/unpublishing, repository archival, source deletion, or any hosting change.
 - **fff (`npm:@ff-labs/pi-fff`) is no longer a bundled default extension.** TLH-installed copies are automatically removed from the isolated profile on the next `tlh install` or `tlh update` run. TLH determines ownership from the profile's `tlh.defaultExtensionProvenance` metadata: on profiles carrying that metadata (TLH 0.17.0 and later), only copies TLH originally installed are removed and any manually added copy is preserved. On older pre-provenance profiles (TLH 0.16.x and earlier, where fff was a bundled default anyway), TLH infers ownership from the installed package identity and removes it even if it was added manually. Settings are backed up before any write. If you have leftover files under `~/.the-last-harness/agent/npm/node_modules/@ff-labs/`, you may delete that directory manually.
 
 ## [0.32.0] - 2026-08-03

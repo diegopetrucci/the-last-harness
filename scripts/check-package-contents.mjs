@@ -53,10 +53,12 @@ const piEntrypoints = configuredPiEntrypoints.map((entrypoint) => entrypoint.rep
 const requiredFiles = [
 	...piEntrypoints,
 	"extensions/the-last-harness.ts",
+	"extensions/subagents/LICENSE",
 	"agents/primary/architect.md",
 	"agents/subagents/developer.md",
 	"config/APPEND_SYSTEM.md",
 	"config/settings.defaults.json",
+	"docs/subagents.md",
 	"prompts/analyse-tlh-sessions.md",
 	"themes/the-last-harness.json",
 	"install.sh",
