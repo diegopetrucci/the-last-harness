@@ -29,9 +29,9 @@ test("generated child Pi arguments select generated JavaScript runtime extension
 	});
 	const paths = extensionArgs(result.args);
 
-	assert.equal(paths.length, 2);
+	assert.equal(paths.length, 1);
 	assert.equal(paths.some((path) => path.endsWith("subagent-prompt-runtime.js")), true);
-	assert.equal(paths.some((path) => path.endsWith("fanout-child.js")), true);
+	assert.equal(paths.every((path) => !path.endsWith("fanout-child.js")), true);
 	assert.equal(paths.every((path) => extname(path) === ".js"), true);
 });
 

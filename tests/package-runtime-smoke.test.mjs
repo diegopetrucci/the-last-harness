@@ -92,7 +92,7 @@ Return the deterministic faux child marker exactly.
 	]
 		.map((path) => path.replace(/\.ts$/, ".js"))
 		.sort();
-	assert.equal(generatedExtensionPaths.length, 166);
+	assert.equal(generatedExtensionPaths.length, 165);
 	for (const generatedPath of generatedExtensionPaths) {
 		assert.ok(packedPaths.has(generatedPath), `npm pack omitted generated extension module ${generatedPath}`);
 	}
@@ -150,17 +150,13 @@ Return the deterministic faux child marker exactly.
 	const expectedExecutedChildExtensionPaths = [
 		"extensions/subagents/src/runs/shared/subagent-prompt-runtime.js",
 	];
-	const expectedBuiltChildExtensionPaths = [
-		...expectedExecutedChildExtensionPaths,
-		"extensions/subagents/src/extension/fanout-child.js",
-	];
 	assert.deepEqual(runtimeEvidence.childExecution, {
 		marker: "PACKED_FAUX_CHILD_MARKER",
 		childExtensionPaths: expectedExecutedChildExtensionPaths,
 	});
 	assert.equal(runtimeEvidence.childEnvRestored, true);
 	assert.deepEqual(runtimeEvidence.childExtensionPaths, expectedExecutedChildExtensionPaths);
-	assert.deepEqual(runtimeEvidence.builtChildExtensionPaths, expectedBuiltChildExtensionPaths);
+	assert.deepEqual(runtimeEvidence.builtChildExtensionPaths, expectedExecutedChildExtensionPaths);
 	assert.ok(runtimeEvidence.changelogBytes > 1000);
 	assert.ok(runtimeEvidence.reviewHtmlBytes > 100_000);
 	assert.ok(runtimeEvidence.annotateHtmlBytes > 1000);

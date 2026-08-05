@@ -103,7 +103,6 @@ extensions/subagents/src/extension/config.js linguist-generated=true
 extensions/subagents/src/extension/control-notices.js linguist-generated=true
 extensions/subagents/src/extension/doctor.js linguist-generated=true
 extensions/subagents/src/extension/external-package-guard.js linguist-generated=true
-extensions/subagents/src/extension/fanout-child.js linguist-generated=true
 extensions/subagents/src/extension/index.js linguist-generated=true
 extensions/subagents/src/extension/live-detail-shortcut.js linguist-generated=true
 extensions/subagents/src/extension/pause-all-shortcut.js linguist-generated=true

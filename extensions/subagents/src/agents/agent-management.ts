@@ -198,7 +198,7 @@ function handleGet(params: ManagementParams, ctx: ManagementContext): SubagentTo
 
 // handleCreate through handleReset removed: these seven write verbs are unreachable — the
 // tool's 'action' schema enum (schemas.ts) admits only list/get/models/status/interrupt/
-// resume/steer/doctor. Renaming allowMutatingManagementActions is deferred to #449.
+// resume/steer/doctor.
 
 export function handleManagementAction(action: string, params: ManagementParams, ctx: ManagementContext): SubagentToolResult<Details> {
 	switch (action as ManagementAction) {
