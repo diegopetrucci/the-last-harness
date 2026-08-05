@@ -26,6 +26,15 @@ function getTlhGlobalSettings(cwd) {
 function getTlhPrimaryAgentConfig(cwd) {
     return getTlhGlobalSettings(cwd).tlh?.primaryAgent;
 }
+function getTlhSubagentOverrides(cwd) {
+    const overrides = getTlhGlobalSettings(cwd).subagents?.agentOverrides;
+    if (!isRecord(overrides)) {
+        return new Map();
+    }
+    return new Map(Object.entries(overrides)
+        .filter(([, value]) => isRecord(value))
+        .map(([agent, value]) => [agent, value]));
+}
 function resolvePrimaryAutoApplySetting(primaryConfig, primary, key) {
     const configured = primaryConfig?.[key];
     if (typeof configured === "boolean") {
@@ -672,7 +681,11 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             if (event.toolName !== "subagent") {
                 return undefined;
             }
-            applyProviderAwareSubagentModels(event.input, subagentsByName, getUnfilteredAvailableModels(ctx.modelRegistry), ctx.model?.provider, ctx.model);
+            const subagentOverrides = getTlhSubagentOverrides(ctx.cwd);
+            applyProviderAwareSubagentModels(event.input, subagentsByName, getUnfilteredAvailableModels(ctx.modelRegistry), ctx.model?.provider, ctx.model, {
+                agentOverrides: subagentOverrides,
+                onWarning: ({ agent, message }) => warnOnce(ctx, `subagent-override-warning-${agent}-${message}`, message),
+            });
             capScoutSubagentTimeout(event.input);
             syncPrimaryAgentState(ctx);
             const selection = currentPrimaryAgentSelection();
