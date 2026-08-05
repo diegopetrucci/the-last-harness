@@ -2,6 +2,12 @@
 
 All notable changes to The Last Harness will be documented in this file.
 
+## Unreleased
+
+### Removed
+
+- Removed the seven unreachable mutating agent-management verbs (`create`, `update`, `delete`, `eject`, `disable`, `enable`, `reset`). The subagent tool's `action` schema enum (`extensions/subagents/src/extension/schemas.ts`) admits only `list`, `get`, `models`, `status`, `interrupt`, `resume`, `steer`, and `doctor`; none of the write verbs can be named by any caller. Also removed the now-vestigial `MUTATING_MANAGEMENT_ACTIONS` belt-gate in `subagent-executor.ts`. The `allowMutatingManagementActions` flag is retained; its surviving role (discriminating child-safe fanout mode for nested run-id resolution) is unchanged — renaming is deferred to issue #449.
+
 ## [0.33.0] - 2026-08-05
 
 ### Added
@@ -24,8 +30,6 @@ All notable changes to The Last Harness will be documented in this file.
 - **`tlh update` now automatically reclaims disk space left behind by retired bundled extensions** ([#438](https://github.com/diegopetrucci/the-last-harness/issues/438)). After each settings merge, TLH drives the isolated Pi runtime's own `pi remove` command to uninstall each retired default extension that is absent from the merged settings and still installed on disk. This covers residue from all previously retired defaults — fff, intercom, rtk, oracle, context-cap, plannotator, librarian, and triage-comments — which together account for roughly 35 MB in a typical profile. Cleanup is always owner-driven (Pi performs the npm uninstall and computes the safe transitive-dep closure; TLH never deletes npm files by hand). A package that still appears in your settings — either because you added it manually or because a provenance check found a user-owned copy — keeps its installed files untouched. The operation is skipped entirely when settings are unreadable and is a no-op under `--dry-run`. Retired profile state directories (such as `agent/intercom/`) are also removed on update. This backfills all existing profiles on the next `tlh update` run.
 
 ### Removed
-
-- Removed the seven unreachable mutating agent-management verbs (`create`, `update`, `delete`, `eject`, `disable`, `enable`, `reset`). The subagent tool's `action` schema enum (`extensions/subagents/src/extension/schemas.ts`) admits only `list`, `get`, `models`, `status`, `interrupt`, `resume`, `steer`, and `doctor`; none of the write verbs can be named by any caller. Also removed the now-vestigial `MUTATING_MANAGEMENT_ACTIONS` belt-gate in `subagent-executor.ts`. The `allowMutatingManagementActions` flag is retained; its surviving role (discriminating child-safe fanout mode for nested run-id resolution) is unchanged — renaming is deferred to issue #449.
 
 - Removed the `wait` tool (`extensions/subagents/src/runs/background/wait.ts`, 390 LOC) and all wiring: `WaitParamsSchema`/`WaitParams` from `schemas.ts`, `WaitToolConfigObject`/`WaitToolConfig`/`waitTool` config field from `types.ts`, and the `waitToolConfig` const plus `pi.registerTool(waitTool)` call from `index.ts`. Removed the `wait` section from `docs/subagents.md`. This is a user-visible removal for any non-TLH consumer; TLH could not reach the tool (TLH's primary-agent tool allowlist excludes it, no TLH agent declares it, TLH never sets `config.waitTool` or `PI_SUBAGENT_WAIT_TOOL_ENABLED`). Test deletions: `wait.test.ts` (whole file) and exactly one `it()` in `index-child-registration.test.ts`.
 - Removed the `mcpDirectTools` allowlist resolver (`extensions/subagents/src/runs/shared/mcp-direct-tool-allowlist.ts`, 365 LOC) and the `mcpDirectTools?: string[]` frontmatter field threading from all call-site files: no TLH agent declares the field. **Kept**: `env.MCP_DIRECT_TOOLS = "__none__"` is still set unconditionally in `pi-args.ts`; the sentinel tells `@diegopetrucci/pi-mcp-adapter` (bundled in TLH) not to bootstrap direct MCP tools in child subagents — an unset var means "bootstrap everything configured" and would silently widen every child's tool surface. This sentinel must not be removed by a future cleanup pass.
