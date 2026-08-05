@@ -89,7 +89,7 @@ The report is built from sanitized session analysis only. It omits raw transcrip
 
 ## Model-facing subagent tools
 
-TLH ships the `subagent` and `wait` tools as first-party runtime functionality. They are model-facing tools, not slash commands you need to invoke manually. `subagent` supports single or parallel execution plus the closed action set `list`, `get`, `models`, `status`, `interrupt`, `resume`, `steer`, and `doctor`. `wait` blocks the current turn on one run, all initially active runs, or the next terminal/attention event; timing out a wait leaves detached work running. Saved chains and mutating agent-management actions are not in the model-facing TLH contract.
+TLH ships the `subagent` tool as first-party runtime functionality. It is a model-facing tool, not a slash command you need to invoke manually. `subagent` supports single or parallel execution plus the closed action set `list`, `get`, `models`, `status`, `interrupt`, `resume`, `steer`, and `doctor`. Saved chains and mutating agent-management actions are not in the model-facing TLH contract.
 
 The architect normally handles these tools for you. See [subagents.md](subagents.md) for dispatch fields, fresh-context/user-scope isolation, async control and durable resume behavior, acceptance, artifacts, migration, and undo steps.
 

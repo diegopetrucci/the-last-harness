@@ -90,7 +90,6 @@ describe("registered subagent tool description", () => {
 		assertMinimalContract(description);
 		assert.match(description, /SINGLE/);
 		assert.match(description, /PARALLEL/);
-		assert.match(description, /wait tool/i);
 		assert.match(description, /no child process is running/i);
 		assert.doesNotMatch(description, /fresh-redispatch|fresh redispatch|detached-for-intercom/i);
 		assert.match(description, /fallbackModels/i);

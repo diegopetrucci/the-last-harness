@@ -7,7 +7,6 @@ import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeS
 import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile } from "../../shared/settings.js";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.js";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.js";
-import { buildAgentMemoryInjection } from "../../agents/agent-memory.js";
 import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.js";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/utils.js";
 import { buildFallbackModelList, buildModelCandidates, resolveSubagentModelOverride } from "../shared/model-fallback.js";
@@ -244,10 +243,6 @@ export function buildAsyncRunnerSteps(id, params) {
             const injection = buildSkillInjection(resolvedSkills);
             systemPrompt = systemPrompt ? `${systemPrompt}\n\n${injection}` : injection;
         }
-        const memoryInjection = buildAgentMemoryInjection(a, stepCwd);
-        if (memoryInjection) {
-            systemPrompt = systemPrompt ? `${systemPrompt}\n\n${memoryInjection}` : memoryInjection;
-        }
         const readInstructions = buildChainInstructions({ ...behavior, output: false, progress: false }, instructionCwd, false);
         const isFirstProgressAgent = behavior.progress && !progressPrecreated && !progressInstructionCreated;
         if (behavior.progress)
@@ -286,7 +281,6 @@ export function buildAsyncRunnerSteps(id, params) {
             tools: a.tools,
             extensions: a.extensions,
             subagentOnlyExtensions: a.subagentOnlyExtensions,
-            mcpDirectTools: a.mcpDirectTools,
             completionGuard: a.completionGuard,
             systemPrompt,
             systemPromptMode: a.systemPromptMode,
@@ -641,10 +635,6 @@ export function executeAsyncSingle(id, params) {
         const injection = buildSkillInjection(resolvedSkills);
         systemPrompt = systemPrompt ? `${systemPrompt}\n\n${injection}` : injection;
     }
-    const memoryInjection = buildAgentMemoryInjection(agentConfig, runnerCwd);
-    if (memoryInjection) {
-        systemPrompt = systemPrompt ? `${systemPrompt}\n\n${memoryInjection}` : memoryInjection;
-    }
     const inheritedNestedRoute = resolveInheritedNestedRouteFromEnv();
     const nestedAddress = inheritedNestedRoute ? resolveNestedParentAddressFromEnv() : undefined;
     const asyncDir = inheritedNestedRoute
@@ -707,7 +697,6 @@ export function executeAsyncSingle(id, params) {
                     tools: agentConfig.tools,
                     extensions: agentConfig.extensions,
                     subagentOnlyExtensions: agentConfig.subagentOnlyExtensions,
-                    mcpDirectTools: agentConfig.mcpDirectTools,
                     completionGuard: agentConfig.completionGuard,
                     systemPrompt,
                     systemPromptMode: agentConfig.systemPromptMode,

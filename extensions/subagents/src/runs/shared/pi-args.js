@@ -3,7 +3,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { encodeNestedPathEnv, parseNestedPathEnv } from "./nested-path.js";
-import { resolveMcpDirectToolNames } from "./mcp-direct-tool-allowlist.js";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "./structured-output.js";
 import { TEMP_ROOT_DIR } from "../../shared/types.js";
 import { THINKING_LEVELS } from "../../shared/model-info.js";
@@ -79,9 +78,6 @@ export function buildPiArgs(input) {
             }
         }
         if (builtinTools.length > 0) {
-            if (input.mcpDirectTools?.length) {
-                builtinTools.push(...resolveMcpDirectToolNames(input.mcpDirectTools, input.cwd));
-            }
             args.push("--tools", builtinTools.join(","));
         }
     }
@@ -185,12 +181,7 @@ export function buildPiArgs(input) {
     if (input.childIndex !== undefined) {
         env[SUBAGENT_CHILD_INDEX_ENV] = String(input.childIndex);
     }
-    if (input.mcpDirectTools?.length) {
-        env.MCP_DIRECT_TOOLS = input.mcpDirectTools.join(",");
-    }
-    else {
-        env.MCP_DIRECT_TOOLS = "__none__";
-    }
+    env.MCP_DIRECT_TOOLS = "__none__";
     if (input.structuredOutput) {
         env[STRUCTURED_OUTPUT_CAPTURE_ENV] = input.structuredOutput.outputPath;
         env[STRUCTURED_OUTPUT_SCHEMA_ENV] = input.structuredOutput.schemaPath;

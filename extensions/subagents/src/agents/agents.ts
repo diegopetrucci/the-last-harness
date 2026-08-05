@@ -16,7 +16,6 @@ import { parseFrontmatter } from "./frontmatter.ts";
 import { buildRuntimeName, parsePackageName } from "./identity.ts";
 import { parseModelScopeConfig, type ModelScopeConfig } from "../runs/shared/model-scope.ts";
 export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.ts";
-import { parseMemoryFrontmatter } from "./agent-memory.ts";
 import { isPositiveSafeInteger } from "./execution-ceiling.ts";
 
 export type AgentScope = "user" | "project" | "both";
@@ -24,13 +23,6 @@ export type AgentScope = "user" | "project" | "both";
 export type AgentSource = "builtin" | "package" | "user" | "project";
 type SystemPromptMode = "append" | "replace";
 export type AgentDefaultContext = "fresh" | "fork";
-
-export type AgentMemoryScope = "project" | "user";
-
-export interface AgentMemoryConfig {
-	scope: AgentMemoryScope;
-	path: string;
-}
 
 export const BUILTIN_AGENT_NAMES = [
 	"context-builder",
@@ -68,7 +60,6 @@ export interface BuiltinAgentOverrideBase {
 	systemPrompt: string;
 	skills?: string[];
 	tools?: string[];
-	mcpDirectTools?: string[];
 	subagentOnlyExtensions?: string[];
 	completionGuard?: boolean;
 	toolBudget?: ToolBudgetConfig;
@@ -113,7 +104,6 @@ export interface AgentConfig {
 	packageName?: string;
 	description: string;
 	tools?: string[];
-	mcpDirectTools?: string[];
 	model?: string;
 	fallbackModels?: string[];
 	thinking?: string | false;
@@ -136,7 +126,6 @@ export interface AgentConfig {
 	completionGuard?: boolean;
 	toolBudget?: ToolBudgetConfig;
 	maxExecutionTimeMs?: number;
-	memory?: AgentMemoryConfig;
 	disabled?: boolean;
 	extraFields?: Record<string, string>;
 	override?: BuiltinAgentOverrideInfo;
@@ -469,28 +458,13 @@ function collectPackageSubagentPaths(cwd: string, options: { includeUser: boolea
 	return { agents };
 }
 
-function splitToolList(rawTools: string[] | undefined): { tools?: string[]; mcpDirectTools?: string[] } {
-	const mcpDirectTools: string[] = [];
-	const tools: string[] = [];
-	for (const tool of rawTools ?? []) {
-		if (tool.startsWith("mcp:")) {
-			mcpDirectTools.push(tool.slice(4));
-		} else {
-			tools.push(tool);
-		}
-	}
-	return {
-		...(tools.length > 0 ? { tools } : {}),
-		...(mcpDirectTools.length > 0 ? { mcpDirectTools } : {}),
-	};
+function splitToolList(rawTools: string[] | undefined): { tools?: string[] } {
+	const tools = (rawTools ?? []).filter((tool) => !tool.startsWith("mcp:"));
+	return tools.length > 0 ? { tools } : {};
 }
 
-function joinToolList(config: Pick<AgentConfig, "tools" | "mcpDirectTools">): string[] | undefined {
-	const joined = [
-		...(config.tools ?? []),
-		...(config.mcpDirectTools ?? []).map((tool) => `mcp:${tool}`),
-	];
-	return joined.length > 0 ? joined : undefined;
+function joinToolList(config: Pick<AgentConfig, "tools">): string[] | undefined {
+	return config.tools && config.tools.length > 0 ? [...config.tools] : undefined;
 }
 
 function arraysEqual(a: string[] | undefined, b: string[] | undefined): boolean {
@@ -526,7 +500,6 @@ function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 		systemPrompt: agent.systemPrompt,
 		skills: agent.skills ? [...agent.skills] : undefined,
 		tools: agent.tools ? [...agent.tools] : undefined,
-		mcpDirectTools: agent.mcpDirectTools ? [...agent.mcpDirectTools] : undefined,
 		subagentOnlyExtensions: agent.subagentOnlyExtensions ? [...agent.subagentOnlyExtensions] : undefined,
 		completionGuard: agent.completionGuard,
 		toolBudget: agent.toolBudget,
@@ -890,9 +863,8 @@ function applyBuiltinOverride(
 	if (override.systemPrompt !== undefined) next.systemPrompt = override.systemPrompt;
 	if (override.skills !== undefined) next.skills = override.skills === false ? undefined : [...override.skills];
 	if (override.tools !== undefined) {
-		const { tools, mcpDirectTools } = splitToolList(override.tools === false ? [] : override.tools);
+		const { tools } = splitToolList(override.tools === false ? [] : override.tools);
 		next.tools = tools;
-		next.mcpDirectTools = mcpDirectTools;
 	}
 	if (override.subagentOnlyExtensions !== undefined) {
 		next.subagentOnlyExtensions = override.subagentOnlyExtensions === false ? undefined : [...override.subagentOnlyExtensions];
@@ -1032,10 +1004,9 @@ function applyCustomAgentOverride(
 		fill("skills", ["skill", "skills"], override.skills === false ? undefined : [...override.skills]);
 	}
 	if (override.tools !== undefined && !customAgentHasFrontmatterField(agent, "tools")) {
-		const { tools, mcpDirectTools } = splitToolList(override.tools === false ? [] : override.tools);
+		const { tools } = splitToolList(override.tools === false ? [] : override.tools);
 		const target = mutable();
 		target.tools = tools;
-		target.mcpDirectTools = mcpDirectTools;
 		anyFilled = true;
 	}
 	if (override.subagentOnlyExtensions !== undefined) {
@@ -1084,7 +1055,7 @@ function applyCustomAgentOverrides(
 
 export function buildBuiltinOverrideConfig(
 	base: BuiltinAgentOverrideBase,
-	draft: Pick<AgentConfig, "model" | "fallbackModels" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritSkills" | "defaultContext" | "acceptanceRole" | "disabled" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools" | "subagentOnlyExtensions" | "completionGuard" | "toolBudget" | "maxExecutionTimeMs">,
+	draft: Pick<AgentConfig, "model" | "fallbackModels" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritSkills" | "defaultContext" | "acceptanceRole" | "disabled" | "systemPrompt" | "skills" | "tools" | "subagentOnlyExtensions" | "completionGuard" | "toolBudget" | "maxExecutionTimeMs">,
 ): BuiltinAgentOverrideConfig | undefined {
 	const override: BuiltinAgentOverrideConfig = {};
 
@@ -1296,22 +1267,10 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 		const packageName = parsedPackage.packageName;
 		const runtimeName = buildRuntimeName(localName, packageName);
 
-		const rawTools = frontmatter.tools
+		const tools = frontmatter.tools
 			?.split(",")
 			.map((t) => t.trim())
-			.filter(Boolean);
-
-		const mcpDirectTools: string[] = [];
-		const tools: string[] = [];
-		if (rawTools) {
-			for (const tool of rawTools) {
-				if (tool.startsWith("mcp:")) {
-					mcpDirectTools.push(tool.slice(4));
-				} else {
-					tools.push(tool);
-				}
-			}
-		}
+			.filter((t) => Boolean(t) && !t.startsWith("mcp:")) ?? [];
 
 		const defaultReads = frontmatter.defaultReads
 			?.split(",")
@@ -1395,7 +1354,6 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			packageName,
 			description: frontmatter.description,
 			tools: tools.length > 0 ? tools : undefined,
-			mcpDirectTools: mcpDirectTools.length > 0 ? mcpDirectTools : undefined,
 			model: frontmatter.model,
 			fallbackModels: fallbackModels && fallbackModels.length > 0 ? fallbackModels : undefined,
 			thinking: frontmatter.thinking === "false" ? false : frontmatter.thinking,
@@ -1421,7 +1379,6 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			completionGuard,
 			toolBudget,
 			maxExecutionTimeMs,
-			memory: parseMemoryFrontmatter(frontmatter.memory),
 			extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,
 		};
 		agentFrontmatterFields.set(agent, new Set(Object.keys(frontmatter)));

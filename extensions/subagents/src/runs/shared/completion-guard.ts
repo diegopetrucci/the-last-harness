@@ -49,7 +49,6 @@ interface CompletionMutationGuardInput {
 	task: string;
 	messages: Message[];
 	tools?: string[];
-	mcpDirectTools?: string[];
 }
 
 interface CompletionMutationGuardResult {
@@ -60,8 +59,8 @@ interface CompletionMutationGuardResult {
 
 type ToolMutationCapability = { kind: "mutation-capable" } | { kind: "read-only" };
 
-function toolMutationCapability(tools: string[] | undefined, mcpDirectTools: string[] | undefined): ToolMutationCapability {
-	if (tools === undefined || tools.length === 0 || (mcpDirectTools?.length ?? 0) > 0) return { kind: "mutation-capable" };
+function toolMutationCapability(tools: string[] | undefined): ToolMutationCapability {
+	if (tools === undefined || tools.length === 0) return { kind: "mutation-capable" };
 	return tools.every((tool) => READ_ONLY_BUILTIN_TOOLS.has(tool)) ? { kind: "read-only" } : { kind: "mutation-capable" };
 }
 
@@ -104,7 +103,7 @@ export function hasMutationToolCall(messages: Message[]): boolean {
 }
 
 export function evaluateCompletionMutationGuard(input: CompletionMutationGuardInput): CompletionMutationGuardResult {
-	const expectedMutation = toolMutationCapability(input.tools, input.mcpDirectTools).kind === "read-only"
+	const expectedMutation = toolMutationCapability(input.tools).kind === "read-only"
 		? false
 		: expectsImplementationMutation(input.agent, input.task);
 	const attemptedMutation = hasMutationToolCall(input.messages);

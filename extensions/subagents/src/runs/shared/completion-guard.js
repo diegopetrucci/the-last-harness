@@ -36,8 +36,8 @@ const READ_ONLY_BUILTIN_TOOLS = new Set([
     "intercom",
     "contact_supervisor",
 ]);
-function toolMutationCapability(tools, mcpDirectTools) {
-    if (tools === undefined || tools.length === 0 || (mcpDirectTools?.length ?? 0) > 0)
+function toolMutationCapability(tools) {
+    if (tools === undefined || tools.length === 0)
         return { kind: "mutation-capable" };
     return tools.every((tool) => READ_ONLY_BUILTIN_TOOLS.has(tool)) ? { kind: "read-only" } : { kind: "mutation-capable" };
 }
@@ -81,7 +81,7 @@ export function hasMutationToolCall(messages) {
     return false;
 }
 export function evaluateCompletionMutationGuard(input) {
-    const expectedMutation = toolMutationCapability(input.tools, input.mcpDirectTools).kind === "read-only"
+    const expectedMutation = toolMutationCapability(input.tools).kind === "read-only"
         ? false
         : expectsImplementationMutation(input.agent, input.task);
     const attemptedMutation = hasMutationToolCall(input.messages);

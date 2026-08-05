@@ -11,8 +11,8 @@ export const repoRoot = resolve(dirname(scriptPath), "..");
 export const suiteConfigs = {
 	unit: {
 		directory: join(repoRoot, "extensions/subagents/test/unit"),
-		minimumFiles: 93,
-		minimumTests: 1_147,
+		minimumFiles: 91,
+		minimumTests: 1_086,
 	},
 	integration: {
 		directory: join(repoRoot, "extensions/subagents/test/integration"),

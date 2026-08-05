@@ -293,7 +293,6 @@ describe("builtin agent disabling", () => {
 				systemPrompt: "Base prompt",
 				skills: undefined,
 				tools: undefined,
-				mcpDirectTools: undefined,
 			},
 		);
 

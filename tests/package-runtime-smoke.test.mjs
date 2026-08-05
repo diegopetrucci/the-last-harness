@@ -92,7 +92,7 @@ Return the deterministic faux child marker exactly.
 	]
 		.map((path) => path.replace(/\.ts$/, ".js"))
 		.sort();
-	assert.equal(generatedExtensionPaths.length, 170);
+	assert.equal(generatedExtensionPaths.length, 167);
 	for (const generatedPath of generatedExtensionPaths) {
 		assert.ok(packedPaths.has(generatedPath), `npm pack omitted generated extension module ${generatedPath}`);
 	}
@@ -144,7 +144,7 @@ Return the deterministic faux child marker exactly.
 		scope: "user",
 		origin: "package",
 	});
-	assert.deepEqual(runtimeEvidence.toolCounts, { subagent: 1, wait: 1 });
+	assert.deepEqual(runtimeEvidence.toolCounts, { subagent: 1 });
 	assert.equal(runtimeEvidence.factoryExecutions, 3);
 	assert.equal(runtimeEvidence.failedSubagentPatched, true);
 	assert.deepEqual(runtimeEvidence.rpc, {

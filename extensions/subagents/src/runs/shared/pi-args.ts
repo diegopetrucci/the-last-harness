@@ -3,7 +3,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { encodeNestedPathEnv, parseNestedPathEnv, type NestedPathEntry } from "./nested-path.ts";
-import { resolveMcpDirectToolNames } from "./mcp-direct-tool-allowlist.ts";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "./structured-output.ts";
 import { TEMP_ROOT_DIR, type JsonSchemaObject, type ResolvedToolBudget } from "../../shared/types.ts";
 import { THINKING_LEVELS } from "../../shared/model-info.ts";
@@ -51,7 +50,6 @@ interface BuildPiArgsInput {
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
 	systemPrompt?: string | null;
-	mcpDirectTools?: string[];
 	cwd?: string;
 	promptFileStem?: string;
 	intercomSessionName?: string;
@@ -135,9 +133,6 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 			}
 		}
 		if (builtinTools.length > 0) {
-			if (input.mcpDirectTools?.length) {
-				builtinTools.push(...resolveMcpDirectToolNames(input.mcpDirectTools, input.cwd));
-			}
 			args.push("--tools", builtinTools.join(","));
 		}
 	}
@@ -244,11 +239,11 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	if (input.childIndex !== undefined) {
 		env[SUBAGENT_CHILD_INDEX_ENV] = String(input.childIndex);
 	}
-	if (input.mcpDirectTools?.length) {
-		env.MCP_DIRECT_TOOLS = input.mcpDirectTools.join(",");
-	} else {
-		env.MCP_DIRECT_TOOLS = "__none__";
-	}
+	// Sentinel required by @diegopetrucci/pi-mcp-adapter (bundled in TLH):
+	// the adapter's init.ts checks envDirect !== "__none__" before bootstrapping direct MCP tools.
+	// An unset MCP_DIRECT_TOOLS means "bootstrap everything configured", which would silently
+	// widen every child subagent's tool surface. This assignment must not be removed.
+	env.MCP_DIRECT_TOOLS = "__none__";
 	if (input.structuredOutput) {
 		env[STRUCTURED_OUTPUT_CAPTURE_ENV] = input.structuredOutput.outputPath;
 		env[STRUCTURED_OUTPUT_SCHEMA_ENV] = input.structuredOutput.schemaPath;

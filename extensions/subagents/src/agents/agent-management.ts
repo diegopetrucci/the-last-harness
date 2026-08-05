@@ -176,7 +176,6 @@ function editableAgentConfig(agent: AgentConfig): AgentConfig {
 		systemPrompt: base.systemPrompt,
 		skills: base.skills ? [...base.skills] : undefined,
 		tools: base.tools ? [...base.tools] : undefined,
-		mcpDirectTools: base.mcpDirectTools ? [...base.mcpDirectTools] : undefined,
 		subagentOnlyExtensions: base.subagentOnlyExtensions ? [...base.subagentOnlyExtensions] : undefined,
 		completionGuard: base.completionGuard,
 		maxExecutionTimeMs: base.maxExecutionTimeMs,
@@ -241,16 +240,9 @@ function preservedAgentFrontmatterFields(agent: AgentConfig, cfg: Record<string,
 	return fields;
 }
 
-function parseTools(raw: string): { tools?: string[]; mcpDirectTools?: string[] } {
-	const tools: string[] = [];
-	const mcpDirectTools: string[] = [];
-	for (const item of parseCsv(raw)) {
-		if (item.startsWith("mcp:")) {
-			const direct = item.slice(4).trim();
-			if (direct) mcpDirectTools.push(direct);
-		} else tools.push(item);
-	}
-	return { tools: tools.length ? tools : undefined, mcpDirectTools: mcpDirectTools.length ? mcpDirectTools : undefined };
+function parseTools(raw: string): { tools?: string[] } {
+	const tools = parseCsv(raw).filter((item) => !item.startsWith("mcp:"));
+	return { tools: tools.length ? tools : undefined };
 }
 
 function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): string | undefined {
@@ -278,8 +270,8 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		} else return "config.fallbackModels must be a comma-separated string, string array, or false when provided.";
 	}
 	if (hasKey(cfg, "tools")) {
-		if (cfg.tools === false || cfg.tools === "") { target.tools = undefined; target.mcpDirectTools = undefined; }
-		else if (typeof cfg.tools === "string") { const parsed = parseTools(cfg.tools); target.tools = parsed.tools; target.mcpDirectTools = parsed.mcpDirectTools; }
+		if (cfg.tools === false || cfg.tools === "") { target.tools = undefined; }
+		else if (typeof cfg.tools === "string") { const parsed = parseTools(cfg.tools); target.tools = parsed.tools; }
 		else return "config.tools must be a comma-separated string or false when provided.";
 	}
 	if (hasKey(cfg, "skills")) {
@@ -411,7 +403,7 @@ function renamePath(
 }
 
 function formatAgentDetail(agent: AgentConfig): string {
-	const tools = [...(agent.tools ?? []), ...(agent.mcpDirectTools ?? []).map((t) => `mcp:${t}`)];
+	const tools = [...(agent.tools ?? [])];
 	const lines: string[] = [`Agent: ${agent.name} (${agent.source})`, `Path: ${agent.filePath}`, `Description: ${agent.description}`];
 	if (agent.packageName) {
 		lines.push(`Local name: ${frontmatterNameForConfig(agent)}`);
@@ -437,7 +429,6 @@ function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.maxExecutionTimeMs !== undefined) lines.push(`Max execution time: ${agent.maxExecutionTimeMs}ms`);
 	if (agent.completionGuard === false) lines.push("Completion guard: false");
 	if (agent.toolBudget) lines.push(`Tool budget: ${JSON.stringify(agent.toolBudget)}`);
-	if (agent.memory) lines.push(`Memory: ${agent.memory.scope} scope, path: ${agent.memory.path}`);
 	if (agent.systemPrompt.trim()) lines.push("", "System Prompt:", agent.systemPrompt);
 	return lines.join("\n");
 }
