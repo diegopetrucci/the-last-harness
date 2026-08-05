@@ -7,36 +7,25 @@ function escapeRegExp(value: string): string {
 }
 
 interface SlashLiveStateModule {
-	applySlashUpdate?: typeof import("../../src/slash/slash-live-state.ts").applySlashUpdate;
-	createSlashResultComponent?: typeof import("../../src/extension/index.ts").createSlashResultComponent;
-	buildSlashInitialResult?: typeof import("../../src/slash/slash-live-state.ts").buildSlashInitialResult;
-	clearSlashSnapshots?: typeof import("../../src/slash/slash-live-state.ts").clearSlashSnapshots;
-	finalizeSlashResult?: typeof import("../../src/slash/slash-live-state.ts").finalizeSlashResult;
-	getSlashRenderableSnapshot?: typeof import("../../src/slash/slash-live-state.ts").getSlashRenderableSnapshot;
-	restoreSlashFinalSnapshots?: typeof import("../../src/slash/slash-live-state.ts").restoreSlashFinalSnapshots;
+	applySlashUpdate: typeof import("../../src/slash/slash-live-state.ts").applySlashUpdate;
+	createSlashResultComponent: typeof import("../../src/extension/index.ts").createSlashResultComponent;
+	buildSlashInitialResult: typeof import("../../src/slash/slash-live-state.ts").buildSlashInitialResult;
+	clearSlashSnapshots: typeof import("../../src/slash/slash-live-state.ts").clearSlashSnapshots;
+	finalizeSlashResult: typeof import("../../src/slash/slash-live-state.ts").finalizeSlashResult;
+	getSlashRenderableSnapshot: typeof import("../../src/slash/slash-live-state.ts").getSlashRenderableSnapshot;
+	restoreSlashFinalSnapshots: typeof import("../../src/slash/slash-live-state.ts").restoreSlashFinalSnapshots;
 }
 
-let applySlashUpdate: SlashLiveStateModule["applySlashUpdate"];
-let createSlashResultComponent: SlashLiveStateModule["createSlashResultComponent"];
-let buildSlashInitialResult: SlashLiveStateModule["buildSlashInitialResult"];
-let clearSlashSnapshots: SlashLiveStateModule["clearSlashSnapshots"];
-let finalizeSlashResult: SlashLiveStateModule["finalizeSlashResult"];
-let getSlashRenderableSnapshot: SlashLiveStateModule["getSlashRenderableSnapshot"];
-let restoreSlashFinalSnapshots: SlashLiveStateModule["restoreSlashFinalSnapshots"];
-let available = true;
-try {
-	({
-		applySlashUpdate,
-		buildSlashInitialResult,
-		clearSlashSnapshots,
-		finalizeSlashResult,
-		getSlashRenderableSnapshot,
-		restoreSlashFinalSnapshots,
-	} = await import("../../src/slash/slash-live-state.ts") as SlashLiveStateModule);
-	({ createSlashResultComponent } = await import("../../src/extension/index.ts") as SlashLiveStateModule);
-} catch {
-	available = false;
-}
+const {
+	applySlashUpdate,
+	buildSlashInitialResult,
+	clearSlashSnapshots,
+	finalizeSlashResult,
+	getSlashRenderableSnapshot,
+	restoreSlashFinalSnapshots,
+} = await import("../../src/slash/slash-live-state.ts") as SlashLiveStateModule;
+const { createSlashResultComponent } = await import("../../src/extension/index.ts") as SlashLiveStateModule;
+const available = true;
 
 describe("slash live state", { skip: !available ? "slash-live-state.ts not importable" : undefined }, () => {
 	it("streams progress updates into the visible slash snapshot", () => {

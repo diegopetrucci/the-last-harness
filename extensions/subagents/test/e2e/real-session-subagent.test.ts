@@ -8,19 +8,14 @@
  * real stdout parser extracts the result, and the marker flows back as a tool
  * result that the parent relays. No real API keys are used.
  *
- * Skips gracefully when the pi runtime packages are not importable.
+ * Pi runtime packages are required test dependencies; import failures fail the suite.
  */
 
 import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as os from "node:os";
 import * as path from "node:path";
-import { tryImport } from "../support/helpers.ts";
 import type { RealSessionRun } from "../support/real-session-runner.ts";
-
-const piCodingAgent = await tryImport<unknown>("@earendil-works/pi-coding-agent");
-const piAi = await tryImport<unknown>("@earendil-works/pi-ai");
-const available = Boolean(piCodingAgent && piAi);
 
 const CHILD_MARKER = "CHILD_REAL_SESSION_OK";
 // Env vars the runner must clear so a parent that was itself spawned as a
@@ -43,7 +38,7 @@ const ISOLATED_ENV_KEYS = [
 const win32Skip = process.platform === "win32"
 	? "fork argv1 pi-spawn hardening (TLH pi-spawn.ts delta) is incompatible with the upstream Windows harness; TLH targets macOS/Linux"
 	: undefined;
-describe("real Pi-session subagent E2E", { skip: !available ? "pi runtime packages not available" : win32Skip }, () => {
+describe("real Pi-session subagent E2E", { skip: win32Skip }, () => {
 	let run: RealSessionRun | undefined;
 
 	afterEach(async () => {

@@ -124,7 +124,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			await new Promise((resolve) => setTimeout(resolve, 40));
 
 			assert.equal(state.asyncJobs.size, 0);
-			assert.ok(ui.renderRequests > 0, "expected widget cleanup to request a rerender");
+			assert.ok(ui.widgets.length > 0, "expected widget cleanup to replace the widget");
 			assert.equal(ui.widgets.at(-1), undefined);
 		} finally {
 			removeTempDir(asyncRoot);
@@ -189,7 +189,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.equal(job.completedSteps, 0);
 			assert.equal(job.activeParallelGroup, true);
 			assert.ok(state.poller, "expected restored active jobs to start polling");
-			assert.ok(ui.renderRequests >= 2, "expected reset and restore to request widget renders");
+			assert.ok(ui.widgets.length >= 2, "expected reset and restore to replace the widget");
 			assert.equal(typeof ui.widgets.at(-1), "function", "expected restored jobs to render the widget");
 
 			await new Promise((resolve) => setTimeout(resolve, 30));
@@ -351,7 +351,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.deepEqual([...state.asyncJobs.keys()], ["run-owner"]);
 			assert.equal(state.asyncJobs.get("run-owner")?.status, "running");
 			assert.ok(state.poller, "expected restored matching jobs to start polling");
-			assert.ok(ui.renderRequests >= 2, "expected reset and restore to request widget renders");
+			assert.ok(ui.widgets.length >= 2, "expected reset and restore to replace the widget");
 			assert.equal(fs.existsSync(badJsonDir), false);
 			assert.equal(fs.existsSync(badSessionDir), false);
 			assert.equal(warnings.length, 1);
@@ -642,11 +642,11 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			tracker.resetJobs(ui.ctx as never);
 			tracker.handleStarted({ id: "run-unchanged", asyncDir: runDir, agent: "worker" });
 
-			const requestsAfterStart = ui.renderRequests;
+			const widgetUpdatesAfterStart = ui.widgets.length;
 			await new Promise((resolve) => setTimeout(resolve, 35));
-			assert.ok(ui.renderRequests > requestsAfterStart, "first status load should redraw the widget");
+			assert.ok(ui.widgets.length > widgetUpdatesAfterStart, "first status load should replace the widget");
 
-			const requestsAfterStatusLoaded = ui.renderRequests;
+			const widgetUpdatesAfterStatusLoaded = ui.widgets.length;
 			fs.writeFileSync(path.join(runDir, "events.jsonl"), `${JSON.stringify({
 				type: "subagent.control",
 				channels: ["event"],
@@ -661,11 +661,11 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			})}\n`, "utf-8");
 			await new Promise((resolve) => setTimeout(resolve, 40));
 			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-event"), true);
-			assert.equal(ui.renderRequests, requestsAfterStatusLoaded, "unchanged status and control cursors should not request widget redraws");
+			assert.equal(ui.widgets.length, widgetUpdatesAfterStatusLoaded, "unchanged status and control cursors should not replace the widget");
 
 			writeStatus(3000, 1);
 			await new Promise((resolve) => setTimeout(resolve, 40));
-			assert.ok(ui.renderRequests > requestsAfterStatusLoaded, "changed non-terminal status should redraw the widget");
+			assert.ok(ui.widgets.length > widgetUpdatesAfterStatusLoaded, "changed non-terminal status should replace the widget");
 		} finally {
 			removeTempDir(asyncRoot);
 		}
@@ -698,7 +698,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			await new Promise((resolve) => setTimeout(resolve, 80));
 
 			assert.equal(state.asyncJobs.size, 0);
-			assert.ok(ui.renderRequests > 0, "expected polling cleanup to request a rerender");
+			assert.ok(ui.widgets.length > 0, "expected polling cleanup to replace the widget");
 			assert.equal(ui.widgets.at(-1), undefined);
 		} finally {
 			removeTempDir(asyncRoot);
@@ -739,7 +739,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.equal(state.asyncJobs.size, 0);
 			assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, "status.json"), "utf-8")).state, "failed");
 			assert.equal(JSON.parse(fs.readFileSync(path.join(resultsDir, "run-stale.json"), "utf-8")).success, false);
-			assert.ok(ui.renderRequests > 0, "expected stale repair cleanup to request a rerender");
+			assert.ok(ui.widgets.length > 0, "expected stale repair cleanup to replace the widget");
 		} finally {
 			removeTempDir(asyncRoot);
 		}
@@ -790,7 +790,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			]);
 			assert.equal(result.success, false);
 			assert.equal(result.sessionId, "session-current");
-			assert.ok(ui.renderRequests > 0, "expected startup-crash repair cleanup to request a rerender");
+			assert.ok(ui.widgets.length > 0, "expected startup-crash repair cleanup to replace the widget");
 		} finally {
 			removeTempDir(asyncRoot);
 		}
@@ -815,7 +815,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			await new Promise((resolve) => setTimeout(resolve, 80));
 
 			assert.equal(state.asyncJobs.size, 0);
-			assert.ok(ui.renderRequests > 0, "expected malformed status cleanup to request a rerender");
+			assert.ok(ui.widgets.length > 0, "expected malformed status cleanup to replace the widget");
 		} finally {
 			removeTempDir(asyncRoot);
 		}

@@ -8,7 +8,7 @@ import { discoverAgents } from "../../src/agents/agents.ts";
 import { INTERCOM_DETACH_REQUEST_EVENT } from "../../src/shared/types.ts";
 
 interface ExecutorModule {
-	createSubagentExecutor?: (...args: unknown[]) => {
+	createSubagentExecutor: (...args: unknown[]) => {
 		execute: (
 			id: string,
 			params: Record<string, unknown>,
@@ -29,7 +29,7 @@ interface ExecutorModule {
 }
 
 interface AsyncExecutionModule {
-	isAsyncAvailable?: () => boolean;
+	isAsyncAvailable(): boolean;
 }
 
 interface ProgressUpdate {
@@ -40,9 +40,8 @@ interface ProgressUpdate {
 
 const executorMod = await tryImport<ExecutorModule>("./src/runs/foreground/subagent-executor.ts");
 const asyncExecutionMod = await tryImport<AsyncExecutionModule>("./src/runs/background/async-execution.ts");
-const available = !!executorMod;
-const createSubagentExecutor = executorMod?.createSubagentExecutor;
-const asyncAvailable = asyncExecutionMod?.isAsyncAvailable?.() === true;
+const createSubagentExecutor = executorMod.createSubagentExecutor;
+assert.equal(asyncExecutionMod.isAsyncAvailable(), true, "required async runner module is unavailable");
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
 
@@ -88,7 +87,7 @@ function makeState(cwd: string) {
 	};
 }
 
-describe("fork context execution wiring", { skip: !available ? "subagent executor not importable" : undefined }, () => {
+describe("fork context execution wiring", () => {
 	let tempDir: string;
 	let mockPi: MockPi;
 
@@ -1030,7 +1029,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		assert.equal(result.details?.results?.some((entry) => entry.detached === true && entry.exitCode === 0), true);
 	});
 
-	it("runs top-level parallel async requests in the background", { skip: !asyncAvailable ? "jiti not available" : undefined }, async () => {
+	it("runs top-level parallel async requests in the background", async () => {
 		const executor = makeExecutor();
 
 		const result = await executor.execute(

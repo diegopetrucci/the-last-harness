@@ -39,7 +39,9 @@ jobs:
         run: |
           mkdir -p "${HOME}"
           npm run check:package-versions
+          npm run check:package-contents
           npm run typecheck
+          npm run typecheck:subagents-test-support
           npm run typecheck:runtime
           npm run check:runtime
           bash scripts/check-installer-smoke.sh
@@ -80,3 +82,8 @@ jobs:
         run: |
           mkdir -p "${HOME}"
           node --test --test-reporter=dot --test-shard=${{ matrix.shard }}/2 "tests/**/*.test.mjs"
+          node scripts/run-subagents-tests.mjs unit --test-shard=${{ matrix.shard }}/2
+          node scripts/run-subagents-tests.mjs integration --test-shard=${{ matrix.shard }}/2
+          if [ "${{ matrix.shard }}" = "1" ]; then
+            node scripts/run-subagents-tests.mjs e2e
+          fi

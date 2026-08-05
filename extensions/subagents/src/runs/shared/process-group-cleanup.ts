@@ -32,9 +32,12 @@ function isPermissionError(error: unknown): boolean {
 }
 
 function sleep(ms: number): Promise<void> {
+	// This timer backs an awaited cleanup promise. Keep it referenced so Node
+	// cannot emit beforeExit while the owned process group is still escalating
+	// (notably Node 22.19). Fire-and-forget callers therefore may keep shutdown
+	// alive for the bounded cleanup window (up to 4s with the default waits).
 	return new Promise((resolve) => {
-		const timer = setTimeout(resolve, ms);
-		timer.unref?.();
+		setTimeout(resolve, ms);
 	});
 }
 

@@ -6,11 +6,12 @@ import * as path from "node:path";
 import {
 	fauxAssistantMessage,
 	fauxText,
-	registerFauxProvider,
+	fauxProvider,
 } from "@earendil-works/pi-ai";
 import {
 	createAgentSession,
 	DefaultResourceLoader,
+	ModelRuntime,
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
@@ -85,19 +86,6 @@ function parseArgs(argv) {
 	return parsed;
 }
 
-function createModelRegistry(model) {
-	return {
-		find: (provider, id) => provider === model.provider && id === model.id ? model : undefined,
-		getAll: () => [model],
-		getAvailable: () => [model],
-		hasConfiguredAuth: () => true,
-		isUsingOAuth: () => false,
-		getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "faux", headers: {} }),
-		registerProvider: () => {},
-		unregisterProvider: () => {},
-	};
-}
-
 function createSessionManager(parsed, cwd) {
 	if (parsed.sessionFile) {
 		const sessionDir = parsed.sessionDir ?? path.dirname(parsed.sessionFile);
@@ -118,10 +106,12 @@ async function main() {
 		: mkdtempSync(path.join(os.tmpdir(), "pi-e2e-agent-dir-"));
 	const agentDir = process.env.PI_CODING_AGENT_DIR ?? ownedAgentDir;
 
-	const faux = registerFauxProvider({
+	const faux = fauxProvider({
 		provider: "faux-e2e-child",
 		models: [{ id: "child", contextWindow: 200_000 }],
 	});
+	const modelRuntime = await ModelRuntime.create({ modelsPath: null, authPath: path.join(agentDir, "auth.json") });
+	modelRuntime.registerNativeProvider(faux.provider);
 	const model = faux.getModel();
 	faux.setResponses([
 		() => fauxAssistantMessage(fauxText(responseText), { stopReason: "stop" }),
@@ -150,7 +140,7 @@ async function main() {
 			cwd,
 			agentDir,
 			model,
-			modelRegistry: createModelRegistry(model),
+			modelRuntime,
 			resourceLoader: loader,
 			sessionManager: createSessionManager(parsed, cwd),
 			settingsManager,
@@ -173,7 +163,6 @@ async function main() {
 		await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
 		session.dispose();
 	} finally {
-		faux.unregister();
 		if (ownedAgentDir) rmSync(ownedAgentDir, { recursive: true, force: true });
 	}
 }

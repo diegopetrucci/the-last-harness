@@ -10,14 +10,8 @@ interface DetectErrorResult {
 
 type DetectSubagentError = (messages: unknown[]) => DetectErrorResult;
 
-let detectSubagentError: DetectSubagentError | undefined;
-let available = true;
-try {
-	({ detectSubagentError } = await import("../../src/shared/utils.ts"));
-} catch {
-	// Skip in lean unit mode when runtime-only imports are unavailable.
-	available = false;
-}
+const { detectSubagentError } = await import("../../src/shared/utils.ts") as { detectSubagentError: DetectSubagentError };
+const available = true;
 
 /**
  * Helper to create a tool result message (success or error).

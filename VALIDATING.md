@@ -10,21 +10,43 @@ Before considering changes ready, run:
 npm run validate
 ```
 
-This is the standard full validation flow for this repository. It includes the main TypeScript `tsc --noEmit` check, the runtime TypeScript check for `scripts/**/*.mts` and authoritative `extensions/**/*.ts`, and the generated-output freshness check for `scripts/**/*.mjs` plus same-layout `extensions/**/*.js` before the installer smoke checks, tests, lint, and package dry-run. Its default `npm test` phase uses the quiet dot reporter so passing runs stay concise.
+This is the standard full validation flow. It checks managed version pins and package contents; runs the main, subagent-test-support, and runtime TypeScript targets; verifies generated runtime JavaScript freshness; runs installer smoke tests; executes the root and imported subagent test suites; runs JavaScript/TypeScript and shell lint; exercises the settings merge dry-run; and finishes with `npm pack --dry-run`.
 
-## Test output modes
+The default root tests use Node's dot reporter. Imported subagent suites capture TAP so the runner can enforce their counts and print one concise success line; on any failure or invalid summary it relays the full TAP and stderr diagnostics.
 
-Use the default test command for normal local checks:
+## Test suites and output modes
+
+Use the default aggregate command for normal local checks:
 
 ```sh
 npm test
 ```
 
-If you need the full Node test reporter while diagnosing a failure, rerun with:
+The imported suites can be targeted individually:
+
+```sh
+npm run test:subagents:unit
+npm run test:subagents:integration
+npm run test:subagents:e2e
+```
+
+On Node 22.19.0, full imported runs must report every discovered test as passed with zero failures, cancellations, skips, or todo tests. The runner also requires at least 93 unit files, 22 integration files, and 1 E2E file, preventing missing globs or zero-test runs from passing. The imported baseline is 1146 unit tests, 526 integration tests, and 1 E2E test; TLH intentionally raises unit coverage to 1147 solely with the Node 22 referenced-cleanup-timer regression.
+
+CI runs the suites on Linux and macOS with Node 22.19.0. Its unit and integration shards must each execute at least one test and retain the same zero-non-pass requirement; together they cover the full counts.
+
+For expanded output from the root Node tests, use:
 
 ```sh
 npm run test:verbose
 ```
+
+Subagent successes remain concise in that aggregate command. Subagent failures automatically include their full TAP output.
+
+## TypeScript scope
+
+`npm run typecheck` and `npm run typecheck:runtime` cover production subagent sources. `npm run typecheck:subagents-test-support` deliberately covers only typed support modules and focused TLH adaptation regressions. It does **not** claim full imported-test type coverage: legacy fixture mocks are not strict-compatible. The review-time full-tree probe reported 320 TypeScript errors (319 after the required-dependency adaptations in this port). Runtime execution plus ESLint remains authoritative for the rest of the imported fixtures.
+
+For runtime TypeScript changes under `scripts/` or `extensions/`, use `npm run typecheck:runtime` for the focused runtime-only typecheck, `npm run check:runtime` to confirm the generated `scripts/**/*.mjs` and same-layout `extensions/**/*.js` files are fresh without mutating the worktree, and `npm run build` only when you intentionally want to refresh those generated outputs. Review and edit the TypeScript sources rather than the generated `.mjs`/`.js` mirrors.
 
 ## Useful targeted checks
 
@@ -44,8 +66,6 @@ npm run lint:sh
 ```
 
 This runs ShellCheck over every `*.sh` file tracked by git. It is also included in `npm run validate`.
-
-For runtime TypeScript changes under `scripts/` or `extensions/`, use `npm run typecheck:runtime` for the focused runtime-only typecheck, `npm run check:runtime` to confirm the generated `scripts/**/*.mjs` and same-layout `extensions/**/*.js` files are fresh without mutating the worktree, and `npm run build` only when you intentionally want to refresh those generated outputs. Review and edit the TypeScript sources rather than the generated `.mjs`/`.js` mirrors.
 
 For installer tests, prefer temporary `--agent-dir` and `--bin-dir` values. Do not run a real install into home directories unless explicitly requested.
 

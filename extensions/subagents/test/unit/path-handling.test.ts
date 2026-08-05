@@ -96,13 +96,9 @@ describe("path.join vs template string concatenation", () => {
 
 	it("parallel subdir naming should use path.join", () => {
 		// settings.ts:302,306 pattern: `${subdir}/${task.output}`
-		const subdir = "parallel-0/0-_code-reviewer";
 		const output = "review.md";
 
-		const templateResult = `${subdir}/${output}`;
-		const joinResult = path.join(subdir, output);
-
-		// Both produce forward slashes here (subdir itself uses /).
+		// Both approaches produce forward slashes here (the subdir itself uses /).
 		// But if subdir comes from path.join on Windows, it would have backslashes.
 		const windowsSubdir = path.join("parallel-0", "0-_code-reviewer");
 		const windowsJoin = path.join(windowsSubdir, output);

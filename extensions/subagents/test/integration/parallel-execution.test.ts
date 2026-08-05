@@ -139,15 +139,6 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		return payload.args;
 	}
 
-	function readCallArgs(index: number): string[] {
-		const callFile = fs.readdirSync(mockPi.dir)
-			.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
-			.sort()
-			.at(index);
-		assert.ok(callFile, `expected recorded call ${index}`);
-		return readRecordedArgs(callFile);
-	}
-
 	function readAllCallArgs(): string[][] {
 		return fs.readdirSync(mockPi.dir)
 			.filter((name) => name.startsWith("call-") && name.endsWith(".json"))

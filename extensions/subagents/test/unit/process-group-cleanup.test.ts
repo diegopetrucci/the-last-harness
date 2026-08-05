@@ -40,6 +40,19 @@ describe("cleanupOwnedProcessGroup", () => {
 		assert.match(formatOwnedProcessGroupCleanup(result), /SIGKILL/);
 	});
 
+	it("keeps the default awaited cleanup timer referenced until escalation settles", async () => {
+		const result = await cleanupOwnedProcessGroup(2468, {
+			kill: () => true,
+			intWaitMs: 1,
+			termWaitMs: 1,
+			killWaitMs: 1,
+			pollMs: 1,
+		});
+
+		assert.equal(result.terminated, false);
+		assert.equal(result.escalatedToSigkill, true);
+	});
+
 	it("fails closed when SIGKILL cleanup cannot be confirmed", async () => {
 		let now = 0;
 		const result = await cleanupOwnedProcessGroup(9876, {

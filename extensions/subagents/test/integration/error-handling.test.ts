@@ -161,7 +161,7 @@ describe("runSync error handling", { skip: !piAvailable ? "pi packages not avail
 		const start = Date.now();
 		setTimeout(() => controller.abort(), 200);
 
-		const result = await runSync(tempDir, agents, "slow", "Slow task", {
+		await runSync(tempDir, agents, "slow", "Slow task", {
 			signal: controller.signal,
 		});
 		const elapsed = Date.now() - start;

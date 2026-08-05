@@ -248,8 +248,8 @@ test("artifacts-dir uses a fresh child workspace and preserves parent README/res
 test("package scripts keep live evals out of package command surfaces", () => {
 	const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
 
-	assert.equal(pkg.scripts.test, 'node --test --test-reporter=dot "tests/**/*.test.mjs"');
-	assert.equal(pkg.scripts["test:verbose"], 'node --test "tests/**/*.test.mjs"');
+	assert.equal(pkg.scripts.test, 'node --test --test-reporter=dot "tests/**/*.test.mjs" && npm run test:subagents');
+	assert.equal(pkg.scripts["test:verbose"], 'node --test "tests/**/*.test.mjs" && npm run test:subagents');
 	assert.equal(Object.hasOwn(pkg.scripts, "eval:live"), false);
 	assert.doesNotMatch(pkg.scripts.validate, /eval:live|tlh-live-evals/i);
 });

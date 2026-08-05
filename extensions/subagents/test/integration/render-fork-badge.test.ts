@@ -22,10 +22,9 @@ type RenderSubagentResult = (
 	},
 ) => { render(width: number): string[] };
 
-let renderSubagentResult: RenderSubagentResult | undefined;
-({ renderSubagentResult } = await import("../../src/tui/render.ts") as {
-	renderSubagentResult?: RenderSubagentResult;
-});
+const { renderSubagentResult } = await import("../../src/tui/render.ts") as {
+	renderSubagentResult: RenderSubagentResult;
+};
 
 const theme = {
 	fg: (_name: string, text: string) => text,

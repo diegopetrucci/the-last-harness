@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { KeybindingsManager } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js";
+import { KeybindingsManager } from "../../../../node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js";
 import { getKeybindings, setKeybindings } from "@earendil-works/pi-tui";
 import { createSubagentLiveDetailController, type SubagentLiveDetailController } from "../../src/shared/subagent-shortcuts.ts";
 

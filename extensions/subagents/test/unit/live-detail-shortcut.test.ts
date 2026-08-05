@@ -37,11 +37,10 @@ describe("subagent live-detail controller", () => {
 		const liveRendererState = {};
 		let liveInvalidations = 0;
 		let reenteredAsLive = false;
-		let liveInvalidate: () => void;
-		liveInvalidate = () => {
+		function liveInvalidate(): void {
 			liveInvalidations++;
 			reenteredAsLive = controller.registerToolRow("tool-row", liveRendererState, liveInvalidate);
-		};
+		}
 		assert.equal(controller.registerToolRow("tool-row", liveRendererState, liveInvalidate), false);
 		assert.equal(controller.registerToolRow("tool-row", liveRendererState, liveInvalidate), false);
 		assert.equal(liveInvalidations, 0, "probe ran inside the initial render stack");
@@ -92,12 +91,11 @@ describe("subagent live-detail controller", () => {
 
 		const throwingState = {};
 		let throwingCalls = 0;
-		let throwingInvalidate: () => void;
-		throwingInvalidate = () => {
+		function throwingInvalidate(): void {
 			throwingCalls++;
 			controller.registerToolRow("unseen-throwing", throwingState, throwingInvalidate);
 			throw new Error("not live");
-		};
+		}
 		assert.equal(controller.registerToolRow("unseen-throwing", throwingState, throwingInvalidate), false);
 		assert.equal(noOpCalls, 0);
 		assert.equal(throwingCalls, 0);
@@ -120,11 +118,10 @@ describe("subagent live-detail controller", () => {
 		const controller = createSubagentLiveDetailController();
 		const staleRendererState = {};
 		let staleInvalidations = 0;
-		let staleInvalidate: () => void;
-		staleInvalidate = () => {
+		function staleInvalidate(): void {
 			staleInvalidations++;
 			controller.registerToolRow("tool-row", staleRendererState, staleInvalidate);
-		};
+		}
 		assert.equal(controller.registerToolRow("tool-row", staleRendererState, staleInvalidate), false);
 		assert.equal(staleInvalidations, 0);
 		await Promise.resolve();
@@ -133,11 +130,10 @@ describe("subagent live-detail controller", () => {
 		const rebuiltRendererState = {};
 		let rebuiltInvalidations = 0;
 		let reenteredAsLive = false;
-		let rebuiltInvalidate: () => void;
-		rebuiltInvalidate = () => {
+		function rebuiltInvalidate(): void {
 			rebuiltInvalidations++;
 			reenteredAsLive = controller.registerToolRow("tool-row", rebuiltRendererState, rebuiltInvalidate);
-		};
+		}
 
 		assert.equal(controller.registerToolRow("tool-row", rebuiltRendererState, rebuiltInvalidate), false);
 		assert.equal(rebuiltInvalidations, 0);
@@ -153,11 +149,10 @@ describe("subagent live-detail controller", () => {
 		const controller = createSubagentLiveDetailController();
 		const rendererState = {};
 		let invalidations = 0;
-		let invalidate: () => void;
-		invalidate = () => {
+		function invalidate(): void {
 			invalidations++;
 			controller.registerToolRow("tool-row", rendererState, invalidate);
-		};
+		}
 
 		assert.equal(controller.registerToolRow("tool-row", rendererState, invalidate), false);
 		controller.clearToolRows();
@@ -194,7 +189,9 @@ describe("subagent live-detail controller", () => {
 		assert.equal(handleSubagentLiveDetailShortcut(controller, ctx, () => { widgetRenders++; }), true);
 		assert.equal(handleSubagentLiveDetailShortcut(controller, ctx, () => { widgetRenders++; }), false);
 		assert.equal(widgetRenders, 2);
-		assert.equal(renderRequests, 2);
+		// Pi 0.83 redraws after widget replacement; the extension must not
+		// call the removed direct requestRender helper.
+		assert.equal(renderRequests, 0);
 		assert.equal(piExpansionChanges, 0);
 	});
 

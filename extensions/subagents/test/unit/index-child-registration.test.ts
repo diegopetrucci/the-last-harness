@@ -292,7 +292,7 @@ describe("subagent extension child mode", () => {
 			assert.deepEqual(terminalInput(enhancedCtrlShiftDPress), { consume: true });
 			assert.deepEqual(terminalInput(enhancedCtrlShiftDRelease), { consume: true });
 			assert.equal(liveInvalidations, 2, "Ctrl+Shift+D press and release did not toggle the live row exactly once");
-			assert.equal(renderRequests, renderRequestsBeforeIgnoredInput + 1, "Ctrl+Shift+D press and release did not request exactly one UI render");
+			assert.equal(renderRequests, renderRequestsBeforeIgnoredInput, "Pi 0.83 widget updates must not call requestRender directly");
 			assert.match(liveRenderFromInvalidation, /second output line/, "raw input toggle did not use controller state");
 			assert.match(renderText(liveContext, false), /second output line/, "raw input did not expand the live row");
 
@@ -345,7 +345,7 @@ describe("subagent extension child mode", () => {
 			assert.doesNotMatch(renderText(rebuiltContext, true), /second output line/, "confirmed compact row followed Pi options.expanded");
 
 			assert.equal(piExpansionChanges, 0, "shortcut mutated Pi tool expansion");
-			assert.ok(renderRequests > 0, "shortcut did not request a UI render");
+			assert.equal(renderRequests, 0, "Pi 0.83 widget updates must not call requestRender directly");
 			const rebuiltInvalidationsBeforeReset = rebuiltInvalidations;
 			const replacementCtx = makeContext("replacement-session");
 			await emitExtensionEvent("session_start", { type: "session_start", reason: "resume" }, replacementCtx);
@@ -376,8 +376,8 @@ describe("subagent extension child mode", () => {
 	it("keeps one result block when the pinned ToolExecutionComponent registers and reclaims", () => {
 		const script = String.raw`
 			import assert from "node:assert/strict";
-			import { ToolExecutionComponent } from "./node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/tool-execution.js";
-			import { initTheme } from "./node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
+			import { ToolExecutionComponent } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/tool-execution.js";
+			import { initTheme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 			import registerSubagentExtension from "./src/extension/index.ts";
 			import { SUBAGENT_LIVE_DETAIL_SHORTCUT } from "./src/shared/subagent-shortcuts.ts";
 
@@ -498,7 +498,7 @@ describe("subagent extension child mode", () => {
 			const rebuiltText = rebuiltComponent.render(180).join(String.fromCharCode(10));
 			assert.equal(resultBlockCount(rebuiltComponent), 1, "shortcut invalidation duplicated the rebuilt result block");
 			assert.match(rebuiltText, /second output line/, "rebuilt component did not use controller detail");
-			assert.ok(renderRequests > 0, "shortcut did not request a UI render");
+			assert.equal(renderRequests, 0, "Pi 0.83 widget updates must not call requestRender directly");
 
 			await emitExtensionEvent("session_shutdown", { type: "session_shutdown", reason: "quit" });
 		`;

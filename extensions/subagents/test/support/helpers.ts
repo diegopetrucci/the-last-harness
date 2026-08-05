@@ -20,7 +20,9 @@ export function createTempDir(prefix = "pi-subagent-test-"): string {
 export function removeTempDir(dir: string): void {
 	try {
 		fs.rmSync(dir, { recursive: true, force: true });
-	} catch {}
+	} catch {
+		// Test cleanup is best effort when a fixture already removed the directory.
+	}
 }
 
 export function createEventBus() {
@@ -118,40 +120,20 @@ export function makeMinimalCtx(cwd: string): MinimalCtx {
 }
 
 /**
- * Try to dynamically import a module.
- * - Bare specifiers are imported as-is.
- * - Relative paths (e.g., "./src/shared/utils.ts") are resolved from the project root.
+ * Dynamically import a required test module.
  *
- * Only swallows MODULE_NOT_FOUND / ERR_MODULE_NOT_FOUND when the missing module
- * is exactly the requested bare specifier (expected optional dependency).
- * All other errors are rethrown to avoid hiding real breakage.
+ * Relative paths are resolved from the embedded package root. Import failures
+ * intentionally propagate: a missing dependency or broken source must fail the
+ * suite instead of being converted into a skipped test.
  */
-export async function tryImport<T>(specifier: string): Promise<T | null> {
-	const isBare = !(specifier.startsWith(".") || specifier.startsWith("/"));
-	try {
-		if (!isBare) {
-			const projectRoot = path.resolve(__dirname, "..", "..");
-			const abs = path.resolve(projectRoot, specifier);
-			const url = pathToFileURL(abs).href;
-			return await import(url) as T;
-		}
+export async function tryImport<T>(specifier: string): Promise<T> {
+	if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
 		return await import(specifier) as T;
-	} catch (error: unknown) {
-		const code = typeof error === "object" && error !== null && "code" in error
-			? (error as { code?: unknown }).code
-			: undefined;
-		const isModuleNotFound = code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND";
-		if (isBare && isModuleNotFound) {
-			const msg = typeof error === "object" && error !== null && "message" in error
-				? String((error as { message?: unknown }).message ?? "")
-				: "";
-			const missing = msg.match(/Cannot find (?:package|module) ['\"]([^'\"]+)['\"]/i)?.[1];
-			if (missing === specifier || msg.includes(`'${specifier}'`) || msg.includes(`\"${specifier}\"`)) {
-				return null;
-			}
-		}
-		throw error;
 	}
+	const projectRoot = path.resolve(__dirname, "..", "..");
+	const abs = path.resolve(projectRoot, specifier);
+	const url = pathToFileURL(abs).href;
+	return await import(url) as T;
 }
 
 export const events = {

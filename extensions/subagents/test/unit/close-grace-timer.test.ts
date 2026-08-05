@@ -48,7 +48,11 @@ function runWithGuard(script: string, idleMs: number, hardMs: number, maxWaitMs:
 		let stdout = "";
 		const clearGuard = attachPostExitStdioGuard(child, { idleMs, hardMs });
 		const hardStop = setTimeout(() => {
-			try { child.kill("SIGKILL"); } catch {}
+			try {
+				child.kill("SIGKILL");
+			} catch {
+				// The child may have exited between the timeout and kill attempt.
+			}
 			reject(new Error(`promise did not resolve within ${maxWaitMs}ms`));
 		}, maxWaitMs);
 		hardStop.unref?.();
@@ -56,7 +60,9 @@ function runWithGuard(script: string, idleMs: number, hardMs: number, maxWaitMs:
 		child.stdout.on("data", (chunk: Buffer) => {
 			stdout += chunk.toString();
 		});
-		child.stderr.on("data", () => {});
+		child.stderr.on("data", () => {
+			// Drain stderr so the child cannot block on a full pipe.
+		});
 		child.on("close", (code) => {
 			clearTimeout(hardStop);
 			clearGuard();

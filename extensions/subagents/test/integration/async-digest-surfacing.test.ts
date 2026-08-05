@@ -61,11 +61,10 @@ interface TypesModule {
 
 const asyncMod = await tryImport<AsyncExecutionModule>("./src/runs/background/async-execution.ts");
 const typesMod = await tryImport<TypesModule>("./src/shared/types.ts");
-const available = !!(asyncMod && typesMod);
 
-const executeAsyncSingle = asyncMod?.executeAsyncSingle;
-const RESULTS_DIR = typesMod?.RESULTS_DIR;
-const isAsyncAvailable = asyncMod?.isAsyncAvailable;
+const executeAsyncSingle = asyncMod.executeAsyncSingle;
+const RESULTS_DIR = typesMod.RESULTS_DIR;
+assert.equal(asyncMod.isAsyncAvailable(), true, "required async runner module is unavailable");
 
 // Mirrors the default report the mock pi harness appends whenever the child
 // prompt carries an acceptance contract.
@@ -86,7 +85,7 @@ async function readAsyncPayload(id: string): Promise<AsyncSingleResultPayload> {
 	return JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncSingleResultPayload;
 }
 
-describe("async artifact digest surfacing (ps-il5m)", { skip: !available ? "pi packages not available" : undefined }, () => {
+describe("async artifact digest surfacing (ps-il5m)", () => {
 	let tempDir: string;
 	let mockPi: MockPi;
 
@@ -135,7 +134,7 @@ describe("async artifact digest surfacing (ps-il5m)", { skip: !available ? "pi p
 		};
 	}
 
-	it("surfaces validation evidence in the artifact for a completed async run", { skip: !isAsyncAvailable?.() ? "jiti not available" : undefined }, async () => {
+	it("surfaces validation evidence in the artifact for a completed async run", async () => {
 		// The motivating case: the async path uses rawOutput = finalResult.finalOutput
 		// (unstripped), so parseAcceptanceReport finds the block and the digest is live.
 		mockPi.onCall({ jsonl: [events.assistantMessage("Async implementation complete.")] });
@@ -161,7 +160,7 @@ describe("async artifact digest surfacing (ps-il5m)", { skip: !available ? "pi p
 		assert.doesNotMatch(artifact, /```acceptance-report/);
 	});
 
-	it("keeps the semantic output free of the digest on the async path", { skip: !isAsyncAvailable?.() ? "jiti not available" : undefined }, async () => {
+	it("keeps the semantic output free of the digest on the async path", async () => {
 		// results[0].output is outputForSummary which starts from stripAcceptanceReport;
 		// the digest must not be appended there — it belongs only in the artifact.
 		mockPi.onCall({ jsonl: [events.assistantMessage("Async implementation complete.")] });
@@ -181,7 +180,7 @@ describe("async artifact digest surfacing (ps-il5m)", { skip: !available ? "pi p
 		assert.doesNotMatch(payload.results[0]?.output ?? "", /Validation evidence/);
 	});
 
-	it("leaves the artifact byte-exact when the async run saved a user-requested output file", { skip: !isAsyncAvailable?.() ? "jiti not available" : undefined }, async () => {
+	it("leaves the artifact byte-exact when the async run saved a user-requested output file", async () => {
 		// With an `output:` path, resolvedOutput.savedPath is set so the
 		// byte-exact-archive exception applies and no commentary is appended.
 		const outputPath = path.join(tempDir, "deliverable.md");
@@ -206,7 +205,7 @@ describe("async artifact digest surfacing (ps-il5m)", { skip: !available ? "pi p
 		assert.equal(fs.readFileSync(payload.results[0]!.artifactPaths!.outputPath, "utf-8"), "async deliverable body");
 	});
 
-	it("does not add a digest when the async run produced no acceptance report", { skip: !isAsyncAvailable?.() ? "jiti not available" : undefined }, async () => {
+	it("does not add a digest when the async run produced no acceptance report", async () => {
 		// Acceptance disabled → no ## Acceptance Contract in the prompt → mock emits
 		// no block → parseAcceptanceReport returns null → artifact stays bare.
 		mockPi.onCall({ jsonl: [events.assistantMessage("async findings only")] });

@@ -46,15 +46,9 @@ const SLASH_SUBAGENT_REQUEST_EVENT = "subagent:slash:request";
 const SLASH_SUBAGENT_STARTED_EVENT = "subagent:slash:started";
 const SLASH_SUBAGENT_RESPONSE_EVENT = "subagent:slash:response";
 
-let registerSlashCommands: RegisterSlashCommandsModule["registerSlashCommands"];
-let clearSlashSnapshots: SlashLiveStateModule["clearSlashSnapshots"];
-let available = true;
-try {
-	({ registerSlashCommands } = await import("../../src/slash/slash-commands.ts") as RegisterSlashCommandsModule);
-	({ clearSlashSnapshots } = await import("../../src/slash/slash-live-state.ts") as SlashLiveStateModule);
-} catch {
-	available = false;
-}
+const { registerSlashCommands } = await import("../../src/slash/slash-commands.ts") as RegisterSlashCommandsModule;
+const { clearSlashSnapshots } = await import("../../src/slash/slash-live-state.ts") as SlashLiveStateModule;
+const available = true;
 
 function createEventBus(): EventBus {
 	const handlers = new Map<string, Array<(data: unknown) => void>>();

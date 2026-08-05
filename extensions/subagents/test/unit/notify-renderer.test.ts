@@ -9,10 +9,15 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 describe("native completion notification renderer", () => {
 	it("renders structured and legacy single notices result-first while retaining references when expanded", () => {
 		const script = String.raw`
+			import { createRequire } from "node:module";
+			import { pathToFileURL } from "node:url";
 			import registerSubagentExtension from "./src/extension/index.ts";
 			import { MAX_COMPLETION_MESSAGE_CHARS } from "./src/runs/background/notify.ts";
-			import { setKeybindings } from "@earendil-works/pi-tui";
-			import { KeybindingsManager } from "./node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js";
+			const piCodingAgentEntry = import.meta.resolve("@earendil-works/pi-coding-agent");
+			const piCodingAgentRequire = createRequire(piCodingAgentEntry);
+			const piTuiEntry = piCodingAgentRequire.resolve("@earendil-works/pi-tui");
+			const { setKeybindings } = await import(pathToFileURL(piTuiEntry).href);
+			const { KeybindingsManager } = await import(new URL("./core/keybindings.js", piCodingAgentEntry).href);
 			setKeybindings(new KeybindingsManager({ "app.tools.expand": "ctrl+o" }));
 			const events = { on() { return () => {}; }, emit() {} };
 			let notifyRenderer;

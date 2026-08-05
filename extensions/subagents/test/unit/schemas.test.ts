@@ -47,11 +47,6 @@ interface SubagentParamsSchema {
 	};
 }
 
-function missingPackageName(error: unknown): string | undefined {
-	const message = error instanceof Error ? error.message : String(error);
-	return message.match(/Cannot find package ['"]([^'"]+)['"]/i)?.[1];
-}
-
 function anyOfBranches(schema: JsonSchemaNode | undefined): JsonSchemaNode[] {
 	const anyOf = schema?.anyOf;
 	if (!Array.isArray(anyOf)) return [];
@@ -81,26 +76,15 @@ function getPropertySchema(schema: JsonSchemaNode | undefined, path: string[]): 
 	return current && typeof current === "object" ? current as JsonSchemaNode : undefined;
 }
 
-let schemas: Record<string, JsonSchemaNode> = {};
-let SubagentParams: SubagentParamsSchema | undefined;
-let schemasAvailable = true;
-try {
-	schemas = await import("../../src/extension/schemas.ts") as Record<string, JsonSchemaNode>;
-	SubagentParams = schemas.SubagentParams as SubagentParamsSchema;
-} catch (error) {
-	if (missingPackageName(error) !== "typebox") throw error;
-	schemasAvailable = false;
-}
-let CompileSchema: ((schema: unknown) => { Check(value: unknown): boolean; Errors(value: unknown): Iterable<{ message: string }> }) | undefined;
-try {
-	const compileModule = await import("typebox/compile") as { Compile: typeof CompileSchema };
-	CompileSchema = compileModule.Compile;
-} catch (error) {
-	if (missingPackageName(error) !== "typebox") throw error;
-	// The structural schema assertions below do not need the optional compiler package.
-}
+const schemas = await import("../../src/extension/schemas.ts") as Record<string, JsonSchemaNode>;
+const SubagentParams = schemas.SubagentParams as SubagentParamsSchema;
+type CompileSchemaFunction = (schema: unknown) => {
+	Check(value: unknown): boolean;
+	Errors(value: unknown): Iterable<{ message: string }>;
+};
+const { Compile: CompileSchema } = await import("typebox/compile") as { Compile: CompileSchemaFunction };
 
-describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not available" : undefined }, () => {
+describe("SubagentParams schema", () => {
 	it("includes context field for fresh/fork execution mode", () => {
 		const contextSchema = SubagentParams?.properties?.context;
 		assert.ok(contextSchema, "context schema should exist");
@@ -325,7 +309,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(hasAnyOfType(outputSchema, "boolean"), true);
 	});
 
-	it("validates representative flexible field values with TypeBox compiler", { skip: !CompileSchema ? "typebox compiler not available" : undefined }, () => {
+	it("validates representative flexible field values with TypeBox compiler", () => {
 		assert.ok(SubagentParams, "SubagentParams schema should exist");
 		assert.ok(CompileSchema, "TypeBox compiler should exist");
 		const validator = CompileSchema(SubagentParams);
@@ -429,7 +413,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(schema.additionalProperties, false, "root must have additionalProperties: false");
 	});
 
-	it("rejects removed top-level parameters and removed action values", { skip: !CompileSchema ? "typebox compiler not available" : undefined }, () => {
+	it("rejects removed top-level parameters and removed action values", () => {
 		assert.ok(SubagentParams, "SubagentParams schema should exist");
 		assert.ok(CompileSchema, "TypeBox compiler should exist");
 		const validator = CompileSchema(SubagentParams);

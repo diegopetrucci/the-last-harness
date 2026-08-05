@@ -120,7 +120,9 @@ export function createMockPi(): MockPi {
 			else process.argv[1] = originalArgv1;
 			try {
 				fs.rmSync(rootDir, { recursive: true, force: true });
-			} catch {}
+			} catch {
+				// Test cleanup is best effort.
+			}
 		},
 		onCall(response) {
 			ensureDir(queueDir);
@@ -140,7 +142,9 @@ export function createMockPi(): MockPi {
 				if (entry === CURRENT_GENERATION_FILE) continue;
 				try {
 					fs.rmSync(path.join(queueDir, entry), { recursive: true, force: true });
-				} catch {}
+				} catch {
+					// A concurrent fixture cleanup may already have removed this entry.
+				}
 			}
 		},
 		callCount() {

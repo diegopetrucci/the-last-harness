@@ -158,11 +158,16 @@ test("runtime TypeScript package scripts stay wired into validation before tests
 	assert.equal(pkg.scripts["build:runtime"], "node scripts/runtime-typescript.mjs build");
 	assert.equal(pkg.scripts["check:runtime"], "node scripts/runtime-typescript.mjs check");
 	assert.equal(pkg.scripts["typecheck:runtime"], "node scripts/runtime-typescript.mjs typecheck");
-	assert.equal(pkg.scripts.test, 'node --test --test-reporter=dot "tests/**/*.test.mjs"');
-	assert.equal(pkg.scripts["test:verbose"], 'node --test "tests/**/*.test.mjs"');
+	assert.equal(pkg.scripts["typecheck:subagents-test-support"], "tsc --noEmit --project tsconfig.subagents-test-support.json");
+	assert.equal(pkg.scripts["test:subagents"], "npm run test:subagents:unit && npm run test:subagents:integration && npm run test:subagents:e2e");
+	assert.equal(pkg.scripts["check:package-contents"], "node scripts/check-package-contents.mjs");
+	assert.equal(pkg.scripts.test, 'node --test --test-reporter=dot "tests/**/*.test.mjs" && npm run test:subagents');
+	assert.equal(pkg.scripts["test:verbose"], 'node --test "tests/**/*.test.mjs" && npm run test:subagents');
 
 	const validate = pkg.scripts.validate;
+	assert.match(validate, /npm run check:package-contents/);
 	assert.match(validate, /npm run typecheck/);
+	assert.match(validate, /npm run typecheck:subagents-test-support/);
 	assert.match(validate, /npm run typecheck:runtime/);
 	assert.match(validate, /npm run check:runtime/);
 	assert.match(validate, /npm test/);

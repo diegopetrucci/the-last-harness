@@ -36,7 +36,11 @@ function createRepo(prefix: string): string {
 }
 
 function cleanupRepo(repoDir: string): void {
-	try { fs.rmSync(repoDir, { recursive: true, force: true }); } catch {}
+	try {
+		fs.rmSync(repoDir, { recursive: true, force: true });
+	} catch {
+		// Test cleanup is best effort.
+	}
 }
 
 function createUniqueRunId(prefix: string): string {
