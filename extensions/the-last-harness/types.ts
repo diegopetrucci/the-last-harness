@@ -118,8 +118,17 @@ export type TlhModelVisibilityConfig = {
 	unhide?: string[];
 };
 
+export type TlhSubagentOverride = {
+	model?: string | false;
+	thinking?: string | false;
+};
+
+export type TlhSubagentsConfig = {
+	agentOverrides?: Record<string, TlhSubagentOverride>;
+};
 
 export type TlhSettings = {
+	subagents?: TlhSubagentsConfig;
 	tlh?: {
 		usageLimits?: TlhUsageLimitsConfig;
 		attribution?: TlhAttributionConfig;
