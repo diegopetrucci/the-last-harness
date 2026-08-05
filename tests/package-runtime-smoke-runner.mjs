@@ -217,16 +217,15 @@ function inspectLoad() {
 	const [annotateExtension, tlhExtension, subagentExtension] = result.extensions;
 	assert.deepEqual([...annotateExtension.commands.keys()], ["annotate-git-diff"]);
 	assert.deepEqual([...tlhExtension.commands.keys()].sort(), expectedTlhCommands);
-	assert.deepEqual([...subagentExtension.tools.keys()].sort(), ["subagent", "wait"]);
+	assert.deepEqual([...subagentExtension.tools.keys()].sort(), ["subagent"]);
 
 	const allCommandNames = result.extensions.flatMap((extension) => [...extension.commands.keys()]);
 	assert.equal(new Set(allCommandNames).size, allCommandNames.length, "package commands must not be registered twice");
 	const allToolNames = result.extensions.flatMap((extension) => [...extension.tools.keys()]);
 	const toolCounts = {
 		subagent: allToolNames.filter((name) => name === "subagent").length,
-		wait: allToolNames.filter((name) => name === "wait").length,
 	};
-	assert.deepEqual(toolCounts, { subagent: 1, wait: 1 }, "loaded package entrypoints must expose one subagent/wait surface");
+	assert.deepEqual(toolCounts, { subagent: 1 }, "loaded package entrypoints must expose one subagent surface");
 	return {
 		result,
 		tlhExtension,
