@@ -44,7 +44,6 @@ import { registerSlashCommands } from "../slash/slash-commands.ts";
 import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template-bridge.ts";
 import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
 import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.ts";
-import { registerSubagentRpcBridge } from "./rpc.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
 import registerSubagentNotify, { boundedReference, type SubagentNotifyDetails } from "../runs/background/notify.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
@@ -556,19 +555,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			),
 	});
 
-	// RPC bridge is DEFAULT-OFF.  Enable via config.rpc.enabled=true or
-	// PI_SUBAGENTS_RPC_ENABLED=1 (env override for ad-hoc / test use only).
-	const rpcEnabled =
-		config.rpc?.enabled === true ||
-		process.env["PI_SUBAGENTS_RPC_ENABLED"] === "1";
-	const rpcBridge = rpcEnabled
-		? registerSubagentRpcBridge({
-				events: pi.events,
-				getContext: () => state.lastUiContext,
-				execute: (id, params, signal, onUpdate, ctx) => executor.execute(id, params, signal, onUpdate, ctx),
-		  })
-		: { dispose: () => {}, emitReady: () => {} };
-
 	function effectiveParallelTaskCount(tasks: Array<{ count?: unknown }> | undefined): number {
 		if (!tasks || tasks.length === 0) return 0;
 		return tasks.reduce((total, task) => {
@@ -687,7 +673,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, handleStarted),
 		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete),
 		pi.events.on(SUBAGENT_CONTROL_EVENT, controlEventHandler),
-		rpcBridge.dispose,
 	];
 	globalStore[eventUnsubscribeStoreKey] = eventUnsubscribes;
 
@@ -744,7 +729,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		removeLiveDetailTerminalInput();
 		resetSessionState(ctx);
 		installLiveDetailTerminalInput(ctx);
-		rpcBridge.emitReady(ctx);
 		supervisorChannel.start();
 	});
 

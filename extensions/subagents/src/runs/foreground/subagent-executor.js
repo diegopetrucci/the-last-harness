@@ -41,7 +41,6 @@ import { inspectSubagentStatus } from "../background/run-status.js";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.js";
 import { cleanupWorktrees, createWorktrees, diffWorktrees, findWorktreeTaskCwdConflict, formatWorktreeDiffSummary, formatWorktreeTaskCwdConflict, } from "../shared/worktree.js";
 import { ASYNC_DIR, DEFAULT_ARTIFACT_CONFIG, RESULTS_DIR, SUBAGENT_ACTIONS, TEMP_ROOT_DIR, SUBAGENT_CONTROL_EVENT, SUBAGENT_CONTROL_INTERCOM_EVENT, checkSubagentDepth, resolveTopLevelParallelConcurrency, resolveTopLevelParallelMaxTasks, resolveChildMaxSubagentDepth, resolveCurrentMaxSubagentDepth, wrapForkTask, } from "../../shared/types.js";
-const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset"]);
 const NESTED_ASYNC_RUNS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-runs");
 const FOREGROUND_LIVE_MESSAGE_INBOXES_DIR = path.join(TEMP_ROOT_DIR, "foreground-live-message-inboxes");
 function resolveRequestedCwd(runtimeCwd, requestedCwd) {
@@ -328,16 +327,6 @@ function formatForegroundActivity(control) {
     if (control.currentActivityState === "active_long_running")
         return [`active but long-running; last activity ${seconds}s ago`, ...facts].join(" | ");
     return [`active ${seconds}s ago`, ...facts].join(" | ");
-}
-function nestedResolutionScopeForExecutor(deps) {
-    if (deps.allowMutatingManagementActions !== false)
-        return undefined;
-    const route = resolveInheritedNestedRouteFromEnv();
-    const address = route ? resolveNestedParentAddressFromEnv() : undefined;
-    return {
-        routes: route ? [route] : [],
-        ...(address ? { descendantOf: { parentRunId: address.parentRunId, ...(address.parentStepIndex !== undefined ? { parentStepIndex: address.parentStepIndex } : {}) } } : {}),
-    };
 }
 function trustedSessionRootsForStatus(ctx, deps) {
     const roots = deps.config.defaultSessionDir ? [path.resolve(deps.expandTilde(deps.config.defaultSessionDir))] : [];
@@ -1405,7 +1394,7 @@ async function resumeAsyncRun(input) {
     try {
         let resolved;
         try {
-            resolved = requestedId ? resolveSubagentRunId(requestedId, { state: input.deps.state, nested: nestedResolutionScopeForExecutor(input.deps) }) : undefined;
+            resolved = requestedId ? resolveSubagentRunId(requestedId, { state: input.deps.state }) : undefined;
         }
         catch (error) {
             const message = error instanceof Error ? error.message : "";
@@ -3052,14 +3041,13 @@ export function createSubagentExecutor(deps) {
             }
             if (action === "status") {
                 const targetRunId = paramsWithResolvedCwd.id ?? paramsWithResolvedCwd.runId;
-                const nestedScope = nestedResolutionScopeForExecutor(deps);
                 const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
                 if (paramsWithResolvedCwd.view === "fleet") {
-                    return inspectSubagentStatus(buildRunStatusParams(paramsWithResolvedCwd), { state: deps.state, nested: nestedScope, sessionRoots });
+                    return inspectSubagentStatus(buildRunStatusParams(paramsWithResolvedCwd), { state: deps.state, sessionRoots });
                 }
                 if (targetRunId) {
                     try {
-                        const resolved = resolveSubagentRunId(targetRunId, { state: deps.state, nested: nestedScope });
+                        const resolved = resolveSubagentRunId(targetRunId, { state: deps.state });
                         if (resolved?.kind === "foreground") {
                             const foreground = getForegroundControl(deps.state, resolved.id);
                             if (foreground) {
@@ -3089,7 +3077,7 @@ export function createSubagentExecutor(deps) {
                         };
                     }
                 }
-                return inspectSubagentStatus(buildRunStatusParams(paramsWithResolvedCwd), { state: deps.state, nested: nestedScope, sessionRoots });
+                return inspectSubagentStatus(buildRunStatusParams(paramsWithResolvedCwd), { state: deps.state, sessionRoots });
             }
             if (action === "resume") {
                 return resumeAsyncRun({ params: paramsWithResolvedCwd, requestCwd, ctx, deps });
@@ -3115,7 +3103,7 @@ export function createSubagentExecutor(deps) {
                     return { content: [{ type: "text", text: "action='steer' requires id or dir." }], isError: true, details: { mode: "management", results: [] } };
                 let resolved;
                 try {
-                    resolved = resolveSubagentRunId(targetRunId, { state: deps.state, nested: nestedResolutionScopeForExecutor(deps) });
+                    resolved = resolveSubagentRunId(targetRunId, { state: deps.state });
                 }
                 catch (error) {
                     const text = error instanceof Error ? error.message : String(error);
@@ -3140,7 +3128,7 @@ export function createSubagentExecutor(deps) {
                 let resolved;
                 if (targetRunId) {
                     try {
-                        resolved = resolveSubagentRunId(targetRunId, { state: deps.state, nested: nestedResolutionScopeForExecutor(deps) });
+                        resolved = resolveSubagentRunId(targetRunId, { state: deps.state });
                     }
                     catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
@@ -3188,13 +3176,6 @@ export function createSubagentExecutor(deps) {
             if (!SUBAGENT_ACTIONS.includes(action)) {
                 return {
                     content: [{ type: "text", text: `Unknown action: ${action}. Valid: ${SUBAGENT_ACTIONS.join(", ")}` }],
-                    isError: true,
-                    details: { mode: "management", results: [] },
-                };
-            }
-            if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
-                return {
-                    content: [{ type: "text", text: `Action '${action}' is not available from child-safe subagent fanout mode.` }],
                     isError: true,
                     details: { mode: "management", results: [] },
                 };

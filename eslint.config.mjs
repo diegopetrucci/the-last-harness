@@ -75,13 +75,6 @@ export default tseslint.config(
 		},
 	},
 	{
-		name: "tlh/imported-subagent-rpc-gate-fixture",
-		files: ["extensions/subagents/test/unit/rpc-gate.test.ts"],
-		rules: {
-			"no-constant-binary-expression": "off",
-		},
-	},
-	{
 		name: "tlh/imported-subagent-terminal-render-fixture",
 		files: ["extensions/subagents/test/integration/render-widget.test.ts"],
 		rules: {

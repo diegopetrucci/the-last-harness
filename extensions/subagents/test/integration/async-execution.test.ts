@@ -14,6 +14,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createEventBus, createMockPi, createTempDir, events, makeAgent, makeAgentConfigs, makeMinimalCtx, removeTempDir, tryImport } from "../support/helpers.ts";
+import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import type { MockPi } from "../support/helpers.ts";
 import { deliverInterruptRequest } from "../../src/runs/background/control-channel.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
@@ -234,7 +235,7 @@ function writePackageSkill(packageRoot: string, skillName: string): void {
 	);
 }
 
-async function waitForAsyncResultFile(id: string, timeoutMs = 15_000): Promise<string> {
+async function waitForAsyncResultFile(id: string, timeoutMs = scaleTestTimeout(15_000)): Promise<string> {
 	const resultPath = path.join(RESULTS_DIR, `${id}.json`);
 	const deadline = Date.now() + timeoutMs;
 	while (!fs.existsSync(resultPath)) {
@@ -244,7 +245,7 @@ async function waitForAsyncResultFile(id: string, timeoutMs = 15_000): Promise<s
 	return resultPath;
 }
 
-async function waitForAsyncState(asyncDir: string, state: string, timeoutMs = 15_000): Promise<void> {
+async function waitForAsyncState(asyncDir: string, state: string, timeoutMs = scaleTestTimeout(15_000)): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
 	while (readStatus(asyncDir)?.state !== state) {
 		if (Date.now() > deadline) assert.fail(`Timed out waiting for async state '${state}' in ${asyncDir}`);
@@ -252,7 +253,7 @@ async function waitForAsyncState(asyncDir: string, state: string, timeoutMs = 15
 	}
 }
 
-async function waitForAsyncStatusPredicate(asyncDir: string, predicate: (status: AsyncStatusPayload) => boolean, label: string, timeoutMs = 15_000): Promise<AsyncStatusPayload> {
+async function waitForAsyncStatusPredicate(asyncDir: string, predicate: (status: AsyncStatusPayload) => boolean, label: string, timeoutMs = scaleTestTimeout(15_000)): Promise<AsyncStatusPayload> {
 	const statusPath = path.join(asyncDir, "status.json");
 	const deadline = Date.now() + timeoutMs;
 	while (true) {
@@ -268,7 +269,7 @@ async function waitForAsyncStatusPredicate(asyncDir: string, predicate: (status:
 async function waitForAsyncControlCondition(
 	asyncDir: string,
 	predicate: (status: AsyncStatusPayload, eventText: string) => boolean,
-	timeoutMs = 10_000,
+	timeoutMs = scaleTestTimeout(10_000),
 ): Promise<{ status: AsyncStatusPayload; eventText: string }> {
 	const eventsPath = path.join(asyncDir, "events.jsonl");
 	const statusPath = path.join(asyncDir, "status.json");
@@ -288,7 +289,7 @@ async function waitForAsyncControlCondition(
 	}
 }
 
-async function waitForMockPiCall(mockPi: MockPi, index: number, timeoutMs = 30_000): Promise<{ args: string[]; systemPrompts: NonNullable<MockPiCallRecord["systemPrompts"]> }> {
+async function waitForMockPiCall(mockPi: MockPi, index: number, timeoutMs = scaleTestTimeout(30_000)): Promise<{ args: string[]; systemPrompts: NonNullable<MockPiCallRecord["systemPrompts"]> }> {
 	const deadline = Date.now() + timeoutMs;
 	for (;;) {
 		const callFile = fs.readdirSync(mockPi.dir)
@@ -305,7 +306,7 @@ async function waitForMockPiCall(mockPi: MockPi, index: number, timeoutMs = 30_0
 	}
 }
 
-async function waitForMockPiArgs(mockPi: MockPi, index: number, timeoutMs = 30_000): Promise<string[]> {
+async function waitForMockPiArgs(mockPi: MockPi, index: number, timeoutMs = scaleTestTimeout(30_000)): Promise<string[]> {
 	return (await waitForMockPiCall(mockPi, index, timeoutMs)).args;
 }
 
@@ -350,7 +351,7 @@ function startedMockPiPids(mockPi: MockPi): number[] {
 		.filter((pid) => Number.isInteger(pid) && pid > 0);
 }
 
-async function waitForMockPiSignal(mockPi: MockPi, pid: number, signal: "SIGINT" | "SIGTERM", timeoutMs = 10_000): Promise<void> {
+async function waitForMockPiSignal(mockPi: MockPi, pid: number, signal: "SIGINT" | "SIGTERM", timeoutMs = scaleTestTimeout(10_000)): Promise<void> {
 	const signalLogPath = path.join(mockPi.dir, `signals-${pid}.jsonl`);
 	const deadline = Date.now() + timeoutMs;
 	while (true) {
@@ -376,7 +377,7 @@ function assertPidExited(pid: number | undefined, label: string): void {
 	}
 }
 
-async function waitForPidsToExit(pids: Array<number | undefined>, label: string, timeoutMs = 10_000): Promise<void> {
+async function waitForPidsToExit(pids: Array<number | undefined>, label: string, timeoutMs = scaleTestTimeout(10_000)): Promise<void> {
 	const live = pids.filter((pid): pid is number => typeof pid === "number" && pid > 0);
 	const deadline = Date.now() + timeoutMs;
 	while (live.some((pid) => {

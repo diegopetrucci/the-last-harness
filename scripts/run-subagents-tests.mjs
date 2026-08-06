@@ -11,13 +11,13 @@ export const repoRoot = resolve(dirname(scriptPath), "..");
 export const suiteConfigs = {
 	unit: {
 		directory: join(repoRoot, "extensions/subagents/test/unit"),
-		minimumFiles: 91,
-		minimumTests: 1_086,
+		minimumFiles: 88,
+		minimumTests: 1_005,
 	},
 	integration: {
 		directory: join(repoRoot, "extensions/subagents/test/integration"),
 		minimumFiles: 22,
-		minimumTests: 526,
+		minimumTests: 525,
 	},
 	e2e: {
 		directory: join(repoRoot, "extensions/subagents/test/e2e"),
@@ -89,6 +89,31 @@ function relayFailureOutput(result) {
 	if (result.stderr) process.stderr.write(result.stderr);
 }
 
+/**
+ * Build the child process environment for a suite run.
+ *
+ * Strips PI_SUBAGENT_* / PI_SUBAGENTS_* keys that must not bleed across
+ * process boundaries, resets the test-context sentinel, pins the isolated
+ * agent dir, and – when CI is set – injects TLH_TEST_TIMEOUT_SCALE so that
+ * spawn-heavy wait helpers in the integration suites have enough headroom on
+ * slow GitHub-hosted macOS runners.
+ *
+ * @param {Record<string, string | undefined>} parentEnv   Source env (normally process.env).
+ * @param {string}                             agentDir    Isolated PI_CODING_AGENT_DIR path.
+ * @returns {Record<string, string | undefined>}
+ */
+export function buildChildEnv(parentEnv, agentDir) {
+	const env = { ...parentEnv };
+	for (const key of Object.keys(env)) {
+		if (key.startsWith("PI_SUBAGENT_") || key.startsWith("PI_SUBAGENTS_")) delete env[key];
+	}
+	delete env.NODE_TEST_CONTEXT;
+	env.PI_CODING_AGENT_DIR = agentDir;
+	// Scale spawn-heavy wait budgets on CI runners (see extensions/subagents/test/support/scale-timeout.ts).
+	if (parentEnv.CI) env.TLH_TEST_TIMEOUT_SCALE = "3";
+	return env;
+}
+
 export function runSuite(suite, options = []) {
 	const config = suiteConfigs[suite];
 	if (!config) {
@@ -111,12 +136,7 @@ export function runSuite(suite, options = []) {
 	const root = mkdtempSync(join(tmpdir(), "tlh-subagents-tests-"));
 	const agentDir = join(root, "agent");
 	mkdirSync(agentDir, { recursive: true });
-	const env = { ...process.env };
-	for (const key of Object.keys(env)) {
-		if (key.startsWith("PI_SUBAGENT_") || key.startsWith("PI_SUBAGENTS_")) delete env[key];
-	}
-	delete env.NODE_TEST_CONTEXT;
-	env.PI_CODING_AGENT_DIR = agentDir;
+	const env = buildChildEnv(process.env, agentDir);
 
 	const loader = pathToFileURL(join(repoRoot, "extensions/subagents/test/support/register-loader.mjs")).href;
 	const args = [

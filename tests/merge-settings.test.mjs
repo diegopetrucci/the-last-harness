@@ -748,6 +748,52 @@ test("merge dedupes duplicate harness entries when rerun from main", () => {
 	]);
 });
 
+// ── Non-canonical (local) package source tests (tlhmf-14h1) ─────────────────
+
+test("merge with a local path source registers exactly one TLH entry and omits the canonical git entry", () => {
+	const localSource = "/Users/test/tlh-repo";
+	const fixture = tempFixture(
+		{ packages: [harnessPackage] },
+		{ packages: [] },
+	);
+
+	runMerge(fixture, { packageSource: localSource });
+
+	const settings = readJson(fixture.settings);
+	assert.equal(settings.packages[0], localSource, "local source is first entry");
+	assert.ok(!settings.packages.includes(harnessPackage), "no canonical git entry");
+	const tlhCount = settings.packages.filter((e) => e === localSource || e === harnessPackage).length;
+	assert.equal(tlhCount, 1, "exactly one TLH package entry");
+});
+
+test("merge with the canonical git source is unchanged by the non-canonical dedup logic", () => {
+	const fixture = tempFixture(
+		{ packages: [harnessPackage] },
+		{ packages: [] },
+	);
+
+	runMerge(fixture);
+
+	const settings = readJson(fixture.settings);
+	assert.deepEqual(settings.packages, [harnessPackage], "canonical entry is the only package");
+});
+
+test("merge with a local path source over existing settings containing the canonical entry removes the canonical entry", () => {
+	const localSource = "/Users/test/tlh-repo";
+	const fixture = tempFixture(
+		{ packages: [harnessPackage] },
+		{ packages: [harnessPackage] },
+	);
+
+	runMerge(fixture, { packageSource: localSource });
+
+	const settings = readJson(fixture.settings);
+	assert.ok(!settings.packages.includes(harnessPackage), "canonical entry removed");
+	assert.ok(settings.packages.includes(localSource), "local source entry present");
+	const tlhCount = settings.packages.filter((e) => e === localSource || e === harnessPackage).length;
+	assert.equal(tlhCount, 1, "exactly one TLH package entry");
+});
+
 test("merge defers bundled pi-web-access when an upstream package is already installed", () => {
 	const fixture = tempFixture(
 		{ packages: [] },

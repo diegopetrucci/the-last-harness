@@ -51,7 +51,7 @@ import { buildRevivedAsyncTask, resolveAsyncResumeTarget, resolveAsyncRunLocatio
 import { lifecycleContinuationForIndex, lifecycleGeneration, markLifecycleContinuationSpawned, recoverStaleLifecycleContinuationClaim, transitionLifecycleStatus, withLifecycleContinuation, writeNormalizedLifecycleStatus } from "../shared/lifecycle-state.ts";
 import { childMessageAckPath, deliverInterruptRequest, requestAsyncResume, requestAsyncSteer, waitForChildMessageAcceptance } from "../background/control-channel.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
-import { attachRootChildrenToSteps, createNestedRoute, NESTED_CONTROL_DELIVERY_TIMEOUT_MS, NESTED_CONTROL_RESULT_TIMEOUT_MS, readNestedControlResults, resolveInheritedNestedRouteFromEnv, resolveNestedAsyncDir, resolveNestedParentAddressFromEnv, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent, type NestedRunResolutionScope } from "../shared/nested-events.ts";
+import { attachRootChildrenToSteps, createNestedRoute, NESTED_CONTROL_DELIVERY_TIMEOUT_MS, NESTED_CONTROL_RESULT_TIMEOUT_MS, readNestedControlResults, resolveInheritedNestedRouteFromEnv, resolveNestedAsyncDir, resolveNestedParentAddressFromEnv, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent } from "../shared/nested-events.ts";
 import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/run-id-resolver.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { inspectSubagentStatus } from "../background/run-status.ts";
@@ -105,7 +105,6 @@ import {
 	wrapForkTask,
 } from "../../shared/types.ts";
 
-const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset"]);
 const NESTED_ASYNC_RUNS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-runs");
 const FOREGROUND_LIVE_MESSAGE_INBOXES_DIR = path.join(TEMP_ROOT_DIR, "foreground-live-message-inboxes");
 
@@ -179,7 +178,6 @@ interface ExecutorDeps {
 	getSubagentSessionRoot: (parentSessionFile: string | null) => string;
 	expandTilde: (p: string) => string;
 	discoverAgents: (cwd: string, scope: AgentScope) => { agents: AgentConfig[]; modelScope?: ModelScopeConfig };
-	allowMutatingManagementActions?: boolean;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 }
 
@@ -514,16 +512,6 @@ function formatForegroundActivity(control: SubagentState["foregroundControls"] e
 	if (control.currentActivityState === "needs_attention") return [`no activity for ${seconds}s`, ...facts].join(" | ");
 	if (control.currentActivityState === "active_long_running") return [`active but long-running; last activity ${seconds}s ago`, ...facts].join(" | ");
 	return [`active ${seconds}s ago`, ...facts].join(" | ");
-}
-
-function nestedResolutionScopeForExecutor(deps: ExecutorDeps): NestedRunResolutionScope | undefined {
-	if (deps.allowMutatingManagementActions !== false) return undefined;
-	const route = resolveInheritedNestedRouteFromEnv();
-	const address = route ? resolveNestedParentAddressFromEnv() : undefined;
-	return {
-		routes: route ? [route] : [],
-		...(address ? { descendantOf: { parentRunId: address.parentRunId, ...(address.parentStepIndex !== undefined ? { parentStepIndex: address.parentStepIndex } : {}) } } : {}),
-	};
 }
 
 function trustedSessionRootsForStatus(ctx: ExtensionContext, deps: ExecutorDeps): string[] {
@@ -1595,7 +1583,7 @@ async function resumeAsyncRun(input: {
 	try {
 		let resolved: ResolvedSubagentRunId | undefined;
 		try {
-			resolved = requestedId ? resolveSubagentRunId(requestedId, { state: input.deps.state, nested: nestedResolutionScopeForExecutor(input.deps) }) : undefined;
+			resolved = requestedId ? resolveSubagentRunId(requestedId, { state: input.deps.state }) : undefined;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "";
 			const asyncMatches = message.match(/async:/g)?.length ?? 0;
@@ -3452,14 +3440,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}
 			if (action === "status") {
 				const targetRunId = paramsWithResolvedCwd.id ?? paramsWithResolvedCwd.runId;
-				const nestedScope = nestedResolutionScopeForExecutor(deps);
 				const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
 				if (paramsWithResolvedCwd.view === "fleet") {
-					return inspectSubagentStatus(buildRunStatusParams(paramsWithResolvedCwd), { state: deps.state, nested: nestedScope, sessionRoots });
+					return inspectSubagentStatus(buildRunStatusParams(paramsWithResolvedCwd), { state: deps.state, sessionRoots });
 				}
 				if (targetRunId) {
 					try {
-						const resolved = resolveSubagentRunId(targetRunId, { state: deps.state, nested: nestedScope });
+						const resolved = resolveSubagentRunId(targetRunId, { state: deps.state });
 						if (resolved?.kind === "foreground") {
 							const foreground = getForegroundControl(deps.state, resolved.id);
 							if (foreground) {
@@ -3486,7 +3473,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						};
 					}
 				}
-				return inspectSubagentStatus(buildRunStatusParams(paramsWithResolvedCwd), { state: deps.state, nested: nestedScope, sessionRoots });
+				return inspectSubagentStatus(buildRunStatusParams(paramsWithResolvedCwd), { state: deps.state, sessionRoots });
 			}
 			if (action === "resume") {
 				return resumeAsyncRun({ params: paramsWithResolvedCwd, requestCwd, ctx, deps });
@@ -3509,7 +3496,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (!targetRunId) return { content: [{ type: "text", text: "action='steer' requires id or dir." }], isError: true, details: { mode: "management", results: [] } };
 				let resolved: ResolvedSubagentRunId | undefined;
 				try {
-					resolved = resolveSubagentRunId(targetRunId, { state: deps.state, nested: nestedResolutionScopeForExecutor(deps) });
+					resolved = resolveSubagentRunId(targetRunId, { state: deps.state });
 				} catch (error) {
 					const text = error instanceof Error ? error.message : String(error);
 					return { content: [{ type: "text", text }], isError: true, details: { mode: "management", results: [] } };
@@ -3529,7 +3516,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				let resolved: ResolvedSubagentRunId | undefined;
 				if (targetRunId) {
 					try {
-						resolved = resolveSubagentRunId(targetRunId, { state: deps.state, nested: nestedResolutionScopeForExecutor(deps) });
+						resolved = resolveSubagentRunId(targetRunId, { state: deps.state });
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
 						return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
@@ -3579,13 +3566,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (!(SUBAGENT_ACTIONS as readonly string[]).includes(action)) {
 				return {
 					content: [{ type: "text", text: `Unknown action: ${action}. Valid: ${SUBAGENT_ACTIONS.join(", ")}` }],
-					isError: true,
-					details: { mode: "management" as const, results: [] },
-				};
-			}
-			if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
-				return {
-					content: [{ type: "text", text: `Action '${action}' is not available from child-safe subagent fanout mode.` }],
 					isError: true,
 					details: { mode: "management" as const, results: [] },
 				};

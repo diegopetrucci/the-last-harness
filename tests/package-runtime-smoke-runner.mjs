@@ -71,70 +71,6 @@ const resourceLoader = new DefaultResourceLoader({
 	noThemes: true,
 	noContextFiles: true,
 });
-const packagedRpcModule = await import(pathToFileURL(join(realPackageRoot, "extensions", "subagents", "src", "extension", "rpc.js")).href);
-
-function waitForEvent(events, event) {
-	return new Promise((resolve) => {
-		const unsubscribe = events.on(event, (data) => {
-			unsubscribe();
-			resolve(data);
-		});
-	});
-}
-
-async function runPackagedRpcSmoke(context) {
-	assert.equal(process.env.PI_SUBAGENTS_RPC_ENABLED, "1");
-	const rpc = packagedRpcModule;
-	const events = new FakeEvents();
-	const options = {
-		events,
-		getContext: () => context,
-		execute: async () => {
-			throw new Error("packaged RPC ping must not execute a subagent");
-		},
-	};
-	const firstBridge = rpc.registerSubagentRpcBridge(options);
-	const requestListenersAfterRegister = events.listenerCount(rpc.SUBAGENT_RPC_REQUEST_EVENT);
-	assert.equal(requestListenersAfterRegister, 1);
-	const firstReady = waitForEvent(events, rpc.SUBAGENT_RPC_READY_EVENT);
-	firstBridge.emitReady(context);
-	const readyData = await firstReady;
-	assert.equal(readyData.version, rpc.SUBAGENT_RPC_PROTOCOL_VERSION);
-	assert.deepEqual(readyData.methods, ["ping", "status", "spawn", "interrupt", "stop"]);
-	const firstReply = waitForEvent(events, rpc.subagentRpcReplyEvent("packaged-ping"));
-	await events.emit(rpc.SUBAGENT_RPC_REQUEST_EVENT, {
-		version: rpc.SUBAGENT_RPC_PROTOCOL_VERSION,
-		requestId: "packaged-ping",
-		method: "ping",
-	});
-	const reply = await firstReply;
-	assert.equal(reply.success, true);
-	assert.equal(reply.requestId, "packaged-ping");
-	assert.deepEqual(reply.data.session, {
-		cwd,
-		sessionId: "package-smoke-session",
-		sessionFile: null,
-	});
-	firstBridge.dispose();
-	const requestListenersAfterFirstDispose = events.listenerCount(rpc.SUBAGENT_RPC_REQUEST_EVENT);
-	assert.equal(requestListenersAfterFirstDispose, 0);
-
-	const reregisteredBridge = rpc.registerSubagentRpcBridge(options);
-	const requestListenersAfterReregister = events.listenerCount(rpc.SUBAGENT_RPC_REQUEST_EVENT);
-	assert.equal(requestListenersAfterReregister, 1);
-	reregisteredBridge.dispose();
-	const requestListenersAfterDispose = events.listenerCount(rpc.SUBAGENT_RPC_REQUEST_EVENT);
-	assert.equal(requestListenersAfterDispose, 0);
-	return {
-		ready: true,
-		ping: true,
-		requestListenersAfterRegister,
-		requestListenersAfterFirstDispose,
-		requestListenersAfterReregister,
-		requestListenersAfterDispose,
-	};
-}
-
 function shellQuote(value) {
 	return `'${value.replaceAll("'", "'\\''")}'`;
 }
@@ -300,37 +236,17 @@ async function runSessionStart(tlhExtension, subagentExtension) {
 	return fixture;
 }
 
-delete process.env.PI_SUBAGENTS_RPC_ENABLED;
 await resourceLoader.reload();
 const defaultOff = inspectLoad();
-const defaultOffRequestListeners = packagedEvents.listenerCount(packagedRpcModule.SUBAGENT_RPC_REQUEST_EVENT);
-assert.equal(defaultOffRequestListeners, 0);
-let defaultOffReadyEvents = 0;
-const unsubscribeDefaultOffReady = packagedEvents.on(packagedRpcModule.SUBAGENT_RPC_READY_EVENT, () => {
-	defaultOffReadyEvents += 1;
-});
 await runSessionStart(defaultOff.tlhExtension, defaultOff.result.extensions[2]);
-unsubscribeDefaultOffReady();
-assert.equal(defaultOffReadyEvents, 0);
 
-process.env.PI_SUBAGENTS_RPC_ENABLED = "1";
 await resourceLoader.reload();
 const first = inspectLoad();
-const enabledRequestListeners = packagedEvents.listenerCount(packagedRpcModule.SUBAGENT_RPC_REQUEST_EVENT);
-assert.equal(enabledRequestListeners, 1);
-let enabledReadyEvents = 0;
-const unsubscribeEnabledReady = packagedEvents.on(packagedRpcModule.SUBAGENT_RPC_READY_EVENT, () => {
-	enabledReadyEvents += 1;
-});
 await runSessionStart(first.tlhExtension, first.result.extensions[2]);
-unsubscribeEnabledReady();
-assert.equal(enabledReadyEvents, 1);
 assert.equal(first.result.extensions[2].resolvedPath.endsWith("extensions/subagents/src/extension/index.js"), true);
 
 await resourceLoader.reload();
 const second = inspectLoad();
-const requestListenersAfterReload = packagedEvents.listenerCount(packagedRpcModule.SUBAGENT_RPC_REQUEST_EVENT);
-assert.equal(requestListenersAfterReload, 1);
 assert.notEqual(second.result.extensions[0], first.result.extensions[0]);
 assert.notEqual(second.result.extensions[1], first.result.extensions[1]);
 assert.notEqual(second.result.extensions[2], first.result.extensions[2]);
@@ -342,7 +258,6 @@ const subagentExtension = second.result.extensions[2];
 assert.equal(subagentExtension.resolvedPath.endsWith("extensions/subagents/src/extension/index.js"), true);
 
 second.result.runtime.getSessionName = () => undefined;
-const packagedRpc = await runPackagedRpcSmoke(secondSession.context);
 const subagentTool = subagentExtension.tools.get("subagent").definition;
 const failedSubagentResult = await subagentTool.execute(
 	"package-smoke-failure",
@@ -412,10 +327,10 @@ const childPiArgs = buildPiArgs({
 }).args;
 const childExtensionPaths = childPiArgs.flatMap((arg, index) => arg === "--extension" ? [childPiArgs[index + 1]] : []);
 const builtChildExtensionPaths = childExtensionPaths.map((path) => realpathSync(path));
-assert.equal(builtChildExtensionPaths.length, 2);
+assert.equal(builtChildExtensionPaths.length, 1);
 assert.equal(builtChildExtensionPaths.every((path) => path.endsWith(".js") && path.startsWith(realPackageRoot)), true);
 assert.equal(builtChildExtensionPaths.some((path) => path.endsWith("subagent-prompt-runtime.js")), true);
-assert.equal(builtChildExtensionPaths.some((path) => path.endsWith("fanout-child.js")), true);
+assert.equal(builtChildExtensionPaths.every((path) => !path.endsWith("fanout-child.js")), true);
 
 const { buildReviewHtml } = await import(pathToFileURL(reviewUiPath).href);
 const { buildAnnotateLastMessageHtml } = await import(pathToFileURL(annotateUiPath).href);
@@ -429,16 +344,6 @@ assert.doesNotMatch(annotateHtml, /__INLINE_(?:DATA|JS)__/);
 for (const handler of subagentExtension.handlers.get("session_shutdown") ?? []) {
 	await handler({ type: "session_shutdown", reason: "quit" }, secondSession.context);
 }
-const requestListenersAfterShutdown = packagedEvents.listenerCount(packagedRpcModule.SUBAGENT_RPC_REQUEST_EVENT);
-assert.equal(requestListenersAfterShutdown, 0);
-const loadedRpcLifecycle = {
-	defaultOffRequestListeners,
-	defaultOffReadyEvents,
-	enabledRequestListeners,
-	enabledReadyEvents,
-	requestListenersAfterReload,
-	requestListenersAfterShutdown,
-};
 
 process.stdout.write(`${JSON.stringify({
 	piVersion: piPackage.version,
@@ -448,10 +353,6 @@ process.stdout.write(`${JSON.stringify({
 	toolCounts: second.toolCounts,
 	factoryExecutions: 3,
 	failedSubagentPatched: failedSubagentPatch.isError,
-	rpc: {
-		packagedBridge: packagedRpc,
-		loadedLifecycle: loadedRpcLifecycle,
-	},
 	childExecution: packagedChild,
 	childEnvRestored,
 	childExtensionPaths: packagedChild.childExtensionPaths,
