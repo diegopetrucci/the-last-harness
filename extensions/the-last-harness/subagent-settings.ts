@@ -321,7 +321,7 @@ function formatStatusForAgent(agent: SubagentMetadata, override: TlhSubagentOver
 	const warnings = [
 		fixedModelWarning(agent.name, override),
 		overrideResolution.unavailableModel
-			? formatUnavailableStoredModelWarning(agent.name, overrideResolution.unavailableModel, "status")
+			? formatUnavailableStoredModelWarning(agent.name, overrideResolution.unavailableModel)
 			: undefined,
 		overrideResolution.warning,
 	].filter((warning): warning is string => Boolean(warning));

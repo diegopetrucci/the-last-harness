@@ -260,7 +260,7 @@ function formatStatusForAgent(agent, override, ctx) {
     const warnings = [
         fixedModelWarning(agent.name, override),
         overrideResolution.unavailableModel
-            ? formatUnavailableStoredModelWarning(agent.name, overrideResolution.unavailableModel, "status")
+            ? formatUnavailableStoredModelWarning(agent.name, overrideResolution.unavailableModel)
             : undefined,
         overrideResolution.warning,
     ].filter((warning) => Boolean(warning));

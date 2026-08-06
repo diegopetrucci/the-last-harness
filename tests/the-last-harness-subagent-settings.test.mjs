@@ -196,12 +196,14 @@ test("subagent-settings status reports effective overrides and fixed-model indep
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const { ctx, notifications } = createCommandContext({ cwd: fixture.cwd });
 		await command.handler("status code-reviewer", ctx);
+		const message = notifications[0]?.message ?? "";
+		const messageLines = message.split("\n");
 		// "max" is now a valid ThinkingLevel so it displays as a standard value, not "stored nonstandard/disabled"
-		assert.match(notifications[0]?.message ?? "", /override model=openai-codex\/gpt-5\.5, effort=max/i);
-		assert.match(notifications[0]?.message ?? "", /effective openai-codex\/gpt-5\.5/i);
-		assert.match(notifications[0]?.message ?? "", new RegExp(INDEPENDENCE_WARNING.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+		assert.match(message, /override model=openai-codex\/gpt-5\.5, effort=max/i);
+		assert.match(message, /effective openai-codex\/gpt-5\.5/i);
+		assert.ok(messageLines.includes(`  ${INDEPENDENCE_WARNING}`));
 		// "max" is recognized but not supported by these test models (no thinkingLevelMap entry)
-		assert.match(notifications[0]?.message ?? "", /stored minor-agent effort "max" is not supported/i);
+		assert.ok(messageLines.includes("  TLH stored minor-agent effort \"max\" is not supported by openai-codex/gpt-5.5; using bundled defaults for this run."));
 	});
 });
 
@@ -244,24 +246,24 @@ test("subagent-settings status reports unavailable stored pins and update/reset 
 
 	writeFileSync(
 		join(fixture.agent, "settings.json"),
-		`${JSON.stringify({ subagents: { agentOverrides: { "code-reviewer": { model: "openai-codex/gpt-5.999", thinking: "turbo", note: "keep" } } } }, null, 2)}\n`,
+		`${JSON.stringify({ subagents: { agentOverrides: { "code-reviewer": { model: "openai-codex/gpt-5.999", thinking: "turbo", fallbackModels: ["saved/fallback"], note: "keep" } } } }, null, 2)}\n`,
 	);
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const { ctx, notifications } = createCommandContext({ cwd: fixture.cwd });
 		await command.handler("status code-reviewer", ctx);
 		const message = notifications[0]?.message ?? "";
+		const messageLines = message.split("\n");
 		assert.match(message, /override model=openai-codex\/gpt-5\.999, effort=stored nonstandard\/disabled \("turbo"\)/i);
 		assert.match(message, /effective openai-codex\/gpt-5\.999/i);
-		assert.match(message, new RegExp(INDEPENDENCE_WARNING.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-		assert.match(message, /not currently available; forwarding the saved pin unchanged/i);
-		assert.match(message, /set code-reviewer model <provider\/id>/i);
-		assert.match(message, /reset code-reviewer model/i);
-		assert.match(message, /ignored unsupported stored minor-agent effort "turbo"/i);
-		assert.equal(message.match(/not currently available/gi)?.length, 1);
+		assert.ok(messageLines.includes(`  ${INDEPENDENCE_WARNING}`));
+		assert.ok(messageLines.includes("  TLH saved minor-agent model override \"openai-codex/gpt-5.999\" for code-reviewer is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults. Update it with /subagent-settings set code-reviewer model <provider/id> or clear it with /subagent-settings reset code-reviewer model."));
+		assert.ok(messageLines.includes("  TLH ignored unsupported stored minor-agent effort \"turbo\" for code-reviewer; no supported model suffix could be emitted, so the subagents runtime will still apply the stored value if this role is dispatched."));
+		assert.equal(messageLines.filter((line) => line.includes("not currently available")).length, 1);
 		const settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
 		assert.equal(settings.subagents.agentOverrides["code-reviewer"].model, "openai-codex/gpt-5.999");
 		assert.equal(settings.subagents.agentOverrides["code-reviewer"].thinking, "turbo");
+		assert.deepEqual(settings.subagents.agentOverrides["code-reviewer"].fallbackModels, ["saved/fallback"]);
 		assert.equal(settings.subagents.agentOverrides["code-reviewer"].note, "keep");
 	});
 });

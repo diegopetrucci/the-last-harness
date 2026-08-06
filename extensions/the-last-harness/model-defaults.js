@@ -222,13 +222,13 @@ function formatStoredThinkingWarning(agent, model, rawThinking, neutralizingThin
     }
     if (neutralizingThinking === "off") {
         const action = generatedFallback
-            ? "that fallback will use explicit off for this run (emitted as :off so the runtime cannot reapply the stored value)"
-            : "using explicit off for this run (emitted as :off so the runtime cannot reapply the stored value)";
+            ? "that fallback will use explicit off for this run"
+            : "using explicit off for this run";
         return `${subject}; ${action}.`;
     }
     const action = generatedFallback
-        ? `that fallback will use bundled defaults for this run (bundled effort behavior ${neutralizingThinking} is emitted as a supported suffix so the runtime cannot reapply the stored value)`
-        : `using bundled defaults for this run (bundled effort behavior ${neutralizingThinking} is emitted as a supported suffix so the runtime cannot reapply the stored value)`;
+        ? "that fallback will use bundled defaults for this run"
+        : "using bundled defaults for this run";
     return `${subject}; ${action}.`;
 }
 function formatUnresolvedStoredThinkingWarning(agent, rawThinking) {
@@ -291,15 +291,10 @@ function resolveIndependence(agent, model, currentProvider) {
     }
     return currentFamily === modelFamily ? "degraded" : "preferred";
 }
-export function formatUnavailableStoredModelWarning(agentName, model, context) {
+export function formatUnavailableStoredModelWarning(agentName, model) {
     const roleLabel = agentName ?? "this minor-agent role";
-    const dispatchResult = context === "caller-fallbacks"
-        ? " Only the caller-supplied fallbackModels may run if that saved pin fails."
-        : context === "fail-closed"
-            ? " This dispatch will fail closed because it has no nonempty caller-supplied fallbackModels list."
-            : "";
     const action = ` Update it with /subagent-settings set ${roleLabel} model <provider/id> or clear it with /subagent-settings reset ${roleLabel} model.`;
-    return `TLH saved minor-agent model override "${model}" for ${roleLabel} is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults.${dispatchResult}${action}`;
+    return `TLH saved minor-agent model override "${model}" for ${roleLabel} is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults.${action}`;
 }
 export function resolveProviderAwareSubagentResolution(agent, availableModels, currentProvider, currentModel, override) {
     const overrideModel = findAvailableProviderModel(availableModels, override?.model);
@@ -453,11 +448,9 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
     }
     const resolution = resolveProviderAwareSubagentResolution(agent, availableModels, currentProvider, currentModel, override);
     if (resolution.unavailableModel && agentName) {
-        const hasCallerFallbacks = Array.isArray(target.fallbackModels)
-            && target.fallbackModels.some((fb) => typeof fb === "string" && fb.trim().length > 0);
         options.onWarning?.({
             agent: agentName,
-            message: formatUnavailableStoredModelWarning(agentName, resolution.unavailableModel, hasCallerFallbacks ? "caller-fallbacks" : "fail-closed"),
+            message: formatUnavailableStoredModelWarning(agentName, resolution.unavailableModel),
         });
     }
     if (resolution.warning && agentName) {
