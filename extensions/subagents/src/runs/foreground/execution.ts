@@ -50,7 +50,7 @@ import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { scheduleDeadline, type DeadlineTimer } from "../shared/deadline-timer.ts";
-import { applyThinkingSuffix, buildPiArgs, cleanupTempDir } from "../shared/pi-args.ts";
+import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, getThinkingLevelDropNote } from "../shared/pi-args.ts";
 import { readStructuredOutput } from "../shared/structured-output.ts";
 import { captureSingleOutputSnapshot, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
@@ -338,7 +338,13 @@ async function runSingleAttempt(
 	},
 ): Promise<SingleResult> {
 	const effectiveThinking = options.thinkingOverride ?? agent.thinking;
-	const modelArg = applyThinkingSuffix(model, effectiveThinking, options.thinkingOverride !== undefined);
+	const thinkingSuffixOptions = {
+		availableModels: options.availableModels,
+		preferredModelProvider: options.preferredModelProvider,
+	};
+	const thinkingDropNote = getThinkingLevelDropNote(model, effectiveThinking, options.thinkingOverride !== undefined, thinkingSuffixOptions);
+	if (thinkingDropNote && !shared.attemptNotes.includes(thinkingDropNote)) shared.attemptNotes.push(thinkingDropNote);
+	const modelArg = applyThinkingSuffix(model, effectiveThinking, options.thinkingOverride !== undefined, thinkingSuffixOptions);
 	const { args, env: sharedEnv, tempDir } = buildPiArgs({
 		baseArgs: ["--mode", "json", "-p"],
 		task,
@@ -347,6 +353,8 @@ async function runSingleAttempt(
 		sessionFile: options.sessionFile,
 		model: modelArg,
 		thinking: effectiveThinking,
+		availableModels: options.availableModels,
+		preferredModelProvider: options.preferredModelProvider,
 		systemPromptMode: agent.systemPromptMode,
 		inheritProjectContext: agent.inheritProjectContext,
 		inheritSkills: agent.inheritSkills,
@@ -1536,7 +1544,11 @@ export async function runSync(
 	};
 	result.activeRuntimeMs = totalDurationMs;
 	if (attemptNotes.length > 0 && result.progress) {
-		result.progress.recentOutput = [...attemptNotes, ...result.progress.recentOutput];
+		const existingNotes = new Set(result.progress.recentOutput);
+		result.progress.recentOutput = [
+			...attemptNotes.filter((note) => !existingNotes.has(note)),
+			...result.progress.recentOutput,
+		];
 		if (result.progress.recentOutput.length > 50) {
 			result.progress.recentOutput.splice(50);
 		}

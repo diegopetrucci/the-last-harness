@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { encodeNestedPathEnv, parseNestedPathEnv, type NestedPathEntry } from "./nested-path.ts";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "./structured-output.ts";
 import { TEMP_ROOT_DIR, type JsonSchemaObject, type ResolvedToolBudget } from "../../shared/types.ts";
-import { THINKING_LEVELS } from "../../shared/model-info.ts";
+import { findModelInfo, getSupportedThinkingLevels, THINKING_LEVELS, type ModelInfo, type ThinkingLevel } from "../../shared/model-info.ts";
 import { TOOL_BUDGET_ENV, encodeToolBudgetEnv } from "./tool-budget.ts";
 
 const TASK_ARG_LIMIT = 8000;
@@ -42,6 +42,8 @@ interface BuildPiArgsInput {
 	sessionFile?: string;
 	model?: string;
 	thinking?: string | false;
+	availableModels?: ModelInfo[];
+	preferredModelProvider?: string;
 	systemPromptMode?: "append" | "replace";
 	inheritProjectContext: boolean;
 	inheritSkills: boolean;
@@ -89,12 +91,43 @@ function supervisorChannelDir(runId: string, agent: string, childIndex: number):
 	return path.join(TEMP_ROOT_DIR, "supervisor-channels", `${sanitizeSupervisorChannelSegment(runId)}-${sanitizeSupervisorChannelSegment(agent)}-${childIndex}`);
 }
 
-export function applyThinkingSuffix(model: string | undefined, thinking: string | false | undefined, replaceExisting = false): string | undefined {
+export interface ThinkingSuffixOptions {
+	availableModels?: ModelInfo[];
+	preferredModelProvider?: string;
+}
+
+/**
+ * Return the user-facing note for a capability-gated thinking level, if the
+ * gate would drop it. This deliberately mirrors applyThinkingSuffix's gate
+ * without changing the value that function returns.
+ */
+export function getThinkingLevelDropNote(
+	model: string | undefined,
+	thinking: string | false | undefined,
+	replaceExisting = false,
+	options?: ThinkingSuffixOptions,
+): string | undefined {
+	if (!model || !thinking || replaceExisting) return undefined;
+	const colonIdx = model.lastIndexOf(":");
+	if (colonIdx !== -1 && THINKING_LEVELS.some((level) => level === model.substring(colonIdx + 1))) return undefined;
+	const modelInfo = findModelInfo(model, options?.availableModels, options?.preferredModelProvider);
+	if (!modelInfo || getSupportedThinkingLevels(modelInfo).includes(thinking as ThinkingLevel)) return undefined;
+	return `Notice: Thinking level "${thinking}" was dropped for model "${model}" because the model registry does not advertise support.`;
+}
+
+export function applyThinkingSuffix(
+	model: string | undefined,
+	thinking: string | false | undefined,
+	replaceExisting = false,
+	options?: ThinkingSuffixOptions,
+): string | undefined {
 	if (!model || !thinking) return model;
 	const colonIdx = model.lastIndexOf(":");
 	if (colonIdx !== -1 && THINKING_LEVELS.some((level) => level === model.substring(colonIdx + 1))) {
 		return replaceExisting ? `${model.slice(0, colonIdx)}:${thinking}` : model;
 	}
+	// replaceExisting is reserved for explicit caller overrides; preserve that deliberate instruction.
+	if (!replaceExisting && getThinkingLevelDropNote(model, thinking, false, options)) return model;
 	return `${model}:${thinking}`;
 }
 
@@ -114,7 +147,10 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		}
 	}
 
-	const modelArg = applyThinkingSuffix(input.model, input.thinking);
+	const modelArg = applyThinkingSuffix(input.model, input.thinking, false, {
+		availableModels: input.availableModels,
+		preferredModelProvider: input.preferredModelProvider,
+	});
 	if (modelArg) {
 		args.push("--model", modelArg);
 	}
