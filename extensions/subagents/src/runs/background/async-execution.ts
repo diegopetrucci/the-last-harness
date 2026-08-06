@@ -467,7 +467,6 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				task,
 				mode: resultMode,
 				async: true,
-				dynamic: false,
 			}),
 			acceptanceInput: s.acceptance,
 			acceptanceRole: a.acceptanceRole,

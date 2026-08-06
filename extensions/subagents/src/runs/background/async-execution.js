@@ -290,7 +290,6 @@ export function buildAsyncRunnerSteps(id, params) {
                 task,
                 mode: resultMode,
                 async: true,
-                dynamic: false,
             }),
             acceptanceInput: s.acceptance,
             acceptanceRole: a.acceptanceRole,

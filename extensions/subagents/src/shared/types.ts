@@ -1068,8 +1068,6 @@ export interface RunSyncOptions {
 	acceptanceContext?: {
 		mode?: SubagentRunMode;
 		async?: boolean;
-		dynamic?: boolean;
-		dynamicGroup?: boolean;
 	};
 }
 

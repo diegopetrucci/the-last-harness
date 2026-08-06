@@ -5,7 +5,6 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
 	acceptanceFailureMessage,
-	aggregateAcceptanceReport,
 	appendAcceptanceReportDigest,
 	buildAcceptanceReportDigest,
 	evaluateAcceptance,
@@ -49,16 +48,12 @@ function tempRepo(): string {
 }
 
 describe("acceptance gates", () => {
-	it("infers only self-contained acceptance levels across reviewer, writer, async, dynamic, and risky contexts", () => {
+	it("infers only self-contained acceptance levels across reviewer, writer, async, and risky contexts", () => {
 		assert.equal(resolveEffectiveAcceptance({ agentName: "reviewer", task: "Review-only. Do not edit.", mode: "single" }).level, "attested");
 		assert.equal(resolveEffectiveAcceptance({ agentName: "reviewer", task: "Review-only. Do not edit.", mode: "single", async: true }).level, "attested");
-		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Review-only. Do not edit.", mode: "chain", dynamic: true }).level, "attested");
-		assert.equal(resolveEffectiveAcceptance({ agentName: "reviewer", task: "Summarize findings without edits.", mode: "chain", dynamicGroup: true }).level, "attested");
 		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Implement the fix", mode: "single" }).level, "checked");
 		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Implement the fix", mode: "single", async: true }).level, "checked");
-		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Fix each item", mode: "chain", dynamic: true }).level, "checked");
 		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Run the migration", mode: "single" }).level, "checked");
-		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Implement the fix", mode: "chain", dynamicGroup: true }).level, "checked");
 	});
 
 	it("uses explicit agent roles for ambiguous tasks while preserving task-intent precedence", () => {
@@ -125,20 +120,17 @@ describe("acceptance gates", () => {
 			acceptanceRole: "read-only",
 			task: "Explore each target",
 			mode: "chain",
-			dynamic: true,
 		}).level, "attested");
 		assert.equal(resolveEffectiveAcceptance({
 			agentName: "worker",
 			acceptanceRole: "writer",
 			task: "Review only; do not edit files",
 			mode: "chain",
-			dynamicGroup: true,
 		}).level, "attested");
 		assert.equal(resolveEffectiveAcceptance({
 			agentName: "reviewer",
 			task: "Review each target",
 			mode: "chain",
-			dynamic: true,
 		}).level, "attested");
 	});
 
@@ -160,8 +152,6 @@ describe("acceptance gates", () => {
 		for (const [agentName, task, level] of matrix) {
 			assert.equal(resolveEffectiveAcceptance({ agentName, task }).level, level, `${agentName} :: ${task}`);
 		}
-		// Dynamic context still escalates role-less non-read-only agents unconditionally, as on main.
-		assert.equal(resolveEffectiveAcceptance({ agentName: "explorer", task: "Explore each target", mode: "chain", dynamic: true }).level, "checked");
 	});
 
 	it("merge continuation retains inferred provenance for empty or auto overrides", () => {
@@ -496,7 +486,6 @@ describe("acceptance gates", () => {
 			const acceptance = resolveEffectiveAcceptance({
 				agentName: "worker",
 				task: "Implement each dynamic item",
-				dynamic: true,
 				explicit: { level: "checked" },
 			});
 
@@ -550,50 +539,6 @@ describe("acceptance gates", () => {
 			runtimeChecks: [{ id: "paused", status: "not-applicable", message: "Acceptance will run after resume." }],
 			verifyRuns: [],
 		}), undefined);
-	});
-
-	it("aggregate reports do not count paused skipped children as blockers", () => {
-		const report = aggregateAcceptanceReport({
-			results: [{
-				agent: "worker",
-				exitCode: 0,
-				error: undefined,
-				acceptance: {
-					status: "skipped",
-					explicit: true,
-					effectiveAcceptance: resolveEffectiveAcceptance({ agentName: "worker", task: "Implement a fix", explicit: { level: "checked" } }),
-					inferredReason: [],
-					criteria: [],
-					runtimeChecks: [{ id: "paused", status: "not-applicable", message: "Acceptance will run after resume." }],
-					verifyRuns: [],
-				},
-			}],
-		});
-
-		assert.equal(report.criteriaSatisfied[0]?.status, "satisfied");
-		assert.deepEqual(report.residualRisks, []);
-	});
-
-	it("zero-child aggregate reports do not fabricate required evidence", async () => {
-		const cwd = tempRepo();
-		try {
-			const acceptance = resolveEffectiveAcceptance({
-				agentName: "worker",
-				task: "Implement dynamic fanout fixes",
-				explicit: { level: "checked" },
-			});
-			const ledger = await evaluateAcceptance({
-				acceptance,
-				output: "",
-				report: aggregateAcceptanceReport({ results: [] }),
-				cwd,
-			});
-
-			assert.equal(ledger.status, "rejected");
-			assert.match(acceptanceFailureMessage(ledger) ?? "", /criterion|changed-files|tests-added|commands-run|validation-output|no-staged-files/);
-		} finally {
-			fs.rmSync(cwd, { recursive: true, force: true });
-		}
 	});
 
 	it("rejects explicit reviewed at dispatch with actionable guidance while preserving parse compatibility", () => {
