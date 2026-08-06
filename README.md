@@ -76,6 +76,23 @@ All bundled subagents:
 - `oracle` for a deeper second opinion
 - `contrarian` as a bundled default minor subagent for sparing adversarial stress-tests
 
+### Minor-agent model and effort overrides
+
+Use `/subagent-settings` to persist model or effort choices for the bundled TLH minor-agent roles: `code-reviewer`, `contrarian`, `developer`, `diff-summarizer`, `librarian`, `oracle`, `repo-scout`, and `web-scout`.
+
+- `/subagent-settings` opens a picker in the interactive TLH TUI; outside the TUI it reports status.
+- `/subagent-settings status [role]` shows all roles or one role.
+- `/subagent-settings set <role> [model <provider/id>] [effort <off|minimal|low|medium|high|xhigh|max>]` sets one or both fields; the `model` and `effort` pairs may be given in either order.
+- `/subagent-settings reset <role> [model|effort]` clears one field or both, and `/subagent-settings reset-all` clears the saved model/effort fields for bundled roles only.
+
+Values are stored under `subagents.agentOverrides` in the active isolated profile's `settings.json` (normally `~/.the-last-harness/agent/settings.json`, or the profile selected by `PI_CODING_AGENT_DIR`). A caller-supplied dispatch model takes precedence; otherwise stored role overrides are resolved before bundled provider-aware defaults. A fixed model can reduce provider independence for `code-reviewer`, `oracle`, and `contrarian`, so TLH warns and requires confirmation in UI sessions and refuses those writes in headless mode.
+
+The valid effort values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Stored effort is applied only when the resolved model advertises support (`max` requires `thinkingLevelMap` support); if a saved value is no longer supported, TLH warns and uses bundled effort behavior for that dispatch. `max` is also a live bundled default where configured, not a hypothetical value.
+
+Writes that replace existing settings content create a `settings.json.bak-*` backup and show its path. To undo a change, use the matching `reset` command, use `reset-all` for bundled roles, or restore the desired `settings.json.bak-*` backup over the active profile's `settings.json`.
+
+See [`docs/commands.md`](docs/commands.md) for the complete grammar, precedence details, warnings, and recovery steps.
+
 ### Customisation
 
 You can add your own skills, prompts, extensions, and packages to TLH.
