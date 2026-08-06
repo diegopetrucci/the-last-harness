@@ -7,6 +7,7 @@ import registerSubagentNotify from "../../src/runs/background/notify.ts";
 import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
 import { reconcileAsyncRun } from "../../src/runs/background/stale-run-reconciler.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
+import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 function createState(sessionId: string): SubagentState {
 	return {
@@ -28,7 +29,7 @@ function createState(sessionId: string): SubagentState {
 	};
 }
 
-async function waitUntil(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+async function waitUntil(predicate: () => boolean, timeoutMs = scaleTestTimeout(1000)): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
 	while (!predicate()) {
 		if (Date.now() >= deadline) throw new Error("Timed out waiting for watcher-to-notify delivery");
