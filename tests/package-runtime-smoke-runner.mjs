@@ -326,10 +326,10 @@ const childPiArgs = buildPiArgs({
 }).args;
 const childExtensionPaths = childPiArgs.flatMap((arg, index) => arg === "--extension" ? [childPiArgs[index + 1]] : []);
 const builtChildExtensionPaths = childExtensionPaths.map((path) => realpathSync(path));
-assert.equal(builtChildExtensionPaths.length, 2);
+assert.equal(builtChildExtensionPaths.length, 1);
 assert.equal(builtChildExtensionPaths.every((path) => path.endsWith(".js") && path.startsWith(realPackageRoot)), true);
 assert.equal(builtChildExtensionPaths.some((path) => path.endsWith("subagent-prompt-runtime.js")), true);
-assert.equal(builtChildExtensionPaths.some((path) => path.endsWith("fanout-child.js")), true);
+assert.equal(builtChildExtensionPaths.every((path) => !path.endsWith("fanout-child.js")), true);
 
 const { buildReviewHtml } = await import(pathToFileURL(reviewUiPath).href);
 const { buildAnnotateLastMessageHtml } = await import(pathToFileURL(annotateUiPath).href);

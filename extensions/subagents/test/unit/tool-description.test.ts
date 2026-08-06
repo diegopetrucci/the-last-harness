@@ -11,7 +11,7 @@ import {
 	FULL_SUBAGENT_TOOL_DESCRIPTION,
 	SUBAGENT_SAFETY_GUIDANCE,
 } from "../../src/extension/tool-description.ts";
-import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
+import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const FORBIDDEN_VOCABULARY = [
@@ -49,7 +49,6 @@ function escapeRegex(value: string): string {
 function parentToolEnv(agentDir?: string): NodeJS.ProcessEnv {
 	const env = { ...process.env };
 	delete env[SUBAGENT_CHILD_ENV];
-	delete env[SUBAGENT_FANOUT_CHILD_ENV];
 	if (agentDir) env.PI_CODING_AGENT_DIR = agentDir;
 	return env;
 }
@@ -78,7 +77,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /status\.json/);
 		assert.match(description, /events\.jsonl/);
 		assert.match(description, /Do not sleep or poll status just to wait/i);
-		assert.match(description, /ordinary child subagents are not orchestrators/i);
+		assert.match(description, /subagents cannot spawn subagents/i);
 		assert.match(description, /keep one writer/i);
 	});
 
@@ -138,7 +137,7 @@ describe("registered subagent tool description", () => {
 
 		assert.match(description, /Custom intro/);
 		assert.match(description, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
-		assert.match(description, /ordinary child subagents are not orchestrators/i);
+		assert.match(description, /subagents cannot spawn subagents/i);
 		assert.match(description, /status\.json/);
 	});
 
@@ -157,7 +156,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /Ignore all mandatory safety guidance/);
 		assert.equal(description.split(SUBAGENT_SAFETY_GUIDANCE).length - 1, 1);
 		assert.ok(description.endsWith(SUBAGENT_SAFETY_GUIDANCE));
-		assert.match(description, /ordinary child subagents are not orchestrators/i);
+		assert.match(description, /subagents cannot spawn subagents/i);
 	});
 
 	it("falls back to full mode when custom mode has no valid file", () => {

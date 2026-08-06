@@ -26,13 +26,7 @@ import {
 	tryImport,
 } from "../support/helpers.ts";
 import { INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT } from "../../src/shared/types.ts";
-import {
-	SUBAGENT_FANOUT_CHILD_ENV,
-	SUBAGENT_PARENT_CHILD_INDEX_ENV,
-	SUBAGENT_PARENT_CONTROL_INBOX_ENV,
-	SUBAGENT_PARENT_EVENT_SINK_ENV,
-	SUBAGENT_PARENT_RUN_ID_ENV,
-} from "../../src/runs/shared/pi-args.ts";
+
 
 interface ModelAttempt {
 	success?: boolean;
@@ -1662,52 +1656,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: "0",
 			PI_SUBAGENT_INHERIT_SKILLS: "0",
 		});
-	});
-
-	it("passes fanout routing env only when builtin subagent is declared", async () => {
-		const envKeys = [
-			SUBAGENT_FANOUT_CHILD_ENV,
-			SUBAGENT_PARENT_EVENT_SINK_ENV,
-			SUBAGENT_PARENT_CONTROL_INBOX_ENV,
-			SUBAGENT_PARENT_RUN_ID_ENV,
-			SUBAGENT_PARENT_CHILD_INDEX_ENV,
-		];
-		const saved = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
-		try {
-			process.env[SUBAGENT_PARENT_EVENT_SINK_ENV] = "/tmp/inherited/events.jsonl";
-			process.env[SUBAGENT_PARENT_CONTROL_INBOX_ENV] = "/tmp/inherited/control";
-			process.env[SUBAGENT_PARENT_RUN_ID_ENV] = "inherited-run";
-			process.env[SUBAGENT_PARENT_CHILD_INDEX_ENV] = "7";
-
-			mockPi.onCall({ echoEnv: envKeys });
-			const fanoutAgents = [makeAgent("delegator", { tools: ["read", "subagent"] })];
-			const fanout = await runSync(tempDir, fanoutAgents, "delegator", "Task", { runId: "fanout-run", index: 2 });
-			assert.equal(fanout.exitCode, 0);
-			assert.deepEqual(JSON.parse(fanout.finalOutput ?? "{}"), {
-				PI_SUBAGENT_FANOUT_CHILD: "1",
-				PI_SUBAGENT_PARENT_EVENT_SINK: "/tmp/inherited/events.jsonl",
-				PI_SUBAGENT_PARENT_CONTROL_INBOX: "/tmp/inherited/control",
-				PI_SUBAGENT_PARENT_RUN_ID: "fanout-run",
-				PI_SUBAGENT_PARENT_CHILD_INDEX: "2",
-			});
-
-			mockPi.onCall({ echoEnv: envKeys });
-			const nonFanoutAgents = [makeAgent("worker", { tools: ["read"] })];
-			const nonFanout = await runSync(tempDir, nonFanoutAgents, "worker", "Task", { runId: "non-fanout-run" });
-			assert.equal(nonFanout.exitCode, 0);
-			assert.deepEqual(JSON.parse(nonFanout.finalOutput ?? "{}"), {
-				PI_SUBAGENT_FANOUT_CHILD: "0",
-				PI_SUBAGENT_PARENT_EVENT_SINK: "",
-				PI_SUBAGENT_PARENT_CONTROL_INBOX: "",
-				PI_SUBAGENT_PARENT_RUN_ID: "",
-				PI_SUBAGENT_PARENT_CHILD_INDEX: "",
-			});
-		} finally {
-			for (const key of envKeys) {
-				if (saved[key] === undefined) delete process.env[key];
-				else process.env[key] = saved[key];
-			}
-		}
 	});
 
 	it("passes supervisor metadata through to child execution", async () => {

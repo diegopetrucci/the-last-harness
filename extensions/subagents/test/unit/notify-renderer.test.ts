@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
-import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
+import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -131,7 +131,6 @@ describe("native completion notification renderer", () => {
 		`;
 		const env = { ...process.env };
 		delete env[SUBAGENT_CHILD_ENV];
-		delete env[SUBAGENT_FANOUT_CHILD_ENV];
 		execFileSync(
 			process.execPath,
 			[

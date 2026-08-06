@@ -6,6 +6,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Removed
 
+- Removed the nested-fanout capability: the path by which a child subagent could itself become an orchestrator and spawn its own subagents. Deletes `fanout-child.ts`/`.js`, removes `fanoutAuthorized`, `FANOUT_CHILD_EXTENSION_PATH`, `SUBAGENT_FANOUT_CHILD_ENV`, and all parent-address env assignments from `buildPiArgs`. Removes `allowMutatingManagementActions`, `nestedResolutionScopeForExecutor`, and the four nested-scope call sites from `subagent-executor.ts`. The child-safety policy text in `tool-description.ts` now states plainly that subagents cannot spawn subagents. Resolves #449.
+
 - Removed the seven unreachable mutating agent-management verbs (`create`, `update`, `delete`, `eject`, `disable`, `enable`, `reset`). The subagent tool's `action` schema enum (`extensions/subagents/src/extension/schemas.ts`) admits only `list`, `get`, `models`, `status`, `interrupt`, `resume`, `steer`, and `doctor`; none of the write verbs can be named by any caller. Also removed the now-vestigial `MUTATING_MANAGEMENT_ACTIONS` belt-gate in `subagent-executor.ts`. The `allowMutatingManagementActions` flag is retained; its surviving role (discriminating child-safe fanout mode for nested run-id resolution) is unchanged — renaming is deferred to issue #449.
 
 ## [0.33.0] - 2026-08-05

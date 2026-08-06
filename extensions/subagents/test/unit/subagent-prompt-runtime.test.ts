@@ -7,7 +7,6 @@ import { writeChildMessageRequestToDir, writeSteerRequestToDir } from "../../src
 import {
 	SUBAGENT_CHILD_AGENT_ENV,
 	SUBAGENT_CHILD_INDEX_ENV,
-	SUBAGENT_FANOUT_CHILD_ENV,
 	SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV,
 	SUBAGENT_ORCHESTRATOR_TARGET_ENV,
 	SUBAGENT_RUN_ID_ENV,
@@ -17,7 +16,6 @@ import {
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "../../src/runs/shared/structured-output.ts";
 import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
 import registerSubagentPromptRuntime, {
-	CHILD_FANOUT_BOUNDARY_INSTRUCTIONS,
 	CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
 	SUBAGENT_INTERCOM_SESSION_NAME_ENV,
 	rewriteSubagentPrompt,
@@ -31,7 +29,6 @@ const envSnapshot = {
 	PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT,
 	PI_SUBAGENT_INHERIT_SKILLS: process.env.PI_SUBAGENT_INHERIT_SKILLS,
 	PI_SUBAGENT_INTERCOM_SESSION_NAME: process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME,
-	PI_SUBAGENT_FANOUT_CHILD: process.env.PI_SUBAGENT_FANOUT_CHILD,
 	PI_SUBAGENT_STEER_INBOX: process.env.PI_SUBAGENT_STEER_INBOX,
 	PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE,
 	PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA,
@@ -70,8 +67,6 @@ afterEach(() => {
 	else process.env.PI_SUBAGENT_INHERIT_SKILLS = envSnapshot.PI_SUBAGENT_INHERIT_SKILLS;
 	if (envSnapshot.PI_SUBAGENT_INTERCOM_SESSION_NAME === undefined) delete process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME;
 	else process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME = envSnapshot.PI_SUBAGENT_INTERCOM_SESSION_NAME;
-	if (envSnapshot.PI_SUBAGENT_FANOUT_CHILD === undefined) delete process.env.PI_SUBAGENT_FANOUT_CHILD;
-	else process.env.PI_SUBAGENT_FANOUT_CHILD = envSnapshot.PI_SUBAGENT_FANOUT_CHILD;
 	if (envSnapshot.PI_SUBAGENT_STEER_INBOX === undefined) delete process.env[SUBAGENT_STEER_INBOX_ENV];
 	else process.env[SUBAGENT_STEER_INBOX_ENV] = envSnapshot.PI_SUBAGENT_STEER_INBOX;
 	if (envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE === undefined) delete process.env[STRUCTURED_OUTPUT_CAPTURE_ENV];
@@ -267,34 +262,6 @@ describe("subagent prompt runtime", () => {
 		assert.equal(rewriteSubagentPrompt(rewritten, { inheritProjectContext: true, inheritSkills: true }).lastIndexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 0);
 	});
 
-	it("replaces inherited child boundaries with the fanout boundary when authorized", () => {
-		const strictPrompt = `${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}\n\n${BASE_PROMPT}`;
-		const rewritten = rewriteSubagentPrompt(strictPrompt, {
-			inheritProjectContext: true,
-			inheritSkills: true,
-			fanoutChild: true,
-		});
-
-		assert.ok(rewritten.startsWith(CHILD_FANOUT_BOUNDARY_INSTRUCTIONS));
-		assert.ok(rewritten.includes("You may use the `subagent` tool only for the fanout work explicitly requested in this task."));
-		assert.ok(rewritten.includes("If you need to edit files, use the available editing tools."));
-		assert.ok(!rewritten.includes("call the actual edit/write tools"));
-		assert.ok(!rewritten.includes("Do not propose or run subagents."));
-		assert.equal(rewritten.lastIndexOf(CHILD_FANOUT_BOUNDARY_INSTRUCTIONS), 0);
-	});
-
-	it("replaces inherited fanout boundaries with the strict boundary when fanout is not authorized", () => {
-		const fanoutPrompt = `${CHILD_FANOUT_BOUNDARY_INSTRUCTIONS}\n\n${BASE_PROMPT}`;
-		const rewritten = rewriteSubagentPrompt(fanoutPrompt, {
-			inheritProjectContext: true,
-			inheritSkills: true,
-		});
-
-		assert.ok(rewritten.startsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
-		assert.ok(!rewritten.includes("explicit fanout responsibility"));
-		assert.equal(rewritten.lastIndexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 0);
-	});
-
 	it("keeps explicitly injected skill content when inherited skills are stripped", () => {
 		const rewritten = rewriteSubagentPrompt(PROMPT_WITH_EXPLICIT_SKILL, {
 			inheritProjectContext: false,
@@ -386,16 +353,6 @@ describe("subagent prompt runtime", () => {
 				},
 			],
 		);
-	});
-
-	it("preserves live nested subagent calls and results in fanout child context", () => {
-		const user = { role: "user", content: "Task" };
-		const subagentResult = { role: "toolResult", toolName: "subagent", content: "OK" };
-		const subagentCall = { role: "assistant", content: [{ type: "toolCall", name: "subagent", input: { agent: "delegate" } }] };
-		const instruction = { role: "custom", customType: "subagent-orchestration-instructions", content: "Subagent orchestration is enabled." };
-		process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
-
-		assert.deepEqual(stripParentOnlySubagentMessages([user, subagentCall, subagentResult, instruction]), [user, subagentCall, subagentResult]);
 	});
 
 	it("defers native supervisor registration until runtime events and respects installed pi-intercom tools", async () => {
@@ -500,24 +457,6 @@ describe("subagent prompt runtime", () => {
 		assert.ok(!rewritten.systemPrompt.includes("# Project Context"));
 		assert.ok(!rewritten.systemPrompt.includes("<available_skills>"));
 		assert.ok(rewritten.systemPrompt.includes("Current date: 2026-04-16"));
-	});
-
-	it("uses the fanout boundary through before_agent_start when fanout env is set", async () => {
-		clearSupervisorEnv();
-		let beforeAgentStart: ((event: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) | undefined;
-		registerSubagentPromptRuntime({
-			on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) {
-				if (event === "before_agent_start") beforeAgentStart = handler;
-			},
-		} as { on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>): void });
-
-		process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = "1";
-		process.env.PI_SUBAGENT_INHERIT_SKILLS = "1";
-		process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
-
-		const rewritten = await beforeAgentStart?.({ systemPrompt: BASE_PROMPT });
-		assert.ok(rewritten);
-		assert.ok(rewritten.systemPrompt.startsWith(CHILD_FANOUT_BOUNDARY_INSTRUCTIONS));
 	});
 
 	it("filters parent-only artifacts from polluted fork context while preserving ordinary history", () => {

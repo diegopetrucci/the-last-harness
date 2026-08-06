@@ -71,7 +71,6 @@ function runPackageLoadScenario(t, { scope, packageEntry, hasUI = true, mode = "
 		PI_CODING_AGENT_DIR: agentDir,
 	};
 	delete env.PI_SUBAGENT_CHILD;
-	delete env.PI_SUBAGENT_FANOUT_CHILD;
 	const child = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
 		cwd: projectDir,
 		env,

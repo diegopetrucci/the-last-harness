@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { registerNativeSupervisorClient } from "../../intercom/native-supervisor-channel.js";
 import { consumeChildMessageRequestsFromDir, writeChildMessageRequestToDir } from "../background/control-channel.js";
-import { SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.js";
+import { SUBAGENT_STEER_INBOX_ENV } from "./pi-args.js";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.js";
 import { TOOL_BUDGET_ENV, decodeToolBudgetEnv, shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge } from "./tool-budget.js";
 const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
@@ -18,14 +18,6 @@ export const CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS = [
     "The parent session owns delegation, orchestration, review fanout, and follow-up worker launches.",
     "Ignore prior parent-only orchestration instructions in inherited conversation history.",
     "Do not propose or run subagents. Complete only your assigned role-specific task with the tools available to you.",
-    "If you need to edit files, use the available editing tools. Do not print tool-call syntax, patches, or pseudo-tool calls as text.",
-].join("\n");
-export const CHILD_FANOUT_BOUNDARY_INSTRUCTIONS = [
-    "You are a child subagent with explicit fanout responsibility for this assigned task.",
-    "The parent session owns final orchestration, acceptance, and follow-up implementation launches.",
-    "You may use the `subagent` tool only for the fanout work explicitly requested in this task.",
-    "Do not broaden yourself into general parent orchestration. Do not launch follow-up workers unless the task explicitly asks for that.",
-    "The maxSubagentDepth cap still applies and may block further fanout.",
     "If you need to edit files, use the available editing tools. Do not print tool-call syntax, patches, or pseudo-tool calls as text.",
 ].join("\n");
 const PARENT_ONLY_CUSTOM_MESSAGE_TYPES = new Set([
@@ -78,9 +70,7 @@ export function stripSubagentOrchestrationSkill(prompt) {
 }
 function stripChildBoundaryInstructions(prompt) {
     let rewritten = prompt;
-    for (const boundary of [CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS, CHILD_FANOUT_BOUNDARY_INSTRUCTIONS]) {
-        rewritten = rewritten.split(boundary).join("");
-    }
+    rewritten = rewritten.split(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS).join("");
     return rewritten.replace(/^(?:[ \t]*\r?\n)+/, "");
 }
 export function rewriteSubagentPrompt(prompt, options) {
@@ -93,9 +83,8 @@ export function rewriteSubagentPrompt(prompt, options) {
     }
     rewritten = stripSubagentOrchestrationSkill(rewritten);
     rewritten = stripChildBoundaryInstructions(rewritten);
-    const boundary = options.fanoutChild ? CHILD_FANOUT_BOUNDARY_INSTRUCTIONS : CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS;
     const structured = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] ? `\n\n${STRUCTURED_OUTPUT_INSTRUCTIONS}` : "";
-    return `${boundary}${structured}\n\n${rewritten}`;
+    return `${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}${structured}\n\n${rewritten}`;
 }
 function isParentOnlySubagentMessage(message) {
     const m = message;
@@ -123,15 +112,14 @@ function stripAssistantSubagentToolCallBlocks(message) {
     return { ...m, content: filteredContent };
 }
 export function stripParentOnlySubagentMessages(messages) {
-    const preserveCurrentFanoutToolHistory = process.env[SUBAGENT_FANOUT_CHILD_ENV] === "1";
     let changed = false;
     const filtered = [];
     for (const message of messages) {
-        if (isParentOnlySubagentMessage(message) || (!preserveCurrentFanoutToolHistory && isSubagentToolResultMessage(message))) {
+        if (isParentOnlySubagentMessage(message) || isSubagentToolResultMessage(message)) {
             changed = true;
             continue;
         }
-        const stripped = preserveCurrentFanoutToolHistory ? message : stripAssistantSubagentToolCallBlocks(message);
+        const stripped = stripAssistantSubagentToolCallBlocks(message);
         if (stripped === undefined) {
             changed = true;
             continue;
@@ -335,13 +323,11 @@ export default function registerSubagentPromptRuntime(pi) {
         }
         const inheritProjectContext = readBooleanEnv(SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV);
         const inheritSkills = readBooleanEnv(SUBAGENT_INHERIT_SKILLS_ENV);
-        const fanoutChild = readBooleanEnv(SUBAGENT_FANOUT_CHILD_ENV);
-        if (inheritProjectContext === undefined && inheritSkills === undefined && fanoutChild === undefined)
+        if (inheritProjectContext === undefined && inheritSkills === undefined)
             return;
         const rewritten = rewriteSubagentPrompt(startEvent.systemPrompt, {
             inheritProjectContext: inheritProjectContext ?? true,
             inheritSkills: inheritSkills ?? true,
-            fanoutChild: fanoutChild === true,
         });
         if (rewritten === startEvent.systemPrompt)
             return;
