@@ -258,7 +258,7 @@ test("subagent-settings status reports unavailable stored pins and update/reset 
 		assert.match(message, /effective openai-codex\/gpt-5\.999/i);
 		assert.ok(messageLines.includes(`  ${INDEPENDENCE_WARNING}`));
 		assert.ok(messageLines.includes("  TLH saved minor-agent model override \"openai-codex/gpt-5.999\" for code-reviewer is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults. Update it with /subagent-settings set code-reviewer model <provider/id> or clear it with /subagent-settings reset code-reviewer model."));
-		assert.ok(messageLines.includes("  TLH ignored unsupported stored minor-agent effort \"turbo\" for code-reviewer; no supported model suffix could be emitted, so the subagents runtime will still apply the stored value if this role is dispatched."));
+		assert.ok(messageLines.includes("  TLH ignored unsupported stored minor-agent effort \"turbo\" for code-reviewer; no supported model suffix could be emitted, so the subagents runtime will drop the value for a known model and fail open for an unknown model if this role is dispatched."));
 		assert.equal(messageLines.filter((line) => line.includes("not currently available")).length, 1);
 		const settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
 		assert.equal(settings.subagents.agentOverrides["code-reviewer"].model, "openai-codex/gpt-5.999");

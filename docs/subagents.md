@@ -22,6 +22,8 @@ The model-facing `subagent` tool deliberately has a small, fail-closed surface:
 - **Asynchronous when requested:** `async: true` starts detached work and returns an ID and runtime directory so the parent can continue useful work.
 - **Execution controls:** `context`, `timeoutMs`, `cwd`, `artifacts`, and `includeProgress`; single runs also accept `output`, `outputMode`, `model`, and `fallbackModels`.
 
+The runtime capability gate drops a known-unsupported thinking level instead of emitting its suffix. Unknown or unresolvable models fail open and still receive the suffix. An explicit caller `thinkingOverride` is exempt from the gate. Each drop emits a note naming the level and model.
+
 The supported actions are `list`, `get`, `models`, `status`, `interrupt`, `resume`, `steer`, and `doctor`. Saved chains and chain dispatch are intentionally not part of the current TLH contract. Mutating agent-management actions such as create/delete/reset are also not exposed through the model-facing schema; user-owned custom agents remain markdown files managed through the documented profile/project paths.
 
 Keep one writer per working directory. Parallel developers writing the same checkout can race even though their session contexts are isolated; use parallelism for read-only discovery/review or independent workspaces, and keep one owner for edits.

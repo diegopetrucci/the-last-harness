@@ -217,7 +217,7 @@ function formatStoredThinkingWarning(agent, model, rawThinking, neutralizingThin
     if (neutralizingThinking === undefined) {
         const residual = rawThinking === false
             ? "no supported neutralizer is available, so the runtime's default effort behavior will be used for this run"
-            : "no supported suffix can neutralize it, so the subagents runtime will still apply the stored value for this run";
+            : "no supported suffix can neutralize it, so the subagents runtime will drop the stored value for this run";
         return `${subject}; ${residual}.`;
     }
     if (neutralizingThinking === "off") {
@@ -232,7 +232,10 @@ function formatStoredThinkingWarning(agent, model, rawThinking, neutralizingThin
     return `${subject}; ${action}.`;
 }
 function formatUnresolvedStoredThinkingWarning(agent, rawThinking) {
-    return `TLH ignored unsupported stored minor-agent effort "${rawThinking}" for ${agent?.name ?? "this subagent"}; no supported model suffix could be emitted, so the subagents runtime will still apply the stored value if this role is dispatched.`;
+    return `TLH ignored unsupported stored minor-agent effort "${rawThinking}" for ${agent?.name ?? "this subagent"}; no supported model suffix could be emitted, so the subagents runtime will drop the value for a known model and fail open for an unknown model if this role is dispatched.`;
+}
+function formatUnresolvedStoredThinkingCapabilityWarning(agent, rawThinking) {
+    return `TLH stored minor-agent effort "${rawThinking}" for ${agent?.name ?? "this subagent"} could not be capability-checked because no bundled or current-session model is available; the subagents runtime will apply its capability gate if the model resolves and fail open otherwise.`;
 }
 function resolveStoredSubagentThinking(agent, model, override, generatedFallback = false) {
     const rawThinking = override?.thinking;
@@ -340,6 +343,11 @@ export function resolveProviderAwareSubagentResolution(agent, availableModels, c
             if (currentSessionThinkingResolution.thinking) {
                 selectedModel = currentSessionModel;
             }
+        }
+        else if (typeof override.thinking === "string" && override.thinking !== "off") {
+            currentSessionThinkingResolution = {
+                warning: formatUnresolvedStoredThinkingCapabilityWarning(agent, override.thinking),
+            };
         }
     }
     const fallbackModel = oppositeProviderModel

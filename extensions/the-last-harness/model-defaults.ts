@@ -377,8 +377,9 @@ export function selectProviderAwareAgentModelId(
  *
  * A stored effort is consumed independently by the subagents runtime. When it is
  * unsupported, an explicit bundled or `off` suffix keeps that runtime from applying
- * the raw stored value a second time. If neither suffix is supported, the bare model
- * is retained and the warning documents that the runtime will still apply the value.
+ * the raw stored value a second time and pins the intended TLH effort. If neither
+ * suffix is supported, the bare model is retained and the runtime drops a known-
+ * unsupported value (while failing open when the model cannot be resolved).
  *
  * This function must only be called when an `override` is present (`override !== undefined`).
  * For the pure no-override path use `resolveThinkingForProvider` directly.
@@ -402,7 +403,7 @@ function formatStoredThinkingWarning<T extends ReasoningProviderModelReference>(
 	if (neutralizingThinking === undefined) {
 		const residual = rawThinking === false
 			? "no supported neutralizer is available, so the runtime's default effort behavior will be used for this run"
-			: "no supported suffix can neutralize it, so the subagents runtime will still apply the stored value for this run";
+			: "no supported suffix can neutralize it, so the subagents runtime will drop the stored value for this run";
 		return `${subject}; ${residual}.`;
 	}
 	if (neutralizingThinking === "off") {
@@ -421,7 +422,14 @@ function formatUnresolvedStoredThinkingWarning(
 	agent: AgentModelDefaults | undefined,
 	rawThinking: string,
 ): string {
-	return `TLH ignored unsupported stored minor-agent effort "${rawThinking}" for ${agent?.name ?? "this subagent"}; no supported model suffix could be emitted, so the subagents runtime will still apply the stored value if this role is dispatched.`;
+	return `TLH ignored unsupported stored minor-agent effort "${rawThinking}" for ${agent?.name ?? "this subagent"}; no supported model suffix could be emitted, so the subagents runtime will drop the value for a known model and fail open for an unknown model if this role is dispatched.`;
+}
+
+function formatUnresolvedStoredThinkingCapabilityWarning(
+	agent: AgentModelDefaults | undefined,
+	rawThinking: string,
+): string {
+	return `TLH stored minor-agent effort "${rawThinking}" for ${agent?.name ?? "this subagent"} could not be capability-checked because no bundled or current-session model is available; the subagents runtime will apply its capability gate if the model resolves and fail open otherwise.`;
 }
 
 function resolveStoredSubagentThinking<T extends ReasoningProviderModelReference>(
@@ -466,9 +474,9 @@ function resolveStoredSubagentThinking<T extends ReasoningProviderModelReference
 		return { thinking: requestedThinking };
 	}
 
-	// A stored value unsupported by this model must still produce a recognized
-	// suffix, because the runtime independently appends the raw stored value.
-	// Prefer the provider-resolved bundled effort, then use explicit off.
+	// Prefer a recognized suffix when the model supports one: this pins the intended
+	// bundled effort instead of merely letting the runtime drop to model default.
+	// The runtime capability gate remains the fallback when neither suffix is supported.
 	const neutralizingThinking = bundledThinking && supportedLevels.includes(bundledThinking)
 		? bundledThinking
 		: supportedLevels.includes("off")
@@ -585,6 +593,10 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
 			if (currentSessionThinkingResolution.thinking) {
 				selectedModel = currentSessionModel;
 			}
+		} else if (typeof override.thinking === "string" && override.thinking !== "off") {
+			currentSessionThinkingResolution = {
+				warning: formatUnresolvedStoredThinkingCapabilityWarning(agent, override.thinking),
+			};
 		}
 	}
 

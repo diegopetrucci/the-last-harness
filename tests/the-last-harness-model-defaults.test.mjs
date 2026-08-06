@@ -754,6 +754,40 @@ test("saved effort can use the current custom-provider session model only when n
 	assert.equal(unsupportedResolution.warning, expectedWarning);
 });
 
+test("thinking-only overrides warn when no bundled or current-session model is available", () => {
+	const input = { agent: "developer", task: "Implement the ticket" };
+	const warnings = [];
+	const expectedWarning = "TLH stored minor-agent effort \"high\" for developer could not be capability-checked because no bundled or current-session model is available; the subagents runtime will apply its capability gate if the model resolves and fail open otherwise.";
+	const currentModel = { provider: "custom-provider", id: "not-listed" };
+	assert.equal(
+		applyProviderAwareSubagentModels(
+			input,
+			agents,
+			[],
+			"custom-provider",
+			currentModel,
+			{
+				agentOverrides: new Map([["developer", { thinking: "high" }]]),
+				onWarning: (warning) => warnings.push(warning.message),
+			},
+		),
+		0,
+	);
+	assert.equal(input.model, undefined);
+	assert.deepEqual(warnings, [expectedWarning]);
+
+	const resolution = resolveProviderAwareSubagentResolution(
+		developer,
+		[],
+		"custom-provider",
+		currentModel,
+		{ thinking: "high" },
+	);
+	assert.equal(resolution.model, undefined);
+	assert.equal(resolution.thinking, undefined);
+	assert.equal(resolution.warning, expectedWarning);
+});
+
 test("explicit plain model keeps its model and receives supported persisted thinking", () => {
 	const input = { agent: "developer", task: "Implement", model: "anthropic/claude-sonnet-4-6" };
 	assert.equal(
@@ -1160,6 +1194,7 @@ test("unsupported stored effort remains bare only when no supported neutralizer 
 	const noNeutralizerModel = {
 		provider: "anthropic",
 		id: "no-neutralizer",
+		fullId: "anthropic/no-neutralizer",
 		reasoning: true,
 		thinkingLevelMap: { off: null, medium: null },
 	};
@@ -1186,11 +1221,14 @@ test("unsupported stored effort remains bare only when no supported neutralizer 
 		1,
 	);
 	assert.equal(input.model, "anthropic/no-neutralizer");
-	assert.equal(applyRuntimeThinkingSuffix(input.model, "xhigh", false), "anthropic/no-neutralizer:xhigh");
+	assert.equal(
+		applyRuntimeThinkingSuffix(input.model, "xhigh", false, { availableModels: [noNeutralizerModel] }),
+		input.model,
+	);
 	assert.equal(warnings.length, 1);
 	assert.equal(
 		warnings[0],
-		"TLH stored minor-agent effort \"xhigh\" is not supported by anthropic/no-neutralizer; no supported suffix can neutralize it, so the subagents runtime will still apply the stored value for this run.",
+		"TLH stored minor-agent effort \"xhigh\" is not supported by anthropic/no-neutralizer; no supported suffix can neutralize it, so the subagents runtime will drop the stored value for this run.",
 	);
 });
 
