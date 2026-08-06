@@ -42,7 +42,7 @@ export type WorkflowNodeStatus = "pending" | "running" | "completed" | "failed" 
 
 export interface WorkflowGraphNode {
 	id: string;
-	kind: "step" | "parallel-group" | "dynamic-parallel-group" | "agent";
+	kind: "step" | "parallel-group" | "agent";
 	agent?: string;
 	phase?: string;
 	label: string;
@@ -50,13 +50,6 @@ export interface WorkflowGraphNode {
 	flatIndex?: number;
 	stepIndex?: number;
 	children?: WorkflowGraphNode[];
-	dynamic?: {
-		sourceOutput: string;
-		sourcePath: string;
-		itemName: string;
-		maxItems?: number;
-		collectAs?: string;
-	};
 	itemKey?: string;
 	outputName?: string;
 	structured?: boolean;
@@ -1092,11 +1085,8 @@ interface TopLevelParallelConfig {
 	concurrency?: number;
 }
 
-interface ExtensionChainConfig {
-	dynamicFanout?: {
-		maxItems?: number;
-	};
-}
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface ExtensionChainConfig {}
 
 export type ToolDescriptionMode = "full" | "compact" | "custom";
 

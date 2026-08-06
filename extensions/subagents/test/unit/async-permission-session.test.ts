@@ -39,15 +39,11 @@ describe("async permission forwarding session identity", () => {
 		assert.equal(step.parentSessionId, "session-abc123");
 	});
 
-	it("consumes bounded dynamic fanout indexes before later static forked steps", () => {
+	it("consumes one flat index per parallel task before later forked steps", () => {
 		const built = buildAsyncRunnerSteps("run-abc", {
 			chain: [
-				{ agent: "source", task: "produce targets", as: "targets" },
-				{
-					expand: { from: { output: "targets", path: "/items" }, maxItems: 2 },
-					parallel: { agent: "reviewer", task: "Review {item.path}" },
-					collect: { as: "reviews" },
-				},
+				{ agent: "source", task: "produce targets" },
+				{ parallel: [{ agent: "reviewer", task: "Review first" }, { agent: "reviewer", task: "Review second" }] },
 				{ agent: "worker", task: "Use reviews" },
 			],
 			agents: [makeAgent("source"), makeAgent("reviewer"), { ...makeAgent("worker"), model: "anthropic/claude-sonnet-4-5:high", thinking: "high" }],
@@ -56,17 +52,16 @@ describe("async permission forwarding session identity", () => {
 				cwd: "/tmp/project",
 				currentSessionId: "/tmp/parent-session.jsonl",
 			},
-			sessionFilesByFlatIndex: [undefined, "/tmp/dynamic-0.jsonl", "/tmp/dynamic-1.jsonl", "/tmp/static-worker.jsonl"],
+			sessionFilesByFlatIndex: [undefined, "/tmp/parallel-0.jsonl", "/tmp/parallel-1.jsonl", "/tmp/static-worker.jsonl"],
 			thinkingOverridesByFlatIndex: [undefined, "off", "off", "off"],
 			maxSubagentDepth: 1,
 			asyncDir: "/tmp/async-run",
 		});
 
 		assert.ok(!("error" in built));
-		const dynamic = built.steps[1];
-		assert.ok(dynamic && "expand" in dynamic && "collect" in dynamic);
-		assert.deepEqual(dynamic.sessionFiles, ["/tmp/dynamic-0.jsonl", "/tmp/dynamic-1.jsonl"]);
-		assert.deepEqual(dynamic.thinkingOverrides, ["off", "off"]);
+		const group = built.steps[1];
+		assert.ok(group && "parallel" in group && Array.isArray(group.parallel));
+		assert.deepEqual(group.parallel.map((task) => task.sessionFile), ["/tmp/parallel-0.jsonl", "/tmp/parallel-1.jsonl"]);
 		const staticWorker = built.steps[2];
 		assert.ok(staticWorker && !("parallel" in staticWorker));
 		assert.equal(staticWorker.sessionFile, "/tmp/static-worker.jsonl");

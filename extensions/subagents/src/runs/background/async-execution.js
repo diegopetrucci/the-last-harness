@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyThinkingSuffix } from "../shared/pi-args.js";
 import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.js";
-import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile } from "../../shared/settings.js";
+import { buildChainInstructions, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile } from "../../shared/settings.js";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.js";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.js";
 import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.js";
@@ -160,10 +160,6 @@ function validateAsyncExecutionAcceptance(params) {
                     errors.push(...validateDispatchAcceptanceInput(task.acceptance, `chain[${stepIndex}].parallel[${taskIndex}].acceptance`));
                 }
             }
-            else if (isDynamicParallelStep(step)) {
-                errors.push(...validateAcceptanceInput(step.parallel.acceptance, `chain[${stepIndex}].parallel.acceptance`));
-                errors.push(...validateDispatchAcceptanceInput(step.parallel.acceptance, `chain[${stepIndex}].parallel.acceptance`));
-            }
         }
         return errors;
     }
@@ -184,13 +180,11 @@ export function buildAsyncRunnerSteps(id, params) {
     const originalTask = params.task ?? (firstStep
         ? (isParallelStep(firstStep)
             ? firstStep.parallel[0]?.task
-            : isDynamicParallelStep(firstStep)
-                ? firstStep.parallel.task
-                : firstStep.task)
+            : firstStep.task)
         : undefined);
     try {
         if (params.validateOutputBindings !== false) {
-            validateChainOutputBindings(chain, { maxItems: params.dynamicFanoutMaxItems });
+            validateChainOutputBindings(chain);
         }
     }
     catch (error) {
@@ -202,9 +196,7 @@ export function buildAsyncRunnerSteps(id, params) {
     for (const s of chain) {
         const stepAgents = isParallelStep(s)
             ? s.parallel.map((t) => t.agent)
-            : isDynamicParallelStep(s)
-                ? [s.parallel.agent]
-                : [s.agent];
+            : [s.agent];
         for (const agentName of stepAgents) {
             if (!agents.find((x) => x.name === agentName)) {
                 return { error: `Unknown agent: ${agentName}` };
@@ -354,40 +346,6 @@ export function buildAsyncRunnerSteps(id, params) {
                     worktree: s.worktree,
                 };
             }
-            if (isDynamicParallelStep(s)) {
-                const agent = agents.find((candidate) => candidate.name === s.parallel.agent);
-                const behavior = suppressProgressForReadOnlyTask(resolveStepBehavior(agent, buildStepOverrides(s.parallel), chainSkills), s.parallel.task, originalTask);
-                const progressPrecreated = behavior.progress;
-                if (progressPrecreated) {
-                    writeInitialProgressFile(progressDir);
-                    progressInstructionCreated = true;
-                }
-                const maxItems = s.expand.maxItems ?? params.dynamicFanoutMaxItems ?? 0;
-                const dynamicFlatSteps = Array.from({ length: maxItems }, () => nextFlatStep());
-                const parallel = buildSeqStep(s.parallel, undefined, undefined, progressPrecreated, behavior, undefined);
-                return {
-                    expand: s.expand,
-                    parallel,
-                    collect: s.collect,
-                    concurrency: s.concurrency,
-                    failFast: s.failFast,
-                    phase: s.phase,
-                    label: s.label,
-                    sessionFiles: dynamicFlatSteps.map((step) => step.sessionFile),
-                    thinkingOverrides: dynamicFlatSteps.map((step) => step.thinkingOverride),
-                    effectiveAcceptance: resolveEffectiveAcceptance({
-                        explicit: s.acceptance,
-                        agentName: s.parallel.agent,
-                        acceptanceRole: agent.acceptanceRole,
-                        task: parallel.task,
-                        mode: resultMode,
-                        async: true,
-                        dynamicGroup: true,
-                    }),
-                    acceptanceInput: s.acceptance,
-                    acceptanceRole: agent.acceptanceRole,
-                };
-            }
             const staticStep = nextFlatStep();
             return buildSeqStep(s, staticStep.sessionFile, undefined, false, undefined, staticStep.index);
         });
@@ -434,7 +392,6 @@ export function executeAsyncChain(id, params) {
         thinkingOverridesByFlatIndex,
         progressDir: params.progressDir ?? (artifactsDir ? path.join(artifactsDir, "progress", id) : resultMode === "parallel" ? path.join(asyncDir, "progress") : undefined),
         outputBaseDir: artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined,
-        dynamicFanoutMaxItems: params.dynamicFanoutMaxItems,
         maxSubagentDepth,
         worktreeBaseDir,
         asyncDir,
@@ -454,8 +411,6 @@ export function executeAsyncChain(id, params) {
     const ticketTasks = chain.flatMap((step) => {
         if (isParallelStep(step))
             return step.parallel;
-        if (isDynamicParallelStep(step))
-            return [step.parallel];
         return [step];
     });
     const tkTicketContext = resolveTkTicketTaskContext({ topLevelTask: params.task, runnerCwd, tasks: ticketTasks });
@@ -499,7 +454,6 @@ export function executeAsyncChain(id, params) {
             controlIntercomTarget,
             childIntercomTargets,
             resultMode,
-            dynamicFanoutMaxItems: params.dynamicFanoutMaxItems,
             timeoutMs: params.timeoutMs,
             deadlineAt,
             globalConcurrencyLimit: params.globalConcurrencyLimit,
@@ -525,9 +479,7 @@ export function executeAsyncChain(id, params) {
         const eventFirstStep = eventChain[0];
         const firstAgents = isParallelStep(eventFirstStep)
             ? eventFirstStep.parallel.map((t) => t.agent)
-            : isDynamicParallelStep(eventFirstStep)
-                ? [eventFirstStep.parallel.agent]
-                : [eventFirstStep.agent];
+            : [eventFirstStep.agent];
         const parallelGroups = [];
         const flatAgents = [];
         let flatStepStart = 0;
@@ -537,11 +489,6 @@ export function executeAsyncChain(id, params) {
                 parallelGroups.push({ start: flatStepStart, count: step.parallel.length, stepIndex });
                 flatAgents.push(...step.parallel.map((task) => task.agent));
                 flatStepStart += step.parallel.length;
-            }
-            else if (isDynamicParallelStep(step)) {
-                parallelGroups.push({ start: flatStepStart, count: 1, stepIndex });
-                flatAgents.push(step.parallel.agent);
-                flatStepStart++;
             }
             else {
                 flatAgents.push(step.agent);
@@ -595,10 +542,8 @@ export function executeAsyncChain(id, params) {
             agents: flatAgents,
             task: isParallelStep(eventFirstStep)
                 ? eventFirstStep.parallel[0]?.task?.slice(0, 50)
-                : isDynamicParallelStep(eventFirstStep)
-                    ? eventFirstStep.parallel.task?.slice(0, 50)
-                    : eventFirstStep.task?.slice(0, 50),
-            chain: eventChain.map((s) => isParallelStep(s) ? `[${s.parallel.map((t) => t.agent).join("+")}]` : isDynamicParallelStep(s) ? `expand:${s.parallel.agent}` : s.agent),
+                : eventFirstStep.task?.slice(0, 50),
+            chain: eventChain.map((s) => isParallelStep(s) ? `[${s.parallel.map((t) => t.agent).join("+")}]` : s.agent),
             chainStepCount: eventChain.length,
             parallelGroups,
             workflowGraph,
@@ -611,7 +556,7 @@ export function executeAsyncChain(id, params) {
         });
     }
     const chainDesc = chain
-        .map((s) => isParallelStep(s) ? `[${s.parallel.map((t) => t.agent).join("+")}]` : isDynamicParallelStep(s) ? `expand:${s.parallel.agent}` : s.agent)
+        .map((s) => isParallelStep(s) ? `[${s.parallel.map((t) => t.agent).join("+")}]` : s.agent)
         .join(" -> ");
     return {
         content: [{ type: "text", text: formatAsyncStartedMessage(`Async ${resultMode}: ${chainDesc} [${id}]`) }],
