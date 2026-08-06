@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+	buildChildEnv,
 	discoverSuiteFiles,
 	parseTapSummary,
 	repoRoot,
@@ -59,6 +60,29 @@ test("subagents runner rejects missing and zero-file suites before spawning Node
 		() => discoverSuiteFiles("unit", { directory: emptyDir, minimumFiles: 93 }),
 		/unit suite found 0 test files; expected at least 93/,
 	);
+});
+
+test("subagents runner buildChildEnv strips PI_SUBAGENT keys and scales timeouts in CI", () => {
+	const base = {
+		PI_SUBAGENT_SOMETHING: "should-be-removed",
+		PI_SUBAGENTS_EXTRA: "also-removed",
+		KEEP: "preserved",
+		NODE_TEST_CONTEXT: "cleared",
+	};
+
+	// Without CI: no scaling, PI keys stripped.
+	const envNoCI = buildChildEnv(base, "/tmp/agent-dir");
+	assert.equal(envNoCI.TLH_TEST_TIMEOUT_SCALE, undefined, "scale must be absent without CI");
+	assert.equal(envNoCI.PI_SUBAGENT_SOMETHING, undefined, "PI_SUBAGENT_* must be stripped");
+	assert.equal(envNoCI.PI_SUBAGENTS_EXTRA, undefined, "PI_SUBAGENTS_* must be stripped");
+	assert.equal(envNoCI.NODE_TEST_CONTEXT, undefined, "NODE_TEST_CONTEXT must be cleared");
+	assert.equal(envNoCI.KEEP, "preserved", "unrelated keys must be preserved");
+	assert.equal(envNoCI.PI_CODING_AGENT_DIR, "/tmp/agent-dir");
+
+	// With CI: scale factor of 3 is injected.
+	const envCI = buildChildEnv({ ...base, CI: "1" }, "/tmp/agent-dir");
+	assert.equal(envCI.TLH_TEST_TIMEOUT_SCALE, "3", "scale must be 3 when CI is set");
+	assert.equal(envCI.CI, "1", "CI must be preserved");
 });
 
 test("subagents runner rejects skipped TAP and enforces full-run versus shard floors", () => {

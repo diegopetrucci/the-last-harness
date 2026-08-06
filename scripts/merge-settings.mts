@@ -218,6 +218,14 @@ function prepareDefaults(
 			.map((extension) => extension.source),
 	];
 	const ensuredIdentities = new Set(ensuredPackages.map(packageIdentity).filter((value): value is string => Boolean(value)));
+	// When the ensured source is non-canonical (local path, file: URL, etc.), add the
+	// canonical TLH identity to the exclusion set so the defaults' canonical entry is
+	// not carried through into packages. Without this, two TLH entries reach the
+	// profile and Pi clones both, failing at launch with a tool-registration conflict.
+	// Revert: remove the block below to restore the prior inclusive behaviour.
+	if (HARNESS_PACKAGE_IDENTITY && packageIdentity(ensuredSource) !== HARNESS_PACKAGE_IDENTITY) {
+		ensuredIdentities.add(HARNESS_PACKAGE_IDENTITY);
+	}
 	const disabledIdentities = new Set(
 		defaultExtensions.filter((extension) => disabledIds.has(extension.id)).flatMap(defaultExtensionPackageIdentities),
 	);
@@ -264,6 +272,26 @@ function applyHarnessPackageDedupes(settings: JsonObject, ensuredSource: string,
 	if (!Array.isArray(settings.packages)) return;
 	for (const removedSource of removeDuplicatePackagesByIdentity(settings, HARNESS_PACKAGE_IDENTITY)) {
 		changes.push(`remove duplicate harness package: ${removedSource} (same identity as ${ensuredSource})`);
+	}
+}
+
+function applyNonCanonicalHarnessCleanup(
+	settings: JsonObject,
+	ensuredSource: string,
+	changes: string[],
+): void {
+	// When re-installing or updating from a non-canonical source (local path,
+	// file: URL, etc.) over a profile that already contains the canonical TLH
+	// package entry, remove that canonical entry. Without this, mergePackages
+	// carries the canonical entry forward from existing settings alongside the
+	// non-canonical ensured source, producing the same dual-registration and
+	// tool-conflict launch failure.
+	// Revert: remove this function and its call in main() to restore prior behaviour.
+	if (packageIdentity(ensuredSource) === HARNESS_PACKAGE_IDENTITY) return;
+	if (!Array.isArray(settings.packages)) return;
+	let removedSource: string | undefined;
+	while ((removedSource = removePackageByIdentity(settings, HARNESS_PACKAGE_IDENTITY))) {
+		changes.push(`remove canonical TLH package superseded by local source: ${removedSource}`);
 	}
 }
 
@@ -758,6 +786,7 @@ function main(): void {
 	const defaults = prepareDefaults(rawDefaults, args.packageSource, defaultExtensions, disabledIds, existing, { force: args.force });
 	const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
 	applyHarnessPackageDedupes(next, ensuredHarnessSource, changes);
+	applyNonCanonicalHarnessCleanup(next, ensuredHarnessSource, changes);
 	const managedDefaultExtensionProvenance = readDefaultExtensionProvenance(next).managedPackageIdentities;
 	const sourceUpdatedIdentities = applyDefaultExtensionSourceUpdates(next, defaultExtensions, disabledIds, changes, {
 		force: args.force,

@@ -26,6 +26,7 @@ import {
 	events,
 	tryImport,
 } from "../support/helpers.ts";
+import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 interface ArtifactPaths {
 	inputPath: string;
@@ -70,7 +71,7 @@ assert.equal(asyncMod.isAsyncAvailable(), true, "required async runner module is
 // prompt carries an acceptance contract.
 const MOCK_COMMAND_EVIDENCE = /\[passed\] mock validation/;
 
-async function waitForAsyncResultFile(id: string, timeoutMs = 15_000): Promise<string> {
+async function waitForAsyncResultFile(id: string, timeoutMs = scaleTestTimeout(15_000)): Promise<string> {
 	const resultPath = path.join(RESULTS_DIR!, `${id}.json`);
 	const deadline = Date.now() + timeoutMs;
 	while (!fs.existsSync(resultPath)) {

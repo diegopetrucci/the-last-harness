@@ -17,6 +17,7 @@ import {
 	removeTempDir,
 	tryImport,
 } from "../support/helpers.ts";
+import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 interface ExecutorResult {
 	content: Array<{ text?: string }>;
@@ -147,7 +148,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		return JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")).args as string[];
 	}
 
-	async function waitForFile(filePath: string, timeoutMs = 10_000): Promise<void> {
+	async function waitForFile(filePath: string, timeoutMs = scaleTestTimeout(10_000)): Promise<void> {
 		const deadline = Date.now() + timeoutMs;
 		while (!fs.existsSync(filePath)) {
 			if (Date.now() > deadline) assert.fail(`Timed out waiting for file: ${filePath}`);
@@ -155,7 +156,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		}
 	}
 
-	async function waitForAsyncState(runId: string, expected: string, timeoutMs = 10_000): Promise<void> {
+	async function waitForAsyncState(runId: string, expected: string, timeoutMs = scaleTestTimeout(10_000)): Promise<void> {
 		const statusPath = path.join(ASYNC_DIR, runId, "status.json");
 		const deadline = Date.now() + timeoutMs;
 		while (true) {
@@ -172,7 +173,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		runId: string,
 		predicate: (status: { state?: string; currentStep?: number; sessionFile?: string; steps?: Array<{ status?: string; sessionFile?: string; acceptance?: { status?: string } }> }) => boolean,
 		label: string,
-		timeoutMs = 10_000,
+		timeoutMs = scaleTestTimeout(10_000),
 	): Promise<void> {
 		const statusPath = path.join(ASYNC_DIR, runId, "status.json");
 		const deadline = Date.now() + timeoutMs;
@@ -190,7 +191,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		return JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, runId, "status.json"), "utf-8")) as T;
 	}
 
-	async function waitForMockPiCall(index: number, timeoutMs = 10_000): Promise<void> {
+	async function waitForMockPiCall(index: number, timeoutMs = scaleTestTimeout(10_000)): Promise<void> {
 		const deadline = Date.now() + timeoutMs;
 		while (true) {
 			const callFile = fs.readdirSync(mockPi.dir)
@@ -203,7 +204,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		}
 	}
 
-	async function waitForRevivedAsyncResult(result: ExecutorResult, timeoutMs = 10_000): Promise<string> {
+	async function waitForRevivedAsyncResult(result: ExecutorResult, timeoutMs = scaleTestTimeout(10_000)): Promise<string> {
 		const revivedId = result.details?.asyncId;
 		assert.ok(revivedId, "expected revived async id");
 		const resultPath = path.join(RESULTS_DIR, `${revivedId}.json`);
@@ -246,7 +247,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		return repoDir;
 	}
 
-	async function waitFor(predicate: () => boolean, failure: string, timeoutMs = 10_000): Promise<void> {
+	async function waitFor(predicate: () => boolean, failure: string, timeoutMs = scaleTestTimeout(10_000)): Promise<void> {
 		const deadline = Date.now() + timeoutMs;
 		while (!predicate()) {
 			if (Date.now() > deadline) assert.fail(failure);
@@ -1086,7 +1087,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		);
 		const asyncId = started.details?.asyncId;
 		assert.ok(asyncId, "expected async id");
-		const pausedResumeWaitMs = process.platform === "win32" ? 30_000 : 15_000;
+		const pausedResumeWaitMs = scaleTestTimeout(process.platform === "win32" ? 30_000 : 15_000);
 		await waitForAsyncStatusPredicate(
 			asyncId,
 			(status) => status.state === "running" && status.steps?.[0]?.status === "running" && !!(status.steps[0]?.sessionFile ?? status.sessionFile),
@@ -1215,7 +1216,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		);
 		const asyncId = started.details?.asyncId;
 		assert.ok(asyncId, "expected async id");
-		const pausedResumeWaitMs = process.platform === "win32" ? 30_000 : 15_000;
+		const pausedResumeWaitMs = scaleTestTimeout(process.platform === "win32" ? 30_000 : 15_000);
 		await waitForAsyncStatusPredicate(
 			asyncId,
 			(status) => status.state === "running"

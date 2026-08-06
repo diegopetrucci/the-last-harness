@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { createTempDir, removeTempDir, tryImport } from "../support/helpers.ts";
+import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 interface AsyncJobTrackerModule {
 	createAsyncJobTracker(
@@ -69,7 +70,7 @@ function pidGone(): never {
 async function waitForCondition(
 	condition: () => boolean,
 	description: string,
-	timeoutMs = 1000,
+	timeoutMs = scaleTestTimeout(1000),
 ): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
 	while (!condition()) {
