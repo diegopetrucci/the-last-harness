@@ -223,6 +223,18 @@ describe("buildPiArgs model wiring", () => {
 		assert.equal(args[args.indexOf("--model") + 1], "openai/gpt-5");
 	});
 
+	it("fails open for resolved models without a thinking-level map", () => {
+		const availableModels = [{ provider: "anthropic", id: "claude-sonnet-4-5", fullId: "anthropic/claude-sonnet-4-5", reasoning: true }];
+		assert.equal(
+			applyThinkingSuffix("anthropic/claude-sonnet-4-5", "max", false, { availableModels }),
+			"anthropic/claude-sonnet-4-5:max",
+		);
+		assert.equal(
+			getThinkingLevelDropNote("anthropic/claude-sonnet-4-5", "max", false, { availableModels }),
+			undefined,
+		);
+	});
+
 	it("fails open for unknown and unavailable model capabilities", () => {
 		const availableModels = [{ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5", reasoning: false }];
 		assert.equal(
@@ -233,6 +245,48 @@ describe("buildPiArgs model wiring", () => {
 			applyThinkingSuffix("openai/gpt-5", "high", false, { availableModels: [] }),
 			"openai/gpt-5:high",
 		);
+	});
+
+	it("gates positive capability metadata and keeps drop notes in lockstep", () => {
+		const cases = [
+			{
+				thinking: "max",
+				availableModels: [{ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5", reasoning: true, thinkingLevelMap: { xhigh: "xhigh" } }],
+				dropped: true,
+			},
+			{
+				thinking: "xhigh",
+				availableModels: [{ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5", reasoning: true, thinkingLevelMap: { max: "max" } }],
+				dropped: true,
+			},
+			{
+				thinking: "high",
+				availableModels: [{ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5", reasoning: true, thinkingLevelMap: { high: null } }],
+				dropped: true,
+			},
+			{
+				thinking: "high",
+				availableModels: [{ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5", reasoning: true, thinkingLevelMap: { high: "high" } }],
+				dropped: false,
+			},
+		];
+
+		for (const testCase of cases) {
+			const model = applyThinkingSuffix("openai/gpt-5", testCase.thinking, false, { availableModels: testCase.availableModels });
+			const note = getThinkingLevelDropNote("openai/gpt-5", testCase.thinking, false, { availableModels: testCase.availableModels });
+			assert.equal(model === "openai/gpt-5", testCase.dropped);
+			assert.equal(Boolean(note), testCase.dropped);
+		}
+	});
+
+	it("gates reasoning-disabled models at every level except off", () => {
+		const availableModels = [{ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5", reasoning: false }];
+		for (const thinking of ["minimal", "low", "medium", "high", "xhigh", "max"]) {
+			assert.equal(applyThinkingSuffix("openai/gpt-5", thinking, false, { availableModels }), "openai/gpt-5");
+			assert.ok(getThinkingLevelDropNote("openai/gpt-5", thinking, false, { availableModels }));
+		}
+		assert.equal(applyThinkingSuffix("openai/gpt-5", "off", false, { availableModels }), "openai/gpt-5:off");
+		assert.equal(getThinkingLevelDropNote("openai/gpt-5", "off", false, { availableModels }), undefined);
 	});
 
 	it("preserves an already-suffixed model before capability checks", () => {

@@ -2381,6 +2381,44 @@ describe("async execution utilities", () => {
 		assert.equal(args[args.indexOf("--model") + 1], "openai/gpt-5");
 	});
 
+	it("background runs preserve a max thinking suffix when capability metadata is missing", async () => {
+		mockPi.onCall({ output: "Done asynchronously" });
+		const id = `async-thinking-metadata-missing-${Date.now().toString(36)}`;
+		const model = "anthropic/claude-sonnet-4-5";
+		const availableModels = [{
+			provider: "anthropic",
+			id: "claude-sonnet-4-5",
+			fullId: model,
+			reasoning: true,
+		}];
+		const run = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", { model, thinking: "max" }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			availableModels,
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+
+		assert.equal(run.details.asyncId, id);
+		const payload = JSON.parse(fs.readFileSync((await waitForAsyncResultFile(id)), "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.model, `${model}:max`);
+		assert.equal(getThinkingLevelDropNote(model, "max", false, { availableModels }), undefined);
+		const args = readMockPiArgs(mockPi, 0);
+		assert.equal(args[args.indexOf("--model") + 1], `${model}:max`);
+	});
+
 	it("background runs try per-dispatch fallback models before agent fallback models and only persist notices after a retry", async () => {
 		mockPi.onCall({
 			jsonl: [{

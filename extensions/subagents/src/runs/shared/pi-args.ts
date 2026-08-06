@@ -96,6 +96,16 @@ export interface ThinkingSuffixOptions {
 	preferredModelProvider?: string;
 }
 
+function shouldDropThinkingLevel(modelInfo: ModelInfo | undefined, thinking: string): boolean {
+	if (!modelInfo) return false;
+	if (modelInfo.reasoning === false) return thinking !== "off";
+
+	// Do not reuse getSupportedThinkingLevels' no-map default here: settings
+	// validation can be strict, but absent runtime metadata must fail open.
+	if (!modelInfo.thinkingLevelMap) return false;
+	return !getSupportedThinkingLevels(modelInfo).includes(thinking as ThinkingLevel);
+}
+
 /**
  * Return the user-facing note for a capability-gated thinking level, if the
  * gate would drop it. This deliberately mirrors applyThinkingSuffix's gate
@@ -111,7 +121,7 @@ export function getThinkingLevelDropNote(
 	const colonIdx = model.lastIndexOf(":");
 	if (colonIdx !== -1 && THINKING_LEVELS.some((level) => level === model.substring(colonIdx + 1))) return undefined;
 	const modelInfo = findModelInfo(model, options?.availableModels, options?.preferredModelProvider);
-	if (!modelInfo || getSupportedThinkingLevels(modelInfo).includes(thinking as ThinkingLevel)) return undefined;
+	if (!shouldDropThinkingLevel(modelInfo, thinking)) return undefined;
 	return `Notice: Thinking level "${thinking}" was dropped for model "${model}" because the model registry does not advertise support.`;
 }
 

@@ -36,6 +36,15 @@ function sanitizeSupervisorChannelSegment(value) {
 function supervisorChannelDir(runId, agent, childIndex) {
     return path.join(TEMP_ROOT_DIR, "supervisor-channels", `${sanitizeSupervisorChannelSegment(runId)}-${sanitizeSupervisorChannelSegment(agent)}-${childIndex}`);
 }
+function shouldDropThinkingLevel(modelInfo, thinking) {
+    if (!modelInfo)
+        return false;
+    if (modelInfo.reasoning === false)
+        return thinking !== "off";
+    if (!modelInfo.thinkingLevelMap)
+        return false;
+    return !getSupportedThinkingLevels(modelInfo).includes(thinking);
+}
 export function getThinkingLevelDropNote(model, thinking, replaceExisting = false, options) {
     if (!model || !thinking || replaceExisting)
         return undefined;
@@ -43,7 +52,7 @@ export function getThinkingLevelDropNote(model, thinking, replaceExisting = fals
     if (colonIdx !== -1 && THINKING_LEVELS.some((level) => level === model.substring(colonIdx + 1)))
         return undefined;
     const modelInfo = findModelInfo(model, options?.availableModels, options?.preferredModelProvider);
-    if (!modelInfo || getSupportedThinkingLevels(modelInfo).includes(thinking))
+    if (!shouldDropThinkingLevel(modelInfo, thinking))
         return undefined;
     return `Notice: Thinking level "${thinking}" was dropped for model "${model}" because the model registry does not advertise support.`;
 }
