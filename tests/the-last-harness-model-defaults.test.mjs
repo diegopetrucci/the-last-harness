@@ -11,6 +11,9 @@ const {
 	selectProviderAwareAgentModelId,
 	splitKnownThinkingSuffix,
 } = await jiti.import("../extensions/the-last-harness/model-defaults.ts");
+const { applyThinkingSuffix: applyRuntimeThinkingSuffix } = await jiti.import(
+	"../extensions/subagents/src/runs/shared/pi-args.ts",
+);
 
 const developer = {
 	name: "developer",
@@ -732,11 +735,13 @@ test("saved effort can use the current custom-provider session model only when n
 				onWarning: (warning) => warnings.push(warning.message),
 			},
 		),
-		0,
+		1,
 	);
-	assert.equal(unsupportedInput.model, undefined);
+	assert.equal(unsupportedInput.model, "custom-provider/limited:off");
+	assert.equal(applyRuntimeThinkingSuffix(unsupportedInput.model, "high", false), unsupportedInput.model);
 	assert.equal(warnings.length, 1);
 	assert.match(warnings[0], /not supported by custom-provider\/limited/i);
+	assert.match(warnings[0], /explicit off/i);
 	const unsupportedResolution = resolveProviderAwareSubagentResolution(
 		overrideDeveloper,
 		unsupportedCurrentModel,
@@ -744,8 +749,8 @@ test("saved effort can use the current custom-provider session model only when n
 		{ provider: "custom-provider", id: "limited" },
 		{ thinking: "high" },
 	);
-	assert.equal(unsupportedResolution.model, undefined);
-	assert.equal(unsupportedResolution.thinking, undefined);
+	assert.equal(unsupportedResolution.model, unsupportedCurrentModel[0]);
+	assert.equal(unsupportedResolution.thinking, "off");
 	assert.match(unsupportedResolution.warning, /not supported by custom-provider\/limited/i);
 });
 
@@ -1079,7 +1084,7 @@ test("persisted off effort is explicit on selected and generated fallback models
 	assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-5:off"]);
 });
 
-test("unsupported stored effort warns and falls back for that run", () => {
+test("unsupported stored effort is neutralized on the primary and generated fallback models", () => {
 	const warnings = [];
 	const input = { agent: "code-reviewer", task: "Review the diff" };
 	assert.equal(
@@ -1096,11 +1101,88 @@ test("unsupported stored effort warns and falls back for that run", () => {
 		),
 		1,
 	);
-	assert.equal(input.model, "openai-codex/gpt-5.6-sol");
-	assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-5"]);
+	assert.equal(input.model, "openai-codex/gpt-5.6-sol:off");
+	assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-5:off"]);
+
+	// The runtime independently reads the persisted xhigh value from the agent.
+	// Its replaceExisting=false path must leave TLH's supported neutralizer suffixes alone.
+	assert.equal(applyRuntimeThinkingSuffix(input.model, "xhigh", false), input.model);
+	assert.equal(applyRuntimeThinkingSuffix(input.fallbackModels[0], "xhigh", false), input.fallbackModels[0]);
+	assert.doesNotMatch(input.model, /:xhigh$/);
+	assert.doesNotMatch(input.fallbackModels[0], /:xhigh$/);
 	assert.equal(warnings.length, 1);
 	assert.match(warnings[0], /stored minor-agent effort/i);
 	assert.match(warnings[0], /openai-codex\/gpt-5\.6-sol/i);
+	assert.match(warnings[0], /explicit off/i);
+});
+
+test("nonstandard stored effort prefers provider-resolved bundled suffixes on both generated models", () => {
+	const bundledReviewer = {
+		...overrideCodeReviewer,
+		name: "bundled-reviewer",
+		tlhOpenaiThinking: "high",
+		tlhAnthropicThinking: "medium",
+	};
+	const bundledAgents = new Map([[bundledReviewer.name, bundledReviewer]]);
+	const warnings = [];
+	const input = { agent: bundledReviewer.name, task: "Review the diff" };
+	assert.equal(
+		applyProviderAwareSubagentModels(
+			input,
+			bundledAgents,
+			limitedReasoningAvailable,
+			"anthropic",
+			undefined,
+			{
+				agentOverrides: new Map([[bundledReviewer.name, { thinking: "turbo" }]]),
+				onWarning: (warning) => warnings.push(warning.message),
+			},
+		),
+		1,
+	);
+	assert.equal(input.model, "openai-codex/gpt-5.6-sol:high");
+	assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-5:medium"]);
+	assert.equal(applyRuntimeThinkingSuffix(input.model, "turbo", false), input.model);
+	assert.equal(applyRuntimeThinkingSuffix(input.fallbackModels[0], "turbo", false), input.fallbackModels[0]);
+	assert.equal(warnings.length, 1);
+	assert.match(warnings[0], /ignored unsupported stored minor-agent effort "turbo"/i);
+	assert.match(warnings[0], /bundled defaults/i);
+});
+
+test("unsupported stored effort remains bare only when no supported neutralizer exists", () => {
+	const noNeutralizerModel = {
+		provider: "anthropic",
+		id: "no-neutralizer",
+		reasoning: true,
+		thinkingLevelMap: { off: null, medium: null },
+	};
+	const noNeutralizerAgent = {
+		name: "no-neutralizer",
+		tlhAnthropicModels: ["anthropic/no-neutralizer"],
+		thinking: "medium",
+	};
+	const noNeutralizerAgents = new Map([[noNeutralizerAgent.name, noNeutralizerAgent]]);
+	const warnings = [];
+	const input = { agent: noNeutralizerAgent.name, task: "Review the diff" };
+	assert.equal(
+		applyProviderAwareSubagentModels(
+			input,
+			noNeutralizerAgents,
+			[noNeutralizerModel],
+			"anthropic",
+			undefined,
+			{
+				agentOverrides: new Map([[noNeutralizerAgent.name, { thinking: "xhigh" }]]),
+				onWarning: (warning) => warnings.push(warning.message),
+			},
+		),
+		1,
+	);
+	assert.equal(input.model, "anthropic/no-neutralizer");
+	assert.equal(applyRuntimeThinkingSuffix(input.model, "xhigh", false), "anthropic/no-neutralizer:xhigh");
+	assert.equal(warnings.length, 1);
+	assert.match(warnings[0], /no supported suffix can neutralize/i);
+	assert.match(warnings[0], /runtime will still apply the stored value/i);
 });
 
 test("supported primary saved effort survives an incompatible generated fallback", () => {
@@ -1121,10 +1203,10 @@ test("supported primary saved effort survives an incompatible generated fallback
 		1,
 	);
 	assert.equal(input.model, "openai-codex/gpt-5.6-sol:high");
-	assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-5"]);
+	assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-5:off"]);
 	assert.equal(warnings.length, 1);
 	assert.match(warnings[0], /generated fallback anthropic\/claude-opus-5/i);
-	assert.match(warnings[0], /bundled effort behavior/i);
+	assert.match(warnings[0], /explicit off/i);
 });
 
 test("caller-supplied fallbacks suppress warnings for an unused generated fallback", () => {
@@ -1246,8 +1328,9 @@ test("stored max effort warns and falls back when the model's thinkingLevelMap l
 		undefined,
 		{ thinking: "max" },
 	);
-	assert.equal(resolution.thinking, undefined);
+	assert.equal(resolution.thinking, "off");
 	assert.match(resolution.warning, /not supported by anthropic\/plain-reasoner/i);
+	assert.match(resolution.warning, /explicit off/i);
 
 	const warnings = [];
 	const input = { agent: "max-dev", task: "Do" };
@@ -1258,10 +1341,12 @@ test("stored max effort warns and falls back when the model's thinkingLevelMap l
 		}),
 		1,
 	);
-	// Falls back to the bare model for this run rather than emitting an unsupported suffix.
-	assert.equal(input.model, "anthropic/plain-reasoner");
+	// Falls back to explicit off rather than emitting an unsupported suffix.
+	assert.equal(input.model, "anthropic/plain-reasoner:off");
+	assert.equal(applyRuntimeThinkingSuffix(input.model, "max", false), input.model);
 	assert.equal(warnings.length, 1);
 	assert.match(warnings[0], /stored minor-agent effort "max"/i);
+	assert.match(warnings[0], /explicit off/i);
 });
 
 test("splitKnownThinkingSuffix now splits a :max suffix like every other level", () => {

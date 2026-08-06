@@ -204,37 +204,78 @@ export function selectProviderAwareAgentModelId(agent, availableModels, currentP
     const model = selectProviderAwareAgentModel(agent, availableModels, currentProvider);
     return model ? formatProviderModelReference(model) : undefined;
 }
-function resolveStoredSubagentThinking(agent, model, override) {
+function formatStoredThinkingWarning(agent, model, rawThinking, neutralizingThinking, generatedFallback) {
+    const storedThinking = rawThinking === false
+        ? "off"
+        : String(rawThinking);
+    const modelLabel = `${generatedFallback ? "generated fallback " : ""}${formatProviderModelReference(model)}`;
+    const standardStoredThinking = rawThinking === false
+        || (typeof rawThinking === "string" && isThinkingLevel(rawThinking));
+    const subject = standardStoredThinking
+        ? `TLH stored minor-agent effort "${storedThinking}" is not supported by ${modelLabel}`
+        : `TLH ignored unsupported stored minor-agent effort "${storedThinking}" for ${generatedFallback ? modelLabel : agent?.name ?? "this subagent"}`;
+    if (neutralizingThinking === undefined) {
+        const residual = rawThinking === false
+            ? "no supported neutralizer is available, so the runtime's default effort behavior will be used for this run"
+            : "no supported suffix can neutralize it, so the subagents runtime will still apply the stored value for this run";
+        return `${subject}; ${residual}.`;
+    }
+    if (neutralizingThinking === "off") {
+        const action = generatedFallback
+            ? "that fallback will use explicit off for this run (emitted as :off so the runtime cannot reapply the stored value)"
+            : "using explicit off for this run (emitted as :off so the runtime cannot reapply the stored value)";
+        return `${subject}; ${action}.`;
+    }
+    const action = generatedFallback
+        ? `that fallback will use bundled defaults for this run (bundled effort behavior ${neutralizingThinking} is emitted as a supported suffix so the runtime cannot reapply the stored value)`
+        : `using bundled defaults for this run (bundled effort behavior ${neutralizingThinking} is emitted as a supported suffix so the runtime cannot reapply the stored value)`;
+    return `${subject}; ${action}.`;
+}
+function formatUnresolvedStoredThinkingWarning(agent, rawThinking) {
+    return `TLH ignored unsupported stored minor-agent effort "${rawThinking}" for ${agent?.name ?? "this subagent"}; no supported model suffix could be emitted, so the subagents runtime will still apply the stored value if this role is dispatched.`;
+}
+function resolveStoredSubagentThinking(agent, model, override, generatedFallback = false) {
     const rawThinking = override?.thinking;
-    const bundledThinking = rawThinking === undefined ? resolveThinkingForProvider(agent, model?.provider) : undefined;
-    const thinking = rawThinking === false
+    const bundledThinking = resolveThinkingForProvider(agent, model?.provider);
+    const requestedThinking = rawThinking === false
         ? "off"
         : typeof rawThinking === "string" && isThinkingLevel(rawThinking)
             ? rawThinking
-            : bundledThinking;
-    if (!thinking) {
-        return rawThinking === undefined
-            ? {}
-            : {
-                warning: `TLH ignored unsupported stored minor-agent effort "${String(rawThinking)}" for ${agent?.name ?? "this subagent"}; using bundled defaults for this run.`,
-            };
-    }
-    if (!model) {
-        return { thinking };
-    }
-    const supportedLevels = getAvailableThinkingLevels(model);
+            : undefined;
     if (rawThinking === undefined) {
-        if (supportedLevels.includes(thinking)) {
-            return { thinking };
+        if (!bundledThinking) {
+            return {};
+        }
+        if (!model) {
+            return { thinking: bundledThinking };
+        }
+        const supportedLevels = getAvailableThinkingLevels(model);
+        if (supportedLevels.includes(bundledThinking)) {
+            return { thinking: bundledThinking };
         }
         return supportedLevels.includes("off") ? { thinking: "off" } : {};
     }
-    if (!supportedLevels.includes(thinking)) {
+    if (!model) {
+        if (requestedThinking !== undefined) {
+            return { thinking: requestedThinking };
+        }
         return {
-            warning: `TLH stored minor-agent effort "${thinking}" is not supported by ${formatProviderModelReference(model)}; using bundled defaults for this run.`,
+            warning: formatUnresolvedStoredThinkingWarning(agent, String(rawThinking)),
         };
     }
-    return { thinking };
+    const supportedLevels = getAvailableThinkingLevels(model);
+    if (requestedThinking !== undefined && supportedLevels.includes(requestedThinking)) {
+        return { thinking: requestedThinking };
+    }
+    const neutralizingThinking = bundledThinking && supportedLevels.includes(bundledThinking)
+        ? bundledThinking
+        : supportedLevels.includes("off")
+            ? "off"
+            : undefined;
+    return {
+        thinking: neutralizingThinking,
+        warning: formatStoredThinkingWarning(agent, model, rawThinking, neutralizingThinking, generatedFallback),
+    };
 }
 function resolveIndependence(agent, model, currentProvider) {
     if (!agent?.preferOppositeProvider) {
@@ -313,21 +354,22 @@ export function resolveProviderAwareSubagentResolution(agent, availableModels, c
         && (!selectedModel || formatProviderModelReference(fallbackModel) !== formatProviderModelReference(selectedModel))
         ? [fallbackModel]
         : [];
-    const resolveThinking = (m) => override === undefined
-        ? resolveThinkingForProvider(agent, m?.provider ?? currentProvider)
-        : resolveStoredSubagentThinking(agent, m, override).thinking;
-    const resolveThinkingResult = (m) => override === undefined
+    const resolveThinkingResult = (m, generatedFallback = false) => override === undefined
         ? { thinking: resolveThinkingForProvider(agent, m?.provider ?? currentProvider) }
-        : resolveStoredSubagentThinking(agent, m, override);
+        : resolveStoredSubagentThinking(agent, m, override, generatedFallback);
     const primaryThinkingResolution = selectedModel
         ? resolveThinkingResult(selectedModel)
         : currentSessionThinkingResolution ?? {};
-    const resolvedFallbackModels = fallbackModels.map((m) => ({
+    const resolvedFallbackThinking = fallbackModels.map((m) => ({
         model: m,
-        thinking: resolveThinking(m),
+        resolution: resolveThinkingResult(m, true),
+    }));
+    const resolvedFallbackModels = resolvedFallbackThinking.map(({ model: m, resolution }) => ({
+        model: m,
+        thinking: resolution.thinking,
     }));
     const fallbackWarning = override?.thinking !== undefined
-        ? resolvedFallbackModels.find((entry) => entry.thinking === undefined)?.model
+        ? resolvedFallbackThinking.find((entry) => entry.resolution.warning)?.resolution.warning
         : undefined;
     return {
         model: selectedModel,
@@ -336,9 +378,7 @@ export function resolveProviderAwareSubagentResolution(agent, availableModels, c
         thinking: primaryThinkingResolution.thinking,
         independence: resolveIndependence(agent, selectedModel, currentProvider),
         warning: primaryThinkingResolution.warning,
-        fallbackWarning: !primaryThinkingResolution.warning && fallbackWarning
-            ? `TLH stored minor-agent effort "${override?.thinking}" is not supported by generated fallback ${formatProviderModelReference(fallbackWarning)}; that fallback will use bundled effort behavior for this run.`
-            : undefined,
+        fallbackWarning: !primaryThinkingResolution.warning ? fallbackWarning : undefined,
     };
 }
 function hasExplicitModel(target) {
