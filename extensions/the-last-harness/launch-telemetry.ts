@@ -176,6 +176,16 @@ function isDirectorySync(path: string): boolean {
  * extensions/subagents/src/agents/agents.ts:533. A directory qualifies when it contains the Pi
  * project config dir (`CONFIG_DIR_NAME`) or a legacy `.agents` dir. The isolated profile's own
  * parent and `~/<CONFIG_DIR_NAME>` are ignored so the user profile is never mistaken for a project.
+ *
+ * NOTE — Do NOT replace with `SettingsManager.getProjectSettings()`. `FileSettingsStorage` (from
+ * `@earendil-works/pi-coding-agent`) sets `projectSettingsPath = join(resolvedCwd, CONFIG_DIR_NAME,
+ * "settings.json")` — cwd-only, no upward walk — while the subagents runtime uses
+ * `findNearestProjectRoot` + `getProjectAgentSettingsPath` (both in
+ * `extensions/subagents/src/agents/agents.ts`) to walk parent directories. Swapping would
+ * silently miss a project's `settings.json` when `tlh` is launched from a subdirectory, causing
+ * telemetry to report user-scope overrides as effective when a project-scope override should have
+ * won. Empty/malformed/absent cases do align between the two APIs; root resolution is the sole
+ * blocking difference.
  */
 function findNearestTlhProjectRoot(cwd: string): string | undefined {
 	let ignored: Set<string>;
