@@ -7,7 +7,7 @@ import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import { acceptChildMessageRequest, consumeInterruptRequest, deliverInterruptRequest, deliverTimeoutRequest, enqueueStepChildMessage, stepSteerInboxDir, watchAsyncControlInbox, writeChildMessageAcceptanceForRequest, type ChildMessageRequest } from "./control-channel.ts";
 import { appendJsonl as appendRawJsonl, getArtifactPaths } from "../../shared/artifacts.ts";
-import { PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
+import { buildSubagentSpawnEnv, PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { captureSingleOutputSnapshot, finalizeSingleOutput, formatSavedOutputReference, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	type ActivityState,
@@ -429,7 +429,7 @@ function runPiStreaming(
 ): Promise<RunPiStreamingResult> {
 	return new Promise((resolve) => {
 		const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
-		const spawnEnv = { ...process.env, ...(env ?? {}), ...getSubagentDepthEnv(maxSubagentDepth) };
+		const spawnEnv = buildSubagentSpawnEnv(process.env, env, getSubagentDepthEnv(maxSubagentDepth));
 		const spawnSpec = getPiSpawnCommand(args, {
 			...(piPackageRoot ? { piPackageRoot } : {}),
 			...(piArgv1 ? { argv1: piArgv1 } : {}),

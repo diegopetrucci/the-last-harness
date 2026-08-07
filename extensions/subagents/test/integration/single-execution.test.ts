@@ -1680,6 +1680,38 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		}
 	});
 
+	it("filters inherited HERDR credentials in the actual foreground child spawn", async () => {
+		mockPi.onCall({ echoEnv: ["HERDR_PANE_ID", "HERDR_SOCKET_PATH", "HERDR_ENV", "PI_SUBAGENT_DEPTH", "PI_SUBAGENT_MAX_DEPTH"] });
+		const envKeys = ["HERDR_PANE_ID", "HERDR_SOCKET_PATH", "HERDR_ENV", "PI_SUBAGENT_DEPTH", "PI_SUBAGENT_MAX_DEPTH"];
+		const previousEnv = new Map(envKeys.map((key) => [key, process.env[key]]));
+		process.env.HERDR_PANE_ID = "parent-pane-credential";
+		process.env.HERDR_SOCKET_PATH = "/tmp/parent-herdr.sock";
+		process.env.HERDR_ENV = "1";
+		delete process.env.PI_SUBAGENT_DEPTH;
+		delete process.env.PI_SUBAGENT_MAX_DEPTH;
+
+		try {
+			const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
+				runId: "foreground-herdr-env",
+				maxSubagentDepth: 1,
+			});
+
+			assert.equal(result.exitCode, 0);
+			assert.deepEqual(JSON.parse(result.finalOutput ?? "{}"), {
+				HERDR_PANE_ID: null,
+				HERDR_SOCKET_PATH: null,
+				HERDR_ENV: null,
+				PI_SUBAGENT_DEPTH: "1",
+				PI_SUBAGENT_MAX_DEPTH: "1",
+			});
+		} finally {
+			for (const [key, value] of previousEnv) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
+	});
+
 	it("passes prompt inheritance env flags through to child execution", async () => {
 		mockPi.onCall({ echoEnv: ["PI_SUBAGENT_INHERIT_PROJECT_CONTEXT", "PI_SUBAGENT_INHERIT_SKILLS"] });
 		const agents = [makeAgent("echo", {
