@@ -118,7 +118,6 @@ Return the deterministic faux child marker exactly.
 				updateCheck: { enabled: false },
 			},
 			subagents: {
-				disableBuiltins: true,
 				agentDirs: ["package-smoke-agents"],
 			},
 		}, null, 2)}\n`,

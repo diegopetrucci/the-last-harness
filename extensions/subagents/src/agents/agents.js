@@ -567,15 +567,6 @@ function readSubagentSettings(filePath) {
     if (!subagents || typeof subagents !== "object" || Array.isArray(subagents))
         return EMPTY_SUBAGENT_SETTINGS;
     const subagentsObject = subagents;
-    let disableBuiltins;
-    if ("disableBuiltins" in subagentsObject) {
-        if (typeof subagentsObject.disableBuiltins === "boolean") {
-            disableBuiltins = subagentsObject.disableBuiltins;
-        }
-        else {
-            throw new Error(`Subagent settings in '${filePath}' have invalid 'disableBuiltins'; expected a boolean.`);
-        }
-    }
     const agentDirs = parseSettingsStringArray(subagentsObject.agentDirs, { filePath, field: "agentDirs" });
     let defaultModel;
     if ("defaultModel" in subagentsObject) {
@@ -590,14 +581,14 @@ function readSubagentSettings(filePath) {
     const parsed = {};
     const agentOverrides = subagentsObject.agentOverrides;
     if (!agentOverrides || typeof agentOverrides !== "object" || Array.isArray(agentOverrides)) {
-        return { overrides: parsed, defaultModel, disableBuiltins, agentDirs, modelScope };
+        return { overrides: parsed, defaultModel, agentDirs, modelScope };
     }
     for (const [name, value] of Object.entries(agentOverrides)) {
         const override = parseBuiltinOverrideEntry(name, value, filePath);
         if (override)
             parsed[name] = override;
     }
-    return { overrides: parsed, defaultModel, disableBuiltins, agentDirs, modelScope };
+    return { overrides: parsed, defaultModel, agentDirs, modelScope };
 }
 function resolveSubagentDefaultModel(userSettings, projectSettings, userSettingsPath, projectSettingsPath) {
     if (projectSettingsPath && projectSettings.defaultModel !== undefined) {
@@ -633,12 +624,7 @@ function projectScopeUserBuiltinSettings(filePath) {
     const subagents = settings.subagents;
     if (!subagents || typeof subagents !== "object" || Array.isArray(subagents))
         return EMPTY_SUBAGENT_SETTINGS;
-    const { disableBuiltins } = subagents;
-    if (disableBuiltins === true)
-        return { overrides: {}, disableBuiltins: true };
-    if (disableBuiltins === undefined || disableBuiltins === false)
-        return EMPTY_SUBAGENT_SETTINGS;
-    throw new Error(`Subagent settings in '${filePath}' have invalid 'disableBuiltins'; expected a boolean.`);
+    return EMPTY_SUBAGENT_SETTINGS;
 }
 function customAgentHasFrontmatterField(agent, ...fields) {
     const frontmatterFields = agentFrontmatterFields.get(agent);

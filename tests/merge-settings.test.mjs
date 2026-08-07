@@ -101,7 +101,6 @@ test("packaged defaults keep the isolated startup/privacy guardrails enabled", (
 	assert.equal(defaults.collapseChangelog, true);
 	assert.equal(defaults.warnings?.anthropicExtraUsage, false);
 	assert.deepEqual(defaults.subagents, {
-		disableBuiltins: true,
 		agentDirs: ["tlh/agents/subagents"],
 	});
 });
@@ -279,37 +278,6 @@ test("merge treats normalized subagents.agentDirs paths as duplicates", () => {
 	assert.deepEqual(readJson(fixture.settings).subagents.agentDirs, ["./tlh/agents/subagents/"]);
 });
 
-test("merge restores subagents.disableBuiltins while preserving user-owned subagent settings", () => {
-	const fixture = tempFixture(
-		{
-			packages: [],
-			subagents: {
-				disableBuiltins: true,
-				agentDirs: ["tlh/agents/subagents"],
-			},
-		},
-		{
-			packages: [harnessPackage],
-			subagents: {
-				disableBuiltins: false,
-				agentDirs: ["custom/subagents"],
-				agentOverrides: {
-					developer: { model: "kept" },
-				},
-			},
-		},
-	);
-
-	runMerge(fixture);
-
-	assert.deepEqual(readJson(fixture.settings).subagents, {
-		disableBuiltins: true,
-		agentDirs: ["custom/subagents", "tlh/agents/subagents"],
-		agentOverrides: {
-			developer: { model: "kept" },
-		},
-	});
-});
 
 for (const [name, malformedValue] of [
 	["scalar", "nope"],
@@ -321,7 +289,6 @@ for (const [name, malformedValue] of [
 			{
 				packages: [],
 				subagents: {
-					disableBuiltins: true,
 					agentDirs: ["tlh/agents/subagents"],
 				},
 			},
@@ -334,7 +301,6 @@ for (const [name, malformedValue] of [
 		runMerge(fixture);
 
 		assert.deepEqual(readJson(fixture.settings).subagents, {
-			disableBuiltins: true,
 			agentDirs: ["tlh/agents/subagents"],
 		});
 	});
@@ -1503,4 +1469,59 @@ test("merge subagents retirement cleanup is idempotent after first run", () => {
 	const secondOutput = runMerge(fixture, { quiet: false });
 	assert.match(secondOutput, /No settings changes needed\./);
 	assert.equal(readFileSync(fixture.settings, "utf8"), afterFirst, "settings unchanged on second run");
+});
+
+test("merge prune removes subagents.disableBuiltins while preserving sibling subagents keys", () => {
+	const fixture = tempFixture(
+		{
+			packages: [],
+			subagents: {
+				agentDirs: ["tlh/agents/subagents"],
+			},
+		},
+		{
+			packages: [harnessPackage],
+			subagents: {
+				disableBuiltins: true,
+				agentDirs: ["custom/subagents"],
+				agentOverrides: {
+					developer: { model: "kept" },
+				},
+			},
+		},
+	);
+
+	runMerge(fixture);
+
+	const settings = readJson(fixture.settings);
+	assert.equal(Object.hasOwn(settings.subagents, "disableBuiltins"), false, "disableBuiltins must be pruned");
+	assert.deepEqual(settings.subagents.agentDirs, ["custom/subagents", "tlh/agents/subagents"], "agentDirs must survive");
+	assert.deepEqual(settings.subagents.agentOverrides, { developer: { model: "kept" } }, "agentOverrides must survive");
+});
+
+test("merge prune for subagents.disableBuiltins is idempotent on second run", () => {
+	const fixture = tempFixture(
+		{
+			packages: [],
+			subagents: {
+				agentDirs: ["tlh/agents/subagents"],
+			},
+		},
+		{
+			packages: [harnessPackage],
+			subagents: {
+				disableBuiltins: true,
+				agentDirs: ["custom/subagents"],
+			},
+		},
+	);
+
+	runMerge(fixture);
+
+	const afterFirstPrune = readFileSync(fixture.settings, "utf8");
+	assert.equal(Object.hasOwn(readJson(fixture.settings).subagents, "disableBuiltins"), false, "disableBuiltins removed on first run");
+
+	const secondOutput = runMerge(fixture, { quiet: false });
+	assert.match(secondOutput, /No settings changes needed\./);
+	assert.equal(readFileSync(fixture.settings, "utf8"), afterFirstPrune, "settings unchanged on second run");
 });

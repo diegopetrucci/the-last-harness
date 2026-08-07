@@ -362,17 +362,6 @@ describe("builtin agent overrides", () => {
 		assert.equal(implementer.override, undefined);
 	});
 
-	it("disableBuiltins does not disable custom agents", () => {
-		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
-			subagents: { disableBuiltins: true },
-		});
-		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`);
-
-		const implementer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "implementer");
-		assert.ok(implementer);
-		assert.notEqual(implementer.disabled, true);
-	});
-
 	it("does not create a settings file when removing a non-existent override", () => {
 		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
 		assert.equal(fs.existsSync(settingsPath), false);

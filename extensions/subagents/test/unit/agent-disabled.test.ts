@@ -108,20 +108,6 @@ describe("builtin agent disabling", () => {
 		assert.equal(discovered.some((agent) => agent.source === "builtin"), false);
 	});
 
-	it("surfaces malformed disableBuiltins values instead of silently ignoring them", () => {
-		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
-		writeJson(settingsPath, {
-			subagents: { disableBuiltins: "true" },
-		});
-
-		assert.throws(
-			() => discoverAgents(tempProject, "both"),
-			(error: unknown) => error instanceof Error
-				&& error.message.includes(settingsPath)
-				&& error.message.includes("disableBuiltins"),
-		);
-	});
-
 	it("management list shows only enabled project agents with no builtin source", () => {
 		const agentsDir = path.join(tempProject, ".pi", "agents");
 		fs.mkdirSync(agentsDir, { recursive: true });

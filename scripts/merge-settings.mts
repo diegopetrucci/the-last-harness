@@ -531,6 +531,13 @@ function scrubRtkSettings(settings: JsonObject, changes: string[]): void {
 	changes.push("remove tlh.rtk (one-time cleanup)");
 }
 
+function scrubDisableBuiltinsSettings(settings: JsonObject, changes: string[]): void {
+	if (!isPlainObject(settings) || !isPlainObject(settings.subagents)) return;
+	if (!Object.hasOwn(settings.subagents, "disableBuiltins")) return;
+	delete settings.subagents.disableBuiltins;
+	changes.push("remove subagents.disableBuiltins (one-time cleanup)");
+}
+
 function removeCriticalDisabledDefaultExtensionOptOuts(
 	settings: JsonObject,
 	defaultExtensions: readonly DefaultExtensionEntry[],
@@ -599,7 +606,7 @@ function isPersistentTelemetryOptOut(path: readonly string[], currentValue: unkn
 
 function isInstallerOwnedSetting(path: readonly string[]): boolean {
 	const joinedPath = path.join(".");
-	return joinedPath === "lastChangelogVersion" || joinedPath === "subagents.disableBuiltins";
+	return joinedPath === "lastChangelogVersion";
 }
 
 function isInstallerOwnedObjectContainer(path: readonly string[]): boolean {
@@ -804,6 +811,7 @@ function main(): void {
 	removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
 	scrubGnosisSettings(next, changes);
 	scrubRtkSettings(next, changes);
+	scrubDisableBuiltinsSettings(next, changes);
 	purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
 	pruneContextCapDisabledDefaultExtension(next, changes);
 	pruneOracleDisabledDefaultExtension(next, changes);

@@ -83,7 +83,6 @@ describe("PI_SUBAGENT_EXTRA_AGENT_DIRS discovery", () => {
 		const localPath = writeAgent(path.join(agentDir, "agents"), "shared");
 		writeJson(path.join(agentDir, "settings.json"), {
 			subagents: {
-				disableBuiltins: true,
 				agentDirs: ["configured/agents"],
 			},
 		});
