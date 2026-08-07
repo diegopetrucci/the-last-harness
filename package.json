@@ -60,7 +60,17 @@
     "uninstall.sh",
     "README.md",
     "CHANGELOG.md",
-    "docs"
+    "docs",
+    "!docs/subagents-history",
+    "!docs/brand",
+    "!docs/local-development.md",
+    "!docs/releasing.md",
+    "!docs/dependency-risk.md",
+    "!docs/pin-bump-verification.md",
+    "!docs/upstream-sync-inventory.md",
+    "!docs/pi-startup-investigation-2026-07-15.md",
+    "!docs/web-search-fork-release-cadence.md",
+    "!docs/workflow-evals.md"
   ],
   "pi": {
     "extensions": [
