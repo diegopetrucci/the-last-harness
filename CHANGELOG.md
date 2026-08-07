@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+## [0.34.0] - 2026-08-07
+
 ### Added
 
 - You can now more easily edit subagent models/effort via the built-in `/subagent-settings` command. I believe TLH offers the best defaults, but you should be able to tweak them as you wish.
