@@ -1403,6 +1403,221 @@ test("registry-accurate: hand-edited generic model: field wins when provider-awa
 	assert.equal(event.payload["Tlh.Subagent.oracle.thinking"], "high");
 });
 
+// ── project-vs-user agentOverrides precedence tests ───────────────────────────
+//
+// TLH's eight subagents are installed under `tlh/agents/subagents` and reach the subagents
+// runtime through `subagents.agentDirs`, so the runtime resolves them as USER-scope custom
+// agents via applyCustomAgentOverrides (extensions/subagents/src/agents/agents.ts:1035-1054).
+// That gives a two-rule precedence: project `agentOverrides[name]`, else user
+// `agentOverrides[name]`, else unmodified. `disableBuiltins` / `disableThinking` are read only
+// by applyBuiltinOverrides and apply solely to Pi's native BUILTIN_AGENT_NAMES, so they are
+// deliberately not part of this precedence.
+
+const { CONFIG_DIR_NAME: PI_CONFIG_DIR_NAME } = await import("@earendil-works/pi-coding-agent");
+
+/**
+ * Run sendTlhLaunchTelemetry against a fixture with optional user/project settings and return
+ * the decoded telemetry payload.
+ *
+ * `projectSettings` semantics:
+ *   - undefined      → no project config dir at all
+ *   - null           → project config dir exists but contains no settings.json
+ *   - string         → written verbatim (used for malformed JSON)
+ *   - object         → JSON-stringified
+ */
+async function captureSubagentPayload(t, { userSettings, projectSettings } = {}) {
+	const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-precedence-", { test: t, cwd: true });
+	writeTelemetryState(fixture);
+
+	if (userSettings !== undefined) {
+		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify(userSettings, null, 2)}\n`);
+	}
+
+	if (projectSettings !== undefined) {
+		const projectConfigDir = join(fixture.cwd, PI_CONFIG_DIR_NAME);
+		mkdirSync(projectConfigDir, { recursive: true });
+		if (projectSettings !== null) {
+			const content = typeof projectSettings === "string" ? projectSettings : `${JSON.stringify(projectSettings, null, 2)}\n`;
+			writeFileSync(join(projectConfigDir, "settings.json"), content);
+		}
+	}
+
+	const previousFetch = globalThis.fetch;
+	let request;
+	globalThis.fetch = async (url, options) => {
+		request = { url, options };
+		return { ok: true, status: 200, statusText: "OK" };
+	};
+
+	try {
+		await withEnv(
+			{
+				HOME: fixture.home,
+				PI_CODING_AGENT_DIR: fixture.agent,
+				TLH_TELEMETRY_NAMESPACE: "test-namespace",
+				TLH_TELEMETRY_APP_ID: "test-app-id",
+				TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
+				PI_OFFLINE: undefined,
+				TLH_SKIP_TELEMETRY: undefined,
+				TLH_TELEMETRY_DISABLED: undefined,
+				PI_TELEMETRY: undefined,
+			},
+			async () => {
+				await sendTlhLaunchTelemetry({ version: "1.2.3", cwd: fixture.cwd });
+			},
+		);
+	} finally {
+		globalThis.fetch = previousFetch;
+	}
+
+	assert.ok(request, "expected telemetry fetch call");
+	const [event] = JSON.parse(request.options?.body ?? "[]");
+	assert.ok(event, "expected a telemetry event");
+	return event.payload;
+}
+
+test("launch telemetry reports project-scope agentOverrides in preference to user scope", async (t) => {
+	const payload = await captureSubagentPayload(t, {
+		userSettings: { subagents: { agentOverrides: { developer: { thinking: "low", model: "claude-haiku-4-5" } } } },
+		projectSettings: { subagents: { agentOverrides: { developer: { thinking: "max", model: "claude-opus-4-5" } } } },
+	});
+
+	assert.equal(payload["Tlh.Subagent.developer.thinking"], "max", "project thinking must outrank user thinking");
+	assert.equal(payload["Tlh.Subagent.developer.model"], "claude-opus-4-5", "project model must outrank user model");
+});
+
+test("launch telemetry applies the winning scope's override wholesale rather than merging scopes", async (t) => {
+	// applyCustomAgentOverrides picks ONE scope's override object; it never merges fields across
+	// scopes. A project entry that sets only `thinking` therefore discards the user entry's
+	// `model`, which falls back to frontmatter (absent here → "unknown").
+	const payload = await captureSubagentPayload(t, {
+		userSettings: { subagents: { agentOverrides: { oracle: { model: "claude-opus-4-5" } } } },
+		projectSettings: { subagents: { agentOverrides: { oracle: { thinking: "high" } } } },
+	});
+
+	assert.equal(payload["Tlh.Subagent.oracle.thinking"], "high", "project thinking should be reported");
+	assert.equal(
+		payload["Tlh.Subagent.oracle.model"],
+		"unknown",
+		"user model must NOT be merged in when a project override wins the agent",
+	);
+});
+
+test("launch telemetry falls back to user-scope agentOverrides when the project has none for that agent", async (t) => {
+	// `librarian` is overridden only in project scope; `developer` only in user scope. Each must
+	// be reported from whichever scope actually configures it.
+	const payload = await captureSubagentPayload(t, {
+		userSettings: { subagents: { agentOverrides: { developer: { thinking: "high", model: "claude-opus-4-5" } } } },
+		projectSettings: { subagents: { agentOverrides: { librarian: { thinking: "low" } } } },
+	});
+
+	assert.equal(payload["Tlh.Subagent.developer.thinking"], "high", "user override applies with no project entry for developer");
+	assert.equal(payload["Tlh.Subagent.developer.model"], "claude-opus-4-5", "user model applies with no project entry for developer");
+	assert.equal(payload["Tlh.Subagent.librarian.thinking"], "low", "project override applies for librarian");
+	assert.equal(payload["Tlh.Subagent.contrarian.thinking"], "unknown", "unconfigured agents stay unknown");
+});
+
+test("launch telemetry degrades quietly to user scope when project settings are missing or unreadable", async (t) => {
+	const userSettings = { subagents: { agentOverrides: { developer: { thinking: "high", model: "claude-opus-4-5" } } } };
+
+	const cases = [
+		["no project config dir at all", undefined],
+		["project config dir without settings.json", null],
+		["malformed project settings JSON", "{ not json"],
+		["project settings that are a JSON array", "[]"],
+		["empty project settings file", ""],
+		["project settings without a subagents section", { theme: "whatever" }],
+	];
+
+	for (const [label, projectSettings] of cases) {
+		const payload = await captureSubagentPayload(t, { userSettings, projectSettings });
+		assert.equal(payload["Tlh.Subagent.developer.thinking"], "high", `${label}: should fall back to user thinking`);
+		assert.equal(payload["Tlh.Subagent.developer.model"], "claude-opus-4-5", `${label}: should fall back to user model`);
+		// Degrading must not drop the event or the other bundled keys.
+		assert.equal(payload["Tlh.Subagent.web-scout.thinking"], "unknown", `${label}: other agents still reported`);
+	}
+});
+
+test("launch telemetry never emits a project-scope override for a non-bundled agent name", async (t) => {
+	const payload = await captureSubagentPayload(t, {
+		projectSettings: { subagents: { agentOverrides: { "skunkworks-secret": { thinking: "high", model: "internal/secret-model" } } } },
+	});
+
+	const leaked = Object.keys(payload).filter((key) => key.includes("skunkworks"));
+	assert.deepEqual(leaked, [], "non-bundled project override names must never become telemetry keys");
+	assert.equal(payload["Tlh.Subagent.developer.thinking"], "unknown");
+});
+
+test("launch telemetry honours a project-scope disabled override", async (t) => {
+	const payload = await captureSubagentPayload(t, {
+		userSettings: { subagents: { agentOverrides: { "repo-scout": { thinking: "high" } } } },
+		projectSettings: { subagents: { agentOverrides: { "repo-scout": { disabled: true } } } },
+	});
+
+	assert.equal(payload["Tlh.Subagent.repo-scout.thinking"], "disabled");
+	assert.equal(payload["Tlh.Subagent.repo-scout.model"], "disabled");
+});
+
+test("launch telemetry reads settings.json once per send", () => {
+	// readTlhLaunchSettings previously ran in both sendTlhLaunchTelemetry and sendTlhTelemetry,
+	// parsing the user settings file twice and evaluating the opt-out twice per launch. The
+	// already-read settings are now threaded through instead.
+	const source = readFileSync(new URL("../extensions/the-last-harness/launch-telemetry.ts", import.meta.url), "utf8");
+
+	const sendTelemetrySource = source.match(/export async function sendTlhTelemetry\([\s\S]*?\n\}/)?.[0];
+	assert.ok(sendTelemetrySource, "expected sendTlhTelemetry source");
+	assert.match(
+		sendTelemetrySource,
+		/preReadLaunchSettings \?\? readTlhLaunchSettings\(\)/,
+		"sendTlhTelemetry must prefer settings threaded in by its caller",
+	);
+
+	const sendLaunchSource = source.match(/export async function sendTlhLaunchTelemetry\(snapshot: TlhTelemetrySnapshot\): Promise<void> \{[\s\S]*?\n\}/)?.[0];
+	assert.ok(sendLaunchSource, "expected sendTlhLaunchTelemetry source");
+	assert.equal(
+		sendLaunchSource.match(/readTlhLaunchSettings\(\)/g)?.length,
+		1,
+		"sendTlhLaunchTelemetry must read settings exactly once",
+	);
+	assert.match(sendLaunchSource, /\n\t\tlaunchSettings,\n/, "sendTlhLaunchTelemetry must pass launchSettings to sendTlhTelemetry");
+
+	// shouldSkipTlhLaunchTelemetry must keep its default parameter so no-argument callers and
+	// existing tests are unaffected.
+	assert.match(
+		source,
+		/export function shouldSkipTlhLaunchTelemetry\(launchSettings: ReturnType<typeof readTlhLaunchSettings> = readTlhLaunchSettings\(\)\)/,
+		"shouldSkipTlhLaunchTelemetry must retain its default-parameter behaviour",
+	);
+});
+
+test("project settings are never read on the synchronous startup path", async (t) => {
+	const source = readFileSync(new URL("../extensions/the-last-harness/launch-telemetry.ts", import.meta.url), "utf8");
+	const scheduleStart = source.indexOf("export function scheduleTlhLaunchTelemetry(");
+	const setTimeoutIndex = source.indexOf("const timer = setTimeout(", scheduleStart);
+	assert.notEqual(scheduleStart, -1);
+	assert.notEqual(setTimeoutIndex, -1);
+	const syncBody = source.slice(scheduleStart, setTimeoutIndex);
+
+	assert.doesNotMatch(syncBody, /readTlhProjectSubagentOverrides/, "project settings reader must not run synchronously");
+	assert.doesNotMatch(syncBody, /findNearestTlhProjectRoot/, "project root walk must not run synchronously");
+	assert.doesNotMatch(syncBody, /resolveEffectiveSubagentOverrides/, "override resolution must not run synchronously");
+
+	const deferredStart = source.indexOf("export async function sendTlhLaunchTelemetry(");
+	const deferredEnd = source.indexOf("\nexport function scheduleTlhLaunchTelemetry", deferredStart);
+	const deferredBody = source.slice(deferredStart, deferredEnd === -1 ? undefined : deferredEnd);
+	assert.match(deferredBody, /readTlhProjectSubagentOverrides/, "project settings must be read inside the deferred send");
+
+	// No payload value may carry a path, project name, or other user string: the reported values
+	// are the same privacy-filtered sentinels regardless of where the project root lives.
+	const payload = await captureSubagentPayload(t, {
+		projectSettings: { subagents: { agentOverrides: { developer: { model: "/Users/someone/private/model.gguf" } } } },
+	});
+	assert.equal(payload["Tlh.Subagent.developer.model"], "custom", "unrecognised model strings must be filtered to 'custom'");
+	for (const value of Object.values(payload)) {
+		assert.doesNotMatch(String(value), /[/\\]/, `telemetry value must not contain a path separator: ${value}`);
+	}
+});
+
 // ── deferral tests ───────────────────────────────────────────────────────────
 
 test("scheduleTlhLaunchTelemetry does not read subagent frontmatter files synchronously", () => {

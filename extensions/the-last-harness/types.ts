@@ -201,6 +201,13 @@ export type TlhTelemetrySnapshot = {
 	 * When absent or empty the subagent model fields are resolved as-is (bare model names only).
 	 */
 	availableModels?: readonly ProviderModelReference[];
+	/**
+	 * Working directory captured from ctx.cwd at schedule time (an in-memory read, no I/O).
+	 * Used inside the deferred send to locate the nearest project settings.json so reported
+	 * subagent overrides honour the runtime's project-over-user precedence. Falls back to
+	 * process.cwd() when absent.
+	 */
+	cwd?: string;
 };
 
 export type TlhTelemetryEnvelope = {

@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { arch as osArch, platform as osPlatform, release as osRelease, type as osType } from "node:os";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { homedir, arch as osArch, platform as osPlatform, release as osRelease, type as osType } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, getAgentDir, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	THINKING_LEVELS,
 	TLH_LAUNCH_TELEMETRY_EVENT_TYPE,
@@ -129,9 +129,128 @@ type TlhLaunchSettings = {
 	 * Per-agent overrides extracted from settings.subagents.agentOverrides, restricted to the
 	 * eight bundled subagent names. Any name outside BUNDLED_SUBAGENT_NAMES is dropped here
 	 * so it can never appear as a telemetry key.
+	 *
+	 * This is the USER-scope layer only. Project-scope overrides outrank it; see
+	 * resolveEffectiveSubagentOverrides.
 	 */
 	subagentOverrides?: Record<string, SubagentOverrideEntry>;
 };
+
+/**
+ * Extract `subagents.agentOverrides` from an already-parsed settings object, keeping only the
+ * eight bundled subagent names so a user-authored agent name can never become a telemetry key.
+ */
+function extractBundledSubagentOverrides(settings: Record<string, unknown>): Record<string, SubagentOverrideEntry> | undefined {
+	const subagentsSection = isPlainObject(settings.subagents) ? settings.subagents : undefined;
+	const rawOverrides = isPlainObject(subagentsSection) && isPlainObject(subagentsSection.agentOverrides)
+		? subagentsSection.agentOverrides
+		: undefined;
+	if (!rawOverrides) return undefined;
+
+	let subagentOverrides: Record<string, SubagentOverrideEntry> | undefined;
+	for (const name of BUNDLED_SUBAGENT_NAMES) {
+		const entry = rawOverrides[name];
+		if (!isPlainObject(entry)) continue;
+		const overrideEntry: SubagentOverrideEntry = {};
+		if (typeof entry.thinking === "string" || entry.thinking === false) overrideEntry.thinking = entry.thinking as string | false;
+		if (typeof entry.model === "string" || entry.model === false) overrideEntry.model = entry.model as string | false;
+		if (typeof entry.disabled === "boolean") overrideEntry.disabled = entry.disabled;
+		if (Object.keys(overrideEntry).length > 0) {
+			subagentOverrides ??= {};
+			subagentOverrides[name] = overrideEntry;
+		}
+	}
+	return subagentOverrides;
+}
+
+function isDirectorySync(path: string): boolean {
+	try {
+		return statSync(path).isDirectory();
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Locate the nearest project root above `cwd`, mirroring findNearestProjectRoot in
+ * extensions/subagents/src/agents/agents.ts:533. A directory qualifies when it contains the Pi
+ * project config dir (`CONFIG_DIR_NAME`) or a legacy `.agents` dir. The isolated profile's own
+ * parent and `~/<CONFIG_DIR_NAME>` are ignored so the user profile is never mistaken for a project.
+ */
+function findNearestTlhProjectRoot(cwd: string): string | undefined {
+	let ignored: Set<string>;
+	try {
+		ignored = new Set([resolve(dirname(getAgentDir())), resolve(homedir(), CONFIG_DIR_NAME)]);
+	} catch {
+		ignored = new Set<string>();
+	}
+
+	let currentDir = resolve(cwd);
+	while (true) {
+		const projectConfigDir = join(currentDir, CONFIG_DIR_NAME);
+		if (isDirectorySync(projectConfigDir) && !ignored.has(resolve(projectConfigDir))) return currentDir;
+		if (isDirectorySync(join(currentDir, ".agents"))) return currentDir;
+
+		const parentDir = dirname(currentDir);
+		if (parentDir === currentDir) return undefined;
+		currentDir = parentDir;
+	}
+}
+
+/**
+ * Read project-scope `subagents.agentOverrides` from `<nearest project root>/<CONFIG_DIR_NAME>/settings.json`,
+ * mirroring getProjectAgentSettingsPath in extensions/subagents/src/agents/agents.ts:560.
+ *
+ * An absent project settings file is the normal case, not an error. Anything unreadable or
+ * malformed degrades quietly to `undefined` so reporting falls back to user scope rather than
+ * dropping the whole telemetry event.
+ *
+ * Performs file I/O — must only be called from the deferred (setTimeout) send path.
+ */
+function readTlhProjectSubagentOverrides(cwd: string): Record<string, SubagentOverrideEntry> | undefined {
+	try {
+		const projectRoot = findNearestTlhProjectRoot(cwd);
+		if (!projectRoot) return undefined;
+		const settingsPath = join(projectRoot, CONFIG_DIR_NAME, "settings.json");
+		const content = readText(settingsPath);
+		if (!content || !content.trim()) return undefined;
+		const settings: unknown = JSON.parse(content);
+		return isPlainObject(settings) ? extractBundledSubagentOverrides(settings) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Resolve the effective per-agent override the subagents runtime would actually apply.
+ *
+ * TLH's eight subagents are installed under `tlh/agents/subagents` and reach the runtime via
+ * `subagents.agentDirs`, so they are resolved as USER-scope custom agents by
+ * applyCustomAgentOverrides (extensions/subagents/src/agents/agents.ts:1035-1054), NOT by
+ * applyBuiltinOverrides. That gives a two-rule precedence:
+ *   1. project-scope `agentOverrides[name]`
+ *   2. user-scope `agentOverrides[name]`
+ *   3. otherwise unmodified
+ *
+ * The winning entry replaces the loser WHOLESALE — the runtime picks one scope's override object
+ * and never merges fields across scopes, so a project entry setting only `thinking` also discards
+ * a user entry's `model`. Mirror that exactly.
+ *
+ * `subagents.disableBuiltins` / `disableThinking` deliberately play no part here: both are read
+ * only by applyBuiltinOverrides (agents.ts:895-906, applied via applyGlobalThinking at 903-939)
+ * and apply solely to Pi's native BUILTIN_AGENT_NAMES (agents.ts:27-36), never to custom agents.
+ */
+function resolveEffectiveSubagentOverrides(
+	userOverrides: Record<string, SubagentOverrideEntry> | undefined,
+	projectOverrides: Record<string, SubagentOverrideEntry> | undefined,
+): Record<string, SubagentOverrideEntry> {
+	const resolved: Record<string, SubagentOverrideEntry> = {};
+	for (const name of BUNDLED_SUBAGENT_NAMES) {
+		const effective = projectOverrides?.[name] ?? userOverrides?.[name];
+		if (effective) resolved[name] = effective;
+	}
+	return resolved;
+}
 
 function readTlhLaunchSettings(): { ok: true; config: TlhLaunchSettings } | { ok: false } {
 	const stateDir = tlhStateDir();
@@ -178,25 +297,7 @@ function readTlhLaunchSettings(): { ok: true; config: TlhLaunchSettings } | { ok
 	// Extract subagents.agentOverrides — the whole settings object is already parsed above;
 	// this avoids a second file read. Only retain overrides for bundled subagent names so
 	// user-authored agent names can never appear as telemetry keys.
-	const subagentsSection = isPlainObject(settings.subagents) ? settings.subagents : undefined;
-	const rawOverrides = isPlainObject(subagentsSection) && isPlainObject(subagentsSection.agentOverrides)
-		? subagentsSection.agentOverrides
-		: undefined;
-	let subagentOverrides: Record<string, SubagentOverrideEntry> | undefined;
-	if (rawOverrides) {
-		for (const name of BUNDLED_SUBAGENT_NAMES) {
-			const entry = rawOverrides[name];
-			if (!isPlainObject(entry)) continue;
-			const overrideEntry: SubagentOverrideEntry = {};
-			if (typeof entry.thinking === "string" || entry.thinking === false) overrideEntry.thinking = entry.thinking as string | false;
-			if (typeof entry.model === "string" || entry.model === false) overrideEntry.model = entry.model as string | false;
-			if (typeof entry.disabled === "boolean") overrideEntry.disabled = entry.disabled;
-			if (Object.keys(overrideEntry).length > 0) {
-				subagentOverrides ??= {};
-				subagentOverrides[name] = overrideEntry;
-			}
-		}
-	}
+	const subagentOverrides = extractBundledSubagentOverrides(settings);
 
 	return { ok: true, config: { telemetry: telemetry as TlhTelemetryConfig | undefined, experimental, subagentOverrides } };
 }
@@ -380,11 +481,20 @@ async function getTlhOsMetadata(): Promise<TlhOsMetadata> {
 	}
 }
 
-export async function sendTlhTelemetry(envelopes: readonly TlhTelemetryEnvelope[], version: string): Promise<void> {
+export async function sendTlhTelemetry(
+	envelopes: readonly TlhTelemetryEnvelope[],
+	version: string,
+	/**
+	 * Already-read settings from the caller. Threaded through so a single send reads and parses
+	 * settings.json once instead of twice (and evaluates the opt-out once). Omitted by callers
+	 * that have not read settings yet.
+	 */
+	preReadLaunchSettings?: ReturnType<typeof readTlhLaunchSettings>,
+): Promise<void> {
 	if (envelopes.length === 0) {
 		return;
 	}
-	const launchSettings = readTlhLaunchSettings();
+	const launchSettings = preReadLaunchSettings ?? readTlhLaunchSettings();
 	if (shouldSkipTlhLaunchTelemetry(launchSettings)) return;
 	if (!launchSettings.ok) return;
 
@@ -486,7 +596,8 @@ function readSubagentFrontmatterConfig(
  * bundled minor agents.
  *
  * Precedence (highest first):
- *   1. settings.subagents.agentOverrides.<name>.thinking / .model (already in launchSettings)
+ *   1. The effective settings override for <name>, already resolved across project and user scope
+ *      by resolveEffectiveSubagentOverrides (project outranks user).
  *   2. Provider-aware frontmatter in <agentDir>/tlh/agents/subagents/<name>.md, resolved via
  *      selectProviderAwareAgentDefaults for the active provider.
  *
@@ -503,14 +614,14 @@ function readSubagentFrontmatterConfig(
  * BUNDLED_SUBAGENT_NAMES are never emitted as keys.
  */
 function buildSubagentTelemetryPayload(
-	launchSettings: ReturnType<typeof readTlhLaunchSettings>,
+	effectiveOverrides: Record<string, SubagentOverrideEntry>,
 	agentDir: string | undefined,
 	providerId: string | undefined,
 	availableModels: readonly ProviderModelReference[],
 ): Record<string, string> {
 	const payload: Record<string, string> = {};
 	for (const name of BUNDLED_SUBAGENT_NAMES) {
-		const override = launchSettings.ok ? launchSettings.config.subagentOverrides?.[name] : undefined;
+		const override = effectiveOverrides[name];
 
 		// A disabled override means the agent won't run; report that clearly.
 		if (override?.disabled === true) {
@@ -548,6 +659,12 @@ export async function sendTlhLaunchTelemetry(snapshot: TlhTelemetrySnapshot): Pr
 	}
 	const stateDir = tlhStateDir();
 	const agentDir = stateDir ? dirname(stateDir) : undefined;
+	// Project settings read happens here, inside the deferred send — never on the startup path.
+	// Absent project settings are the normal case and degrade quietly to user scope.
+	const effectiveSubagentOverrides = resolveEffectiveSubagentOverrides(
+		launchSettings.ok ? launchSettings.config.subagentOverrides : undefined,
+		readTlhProjectSubagentOverrides(snapshot.cwd ?? process.cwd()),
+	);
 	const osMetadata = await getTlhOsMetadata();
 	await sendTlhTelemetry(
 		[
@@ -563,11 +680,12 @@ export async function sendTlhLaunchTelemetry(snapshot: TlhTelemetrySnapshot): Pr
 					"Tlh.Device.osVersion": osMetadata.osVersion,
 					"Tlh.Device.osArch": osMetadata.osArch,
 					...buildExperimentalFeatureTelemetryPayload(launchSettings.ok ? launchSettings.config.experimental : undefined),
-					...buildSubagentTelemetryPayload(launchSettings, agentDir, snapshot.providerId, snapshot.availableModels ?? []),
+					...buildSubagentTelemetryPayload(effectiveSubagentOverrides, agentDir, snapshot.providerId, snapshot.availableModels ?? []),
 				},
 			},
 		],
 		snapshot.version,
+		launchSettings,
 	);
 }
 
@@ -591,6 +709,9 @@ export function scheduleTlhLaunchTelemetry(ctx: ExtensionContext, primaryAgentNa
 		primaryAgentName,
 		thinkingLevel: ctx.thinkingLevel,
 		availableModels: getUnfilteredAvailableModels(ctx.modelRegistry),
+		// In-memory property read (no I/O). The project settings.json lookup it enables happens
+		// later, inside the deferred send.
+		cwd: ctx.cwd,
 	};
 	const timer = setTimeout(() => {
 		void sendTlhLaunchTelemetry(telemetrySnapshot).catch(() => undefined);

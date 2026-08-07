@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { arch as osArch, platform as osPlatform, release as osRelease, type as osType } from "node:os";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { homedir, arch as osArch, platform as osPlatform, release as osRelease, type as osType } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { THINKING_LEVELS, TLH_LAUNCH_TELEMETRY_EVENT_TYPE, TLH_NAME, TLH_TELEMETRY_APP_ID, TLH_TELEMETRY_INGEST_BASE_URL, TLH_TELEMETRY_NAMESPACE, TLH_TELEMETRY_STATE_SCHEMA_VERSION, TLH_TELEMETRY_TIMEOUT_MS, } from "./constants.js";
 import { isFalseyEnvFlag, isPlainObject, isTruthyEnvFlag, readText } from "./common.js";
 import { buildExperimentalFeatureTelemetryPayload } from "./experimental.js";
@@ -76,6 +77,86 @@ function configuredTlhTelemetryAppId() {
 function configuredTlhTelemetryIngestBaseUrl() {
     return (process.env.TLH_TELEMETRY_INGEST_BASE_URL || TLH_TELEMETRY_INGEST_BASE_URL).trim().replace(/\/+$/, "");
 }
+function extractBundledSubagentOverrides(settings) {
+    const subagentsSection = isPlainObject(settings.subagents) ? settings.subagents : undefined;
+    const rawOverrides = isPlainObject(subagentsSection) && isPlainObject(subagentsSection.agentOverrides)
+        ? subagentsSection.agentOverrides
+        : undefined;
+    if (!rawOverrides)
+        return undefined;
+    let subagentOverrides;
+    for (const name of BUNDLED_SUBAGENT_NAMES) {
+        const entry = rawOverrides[name];
+        if (!isPlainObject(entry))
+            continue;
+        const overrideEntry = {};
+        if (typeof entry.thinking === "string" || entry.thinking === false)
+            overrideEntry.thinking = entry.thinking;
+        if (typeof entry.model === "string" || entry.model === false)
+            overrideEntry.model = entry.model;
+        if (typeof entry.disabled === "boolean")
+            overrideEntry.disabled = entry.disabled;
+        if (Object.keys(overrideEntry).length > 0) {
+            subagentOverrides ??= {};
+            subagentOverrides[name] = overrideEntry;
+        }
+    }
+    return subagentOverrides;
+}
+function isDirectorySync(path) {
+    try {
+        return statSync(path).isDirectory();
+    }
+    catch {
+        return false;
+    }
+}
+function findNearestTlhProjectRoot(cwd) {
+    let ignored;
+    try {
+        ignored = new Set([resolve(dirname(getAgentDir())), resolve(homedir(), CONFIG_DIR_NAME)]);
+    }
+    catch {
+        ignored = new Set();
+    }
+    let currentDir = resolve(cwd);
+    while (true) {
+        const projectConfigDir = join(currentDir, CONFIG_DIR_NAME);
+        if (isDirectorySync(projectConfigDir) && !ignored.has(resolve(projectConfigDir)))
+            return currentDir;
+        if (isDirectorySync(join(currentDir, ".agents")))
+            return currentDir;
+        const parentDir = dirname(currentDir);
+        if (parentDir === currentDir)
+            return undefined;
+        currentDir = parentDir;
+    }
+}
+function readTlhProjectSubagentOverrides(cwd) {
+    try {
+        const projectRoot = findNearestTlhProjectRoot(cwd);
+        if (!projectRoot)
+            return undefined;
+        const settingsPath = join(projectRoot, CONFIG_DIR_NAME, "settings.json");
+        const content = readText(settingsPath);
+        if (!content || !content.trim())
+            return undefined;
+        const settings = JSON.parse(content);
+        return isPlainObject(settings) ? extractBundledSubagentOverrides(settings) : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+function resolveEffectiveSubagentOverrides(userOverrides, projectOverrides) {
+    const resolved = {};
+    for (const name of BUNDLED_SUBAGENT_NAMES) {
+        const effective = projectOverrides?.[name] ?? userOverrides?.[name];
+        if (effective)
+            resolved[name] = effective;
+    }
+    return resolved;
+}
 function readTlhLaunchSettings() {
     const stateDir = tlhStateDir();
     if (!stateDir) {
@@ -115,29 +196,7 @@ function readTlhLaunchSettings() {
         return { ok: false };
     }
     const experimental = isPlainObject(tlh) && isPlainObject(tlh.experimental) ? tlh.experimental : undefined;
-    const subagentsSection = isPlainObject(settings.subagents) ? settings.subagents : undefined;
-    const rawOverrides = isPlainObject(subagentsSection) && isPlainObject(subagentsSection.agentOverrides)
-        ? subagentsSection.agentOverrides
-        : undefined;
-    let subagentOverrides;
-    if (rawOverrides) {
-        for (const name of BUNDLED_SUBAGENT_NAMES) {
-            const entry = rawOverrides[name];
-            if (!isPlainObject(entry))
-                continue;
-            const overrideEntry = {};
-            if (typeof entry.thinking === "string" || entry.thinking === false)
-                overrideEntry.thinking = entry.thinking;
-            if (typeof entry.model === "string" || entry.model === false)
-                overrideEntry.model = entry.model;
-            if (typeof entry.disabled === "boolean")
-                overrideEntry.disabled = entry.disabled;
-            if (Object.keys(overrideEntry).length > 0) {
-                subagentOverrides ??= {};
-                subagentOverrides[name] = overrideEntry;
-            }
-        }
-    }
+    const subagentOverrides = extractBundledSubagentOverrides(settings);
     return { ok: true, config: { telemetry: telemetry, experimental, subagentOverrides } };
 }
 export function shouldSkipTlhLaunchTelemetry(launchSettings = readTlhLaunchSettings()) {
@@ -310,11 +369,11 @@ async function getTlhOsMetadata() {
         return { osName: "unknown", osVersion: "unknown", osArch: architecture };
     }
 }
-export async function sendTlhTelemetry(envelopes, version) {
+export async function sendTlhTelemetry(envelopes, version, preReadLaunchSettings) {
     if (envelopes.length === 0) {
         return;
     }
-    const launchSettings = readTlhLaunchSettings();
+    const launchSettings = preReadLaunchSettings ?? readTlhLaunchSettings();
     if (shouldSkipTlhLaunchTelemetry(launchSettings))
         return;
     if (!launchSettings.ok)
@@ -373,10 +432,10 @@ function readSubagentFrontmatterConfig(agentDir, name, providerId, availableMode
             : undefined;
     return { thinking, model };
 }
-function buildSubagentTelemetryPayload(launchSettings, agentDir, providerId, availableModels) {
+function buildSubagentTelemetryPayload(effectiveOverrides, agentDir, providerId, availableModels) {
     const payload = {};
     for (const name of BUNDLED_SUBAGENT_NAMES) {
-        const override = launchSettings.ok ? launchSettings.config.subagentOverrides?.[name] : undefined;
+        const override = effectiveOverrides[name];
         if (override?.disabled === true) {
             payload[`Tlh.Subagent.${name}.thinking`] = "disabled";
             payload[`Tlh.Subagent.${name}.model`] = "disabled";
@@ -401,6 +460,7 @@ export async function sendTlhLaunchTelemetry(snapshot) {
     }
     const stateDir = tlhStateDir();
     const agentDir = stateDir ? dirname(stateDir) : undefined;
+    const effectiveSubagentOverrides = resolveEffectiveSubagentOverrides(launchSettings.ok ? launchSettings.config.subagentOverrides : undefined, readTlhProjectSubagentOverrides(snapshot.cwd ?? process.cwd()));
     const osMetadata = await getTlhOsMetadata();
     await sendTlhTelemetry([
         {
@@ -415,10 +475,10 @@ export async function sendTlhLaunchTelemetry(snapshot) {
                 "Tlh.Device.osVersion": osMetadata.osVersion,
                 "Tlh.Device.osArch": osMetadata.osArch,
                 ...buildExperimentalFeatureTelemetryPayload(launchSettings.ok ? launchSettings.config.experimental : undefined),
-                ...buildSubagentTelemetryPayload(launchSettings, agentDir, snapshot.providerId, snapshot.availableModels ?? []),
+                ...buildSubagentTelemetryPayload(effectiveSubagentOverrides, agentDir, snapshot.providerId, snapshot.availableModels ?? []),
             },
         },
-    ], snapshot.version);
+    ], snapshot.version, launchSettings);
 }
 export function scheduleTlhLaunchTelemetry(ctx, primaryAgentName) {
     if (sentTlhLaunchTelemetry) {
@@ -432,6 +492,7 @@ export function scheduleTlhLaunchTelemetry(ctx, primaryAgentName) {
         primaryAgentName,
         thinkingLevel: ctx.thinkingLevel,
         availableModels: getUnfilteredAvailableModels(ctx.modelRegistry),
+        cwd: ctx.cwd,
     };
     const timer = setTimeout(() => {
         void sendTlhLaunchTelemetry(telemetrySnapshot).catch(() => undefined);
