@@ -271,9 +271,10 @@ export default function theLastHarness(pi: ExtensionAPI) {
 		if (event.reason === "startup") {
 			void import("./the-last-harness/launch-telemetry.js")
 				.then(({ scheduleTlhLaunchTelemetry }) => {
-					scheduleTlhLaunchTelemetry(ctx);
+					scheduleTlhLaunchTelemetry(ctx, primaryAgentRuntime.activePrimaryAgentPrompt()?.name);
 				})
 				.catch(() => undefined);
+
 		}
 
 		ctx.ui.addAutocompleteProvider(createTlhAutocompleteProvider);

@@ -671,8 +671,9 @@ test("extension delegates launch update and telemetry services to feature module
 	assert.match(extensionSource, /from "\.\/the-last-harness\/update-check\.js"/);
 	assert.match(
 		sessionStart,
-		/if \(event\.reason === "startup"\) \{[\s\S]*void import\("\.\/the-last-harness\/launch-telemetry\.js"\)[\s\S]*scheduleTlhLaunchTelemetry\(ctx\)[\s\S]*\.catch\(\(\) => undefined\);[\s\S]*\}/,
+		/if \(event\.reason === "startup"\) \{[\s\S]*void import\("\.\/the-last-harness\/launch-telemetry\.js"\)[\s\S]*scheduleTlhLaunchTelemetry\(ctx, primaryAgentRuntime\.activePrimaryAgentPrompt\(\)\?\.name\)[\s\S]*\.catch\(\(\) => undefined\);[\s\S]*\}/,
 	);
+	assert.match(sessionStart, /await primaryAgentRuntime\.applySessionStart\(ctx\);[\s\S]*if \(event\.reason === "startup"\) \{[\s\S]*scheduleTlhLaunchTelemetry\(ctx, primaryAgentRuntime\.activePrimaryAgentPrompt\(\)\?\.name\)/);
 	assert.match(sessionStart, /if \(!ctx\.hasUI\) \{[\s\S]*return;[\s\S]*if \(event\.reason === "startup"\)/);
 	assert.match(sessionStart, /const headerUpdate = getTlhHeaderUpdate\(\);/);
 	assert.match(sessionStart, /scheduleDeferredStartupTask\(\(\) => \{[\s\S]*void maybeNotifyAvailableTlhUpdate\(ctx, \{[\s\S]*\}\)\.catch\(\(\) => undefined\);/);

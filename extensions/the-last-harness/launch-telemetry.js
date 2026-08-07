@@ -1,14 +1,71 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { arch as osArch, platform as osPlatform, release as osRelease, type as osType } from "node:os";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { homedir, arch as osArch, platform as osPlatform, release as osRelease, type as osType } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { TLH_NAME, TLH_TELEMETRY_APP_ID, TLH_TELEMETRY_EVENT_TYPE, TLH_TELEMETRY_INGEST_BASE_URL, TLH_TELEMETRY_NAMESPACE, TLH_TELEMETRY_STATE_SCHEMA_VERSION, TLH_TELEMETRY_TIMEOUT_MS, } from "./constants.js";
+import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { THINKING_LEVELS, TLH_LAUNCH_TELEMETRY_EVENT_TYPE, TLH_NAME, TLH_TELEMETRY_APP_ID, TLH_TELEMETRY_INGEST_BASE_URL, TLH_TELEMETRY_NAMESPACE, TLH_TELEMETRY_STATE_SCHEMA_VERSION, TLH_TELEMETRY_TIMEOUT_MS, } from "./constants.js";
 import { isFalseyEnvFlag, isPlainObject, isTruthyEnvFlag, readText } from "./common.js";
 import { buildExperimentalFeatureTelemetryPayload } from "./experimental.js";
+import { formatProviderModelReference, parseProviderModelReference, selectProviderAwareAgentDefaults } from "./model-defaults.js";
+import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { getTlhVersion } from "./package-version.js";
 import { tlhStateDir, tlhTelemetryStatePath } from "./profile-state.js";
+import { parseFrontmatter } from "./prompts.js";
+import { isThinkingLevel } from "./thinking.js";
+const PUBLIC_PROVIDER_IDS = new Set([
+    "amazon-bedrock",
+    "ant-ling",
+    "anthropic",
+    "azure-openai-responses",
+    "cerebras",
+    "cloudflare-ai-gateway",
+    "cloudflare-workers-ai",
+    "deepseek",
+    "fireworks",
+    "github-copilot",
+    "google",
+    "google-vertex",
+    "groq",
+    "huggingface",
+    "kimi-coding",
+    "llama.cpp",
+    "minimax",
+    "minimax-cn",
+    "mistral",
+    "moonshotai",
+    "moonshotai-cn",
+    "nvidia",
+    "openai",
+    "openai-codex",
+    "opencode",
+    "opencode-go",
+    "openrouter",
+    "qwen-token-plan",
+    "qwen-token-plan-cn",
+    "radius",
+    "together",
+    "vercel-ai-gateway",
+    "xai",
+    "xiaomi",
+    "xiaomi-token-plan-ams",
+    "xiaomi-token-plan-cn",
+    "xiaomi-token-plan-sgp",
+    "zai",
+    "zai-coding-cn",
+]);
+const BUNDLED_PRIMARY_AGENT_NAMES = new Set(["architect", "bug-hunter", "product", "rush"]);
+const BUNDLED_SUBAGENT_NAMES = Object.freeze([
+    "code-reviewer",
+    "contrarian",
+    "developer",
+    "diff-summarizer",
+    "librarian",
+    "oracle",
+    "repo-scout",
+    "web-scout",
+]);
 const execFileAsync = promisify(execFile);
 let sentTlhLaunchTelemetry = false;
 function configuredTlhTelemetryNamespace() {
@@ -19,6 +76,86 @@ function configuredTlhTelemetryAppId() {
 }
 function configuredTlhTelemetryIngestBaseUrl() {
     return (process.env.TLH_TELEMETRY_INGEST_BASE_URL || TLH_TELEMETRY_INGEST_BASE_URL).trim().replace(/\/+$/, "");
+}
+function extractBundledSubagentOverrides(settings) {
+    const subagentsSection = isPlainObject(settings.subagents) ? settings.subagents : undefined;
+    const rawOverrides = isPlainObject(subagentsSection) && isPlainObject(subagentsSection.agentOverrides)
+        ? subagentsSection.agentOverrides
+        : undefined;
+    if (!rawOverrides)
+        return undefined;
+    let subagentOverrides;
+    for (const name of BUNDLED_SUBAGENT_NAMES) {
+        const entry = rawOverrides[name];
+        if (!isPlainObject(entry))
+            continue;
+        const overrideEntry = {};
+        if (typeof entry.thinking === "string" || entry.thinking === false)
+            overrideEntry.thinking = entry.thinking;
+        if (typeof entry.model === "string" || entry.model === false)
+            overrideEntry.model = entry.model;
+        if (typeof entry.disabled === "boolean")
+            overrideEntry.disabled = entry.disabled;
+        if (Object.keys(overrideEntry).length > 0) {
+            subagentOverrides ??= {};
+            subagentOverrides[name] = overrideEntry;
+        }
+    }
+    return subagentOverrides;
+}
+function isDirectorySync(path) {
+    try {
+        return statSync(path).isDirectory();
+    }
+    catch {
+        return false;
+    }
+}
+function findNearestTlhProjectRoot(cwd) {
+    let ignored;
+    try {
+        ignored = new Set([resolve(dirname(getAgentDir())), resolve(homedir(), CONFIG_DIR_NAME)]);
+    }
+    catch {
+        ignored = new Set();
+    }
+    let currentDir = resolve(cwd);
+    while (true) {
+        const projectConfigDir = join(currentDir, CONFIG_DIR_NAME);
+        if (isDirectorySync(projectConfigDir) && !ignored.has(resolve(projectConfigDir)))
+            return currentDir;
+        if (isDirectorySync(join(currentDir, ".agents")))
+            return currentDir;
+        const parentDir = dirname(currentDir);
+        if (parentDir === currentDir)
+            return undefined;
+        currentDir = parentDir;
+    }
+}
+function readTlhProjectSubagentOverrides(cwd) {
+    try {
+        const projectRoot = findNearestTlhProjectRoot(cwd);
+        if (!projectRoot)
+            return undefined;
+        const settingsPath = join(projectRoot, CONFIG_DIR_NAME, "settings.json");
+        const content = readText(settingsPath);
+        if (!content || !content.trim())
+            return undefined;
+        const settings = JSON.parse(content);
+        return isPlainObject(settings) ? extractBundledSubagentOverrides(settings) : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+function resolveEffectiveSubagentOverrides(userOverrides, projectOverrides) {
+    const resolved = {};
+    for (const name of BUNDLED_SUBAGENT_NAMES) {
+        const effective = projectOverrides?.[name] ?? userOverrides?.[name];
+        if (effective)
+            resolved[name] = effective;
+    }
+    return resolved;
 }
 function readTlhLaunchSettings() {
     const stateDir = tlhStateDir();
@@ -59,9 +196,10 @@ function readTlhLaunchSettings() {
         return { ok: false };
     }
     const experimental = isPlainObject(tlh) && isPlainObject(tlh.experimental) ? tlh.experimental : undefined;
-    return { ok: true, config: { telemetry: telemetry, experimental } };
+    const subagentOverrides = extractBundledSubagentOverrides(settings);
+    return { ok: true, config: { telemetry: telemetry, experimental, subagentOverrides } };
 }
-function shouldSkipTlhLaunchTelemetry(launchSettings = readTlhLaunchSettings()) {
+export function shouldSkipTlhLaunchTelemetry(launchSettings = readTlhLaunchSettings()) {
     if (!tlhTelemetryStatePath())
         return true;
     if (!configuredTlhTelemetryNamespace() || !configuredTlhTelemetryAppId() || !configuredTlhTelemetryIngestBaseUrl())
@@ -137,7 +275,34 @@ const PUBLIC_MODEL_ID_PATTERNS = [
     /^nova-[a-z0-9._-]+$/,
     /^mimo-[a-z0-9._-]+$/,
 ];
-function privacySafeTlhTelemetryModelId(modelId) {
+export function privacySafeTlhTelemetryProviderId(providerId) {
+    if (typeof providerId !== "string" || !providerId.trim()) {
+        return "unknown";
+    }
+    const normalized = providerId.trim().toLowerCase();
+    if (!/^[a-z0-9._-]+$/.test(normalized) || normalized.length > 80) {
+        return "custom";
+    }
+    return PUBLIC_PROVIDER_IDS.has(normalized) ? normalized : "custom";
+}
+export function privacySafeTlhTelemetryThinkingLevel(thinkingLevel) {
+    if (typeof thinkingLevel !== "string" || !thinkingLevel.trim()) {
+        return "unknown";
+    }
+    const normalized = thinkingLevel.trim();
+    return THINKING_LEVELS.includes(normalized) ? normalized : "custom";
+}
+export function privacySafeTlhTelemetryPrimaryAgentName(primaryAgentName) {
+    if (typeof primaryAgentName !== "string" || !primaryAgentName.trim()) {
+        return "unknown";
+    }
+    const normalized = primaryAgentName.trim().toLowerCase();
+    if (!/^[a-z0-9._-]+$/.test(normalized) || normalized.length > 80) {
+        return "custom";
+    }
+    return BUNDLED_PRIMARY_AGENT_NAMES.has(normalized) ? normalized : "custom";
+}
+export function privacySafeTlhTelemetryModelId(modelId) {
     if (typeof modelId !== "string" || !modelId.trim()) {
         return "unknown";
     }
@@ -204,8 +369,11 @@ async function getTlhOsMetadata() {
         return { osName: "unknown", osVersion: "unknown", osArch: architecture };
     }
 }
-export async function sendTlhLaunchTelemetry(snapshot) {
-    const launchSettings = readTlhLaunchSettings();
+export async function sendTlhTelemetry(envelopes, version, preReadLaunchSettings) {
+    if (envelopes.length === 0) {
+        return;
+    }
+    const launchSettings = preReadLaunchSettings ?? readTlhLaunchSettings();
     if (shouldSkipTlhLaunchTelemetry(launchSettings))
         return;
     if (!launchSettings.ok)
@@ -215,28 +383,18 @@ export async function sendTlhLaunchTelemetry(snapshot) {
     const installId = getOrCreateTlhTelemetryInstallId();
     if (!namespace || !appID || !installId)
         return;
-    const osMetadata = await getTlhOsMetadata();
-    const body = [
-        {
-            appID,
-            clientUser: hashTlhTelemetryClientUser(installId),
-            type: TLH_TELEMETRY_EVENT_TYPE,
-            payload: {
-                "Tlh.App.version": snapshot.version,
-                "Tlh.Runtime.model": privacySafeTlhTelemetryModelId(snapshot.modelId),
-                "Tlh.Device.osName": osMetadata.osName,
-                "Tlh.Device.osVersion": osMetadata.osVersion,
-                "Tlh.Device.osArch": osMetadata.osArch,
-                ...buildExperimentalFeatureTelemetryPayload(launchSettings.config.experimental),
-            },
-        },
-    ];
+    const body = envelopes.map((envelope) => ({
+        appID,
+        clientUser: hashTlhTelemetryClientUser(installId),
+        type: envelope.type,
+        payload: envelope.payload,
+    }));
     try {
         await fetch(`${configuredTlhTelemetryIngestBaseUrl()}/${encodeURIComponent(namespace)}/`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json; charset=utf-8",
-                "User-Agent": `${TLH_NAME}/${snapshot.version}`,
+                "User-Agent": `${TLH_NAME}/${version}`,
             },
             body: JSON.stringify(body),
             signal: AbortSignal.timeout(TLH_TELEMETRY_TIMEOUT_MS),
@@ -245,14 +403,96 @@ export async function sendTlhLaunchTelemetry(snapshot) {
     catch {
     }
 }
-export function scheduleTlhLaunchTelemetry(ctx) {
+function readSubagentFrontmatterConfig(agentDir, name, providerId, availableModels) {
+    const filePath = join(agentDir, "tlh", "agents", "subagents", `${name}.md`);
+    const content = readText(filePath);
+    if (!content)
+        return {};
+    const { frontmatter } = parseFrontmatter(content);
+    const splitList = (val) => (val ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    const agentDefaults = {
+        name,
+        model: frontmatter.model || undefined,
+        tlhOpenaiModels: splitList(frontmatter.tlhOpenaiModels),
+        tlhAnthropicModels: splitList(frontmatter.tlhAnthropicModels),
+        thinking: frontmatter.thinking && isThinkingLevel(frontmatter.thinking) ? frontmatter.thinking : undefined,
+        tlhOpenaiThinking: frontmatter.tlhOpenaiThinking && isThinkingLevel(frontmatter.tlhOpenaiThinking) ? frontmatter.tlhOpenaiThinking : undefined,
+        tlhAnthropicThinking: frontmatter.tlhAnthropicThinking && isThinkingLevel(frontmatter.tlhAnthropicThinking) ? frontmatter.tlhAnthropicThinking : undefined,
+        preferOppositeProvider: frontmatter.preferOppositeProvider?.trim() === "true" ? true
+            : frontmatter.preferOppositeProvider?.trim() === "false" ? false : undefined,
+        preferCurrentOpenaiModel: frontmatter.preferCurrentOpenaiModel?.trim() === "true" ? true
+            : frontmatter.preferCurrentOpenaiModel?.trim() === "false" ? false : undefined,
+    };
+    const result = selectProviderAwareAgentDefaults(agentDefaults, availableModels, providerId);
+    const thinking = result.thinking;
+    const model = result.model
+        ? formatProviderModelReference(result.model)
+        : parseProviderModelReference(agentDefaults.model) === undefined
+            ? agentDefaults.model
+            : undefined;
+    return { thinking, model };
+}
+function buildSubagentTelemetryPayload(effectiveOverrides, agentDir, providerId, availableModels) {
+    const payload = {};
+    for (const name of BUNDLED_SUBAGENT_NAMES) {
+        const override = effectiveOverrides[name];
+        if (override?.disabled === true) {
+            payload[`Tlh.Subagent.${name}.thinking`] = "disabled";
+            payload[`Tlh.Subagent.${name}.model`] = "disabled";
+            continue;
+        }
+        const needFrontmatter = agentDir !== undefined
+            && (override?.thinking === undefined || override?.model === undefined);
+        const fm = needFrontmatter ? readSubagentFrontmatterConfig(agentDir, name, providerId, availableModels) : undefined;
+        payload[`Tlh.Subagent.${name}.thinking`] = override?.thinking === false
+            ? "cleared"
+            : privacySafeTlhTelemetryThinkingLevel(override?.thinking ?? fm?.thinking);
+        payload[`Tlh.Subagent.${name}.model`] = override?.model === false
+            ? "cleared"
+            : privacySafeTlhTelemetryModelId(override?.model ?? fm?.model);
+    }
+    return payload;
+}
+export async function sendTlhLaunchTelemetry(snapshot) {
+    const launchSettings = readTlhLaunchSettings();
+    if (shouldSkipTlhLaunchTelemetry(launchSettings)) {
+        return;
+    }
+    const stateDir = tlhStateDir();
+    const agentDir = stateDir ? dirname(stateDir) : undefined;
+    const effectiveSubagentOverrides = resolveEffectiveSubagentOverrides(launchSettings.ok ? launchSettings.config.subagentOverrides : undefined, readTlhProjectSubagentOverrides(snapshot.cwd ?? process.cwd()));
+    const osMetadata = await getTlhOsMetadata();
+    await sendTlhTelemetry([
+        {
+            type: TLH_LAUNCH_TELEMETRY_EVENT_TYPE,
+            payload: {
+                "Tlh.App.version": snapshot.version,
+                "Tlh.Runtime.provider": privacySafeTlhTelemetryProviderId(snapshot.providerId),
+                "Tlh.Runtime.model": privacySafeTlhTelemetryModelId(snapshot.modelId),
+                "Tlh.Runtime.thinking": privacySafeTlhTelemetryThinkingLevel(snapshot.thinkingLevel),
+                "Tlh.PrimaryAgent.name": privacySafeTlhTelemetryPrimaryAgentName(snapshot.primaryAgentName),
+                "Tlh.Device.osName": osMetadata.osName,
+                "Tlh.Device.osVersion": osMetadata.osVersion,
+                "Tlh.Device.osArch": osMetadata.osArch,
+                ...buildExperimentalFeatureTelemetryPayload(launchSettings.ok ? launchSettings.config.experimental : undefined),
+                ...buildSubagentTelemetryPayload(effectiveSubagentOverrides, agentDir, snapshot.providerId, snapshot.availableModels ?? []),
+            },
+        },
+    ], snapshot.version, launchSettings);
+}
+export function scheduleTlhLaunchTelemetry(ctx, primaryAgentName) {
     if (sentTlhLaunchTelemetry) {
         return;
     }
     sentTlhLaunchTelemetry = true;
     const telemetrySnapshot = {
         version: getTlhVersion(),
+        providerId: ctx.model?.provider,
         modelId: ctx.model?.id,
+        primaryAgentName,
+        thinkingLevel: ctx.thinkingLevel,
+        availableModels: getUnfilteredAvailableModels(ctx.modelRegistry),
+        cwd: ctx.cwd,
     };
     const timer = setTimeout(() => {
         void sendTlhLaunchTelemetry(telemetrySnapshot).catch(() => undefined);
