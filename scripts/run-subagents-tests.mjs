@@ -12,7 +12,7 @@ export const suiteConfigs = {
 	unit: {
 		directory: join(repoRoot, "extensions/subagents/test/unit"),
 		minimumFiles: 87,
-		minimumTests: 997,
+		minimumTests: 982,
 	},
 	integration: {
 		directory: join(repoRoot, "extensions/subagents/test/integration"),

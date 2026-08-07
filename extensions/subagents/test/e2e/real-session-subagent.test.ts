@@ -13,6 +13,7 @@
 
 import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { RealSessionRun } from "../support/real-session-runner.ts";
@@ -61,12 +62,21 @@ describe("real Pi-session subagent E2E", { skip: win32Skip }, () => {
 
 		try {
 			run = await runRealSubagentSession({
-				prompt: "Delegate to a worker and report its exact result.",
+				prompt: "Delegate to a helper and report its exact result.",
 				childText: CHILD_MARKER,
+				setup({ cwd }) {
+					const agentsDir = path.join(cwd, ".pi", "agents");
+					fs.mkdirSync(agentsDir, { recursive: true });
+					fs.writeFileSync(
+						path.join(agentsDir, "helper.md"),
+						"---\nname: helper\ndescription: Project helper\n---\n\nReturn the task result.\n",
+						"utf-8",
+					);
+				},
 				respond: routeParentThroughSubagent({
 					childMarker: CHILD_MARKER,
 					subagentArgs: {
-						agent: "worker",
+						agent: "helper",
 						task: "Return the marker from the faux child provider.",
 						context: "fresh",
 						agentScope: "project",

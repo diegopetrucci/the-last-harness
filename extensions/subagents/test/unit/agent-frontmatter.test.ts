@@ -124,16 +124,6 @@ Do work
 		assert.equal(worker?.defaultContext, "fork");
 	});
 
-	it("loads packaged planner, worker, and oracle with fork defaultContext", () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-default-context-"));
-		tempDirs.push(dir);
-		const agents = discoverAgentsAll(dir).builtin;
-
-		for (const name of ["planner", "worker", "oracle"]) {
-			const agent = agents.find((candidate) => candidate.name === name);
-			assert.equal(agent?.defaultContext, "fork", `${name} should default to fork context`);
-		}
-	});
 });
 
 describe("agent maxExecutionTimeMs frontmatter", () => {
@@ -1021,90 +1011,6 @@ Do work
 		assert.equal(worker?.systemPromptMode, "replace");
 		assert.equal(worker?.inheritProjectContext, false);
 		assert.equal(worker?.inheritSkills, false);
-	});
-
-	it("builtin agents inherit project context by default", () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-default-prompt-settings-"));
-		const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-default-home-"));
-		tempDirs.push(dir);
-		tempDirs.push(homeDir);
-		const previousHome = process.env.HOME;
-		const previousUserProfile = process.env.USERPROFILE;
-		const previousPiCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
-		const previousExtraAgentDirs = process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
-
-		try {
-			process.env.HOME = homeDir;
-			process.env.USERPROFILE = homeDir;
-			delete process.env.PI_CODING_AGENT_DIR;
-			delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
-
-			const result = discoverAgents(dir, "both");
-			const scout = result.agents.find((agent) => agent.name === "scout");
-			const reviewer = result.agents.find((agent) => agent.name === "reviewer");
-			const delegate = result.agents.find((agent) => agent.name === "delegate");
-			assert.equal(scout?.inheritProjectContext, true);
-			assert.equal(reviewer?.inheritProjectContext, true);
-			assert.equal(delegate?.inheritProjectContext, true);
-		} finally {
-			if (previousHome === undefined) delete process.env.HOME;
-			else process.env.HOME = previousHome;
-			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
-			else process.env.USERPROFILE = previousUserProfile;
-			if (previousPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-			else process.env.PI_CODING_AGENT_DIR = previousPiCodingAgentDir;
-			if (previousExtraAgentDirs === undefined) delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
-			else process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = previousExtraAgentDirs;
-		}
-	});
-
-	it("bundled agents all have explicit tool allowlists", () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-tools-"));
-		const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-tools-home-"));
-		tempDirs.push(dir);
-		tempDirs.push(homeDir);
-		const previousHome = process.env.HOME;
-		const previousUserProfile = process.env.USERPROFILE;
-
-		try {
-			process.env.HOME = homeDir;
-			process.env.USERPROFILE = homeDir;
-			const builtins = discoverAgentsAll(dir).builtin;
-			assert.ok(builtins.length > 0);
-			for (const agent of builtins) {
-				assert.ok(agent.tools && agent.tools.length > 0, `${agent.name} should have explicit tools frontmatter`);
-			}
-		} finally {
-			if (previousHome === undefined) delete process.env.HOME;
-			else process.env.HOME = previousHome;
-			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
-			else process.env.USERPROFILE = previousUserProfile;
-		}
-	});
-
-	it("worker and delegate include the child-facing supervisor tool", () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-supervisor-tool-"));
-		const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-supervisor-tool-home-"));
-		tempDirs.push(dir);
-		tempDirs.push(homeDir);
-		const previousHome = process.env.HOME;
-		const previousUserProfile = process.env.USERPROFILE;
-
-		try {
-			process.env.HOME = homeDir;
-			process.env.USERPROFILE = homeDir;
-			const agents = discoverAgentsAll(dir).builtin;
-			for (const name of ["worker", "delegate"]) {
-				const agent = agents.find((candidate) => candidate.name === name);
-				assert.ok(agent, `${name} builtin should be discovered`);
-				assert.deepEqual(agent?.tools, ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"]);
-			}
-		} finally {
-			if (previousHome === undefined) delete process.env.HOME;
-			else process.env.HOME = previousHome;
-			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
-			else process.env.USERPROFILE = previousUserProfile;
-		}
 	});
 
 	it("defaults delegate to append mode with inherited project context", () => {

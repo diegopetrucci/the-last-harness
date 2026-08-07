@@ -8,7 +8,7 @@ const CUSTOM_TOOL_DESCRIPTION_MAX_BYTES = 50 * 1024;
 
 export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
 • Use { action: "list" } before execution and run only agents shown there.
-• Keep execution and actions separate: omit action for SINGLE { agent, task? } or PARALLEL { tasks:[...] }; use action only for list, get, models, status, interrupt, resume, steer, or doctor.
+• Keep execution and actions separate: omit action for SINGLE { agent, task? } or PARALLEL { tasks:[...] }; use action only for list, get, status, interrupt, resume, steer, or doctor.
 • Async/background runs: set async:true only when work can continue without waiting. Do not sleep or poll status just to wait; continue useful work or reply and let completion notifications arrive.
 • Child-safety boundary: subagents cannot spawn subagents. Subagent processes do not have orchestrator capability.
 • Writing safety: keep one writer for the same cwd. Use fresh read-only reviewers or validators for independent checks, then have the parent apply edits as the sole writer.
@@ -39,7 +39,6 @@ ACTIONS
 Use action only with the supported TLH action set:
 • { action: "list" } shows executable agents.
 • { action: "get", agent: "name" } returns full details for one agent.
-• { action: "models", agent?: "name" } shows runtime-loaded builtin model mappings, optionally filtered to one builtin.
 • { action: "status", id?: "..." } inspects an async/background run by id or prefix, including durable paused-awaiting-supervisor state where no child process is running.
 • { action: "interrupt", id?: "..." } requests a soft interrupt for a running child, or cancels a durable paused child before continuation starts.
 • { action: "resume", id: "...", message: "...", index?: 0 } resumes a durably paused child. Omit message for an unchanged resume, or pass message for guided resume.
@@ -66,7 +65,7 @@ OUTPUT / MODELS
 
 
 ACTIONS
-• Supported actions only: { action: "list" }, { action: "get", agent: "name" }, { action: "models", agent?: "name" }, { action: "status", id?: "..." }, { action: "interrupt", id?: "..." }, { action: "resume", id: "...", message?: "...", index?: 0 }, { action: "steer", id: "...", message: "...", index?: 0 }, { action: "doctor" }.
+• Supported actions only: { action: "list" }, { action: "get", agent: "name" }, { action: "status", id?: "..." }, { action: "interrupt", id?: "..." }, { action: "resume", id: "...", message?: "...", index?: 0 }, { action: "steer", id: "...", message: "...", index?: 0 }, { action: "doctor" }.
 • Paused-awaiting-supervisor status reports that no child process is running and gives exact unchanged resume, guided resume, and cancel commands.
 
 ASYNC / SAFETY

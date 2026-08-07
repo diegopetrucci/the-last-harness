@@ -93,7 +93,7 @@ export const SLASH_SUBAGENT_CANCEL_EVENT = "subagent:slash:cancel";
 export const POLL_INTERVAL_MS = 250;
 export const MAX_WIDGET_JOBS = 4;
 export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
-export const SUBAGENT_ACTIONS = ["list", "get", "models", "status", "interrupt", "resume", "steer", "doctor"];
+export const SUBAGENT_ACTIONS = ["list", "get", "status", "interrupt", "resume", "steer", "doctor"];
 export const DEFAULT_FORK_PREAMBLE = "You are a delegated subagent running from a fork of the parent session. " +
     "Treat the inherited conversation as reference-only context, not a live thread to continue. " +
     "Do not continue or answer prior messages as if they are waiting for a reply. " +

@@ -1182,7 +1182,7 @@ describe("fork context execution wiring", () => {
 		assert.deepEqual(result.details?.results?.[0]?.skills, ["parallel-step-skill"]);
 	});
 
-	it("uses request cwd for project builtin overrides during management", async () => {
+	it("uses request cwd for project custom agent overrides during management", async () => {
 		const tempHome = createTempDir("pi-subagent-home-");
 		const previousHome = process.env.HOME;
 		const previousUserProfile = process.env.USERPROFILE;
@@ -1192,14 +1192,22 @@ describe("fork context execution wiring", () => {
 		delete process.env.PI_CODING_AGENT_DIR;
 		const worktreeDir = path.join(tempDir, "worktree");
 		fs.mkdirSync(worktreeDir, { recursive: true });
-		writeProjectOverride(tempDir, "reviewer", "openai/gpt-5-main");
-		writeProjectOverride(worktreeDir, "reviewer", "openai/gpt-5-worktree");
+		// Write a custom project agent (no frontmatter model so overrides apply)
+		const agentBody = "---\nname: auditor\ndescription: Auditor agent\n---\n\nAudit code.\n";
+		const mainAgentsDir = path.join(tempDir, ".pi", "agents");
+		fs.mkdirSync(mainAgentsDir, { recursive: true });
+		fs.writeFileSync(path.join(mainAgentsDir, "auditor.md"), agentBody, "utf-8");
+		const worktreeAgentsDir = path.join(worktreeDir, ".pi", "agents");
+		fs.mkdirSync(worktreeAgentsDir, { recursive: true });
+		fs.writeFileSync(path.join(worktreeAgentsDir, "auditor.md"), agentBody, "utf-8");
+		writeProjectOverride(tempDir, "auditor", "openai/gpt-5-main");
+		writeProjectOverride(worktreeDir, "auditor", "openai/gpt-5-worktree");
 		const executor = makeExecutor();
 
 		try {
 			const result = await executor.execute(
 				"id",
-				{ action: "get", agent: "reviewer", cwd: "worktree" },
+				{ action: "get", agent: "auditor", cwd: "worktree" },
 				new AbortController().signal,
 				undefined,
 				makeCtx(makeSessionManagerRecorder().manager),

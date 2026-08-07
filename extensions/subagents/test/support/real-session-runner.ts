@@ -34,6 +34,8 @@ export interface RealSessionRunOptions {
 	childText: string;
 	respond: FauxResponder;
 	timeoutMs?: number;
+	/** Optional callback to write fixtures into the temp cwd and home directories before the session starts. */
+	setup?: (dirs: { cwd: string; home: string }) => void;
 }
 
 export interface RealSessionRun {
@@ -162,6 +164,7 @@ function restoreEnv(snapshot: Map<string, string | undefined>): void {
 export async function runRealSubagentSession(options: RealSessionRunOptions): Promise<RealSessionRun> {
 	const cwd = mkdtempSync(path.join(os.tmpdir(), "pi-real-session-cwd-"));
 	const home = mkdtempSync(path.join(os.tmpdir(), "pi-real-session-home-"));
+	options.setup?.({ cwd, home });
 	const previousCwd = process.cwd();
 	const envSnapshot = new Map([
 		["HOME", process.env.HOME],
