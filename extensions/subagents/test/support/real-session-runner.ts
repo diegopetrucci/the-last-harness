@@ -34,6 +34,8 @@ export interface RealSessionRunOptions {
 	childText: string;
 	respond: FauxResponder;
 	timeoutMs?: number;
+	/** Optional callback to write fixtures into the temp cwd and home directories before the session starts. */
+	setup?: (dirs: { cwd: string; home: string }) => void;
 }
 
 export interface RealSessionRun {
@@ -207,6 +209,7 @@ export async function runRealSubagentSession(options: RealSessionRunOptions): Pr
 	};
 
 	try {
+		options.setup?.({ cwd, home });
 		process.chdir(cwd);
 		process.env.HOME = home;
 		process.env.USERPROFILE = home;

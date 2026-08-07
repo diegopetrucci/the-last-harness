@@ -140,7 +140,7 @@ Inspect env.
 		writeFile(settingsPath, JSON.stringify({
 			subagents: {
 				agentOverrides: {
-					worker: { systemPrompt: "Use env-rooted settings." },
+					"env-agent": { model: "deepseek-v4-pro" },
 				},
 			},
 		}, null, 2));
@@ -149,13 +149,13 @@ Inspect env.
 		assert.equal(discovered.userDir, path.join(agentDir, "agents"));
 		assert.equal(discovered.userChainDir, path.join(agentDir, "chains"));
 		assert.equal(discovered.userSettingsPath, settingsPath);
-		assert.ok(discovered.user.find((agent) => agent.name === "env-agent" && agent.filePath === path.join(agentDir, "agents", "env-agent.md")));
 		assert.deepEqual(discovered.chains, []);
 
-		const worker = discovered.builtin.find((agent) => agent.name === "worker");
-		assert.equal(worker?.systemPrompt, "Use env-rooted settings.");
-		assert.equal(worker?.override?.path, settingsPath);
-		assert.equal(worker?.override?.scope, "user");
+		const envAgent = discovered.user.find((agent) => agent.name === "env-agent" && agent.filePath === path.join(agentDir, "agents", "env-agent.md"));
+		assert.ok(envAgent);
+		assert.equal(envAgent?.model, "deepseek-v4-pro");
+		assert.equal(envAgent?.override?.path, settingsPath);
+		assert.equal(envAgent?.override?.scope, "user");
 
 	});
 
