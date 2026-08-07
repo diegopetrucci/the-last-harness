@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { getPiSpawnCommand, resolvePiCliScript, resolveWindowsPiCliScript, type PiSpawnDeps } from "../../src/runs/shared/pi-spawn.ts";
+import { buildSubagentSpawnEnv, getPiSpawnCommand, resolvePiCliScript, resolveWindowsPiCliScript, type PiSpawnDeps } from "../../src/runs/shared/pi-spawn.ts";
 
 function makeDeps(input: {
 	platform?: NodeJS.Platform;
@@ -36,6 +36,34 @@ function makeDeps(input: {
 		env: input.env ?? {},
 	};
 }
+
+describe("buildSubagentSpawnEnv", () => {
+	it("strips inherited HERDR_* keys while preserving unrelated and deliberate env", () => {
+		const depthEnv = { PI_SUBAGENT_DEPTH: "2" };
+		const spawnEnv = buildSubagentSpawnEnv(
+			{
+				PATH: "/usr/local/bin",
+				HERDR_PANE_ID: "parent-pane",
+				HERDR_SOCKET_PATH: "/tmp/parent.sock",
+				HERDR_FUTURE_KEY: "future-value",
+			},
+			{ EXPLICIT_ENV: "kept" },
+			depthEnv,
+		);
+
+		assert.equal(Object.keys(spawnEnv).some((key) => key.startsWith("HERDR_")), false);
+		assert.equal(spawnEnv.PATH, "/usr/local/bin");
+		assert.equal(spawnEnv.EXPLICIT_ENV, "kept");
+		assert.equal(spawnEnv.PI_SUBAGENT_DEPTH, "2");
+
+		const deliberateHerdrEnv = buildSubagentSpawnEnv(
+			{ HERDR_PANE_ID: "parent-pane" },
+			{ HERDR_PANE_ID: "explicit-pane" },
+			depthEnv,
+		);
+		assert.equal(deliberateHerdrEnv.HERDR_PANE_ID, "explicit-pane");
+	});
+});
 
 describe("getPiSpawnCommand", () => {
 	it("honors explicit PI_SUBAGENT_PI_BINARY override on any platform, even over a resolvable Pi package", () => {

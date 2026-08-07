@@ -8,7 +8,7 @@ import { DEFAULT_CONTROL_CONFIG, buildControlEvent, claimControlNotification, de
 import { getFinalOutput, findLatestSessionFile, detectSubagentError, extractToolArgsPreview, extractTextFromContent, formatErrorWithOutput, synthesizeChildExitDiagnostic, } from "../../shared/utils.js";
 import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.js";
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.js";
-import { getPiSpawnCommand } from "../shared/pi-spawn.js";
+import { buildSubagentSpawnEnv, getPiSpawnCommand } from "../shared/pi-spawn.js";
 import { createJsonlWriter } from "../../shared/jsonl-writer.js";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.js";
 import { scheduleDeadline } from "../shared/deadline-timer.js";
@@ -351,7 +351,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         };
         return result;
     }
-    const spawnEnv = { ...process.env, ...sharedEnv, ...getSubagentDepthEnv(options.maxSubagentDepth) };
+    const spawnEnv = buildSubagentSpawnEnv(process.env, sharedEnv, getSubagentDepthEnv(options.maxSubagentDepth));
     let observedMutationAttempt = false;
     let supervisorPauseRequested = false;
     const exitCode = await new Promise((resolve) => {

@@ -6,6 +6,7 @@ const HERDR_SOURCE = "herdr:tlh";
 const HERDR_AGENT = "pi";
 const CMUX_STATUS_KEY = "tlh";
 const DEFAULT_IDLE_DEBOUNCE_MS = 250;
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 20000;
 const HERDR_SOCKET_ATTEMPT_TIMEOUTS_MS = [500, 1500];
 function parseDurationEnv(env, name, fallback) {
     const raw = env[name];
@@ -211,13 +212,28 @@ export function createHerdrActivityReporter(options = {}) {
     let reportSeq = now() * 1000;
     let sessionRef = {};
     let rootSession = false;
-    let released = false;
+    let disposed = false;
+    const heartbeatIntervalMs = parseDurationEnv(env, "HERDR_TLH_HEARTBEAT_MS", DEFAULT_HEARTBEAT_INTERVAL_MS);
+    const heartbeatTimers = {
+        setTimeout: options.timers?.setTimeout ?? setTimeout,
+        clearTimeout: options.timers?.clearTimeout ?? clearTimeout,
+    };
+    let desiredState;
+    let lastReportedState;
+    let heartbeatTimer;
+    let heartbeatStopped = false;
+    let heartbeatStarted = false;
+    let outboundChain = Promise.resolve();
     const nextReportSeq = () => {
         reportSeq += 1;
         return reportSeq;
     };
-    const sendState = async (state) => {
-        released = false;
+    const enqueueOutbound = (task) => {
+        const delivery = outboundChain.then(task);
+        outboundChain = delivery.catch(() => { });
+        return delivery;
+    };
+    const sendStateCore = async (state) => {
         await sendRequest({
             id: `${HERDR_SOURCE}:${now()}:${Math.random().toString(36).slice(2)}`,
             method: "pane.report_agent",
@@ -230,18 +246,64 @@ export function createHerdrActivityReporter(options = {}) {
             }, sessionRef),
         });
     };
+    const stopHeartbeat = () => {
+        heartbeatStopped = true;
+        if (heartbeatTimer) {
+            heartbeatTimers.clearTimeout(heartbeatTimer);
+            heartbeatTimer = undefined;
+        }
+    };
+    const scheduleHeartbeat = () => {
+        if (heartbeatStopped || !rootSession || disposed)
+            return;
+        heartbeatTimer = heartbeatTimers.setTimeout(() => {
+            heartbeatTimer = undefined;
+            if (heartbeatStopped || !rootSession || disposed)
+                return;
+            const heartbeatDelivery = enqueueOutbound(async () => {
+                if (heartbeatStopped || !rootSession || disposed)
+                    return;
+                const state = desiredState ?? lastReportedState;
+                if (state === undefined)
+                    return;
+                await sendStateCore(state);
+                lastReportedState = state;
+            });
+            void heartbeatDelivery.catch(() => undefined).finally(() => {
+                if (!heartbeatStopped && rootSession && !disposed)
+                    scheduleHeartbeat();
+            });
+        }, heartbeatIntervalMs);
+        heartbeatTimer.unref?.();
+    };
+    const sendState = (state) => {
+        desiredState = state;
+        return enqueueOutbound(async () => {
+            if (!rootSession || disposed)
+                return;
+            await sendStateCore(state);
+            lastReportedState = state;
+            if (!heartbeatStarted) {
+                heartbeatStarted = true;
+                scheduleHeartbeat();
+            }
+        });
+    };
     const queuedReporter = createQueuedStateReporter(sendState, {
         idleDebounceMs: options.idleDebounceMs ?? parseDurationEnv(env, "HERDR_TLH_IDLE_DEBOUNCE_MS", DEFAULT_IDLE_DEBOUNCE_MS),
         timers: options.timers,
     });
     return {
         handleSessionStart(ctx) {
-            if (!ctx.hasUI)
+            if (disposed || ctx.mode !== "tui") {
+                rootSession = false;
                 return;
+            }
             rootSession = true;
             sessionRef = readSessionRef(ctx);
             if (!sessionRef.agentSessionId && !sessionRef.agentSessionPath)
                 return;
+            const startedSessionRef = sessionRef;
             void sendRequest({
                 id: `${HERDR_SOURCE}:session:${now()}:${Math.random().toString(36).slice(2)}`,
                 method: "pane.report_agent_session",
@@ -250,31 +312,25 @@ export function createHerdrActivityReporter(options = {}) {
                     source: HERDR_SOURCE,
                     agent: HERDR_AGENT,
                     seq: nextReportSeq(),
-                }, sessionRef),
+                }, startedSessionRef),
             }).catch(() => undefined);
         },
         handleSnapshot(snapshot) {
-            if (!rootSession)
+            if (!rootSession || disposed)
                 return;
             queuedReporter.handleSnapshot(snapshot);
         },
         handleSessionShutdown() {
-            if (!rootSession || released)
+            if (!rootSession)
                 return;
-            released = true;
+            rootSession = false;
+            stopHeartbeat();
             queuedReporter.handleSessionShutdown();
-            void sendRequest({
-                id: `${HERDR_SOURCE}:release:${now()}:${Math.random().toString(36).slice(2)}`,
-                method: "pane.release_agent",
-                params: {
-                    pane_id: paneId,
-                    source: HERDR_SOURCE,
-                    agent: HERDR_AGENT,
-                    seq: nextReportSeq(),
-                },
-            }).catch(() => undefined);
         },
         dispose() {
+            disposed = true;
+            rootSession = false;
+            stopHeartbeat();
             queuedReporter.dispose();
         },
     };
@@ -351,7 +407,7 @@ export function createCmuxActivityReporter(options = {}) {
     const queuedReporter = createQueuedStateReporter(sendState, options);
     return {
         handleSessionStart(ctx) {
-            rootSession = ctx.hasUI;
+            rootSession = ctx.mode === "tui";
             if (!rootSession)
                 return;
             statusKey = getCmuxStatusKey(env, ctx);

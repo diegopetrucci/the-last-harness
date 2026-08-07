@@ -14,7 +14,7 @@ import { writeAtomicJson } from "../../shared/atomic-json.js";
 import { createChildTranscriptWriter } from "../../shared/child-transcript.js";
 import { acceptChildMessageRequest, consumeInterruptRequest, deliverInterruptRequest, deliverTimeoutRequest, enqueueStepChildMessage, stepSteerInboxDir, watchAsyncControlInbox, writeChildMessageAcceptanceForRequest } from "./control-channel.js";
 import { appendJsonl as appendRawJsonl, getArtifactPaths } from "../../shared/artifacts.js";
-import { PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.js";
+import { buildSubagentSpawnEnv, PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.js";
 import { captureSingleOutputSnapshot, finalizeSingleOutput, formatSavedOutputReference, resolveSingleOutput } from "../shared/single-output.js";
 import { DEFAULT_MAX_OUTPUT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, truncateOutput, getSubagentDepthEnv, } from "../../shared/types.js";
 import { DEFAULT_CONTROL_CONFIG, buildControlEvent, deriveActivityState, claimControlNotification, formatControlIntercomMessage, formatControlNoticeMessage, } from "../shared/subagent-control.js";
@@ -212,7 +212,7 @@ function resolveSupervisorPauseMetadata(input) {
 function runPiStreaming(args, cwd, outputFile, env, piPackageRoot, piArgv1, maxSubagentDepth, childEventContext, registerInterrupt, onChildEvent, transcriptWriter, registerTimeout, timeoutMessage, registerTurnBudgetAbort) {
     return new Promise((resolve) => {
         const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
-        const spawnEnv = { ...process.env, ...(env ?? {}), ...getSubagentDepthEnv(maxSubagentDepth) };
+        const spawnEnv = buildSubagentSpawnEnv(process.env, env, getSubagentDepthEnv(maxSubagentDepth));
         const spawnSpec = getPiSpawnCommand(args, {
             ...(piPackageRoot ? { piPackageRoot } : {}),
             ...(piArgv1 ? { argv1: piArgv1 } : {}),

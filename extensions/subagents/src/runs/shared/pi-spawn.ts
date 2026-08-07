@@ -5,6 +5,18 @@ import { fileURLToPath } from "node:url";
 export const PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";
 export const PI_SUBAGENT_PI_BINARY_ENV = "PI_SUBAGENT_PI_BINARY";
 
+export function buildSubagentSpawnEnv(
+	inheritedEnv: NodeJS.ProcessEnv,
+	explicitEnv: Record<string, string | undefined> | undefined,
+	depthEnv: Record<string, string>,
+): NodeJS.ProcessEnv {
+	// Pane lifecycle state belongs to the TUI session that owns the pane, never an inherited child process.
+	const filteredInheritedEnv = Object.fromEntries(
+		Object.entries(inheritedEnv).filter(([key]) => !key.startsWith("HERDR_")),
+	);
+	return { ...filteredInheritedEnv, ...(explicitEnv ?? {}), ...depthEnv };
+}
+
 export function findPiPackageRootFromEntry(
 	entryPoint: string,
 ): string | undefined {
