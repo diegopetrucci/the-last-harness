@@ -12,7 +12,7 @@ import { getPiSpawnCommand } from "../shared/pi-spawn.js";
 import { createJsonlWriter } from "../../shared/jsonl-writer.js";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.js";
 import { scheduleDeadline } from "../shared/deadline-timer.js";
-import { applyThinkingSuffix, buildPiArgs, cleanupTempDir } from "../shared/pi-args.js";
+import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, getThinkingLevelDropNote } from "../shared/pi-args.js";
 import { readStructuredOutput } from "../shared/structured-output.js";
 import { captureSingleOutputSnapshot, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode } from "../shared/single-output.js";
 import { buildFallbackModelList, buildModelCandidates, formatModelAttemptNote, isRetryableModelFailure, sanitizeModelFallbackNotice, } from "../shared/model-fallback.js";
@@ -245,7 +245,14 @@ function resolveResultSessionFile(result, options, shareEnabled) {
 }
 async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared) {
     const effectiveThinking = options.thinkingOverride ?? agent.thinking;
-    const modelArg = applyThinkingSuffix(model, effectiveThinking, options.thinkingOverride !== undefined);
+    const thinkingSuffixOptions = {
+        availableModels: options.availableModels,
+        preferredModelProvider: options.preferredModelProvider,
+    };
+    const thinkingDropNote = getThinkingLevelDropNote(model, effectiveThinking, options.thinkingOverride !== undefined, thinkingSuffixOptions);
+    if (thinkingDropNote && !shared.attemptNotes.includes(thinkingDropNote))
+        shared.attemptNotes.push(thinkingDropNote);
+    const modelArg = applyThinkingSuffix(model, effectiveThinking, options.thinkingOverride !== undefined, thinkingSuffixOptions);
     const { args, env: sharedEnv, tempDir } = buildPiArgs({
         baseArgs: ["--mode", "json", "-p"],
         task,
@@ -254,6 +261,8 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         sessionFile: options.sessionFile,
         model: modelArg,
         thinking: effectiveThinking,
+        availableModels: options.availableModels,
+        preferredModelProvider: options.preferredModelProvider,
         systemPromptMode: agent.systemPromptMode,
         inheritProjectContext: agent.inheritProjectContext,
         inheritSkills: agent.inheritSkills,
@@ -1415,7 +1424,11 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
     };
     result.activeRuntimeMs = totalDurationMs;
     if (attemptNotes.length > 0 && result.progress) {
-        result.progress.recentOutput = [...attemptNotes, ...result.progress.recentOutput];
+        const existingNotes = new Set(result.progress.recentOutput);
+        result.progress.recentOutput = [
+            ...attemptNotes.filter((note) => !existingNotes.has(note)),
+            ...result.progress.recentOutput,
+        ];
         if (result.progress.recentOutput.length > 50) {
             result.progress.recentOutput.splice(50);
         }

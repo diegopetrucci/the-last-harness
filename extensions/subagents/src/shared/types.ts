@@ -1050,8 +1050,8 @@ export interface RunSyncOptions {
 	modelFallbackNotice?: string;
 	/** Override the agent's default thinking level for this run */
 	thinkingOverride?: import("../agents/agents.ts").AgentConfig["thinking"];
-	/** Registry models available for heuristic bare-model resolution */
-	availableModels?: Array<{ provider: string; id: string; fullId: string }>;
+	/** Registry models available for model resolution and thinking-capability checks */
+	availableModels?: import("./model-info.ts").ModelInfo[];
 	/** Current parent-session provider to prefer for ambiguous bare model ids */
 	preferredModelProvider?: string;
 	/** Optional subagent model-scope enforcement for fallback candidates */

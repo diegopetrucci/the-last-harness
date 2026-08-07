@@ -28,7 +28,7 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/dow
 
 ### The architect
 
-![Illustration of the TLH architect-first workflow: a request passes through approval, tk tickets, scout/build/review child sessions, and returns a judged result.](assets/main-tlh-workflow-illustrations/01-main-tlh-workflow.png)
+![Illustration of the TLH architect-first workflow: a request passes through approval, tk tickets, scout/build/review child sessions, and returns a judged result.](https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/assets/main-tlh-workflow-illustrations/01-main-tlh-workflow.png)
 
 As a software engineer, you will likely spend most of your time with the **architect** primary agent. The architect does not do any change directly, but its purpose is to help you investigate, find issues, plan the work, and so on. It is banned from making (bigger) direct changes, and it will always propose to encode the plan/work into smaller tickets.
 
@@ -76,6 +76,23 @@ All bundled subagents:
 - `oracle` for a deeper second opinion
 - `contrarian` as a bundled default minor subagent for sparing adversarial stress-tests
 
+### Minor-agent model and effort overrides
+
+Use `/subagent-settings` to persist model or effort choices for the bundled TLH minor-agent roles: `code-reviewer`, `contrarian`, `developer`, `diff-summarizer`, `librarian`, `oracle`, `repo-scout`, and `web-scout`.
+
+- `/subagent-settings` opens a picker in the interactive TLH TUI; outside the TUI it reports status.
+- `/subagent-settings status [role]` shows all roles or one role.
+- `/subagent-settings set <role> [model <provider/id>] [effort <off|minimal|low|medium|high|xhigh|max>]` sets one or both fields; the `model` and `effort` pairs may be given in either order.
+- `/subagent-settings reset <role> [model|effort]` clears one field or both, and `/subagent-settings reset-all` clears the saved model/effort fields for bundled roles only.
+
+Values are stored under `subagents.agentOverrides` in the active isolated profile's `settings.json` (normally `~/.the-last-harness/agent/settings.json`, or the profile selected by `PI_CODING_AGENT_DIR`). A caller-supplied dispatch model takes precedence; otherwise stored role overrides are resolved before bundled provider-aware defaults. A fixed model can reduce provider independence for `code-reviewer`, `oracle`, and `contrarian`, so TLH warns and requires confirmation in UI sessions and refuses those writes in headless mode.
+
+The valid effort values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Stored effort is applied when the resolved model advertises support (`max` requires `thinkingLevelMap` support); if a saved value is no longer supported, TLH warns and neutralizes it with the bundled effort or explicit `off` when possible. If neither is supported, the subagents runtime drops the unsupported value for a known model; unknown or unresolvable models fail open and still receive the suffix. `max` is also a live bundled default where configured, not a hypothetical value.
+
+Writes that replace existing settings content create a `settings.json.bak-*` backup and show its path. To undo a change, use the matching `reset` command, use `reset-all` for bundled roles, or restore the desired `settings.json.bak-*` backup over the active profile's `settings.json`.
+
+See [`docs/commands.md`](docs/commands.md) for the complete grammar, precedence details, warnings, and recovery steps.
+
 ### Customisation
 
 You can add your own skills, prompts, extensions, and packages to TLH.
@@ -104,7 +121,7 @@ After adding files, installing a package, or saving project trust, run `/reload`
 - MCP usage and caveats: [`docs/mcp.md`](docs/mcp.md)
 - Launch telemetry and opt-out: [`docs/telemetry.md`](docs/telemetry.md)
 - Git commit attribution footer, setting, and toggle flow: [`docs/git-attribution.md`](docs/git-attribution.md)
-- Local testing and development: [`docs/local-development.md`](docs/local-development.md)
+- Local testing and development: [`docs/local-development.md`](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/local-development.md)
 - Release notes: [`CHANGELOG.md`](CHANGELOG.md)
-- Maintainer release process: [`docs/releasing.md`](docs/releasing.md)
-- Accepted dependency risks: [`docs/dependency-risk.md`](docs/dependency-risk.md)
+- Maintainer release process: [`docs/releasing.md`](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/releasing.md)
+- Accepted dependency risks: [`docs/dependency-risk.md`](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/dependency-risk.md)

@@ -671,8 +671,9 @@ test("extension delegates launch update and telemetry services to feature module
 	assert.match(extensionSource, /from "\.\/the-last-harness\/update-check\.js"/);
 	assert.match(
 		sessionStart,
-		/if \(event\.reason === "startup"\) \{[\s\S]*void import\("\.\/the-last-harness\/launch-telemetry\.js"\)[\s\S]*scheduleTlhLaunchTelemetry\(ctx\)[\s\S]*\.catch\(\(\) => undefined\);[\s\S]*\}/,
+		/if \(event\.reason === "startup"\) \{[\s\S]*void import\("\.\/the-last-harness\/launch-telemetry\.js"\)[\s\S]*scheduleTlhLaunchTelemetry\(ctx, primaryAgentRuntime\.activePrimaryAgentPrompt\(\)\?\.name\)[\s\S]*\.catch\(\(\) => undefined\);[\s\S]*\}/,
 	);
+	assert.match(sessionStart, /await primaryAgentRuntime\.applySessionStart\(ctx\);[\s\S]*if \(event\.reason === "startup"\) \{[\s\S]*scheduleTlhLaunchTelemetry\(ctx, primaryAgentRuntime\.activePrimaryAgentPrompt\(\)\?\.name\)/);
 	assert.match(sessionStart, /if \(!ctx\.hasUI\) \{[\s\S]*return;[\s\S]*if \(event\.reason === "startup"\)/);
 	assert.match(sessionStart, /const headerUpdate = getTlhHeaderUpdate\(\);/);
 	assert.match(sessionStart, /scheduleDeferredStartupTask\(\(\) => \{[\s\S]*void maybeNotifyAvailableTlhUpdate\(ctx, \{[\s\S]*\}\)\.catch\(\(\) => undefined\);/);
@@ -726,7 +727,10 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 	assert.doesNotMatch(primaryRuntimeSource, /pi\.registerCommand\("harness"/);
 	assert.match(toolCall, /if \(event\.toolName === "bash"\) \{[\s\S]*resolveTlhCommitAttribution\(getTlhGlobalSettings\(ctx\.cwd\)\.tlh\?\.attribution\)/);
 	assert.match(toolCall, /getTlhGitCommitAttributionBlockReason\(event\.input\.command, commitAttributionState\)/);
-	assert.match(toolCall, /applyProviderAwareSubagentModels\(event\.input, subagentsByName, getUnfilteredAvailableModels\(ctx\.modelRegistry\), ctx\.model\?\.provider, ctx\.model\)/);
+	assert.match(
+		toolCall,
+		/applyProviderAwareSubagentModels\(\s*event\.input,\s*subagentsByName,\s*getUnfilteredAvailableModels\(ctx\.modelRegistry\),\s*ctx\.model\?\.provider,\s*ctx\.model,\s*\{\s*agentOverrides: subagentOverrides,\s*onWarning:/,
+	);
 	assert.match(toolCall, /const selection = currentPrimaryAgentSelection\(\)/);
 	assert.match(toolCall, /const allowedSubagents = allowedSubagentsForExperimentalConfig\(getTlhGlobalSettings\(ctx\.cwd\)\.tlh\?\.experimental\)/);
 	assert.match(

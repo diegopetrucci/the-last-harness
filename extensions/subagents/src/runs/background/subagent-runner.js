@@ -782,7 +782,7 @@ async function runSingleStep(step, ctx) {
             : [undefined];
     const attemptedModels = [];
     const modelAttempts = [];
-    const attemptNotes = [];
+    const attemptNotes = [...(step.attemptNotes ?? [])];
     const eventsPath = path.join(path.dirname(ctx.outputFile), "events.jsonl");
     let finalResult;
     let finalOutputSnapshot;
@@ -2332,6 +2332,7 @@ async function runSubagent(config) {
                     statusPayload.outputFile = path.join(asyncDir, `output-${fi}.log`);
                     statusPayload.lastActivityAt = taskStartTime;
                     statusPayload.lastUpdate = taskStartTime;
+                    appendRecentStepOutput(statusPayload.steps[fi], task.attemptNotes ?? []);
                     writeStatusPayload();
                     appendJsonl(eventsPath, JSON.stringify({
                         type: "subagent.step.started", ts: taskStartTime, runId: id, stepIndex: fi, agent: task.agent,
@@ -2549,6 +2550,7 @@ async function runSubagent(config) {
             statusPayload.lastActivityAt = stepStartTime;
             statusPayload.lastUpdate = stepStartTime;
             statusPayload.outputFile = path.join(asyncDir, `output-${flatIndex}.log`);
+            appendRecentStepOutput(statusPayload.steps[flatIndex], seqStep.attemptNotes ?? []);
             writeStatusPayload();
             appendJsonl(eventsPath, JSON.stringify({
                 type: "subagent.step.started",

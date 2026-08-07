@@ -26,7 +26,7 @@ import {
 	tryImport,
 } from "../support/helpers.ts";
 import { INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT } from "../../src/shared/types.ts";
-
+import { getThinkingLevelDropNote } from "../../src/runs/shared/pi-args.ts";
 
 interface ModelAttempt {
 	success?: boolean;
@@ -48,6 +48,7 @@ interface ProgressSummary {
 	tokens?: number;
 	durationMs: number;
 	toolCount: number;
+	recentOutput: string[];
 }
 
 interface ArtifactPaths {
@@ -759,6 +760,46 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.exitCode, 0);
 		assert.equal(result.model, "github-copilot/gpt-5-mini");
 		assert.deepEqual(result.attemptedModels, ["github-copilot/gpt-5-mini"]);
+	});
+
+	it("surfaces a dropped thinking level in foreground progress without changing the model arg", async () => {
+		mockPi.onCall({ output: "Done" });
+		const agents = [makeAgent("echo", { model: "openai/gpt-5", thinking: "max" })];
+		const availableModels = [{
+			provider: "openai",
+			id: "gpt-5",
+			fullId: "openai/gpt-5",
+			reasoning: true,
+			thinkingLevelMap: { max: null },
+		}];
+
+		const result = await runSync(tempDir, agents, "echo", "Task", { availableModels, runId: "foreground-thinking-drop" });
+		const note = getThinkingLevelDropNote("openai/gpt-5", "max", false, { availableModels });
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.model, "openai/gpt-5");
+		const args = readCallArgs();
+		assert.equal(args[args.indexOf("--model") + 1], "openai/gpt-5");
+		assert.ok(note);
+		assert.equal(result.progress.recentOutput.filter((line) => line === note).length, 1);
+	});
+
+	it("preserves a max thinking suffix for resolved foreground models without capability metadata", async () => {
+		mockPi.onCall({ output: "Done" });
+		const model = "anthropic/claude-sonnet-4-5";
+		const agents = [makeAgent("echo", { model, thinking: "max" })];
+		const availableModels = [{
+			provider: "anthropic",
+			id: "claude-sonnet-4-5",
+			fullId: model,
+			reasoning: true,
+		}];
+
+		const result = await runSync(tempDir, agents, "echo", "Task", { availableModels, runId: "foreground-thinking-metadata-missing" });
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.model, `${model}:max`);
+		const args = readCallArgs();
+		assert.equal(args[args.indexOf("--model") + 1], `${model}:max`);
+		assert.equal(getThinkingLevelDropNote(model, "max", false, { availableModels }), undefined);
 	});
 
 	it("tracks usage from message events", async () => {

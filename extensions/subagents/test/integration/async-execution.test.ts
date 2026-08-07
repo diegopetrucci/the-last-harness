@@ -22,6 +22,7 @@ import { reconcileAsyncRun } from "../../src/runs/background/stale-run-reconcile
 import { writeNormalizedLifecycleStatus } from "../../src/runs/shared/lifecycle-state.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
+import { getThinkingLevelDropNote } from "../../src/runs/shared/pi-args.ts";
 
 interface AsyncExecutionResult {
 	content: Array<{ text?: string }>;
@@ -123,6 +124,7 @@ interface AsyncStatusPayload {
 		turnBudgetExceeded?: boolean;
 		wrapUpRequested?: boolean;
 		sessionFile?: string;
+		recentOutput?: string[];
 	}>;
 }
 
@@ -1755,6 +1757,87 @@ describe("async execution utilities", () => {
 		assert.deepEqual(completed?.totalCost, { inputTokens: 110, outputTokens: 55, costUsd: 0.011 });
 		assert.match(fs.readFileSync(path.join(asyncDir, "output-0.log"), "utf-8"), /Recovered asynchronously/);
 		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("background runs surface a dropped thinking level once without changing the model arg", async () => {
+		mockPi.onCall({ output: "Done asynchronously" });
+		const id = `async-thinking-drop-${Date.now().toString(36)}`;
+		const availableModels = [{
+			provider: "openai",
+			id: "gpt-5",
+			fullId: "openai/gpt-5",
+			reasoning: true,
+			thinkingLevelMap: { max: null },
+		}];
+		const run = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", { model: "openai/gpt-5", thinking: "max" }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			availableModels,
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+
+		assert.equal(run.details.asyncId, id);
+		const resultPath = await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		const statusPayload = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const note = getThinkingLevelDropNote("openai/gpt-5", "max", false, { availableModels });
+		assert.ok(note);
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.model, "openai/gpt-5");
+		assert.equal(payload.results[0]?.output?.split(note).length - 1, 1);
+		assert.equal(statusPayload.steps?.[0]?.recentOutput?.filter((line) => line === note).length, 1);
+		const args = readMockPiArgs(mockPi, 0);
+		assert.equal(args[args.indexOf("--model") + 1], "openai/gpt-5");
+	});
+
+	it("background runs preserve a max thinking suffix when capability metadata is missing", async () => {
+		mockPi.onCall({ output: "Done asynchronously" });
+		const id = `async-thinking-metadata-missing-${Date.now().toString(36)}`;
+		const model = "anthropic/claude-sonnet-4-5";
+		const availableModels = [{
+			provider: "anthropic",
+			id: "claude-sonnet-4-5",
+			fullId: model,
+			reasoning: true,
+		}];
+		const run = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", { model, thinking: "max" }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			availableModels,
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+
+		assert.equal(run.details.asyncId, id);
+		const payload = JSON.parse(fs.readFileSync((await waitForAsyncResultFile(id)), "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.model, `${model}:max`);
+		assert.equal(getThinkingLevelDropNote(model, "max", false, { availableModels }), undefined);
+		const args = readMockPiArgs(mockPi, 0);
+		assert.equal(args[args.indexOf("--model") + 1], `${model}:max`);
 	});
 
 	it("background runs try per-dispatch fallback models before agent fallback models and only persist notices after a retry", async () => {

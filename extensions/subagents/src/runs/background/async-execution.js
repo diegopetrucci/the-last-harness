@@ -2,9 +2,10 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyThinkingSuffix } from "../shared/pi-args.js";
+import { applyThinkingSuffix, getThinkingLevelDropNote } from "../shared/pi-args.js";
 import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.js";
 import { buildChainInstructions, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile } from "../../shared/settings.js";
+import { isParallelGroup } from "../shared/parallel-utils.js";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.js";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.js";
 import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.js";
@@ -148,6 +149,30 @@ class UnavailableSubagentSkillError extends Error {
 }
 class AsyncStartValidationError extends Error {
 }
+function appendThinkingDropNote(notes, model, thinking, replaceExisting, options) {
+    const note = getThinkingLevelDropNote(model, thinking, replaceExisting, options);
+    if (note && !notes.includes(note))
+        notes.push(note);
+}
+function dedupeRunnerAttemptNotes(steps) {
+    const emitted = new Set();
+    const dedupe = (step) => {
+        if (!step.attemptNotes || step.attemptNotes.length === 0)
+            return step;
+        const attemptNotes = step.attemptNotes.filter((note) => {
+            if (emitted.has(note))
+                return false;
+            emitted.add(note);
+            return true;
+        });
+        return attemptNotes.length > 0 ? { ...step, attemptNotes } : { ...step, attemptNotes: undefined };
+    };
+    return steps.map((step) => {
+        if (isParallelGroup(step))
+            return { ...step, parallel: step.parallel.map(dedupe) };
+        return dedupe(step);
+    });
+}
 function validateAsyncExecutionAcceptance(params) {
     const errors = [];
     if ("chain" in params) {
@@ -173,6 +198,10 @@ export function buildAsyncRunnerSteps(id, params) {
     const resultMode = params.resultMode ?? "chain";
     const chainSkills = params.chainSkills ?? [];
     const availableModels = params.availableModels;
+    const thinkingSuffixOptions = {
+        availableModels,
+        preferredModelProvider: ctx.currentModelProvider,
+    };
     const runnerCwd = resolveChildCwd(ctx.cwd, cwd);
     const progressDir = params.progressDir ?? runnerCwd;
     const graphChain = chain;
@@ -254,7 +283,15 @@ export function buildAsyncRunnerSteps(id, params) {
         const fallbackModels = buildFallbackModelList(behavior.fallbackModels, a.fallbackModels);
         const thinkingOverride = flatIndex === undefined ? undefined : thinkingOverridesByFlatIndex?.[flatIndex];
         const effectiveThinking = thinkingOverride !== undefined ? thinkingOverride : a.thinking;
-        const model = applyThinkingSuffix(primaryModel, effectiveThinking, thinkingOverride !== undefined);
+        const attemptNotes = [];
+        appendThinkingDropNote(attemptNotes, primaryModel, effectiveThinking, thinkingOverride !== undefined, thinkingSuffixOptions);
+        const model = applyThinkingSuffix(primaryModel, effectiveThinking, thinkingOverride !== undefined, thinkingSuffixOptions);
+        const modelCandidates = buildModelCandidates(primaryModel, fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope })
+            .map((candidate) => {
+            appendThinkingDropNote(attemptNotes, candidate, effectiveThinking, thinkingOverride !== undefined, thinkingSuffixOptions);
+            return applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined, thinkingSuffixOptions);
+        })
+            .filter((candidate) => candidate !== undefined);
         return {
             parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
             agent: s.agent,
@@ -266,9 +303,8 @@ export function buildAsyncRunnerSteps(id, params) {
             cwd: stepCwd,
             model,
             thinking: resolveEffectiveThinking(model, effectiveThinking),
-            modelCandidates: buildModelCandidates(primaryModel, fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope })
-                .map((candidate) => applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined))
-                .filter((candidate) => candidate !== undefined),
+            modelCandidates,
+            ...(attemptNotes.length > 0 ? { attemptNotes } : {}),
             modelFallbackNotice: behavior.modelFallbackNotice,
             tools: a.tools,
             extensions: a.extensions,
@@ -348,7 +384,7 @@ export function buildAsyncRunnerSteps(id, params) {
             const staticStep = nextFlatStep();
             return buildSeqStep(s, staticStep.sessionFile, undefined, false, undefined, staticStep.index);
         });
-        return { steps: builtSteps, runnerCwd, workflowGraph, eventChain: graphChain, ...(originalTask !== undefined ? { originalTask } : {}) };
+        return { steps: dedupeRunnerAttemptNotes(builtSteps), runnerCwd, workflowGraph, eventChain: graphChain, ...(originalTask !== undefined ? { originalTask } : {}) };
     }
     catch (error) {
         if (error instanceof UnavailableSubagentSkillError || error instanceof AsyncStartValidationError)
@@ -571,6 +607,10 @@ export function executeAsyncSingle(id, params) {
     const runnerCwd = resolveChildCwd(ctx.cwd, cwd);
     const skillNames = params.skills ?? agentConfig.skills ?? [];
     const availableModels = params.availableModels;
+    const thinkingSuffixOptions = {
+        availableModels,
+        preferredModelProvider: ctx.currentModelProvider,
+    };
     const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(skillNames, runnerCwd, ctx.cwd);
     if (missingSkills.includes("pi-subagents"))
         return formatAsyncStartError("single", UNAVAILABLE_SUBAGENT_SKILL_ERROR);
@@ -606,7 +646,15 @@ export function executeAsyncSingle(id, params) {
     const primaryModel = resolveSubagentModelOverride(params.modelOverride ?? agentConfig.model, ctx.currentModel, availableModels, ctx.currentModelProvider);
     const fallbackModels = buildFallbackModelList(params.fallbackModels, agentConfig.fallbackModels);
     const effectiveThinking = params.thinkingOverride ?? agentConfig.thinking;
-    const model = applyThinkingSuffix(primaryModel, effectiveThinking, params.thinkingOverride !== undefined);
+    const attemptNotes = [];
+    appendThinkingDropNote(attemptNotes, primaryModel, effectiveThinking, params.thinkingOverride !== undefined, thinkingSuffixOptions);
+    const model = applyThinkingSuffix(primaryModel, effectiveThinking, params.thinkingOverride !== undefined, thinkingSuffixOptions);
+    const modelCandidates = buildModelCandidates(primaryModel, fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope })
+        .map((candidate) => {
+        appendThinkingDropNote(attemptNotes, candidate, effectiveThinking, params.thinkingOverride !== undefined, thinkingSuffixOptions);
+        return applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined, thinkingSuffixOptions);
+    })
+        .filter((candidate) => candidate !== undefined);
     const toolBudgetInput = params.toolBudget ?? agentConfig.toolBudget ?? params.configToolBudget;
     const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, params.toolBudget ? "toolBudget" : agentConfig.toolBudget ? "agent.toolBudget" : "config.toolBudget");
     if (resolvedToolBudget.error)
@@ -634,9 +682,8 @@ export function executeAsyncSingle(id, params) {
                     cwd: runnerCwd,
                     model,
                     thinking: resolveEffectiveThinking(model, effectiveThinking),
-                    modelCandidates: buildModelCandidates(primaryModel, fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope })
-                        .map((candidate) => applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined))
-                        .filter((candidate) => candidate !== undefined),
+                    modelCandidates,
+                    ...(attemptNotes.length > 0 ? { attemptNotes } : {}),
                     modelFallbackNotice: params.modelFallbackNotice,
                     tools: agentConfig.tools,
                     extensions: agentConfig.extensions,

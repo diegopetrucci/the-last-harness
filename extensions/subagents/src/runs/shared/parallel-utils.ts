@@ -10,6 +10,8 @@ export interface RunnerSubagentStep {
 	cwd?: string;
 	model?: string;
 	thinking?: string;
+	/** Notes collected while preparing this dispatch, surfaced with attempt notes. */
+	attemptNotes?: string[];
 	modelCandidates?: string[];
 	modelFallbackNotice?: string;
 	tools?: string[];

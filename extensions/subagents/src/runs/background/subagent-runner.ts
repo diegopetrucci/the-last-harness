@@ -1060,7 +1060,7 @@ async function runSingleStep(
 			: [undefined];
 	const attemptedModels: string[] = [];
 	const modelAttempts: ModelAttempt[] = [];
-	const attemptNotes: string[] = [];
+	const attemptNotes: string[] = [...(step.attemptNotes ?? [])];
 	const eventsPath = path.join(path.dirname(ctx.outputFile), "events.jsonl");
 	let finalResult: RunPiStreamingResult | undefined;
 	let finalOutputSnapshot: SingleOutputSnapshot | undefined;
@@ -2654,6 +2654,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						statusPayload.outputFile = path.join(asyncDir, `output-${fi}.log`);
 						statusPayload.lastActivityAt = taskStartTime;
 						statusPayload.lastUpdate = taskStartTime;
+						appendRecentStepOutput(statusPayload.steps[fi], task.attemptNotes ?? []);
 						writeStatusPayload();
 
 						appendJsonl(eventsPath, JSON.stringify({
@@ -2874,6 +2875,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			statusPayload.lastActivityAt = stepStartTime;
 			statusPayload.lastUpdate = stepStartTime;
 			statusPayload.outputFile = path.join(asyncDir, `output-${flatIndex}.log`);
+			appendRecentStepOutput(statusPayload.steps[flatIndex], seqStep.attemptNotes ?? []);
 			writeStatusPayload();
 
 			appendJsonl(eventsPath, JSON.stringify({
