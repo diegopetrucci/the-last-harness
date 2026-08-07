@@ -156,7 +156,7 @@ test("Herdr reporter starts heartbeat recovery after exhausted socket retries", 
 	const timers = createFakeTimers();
 	const sockets = [];
 	const reporter = createHerdrActivityReporter({
-		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1", HERDR_TLH_HEARTBEAT_MS: "100" },
+		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1", HERDR_TLH_HEARTBEAT_MS: "1000" },
 		createSocket: (path) => {
 			const socket = createFakeSocket(path);
 			sockets.push(socket);
@@ -181,15 +181,106 @@ test("Herdr reporter starts heartbeat recovery after exhausted socket retries", 
 	assert.equal(sockets.length, 2);
 	timers.advance(1500);
 	await flushAsyncWork();
-	assert.deepEqual(timers.getPendingDelays(), [100]);
+	assert.deepEqual(timers.getPendingDelays(), [1000]);
 
-	timers.advance(100);
+	timers.advance(1000);
 	await flushAsyncWork();
 	assert.equal(sockets.length, 3);
 	sockets[2].emit("connect");
 	sockets[2].emit("data", Buffer.from("ok"));
 	await flushAsyncWork();
 	assert.equal(JSON.parse(sockets[2].writes[0]).params.state, "working");
+	reporter.dispose();
+});
+
+test("Herdr reporter disables heartbeat for numeric zero representations", async () => {
+	for (const configuredInterval of ["0", "0.0", " 0 ", "-0"]) {
+		const timers = createFakeTimers();
+		const calls = [];
+		const reporter = createHerdrActivityReporter({
+			env: {
+				HERDR_SOCKET_PATH: "/tmp/herdr.sock",
+				HERDR_PANE_ID: "pane-1",
+				HERDR_TLH_HEARTBEAT_MS: configuredInterval,
+			},
+			sendRequest: async (request) => {
+				calls.push(request);
+			},
+			now: timers.now,
+			timers,
+		});
+
+		reporter.handleSessionStart({
+			mode: "tui",
+			sessionManager: { getSessionFile: () => undefined, getSessionId: () => undefined },
+		});
+		reporter.handleSnapshot({ inProgress: true, primaryReasons: ["primary:agent-loop"], activeAsyncJobIds: [] });
+		await flushAsyncWork();
+		assert.equal(calls.filter((call) => call.method === "pane.report_agent").length, 1);
+		assert.deepEqual(timers.getPendingDelays(), [], `zero interval ${JSON.stringify(configuredInterval)} must disable heartbeat`);
+
+		timers.advance(60000);
+		await flushAsyncWork();
+		assert.equal(calls.filter((call) => call.method === "pane.report_agent").length, 1);
+		reporter.dispose();
+	}
+});
+
+test("Herdr reporter falls back to the default heartbeat for unsafe intervals", async () => {
+	for (const configuredInterval of ["999", "-1", "invalid", "1500garbage", "Infinity", "2147483648"]) {
+		const timers = createFakeTimers();
+		const calls = [];
+		const reporter = createHerdrActivityReporter({
+			env: {
+				HERDR_SOCKET_PATH: "/tmp/herdr.sock",
+				HERDR_PANE_ID: "pane-1",
+				HERDR_TLH_HEARTBEAT_MS: configuredInterval,
+			},
+			sendRequest: async (request) => {
+				calls.push(request);
+			},
+			now: timers.now,
+			timers,
+		});
+
+		reporter.handleSessionStart({
+			mode: "tui",
+			sessionManager: { getSessionFile: () => undefined, getSessionId: () => undefined },
+		});
+		reporter.handleSnapshot({ inProgress: true, primaryReasons: ["primary:agent-loop"], activeAsyncJobIds: [] });
+		await flushAsyncWork();
+		assert.deepEqual(timers.getPendingDelays(), [20000], `interval ${configuredInterval} must use the default`);
+
+		timers.advance(19999);
+		await flushAsyncWork();
+		assert.equal(calls.filter((call) => call.method === "pane.report_agent").length, 1);
+		timers.advance(1);
+		await flushAsyncWork();
+		assert.equal(calls.filter((call) => call.method === "pane.report_agent").length, 2);
+		reporter.dispose();
+	}
+});
+
+test("Herdr reporter accepts Node's maximum timer interval", async () => {
+	const timers = createFakeTimers();
+	const reporter = createHerdrActivityReporter({
+		env: {
+			HERDR_SOCKET_PATH: "/tmp/herdr.sock",
+			HERDR_PANE_ID: "pane-1",
+			HERDR_TLH_HEARTBEAT_MS: "2147483647",
+		},
+		sendRequest: async () => {},
+		now: timers.now,
+		timers,
+	});
+
+	reporter.handleSessionStart({
+		mode: "tui",
+		sessionManager: { getSessionFile: () => undefined, getSessionId: () => undefined },
+	});
+	reporter.handleSnapshot({ inProgress: true, primaryReasons: ["primary:agent-loop"], activeAsyncJobIds: [] });
+	await flushAsyncWork();
+	assert.deepEqual(timers.getPendingDelays(), [2147483647]);
 	reporter.dispose();
 });
 
@@ -320,7 +411,7 @@ test("Herdr heartbeat followed by an idle transition preserves final state order
 	const timers = createFakeTimers();
 	const deliveries = [];
 	const reporter = createHerdrActivityReporter({
-		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1", HERDR_TLH_HEARTBEAT_MS: "100" },
+		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1", HERDR_TLH_HEARTBEAT_MS: "1000" },
 		sendRequest: (request) => {
 			const deferred = createDeferred();
 			deliveries.push({ request, deferred });
@@ -343,7 +434,7 @@ test("Herdr heartbeat followed by an idle transition preserves final state order
 	await flushAsyncWork();
 
 	// The heartbeat starts before the idle transition and remains in flight.
-	timers.advance(100);
+	timers.advance(1000);
 	await flushAsyncWork();
 	assert.equal(deliveries.length, 2);
 	assert.equal(deliveries[1].request.params.state, "working");
@@ -364,17 +455,66 @@ test("Herdr heartbeat followed by an idle transition preserves final state order
 	await flushAsyncWork();
 });
 
+test("queued Herdr transition resolves the latest committed state behind a heartbeat", async () => {
+	const timers = createFakeTimers();
+	const deliveries = [];
+	const reporter = createHerdrActivityReporter({
+		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1", HERDR_TLH_HEARTBEAT_MS: "1000" },
+		sendRequest: (request) => {
+			const deferred = createDeferred();
+			deliveries.push({ request, deferred });
+			return deferred.promise;
+		},
+		now: timers.now,
+		timers,
+		idleDebounceMs: 10,
+	});
+
+	reporter.handleSessionStart({
+		mode: "tui",
+		sessionManager: { getSessionFile: () => undefined, getSessionId: () => undefined },
+	});
+	reporter.handleSnapshot({ inProgress: true, primaryReasons: ["primary:agent-loop"], activeAsyncJobIds: [] });
+	await flushAsyncWork();
+	deliveries[0].deferred.resolve();
+	await flushAsyncWork();
+
+	timers.advance(1000);
+	await flushAsyncWork();
+	assert.equal(deliveries.length, 2);
+	assert.equal(deliveries[1].request.params.state, "working");
+
+	// Commit idle behind the in-flight heartbeat, then supersede it with an
+	// immediate working transition before the queued real-state task executes.
+	reporter.handleSnapshot({ inProgress: false, primaryReasons: [], activeAsyncJobIds: [] });
+	timers.advance(10);
+	await flushAsyncWork();
+	reporter.handleSnapshot({ inProgress: true, primaryReasons: ["primary:agent-loop"], activeAsyncJobIds: [] });
+	await flushAsyncWork();
+	assert.equal(deliveries.length, 2, "the transition must remain queued behind the heartbeat");
+
+	deliveries[1].deferred.resolve();
+	await flushAsyncWork();
+	assert.equal(deliveries.length, 3);
+	assert.equal(deliveries[2].request.params.state, "working", "the queued transition must not replay stale idle");
+
+	reporter.dispose();
+	deliveries[2].deferred.resolve();
+	await flushAsyncWork();
+	assert.equal(deliveries.length, 3);
+});
+
 test("Herdr heartbeat does not bypass idle debounce", async () => {
 	const timers = createFakeTimers();
 	const calls = [];
 	const reporter = createHerdrActivityReporter({
-		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1", HERDR_TLH_HEARTBEAT_MS: "50" },
+		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1", HERDR_TLH_HEARTBEAT_MS: "1000" },
 		sendRequest: async (request) => {
 			calls.push(request);
 		},
 		now: timers.now,
 		timers,
-		idleDebounceMs: 100,
+		idleDebounceMs: 2000,
 	});
 
 	reporter.handleSessionStart({
@@ -385,7 +525,7 @@ test("Herdr heartbeat does not bypass idle debounce", async () => {
 	await flushAsyncWork();
 
 	reporter.handleSnapshot({ inProgress: false, primaryReasons: [], activeAsyncJobIds: [] });
-	timers.advance(50);
+	timers.advance(1000);
 	await flushAsyncWork();
 
 	const stateCalls = calls.filter((call) => call.method === "pane.report_agent");
@@ -402,7 +542,7 @@ test("queued Herdr heartbeat reads idle after a real send settles", async () => 
 	const timers = createFakeTimers();
 	const deliveries = [];
 	const reporter = createHerdrActivityReporter({
-		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1", HERDR_TLH_HEARTBEAT_MS: "100" },
+		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1", HERDR_TLH_HEARTBEAT_MS: "1000" },
 		sendRequest: (request) => {
 			const deferred = createDeferred();
 			deliveries.push({ request, deferred });
@@ -429,7 +569,7 @@ test("queued Herdr heartbeat reads idle after a real send settles", async () => 
 	await flushAsyncWork();
 	assert.equal(deliveries.length, 2);
 	assert.equal(deliveries[1].request.params.state, "idle");
-	timers.advance(90);
+	timers.advance(990);
 	await flushAsyncWork();
 	assert.equal(deliveries.length, 2, "heartbeat should remain queued behind idle");
 
@@ -479,7 +619,7 @@ test("queued Herdr heartbeat is a no-op after shutdown and snapshots cannot rest
 	const timers = createFakeTimers();
 	const deliveries = [];
 	const reporter = createHerdrActivityReporter({
-		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1", HERDR_TLH_HEARTBEAT_MS: "100" },
+		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1", HERDR_TLH_HEARTBEAT_MS: "1000" },
 		sendRequest: (request) => {
 			const deferred = createDeferred();
 			deliveries.push({ request, deferred });
@@ -503,7 +643,7 @@ test("queued Herdr heartbeat is a no-op after shutdown and snapshots cannot rest
 	timers.advance(10);
 	await flushAsyncWork();
 	assert.equal(deliveries.length, 2);
-	timers.advance(90);
+	timers.advance(990);
 	await flushAsyncWork();
 	assert.equal(deliveries.length, 2, "heartbeat should be queued behind the idle delivery");
 
@@ -519,7 +659,7 @@ test("Herdr reporter heartbeat re-sends last state with strictly increasing seq"
 	const timers = createFakeTimers();
 	const calls = [];
 	const reporter = createHerdrActivityReporter({
-		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1", HERDR_TLH_HEARTBEAT_MS: "100" },
+		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1", HERDR_TLH_HEARTBEAT_MS: "1000" },
 		sendRequest: async (request) => {
 			calls.push(request);
 		},
@@ -548,7 +688,7 @@ test("Herdr reporter heartbeat re-sends last state with strictly increasing seq"
 	const firstSeq = afterFirstReport[0].params.seq;
 
 	// Advance past the heartbeat interval — one heartbeat should fire.
-	timers.advance(100);
+	timers.advance(1000);
 	await flushAsyncWork();
 	const afterFirstHeartbeat = calls.filter((c) => c.method === "pane.report_agent");
 	assert.equal(afterFirstHeartbeat.length, 2, "one heartbeat should have fired");
@@ -556,7 +696,7 @@ test("Herdr reporter heartbeat re-sends last state with strictly increasing seq"
 	assert.ok(afterFirstHeartbeat[1].params.seq > firstSeq, "heartbeat seq must be strictly greater than first report seq");
 
 	// Advance another interval — another heartbeat fires.
-	timers.advance(100);
+	timers.advance(1000);
 	await flushAsyncWork();
 	const afterSecondHeartbeat = calls.filter((c) => c.method === "pane.report_agent");
 	assert.equal(afterSecondHeartbeat.length, 3, "second heartbeat should fire");
@@ -568,7 +708,7 @@ test("Herdr reporter heartbeat re-sends last state with strictly increasing seq"
 	await flushAsyncWork();
 	const idleReport = calls.filter((c) => c.method === "pane.report_agent").at(-1);
 	assert.equal(idleReport.params.state, "idle");
-	timers.advance(100);
+	timers.advance(1000);
 	await flushAsyncWork();
 	const afterIdleHeartbeat = calls.filter((c) => c.method === "pane.report_agent").at(-1);
 	assert.equal(afterIdleHeartbeat.params.state, "idle", "heartbeat re-sends idle state");
@@ -582,7 +722,7 @@ test("Herdr reporter heartbeat stops on handleSessionShutdown and dispose", asyn
 
 	// Test shutdown.
 	const shutdownReporter = createHerdrActivityReporter({
-		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1", HERDR_TLH_HEARTBEAT_MS: "100" },
+		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1", HERDR_TLH_HEARTBEAT_MS: "1000" },
 		sendRequest: async (request) => { calls.push(request); },
 		now: timers.now,
 		timers,
@@ -596,7 +736,7 @@ test("Herdr reporter heartbeat stops on handleSessionShutdown and dispose", asyn
 	await flushAsyncWork();
 	const countBeforeShutdown = calls.filter((c) => c.method === "pane.report_agent").length;
 	shutdownReporter.handleSessionShutdown();
-	timers.advance(500);
+	timers.advance(5000);
 	await flushAsyncWork();
 	const countAfterShutdown = calls.filter((c) => c.method === "pane.report_agent").length;
 	assert.equal(countAfterShutdown, countBeforeShutdown, "heartbeat must not fire after handleSessionShutdown");
@@ -604,7 +744,7 @@ test("Herdr reporter heartbeat stops on handleSessionShutdown and dispose", asyn
 	// Test dispose.
 	const calls2 = [];
 	const disposeReporter = createHerdrActivityReporter({
-		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1", HERDR_TLH_HEARTBEAT_MS: "100" },
+		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1", HERDR_TLH_HEARTBEAT_MS: "1000" },
 		sendRequest: async (request) => { calls2.push(request); },
 		now: timers.now,
 		timers,
@@ -618,7 +758,7 @@ test("Herdr reporter heartbeat stops on handleSessionShutdown and dispose", asyn
 	await flushAsyncWork();
 	const countBeforeDispose = calls2.filter((c) => c.method === "pane.report_agent").length;
 	disposeReporter.dispose();
-	timers.advance(500);
+	timers.advance(5000);
 	await flushAsyncWork();
 	const countAfterDispose = calls2.filter((c) => c.method === "pane.report_agent").length;
 	assert.equal(countAfterDispose, countBeforeDispose, "heartbeat must not fire after dispose");

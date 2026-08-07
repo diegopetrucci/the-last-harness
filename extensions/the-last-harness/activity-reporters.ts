@@ -10,6 +10,8 @@ const HERDR_AGENT = "pi";
 const CMUX_STATUS_KEY = "tlh";
 const DEFAULT_IDLE_DEBOUNCE_MS = 250;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 20000;
+const MIN_HEARTBEAT_INTERVAL_MS = 1000;
+const MAX_HEARTBEAT_INTERVAL_MS = 2_147_483_647;
 const HERDR_SOCKET_ATTEMPT_TIMEOUTS_MS = [500, 1500] as const;
 
 type TimeoutHandle = ReturnType<typeof setTimeout>;
@@ -65,6 +67,17 @@ function parseDurationEnv(env: NodeJS.ProcessEnv, name: string, fallback: number
 	return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+function parseHeartbeatIntervalEnv(env: NodeJS.ProcessEnv): number | undefined {
+	const raw = env.HERDR_TLH_HEARTBEAT_MS;
+	if (raw === undefined || raw.trim().length === 0) return DEFAULT_HEARTBEAT_INTERVAL_MS;
+	const parsed = Number(raw);
+	if (!Number.isFinite(parsed)) return DEFAULT_HEARTBEAT_INTERVAL_MS;
+	if (parsed === 0) return undefined;
+	return parsed >= MIN_HEARTBEAT_INTERVAL_MS && parsed <= MAX_HEARTBEAT_INTERVAL_MS
+		? parsed
+		: DEFAULT_HEARTBEAT_INTERVAL_MS;
+}
+
 function createNoopReporter(): TlhActivityReporter {
 	return {
 		handleSessionStart() {},
@@ -77,6 +90,7 @@ function createNoopReporter(): TlhActivityReporter {
 function createQueuedStateReporter(
 	sendState: StateSender,
 	options: TlhActivityReporterOptions = {},
+	onStateCommitted?: (state: "working" | "idle") => void,
 ): Pick<TlhActivityReporter, "handleSnapshot" | "handleSessionShutdown" | "dispose"> {
 	const timers: TimerApi = {
 		setTimeout: options.timers?.setTimeout ?? setTimeout,
@@ -99,6 +113,7 @@ function createQueuedStateReporter(
 		if (disposed || lastQueuedState === state) return;
 		queuedState = state;
 		lastQueuedState = state;
+		onStateCommitted?.(state);
 		if (!sendInFlight) {
 			void drainQueue();
 		}
@@ -279,7 +294,7 @@ export function createHerdrActivityReporter(options: HerdrActivityReporterOption
 	let rootSession = false;
 	let disposed = false;
 
-	const heartbeatIntervalMs = parseDurationEnv(env, "HERDR_TLH_HEARTBEAT_MS", DEFAULT_HEARTBEAT_INTERVAL_MS);
+	const heartbeatIntervalMs = parseHeartbeatIntervalEnv(env);
 	const heartbeatTimers: TimerApi = {
 		setTimeout: options.timers?.setTimeout ?? setTimeout,
 		clearTimeout: options.timers?.clearTimeout ?? clearTimeout,
@@ -327,7 +342,7 @@ export function createHerdrActivityReporter(options: HerdrActivityReporterOption
 	};
 
 	const scheduleHeartbeat = (): void => {
-		if (heartbeatStopped || !rootSession || disposed) return;
+		if (heartbeatIntervalMs === undefined || heartbeatStopped || !rootSession || disposed) return;
 		heartbeatTimer = heartbeatTimers.setTimeout(() => {
 			heartbeatTimer = undefined;
 			if (heartbeatStopped || !rootSession || disposed) return;
@@ -351,12 +366,11 @@ export function createHerdrActivityReporter(options: HerdrActivityReporterOption
 		(heartbeatTimer as { unref?: () => void }).unref?.();
 	};
 
-	const sendState = (state: "working" | "idle"): Promise<void> => {
-		// Update only when the debounced reporter commits a transition. Setting
-		// this from handleSnapshot would let a heartbeat bypass idle debounce.
-		desiredState = state;
+	const sendState: StateSender = () => {
 		return enqueueOutbound(async () => {
 			if (!rootSession || disposed) return;
+			const state = desiredState;
+			if (state === undefined) return;
 			await sendStateCore(state);
 			lastReportedState = state;
 			if (!heartbeatStarted) {
@@ -371,6 +385,10 @@ export function createHerdrActivityReporter(options: HerdrActivityReporterOption
 	const queuedReporter = createQueuedStateReporter(sendState, {
 		idleDebounceMs: options.idleDebounceMs ?? parseDurationEnv(env, "HERDR_TLH_IDLE_DEBOUNCE_MS", DEFAULT_IDLE_DEBOUNCE_MS),
 		timers: options.timers,
+	}, (state) => {
+		// This callback runs only when the queued reporter commits a transition,
+		// so idle remains debounced while outbound tasks can read the latest state.
+		desiredState = state;
 	});
 
 	return {

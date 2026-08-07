@@ -7,6 +7,8 @@ const HERDR_AGENT = "pi";
 const CMUX_STATUS_KEY = "tlh";
 const DEFAULT_IDLE_DEBOUNCE_MS = 250;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 20000;
+const MIN_HEARTBEAT_INTERVAL_MS = 1000;
+const MAX_HEARTBEAT_INTERVAL_MS = 2_147_483_647;
 const HERDR_SOCKET_ATTEMPT_TIMEOUTS_MS = [500, 1500];
 function parseDurationEnv(env, name, fallback) {
     const raw = env[name];
@@ -14,6 +16,19 @@ function parseDurationEnv(env, name, fallback) {
         return fallback;
     const parsed = Number.parseInt(raw, 10);
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+function parseHeartbeatIntervalEnv(env) {
+    const raw = env.HERDR_TLH_HEARTBEAT_MS;
+    if (raw === undefined || raw.trim().length === 0)
+        return DEFAULT_HEARTBEAT_INTERVAL_MS;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed))
+        return DEFAULT_HEARTBEAT_INTERVAL_MS;
+    if (parsed === 0)
+        return undefined;
+    return parsed >= MIN_HEARTBEAT_INTERVAL_MS && parsed <= MAX_HEARTBEAT_INTERVAL_MS
+        ? parsed
+        : DEFAULT_HEARTBEAT_INTERVAL_MS;
 }
 function createNoopReporter() {
     return {
@@ -23,7 +38,7 @@ function createNoopReporter() {
         dispose() { },
     };
 }
-function createQueuedStateReporter(sendState, options = {}) {
+function createQueuedStateReporter(sendState, options = {}, onStateCommitted) {
     const timers = {
         setTimeout: options.timers?.setTimeout ?? setTimeout,
         clearTimeout: options.timers?.clearTimeout ?? clearTimeout,
@@ -45,6 +60,7 @@ function createQueuedStateReporter(sendState, options = {}) {
             return;
         queuedState = state;
         lastQueuedState = state;
+        onStateCommitted?.(state);
         if (!sendInFlight) {
             void drainQueue();
         }
@@ -213,7 +229,7 @@ export function createHerdrActivityReporter(options = {}) {
     let sessionRef = {};
     let rootSession = false;
     let disposed = false;
-    const heartbeatIntervalMs = parseDurationEnv(env, "HERDR_TLH_HEARTBEAT_MS", DEFAULT_HEARTBEAT_INTERVAL_MS);
+    const heartbeatIntervalMs = parseHeartbeatIntervalEnv(env);
     const heartbeatTimers = {
         setTimeout: options.timers?.setTimeout ?? setTimeout,
         clearTimeout: options.timers?.clearTimeout ?? clearTimeout,
@@ -254,7 +270,7 @@ export function createHerdrActivityReporter(options = {}) {
         }
     };
     const scheduleHeartbeat = () => {
-        if (heartbeatStopped || !rootSession || disposed)
+        if (heartbeatIntervalMs === undefined || heartbeatStopped || !rootSession || disposed)
             return;
         heartbeatTimer = heartbeatTimers.setTimeout(() => {
             heartbeatTimer = undefined;
@@ -276,10 +292,12 @@ export function createHerdrActivityReporter(options = {}) {
         }, heartbeatIntervalMs);
         heartbeatTimer.unref?.();
     };
-    const sendState = (state) => {
-        desiredState = state;
+    const sendState = () => {
         return enqueueOutbound(async () => {
             if (!rootSession || disposed)
+                return;
+            const state = desiredState;
+            if (state === undefined)
                 return;
             await sendStateCore(state);
             lastReportedState = state;
@@ -292,6 +310,8 @@ export function createHerdrActivityReporter(options = {}) {
     const queuedReporter = createQueuedStateReporter(sendState, {
         idleDebounceMs: options.idleDebounceMs ?? parseDurationEnv(env, "HERDR_TLH_IDLE_DEBOUNCE_MS", DEFAULT_IDLE_DEBOUNCE_MS),
         timers: options.timers,
+    }, (state) => {
+        desiredState = state;
     });
     return {
         handleSessionStart(ctx) {
