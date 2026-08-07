@@ -64,4 +64,4 @@ install -m 600 ~/.pi/web-search.json "$target"
 
 If `$target` already exists, review or merge it manually instead of overwriting it by default.
 
-For durable web-search / web-scout decisions, see repo-local Gnosis entries `ywsuwh` and `gbmehw`. For scoped npm pin and source-release details, see [`docs/web-search-fork-release-cadence.md`](web-search-fork-release-cadence.md).
+For durable web-search / web-scout decisions, see repo-local Gnosis entries `ywsuwh` and `gbmehw`. For scoped npm pin and source-release details, see [`docs/web-search-fork-release-cadence.md`](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/web-search-fork-release-cadence.md).

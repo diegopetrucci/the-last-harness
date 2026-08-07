@@ -30,6 +30,41 @@ try {
 }
 
 const files = new Set(packResult.flatMap((entry) => entry.files ?? []).map((entry) => entry.path));
+
+// Exact set of public docs shipped to end users. Update this list (and the
+// package.json files negations) when adding or removing a public doc.
+const PUBLIC_DOCS = [
+	"docs/commands.md",
+	"docs/embedded-subagents.md",
+	"docs/git-attribution.md",
+	"docs/install.md",
+	"docs/integrations.md",
+	"docs/mcp.md",
+	"docs/models.md",
+	"docs/subagents.md",
+	"docs/telemetry.md",
+	"docs/troubleshooting.md",
+	"docs/web-search.md",
+];
+
+// Fail if any packed docs/ path is not on the allowlist (fail-closed guard).
+const unknownDocs = [...files].filter((f) => f.startsWith("docs/") && !PUBLIC_DOCS.includes(f));
+if (unknownDocs.length > 0) {
+	console.error("Published package contains unexpected docs/ files not on the PUBLIC_DOCS allowlist.");
+	console.error("Add them to PUBLIC_DOCS in scripts/check-package-contents.mjs, or exclude them via the package.json files negations.");
+	for (const file of unknownDocs.sort()) console.error(`  - ${file}`);
+	process.exit(1);
+}
+
+// Fail if any allowlisted public doc is missing from the pack.
+const missingDocs = PUBLIC_DOCS.filter((f) => !files.has(f));
+if (missingDocs.length > 0) {
+	console.error("Published package is missing expected public docs/ files from the PUBLIC_DOCS allowlist.");
+	console.error("Restore missing entries via the package.json files negations or ensure the file exists.");
+	for (const file of missingDocs) console.error(`  - ${file}`);
+	process.exit(1);
+}
+
 const forbiddenPrefixes = ["extensions/subagents/test/", "tests/"];
 const forbiddenExactPaths = [
 	"scripts/check-package-contents.mjs",
@@ -58,7 +93,6 @@ const requiredFiles = [
 	"agents/subagents/developer.md",
 	"config/APPEND_SYSTEM.md",
 	"config/settings.defaults.json",
-	"docs/subagents.md",
 	"prompts/analyse-tlh-sessions.md",
 	"themes/the-last-harness.json",
 	"install.sh",
