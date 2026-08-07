@@ -395,7 +395,6 @@ test("tlh doctor reports repairable settings drift without mutating settings or 
 	const settingsPath = join(fixture.agentDir, "settings.json");
 	const driftedSettings = {
 		subagents: {
-			disableBuiltins: false,
 			agentOverrides: {
 				developer: { model: "kept" },
 			},
@@ -483,7 +482,6 @@ test("tlh doctor --repair restores isolated settings drift, preserves user value
 	const settingsPath = join(fixture.agentDir, "settings.json");
 	writeFileSync(settingsPath, JSON.stringify({
 		subagents: {
-			disableBuiltins: false,
 			agentOverrides: {
 				developer: { model: "kept" },
 			},
@@ -506,7 +504,6 @@ test("tlh doctor --repair restores isolated settings drift, preserves user value
 	const backupsAfterRepair = readdirSync(fixture.agentDir).filter((entry) => /^settings\.json\.backup-/.test(entry)).length;
 
 	assert.equal(result.status, 0, output);
-	assert.equal(repairedSettings.subagents.disableBuiltins, true);
 	assert.deepEqual(repairedSettings.subagents.agentDirs, ["tlh/agents/subagents"]);
 	assert.deepEqual(repairedSettings.subagents.agentOverrides, { developer: { model: "kept" } });
 	assert.ok(repairedSettings.packages.includes("git:github.com/example/unmanaged-extension"));
@@ -632,7 +629,6 @@ test("tlh doctor --repair repairs malformed subagents containers without --force
 
 	assert.equal(result.status, 0, output);
 	assert.deepEqual(repairedSettings.subagents, {
-		disableBuiltins: true,
 		agentDirs: ["tlh/agents/subagents"],
 	});
 	assert.ok(repairedSettings.packages.includes("git:github.com/example/unmanaged-extension"));

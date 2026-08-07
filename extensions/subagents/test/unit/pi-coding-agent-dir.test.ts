@@ -171,7 +171,6 @@ Use TLH developer.
 `);
 		writeFile(path.join(agentDir, "settings.json"), JSON.stringify({
 			subagents: {
-				disableBuiltins: true,
 				agentDirs: ["tlh/agents/subagents"],
 			},
 		}, null, 2));

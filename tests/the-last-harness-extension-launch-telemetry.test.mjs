@@ -1409,9 +1409,8 @@ test("registry-accurate: hand-edited generic model: field wins when provider-awa
 // runtime through `subagents.agentDirs`, so the runtime resolves them as USER-scope custom
 // agents via applyCustomAgentOverrides (extensions/subagents/src/agents/agents.ts:1035-1054).
 // That gives a two-rule precedence: project `agentOverrides[name]`, else user
-// `agentOverrides[name]`, else unmodified. `disableBuiltins` / `disableThinking` are read only
-// by applyBuiltinOverrides and apply solely to Pi's native BUILTIN_AGENT_NAMES, so they are
-// deliberately not part of this precedence.
+// `agentOverrides[name]`, else unmodified. `disableBuiltins` and `disableThinking` have been
+// removed from the extension, so only the two-rule custom override precedence above applies.
 
 const { CONFIG_DIR_NAME: PI_CONFIG_DIR_NAME } = await import("@earendil-works/pi-coding-agent");
 

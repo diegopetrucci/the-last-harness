@@ -245,7 +245,6 @@ describe("configured agent directories", () => {
 		fs.mkdirSync(nested, { recursive: true });
 		writeJson(path.join(dir, ".pi", "settings.json"), {
 			subagents: {
-				disableBuiltins: true,
 				agentDirs: ["vendor/subagents"],
 			},
 		});
