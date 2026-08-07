@@ -129,22 +129,6 @@ describe("builtin agent overrides", () => {
 		);
 	});
 
-	it("surfaces malformed global thinking settings", () => {
-		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
-		writeJson(settingsPath, {
-			subagents: {
-				disableThinking: "yes",
-			},
-		});
-
-		assert.throws(
-			() => discoverAgents(tempProject, "both"),
-			(error: unknown) => error instanceof Error
-				&& error.message.includes(settingsPath)
-				&& error.message.includes("disableThinking"),
-		);
-	});
-
 	it("prefers project settings overrides over user settings overrides for custom agents", () => {
 		fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {

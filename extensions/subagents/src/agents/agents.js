@@ -576,15 +576,6 @@ function readSubagentSettings(filePath) {
             throw new Error(`Subagent settings in '${filePath}' have invalid 'disableBuiltins'; expected a boolean.`);
         }
     }
-    let disableThinking;
-    if ("disableThinking" in subagentsObject) {
-        if (typeof subagentsObject.disableThinking === "boolean") {
-            disableThinking = subagentsObject.disableThinking;
-        }
-        else {
-            throw new Error(`Subagent settings in '${filePath}' have invalid 'disableThinking'; expected a boolean.`);
-        }
-    }
     const agentDirs = parseSettingsStringArray(subagentsObject.agentDirs, { filePath, field: "agentDirs" });
     let defaultModel;
     if ("defaultModel" in subagentsObject) {
@@ -599,14 +590,14 @@ function readSubagentSettings(filePath) {
     const parsed = {};
     const agentOverrides = subagentsObject.agentOverrides;
     if (!agentOverrides || typeof agentOverrides !== "object" || Array.isArray(agentOverrides)) {
-        return { overrides: parsed, defaultModel, disableBuiltins, disableThinking, agentDirs, modelScope };
+        return { overrides: parsed, defaultModel, disableBuiltins, agentDirs, modelScope };
     }
     for (const [name, value] of Object.entries(agentOverrides)) {
         const override = parseBuiltinOverrideEntry(name, value, filePath);
         if (override)
             parsed[name] = override;
     }
-    return { overrides: parsed, defaultModel, disableBuiltins, disableThinking, agentDirs, modelScope };
+    return { overrides: parsed, defaultModel, disableBuiltins, agentDirs, modelScope };
 }
 function resolveSubagentDefaultModel(userSettings, projectSettings, userSettingsPath, projectSettingsPath) {
     if (projectSettingsPath && projectSettings.defaultModel !== undefined) {
