@@ -10,8 +10,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { applyThinkingSuffix, getThinkingLevelDropNote } from "../shared/pi-args.ts";
 import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
-import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile, type ChainStep, type ResolvedStepBehavior, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
-import { isDynamicRunnerGroup, isParallelGroup, type RunnerStep, type RunnerSubagentStep } from "../shared/parallel-utils.ts";
+import { buildChainInstructions, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile, type ChainStep, type ResolvedStepBehavior, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
+import { isParallelGroup, type RunnerStep, type RunnerSubagentStep } from "../shared/parallel-utils.ts";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.ts";
@@ -79,7 +79,6 @@ interface AsyncChainParams {
 	sessionFilesByFlatIndex?: (string | undefined)[];
 	thinkingOverridesByFlatIndex?: (AgentConfig["thinking"] | undefined)[];
 	progressDir?: string;
-	dynamicFanoutMaxItems?: number;
 	maxSubagentDepth: number;
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
@@ -155,7 +154,6 @@ export interface AsyncRunnerStepBuildParams {
 	sessionFilesByFlatIndex?: (string | undefined)[];
 	thinkingOverridesByFlatIndex?: (AgentConfig["thinking"] | undefined)[];
 	progressDir?: string;
-	dynamicFanoutMaxItems?: number;
 	maxSubagentDepth: number;
 	worktreeBaseDir?: string;
 	asyncDir: string;
@@ -341,7 +339,6 @@ function dedupeRunnerAttemptNotes(steps: RunnerStep[]): RunnerStep[] {
 	};
 	return steps.map((step) => {
 		if (isParallelGroup(step)) return { ...step, parallel: step.parallel.map(dedupe) };
-		if (isDynamicRunnerGroup(step)) return { ...step, parallel: dedupe(step.parallel) };
 		return dedupe(step);
 	});
 }
@@ -357,9 +354,6 @@ function validateAsyncExecutionAcceptance(params: Pick<AsyncSingleParams, "accep
 					errors.push(...validateAcceptanceInput(task.acceptance, `chain[${stepIndex}].parallel[${taskIndex}].acceptance`));
 					errors.push(...validateDispatchAcceptanceInput(task.acceptance, `chain[${stepIndex}].parallel[${taskIndex}].acceptance`));
 				}
-			} else if (isDynamicParallelStep(step)) {
-				errors.push(...validateAcceptanceInput(step.parallel.acceptance, `chain[${stepIndex}].parallel.acceptance`));
-				errors.push(...validateDispatchAcceptanceInput(step.parallel.acceptance, `chain[${stepIndex}].parallel.acceptance`));
 			}
 		}
 		return errors;
@@ -396,13 +390,11 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 	const originalTask = params.task ?? (firstStep
 		? (isParallelStep(firstStep)
 			? firstStep.parallel[0]?.task
-			: isDynamicParallelStep(firstStep)
-				? firstStep.parallel.task
-				: (firstStep as SequentialStep).task)
+			: (firstStep as SequentialStep).task)
 		: undefined);
 	try {
 		if (params.validateOutputBindings !== false) {
-			validateChainOutputBindings(chain, { maxItems: params.dynamicFanoutMaxItems });
+			validateChainOutputBindings(chain);
 		}
 	} catch (error) {
 		if (error instanceof ChainOutputValidationError) return { error: error.message };
@@ -413,9 +405,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 	for (const s of chain) {
 		const stepAgents = isParallelStep(s)
 			? s.parallel.map((t) => t.agent)
-			: isDynamicParallelStep(s)
-				? [s.parallel.agent]
-				: [(s as SequentialStep).agent];
+			: [(s as SequentialStep).agent];
 		for (const agentName of stepAgents) {
 			if (!agents.find((x) => x.name === agentName)) {
 				return { error: `Unknown agent: ${agentName}` };
@@ -516,7 +506,6 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				task,
 				mode: resultMode,
 				async: true,
-				dynamic: false,
 			}),
 			acceptanceInput: s.acceptance,
 			acceptanceRole: a.acceptanceRole,
@@ -570,40 +559,6 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 					concurrency: s.concurrency,
 					failFast: s.failFast,
 					worktree: s.worktree,
-				};
-			}
-			if (isDynamicParallelStep(s)) {
-				const agent = agents.find((candidate) => candidate.name === s.parallel.agent)!;
-				const behavior = suppressProgressForReadOnlyTask(resolveStepBehavior(agent, buildStepOverrides(s.parallel), chainSkills), s.parallel.task, originalTask);
-				const progressPrecreated = behavior.progress;
-				if (progressPrecreated) {
-					writeInitialProgressFile(progressDir);
-					progressInstructionCreated = true;
-				}
-				const maxItems = s.expand.maxItems ?? params.dynamicFanoutMaxItems ?? 0;
-				const dynamicFlatSteps = Array.from({ length: maxItems }, () => nextFlatStep());
-				const parallel = buildSeqStep(s.parallel as SequentialStep, undefined, undefined, progressPrecreated, behavior, undefined);
-				return {
-					expand: s.expand,
-					parallel,
-					collect: s.collect,
-					concurrency: s.concurrency,
-					failFast: s.failFast,
-					phase: s.phase,
-					label: s.label,
-					sessionFiles: dynamicFlatSteps.map((step) => step.sessionFile),
-					thinkingOverrides: dynamicFlatSteps.map((step) => step.thinkingOverride),
-					effectiveAcceptance: resolveEffectiveAcceptance({
-						explicit: s.acceptance,
-						agentName: s.parallel.agent,
-						acceptanceRole: agent.acceptanceRole,
-						task: parallel.task,
-						mode: resultMode,
-						async: true,
-						dynamicGroup: true,
-					}),
-					acceptanceInput: s.acceptance,
-					acceptanceRole: agent.acceptanceRole,
 				};
 			}
 			const staticStep = nextFlatStep();
@@ -676,7 +631,6 @@ export function executeAsyncChain(
 		thinkingOverridesByFlatIndex,
 		progressDir: params.progressDir ?? (artifactsDir ? path.join(artifactsDir, "progress", id) : resultMode === "parallel" ? path.join(asyncDir, "progress") : undefined),
 		outputBaseDir: artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined,
-		dynamicFanoutMaxItems: params.dynamicFanoutMaxItems,
 		maxSubagentDepth,
 		worktreeBaseDir,
 		asyncDir,
@@ -695,7 +649,6 @@ export function executeAsyncChain(
 	const { steps, runnerCwd, workflowGraph, eventChain } = built;
 	const ticketTasks = chain.flatMap((step) => {
 		if (isParallelStep(step)) return step.parallel;
-		if (isDynamicParallelStep(step)) return [step.parallel];
 		return [step as SequentialStep];
 	});
 	const tkTicketContext = resolveTkTicketTaskContext({ topLevelTask: params.task, runnerCwd, tasks: ticketTasks });
@@ -741,7 +694,6 @@ export function executeAsyncChain(
 				controlIntercomTarget,
 				childIntercomTargets,
 				resultMode,
-				dynamicFanoutMaxItems: params.dynamicFanoutMaxItems,
 				timeoutMs: params.timeoutMs,
 				deadlineAt,
 				globalConcurrencyLimit: params.globalConcurrencyLimit,
@@ -771,8 +723,6 @@ export function executeAsyncChain(
 		const eventFirstStep = eventChain[0];
 		const firstAgents = isParallelStep(eventFirstStep)
 			? eventFirstStep.parallel.map((t) => t.agent)
-			: isDynamicParallelStep(eventFirstStep)
-				? [eventFirstStep.parallel.agent]
 			: [(eventFirstStep as SequentialStep).agent];
 		const parallelGroups: Array<{ start: number; count: number; stepIndex: number }> = [];
 		const flatAgents: string[] = [];
@@ -783,10 +733,6 @@ export function executeAsyncChain(
 				parallelGroups.push({ start: flatStepStart, count: step.parallel.length, stepIndex });
 				flatAgents.push(...step.parallel.map((task) => task.agent));
 				flatStepStart += step.parallel.length;
-			} else if (isDynamicParallelStep(step)) {
-				parallelGroups.push({ start: flatStepStart, count: 1, stepIndex });
-				flatAgents.push(step.parallel.agent);
-				flatStepStart++;
 			} else {
 				flatAgents.push((step as SequentialStep).agent);
 				flatStepStart++;
@@ -838,11 +784,9 @@ export function executeAsyncChain(
 			agents: flatAgents,
 			task: isParallelStep(eventFirstStep)
 				? eventFirstStep.parallel[0]?.task?.slice(0, 50)
-				: isDynamicParallelStep(eventFirstStep)
-					? eventFirstStep.parallel.task?.slice(0, 50)
 				: (eventFirstStep as SequentialStep).task?.slice(0, 50),
 			chain: eventChain.map((s) =>
-				isParallelStep(s) ? `[${s.parallel.map((t) => t.agent).join("+")}]` : isDynamicParallelStep(s) ? `expand:${s.parallel.agent}` : (s as SequentialStep).agent,
+				isParallelStep(s) ? `[${s.parallel.map((t) => t.agent).join("+")}]` : (s as SequentialStep).agent,
 			),
 			chainStepCount: eventChain.length,
 			parallelGroups,
@@ -858,7 +802,7 @@ export function executeAsyncChain(
 
 	const chainDesc = chain
 		.map((s) =>
-			isParallelStep(s) ? `[${s.parallel.map((t) => t.agent).join("+")}]` : isDynamicParallelStep(s) ? `expand:${s.parallel.agent}` : (s as SequentialStep).agent,
+			isParallelStep(s) ? `[${s.parallel.map((t) => t.agent).join("+")}]` : (s as SequentialStep).agent,
 		)
 		.join(" -> ");
 

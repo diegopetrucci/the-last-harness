@@ -17,7 +17,6 @@ import type {
 	AcceptanceVerifyResult,
 	ResolvedAcceptanceConfig,
 	ResolvedAcceptanceGate,
-	SingleResult,
 	SubagentRunMode,
 } from "../../shared/types.ts";
 import { classifyTaskMutationIntent, taskMayMutate } from "./task-intent.ts";
@@ -74,8 +73,6 @@ function inferLegacyLevel(input: {
 	task?: string;
 	mode?: SubagentRunMode;
 	async?: boolean;
-	dynamic?: boolean;
-	dynamicGroup?: boolean;
 }): { level: Exclude<AcceptanceLevel, "auto">; reasons: string[]; criteria: string[]; evidence: AcceptanceEvidenceKind[]; review?: { agent?: string; required?: boolean } } {
 	const agent = input.agentName.toLowerCase();
 	const task = input.task?.toLowerCase() ?? "";
@@ -85,8 +82,6 @@ function inferLegacyLevel(input: {
 	const writeTask = /\b(?:fix|implement|update|write|edit|modify|migrate|release|security|delete|remove|refactor|commit)\b/.test(task)
 		|| /\bworker\b/.test(agent);
 	const risky = Boolean(input.async && writeTask)
-		|| Boolean(input.dynamic)
-		|| Boolean(input.dynamicGroup)
 		|| /\b(?:release|migration|migrate|security|data[- ]loss|destructive|post-review|fix pass)\b/.test(task);
 
 	if (readOnlyAgent || readOnlyTask) {
@@ -100,7 +95,6 @@ function inferLegacyLevel(input: {
 	}
 	if (risky) {
 		reasons.push(input.async ? "async write-capable or risky run" : "risky write-capable run");
-		if (input.dynamic || input.dynamicGroup) reasons.push("dynamic fanout context");
 		return {
 			level: "checked",
 			reasons,
@@ -132,8 +126,6 @@ function inferRoleAwareLevel(input: {
 	task?: string;
 	mode?: SubagentRunMode;
 	async?: boolean;
-	dynamic?: boolean;
-	dynamicGroup?: boolean;
 }): { level: Exclude<AcceptanceLevel, "auto">; reasons: string[]; criteria: string[]; evidence: AcceptanceEvidenceKind[]; review?: { agent?: string; required?: boolean } } {
 	const task = input.task?.toLowerCase() ?? "";
 	const reasons: string[] = [];
@@ -148,13 +140,10 @@ function inferRoleAwareLevel(input: {
 	const writeTask = taskWrites || (input.acceptanceRole === "writer" && !readOnlyTask);
 	const inferredReadOnly = readOnlyTask || (input.acceptanceRole === "read-only" && !taskWrites);
 	const risky = Boolean(input.async && writeTask)
-		|| (Boolean(input.dynamic) && !inferredReadOnly)
-		|| (Boolean(input.dynamicGroup) && !inferredReadOnly)
 		|| (!inferredReadOnly && /\b(?:release|migration|migrate|security|data[- ]loss|destructive|post-review|fix pass)\b/.test(task));
 
 	if (risky) {
 		reasons.push(input.async ? "async write-capable or risky run" : "risky write-capable run");
-		if (input.dynamic || input.dynamicGroup) reasons.push("dynamic fanout context");
 		return {
 			level: "checked",
 			reasons,
@@ -195,8 +184,6 @@ function inferLevel(input: {
 	task?: string;
 	mode?: SubagentRunMode;
 	async?: boolean;
-	dynamic?: boolean;
-	dynamicGroup?: boolean;
 }): { level: Exclude<AcceptanceLevel, "auto">; reasons: string[]; criteria: string[]; evidence: AcceptanceEvidenceKind[]; review?: { agent?: string; required?: boolean } } {
 	return input.acceptanceRole === undefined
 		? inferLegacyLevel(input)
@@ -206,8 +193,6 @@ function inferLevel(input: {
 			task: input.task,
 			mode: input.mode,
 			async: input.async,
-			dynamic: input.dynamic,
-			dynamicGroup: input.dynamicGroup,
 		});
 }
 
@@ -364,8 +349,6 @@ export function resolveEffectiveAcceptance(input: {
 	task?: string;
 	mode?: SubagentRunMode;
 	async?: boolean;
-	dynamic?: boolean;
-	dynamicGroup?: boolean;
 }): ResolvedAcceptanceConfig {
 	const explicit = normalizeAcceptanceInput(input.explicit);
 	const inferred = inferLevel(input);
@@ -896,38 +879,6 @@ function trimOutput(value: string): string | undefined {
 
 function uniqueStrings(items: Array<string | undefined>): string[] {
 	return unique(items.map((item) => item?.trim()).filter((item): item is string => Boolean(item)));
-}
-
-export function aggregateAcceptanceReport(input: {
-	results: Array<Pick<SingleResult, "agent" | "acceptance" | "error" | "exitCode">>;
-	notes?: string;
-}): AcceptanceReport {
-	const childReports = input.results.map((result) => result.acceptance?.childReport).filter((report): report is AcceptanceReport => Boolean(report));
-	const blockers = input.results.filter((result) => result.exitCode !== 0 || result.acceptance?.status === "rejected");
-	const successfulChildren = input.results.length > 0 && blockers.length === 0;
-	return {
-		criteriaSatisfied: [
-			{ id: "criterion-1", status: successfulChildren ? "satisfied" : "not-satisfied", evidence: successfulChildren ? `All ${input.results.length} dynamic child run(s) completed without child or acceptance blockers.` : "Dynamic fanout produced no accepted child evidence." },
-			{ id: "criterion-2", status: successfulChildren ? "satisfied" : "not-satisfied", evidence: successfulChildren ? "Collected child acceptance evidence for aggregate review." : "Dynamic fanout produced no aggregate review evidence." },
-			...input.results.map<NonNullable<AcceptanceReport["criteriaSatisfied"]>[number]>((result, index) => ({
-				id: `child-${index + 1}`,
-				status: result.exitCode === 0 && result.acceptance?.status !== "rejected" ? "satisfied" : "not-satisfied",
-				evidence: `${result.agent}: acceptance ${result.acceptance?.status ?? "unreported"}${result.error ? ` (${result.error})` : ""}`,
-			})),
-		],
-		changedFiles: uniqueStrings(childReports.flatMap((report) => report.changedFiles ?? [])),
-		testsAddedOrUpdated: uniqueStrings(childReports.flatMap((report) => report.testsAddedOrUpdated ?? [])),
-		commandsRun: childReports.flatMap((report) => report.commandsRun ?? []),
-		validationOutput: uniqueStrings(childReports.flatMap((report) => report.validationOutput ?? [])),
-		residualRisks: uniqueStrings([
-			...childReports.flatMap((report) => report.residualRisks ?? []),
-			...blockers.map((result) => `${result.agent}: ${result.error ?? "child or acceptance gate failed"}`),
-		]),
-		noStagedFiles: childReports.length > 0 && childReports.every((report) => report.noStagedFiles === true),
-		reviewFindings: uniqueStrings(childReports.flatMap((report) => report.reviewFindings ?? [])),
-		manualNotes: input.notes ?? `Aggregated acceptance evidence from ${input.results.length} dynamic fanout child run(s).`,
-		notes: input.notes,
-	};
 }
 
 function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, options: { signal?: AbortSignal; abortMessage?: string } = {}): Promise<AcceptanceVerifyResult> {

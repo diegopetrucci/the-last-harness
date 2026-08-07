@@ -137,7 +137,6 @@ extensions/subagents/src/runs/shared/acceptance.js linguist-generated=true
 extensions/subagents/src/runs/shared/chain-outputs.js linguist-generated=true
 extensions/subagents/src/runs/shared/completion-guard.js linguist-generated=true
 extensions/subagents/src/runs/shared/deadline-timer.js linguist-generated=true
-extensions/subagents/src/runs/shared/dynamic-fanout.js linguist-generated=true
 extensions/subagents/src/runs/shared/foreground-interrupts.js linguist-generated=true
 extensions/subagents/src/runs/shared/lifecycle-privacy.js linguist-generated=true
 extensions/subagents/src/runs/shared/lifecycle-state.js linguist-generated=true

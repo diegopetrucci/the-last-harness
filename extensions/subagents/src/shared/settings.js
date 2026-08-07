@@ -10,15 +10,9 @@ function normalizeOutputOverride(output) {
 export function isParallelStep(step) {
     return "parallel" in step && Array.isArray(step.parallel);
 }
-export function isDynamicParallelStep(step) {
-    return "expand" in step && "collect" in step && "parallel" in step && !Array.isArray(step.parallel);
-}
 export function getStepAgents(step) {
     if (isParallelStep(step)) {
         return step.parallel.map((t) => t.agent);
-    }
-    if (isDynamicParallelStep(step)) {
-        return [step.parallel.agent];
     }
     return [step.agent];
 }
@@ -65,9 +59,6 @@ export function resolveChainTemplates(steps) {
                     return task.task;
                 return "{previous}";
             });
-        }
-        if (isDynamicParallelStep(step)) {
-            return step.parallel.task ?? "{previous}";
         }
         const seq = step;
         if (seq.task)

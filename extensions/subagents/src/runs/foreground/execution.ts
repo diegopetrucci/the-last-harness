@@ -1409,8 +1409,6 @@ export async function runSync(
 		task,
 		mode: options.acceptanceContext?.mode ?? "single",
 		async: options.acceptanceContext?.async,
-		dynamic: options.acceptanceContext?.dynamic,
-		dynamicGroup: options.acceptanceContext?.dynamicGroup,
 	});
 	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance);
 	const taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;

@@ -50,29 +50,10 @@ export interface ParallelStepGroup {
 	worktree?: boolean;
 }
 
-export interface DynamicRunnerGroup {
-	expand: import("../../shared/settings.ts").DynamicExpandSpec;
-	parallel: RunnerSubagentStep;
-	collect: import("../../shared/settings.ts").DynamicCollectSpec;
-	concurrency?: number;
-	failFast?: boolean;
-	phase?: string;
-	label?: string;
-	sessionFiles?: (string | undefined)[];
-	thinkingOverrides?: (string | false | undefined)[];
-	effectiveAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
-	acceptanceInput?: import("../../shared/types.ts").AcceptanceInput;
-	acceptanceRole?: import("../../shared/types.ts").AcceptanceRole;
-}
-
-export type RunnerStep = RunnerSubagentStep | ParallelStepGroup | DynamicRunnerGroup;
+export type RunnerStep = RunnerSubagentStep | ParallelStepGroup;
 
 export function isParallelGroup(step: RunnerStep): step is ParallelStepGroup {
 	return "parallel" in step && Array.isArray(step.parallel);
-}
-
-export function isDynamicRunnerGroup(step: RunnerStep): step is DynamicRunnerGroup {
-	return "expand" in step && "collect" in step && "parallel" in step && !Array.isArray((step as { parallel?: unknown }).parallel);
 }
 
 export function flattenSteps(steps: RunnerStep[]): RunnerSubagentStep[] {
@@ -80,8 +61,6 @@ export function flattenSteps(steps: RunnerStep[]): RunnerSubagentStep[] {
 	for (const step of steps) {
 		if (isParallelGroup(step)) {
 			for (const task of step.parallel) flat.push(task);
-		} else if (isDynamicRunnerGroup(step)) {
-			continue;
 		} else {
 			flat.push(step);
 		}

@@ -87,35 +87,6 @@ export interface ParallelTaskItem {
 	acceptance?: AcceptanceInput;
 }
 
-export interface DynamicExpandSpec {
-	from: {
-		output: string;
-		path: string;
-	};
-	item?: string;
-	key?: string;
-	maxItems?: number;
-	onEmpty?: "skip" | "fail";
-}
-
-export type DynamicParallelTemplate = Omit<ParallelTaskItem, "as" | "count">;
-
-export interface DynamicCollectSpec {
-	as: string;
-	outputSchema?: JsonSchemaObject;
-}
-
-export interface DynamicParallelStep {
-	expand: DynamicExpandSpec;
-	parallel: DynamicParallelTemplate;
-	collect: DynamicCollectSpec;
-	concurrency?: number;
-	failFast?: boolean;
-	phase?: string;
-	label?: string;
-	acceptance?: AcceptanceInput;
-}
-
 /** Parallel step: multiple agents running concurrently */
 export interface ParallelStep {
 	parallel: ParallelTaskItem[];
@@ -126,7 +97,7 @@ export interface ParallelStep {
 }
 
 /** Union type for chain steps */
-export type ChainStep = SequentialStep | ParallelStep | DynamicParallelStep;
+export type ChainStep = SequentialStep | ParallelStep;
 
 // =============================================================================
 // Type Guards
@@ -136,17 +107,10 @@ export function isParallelStep(step: ChainStep): step is ParallelStep {
 	return "parallel" in step && Array.isArray((step as ParallelStep).parallel);
 }
 
-export function isDynamicParallelStep(step: ChainStep): step is DynamicParallelStep {
-	return "expand" in step && "collect" in step && "parallel" in step && !Array.isArray((step as { parallel?: unknown }).parallel);
-}
-
 /** Get all agent names in a step (single for sequential, multiple for parallel) */
 export function getStepAgents(step: ChainStep): string[] {
 	if (isParallelStep(step)) {
 		return step.parallel.map((t) => t.agent);
-	}
-	if (isDynamicParallelStep(step)) {
-		return [step.parallel.agent];
 	}
 	return [step.agent];
 }
@@ -216,9 +180,6 @@ export function resolveChainTemplates(
 				// Default for parallel tasks is {previous}
 				return "{previous}";
 			});
-		}
-		if (isDynamicParallelStep(step)) {
-			return step.parallel.task ?? "{previous}";
 		}
 		// Sequential step: existing logic
 		const seq = step as SequentialStep;

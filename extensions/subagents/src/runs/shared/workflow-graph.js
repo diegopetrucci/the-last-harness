@@ -1,4 +1,4 @@
-import { isDynamicParallelStep, isParallelStep } from "../../shared/settings.js";
+import { isParallelStep } from "../../shared/settings.js";
 function normalizeStatus(status) {
     switch (status) {
         case "complete":
@@ -107,63 +107,6 @@ export function buildWorkflowGraphSnapshot(input) {
                 stepIndex,
                 children,
             });
-            continue;
-        }
-        if (isDynamicParallelStep(step)) {
-            const groupId = `step-${stepIndex}`;
-            const materialized = input.dynamicChildren?.[stepIndex] ?? [];
-            const groupOverride = input.dynamicGroupStatuses?.[stepIndex];
-            const children = [];
-            const childStatuses = [];
-            for (let taskIndex = 0; taskIndex < materialized.length; taskIndex++) {
-                const task = materialized[taskIndex];
-                const status = nodeStatus(input, task.flatIndex);
-                childStatuses.push(status);
-                const childId = `step-${stepIndex}-item-${task.itemKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-                const child = {
-                    id: childId,
-                    kind: "agent",
-                    agent: task.agent,
-                    phase: step.parallel.phase ?? step.phase,
-                    label: task.label?.trim() || step.parallel.label?.trim() || `${task.agent} ${task.itemKey}`,
-                    status,
-                    flatIndex: task.flatIndex,
-                    stepIndex,
-                    itemKey: task.itemKey,
-                    outputName: task.outputName,
-                    structured: task.structured,
-                    acceptanceStatus: input.results?.[task.flatIndex]?.acceptance?.status,
-                    error: input.stepStatuses?.[task.flatIndex]?.error ?? input.results?.[task.flatIndex]?.error ?? task.error,
-                };
-                children.push(child);
-                pushPhase(phases, child.phase, childId);
-                if (status === "running" || input.currentFlatIndex === task.flatIndex)
-                    currentNodeId = childId;
-            }
-            const groupStatus = groupOverride?.status ?? (children.length > 0 ? summarizeParallelStatuses(childStatuses) : (input.currentStepIndex === stepIndex ? "running" : "pending"));
-            if (input.currentStepIndex === stepIndex && !currentNodeId)
-                currentNodeId = groupId;
-            nodes.push({
-                id: groupId,
-                kind: "dynamic-parallel-group",
-                label: step.label?.trim() || step.parallel.label?.trim() || `Dynamic fanout (${step.collect.as})`,
-                status: groupStatus,
-                stepIndex,
-                outputName: step.collect.as,
-                structured: Boolean(step.collect.outputSchema),
-                acceptanceStatus: groupOverride?.acceptance?.status,
-                error: groupOverride?.error,
-                dynamic: {
-                    sourceOutput: step.expand.from.output,
-                    sourcePath: step.expand.from.path,
-                    itemName: step.expand.item ?? "item",
-                    maxItems: step.expand.maxItems,
-                    collectAs: step.collect.as,
-                },
-                children,
-            });
-            if (materialized.length > 0)
-                flatIndex = Math.max(flatIndex, ...materialized.map((child) => child.flatIndex + 1));
             continue;
         }
         const seq = step;

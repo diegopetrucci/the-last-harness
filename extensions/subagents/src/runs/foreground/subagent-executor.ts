@@ -20,7 +20,6 @@ import {
 	buildChainInstructions,
 	writeInitialProgressFile,
 	isParallelStep,
-	isDynamicParallelStep,
 	resolveStepBehavior,
 	suppressProgressForReadOnlyTask,
 	type ChainStep,
@@ -1979,9 +1978,6 @@ function validateExecutionAcceptance(params: SubagentParamsLike): string[] {
 				errors.push(...validateAcceptanceInput(task.acceptance, `chain[${stepIndex}].parallel[${taskIndex}].acceptance`));
 				errors.push(...validateDispatchAcceptanceInput(task.acceptance, `chain[${stepIndex}].parallel[${taskIndex}].acceptance`));
 			}
-		} else if (isDynamicParallelStep(step)) {
-			errors.push(...validateAcceptanceInput(step.parallel.acceptance, `chain[${stepIndex}].parallel.acceptance`));
-			errors.push(...validateDispatchAcceptanceInput(step.parallel.acceptance, `chain[${stepIndex}].parallel.acceptance`));
 		}
 	}
 	return errors;
@@ -2185,7 +2181,6 @@ function preflightForkSessionsForStaticTasks(
 	params: SubagentParamsLike,
 	contextPolicy: AgentDefaultContextPolicy,
 	sessionFileForTask: (agentName: string, idx?: number) => string | undefined,
-	dynamicFanoutMaxItems?: number,
 ): void {
 	if (!contextPolicy.usesFork) return;
 	if (params.agent) {
@@ -2206,14 +2201,6 @@ function preflightForkSessionsForStaticTasks(
 				if (shouldForkAgent(contextPolicy, task.agent)) sessionFileForTask(task.agent, flatIndex);
 				flatIndex++;
 			}
-			continue;
-		}
-		if (isDynamicParallelStep(step)) {
-			const maxItems = step.expand.maxItems ?? dynamicFanoutMaxItems ?? 0;
-			if (shouldForkAgent(contextPolicy, step.parallel.agent)) {
-				for (let itemIndex = 0; itemIndex < maxItems; itemIndex++) sessionFileForTask(step.parallel.agent, flatIndex + itemIndex);
-			}
-			flatIndex += maxItems;
 			continue;
 		}
 		const sequential = step as SequentialStep;
@@ -3694,7 +3681,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const childSessionFileForIndex = (idx?: number) =>
 			path.join(sessionDirForIndex(idx), "session.jsonl");
 		try {
-			preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, forkSessionFileForTask, deps.config.chain?.dynamicFanout?.maxItems);
+			preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, forkSessionFileForTask);
 		} catch (error) {
 			return toExecutionErrorResult(effectiveParams, error);
 		}

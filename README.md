@@ -28,7 +28,7 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/dow
 
 ### The architect
 
-![Illustration of the TLH architect-first workflow: a request passes through approval, tk tickets, scout/build/review child sessions, and returns a judged result.](assets/main-tlh-workflow-illustrations/01-main-tlh-workflow.png)
+![Illustration of the TLH architect-first workflow: a request passes through approval, tk tickets, scout/build/review child sessions, and returns a judged result.](https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main/assets/main-tlh-workflow-illustrations/01-main-tlh-workflow.png)
 
 As a software engineer, you will likely spend most of your time with the **architect** primary agent. The architect does not do any change directly, but its purpose is to help you investigate, find issues, plan the work, and so on. It is banned from making (bigger) direct changes, and it will always propose to encode the plan/work into smaller tickets.
 
@@ -121,7 +121,7 @@ After adding files, installing a package, or saving project trust, run `/reload`
 - MCP usage and caveats: [`docs/mcp.md`](docs/mcp.md)
 - Launch telemetry and opt-out: [`docs/telemetry.md`](docs/telemetry.md)
 - Git commit attribution footer, setting, and toggle flow: [`docs/git-attribution.md`](docs/git-attribution.md)
-- Local testing and development: [`docs/local-development.md`](docs/local-development.md)
+- Local testing and development: [`docs/local-development.md`](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/local-development.md)
 - Release notes: [`CHANGELOG.md`](CHANGELOG.md)
-- Maintainer release process: [`docs/releasing.md`](docs/releasing.md)
-- Accepted dependency risks: [`docs/dependency-risk.md`](docs/dependency-risk.md)
+- Maintainer release process: [`docs/releasing.md`](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/releasing.md)
+- Accepted dependency risks: [`docs/dependency-risk.md`](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/dependency-risk.md)
