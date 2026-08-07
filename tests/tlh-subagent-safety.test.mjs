@@ -125,7 +125,7 @@ test("validateSubagentToolInput allows approved execution and forces fresh user 
 
 test("SAFE_SUBAGENT_ACTIONS exposes exactly the supported management contract", () => {
 	// steer was added by explicit policy decision (ts-hl1q); rush is blocked from steer as the compensating control.
-	assert.deepEqual(SAFE_SUBAGENT_ACTIONS, ["list", "get", "models", "status", "interrupt", "doctor", "resume", "steer"]);
+	assert.deepEqual(SAFE_SUBAGENT_ACTIONS, ["list", "get", "status", "interrupt", "doctor", "resume", "steer"]);
 });
 
 test("validateSubagentToolInput allows approved management calls and keeps enabled resume normalization", () => {
@@ -155,7 +155,7 @@ test("validateSubagentToolInput allows approved management calls and keeps enabl
 	assert.equal(resumeBoth.agentScope, "user");
 	assert.equal(resumeBoth.context, "fresh");
 
-	for (const action of ["models", "status", "interrupt", "doctor"]) {
+	for (const action of ["status", "interrupt", "doctor"]) {
 		assertAllowed({ action });
 	}
 });
@@ -364,7 +364,7 @@ test("validateSubagentToolInput blocks v0.34.0 agent-mutation verbs (eject/disab
 	// (rushSteerDelegationReason in primary-agent-runtime.ts) because an opaque steer carries no agent field.
 	assert.deepEqual(
 		[...SAFE_SUBAGENT_ACTIONS],
-		["list", "get", "models", "status", "interrupt", "doctor", "resume", "steer"],
+		["list", "get", "status", "interrupt", "doctor", "resume", "steer"],
 		"SAFE_SUBAGENT_ACTIONS whitelist changed — verify TLH policy before widening",
 	);
 });

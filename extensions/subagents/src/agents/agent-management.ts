@@ -2,16 +2,13 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	type AgentConfig,
 	type AgentScope,
-	BUILTIN_AGENT_NAMES,
 	discoverAgentsAll,
 	frontmatterNameForConfig,
 } from "./agents.ts";
-import { toModelInfo } from "../shared/model-info.ts";
-import { resolveSubagentModelOverride, type ParentModel } from "../runs/shared/model-fallback.ts";
 import type { Details, ExtensionConfig, SubagentToolResult } from "../shared/types.ts";
 
-type ManagementAction = "list" | "get" | "models";
-type ManagementContext = Pick<ExtensionContext, "cwd" | "modelRegistry"> & { model?: ExtensionContext["model"]; config?: ExtensionConfig };
+type ManagementAction = "list" | "get";
+type ManagementContext = Pick<ExtensionContext, "cwd"> & { config?: ExtensionConfig };
 
 interface ManagementParams {
 	action?: string;
@@ -105,87 +102,6 @@ export function handleList(params: ManagementParams, ctx: ManagementContext): Su
 	return result(lines.join("\n"));
 }
 
-function formatModelSource(agent: AgentConfig, currentModel: ParentModel | undefined): string {
-	if (agent.override && agent.model !== agent.override.base.model) {
-		return `${agent.override.scope} override`;
-	}
-	if (agent.modelSource?.type === "subagents.defaultModel" && agent.model === agent.modelSource.model) {
-		return `${agent.modelSource.scope} defaultModel`;
-	}
-	if (agent.model) return "builtin agent config";
-	if (currentModel) return "inherits current session model";
-	return "inherit requested, but no current session model is available";
-}
-
-function handleModels(params: ManagementParams, ctx: ManagementContext): SubagentToolResult<Details> {
-	const requestedAgent = params.agent?.trim();
-	if (requestedAgent && !(BUILTIN_AGENT_NAMES as readonly string[]).includes(requestedAgent)) {
-		return result(`Builtin agent '${requestedAgent}' not found. Available: ${BUILTIN_AGENT_NAMES.join(", ")}.`, true);
-	}
-
-	const discovered = discoverAgentsAll(ctx.cwd);
-	const builtinByName = new Map(discovered.builtin.map((agent) => [agent.name, agent]));
-	const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
-	const currentModel = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined;
-	const preferredProvider = ctx.model?.provider;
-	const names = requestedAgent ? [requestedAgent] : [...BUILTIN_AGENT_NAMES];
-
-	if (requestedAgent) {
-		const agent = builtinByName.get(requestedAgent);
-		if (!agent) return result(`Builtin agent '${requestedAgent}' not found.`, true);
-		const resolvedModel = resolveSubagentModelOverride(agent.model, currentModel, availableModels, preferredProvider);
-		const lines = [
-			"Builtin subagent model",
-			"",
-			`Agent: ${requestedAgent}`,
-			"Effective model:",
-			`  ${resolvedModel ?? "(unresolved)"}`,
-			`Source: ${formatModelSource(agent, currentModel)}`,
-		];
-		if (agent.override) {
-			lines.push("Override file:");
-			lines.push(`  ${agent.override.path}`);
-		}
-		if (agent.model && resolvedModel && agent.model !== resolvedModel) {
-			lines.push("Requested model setting:");
-			lines.push(`  ${agent.model}`);
-		}
-		if (agent.disabled) lines.push("Disabled: true");
-		lines.push("Current session model:");
-		lines.push(`  ${currentModel ? `${currentModel.provider}/${currentModel.id}` : "(unavailable)"}`);
-		return result(lines.join("\n"));
-	}
-
-	const lines = [
-		"Builtin subagent models",
-		"",
-		"Current session model:",
-		`  ${currentModel ? `${currentModel.provider}/${currentModel.id}` : "(unavailable)"}`,
-		"",
-	];
-
-	for (const name of names) {
-		const agent = builtinByName.get(name);
-		if (!agent) {
-			lines.push(name);
-			lines.push("  model:");
-			lines.push("    (builtin definition not found)");
-			lines.push("  source: missing");
-			lines.push("");
-			continue;
-		}
-		const resolvedModel = resolveSubagentModelOverride(agent.model, currentModel, availableModels, preferredProvider);
-		const source = `${formatModelSource(agent, currentModel)}${agent.disabled ? "; disabled" : ""}`;
-		lines.push(name);
-		lines.push("  model:");
-		lines.push(`    ${resolvedModel ?? "(unresolved)"}`);
-		lines.push(`  source: ${source}`);
-		lines.push("");
-	}
-
-	return result(lines.join("\n"));
-}
-
 function handleGet(params: ManagementParams, ctx: ManagementContext): SubagentToolResult<Details> {
 	if (params.chainName) return unsupportedSavedChainResult("Use 'agent' for action='get'; omit chainName.");
 	if (!params.agent) return result("Specify 'agent' for get.", true);
@@ -197,14 +113,13 @@ function handleGet(params: ManagementParams, ctx: ManagementContext): SubagentTo
 }
 
 // handleCreate through handleReset removed: these seven write verbs are unreachable — the
-// tool's 'action' schema enum (schemas.ts) admits only list/get/models/status/interrupt/
+// tool's 'action' schema enum (schemas.ts) admits only list/get/status/interrupt/
 // resume/steer/doctor.
 
 export function handleManagementAction(action: string, params: ManagementParams, ctx: ManagementContext): SubagentToolResult<Details> {
 	switch (action as ManagementAction) {
 		case "list": return handleList(params, ctx);
 		case "get": return handleGet(params, ctx);
-		case "models": return handleModels(params, ctx);
 		default: return result(`Unknown action: ${action}`, true);
 	}
 }

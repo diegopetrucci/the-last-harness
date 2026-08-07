@@ -1,6 +1,4 @@
-import { BUILTIN_AGENT_NAMES, discoverAgentsAll, frontmatterNameForConfig, } from "./agents.js";
-import { toModelInfo } from "../shared/model-info.js";
-import { resolveSubagentModelOverride } from "../runs/shared/model-fallback.js";
+import { discoverAgentsAll, frontmatterNameForConfig, } from "./agents.js";
 function result(text, isError = false) {
     return { content: [{ type: "text", text }], isError, details: { mode: "management", results: [] } };
 }
@@ -95,84 +93,6 @@ export function handleList(params, ctx) {
     ];
     return result(lines.join("\n"));
 }
-function formatModelSource(agent, currentModel) {
-    if (agent.override && agent.model !== agent.override.base.model) {
-        return `${agent.override.scope} override`;
-    }
-    if (agent.modelSource?.type === "subagents.defaultModel" && agent.model === agent.modelSource.model) {
-        return `${agent.modelSource.scope} defaultModel`;
-    }
-    if (agent.model)
-        return "builtin agent config";
-    if (currentModel)
-        return "inherits current session model";
-    return "inherit requested, but no current session model is available";
-}
-function handleModels(params, ctx) {
-    const requestedAgent = params.agent?.trim();
-    if (requestedAgent && !BUILTIN_AGENT_NAMES.includes(requestedAgent)) {
-        return result(`Builtin agent '${requestedAgent}' not found. Available: ${BUILTIN_AGENT_NAMES.join(", ")}.`, true);
-    }
-    const discovered = discoverAgentsAll(ctx.cwd);
-    const builtinByName = new Map(discovered.builtin.map((agent) => [agent.name, agent]));
-    const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
-    const currentModel = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined;
-    const preferredProvider = ctx.model?.provider;
-    const names = requestedAgent ? [requestedAgent] : [...BUILTIN_AGENT_NAMES];
-    if (requestedAgent) {
-        const agent = builtinByName.get(requestedAgent);
-        if (!agent)
-            return result(`Builtin agent '${requestedAgent}' not found.`, true);
-        const resolvedModel = resolveSubagentModelOverride(agent.model, currentModel, availableModels, preferredProvider);
-        const lines = [
-            "Builtin subagent model",
-            "",
-            `Agent: ${requestedAgent}`,
-            "Effective model:",
-            `  ${resolvedModel ?? "(unresolved)"}`,
-            `Source: ${formatModelSource(agent, currentModel)}`,
-        ];
-        if (agent.override) {
-            lines.push("Override file:");
-            lines.push(`  ${agent.override.path}`);
-        }
-        if (agent.model && resolvedModel && agent.model !== resolvedModel) {
-            lines.push("Requested model setting:");
-            lines.push(`  ${agent.model}`);
-        }
-        if (agent.disabled)
-            lines.push("Disabled: true");
-        lines.push("Current session model:");
-        lines.push(`  ${currentModel ? `${currentModel.provider}/${currentModel.id}` : "(unavailable)"}`);
-        return result(lines.join("\n"));
-    }
-    const lines = [
-        "Builtin subagent models",
-        "",
-        "Current session model:",
-        `  ${currentModel ? `${currentModel.provider}/${currentModel.id}` : "(unavailable)"}`,
-        "",
-    ];
-    for (const name of names) {
-        const agent = builtinByName.get(name);
-        if (!agent) {
-            lines.push(name);
-            lines.push("  model:");
-            lines.push("    (builtin definition not found)");
-            lines.push("  source: missing");
-            lines.push("");
-            continue;
-        }
-        const resolvedModel = resolveSubagentModelOverride(agent.model, currentModel, availableModels, preferredProvider);
-        const source = `${formatModelSource(agent, currentModel)}${agent.disabled ? "; disabled" : ""}`;
-        lines.push(name);
-        lines.push("  model:");
-        lines.push(`    ${resolvedModel ?? "(unresolved)"}`);
-        lines.push(`  source: ${source}`);
-        lines.push("");
-    }
-    return result(lines.join("\n"));
-}
 function handleGet(params, ctx) {
     if (params.chainName)
         return unsupportedSavedChainResult("Use 'agent' for action='get'; omit chainName.");
@@ -188,7 +108,6 @@ export function handleManagementAction(action, params, ctx) {
     switch (action) {
         case "list": return handleList(params, ctx);
         case "get": return handleGet(params, ctx);
-        case "models": return handleModels(params, ctx);
         default: return result(`Unknown action: ${action}`, true);
     }
 }

@@ -246,9 +246,9 @@ function readTlhProjectSubagentOverrides(cwd: string): Record<string, SubagentOv
  * and never merges fields across scopes, so a project entry setting only `thinking` also discards
  * a user entry's `model`. Mirror that exactly.
  *
- * `subagents.disableBuiltins` / `disableThinking` deliberately play no part here: both are read
- * only by applyBuiltinOverrides (agents.ts:895-906, applied via applyGlobalThinking at 903-939)
- * and apply solely to Pi's native BUILTIN_AGENT_NAMES (agents.ts:27-36), never to custom agents.
+ * `disableBuiltins` and `disableThinking` have been removed from the extension and play no part
+ * here: TLH's agents are resolved as custom agents via `agentDirs`, so only the two-rule custom
+ * override precedence above applies.
  */
 function resolveEffectiveSubagentOverrides(
 	userOverrides: Record<string, SubagentOverrideEntry> | undefined,

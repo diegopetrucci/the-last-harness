@@ -130,7 +130,7 @@ describe("SubagentParams schema", () => {
 		const actionSchema = SubagentParams?.properties?.action;
 		assert.ok(actionSchema, "action schema should exist");
 		assert.equal(actionSchema.type, "string");
-		assert.deepEqual(actionSchema.enum, ["list", "get", "models", "status", "interrupt", "resume", "steer", "doctor"]);
+		assert.deepEqual(actionSchema.enum, ["list", "get", "status", "interrupt", "resume", "steer", "doctor"]);
 		const description = String(actionSchema.description ?? "");
 		assert.match(description, /Management action/);
 		assert.match(description, /list/);
@@ -327,7 +327,6 @@ describe("SubagentParams schema", () => {
 			{ action: "steer", id: "run-1", message: "adjust approach", index: 0 },
 			{ action: "list" },
 			{ action: "get", agent: "developer" },
-			{ action: "models" },
 			{ action: "doctor" },
 			{ agent: "worker", task: "Fix", output: "out.md" },
 			{ agent: "worker", task: "Fix", output: false },
@@ -407,7 +406,7 @@ describe("SubagentParams schema", () => {
 		const actionEnum = (schema.properties as Record<string, JsonSchemaNode>)?.action?.enum;
 		assert.deepEqual(
 			actionEnum,
-			["list", "get", "models", "status", "interrupt", "resume", "steer", "doctor"],
+			["list", "get", "status", "interrupt", "resume", "steer", "doctor"],
 			"action enum mismatch",
 		);
 		assert.equal(schema.additionalProperties, false, "root must have additionalProperties: false");
@@ -434,7 +433,7 @@ describe("SubagentParams schema", () => {
 		}
 		const removedActions = [
 			"create", "update", "delete", "eject", "disable", "enable",
-			"reset", "append-step", "schedule-list",
+			"reset", "append-step", "schedule-list", "models",
 		];
 		for (const action of removedActions) {
 			assert.equal(validator.Check({ action }), false, `action '${action}' should be rejected (not in enum)`);
