@@ -566,7 +566,7 @@ function buildChainStepSpans(details: Pick<Details, "chainAgents" | "workflowGra
 		let flatCursor = 0;
 		for (const node of details.workflowGraph.nodes) {
 			if (node.stepIndex === undefined) continue;
-			if (node.kind === "parallel-group" || node.kind === "dynamic-parallel-group") {
+			if (node.kind === "parallel-group") {
 				const childFlatIndexes = (node.children ?? [])
 					.map((child) => child.flatIndex)
 					.filter((value): value is number => typeof value === "number");

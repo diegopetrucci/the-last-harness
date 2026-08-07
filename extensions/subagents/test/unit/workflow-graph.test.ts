@@ -104,31 +104,4 @@ describe("workflow graph snapshots", () => {
 		assert.equal(pausedThenFailed.nodes[0]?.status, "failed");
 	});
 
-	it("uses dynamic group status overrides for empty or aggregate-failure fanout states", () => {
-		const steps = [{
-			expand: { from: { output: "targets", path: "/items" }, maxItems: 4 },
-			parallel: { agent: "reviewer", task: "Review {item}" },
-			collect: { as: "reviews" },
-		}];
-
-		const emptySkip = buildWorkflowGraphSnapshot({
-			runId: "run-dynamic-empty",
-			steps,
-			dynamicGroupStatuses: { 0: { status: "completed" } },
-		});
-		assert.equal(emptySkip.nodes[0]?.kind, "dynamic-parallel-group");
-		assert.equal(emptySkip.nodes[0]?.status, "completed");
-		assert.deepEqual(emptySkip.nodes[0]?.children, []);
-
-		const collectFailure = buildWorkflowGraphSnapshot({
-			runId: "run-dynamic-collect-fail",
-			steps,
-			dynamicChildren: { 0: [{ agent: "reviewer", flatIndex: 0, itemKey: "a" }] },
-			results: [{ exitCode: 0 }],
-			dynamicGroupStatuses: { 0: { status: "failed", error: "Collected output validation failed" } },
-		});
-		assert.equal(collectFailure.nodes[0]?.status, "failed");
-		assert.match(collectFailure.nodes[0]?.error ?? "", /Collected output validation failed/);
-		assert.equal(collectFailure.nodes[0]?.children?.[0]?.status, "completed");
-	});
 });

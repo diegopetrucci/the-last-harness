@@ -1,18 +1,12 @@
 export function isParallelGroup(step) {
     return "parallel" in step && Array.isArray(step.parallel);
 }
-export function isDynamicRunnerGroup(step) {
-    return "expand" in step && "collect" in step && "parallel" in step && !Array.isArray(step.parallel);
-}
 export function flattenSteps(steps) {
     const flat = [];
     for (const step of steps) {
         if (isParallelGroup(step)) {
             for (const task of step.parallel)
                 flat.push(task);
-        }
-        else if (isDynamicRunnerGroup(step)) {
-            continue;
         }
         else {
             flat.push(step);

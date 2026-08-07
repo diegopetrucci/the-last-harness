@@ -14,7 +14,7 @@ import { resolveSubagentModelOverride } from "../shared/model-fallback.js";
 import { aggregateParallelOutputs } from "../shared/parallel-utils.js";
 import { clearForegroundInterrupt, registerForegroundInterrupt } from "../shared/foreground-interrupts.js";
 import { recordRun } from "../shared/run-history.js";
-import { buildChainInstructions, writeInitialProgressFile, isParallelStep, isDynamicParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, } from "../../shared/settings.js";
+import { buildChainInstructions, writeInitialProgressFile, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, } from "../../shared/settings.js";
 import { normalizeSkillInput } from "../../agents/skills.js";
 import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.js";
 import { executeAsyncChain, executeAsyncSingle, formatAsyncStartedMessage, isAsyncAvailable } from "../background/async-execution.js";
@@ -1771,10 +1771,6 @@ function validateExecutionAcceptance(params) {
                 errors.push(...validateDispatchAcceptanceInput(task.acceptance, `chain[${stepIndex}].parallel[${taskIndex}].acceptance`));
             }
         }
-        else if (isDynamicParallelStep(step)) {
-            errors.push(...validateAcceptanceInput(step.parallel.acceptance, `chain[${stepIndex}].parallel.acceptance`));
-            errors.push(...validateDispatchAcceptanceInput(step.parallel.acceptance, `chain[${stepIndex}].parallel.acceptance`));
-        }
     }
     return errors;
 }
@@ -1955,7 +1951,7 @@ function toExecutionErrorResult(params, error) {
         details: { mode: getRequestedModeLabel(params), results: [] },
     }, params.context);
 }
-function preflightForkSessionsForStaticTasks(params, contextPolicy, sessionFileForTask, dynamicFanoutMaxItems) {
+function preflightForkSessionsForStaticTasks(params, contextPolicy, sessionFileForTask) {
     if (!contextPolicy.usesFork)
         return;
     if (params.agent) {
@@ -1980,15 +1976,6 @@ function preflightForkSessionsForStaticTasks(params, contextPolicy, sessionFileF
                     sessionFileForTask(task.agent, flatIndex);
                 flatIndex++;
             }
-            continue;
-        }
-        if (isDynamicParallelStep(step)) {
-            const maxItems = step.expand.maxItems ?? dynamicFanoutMaxItems ?? 0;
-            if (shouldForkAgent(contextPolicy, step.parallel.agent)) {
-                for (let itemIndex = 0; itemIndex < maxItems; itemIndex++)
-                    sessionFileForTask(step.parallel.agent, flatIndex + itemIndex);
-            }
-            flatIndex += maxItems;
             continue;
         }
         const sequential = step;
@@ -3287,7 +3274,7 @@ export function createSubagentExecutor(deps) {
         const childSessionFileForTask = (agentName, idx) => forkSessionFileForTask(agentName, idx) ?? path.join(sessionDirForIndex(idx), "session.jsonl");
         const childSessionFileForIndex = (idx) => path.join(sessionDirForIndex(idx), "session.jsonl");
         try {
-            preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, forkSessionFileForTask, deps.config.chain?.dynamicFanout?.maxItems);
+            preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, forkSessionFileForTask);
         }
         catch (error) {
             return toExecutionErrorResult(effectiveParams, error);

@@ -125,17 +125,6 @@ describe("reviewed dispatch route preflight", () => {
 				id: `reviewed-chain-static-${Date.now().toString(36)}`,
 				chain: [{ parallel: [{ agent: "worker", task: "Implement fix", acceptance: "reviewed" }] }],
 			},
-			{
-				id: `reviewed-chain-dynamic-${Date.now().toString(36)}`,
-				chain: [
-					{ agent: "producer", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
-					{
-						expand: { from: { output: "targets", path: "/items" }, maxItems: 1 },
-						parallel: { agent: "reviewer", task: "Review {target.path}", acceptance: { level: "reviewed", review: false } },
-						collect: { as: "reviews" },
-					},
-				],
-			},
 		];
 
 		for (const testCase of chainCases) {

@@ -722,41 +722,6 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		});
 	});
 
-	it("dynamic chain collect requests fail closed before child collection starts", async () => {
-		const { executor, events } = makeExecutor({ agents: [makeAgent("scout"), makeAgent("reviewer")] });
-
-		await expectUnsupportedChainRequest(executor, "chain-dynamic-collect-schema-native-failure", {
-			chain: [
-				{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
-				{
-					expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 4 },
-					parallel: { agent: "reviewer", task: "Review {item.path}", outputSchema: { type: "object" } },
-					collect: { as: "reviews", outputSchema: { type: "object" } },
-					concurrency: 1,
-				},
-			],
-		});
-		assert.equal(events.emitted.some((entry) => entry.channel === "subagent:result-intercom"), false);
-	});
-
-	it("dynamic chain aggregate acceptance requests fail closed before verification runs", async () => {
-		const { executor, events } = makeExecutor({ agents: [makeAgent("scout"), makeAgent("reviewer")] });
-
-		await expectUnsupportedChainRequest(executor, "chain-dynamic-aggregate-acceptance-native-failure", {
-			chain: [
-				{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
-				{
-					expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 4 },
-					parallel: { agent: "reviewer", task: "Review {item.path}", outputSchema: { type: "object" } },
-					collect: { as: "reviews" },
-					acceptance: { level: "verified", verify: [{ id: "dynamic-group-verify", command: "node -e \"process.exit(7)\"" }] },
-					concurrency: 1,
-				},
-			],
-		});
-		assert.equal(events.emitted.some((entry) => entry.channel === "subagent:result-intercom"), false);
-	});
-
 	it("failed chain foreground requests fail closed before any child can fail", async () => {
 		const { executor, events } = makeExecutor({ agents: [makeAgent("a"), makeAgent("b")] });
 
