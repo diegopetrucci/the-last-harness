@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- While a subagent is reasoning (no active tool), the live-progress display now shows a whimsical phrase from a pool of ~200 entries.
+
 ## [0.34.0] - 2026-08-07
 
 ### Added

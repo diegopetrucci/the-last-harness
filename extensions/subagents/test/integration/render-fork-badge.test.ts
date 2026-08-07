@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { finalizeSingleOutput } from "../../src/runs/shared/single-output.ts";
 import { liveDetailShortcutDisplay } from "../../src/shared/subagent-shortcuts.ts";
 import { truncateOutput } from "../../src/shared/types.ts";
+import { WHIMSICAL_THINKING_PHRASES, whimsicalThinkingPhrase } from "../../src/tui/whimsical-phrases.ts";
 
 type RenderSubagentResult = (
 	result: {
@@ -38,6 +39,10 @@ const emptyUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, 
 
 function firstGrapheme(text: string): string {
 	return Array.from(text.trimStart())[0] ?? "";
+}
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function withTerminalWidth<T>(columns: number, fn: () => T): T {
@@ -354,9 +359,7 @@ describe("renderSubagentResult fork indicator", () => {
 
 		const text = widget.render(120).join("\n");
 		assert.match(text, /^✓ reviewer/);
-		assert.match(text, /⟳ 2/);
-		assert.match(text, /3 tool uses/);
-		assert.match(text, /1\.2k token/);
+		assert.doesNotMatch(text, /⟳ 2|3 tool uses|1\.2k token|1\.5s/);
 		assert.match(text, /⎿  Done/);
 		assert.match(text, /session: \/tmp\/session\.jsonl/);
 	});
@@ -426,6 +429,71 @@ describe("renderSubagentResult fork indicator", () => {
 		const expandedText = renderSubagentResult!(result, { expanded: true }, theme).render(120).join("\n");
 		assert.match(expandedText, /Output: \/tmp\/configured-output\.md/);
 		assert.equal((expandedText.match(/Artifacts: \/tmp\/reviewer_output\.md/g) ?? []).length, 1);
+	});
+
+	it("cycles the full attributed thinking pool per turn and suppresses it for active tools", () => {
+		assert.equal(WHIMSICAL_THINKING_PHRASES.length, 453);
+		const firstCycle = WHIMSICAL_THINKING_PHRASES.map((_, turn) => whimsicalThinkingPhrase(turn));
+		const repeatedCycle = WHIMSICAL_THINKING_PHRASES.map((_, turn) => whimsicalThinkingPhrase(turn));
+		assert.deepEqual(repeatedCycle, firstCycle);
+		assert.notDeepEqual(firstCycle, [...WHIMSICAL_THINKING_PHRASES]);
+		assert.notEqual(firstCycle[0], WHIMSICAL_THINKING_PHRASES[0]);
+		assert.equal(new Set(firstCycle).size, WHIMSICAL_THINKING_PHRASES.length);
+		assert.equal(whimsicalThinkingPhrase(WHIMSICAL_THINKING_PHRASES.length), firstCycle[0]);
+
+		const snapshotNow = 10_000;
+		const makeResult = (turnCount: number, currentTool?: string, activityState?: "needs_attention" | "active_long_running") => ({
+			content: [{ type: "text" as const, text: "(running...)" }],
+			details: {
+				mode: "single" as const,
+				results: [{
+					agent: "reviewer",
+					task: "review",
+					exitCode: 0,
+					messages: [],
+					usage: { ...emptyUsage, turns: turnCount },
+					progress: {
+						index: 0,
+						agent: "reviewer",
+						status: "running" as const,
+						task: "review",
+						lastActivityAt: snapshotNow,
+						...(activityState ? { activityState } : {}),
+						...(currentTool ? { currentTool, currentToolStartedAt: snapshotNow - 2_000 } : {}),
+						recentTools: [],
+						recentOutput: [],
+						toolCount: 3,
+						tokens: 1_200,
+						durationMs: 4_000,
+						turnCount,
+					},
+				}],
+			},
+		});
+
+		const compact = renderSubagentResult!(makeResult(0), { expanded: false }, theme).render(120).join("\n");
+		assert.match(compact, new RegExp(`⎿  ${escapeRegExp(whimsicalThinkingPhrase(0))}`));
+		assert.ok(compact.indexOf(whimsicalThinkingPhrase(0)) < compact.indexOf("active now"));
+		assert.doesNotMatch(compact, /3 tool uses|1\.2k token|4\.0s|⟳ 0/);
+
+		const next = renderSubagentResult!(makeResult(1), { expanded: false }, theme).render(120).join("\n");
+		assert.match(next, new RegExp(escapeRegExp(whimsicalThinkingPhrase(1))));
+		assert.doesNotMatch(next, new RegExp(escapeRegExp(whimsicalThinkingPhrase(0))));
+
+		const activeTool = renderSubagentResult!(makeResult(0, "read"), { expanded: false }, theme).render(120).join("\n");
+		assert.match(activeTool, /⎿  read \| 4\.0s/);
+		assert.match(activeTool, /active 2s ago/);
+		assert.doesNotMatch(activeTool, new RegExp(escapeRegExp(whimsicalThinkingPhrase(0))));
+
+		const expanded = renderSubagentResult!(makeResult(2), { expanded: true }, theme).render(120).join("\n");
+		assert.match(expanded, /3 tools, 1\.2k tok, 4\.0s/);
+		assert.match(expanded, /2 turns/);
+
+		for (const activityState of ["needs_attention", "active_long_running"] as const) {
+			const warning = renderSubagentResult!(makeResult(0, undefined, activityState), { expanded: false }, theme).render(120).join("\n");
+			assert.doesNotMatch(warning, new RegExp(escapeRegExp(whimsicalThinkingPhrase(0))));
+			assert.match(warning, activityState === "needs_attention" ? /no activity for/ : /active but long-running/);
+		}
 	});
 
 	it("keeps running compact result output stable when progress is unchanged", async () => {
