@@ -230,7 +230,7 @@ test("runtime TypeScript helper tracks generated extension runtime modules", () 
 
 test("dedicated subagents runtime target compiles all production modules and rewrites relative TypeScript imports", () => {
 	const sourcePaths = globSync("extensions/subagents/src/**/*.ts", { cwd: repoRoot }).filter((path) => !path.endsWith(".d.ts"));
-	assert.equal(sourcePaths.length, 95);
+	assert.equal(sourcePaths.length, 96);
 	for (const sourcePath of sourcePaths) {
 		const outputPath = sourcePath.replace(/\.ts$/, ".js");
 		assert.equal(existsSync(join(repoRoot, outputPath)), true, `${outputPath} should exist`);

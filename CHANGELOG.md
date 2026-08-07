@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Compact subagent thinking status: while a subagent is reasoning (no active tool), the live-progress display now shows a whimsical phrase from a pool of ~200 entries alongside a freshness timestamp. The phrase pool is adapted from `mitsuhiko/agent-stuff` under Apache-2.0 (see `licenses/agent-stuff-Apache-2.0.txt`). The compact activity renderer (`compactProgressActivityLines`) now returns an array so the current tool line and the live status line are shown together rather than one replacing the other. Progressive and parallel widget views use `fitInlineThinkingActivity` for width-aware truncation; health-state warnings remain displayed via `fitInlineActivity`.
+
 ### Removed
 
 - Removed the `subagents.disableBuiltins` setting end-to-end. It was consumed by nothing after PR #461 deleted the builtin subagent definitions; TLH was still writing it on every installer run for no reason. The setting is now pruned from existing user profiles by a one-time migration in `scripts/merge-settings.mjs` (following the established `scrubGnosisSettings` / `scrubRtkSettings` pattern), dropped from `config/settings.defaults.json`, and removed from the extension source (`SubagentSettings`, the parse/validate block in `agents.ts`). `isInstallerOwnedObjectContainer` still returns `true` for `subagents` so `agentDirs` management is unaffected.

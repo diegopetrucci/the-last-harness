@@ -60,7 +60,18 @@ test("compact multi-result rendering shows total cost in the header", () => {
 	}, { expanded: false }, theme as any));
 
 	assert.match(text, /2\/2 done/);
-	assert.match(text, /in:30 out:12 \$0\.0400/);
+	assert.doesNotMatch(text, /in:30 out:12|token|tool use|duration/);
+	assert.match(text, /\$0\.0400/);
+
+	const expanded = componentText(renderSubagentResult({
+		content: [{ type: "text", text: "done" }],
+		details: {
+			mode: "parallel",
+			results: [result("scout", "a"), result("reviewer", "b")],
+			totalCost: { inputTokens: 30, outputTokens: 12, costUsd: 0.04 },
+		},
+	}, { expanded: true }, theme as any));
+	assert.match(expanded, /in:30 out:12 \$0\.0400/);
 });
 
 test("static sequential and static parallel chain rendering keep existing labels", () => {

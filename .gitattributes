@@ -186,3 +186,4 @@ extensions/subagents/src/slash/slash-commands.js linguist-generated=true
 extensions/subagents/src/slash/slash-live-state.js linguist-generated=true
 extensions/subagents/src/tui/render-helpers.js linguist-generated=true
 extensions/subagents/src/tui/render.js linguist-generated=true
+extensions/subagents/src/tui/whimsical-phrases.js linguist-generated=true
