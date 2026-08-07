@@ -16,6 +16,7 @@ import { installTlhPackageUpdateNotificationOverride } from "./the-last-harness/
 import { registerTlhPrimaryAgentRuntime } from "./the-last-harness/primary-agent-runtime.js";
 import { collectStartupResources } from "./the-last-harness/resources.js";
 import { getTlhStartupTip } from "./the-last-harness/startup-tip.js";
+import { registerSubagentSettingsCommand } from "./the-last-harness/subagent-settings.js";
 import { createLazyTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage-facade.js";
 import { registerLazyTlhTicketWorkflowUi } from "./the-last-harness/ticket-workflow-ui-facade.js";
 import { getCachedTlhUsageWeeklyVisibility, refreshCachedTlhUsageWeeklyVisibility, registerUsageCommand, } from "./the-last-harness/usage-limits.js";
@@ -175,6 +176,7 @@ export default function theLastHarness(pi) {
     });
     registerEffortCommand(pi, primaryAgentRuntime);
     registerExperimentalCommand(pi);
+    registerSubagentSettingsCommand(pi);
     registerLazyTlhTicketWorkflowUi(pi);
     pi.registerCommand("review", {
         description: REVIEW_COMMAND_DESCRIPTION,

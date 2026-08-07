@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "./structured-output.js";
 import { TEMP_ROOT_DIR } from "../../shared/types.js";
-import { THINKING_LEVELS } from "../../shared/model-info.js";
+import { findModelInfo, getSupportedThinkingLevels, THINKING_LEVELS } from "../../shared/model-info.js";
 import { TOOL_BUDGET_ENV, encodeToolBudgetEnv } from "./tool-budget.js";
 const TASK_ARG_LIMIT = 8000;
 const RUNTIME_EXTENSION_SUFFIX = path.extname(fileURLToPath(import.meta.url)) === ".ts" ? ".ts" : ".js";
@@ -33,13 +33,35 @@ function sanitizeSupervisorChannelSegment(value) {
 function supervisorChannelDir(runId, agent, childIndex) {
     return path.join(TEMP_ROOT_DIR, "supervisor-channels", `${sanitizeSupervisorChannelSegment(runId)}-${sanitizeSupervisorChannelSegment(agent)}-${childIndex}`);
 }
-export function applyThinkingSuffix(model, thinking, replaceExisting = false) {
+function shouldDropThinkingLevel(modelInfo, thinking) {
+    if (!modelInfo)
+        return false;
+    if (modelInfo.reasoning === false)
+        return thinking !== "off";
+    if (!modelInfo.thinkingLevelMap)
+        return false;
+    return !getSupportedThinkingLevels(modelInfo).includes(thinking);
+}
+export function getThinkingLevelDropNote(model, thinking, replaceExisting = false, options) {
+    if (!model || !thinking || replaceExisting)
+        return undefined;
+    const colonIdx = model.lastIndexOf(":");
+    if (colonIdx !== -1 && THINKING_LEVELS.some((level) => level === model.substring(colonIdx + 1)))
+        return undefined;
+    const modelInfo = findModelInfo(model, options?.availableModels, options?.preferredModelProvider);
+    if (!shouldDropThinkingLevel(modelInfo, thinking))
+        return undefined;
+    return `Notice: Thinking level "${thinking}" was dropped for model "${model}" because the model registry does not advertise support.`;
+}
+export function applyThinkingSuffix(model, thinking, replaceExisting = false, options) {
     if (!model || !thinking)
         return model;
     const colonIdx = model.lastIndexOf(":");
     if (colonIdx !== -1 && THINKING_LEVELS.some((level) => level === model.substring(colonIdx + 1))) {
         return replaceExisting ? `${model.slice(0, colonIdx)}:${thinking}` : model;
     }
+    if (!replaceExisting && getThinkingLevelDropNote(model, thinking, false, options))
+        return model;
     return `${model}:${thinking}`;
 }
 export function buildPiArgs(input) {
@@ -57,7 +79,10 @@ export function buildPiArgs(input) {
             args.push("--session-dir", input.sessionDir);
         }
     }
-    const modelArg = applyThinkingSuffix(input.model, input.thinking);
+    const modelArg = applyThinkingSuffix(input.model, input.thinking, false, {
+        availableModels: input.availableModels,
+        preferredModelProvider: input.preferredModelProvider,
+    });
     if (modelArg) {
         args.push("--model", modelArg);
     }

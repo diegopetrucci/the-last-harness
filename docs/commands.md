@@ -53,6 +53,7 @@ These commands are registered by the TLH extension bundled with this profile.
 | `/tickets` | Show the read-only tk-backed TLH ticket workflow details for the current repo/worktree |
 | `/review` | Open an interactive code-review mode picker (requires the architect primary agent) |
 | `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
+| `/subagent-settings` | Show or edit persisted TLH bundled minor-agent model and effort overrides |
 | `/tlh-changelog` | Show TLH release notes from the packaged `CHANGELOG.md` |
 | `/tokens` | Generate and open a single no-flags local HTML token-spend report for the current session |
 | `/what-consumed-my-session-limit-and-tokens` | Generate and open a local HTML session-limit usage report across all in-window TLH sessions |
@@ -68,6 +69,66 @@ Both `/thinking` and `/effort` are subject to the active primary-agent thinking 
 ### `/experimental`
 
 `/experimental` currently registers `delta-follow-up-reviews`, `ci-failure-investigation`, and `embedded-subagents`. In the interactive TLH TUI, running `/experimental` with no arguments opens a picker that shows current feature state and lets you toggle flags; outside the TUI it falls back to the status list. Typed subcommands remain available: `/experimental list`, `/experimental status [feature]`, `/experimental enable <feature>`, `/experimental disable <feature>`, and `/experimental toggle <feature>`. `contrarian` is a bundled default minor subagent for sparing pre-ticket planning stress-tests when a proposed change genuinely warrants an adversarial brief; it is not part of the `/experimental` toggle surface, not the routine `code-reviewer` diff pass, and not the broader `oracle` second-opinion path. `delta-follow-up-reviews` is an opt-in flag that adds architect and `code-reviewer` guidance for delta-scoped follow-up reviews after fixes. `ci-failure-investigation` is an opt-in flag that lets the architect primary agent do read-only failed CI/status-check investigation after TLH opens a PR, then summarize and ask whether to proceed before any edits, commits, pushes, reruns, PR changes, or other follow-up changes. `embedded-subagents` is a default-off flag that gates architect-initiated delegation to trusted user-owned `embedded.<slug>` subagents placed in the isolated TLH profile. A new session or explicit `/reload` recaptures flag state; enabling or disabling the flag does not affect the active runtime until one of those activation boundaries. Enable it with `/experimental enable embedded-subagents` and undo it with `/experimental disable embedded-subagents`, then start a new session or run `/reload`. Only valid regular non-symlink `.md` agent definitions with `package: embedded`, a valid `name`, and a non-empty `description` authorize; `.chain.md` files do not. See [embedded-subagents.md](embedded-subagents.md) for the full setup guide. All three flags are disabled by default. Stale `run-tests-last` values in `tlh.experimental.enabledFeatures` do not re-enable retired behavior.
+
+### `/subagent-settings`
+
+`/subagent-settings` configures persistent model and effort overrides for the eight bundled TLH minor-agent roles: `code-reviewer`, `contrarian`, `developer`, `diff-summarizer`, `librarian`, `oracle`, `repo-scout`, and `web-scout`. These roles are dispatched through TLH's first-party `extensions/subagents` runtime; they are not a separately installed extension.
+
+#### Grammar
+
+```text
+/subagent-settings
+/subagent-settings status [role]
+/subagent-settings set <role> [model <provider/id>] [effort <off|minimal|low|medium|high|xhigh|max>]
+/subagent-settings reset <role> [model|effort]
+/subagent-settings reset-all
+```
+
+With no arguments, the command opens the picker in the interactive TUI. In a non-TUI or headless context, it reports status instead. `set` requires at least one `model` or `effort` pair; the two pairs can be supplied in either order. A model must be currently available and should be written as `provider/id`; do not put an effort suffix on the model override—use the separate `effort` field. `status` shows every bundled role, or one role when supplied. `reset <role>` clears both saved fields for that role, while the field-specific forms clear only `model` or `effort`.
+
+#### Storage and backups
+
+Overrides are global settings stored under `subagents.agentOverrides` in the active isolated TLH profile's `settings.json`. The default profile is `~/.the-last-harness/agent/settings.json`; when `PI_CODING_AGENT_DIR` is set, the profile it names is used instead. The TLH wrapper sets this variable for the isolated profile. Writes are refused when the selected directory is the normal Pi profile or otherwise outside the isolated TLH profile, so the command will not modify normal user configuration. The user-facing `effort` field is stored as the runtime's `thinking` field.
+
+TLH preserves unrelated settings and per-role keys. When a write replaces existing settings content, it first creates a collision-safe `settings.json.bak-*` backup (the notification shows the exact backup path); a new settings file with no previous content has no backup to report. To roll back a whole settings change, restore the desired backup over the active profile's `settings.json`, for example:
+
+```sh
+cp /path/to/settings.json.bak-<timestamp> /path/to/settings.json
+```
+
+Use the path shown by TLH, or substitute the directory selected by `PI_CODING_AGENT_DIR` for the default path above.
+
+#### Dispatch precedence and warnings
+
+For each subagent dispatch, the effective choices are resolved from highest to lowest precedence:
+
+1. A direct dispatch with an explicit model that already has a recognized `:effort` suffix is left unchanged; the suffix wins over any saved effort.
+2. A direct dispatch with an explicit model but no recognized suffix keeps that model. A saved role effort may be appended when the model supports it; a saved role model pin does not replace the caller's explicit model.
+3. When the dispatch has no explicit model, stored `/subagent-settings` values are resolved before bundled defaults. An available stored model pin is used, and a stored effort is applied when supported. A stored `model: false` means inherit the current session model and then apply the stored effort. A stored effort without a model pin applies to the resolved role model.
+4. With no applicable stored override, TLH uses the bundled provider-aware role defaults. `code-reviewer`, `oracle`, and `contrarian` prefer an available opposite provider for independence; the other bundled roles generally follow the current session provider when TLH injects defaults.
+
+A saved model pin that is no longer available is not silently replaced: TLH warns that `TLH saved minor-agent model override "<model>" for <role> is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults. Update it with /subagent-settings set <role> model <provider/id> or clear it with /subagent-settings reset <role> model.` During dispatch, the subagents runtime combines caller-supplied `fallbackModels` with fallback models from the role's saved `subagents.agentOverrides.<role>.fallbackModels` field or bundled agent frontmatter. Because TLH cannot observe every runtime fallback source, this warning does not claim that a dispatch will fail closed.
+
+Stored effort overrides are capability-checked on each dispatch. When a recognized stored value is unsupported, TLH neutralizes it with the provider-resolved bundled level when possible and warns `TLH stored minor-agent effort "<level>" is not supported by <provider/id>; using bundled defaults for this run.` If the bundled level is unavailable but `off` is supported, it warns `TLH stored minor-agent effort "<level>" is not supported by <provider/id>; using explicit off for this run.` A nonstandard stored value uses the same two outcomes: `TLH ignored unsupported stored minor-agent effort "<value>" for <role>; using bundled defaults for this run.` or `TLH ignored unsupported stored minor-agent effort "<value>" for <role>; using explicit off for this run.`
+
+Generated opposite-provider fallbacks use the corresponding wording with `generated fallback <provider/id>` and `that fallback will use`, for example: `TLH stored minor-agent effort "<level>" is not supported by generated fallback <provider/id>; that fallback will use bundled defaults for this run.` or `TLH stored minor-agent effort "<level>" is not supported by generated fallback <provider/id>; that fallback will use explicit off for this run.` If neither bundled nor `off` is supported, TLH warns `TLH stored minor-agent effort "<level>" is not supported by <provider/id>; no supported suffix can neutralize it, so the subagents runtime will drop the stored value for this run.` If no model can be resolved for a nonstandard stored value, it warns `TLH ignored unsupported stored minor-agent effort "<value>" for <role>; no supported model suffix could be emitted, so the subagents runtime will drop the value for a known model and fail open for an unknown model if this role is dispatched.` When no bundled or current-session model is available for a thinking-only override, TLH warns `TLH stored minor-agent effort "<value>" for <role> could not be capability-checked because no bundled or current-session model is available; the subagents runtime will apply its capability gate if the model resolves and fail open otherwise.` The runtime gate resolves the known-model case by dropping unsupported values rather than emitting them; unknown or unresolvable models remain fail-open capability uncertainty, not residual known-model application.
+
+#### Provider independence and headless use
+
+A fixed model override cannot guarantee provider independence for `code-reviewer`, `oracle`, or `contrarian`. In a UI-enabled session, TLH asks for confirmation with the warning `Provider independence is not guaranteed when a fixed model override is configured for this role.` Status output repeats that warning for a saved fixed model. In a headless or otherwise non-UI context, TLH refuses the write because it cannot show the confirmation, reporting `Cannot confirm the independence warning for <role> in this mode.`
+
+#### Supported effort values and undo
+
+The complete set of values accepted by `/subagent-settings set ... effort ...` is `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. The command validates a new value against the currently effective model before writing. A stored value is applied when the resolved model advertises support; `max` specifically requires a `thinkingLevelMap` entry advertising it. If a model later stops supporting a stored value, TLH warns and uses bundled effort or explicit `off` when possible; if neither is supported, the runtime drops a known-unsupported value instead of emitting it, while unknown or unresolvable models fail open. `max` is a live value in bundled behavior too: the bundled `developer` role already configures `max` for its OpenAI default.
+
+To undo a persistent change:
+
+- use `/subagent-settings reset <role> model` or `reset <role> effort` to clear one field;
+- use `/subagent-settings reset <role>` to clear both `model` and `thinking` for one bundled role while preserving any other keys in that role's entry;
+- use `/subagent-settings reset-all` to clear only `model` and `thinking` for bundled roles. It preserves other keys on those role entries and leaves unknown/non-TLH entries under `subagents.agentOverrides` untouched; or
+- restore the `settings.json.bak-*` file shown after a write by copying it back over the active `settings.json`.
+
+The reset commands clean up empty role and override containers but do not remove unrelated settings. When diagnosing whether a saved setting took effect, `/subagents-doctor` shows first-party runtime diagnostics and `/subagents-fleet` shows active dispatch status; neither command changes these overrides.
 
 ### `/tickets`
 

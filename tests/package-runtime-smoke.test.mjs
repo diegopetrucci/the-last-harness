@@ -92,7 +92,7 @@ Return the deterministic faux child marker exactly.
 	]
 		.map((path) => path.replace(/\.ts$/, ".js"))
 		.sort();
-	assert.equal(generatedExtensionPaths.length, 165);
+	assert.equal(generatedExtensionPaths.length, 166);
 	for (const generatedPath of generatedExtensionPaths) {
 		assert.ok(packedPaths.has(generatedPath), `npm pack omitted generated extension module ${generatedPath}`);
 	}

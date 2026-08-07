@@ -1064,7 +1064,7 @@ async function runSingleStep(
 			: [undefined];
 	const attemptedModels: string[] = [];
 	const modelAttempts: ModelAttempt[] = [];
-	const attemptNotes: string[] = [];
+	const attemptNotes: string[] = [...(step.attemptNotes ?? [])];
 	const eventsPath = path.join(path.dirname(ctx.outputFile), "events.jsonl");
 	let finalResult: RunPiStreamingResult | undefined;
 	let finalOutputSnapshot: SingleOutputSnapshot | undefined;
@@ -2700,8 +2700,11 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				continue;
 			}
 
+			let dynamicAttemptNotesEmitted = false;
 			const dynamicSteps = materialized.parallel.map((task, itemIndex) => {
 				const thinkingOverride = step.thinkingOverrides?.[itemIndex];
+				const attemptNotes = thinkingOverride === undefined && !dynamicAttemptNotesEmitted ? step.parallel.attemptNotes : undefined;
+				if (attemptNotes?.length) dynamicAttemptNotesEmitted = true;
 				const model = thinkingOverride !== undefined ? applyThinkingSuffix(step.parallel.model, thinkingOverride, true) : step.parallel.model;
 				const thinking = thinkingOverride !== undefined ? resolveEffectiveThinking(model, thinkingOverride) : undefined;
 				const outputPath = step.parallel.outputPath;
@@ -2709,6 +2712,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				const materializedTask = taskText;
 				return {
 					...step.parallel,
+					...(attemptNotes ? { attemptNotes } : { attemptNotes: undefined }),
 					task: materializedTask,
 					effectiveAcceptance: resolveEffectiveAcceptance({
 						explicit: step.parallel.acceptanceInput,
@@ -2842,6 +2846,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				statusPayload.outputFile = path.join(asyncDir, `output-${fi}.log`);
 				statusPayload.lastActivityAt = taskStartTime;
 				statusPayload.lastUpdate = taskStartTime;
+				appendRecentStepOutput(statusPayload.steps[fi], task.attemptNotes ?? []);
 				writeStatusPayload();
 				appendJsonl(eventsPath, JSON.stringify({ type: "subagent.step.started", ts: taskStartTime, runId: id, stepIndex: fi, agent: task.agent }));
 				flushPendingStepSteers(fi);
@@ -3163,6 +3168,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						statusPayload.outputFile = path.join(asyncDir, `output-${fi}.log`);
 						statusPayload.lastActivityAt = taskStartTime;
 						statusPayload.lastUpdate = taskStartTime;
+						appendRecentStepOutput(statusPayload.steps[fi], task.attemptNotes ?? []);
 						writeStatusPayload();
 
 						appendJsonl(eventsPath, JSON.stringify({
@@ -3383,6 +3389,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			statusPayload.lastActivityAt = stepStartTime;
 			statusPayload.lastUpdate = stepStartTime;
 			statusPayload.outputFile = path.join(asyncDir, `output-${flatIndex}.log`);
+			appendRecentStepOutput(statusPayload.steps[flatIndex], seqStep.attemptNotes ?? []);
 			writeStatusPayload();
 
 			appendJsonl(eventsPath, JSON.stringify({

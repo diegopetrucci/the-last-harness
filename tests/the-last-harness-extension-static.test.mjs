@@ -726,7 +726,10 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
 	assert.doesNotMatch(primaryRuntimeSource, /pi\.registerCommand\("harness"/);
 	assert.match(toolCall, /if \(event\.toolName === "bash"\) \{[\s\S]*resolveTlhCommitAttribution\(getTlhGlobalSettings\(ctx\.cwd\)\.tlh\?\.attribution\)/);
 	assert.match(toolCall, /getTlhGitCommitAttributionBlockReason\(event\.input\.command, commitAttributionState\)/);
-	assert.match(toolCall, /applyProviderAwareSubagentModels\(event\.input, subagentsByName, getUnfilteredAvailableModels\(ctx\.modelRegistry\), ctx\.model\?\.provider, ctx\.model\)/);
+	assert.match(
+		toolCall,
+		/applyProviderAwareSubagentModels\(\s*event\.input,\s*subagentsByName,\s*getUnfilteredAvailableModels\(ctx\.modelRegistry\),\s*ctx\.model\?\.provider,\s*ctx\.model,\s*\{\s*agentOverrides: subagentOverrides,\s*onWarning:/,
+	);
 	assert.match(toolCall, /const selection = currentPrimaryAgentSelection\(\)/);
 	assert.match(toolCall, /const allowedSubagents = allowedSubagentsForExperimentalConfig\(getTlhGlobalSettings\(ctx\.cwd\)\.tlh\?\.experimental\)/);
 	assert.match(

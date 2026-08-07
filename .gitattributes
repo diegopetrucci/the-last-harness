@@ -74,6 +74,7 @@ extensions/the-last-harness/session-limit-report.js linguist-generated=true
 extensions/the-last-harness/session-limit-report-scan.js linguist-generated=true
 extensions/the-last-harness/shell-parser.js linguist-generated=true
 extensions/the-last-harness/startup-tip.js linguist-generated=true
+extensions/the-last-harness/subagent-settings.js linguist-generated=true
 extensions/the-last-harness/subscription-usage-facade.js linguist-generated=true
 extensions/the-last-harness/subscription-usage.js linguist-generated=true
 extensions/the-last-harness/thinking.js linguist-generated=true
