@@ -127,12 +127,12 @@ export function makeMinimalCtx(cwd: string): MinimalCtx {
  */
 export async function tryImport<T>(specifier: string): Promise<T> {
 	if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
-		return await import(specifier) as T;
+		return (await import(specifier)) as T;
 	}
 	const projectRoot = path.resolve(__dirname, "..", "..");
 	const abs = path.resolve(projectRoot, specifier);
 	const url = pathToFileURL(abs).href;
-	return await import(url) as T;
+	return (await import(url)) as T;
 }
 
 export const events = {

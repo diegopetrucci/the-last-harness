@@ -106,9 +106,9 @@ export function createSubagentLiveDetailController(initialExpanded = false): Sub
 		},
 		registerToolRow: (toolCallId: string, rendererState: object, invalidate: () => void) => {
 			if (
-				activeProbe?.generation === generation
-				&& activeProbe.toolCallId === toolCallId
-				&& activeProbe.rendererState === rendererState
+				activeProbe?.generation === generation &&
+				activeProbe.toolCallId === toolCallId &&
+				activeProbe.rendererState === rendererState
 			) {
 				// The deferred live invalidator synchronously re-enters here. Replacing
 				// the map entry releases the detached component and its callback.
@@ -141,10 +141,12 @@ export function createSubagentLiveDetailController(initialExpanded = false): Sub
 export function formatShortcutDisplay(key: string): string {
 	return key
 		.split("/")
-		.map((binding) => binding
-			.split("+")
-			.map((part) => part.length === 1 ? part.toUpperCase() : `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
-			.join("+"))
+		.map((binding) =>
+			binding
+				.split("+")
+				.map((part) => (part.length === 1 ? part.toUpperCase() : `${part.charAt(0).toUpperCase()}${part.slice(1)}`))
+				.join("+"),
+		)
 		.join("/");
 }
 

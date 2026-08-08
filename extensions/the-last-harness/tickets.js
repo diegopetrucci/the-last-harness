@@ -27,7 +27,11 @@ function uniqueTicketCandidates(candidates) {
 }
 function ticketCommandCandidates(settings, agentDir) {
     const agentRoot = resolve(expandHomePath(agentDir));
-    return uniqueTicketCandidates([configuredTicketInstallPath(settings.tlh?.tickets), join(agentRoot, "bin", "tk"), "tk"]);
+    return uniqueTicketCandidates([
+        configuredTicketInstallPath(settings.tlh?.tickets),
+        join(agentRoot, "bin", "tk"),
+        "tk",
+    ]);
 }
 function hasTkCommandName(candidate) {
     return candidate === "tk" || basename(candidate) === "tk";
@@ -41,7 +45,10 @@ export function validateTlhTicketCommand(command) {
 }
 function prependProcessPath(dir) {
     const currentPath = process.env.PATH || "";
-    const entries = currentPath.split(delimiter).filter(Boolean).filter((entry) => entry !== dir);
+    const entries = currentPath
+        .split(delimiter)
+        .filter(Boolean)
+        .filter((entry) => entry !== dir);
     process.env.PATH = [dir, ...entries].join(delimiter);
 }
 function resolveGitWorktreeRoot(cwd) {

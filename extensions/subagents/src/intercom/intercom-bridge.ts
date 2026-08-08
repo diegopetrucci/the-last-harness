@@ -64,7 +64,13 @@ export function resolveIntercomSessionTarget(sessionName: string | undefined, se
 }
 
 function sanitizeIntercomTargetPart(value: string): string {
-	return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "agent";
+	return (
+		value
+			.trim()
+			.toLowerCase()
+			.replace(/[^a-z0-9_-]+/g, "-")
+			.replace(/^-+|-+$/g, "") || "agent"
+	);
 }
 
 export function resolveSubagentIntercomTarget(runId: string, agent: string, index?: number): string {
@@ -94,13 +100,14 @@ function expandTilde(filePath: string): string {
 function resolveInstructionTemplate(instructionFile: string, settingsDir: string): string {
 	if (!instructionFile) return DEFAULT_INTERCOM_BRIDGE_TEMPLATE;
 	const expandedPath = expandTilde(instructionFile);
-	const resolvedPath = path.isAbsolute(expandedPath)
-		? expandedPath
-		: path.resolve(settingsDir, expandedPath);
+	const resolvedPath = path.isAbsolute(expandedPath) ? expandedPath : path.resolve(settingsDir, expandedPath);
 	try {
 		return fs.readFileSync(resolvedPath, "utf-8");
 	} catch (error) {
-		console.warn(`Failed to read intercom bridge instructionFile at '${resolvedPath}'. Using default instructions.`, error);
+		console.warn(
+			`Failed to read intercom bridge instructionFile at '${resolvedPath}'. Using default instructions.`,
+			error,
+		);
 		return DEFAULT_INTERCOM_BRIDGE_TEMPLATE;
 	}
 }
@@ -111,7 +118,11 @@ function buildIntercomBridgeInstruction(orchestratorTarget: string, template: st
 	return `${INTERCOM_BRIDGE_MARKER}\n${instruction}`;
 }
 
-function inactiveReason(mode: IntercomBridgeMode, context: "fresh" | "fork" | undefined, orchestratorTarget: string | undefined): string | undefined {
+function inactiveReason(
+	mode: IntercomBridgeMode,
+	context: "fresh" | "fork" | undefined,
+	orchestratorTarget: string | undefined,
+): string | undefined {
 	if (mode === "off") return "bridge mode is off";
 	if (mode === "fork-only" && context !== "fork") return "bridge mode is fork-only and context is not fork";
 	if (!orchestratorTarget) return "orchestrator target is not available";
@@ -154,7 +165,10 @@ export function resolveIntercomBridge(input: ResolveIntercomBridgeInput): Interc
 		mode,
 		orchestratorTarget,
 		extensionDir: NATIVE_INTERCOM_EXTENSION_DIR,
-		instruction: buildIntercomBridgeInstruction(orchestratorTarget, resolveInstructionTemplate(config.instructionFile, settingsDir)),
+		instruction: buildIntercomBridgeInstruction(
+			orchestratorTarget,
+			resolveInstructionTemplate(config.instructionFile, settingsDir),
+		),
 	};
 }
 

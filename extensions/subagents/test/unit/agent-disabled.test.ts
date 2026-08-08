@@ -70,10 +70,11 @@ describe("builtin agent disabling", () => {
 
 		assert.throws(
 			() => discoverAgents(tempProject, "both"),
-			(error: unknown) => error instanceof Error
-				&& error.message.includes(settingsPath)
-				&& error.message.includes("reviewer")
-				&& error.message.includes("disabled"),
+			(error: unknown) =>
+				error instanceof Error &&
+				error.message.includes(settingsPath) &&
+				error.message.includes("reviewer") &&
+				error.message.includes("disabled"),
 		);
 	});
 
@@ -90,8 +91,14 @@ describe("builtin agent disabling", () => {
 
 		const projectScoped = discoverAgents(tempProject, "project").agents;
 		assert.ok(projectScoped.find((agent) => agent.name === "project-helper" && agent.source === "project"));
-		assert.equal(projectScoped.find((agent) => agent.name === "user-helper"), undefined);
-		assert.equal(projectScoped.find((agent) => agent.name === "configured-user-helper"), undefined);
+		assert.equal(
+			projectScoped.find((agent) => agent.name === "user-helper"),
+			undefined,
+		);
+		assert.equal(
+			projectScoped.find((agent) => agent.name === "configured-user-helper"),
+			undefined,
+		);
 	});
 
 	it("custom extra-agent-dir, user, and project agents all discover in a clean environment", () => {
@@ -105,20 +112,9 @@ describe("builtin agent disabling", () => {
 		assert.ok(discovered.find((agent) => agent.name === "tlh-helper" && agent.source === "user"));
 		assert.ok(discovered.find((agent) => agent.name === "user-helper" && agent.source === "user"));
 		assert.ok(discovered.find((agent) => agent.name === "project-helper" && agent.source === "project"));
-		assert.equal(discovered.some((agent) => agent.source === "builtin"), false);
-	});
-
-	it("surfaces malformed disableBuiltins values instead of silently ignoring them", () => {
-		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
-		writeJson(settingsPath, {
-			subagents: { disableBuiltins: "true" },
-		});
-
-		assert.throws(
-			() => discoverAgents(tempProject, "both"),
-			(error: unknown) => error instanceof Error
-				&& error.message.includes(settingsPath)
-				&& error.message.includes("disableBuiltins"),
+		assert.equal(
+			discovered.some((agent) => agent.source === "builtin"),
+			false,
 		);
 	});
 

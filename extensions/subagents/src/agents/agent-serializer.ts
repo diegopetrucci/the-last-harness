@@ -54,12 +54,18 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 	if (config.model || preserve("model")) lines.push(`model: ${config.model ?? ""}`);
 	const fallbackModelsValue = joinComma(config.fallbackModels);
 	if (fallbackModelsValue || preserve("fallbackModels")) lines.push(`fallbackModels: ${fallbackModelsValue ?? ""}`);
-	if ((config.thinking && (config.thinking !== "off" || preserve("thinking"))) || (!config.thinking && preserve("thinking"))) {
+	if (
+		(config.thinking && (config.thinking !== "off" || preserve("thinking"))) ||
+		(!config.thinking && preserve("thinking"))
+	) {
 		lines.push(`thinking: ${config.thinking ?? ""}`);
 	}
-	if (!preservingExistingFrontmatter || preserve("systemPromptMode")) lines.push(`systemPromptMode: ${config.systemPromptMode}`);
-	if (!preservingExistingFrontmatter || preserve("inheritProjectContext")) lines.push(`inheritProjectContext: ${config.inheritProjectContext ? "true" : "false"}`);
-	if (!preservingExistingFrontmatter || preserve("inheritSkills")) lines.push(`inheritSkills: ${config.inheritSkills ? "true" : "false"}`);
+	if (!preservingExistingFrontmatter || preserve("systemPromptMode"))
+		lines.push(`systemPromptMode: ${config.systemPromptMode}`);
+	if (!preservingExistingFrontmatter || preserve("inheritProjectContext"))
+		lines.push(`inheritProjectContext: ${config.inheritProjectContext ? "true" : "false"}`);
+	if (!preservingExistingFrontmatter || preserve("inheritSkills"))
+		lines.push(`inheritSkills: ${config.inheritSkills ? "true" : "false"}`);
 	if (config.defaultContext || preserve("defaultContext")) lines.push(`defaultContext: ${config.defaultContext ?? ""}`);
 	if (config.acceptanceRole || preserve("acceptanceRole")) lines.push(`acceptanceRole: ${config.acceptanceRole ?? ""}`);
 
@@ -92,7 +98,9 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 		lines.push("maxExecutionTimeMs: ");
 	}
 	if (config.completionGuard === false || preserve("completionGuard")) {
-		lines.push(`completionGuard: ${config.completionGuard === undefined ? "" : config.completionGuard ? "true" : "false"}`);
+		lines.push(
+			`completionGuard: ${config.completionGuard === undefined ? "" : config.completionGuard ? "true" : "false"}`,
+		);
 	}
 	if (config.toolBudget || preserve("toolBudget")) {
 		lines.push(`toolBudget: ${config.toolBudget ? JSON.stringify(config.toolBudget) : ""}`);

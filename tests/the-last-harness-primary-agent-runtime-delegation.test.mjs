@@ -68,7 +68,10 @@ test("tool_call caps targeted scout execution timeouts without affecting stricte
 		},
 		{
 			name: "overly long timeout is capped",
-			event: { toolName: "subagent", input: { agent: "librarian", task: "Research upstream docs", timeoutMs: 420_000 } },
+			event: {
+				toolName: "subagent",
+				input: { agent: "librarian", task: "Research upstream docs", timeoutMs: 420_000 },
+			},
 			expectedTimeoutMs: SCOUT_RUN_MAX_TIMEOUT_MS,
 		},
 		{
@@ -157,7 +160,9 @@ test("tool_call leaves every resume timeout unchanged while still normalizing sc
 test("enabled primary mode allows contrarian by default and stale contrarian settings stay harmless", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const subagentMetadata = [contrarianMetadata()];
-	const branchEntries = [{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }];
+	const branchEntries = [
+		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
+	];
 	const blockedCtx = createToolCallContext(branchEntries, undefined, {
 		cwd: fixture.cwd,
 		modelRegistry: {
@@ -237,8 +242,14 @@ test("enabled primary mode normalizes safe management list/get/resume inputs and
 		input: { action: "resume", id: "run-456", message: "Continue the approved ticket.", agentScope: "both" },
 	};
 	const blockedGetEvent = { toolName: "subagent", input: { action: "get", agentScope: "project" } };
-	const blockedResumeScopeEvent = { toolName: "subagent", input: { action: "resume", id: "run-123", agentScope: "system" } };
-	const blockedResumeContextEvent = { toolName: "subagent", input: { action: "resume", id: "run-123", context: "resume" } };
+	const blockedResumeScopeEvent = {
+		toolName: "subagent",
+		input: { action: "resume", id: "run-123", agentScope: "system" },
+	};
+	const blockedResumeContextEvent = {
+		toolName: "subagent",
+		input: { action: "resume", id: "run-123", context: "resume" },
+	};
 
 	assert.equal(await toolCall(listEvent, ctx), undefined);
 	assert.equal(listEvent.input.agentScope, "user");
@@ -256,11 +267,13 @@ test("enabled primary mode normalizes safe management list/get/resume inputs and
 	assert.equal(resumeBothEvent.input.context, "fresh");
 	assert.deepEqual(await toolCall(blockedGetEvent, ctx), {
 		block: true,
-		reason: 'TLH primary-agent subagent get calls may not use agentScope: "project". TLH minor agents must run from the isolated user scope.',
+		reason:
+			'TLH primary-agent subagent get calls may not use agentScope: "project". TLH minor agents must run from the isolated user scope.',
 	});
 	assert.deepEqual(await toolCall(blockedResumeScopeEvent, ctx), {
 		block: true,
-		reason: 'TLH primary-agent subagent resume calls may not use agentScope: "system". TLH minor agents must run from the isolated user scope.',
+		reason:
+			'TLH primary-agent subagent resume calls may not use agentScope: "system". TLH minor agents must run from the isolated user scope.',
 	});
 	assert.deepEqual(await toolCall(blockedResumeContextEvent, ctx), {
 		block: true,
@@ -368,9 +381,13 @@ test("/switch-primary-agent includes Rush completions, usage, and status strings
 test("/switch-primary-agent model reset clears the active primary model override", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
-	const initialSettings = `${JSON.stringify({
-		tlh: { primaryAgent: { modelOverrides: { architect: "openai-codex/gpt-5.6-luna" } } },
-	}, null, 2)}\n`;
+	const initialSettings = `${JSON.stringify(
+		{
+			tlh: { primaryAgent: { modelOverrides: { architect: "openai-codex/gpt-5.6-luna" } } },
+		},
+		null,
+		2,
+	)}\n`;
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		writeFileSync(join(fixture.agent, "settings.json"), initialSettings);
@@ -439,9 +456,10 @@ test("/switch-primary-agent status hides stale overrides for locked primaries", 
 		const command = pi.commands.get("switch-primary-agent");
 		assert.ok(command, "registers /switch-primary-agent");
 
-		const status = createCommandContext([
-			{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
-		], { cwd: fixture.cwd });
+		const status = createCommandContext(
+			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } }],
+			{ cwd: fixture.cwd },
+		);
 		await command.handler("status", status.ctx);
 
 		assert.equal(status.notifications.at(-1)?.type, "info");
@@ -454,9 +472,13 @@ test("/switch-primary-agent status hides stale overrides for locked primaries", 
 test("/switch-primary-agent model reset clears a stale locked-primary model override", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const primaryAgents = new Map([["rush", lockedRushPrimary()]]);
-	const initialSettings = `${JSON.stringify({
-		tlh: { primaryAgent: { modelOverrides: { rush: "anthropic/claude-opus-5" } } },
-	}, null, 2)}\n`;
+	const initialSettings = `${JSON.stringify(
+		{
+			tlh: { primaryAgent: { modelOverrides: { rush: "anthropic/claude-opus-5" } } },
+		},
+		null,
+		2,
+	)}\n`;
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		writeFileSync(join(fixture.agent, "settings.json"), initialSettings);
@@ -464,13 +486,14 @@ test("/switch-primary-agent model reset clears a stale locked-primary model over
 		const command = pi.commands.get("switch-primary-agent");
 		assert.ok(command, "registers /switch-primary-agent");
 
-		const reset = createCommandContext([
-			{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
-		], {
-			cwd: fixture.cwd,
-			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-sonnet-4-6" }] },
-			model: { provider: "anthropic", id: "claude-opus-5" },
-		});
+		const reset = createCommandContext(
+			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } }],
+			{
+				cwd: fixture.cwd,
+				modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-sonnet-4-6" }] },
+				model: { provider: "anthropic", id: "claude-opus-5" },
+			},
+		);
 		await command.handler("model reset", reset.ctx);
 
 		const written = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
@@ -547,7 +570,10 @@ test("embedded subagents: flag off blocks embedded targets for architect with st
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { applySessionStart, toolCall } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
 			undefined,
@@ -577,7 +603,10 @@ test("embedded subagents: flag off + rush and product get the standard disallowe
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		for (const selected of ["rush", "product"]) {
 			// Fresh harness per selection so each session snapshots with the flag off.
-			const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+			const { applySessionStart, toolCall } = registerRuntimeHarness({
+				primaryAgents: selectablePrimaryAgents(),
+				subagentMetadata: [],
+			});
 			const ctx = createToolCallContext(
 				[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected } }],
 				undefined,
@@ -590,14 +619,17 @@ test("embedded subagents: flag off + rush and product get the standard disallowe
 			const result = await toolCall(embeddedEvent, ctx);
 			assert.equal(result?.block, true, `expected block for ${selected}`);
 			// Identical to current main: the generic disallowed-target reason, with zero embedded-specific wording.
-			assert.equal(result?.reason, standardDisallowedTargetReason("embedded.my-tool"), `flag-off ${selected} must get the standard reason`);
+			assert.equal(
+				result?.reason,
+				standardDisallowedTargetReason("embedded.my-tool"),
+				`flag-off ${selected} must get the standard reason`,
+			);
 			assert.doesNotMatch(result?.reason ?? "", /may not delegate to embedded/i);
 			assert.doesNotMatch(result?.reason ?? "", /reserved for the architect/i);
 			assert.doesNotMatch(result?.reason ?? "", /, or embedded\.<slug>/);
 		}
 	});
 });
-
 
 test("embedded subagents: flag on + architect allows only profile-authorized embedded targets", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
@@ -612,7 +644,10 @@ test("embedded subagents: flag on + architect allows only profile-authorized emb
 			"trusted/my-tool.md",
 			"---\nname: my-tool\npackage: embedded\ndescription: Trusted helper\n---",
 		);
-		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { applySessionStart, toolCall } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
 			undefined,
@@ -644,7 +679,10 @@ test("embedded subagents: flag on + rush blocks embedded targets with rush-speci
 			join(fixture.agent, "settings.json"),
 			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
 		);
-		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { applySessionStart, toolCall } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } }],
 			undefined,
@@ -675,7 +713,10 @@ test("embedded subagents: flag on keeps opaque resume issue #330 behavior for pr
 			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
 		);
 		for (const selected of ["product", "bug-hunter"]) {
-			const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+			const { applySessionStart, toolCall } = registerRuntimeHarness({
+				primaryAgents: selectablePrimaryAgents(),
+				subagentMetadata: [],
+			});
 			const ctx = createToolCallContext(
 				[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected } }],
 				undefined,
@@ -683,8 +724,15 @@ test("embedded subagents: flag on keeps opaque resume issue #330 behavior for pr
 			);
 			await applySessionStart(ctx);
 
-			const opaqueResumeEvent = { toolName: "subagent", input: { action: "resume", id: "run-123", message: "Continue the approved ticket." } };
-			assert.equal(await toolCall(opaqueResumeEvent, ctx), undefined, `${selected} opaque resume should remain allowed`);
+			const opaqueResumeEvent = {
+				toolName: "subagent",
+				input: { action: "resume", id: "run-123", message: "Continue the approved ticket." },
+			};
+			assert.equal(
+				await toolCall(opaqueResumeEvent, ctx),
+				undefined,
+				`${selected} opaque resume should remain allowed`,
+			);
 			assert.equal(opaqueResumeEvent.input.agentScope, "user");
 			assert.equal(opaqueResumeEvent.input.context, "fresh");
 		}
@@ -699,7 +747,10 @@ test("embedded subagents: flag on + product blocks embedded targets with product
 			join(fixture.agent, "settings.json"),
 			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
 		);
-		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { applySessionStart, toolCall } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "product" } }],
 			undefined,
@@ -727,7 +778,10 @@ test("embedded subagents: flag on + bug-hunter blocks embedded targets with bug-
 			join(fixture.agent, "settings.json"),
 			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
 		);
-		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { applySessionStart, toolCall } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "bug-hunter" } }],
 			undefined,
@@ -754,22 +808,25 @@ test("embedded subagents: same-name external fallback stays blocked when the pro
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		writeFileSync(
 			join(fixture.agent, "settings.json"),
-			`${JSON.stringify({
-				tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } },
-				subagents: { agentDirs: [externalAgentsDir] },
-			}, null, 2)}\n`,
+			`${JSON.stringify(
+				{
+					tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } },
+					subagents: { agentDirs: [externalAgentsDir] },
+				},
+				null,
+				2,
+			)}\n`,
 		);
 		writeEmbeddedAgent(
 			externalAgentsDir,
 			"fallback.md",
 			"---\nname: fallback\npackage: embedded\ndescription: External helper\n---",
 		);
-		writeEmbeddedAgent(
-			fixture.agent,
-			"fallback.md",
-			"---\nname: fallback\npackage: embedded\ndescription:\n---",
-		);
-		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		writeEmbeddedAgent(fixture.agent, "fallback.md", "---\nname: fallback\npackage: embedded\ndescription:\n---");
+		const { applySessionStart, toolCall } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
 			undefined,
@@ -792,10 +849,14 @@ test("embedded subagents: same-name external agents stay blocked and deleting pr
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		writeFileSync(
 			join(fixture.agent, "settings.json"),
-			`${JSON.stringify({
-				tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } },
-				subagents: { agentDirs: [externalAgentsDir] },
-			}, null, 2)}\n`,
+			`${JSON.stringify(
+				{
+					tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } },
+					subagents: { agentDirs: [externalAgentsDir] },
+				},
+				null,
+				2,
+			)}\n`,
 		);
 		writeEmbeddedAgent(
 			externalAgentsDir,
@@ -807,7 +868,10 @@ test("embedded subagents: same-name external agents stay blocked and deleting pr
 			"fallback.md",
 			"---\nname: fallback\npackage: embedded\ndescription: Profile helper\n---",
 		);
-		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { applySessionStart, toolCall } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
 			undefined,
@@ -835,10 +899,14 @@ test("embedded subagents: same-name external agents stay blocked when the profil
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		writeFileSync(
 			join(fixture.agent, "settings.json"),
-			`${JSON.stringify({
-				tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } },
-				subagents: { agentDirs: [externalAgentsDir] },
-			}, null, 2)}\n`,
+			`${JSON.stringify(
+				{
+					tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } },
+					subagents: { agentDirs: [externalAgentsDir] },
+				},
+				null,
+				2,
+			)}\n`,
 		);
 		writeEmbeddedAgent(
 			externalAgentsDir,
@@ -850,7 +918,10 @@ test("embedded subagents: same-name external agents stay blocked when the profil
 			"fallback.chain.md",
 			"---\nname: fallback\npackage: embedded\ndescription: Chain helper\n---",
 		);
-		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { applySessionStart, toolCall } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
 			undefined,
@@ -873,10 +944,14 @@ test("embedded subagents: same-name external agents stay blocked when the profil
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		writeFileSync(
 			join(fixture.agent, "settings.json"),
-			`${JSON.stringify({
-				tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } },
-				subagents: { agentDirs: [externalAgentsDir] },
-			}, null, 2)}\n`,
+			`${JSON.stringify(
+				{
+					tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } },
+					subagents: { agentDirs: [externalAgentsDir] },
+				},
+				null,
+				2,
+			)}\n`,
 		);
 		const externalAuthorizerPath = writeEmbeddedAgent(
 			fixture.dir,
@@ -890,7 +965,10 @@ test("embedded subagents: same-name external agents stay blocked when the profil
 		);
 		mkdirSync(join(fixture.agent, "agents"), { recursive: true });
 		symlinkSync(externalAuthorizerPath, join(fixture.agent, "agents", "fallback.md"));
-		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { applySessionStart, toolCall } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
 			undefined,
@@ -914,10 +992,14 @@ test("embedded subagents: a symlinked profile agents root cannot authorize embed
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		writeFileSync(
 			join(fixture.agent, "settings.json"),
-			`${JSON.stringify({
-				tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } },
-				subagents: { agentDirs: [externalAgentsDir] },
-			}, null, 2)}\n`,
+			`${JSON.stringify(
+				{
+					tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } },
+					subagents: { agentDirs: [externalAgentsDir] },
+				},
+				null,
+				2,
+			)}\n`,
 		);
 		writeEmbeddedAgent(
 			externalAgentsDir,
@@ -925,7 +1007,10 @@ test("embedded subagents: a symlinked profile agents root cannot authorize embed
 			"---\nname: fallback\npackage: embedded\ndescription: External helper\n---",
 		);
 		symlinkSync(externalAgentsDir, profileAgentsDir, "dir");
-		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { applySessionStart, toolCall } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
 			undefined,
@@ -956,11 +1041,13 @@ test("embedded subagents: later same-name profile symlink collisions use upstrea
 			},
 			{
 				name: "normalized-package",
-				laterFrontmatter: "---\nname: normalized-package\npackage: Embedded\ndescription: Later normalized-package symlink authorizer\n---",
+				laterFrontmatter:
+					"---\nname: normalized-package\npackage: Embedded\ndescription: Later normalized-package symlink authorizer\n---",
 			},
 			{
 				name: "block-description",
-				laterFrontmatter: "---\nname: block-description\npackage: embedded\ndescription:\n  Later block-valued\n  symlink authorizer\n---",
+				laterFrontmatter:
+					"---\nname: block-description\npackage: embedded\ndescription:\n  Later block-valued\n  symlink authorizer\n---",
 			},
 		];
 		for (const { name, laterFrontmatter } of collisionCases) {
@@ -973,7 +1060,10 @@ test("embedded subagents: later same-name profile symlink collisions use upstrea
 			mkdirSync(join(fixture.agent, "agents", "z"), { recursive: true });
 			symlinkSync(laterSymlinkTargetPath, join(fixture.agent, "agents", "z", `${name}.md`));
 		}
-		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { applySessionStart, toolCall } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
 			undefined,
@@ -983,7 +1073,10 @@ test("embedded subagents: later same-name profile symlink collisions use upstrea
 
 		for (const { name } of collisionCases) {
 			const runtimeName = `embedded.${name}`;
-			const blockedResult = await toolCall({ toolName: "subagent", input: { agent: runtimeName, prompt: "blocked" } }, ctx);
+			const blockedResult = await toolCall(
+				{ toolName: "subagent", input: { agent: runtimeName, prompt: "blocked" } },
+				ctx,
+			);
 			assert.equal(blockedResult?.block, true, `${runtimeName} should bind to the later symlink definition`);
 			assert.match(blockedResult?.reason ?? "", new RegExp(runtimeName.replace(".", "\\.")));
 		}
@@ -1010,7 +1103,10 @@ test("embedded subagents: a later valid regular profile definition supersedes an
 			"z/fallback.md",
 			"---\nname: fallback\npackage: embedded\ndescription: Later regular authorizer\n---",
 		);
-		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { applySessionStart, toolCall } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
 			undefined,
@@ -1018,7 +1114,10 @@ test("embedded subagents: a later valid regular profile definition supersedes an
 		);
 		await applySessionStart(ctx);
 
-		assert.equal(await toolCall({ toolName: "subagent", input: { agent: "embedded.fallback", prompt: "allowed" } }, ctx), undefined);
+		assert.equal(
+			await toolCall({ toolName: "subagent", input: { agent: "embedded.fallback", prompt: "allowed" } }, ctx),
+			undefined,
+		);
 	});
 });
 
@@ -1042,7 +1141,10 @@ test("embedded subagents: definitions beneath nested .agents/skills paths do not
 			"z/.agents/skills/fallback.md",
 			"---\nname: fallback\npackage: embedded\ndescription: Excluded legacy skill definition\n---",
 		);
-		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { applySessionStart, toolCall } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
 			undefined,
@@ -1050,7 +1152,10 @@ test("embedded subagents: definitions beneath nested .agents/skills paths do not
 		);
 		await applySessionStart(ctx);
 
-		const blockedResult = await toolCall({ toolName: "subagent", input: { agent: "embedded.fallback", prompt: "blocked" } }, ctx);
+		const blockedResult = await toolCall(
+			{ toolName: "subagent", input: { agent: "embedded.fallback", prompt: "blocked" } },
+			ctx,
+		);
 		assert.equal(blockedResult?.block, true);
 		assert.match(blockedResult?.reason ?? "", /embedded\.fallback/);
 	});
@@ -1075,7 +1180,10 @@ test("embedded subagents: malformed or unreadable profile files fail closed", as
 			"---\nname: other-tool\npackage: bundled\ndescription: Wrong package\n---",
 		);
 		symlinkSync(join(fixture.agent, "missing-target.md"), join(fixture.agent, "agents", "missing-file.md"));
-		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { applySessionStart, toolCall } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
 			undefined,
@@ -1095,7 +1203,10 @@ test("embedded subagents: snapshot semantics — enabling flag mid-session does 
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { applySessionStart, toolCall } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
 			undefined,
@@ -1134,7 +1245,10 @@ test("embedded subagents: snapshot semantics — disabling flag mid-session does
 			"my-tool.md",
 			"---\nname: my-tool\npackage: embedded\ndescription: Trusted helper\n---",
 		);
-		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { applySessionStart, toolCall } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
 			undefined,
@@ -1148,7 +1262,11 @@ test("embedded subagents: snapshot semantics — disabling flag mid-session does
 		);
 
 		const embeddedEvent = { toolName: "subagent", input: { agent: "embedded.my-tool", prompt: "do something" } };
-		assert.equal(await toolCall(embeddedEvent, ctx), undefined, "disabling flag mid-session must not close the embedded gate");
+		assert.equal(
+			await toolCall(embeddedEvent, ctx),
+			undefined,
+			"disabling flag mid-session must not close the embedded gate",
+		);
 		assert.equal(embeddedEvent.input.agentScope, "user");
 		assert.equal(embeddedEvent.input.context, "fresh");
 	});
@@ -1162,7 +1280,10 @@ test("embedded subagents: flag on + architect — normal (non-embedded) subagent
 			join(fixture.agent, "settings.json"),
 			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
 		);
-		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { applySessionStart, toolCall } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
 			undefined,
@@ -1187,7 +1308,10 @@ test("embedded subagents: existing rush developer and resume blocks are preserve
 			join(fixture.agent, "settings.json"),
 			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
 		);
-		const { applySessionStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { applySessionStart, toolCall } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const rushCtx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } }],
 			undefined,
@@ -1218,7 +1342,10 @@ test("embedded subagents: multi-turn — enabling flag mid-session then re-firin
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		// No settings file → flag off at session start.
-		const { applySessionStart, beforeAgentStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { applySessionStart, beforeAgentStart, toolCall } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
 			undefined,
@@ -1241,7 +1368,11 @@ test("embedded subagents: multi-turn — enabling flag mid-session then re-firin
 
 		const embeddedEvent = { toolName: "subagent", input: { agent: "embedded.my-tool", prompt: "do something" } };
 		const result = await toolCall(embeddedEvent, ctx);
-		assert.equal(result?.block, true, "enabling flag mid-session + second before_agent_start must NOT open the embedded gate");
+		assert.equal(
+			result?.block,
+			true,
+			"enabling flag mid-session + second before_agent_start must NOT open the embedded gate",
+		);
 		// Exact flag-off standard reason: no embedded suffix, no embedded-specific wording.
 		assert.equal(result?.reason, standardDisallowedTargetReason("embedded.my-tool"));
 		assert.doesNotMatch(result?.reason ?? "", /, or embedded\.<slug>/);
@@ -1262,7 +1393,10 @@ test("embedded subagents: multi-turn — disabling flag mid-session then re-firi
 			"my-tool.md",
 			"---\nname: my-tool\npackage: embedded\ndescription: Trusted helper\n---",
 		);
-		const { applySessionStart, beforeAgentStart, toolCall } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { applySessionStart, beforeAgentStart, toolCall } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const ctx = createToolCallContext(
 			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
 			undefined,
@@ -1284,7 +1418,11 @@ test("embedded subagents: multi-turn — disabling flag mid-session then re-firi
 		await beforeAgentStart({ systemPrompt: "base" }, ctx);
 
 		const embeddedEvent = { toolName: "subagent", input: { agent: "embedded.my-tool", prompt: "do something" } };
-		assert.equal(await toolCall(embeddedEvent, ctx), undefined, "disabling flag mid-session + second before_agent_start must NOT close the embedded gate");
+		assert.equal(
+			await toolCall(embeddedEvent, ctx),
+			undefined,
+			"disabling flag mid-session + second before_agent_start must NOT close the embedded gate",
+		);
 		assert.equal(embeddedEvent.input.agentScope, "user");
 		assert.equal(embeddedEvent.input.context, "fresh");
 	});

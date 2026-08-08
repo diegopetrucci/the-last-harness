@@ -29,7 +29,10 @@ export type EnvLeadingOptionParseResult =
 	| { kind: "unknown-option" }
 	| { kind: "not-an-option" };
 
-export function readHereDocSpec(command: string, startIndex: number): { spec: HereDocSpec; endIndex: number } | undefined {
+export function readHereDocSpec(
+	command: string,
+	startIndex: number,
+): { spec: HereDocSpec; endIndex: number } | undefined {
 	if (command[startIndex] !== "<" || command[startIndex + 1] !== "<" || command[startIndex + 2] === "<") {
 		return undefined;
 	}
@@ -62,7 +65,11 @@ export function readHereDocSpec(command: string, startIndex: number): { spec: He
 	return delimiter ? { spec: { delimiter, allowIndent }, endIndex: index } : undefined;
 }
 
-export function readHereDocBodies(command: string, startIndex: number, specs: HereDocSpec[]): { bodies: string[]; nextIndex: number } {
+export function readHereDocBodies(
+	command: string,
+	startIndex: number,
+	specs: HereDocSpec[],
+): { bodies: string[]; nextIndex: number } {
 	const bodies: string[] = [];
 	let index = startIndex;
 
@@ -158,7 +165,10 @@ export function normalizeTrailingLineEnding(value: string): string {
 	return value.replace(/\r?\n$/, "");
 }
 
-export function readProcessSubstitutionBody(command: string, startIndex: number): { body: string; endIndex: number } | undefined {
+export function readProcessSubstitutionBody(
+	command: string,
+	startIndex: number,
+): { body: string; endIndex: number } | undefined {
 	let quote: "'" | '"' | "`" | undefined;
 	let escaped = false;
 	const hereDocs: HereDocSpec[] = [];
@@ -449,7 +459,11 @@ export function isSupportedEnvOptionWithValue(token: string): boolean {
 
 export function isSupportedEnvOptionWithAttachedValue(token: string): boolean {
 	const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
-	return normalizedToken.startsWith("--argv0=") || normalizedToken.startsWith("--chdir=") || normalizedToken.startsWith("--unset=");
+	return (
+		normalizedToken.startsWith("--argv0=") ||
+		normalizedToken.startsWith("--chdir=") ||
+		normalizedToken.startsWith("--unset=")
+	);
 }
 
 export function isEnvSplitStringOption(token: string): boolean {
@@ -482,11 +496,15 @@ export function getEnvSplitStringEffectiveTokens(tokens: string[], splitStringIn
 	if (payload === undefined) {
 		return undefined;
 	}
-	const remainingTokens = attachedPayload !== undefined ? tokens.slice(splitStringIndex + 1) : tokens.slice(splitStringIndex + 2);
+	const remainingTokens =
+		attachedPayload !== undefined ? tokens.slice(splitStringIndex + 1) : tokens.slice(splitStringIndex + 2);
 	return buildEnvSplitStringEffectiveTokens(payload, remainingTokens);
 }
 
-export function getShortEnvLeadingOptionParseResult(tokens: string[], index: number): EnvLeadingOptionParseResult | undefined {
+export function getShortEnvLeadingOptionParseResult(
+	tokens: string[],
+	index: number,
+): EnvLeadingOptionParseResult | undefined {
 	const token = tokens[index];
 	if (!token || token === "-" || !token.startsWith("-") || token.startsWith("--")) {
 		return undefined;
@@ -646,19 +664,23 @@ export function renderPrintfEscape(format: string, index: number): { output: str
 	return undefined;
 }
 
-export function renderPrintfCycle(format: string, args: string[], startIndex: number): { output: string; nextIndex: number } | undefined {
+export function renderPrintfCycle(
+	format: string,
+	args: string[],
+	startIndex: number,
+): { output: string; nextIndex: number } | undefined {
 	let output = "";
 	let nextIndex = startIndex;
 
 	for (let index = 0; index < format.length; index += 1) {
 		const character = format[index];
 		if (character === "\\") {
-			const escape = renderPrintfEscape(format, index);
-			if (!escape) {
+			const escapeResult = renderPrintfEscape(format, index);
+			if (!escapeResult) {
 				return undefined;
 			}
-			output += escape.output;
-			index = escape.nextIndex;
+			output += escapeResult.output;
+			index = escapeResult.nextIndex;
 			continue;
 		}
 		if (character !== "%") {

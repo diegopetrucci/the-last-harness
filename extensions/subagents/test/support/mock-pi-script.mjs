@@ -52,7 +52,8 @@ function isStaleInvocation(dir) {
 }
 
 function listPendingFiles(dir) {
-	return fs.readdirSync(dir)
+	return fs
+		.readdirSync(dir)
 		.filter((name) => name.startsWith("pending-") && name.endsWith(".json"))
 		.sort();
 }
@@ -68,17 +69,17 @@ function appendSignalRecord(signal) {
 function spawnStubbornDescendants() {
 	const grandchildCode = [
 		'import fs from "node:fs";',
-		'const [recordPath, childPid] = process.argv.slice(1);',
+		"const [recordPath, childPid] = process.argv.slice(1);",
 		'process.on("SIGINT", () => {}); process.on("SIGTERM", () => {});',
-		'fs.writeFileSync(recordPath, JSON.stringify({ childPid: Number(childPid), grandchildPid: process.pid }));',
-		'setInterval(() => {}, 1000);',
+		"fs.writeFileSync(recordPath, JSON.stringify({ childPid: Number(childPid), grandchildPid: process.pid }));",
+		"setInterval(() => {}, 1000);",
 	].join("");
 	const childCode = [
 		'import { spawn } from "node:child_process";',
-		'const [recordPath] = process.argv.slice(1);',
+		"const [recordPath] = process.argv.slice(1);",
 		'process.on("SIGINT", () => {}); process.on("SIGTERM", () => {});',
 		`spawn(process.execPath, ["--input-type=module", "-e", ${JSON.stringify(grandchildCode)}, recordPath, String(process.pid)], { stdio: "ignore" });`,
-		'setInterval(() => {}, 1000);',
+		"setInterval(() => {}, 1000);",
 	].join("");
 	const recordPath = path.join(queueDir, `descendants-${process.pid}.json`);
 	spawn(process.execPath, ["--input-type=module", "-e", childCode, recordPath], { stdio: "ignore" });
@@ -97,7 +98,7 @@ function readPendingResponse(filePath) {
 }
 
 function hasArgMatcher(response) {
-	return Object.prototype.hasOwnProperty.call(response ?? {}, "matchArgIncludes");
+	return Object.hasOwn(response ?? {}, "matchArgIncludes");
 }
 
 function responseMatchesArgs(response, args) {
@@ -302,7 +303,12 @@ async function writeResponseEntries(entries, jsonMode, args) {
 			const textPart = entry.message?.content?.find?.((part) => part?.type === "text");
 			const isProviderError = Boolean(entry.message?.errorMessage || entry.message?.stopReason === "error");
 			if (isProviderError) sawProviderError = true;
-			if (!isProviderError && textPart && typeof textPart.text === "string" && (!sawProviderError || textPart.text.trim())) {
+			if (
+				!isProviderError &&
+				textPart &&
+				typeof textPart.text === "string" &&
+				(!sawProviderError || textPart.text.trim())
+			) {
 				textPart.text = withAcceptanceReport(textPart.text, args);
 			}
 		}
@@ -316,13 +322,17 @@ async function writeResponseEntries(entries, jsonMode, args) {
 }
 
 async function maybeWriteStructuredOutput(response, jsonMode) {
-	if (!Object.prototype.hasOwnProperty.call(response, "structuredOutput")) return;
+	if (!Object.hasOwn(response, "structuredOutput")) return;
 	const outputPath = process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE;
 	if (!outputPath) return;
 	fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 	fs.writeFileSync(outputPath, JSON.stringify(response.structuredOutput), "utf-8");
 	if (!jsonMode) return;
-	await writeJsonlLine({ type: "tool_execution_start", toolName: "structured_output", args: { value: response.structuredOutput } });
+	await writeJsonlLine({
+		type: "tool_execution_start",
+		toolName: "structured_output",
+		args: { value: response.structuredOutput },
+	});
 	await writeJsonlLine({
 		type: "tool_result_end",
 		message: {
@@ -369,27 +379,27 @@ async function main() {
 		for (const step of response.steps) {
 			if (typeof step?.delay === "number" && step.delay > 0) {
 				await new Promise((resolve) => setTimeout(resolve, step.delay));
-				}
-				if (Array.isArray(step?.jsonl) && step.jsonl.length > 0) {
-						await writeResponseEntries(step.jsonl, jsonMode, args);
-				}
-				if (typeof step?.stderr === "string" && step.stderr.length > 0) {
-					process.stderr.write(step.stderr);
-				}
 			}
-		} else if (Array.isArray(response.jsonl) && response.jsonl.length > 0) {
-				await writeResponseEntries(response.jsonl, jsonMode, args);
-		} else if (Array.isArray(response.echoEnv) && response.echoEnv.length > 0) {
-			const envSnapshot = Object.fromEntries(response.echoEnv.map((key) => [key, process.env[key] ?? null]));
-				const output = withAcceptanceReport(JSON.stringify(envSnapshot), args);
-				if (jsonMode) await writeJsonlLine(defaultAssistantMessage(output));
-				else await writeStdout(`${output}\n`);
-			} else if (typeof response.output === "string") {
-				const output = withAcceptanceReport(response.output, args);
-				if (jsonMode) await writeJsonlLine(defaultAssistantMessage(output));
-				else await writeStdout(`${output}\n`);
+			if (Array.isArray(step?.jsonl) && step.jsonl.length > 0) {
+				await writeResponseEntries(step.jsonl, jsonMode, args);
 			}
-		await maybeWriteStructuredOutput(response, jsonMode);
+			if (typeof step?.stderr === "string" && step.stderr.length > 0) {
+				process.stderr.write(step.stderr);
+			}
+		}
+	} else if (Array.isArray(response.jsonl) && response.jsonl.length > 0) {
+		await writeResponseEntries(response.jsonl, jsonMode, args);
+	} else if (Array.isArray(response.echoEnv) && response.echoEnv.length > 0) {
+		const envSnapshot = Object.fromEntries(response.echoEnv.map((key) => [key, process.env[key] ?? null]));
+		const output = withAcceptanceReport(JSON.stringify(envSnapshot), args);
+		if (jsonMode) await writeJsonlLine(defaultAssistantMessage(output));
+		else await writeStdout(`${output}\n`);
+	} else if (typeof response.output === "string") {
+		const output = withAcceptanceReport(response.output, args);
+		if (jsonMode) await writeJsonlLine(defaultAssistantMessage(output));
+		else await writeStdout(`${output}\n`);
+	}
+	await maybeWriteStructuredOutput(response, jsonMode);
 
 	if (typeof response.stderr === "string" && response.stderr.length > 0) {
 		process.stderr.write(response.stderr);

@@ -3,25 +3,25 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyThinkingSuffix, getThinkingLevelDropNote } from "../shared/pi-args.js";
-import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.js";
-import { buildChainInstructions, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile } from "../../shared/settings.js";
+import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode, } from "../shared/single-output.js";
+import { buildChainInstructions, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile, } from "../../shared/settings.js";
 import { isParallelGroup } from "../shared/parallel-utils.js";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.js";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.js";
 import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.js";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/utils.js";
-import { buildFallbackModelList, buildModelCandidates, resolveSubagentModelOverride } from "../shared/model-fallback.js";
+import { buildFallbackModelList, buildModelCandidates, resolveSubagentModelOverride, } from "../shared/model-fallback.js";
 import { resolveEffectiveThinking } from "../../shared/model-info.js";
 import { resolveExpectedWorktreeAgentCwd } from "../shared/worktree.js";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.js";
 import { ChainOutputValidationError, validateChainOutputBindings } from "../shared/chain-outputs.js";
 import { createStructuredOutputRuntime } from "../shared/structured-output.js";
-import { mergeContinuationAcceptance, resolveEffectiveAcceptance, validateAcceptanceInput, validateDispatchAcceptanceInput } from "../shared/acceptance.js";
+import { mergeContinuationAcceptance, resolveEffectiveAcceptance, validateAcceptanceInput, validateDispatchAcceptanceInput, } from "../shared/acceptance.js";
 import { ASYNC_DIR, RESULTS_DIR, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, TEMP_ROOT_DIR, getAsyncConfigPath, resolveChildMaxSubagentDepth, } from "../../shared/types.js";
-import { nestedResultsPath, resolveInheritedNestedRouteFromEnv, resolveNestedParentAddressFromEnv, writeNestedEvent } from "../shared/nested-events.js";
+import { nestedResultsPath, resolveInheritedNestedRouteFromEnv, resolveNestedParentAddressFromEnv, writeNestedEvent, } from "../shared/nested-events.js";
 import { initialTurnBudgetState } from "../shared/turn-budget.js";
 import { validateToolBudgetConfig } from "../shared/tool-budget.js";
-import { detectTkTicketId, normalizeTkTicketMetadata, resolveTkTicketMetadata, resolveTkTicketTaskContext } from "../shared/tk-ticket.js";
+import { detectTkTicketId, normalizeTkTicketMetadata, resolveTkTicketMetadata, resolveTkTicketTaskContext, } from "../shared/tk-ticket.js";
 const piPackageRoot = resolvePiPackageRoot();
 export function formatAsyncStartedMessage(headline) {
     return headline;
@@ -54,9 +54,7 @@ function resolveAsyncRunnerNodeCommand() {
     return process.platform === "win32" ? "node.exe" : "node";
 }
 export function resolveAsyncRunnerLogPaths(cfg) {
-    const asyncDir = typeof cfg.asyncDir === "string"
-        ? cfg.asyncDir
-        : undefined;
+    const asyncDir = typeof cfg.asyncDir === "string" ? cfg.asyncDir : undefined;
     if (!asyncDir)
         return undefined;
     return {
@@ -91,9 +89,7 @@ function spawnRunner(cfg, suffix, cwd) {
     const cfgPath = getAsyncConfigPath(suffix);
     fs.writeFileSync(cfgPath, JSON.stringify(cfg));
     const nodeCommand = resolveAsyncRunnerNodeCommand();
-    const runnerArgs = runner.endsWith(".ts")
-        ? ["--experimental-strip-types", runner, cfgPath]
-        : [runner, cfgPath];
+    const runnerArgs = runner.endsWith(".ts") ? ["--experimental-strip-types", runner, cfgPath] : [runner, cfgPath];
     const logPaths = resolveAsyncRunnerLogPaths(cfg);
     let stdoutFd;
     let stderrFd;
@@ -206,11 +202,12 @@ export function buildAsyncRunnerSteps(id, params) {
     const progressDir = params.progressDir ?? runnerCwd;
     const graphChain = chain;
     const firstStep = chain[0];
-    const originalTask = params.task ?? (firstStep
-        ? (isParallelStep(firstStep)
-            ? firstStep.parallel[0]?.task
-            : firstStep.task)
-        : undefined);
+    const originalTask = params.task ??
+        (firstStep
+            ? isParallelStep(firstStep)
+                ? firstStep.parallel[0]?.task
+                : firstStep.task
+            : undefined);
     try {
         if (params.validateOutputBindings !== false) {
             validateChainOutputBindings(chain);
@@ -223,9 +220,7 @@ export function buildAsyncRunnerSteps(id, params) {
     }
     const workflowGraph = buildWorkflowGraphSnapshot({ runId: id, mode: resultMode, steps: graphChain });
     for (const s of chain) {
-        const stepAgents = isParallelStep(s)
-            ? s.parallel.map((t) => t.agent)
-            : [s.agent];
+        const stepAgents = isParallelStep(s) ? s.parallel.map((t) => t.agent) : [s.agent];
         for (const agentName of stepAgents) {
             if (!agents.find((x) => x.name === agentName)) {
                 return { error: `Unknown agent: ${agentName}` };
@@ -330,9 +325,12 @@ export function buildAsyncRunnerSteps(id, params) {
             acceptanceInput: s.acceptance,
             acceptanceRole: a.acceptanceRole,
             ...(s.outputSchema ? { structuredOutputSchema: s.outputSchema } : {}),
-            ...(s.outputSchema ? { structuredOutput: createStructuredOutputRuntime(s.outputSchema, path.join(asyncDir, "structured-output")) } : {}),
+            ...(s.outputSchema
+                ? { structuredOutput: createStructuredOutputRuntime(s.outputSchema, path.join(asyncDir, "structured-output")) }
+                : {}),
             ...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
-            ...(a.maxExecutionTimeMs !== undefined && (params.timeoutMs === undefined || a.maxExecutionTimeMs < params.timeoutMs)
+            ...(a.maxExecutionTimeMs !== undefined &&
+                (params.timeoutMs === undefined || a.maxExecutionTimeMs < params.timeoutMs)
                 ? { timeoutMs: a.maxExecutionTimeMs }
                 : {}),
         };
@@ -384,7 +382,13 @@ export function buildAsyncRunnerSteps(id, params) {
             const staticStep = nextFlatStep();
             return buildSeqStep(s, staticStep.sessionFile, undefined, false, undefined, staticStep.index);
         });
-        return { steps: dedupeRunnerAttemptNotes(builtSteps), runnerCwd, workflowGraph, eventChain: graphChain, ...(originalTask !== undefined ? { originalTask } : {}) };
+        return {
+            steps: dedupeRunnerAttemptNotes(builtSteps),
+            runnerCwd,
+            workflowGraph,
+            eventChain: graphChain,
+            ...(originalTask !== undefined ? { originalTask } : {}),
+        };
     }
     catch (error) {
         if (error instanceof UnavailableSubagentSkillError || error instanceof AsyncStartValidationError)
@@ -425,7 +429,12 @@ export function executeAsyncChain(id, params) {
         chainSkills: params.chainSkills,
         sessionFilesByFlatIndex,
         thinkingOverridesByFlatIndex,
-        progressDir: params.progressDir ?? (artifactsDir ? path.join(artifactsDir, "progress", id) : resultMode === "parallel" ? path.join(asyncDir, "progress") : undefined),
+        progressDir: params.progressDir ??
+            (artifactsDir
+                ? path.join(artifactsDir, "progress", id)
+                : resultMode === "parallel"
+                    ? path.join(asyncDir, "progress")
+                    : undefined),
         outputBaseDir: artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined,
         maxSubagentDepth,
         worktreeBaseDir,
@@ -449,26 +458,32 @@ export function executeAsyncChain(id, params) {
         return [step];
     });
     const tkTicketContext = resolveTkTicketTaskContext({ topLevelTask: params.task, runnerCwd, tasks: ticketTasks });
-    const tkTicket = tkTicketContext ? resolveTkTicketMetadata(tkTicketContext.task, { cwd: tkTicketContext.cwd }) : undefined;
+    const tkTicket = tkTicketContext
+        ? resolveTkTicketMetadata(tkTicketContext.task, { cwd: tkTicketContext.cwd })
+        : undefined;
     const deadlineAt = params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined;
     const initialTurnBudget = params.turnBudget ? initialTurnBudgetState(params.turnBudget) : undefined;
     let childTargetIndex = 0;
-    const childIntercomTargets = childIntercomTarget ? steps.flatMap((step) => {
-        if ("parallel" in step) {
-            if (!Array.isArray(step.parallel)) {
-                childTargetIndex++;
-                return [undefined];
+    const childIntercomTargets = childIntercomTarget
+        ? steps.flatMap((step) => {
+            if ("parallel" in step) {
+                if (!Array.isArray(step.parallel)) {
+                    childTargetIndex++;
+                    return [undefined];
+                }
+                return step.parallel.map((task) => childIntercomTarget(task.agent, childTargetIndex++));
             }
-            return step.parallel.map((task) => childIntercomTarget(task.agent, childTargetIndex++));
-        }
-        return [childIntercomTarget(step.agent, childTargetIndex++)];
-    }) : undefined;
+            return [childIntercomTarget(step.agent, childTargetIndex++)];
+        })
+        : undefined;
     let spawnResult;
     try {
         spawnResult = spawnRunner({
             id,
             steps,
-            resultPath: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : path.join(RESULTS_DIR, `${id}.json`),
+            resultPath: inheritedNestedRoute
+                ? nestedResultsPath(inheritedNestedRoute.rootRunId, id)
+                : path.join(RESULTS_DIR, `${id}.json`),
             cwd: runnerCwd,
             placeholder: "{previous}",
             maxOutput,
@@ -495,12 +510,14 @@ export function executeAsyncChain(id, params) {
             workflowGraph,
             tkTicket,
             nestedRoute: nestedRoute ?? inheritedNestedRoute,
-            nestedSelf: inheritedNestedRoute && nestedAddress ? {
-                parentRunId: nestedAddress.parentRunId,
-                parentStepIndex: nestedAddress.parentStepIndex,
-                depth: nestedAddress.depth,
-                path: nestedAddress.path,
-            } : undefined,
+            nestedSelf: inheritedNestedRoute && nestedAddress
+                ? {
+                    parentRunId: nestedAddress.parentRunId,
+                    parentStepIndex: nestedAddress.parentStepIndex,
+                    depth: nestedAddress.depth,
+                    path: nestedAddress.path,
+                }
+                : undefined,
         }, id, runnerCwd);
     }
     catch (error) {
@@ -591,11 +608,21 @@ export function executeAsyncChain(id, params) {
         });
     }
     const chainDesc = chain
-        .map((s) => isParallelStep(s) ? `[${s.parallel.map((t) => t.agent).join("+")}]` : s.agent)
+        .map((s) => (isParallelStep(s) ? `[${s.parallel.map((t) => t.agent).join("+")}]` : s.agent))
         .join(" -> ");
     return {
         content: [{ type: "text", text: formatAsyncStartedMessage(`Async ${resultMode}: ${chainDesc} [${id}]`) }],
-        details: { mode: resultMode, runId: id, results: [], asyncId: id, asyncDir, workflowGraph, ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}) },
+        details: {
+            mode: resultMode,
+            runId: id,
+            results: [],
+            asyncId: id,
+            asyncDir,
+            workflowGraph,
+            ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
+            ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}),
+            ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}),
+        },
     };
 }
 export function executeAsyncSingle(id, params) {
@@ -699,7 +726,8 @@ export function executeAsyncSingle(id, params) {
                     sessionFile,
                     maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
                     effectiveAcceptance: params.continuationAcceptance
-                        ? mergeContinuationAcceptance(params.continuationAcceptance, params.acceptance) ?? params.continuationAcceptance
+                        ? (mergeContinuationAcceptance(params.continuationAcceptance, params.acceptance) ??
+                            params.continuationAcceptance)
                         : resolveEffectiveAcceptance({
                             explicit: params.acceptance,
                             agentName: agent,
@@ -712,7 +740,9 @@ export function executeAsyncSingle(id, params) {
                     ...(activeRuntimeMs > 0 ? { activeRuntimeMs } : {}),
                 },
             ],
-            resultPath: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : path.join(RESULTS_DIR, `${id}.json`),
+            resultPath: inheritedNestedRoute
+                ? nestedResultsPath(inheritedNestedRoute.rootRunId, id)
+                : path.join(RESULTS_DIR, `${id}.json`),
             cwd: runnerCwd,
             placeholder: "{previous}",
             maxOutput,
@@ -738,12 +768,14 @@ export function executeAsyncSingle(id, params) {
             ...(params.continuationSource ? { continuationSource: params.continuationSource } : {}),
             resultMode: "single",
             nestedRoute: nestedRoute ?? inheritedNestedRoute,
-            nestedSelf: inheritedNestedRoute && nestedAddress ? {
-                parentRunId: nestedAddress.parentRunId,
-                parentStepIndex: nestedAddress.parentStepIndex,
-                depth: nestedAddress.depth,
-                path: nestedAddress.path,
-            } : undefined,
+            nestedSelf: inheritedNestedRoute && nestedAddress
+                ? {
+                    parentRunId: nestedAddress.parentRunId,
+                    parentStepIndex: nestedAddress.parentStepIndex,
+                    depth: nestedAddress.depth,
+                    path: nestedAddress.path,
+                }
+                : undefined,
         }, id, runnerCwd);
     }
     catch (error) {
@@ -808,6 +840,15 @@ export function executeAsyncSingle(id, params) {
     }
     return {
         content: [{ type: "text", text: formatAsyncStartedMessage(`Async: ${agent} [${id}]`) }],
-        details: { mode: "single", runId: id, results: [], asyncId: id, asyncDir, ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}) },
+        details: {
+            mode: "single",
+            runId: id,
+            results: [],
+            asyncId: id,
+            asyncDir,
+            ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs, deadlineAt } : {}),
+            ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}),
+            ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}),
+        },
     };
 }

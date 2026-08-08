@@ -45,9 +45,6 @@ export function thinkingLevelAtLeast(level: ThinkingLevel, floor: ThinkingLevel)
 	return THINKING_LEVELS.indexOf(level) >= THINKING_LEVELS.indexOf(floor);
 }
 
-export function setExtensionThinkingLevel(
-	pi: Pick<ExtensionAPI, "setThinkingLevel">,
-	level: ThinkingLevel,
-): void {
+export function setExtensionThinkingLevel(pi: Pick<ExtensionAPI, "setThinkingLevel">, level: ThinkingLevel): void {
 	pi.setThinkingLevel(level as RuntimeThinkingLevel);
 }

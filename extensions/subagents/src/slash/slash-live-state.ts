@@ -1,7 +1,13 @@
 import type { Message } from "@earendil-works/pi-ai";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
-import { type Details, type SingleResult, type SubagentToolResult, type Usage, SLASH_RESULT_TYPE } from "../shared/types.ts";
+import {
+	type Details,
+	type SingleResult,
+	type SubagentToolResult,
+	type Usage,
+	SLASH_RESULT_TYPE,
+} from "../shared/types.ts";
 
 export interface SlashMessageDetails {
 	requestId: string;
@@ -93,25 +99,26 @@ function buildSingleInitialResult(params: SubagentParamsLike): SubagentToolResul
 			mode: "single",
 			...(params.context ? { context: params.context } : {}),
 			results: [createPlaceholderResult(agent, task, "running", 0)],
-			progress: [{
-				index: 0,
-				agent,
-				status: "running",
-				task,
-				recentTools: [],
-				recentOutput: [],
-				toolCount: 0,
-				tokens: 0,
-				durationMs: 0,
-			}],
+			progress: [
+				{
+					index: 0,
+					agent,
+					status: "running",
+					task,
+					recentTools: [],
+					recentOutput: [],
+					toolCount: 0,
+					tokens: 0,
+					durationMs: 0,
+				},
+			],
 		},
 	};
 }
 
 export function buildSlashInitialResult(requestId: string, params: SubagentParamsLike): SlashMessageDetails {
-	const result = (params.tasks?.length ?? 0) > 0
-		? buildParallelInitialResult(params)
-		: buildSingleInitialResult(params);
+	const result =
+		(params.tasks?.length ?? 0) > 0 ? buildParallelInitialResult(params) : buildSingleInitialResult(params);
 	liveSnapshots.set(requestId, { result, version: nextVersion() });
 	finalSnapshots.delete(requestId);
 	return { requestId, result };
@@ -122,9 +129,7 @@ function cloneResultsWithProgress(
 	progress: NonNullable<Details["progress"]> | undefined,
 ): SingleResult[] {
 	return results.map((result, index) => {
-		const nextProgress = progress?.find((entry) => entry.index === index)
-			?? progress?.[index]
-			?? result.progress;
+		const nextProgress = progress?.find((entry) => entry.index === index) ?? progress?.[index] ?? result.progress;
 		return nextProgress ? { ...result, progress: nextProgress } : result;
 	});
 }
@@ -196,9 +201,10 @@ export function resolveSlashMessageDetails(value: unknown): SlashMessageDetails 
 }
 
 export function getSlashRenderableSnapshot(details: SlashMessageDetails): SlashSnapshot {
-	return finalSnapshots.get(details.requestId)
-		?? liveSnapshots.get(details.requestId)
-		?? { result: details.result, version: 0 };
+	return (
+		finalSnapshots.get(details.requestId) ??
+		liveSnapshots.get(details.requestId) ?? { result: details.result, version: 0 }
+	);
 }
 
 export function restoreSlashFinalSnapshots(entries: unknown[]): void {

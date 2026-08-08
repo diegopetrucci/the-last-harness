@@ -21,7 +21,10 @@ describe("foreground native suffix budgeting", () => {
 		assert.match(patchesLine, /^\/tmp\/deep-segment\//);
 		assert.match(patchesLine, /\[reference truncated\]$/);
 		assert.ok(patchesLine.length <= 500);
-		assert.match(grouped.text, /\[suffix truncated; inspect retained details, artifacts, or sessions for full appended output\]/);
+		assert.match(
+			grouped.text,
+			/\[suffix truncated; inspect retained details, artifacts, or sessions for full appended output\]/,
+		);
 		assert.ok(grouped.text.length <= 8_000);
 	});
 });

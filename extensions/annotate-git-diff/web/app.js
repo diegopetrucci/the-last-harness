@@ -2031,9 +2031,7 @@ function setupMonaco() {
 		getWorker(_moduleId, label) {
 			if (label === "editorWorkerService" || !label || label === "default") {
 				if (!editorWorkerBlobUrl) {
-					editorWorkerBlobUrl = URL.createObjectURL(
-						new Blob([workerSource], { type: "text/javascript" }),
-					);
+					editorWorkerBlobUrl = URL.createObjectURL(new Blob([workerSource], { type: "text/javascript" }));
 				}
 				return new Worker(editorWorkerBlobUrl);
 			}
@@ -2061,11 +2059,7 @@ function setupMonaco() {
 	const settleFailure = (message, error) => {
 		if (settled) return;
 		settled = true;
-		showAssetFailure(
-			"The review window could not finish loading.",
-			message,
-			formatAssetErrorDetail(error),
-		);
+		showAssetFailure("The review window could not finish loading.", message, formatAssetErrorDetail(error));
 		updateToggleButtons();
 	};
 	const settleSuccess = () => {

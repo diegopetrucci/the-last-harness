@@ -1,13 +1,4 @@
-import {
-	copyFileSync,
-	existsSync,
-	lstatSync,
-	mkdirSync,
-	mkdtempSync,
-	realpathSync,
-	renameSync,
-	rmSync,
-} from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
@@ -72,7 +63,9 @@ export function validateInstallerTargets(
 	{ homeDir = homedir(), validUpdateTracks = DEFAULT_VALID_UPDATE_TRACKS }: InstallerPathOptions = {},
 ): void {
 	if (!config.wrapperName || !/^[A-Za-z0-9._-]+$/.test(config.wrapperName)) {
-		throw new Error("--wrapper-name must be a simple command name containing only letters, numbers, dot, underscore, or dash");
+		throw new Error(
+			"--wrapper-name must be a simple command name containing only letters, numbers, dot, underscore, or dash",
+		);
 	}
 	if (!config.updateTrack || !new Set(validUpdateTracks).has(config.updateTrack)) {
 		throw new Error("--track must be one of: latest-release, pinned-tag, ref, custom");
@@ -209,10 +202,7 @@ export function copySafeProfileFile(
 	}
 }
 
-export function assertSafeSettingsTarget(
-	config: InstallerPathConfig,
-	options: InstallerPathOptions = {},
-): void {
+export function assertSafeSettingsTarget(config: InstallerPathConfig, options: InstallerPathOptions = {}): void {
 	if (!config.settingsPath) {
 		throw new Error("installer settings target validation requires settingsPath");
 	}

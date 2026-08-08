@@ -23,10 +23,7 @@ test("buildReviewEnvelope: branch+base with currentBranch ctx and no body contai
 
 test("buildReviewEnvelope: diff body is included verbatim inside diff fence", () => {
 	const body = "DIFF\nBODY";
-	const envelope = buildReviewEnvelope(
-		{ mode: "uncommitted", extra: undefined },
-		{ body, bodyKind: "diff" },
-	);
+	const envelope = buildReviewEnvelope({ mode: "uncommitted", extra: undefined }, { body, bodyKind: "diff" });
 	assert.ok(envelope.includes("--- begin diff ---"), "contains begin diff fence");
 	assert.ok(envelope.includes("--- end diff ---"), "contains end diff fence");
 	assert.ok(envelope.includes(body), "body is present verbatim");
@@ -65,9 +62,7 @@ test("buildReviewEnvelope: checkout ctx produces switched-from line", () => {
 });
 
 test("buildReviewEnvelope: extra value appears after extra: label (not the none literal)", () => {
-	const envelope = buildReviewEnvelope(
-		{ mode: "uncommitted", extra: "watch perf" },
-	);
+	const envelope = buildReviewEnvelope({ mode: "uncommitted", extra: "watch perf" });
 	const lines = envelope.split("\n");
 	const extraLabelIdx = lines.indexOf("extra:");
 	assert.notEqual(extraLabelIdx, -1, "extra: label line is present");
@@ -77,8 +72,6 @@ test("buildReviewEnvelope: extra value appears after extra: label (not the none 
 
 test("buildReviewEnvelope: multi-line extra is preserved verbatim", () => {
 	const multiLineExtra = "line one\nline two\nline three";
-	const envelope = buildReviewEnvelope(
-		{ mode: "uncommitted", extra: multiLineExtra },
-	);
+	const envelope = buildReviewEnvelope({ mode: "uncommitted", extra: multiLineExtra });
 	assert.ok(envelope.includes(multiLineExtra), "multi-line extra is preserved verbatim");
 });

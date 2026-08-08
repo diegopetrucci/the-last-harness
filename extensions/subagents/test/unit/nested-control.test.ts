@@ -3,8 +3,21 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { clearForegroundMessageInbox, createSubagentExecutor, registerForegroundMessageInbox } from "../../src/runs/foreground/subagent-executor.ts";
-import { createNestedRoute, NESTED_CONTROL_DELIVERY_TIMEOUT_MS, NESTED_CONTROL_RESULT_TIMEOUT_MS, NESTED_RUNNER_ACCEPTANCE_TIMEOUT_MS, projectNestedEvents, readNestedControlRequests, writeNestedControlResult, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
+import {
+	clearForegroundMessageInbox,
+	createSubagentExecutor,
+	registerForegroundMessageInbox,
+} from "../../src/runs/foreground/subagent-executor.ts";
+import {
+	createNestedRoute,
+	NESTED_CONTROL_DELIVERY_TIMEOUT_MS,
+	NESTED_CONTROL_RESULT_TIMEOUT_MS,
+	NESTED_RUNNER_ACCEPTANCE_TIMEOUT_MS,
+	projectNestedEvents,
+	readNestedControlRequests,
+	writeNestedControlResult,
+	writeNestedEvent,
+} from "../../src/runs/shared/nested-events.ts";
 import {
 	SUBAGENT_CHILD_ENV,
 	SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV,
@@ -15,7 +28,13 @@ import {
 	SUBAGENT_PARENT_RUN_ID_ENV,
 } from "../../src/runs/shared/pi-args.ts";
 import { consumeSteerRequests } from "../../src/runs/background/control-channel.ts";
-import { RESULTS_DIR, SUBAGENT_CONTROL_INTERCOM_EVENT, SUBAGENT_RESULT_INTERCOM_EVENT, TEMP_ROOT_DIR, type SubagentState } from "../../src/shared/types.ts";
+import {
+	RESULTS_DIR,
+	SUBAGENT_CONTROL_INTERCOM_EVENT,
+	SUBAGENT_RESULT_INTERCOM_EVENT,
+	TEMP_ROOT_DIR,
+	type SubagentState,
+} from "../../src/shared/types.ts";
 
 const routeRoots: string[] = [];
 const savedEnv = {
@@ -55,14 +74,31 @@ function createState(): SubagentState {
 	};
 }
 
-function createExecutor(state = createState(), agents: Array<Record<string, unknown>> = [], events: any = { emit() {}, on() { return () => {}; } }) {
+function createExecutor(
+	state = createState(),
+	agents: Array<Record<string, unknown>> = [],
+	events: any = {
+		emit() {},
+		on() {
+			return () => {};
+		},
+	},
+) {
 	return createSubagentExecutor({
-		pi: { events, getSessionName() { return "parent"; } } as any,
+		pi: {
+			events,
+			getSessionName() {
+				return "parent";
+			},
+		} as any,
 		state,
 		config: { maxSubagentDepth: 2, control: {}, intercomBridge: {} } as any,
 		asyncByDefault: false,
 		tempArtifactsDir: os.tmpdir(),
-		getSubagentSessionRoot: (parentSessionFile) => parentSessionFile ? path.join(path.dirname(parentSessionFile), path.basename(parentSessionFile, ".jsonl")) : os.tmpdir(),
+		getSubagentSessionRoot: (parentSessionFile) =>
+			parentSessionFile
+				? path.join(path.dirname(parentSessionFile), path.basename(parentSessionFile, ".jsonl"))
+				: os.tmpdir(),
 		expandTilde: (value) => value,
 		discoverAgents: () => ({ agents: agents as any }),
 	});
@@ -72,12 +108,27 @@ function ctx(root: string, sessionFile: string | null = null) {
 	return {
 		cwd: root,
 		hasUI: false,
-		sessionManager: { getSessionId() { return "session"; }, getSessionFile() { return sessionFile; } },
-		modelRegistry: { getAvailable() { return []; } },
+		sessionManager: {
+			getSessionId() {
+				return "session";
+			},
+			getSessionFile() {
+				return sessionFile;
+			},
+		},
+		modelRegistry: {
+			getAvailable() {
+				return [];
+			},
+		},
 	} as any;
 }
 
-function createNestedRun(id = "nested-live", state: "running" | "complete" | "failed" | "paused" = "running", extras: Record<string, unknown> = {}) {
+function createNestedRun(
+	id = "nested-live",
+	state: "running" | "complete" | "failed" | "paused" = "running",
+	extras: Record<string, unknown> = {},
+) {
 	const route = createNestedRoute("root-control");
 	routeRoots.push(path.dirname(route.eventSink));
 	writeNestedEvent(route, {
@@ -85,7 +136,17 @@ function createNestedRun(id = "nested-live", state: "running" | "complete" | "fa
 		ts: 100,
 		parentRunId: "root-control",
 		parentStepIndex: 0,
-		child: { id, parentRunId: "root-control", parentStepIndex: 0, depth: 1, path: [{ runId: "root-control", stepIndex: 0 }], state, agent: "worker", ownerState: state === "running" ? "live" : "gone", ...extras },
+		child: {
+			id,
+			parentRunId: "root-control",
+			parentStepIndex: 0,
+			depth: 1,
+			path: [{ runId: "root-control", stepIndex: 0 }],
+			state,
+			agent: "worker",
+			ownerState: state === "running" ? "live" : "gone",
+			...extras,
+		},
 	});
 	return route;
 }
@@ -142,10 +203,22 @@ describe("nested control routing", () => {
 			setTimeout(() => {
 				const request = readNestedControlRequests(route)[0];
 				assert.ok(request, "expected a nested control request");
-				writeNestedControlResult(route, { ts: Date.now(), requestId: request.requestId, targetRunId: request.targetRunId, ok: true, message: "nested interrupt accepted" });
+				writeNestedControlResult(route, {
+					ts: Date.now(),
+					requestId: request.requestId,
+					targetRunId: request.targetRunId,
+					ok: true,
+					message: "nested interrupt accepted",
+				});
 			}, 50);
 
-			const result = await executor.execute("interrupt", { action: "interrupt", id: "nested-live" }, new AbortController().signal, undefined, ctx(root));
+			const result = await executor.execute(
+				"interrupt",
+				{ action: "interrupt", id: "nested-live" },
+				new AbortController().signal,
+				undefined,
+				ctx(root),
+			);
 			assert.equal(result.isError, undefined);
 			assert.match(text(result), /nested interrupt accepted/);
 		} finally {
@@ -161,21 +234,35 @@ describe("nested control routing", () => {
 		try {
 			fs.rmSync(nestedResultFile, { force: true });
 			fs.mkdirSync(nestedAsyncDir, { recursive: true });
-			fs.writeFileSync(path.join(nestedAsyncDir, "status.json"), JSON.stringify({
-				runId,
-				mode: "single",
-				state: "running",
-				pid: process.pid,
-				cwd: root,
-				startedAt: 100,
-				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "running", startedAt: 100 }],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(nestedAsyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId,
+						mode: "single",
+						state: "running",
+						pid: process.pid,
+						cwd: root,
+						startedAt: 100,
+						lastUpdate: Date.now(),
+						steps: [{ agent: "worker", status: "running", startedAt: 100 }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
 			const route = createNestedRun(runId, "running", { asyncDir: nestedAsyncDir });
 			const executor = createExecutor(stateWithNestedRoute(route));
 
-			const result = await executor.execute("steer", { action: "steer", id: runId, message: "adjust focus" }, new AbortController().signal, undefined, ctx(root));
+			const result = await executor.execute(
+				"steer",
+				{ action: "steer", id: runId, message: "adjust focus" },
+				new AbortController().signal,
+				undefined,
+				ctx(root),
+			);
 			assert.equal(result.isError, undefined, `unexpected error: ${text(result)}`);
 			assert.match(text(result), /Steering queued/);
 
@@ -205,7 +292,13 @@ describe("nested control routing", () => {
 			});
 			state.lastForegroundControlId = "root-control";
 
-			const result = await createExecutor(state).execute("status", { action: "status", id: "root-control" }, new AbortController().signal, undefined, ctx(root));
+			const result = await createExecutor(state).execute(
+				"status",
+				{ action: "status", id: "root-control" },
+				new AbortController().signal,
+				undefined,
+				ctx(root),
+			);
 
 			assert.equal(result.isError, undefined);
 			assert.match(text(result), /Run: root-control/);
@@ -220,7 +313,13 @@ describe("nested control routing", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-bare-interrupt-"));
 		try {
 			createNestedRun("nested-only");
-			const result = await createExecutor().execute("interrupt", { action: "interrupt" }, new AbortController().signal, undefined, ctx(root));
+			const result = await createExecutor().execute(
+				"interrupt",
+				{ action: "interrupt" },
+				new AbortController().signal,
+				undefined,
+				ctx(root),
+			);
 			assert.equal(result.isError, true);
 			assert.match(text(result), /No interrupt-capable run found/);
 		} finally {
@@ -235,9 +334,22 @@ describe("nested control routing", () => {
 			const executor = createExecutor(stateWithNestedRoute(route));
 			setTimeout(() => {
 				const request = readNestedControlRequests(route)[0];
-				if (request) writeNestedControlResult(route, { ts: Date.now(), requestId: request.requestId, targetRunId: request.targetRunId, ok: true, message: "late success" });
+				if (request)
+					writeNestedControlResult(route, {
+						ts: Date.now(),
+						requestId: request.requestId,
+						targetRunId: request.targetRunId,
+						ok: true,
+						message: "late success",
+					});
 			}, 1_200);
-			const result = await executor.execute("interrupt", { action: "interrupt", id: "nested-timeout" }, new AbortController().signal, undefined, ctx(root));
+			const result = await executor.execute(
+				"interrupt",
+				{ action: "interrupt", id: "nested-timeout" },
+				new AbortController().signal,
+				undefined,
+				ctx(root),
+			);
 			assert.equal(result.isError, true);
 			assert.match(text(result), /owner is not reachable/);
 			assert.doesNotMatch(text(result), /late success/);
@@ -256,9 +368,22 @@ describe("nested control routing", () => {
 			const executor = createExecutor(stateWithNestedRoute(route));
 			setTimeout(() => {
 				const request = readNestedControlRequests(route)[0];
-				if (request) writeNestedControlResult(route, { ts: Date.now(), requestId: request.requestId, targetRunId: request.targetRunId, ok: true, message: "owner completed within parent bound" });
+				if (request)
+					writeNestedControlResult(route, {
+						ts: Date.now(),
+						requestId: request.requestId,
+						targetRunId: request.targetRunId,
+						ok: true,
+						message: "owner completed within parent bound",
+					});
 			}, NESTED_RUNNER_ACCEPTANCE_TIMEOUT_MS + 100);
-			const result = await executor.execute("resume", { action: "resume", id: "nested-owner-bound", message: "continue" }, new AbortController().signal, undefined, ctx(root));
+			const result = await executor.execute(
+				"resume",
+				{ action: "resume", id: "nested-owner-bound", message: "continue" },
+				new AbortController().signal,
+				undefined,
+				ctx(root),
+			);
 			assert.equal(result.isError, undefined);
 			assert.match(text(result), /owner completed within parent bound/);
 		} finally {
@@ -270,8 +395,18 @@ describe("nested control routing", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-live-resume-"));
 		try {
 			const emitted: Array<{ name: string; payload: unknown }> = [];
-			const events = { emit(name: string, payload: unknown) { emitted.push({ name, payload }); }, on() { return () => {}; } };
-			const route = createNestedRun("nested-live-resume", "running", { intercomTarget: "attacker-target", leafIntercomTarget: "attacker-leaf" });
+			const events = {
+				emit(name: string, payload: unknown) {
+					emitted.push({ name, payload });
+				},
+				on() {
+					return () => {};
+				},
+			};
+			const route = createNestedRun("nested-live-resume", "running", {
+				intercomTarget: "attacker-target",
+				leafIntercomTarget: "attacker-leaf",
+			});
 			const executor = createExecutor(stateWithNestedRoute(route), [], events);
 			setTimeout(() => {
 				const request = readNestedControlRequests(route)[0];
@@ -280,19 +415,40 @@ describe("nested control routing", () => {
 				assert.equal(request.targetIndex, 1);
 				assert.equal(request.deliveryDeadlineAt, request.ts + NESTED_CONTROL_DELIVERY_TIMEOUT_MS);
 				assert.equal(request.message, "continue please");
-				writeNestedControlResult(route, { ts: Date.now(), requestId: request.requestId, targetRunId: request.targetRunId, ok: true, message: "nested resume accepted" });
+				writeNestedControlResult(route, {
+					ts: Date.now(),
+					requestId: request.requestId,
+					targetRunId: request.targetRunId,
+					ok: true,
+					message: "nested resume accepted",
+				});
 			}, 50);
 
-			const result = await executor.execute("resume", { action: "resume", id: "nested-live-resume", index: 1, message: "continue please" }, new AbortController().signal, undefined, ctx(root));
+			const result = await executor.execute(
+				"resume",
+				{ action: "resume", id: "nested-live-resume", index: 1, message: "continue please" },
+				new AbortController().signal,
+				undefined,
+				ctx(root),
+			);
 
 			assert.equal(result.isError, undefined);
 			assert.match(text(result), /nested resume accepted/);
-			assert.equal(emitted.some((event) => {
-				const payload = event.payload as { to?: unknown };
-				return payload.to === "attacker-target" || payload.to === "attacker-leaf";
-			}), false);
-			assert.equal(emitted.some((event) => event.name === SUBAGENT_CONTROL_INTERCOM_EVENT), false);
-			assert.equal(emitted.some((event) => event.name === SUBAGENT_RESULT_INTERCOM_EVENT), false);
+			assert.equal(
+				emitted.some((event) => {
+					const payload = event.payload as { to?: unknown };
+					return payload.to === "attacker-target" || payload.to === "attacker-leaf";
+				}),
+				false,
+			);
+			assert.equal(
+				emitted.some((event) => event.name === SUBAGENT_CONTROL_INTERCOM_EVENT),
+				false,
+			);
+			assert.equal(
+				emitted.some((event) => event.name === SUBAGENT_RESULT_INTERCOM_EVENT),
+				false,
+			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -301,10 +457,19 @@ describe("nested control routing", () => {
 	it("validates terminal nested resume session files before revive", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-terminal-resume-"));
 		try {
-			const route = createNestedRun("nested-terminal-resume", "complete", { sessionFile: path.join(root, "missing-session.jsonl") });
+			const route = createNestedRun("nested-terminal-resume", "complete", {
+				sessionFile: path.join(root, "missing-session.jsonl"),
+			});
 
-			const result = await createExecutor(stateWithNestedRoute(route), [{ name: "worker", description: "Worker", prompt: "Do work" }])
-				.execute("resume", { action: "resume", id: "nested-terminal-resume", message: "continue" }, new AbortController().signal, undefined, ctx(root));
+			const result = await createExecutor(stateWithNestedRoute(route), [
+				{ name: "worker", description: "Worker", prompt: "Do work" },
+			]).execute(
+				"resume",
+				{ action: "resume", id: "nested-terminal-resume", message: "continue" },
+				new AbortController().signal,
+				undefined,
+				ctx(root),
+			);
 
 			assert.equal(result.isError, true);
 			assert.match(text(result), /session file does not exist/);
@@ -324,16 +489,27 @@ describe("nested control routing", () => {
 			fs.writeFileSync(parentSessionFile, "");
 			fs.writeFileSync(sessionFile, "");
 			fs.mkdirSync(nestedAsyncDir, { recursive: true });
-			fs.writeFileSync(path.join(nestedAsyncDir, "status.json"), JSON.stringify({
-				runId,
-				mode: "single",
-				state: "complete",
-				steps: [{ agent: "worker", status: "complete", sessionFile, activeRuntimeMs: 75 }],
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(nestedAsyncDir, "status.json"),
+				JSON.stringify({
+					runId,
+					mode: "single",
+					state: "complete",
+					steps: [{ agent: "worker", status: "complete", sessionFile, activeRuntimeMs: 75 }],
+				}),
+				"utf-8",
+			);
 			const route = createNestedRun(runId, "complete", { asyncDir: nestedAsyncDir, sessionFile });
 
-			const result = await createExecutor(stateWithNestedRoute(route), [{ name: "worker", description: "Worker", prompt: "Do work", maxExecutionTimeMs: 100 }])
-				.execute("resume", { action: "resume", id: runId, message: "continue", timeoutMs: 1_000 }, new AbortController().signal, undefined, ctx(root, parentSessionFile));
+			const result = await createExecutor(stateWithNestedRoute(route), [
+				{ name: "worker", description: "Worker", prompt: "Do work", maxExecutionTimeMs: 100 },
+			]).execute(
+				"resume",
+				{ action: "resume", id: runId, message: "continue", timeoutMs: 1_000 },
+				new AbortController().signal,
+				undefined,
+				ctx(root, parentSessionFile),
+			);
 
 			assert.equal(result.isError, undefined, text(result));
 			assert.equal(result.details?.timeoutMs, 25);
@@ -354,28 +530,48 @@ describe("nested control routing", () => {
 			fs.writeFileSync(parentSessionFile, "");
 			fs.writeFileSync(sessionFile, "");
 			fs.mkdirSync(nestedAsyncDir, { recursive: true });
-			fs.writeFileSync(path.join(nestedAsyncDir, "status.json"), JSON.stringify({
-				runId,
-				mode: "single",
-				state: "paused",
-				steps: [{
-					agent: "worker",
-					status: "paused",
-					sessionFile,
-					activeRuntimeMs: 100,
-					acceptance: {
-						status: "skipped",
-						effectiveAcceptance: { level: "checked", explicit: true, criteria: [], evidence: [], verify: [], stopRules: [] },
-						criteria: [],
-						runtimeChecks: [],
-						verifyRuns: [],
-					},
-				}],
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(nestedAsyncDir, "status.json"),
+				JSON.stringify({
+					runId,
+					mode: "single",
+					state: "paused",
+					steps: [
+						{
+							agent: "worker",
+							status: "paused",
+							sessionFile,
+							activeRuntimeMs: 100,
+							acceptance: {
+								status: "skipped",
+								effectiveAcceptance: {
+									level: "checked",
+									explicit: true,
+									criteria: [],
+									evidence: [],
+									verify: [],
+									stopRules: [],
+								},
+								criteria: [],
+								runtimeChecks: [],
+								verifyRuns: [],
+							},
+						},
+					],
+				}),
+				"utf-8",
+			);
 			const route = createNestedRun(runId, "paused", { asyncDir: nestedAsyncDir, sessionFile });
 
-			const result = await createExecutor(stateWithNestedRoute(route), [{ name: "worker", description: "Worker", prompt: "Do work", maxExecutionTimeMs: 100 }])
-				.execute("resume", { action: "resume", id: runId, message: "continue", timeoutMs: 1_000 }, new AbortController().signal, undefined, ctx(root, parentSessionFile));
+			const result = await createExecutor(stateWithNestedRoute(route), [
+				{ name: "worker", description: "Worker", prompt: "Do work", maxExecutionTimeMs: 100 },
+			]).execute(
+				"resume",
+				{ action: "resume", id: runId, message: "continue", timeoutMs: 1_000 },
+				new AbortController().signal,
+				undefined,
+				ctx(root, parentSessionFile),
+			);
 
 			assert.equal(result.isError, true);
 			assert.match(text(result), /exhausted its maxExecutionTimeMs ceiling after 100ms/);
@@ -391,16 +587,30 @@ describe("nested control routing", () => {
 		const nestedAsyncDir = path.join(TEMP_ROOT_DIR, "nested-subagent-runs", "root-control", runId);
 		try {
 			fs.mkdirSync(nestedAsyncDir, { recursive: true });
-			fs.writeFileSync(path.join(nestedAsyncDir, "status.json"), JSON.stringify({
-				runId,
-				mode: "single",
-				state: "complete",
-				steps: [{ agent: "worker", status: "complete", activeRuntimeMs: "75" }],
-			}), "utf-8");
-			const route = createNestedRun(runId, "complete", { asyncDir: nestedAsyncDir, sessionFile: path.join(root, "missing-session.jsonl") });
+			fs.writeFileSync(
+				path.join(nestedAsyncDir, "status.json"),
+				JSON.stringify({
+					runId,
+					mode: "single",
+					state: "complete",
+					steps: [{ agent: "worker", status: "complete", activeRuntimeMs: "75" }],
+				}),
+				"utf-8",
+			);
+			const route = createNestedRun(runId, "complete", {
+				asyncDir: nestedAsyncDir,
+				sessionFile: path.join(root, "missing-session.jsonl"),
+			});
 
-			const result = await createExecutor(stateWithNestedRoute(route), [{ name: "worker", description: "Worker", prompt: "Do work", maxExecutionTimeMs: 100 }])
-				.execute("resume", { action: "resume", id: runId, message: "continue" }, new AbortController().signal, undefined, ctx(root));
+			const result = await createExecutor(stateWithNestedRoute(route), [
+				{ name: "worker", description: "Worker", prompt: "Do work", maxExecutionTimeMs: 100 },
+			]).execute(
+				"resume",
+				{ action: "resume", id: runId, message: "continue" },
+				new AbortController().signal,
+				undefined,
+				ctx(root),
+			);
 
 			assert.equal(result.isError, true);
 			assert.match(text(result), /activeRuntimeMs must be a non-negative finite number/);
@@ -413,10 +623,19 @@ describe("nested control routing", () => {
 	it("fails closed when reviving a paused nested run without a readable skipped acceptance ledger", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-paused-no-ledger-"));
 		try {
-			const route = createNestedRun("nested-paused-no-ledger", "paused", { sessionFile: path.join(root, "missing-session.jsonl") });
+			const route = createNestedRun("nested-paused-no-ledger", "paused", {
+				sessionFile: path.join(root, "missing-session.jsonl"),
+			});
 
-			const result = await createExecutor(stateWithNestedRoute(route), [{ name: "worker", description: "Worker", prompt: "Do work" }])
-				.execute("resume", { action: "resume", id: "nested-paused-no-ledger", message: "continue" }, new AbortController().signal, undefined, ctx(root));
+			const result = await createExecutor(stateWithNestedRoute(route), [
+				{ name: "worker", description: "Worker", prompt: "Do work" },
+			]).execute(
+				"resume",
+				{ action: "resume", id: "nested-paused-no-ledger", message: "continue" },
+				new AbortController().signal,
+				undefined,
+				ctx(root),
+			);
 
 			assert.equal(result.isError, true);
 			assert.match(text(result), /skipped acceptance ledger could not be read/);
@@ -431,26 +650,49 @@ describe("nested control routing", () => {
 		const nestedAsyncDir = path.join(TEMP_ROOT_DIR, "nested-subagent-runs", "root-control", runId);
 		try {
 			fs.mkdirSync(nestedAsyncDir, { recursive: true });
-			fs.writeFileSync(path.join(nestedAsyncDir, "status.json"), JSON.stringify({
-				runId,
-				mode: "single",
-				state: "paused",
-				steps: [{
-					agent: "worker",
-					status: "paused",
-					acceptance: {
-						status: "skipped",
-						effectiveAcceptance: { level: "checked", explicit: true, criteria: [], evidence: [], verify: [], stopRules: [] },
-						criteria: [],
-						runtimeChecks: [],
-						verifyRuns: [],
-					},
-				}],
-			}), "utf-8");
-			const route = createNestedRun(runId, "paused", { asyncDir: nestedAsyncDir, sessionFile: path.join(root, "missing-session.jsonl") });
+			fs.writeFileSync(
+				path.join(nestedAsyncDir, "status.json"),
+				JSON.stringify({
+					runId,
+					mode: "single",
+					state: "paused",
+					steps: [
+						{
+							agent: "worker",
+							status: "paused",
+							acceptance: {
+								status: "skipped",
+								effectiveAcceptance: {
+									level: "checked",
+									explicit: true,
+									criteria: [],
+									evidence: [],
+									verify: [],
+									stopRules: [],
+								},
+								criteria: [],
+								runtimeChecks: [],
+								verifyRuns: [],
+							},
+						},
+					],
+				}),
+				"utf-8",
+			);
+			const route = createNestedRun(runId, "paused", {
+				asyncDir: nestedAsyncDir,
+				sessionFile: path.join(root, "missing-session.jsonl"),
+			});
 
-			const result = await createExecutor(stateWithNestedRoute(route), [{ name: "worker", description: "Worker", prompt: "Do work" }])
-				.execute("resume", { action: "resume", id: runId, message: "continue" }, new AbortController().signal, undefined, ctx(root));
+			const result = await createExecutor(stateWithNestedRoute(route), [
+				{ name: "worker", description: "Worker", prompt: "Do work" },
+			]).execute(
+				"resume",
+				{ action: "resume", id: runId, message: "continue" },
+				new AbortController().signal,
+				undefined,
+				ctx(root),
+			);
 
 			// The ledger was read successfully, so resolution proceeds past the
 			// fail-closed acceptance guard to session-file validation.
@@ -472,8 +714,15 @@ describe("nested control routing", () => {
 			fs.writeFileSync(attackerSessionFile, "");
 			const route = createNestedRun("nested-untrusted-resume", "complete", { sessionFile: attackerSessionFile });
 
-			const result = await createExecutor(stateWithNestedRoute(route), [{ name: "worker", description: "Worker", prompt: "Do work" }])
-				.execute("resume", { action: "resume", id: "nested-untrusted-resume", message: "continue" }, new AbortController().signal, undefined, ctx(root, parentSessionFile));
+			const result = await createExecutor(stateWithNestedRoute(route), [
+				{ name: "worker", description: "Worker", prompt: "Do work" },
+			]).execute(
+				"resume",
+				{ action: "resume", id: "nested-untrusted-resume", message: "continue" },
+				new AbortController().signal,
+				undefined,
+				ctx(root, parentSessionFile),
+			);
 
 			assert.equal(result.isError, true);
 			assert.match(text(result), /outside trusted nested session roots/);
@@ -492,8 +741,15 @@ describe("nested control routing", () => {
 			fs.writeFileSync(siblingSessionFile, "");
 			const route = createNestedRun("nested-sibling-resume", "complete", { sessionFile: siblingSessionFile });
 
-			const result = await createExecutor(stateWithNestedRoute(route), [{ name: "worker", description: "Worker", prompt: "Do work" }])
-				.execute("resume", { action: "resume", id: "nested-sibling-resume", message: "continue" }, new AbortController().signal, undefined, ctx(root, parentSessionFile));
+			const result = await createExecutor(stateWithNestedRoute(route), [
+				{ name: "worker", description: "Worker", prompt: "Do work" },
+			]).execute(
+				"resume",
+				{ action: "resume", id: "nested-sibling-resume", message: "continue" },
+				new AbortController().signal,
+				undefined,
+				ctx(root, parentSessionFile),
+			);
 
 			assert.equal(result.isError, true);
 			assert.match(text(result), /not under that nested run's session directory/);
@@ -510,11 +766,16 @@ describe("nested control routing", () => {
 			setNestedRouteEnv(route, "root-parent");
 			const throwingCtx = {
 				...ctx(root),
-				modelRegistry: { getAvailable() { throw new Error("model registry exploded"); } },
+				modelRegistry: {
+					getAvailable() {
+						throw new Error("model registry exploded");
+					},
+				},
 			};
 
-			const result = await createExecutor(createState(), [{ name: "worker", description: "Worker", prompt: "Do work" }])
-				.execute("run", { agent: "worker", task: "go" }, new AbortController().signal, undefined, throwingCtx);
+			const result = await createExecutor(createState(), [
+				{ name: "worker", description: "Worker", prompt: "Do work" },
+			]).execute("run", { agent: "worker", task: "go" }, new AbortController().signal, undefined, throwingCtx);
 
 			assert.equal(result.isError, true);
 			assert.match(text(result), /model registry exploded/);
@@ -526,5 +787,4 @@ describe("nested control routing", () => {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
-
 });

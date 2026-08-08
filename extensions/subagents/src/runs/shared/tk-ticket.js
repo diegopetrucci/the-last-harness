@@ -57,7 +57,11 @@ function sanitizeTerminalText(raw) {
             }
             continue;
         }
-        if (code <= 0x08 || code === 0x0b || code === 0x0c || (code >= 0x0e && code <= 0x1f) || (code >= 0x7f && code <= 0x9f)) {
+        if (code <= 0x08 ||
+            code === 0x0b ||
+            code === 0x0c ||
+            (code >= 0x0e && code <= 0x1f) ||
+            (code >= 0x7f && code <= 0x9f)) {
             cleaned += " ";
             continue;
         }
@@ -66,9 +70,7 @@ function sanitizeTerminalText(raw) {
     return cleaned;
 }
 export function sanitizeTkTicketTitle(raw, maxWidth = MAX_TK_TICKET_TITLE_WIDTH) {
-    const cleaned = sanitizeTerminalText(raw)
-        .replace(/\s+/g, " ")
-        .trim();
+    const cleaned = sanitizeTerminalText(raw).replace(/\s+/g, " ").trim();
     if (!cleaned)
         return undefined;
     return truncatePlainTextToWidth(cleaned, maxWidth);

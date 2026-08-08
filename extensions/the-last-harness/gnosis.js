@@ -18,7 +18,10 @@ function uniqueGnosisCandidates(candidates) {
 }
 function validateGnosisCommand(command) {
     try {
-        for (const args of [["help", "plan"], ["help", "review"]]) {
+        for (const args of [
+            ["help", "plan"],
+            ["help", "review"],
+        ]) {
             execFileSync(command, args, { stdio: "ignore", timeout: GNOSIS_VALIDATION_TIMEOUT_MS });
         }
         return true;

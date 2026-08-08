@@ -292,7 +292,9 @@ function normalizeState(raw) {
         ref,
         packageSource,
         packageSourceIsDefault: readBooleanProperty(raw, "packageSourceIsDefault") === true,
-        ...(typeof readBooleanProperty(raw, "piInstalledByTlh") === "boolean" ? { piInstalledByTlh: readBooleanProperty(raw, "piInstalledByTlh") } : {}),
+        ...(typeof readBooleanProperty(raw, "piInstalledByTlh") === "boolean"
+            ? { piInstalledByTlh: readBooleanProperty(raw, "piInstalledByTlh") }
+            : {}),
     };
 }
 function loadState(args) {
@@ -318,7 +320,10 @@ function loadState(args) {
     return undefined;
 }
 function encodePathRef(ref) {
-    return ref.split("/").map((part) => encodeURIComponent(part)).join("/");
+    return ref
+        .split("/")
+        .map((part) => encodeURIComponent(part))
+        .join("/");
 }
 function resolvePlan(state, args) {
     const repo = args.repo || state?.repo || DEFAULT_REPO;
@@ -328,7 +333,9 @@ function resolvePlan(state, args) {
     const packageSourceIsDefault = args.packageSource ? false : state?.packageSourceIsDefault === true;
     const changesStoredCustomTarget = state?.packageSourceIsDefault === false &&
         !args.packageSource &&
-        ((args.ref && args.ref !== state.ref) || (args.repo && args.repo !== state.repo) || (args.track && args.track !== state.track));
+        ((args.ref && args.ref !== state.ref) ||
+            (args.repo && args.repo !== state.repo) ||
+            (args.track && args.track !== state.track));
     if (changesStoredCustomTarget) {
         throw new Error("This install uses a custom package source. Pass --package-source with any --track, --repo, or --ref override so package code and update metadata stay aligned.");
     }
@@ -446,9 +453,7 @@ function assertPackageUpdateTargetSafe(agentDir) {
     }
 }
 function assertPackageUpdateArgs(args) {
-    const unsupported = PACKAGE_UPDATE_UNSUPPORTED_OPTIONS
-        .filter(([key]) => args.explicitOptions.has(key))
-        .map(([, flag]) => flag);
+    const unsupported = PACKAGE_UPDATE_UNSUPPORTED_OPTIONS.filter(([key]) => args.explicitOptions.has(key)).map(([, flag]) => flag);
     if (unsupported.length > 0) {
         throw new Error(`--extensions does not support ${unsupported.join(", ")}. Run plain tlh update for installer updates.`);
     }

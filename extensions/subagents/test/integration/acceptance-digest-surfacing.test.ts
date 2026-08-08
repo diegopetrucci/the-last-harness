@@ -93,7 +93,13 @@ describe("acceptance-report digest surfacing", { skip: !available ? "pi packages
 		// Stripping the block used to leave ~50 bytes with no evidence at all.
 		mockPi.onCall({ jsonl: [events.assistantMessage("Implementation complete.")] });
 
-		const result = await runSync!(tempDir, readOnlyAgents(), "reviewer", readOnlyTask, artifactOptions("digest-inline"));
+		const result = await runSync!(
+			tempDir,
+			readOnlyAgents(),
+			"reviewer",
+			readOnlyTask,
+			artifactOptions("digest-inline"),
+		);
 
 		assert.equal(result.exitCode, 0);
 		assert.ok(result.artifactPaths, "expected artifact paths");
@@ -110,7 +116,13 @@ describe("acceptance-report digest surfacing", { skip: !available ? "pi packages
 	it("keeps result.finalOutput free of the digest so the output contract is intact", async () => {
 		mockPi.onCall({ jsonl: [events.assistantMessage("Implementation complete.")] });
 
-		const result = await runSync!(tempDir, readOnlyAgents(), "reviewer", readOnlyTask, artifactOptions("digest-final-output"));
+		const result = await runSync!(
+			tempDir,
+			readOnlyAgents(),
+			"reviewer",
+			readOnlyTask,
+			artifactOptions("digest-final-output"),
+		);
 
 		// finalOutput feeds `output:` files and chain/parallel output references.
 		// It must be exactly the stripped assistant text, with nothing appended.
@@ -158,8 +170,13 @@ describe("acceptance-report digest surfacing", { skip: !available ? "pi packages
 		// remove-only so tails do not bloat with digest text.
 		mockPi.onCall({ jsonl: [events.assistantMessage("Implementation complete.")] });
 
-		const result = await runSync!(tempDir, readOnlyAgents(), "reviewer", readOnlyTask, artifactOptions("digest-step-tail")) as
-			SingleResultLike & { progress?: { recentOutput?: string[] } };
+		const result = (await runSync!(
+			tempDir,
+			readOnlyAgents(),
+			"reviewer",
+			readOnlyTask,
+			artifactOptions("digest-step-tail"),
+		)) as SingleResultLike & { progress?: { recentOutput?: string[] } };
 
 		const recent = (result.progress?.recentOutput ?? []).join("\n");
 		assert.doesNotMatch(recent, /Validation evidence/);

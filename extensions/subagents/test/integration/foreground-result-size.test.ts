@@ -105,7 +105,9 @@ function buildDockerNoiseChunk(step: number): string {
 	return lines.join("\n");
 }
 
-describe("foreground result payload compaction", { skip: !available ? "subagent executor not importable" : undefined }, () => {
+describe("foreground result payload compaction", {
+	skip: !available ? "subagent executor not importable" : undefined,
+}, () => {
 	let tempDir: string;
 	let mockPi: MockPi;
 
@@ -133,14 +135,16 @@ describe("foreground result payload compaction", { skip: !available ? "subagent 
 			type: "message_end",
 			message: {
 				role: "assistant",
-				content: [{
-					type: "toolCall",
-					name: "write",
-					arguments: {
-						path: "/tmp/huge-report.md",
-						content: "x".repeat(50_000),
+				content: [
+					{
+						type: "toolCall",
+						name: "write",
+						arguments: {
+							path: "/tmp/huge-report.md",
+							content: "x".repeat(50_000),
+						},
 					},
-				}],
+				],
 				model: "mock/test-model",
 				usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
 			},
@@ -149,13 +153,19 @@ describe("foreground result payload compaction", { skip: !available ? "subagent 
 		jsonl.push(events.toolResult("write", "ok"));
 		jsonl.push(events.toolEnd("write"));
 		for (let step = 0; step < 60; step++) {
-			jsonl.push(events.toolStart("bash", {
-				command: `docker compose run --rm api test-shard-${step} --retry --verbose`,
-			}));
+			jsonl.push(
+				events.toolStart("bash", {
+					command: `docker compose run --rm api test-shard-${step} --retry --verbose`,
+				}),
+			);
 			jsonl.push(events.toolResult("bash", buildDockerNoiseChunk(step)));
 			jsonl.push(events.toolEnd("bash"));
 		}
-		jsonl.push(events.assistantMessage("Finished the test sweep. Three failures reproduced, two were flaky, and the smallest fix is to retry the image bootstrap before the integration shard starts."));
+		jsonl.push(
+			events.assistantMessage(
+				"Finished the test sweep. Three failures reproduced, two were flaky, and the smallest fix is to retry the image bootstrap before the integration shard starts.",
+			),
+		);
 		mockPi.onCall({ jsonl });
 
 		const executor = makeExecutor(tempDir);

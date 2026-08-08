@@ -1,6 +1,6 @@
 {
   "name": "the-last-harness",
-  "version": "0.33.0",
+  "version": "0.34.0",
   "description": "The Last Harness Pi package",
   "license": "MIT",
   "type": "module",
@@ -35,7 +35,7 @@
     "check:package-contents": "node scripts/check-package-contents.mjs",
     "check:runtime": "node scripts/runtime-typescript.mjs check",
     "check:startup-performance": "node scripts/check-startup-performance.mjs",
-    "lint": "eslint \"scripts/**/*.{js,mjs,ts,mts}\" \"tests/**/*.{js,mjs,ts,mts}\" \"extensions/**/*.{js,mjs,ts,mts}\"",
+    "lint": "biome check scripts tests extensions",
     "lint:sh": "git ls-files '*.sh' | xargs shellcheck",
     "test": "node --test --test-reporter=dot \"tests/**/*.test.mjs\" && npm run test:subagents",
     "test:verbose": "node --test \"tests/**/*.test.mjs\" && npm run test:subagents",
@@ -52,6 +52,7 @@
     "agents",
     "config",
     "extensions",
+    "licenses",
     "prompts",
     "scripts",
     "skills",
@@ -99,17 +100,14 @@
     "typebox": "1.3.7"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.7",
     "@earendil-works/pi-agent-core": "0.83.0",
     "@earendil-works/pi-ai": "0.83.0",
     "@earendil-works/pi-coding-agent": "0.83.0",
     "@earendil-works/pi-tui": "0.83.0",
-    "@eslint/js": "10.0.1",
     "@types/node": "26.1.2",
-    "eslint": "10.8.0",
-    "globals": "17.9.0",
     "jiti": "2.7.0",
     "shellcheck": "4.1.0",
-    "typescript": "6.0.3",
-    "typescript-eslint": "8.65.0"
+    "typescript": "6.0.3"
   }
 }

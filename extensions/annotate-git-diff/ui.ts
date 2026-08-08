@@ -65,7 +65,9 @@ function resolveMonacoRuntimeJs(monacoBasePath: string, monacoEntryPath: string)
 	const scripts: string[] = [];
 
 	const visit = (dir: string): void => {
-		for (const entry of readdirSync(dir, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+		for (const entry of readdirSync(dir, { withFileTypes: true }).sort((left, right) =>
+			left.name.localeCompare(right.name),
+		)) {
 			const entryPath = join(dir, entry.name);
 			if (entry.isDirectory()) {
 				if (entry.name === "assets") continue;
@@ -142,9 +144,17 @@ export function buildReviewHtml(data: ReviewWindowData): string {
 	html = safeReplace(html, "__INLINE_TAILWIND_JS__", escapeInlineScriptSource(assets.tailwindBrowserJs));
 	html = safeReplace(html, "__INLINE_MONACO_LOADER_JS__", escapeInlineScriptSource(assets.monacoLoaderJs));
 	html = safeReplace(html, "__INLINE_MONACO_EDITOR_CSS__", escapeInlineStyleSource(assets.monacoEditorCss));
-	html = safeReplace(html, "__INLINE_MONACO_WORKER_SOURCE_JSON__", escapeForInlineScript(JSON.stringify(assets.monacoWorkerJs)));
+	html = safeReplace(
+		html,
+		"__INLINE_MONACO_WORKER_SOURCE_JSON__",
+		escapeForInlineScript(JSON.stringify(assets.monacoWorkerJs)),
+	);
 	html = safeReplace(html, "__INLINE_MONACO_ENTRY_JS__", escapeInlineScriptSource(assets.monacoEntryJs));
-	html = safeReplace(html, "__INLINE_MONACO_BASIC_LANGUAGES_JS__", escapeInlineScriptSource(assets.monacoBasicLanguagesJs));
+	html = safeReplace(
+		html,
+		"__INLINE_MONACO_BASIC_LANGUAGES_JS__",
+		escapeInlineScriptSource(assets.monacoBasicLanguagesJs),
+	);
 	html = safeReplace(html, "__INLINE_REVIEW_STATE_JS__", reviewStateJs);
 	html = safeReplace(html, "__INLINE_JS__", appJs);
 	return html;

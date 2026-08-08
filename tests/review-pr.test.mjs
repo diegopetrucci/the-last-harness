@@ -14,8 +14,7 @@ test("/review pr uses gh pr checkout before diff when switching to the PR head",
 			}
 			if (
 				command === "gh" &&
-				args.join(" ") ===
-					"pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
+				args.join(" ") === "pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
 			) {
 				return {
 					code: 0,
@@ -82,8 +81,7 @@ test("/review pr uses the gh default repo for REST metadata fallback when set", 
 			}
 			if (
 				command === "gh" &&
-				args.join(" ") ===
-					"pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
+				args.join(" ") === "pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
 			) {
 				return { code: 1, stdout: "", stderr: "GraphQL: API rate limit exceeded" };
 			}
@@ -145,8 +143,7 @@ test("/review pr falls back to local remotes for REST metadata when no gh defaul
 			}
 			if (
 				command === "gh" &&
-				args.join(" ") ===
-					"pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
+				args.join(" ") === "pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
 			) {
 				return { code: 1, stdout: "", stderr: "GraphQL: API rate limit exceeded" };
 			}
@@ -188,7 +185,9 @@ test("/review pr falls back to local remotes for REST metadata when no gh defaul
 	assert.match(harness.sentMessages[0], /current-branch: feature\/review/);
 	assert.match(harness.sentMessages[0], /diff --git a\/src\/app.ts b\/src\/app.ts/);
 	assert.ok(
-		harness.execCalls.some(({ command, args }) => command === "gh" && args.join(" ") === "api repos/acme/widgets/pulls/123"),
+		harness.execCalls.some(
+			({ command, args }) => command === "gh" && args.join(" ") === "api repos/acme/widgets/pulls/123",
+		),
 		"should fetch PR metadata via REST when GraphQL is rate-limited",
 	);
 });
@@ -207,8 +206,7 @@ test("/review pr falls back to REST diff when gh pr diff hits a GraphQL rate lim
 			}
 			if (
 				command === "gh" &&
-				args.join(" ") ===
-					"pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
+				args.join(" ") === "pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
 			) {
 				return {
 					code: 0,
@@ -244,8 +242,7 @@ test("/review pr falls back to REST diff when gh pr diff hits a GraphQL rate lim
 			}
 			if (
 				command === "gh" &&
-				args.join(" ") ===
-					"api -H Accept: application/vnd.github.v3.diff repos/acme/widgets/pulls/123"
+				args.join(" ") === "api -H Accept: application/vnd.github.v3.diff repos/acme/widgets/pulls/123"
 			) {
 				return { code: 0, stdout: "diff --git a/src/rest.ts b/src/rest.ts\n", stderr: "" };
 			}
@@ -267,7 +264,9 @@ test("/review pr falls back to REST diff when gh pr diff hits a GraphQL rate lim
 	assert.ok(
 		harness.execCalls.findIndex(({ command, args }) => command === "gh" && args.join(" ") === "pr checkout 123") <
 			harness.execCalls.findIndex(
-				({ command, args }) => command === "gh" && args.join(" ") === "api -H Accept: application/vnd.github.v3.diff repos/acme/widgets/pulls/123",
+				({ command, args }) =>
+					command === "gh" &&
+					args.join(" ") === "api -H Accept: application/vnd.github.v3.diff repos/acme/widgets/pulls/123",
 			),
 		"should preserve the checkout-before-diff behavior when falling back to REST diff",
 	);
@@ -291,8 +290,7 @@ test("/review pr reports both the GraphQL limit and REST fallback resolution fai
 			}
 			if (
 				command === "gh" &&
-				args.join(" ") ===
-					"pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
+				args.join(" ") === "pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
 			) {
 				return { code: 1, stdout: "", stderr: "GraphQL: quota exceeded" };
 			}
@@ -332,8 +330,7 @@ test("/review pr reports the branch switch when gh pr diff fails after checkout"
 			}
 			if (
 				command === "gh" &&
-				args.join(" ") ===
-					"pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
+				args.join(" ") === "pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
 			) {
 				return {
 					code: 0,
@@ -402,8 +399,7 @@ test("/review pr aborts before checkout when git status dirty-check fails", asyn
 			}
 			if (
 				command === "gh" &&
-				args.join(" ") ===
-					"pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
+				args.join(" ") === "pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
 			) {
 				return {
 					code: 0,

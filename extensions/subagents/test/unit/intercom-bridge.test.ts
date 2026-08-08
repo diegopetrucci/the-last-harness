@@ -55,7 +55,10 @@ describe("resolveIntercomSessionTarget", () => {
 describe("resolveSubagentIntercomTarget", () => {
 	it("builds stable child session targets from run metadata", () => {
 		assert.equal(resolveSubagentIntercomTarget("78f659a3", "worker"), "subagent-worker-78f659a3");
-		assert.equal(resolveSubagentIntercomTarget("78f659a3", "senior executor", 1), "subagent-senior-executor-78f659a3-2");
+		assert.equal(
+			resolveSubagentIntercomTarget("78f659a3", "senior executor", 1),
+			"subagent-senior-executor-78f659a3-2",
+		);
 	});
 });
 
@@ -151,7 +154,8 @@ describe("applyIntercomBridgeToAgent", () => {
 		mode: "always",
 		orchestratorTarget: "main",
 		extensionDir: NATIVE_INTERCOM_EXTENSION_DIR,
-		instruction: "Intercom orchestration channel:\n- Need a decision or blocked: contact_supervisor({ reason: \"need_decision\", message: \"<question>\" })\n- Blocking supervisor requests durably pause the child until the parent resumes or cancels it; no child process keeps running during that pause.\n- Blocked/update: contact_supervisor({ reason: \"progress_update\", message: \"UPDATE: <summary>\" })",
+		instruction:
+			'Intercom orchestration channel:\n- Need a decision or blocked: contact_supervisor({ reason: "need_decision", message: "<question>" })\n- Blocking supervisor requests durably pause the child until the parent resumes or cancels it; no child process keeps running during that pause.\n- Blocked/update: contact_supervisor({ reason: "progress_update", message: "UPDATE: <summary>" })',
 	};
 
 	it("injects intercom tool and prompt instructions", () => {

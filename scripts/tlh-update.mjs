@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-import { accessSync, chmodSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
-import { pathIsProtectedPiConfig, } from "./lib/tlh-install-paths.mjs";
-import { assignOptionValue, defaultTlhAgentDir, defaultTlhBinDir, expandHomePath, } from "./lib/tlh-install-utils.mjs";
+import { pathIsProtectedPiConfig } from "./lib/tlh-install-paths.mjs";
+import { assignOptionValue, defaultTlhAgentDir, defaultTlhBinDir, expandHomePath } from "./lib/tlh-install-utils.mjs";
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_WRAPPER_NAME = "tlh";
 const VALID_TRACKS = new Set(["latest-release", "pinned-tag", "ref", "custom"]);
@@ -312,7 +312,9 @@ function normalizeState(raw, fallback = {}) {
     const repo = typeof record.repo === "string" && record.repo.trim() ? record.repo.trim() : fallback.repo;
     const track = typeof record.track === "string" && record.track.trim() ? record.track.trim() : fallback.track;
     const ref = typeof record.ref === "string" && record.ref.trim() ? record.ref.trim() : fallback.ref;
-    const packageSource = typeof record.packageSource === "string" && record.packageSource.trim() ? record.packageSource.trim() : fallback.packageSource;
+    const packageSource = typeof record.packageSource === "string" && record.packageSource.trim()
+        ? record.packageSource.trim()
+        : fallback.packageSource;
     if (!repo || !track || !VALID_TRACKS.has(track))
         return undefined;
     return {
@@ -380,7 +382,10 @@ function loadState(args) {
     return undefined;
 }
 function encodePathRef(ref) {
-    return ref.split("/").map((part) => encodeURIComponent(part)).join("/");
+    return ref
+        .split("/")
+        .map((part) => encodeURIComponent(part))
+        .join("/");
 }
 function resolvePlan(state, args) {
     const repo = args.repo || state?.repo || DEFAULT_REPO;
@@ -390,7 +395,9 @@ function resolvePlan(state, args) {
     const packageSourceIsDefault = args.packageSource ? false : state?.packageSourceIsDefault === true;
     const changesStoredCustomTarget = state?.packageSourceIsDefault === false &&
         !args.packageSource &&
-        ((args.ref && args.ref !== state.ref) || (args.repo && args.repo !== state.repo) || (args.track && args.track !== state.track));
+        ((args.ref && args.ref !== state.ref) ||
+            (args.repo && args.repo !== state.repo) ||
+            (args.track && args.track !== state.track));
     if (changesStoredCustomTarget) {
         throw new Error("This install uses a custom package source. Pass --package-source with any --track, --repo, or --ref override so package code and update metadata stay aligned.");
     }
@@ -496,9 +503,7 @@ function assertPackageUpdateTargetSafe(agentDir) {
     }
 }
 function assertPackageUpdateArgs(args) {
-    const unsupported = PACKAGE_UPDATE_UNSUPPORTED_OPTIONS
-        .filter(([key]) => args.explicitOptions.has(key))
-        .map(([, flag]) => flag);
+    const unsupported = PACKAGE_UPDATE_UNSUPPORTED_OPTIONS.filter(([key]) => args.explicitOptions.has(key)).map(([, flag]) => flag);
     if (unsupported.length > 0) {
         throw new Error(`--extensions does not support ${unsupported.join(", ")}. Run plain tlh update for installer updates.`);
     }

@@ -127,7 +127,9 @@ export function formatGitStatusFooterSegment(status: DisplayGitStatusSnapshot): 
 	return parts.length > 0 ? parts.join(" ") : undefined;
 }
 
-export function formatPullRequestFooterSegment(pullRequest: PullRequestSnapshot | null | undefined): string | undefined {
+export function formatPullRequestFooterSegment(
+	pullRequest: PullRequestSnapshot | null | undefined,
+): string | undefined {
 	const value = pullRequest?.number;
 	if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
 		return `PR #${value}`;

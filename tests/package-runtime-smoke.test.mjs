@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { globSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	globSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -31,11 +40,7 @@ const requiredPackedAssets = [
 function isolatedEnv(root, agentDir) {
 	const env = { ...process.env };
 	for (const key of Object.keys(env)) {
-		if (
-			key === "PI_CODING_AGENT_DIR"
-			|| key.startsWith("PI_SUBAGENT")
-			|| key.startsWith("TLH_")
-		) {
+		if (key === "PI_CODING_AGENT_DIR" || key.startsWith("PI_SUBAGENT") || key.startsWith("TLH_")) {
 			delete env[key];
 		}
 	}
@@ -61,7 +66,9 @@ test("packed TLH generated JavaScript resolves from profile settings and reloads
 	for (const path of [packDir, extractDir, cwd, agentDir, homeDir]) mkdirSync(path, { recursive: true });
 
 	mkdirSync(join(agentDir, "package-smoke-agents"), { recursive: true });
-	writeFileSync(join(agentDir, "package-smoke-agents", "worker.md"), `---
+	writeFileSync(
+		join(agentDir, "package-smoke-agents", "worker.md"),
+		`---
 name: worker
 description: deterministic packed package smoke worker
 tools: read
@@ -72,7 +79,8 @@ defaultContext: fresh
 acceptanceRole: read-only
 ---
 Return the deterministic faux child marker exactly.
-`);
+`,
+	);
 
 	const env = isolatedEnv(root, agentDir);
 	const packResult = spawnSync("npm", ["pack", "--json", "--pack-destination", packDir], {
@@ -86,13 +94,14 @@ Return the deterministic faux child marker exactly.
 
 	const packedPaths = new Set(pack.files.map((file) => file.path));
 	const generatedExtensionPaths = [
-		...globSync("extensions/**/*.ts", { cwd: repoRoot })
-			.filter((path) => !path.endsWith(".d.ts") && !path.startsWith("extensions/subagents/")),
+		...globSync("extensions/**/*.ts", { cwd: repoRoot }).filter(
+			(path) => !path.endsWith(".d.ts") && !path.startsWith("extensions/subagents/"),
+		),
 		...globSync("extensions/subagents/src/**/*.ts", { cwd: repoRoot }).filter((path) => !path.endsWith(".d.ts")),
 	]
 		.map((path) => path.replace(/\.ts$/, ".js"))
 		.sort();
-	assert.equal(generatedExtensionPaths.length, 165);
+	assert.equal(generatedExtensionPaths.length, 166);
 	for (const generatedPath of generatedExtensionPaths) {
 		assert.ok(packedPaths.has(generatedPath), `npm pack omitted generated extension module ${generatedPath}`);
 	}
@@ -110,18 +119,21 @@ Return the deterministic faux child marker exactly.
 	assert.equal(packedManifest.peerDependencies["@earendil-works/pi-tui"], "0.83.0");
 	writeFileSync(
 		join(agentDir, "settings.json"),
-		`${JSON.stringify({
-			packages: [packageRoot],
-			tlh: {
-				primaryAgent: { enabled: false, selected: "disabled" },
-				telemetry: { enabled: false },
-				updateCheck: { enabled: false },
+		`${JSON.stringify(
+			{
+				packages: [packageRoot],
+				tlh: {
+					primaryAgent: { enabled: false, selected: "disabled" },
+					telemetry: { enabled: false },
+					updateCheck: { enabled: false },
+				},
+				subagents: {
+					agentDirs: ["package-smoke-agents"],
+				},
 			},
-			subagents: {
-				disableBuiltins: true,
-				agentDirs: ["package-smoke-agents"],
-			},
-		}, null, 2)}\n`,
+			null,
+			2,
+		)}\n`,
 	);
 
 	// npm pack intentionally excludes installed dependencies. Link the checkout's already-pinned,
@@ -136,7 +148,10 @@ Return the deterministic faux child marker exactly.
 	assert.equal(runtimeResult.status, 0, runtimeResult.stderr || runtimeResult.stdout);
 	const runtimeEvidence = JSON.parse(runtimeResult.stdout.trim());
 	assert.equal(runtimeEvidence.piVersion, "0.83.0");
-	assert.deepEqual(runtimeEvidence.entrypoints, expectedEntrypoints.map((path) => path.slice(2)));
+	assert.deepEqual(
+		runtimeEvidence.entrypoints,
+		expectedEntrypoints.map((path) => path.slice(2)),
+	);
 	assert.deepEqual(runtimeEvidence.packageResolution, {
 		configuredPackage: packageRoot,
 		resolvedPackageRoots: [packageRoot],
@@ -147,9 +162,7 @@ Return the deterministic faux child marker exactly.
 	assert.deepEqual(runtimeEvidence.toolCounts, { subagent: 1 });
 	assert.equal(runtimeEvidence.factoryExecutions, 3);
 	assert.equal(runtimeEvidence.failedSubagentPatched, true);
-	const expectedExecutedChildExtensionPaths = [
-		"extensions/subagents/src/runs/shared/subagent-prompt-runtime.js",
-	];
+	const expectedExecutedChildExtensionPaths = ["extensions/subagents/src/runs/shared/subagent-prompt-runtime.js"];
 	assert.deepEqual(runtimeEvidence.childExecution, {
 		marker: "PACKED_FAUX_CHILD_MARKER",
 		childExtensionPaths: expectedExecutedChildExtensionPaths,

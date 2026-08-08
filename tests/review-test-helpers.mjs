@@ -13,12 +13,9 @@ import {
 } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
-const {
-	buildReviewEnvelope,
-	decideBranchAction,
-	parseReviewArgs,
-	registerReviewCommand,
-} = await jiti.import("../extensions/the-last-harness/review.ts");
+const { buildReviewEnvelope, decideBranchAction, parseReviewArgs, registerReviewCommand } = await jiti.import(
+	"../extensions/the-last-harness/review.ts",
+);
 
 const reviewEnvRoot = makeSharedTempDir("tlh-review-agent-env-");
 const reviewEnvHome = join(reviewEnvRoot, "home");

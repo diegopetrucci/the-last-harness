@@ -8,9 +8,9 @@ import { createJiti } from "jiti";
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
-const {
-	registerLazyTlhTicketWorkflowUi,
-} = await jiti.import("../extensions/the-last-harness/ticket-workflow-ui-facade.ts");
+const { registerLazyTlhTicketWorkflowUi } = await jiti.import(
+	"../extensions/the-last-harness/ticket-workflow-ui-facade.ts",
+);
 
 function resetTicketWorkflowFacadeTestState() {
 	delete process.env.TICKETS_DIR;

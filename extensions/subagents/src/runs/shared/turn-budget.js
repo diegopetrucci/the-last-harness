@@ -20,9 +20,7 @@ export function turnBudgetExceededMessage(budget, turnCount) {
     return `Subagent exceeded turn budget after ${turnCount} assistant turn${turnCount === 1 ? "" : "s"} (soft limit ${budget.maxTurns} + grace ${budget.graceTurns}).`;
 }
 export function formatTurnBudgetOutput(message, output) {
-    return output.trim()
-        ? `${message}\n\nPartial output before turn-budget abort:\n${output}`
-        : message;
+    return output.trim() ? `${message}\n\nPartial output before turn-budget abort:\n${output}` : message;
 }
 export function initialTurnBudgetState(budget) {
     return { ...budget, outcome: "within-budget", turnCount: 0 };

@@ -11,7 +11,12 @@ import { loadConfig } from "../../src/extension/config.ts";
 import { diagnoseIntercomBridge, resolveIntercomBridge } from "../../src/intercom/intercom-bridge.ts";
 import { loadRunsForAgent, recordRun } from "../../src/runs/shared/run-history.ts";
 import { cleanupAllArtifactDirs } from "../../src/shared/artifacts.ts";
-import { getConfigDirName, getProjectConfigDir, resolveConfigDirName, resolveRuntimeConfigDirName } from "../../src/shared/config-dir.ts";
+import {
+	getConfigDirName,
+	getProjectConfigDir,
+	resolveConfigDirName,
+	resolveRuntimeConfigDirName,
+} from "../../src/shared/config-dir.ts";
 import { getAgentDir } from "../../src/shared/utils.ts";
 
 let tempDir = "";
@@ -26,8 +31,6 @@ function writeFile(filePath: string, content: string): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
 	fs.writeFileSync(filePath, content, "utf-8");
 }
-
-
 
 function readInstalledRuntimeConfigDirName(): string {
 	const entryUrl = import.meta.resolve("@earendil-works/pi-coding-agent");
@@ -91,14 +94,28 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
 	it("prefers the active runtime package config-dir over the import-resolved package", () => {
 		const runtimeRoot = path.join(tempDir, "runtime-package");
 		const importResolvedRoot = path.join(tempDir, "import-resolved-package");
-		writeFile(path.join(runtimeRoot, "package.json"), JSON.stringify({
-			name: "@earendil-works/pi-coding-agent",
-			piConfig: { configDir: ".runtime-root" },
-		}, null, 2));
-		writeFile(path.join(importResolvedRoot, "package.json"), JSON.stringify({
-			name: "@earendil-works/pi-coding-agent",
-			piConfig: { configDir: ".import-resolved" },
-		}, null, 2));
+		writeFile(
+			path.join(runtimeRoot, "package.json"),
+			JSON.stringify(
+				{
+					name: "@earendil-works/pi-coding-agent",
+					piConfig: { configDir: ".runtime-root" },
+				},
+				null,
+				2,
+			),
+		);
+		writeFile(
+			path.join(importResolvedRoot, "package.json"),
+			JSON.stringify(
+				{
+					name: "@earendil-works/pi-coding-agent",
+					piConfig: { configDir: ".import-resolved" },
+				},
+				null,
+				2,
+			),
+		);
 
 		const deps = {
 			env: {},
@@ -121,14 +138,19 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
 
 	it("discovers user agents and settings while preserving chain paths without discovering saved chains", () => {
 		const settingsPath = path.join(agentDir, "settings.json");
-		writeFile(path.join(agentDir, "agents", "env-agent.md"), `---
+		writeFile(
+			path.join(agentDir, "agents", "env-agent.md"),
+			`---
 name: env-agent
 description: Env agent
 ---
 
 Use env agent.
-`);
-		writeFile(path.join(agentDir, "chains", "env-chain.chain.md"), `---
+`,
+		);
+		writeFile(
+			path.join(agentDir, "chains", "env-chain.chain.md"),
+			`---
 name: env-chain
 description: Env chain
 ---
@@ -136,14 +158,22 @@ description: Env chain
 ## env-agent
 
 Inspect env.
-`);
-		writeFile(settingsPath, JSON.stringify({
-			subagents: {
-				agentOverrides: {
-					"env-agent": { model: "deepseek-v4-pro" },
+`,
+		);
+		writeFile(
+			settingsPath,
+			JSON.stringify(
+				{
+					subagents: {
+						agentOverrides: {
+							"env-agent": { model: "deepseek-v4-pro" },
+						},
+					},
 				},
-			},
-		}, null, 2));
+				null,
+				2,
+			),
+		);
 
 		const discovered = discoverAgentsAll(cwd);
 		assert.equal(discovered.userDir, path.join(agentDir, "agents"));
@@ -151,85 +181,141 @@ Inspect env.
 		assert.equal(discovered.userSettingsPath, settingsPath);
 		assert.deepEqual(discovered.chains, []);
 
-		const envAgent = discovered.user.find((agent) => agent.name === "env-agent" && agent.filePath === path.join(agentDir, "agents", "env-agent.md"));
+		const envAgent = discovered.user.find(
+			(agent) => agent.name === "env-agent" && agent.filePath === path.join(agentDir, "agents", "env-agent.md"),
+		);
 		assert.ok(envAgent);
 		assert.equal(envAgent?.model, "deepseek-v4-pro");
 		assert.equal(envAgent?.override?.path, settingsPath);
 		assert.equal(envAgent?.override?.scope, "user");
-
 	});
 
 	it("loads configured user agent dirs relative to PI_CODING_AGENT_DIR without leaking legacy ~/.agents", () => {
 		const homeWorkspace = path.join(tempHome, "workspace", "nested");
 		fs.mkdirSync(homeWorkspace, { recursive: true });
-		writeFile(path.join(agentDir, "tlh", "agents", "subagents", "developer.md"), `---
+		writeFile(
+			path.join(agentDir, "tlh", "agents", "subagents", "developer.md"),
+			`---
 name: developer
 description: TLH developer
 ---
 
 Use TLH developer.
-`);
-		writeFile(path.join(agentDir, "settings.json"), JSON.stringify({
-			subagents: {
-				disableBuiltins: true,
-				agentDirs: ["tlh/agents/subagents"],
-			},
-		}, null, 2));
-		writeFile(path.join(tempHome, ".agents", "legacy-home.md"), `---
+`,
+		);
+		writeFile(
+			path.join(agentDir, "settings.json"),
+			JSON.stringify(
+				{
+					subagents: {
+						agentDirs: ["tlh/agents/subagents"],
+					},
+				},
+				null,
+				2,
+			),
+		);
+		writeFile(
+			path.join(tempHome, ".agents", "legacy-home.md"),
+			`---
 name: legacy-home
 description: Legacy home agent
 ---
 
 Use legacy agent.
-`);
-		writeFile(path.join(tempHome, ".agents", "skills", "legacy-skill", "SKILL.md"), `---
+`,
+		);
+		writeFile(
+			path.join(tempHome, ".agents", "skills", "legacy-skill", "SKILL.md"),
+			`---
 description: Legacy skill
 ---
 Legacy skill content.
-`);
+`,
+		);
 
 		const discovered = discoverAgents(homeWorkspace, "both").agents;
-		assert.deepEqual(discovered.map((agent) => agent.name), ["developer"]);
+		assert.deepEqual(
+			discovered.map((agent) => agent.name),
+			["developer"],
+		);
 		assert.equal(discovered[0]?.filePath, path.join(agentDir, "tlh", "agents", "subagents", "developer.md"));
 
 		const all = discoverAgentsAll(homeWorkspace);
 		assert.equal(all.projectDir, null);
 		assert.equal(all.userDir, path.join(agentDir, "agents"));
-		assert.equal(all.user.some((agent) => agent.name === "legacy-home"), false);
-		assert.equal(all.user.find((agent) => agent.name === "developer")?.filePath, path.join(agentDir, "tlh", "agents", "subagents", "developer.md"));
+		assert.equal(
+			all.user.some((agent) => agent.name === "legacy-home"),
+			false,
+		);
+		assert.equal(
+			all.user.find((agent) => agent.name === "developer")?.filePath,
+			path.join(agentDir, "tlh", "agents", "subagents", "developer.md"),
+		);
 
 		clearSkillCache();
 		assert.equal(resolveSkillPath("legacy-skill", homeWorkspace), undefined);
-		assert.equal(discoverAvailableSkills(homeWorkspace).some((skill) => skill.name === "legacy-skill"), false);
+		assert.equal(
+			discoverAvailableSkills(homeWorkspace).some((skill) => skill.name === "legacy-skill"),
+			false,
+		);
 	});
 
 	it("resolves user skills, settings skills, and package skills from the configured agent dir", () => {
-		writeFile(path.join(agentDir, "skills", "env-skill", "SKILL.md"), `---
+		writeFile(
+			path.join(agentDir, "skills", "env-skill", "SKILL.md"),
+			`---
 description: Env skill
 ---
 Env skill content.
-`);
-		writeFile(path.join(agentDir, "settings-skill.md"), `---
+`,
+		);
+		writeFile(
+			path.join(agentDir, "settings-skill.md"),
+			`---
 description: Settings skill
 ---
 Settings skill content.
-`);
+`,
+		);
 		const packageRoot = path.join(agentDir, "packages", "env-package");
-		writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "env-package", pi: { skills: ["./skills/package-skill.md"] } }, null, 2));
-		writeFile(path.join(packageRoot, "skills", "package-skill.md"), `---
+		writeFile(
+			path.join(packageRoot, "package.json"),
+			JSON.stringify({ name: "env-package", pi: { skills: ["./skills/package-skill.md"] } }, null, 2),
+		);
+		writeFile(
+			path.join(packageRoot, "skills", "package-skill.md"),
+			`---
 description: Package skill
 ---
 Package skill content.
-`);
-		writeFile(path.join(agentDir, "settings.json"), JSON.stringify({
-			skills: ["./settings-skill.md"],
-			packages: ["file:./packages/env-package"],
-		}, null, 2));
+`,
+		);
+		writeFile(
+			path.join(agentDir, "settings.json"),
+			JSON.stringify(
+				{
+					skills: ["./settings-skill.md"],
+					packages: ["file:./packages/env-package"],
+				},
+				null,
+				2,
+			),
+		);
 
 		clearSkillCache();
-		assert.deepEqual(resolveSkillPath("env-skill", cwd), { path: path.join(agentDir, "skills", "env-skill", "SKILL.md"), source: "user" });
-		assert.deepEqual(resolveSkillPath("settings-skill", cwd), { path: path.join(agentDir, "settings-skill.md"), source: "user-settings" });
-		assert.deepEqual(resolveSkillPath("package-skill", cwd), { path: path.join(packageRoot, "skills", "package-skill.md"), source: "user-package" });
+		assert.deepEqual(resolveSkillPath("env-skill", cwd), {
+			path: path.join(agentDir, "skills", "env-skill", "SKILL.md"),
+			source: "user",
+		});
+		assert.deepEqual(resolveSkillPath("settings-skill", cwd), {
+			path: path.join(agentDir, "settings-skill.md"),
+			source: "user-settings",
+		});
+		assert.deepEqual(resolveSkillPath("package-skill", cwd), {
+			path: path.join(packageRoot, "skills", "package-skill.md"),
+			source: "user-package",
+		});
 
 		const available = discoverAvailableSkills(cwd);
 		assert.ok(available.find((skill) => skill.name === "env-skill" && skill.source === "user"));

@@ -104,7 +104,9 @@ describe("artifact cleanup", () => {
 		});
 	});
 
-	it("does not traverse or delete external symlink targets when removing stale trees", { skip: typeof fs.symlinkSync !== "function" || typeof fs.lutimesSync !== "function" }, () => {
+	it("does not traverse or delete external symlink targets when removing stale trees", {
+		skip: typeof fs.symlinkSync !== "function" || typeof fs.lutimesSync !== "function",
+	}, () => {
 		withTempDir((dir) => {
 			const externalRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-artifacts-external-"));
 			try {
@@ -116,7 +118,11 @@ describe("artifact cleanup", () => {
 				const linkPath = path.join(tree, "outside-link");
 				fs.symlinkSync(externalRoot, linkPath, "dir");
 				agePath(tree, 10);
-				fs.lutimesSync(linkPath, new Date(Date.now() - 10 * 24 * 60 * 60 * 1000), new Date(Date.now() - 10 * 24 * 60 * 60 * 1000));
+				fs.lutimesSync(
+					linkPath,
+					new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+					new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+				);
 
 				cleanupOldArtifacts(dir, 5);
 

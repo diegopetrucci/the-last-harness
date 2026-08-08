@@ -29,7 +29,11 @@ function writeRoute(nestedEventsDir: string, rootRunId: string, suffix: string):
 	const routeDir = path.join(nestedEventsDir, `${rootRunId}-${suffix}`);
 	fs.mkdirSync(path.join(routeDir, "events"), { recursive: true });
 	fs.mkdirSync(path.join(routeDir, "controls"), { recursive: true });
-	fs.writeFileSync(path.join(routeDir, "route.json"), JSON.stringify({ rootRunId, capabilityToken: suffix }, null, 2), "utf-8");
+	fs.writeFileSync(
+		path.join(routeDir, "route.json"),
+		JSON.stringify({ rootRunId, capabilityToken: suffix }, null, 2),
+		"utf-8",
+	);
 	return routeDir;
 }
 
@@ -49,27 +53,27 @@ describe("runtime cleanup", () => {
 		try {
 			const staleEmptyDir = path.join(paths.asyncDir, "stale-empty");
 			fs.mkdirSync(staleEmptyDir, { recursive: true });
-			setTreeMtime(staleEmptyDir, now - (2 * ONE_DAY_MS));
+			setTreeMtime(staleEmptyDir, now - 2 * ONE_DAY_MS);
 
 			const staleCompleteDir = path.join(paths.asyncDir, "stale-complete");
 			writeStatus(staleCompleteDir, {
 				runId: "stale-complete",
 				mode: "single",
 				state: "complete",
-				startedAt: now - (10 * ONE_DAY_MS),
-				endedAt: now - (8 * ONE_DAY_MS),
+				startedAt: now - 10 * ONE_DAY_MS,
+				endedAt: now - 8 * ONE_DAY_MS,
 			});
-			setTreeMtime(staleCompleteDir, now - (8 * ONE_DAY_MS));
+			setTreeMtime(staleCompleteDir, now - 8 * ONE_DAY_MS);
 
 			const pausedDir = path.join(paths.asyncDir, "paused-run");
 			writeStatus(pausedDir, {
 				runId: "paused-run",
 				mode: "single",
 				state: "paused",
-				startedAt: now - (20 * ONE_DAY_MS),
-				lastUpdate: now - (20 * ONE_DAY_MS),
+				startedAt: now - 20 * ONE_DAY_MS,
+				lastUpdate: now - 20 * ONE_DAY_MS,
 			});
-			setTreeMtime(pausedDir, now - (20 * ONE_DAY_MS));
+			setTreeMtime(pausedDir, now - 20 * ONE_DAY_MS);
 
 			const runningDir = path.join(paths.asyncDir, "running-run");
 			writeStatus(runningDir, {
@@ -107,13 +111,13 @@ describe("runtime cleanup", () => {
 				runId: "child-1",
 				mode: "single",
 				state: "failed",
-				startedAt: now - (10 * ONE_DAY_MS),
-				endedAt: now - (8 * ONE_DAY_MS),
+				startedAt: now - 10 * ONE_DAY_MS,
+				endedAt: now - 8 * ONE_DAY_MS,
 			});
-			setTreeMtime(path.join(paths.nestedRunsDir, "run-live", "child-1"), now - (8 * ONE_DAY_MS));
+			setTreeMtime(path.join(paths.nestedRunsDir, "run-live", "child-1"), now - 8 * ONE_DAY_MS);
 			writeRoute(paths.nestedEventsDir, "run-live", "kept");
 			const staleRoute = writeRoute(paths.nestedEventsDir, "gone-root", "stale");
-			setTreeMtime(staleRoute, now - (2 * ONE_DAY_MS));
+			setTreeMtime(staleRoute, now - 2 * ONE_DAY_MS);
 
 			const counts = inspectRuntimeDirs(paths, { now: () => now, kill: () => true });
 			assert.equal(counts.topLevelAsyncDirs, 1);

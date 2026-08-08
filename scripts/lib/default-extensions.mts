@@ -59,9 +59,7 @@ function readStringArrayField(entry: PlainObject, key: string, label: string): s
 	if (!Array.isArray(entry[key])) {
 		throw new Error(`Default extension ${label} field '${key}' must be an array`);
 	}
-	return entry[key]
-		.map((value) => (typeof value === "string" ? value.trim() : ""))
-		.filter((value) => value.length > 0);
+	return entry[key].map((value) => (typeof value === "string" ? value.trim() : "")).filter((value) => value.length > 0);
 }
 
 function readBooleanField(entry: PlainObject, key: string, label: string): boolean {
@@ -152,17 +150,16 @@ export function packageIdentity(entry: unknown): string | undefined {
 	if (!source) return undefined;
 	const trimmed = source.trim();
 	if (trimmed.startsWith("npm:")) return npmIdentity(trimmed);
-	if (
-		trimmed.startsWith("git:")
-		|| /^(https?|ssh|git):\/\//i.test(trimmed)
-		|| trimmed.startsWith("git@")
-	) {
+	if (trimmed.startsWith("git:") || /^(https?|ssh|git):\/\//i.test(trimmed) || trimmed.startsWith("git@")) {
 		return gitIdentity(trimmed);
 	}
 	return `local:${trimmed}`;
 }
 
-export function readDefaultExtensions(path: string, { allowMissing = false }: { allowMissing?: boolean } = {}): DefaultExtensionEntry[] {
+export function readDefaultExtensions(
+	path: string,
+	{ allowMissing = false }: { allowMissing?: boolean } = {},
+): DefaultExtensionEntry[] {
 	const raw = readManifestJson(path, { allowMissing });
 	if (!Array.isArray(raw)) {
 		throw new Error(`Default extension manifest must be an array: ${path}`);
@@ -200,17 +197,25 @@ function rawDisabledDefaultExtensionIds(settings: unknown): Set<string> {
 	const tlh = isPlainObject(settings.tlh) ? (settings.tlh as RawTlhSettings) : undefined;
 	const values = tlh?.disabledDefaultExtensions;
 	if (!Array.isArray(values)) return new Set();
-	return new Set(values.filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim()));
+	return new Set(
+		values
+			.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+			.map((value) => value.trim()),
+	);
 }
 
-function rawDefaultExtensionProvenance(settings: unknown): { exists: boolean; value: RawDefaultExtensionProvenance | undefined } {
+function rawDefaultExtensionProvenance(settings: unknown): {
+	exists: boolean;
+	value: RawDefaultExtensionProvenance | undefined;
+} {
 	if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) {
 		return { exists: false, value: undefined };
 	}
 	const exists = Object.hasOwn(settings.tlh, "defaultExtensionProvenance");
-	const value = exists && isPlainObject(settings.tlh.defaultExtensionProvenance)
-		? settings.tlh.defaultExtensionProvenance as RawDefaultExtensionProvenance
-		: undefined;
+	const value =
+		exists && isPlainObject(settings.tlh.defaultExtensionProvenance)
+			? (settings.tlh.defaultExtensionProvenance as RawDefaultExtensionProvenance)
+			: undefined;
 	return { exists, value };
 }
 
@@ -260,16 +265,15 @@ export function readDefaultExtensionProvenance(settings: unknown): DefaultExtens
 	const { exists, value } = rawDefaultExtensionProvenance(settings);
 	const managedPackageIdentities = new Set(
 		Array.isArray(value?.managedPackageIdentities)
-			? value.managedPackageIdentities.map(normalizeManagedPackageIdentity).filter((identity): identity is string => Boolean(identity))
+			? value.managedPackageIdentities
+					.map(normalizeManagedPackageIdentity)
+					.filter((identity): identity is string => Boolean(identity))
 			: [],
 	);
 	return { exists, managedPackageIdentities };
 }
 
-export function setDefaultExtensionProvenance(
-	settings: unknown,
-	managedPackageIdentities: Iterable<string>,
-): boolean {
+export function setDefaultExtensionProvenance(settings: unknown, managedPackageIdentities: Iterable<string>): boolean {
 	if (!isPlainObject(settings)) return false;
 
 	let tlh = settings.tlh;
@@ -279,8 +283,13 @@ export function setDefaultExtensionProvenance(
 	}
 	if (!isPlainObject(tlh)) return false;
 
-	const values = [...new Set([...managedPackageIdentities].map(normalizeManagedPackageIdentity).filter((identity): identity is string => Boolean(identity)))]
-		.sort((left, right) => left.localeCompare(right));
+	const values = [
+		...new Set(
+			[...managedPackageIdentities]
+				.map(normalizeManagedPackageIdentity)
+				.filter((identity): identity is string => Boolean(identity)),
+		),
+	].sort((left, right) => left.localeCompare(right));
 	tlh.defaultExtensionProvenance = { managedPackageIdentities: values };
 	return true;
 }
@@ -364,7 +373,9 @@ export function repairTargetedDefaultExtensionLoadOrder(
 	}
 	if (matchedEntries.length < 2) return undefined;
 
-	const reorderedEntries = [...matchedEntries].sort((left, right) => left.order - right.order || left.index - right.index);
+	const reorderedEntries = [...matchedEntries].sort(
+		(left, right) => left.order - right.order || left.index - right.index,
+	);
 	if (matchedEntries.every((entry, index) => entry === reorderedEntries[index])) return undefined;
 
 	for (let index = 0; index < matchedEntries.length; index += 1) {

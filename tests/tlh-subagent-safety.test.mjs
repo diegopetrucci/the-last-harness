@@ -78,7 +78,6 @@ test("experimental allowlist keeps contrarian enabled by default and treats stal
 	assert.equal(allowedWithLegacyFlag.context, "fresh");
 });
 
-
 test("custom allowlists are bounded to canonical bundled subagents", () => {
 	const customEnabled = { agent: "contrarian", task: "stress-test this plan" };
 	assertAllowed(customEnabled, { allowedSubagents: [" Developer ", " CONTRARIAN ", "root"] });
@@ -86,7 +85,10 @@ test("custom allowlists are bounded to canonical bundled subagents", () => {
 	assert.equal(customEnabled.context, "fresh");
 
 	assert.match(
-		validateSubagentToolInput({ agent: "root", task: "do something unsafe" }, { allowedSubagents: ["developer", "root"] }),
+		validateSubagentToolInput(
+			{ agent: "root", task: "do something unsafe" },
+			{ allowedSubagents: ["developer", "root"] },
+		),
 		/Disallowed target\(s\): root/,
 	);
 
@@ -145,12 +147,23 @@ test("validateSubagentToolInput allows approved management calls and keeps enabl
 	assertAllowed(getBoth);
 	assert.equal(getBoth.agentScope, "user");
 
-	const resume = { action: "resume", id: "run-123", message: "Continue with the approved ticket.", agentScope: "", context: "" };
+	const resume = {
+		action: "resume",
+		id: "run-123",
+		message: "Continue with the approved ticket.",
+		agentScope: "",
+		context: "",
+	};
 	assertAllowed(resume);
 	assert.equal(resume.agentScope, "user");
 	assert.equal(resume.context, "fresh");
 
-	const resumeBoth = { action: "resume", id: "run-456", message: "Continue with the approved ticket.", agentScope: "both" };
+	const resumeBoth = {
+		action: "resume",
+		id: "run-456",
+		message: "Continue with the approved ticket.",
+		agentScope: "both",
+	};
 	assertAllowed(resumeBoth);
 	assert.equal(resumeBoth.agentScope, "user");
 	assert.equal(resumeBoth.context, "fresh");
@@ -163,19 +176,52 @@ test("validateSubagentToolInput allows approved management calls and keeps enabl
 test("validateSubagentToolInput allows opaque resume and blocks unsafe scopes/contexts", () => {
 	assert.match(validateSubagentToolInput({ action: "delete" }), /may not use subagent management action 'delete'/);
 	assert.match(validateSubagentToolInput({ agent: "developer", agentScope: "both" }), /may not use agentScope: "both"/);
-	assert.match(validateSubagentToolInput({ agent: "developer", agentScope: "project" }), /may not use agentScope: "project"/);
-	assert.match(validateSubagentToolInput({ agent: "librarian", agentScope: "project" }), /may not use agentScope: "project"/);
+	assert.match(
+		validateSubagentToolInput({ agent: "developer", agentScope: "project" }),
+		/may not use agentScope: "project"/,
+	);
+	assert.match(
+		validateSubagentToolInput({ agent: "librarian", agentScope: "project" }),
+		/may not use agentScope: "project"/,
+	);
 	assert.match(validateSubagentToolInput({ agent: "oracle", context: "resume" }), /may not use context: "resume"/);
-	assert.match(validateSubagentToolInput({ action: "list", agentScope: "project" }), /may not use agentScope: "project"/);
+	assert.match(
+		validateSubagentToolInput({ action: "list", agentScope: "project" }),
+		/may not use agentScope: "project"/,
+	);
 	assert.match(validateSubagentToolInput({ action: "list", agentScope: "system" }), /may not use agentScope: "system"/);
-	assert.match(validateSubagentToolInput({ action: "get", agentScope: "invalid" }), /may not use agentScope: "invalid"/);
-	assert.match(validateSubagentToolInput({ action: "resume", agentScope: "project" }), /resume calls may not use agentScope: "project"/);
-	assert.match(validateSubagentToolInput({ action: "resume", agentScope: "system" }), /resume calls may not use agentScope: "system"/);
-	assert.match(validateSubagentToolInput({ action: "resume", agentScope: "invalid" }), /resume calls may not use agentScope: "invalid"/);
-	assert.match(validateSubagentToolInput({ action: "resume", context: "resume" }), /subagent resume may not use context: "resume"/);
-	assert.match(validateSubagentToolInput({ action: "resume", context: 1 }), /subagent resume must use context: "fresh"/);
+	assert.match(
+		validateSubagentToolInput({ action: "get", agentScope: "invalid" }),
+		/may not use agentScope: "invalid"/,
+	);
+	assert.match(
+		validateSubagentToolInput({ action: "resume", agentScope: "project" }),
+		/resume calls may not use agentScope: "project"/,
+	);
+	assert.match(
+		validateSubagentToolInput({ action: "resume", agentScope: "system" }),
+		/resume calls may not use agentScope: "system"/,
+	);
+	assert.match(
+		validateSubagentToolInput({ action: "resume", agentScope: "invalid" }),
+		/resume calls may not use agentScope: "invalid"/,
+	);
+	assert.match(
+		validateSubagentToolInput({ action: "resume", context: "resume" }),
+		/subagent resume may not use context: "resume"/,
+	);
+	assert.match(
+		validateSubagentToolInput({ action: "resume", context: 1 }),
+		/subagent resume must use context: "fresh"/,
+	);
 
-	const opaqueResume = { action: "resume", id: "run-123", message: "Continue with the approved ticket.", agentScope: "", context: "" };
+	const opaqueResume = {
+		action: "resume",
+		id: "run-123",
+		message: "Continue with the approved ticket.",
+		agentScope: "",
+		context: "",
+	};
 	assertAllowed(opaqueResume);
 	assert.equal(opaqueResume.agentScope, "user");
 	assert.equal(opaqueResume.context, "fresh");
@@ -190,8 +236,6 @@ test("validateSubagentToolInput allows opaque resume and blocks unsafe scopes/co
 	assert.equal(allowedDeveloperResume.agentScope, "user");
 	assert.equal(allowedDeveloperResume.context, "fresh");
 });
-
-
 
 test("validateSubagentToolInput uses generic primary-agent wording", () => {
 	const reasons = [
@@ -248,8 +292,14 @@ test("validateSubagentToolInput with allowEmbeddedTargets:false (default) reject
 	assert.doesNotMatch(reason, /or embedded\.<slug>/);
 
 	// Malformed embedded names are also rejected
-	assert.match(validateSubagentToolInput({ agent: "embedded.Repo-helper" }), /Disallowed target\(s\): embedded\.Repo-helper/);
-	assert.match(validateSubagentToolInput({ agent: "embedded.repo.helper" }), /Disallowed target\(s\): embedded\.repo\.helper/);
+	assert.match(
+		validateSubagentToolInput({ agent: "embedded.Repo-helper" }),
+		/Disallowed target\(s\): embedded\.Repo-helper/,
+	);
+	assert.match(
+		validateSubagentToolInput({ agent: "embedded.repo.helper" }),
+		/Disallowed target\(s\): embedded\.repo\.helper/,
+	);
 	assert.match(validateSubagentToolInput({ agent: "embedded.-x" }), /Disallowed target\(s\): embedded\.-x/);
 });
 
@@ -269,7 +319,12 @@ test("validateSubagentToolInput with allowEmbeddedTargets:true allows valid embe
 	assert.equal(tasks.context, "fresh");
 
 	// mixed: bundled + embedded
-	const mixed = { tasks: [{ agent: "developer", prompt: "impl" }, { agent: "embedded.scout", prompt: "scout" }] };
+	const mixed = {
+		tasks: [
+			{ agent: "developer", prompt: "impl" },
+			{ agent: "embedded.scout", prompt: "scout" },
+		],
+	};
 	assertAllowed(mixed, opts);
 });
 
@@ -278,7 +333,10 @@ test("validateSubagentToolInput with allowEmbeddedTargets:true rejects malformed
 
 	assert.match(validateSubagentToolInput({ agent: "embedded." }, opts), /Disallowed target\(s\): embedded\./);
 	assert.match(validateSubagentToolInput({ agent: "embedded.Scout" }, opts), /Disallowed target\(s\): embedded\.Scout/);
-	assert.match(validateSubagentToolInput({ agent: "embedded.repo.helper" }, opts), /Disallowed target\(s\): embedded\.repo\.helper/);
+	assert.match(
+		validateSubagentToolInput({ agent: "embedded.repo.helper" }, opts),
+		/Disallowed target\(s\): embedded\.repo\.helper/,
+	);
 	assert.match(validateSubagentToolInput({ agent: "embedded.-x" }, opts), /Disallowed target\(s\): embedded\.-x/);
 	assert.match(validateSubagentToolInput({ agent: "x.embedded.y" }, opts), /Disallowed target\(s\): x\.embedded\.y/);
 });
@@ -322,14 +380,23 @@ test("validateSubagentToolInput: allowEmbeddedTargets does not affect management
 	}
 
 	// Unsafe action still blocked
-	assert.match(validateSubagentToolInput({ action: "delete" }, opts), /may not use subagent management action 'delete'/);
+	assert.match(
+		validateSubagentToolInput({ action: "delete" }, opts),
+		/may not use subagent management action 'delete'/,
+	);
 });
 
 test("validateSubagentToolInput rejects non-fresh top-level and nested contexts", () => {
 	assert.match(validateSubagentToolInput({ agent: "developer", context: "resume" }), /may not use context: "resume"/);
 	assert.match(validateSubagentToolInput({ agent: "developer", context: 1 }), /must use context: "fresh"/);
-	assert.match(validateSubagentToolInput({ action: "resume", context: "resume" }), /subagent resume may not use context: "resume"/);
-	assert.match(validateSubagentToolInput({ action: "resume", context: 1 }), /subagent resume must use context: "fresh"/);
+	assert.match(
+		validateSubagentToolInput({ action: "resume", context: "resume" }),
+		/subagent resume may not use context: "resume"/,
+	);
+	assert.match(
+		validateSubagentToolInput({ action: "resume", context: 1 }),
+		/subagent resume must use context: "fresh"/,
+	);
 
 	assert.match(
 		validateSubagentToolInput({ tasks: [{ agent: "developer", context: "resume" }] }),
@@ -351,11 +418,7 @@ test("validateSubagentToolInput blocks v0.34.0 agent-mutation verbs (eject/disab
 	// Each new verb must be rejected with a block reason.
 	for (const action of ["eject", "disable", "enable", "reset"]) {
 		const reason = validateSubagentToolInput({ action });
-		assert.match(
-			reason,
-			/may not use subagent management action/,
-			`expected block reason for action '${action}'`,
-		);
+		assert.match(reason, /may not use subagent management action/, `expected block reason for action '${action}'`);
 		assert.match(reason, new RegExp(`'${action}'`), `reason should name the blocked action '${action}'`);
 	}
 
@@ -447,7 +510,10 @@ test("PI_SUBAGENT_CHILD=1 registers only child prompt behavior", async () => {
 
 	assert.equal(mode, "child");
 	assert.equal(parentStartupCalled, false);
-	assert.deepEqual(pi.events.map((event) => event.name), ["before_agent_start"]);
+	assert.deepEqual(
+		pi.events.map((event) => event.name),
+		["before_agent_start"],
+	);
 	assert.deepEqual(pi.commands, []);
 	assert.deepEqual(pi.shortcuts, []);
 
@@ -472,7 +538,10 @@ test("PI_SUBAGENT_CHILD=1 prefers an explicit child registrar over the prompt-on
 
 	assert.equal(mode, "child");
 	assert.equal(childStartupCalled, true);
-	assert.deepEqual(pi.events.map((event) => event.name), ["tool_call"]);
+	assert.deepEqual(
+		pi.events.map((event) => event.name),
+		["tool_call"],
+	);
 	assert.deepEqual(pi.commands, []);
 	assert.deepEqual(pi.shortcuts, []);
 });

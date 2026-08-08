@@ -216,15 +216,15 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
             const modelPart = modelOrNoModel;
             const primaryName = getPrimaryName();
             const dimSep = theme.fg("dim", " • ");
-            const nameSegment = primaryName === DEFAULT_PRIMARY_AGENT
-                ? theme.fg("dim", primaryName)
-                : theme.fg("accent", primaryName);
+            const nameSegment = primaryName === DEFAULT_PRIMARY_AGENT ? theme.fg("dim", primaryName) : theme.fg("accent", primaryName);
             let agentLine2Str = theme.fg("dim", "agent: ") + nameSegment + dimSep + theme.fg("dim", modelPart);
             if (model?.reasoning) {
                 const thinkingLevel = getCurrentThinkingLevel(pi);
                 agentLine2Str += dimSep + theme.fg("dim", thinkingLevel === "off" ? "thinking off" : thinkingLevel);
             }
-            const contextPercentDisplay = contextPercent === "?" ? `?/${formatCompactTokenCount(contextWindow)}` : `${contextPercent}%/${formatCompactTokenCount(contextWindow)}`;
+            const contextPercentDisplay = contextPercent === "?"
+                ? `?/${formatCompactTokenCount(contextWindow)}`
+                : `${contextPercent}%/${formatCompactTokenCount(contextWindow)}`;
             let contextPercentStr;
             if (contextPercentValue > 90) {
                 contextPercentStr = theme.fg("error", contextPercentDisplay);

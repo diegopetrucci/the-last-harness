@@ -9,14 +9,18 @@ import { createJiti } from "jiti";
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
-const { TLH_LAUNCH_TELEMETRY_EVENT_TYPE, TLH_NAME, TLH_TELEMETRY_STATE_SCHEMA_VERSION } = await jiti.import("../extensions/the-last-harness/constants.ts");
-const { CI_FAILURE_INVESTIGATION_FEATURE, DELTA_FOLLOW_UP_REVIEWS_FEATURE, EMBEDDED_SUBAGENTS_FEATURE } = await jiti.import(
-	"../extensions/the-last-harness/experimental.ts",
+const { TLH_LAUNCH_TELEMETRY_EVENT_TYPE, TLH_NAME, TLH_TELEMETRY_STATE_SCHEMA_VERSION } = await jiti.import(
+	"../extensions/the-last-harness/constants.ts",
 );
+const { CI_FAILURE_INVESTIGATION_FEATURE, DELTA_FOLLOW_UP_REVIEWS_FEATURE, EMBEDDED_SUBAGENTS_FEATURE } =
+	await jiti.import("../extensions/the-last-harness/experimental.ts");
 const { THINKING_LEVELS } = await jiti.import("../extensions/the-last-harness/constants.ts");
-const { privacySafeTlhTelemetryProviderId, privacySafeTlhTelemetryThinkingLevel, scheduleTlhLaunchTelemetry, sendTlhLaunchTelemetry } = await jiti.import(
-	"../extensions/the-last-harness/launch-telemetry.ts",
-);
+const {
+	privacySafeTlhTelemetryProviderId,
+	privacySafeTlhTelemetryThinkingLevel,
+	scheduleTlhLaunchTelemetry,
+	sendTlhLaunchTelemetry,
+} = await jiti.import("../extensions/the-last-harness/launch-telemetry.ts");
 
 const EXISTING_INSTALL_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -184,7 +188,9 @@ test("launch telemetry skips when the isolated profile has telemetry opt-out ena
 
 test("launch telemetry checks opt-out before collecting OS metadata", () => {
 	const source = readFileSync(new URL("../extensions/the-last-harness/launch-telemetry.ts", import.meta.url), "utf8");
-	const functionSource = source.match(/export async function sendTlhLaunchTelemetry\(snapshot: TlhTelemetrySnapshot\): Promise<void> \{[\s\S]*?\n\}/)?.[0];
+	const functionSource = source.match(
+		/export async function sendTlhLaunchTelemetry\(snapshot: TlhTelemetrySnapshot\): Promise<void> \{[\s\S]*?\n\}/,
+	)?.[0];
 
 	assert.ok(functionSource, "expected sendTlhLaunchTelemetry source");
 	const skipCheckIndex = functionSource.indexOf("if (shouldSkipTlhLaunchTelemetry(launchSettings))");
@@ -373,7 +379,7 @@ test("launch telemetry maps unknown thinkingLevel to unknown and uppercase value
 
 	const previousFetch = globalThis.fetch;
 	const results = {};
-	globalThis.fetch = async (url, options) => {
+	globalThis.fetch = async (_url, options) => {
 		const [event] = JSON.parse(options?.body ?? "[]");
 		results[event.payload["Tlh.App.version"]] = event.payload["Tlh.Runtime.thinking"];
 		return { ok: true, status: 200, statusText: "OK" };
@@ -437,7 +443,16 @@ test("launch telemetry emits all eight bundled subagent keys with unknown when n
 
 	assert.ok(request, "expected telemetry fetch call");
 	const [event] = JSON.parse(request.options?.body ?? "[]");
-	const bundledNames = ["code-reviewer", "contrarian", "developer", "diff-summarizer", "librarian", "oracle", "repo-scout", "web-scout"];
+	const bundledNames = [
+		"code-reviewer",
+		"contrarian",
+		"developer",
+		"diff-summarizer",
+		"librarian",
+		"oracle",
+		"repo-scout",
+		"web-scout",
+	];
 	for (const name of bundledNames) {
 		assert.equal(event.payload[`Tlh.Subagent.${name}.thinking`], "unknown", `expected unknown thinking for ${name}`);
 		assert.equal(event.payload[`Tlh.Subagent.${name}.model`], "unknown", `expected unknown model for ${name}`);
@@ -449,9 +464,13 @@ test("launch telemetry reflects settings agentOverrides thinking change", async 
 	writeTelemetryState(fixture);
 	writeFileSync(
 		join(fixture.agent, "settings.json"),
-		`${JSON.stringify({
-			subagents: { agentOverrides: { developer: { thinking: "high", model: "claude-opus-4-5" } } },
-		}, null, 2)}\n`,
+		`${JSON.stringify(
+			{
+				subagents: { agentOverrides: { developer: { thinking: "high", model: "claude-opus-4-5" } } },
+			},
+			null,
+			2,
+		)}\n`,
 	);
 
 	const previousFetch = globalThis.fetch;
@@ -484,8 +503,16 @@ test("launch telemetry reflects settings agentOverrides thinking change", async 
 
 	assert.ok(request, "expected telemetry fetch call");
 	const [event] = JSON.parse(request.options?.body ?? "[]");
-	assert.equal(event.payload["Tlh.Subagent.developer.thinking"], "high", "settings override thinking should be reflected");
-	assert.equal(event.payload["Tlh.Subagent.developer.model"], "claude-opus-4-5", "settings override model should be reflected");
+	assert.equal(
+		event.payload["Tlh.Subagent.developer.thinking"],
+		"high",
+		"settings override thinking should be reflected",
+	);
+	assert.equal(
+		event.payload["Tlh.Subagent.developer.model"],
+		"claude-opus-4-5",
+		"settings override model should be reflected",
+	);
 	// Other agents should still be unknown
 	assert.equal(event.payload["Tlh.Subagent.librarian.thinking"], "unknown");
 });
@@ -533,7 +560,11 @@ test("launch telemetry reflects hand-edited frontmatter thinking value", async (
 	assert.ok(request, "expected telemetry fetch call");
 	const [event] = JSON.parse(request.options?.body ?? "[]");
 	assert.equal(event.payload["Tlh.Subagent.librarian.thinking"], "medium", "frontmatter thinking should be reflected");
-	assert.equal(event.payload["Tlh.Subagent.librarian.model"], "claude-opus-4-5", "frontmatter model should be reflected");
+	assert.equal(
+		event.payload["Tlh.Subagent.librarian.model"],
+		"claude-opus-4-5",
+		"frontmatter model should be reflected",
+	);
 });
 
 test("launch telemetry: settings agentOverrides wins over frontmatter", async (t) => {
@@ -543,15 +574,16 @@ test("launch telemetry: settings agentOverrides wins over frontmatter", async (t
 	// Frontmatter says "low"; settings override says "max"
 	const subagentDir = join(fixture.agent, "tlh", "agents", "subagents");
 	mkdirSync(subagentDir, { recursive: true });
-	writeFileSync(
-		join(subagentDir, "oracle.md"),
-		"---\nname: oracle\nthinking: low\nmodel: gpt-4o\n---\nPrompt body.\n",
-	);
+	writeFileSync(join(subagentDir, "oracle.md"), "---\nname: oracle\nthinking: low\nmodel: gpt-4o\n---\nPrompt body.\n");
 	writeFileSync(
 		join(fixture.agent, "settings.json"),
-		`${JSON.stringify({
-			subagents: { agentOverrides: { oracle: { thinking: "max", model: "claude-opus-4-5" } } },
-		}, null, 2)}\n`,
+		`${JSON.stringify(
+			{
+				subagents: { agentOverrides: { oracle: { thinking: "max", model: "claude-opus-4-5" } } },
+			},
+			null,
+			2,
+		)}\n`,
 	);
 
 	const previousFetch = globalThis.fetch;
@@ -585,7 +617,11 @@ test("launch telemetry: settings agentOverrides wins over frontmatter", async (t
 	assert.ok(request, "expected telemetry fetch call");
 	const [event] = JSON.parse(request.options?.body ?? "[]");
 	assert.equal(event.payload["Tlh.Subagent.oracle.thinking"], "max", "settings override should win over frontmatter");
-	assert.equal(event.payload["Tlh.Subagent.oracle.model"], "claude-opus-4-5", "settings override model should win over frontmatter");
+	assert.equal(
+		event.payload["Tlh.Subagent.oracle.model"],
+		"claude-opus-4-5",
+		"settings override model should win over frontmatter",
+	);
 });
 
 test("launch telemetry: disabled agentOverride is reported as 'disabled' for both keys", async (t) => {
@@ -593,9 +629,13 @@ test("launch telemetry: disabled agentOverride is reported as 'disabled' for bot
 	writeTelemetryState(fixture);
 	writeFileSync(
 		join(fixture.agent, "settings.json"),
-		`${JSON.stringify({
-			subagents: { agentOverrides: { "repo-scout": { disabled: true } } },
-		}, null, 2)}\n`,
+		`${JSON.stringify(
+			{
+				subagents: { agentOverrides: { "repo-scout": { disabled: true } } },
+			},
+			null,
+			2,
+		)}\n`,
 	);
 
 	const previousFetch = globalThis.fetch;
@@ -638,10 +678,14 @@ test("launch telemetry never emits keys for agent names outside the bundled eigh
 	writeTelemetryState(fixture);
 	writeFileSync(
 		join(fixture.agent, "settings.json"),
-		`${JSON.stringify({
-			// "skunkworks" is not a bundled subagent name
-			subagents: { agentOverrides: { skunkworks: { thinking: "high", model: "secret-model" } } },
-		}, null, 2)}\n`,
+		`${JSON.stringify(
+			{
+				// "skunkworks" is not a bundled subagent name
+				subagents: { agentOverrides: { skunkworks: { thinking: "high", model: "secret-model" } } },
+			},
+			null,
+			2,
+		)}\n`,
 	);
 
 	const previousFetch = globalThis.fetch;
@@ -785,7 +829,11 @@ test("launch telemetry reports provider-aware defaults for bundled agents (Anthr
 	// Anthropic provider: tlhAnthropicThinking=medium, model resolved against the real
 	// available list (claude-sonnet-4-6 IS available here).
 	assert.equal(event.payload["Tlh.Subagent.developer.thinking"], "medium", "Anthropic: expected medium thinking");
-	assert.equal(event.payload["Tlh.Subagent.developer.model"], "claude-sonnet-4-6", "Anthropic: expected claude-sonnet-4-6 model");
+	assert.equal(
+		event.payload["Tlh.Subagent.developer.model"],
+		"claude-sonnet-4-6",
+		"Anthropic: expected claude-sonnet-4-6 model",
+	);
 });
 
 test("launch telemetry reports provider-aware defaults for bundled agents (OpenAI active)", async (t) => {
@@ -896,8 +944,16 @@ test("launch telemetry handles quoted frontmatter model values", async (t) => {
 	assert.ok(request, "expected telemetry fetch call");
 	const [event] = JSON.parse(request.options?.body ?? "[]");
 	// Quoted frontmatter values must be unquoted correctly; model resolved against available list.
-	assert.equal(event.payload["Tlh.Subagent.librarian.thinking"], "high", "quoted thinking value should be parsed correctly");
-	assert.equal(event.payload["Tlh.Subagent.librarian.model"], "claude-haiku-4-5", "quoted model value should be parsed correctly");
+	assert.equal(
+		event.payload["Tlh.Subagent.librarian.thinking"],
+		"high",
+		"quoted thinking value should be parsed correctly",
+	);
+	assert.equal(
+		event.payload["Tlh.Subagent.librarian.model"],
+		"claude-haiku-4-5",
+		"quoted model value should be parsed correctly",
+	);
 });
 
 test("launch telemetry handles list-valued model fields (comma-separated tlhOpenaiModels)", async (t) => {
@@ -952,7 +1008,11 @@ test("launch telemetry handles list-valued model fields (comma-separated tlhOpen
 	assert.ok(request, "expected telemetry fetch call");
 	const [event] = JSON.parse(request.options?.body ?? "[]");
 	// First matching openai-codex entry from the comma-separated list is selected (available in registry).
-	assert.equal(event.payload["Tlh.Subagent.oracle.model"], "gpt-5.6-sol", "first matching openai-codex model from list should be selected");
+	assert.equal(
+		event.payload["Tlh.Subagent.oracle.model"],
+		"gpt-5.6-sol",
+		"first matching openai-codex model from list should be selected",
+	);
 	assert.equal(event.payload["Tlh.Subagent.oracle.thinking"], "high");
 });
 
@@ -1006,7 +1066,11 @@ test("launch telemetry: model: false clearing override reports 'cleared', not th
 	// false model override must report "cleared", not fall back to frontmatter value
 	assert.equal(event.payload["Tlh.Subagent.developer.model"], "cleared", "model: false must report 'cleared'");
 	// thinking override is absent so frontmatter value is used
-	assert.equal(event.payload["Tlh.Subagent.developer.thinking"], "medium", "thinking should still come from frontmatter");
+	assert.equal(
+		event.payload["Tlh.Subagent.developer.thinking"],
+		"medium",
+		"thinking should still come from frontmatter",
+	);
 });
 
 test("launch telemetry: thinking: false clearing override reports 'cleared', not the frontmatter value", async (t) => {
@@ -1065,7 +1129,11 @@ test("launch telemetry: thinking: false clearing override reports 'cleared', not
 	// model override is absent so frontmatter value is used.
 	// The model (anthropic/claude-sonnet-4-6) is in availableModels in the snapshot, so it
 	// is resolved and reported; this demonstrates that only thinking is cleared, not model.
-	assert.equal(event.payload["Tlh.Subagent.developer.model"], "claude-sonnet-4-6", "model should still come from frontmatter");
+	assert.equal(
+		event.payload["Tlh.Subagent.developer.model"],
+		"claude-sonnet-4-6",
+		"model should still come from frontmatter",
+	);
 });
 
 test("launch telemetry: settings override wins over provider-aware frontmatter", async (t) => {
@@ -1115,9 +1183,17 @@ test("launch telemetry: settings override wins over provider-aware frontmatter",
 
 	assert.ok(request, "expected telemetry fetch call");
 	const [event] = JSON.parse(request.options?.body ?? "[]");
-	assert.equal(event.payload["Tlh.Subagent.developer.thinking"], "high", "settings override thinking should win over frontmatter");
+	assert.equal(
+		event.payload["Tlh.Subagent.developer.thinking"],
+		"high",
+		"settings override thinking should win over frontmatter",
+	);
 	// model "anthropic/claude-opus-5" → last segment "claude-opus-5" → matches claude-* pattern
-	assert.equal(event.payload["Tlh.Subagent.developer.model"], "claude-opus-5", "settings override model should win over frontmatter");
+	assert.equal(
+		event.payload["Tlh.Subagent.developer.model"],
+		"claude-opus-5",
+		"settings override model should win over frontmatter",
+	);
 });
 
 // ── registry-accurate resolution tests ──────────────────────────────────────
@@ -1174,7 +1250,11 @@ test("registry-accurate: provider-aware candidate NOT available is reported as '
 	// Model was NOT in the available list → unknown (a plausible-but-wrong value is worse than unknown).
 	// Thinking still resolves from provider key because it does not depend on model availability.
 	assert.equal(event.payload["Tlh.Subagent.developer.model"], "unknown", "unavailable model must resolve to unknown");
-	assert.equal(event.payload["Tlh.Subagent.developer.thinking"], "medium", "thinking resolves from provider key regardless of model availability");
+	assert.equal(
+		event.payload["Tlh.Subagent.developer.thinking"],
+		"medium",
+		"thinking resolves from provider key regardless of model availability",
+	);
 });
 
 test("registry-accurate: empty availableModels yields 'unknown' for provider-qualified model fields", async (t) => {
@@ -1222,7 +1302,11 @@ test("registry-accurate: empty availableModels yields 'unknown' for provider-qua
 
 	assert.ok(request, "expected telemetry fetch call");
 	const [event] = JSON.parse(request.options?.body ?? "[]");
-	assert.equal(event.payload["Tlh.Subagent.librarian.model"], "unknown", "empty registry must yield unknown for provider-qualified models");
+	assert.equal(
+		event.payload["Tlh.Subagent.librarian.model"],
+		"unknown",
+		"empty registry must yield unknown for provider-qualified models",
+	);
 	// thinking still resolves correctly from provider key
 	assert.equal(event.payload["Tlh.Subagent.librarian.thinking"], "low");
 });
@@ -1336,8 +1420,16 @@ test("registry-accurate: preferOppositeProvider agent — opposite-provider mode
 	const [event] = JSON.parse(request.options?.body ?? "[]");
 	// Old synthetic code would have wrongly reported gpt-5.6-luna here.
 	// New registry-accurate code correctly reports the same-provider fallback.
-	assert.notEqual(event.payload["Tlh.Subagent.contrarian.model"], "gpt-5.6-luna", "unavailable opposite-provider model must not be reported");
-	assert.equal(event.payload["Tlh.Subagent.contrarian.model"], "claude-sonnet-4-6", "same-provider fallback selected when opposite-provider model unavailable");
+	assert.notEqual(
+		event.payload["Tlh.Subagent.contrarian.model"],
+		"gpt-5.6-luna",
+		"unavailable opposite-provider model must not be reported",
+	);
+	assert.equal(
+		event.payload["Tlh.Subagent.contrarian.model"],
+		"claude-sonnet-4-6",
+		"same-provider fallback selected when opposite-provider model unavailable",
+	);
 	// Thinking resolves for the selected model's provider (anthropic → tlhAnthropicThinking=medium)
 	assert.equal(event.payload["Tlh.Subagent.contrarian.thinking"], "medium");
 });
@@ -1397,7 +1489,11 @@ test("registry-accurate: hand-edited generic model: field wins when provider-awa
 	const [event] = JSON.parse(request.options?.body ?? "[]");
 	// The generic model: field IS available in the registry and is checked first by
 	// selectStandardProviderAwareAgentModel, so it wins over the unavailable tlhAnthropicModels.
-	assert.equal(event.payload["Tlh.Subagent.oracle.model"], "claude-opus-5", "generic model: field wins when it is the only available model");
+	assert.equal(
+		event.payload["Tlh.Subagent.oracle.model"],
+		"claude-opus-5",
+		"generic model: field wins when it is the only available model",
+	);
 	// Thinking: with only the generic model available, resolveThinkingForProvider uses the
 	// selected model's provider (anthropic) → tlhAnthropicThinking=high.
 	assert.equal(event.payload["Tlh.Subagent.oracle.thinking"], "high");
@@ -1409,9 +1505,8 @@ test("registry-accurate: hand-edited generic model: field wins when provider-awa
 // runtime through `subagents.agentDirs`, so the runtime resolves them as USER-scope custom
 // agents via applyCustomAgentOverrides (extensions/subagents/src/agents/agents.ts:1035-1054).
 // That gives a two-rule precedence: project `agentOverrides[name]`, else user
-// `agentOverrides[name]`, else unmodified. `disableBuiltins` / `disableThinking` are read only
-// by applyBuiltinOverrides and apply solely to Pi's native BUILTIN_AGENT_NAMES, so they are
-// deliberately not part of this precedence.
+// `agentOverrides[name]`, else unmodified. `disableBuiltins` and `disableThinking` have been
+// removed from the extension, so only the two-rule custom override precedence above applies.
 
 const { CONFIG_DIR_NAME: PI_CONFIG_DIR_NAME } = await import("@earendil-works/pi-coding-agent");
 
@@ -1437,7 +1532,8 @@ async function captureSubagentPayload(t, { userSettings, projectSettings } = {})
 		const projectConfigDir = join(fixture.cwd, PI_CONFIG_DIR_NAME);
 		mkdirSync(projectConfigDir, { recursive: true });
 		if (projectSettings !== null) {
-			const content = typeof projectSettings === "string" ? projectSettings : `${JSON.stringify(projectSettings, null, 2)}\n`;
+			const content =
+				typeof projectSettings === "string" ? projectSettings : `${JSON.stringify(projectSettings, null, 2)}\n`;
 			writeFileSync(join(projectConfigDir, "settings.json"), content);
 		}
 	}
@@ -1511,8 +1607,16 @@ test("launch telemetry falls back to user-scope agentOverrides when the project 
 		projectSettings: { subagents: { agentOverrides: { librarian: { thinking: "low" } } } },
 	});
 
-	assert.equal(payload["Tlh.Subagent.developer.thinking"], "high", "user override applies with no project entry for developer");
-	assert.equal(payload["Tlh.Subagent.developer.model"], "claude-opus-4-5", "user model applies with no project entry for developer");
+	assert.equal(
+		payload["Tlh.Subagent.developer.thinking"],
+		"high",
+		"user override applies with no project entry for developer",
+	);
+	assert.equal(
+		payload["Tlh.Subagent.developer.model"],
+		"claude-opus-4-5",
+		"user model applies with no project entry for developer",
+	);
 	assert.equal(payload["Tlh.Subagent.librarian.thinking"], "low", "project override applies for librarian");
 	assert.equal(payload["Tlh.Subagent.contrarian.thinking"], "unknown", "unconfigured agents stay unknown");
 });
@@ -1532,7 +1636,11 @@ test("launch telemetry degrades quietly to user scope when project settings are 
 	for (const [label, projectSettings] of cases) {
 		const payload = await captureSubagentPayload(t, { userSettings, projectSettings });
 		assert.equal(payload["Tlh.Subagent.developer.thinking"], "high", `${label}: should fall back to user thinking`);
-		assert.equal(payload["Tlh.Subagent.developer.model"], "claude-opus-4-5", `${label}: should fall back to user model`);
+		assert.equal(
+			payload["Tlh.Subagent.developer.model"],
+			"claude-opus-4-5",
+			`${label}: should fall back to user model`,
+		);
 		// Degrading must not drop the event or the other bundled keys.
 		assert.equal(payload["Tlh.Subagent.web-scout.thinking"], "unknown", `${label}: other agents still reported`);
 	}
@@ -1540,7 +1648,9 @@ test("launch telemetry degrades quietly to user scope when project settings are 
 
 test("launch telemetry never emits a project-scope override for a non-bundled agent name", async (t) => {
 	const payload = await captureSubagentPayload(t, {
-		projectSettings: { subagents: { agentOverrides: { "skunkworks-secret": { thinking: "high", model: "internal/secret-model" } } } },
+		projectSettings: {
+			subagents: { agentOverrides: { "skunkworks-secret": { thinking: "high", model: "internal/secret-model" } } },
+		},
 	});
 
 	const leaked = Object.keys(payload).filter((key) => key.includes("skunkworks"));
@@ -1572,20 +1682,26 @@ test("launch telemetry reads settings.json once per send", () => {
 		"sendTlhTelemetry must prefer settings threaded in by its caller",
 	);
 
-	const sendLaunchSource = source.match(/export async function sendTlhLaunchTelemetry\(snapshot: TlhTelemetrySnapshot\): Promise<void> \{[\s\S]*?\n\}/)?.[0];
+	const sendLaunchSource = source.match(
+		/export async function sendTlhLaunchTelemetry\(snapshot: TlhTelemetrySnapshot\): Promise<void> \{[\s\S]*?\n\}/,
+	)?.[0];
 	assert.ok(sendLaunchSource, "expected sendTlhLaunchTelemetry source");
 	assert.equal(
 		sendLaunchSource.match(/readTlhLaunchSettings\(\)/g)?.length,
 		1,
 		"sendTlhLaunchTelemetry must read settings exactly once",
 	);
-	assert.match(sendLaunchSource, /\n\t\tlaunchSettings,\n/, "sendTlhLaunchTelemetry must pass launchSettings to sendTlhTelemetry");
+	assert.match(
+		sendLaunchSource,
+		/\n\t\tlaunchSettings,\n/,
+		"sendTlhLaunchTelemetry must pass launchSettings to sendTlhTelemetry",
+	);
 
 	// shouldSkipTlhLaunchTelemetry must keep its default parameter so no-argument callers and
 	// existing tests are unaffected.
 	assert.match(
 		source,
-		/export function shouldSkipTlhLaunchTelemetry\(launchSettings: ReturnType<typeof readTlhLaunchSettings> = readTlhLaunchSettings\(\)\)/,
+		/export function shouldSkipTlhLaunchTelemetry\(\s*launchSettings:\s*ReturnType<typeof readTlhLaunchSettings>\s*=\s*readTlhLaunchSettings\(\),?\s*\)/,
 		"shouldSkipTlhLaunchTelemetry must retain its default-parameter behaviour",
 	);
 });
@@ -1598,21 +1714,33 @@ test("project settings are never read on the synchronous startup path", async (t
 	assert.notEqual(setTimeoutIndex, -1);
 	const syncBody = source.slice(scheduleStart, setTimeoutIndex);
 
-	assert.doesNotMatch(syncBody, /readTlhProjectSubagentOverrides/, "project settings reader must not run synchronously");
+	assert.doesNotMatch(
+		syncBody,
+		/readTlhProjectSubagentOverrides/,
+		"project settings reader must not run synchronously",
+	);
 	assert.doesNotMatch(syncBody, /findNearestTlhProjectRoot/, "project root walk must not run synchronously");
 	assert.doesNotMatch(syncBody, /resolveEffectiveSubagentOverrides/, "override resolution must not run synchronously");
 
 	const deferredStart = source.indexOf("export async function sendTlhLaunchTelemetry(");
 	const deferredEnd = source.indexOf("\nexport function scheduleTlhLaunchTelemetry", deferredStart);
 	const deferredBody = source.slice(deferredStart, deferredEnd === -1 ? undefined : deferredEnd);
-	assert.match(deferredBody, /readTlhProjectSubagentOverrides/, "project settings must be read inside the deferred send");
+	assert.match(
+		deferredBody,
+		/readTlhProjectSubagentOverrides/,
+		"project settings must be read inside the deferred send",
+	);
 
 	// No payload value may carry a path, project name, or other user string: the reported values
 	// are the same privacy-filtered sentinels regardless of where the project root lives.
 	const payload = await captureSubagentPayload(t, {
 		projectSettings: { subagents: { agentOverrides: { developer: { model: "/Users/someone/private/model.gguf" } } } },
 	});
-	assert.equal(payload["Tlh.Subagent.developer.model"], "custom", "unrecognised model strings must be filtered to 'custom'");
+	assert.equal(
+		payload["Tlh.Subagent.developer.model"],
+		"custom",
+		"unrecognised model strings must be filtered to 'custom'",
+	);
 	for (const value of Object.values(payload)) {
 		assert.doesNotMatch(String(value), /[/\\]/, `telemetry value must not contain a path separator: ${value}`);
 	}
@@ -1639,8 +1767,16 @@ test("scheduleTlhLaunchTelemetry does not read subagent frontmatter files synchr
 	const syncBody = source.slice(scheduleStart, setTimeoutIndex);
 
 	// The sync body must not contain frontmatter-related paths or read calls
-	assert.doesNotMatch(syncBody, /tlh\/agents\/subagents/, "frontmatter path must not appear in synchronous scheduleTlhLaunchTelemetry body");
-	assert.doesNotMatch(syncBody, /buildSubagentTelemetryPayload/, "subagent payload builder must not be called synchronously");
+	assert.doesNotMatch(
+		syncBody,
+		/tlh\/agents\/subagents/,
+		"frontmatter path must not appear in synchronous scheduleTlhLaunchTelemetry body",
+	);
+	assert.doesNotMatch(
+		syncBody,
+		/buildSubagentTelemetryPayload/,
+		"subagent payload builder must not be called synchronously",
+	);
 	assert.doesNotMatch(syncBody, /readSubagentFrontmatterConfig/, "frontmatter reader must not be called synchronously");
 
 	// Verify the deferred path DOES contain the subagent build call
@@ -1648,7 +1784,11 @@ test("scheduleTlhLaunchTelemetry does not read subagent frontmatter files synchr
 	assert.notEqual(deferredStart, -1, "sendTlhLaunchTelemetry must exist");
 	const deferredEnd = source.indexOf("\nexport function scheduleTlhLaunchTelemetry", deferredStart);
 	const deferredBody = deferredEnd === -1 ? source.slice(deferredStart) : source.slice(deferredStart, deferredEnd);
-	assert.match(deferredBody, /buildSubagentTelemetryPayload/, "buildSubagentTelemetryPayload must appear in the deferred sendTlhLaunchTelemetry path");
+	assert.match(
+		deferredBody,
+		/buildSubagentTelemetryPayload/,
+		"buildSubagentTelemetryPayload must appear in the deferred sendTlhLaunchTelemetry path",
+	);
 });
 
 test("scheduleTlhLaunchTelemetry defers subagent frontmatter reads: no fetch before timer fires, fetch occurs after (behavioural)", async (t) => {
@@ -1692,7 +1832,10 @@ test("scheduleTlhLaunchTelemetry defers subagent frontmatter reads: no fetch bef
 	// The settings structure follows the schema parsed by readTlhLaunchSettings:
 	// { subagents: { agentOverrides: { <name>: { thinking, model } } } }
 	const settingsPath = join(fixture.agent, "settings.json");
-	writeFileSync(settingsPath, JSON.stringify({ subagents: { agentOverrides: { developer: { thinking: "low" } } } }) + "\n");
+	writeFileSync(
+		settingsPath,
+		JSON.stringify({ subagents: { agentOverrides: { developer: { thinking: "low" } } } }) + "\n",
+	);
 
 	// Write a subagent frontmatter file so that buildSubagentTelemetryPayload has
 	// genuine file I/O to perform and the scenario is not trivially opt-out.
@@ -1739,7 +1882,11 @@ test("scheduleTlhLaunchTelemetry defers subagent frontmatter reads: no fetch bef
 				// Minimal ExtensionContext stub — only the fields scheduleTlhLaunchTelemetry reads.
 				// modelRegistry: null is a valid input to getUnfilteredAvailableModels which
 				// gracefully returns [] for falsy inputs (no I/O, just an in-memory guard).
-				const mockCtx = { model: { provider: "anthropic", id: "claude-opus-4-5" }, thinkingLevel: "medium", modelRegistry: null };
+				const mockCtx = {
+					model: { provider: "anthropic", id: "claude-opus-4-5" },
+					thinkingLevel: "medium",
+					modelRegistry: null,
+				};
 				scheduleTlhLaunchTelemetry(mockCtx, "architect");
 
 				// SETTINGS_B written SYNCHRONOUSLY (no await between here and the call above).
@@ -1747,7 +1894,10 @@ test("scheduleTlhLaunchTelemetry defers subagent frontmatter reads: no fetch bef
 				// it will run inside the timer callback and will see SETTINGS_B (thinking=high).
 				// With deferral removed, readTlhLaunchSettings already ran above (thinking=low);
 				// this overwrite is too late to affect the captured launchSettings.
-				writeFileSync(settingsPath, JSON.stringify({ subagents: { agentOverrides: { developer: { thinking: "high" } } } }) + "\n");
+				writeFileSync(
+					settingsPath,
+					JSON.stringify({ subagents: { agentOverrides: { developer: { thinking: "high" } } } }) + "\n",
+				);
 
 				// BEFORE the timer fires: no fetch call should have occurred.
 				assert.equal(fetchCallCount, 0, "no fetch calls should occur before the deferred timer fires");
@@ -1771,10 +1921,7 @@ test("scheduleTlhLaunchTelemetry defers subagent frontmatter reads: no fetch bef
 				}
 
 				// AFTER the timer fires: settings were read (SETTINGS_B) and fetch was called.
-				assert.ok(
-					fetchCallCount > 0,
-					"fetch should have been called after the deferred timer fires",
-				);
+				assert.ok(fetchCallCount > 0, "fetch should have been called after the deferred timer fires");
 
 				// Primary deferral assertion: the telemetry payload must reflect SETTINGS_B
 				// (thinking=high), not SETTINGS_A (thinking=low). This can only be true if
@@ -1787,13 +1934,17 @@ test("scheduleTlhLaunchTelemetry defers subagent frontmatter reads: no fetch bef
 					event.payload["Tlh.Subagent.developer.thinking"],
 					"high",
 					"Tlh.Subagent.developer.thinking must be 'high' (from SETTINGS_B), not 'low' (SETTINGS_A) or 'unknown' — " +
-					"proving readTlhLaunchSettings ran inside the deferred timer callback, not synchronously before it",
+						"proving readTlhLaunchSettings ran inside the deferred timer callback, not synchronously before it",
 				);
 			},
 		);
 	} finally {
 		globalThis.fetch = previousFetch;
 		// Ensure mock timers are always restored (idempotent after reset()).
-		try { t.mock.timers.reset(); } catch { /* already reset */ }
+		try {
+			t.mock.timers.reset();
+		} catch {
+			/* already reset */
+		}
 	}
 });

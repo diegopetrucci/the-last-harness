@@ -43,16 +43,30 @@ describe("async permission forwarding session identity", () => {
 		const built = buildAsyncRunnerSteps("run-abc", {
 			chain: [
 				{ agent: "source", task: "produce targets" },
-				{ parallel: [{ agent: "reviewer", task: "Review first" }, { agent: "reviewer", task: "Review second" }] },
+				{
+					parallel: [
+						{ agent: "reviewer", task: "Review first" },
+						{ agent: "reviewer", task: "Review second" },
+					],
+				},
 				{ agent: "worker", task: "Use reviews" },
 			],
-			agents: [makeAgent("source"), makeAgent("reviewer"), { ...makeAgent("worker"), model: "anthropic/claude-sonnet-4-5:high", thinking: "high" }],
+			agents: [
+				makeAgent("source"),
+				makeAgent("reviewer"),
+				{ ...makeAgent("worker"), model: "anthropic/claude-sonnet-4-5:high", thinking: "high" },
+			],
 			ctx: {
 				pi: {} as never,
 				cwd: "/tmp/project",
 				currentSessionId: "/tmp/parent-session.jsonl",
 			},
-			sessionFilesByFlatIndex: [undefined, "/tmp/parallel-0.jsonl", "/tmp/parallel-1.jsonl", "/tmp/static-worker.jsonl"],
+			sessionFilesByFlatIndex: [
+				undefined,
+				"/tmp/parallel-0.jsonl",
+				"/tmp/parallel-1.jsonl",
+				"/tmp/static-worker.jsonl",
+			],
 			thinkingOverridesByFlatIndex: [undefined, "off", "off", "off"],
 			maxSubagentDepth: 1,
 			asyncDir: "/tmp/async-run",
@@ -61,7 +75,10 @@ describe("async permission forwarding session identity", () => {
 		assert.ok(!("error" in built));
 		const group = built.steps[1];
 		assert.ok(group && "parallel" in group && Array.isArray(group.parallel));
-		assert.deepEqual(group.parallel.map((task) => task.sessionFile), ["/tmp/parallel-0.jsonl", "/tmp/parallel-1.jsonl"]);
+		assert.deepEqual(
+			group.parallel.map((task) => task.sessionFile),
+			["/tmp/parallel-0.jsonl", "/tmp/parallel-1.jsonl"],
+		);
 		const staticWorker = built.steps[2];
 		assert.ok(staticWorker && !("parallel" in staticWorker));
 		assert.equal(staticWorker.sessionFile, "/tmp/static-worker.jsonl");
@@ -72,12 +89,14 @@ describe("async permission forwarding session identity", () => {
 	it("gates thinking levels on merged agent fallback candidates", () => {
 		const built = buildAsyncRunnerSteps("run-abc", {
 			chain: [{ agent: "worker", task: "Do work" }],
-			agents: [{
-				...makeAgent("worker"),
-				model: "openai/gpt-5",
-				fallbackModels: ["anthropic/claude-haiku-4-5"],
-				thinking: "high",
-			}],
+			agents: [
+				{
+					...makeAgent("worker"),
+					model: "openai/gpt-5",
+					fallbackModels: ["anthropic/claude-haiku-4-5"],
+					thinking: "high",
+				},
+			],
 			ctx: {
 				pi: {} as never,
 				cwd: "/tmp/project",
@@ -107,13 +126,22 @@ describe("async permission forwarding session identity", () => {
 		assert.ok(step && !("parallel" in step));
 		assert.equal(step.model, "openai/gpt-5:high");
 		assert.deepEqual(step.modelCandidates, ["openai/gpt-5:high", "anthropic/claude-haiku-4-5"]);
-		assert.deepEqual(step.attemptNotes, ["Notice: Thinking level \"high\" was dropped for model \"anthropic/claude-haiku-4-5\" because the model registry does not advertise support."]);
+		assert.deepEqual(step.attemptNotes, [
+			'Notice: Thinking level "high" was dropped for model "anthropic/claude-haiku-4-5" because the model registry does not advertise support.',
+		]);
 	});
 
 	it("applies thinking overrides to async fallback candidates", () => {
 		const built = buildAsyncRunnerSteps("run-abc", {
 			chain: [{ agent: "worker", task: "Do work" }],
-			agents: [{ ...makeAgent("worker"), model: "openai/gpt-5-mini:high", fallbackModels: ["anthropic/claude-sonnet-4:low"], thinking: "high" }],
+			agents: [
+				{
+					...makeAgent("worker"),
+					model: "openai/gpt-5-mini:high",
+					fallbackModels: ["anthropic/claude-sonnet-4:low"],
+					thinking: "high",
+				},
+			],
 			ctx: {
 				pi: {} as never,
 				cwd: "/tmp/project",

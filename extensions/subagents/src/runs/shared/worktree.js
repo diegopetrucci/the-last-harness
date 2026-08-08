@@ -88,9 +88,7 @@ function resolveRepoCwdRelative(cwd) {
         throw new Error("worktree isolation requires a git repository");
     }
     const rawPrefix = runGitChecked(cwd, ["rev-parse", "--show-prefix"]).trim();
-    const normalizedPrefix = rawPrefix
-        ? path.normalize(rawPrefix.replace(/[\\/]+$/, ""))
-        : "";
+    const normalizedPrefix = rawPrefix ? path.normalize(rawPrefix.replace(/[\\/]+$/, "")) : "";
     return normalizedPrefix === "." ? "" : normalizedPrefix;
 }
 export function resolveExpectedWorktreeAgentCwd(cwd, runId, index, baseDir) {
@@ -277,7 +275,11 @@ function createSingleWorktree(toplevel, cwdRelative, runId, index, baseCommit, s
 function removeSyntheticPath(worktree, syntheticPath) {
     const resolved = path.resolve(worktree.path, syntheticPath);
     const relative = path.relative(worktree.path, resolved);
-    if (!relative || relative === "." || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    if (!relative ||
+        relative === "." ||
+        relative === ".." ||
+        relative.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(relative)) {
         return;
     }
     let stat;

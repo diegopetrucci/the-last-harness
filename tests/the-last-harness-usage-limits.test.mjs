@@ -8,7 +8,9 @@ import { createJiti } from "jiti";
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
-const { registerUsageCommand, shouldShowTlhUsageWeekly } = await jiti.import("../extensions/the-last-harness/usage-limits.ts");
+const { registerUsageCommand, shouldShowTlhUsageWeekly } = await jiti.import(
+	"../extensions/the-last-harness/usage-limits.ts",
+);
 const {
 	getCachedTlhUsageWeeklyVisibility,
 	getPersistedTlhUsageWeeklyVisibility,
@@ -131,7 +133,11 @@ test("usage weekly on is idempotent across repeated invocations", async (t) => {
 		assert.ok(afterSecond.equals(afterFirst), "settings file must be byte-identical after the second call");
 
 		const backupsAfterSecond = readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.bak-"));
-		assert.deepEqual(backupsAfterSecond, backupsAfterFirst, "no additional backup should be produced on the second call");
+		assert.deepEqual(
+			backupsAfterSecond,
+			backupsAfterFirst,
+			"no additional backup should be produced on the second call",
+		);
 
 		const secondNotice = notifications.at(-1);
 		assert.equal(secondNotice?.type, "info");

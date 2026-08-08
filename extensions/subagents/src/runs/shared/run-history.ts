@@ -20,13 +20,7 @@ function getHistoryPath(): string {
 	return path.join(getAgentDir(), "run-history.jsonl");
 }
 
-export function recordRun(
-	agent: string,
-	task: string,
-	exitCode: number,
-	durationMs: number,
-	error?: string,
-): void {
+export function recordRun(agent: string, task: string, exitCode: number, durationMs: number, error?: string): void {
 	try {
 		const entry: RunEntry = {
 			agent,
@@ -55,15 +49,28 @@ export function loadRunsForAgent(agent: string): RunEntry[] {
 		return [];
 	}
 
-	let lines = raw.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+	let lines = raw
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0);
 
 	if (lines.length > ROTATE_READ_THRESHOLD) {
 		lines = lines.slice(-ROTATE_KEEP);
-		try { fs.writeFileSync(historyPath, `${lines.join("\n")}\n`, "utf-8"); } catch { void 0; }
+		try {
+			fs.writeFileSync(historyPath, `${lines.join("\n")}\n`, "utf-8");
+		} catch {
+			void 0;
+		}
 	}
 
 	return lines
-		.map((line) => { try { return JSON.parse(line) as RunEntry; } catch { return undefined; } })
+		.map((line) => {
+			try {
+				return JSON.parse(line) as RunEntry;
+			} catch {
+				return undefined;
+			}
+		})
 		.filter((entry): entry is RunEntry => entry != null && entry.agent === agent)
 		.reverse();
 }

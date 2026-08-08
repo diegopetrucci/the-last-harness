@@ -26,8 +26,14 @@ describe("tool-budget module", () => {
 	it("rejects unsafe configs", () => {
 		assert.equal(validateToolBudgetConfig({ hard: 0 }).error, "toolBudget.hard must be an integer >= 1.");
 		assert.equal(validateToolBudgetConfig({ soft: 5, hard: 4 }).error, "toolBudget.soft must be <= toolBudget.hard.");
-		assert.equal(validateToolBudgetConfig({ hard: 4, block: [] }).error, "toolBudget.block must contain at least one tool name.");
-		assert.equal(validateToolBudgetConfig({ hard: 4, block: [""] }).error, "toolBudget.block must contain non-empty tool names.");
+		assert.equal(
+			validateToolBudgetConfig({ hard: 4, block: [] }).error,
+			"toolBudget.block must contain at least one tool name.",
+		);
+		assert.equal(
+			validateToolBudgetConfig({ hard: 4, block: [""] }).error,
+			"toolBudget.block must contain non-empty tool names.",
+		);
 	});
 
 	it("serializes and decodes env config", () => {
@@ -37,7 +43,13 @@ describe("tool-budget module", () => {
 
 	it("tracks state and block decisions", () => {
 		const budget = { soft: 2, hard: 3, block: ["read"] };
-		assert.deepEqual(initialToolBudgetState(budget), { soft: 2, hard: 3, block: ["read"], toolCount: 0, outcome: "within-budget" });
+		assert.deepEqual(initialToolBudgetState(budget), {
+			soft: 2,
+			hard: 3,
+			block: ["read"],
+			toolCount: 0,
+			outcome: "within-budget",
+		});
 		assert.equal(toolBudgetState(budget, 2).outcome, "soft-reached");
 		assert.equal(toolBudgetState(budget, 4, "read").outcome, "hard-blocked");
 		assert.equal(shouldBlockToolForBudget(budget, "read", 4), true);

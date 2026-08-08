@@ -4,11 +4,20 @@ import { buildWidgetLines, widgetRenderKey } from "../../src/tui/render.ts";
 import type { AsyncJobState, NestedRunSummary } from "../../src/shared/types.ts";
 
 const theme = {
-	fg(_name: string, text: string): string { return text; },
-	bold(text: string): string { return text; },
+	fg(_name: string, text: string): string {
+		return text;
+	},
+	bold(text: string): string {
+		return text;
+	},
 };
 
-function nested(id: string, parentRunId: string, state: NestedRunSummary["state"] = "running", extra: Partial<NestedRunSummary> = {}): NestedRunSummary {
+function nested(
+	id: string,
+	parentRunId: string,
+	state: NestedRunSummary["state"] = "running",
+	extra: Partial<NestedRunSummary> = {},
+): NestedRunSummary {
 	return {
 		id,
 		parentRunId,
@@ -50,13 +59,17 @@ describe("nested widget rendering", () => {
 
 	it("collapses descendants beyond the nested depth budget", () => {
 		const root = nested("nested-root", "root-run", "running", {
-			children: [nested("nested-child", "nested-root", "running", {
-				parentStepIndex: undefined,
-				children: [nested("nested-grandchild", "nested-child", "running", {
+			children: [
+				nested("nested-child", "nested-root", "running", {
 					parentStepIndex: undefined,
-					children: [nested("nested-great-grandchild", "nested-grandchild")],
-				})],
-			})],
+					children: [
+						nested("nested-grandchild", "nested-child", "running", {
+							parentStepIndex: undefined,
+							children: [nested("nested-great-grandchild", "nested-grandchild")],
+						}),
+					],
+				}),
+			],
 		});
 		const expanded = buildWidgetLines([job(root)], theme as any, 160, true).join("\n");
 		assert.match(expanded, /nested-grandchild/);

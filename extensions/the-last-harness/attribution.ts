@@ -1,4 +1,9 @@
-import { SettingsManager, getAgentDir, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import {
+	SettingsManager,
+	getAgentDir,
+	type ExtensionAPI,
+	type ExtensionCommandContext,
+} from "@earendil-works/pi-coding-agent";
 
 import { isRecord } from "./common.js";
 import {
@@ -23,8 +28,17 @@ import type { TlhAttributionConfig, TlhCommitAttributionState, TlhSettings } fro
 export const TLH_DEFAULT_COMMIT_ATTRIBUTION = `Co-authored-by: The Last Harness <hi@thelastharness.com>`;
 
 const TLH_GIT_COMMIT_ATTRIBUTION_PROMPT_HEADING = "## TLH Git Commit Attribution";
-const TLH_GIT_COMMIT_BLOCK_REASON = "Blocked TLH bash git commit because the commit message is missing the required TLH attribution footer.";
-const GIT_GLOBAL_OPTIONS_WITH_VALUES = new Set(["-C", "-c", "--config-env", "--git-dir", "--namespace", "--super-prefix", "--work-tree"]);
+const TLH_GIT_COMMIT_BLOCK_REASON =
+	"Blocked TLH bash git commit because the commit message is missing the required TLH attribution footer.";
+const GIT_GLOBAL_OPTIONS_WITH_VALUES = new Set([
+	"-C",
+	"-c",
+	"--config-env",
+	"--git-dir",
+	"--namespace",
+	"--super-prefix",
+	"--work-tree",
+]);
 
 function normalizeTlhAttributionConfig(config: unknown): TlhAttributionConfig | undefined {
 	if (!isRecord(config)) {
@@ -84,7 +98,11 @@ function getGitCommitArgumentsFromTokens(tokens: string[]): string[] | undefined
 		if (token.startsWith("-C") || token.startsWith("-c")) {
 			continue;
 		}
-		if (["--config-env", "--git-dir", "--namespace", "--super-prefix", "--work-tree"].some((option) => token.startsWith(`${option}=`))) {
+		if (
+			["--config-env", "--git-dir", "--namespace", "--super-prefix", "--work-tree"].some((option) =>
+				token.startsWith(`${option}=`),
+			)
+		) {
 			continue;
 		}
 	}
@@ -258,7 +276,9 @@ function areInlineGitCommitArgumentsAttributed(commitArguments: string[], footer
 }
 
 function buildTlhGitCommitAttributionBlockReason(footer: string): string {
-	return [TLH_GIT_COMMIT_BLOCK_REASON, "Retry with this exact footer at the end of the commit message:", footer].join("\n\n");
+	return [TLH_GIT_COMMIT_BLOCK_REASON, "Retry with this exact footer at the end of the commit message:", footer].join(
+		"\n\n",
+	);
 }
 
 function hasObviousGitCommitInTokens(tokens: string[], depth = 0): boolean {
@@ -317,7 +337,13 @@ function getWrappedShellGitCommitAttributionBlockReasonFromTokens(
 
 	const wrappedCommand = getWrappedShellCommandFromTokens(normalizedTokens);
 	return wrappedCommand !== undefined
-		? getWrappedShellGitCommitAttributionBlockReason(wrappedCommand, footer, depth + 1, failClosedOnCommitLike, sourceSegment)
+		? getWrappedShellGitCommitAttributionBlockReason(
+				wrappedCommand,
+				footer,
+				depth + 1,
+				failClosedOnCommitLike,
+				sourceSegment,
+			)
 		: undefined;
 }
 
@@ -350,12 +376,12 @@ function getEnvContextGitCommitAttributionBlockReasonFromTokens(
 		if (parseResult.kind === "split-string") {
 			return parseResult.effectiveTokens !== undefined
 				? getEnvContextGitCommitAttributionBlockReasonFromTokens(
-					parseResult.effectiveTokens,
-					footer,
-					sourceSegment,
-					depth + 1,
-					failClosedOnCommitLike,
-				)
+						parseResult.effectiveTokens,
+						footer,
+						sourceSegment,
+						depth + 1,
+						failClosedOnCommitLike,
+					)
 				: undefined;
 		}
 		if (parseResult.kind === "unknown-option") {
@@ -405,7 +431,12 @@ function getUnsupportedEnvGitCommitAttributionBlockReason(
 		}
 		if (parseResult.kind === "split-string") {
 			return parseResult.effectiveTokens !== undefined
-				? getEnvContextGitCommitAttributionBlockReasonFromTokens(parseResult.effectiveTokens, footer, sourceSegment, depth + 1)
+				? getEnvContextGitCommitAttributionBlockReasonFromTokens(
+						parseResult.effectiveTokens,
+						footer,
+						sourceSegment,
+						depth + 1,
+					)
 				: undefined;
 		}
 		if (parseResult.kind === "unknown-option") {
@@ -440,11 +471,12 @@ function getWrappedShellGitCommitAttributionBlockReason(
 		}
 		const effectiveSourceSegment = sourceSegment ?? trimmedSegment;
 		const commitArguments = getGitCommitArguments(trimmedSegment);
-		const isObviousInlineGitCommit = commitArguments !== undefined && hasInlineLikeGitCommitMessageOrFileArgument(commitArguments);
+		const isObviousInlineGitCommit =
+			commitArguments !== undefined && hasInlineLikeGitCommitMessageOrFileArgument(commitArguments);
 		if (isObviousInlineGitCommit) {
 			if (
-				areInlineGitCommitArgumentsAttributed(commitArguments, footer, trimmedSegment)
-				|| areInlineGitCommitArgumentsAttributed(commitArguments, footer, effectiveSourceSegment)
+				areInlineGitCommitArgumentsAttributed(commitArguments, footer, trimmedSegment) ||
+				areInlineGitCommitArgumentsAttributed(commitArguments, footer, effectiveSourceSegment)
 			) {
 				continue;
 			}
@@ -454,7 +486,12 @@ function getWrappedShellGitCommitAttributionBlockReason(
 			return buildTlhGitCommitAttributionBlockReason(footer);
 		}
 
-		const unsupportedEnvBlockReason = getUnsupportedEnvGitCommitAttributionBlockReason(trimmedSegment, footer, depth, effectiveSourceSegment);
+		const unsupportedEnvBlockReason = getUnsupportedEnvGitCommitAttributionBlockReason(
+			trimmedSegment,
+			footer,
+			depth,
+			effectiveSourceSegment,
+		);
 		if (unsupportedEnvBlockReason) {
 			return unsupportedEnvBlockReason;
 		}
@@ -488,7 +525,10 @@ export function buildTlhCommitAttributionPrompt(state: TlhCommitAttributionState
 	].join("\n\n");
 }
 
-export function getTlhGitCommitAttributionBlockReason(command: string, state: TlhCommitAttributionState): string | undefined {
+export function getTlhGitCommitAttributionBlockReason(
+	command: string,
+	state: TlhCommitAttributionState,
+): string | undefined {
 	if (!state.enabled || !state.footer) {
 		return undefined;
 	}
@@ -516,7 +556,10 @@ function createRetryableLazyImport<TModule>(loader: () => Promise<TModule>): () 
 	};
 }
 
-export function registerToggleTlhGitAttributionCommand(pi: ExtensionAPI, options: TlhAttributionCommandFacadeOptions = {}): void {
+export function registerToggleTlhGitAttributionCommand(
+	pi: ExtensionAPI,
+	options: TlhAttributionCommandFacadeOptions = {},
+): void {
 	const loadModule = createRetryableLazyImport(
 		options.loadModule ?? (() => import("./attribution-command.js") as Promise<AttributionCommandModule>),
 	);

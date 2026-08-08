@@ -137,36 +137,44 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		try {
 			const runDir = path.join(asyncRoot, "run-restored");
 			fs.mkdirSync(runDir, { recursive: true });
-			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
-				runId: "run-restored",
-				mode: "chain",
-				state: "running",
-				sessionId: "session-restored",
-				startedAt: 1000,
-				lastUpdate: 2000,
-				currentStep: 1,
-				chainStepCount: 3,
-				tkTicket: { id: "psr-raw4", title: "Show active tk title" },
-				parallelGroups: [{ start: 1, count: 2, stepIndex: 1 }],
-				steps: [
-					{ agent: "scout", status: "complete" },
-					{ agent: "reviewer", status: "running", currentTool: "read" },
-					{ agent: "worker", status: "running" },
-					{ agent: "writer", status: "pending" },
-				],
-			}), "utf-8");
-			fs.writeFileSync(path.join(runDir, "events.jsonl"), `${JSON.stringify({
-				type: "subagent.control",
-				channels: ["event"],
-				event: {
-					type: "needs_attention",
-					to: "needs_attention",
-					ts: 123,
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
 					runId: "run-restored",
-					agent: "reviewer",
-					message: "old notice",
-				},
-			})}\n`, "utf-8");
+					mode: "chain",
+					state: "running",
+					sessionId: "session-restored",
+					startedAt: 1000,
+					lastUpdate: 2000,
+					currentStep: 1,
+					chainStepCount: 3,
+					tkTicket: { id: "psr-raw4", title: "Show active tk title" },
+					parallelGroups: [{ start: 1, count: 2, stepIndex: 1 }],
+					steps: [
+						{ agent: "scout", status: "complete" },
+						{ agent: "reviewer", status: "running", currentTool: "read" },
+						{ agent: "worker", status: "running" },
+						{ agent: "writer", status: "pending" },
+					],
+				}),
+				"utf-8",
+			);
+			fs.writeFileSync(
+				path.join(runDir, "events.jsonl"),
+				`${JSON.stringify({
+					type: "subagent.control",
+					channels: ["event"],
+					event: {
+						type: "needs_attention",
+						to: "needs_attention",
+						ts: 123,
+						runId: "run-restored",
+						agent: "reviewer",
+						message: "old notice",
+					},
+				})}\n`,
+				"utf-8",
+			);
 
 			const state = createState();
 			state.currentSessionId = "session-restored";
@@ -184,7 +192,10 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.equal(job.sessionId, "session-restored");
 			assert.deepEqual(job.tkTicket, { id: "psr-raw4", title: "Show active tk title" });
 			assert.deepEqual(job.agents, ["reviewer", "worker"]);
-			assert.deepEqual(job.steps?.map((step: { index?: number }) => step.index), [1, 2]);
+			assert.deepEqual(
+				job.steps?.map((step: { index?: number }) => step.index),
+				[1, 2],
+			);
 			assert.equal(job.stepsTotal, 2);
 			assert.equal(job.runningSteps, 2);
 			assert.equal(job.completedSteps, 0);
@@ -205,22 +216,29 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		try {
 			const runDir = path.join(asyncRoot, "run-restored-ticket");
 			fs.mkdirSync(runDir, { recursive: true });
-			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
-				runId: "run-restored-ticket",
-				mode: "single",
-				state: "running",
-				sessionId: "session-restored",
-				startedAt: 1000,
-				steps: [{ agent: "worker", status: "running" }],
-				tkTicket: { id: "psr-raw4", title: "Restored\u009b title\u001b[31m now\u001b[0m" },
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
+					runId: "run-restored-ticket",
+					mode: "single",
+					state: "running",
+					sessionId: "session-restored",
+					startedAt: 1000,
+					steps: [{ agent: "worker", status: "running" }],
+					tkTicket: { id: "psr-raw4", title: "Restored\u009b title\u001b[31m now\u001b[0m" },
+				}),
+				"utf-8",
+			);
 
 			const state = createState();
 			state.currentSessionId = "session-restored";
 			const tracker = trackerMod!.createAsyncJobTracker(createEventRecorder().pi, state as never, asyncRoot);
 			tracker.restoreActiveJobs();
 
-			assert.deepEqual(state.asyncJobs.get("run-restored-ticket")?.tkTicket, { id: "psr-raw4", title: "Restored title now" });
+			assert.deepEqual(state.asyncJobs.get("run-restored-ticket")?.tkTicket, {
+				id: "psr-raw4",
+				title: "Restored title now",
+			});
 		} finally {
 			removeTempDir(asyncRoot);
 		}
@@ -233,22 +251,30 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			const otherDir = path.join(asyncRoot, "run-other");
 			fs.mkdirSync(ownerDir, { recursive: true });
 			fs.mkdirSync(otherDir, { recursive: true });
-			fs.writeFileSync(path.join(ownerDir, "status.json"), JSON.stringify({
-				runId: "run-owner",
-				mode: "single",
-				state: "running",
-				sessionId: "session-owner",
-				startedAt: 1000,
-				steps: [{ agent: "worker", status: "running" }],
-			}), "utf-8");
-			fs.writeFileSync(path.join(otherDir, "status.json"), JSON.stringify({
-				runId: "run-other",
-				mode: "single",
-				state: "running",
-				sessionId: "session-other",
-				startedAt: 1000,
-				steps: [{ agent: "worker", status: "running" }],
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(ownerDir, "status.json"),
+				JSON.stringify({
+					runId: "run-owner",
+					mode: "single",
+					state: "running",
+					sessionId: "session-owner",
+					startedAt: 1000,
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
+			fs.writeFileSync(
+				path.join(otherDir, "status.json"),
+				JSON.stringify({
+					runId: "run-other",
+					mode: "single",
+					state: "running",
+					sessionId: "session-other",
+					startedAt: 1000,
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
 
 			const state = createState();
 			state.currentSessionId = "session-owner";
@@ -274,9 +300,23 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				pollIntervalMs: 10,
 			});
 
-			tracker.handleStarted({ id: "run-sessionless", asyncDir: path.join(asyncRoot, "run-sessionless"), agent: "worker" });
-			tracker.handleStarted({ id: "run-other", asyncDir: path.join(asyncRoot, "run-other"), agent: "worker", sessionId: "session-other" });
-			tracker.handleStarted({ id: "run-owner", asyncDir: path.join(asyncRoot, "run-owner"), agent: "worker", sessionId: "session-owner" });
+			tracker.handleStarted({
+				id: "run-sessionless",
+				asyncDir: path.join(asyncRoot, "run-sessionless"),
+				agent: "worker",
+			});
+			tracker.handleStarted({
+				id: "run-other",
+				asyncDir: path.join(asyncRoot, "run-other"),
+				agent: "worker",
+				sessionId: "session-other",
+			});
+			tracker.handleStarted({
+				id: "run-owner",
+				asyncDir: path.join(asyncRoot, "run-owner"),
+				agent: "worker",
+				sessionId: "session-owner",
+			});
 
 			assert.deepEqual([...state.asyncJobs.keys()], ["run-owner"]);
 
@@ -285,7 +325,11 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.equal(state.asyncJobs.get("run-owner")?.status, "queued");
 
 			tracker.handleComplete({ id: "run-owner", success: true, sessionId: "session-owner" });
-			await waitForCondition(() => !state.asyncJobs.has("run-owner"), "owned job cleanup after matching completion", 1000);
+			await waitForCondition(
+				() => !state.asyncJobs.has("run-owner"),
+				"owned job cleanup after matching completion",
+				1000,
+			);
 		} finally {
 			removeTempDir(asyncRoot);
 		}
@@ -308,36 +352,48 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			fs.mkdirSync(otherDir, { recursive: true });
 			fs.mkdirSync(badJsonDir, { recursive: true });
 			fs.mkdirSync(badSessionDir, { recursive: true });
-			fs.writeFileSync(path.join(ownerDir, "status.json"), JSON.stringify({
-				runId: "run-owner",
-				mode: "single",
-				state: "running",
-				sessionId: "session-owner",
-				startedAt: 1000,
-				lastUpdate: 1000,
-				steps: [{ agent: "worker", status: "running" }],
-			}), "utf-8");
-			fs.writeFileSync(path.join(otherDir, "status.json"), JSON.stringify({
-				runId: "run-other",
-				mode: "single",
-				state: "running",
-				sessionId: "session-other",
-				startedAt: 1000,
-				steps: [{ agent: "worker", status: "running" }],
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(ownerDir, "status.json"),
+				JSON.stringify({
+					runId: "run-owner",
+					mode: "single",
+					state: "running",
+					sessionId: "session-owner",
+					startedAt: 1000,
+					lastUpdate: 1000,
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
+			fs.writeFileSync(
+				path.join(otherDir, "status.json"),
+				JSON.stringify({
+					runId: "run-other",
+					mode: "single",
+					state: "running",
+					sessionId: "session-other",
+					startedAt: 1000,
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
 			fs.writeFileSync(path.join(badJsonDir, "status.json"), "{bad json", "utf-8");
 			fs.writeFileSync(path.join(badJsonDir, "events.jsonl"), '{"type":"event"}\n', "utf-8");
 			fs.writeFileSync(path.join(badJsonDir, "output.log"), "private output\n", "utf-8");
 			fs.writeFileSync(path.join(badJsonDir, "session.jsonl"), '{"private":true}\n', "utf-8");
 			fs.writeFileSync(path.join(badJsonDir, "extra.txt"), "extra artifact\n", "utf-8");
-			fs.writeFileSync(path.join(badSessionDir, "status.json"), JSON.stringify({
-				runId: "run-bad-session",
-				mode: "single",
-				state: "running",
-				sessionId: { value: "session-owner" },
-				startedAt: 1000,
-				steps: [{ agent: "worker", status: "running" }],
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(badSessionDir, "status.json"),
+				JSON.stringify({
+					runId: "run-bad-session",
+					mode: "single",
+					state: "running",
+					sessionId: { value: "session-owner" },
+					startedAt: 1000,
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
 
 			const state = createState();
 			state.currentSessionId = "session-owner";
@@ -360,22 +416,45 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.match(warnings[0] ?? "", /quarantined 1 malformed JSON, 1 invalid persisted status/);
 			assert.doesNotMatch(warnings[0] ?? "", /status\.json|run-bad|private|bad json|session-owner|\//);
 			const quarantineRoot = path.join(root, "quarantined-async-subagent-runs");
-			assert.equal(fs.readFileSync(path.join(quarantineRoot, "run-bad-json.fixed-suffix", "status.json"), "utf-8"), "{bad json");
-			assert.equal(fs.readFileSync(path.join(quarantineRoot, "run-bad-json.fixed-suffix", "events.jsonl"), "utf-8"), '{"type":"event"}\n');
-			assert.equal(fs.readFileSync(path.join(quarantineRoot, "run-bad-json.fixed-suffix", "output.log"), "utf-8"), "private output\n");
-			assert.equal(fs.readFileSync(path.join(quarantineRoot, "run-bad-json.fixed-suffix", "session.jsonl"), "utf-8"), '{"private":true}\n');
-			assert.equal(fs.readFileSync(path.join(quarantineRoot, "run-bad-json.fixed-suffix", "extra.txt"), "utf-8"), "extra artifact\n");
-			assert.equal(JSON.parse(fs.readFileSync(path.join(quarantineRoot, "run-bad-session.fixed-suffix", "status.json"), "utf-8")).runId, "run-bad-session");
+			assert.equal(
+				fs.readFileSync(path.join(quarantineRoot, "run-bad-json.fixed-suffix", "status.json"), "utf-8"),
+				"{bad json",
+			);
+			assert.equal(
+				fs.readFileSync(path.join(quarantineRoot, "run-bad-json.fixed-suffix", "events.jsonl"), "utf-8"),
+				'{"type":"event"}\n',
+			);
+			assert.equal(
+				fs.readFileSync(path.join(quarantineRoot, "run-bad-json.fixed-suffix", "output.log"), "utf-8"),
+				"private output\n",
+			);
+			assert.equal(
+				fs.readFileSync(path.join(quarantineRoot, "run-bad-json.fixed-suffix", "session.jsonl"), "utf-8"),
+				'{"private":true}\n',
+			);
+			assert.equal(
+				fs.readFileSync(path.join(quarantineRoot, "run-bad-json.fixed-suffix", "extra.txt"), "utf-8"),
+				"extra artifact\n",
+			);
+			assert.equal(
+				JSON.parse(fs.readFileSync(path.join(quarantineRoot, "run-bad-session.fixed-suffix", "status.json"), "utf-8"))
+					.runId,
+				"run-bad-session",
+			);
 
-			fs.writeFileSync(path.join(ownerDir, "status.json"), JSON.stringify({
-				runId: "run-owner",
-				mode: "single",
-				state: "complete",
-				sessionId: "session-owner",
-				startedAt: 1000,
-				lastUpdate: 2000,
-				steps: [{ agent: "worker", status: "complete" }],
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(ownerDir, "status.json"),
+				JSON.stringify({
+					runId: "run-owner",
+					mode: "single",
+					state: "complete",
+					sessionId: "session-owner",
+					startedAt: 1000,
+					lastUpdate: 2000,
+					steps: [{ agent: "worker", status: "complete" }],
+				}),
+				"utf-8",
+			);
 			await waitForCondition(() => state.asyncJobs.get("run-owner")?.status === "complete", "restored job poll update");
 		} finally {
 			console.warn = originalWarn;
@@ -398,14 +477,18 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			fs.mkdirSync(ownerDir, { recursive: true });
 			fs.mkdirSync(badDirA, { recursive: true });
 			fs.mkdirSync(badDirB, { recursive: true });
-			fs.writeFileSync(path.join(ownerDir, "status.json"), JSON.stringify({
-				runId: "run-owner",
-				mode: "single",
-				state: "running",
-				sessionId: "session-owner",
-				startedAt: 1000,
-				steps: [{ agent: "worker", status: "running" }],
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(ownerDir, "status.json"),
+				JSON.stringify({
+					runId: "run-owner",
+					mode: "single",
+					state: "running",
+					sessionId: "session-owner",
+					startedAt: 1000,
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
 			fs.writeFileSync(path.join(badDirA, "status.json"), "{bad json", "utf-8");
 			fs.writeFileSync(path.join(badDirB, "status.json"), "{bad json", "utf-8");
 
@@ -463,14 +546,18 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			fs.mkdirSync(ownerDir, { recursive: true });
 			fs.mkdirSync(changedDir, { recursive: true });
 			fs.mkdirSync(unstableDir, { recursive: true });
-			fs.writeFileSync(path.join(ownerDir, "status.json"), JSON.stringify({
-				runId: "run-owner",
-				mode: "single",
-				state: "running",
-				sessionId: "session-owner",
-				startedAt: 1000,
-				steps: [{ agent: "worker", status: "running" }],
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(ownerDir, "status.json"),
+				JSON.stringify({
+					runId: "run-owner",
+					mode: "single",
+					state: "running",
+					sessionId: "session-owner",
+					startedAt: 1000,
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
 			fs.writeFileSync(path.join(changedDir, "status.json"), "{bad json", "utf-8");
 			fs.writeFileSync(path.join(unstableDir, "status.json"), "{bad json", "utf-8");
 
@@ -487,7 +574,8 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 					fs: {
 						statSync(filePath: string) {
 							if (filePath === path.join(changedDir, "status.json")) return stableChangedStat;
-							if (filePath === path.join(unstableDir, "status.json")) return (++unstableStatCalls % 2 === 1 ? unstableBefore : unstableAfter) as fs.Stats;
+							if (filePath === path.join(unstableDir, "status.json"))
+								return (++unstableStatCalls % 2 === 1 ? unstableBefore : unstableAfter) as fs.Stats;
 							return fs.statSync(filePath);
 						},
 						readFileSync(filePath: string, encoding: BufferEncoding) {
@@ -560,7 +648,10 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				tkTicket: { id: "psr-raw4", title: "Show\u009b active\u001b[31m tk\u001b[0m title" },
 			});
 
-			assert.deepEqual(state.asyncJobs.get("run-ticketed-start")?.tkTicket, { id: "psr-raw4", title: "Show active tk title" });
+			assert.deepEqual(state.asyncJobs.get("run-ticketed-start")?.tkTicket, {
+				id: "psr-raw4",
+				title: "Show active tk title",
+			});
 		} finally {
 			removeTempDir(asyncRoot);
 		}
@@ -571,29 +662,33 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		try {
 			const runDir = path.join(asyncRoot, "run-chain");
 			fs.mkdirSync(runDir, { recursive: true });
-			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
-				runId: "run-chain",
-				mode: "chain",
-				state: "running",
-				startedAt: Date.now() - 1000,
-				lastUpdate: Date.now(),
-				currentStep: 1,
-				chainStepCount: 3,
-				parallelGroups: [{ start: 1, count: 2, stepIndex: 1 }],
-				steps: [
-					{ agent: "scout", status: "complete" },
-					{
-						agent: "reviewer",
-						status: "running",
-						currentTool: "read",
-						currentToolArgs: "src/tui/render.ts",
-						recentTools: [{ tool: "grep", args: "async widget", endMs: Date.now() - 100 }],
-						recentOutput: ["reviewer line"],
-					},
-					{ agent: "auditor", status: "running" },
-					{ agent: "writer", status: "pending" },
-				],
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
+					runId: "run-chain",
+					mode: "chain",
+					state: "running",
+					startedAt: Date.now() - 1000,
+					lastUpdate: Date.now(),
+					currentStep: 1,
+					chainStepCount: 3,
+					parallelGroups: [{ start: 1, count: 2, stepIndex: 1 }],
+					steps: [
+						{ agent: "scout", status: "complete" },
+						{
+							agent: "reviewer",
+							status: "running",
+							currentTool: "read",
+							currentToolArgs: "src/tui/render.ts",
+							recentTools: [{ tool: "grep", args: "async widget", endMs: Date.now() - 100 }],
+							recentOutput: ["reviewer line"],
+						},
+						{ agent: "auditor", status: "running" },
+						{ agent: "writer", status: "pending" },
+					],
+				}),
+				"utf-8",
+			);
 
 			const state = createState();
 			const ui = createUiContext();
@@ -602,16 +697,30 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				pollIntervalMs: 10,
 			});
 			tracker.resetJobs(ui.ctx as never);
-			tracker.handleStarted({ id: "run-chain", asyncDir: runDir, mode: "chain", agents: ["scout", "reviewer", "auditor", "writer"] });
+			tracker.handleStarted({
+				id: "run-chain",
+				asyncDir: runDir,
+				mode: "chain",
+				agents: ["scout", "reviewer", "auditor", "writer"],
+			});
 
 			await new Promise((resolve) => setTimeout(resolve, 50));
 
 			const job = state.asyncJobs.get("run-chain");
-			assert.deepEqual(job?.steps?.map((step: { index?: number }) => step.index), [1, 2]);
+			assert.deepEqual(
+				job?.steps?.map((step: { index?: number }) => step.index),
+				[1, 2],
+			);
 			assert.deepEqual(job?.agents, ["reviewer", "auditor"]);
 			assert.equal(job?.steps?.[0]?.currentTool, "read");
 			assert.equal(job?.steps?.[0]?.currentToolArgs, "src/tui/render.ts");
-			assert.deepEqual(job?.steps?.[0]?.recentTools?.map((tool: { tool: string; args: string }) => ({ tool: tool.tool, args: tool.args })), [{ tool: "grep", args: "async widget" }]);
+			assert.deepEqual(
+				job?.steps?.[0]?.recentTools?.map((tool: { tool: string; args: string }) => ({
+					tool: tool.tool,
+					args: tool.args,
+				})),
+				[{ tool: "grep", args: "async widget" }],
+			);
 			assert.deepEqual(job?.steps?.[0]?.recentOutput, ["reviewer line"]);
 		} finally {
 			removeTempDir(asyncRoot);
@@ -623,15 +732,20 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		try {
 			const runDir = path.join(asyncRoot, "run-unchanged");
 			fs.mkdirSync(runDir, { recursive: true });
-			const writeStatus = (lastUpdate: number, toolCount?: number) => fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
-				runId: "run-unchanged",
-				mode: "single",
-				state: "running",
-				startedAt: 1000,
-				lastUpdate,
-				...(toolCount !== undefined ? { toolCount } : {}),
-				steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
-			}), "utf-8");
+			const writeStatus = (lastUpdate: number, toolCount?: number) =>
+				fs.writeFileSync(
+					path.join(runDir, "status.json"),
+					JSON.stringify({
+						runId: "run-unchanged",
+						mode: "single",
+						state: "running",
+						startedAt: 1000,
+						lastUpdate,
+						...(toolCount !== undefined ? { toolCount } : {}),
+						steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
+					}),
+					"utf-8",
+				);
 			writeStatus(2000);
 
 			const state = createState();
@@ -648,25 +762,39 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.ok(ui.widgets.length > widgetUpdatesAfterStart, "first status load should replace the widget");
 
 			const widgetUpdatesAfterStatusLoaded = ui.widgets.length;
-			fs.writeFileSync(path.join(runDir, "events.jsonl"), `${JSON.stringify({
-				type: "subagent.control",
-				channels: ["event"],
-				event: {
-					type: "needs_attention",
-					to: "needs_attention",
-					ts: 123,
-					runId: "run-unchanged",
-					agent: "worker",
-					message: "worker needs attention",
-				},
-			})}\n`, "utf-8");
+			fs.writeFileSync(
+				path.join(runDir, "events.jsonl"),
+				`${JSON.stringify({
+					type: "subagent.control",
+					channels: ["event"],
+					event: {
+						type: "needs_attention",
+						to: "needs_attention",
+						ts: 123,
+						runId: "run-unchanged",
+						agent: "worker",
+						message: "worker needs attention",
+					},
+				})}\n`,
+				"utf-8",
+			);
 			await new Promise((resolve) => setTimeout(resolve, 40));
-			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-event"), true);
-			assert.equal(ui.widgets.length, widgetUpdatesAfterStatusLoaded, "unchanged status and control cursors should not replace the widget");
+			assert.equal(
+				recorder.events.some((event) => event.channel === "subagent:control-event"),
+				true,
+			);
+			assert.equal(
+				ui.widgets.length,
+				widgetUpdatesAfterStatusLoaded,
+				"unchanged status and control cursors should not replace the widget",
+			);
 
 			writeStatus(3000, 1);
 			await new Promise((resolve) => setTimeout(resolve, 40));
-			assert.ok(ui.widgets.length > widgetUpdatesAfterStatusLoaded, "changed non-terminal status should replace the widget");
+			assert.ok(
+				ui.widgets.length > widgetUpdatesAfterStatusLoaded,
+				"changed non-terminal status should replace the widget",
+			);
 		} finally {
 			removeTempDir(asyncRoot);
 		}
@@ -677,14 +805,18 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		try {
 			const runDir = path.join(asyncRoot, "run-2");
 			fs.mkdirSync(runDir, { recursive: true });
-			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
-				runId: "run-2",
-				mode: "single",
-				state: "complete",
-				startedAt: Date.now() - 1000,
-				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "complete" }],
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
+					runId: "run-2",
+					mode: "single",
+					state: "complete",
+					startedAt: Date.now() - 1000,
+					lastUpdate: Date.now(),
+					steps: [{ agent: "worker", status: "complete" }],
+				}),
+				"utf-8",
+			);
 
 			const state = createState();
 			const ui = createUiContext();
@@ -712,15 +844,19 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			const resultsDir = path.join(asyncRoot, "results");
 			const runDir = path.join(asyncRoot, "run-stale");
 			fs.mkdirSync(runDir, { recursive: true });
-			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
-				runId: "run-stale",
-				mode: "single",
-				state: "running",
-				pid: 12345,
-				startedAt: Date.now() - 1000,
-				lastUpdate: Date.now() - 1000,
-				steps: [{ agent: "worker", status: "running", startedAt: Date.now() - 1000 }],
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
+					runId: "run-stale",
+					mode: "single",
+					state: "running",
+					pid: 12345,
+					startedAt: Date.now() - 1000,
+					lastUpdate: Date.now() - 1000,
+					steps: [{ agent: "worker", status: "running", startedAt: Date.now() - 1000 }],
+				}),
+				"utf-8",
+			);
 
 			const state = createState();
 			const ui = createUiContext();
@@ -784,11 +920,14 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.equal(status.currentStep, 0);
 			assert.equal(status.chainStepCount, 1);
 			assert.deepEqual(status.parallelGroups, [{ start: 0, count: 3, stepIndex: 0 }]);
-			assert.deepEqual(status.steps.map((step: { agent: string; status: string }) => [step.agent, step.status]), [
-				["scout", "failed"],
-				["reviewer", "failed"],
-				["worker", "failed"],
-			]);
+			assert.deepEqual(
+				status.steps.map((step: { agent: string; status: string }) => [step.agent, step.status]),
+				[
+					["scout", "failed"],
+					["reviewer", "failed"],
+					["worker", "failed"],
+				],
+			);
 			assert.equal(result.success, false);
 			assert.equal(result.sessionId, "session-current");
 			assert.ok(ui.widgets.length > 0, "expected startup-crash repair cleanup to replace the widget");
@@ -840,14 +979,16 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			tracker.handleStarted({ id: "run-bad-status-nested", asyncDir: runDir, agent: "worker" });
 			const job = state.asyncJobs.get("run-bad-status-nested");
 			assert.ok(job);
-			job.nestedChildren = [{
-				id: "nested-live",
-				parentRunId: "run-bad-status-nested",
-				depth: 1,
-				path: [{ runId: "run-bad-status-nested" }],
-				state: "running",
-				agent: "nested-worker",
-			}];
+			job.nestedChildren = [
+				{
+					id: "nested-live",
+					parentRunId: "run-bad-status-nested",
+					depth: 1,
+					path: [{ runId: "run-bad-status-nested" }],
+					state: "running",
+					agent: "nested-worker",
+				},
+			];
 
 			await new Promise((resolve) => setTimeout(resolve, 80));
 
@@ -869,14 +1010,18 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		try {
 			const runDir = path.join(asyncRoot, "run-nested-refresh");
 			fs.mkdirSync(runDir, { recursive: true });
-			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
-				runId: "run-nested-refresh",
-				mode: "single",
-				state: "running",
-				startedAt: Date.now() - 1000,
-				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "running" }],
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
+					runId: "run-nested-refresh",
+					mode: "single",
+					state: "running",
+					startedAt: Date.now() - 1000,
+					lastUpdate: Date.now(),
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
 
 			const state = createState();
 			const recorder = createEventRecorder();
@@ -923,14 +1068,18 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			tracker.handleComplete({ id: "run-recovered", success: true });
 			assert.equal(state.cleanupTimers.has("run-recovered"), true);
 
-			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
-				runId: "run-recovered",
-				mode: "single",
-				state: "running",
-				startedAt: Date.now() - 1000,
-				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "running" }],
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
+					runId: "run-recovered",
+					mode: "single",
+					state: "running",
+					startedAt: Date.now() - 1000,
+					lastUpdate: Date.now(),
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
 
 			const deadline = Date.now() + 200;
 			while (Date.now() < deadline && state.cleanupTimers.has("run-recovered")) {
@@ -950,14 +1099,18 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		try {
 			const runDir = path.join(asyncRoot, "run-partial");
 			fs.mkdirSync(runDir, { recursive: true });
-			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
-				runId: "run-partial",
-				mode: "single",
-				state: "running",
-				startedAt: Date.now() - 1000,
-				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "running" }],
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
+					runId: "run-partial",
+					mode: "single",
+					state: "running",
+					startedAt: Date.now() - 1000,
+					lastUpdate: Date.now(),
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
 			const eventPath = path.join(runDir, "events.jsonl");
 			const partialRecord = JSON.stringify({
 				type: "subagent.control",
@@ -985,7 +1138,10 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 
 			fs.appendFileSync(eventPath, "\n", "utf-8");
 			await new Promise((resolve) => setTimeout(resolve, 30));
-			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-event"), true);
+			assert.equal(
+				recorder.events.some((event) => event.channel === "subagent:control-event"),
+				true,
+			);
 		} finally {
 			removeTempDir(asyncRoot);
 		}
@@ -998,14 +1154,18 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		try {
 			const runDir = path.join(asyncRoot, "run-chunked-control");
 			fs.mkdirSync(runDir, { recursive: true });
-			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
-				runId: "run-chunked-control",
-				mode: "single",
-				state: "running",
-				startedAt: Date.now() - 1000,
-				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "running" }],
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
+					runId: "run-chunked-control",
+					mode: "single",
+					state: "running",
+					startedAt: Date.now() - 1000,
+					lastUpdate: Date.now(),
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
 			const largeDiagnostic = JSON.stringify({
 				type: "message_update",
 				message: { role: "assistant", content: [{ type: "text", text: "x".repeat(200_000) }] },
@@ -1053,14 +1213,18 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		try {
 			const runDir = path.join(asyncRoot, "run-new-large-control");
 			fs.mkdirSync(runDir, { recursive: true });
-			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
-				runId: "run-new-large-control",
-				mode: "single",
-				state: "running",
-				startedAt: Date.now() - 1000,
-				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "running" }],
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
+					runId: "run-new-large-control",
+					mode: "single",
+					state: "running",
+					startedAt: Date.now() - 1000,
+					lastUpdate: Date.now(),
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
 			const controlEvent = JSON.stringify({
 				type: "subagent.control",
 				channels: ["event"],
@@ -1073,10 +1237,11 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 					message: "worker needs attention",
 				},
 			});
-			const diagnosticLine = JSON.stringify({
-				type: "message_update",
-				message: { role: "assistant", content: [{ type: "text", text: "x".repeat(4000) }] },
-			}) + "\n";
+			const diagnosticLine =
+				JSON.stringify({
+					type: "message_update",
+					message: { role: "assistant", content: [{ type: "text", text: "x".repeat(4000) }] },
+				}) + "\n";
 			const eventsPath = path.join(runDir, "events.jsonl");
 			fs.writeFileSync(eventsPath, controlEvent + "\n" + diagnosticLine.repeat(900), "utf-8");
 			assert.ok(fs.statSync(eventsPath).size > 2 * 1024 * 1024, "test fixture should exceed the legacy scan window");
@@ -1106,18 +1271,23 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		try {
 			const runDir = path.join(asyncRoot, "run-large-legacy-control");
 			fs.mkdirSync(runDir, { recursive: true });
-			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
-				runId: "run-large-legacy-control",
-				mode: "single",
-				state: "running",
-				startedAt: Date.now() - 1000,
-				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "running" }],
-			}), "utf-8");
-			const diagnosticLine = JSON.stringify({
-				type: "message_update",
-				message: { role: "assistant", content: [{ type: "text", text: "x".repeat(4000) }] },
-			}) + "\n";
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
+					runId: "run-large-legacy-control",
+					mode: "single",
+					state: "running",
+					startedAt: Date.now() - 1000,
+					lastUpdate: Date.now(),
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
+			const diagnosticLine =
+				JSON.stringify({
+					type: "message_update",
+					message: { role: "assistant", content: [{ type: "text", text: "x".repeat(4000) }] },
+				}) + "\n";
 			const controlEvent = JSON.stringify({
 				type: "subagent.control",
 				channels: ["event"],
@@ -1176,17 +1346,21 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		try {
 			const runDir = path.join(asyncRoot, "run-clear-tool");
 			fs.mkdirSync(runDir, { recursive: true });
-			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
-				runId: "run-clear-tool",
-				mode: "single",
-				state: "running",
-				startedAt: Date.now() - 1000,
-				lastUpdate: Date.now(),
-				currentTool: "edit",
-				currentToolStartedAt: Date.now() - 100,
-				currentPath: "src/runs/background/subagent-runner.ts",
-				steps: [{ agent: "worker", status: "running" }],
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
+					runId: "run-clear-tool",
+					mode: "single",
+					state: "running",
+					startedAt: Date.now() - 1000,
+					lastUpdate: Date.now(),
+					currentTool: "edit",
+					currentToolStartedAt: Date.now() - 100,
+					currentPath: "src/runs/background/subagent-runner.ts",
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
 
 			const state = createState();
 			const recorder = createEventRecorder();
@@ -1200,14 +1374,18 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.equal(job?.currentTool, "edit");
 			assert.equal(job?.currentPath, "src/runs/background/subagent-runner.ts");
 
-			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
-				runId: "run-clear-tool",
-				mode: "single",
-				state: "running",
-				startedAt: Date.now() - 1000,
-				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "running" }],
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
+					runId: "run-clear-tool",
+					mode: "single",
+					state: "running",
+					startedAt: Date.now() - 1000,
+					lastUpdate: Date.now(),
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
 
 			await new Promise((resolve) => setTimeout(resolve, 30));
 			job = state.asyncJobs.get("run-clear-tool");
@@ -1224,27 +1402,35 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		try {
 			const runDir = path.join(asyncRoot, "run-channels");
 			fs.mkdirSync(runDir, { recursive: true });
-			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
-				runId: "run-channels",
-				mode: "single",
-				state: "running",
-				startedAt: Date.now() - 1000,
-				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "running" }],
-			}), "utf-8");
-			fs.writeFileSync(path.join(runDir, "events.jsonl"), `${JSON.stringify({
-				type: "subagent.control",
-				channels: ["intercom"],
-				event: {
-					type: "needs_attention",
-					to: "needs_attention",
-					ts: 123,
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
 					runId: "run-channels",
-					agent: "worker",
-					message: "worker needs attention",
-				},
-				intercom: { to: "main", message: "SUBAGENT NEEDS ATTENTION: worker in run run-channels." },
-			})}\n`, "utf-8");
+					mode: "single",
+					state: "running",
+					startedAt: Date.now() - 1000,
+					lastUpdate: Date.now(),
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
+			fs.writeFileSync(
+				path.join(runDir, "events.jsonl"),
+				`${JSON.stringify({
+					type: "subagent.control",
+					channels: ["intercom"],
+					event: {
+						type: "needs_attention",
+						to: "needs_attention",
+						ts: 123,
+						runId: "run-channels",
+						agent: "worker",
+						message: "worker needs attention",
+					},
+					intercom: { to: "main", message: "SUBAGENT NEEDS ATTENTION: worker in run run-channels." },
+				})}\n`,
+				"utf-8",
+			);
 
 			const state = createState();
 			const recorder = createEventRecorder();
@@ -1254,8 +1440,14 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			tracker.handleStarted({ id: "run-channels", asyncDir: runDir, agent: "worker" });
 
 			await new Promise((resolve) => setTimeout(resolve, 30));
-			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-event"), false);
-			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-intercom"), true);
+			assert.equal(
+				recorder.events.some((event) => event.channel === "subagent:control-event"),
+				false,
+			);
+			assert.equal(
+				recorder.events.some((event) => event.channel === "subagent:control-intercom"),
+				true,
+			);
 		} finally {
 			removeTempDir(asyncRoot);
 		}
@@ -1266,27 +1458,35 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		try {
 			const runDir = path.join(asyncRoot, "run-active-intercom");
 			fs.mkdirSync(runDir, { recursive: true });
-			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
-				runId: "run-active-intercom",
-				mode: "single",
-				state: "running",
-				startedAt: Date.now() - 1000,
-				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "running" }],
-			}), "utf-8");
-			fs.writeFileSync(path.join(runDir, "events.jsonl"), `${JSON.stringify({
-				type: "subagent.control",
-				channels: ["event", "intercom"],
-				event: {
-					type: "active_long_running",
-					to: "active_long_running",
-					ts: 123,
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
 					runId: "run-active-intercom",
-					agent: "worker",
-					message: "worker is still active but long-running",
-				},
-				intercom: { to: "main", message: "stale active notice" },
-			})}\n`, "utf-8");
+					mode: "single",
+					state: "running",
+					startedAt: Date.now() - 1000,
+					lastUpdate: Date.now(),
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
+			fs.writeFileSync(
+				path.join(runDir, "events.jsonl"),
+				`${JSON.stringify({
+					type: "subagent.control",
+					channels: ["event", "intercom"],
+					event: {
+						type: "active_long_running",
+						to: "active_long_running",
+						ts: 123,
+						runId: "run-active-intercom",
+						agent: "worker",
+						message: "worker is still active but long-running",
+					},
+					intercom: { to: "main", message: "stale active notice" },
+				})}\n`,
+				"utf-8",
+			);
 
 			const state = createState();
 			const recorder = createEventRecorder();
@@ -1296,8 +1496,14 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			tracker.handleStarted({ id: "run-active-intercom", asyncDir: runDir, agent: "worker" });
 
 			await new Promise((resolve) => setTimeout(resolve, 30));
-			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-event"), true);
-			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-intercom"), false);
+			assert.equal(
+				recorder.events.some((event) => event.channel === "subagent:control-event"),
+				true,
+			);
+			assert.equal(
+				recorder.events.some((event) => event.channel === "subagent:control-intercom"),
+				false,
+			);
 		} finally {
 			removeTempDir(asyncRoot);
 		}
@@ -1308,29 +1514,38 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		try {
 			const runDir = path.join(asyncRoot, "run-3");
 			fs.mkdirSync(runDir, { recursive: true });
-			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
-				runId: "run-3",
-				mode: "single",
-				state: "running",
-				startedAt: Date.now() - 1000,
-				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "running" }],
-			}), "utf-8");
-			fs.writeFileSync(path.join(runDir, "events.jsonl"), `${JSON.stringify({
-				type: "subagent.control",
-				channels: ["event", "intercom"],
-				childIntercomTarget: "subagent-worker-run-3-1",
-				noticeText: "Subagent needs attention: worker\nNudge: intercom({ action: \"send\", to: \"subagent-worker-run-3-1\", message: \"<message>\" })",
-				event: {
-					type: "needs_attention",
-					to: "needs_attention",
-					ts: 123,
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
 					runId: "run-3",
-					agent: "worker",
-					message: "worker needs attention",
-				},
-				intercom: { to: "main", message: "SUBAGENT NEEDS ATTENTION: worker in run run-3." },
-			})}\n`, "utf-8");
+					mode: "single",
+					state: "running",
+					startedAt: Date.now() - 1000,
+					lastUpdate: Date.now(),
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
+			fs.writeFileSync(
+				path.join(runDir, "events.jsonl"),
+				`${JSON.stringify({
+					type: "subagent.control",
+					channels: ["event", "intercom"],
+					childIntercomTarget: "subagent-worker-run-3-1",
+					noticeText:
+						'Subagent needs attention: worker\nNudge: intercom({ action: "send", to: "subagent-worker-run-3-1", message: "<message>" })',
+					event: {
+						type: "needs_attention",
+						to: "needs_attention",
+						ts: 123,
+						runId: "run-3",
+						agent: "worker",
+						message: "worker needs attention",
+					},
+					intercom: { to: "main", message: "SUBAGENT NEEDS ATTENTION: worker in run run-3." },
+				})}\n`,
+				"utf-8",
+			);
 
 			const state = createState();
 			const recorder = createEventRecorder();
@@ -1344,7 +1559,10 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			const controlEvent = recorder.events.find((event) => event.channel === "subagent:control-event");
 			assert.ok(controlEvent);
 			assert.match((controlEvent.data as { noticeText?: string }).noticeText ?? "", /subagent-worker-run-3-1/);
-			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-intercom"), true);
+			assert.equal(
+				recorder.events.some((event) => event.channel === "subagent:control-intercom"),
+				true,
+			);
 		} finally {
 			removeTempDir(asyncRoot);
 		}

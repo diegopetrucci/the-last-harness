@@ -149,7 +149,10 @@ function candidateCommands(agentDir: string): string[] {
 }
 
 function validateGnosisCommand(command: string): boolean {
-	for (const args of [["help", "plan"], ["help", "review"]] as const) {
+	for (const args of [
+		["help", "plan"],
+		["help", "review"],
+	] as const) {
 		const result = spawnSync(command, args, { stdio: "ignore", timeout: VALIDATION_TIMEOUT_MS });
 		if (result.error || result.status !== 0) return false;
 	}
@@ -233,7 +236,10 @@ async function resolveGnosisVersion(args: CliArgs): Promise<string> {
 		return args.gnosisVersion.replace(/^v/, "");
 	}
 
-	const response = await fetchWithTimeout(`https://github.com/${args.gnosisRepo}/releases/latest`, { method: "HEAD", redirect: "follow" });
+	const response = await fetchWithTimeout(`https://github.com/${args.gnosisRepo}/releases/latest`, {
+		method: "HEAD",
+		redirect: "follow",
+	});
 	const latestUrl = response.url || "";
 	const version = latestUrl.split("/").pop()?.replace(/^v/, "");
 	if (!version || version === "latest") {
@@ -268,7 +274,12 @@ function checksumForAsset(checksumsText: string, assetName: string): string | un
 	return undefined;
 }
 
-async function verifyGnosisArchive(args: CliArgs, archivePath: string, assetName: string, version: string): Promise<void> {
+async function verifyGnosisArchive(
+	args: CliArgs,
+	archivePath: string,
+	assetName: string,
+	version: string,
+): Promise<void> {
 	const checksumsUrl = `https://github.com/${args.gnosisRepo}/releases/download/v${version}/checksums.txt`;
 	const checksumsText = await fetchText(checksumsUrl);
 	const expected = checksumForAsset(checksumsText, assetName);
@@ -309,7 +320,11 @@ function assertManagedGnosisTempPath(
 	path: string,
 	agentDir: string,
 	label: string,
-	{ mustExist = false, expectDirectory = false, expectFile = false }: { mustExist?: boolean; expectDirectory?: boolean; expectFile?: boolean } = {},
+	{
+		mustExist = false,
+		expectDirectory = false,
+		expectFile = false,
+	}: { mustExist?: boolean; expectDirectory?: boolean; expectFile?: boolean } = {},
 ): void {
 	const stats = lstatIfExists(path);
 	if (!stats) {
@@ -331,11 +346,17 @@ function assertManagedGnosisTempPath(
 	const resolvedAgentDir = resolvedManagedAgentDir(agentDir);
 	const resolvedPath = stats ? realpathSync(path) : realpathForCompare(path);
 	if (!isPathInsideOrEqual(resolvedPath, resolvedAgentDir)) {
-		throw new Error(`Refusing to install managed Gnosis because temporary ${label} resolves outside the isolated tlh profile: ${path} (resolves to ${resolvedPath}; profile: ${resolvedAgentDir})`);
+		throw new Error(
+			`Refusing to install managed Gnosis because temporary ${label} resolves outside the isolated tlh profile: ${path} (resolves to ${resolvedPath}; profile: ${resolvedAgentDir})`,
+		);
 	}
 }
 
-function createManagedGnosisTempTarget(args: CliArgs, agentDir: string, target: string): { tempDir: string; tempTarget: string } {
+function createManagedGnosisTempTarget(
+	args: CliArgs,
+	agentDir: string,
+	target: string,
+): { tempDir: string; tempTarget: string } {
 	validateManagedGnosisTarget(args, agentDir);
 	const targetParent = dirname(target);
 	mkdirSync(targetParent, { recursive: true });
@@ -368,9 +389,8 @@ async function installManagedGnosis(args: CliArgs, agentDir: string): Promise<st
 
 	if (args.dryRun) {
 		logStderr(args, `Would install Gnosis into isolated profile: ${target}`);
-		const versionLabel = args.gnosisVersion === "latest"
-			? "latest compatible release"
-			: `Gnosis ${args.gnosisVersion.replace(/^v/, "")}`;
+		const versionLabel =
+			args.gnosisVersion === "latest" ? "latest compatible release" : `Gnosis ${args.gnosisVersion.replace(/^v/, "")}`;
 		logStderr(args, `Would download ${versionLabel} from https://github.com/${args.gnosisRepo}`);
 		return target;
 	}
@@ -380,7 +400,9 @@ async function installManagedGnosis(args: CliArgs, agentDir: string): Promise<st
 		version = await resolveGnosisVersion(args);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		warnStderr(`could not resolve latest Gnosis release; install manually from https://github.com/${args.gnosisRepo} (${message})`);
+		warnStderr(
+			`could not resolve latest Gnosis release; install manually from https://github.com/${args.gnosisRepo} (${message})`,
+		);
 		return undefined;
 	}
 
@@ -482,7 +504,9 @@ function assertManagedGnosisAgentDir(agentDir: string): void {
 		try {
 			directoryStats = statSync(agentDir);
 		} catch {
-			throw new Error(`Refusing to install managed Gnosis because agent dir does not resolve to a directory: ${agentDir}`);
+			throw new Error(
+				`Refusing to install managed Gnosis because agent dir does not resolve to a directory: ${agentDir}`,
+			);
 		}
 	}
 
@@ -507,7 +531,9 @@ function assertNoSymlinkedManagedTargetParents(target: string, boundary: string)
 			throw new Error(`Refusing to install managed Gnosis through symlinked target parent component: ${current}`);
 		}
 		if (!stats.isDirectory()) {
-			throw new Error(`Refusing to install managed Gnosis because target parent component is not a directory: ${current}`);
+			throw new Error(
+				`Refusing to install managed Gnosis because target parent component is not a directory: ${current}`,
+			);
 		}
 	}
 }
@@ -519,7 +545,9 @@ function validateManagedGnosisTarget(args: CliArgs, agentDir: string): string {
 	assertNotNormalPiPath(agentRoot, "agent dir");
 	assertNotNormalPiPath(target, "managed gn target");
 	if (!isPathInsideOrEqual(target, agentRoot)) {
-		throw new Error(`Refusing to install managed Gnosis outside the configured tlh profile path: ${target} (profile: ${agentRoot})`);
+		throw new Error(
+			`Refusing to install managed Gnosis outside the configured tlh profile path: ${target} (profile: ${agentRoot})`,
+		);
 	}
 	assertManagedGnosisAgentDir(agentRoot);
 
@@ -537,7 +565,9 @@ function validateManagedGnosisTarget(args: CliArgs, agentDir: string): string {
 
 	const resolvedTarget = realpathForCompare(target);
 	if (!isPathInsideOrEqual(resolvedTarget, resolvedAgentDir)) {
-		throw new Error(`Refusing to install managed Gnosis outside the isolated tlh profile: ${target} (resolves to ${resolvedTarget}; profile: ${resolvedAgentDir})`);
+		throw new Error(
+			`Refusing to install managed Gnosis outside the isolated tlh profile: ${target} (resolves to ${resolvedTarget}; profile: ${resolvedAgentDir})`,
+		);
 	}
 
 	return target;
@@ -571,7 +601,9 @@ async function commandConfigureInstall(args: CliArgs, agentDir: string): Promise
 		return;
 	}
 
-	process.stderr.write("error: Gnosis managed install failed; cannot continue without a valid gn binary. Set TLH_SKIP_GNOSIS_INSTALL=1 to skip.\n");
+	process.stderr.write(
+		"error: Gnosis managed install failed; cannot continue without a valid gn binary. Set TLH_SKIP_GNOSIS_INSTALL=1 to skip.\n",
+	);
 	process.exitCode = 1;
 }
 

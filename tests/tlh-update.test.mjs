@@ -252,7 +252,15 @@ test("dry-run custom file source preserves the raw package source in update plan
 		packageSourceIsDefault: false,
 	});
 
-	const output = runUpdate(agentDir, ["--dry-run", "--track", "ref", "--ref", "main", "--package-source", packageSource]);
+	const output = runUpdate(agentDir, [
+		"--dry-run",
+		"--track",
+		"ref",
+		"--ref",
+		"main",
+		"--package-source",
+		packageSource,
+	]);
 
 	assert.match(output, /Track: ref \(main\)/);
 	assert.match(output, new RegExp(`Package source: ${packageSource.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));

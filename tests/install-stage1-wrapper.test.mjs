@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 import test from "node:test";
 
@@ -18,10 +27,7 @@ import {
 	writeWrapperHelperLogger,
 } from "./install-stage1-core-test-helpers.mjs";
 
-import {
-	buildInstallConfig,
-	parseArgs,
-} from "../scripts/tlh-install.mjs";
+import { buildInstallConfig, parseArgs } from "../scripts/tlh-install.mjs";
 
 test("wrapper skips stale fallback package helpers for unlocatable custom sources", (t) => {
 	const root = makeTempDir();
@@ -35,38 +41,49 @@ test("wrapper skips stale fallback package helpers for unlocatable custom source
 	mkdirSync(homeDir, { recursive: true });
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
-	const env = scrubInstallerEnv({
-		HOME: homeDir,
-		TLH_PACKAGE_SOURCE: "github:owner/repo",
-	}, {
-		...process.env,
-		PI_CODING_AGENT_DIR: join(homeDir, ".pi", "agent"),
-		TLH_AGENT_DIR: join(homeDir, ".pi", "agent"),
-		TLH_REPO: "poisoned/repo",
-		TLH_REF: "poisoned-ref",
-	});
+	const env = scrubInstallerEnv(
+		{
+			HOME: homeDir,
+			TLH_PACKAGE_SOURCE: "github:owner/repo",
+		},
+		{
+			...process.env,
+			PI_CODING_AGENT_DIR: join(homeDir, ".pi", "agent"),
+			TLH_AGENT_DIR: join(homeDir, ".pi", "agent"),
+			TLH_REPO: "poisoned/repo",
+			TLH_REF: "poisoned-ref",
+		},
+	);
 	const config = buildInstallConfig(parseArgs(["--agent-dir", agentDir, "--bin-dir", binDir], env), env);
 
 	writeWrapperHelperLogger(join(config.packageRoot, "scripts", "tlh-update.mjs"), "TLH_UPDATE_LOG", "stale-package");
-	writeWrapperHelperLogger(join(config.packageRoot, "scripts", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "stale-package");
+	writeWrapperHelperLogger(
+		join(config.packageRoot, "scripts", "tlh-defaults.mjs"),
+		"TLH_DEFAULTS_LOG",
+		"stale-package",
+	);
 	writeWrapperHelperLogger(join(config.packageRoot, "scripts", "tlh-tickets.mjs"), "TLH_TICKETS_LOG", "stale-package");
 	mkdirSync(join(config.packageRoot, "config"), { recursive: true });
-	writeFileSync(join(config.packageRoot, "config", "default-extensions.json"), "[\n  \"stale-package\"\n]\n", "utf8");
+	writeFileSync(join(config.packageRoot, "config", "default-extensions.json"), '[\n  "stale-package"\n]\n', "utf8");
 	writeWrapperHelperLogger(join(agentDir, "tlh", "recover-update.mjs"), "TLH_UPDATE_LOG", "recovery");
 	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-update.mjs"), "TLH_UPDATE_LOG", "legacy-profile");
 	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "legacy-profile");
 	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-tickets.mjs"), "TLH_TICKETS_LOG", "legacy-profile");
-	writeFileSync(join(agentDir, "tlh", "default-extensions.json"), "[\n  \"legacy-profile\"\n]\n", "utf8");
+	writeFileSync(join(agentDir, "tlh", "default-extensions.json"), '[\n  "legacy-profile"\n]\n', "utf8");
 
-	runHelper("scripts/tlh-wrapper.mjs", [
-		"--agent-dir",
-		config.agentDir,
-		"--bin-dir",
-		config.binDir,
-		"--wrapper-name",
-		config.wrapperName,
-		`--package-root=${config.packageHelperRoot}`,
-	], { homeDir });
+	runHelper(
+		"scripts/tlh-wrapper.mjs",
+		[
+			"--agent-dir",
+			config.agentDir,
+			"--bin-dir",
+			config.binDir,
+			"--wrapper-name",
+			config.wrapperName,
+			`--package-root=${config.packageHelperRoot}`,
+		],
+		{ homeDir },
+	);
 	const wrapper = readFileSync(config.wrapperPath, "utf8");
 	assert.ok(wrapper.split(/\r?\n/).includes("default_tlh_package_root=''"));
 
@@ -94,7 +111,10 @@ test("wrapper skips stale fallback package helpers for unlocatable custom source
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	assert.equal(defaultsResult.status, 1);
-	assert.match(defaultsResult.stderr, /tlh defaults package support files are missing or corrupt; run `tlh update` to recover\./);
+	assert.match(
+		defaultsResult.stderr,
+		/tlh defaults package support files are missing or corrupt; run `tlh update` to recover\./,
+	);
 	assert.doesNotMatch(defaultsResult.stderr, /ERR_MODULE_NOT_FOUND/);
 	assert.equal(existsSync(defaultsLog), false);
 
@@ -104,7 +124,10 @@ test("wrapper skips stale fallback package helpers for unlocatable custom source
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	assert.equal(ticketsResult.status, 1);
-	assert.match(ticketsResult.stderr, /tlh tickets package support files are missing or corrupt; run `tlh update` to recover\./);
+	assert.match(
+		ticketsResult.stderr,
+		/tlh tickets package support files are missing or corrupt; run `tlh update` to recover\./,
+	);
 	assert.doesNotMatch(ticketsResult.stderr, /ERR_MODULE_NOT_FOUND/);
 	assert.equal(existsSync(ticketsLog), false);
 });
@@ -139,26 +162,38 @@ test("wrapper uses original node for helpers while exposing isolated bin only fo
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
 	writeFakeCommand(agentBin, "node", "printf 'isolated node intercepted\\n' >\"${FAKE_NODE_LOG}\"\nexit 88");
-	writeFakeCommand(agentBin, "tk", "if [[ \"${1:-}\" == \"help\" ]]; then printf 'isolated tk help\\n'; exit 0; fi\nexit 1");
+	writeFakeCommand(
+		agentBin,
+		"tk",
+		'if [[ "${1:-}" == "help" ]]; then printf \'isolated tk help\\n\'; exit 0; fi\nexit 1',
+	);
 	writeFakeCommand(agentBin, "pi", "printf 'isolated pi intercepted\\n' >\"${ISOLATED_PI_LOG}\"\nexit 89");
 	writeFakeCommand(cwdDir, "node", "printf 'current-dir node intercepted\\n' >\"${CURRENT_NODE_LOG}\"\nexit 87");
 	writeFakeCommand(cwdDir, "pi", "printf 'current-dir pi intercepted\\n' >\"${CURRENT_PI_LOG}\"\nexit 86");
 	writeWrapperHelperLogger(join(agentDir, "tlh", "recover-update.mjs"), "TLH_UPDATE_LOG", "recovery");
-	writeFileSync(join(packageRoot, "scripts", "tlh-tickets.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst tk = spawnSync("tk", ["help"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_TICKETS_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, tk: { status: tk.status, stdout: (tk.stdout || "").trim(), stderr: (tk.stderr || "").trim(), error: tk.error?.message } }));\nprocess.exit(tk.status ?? (tk.error ? 1 : 0));\n`, "utf8");
+	writeFileSync(
+		join(packageRoot, "scripts", "tlh-tickets.mjs"),
+		`import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst tk = spawnSync("tk", ["help"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_TICKETS_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, tk: { status: tk.status, stdout: (tk.stdout || "").trim(), stderr: (tk.stderr || "").trim(), error: tk.error?.message } }));\nprocess.exit(tk.status ?? (tk.error ? 1 : 0));\n`,
+		"utf8",
+	);
 	writeVersionedWrapperPi(fakebin, piLog);
 
-	runHelper("scripts/tlh-wrapper.mjs", [
-		"--agent-dir",
-		agentDir,
-		"--bin-dir",
-		binDir,
-		"--wrapper-name",
-		"tlh",
-		"--package-root",
-		packageRoot,
-		"--pi-cmd",
-		join(fakebin, "pi"),
-	], { homeDir });
+	runHelper(
+		"scripts/tlh-wrapper.mjs",
+		[
+			"--agent-dir",
+			agentDir,
+			"--bin-dir",
+			binDir,
+			"--wrapper-name",
+			"tlh",
+			"--package-root",
+			packageRoot,
+			"--pi-cmd",
+			join(fakebin, "pi"),
+		],
+		{ homeDir },
+	);
 
 	const wrapper = join(binDir, "tlh");
 	const poisonedPathEntries = ["", ".", cwdDir, agentBin];
@@ -245,10 +280,15 @@ test("wrapper uses original node for helpers while exposing isolated bin only fo
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	assert.equal(piResult.status, 0, piResult.stderr);
-	const piRecord = Object.fromEntries(readFileSync(piLog, "utf8").trim().split(/\r?\n/).map((line) => {
-		const separator = line.indexOf("=");
-		return [line.slice(0, separator), line.slice(separator + 1)];
-	}));
+	const piRecord = Object.fromEntries(
+		readFileSync(piLog, "utf8")
+			.trim()
+			.split(/\r?\n/)
+			.map((line) => {
+				const separator = line.indexOf("=");
+				return [line.slice(0, separator), line.slice(separator + 1)];
+			}),
+	);
 	assert.equal(piRecord.argv, "chat --version");
 	assert.equal(piRecord.agent, agentDir);
 	const piPathEntries = piRecord.path.split(":");
@@ -284,25 +324,34 @@ test("wrapper defaults and tickets helpers do not invoke PATH pi", (t) => {
 	mkdirSync(join(packageRoot, "config"), { recursive: true });
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
-	writeFakePi(agentBin, `printf 'managed:%s\n' "$*" >>"${piProbeLog}"
-exit 63`);
-	writeFakeCommand(agentBin, "tk", "if [[ \"${1:-}\" == \"help\" ]]; then printf 'isolated tk help\\n'; exit 0; fi\nexit 1");
-	writeFakePi(fakebin, `printf 'path:%s\n' "$*" >>"${piProbeLog}"
-exit 64`);
+	writeFakePi(
+		agentBin,
+		`printf 'managed:%s\n' "$*" >>"${piProbeLog}"
+exit 63`,
+	);
+	writeFakeCommand(
+		agentBin,
+		"tk",
+		'if [[ "${1:-}" == "help" ]]; then printf \'isolated tk help\\n\'; exit 0; fi\nexit 1',
+	);
+	writeFakePi(
+		fakebin,
+		`printf 'path:%s\n' "$*" >>"${piProbeLog}"
+exit 64`,
+	);
 	writeWrapperHelperLogger(join(packageRoot, "scripts", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "package");
 	writeFileSync(join(packageRoot, "config", "default-extensions.json"), "[]\n", "utf8");
-	writeFileSync(join(packageRoot, "scripts", "tlh-tickets.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst tk = spawnSync("tk", ["help"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_TICKETS_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, tk: { status: tk.status, stdout: (tk.stdout || "").trim(), stderr: (tk.stderr || "").trim(), error: tk.error?.message } }));\nprocess.exit(tk.status ?? (tk.error ? 1 : 0));\n`, "utf8");
+	writeFileSync(
+		join(packageRoot, "scripts", "tlh-tickets.mjs"),
+		`import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst tk = spawnSync("tk", ["help"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_TICKETS_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, tk: { status: tk.status, stdout: (tk.stdout || "").trim(), stderr: (tk.stderr || "").trim(), error: tk.error?.message } }));\nprocess.exit(tk.status ?? (tk.error ? 1 : 0));\n`,
+		"utf8",
+	);
 
-	runHelper("scripts/tlh-wrapper.mjs", [
-		"--agent-dir",
-		agentDir,
-		"--bin-dir",
-		binDir,
-		"--wrapper-name",
-		"tlh",
-		"--package-root",
-		packageRoot,
-	], { homeDir });
+	runHelper(
+		"scripts/tlh-wrapper.mjs",
+		["--agent-dir", agentDir, "--bin-dir", binDir, "--wrapper-name", "tlh", "--package-root", packageRoot],
+		{ homeDir },
+	);
 
 	const wrapper = join(binDir, "tlh");
 	const wrapperEnv = scrubInstallerEnv({
@@ -374,22 +423,17 @@ test("wrapper prefers package checkout helpers over profile copies", (t) => {
 	writeWrapperHelperLogger(join(packageRoot, "scripts", "tlh-update.mjs"), "TLH_UPDATE_LOG", "package");
 	writeWrapperHelperLogger(join(packageRoot, "scripts", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "package");
 	writeWrapperHelperLogger(join(packageRoot, "scripts", "tlh-tickets.mjs"), "TLH_TICKETS_LOG", "package");
-	writeFileSync(join(packageRoot, "config", "default-extensions.json"), "[\n  \"package\"\n]\n", "utf8");
+	writeFileSync(join(packageRoot, "config", "default-extensions.json"), '[\n  "package"\n]\n', "utf8");
 	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-update.mjs"), "TLH_UPDATE_LOG", "profile");
 	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "profile");
 	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-tickets.mjs"), "TLH_TICKETS_LOG", "profile");
-	writeFileSync(join(agentDir, "tlh", "default-extensions.json"), "[\n  \"profile\"\n]\n", "utf8");
+	writeFileSync(join(agentDir, "tlh", "default-extensions.json"), '[\n  "profile"\n]\n', "utf8");
 
-	runHelper("scripts/tlh-wrapper.mjs", [
-		"--agent-dir",
-		agentDir,
-		"--bin-dir",
-		binDir,
-		"--wrapper-name",
-		"tlh",
-		"--package-root",
-		packageRoot,
-	], { homeDir });
+	runHelper(
+		"scripts/tlh-wrapper.mjs",
+		["--agent-dir", agentDir, "--bin-dir", binDir, "--wrapper-name", "tlh", "--package-root", packageRoot],
+		{ homeDir },
+	);
 
 	const wrapper = join(binDir, "tlh");
 	const wrapperEnv = scrubInstallerEnv({
@@ -408,7 +452,15 @@ test("wrapper prefers package checkout helpers over profile copies", (t) => {
 	assert.equal(updateResult.status, 0, updateResult.stderr);
 	const updateRecord = JSON.parse(readFileSync(updateLog, "utf8"));
 	assert.equal(updateRecord.source, "package");
-	assert.deepEqual(updateRecord.argv, ["--agent-dir", agentDir, "--bin-dir", binDir, "--wrapper-name", "tlh", "--dry-run"]);
+	assert.deepEqual(updateRecord.argv, [
+		"--agent-dir",
+		agentDir,
+		"--bin-dir",
+		binDir,
+		"--wrapper-name",
+		"tlh",
+		"--dry-run",
+	]);
 
 	const defaultsResult = spawnSync(wrapper, ["defaults", "list"], {
 		env: wrapperEnv,
@@ -461,23 +513,26 @@ test("wrapper ignores stale profile defaults/tickets helpers when package helper
 
 	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-defaults.mjs"), "TLH_DEFAULTS_LOG", "legacy-profile");
 	writeWrapperHelperLogger(join(agentDir, "tlh", "tlh-tickets.mjs"), "TLH_TICKETS_LOG", "legacy-profile");
-	writeFileSync(join(agentDir, "tlh", "default-extensions.json"), "[\n  \"legacy-profile\"\n]\n", "utf8");
+	writeFileSync(join(agentDir, "tlh", "default-extensions.json"), '[\n  "legacy-profile"\n]\n', "utf8");
 	writeFileSync(join(packageRoot, "scripts", "tlh-defaults.mjs"), 'import "./lib/defaults-hop.mjs";\n', "utf8");
-	writeFileSync(join(packageRoot, "scripts", "lib", "defaults-hop.mjs"), 'import "./missing-defaults-lib.mjs";\n', "utf8");
+	writeFileSync(
+		join(packageRoot, "scripts", "lib", "defaults-hop.mjs"),
+		'import "./missing-defaults-lib.mjs";\n',
+		"utf8",
+	);
 	writeFileSync(join(packageRoot, "config", "default-extensions.json"), "[]\n", "utf8");
 	writeFileSync(join(packageRoot, "scripts", "tlh-tickets.mjs"), 'import "./lib/tickets-hop.mjs";\n', "utf8");
-	writeFileSync(join(packageRoot, "scripts", "lib", "tickets-hop.mjs"), 'import "./missing-tickets-lib.mjs";\n', "utf8");
+	writeFileSync(
+		join(packageRoot, "scripts", "lib", "tickets-hop.mjs"),
+		'import "./missing-tickets-lib.mjs";\n',
+		"utf8",
+	);
 
-	runHelper("scripts/tlh-wrapper.mjs", [
-		"--agent-dir",
-		agentDir,
-		"--bin-dir",
-		binDir,
-		"--wrapper-name",
-		"tlh",
-		"--package-root",
-		packageRoot,
-	], { homeDir });
+	runHelper(
+		"scripts/tlh-wrapper.mjs",
+		["--agent-dir", agentDir, "--bin-dir", binDir, "--wrapper-name", "tlh", "--package-root", packageRoot],
+		{ homeDir },
+	);
 
 	const wrapper = join(binDir, "tlh");
 	const wrapperEnv = scrubInstallerEnv({
@@ -493,7 +548,10 @@ test("wrapper ignores stale profile defaults/tickets helpers when package helper
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	assert.equal(defaultsResult.status, 1);
-	assert.match(defaultsResult.stderr, /tlh defaults package support files are missing or corrupt; run `tlh update` to recover\./);
+	assert.match(
+		defaultsResult.stderr,
+		/tlh defaults package support files are missing or corrupt; run `tlh update` to recover\./,
+	);
 	assert.doesNotMatch(defaultsResult.stderr, /ERR_MODULE_NOT_FOUND/);
 	assert.equal(existsSync(defaultsLog), false);
 
@@ -503,7 +561,10 @@ test("wrapper ignores stale profile defaults/tickets helpers when package helper
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	assert.equal(ticketsResult.status, 1);
-	assert.match(ticketsResult.stderr, /tlh tickets package support files are missing or corrupt; run `tlh update` to recover\./);
+	assert.match(
+		ticketsResult.stderr,
+		/tlh tickets package support files are missing or corrupt; run `tlh update` to recover\./,
+	);
 	assert.doesNotMatch(ticketsResult.stderr, /ERR_MODULE_NOT_FOUND/);
 	assert.equal(existsSync(ticketsLog), false);
 });
@@ -520,28 +581,34 @@ test("wrapper falls back to the profile recovery updater when package update hel
 	mkdirSync(join(packageRoot, "scripts", "lib"), { recursive: true });
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
-	writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify({
-		schemaVersion: 1,
-		repo: "diegopetrucci/the-last-harness",
-		track: "latest-release",
-		packageSource: "git:github.com/diegopetrucci/the-last-harness@main",
-		packageSourceIsDefault: true,
-	}, null, 2));
+	writeFileSync(
+		join(agentDir, "tlh", "install-state.json"),
+		JSON.stringify(
+			{
+				schemaVersion: 1,
+				repo: "diegopetrucci/the-last-harness",
+				track: "latest-release",
+				packageSource: "git:github.com/diegopetrucci/the-last-harness@main",
+				packageSourceIsDefault: true,
+			},
+			null,
+			2,
+		),
+	);
 	writeFileSync(join(packageRoot, "scripts", "tlh-update.mjs"), 'import "./lib/update-hop.mjs";\n', "utf8");
 	writeFileSync(join(packageRoot, "scripts", "lib", "update-hop.mjs"), 'import "./missing-update-hop.mjs";\n', "utf8");
 	copyFileSync(join(repoRoot, "scripts", "tlh-recover-update.mjs"), join(agentDir, "tlh", "recover-update.mjs"));
-	writeFileSync(join(agentDir, "tlh", "tlh-update.mjs"), `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(legacyUpdateLog)}, "legacy profile update should not run\\n");\nprocess.exit(91);\n`, "utf8");
+	writeFileSync(
+		join(agentDir, "tlh", "tlh-update.mjs"),
+		`import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(legacyUpdateLog)}, "legacy profile update should not run\\n");\nprocess.exit(91);\n`,
+		"utf8",
+	);
 
-	runHelper("scripts/tlh-wrapper.mjs", [
-		"--agent-dir",
-		agentDir,
-		"--bin-dir",
-		binDir,
-		"--wrapper-name",
-		"tlh",
-		"--package-root",
-		packageRoot,
-	], { homeDir });
+	runHelper(
+		"scripts/tlh-wrapper.mjs",
+		["--agent-dir", agentDir, "--bin-dir", binDir, "--wrapper-name", "tlh", "--package-root", packageRoot],
+		{ homeDir },
+	);
 
 	const wrapper = join(binDir, "tlh");
 	const result = spawnSync(wrapper, ["update", "--dry-run"], {
@@ -577,34 +644,48 @@ test("wrapper uses the profile recovery updater before legacy profile update hel
 	mkdirSync(safeBin, { recursive: true });
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
-	writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify({
-		schemaVersion: 1,
-		repo: "diegopetrucci/the-last-harness",
-		track: "ref",
-		ref: "main",
-		packageSource: "git:github.com/diegopetrucci/the-last-harness@main",
-		packageSourceIsDefault: true,
-	}, null, 2));
+	writeFileSync(
+		join(agentDir, "tlh", "install-state.json"),
+		JSON.stringify(
+			{
+				schemaVersion: 1,
+				repo: "diegopetrucci/the-last-harness",
+				track: "ref",
+				ref: "main",
+				packageSource: "git:github.com/diegopetrucci/the-last-harness@main",
+				packageSourceIsDefault: true,
+			},
+			null,
+			2,
+		),
+	);
 	copyFileSync(join(repoRoot, "scripts", "tlh-recover-update.mjs"), join(agentDir, "tlh", "recover-update.mjs"));
-	writeFileSync(join(agentDir, "tlh", "tlh-update.mjs"), `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(legacyUpdateLog)}, "legacy profile update should not run\\n");\nprocess.exit(91);\n`, "utf8");
-	writeFileSync(join(safeBin, "bash"), [
-		"#!/bin/sh",
-		"marker=$(grep -F 'recovery stub marker' \"$1\" || true)",
-		"{ printf 'cmd=%s\\n' \"$0\"; printf 'argv=%s\\n' \"$*\"; printf 'marker=%s\\n' \"${marker}\"; printf 'repo=%s\\n' \"${TLH_REPO:-}\"; printf 'source=%s\\n' \"${TLH_PACKAGE_SOURCE:-}\"; printf 'agent=%s\\n' \"${PI_CODING_AGENT_DIR:-}\"; printf 'path=%s\\n' \"${PATH:-}\"; } >\"${BASH_LOG}\"",
-	].join("\n"), "utf8");
+	writeFileSync(
+		join(agentDir, "tlh", "tlh-update.mjs"),
+		`import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(legacyUpdateLog)}, "legacy profile update should not run\\n");\nprocess.exit(91);\n`,
+		"utf8",
+	);
+	writeFileSync(
+		join(safeBin, "bash"),
+		[
+			"#!/bin/sh",
+			"marker=$(grep -F 'recovery stub marker' \"$1\" || true)",
+			'{ printf \'cmd=%s\\n\' "$0"; printf \'argv=%s\\n\' "$*"; printf \'marker=%s\\n\' "${marker}"; printf \'repo=%s\\n\' "${TLH_REPO:-}"; printf \'source=%s\\n\' "${TLH_PACKAGE_SOURCE:-}"; printf \'agent=%s\\n\' "${PI_CODING_AGENT_DIR:-}"; printf \'path=%s\\n\' "${PATH:-}"; } >"${BASH_LOG}"',
+		].join("\n"),
+		"utf8",
+	);
 	chmodSync(join(safeBin, "bash"), 0o755);
-	writeFileSync(fetchPreload, `globalThis.fetch = async () => ({\n\tok: true,\n\tstatus: 200,\n\tstatusText: "OK",\n\ttext: async () => "#!/usr/bin/env bash\\n# recovery stub marker\\nexit 0\\n",\n});\n`, "utf8");
+	writeFileSync(
+		fetchPreload,
+		`globalThis.fetch = async () => ({\n\tok: true,\n\tstatus: 200,\n\tstatusText: "OK",\n\ttext: async () => "#!/usr/bin/env bash\\n# recovery stub marker\\nexit 0\\n",\n});\n`,
+		"utf8",
+	);
 
-	runHelper("scripts/tlh-wrapper.mjs", [
-		"--agent-dir",
-		agentDir,
-		"--bin-dir",
-		binDir,
-		"--wrapper-name",
-		"tlh",
-		"--package-root",
-		packageRoot,
-	], { homeDir });
+	runHelper(
+		"scripts/tlh-wrapper.mjs",
+		["--agent-dir", agentDir, "--bin-dir", binDir, "--wrapper-name", "tlh", "--package-root", packageRoot],
+		{ homeDir },
+	);
 
 	const wrapper = join(binDir, "tlh");
 	const result = spawnSync(bashPath, [wrapper, "update", "--quiet"], {
@@ -620,10 +701,15 @@ test("wrapper uses the profile recovery updater before legacy profile update hel
 
 	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
 	assert.equal(existsSync(legacyUpdateLog), false);
-	const bashRecord = Object.fromEntries(readFileSync(bashLog, "utf8").trim().split(/\r?\n/).map((line) => {
-		const separator = line.indexOf("=");
-		return [line.slice(0, separator), line.slice(separator + 1)];
-	}));
+	const bashRecord = Object.fromEntries(
+		readFileSync(bashLog, "utf8")
+			.trim()
+			.split(/\r?\n/)
+			.map((line) => {
+				const separator = line.indexOf("=");
+				return [line.slice(0, separator), line.slice(separator + 1)];
+			}),
+	);
 	assert.equal(bashRecord.cmd, join(safeBin, "bash"));
 	assert.match(bashRecord.argv, new RegExp(`--agent-dir ${agentDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
 	assert.match(bashRecord.argv, new RegExp(`--bin-dir ${binDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
@@ -659,21 +745,29 @@ test("wrapper resolves pi to an absolute command path before exposing isolated b
 
 	writeFakePi(agentBin, "printf 'isolated pi intercepted\\n' >\"${ISOLATED_PI_LOG}\"\nexit 89");
 	writeVersionedWrapperPi(safeBin, piLog);
-	writeFileSync(bashEnv, "pi() {\n\tprintf 'shell function pi intercepted\\n' >\"${FUNCTION_PI_LOG}\"\n\treturn 79\n}\n", "utf8");
+	writeFileSync(
+		bashEnv,
+		"pi() {\n\tprintf 'shell function pi intercepted\\n' >\"${FUNCTION_PI_LOG}\"\n\treturn 79\n}\n",
+		"utf8",
+	);
 
 	// Under the private-runtime model, --pi-cmd bakes the absolute pi path at wrapper-creation time.
-	runHelper("scripts/tlh-wrapper.mjs", [
-		"--agent-dir",
-		agentDir,
-		"--bin-dir",
-		binDir,
-		"--wrapper-name",
-		"tlh",
-		"--package-root",
-		packageRoot,
-		"--pi-cmd",
-		join(safeBin, "pi"),
-	], { homeDir });
+	runHelper(
+		"scripts/tlh-wrapper.mjs",
+		[
+			"--agent-dir",
+			agentDir,
+			"--bin-dir",
+			binDir,
+			"--wrapper-name",
+			"tlh",
+			"--package-root",
+			packageRoot,
+			"--pi-cmd",
+			join(safeBin, "pi"),
+		],
+		{ homeDir },
+	);
 
 	const wrapper = join(binDir, "tlh");
 	const result = spawnSync(wrapper, ["chat"], {
@@ -691,10 +785,15 @@ test("wrapper resolves pi to an absolute command path before exposing isolated b
 	});
 
 	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
-	const piRecord = Object.fromEntries(readFileSync(piLog, "utf8").trim().split(/\r?\n/).map((line) => {
-		const separator = line.indexOf("=");
-		return [line.slice(0, separator), line.slice(separator + 1)];
-	}));
+	const piRecord = Object.fromEntries(
+		readFileSync(piLog, "utf8")
+			.trim()
+			.split(/\r?\n/)
+			.map((line) => {
+				const separator = line.indexOf("=");
+				return [line.slice(0, separator), line.slice(separator + 1)];
+			}),
+	);
 	// The absolute --pi-cmd path is exec'd directly; shell functions and PATH pi are bypassed.
 	// piRecord.cmd is $0 from the exec'd script, which is the --pi-cmd value (not necessarily realpath'd).
 	assert.ok(piRecord.cmd.endsWith("/pi"), `expected pi command to end with /pi: ${piRecord.cmd}`);
@@ -707,8 +806,6 @@ test("wrapper resolves pi to an absolute command path before exposing isolated b
 	assert.equal(existsSync(isolatedPiLog), false);
 	assert.equal(existsSync(functionPiLog), false);
 });
-
-
 
 test("wrapper falls back to the sanitized PATH when HOME is unset", (t) => {
 	const root = makeTempDir();
@@ -729,18 +826,22 @@ test("wrapper falls back to the sanitized PATH when HOME is unset", (t) => {
 	writeVersionedWrapperPi(supportedPiDir, piLog);
 
 	// In the private-runtime model, --pi-cmd is baked in at wrapper creation; HOME is not needed at runtime.
-	runHelper("scripts/tlh-wrapper.mjs", [
-		"--agent-dir",
-		agentDir,
-		"--bin-dir",
-		binDir,
-		"--wrapper-name",
-		"tlh",
-		"--package-root",
-		packageRoot,
-		"--pi-cmd",
-		join(supportedPiDir, "pi"),
-	], { homeDir });
+	runHelper(
+		"scripts/tlh-wrapper.mjs",
+		[
+			"--agent-dir",
+			agentDir,
+			"--bin-dir",
+			binDir,
+			"--wrapper-name",
+			"tlh",
+			"--package-root",
+			packageRoot,
+			"--pi-cmd",
+			join(supportedPiDir, "pi"),
+		],
+		{ homeDir },
+	);
 
 	const wrapper = join(binDir, "tlh");
 	const wrapperEnv = scrubInstallerEnv({
@@ -756,10 +857,15 @@ test("wrapper falls back to the sanitized PATH when HOME is unset", (t) => {
 	});
 
 	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
-	const piRecord = Object.fromEntries(readFileSync(piLog, "utf8").trim().split(/\r?\n/).map((line) => {
-		const separator = line.indexOf("=");
-		return [line.slice(0, separator), line.slice(separator + 1)];
-	}));
+	const piRecord = Object.fromEntries(
+		readFileSync(piLog, "utf8")
+			.trim()
+			.split(/\r?\n/)
+			.map((line) => {
+				const separator = line.indexOf("=");
+				return [line.slice(0, separator), line.slice(separator + 1)];
+			}),
+	);
 	assert.equal(piRecord.cmd, join(supportedPiDir, "pi"));
 	assert.equal(piRecord.argv, "chat");
 	assert.equal(piRecord.agent, agentDir);
@@ -783,24 +889,31 @@ test("wrapper --pi-cmd validates the pinned binary before fast-path exec", (t) =
 	mkdirSync(packageRoot, { recursive: true });
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
-	writeFakePi(pinnedPiDir, [
-		`printf '%s\\n' "$*" >>"${piCallLog}"`,
-		`{ printf 'cmd=%s\\n' "$0"; printf 'argv=%s\\n' "$*"; printf 'agent=%s\\n' "\${PI_CODING_AGENT_DIR:-}"; printf 'path=%s\\n' "\${PATH:-}"; } >"${piMainLog}"`,
-		"exit 0",
-	].join("\n"));
+	writeFakePi(
+		pinnedPiDir,
+		[
+			`printf '%s\\n' "$*" >>"${piCallLog}"`,
+			`{ printf 'cmd=%s\\n' "$0"; printf 'argv=%s\\n' "$*"; printf 'agent=%s\\n' "\${PI_CODING_AGENT_DIR:-}"; printf 'path=%s\\n' "\${PATH:-}"; } >"${piMainLog}"`,
+			"exit 0",
+		].join("\n"),
+	);
 
-	runHelper("scripts/tlh-wrapper.mjs", [
-		"--agent-dir",
-		agentDir,
-		"--bin-dir",
-		binDir,
-		"--wrapper-name",
-		"tlh",
-		"--package-root",
-		packageRoot,
-		"--pi-cmd",
-		join(pinnedPiDir, "pi"),
-	], { homeDir });
+	runHelper(
+		"scripts/tlh-wrapper.mjs",
+		[
+			"--agent-dir",
+			agentDir,
+			"--bin-dir",
+			binDir,
+			"--wrapper-name",
+			"tlh",
+			"--package-root",
+			packageRoot,
+			"--pi-cmd",
+			join(pinnedPiDir, "pi"),
+		],
+		{ homeDir },
+	);
 
 	const wrapper = join(binDir, "tlh");
 	const result = spawnSync(wrapper, ["chat"], {
@@ -814,10 +927,15 @@ test("wrapper --pi-cmd validates the pinned binary before fast-path exec", (t) =
 
 	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
 
-	const mainRecord = Object.fromEntries(readFileSync(piMainLog, "utf8").trim().split(/\r?\n/).map((line) => {
-		const separator = line.indexOf("=");
-		return [line.slice(0, separator), line.slice(separator + 1)];
-	}));
+	const mainRecord = Object.fromEntries(
+		readFileSync(piMainLog, "utf8")
+			.trim()
+			.split(/\r?\n/)
+			.map((line) => {
+				const separator = line.indexOf("=");
+				return [line.slice(0, separator), line.slice(separator + 1)];
+			}),
+	);
 	assert.equal(mainRecord.argv, "chat");
 	assert.equal(mainRecord.agent, agentDir);
 
@@ -839,18 +957,22 @@ test("wrapper --pi-cmd hard-fails when the pinned path is non-executable", (t) =
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
 	const missingPiCmd = join(root, "nonexistent", "pi");
-	runHelper("scripts/tlh-wrapper.mjs", [
-		"--agent-dir",
-		agentDir,
-		"--bin-dir",
-		binDir,
-		"--wrapper-name",
-		"tlh",
-		"--package-root",
-		packageRoot,
-		"--pi-cmd",
-		missingPiCmd,
-	], { homeDir });
+	runHelper(
+		"scripts/tlh-wrapper.mjs",
+		[
+			"--agent-dir",
+			agentDir,
+			"--bin-dir",
+			binDir,
+			"--wrapper-name",
+			"tlh",
+			"--package-root",
+			packageRoot,
+			"--pi-cmd",
+			missingPiCmd,
+		],
+		{ homeDir },
+	);
 
 	const wrapper = join(binDir, "tlh");
 	const result = spawnSync(wrapper, ["chat"], {
@@ -886,29 +1008,33 @@ test("wrapper --pi-cmd fast path exports PATH as managed_bin:pinned_dir:sanitize
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
 	// Pinned pi logs PATH so we can verify ordering.
-	writeFakePi(pinnedPiDir, [
-		`{ printf 'cmd=%s\\n' "$0"; printf 'argv=%s\\n' "$*"; printf 'agent=%s\\n' "\${PI_CODING_AGENT_DIR:-}"; printf 'path=%s\\n' "\${PATH:-}"; } >"${piLog}"`,
-		"exit 0",
-	].join("\n"));
+	writeFakePi(
+		pinnedPiDir,
+		[
+			`{ printf 'cmd=%s\\n' "$0"; printf 'argv=%s\\n' "$*"; printf 'agent=%s\\n' "\${PI_CODING_AGENT_DIR:-}"; printf 'path=%s\\n' "\${PATH:-}"; } >"${piLog}"`,
+			"exit 0",
+		].join("\n"),
+	);
 
 	// Stale pi should not be called and should not appear before pinned_dir.
-	writeFakePi(stalePiDir, [
-		`printf 'stale pi intercepted\\n' >"${stalePiLog}"`,
-		"exit 85",
-	].join("\n"));
+	writeFakePi(stalePiDir, [`printf 'stale pi intercepted\\n' >"${stalePiLog}"`, "exit 85"].join("\n"));
 
-	runHelper("scripts/tlh-wrapper.mjs", [
-		"--agent-dir",
-		agentDir,
-		"--bin-dir",
-		binDir,
-		"--wrapper-name",
-		"tlh",
-		"--package-root",
-		packageRoot,
-		"--pi-cmd",
-		join(pinnedPiDir, "pi"),
-	], { homeDir });
+	runHelper(
+		"scripts/tlh-wrapper.mjs",
+		[
+			"--agent-dir",
+			agentDir,
+			"--bin-dir",
+			binDir,
+			"--wrapper-name",
+			"tlh",
+			"--package-root",
+			packageRoot,
+			"--pi-cmd",
+			join(pinnedPiDir, "pi"),
+		],
+		{ homeDir },
+	);
 
 	const wrapper = join(binDir, "tlh");
 	const result = spawnSync(wrapper, ["chat"], {
@@ -923,10 +1049,15 @@ test("wrapper --pi-cmd fast path exports PATH as managed_bin:pinned_dir:sanitize
 
 	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
 
-	const piRecord = Object.fromEntries(readFileSync(piLog, "utf8").trim().split(/\r?\n/).map((line) => {
-		const separator = line.indexOf("=");
-		return [line.slice(0, separator), line.slice(separator + 1)];
-	}));
+	const piRecord = Object.fromEntries(
+		readFileSync(piLog, "utf8")
+			.trim()
+			.split(/\r?\n/)
+			.map((line) => {
+				const separator = line.indexOf("=");
+				return [line.slice(0, separator), line.slice(separator + 1)];
+			}),
+	);
 	assert.equal(piRecord.argv, "chat");
 	assert.equal(piRecord.agent, agentDir);
 
@@ -935,7 +1066,10 @@ test("wrapper --pi-cmd fast path exports PATH as managed_bin:pinned_dir:sanitize
 	assert.equal(piPathEntries[0], agentBin, `expected managed_bin first; got ${piPathEntries.join(":")}`);
 	assert.equal(piPathEntries[1], pinnedPiDir, `expected pinned_dir second; got ${piPathEntries.join(":")}`);
 	const stalePiIndex = piPathEntries.indexOf(stalePiDir);
-	assert.ok(stalePiIndex === -1 || stalePiIndex > 1, `stale entry must not appear before pinned_dir; PATH: ${piPathEntries.join(":")}`);
+	assert.ok(
+		stalePiIndex === -1 || stalePiIndex > 1,
+		`stale entry must not appear before pinned_dir; PATH: ${piPathEntries.join(":")}`,
+	);
 
 	// Verify stale pi was not invoked.
 	assert.equal(existsSync(stalePiLog), false);
@@ -962,22 +1096,34 @@ test("wrapper update --extensions helper prepends executable --pi-cmd directory 
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
 	mkdirSync(pinnedPiDir, { recursive: true });
-	writeFileSync(join(pinnedPiDir, "pi"), `#!/bin/sh\nif [ "\${1:-}" = "--version" ]; then printf '${TLH_NON_PINNED_PI_VERSION}\\n'; exit 0; fi\nprintf 'unexpected args: %s\\n' "$*" >&2\nexit 1\n`, "utf8");
-	chmodSync(join(pinnedPiDir, "pi"), 0o755);
-	writeFileSync(join(agentDir, "tlh", "recover-update.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst pi = spawnSync("pi", ["--version"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, pi: { status: pi.status, stdout: pi.stdout, stderr: pi.stderr, error: pi.error?.message } }));\nprocess.exit(pi.status ?? (pi.error ? 1 : 0));\n`, "utf8");
-
-	runHelper("scripts/tlh-wrapper.mjs", [
-		"--agent-dir",
-		agentDir,
-		"--bin-dir",
-		binDir,
-		"--wrapper-name",
-		"tlh",
-		"--package-root",
-		packageRoot,
-		"--pi-cmd",
+	writeFileSync(
 		join(pinnedPiDir, "pi"),
-	], { homeDir });
+		`#!/bin/sh\nif [ "\${1:-}" = "--version" ]; then printf '${TLH_NON_PINNED_PI_VERSION}\\n'; exit 0; fi\nprintf 'unexpected args: %s\\n' "$*" >&2\nexit 1\n`,
+		"utf8",
+	);
+	chmodSync(join(pinnedPiDir, "pi"), 0o755);
+	writeFileSync(
+		join(agentDir, "tlh", "recover-update.mjs"),
+		`import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst pi = spawnSync("pi", ["--version"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, pi: { status: pi.status, stdout: pi.stdout, stderr: pi.stderr, error: pi.error?.message } }));\nprocess.exit(pi.status ?? (pi.error ? 1 : 0));\n`,
+		"utf8",
+	);
+
+	runHelper(
+		"scripts/tlh-wrapper.mjs",
+		[
+			"--agent-dir",
+			agentDir,
+			"--bin-dir",
+			binDir,
+			"--wrapper-name",
+			"tlh",
+			"--package-root",
+			packageRoot,
+			"--pi-cmd",
+			join(pinnedPiDir, "pi"),
+		],
+		{ homeDir },
+	);
 
 	const wrapper = join(binDir, "tlh");
 	const result = spawnSync(wrapper, ["update", "--extensions", "--dry-run"], {
@@ -1009,8 +1155,16 @@ test("wrapper update --extensions helper prepends executable --pi-cmd directory 
 	assert.match(updateRecord.pi.stdout, new RegExp(escapeRegExp(TLH_NON_PINNED_PI_VERSION)));
 
 	const updatePathEntries = updateRecord.env.PATH.split(delimiter);
-	assert.equal(updatePathEntries[0], pinnedPiDir, `expected pinned_dir first; got ${updatePathEntries.join(delimiter)}`);
-	assert.equal(updatePathEntries[1], nodeDir, `expected sanitized PATH to follow pinned_dir; got ${updatePathEntries.join(delimiter)}`);
+	assert.equal(
+		updatePathEntries[0],
+		pinnedPiDir,
+		`expected pinned_dir first; got ${updatePathEntries.join(delimiter)}`,
+	);
+	assert.equal(
+		updatePathEntries[1],
+		nodeDir,
+		`expected sanitized PATH to follow pinned_dir; got ${updatePathEntries.join(delimiter)}`,
+	);
 	assert.equal(updatePathEntries.includes(""), false);
 	assert.equal(updatePathEntries.includes("."), false);
 	assert.equal(updatePathEntries.includes(cwdDir), false);
@@ -1039,25 +1193,36 @@ test("wrapper update --extensions helper prepends the pinned private runtime dir
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
 	// Pinned pi at 0.83.0 — still prepended for --extensions.
-	writeFakePi(pinnedPiDir, [
-		`printf '%s\\n' "$*" >>"${pinnedPiCallLog}"`,
-		`if [[ "\${1:-}" == "--version" ]]; then printf '0.83.0\\n'; exit 0; fi`,
-		"exit 85",
-	].join("\n"));
-	writeFileSync(join(agentDir, "tlh", "recover-update.mjs"), `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst pi = spawnSync("pi", ["--version"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, pi: { status: pi.status, stdout: pi.stdout, stderr: pi.stderr, error: pi.error?.message } }));\nprocess.exit(pi.status ?? (pi.error ? 1 : 0));\n`, "utf8");
+	writeFakePi(
+		pinnedPiDir,
+		[
+			`printf '%s\\n' "$*" >>"${pinnedPiCallLog}"`,
+			`if [[ "\${1:-}" == "--version" ]]; then printf '0.83.0\\n'; exit 0; fi`,
+			"exit 85",
+		].join("\n"),
+	);
+	writeFileSync(
+		join(agentDir, "tlh", "recover-update.mjs"),
+		`import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nconst pi = spawnSync("pi", ["--version"], { encoding: "utf8" });\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH }, pi: { status: pi.status, stdout: pi.stdout, stderr: pi.stderr, error: pi.error?.message } }));\nprocess.exit(pi.status ?? (pi.error ? 1 : 0));\n`,
+		"utf8",
+	);
 
-	runHelper("scripts/tlh-wrapper.mjs", [
-		"--agent-dir",
-		agentDir,
-		"--bin-dir",
-		binDir,
-		"--wrapper-name",
-		"tlh",
-		"--package-root",
-		packageRoot,
-		"--pi-cmd",
-		join(pinnedPiDir, "pi"),
-	], { homeDir });
+	runHelper(
+		"scripts/tlh-wrapper.mjs",
+		[
+			"--agent-dir",
+			agentDir,
+			"--bin-dir",
+			binDir,
+			"--wrapper-name",
+			"tlh",
+			"--package-root",
+			packageRoot,
+			"--pi-cmd",
+			join(pinnedPiDir, "pi"),
+		],
+		{ homeDir },
+	);
 
 	const wrapper = join(binDir, "tlh");
 	const result = spawnSync(wrapper, ["update", "--extensions", "--dry-run"], {
@@ -1075,7 +1240,11 @@ test("wrapper update --extensions helper prepends the pinned private runtime dir
 	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
 	const updateRecord = JSON.parse(readFileSync(updateLog, "utf8"));
 	const updatePathEntries = updateRecord.env.PATH.split(delimiter);
-	assert.equal(updatePathEntries[0], pinnedPiDir, `expected pinned pi dir first for --extensions; got ${updatePathEntries.join(delimiter)}`);
+	assert.equal(
+		updatePathEntries[0],
+		pinnedPiDir,
+		`expected pinned pi dir first for --extensions; got ${updatePathEntries.join(delimiter)}`,
+	);
 	assert.equal(updatePathEntries.includes(""), false);
 	assert.equal(updatePathEntries.includes("."), false);
 	assert.equal(updatePathEntries.includes(cwdDir), false);
@@ -1107,20 +1276,28 @@ test("wrapper plain update helper does not prepend executable --pi-cmd directory
 	mkdirSync(pinnedPiDir, { recursive: true });
 	writeFileSync(join(pinnedPiDir, "pi"), "#!/bin/sh\nprintf 'unexpected args: %s\\n' \"$*\" >&2\nexit 1\n", "utf8");
 	chmodSync(join(pinnedPiDir, "pi"), 0o755);
-	writeFileSync(join(agentDir, "tlh", "recover-update.mjs"), `import { writeFileSync } from "node:fs";\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH } }));\n`, "utf8");
+	writeFileSync(
+		join(agentDir, "tlh", "recover-update.mjs"),
+		`import { writeFileSync } from "node:fs";\nwriteFileSync(process.env.TLH_UPDATE_LOG, JSON.stringify({ argv: process.argv.slice(2), env: { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH } }));\n`,
+		"utf8",
+	);
 
-	runHelper("scripts/tlh-wrapper.mjs", [
-		"--agent-dir",
-		agentDir,
-		"--bin-dir",
-		binDir,
-		"--wrapper-name",
-		"tlh",
-		"--package-root",
-		packageRoot,
-		"--pi-cmd",
-		join(pinnedPiDir, "pi"),
-	], { homeDir });
+	runHelper(
+		"scripts/tlh-wrapper.mjs",
+		[
+			"--agent-dir",
+			agentDir,
+			"--bin-dir",
+			binDir,
+			"--wrapper-name",
+			"tlh",
+			"--package-root",
+			packageRoot,
+			"--pi-cmd",
+			join(pinnedPiDir, "pi"),
+		],
+		{ homeDir },
+	);
 
 	const wrapper = join(binDir, "tlh");
 	const result = spawnSync(wrapper, ["update", "--dry-run"], {
@@ -1149,8 +1326,16 @@ test("wrapper plain update helper does not prepend executable --pi-cmd directory
 	assert.equal(updateRecord.env.PI_CODING_AGENT_DIR, agentDir);
 
 	const updatePathEntries = updateRecord.env.PATH.split(delimiter);
-	assert.equal(updatePathEntries[0], nodeDir, `expected sanitized PATH first; got ${updatePathEntries.join(delimiter)}`);
-	assert.equal(updatePathEntries.includes(pinnedPiDir), false, `did not expect pinned_dir in PATH: ${updatePathEntries.join(delimiter)}`);
+	assert.equal(
+		updatePathEntries[0],
+		nodeDir,
+		`expected sanitized PATH first; got ${updatePathEntries.join(delimiter)}`,
+	);
+	assert.equal(
+		updatePathEntries.includes(pinnedPiDir),
+		false,
+		`did not expect pinned_dir in PATH: ${updatePathEntries.join(delimiter)}`,
+	);
 	assert.equal(updatePathEntries.includes(""), false);
 	assert.equal(updatePathEntries.includes("."), false);
 	assert.equal(updatePathEntries.includes(cwdDir), false);
@@ -1175,18 +1360,27 @@ test("wrapper pi exec path exports NODE_COMPILE_CACHE pointing at the runtime pr
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
 	// Fake pi logs NODE_COMPILE_CACHE so we can assert its value.
-	writeFakePi(pinnedPiDir, [
-		`{ printf 'compile_cache=%s\\n' "\${NODE_COMPILE_CACHE:-}"; } >"${piLog}"`,
-		"exit 0",
-	].join("\n"));
+	writeFakePi(
+		pinnedPiDir,
+		[`{ printf 'compile_cache=%s\\n' "\${NODE_COMPILE_CACHE:-}"; } >"${piLog}"`, "exit 0"].join("\n"),
+	);
 
-	runHelper("scripts/tlh-wrapper.mjs", [
-		"--agent-dir", agentDir,
-		"--bin-dir", binDir,
-		"--wrapper-name", "tlh",
-		"--package-root", packageRoot,
-		"--pi-cmd", join(pinnedPiDir, "pi"),
-	], { homeDir });
+	runHelper(
+		"scripts/tlh-wrapper.mjs",
+		[
+			"--agent-dir",
+			agentDir,
+			"--bin-dir",
+			binDir,
+			"--wrapper-name",
+			"tlh",
+			"--package-root",
+			packageRoot,
+			"--pi-cmd",
+			join(pinnedPiDir, "pi"),
+		],
+		{ homeDir },
+	);
 
 	const wrapper = join(binDir, "tlh");
 	const result = spawnSync(wrapper, ["chat"], {
@@ -1197,10 +1391,13 @@ test("wrapper pi exec path exports NODE_COMPILE_CACHE pointing at the runtime pr
 	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
 
 	const piRecord = Object.fromEntries(
-		readFileSync(piLog, "utf8").trim().split(/\r?\n/).map((line) => {
-			const separator = line.indexOf("=");
-			return [line.slice(0, separator), line.slice(separator + 1)];
-		}),
+		readFileSync(piLog, "utf8")
+			.trim()
+			.split(/\r?\n/)
+			.map((line) => {
+				const separator = line.indexOf("=");
+				return [line.slice(0, separator), line.slice(separator + 1)];
+			}),
 	);
 
 	// NODE_COMPILE_CACHE must point to <runtime-prefix>/node-compile-cache.

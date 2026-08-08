@@ -46,20 +46,142 @@ const MUTATING_BASH_PATTERNS = [
 
 const SHELL_COMMAND_BOUNDARIES = new Set([";", "|", "&", "(", ")", "\n"]);
 const EXECUTABLE_HEREDOC_INTERPRETER_PATTERN = /^(node|nodejs|python(?:[23](?:\.\d+)?)?)$/;
-const GIT_MUTATING_SUBCOMMANDS = new Set(["add", "cherry-pick", "commit", "merge", "mv", "push", "rebase", "revert", "rm"]);
-const GIT_GLOBAL_OPTION_VALUE_FLAGS = new Set(["-C", "-c", "--config-env", "--exec-path", "--git-dir", "--namespace", "--super-prefix", "--work-tree"]);
-const GIT_GLOBAL_BOOLEAN_FLAGS = new Set(["--bare", "--help", "--literal-pathspecs", "--no-lazy-fetch", "--no-optional-locks", "--no-pager", "--paginate", "--version", "-h", "-p", "-P"]);
+const GIT_MUTATING_SUBCOMMANDS = new Set([
+	"add",
+	"cherry-pick",
+	"commit",
+	"merge",
+	"mv",
+	"push",
+	"rebase",
+	"revert",
+	"rm",
+]);
+const GIT_GLOBAL_OPTION_VALUE_FLAGS = new Set([
+	"-C",
+	"-c",
+	"--config-env",
+	"--exec-path",
+	"--git-dir",
+	"--namespace",
+	"--super-prefix",
+	"--work-tree",
+]);
+const GIT_GLOBAL_BOOLEAN_FLAGS = new Set([
+	"--bare",
+	"--help",
+	"--literal-pathspecs",
+	"--no-lazy-fetch",
+	"--no-optional-locks",
+	"--no-pager",
+	"--paginate",
+	"--version",
+	"-h",
+	"-p",
+	"-P",
+]);
 const GIT_TERMINAL_READ_ONLY_FLAGS = new Set(["--help", "--version", "-h"]);
-const GIT_MUTATING_TAG_FLAGS = new Set(["-a", "-d", "-f", "-F", "-m", "-s", "-u", "--annotate", "--delete", "--file", "--force", "--local-user", "--message", "--sign"]);
-const GIT_READ_ONLY_TAG_FLAGS = new Set(["-l", "-n", "-v", "--column", "--color", "--contains", "--format", "--help", "--ignore-case", "--list", "--merged", "--no-contains", "--no-merged", "--omit-empty", "--points-at", "--sort", "--verify"]);
-const GIT_MUTATING_BRANCH_FLAGS = new Set(["-c", "-C", "-d", "-D", "-f", "-m", "-M", "-u", "--copy", "--delete", "--edit-description", "--force", "--move", "--set-upstream-to", "--unset-upstream"]);
-const GIT_READ_ONLY_BRANCH_FLAGS = new Set(["-a", "-l", "-r", "--all", "--color", "--column", "--contains", "--format", "--ignore-case", "--list", "--merged", "--no-color", "--no-column", "--no-contains", "--no-merged", "--omit-empty", "--points-at", "--remotes", "--show-current", "--sort", "--verbose", "-v"]);
-const GIT_MUTATING_STASH_SUBCOMMANDS = new Set(["apply", "branch", "clear", "create", "drop", "pop", "push", "save", "store"]);
+const GIT_MUTATING_TAG_FLAGS = new Set([
+	"-a",
+	"-d",
+	"-f",
+	"-F",
+	"-m",
+	"-s",
+	"-u",
+	"--annotate",
+	"--delete",
+	"--file",
+	"--force",
+	"--local-user",
+	"--message",
+	"--sign",
+]);
+const GIT_READ_ONLY_TAG_FLAGS = new Set([
+	"-l",
+	"-n",
+	"-v",
+	"--column",
+	"--color",
+	"--contains",
+	"--format",
+	"--help",
+	"--ignore-case",
+	"--list",
+	"--merged",
+	"--no-contains",
+	"--no-merged",
+	"--omit-empty",
+	"--points-at",
+	"--sort",
+	"--verify",
+]);
+const GIT_MUTATING_BRANCH_FLAGS = new Set([
+	"-c",
+	"-C",
+	"-d",
+	"-D",
+	"-f",
+	"-m",
+	"-M",
+	"-u",
+	"--copy",
+	"--delete",
+	"--edit-description",
+	"--force",
+	"--move",
+	"--set-upstream-to",
+	"--unset-upstream",
+]);
+const GIT_READ_ONLY_BRANCH_FLAGS = new Set([
+	"-a",
+	"-l",
+	"-r",
+	"--all",
+	"--color",
+	"--column",
+	"--contains",
+	"--format",
+	"--ignore-case",
+	"--list",
+	"--merged",
+	"--no-color",
+	"--no-column",
+	"--no-contains",
+	"--no-merged",
+	"--omit-empty",
+	"--points-at",
+	"--remotes",
+	"--show-current",
+	"--sort",
+	"--verbose",
+	"-v",
+]);
+const GIT_MUTATING_STASH_SUBCOMMANDS = new Set([
+	"apply",
+	"branch",
+	"clear",
+	"create",
+	"drop",
+	"pop",
+	"push",
+	"save",
+	"store",
+]);
 const GIT_READ_ONLY_STASH_SUBCOMMANDS = new Set(["list", "show"]);
 const GH_GLOBAL_OPTION_VALUE_FLAGS = new Set(["-R", "--repo", "--hostname"]);
 const GH_GLOBAL_BOOLEAN_FLAGS = new Set(["--help", "--version", "-h"]);
 const GH_TERMINAL_READ_ONLY_FLAGS = new Set(["--help", "--version", "-h"]);
-const GH_MUTATING_PR_SUBCOMMANDS = new Set(["close", "comment", "create", "edit", "merge", "ready", "reopen", "review"]);
+const GH_MUTATING_PR_SUBCOMMANDS = new Set([
+	"close",
+	"comment",
+	"create",
+	"edit",
+	"merge",
+	"ready",
+	"reopen",
+	"review",
+]);
 const GH_MUTATING_RELEASE_SUBCOMMANDS = new Set(["create", "delete", "delete-asset", "edit", "upload"]);
 const GH_API_WRITE_METHODS = new Set(["DELETE", "PATCH", "POST", "PUT"]);
 const GH_API_FIELD_FLAGS = new Set(["-F", "-f", "--field", "--raw-field"]);
@@ -76,7 +198,10 @@ const MUTATING_FAILURE_HINTS = [
 	"could not",
 ];
 
-export function resolveCurrentPath(toolName: string | undefined, args: Record<string, unknown> | undefined): string | undefined {
+export function resolveCurrentPath(
+	toolName: string | undefined,
+	args: Record<string, unknown> | undefined,
+): string | undefined {
 	if (!toolName || !args) return undefined;
 	const direct = ["path", "file", "filename", "target", "cwd"];
 	for (const key of direct) {
@@ -207,7 +332,9 @@ function extractExecutableHereDocBodies(command: string): string[] {
 			if (current.scanBody) current.lines.push(line);
 			continue;
 		}
-		pending.push(...collectHereDocDescriptors(line).map(({ delimiter, scanBody }) => ({ delimiter, scanBody, lines: [] })));
+		pending.push(
+			...collectHereDocDescriptors(line).map(({ delimiter, scanBody }) => ({ delimiter, scanBody, lines: [] })),
+		);
 	}
 	return bodies;
 }
@@ -403,9 +530,7 @@ function parseGhApiInvocation(args: string[]): { explicitMethod?: string; hasFie
 
 function isMutatingGhApiInvocation(args: string[]): boolean {
 	const { explicitMethod, hasFieldParameters } = parseGhApiInvocation(args);
-	return explicitMethod !== undefined
-		? GH_API_WRITE_METHODS.has(explicitMethod)
-		: hasFieldParameters;
+	return explicitMethod !== undefined ? GH_API_WRITE_METHODS.has(explicitMethod) : hasFieldParameters;
 }
 
 type StructuredShellCommandClassification = "mutating" | "read-only" | "unrecognized";
@@ -417,13 +542,19 @@ function classifyStructuredShellSegment(segment: string): StructuredShellCommand
 	if (executable === "git") {
 		const invocationArgs = tokens.slice(commandIndex + 1);
 		if (hasTerminalReadOnlyFlag(invocationArgs, GIT_TERMINAL_READ_ONLY_FLAGS)) return "read-only";
-		const subcommandIndex = skipLeadingCliOptions(tokens, commandIndex + 1, GIT_GLOBAL_OPTION_VALUE_FLAGS, GIT_GLOBAL_BOOLEAN_FLAGS);
+		const subcommandIndex = skipLeadingCliOptions(
+			tokens,
+			commandIndex + 1,
+			GIT_GLOBAL_OPTION_VALUE_FLAGS,
+			GIT_GLOBAL_BOOLEAN_FLAGS,
+		);
 		const subcommand = tokens[subcommandIndex];
 		const subcommandArgs = tokens.slice(subcommandIndex + 1);
 		if (!subcommand) return "read-only";
 		if (GIT_MUTATING_SUBCOMMANDS.has(subcommand)) return "mutating";
 		if (subcommand === "branch" && isMutatingGitBranchInvocation(subcommandArgs)) return "mutating";
-		if (subcommand === "checkout" && (subcommandArgs.includes("-b") || subcommandArgs.includes("-B"))) return "mutating";
+		if (subcommand === "checkout" && (subcommandArgs.includes("-b") || subcommandArgs.includes("-B")))
+			return "mutating";
 		if (subcommand === "switch" && (subcommandArgs.includes("-c") || subcommandArgs.includes("-C"))) return "mutating";
 		if (subcommand === "stash" && isMutatingGitStashInvocation(subcommandArgs)) return "mutating";
 		if (subcommand === "tag" && isMutatingGitTagInvocation(subcommandArgs)) return "mutating";
@@ -436,7 +567,12 @@ function classifyStructuredShellSegment(segment: string): StructuredShellCommand
 	if (executable === "gh") {
 		const invocationArgs = tokens.slice(commandIndex + 1);
 		if (hasTerminalReadOnlyFlag(invocationArgs, GH_TERMINAL_READ_ONLY_FLAGS)) return "read-only";
-		const subcommandIndex = skipLeadingCliOptions(tokens, commandIndex + 1, GH_GLOBAL_OPTION_VALUE_FLAGS, GH_GLOBAL_BOOLEAN_FLAGS);
+		const subcommandIndex = skipLeadingCliOptions(
+			tokens,
+			commandIndex + 1,
+			GH_GLOBAL_OPTION_VALUE_FLAGS,
+			GH_GLOBAL_BOOLEAN_FLAGS,
+		);
 		const subcommand = tokens[subcommandIndex];
 		const subcommandArgs = tokens.slice(subcommandIndex + 1);
 		if (!subcommand) return "read-only";
@@ -449,8 +585,9 @@ function classifyStructuredShellSegment(segment: string): StructuredShellCommand
 }
 
 function hasMutatingExecutableHereDocBody(command: string): boolean {
-	return extractExecutableHereDocBodies(command)
-		.some((body) => EMBEDDED_FILE_WRITE_PATTERNS.some((pattern) => pattern.test(body)));
+	return extractExecutableHereDocBodies(command).some((body) =>
+		EMBEDDED_FILE_WRITE_PATTERNS.some((pattern) => pattern.test(body)),
+	);
 }
 
 export function isMutatingBashCommand(command: string): boolean {
@@ -484,8 +621,10 @@ export function nextLongRunningTrigger(
 	metrics: LongRunningNoticeMetrics,
 ): LongRunningTriggerReason | undefined {
 	if (metrics.now - metrics.startedAt >= config.activeNoticeAfterMs) return "time_threshold";
-	if (config.activeNoticeAfterTurns !== undefined && metrics.turns >= config.activeNoticeAfterTurns) return "turn_threshold";
-	if (config.activeNoticeAfterTokens !== undefined && metrics.tokens >= config.activeNoticeAfterTokens) return "token_threshold";
+	if (config.activeNoticeAfterTurns !== undefined && metrics.turns >= config.activeNoticeAfterTurns)
+		return "turn_threshold";
+	if (config.activeNoticeAfterTokens !== undefined && metrics.tokens >= config.activeNoticeAfterTokens)
+		return "token_threshold";
 	return undefined;
 }
 

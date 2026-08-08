@@ -62,7 +62,10 @@ function sanitizeUnsafeThinkingBlocks(entries) {
     return sanitized;
 }
 function readSessionEntries(sessionFile) {
-    const lines = fs.readFileSync(sessionFile, "utf-8").split("\n").filter((line) => line.trim().length > 0);
+    const lines = fs
+        .readFileSync(sessionFile, "utf-8")
+        .split("\n")
+        .filter((line) => line.trim().length > 0);
     return lines.map((line, index) => {
         try {
             return JSON.parse(line);
@@ -88,9 +91,9 @@ export function createForkContextResolver(sessionManager, requestedContext, opti
     if (!leafId) {
         throw new Error("Forked subagent context requires a current leaf to fork from.");
     }
-    const openSession = options.openSession
-        ?? sessionManager.openSession
-        ?? ((file, dir) => SessionManager.open(file, dir));
+    const openSession = options.openSession ??
+        sessionManager.openSession ??
+        ((file, dir) => SessionManager.open(file, dir));
     const sessionDir = sessionManager.getSessionDir?.();
     const cachedResolutions = new Map();
     const resolveFork = (index = 0) => {

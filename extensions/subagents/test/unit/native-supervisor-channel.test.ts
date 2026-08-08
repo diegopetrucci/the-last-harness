@@ -48,27 +48,42 @@ function makeState(sessionId: string | null, ctx: unknown): SubagentState {
 	};
 }
 
-function writeRequest(input: { sessionId: string; runId: string; agent?: string; index?: number; message?: string; createdAt?: number; expiresAt?: number }): string {
+function writeRequest(input: {
+	sessionId: string;
+	runId: string;
+	agent?: string;
+	index?: number;
+	message?: string;
+	createdAt?: number;
+	expiresAt?: number;
+}): string {
 	const agent = input.agent ?? "worker";
 	const index = input.index ?? 0;
 	const channelDir = resolveSupervisorChannelDir(input.runId, agent, index);
 	createdChannels.push(channelDir);
 	ensureSupervisorChannelDir(channelDir);
 	const requestId = randomUUID();
-	fs.writeFileSync(path.join(channelDir, "requests", `${requestId}.json`), JSON.stringify({
-		type: "subagent.supervisor.request",
-		id: requestId,
-		createdAt: input.createdAt ?? Date.now(),
-		...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
-		reason: "need_decision",
-		message: input.message ?? "Need a decision",
-		expectsReply: true,
-		orchestratorSessionId: input.sessionId,
-		orchestratorTarget: "shared-name",
-		runId: input.runId,
-		agent,
-		childIndex: index,
-	}, null, "\t"));
+	fs.writeFileSync(
+		path.join(channelDir, "requests", `${requestId}.json`),
+		JSON.stringify(
+			{
+				type: "subagent.supervisor.request",
+				id: requestId,
+				createdAt: input.createdAt ?? Date.now(),
+				...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+				reason: "need_decision",
+				message: input.message ?? "Need a decision",
+				expectsReply: true,
+				orchestratorSessionId: input.sessionId,
+				orchestratorTarget: "shared-name",
+				runId: input.runId,
+				agent,
+				childIndex: index,
+			},
+			null,
+			"\t",
+		),
+	);
 	return requestId;
 }
 
@@ -126,8 +141,12 @@ describe("native supervisor channel", () => {
 		};
 		const pi = {
 			getAllTools: () => [],
-			registerTool: (tool: { name: string }) => { registeredTools.push(tool.name); },
-			sendMessage: (message: { content?: string; details?: { id?: string } }) => { sent.push(message); },
+			registerTool: (tool: { name: string }) => {
+				registeredTools.push(tool.name);
+			},
+			sendMessage: (message: { content?: string; details?: { id?: string } }) => {
+				sent.push(message);
+			},
 			getSessionName: () => "shared-name",
 		};
 		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
@@ -137,9 +156,15 @@ describe("native supervisor channel", () => {
 		channel.dispose();
 
 		assert.deepEqual(registeredTools, [NATIVE_SUPERVISOR_TOOL_NAME, "intercom"]);
-		assert.deepEqual(sent.map((message) => message.details?.id), [matchingId]);
+		assert.deepEqual(
+			sent.map((message) => message.details?.id),
+			[matchingId],
+		);
 		assert.equal(channel.pending.has(matchingId), false, "disposed channel clears pending requests");
-		assert.equal(sent.some((message) => message.details?.id === otherId), false);
+		assert.equal(
+			sent.some((message) => message.details?.id === otherId),
+			false,
+		);
 	});
 
 	it("prunes stale empty supervisor channel directories before polling", () => {
@@ -159,7 +184,9 @@ describe("native supervisor channel", () => {
 		const pi = {
 			getAllTools: () => [],
 			registerTool: () => {},
-			sendMessage: (message: { details?: { id?: string } }) => { sent.push(message); },
+			sendMessage: (message: { details?: { id?: string } }) => {
+				sent.push(message);
+			},
 			getSessionName: () => "shared-name",
 		};
 		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
@@ -218,7 +245,9 @@ describe("native supervisor channel", () => {
 		const pi = {
 			getAllTools: () => [],
 			registerTool: () => {},
-			sendMessage: (message: { details?: { id?: string } }) => { sent.push(message); },
+			sendMessage: (message: { details?: { id?: string } }) => {
+				sent.push(message);
+			},
 			getSessionName: () => "shared-name",
 		};
 		const channel = createNativeSupervisorChannel(pi as never, makeState(persistedSessionFile, ctx));
@@ -226,14 +255,20 @@ describe("native supervisor channel", () => {
 		channel.start();
 		channel.dispose();
 
-		assert.deepEqual(sent.map((message) => message.details?.id), [matchingId]);
+		assert.deepEqual(
+			sent.map((message) => message.details?.id),
+			[matchingId],
+		);
 	});
 
 	it("keeps an installed intercom tool and still exposes a native supervisor reply path", async () => {
 		const currentSessionId = `session-${randomUUID()}`;
 		const runId = `run-${randomUUID()}`;
 		const requestId = writeRequest({ sessionId: currentSessionId, runId });
-		const registeredTools = new Map<string, { execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<unknown> }>();
+		const registeredTools = new Map<
+			string,
+			{ execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<unknown> }
+		>();
 		const ctx = {
 			cwd: process.cwd(),
 			hasUI: false,
@@ -245,7 +280,10 @@ describe("native supervisor channel", () => {
 		};
 		const pi = {
 			getAllTools: () => [{ name: "intercom" }, ...[...registeredTools.keys()].map((name) => ({ name }))],
-			registerTool: (tool: { name: string; execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<unknown> }) => {
+			registerTool: (tool: {
+				name: string;
+				execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<unknown>;
+			}) => {
 				registeredTools.set(tool.name, tool);
 			},
 			sendMessage: () => {},
@@ -258,8 +296,13 @@ describe("native supervisor channel", () => {
 			channel.start();
 
 			assert.deepEqual([...registeredTools.keys()], [NATIVE_SUPERVISOR_TOOL_NAME]);
-			await registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)?.execute("reply", { action: "reply", replyTo: requestId, message: "Approved" });
-			const reply = JSON.parse(fs.readFileSync(replyFile(runId, requestId), "utf-8")) as { message?: string; requestId?: string };
+			await registeredTools
+				.get(NATIVE_SUPERVISOR_TOOL_NAME)
+				?.execute("reply", { action: "reply", replyTo: requestId, message: "Approved" });
+			const reply = JSON.parse(fs.readFileSync(replyFile(runId, requestId), "utf-8")) as {
+				message?: string;
+				requestId?: string;
+			};
 			assert.equal(reply.requestId, requestId);
 			assert.equal(reply.message, "Approved");
 			assert.equal(fs.existsSync(requestFile(runId, requestId)), false);
@@ -282,12 +325,16 @@ describe("native supervisor channel", () => {
 		const cancelledId = writeRequest({ sessionId: currentSessionId, runId: cancelledRunId });
 		const completedId = writeRequest({ sessionId: currentSessionId, runId: completedRunId });
 		const failedId = writeRequest({ sessionId: currentSessionId, runId: failedRunId });
-		fs.writeFileSync(replyFile(resolvedRunId, resolvedId), JSON.stringify({
-			type: "subagent.supervisor.reply",
-			requestId: resolvedId,
-			createdAt: Date.now(),
-			message: "Already handled",
-		}), "utf-8");
+		fs.writeFileSync(
+			replyFile(resolvedRunId, resolvedId),
+			JSON.stringify({
+				type: "subagent.supervisor.reply",
+				requestId: resolvedId,
+				createdAt: Date.now(),
+				message: "Already handled",
+			}),
+			"utf-8",
+		);
 		const sent: Array<{ details?: { id?: string } }> = [];
 		const ctx = {
 			cwd: process.cwd(),
@@ -326,7 +373,9 @@ describe("native supervisor channel", () => {
 		const pi = {
 			getAllTools: () => [],
 			registerTool: () => {},
-			sendMessage: (message: { details?: { id?: string } }) => { sent.push(message); },
+			sendMessage: (message: { details?: { id?: string } }) => {
+				sent.push(message);
+			},
 			getSessionName: () => "shared-name",
 		};
 		const channel = createNativeSupervisorChannel(pi as never, state);
@@ -347,7 +396,15 @@ describe("native supervisor channel", () => {
 		const currentSessionId = `session-${randomUUID()}`;
 		const runId = `run-${randomUUID()}`;
 		writeRequest({ sessionId: currentSessionId, runId, index: 3 });
-		const registeredTools = new Map<string, { execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }> }>();
+		const registeredTools = new Map<
+			string,
+			{
+				execute: (
+					_id: string,
+					params: { action: string; replyTo?: string; message?: string },
+				) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
+			}
+		>();
 		const sent: Array<{ content?: string; details?: { id?: string } }> = [];
 		const ctx = {
 			cwd: process.cwd(),
@@ -373,10 +430,18 @@ describe("native supervisor channel", () => {
 		});
 		const pi = {
 			getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
-			registerTool: (tool: { name: string; execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }> }) => {
+			registerTool: (tool: {
+				name: string;
+				execute: (
+					_id: string,
+					params: { action: string; replyTo?: string; message?: string },
+				) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
+			}) => {
 				registeredTools.set(tool.name, tool);
 			},
-			sendMessage: (message: { content?: string; details?: { id?: string } }) => { sent.push(message); },
+			sendMessage: (message: { content?: string; details?: { id?: string } }) => {
+				sent.push(message);
+			},
 			getSessionName: () => "shared-name",
 		};
 		const channel = createNativeSupervisorChannel(pi as never, state);
@@ -387,18 +452,42 @@ describe("native supervisor channel", () => {
 			assert.match(visible, /Child 3 has a blocking request entering durable pause\./);
 			assert.match(visible, /Blocking request is entering durable pause; wait until subagent status reports paused\./);
 			assert.match(visible, /Once paused, no child process is running\. Then use these exact actions:/);
-			assert.match(visible, new RegExp(`When paused: Resume unchanged: subagent\\(\\{ action: "resume", id: "${runId}", index: 3 \\}\\)`));
-			assert.match(visible, new RegExp(`When paused: Resume with guidance: subagent\\(\\{ action: "resume", id: "${runId}", index: 3, message: "Supervisor replied: \.\.\." \\}\\)`));
-			assert.match(visible, new RegExp(`When paused: Cancel: subagent\\(\\{ action: "interrupt", id: "${runId}", index: 3 \\}\\)`));
+			assert.match(
+				visible,
+				new RegExp(`When paused: Resume unchanged: subagent\\(\\{ action: "resume", id: "${runId}", index: 3 \\}\\)`),
+			);
+			assert.match(
+				visible,
+				new RegExp(
+					`When paused: Resume with guidance: subagent\\(\\{ action: "resume", id: "${runId}", index: 3, message: "Supervisor replied: \.\.\." \\}\\)`,
+				),
+			);
+			assert.match(
+				visible,
+				new RegExp(`When paused: Cancel: subagent\\(\\{ action: "interrupt", id: "${runId}", index: 3 \\}\\)`),
+			);
 			assert.doesNotMatch(visible, new RegExp(`${NATIVE_SUPERVISOR_TOOL_NAME}\\(\\{ action: "reply"`));
 			assert.doesNotMatch(visible, /^No child process is running\./m);
 			assert.doesNotMatch(visible, /^Reply with:/m);
 
-			const pendingResult = await registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("pending", { action: "pending" });
+			const pendingResult = await registeredTools
+				.get(NATIVE_SUPERVISOR_TOOL_NAME)!
+				.execute("pending", { action: "pending" });
 			const pendingText = pendingResult.content[0]!.text;
-			assert.match(pendingText, new RegExp(`When paused: Resume unchanged: subagent\\(\\{ action: "resume", id: "${runId}", index: 3 \\}\\)`));
-			assert.match(pendingText, new RegExp(`When paused: Resume with guidance: subagent\\(\\{ action: "resume", id: "${runId}", index: 3, message: "Supervisor replied: \.\.\." \\}\\)`));
-			assert.match(pendingText, new RegExp(`When paused: Cancel: subagent\\(\\{ action: "interrupt", id: "${runId}", index: 3 \\}\\)`));
+			assert.match(
+				pendingText,
+				new RegExp(`When paused: Resume unchanged: subagent\\(\\{ action: "resume", id: "${runId}", index: 3 \\}\\)`),
+			);
+			assert.match(
+				pendingText,
+				new RegExp(
+					`When paused: Resume with guidance: subagent\\(\\{ action: "resume", id: "${runId}", index: 3, message: "Supervisor replied: \.\.\." \\}\\)`,
+				),
+			);
+			assert.match(
+				pendingText,
+				new RegExp(`When paused: Cancel: subagent\\(\\{ action: "interrupt", id: "${runId}", index: 3 \\}\\)`),
+			);
 			assert.match(pendingText, /Once paused, no child process is running\. Then use these exact actions:/);
 			assert.doesNotMatch(pendingText, new RegExp(`${NATIVE_SUPERVISOR_TOOL_NAME}\\(\\{ action: "reply"`));
 			assert.doesNotMatch(pendingText, /^- .*No child process is running\./m);
@@ -412,7 +501,15 @@ describe("native supervisor channel", () => {
 		const currentSessionId = `session-${randomUUID()}`;
 		const runId = `run-${randomUUID()}`;
 		const requestId = writeRequest({ sessionId: currentSessionId, runId, index: 2 });
-		const registeredTools = new Map<string, { execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }> }>();
+		const registeredTools = new Map<
+			string,
+			{
+				execute: (
+					_id: string,
+					params: { action: string; replyTo?: string; message?: string },
+				) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
+			}
+		>();
 		const sent: Array<{ content?: string; details?: { id?: string } }> = [];
 		const ctx = {
 			cwd: process.cwd(),
@@ -437,10 +534,18 @@ describe("native supervisor channel", () => {
 		});
 		const pi = {
 			getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
-			registerTool: (tool: { name: string; execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }> }) => {
+			registerTool: (tool: {
+				name: string;
+				execute: (
+					_id: string,
+					params: { action: string; replyTo?: string; message?: string },
+				) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
+			}) => {
 				registeredTools.set(tool.name, tool);
 			},
-			sendMessage: (message: { content?: string; details?: { id?: string } }) => { sent.push(message); },
+			sendMessage: (message: { content?: string; details?: { id?: string } }) => {
+				sent.push(message);
+			},
 			getSessionName: () => "shared-name",
 		};
 		const channel = createNativeSupervisorChannel(pi as never, state);
@@ -457,15 +562,23 @@ describe("native supervisor channel", () => {
 			assert.doesNotMatch(visible, /^No child process is running\./m);
 			assert.doesNotMatch(visible, /is durably paused awaiting supervisor guidance/);
 
-			const pendingResult = await registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("pending", { action: "pending" });
+			const pendingResult = await registeredTools
+				.get(NATIVE_SUPERVISOR_TOOL_NAME)!
+				.execute("pending", { action: "pending" });
 			const pendingText = pendingResult.content[0]!.text;
-			assert.match(pendingText, /Blocking request is entering durable pause; wait until subagent status reports paused\./);
+			assert.match(
+				pendingText,
+				/Blocking request is entering durable pause; wait until subagent status reports paused\./,
+			);
 			assert.match(pendingText, /Once paused, no child process is running\. Then use these exact actions:/);
 			assert.match(pendingText, /When paused: Resume unchanged: subagent/);
 			assert.doesNotMatch(pendingText, /is durably paused awaiting supervisor guidance/);
 			assert.doesNotMatch(pendingText, /^- .*No child process is running\./m);
 			await assert.rejects(
-				() => registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", { action: "reply", replyTo: requestId, message: "Too late" }),
+				() =>
+					registeredTools
+						.get(NATIVE_SUPERVISOR_TOOL_NAME)!
+						.execute("reply", { action: "reply", replyTo: requestId, message: "Too late" }),
 				new RegExp(`Supervisor request '${requestId}' is durably pausing; use subagent resume or interrupt instead`),
 			);
 			assert.equal(fs.existsSync(requestFile(runId, requestId, "worker", 2)), true);
@@ -479,17 +592,33 @@ describe("native supervisor channel", () => {
 		const runId = `run-${randomUUID()}`;
 		const requestId = writeRequest({ sessionId: currentSessionId, runId, expiresAt: Date.now() - 1 });
 		const createPi = () => {
-			const registeredTools = new Map<string, { execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }> }>();
+			const registeredTools = new Map<
+				string,
+				{
+					execute: (
+						_id: string,
+						params: { action: string; replyTo?: string; message?: string },
+					) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
+				}
+			>();
 			const sent: Array<{ content?: string; details?: { id?: string } }> = [];
 			return {
 				registeredTools,
 				sent,
 				pi: {
 					getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
-					registerTool: (tool: { name: string; execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }> }) => {
+					registerTool: (tool: {
+						name: string;
+						execute: (
+							_id: string,
+							params: { action: string; replyTo?: string; message?: string },
+						) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
+					}) => {
 						registeredTools.set(tool.name, tool);
 					},
-					sendMessage: (message: { content?: string; details?: { id?: string } }) => { sent.push(message); },
+					sendMessage: (message: { content?: string; details?: { id?: string } }) => {
+						sent.push(message);
+					},
 					getSessionName: () => "shared-name",
 				},
 			};
@@ -514,9 +643,14 @@ describe("native supervisor channel", () => {
 		const first = createPi();
 		const channel = createNativeSupervisorChannel(first.pi as never, state);
 		channel.start();
-		assert.deepEqual(first.sent.map((message) => message.details?.id), [requestId]);
+		assert.deepEqual(
+			first.sent.map((message) => message.details?.id),
+			[requestId],
+		);
 		assert.equal(channel.pending.has(requestId), true);
-		const firstPending = await first.registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("pending", { action: "pending" });
+		const firstPending = await first.registeredTools
+			.get(NATIVE_SUPERVISOR_TOOL_NAME)!
+			.execute("pending", { action: "pending" });
 		assert.match(firstPending.content[0]!.text, /No child process is running\./);
 		assert.equal(fs.existsSync(requestFile(runId, requestId)), true);
 		channel.dispose();
@@ -525,9 +659,17 @@ describe("native supervisor channel", () => {
 		const refreshedChannel = createNativeSupervisorChannel(second.pi as never, state);
 		try {
 			refreshedChannel.start();
-			assert.deepEqual(second.sent.map((message) => message.details?.id), [requestId]);
-			const refreshedPending = await second.registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("pending", { action: "pending" });
-			assert.match(refreshedPending.content[0]!.text, new RegExp(`Resume unchanged: subagent\\(\\{ action: "resume", id: "${runId}", index: 0 \\}\\)`));
+			assert.deepEqual(
+				second.sent.map((message) => message.details?.id),
+				[requestId],
+			);
+			const refreshedPending = await second.registeredTools
+				.get(NATIVE_SUPERVISOR_TOOL_NAME)!
+				.execute("pending", { action: "pending" });
+			assert.match(
+				refreshedPending.content[0]!.text,
+				new RegExp(`Resume unchanged: subagent\\(\\{ action: "resume", id: "${runId}", index: 0 \\}\\)`),
+			);
 			assert.equal(fs.existsSync(requestFile(runId, requestId)), true);
 		} finally {
 			refreshedChannel.dispose();
@@ -538,7 +680,15 @@ describe("native supervisor channel", () => {
 		const currentSessionId = `session-${randomUUID()}`;
 		const runId = `run-${randomUUID()}`;
 		const requestId = writeRequest({ sessionId: currentSessionId, runId });
-		const registeredTools = new Map<string, { execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }> }>();
+		const registeredTools = new Map<
+			string,
+			{
+				execute: (
+					_id: string,
+					params: { action: string; replyTo?: string; message?: string },
+				) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
+			}
+		>();
 		const sent: Array<{ details?: { id?: string } }> = [];
 		const ctx = {
 			cwd: process.cwd(),
@@ -551,27 +701,43 @@ describe("native supervisor channel", () => {
 		};
 		const pi = {
 			getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
-			registerTool: (tool: { name: string; execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }> }) => {
+			registerTool: (tool: {
+				name: string;
+				execute: (
+					_id: string,
+					params: { action: string; replyTo?: string; message?: string },
+				) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
+			}) => {
 				registeredTools.set(tool.name, tool);
 			},
-			sendMessage: (message: { details?: { id?: string } }) => { sent.push(message); },
+			sendMessage: (message: { details?: { id?: string } }) => {
+				sent.push(message);
+			},
 			getSessionName: () => "shared-name",
 		};
 		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
 
 		try {
 			channel.start();
-			assert.deepEqual(sent.map((message) => message.details?.id), [requestId]);
+			assert.deepEqual(
+				sent.map((message) => message.details?.id),
+				[requestId],
+			);
 			assert.equal(channel.pending.has(requestId), true);
 
 			fs.rmSync(requestFile(runId, requestId), { force: true });
-			const pendingResult = await registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("pending", { action: "pending" });
+			const pendingResult = await registeredTools
+				.get(NATIVE_SUPERVISOR_TOOL_NAME)!
+				.execute("pending", { action: "pending" });
 
 			assert.match(pendingResult.content[0]!.text, /No pending supervisor requests/);
 			assert.deepEqual(pendingResult.details?.pending, []);
 			assert.equal(channel.pending.has(requestId), false);
 			await assert.rejects(
-				() => registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", { action: "reply", replyTo: requestId, message: "Too late" }),
+				() =>
+					registeredTools
+						.get(NATIVE_SUPERVISOR_TOOL_NAME)!
+						.execute("reply", { action: "reply", replyTo: requestId, message: "Too late" }),
 				new RegExp(`No pending supervisor request found for replyTo '${requestId}'`),
 			);
 		} finally {
@@ -598,9 +764,18 @@ describe("native supervisor channel", () => {
 		process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
 		try {
 			registerNativeSupervisorClient(pi as never, { includeIntercomFallback: true });
-			assert.match(registeredTools.get("contact_supervisor")?.description ?? "", /durably pause the child until the parent resumes or cancels it/i);
-			assert.match(registeredTools.get("contact_supervisor")?.description ?? "", /no child process keeps running while paused/i);
-			assert.match(registeredTools.get("intercom")?.description ?? "", /durably pause the child until the parent resumes or cancels it/i);
+			assert.match(
+				registeredTools.get("contact_supervisor")?.description ?? "",
+				/durably pause the child until the parent resumes or cancels it/i,
+			);
+			assert.match(
+				registeredTools.get("contact_supervisor")?.description ?? "",
+				/no child process keeps running while paused/i,
+			);
+			assert.match(
+				registeredTools.get("intercom")?.description ?? "",
+				/durably pause the child until the parent resumes or cancels it/i,
+			);
 			assert.match(registeredTools.get("intercom")?.description ?? "", /no child process keeps running while paused/i);
 		} finally {
 			restoreEnv();
@@ -617,10 +792,26 @@ describe("native supervisor channel", () => {
 		process.env[SUBAGENT_RUN_ID_ENV] = runId;
 		process.env[SUBAGENT_CHILD_AGENT_ENV] = "worker";
 		process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
-		const registeredTools = new Map<string, { execute: (_id: string, params: { reason: string; message?: string }, signal?: AbortSignal) => Promise<unknown> | unknown }>();
+		const registeredTools = new Map<
+			string,
+			{
+				execute: (
+					_id: string,
+					params: { reason: string; message?: string },
+					signal?: AbortSignal,
+				) => Promise<unknown> | unknown;
+			}
+		>();
 		const pi = {
 			getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
-			registerTool: (tool: { name: string; execute: (_id: string, params: { reason: string; message?: string }, signal?: AbortSignal) => Promise<unknown> | unknown }) => {
+			registerTool: (tool: {
+				name: string;
+				execute: (
+					_id: string,
+					params: { reason: string; message?: string },
+					signal?: AbortSignal,
+				) => Promise<unknown> | unknown;
+			}) => {
 				registeredTools.set(tool.name, tool);
 			},
 		};
@@ -629,7 +820,10 @@ describe("native supervisor channel", () => {
 		controller.abort();
 
 		await assert.rejects(
-			() => registeredTools.get("contact_supervisor")!.execute("contact", { reason: "need_decision", message: "Need a decision" }, controller.signal),
+			() =>
+				registeredTools
+					.get("contact_supervisor")!
+					.execute("contact", { reason: "need_decision", message: "Need a decision" }, controller.signal),
 			/Supervisor request cancelled/,
 		);
 

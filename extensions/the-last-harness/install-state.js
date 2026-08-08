@@ -16,16 +16,16 @@ function isLocalPackageSource(value) {
         return false;
     }
     const normalized = source.toLowerCase();
-    return (normalized === "."
-        || normalized === ".."
-        || normalized === "~"
-        || source.startsWith("./")
-        || source.startsWith("../")
-        || source.startsWith("~/")
-        || source.startsWith("/")
-        || source.startsWith("\\\\")
-        || /^[A-Za-z]:[\\/]/.test(source)
-        || normalized.startsWith("file:"));
+    return (normalized === "." ||
+        normalized === ".." ||
+        normalized === "~" ||
+        source.startsWith("./") ||
+        source.startsWith("../") ||
+        source.startsWith("~/") ||
+        source.startsWith("/") ||
+        source.startsWith("\\\\") ||
+        /^[A-Za-z]:[\\/]/.test(source) ||
+        normalized.startsWith("file:"));
 }
 function isDefaultPackageSource(state) {
     if (state?.packageSourceIsDefault === true) {

@@ -1,4 +1,14 @@
-import { assert, createReviewHarness, join, makePrimaryFixture, makeTempDir, mkdirSync, test, withEnv, writeFileSync } from "./review-test-helpers.mjs";
+import {
+	assert,
+	createReviewHarness,
+	join,
+	makePrimaryFixture,
+	makeTempDir,
+	mkdirSync,
+	test,
+	withEnv,
+	writeFileSync,
+} from "./review-test-helpers.mjs";
 
 test("/review rejects typed shortcuts and does not open the picker", async (t) => {
 	const cwd = makeTempDir(t, "tlh-review-typed-shortcuts-");
@@ -19,7 +29,7 @@ test("/review rejects typed shortcuts and does not open the picker", async (t) =
 		"commit abc123",
 		"pr 123",
 		"folder src",
-		"uncommitted --extra \"focus on error handling\"",
+		'uncommitted --extra "focus on error handling"',
 	]) {
 		await harness.handler(input, harness.ctx);
 	}
@@ -61,14 +71,11 @@ test("/review without TUI fails clearly because the picker is required", async (
 	]);
 });
 
-
 test("/review still opens the picker when the architect primary agent is active", async (t) => {
 	const fixture = makePrimaryFixture(t, "tlh-review-architect-primary-");
 	const harness = createReviewHarness({
 		cwd: fixture.cwd,
-		branchEntries: [
-			{ type: "custom", customType: "tlh-primary-agent-state", data: { selected: "architect" } },
-		],
+		branchEntries: [{ type: "custom", customType: "tlh-primary-agent-state", data: { selected: "architect" } }],
 		custom: () => undefined,
 		exec: async (command, args) => {
 			throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
@@ -84,7 +91,6 @@ test("/review still opens the picker when the architect primary agent is active"
 	assert.equal(harness.sentMessages.length, 0);
 	assert.deepEqual(harness.notifications, []);
 });
-
 
 test("/review blocks non-architect primary mode before opening the picker or gathering diffs", async (t) => {
 	const fixture = makePrimaryFixture(t, "tlh-review-rush-primary-");
@@ -244,7 +250,8 @@ test("/review picker-selected branch rejects a leading-dash base before git use"
 	assert.equal(harness.sentMessages.length, 0);
 	assert.deepEqual(harness.notifications, [
 		{
-			message: "base cannot start with '-' (got '-feature/parent'). If this is intentional, run the underlying command manually.",
+			message:
+				"base cannot start with '-' (got '-feature/parent'). If this is intentional, run the underlying command manually.",
 			level: "error",
 		},
 	]);
@@ -269,12 +276,12 @@ test("/review picker-selected commit rejects a leading-dash sha before git use",
 	assert.equal(harness.sentMessages.length, 0);
 	assert.deepEqual(harness.notifications, [
 		{
-			message: "sha cannot start with '-' (got '-abc123'). If this is intentional, run the underlying command manually.",
+			message:
+				"sha cannot start with '-' (got '-abc123'). If this is intentional, run the underlying command manually.",
 			level: "error",
 		},
 	]);
 });
-
 
 test("/review picker-selected pr rejects a leading-dash ref before gh use", async (t) => {
 	const cwd = makeTempDir(t, "tlh-review-pr-leading-dash-");
@@ -344,8 +351,7 @@ test("/review picker-selected pr prompts for a PR number before dispatch", async
 			}
 			if (
 				command === "gh" &&
-				args.join(" ") ===
-					"pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
+				args.join(" ") === "pr view 123 --json number,headRefName,baseRefName,isCrossRepository,headRepository"
 			) {
 				return {
 					code: 0,

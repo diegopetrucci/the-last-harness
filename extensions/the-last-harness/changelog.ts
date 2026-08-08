@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 
-import { DynamicBorder, getMarkdownTheme, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import {
+	DynamicBorder,
+	getMarkdownTheme,
+	type ExtensionAPI,
+	type ExtensionCommandContext,
+} from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Text, matchesKey } from "@earendil-works/pi-tui";
 
 const TLH_CHANGELOG_PATH = new URL("../../CHANGELOG.md", import.meta.url);
@@ -45,7 +50,11 @@ async function showTlhChangelogUi(changelog: string, ctx: ExtensionCommandContex
 	return rendered;
 }
 
-export async function handleTlhChangelogCommand(pi: ExtensionAPI, _args: string, ctx: ExtensionCommandContext): Promise<void> {
+export async function handleTlhChangelogCommand(
+	pi: ExtensionAPI,
+	_args: string,
+	ctx: ExtensionCommandContext,
+): Promise<void> {
 	let changelog: string;
 	try {
 		changelog = readTlhChangelog();

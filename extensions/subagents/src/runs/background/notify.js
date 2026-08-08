@@ -60,7 +60,9 @@ function formatResumeLine(details) {
     if (!asyncId || !target || !hasExistingSessionFile(target.sessionPath))
         return undefined;
     if (target.index !== undefined) {
-        if (typeof target.childCount !== "number" || !Number.isInteger(target.childCount) || !isValidChildIndex(target.index, target.childCount))
+        if (typeof target.childCount !== "number" ||
+            !Number.isInteger(target.childCount) ||
+            !isValidChildIndex(target.index, target.childCount))
             return undefined;
     }
     const idLiteral = JSON.stringify(asyncId);
@@ -82,7 +84,9 @@ function formatPausedSupervisorActionLines(details) {
             `Cancel: subagent({ action: "interrupt", id: ${idLiteral} })`,
         ];
     }
-    if (typeof target.childCount !== "number" || !Number.isInteger(target.childCount) || !isValidChildIndex(target.index, target.childCount))
+    if (typeof target.childCount !== "number" ||
+        !Number.isInteger(target.childCount) ||
+        !isValidChildIndex(target.index, target.childCount))
         return [];
     return [
         "No child process is running.",
@@ -102,7 +106,7 @@ function resolveAsyncIdentifier(result) {
     return normalizeAsyncIdentifier(result.id) ?? normalizeAsyncIdentifier(result.runId);
 }
 function isValidChildIndex(value, childCount) {
-    return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0 && value < childCount;
+    return (typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0 && value < childCount);
 }
 function resolveResumeTarget(result, asyncId) {
     if (!asyncId)
@@ -114,9 +118,9 @@ function resolveResumeTarget(result, asyncId) {
     }
     const statusPriority = ["failed", "paused", "completed", "detached"];
     const resumableChild = statusPriority
-        .map((status) => children.find((child) => resolveChildStatus(child) === status
-        && isValidChildIndex(child.index, children.length)
-        && hasExistingSessionFile(child.sessionPath)))
+        .map((status) => children.find((child) => resolveChildStatus(child) === status &&
+        isValidChildIndex(child.index, children.length) &&
+        hasExistingSessionFile(child.sessionPath)))
         .find((child) => child !== undefined);
     const sessionPath = normalizeSessionPath(resumableChild?.sessionPath);
     if (!resumableChild || sessionPath === undefined || !isValidChildIndex(resumableChild.index, children.length))
@@ -128,8 +132,10 @@ function resolveChildStatus(child) {
 }
 function resolveOuterStatus(result) {
     const summary = typeof result.summary === "string" ? result.summary : "";
-    const paused = result.state === "paused" || (result.state !== "failed" && !result.success && (result.exitCode === 0
-        || summary.startsWith("Paused after interrupt.")));
+    const paused = result.state === "paused" ||
+        (result.state !== "failed" &&
+            !result.success &&
+            (result.exitCode === 0 || summary.startsWith("Paused after interrupt.")));
     if (paused)
         return "paused";
     if (!result.success || result.state === "failed" || (typeof result.exitCode === "number" && result.exitCode !== 0))
@@ -146,7 +152,7 @@ function countChildStatuses(children) {
     }
     const ordered = ["completed", "failed", "paused", "detached"];
     const parts = ordered
-        .map((status) => counts.get(status) ? `${counts.get(status)} ${status}` : undefined)
+        .map((status) => (counts.get(status) ? `${counts.get(status)} ${status}` : undefined))
         .filter((part) => Boolean(part));
     return parts.length ? parts.join(", ") : undefined;
 }
@@ -213,23 +219,23 @@ function formatProtectedLifecyclePreview(result) {
     return lines.join("\n").trimEnd() || "Paused awaiting supervisor.";
 }
 function formatResultPreview(result) {
-    const privacySafe = isProtectedPausedLifecycle({ state: result.state, pause: result.pause });
+    const privacySafe = isProtectedPausedLifecycle({
+        state: result.state,
+        pause: result.pause,
+    });
     if (privacySafe)
         return formatProtectedLifecyclePreview(result);
     const children = Array.isArray(result.results) ? result.results : [];
     const nestedBudget = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() };
     if (children.length === 0)
         return boundedSummary(typeof result.summary === "string" ? result.summary : "");
-    const outerFailureSummary = resolveOuterStatus(result) === "failed"
-        && !children.some((child) => resolveChildStatus(child) === "failed")
+    const outerFailureSummary = resolveOuterStatus(result) === "failed" && !children.some((child) => resolveChildStatus(child) === "failed")
         ? boundedSummary(typeof result.summary === "string" ? result.summary : "")
         : "";
     if (children.length === 1) {
         const child = children[0];
-        const childSummary = boundedSummary(child.summary ?? child.output ?? (outerFailureSummary ? "" : result.summary ?? ""));
-        const lines = outerFailureSummary
-            ? [outerFailureSummary, "", childSummary || "(no output)"]
-            : [childSummary];
+        const childSummary = boundedSummary(child.summary ?? child.output ?? (outerFailureSummary ? "" : (result.summary ?? "")));
+        const lines = outerFailureSummary ? [outerFailureSummary, "", childSummary || "(no output)"] : [childSummary];
         lines.push(...formatChildReferences(child, privacySafe));
         lines.push(...formatNestedChildren(child.children, "   ", nestedBudget));
         return lines.join("\n").trim();
@@ -303,21 +309,23 @@ export function formatGroupedCompletion(details) {
 function sendCompletion(pi, details, options = { triggerTurn: true }) {
     if (details.length === 0)
         return;
-    const formatted = details.length === 1
-        ? formatSingleCompletion(details[0])
-        : formatGroupedCompletion(details);
+    const formatted = details.length === 1 ? formatSingleCompletion(details[0]) : formatGroupedCompletion(details);
     const content = truncateWithMarker(formatted, MAX_COMPLETION_MESSAGE_CHARS, "\n… [completion message truncated]");
     const structuredDetails = details.length === 1
         ? {
             ...details[0],
             resultPreview: boundedSummary(details[0].resultPreview),
             ...(details[0].sessionValue ? { sessionValue: boundedReference(details[0].sessionValue) } : {}),
-            ...(details[0].awaitingSupervisor && details[0].resumeTarget ? {
-                resumeTarget: {
-                    ...(details[0].resumeTarget.index !== undefined ? { index: details[0].resumeTarget.index } : {}),
-                    ...(details[0].resumeTarget.childCount !== undefined ? { childCount: details[0].resumeTarget.childCount } : {}),
-                },
-            } : {}),
+            ...(details[0].awaitingSupervisor && details[0].resumeTarget
+                ? {
+                    resumeTarget: {
+                        ...(details[0].resumeTarget.index !== undefined ? { index: details[0].resumeTarget.index } : {}),
+                        ...(details[0].resumeTarget.childCount !== undefined
+                            ? { childCount: details[0].resumeTarget.childCount }
+                            : {}),
+                    },
+                }
+                : {}),
         }
         : undefined;
     pi.sendMessage({
@@ -358,7 +366,10 @@ export function buildCompletionDetails(result) {
         ? ` (${result.taskIndex + 1}/${result.totalTasks})`
         : undefined;
     const hasNormalizedChildResults = Array.isArray(result.results) && result.results.length > 0;
-    const privacySafe = isProtectedPausedLifecycle({ state: result.state, pause: result.pause });
+    const privacySafe = isProtectedPausedLifecycle({
+        state: result.state,
+        pause: result.pause,
+    });
     const session = privacySafe
         ? undefined
         : result.shareUrl
@@ -379,7 +390,9 @@ export function buildCompletionDetails(result) {
         ...(asyncId ? { asyncId } : {}),
         ...(resumeTarget ? { resumeTarget } : {}),
         ...(session ? { sessionLabel: session.label, sessionValue: session.value } : {}),
-        ...(result.state === "paused" && result.pause?.kind === "awaiting_supervisor" ? { awaitingSupervisor: true } : {}),
+        ...(result.state === "paused" && result.pause?.kind === "awaiting_supervisor"
+            ? { awaitingSupervisor: true }
+            : {}),
     };
 }
 export default function registerSubagentNotify(pi, state, options = {}) {

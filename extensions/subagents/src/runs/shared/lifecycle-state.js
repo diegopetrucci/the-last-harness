@@ -11,17 +11,19 @@ const DEFAULT_OWNERLESS_LOCK_STALE_MS = 30_000;
 const WAIT_BUFFER = typeof SharedArrayBuffer !== "undefined" ? new SharedArrayBuffer(4) : undefined;
 const WAIT_VIEW = WAIT_BUFFER ? new Int32Array(WAIT_BUFFER) : undefined;
 function replaceControlCharacters(value) {
-    return [...value].map((character) => {
+    return [...value]
+        .map((character) => {
         const code = character.codePointAt(0) ?? 0;
-        return code <= 0x08 || code === 0x0b || code === 0x0c || (code >= 0x0e && code <= 0x1f) || code === 0x7f ? " " : character;
-    }).join("");
+        return code <= 0x08 || code === 0x0b || code === 0x0c || (code >= 0x0e && code <= 0x1f) || code === 0x7f
+            ? " "
+            : character;
+    })
+        .join("");
 }
 export function boundSupervisorSummary(summary, maxBytes = DEFAULT_MAX_SUMMARY_BYTES) {
     if (typeof summary !== "string")
         return undefined;
-    const normalized = replaceControlCharacters(summary)
-        .replace(/\s+/g, " ")
-        .trim();
+    const normalized = replaceControlCharacters(summary).replace(/\s+/g, " ").trim();
     if (!normalized)
         return undefined;
     let bounded = normalized;
@@ -116,7 +118,13 @@ function normalizeContinuationMetadata(continuation) {
     const launchedAt = parseTimestamp(raw.launchedAt);
     const continuedAt = parseTimestamp(raw.continuedAt);
     const continuationRunId = boundLifecycleToken(raw.continuationRunId);
-    if (!phase && !claimToken && claimedAt === undefined && ownerPid === undefined && launchedAt === undefined && continuedAt === undefined && !continuationRunId)
+    if (!phase &&
+        !claimToken &&
+        claimedAt === undefined &&
+        ownerPid === undefined &&
+        launchedAt === undefined &&
+        continuedAt === undefined &&
+        !continuationRunId)
         return undefined;
     return {
         ...(phase ? { phase } : {}),
@@ -173,7 +181,7 @@ export function withLifecycleContinuation(status, index, continuation) {
     };
 }
 function hasActionablePausedChildren(status) {
-    return status?.some((step) => step.status === "paused" || step.status === "pausing" || step.status === "pending") ?? false;
+    return (status?.some((step) => step.status === "paused" || step.status === "pausing" || step.status === "pending") ?? false);
 }
 export function finalizeLifecycleContinuationStatus(status, index, continuation, continuedAt, continuationRunId) {
     const nextSteps = status.steps?.map((step, stepIndex) => stepIndex === index
@@ -192,13 +200,15 @@ export function finalizeLifecycleContinuationStatus(status, index, continuation,
         endedAt: continuedAt,
         lastUpdate: continuedAt,
         pause: nextRootPause,
-        lifecycle: withLifecycleContinuation(status, index, remainingActionable ? undefined : {
-            ...continuation,
-            phase: "continued",
-            ownerPid: undefined,
-            continuedAt,
-            continuationRunId,
-        }),
+        lifecycle: withLifecycleContinuation(status, index, remainingActionable
+            ? undefined
+            : {
+                ...continuation,
+                phase: "continued",
+                ownerPid: undefined,
+                continuedAt,
+                continuationRunId,
+            }),
         steps: nextSteps,
     };
 }
@@ -230,7 +240,9 @@ export function normalizeAsyncLifecycleStatus(status) {
     const generation = lifecycleGeneration(status);
     return {
         ...status,
-        ...(typeof status.state === "string" ? { state: status.state } : { state: "failed" }),
+        ...(typeof status.state === "string"
+            ? { state: status.state }
+            : { state: "failed" }),
         ...(pause ? { pause } : {}),
         ...(pause ? {} : { pause: undefined }),
         ...(cancel ? { cancel } : {}),
@@ -329,9 +341,10 @@ function readTransitionLockSnapshot(asyncDir) {
     }
 }
 function isCompleteTransitionLockOwner(owner) {
-    return typeof owner.token === "string" && owner.token.length > 0
-        && typeof owner.pid === "number"
-        && typeof owner.acquiredAt === "number";
+    return (typeof owner.token === "string" &&
+        owner.token.length > 0 &&
+        typeof owner.pid === "number" &&
+        typeof owner.acquiredAt === "number");
 }
 function tryRecoverStaleTransitionLock(asyncDir, options = {}) {
     const snapshot = readTransitionLockSnapshot(asyncDir);
@@ -345,17 +358,19 @@ function tryRecoverStaleTransitionLock(asyncDir, options = {}) {
         const latest = readTransitionLockSnapshot(asyncDir);
         if (!latest || !isCompleteTransitionLockOwner(latest.owner))
             return false;
-        if (latest.owner.token !== snapshot.owner.token || latest.owner.pid !== snapshot.owner.pid || latest.owner.acquiredAt !== snapshot.owner.acquiredAt) {
+        if (latest.owner.token !== snapshot.owner.token ||
+            latest.owner.pid !== snapshot.owner.pid ||
+            latest.owner.acquiredAt !== snapshot.owner.acquiredAt) {
             return false;
         }
     }
     else {
-        if ((now - snapshot.mtimeMs) < ownerlessStaleMs)
+        if (now - snapshot.mtimeMs < ownerlessStaleMs)
             return false;
         const latest = readTransitionLockSnapshot(asyncDir);
         if (!latest || isCompleteTransitionLockOwner(latest.owner))
             return false;
-        if (latest.mtimeMs !== snapshot.mtimeMs || ((now - latest.mtimeMs) < ownerlessStaleMs))
+        if (latest.mtimeMs !== snapshot.mtimeMs || now - latest.mtimeMs < ownerlessStaleMs)
             return false;
     }
     try {
@@ -542,7 +557,10 @@ export function recoverStaleLifecycleContinuationClaim(asyncDir, index, options 
     const continuation = lifecycleContinuationForIndex(current, index);
     if (!continuation?.claimToken)
         return { status: current, recovered: false, liveness: "unclaimed" };
-    if (continuation.continuedAt !== undefined || continuation.phase === "continued" || current.state === "continued" || current.steps?.[index]?.status === "continued") {
+    if (continuation.continuedAt !== undefined ||
+        continuation.phase === "continued" ||
+        current.state === "continued" ||
+        current.steps?.[index]?.status === "continued") {
         return { status: current, recovered: false, liveness: "completed" };
     }
     if (continuation.ownerPid === undefined) {
@@ -579,7 +597,11 @@ export function recoverStaleLifecycleContinuationClaim(asyncDir, index, options 
 }
 export function recoverStoppedLifecycleOwnership(status, options = {}) {
     const normalized = normalizeAsyncLifecycleStatus(status);
-    if ((normalized.state !== "paused" && normalized.state !== "cancelled" && normalized.state !== "continued" && normalized.state !== "pausing") || typeof normalized.pid !== "number") {
+    if ((normalized.state !== "paused" &&
+        normalized.state !== "cancelled" &&
+        normalized.state !== "continued" &&
+        normalized.state !== "pausing") ||
+        typeof normalized.pid !== "number") {
         return { status: normalized, repaired: false };
     }
     const now = options.now?.() ?? normalized.lastUpdate;
@@ -593,9 +615,10 @@ export function recoverStoppedLifecycleOwnership(status, options = {}) {
     if (normalized.state === "pausing") {
         if (pidLiveness !== "dead")
             return { status: normalized, repaired: false, pidLiveness };
-        const hasResumeCheckpoint = Boolean(pause?.kind
-            && (pause.requestedAt !== undefined || pause.pausedAt !== undefined)
-            && (normalized.sessionFile || normalized.steps?.some((step) => typeof step.sessionFile === "string" && step.sessionFile.length > 0)));
+        const hasResumeCheckpoint = Boolean(pause?.kind &&
+            (pause.requestedAt !== undefined || pause.pausedAt !== undefined) &&
+            (normalized.sessionFile ||
+                normalized.steps?.some((step) => typeof step.sessionFile === "string" && step.sessionFile.length > 0)));
         if (!hasResumeCheckpoint)
             return { status: normalized, repaired: false, pidLiveness };
         const pausedAt = pause?.pausedAt ?? now ?? Date.now();

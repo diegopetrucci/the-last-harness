@@ -113,10 +113,15 @@ function versionFromTag(tag) {
 function extractChangelogSection(changelog, version) {
 	const normalized = changelog.replace(/\r\n/g, "\n");
 	const escapedVersion = escapeRegExp(version);
-	const headingPattern = new RegExp(`^##[ \\t]+(?:\\[${escapedVersion}\\]|${escapedVersion})(?:[ \\t]+-[ \\t]+[^\\n]+)?[ \\t]*$`, "m");
+	const headingPattern = new RegExp(
+		`^##[ \\t]+(?:\\[${escapedVersion}\\]|${escapedVersion})(?:[ \\t]+-[ \\t]+[^\\n]+)?[ \\t]*$`,
+		"m",
+	);
 	const match = headingPattern.exec(normalized);
 	if (!match) {
-		throw new Error(`CHANGELOG.md is missing a section for ${version}. Expected a heading like "## [${version}] - YYYY-MM-DD".`);
+		throw new Error(
+			`CHANGELOG.md is missing a section for ${version}. Expected a heading like "## [${version}] - YYYY-MM-DD".`,
+		);
 	}
 
 	const sectionStart = match.index + match[0].length;
@@ -135,9 +140,10 @@ function buildNotes(args) {
 	const changelog = readFileSync(args.changelogPath, "utf8");
 	const section = extractChangelogSection(changelog, version);
 	const ref = args.ref ?? tag;
-	const suffix = args.repository && ref
-		? `\n\n---\n\nFull changelog: https://github.com/${args.repository}/blob/${ref}/CHANGELOG.md\n`
-		: "\n";
+	const suffix =
+		args.repository && ref
+			? `\n\n---\n\nFull changelog: https://github.com/${args.repository}/blob/${ref}/CHANGELOG.md\n`
+			: "\n";
 	return `${section}${suffix}`;
 }
 

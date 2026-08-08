@@ -10,7 +10,9 @@ interface DetectErrorResult {
 
 type DetectSubagentError = (messages: unknown[]) => DetectErrorResult;
 
-const { detectSubagentError } = await import("../../src/shared/utils.ts") as { detectSubagentError: DetectSubagentError };
+const { detectSubagentError } = (await import("../../src/shared/utils.ts")) as {
+	detectSubagentError: DetectSubagentError;
+};
 const available = true;
 
 /**
@@ -75,18 +77,14 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 	});
 
 	it("detects bash fatal pattern (permission denied, no assistant response)", () => {
-		const messages = [
-			toolResult("bash", "ls: permission denied: /root/secret"),
-		];
+		const messages = [toolResult("bash", "ls: permission denied: /root/secret")];
 		const result = detectSubagentError(messages);
 		assert.equal(result.hasError, true);
 		assert.equal(result.errorType, "bash");
 	});
 
 	it("detects bash exit code in output", () => {
-		const messages = [
-			toolResult("bash", "error: process exited with code 127"),
-		];
+		const messages = [toolResult("bash", "error: process exited with code 127")];
 		const result = detectSubagentError(messages);
 		assert.equal(result.hasError, true);
 		assert.equal(result.exitCode, 127);
@@ -103,8 +101,7 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 			assistantMsg("Here is my complete review..."),
 		];
 		const result = detectSubagentError(messages);
-		assert.equal(result.hasError, false,
-			"error before agent's final text response should be ignored");
+		assert.equal(result.hasError, false, "error before agent's final text response should be ignored");
 	});
 
 	it("ignores error as final tool result when agent produced text response after", () => {
@@ -119,8 +116,7 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 			assistantMsg("## Complete Review\n\nHere are all my findings..."),
 		];
 		const result = detectSubagentError(messages);
-		assert.equal(result.hasError, false,
-			"agent produced substantive output after error — not a failure");
+		assert.equal(result.hasError, false, "agent produced substantive output after error — not a failure");
 	});
 
 	it("ignores bash fatal pattern when agent responded after", () => {
@@ -129,8 +125,7 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 			assistantMsg("I couldn't access /root/secret, but I found the data elsewhere."),
 		];
 		const result = detectSubagentError(messages);
-		assert.equal(result.hasError, false,
-			"fatal pattern before agent's text response = recovered");
+		assert.equal(result.hasError, false, "fatal pattern before agent's text response = recovered");
 	});
 
 	// ---- Errors AFTER the last assistant text response are still caught ----
@@ -160,13 +155,9 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 	// ---- Edge cases ----
 
 	it("flags error when no assistant messages at all", () => {
-		const messages = [
-			toolResult("read", "ok"),
-			toolResult("bash", "segmentation fault"),
-		];
+		const messages = [toolResult("read", "ok"), toolResult("bash", "segmentation fault")];
 		const result = detectSubagentError(messages);
-		assert.equal(result.hasError, true,
-			"no assistant response = no recovery evidence");
+		assert.equal(result.hasError, true, "no assistant response = no recovery evidence");
 	});
 
 	it("does not treat tool-call-only assistant message as recovery", () => {
@@ -180,25 +171,17 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 			toolResult("bash", "command succeeded"),
 		];
 		const result = detectSubagentError(messages);
-		assert.equal(result.hasError, true,
-			"tool-call assistant message without text is not a recovery");
+		assert.equal(result.hasError, true, "tool-call assistant message without text is not a recovery");
 	});
 
 	it("does not treat empty/whitespace assistant message as recovery", () => {
-		const messages = [
-			toolResult("read", "EISDIR: illegal operation on a directory", true),
-			assistantMsg("   "),
-		];
+		const messages = [toolResult("read", "EISDIR: illegal operation on a directory", true), assistantMsg("   ")];
 		const result = detectSubagentError(messages);
-		assert.equal(result.hasError, true,
-			"whitespace-only assistant message is not a recovery");
+		assert.equal(result.hasError, true, "whitespace-only assistant message is not a recovery");
 	});
 
 	it("returns no error when only assistant messages (no tool results)", () => {
-		const messages = [
-			assistantMsg("Hello, I'm ready to help."),
-			assistantMsg("Here's my analysis."),
-		];
+		const messages = [assistantMsg("Hello, I'm ready to help."), assistantMsg("Here's my analysis.")];
 		assert.equal(detectSubagentError(messages).hasError, false);
 	});
 
@@ -212,17 +195,14 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 			assistantMsg("Got what I needed. Here's the full review."),
 		];
 		const result = detectSubagentError(messages);
-		assert.equal(result.hasError, false,
-			"all errors have recovery — agent completed successfully");
+		assert.equal(result.hasError, false, "all errors have recovery — agent completed successfully");
 	});
 
 	// ---- Real-world regression test ----
 
 	it("real-world: 19-read review run with trailing EISDIR", () => {
 		// Simulate the actual _impl-reviewer run that produced a false positive
-		const readResults = Array.from({ length: 18 }, (_, i) =>
-			toolResult("read", `contents of file ${i + 1}`),
-		);
+		const readResults = Array.from({ length: 18 }, (_, i) => toolResult("read", `contents of file ${i + 1}`));
 		const messages = [
 			...readResults,
 			toolResult("bash", "npm test\n46 pass\n2 fail\nTests 48"),
@@ -230,7 +210,6 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 			assistantMsg("## Implementation Review\n\n" + "x".repeat(13000)),
 		];
 		const result = detectSubagentError(messages);
-		assert.equal(result.hasError, false,
-			"complete review with trailing EISDIR must not be flagged as failure");
+		assert.equal(result.hasError, false, "complete review with trailing EISDIR must not be flagged as failure");
 	});
 });

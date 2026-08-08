@@ -9,6 +9,9 @@ const HERDR_SOURCE = "herdr:tlh";
 const HERDR_AGENT = "pi";
 const CMUX_STATUS_KEY = "tlh";
 const DEFAULT_IDLE_DEBOUNCE_MS = 250;
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 20000;
+const MIN_HEARTBEAT_INTERVAL_MS = 1000;
+const MAX_HEARTBEAT_INTERVAL_MS = 2_147_483_647;
 const HERDR_SOCKET_ATTEMPT_TIMEOUTS_MS = [500, 1500] as const;
 
 type TimeoutHandle = ReturnType<typeof setTimeout>;
@@ -21,7 +24,7 @@ type TimerApi = {
 type StateSender = (state: "working" | "idle") => Promise<void>;
 
 type TlhActivityReporter = {
-	handleSessionStart(ctx: Pick<ExtensionContext, "hasUI" | "sessionManager">): void;
+	handleSessionStart(ctx: Pick<ExtensionContext, "mode" | "sessionManager">): void;
 	handleSnapshot(snapshot: TlhEffectiveActivitySnapshot): void;
 	handleSessionShutdown(): void;
 	dispose(): void;
@@ -64,6 +67,17 @@ function parseDurationEnv(env: NodeJS.ProcessEnv, name: string, fallback: number
 	return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+function parseHeartbeatIntervalEnv(env: NodeJS.ProcessEnv): number | undefined {
+	const raw = env.HERDR_TLH_HEARTBEAT_MS;
+	if (raw === undefined || raw.trim().length === 0) return DEFAULT_HEARTBEAT_INTERVAL_MS;
+	const parsed = Number(raw);
+	if (!Number.isFinite(parsed)) return DEFAULT_HEARTBEAT_INTERVAL_MS;
+	if (parsed === 0) return undefined;
+	return parsed >= MIN_HEARTBEAT_INTERVAL_MS && parsed <= MAX_HEARTBEAT_INTERVAL_MS
+		? parsed
+		: DEFAULT_HEARTBEAT_INTERVAL_MS;
+}
+
 function createNoopReporter(): TlhActivityReporter {
 	return {
 		handleSessionStart() {},
@@ -76,6 +90,7 @@ function createNoopReporter(): TlhActivityReporter {
 function createQueuedStateReporter(
 	sendState: StateSender,
 	options: TlhActivityReporterOptions = {},
+	onStateCommitted?: (state: "working" | "idle") => void,
 ): Pick<TlhActivityReporter, "handleSnapshot" | "handleSessionShutdown" | "dispose"> {
 	const timers: TimerApi = {
 		setTimeout: options.timers?.setTimeout ?? setTimeout,
@@ -98,6 +113,7 @@ function createQueuedStateReporter(
 		if (disposed || lastQueuedState === state) return;
 		queuedState = state;
 		lastQueuedState = state;
+		onStateCommitted?.(state);
 		if (!sendInFlight) {
 			void drainQueue();
 		}
@@ -253,6 +269,8 @@ function defaultHerdrRequestSender(
 				return;
 			}
 		}
+		// Exhausted retries resolve by design: this reporter is best-effort, and
+		// heartbeats can recover delivery when the socket returns.
 	};
 }
 
@@ -274,70 +292,158 @@ export function createHerdrActivityReporter(options: HerdrActivityReporterOption
 	let reportSeq = now() * 1000;
 	let sessionRef: ActivitySessionRef = {};
 	let rootSession = false;
-	let released = false;
+	let disposed = false;
+
+	const heartbeatIntervalMs = parseHeartbeatIntervalEnv(env);
+	const heartbeatTimers: TimerApi = {
+		setTimeout: options.timers?.setTimeout ?? setTimeout,
+		clearTimeout: options.timers?.clearTimeout ?? clearTimeout,
+	};
+	let desiredState: "working" | "idle" | undefined;
+	let lastReportedState: "working" | "idle" | undefined;
+	let heartbeatTimer: TimeoutHandle | undefined;
+	let heartbeatStopped = false;
+	let heartbeatStarted = false;
+	let outboundChain: Promise<void> = Promise.resolve();
 
 	const nextReportSeq = (): number => {
 		reportSeq += 1;
 		return reportSeq;
 	};
 
-	const sendState = async (state: "working" | "idle"): Promise<void> => {
-		released = false;
+	// State and heartbeat deliveries share this chain. Sequence numbers are
+	// allocated by each task only when it reaches the front of the chain.
+	const enqueueOutbound = (task: () => Promise<void>): Promise<void> => {
+		const delivery = outboundChain.then(task);
+		outboundChain = delivery.catch(() => {});
+		return delivery;
+	};
+
+	const sendStateCore = async (state: "working" | "idle"): Promise<void> => {
 		await sendRequest({
 			id: `${HERDR_SOURCE}:${now()}:${Math.random().toString(36).slice(2)}`,
 			method: "pane.report_agent",
-			params: withSessionRef({
-				pane_id: paneId,
-				source: HERDR_SOURCE,
-				agent: HERDR_AGENT,
-				state,
-				seq: nextReportSeq(),
-			}, sessionRef),
+			params: withSessionRef(
+				{
+					pane_id: paneId,
+					source: HERDR_SOURCE,
+					agent: HERDR_AGENT,
+					state,
+					seq: nextReportSeq(),
+				},
+				sessionRef,
+			),
 		});
 	};
 
-	const queuedReporter = createQueuedStateReporter(sendState, {
-		idleDebounceMs: options.idleDebounceMs ?? parseDurationEnv(env, "HERDR_TLH_IDLE_DEBOUNCE_MS", DEFAULT_IDLE_DEBOUNCE_MS),
-		timers: options.timers,
-	});
+	const stopHeartbeat = (): void => {
+		heartbeatStopped = true;
+		if (heartbeatTimer) {
+			heartbeatTimers.clearTimeout(heartbeatTimer);
+			heartbeatTimer = undefined;
+		}
+	};
+
+	const scheduleHeartbeat = (): void => {
+		if (heartbeatIntervalMs === undefined || heartbeatStopped || !rootSession || disposed) return;
+		heartbeatTimer = heartbeatTimers.setTimeout(() => {
+			heartbeatTimer = undefined;
+			if (heartbeatStopped || !rootSession || disposed) return;
+			const heartbeatDelivery = enqueueOutbound(async () => {
+				// Shutdown/dispose may happen while this heartbeat waits behind an
+				// earlier delivery; do not send after the session has ended.
+				if (heartbeatStopped || !rootSession || disposed) return;
+				// Read desiredState here, not when the timer fires, so a queued
+				// heartbeat cannot replay a stale state after a newer snapshot.
+				const state = desiredState ?? lastReportedState;
+				if (state === undefined) return;
+				await sendStateCore(state);
+				lastReportedState = state;
+			});
+			// A heartbeat failure must not break the outbound chain; schedule the
+			// next recovery attempt only after this delivery settles.
+			void heartbeatDelivery
+				.catch(() => undefined)
+				.finally(() => {
+					if (!heartbeatStopped && rootSession && !disposed) scheduleHeartbeat();
+				});
+		}, heartbeatIntervalMs);
+		(heartbeatTimer as { unref?: () => void }).unref?.();
+	};
+
+	const sendState: StateSender = () => {
+		return enqueueOutbound(async () => {
+			if (!rootSession || disposed) return;
+			const state = desiredState;
+			if (state === undefined) return;
+			await sendStateCore(state);
+			lastReportedState = state;
+			if (!heartbeatStarted) {
+				heartbeatStarted = true;
+				// The default sender resolves after exhausted socket retries on
+				// purpose, so this still starts best-effort recovery heartbeats.
+				scheduleHeartbeat();
+			}
+		});
+	};
+
+	const queuedReporter = createQueuedStateReporter(
+		sendState,
+		{
+			idleDebounceMs:
+				options.idleDebounceMs ?? parseDurationEnv(env, "HERDR_TLH_IDLE_DEBOUNCE_MS", DEFAULT_IDLE_DEBOUNCE_MS),
+			timers: options.timers,
+		},
+		(state) => {
+			// This callback runs only when the queued reporter commits a transition,
+			// so idle remains debounced while outbound tasks can read the latest state.
+			desiredState = state;
+		},
+	);
 
 	return {
 		handleSessionStart(ctx) {
-			if (!ctx.hasUI) return;
+			if (disposed || ctx.mode !== "tui") {
+				rootSession = false;
+				return;
+			}
 			rootSession = true;
 			sessionRef = readSessionRef(ctx);
 			if (!sessionRef.agentSessionId && !sessionRef.agentSessionPath) return;
+			const startedSessionRef = sessionRef;
 			void sendRequest({
 				id: `${HERDR_SOURCE}:session:${now()}:${Math.random().toString(36).slice(2)}`,
 				method: "pane.report_agent_session",
-				params: withSessionRef({
-					pane_id: paneId,
-					source: HERDR_SOURCE,
-					agent: HERDR_AGENT,
-					seq: nextReportSeq(),
-				}, sessionRef),
+				params: withSessionRef(
+					{
+						pane_id: paneId,
+						source: HERDR_SOURCE,
+						agent: HERDR_AGENT,
+						seq: nextReportSeq(),
+					},
+					startedSessionRef,
+				),
 			}).catch(() => undefined);
 		},
 		handleSnapshot(snapshot) {
-			if (!rootSession) return;
+			if (!rootSession || disposed) return;
 			queuedReporter.handleSnapshot(snapshot);
 		},
 		handleSessionShutdown() {
-			if (!rootSession || released) return;
-			released = true;
+			if (!rootSession) return;
+			rootSession = false;
+			stopHeartbeat();
 			queuedReporter.handleSessionShutdown();
-			void sendRequest({
-				id: `${HERDR_SOURCE}:release:${now()}:${Math.random().toString(36).slice(2)}`,
-				method: "pane.release_agent",
-				params: {
-					pane_id: paneId,
-					source: HERDR_SOURCE,
-					agent: HERDR_AGENT,
-					seq: nextReportSeq(),
-				},
-			}).catch(() => undefined);
+			// No pane.release_agent: herdr v0.8.0 (commit e608a751) made pane
+			// ownership release process-owned on confirmed agent exit. Sending
+			// an explicit release here clears the pane's hook authority
+			// mid-session, causing the pane to show idle while the architect
+			// is still working. Do not re-add this call.
 		},
 		dispose() {
+			disposed = true;
+			rootSession = false;
+			stopHeartbeat();
 			queuedReporter.dispose();
 		},
 	};
@@ -378,11 +484,9 @@ function sanitizeCmuxStatusKeySegment(value: string): string | undefined {
 	return sanitized.length > 0 ? sanitized : undefined;
 }
 
-function getCmuxStatusKey(
-	env: NodeJS.ProcessEnv,
-	ctx: Pick<ExtensionContext, "sessionManager">,
-): string {
-	const surfaceSegment = typeof env.CMUX_SURFACE_ID === "string" ? sanitizeCmuxStatusKeySegment(env.CMUX_SURFACE_ID) : undefined;
+function getCmuxStatusKey(env: NodeJS.ProcessEnv, ctx: Pick<ExtensionContext, "sessionManager">): string {
+	const surfaceSegment =
+		typeof env.CMUX_SURFACE_ID === "string" ? sanitizeCmuxStatusKeySegment(env.CMUX_SURFACE_ID) : undefined;
 	if (surfaceSegment) {
 		return `${CMUX_STATUS_KEY}-${surfaceSegment}`;
 	}
@@ -420,7 +524,7 @@ export function createCmuxActivityReporter(options: CmuxActivityReporterOptions 
 	const queuedReporter = createQueuedStateReporter(sendState, options);
 	return {
 		handleSessionStart(ctx) {
-			rootSession = ctx.hasUI;
+			rootSession = ctx.mode === "tui";
 			if (!rootSession) return;
 			statusKey = getCmuxStatusKey(env, ctx);
 		},

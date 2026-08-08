@@ -61,9 +61,7 @@ function formatSkillSourceCounts(skills) {
         "builtin",
         "unknown",
     ];
-    const parts = ordered
-        .map((source) => `${source} ${counts.get(source) ?? 0}`)
-        .filter((part) => !part.endsWith(" 0"));
+    const parts = ordered.map((source) => `${source} ${counts.get(source) ?? 0}`).filter((part) => !part.endsWith(" 0"));
     return parts.length > 0 ? parts.join(", ") : "none";
 }
 function formatConfiguredSessionDir(input) {
@@ -93,9 +91,9 @@ function formatRuntimeDirCounts(paths) {
         nestedRunsDir: path.join(paths.tempRootDir, "nested-subagent-runs"),
         nestedEventsDir: path.join(paths.tempRootDir, "nested-subagent-events"),
     });
-    return `- runtime dir counts: async ${counts.topLevelAsyncDirs + counts.nestedAsyncDirs} `
-        + `(top-level ${counts.topLevelAsyncDirs}, nested ${counts.nestedAsyncDirs}, active/live ${counts.activeOrLiveAsyncDirs}, stale ${counts.staleAsyncDirs}); `
-        + `nested event routes ${counts.nestedEventDirs} (unreferenced ${counts.unreferencedNestedEventDirs})`;
+    return (`- runtime dir counts: async ${counts.topLevelAsyncDirs + counts.nestedAsyncDirs} ` +
+        `(top-level ${counts.topLevelAsyncDirs}, nested ${counts.nestedAsyncDirs}, active/live ${counts.activeOrLiveAsyncDirs}, stale ${counts.staleAsyncDirs}); ` +
+        `nested event routes ${counts.nestedEventDirs} (unreferenced ${counts.unreferencedNestedEventDirs})`);
 }
 function formatDiscovery(input, deps) {
     return [

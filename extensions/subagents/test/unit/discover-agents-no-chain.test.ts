@@ -27,14 +27,30 @@ describe("discoverAgentsAll saved-chain exclusion", () => {
 	});
 
 	it("keeps saved chain paths stable but does not discover user or project chains", () => {
-		writeFile(path.join(tempDir, "agent-home", "agents", "user-agent.md"), `---\nname: user-agent\ndescription: User agent\n---\n\nUse user agent.\n`);
-		writeFile(path.join(tempDir, "agent-home", "chains", "user-flow.chain.md"), `---\nname: user-flow\ndescription: User flow\n---\n\n## user-agent\n\nInspect.\n`);
-		writeFile(path.join(tempDir, ".pi", "agents", "project-agent.md"), `---\nname: project-agent\ndescription: Project agent\n---\n\nUse project agent.\n`);
-		writeFile(path.join(tempDir, ".pi", "chains", "project-flow.chain.json"), JSON.stringify({
-			name: "project-flow",
-			description: "Project flow",
-			chain: [{ agent: "project-agent", task: "Inspect" }],
-		}, null, 2));
+		writeFile(
+			path.join(tempDir, "agent-home", "agents", "user-agent.md"),
+			`---\nname: user-agent\ndescription: User agent\n---\n\nUse user agent.\n`,
+		);
+		writeFile(
+			path.join(tempDir, "agent-home", "chains", "user-flow.chain.md"),
+			`---\nname: user-flow\ndescription: User flow\n---\n\n## user-agent\n\nInspect.\n`,
+		);
+		writeFile(
+			path.join(tempDir, ".pi", "agents", "project-agent.md"),
+			`---\nname: project-agent\ndescription: Project agent\n---\n\nUse project agent.\n`,
+		);
+		writeFile(
+			path.join(tempDir, ".pi", "chains", "project-flow.chain.json"),
+			JSON.stringify(
+				{
+					name: "project-flow",
+					description: "Project flow",
+					chain: [{ agent: "project-agent", task: "Inspect" }],
+				},
+				null,
+				2,
+			),
+		);
 		const discovered = discoverAgentsAll(tempDir);
 
 		assert.ok(discovered.user.some((agent) => agent.name === "user-agent"));

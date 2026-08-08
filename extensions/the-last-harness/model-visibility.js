@@ -52,10 +52,7 @@ export function normalizeTlhModelVisibilityConfig(config) {
     return {
         disabled: config.disabled === true,
         hidden: normalizePatternList(config.hidden),
-        visible: uniqueSorted([
-            ...normalizePatternList(config.visible),
-            ...normalizePatternList(config.unhide),
-        ]),
+        visible: uniqueSorted([...normalizePatternList(config.visible), ...normalizePatternList(config.unhide)]),
     };
 }
 function readTlhSettings() {
@@ -222,14 +219,17 @@ export function getUnfilteredAvailableModels(modelSource) {
     if ("modelRegistry" in modelSource && modelSource.modelRegistry) {
         return getUnfilteredAvailableModels(modelSource.modelRegistry);
     }
-    const compatibilityRuntime = modelSource.runtime;
+    const compatibilityRuntime = modelSource
+        .runtime;
     if (compatibilityRuntime) {
         return getUnfilteredRuntimeAvailableSnapshot(compatibilityRuntime);
     }
     if ("getAvailable" in modelSource && typeof modelSource.getAvailable === "function") {
         const modelRegistryPrototype = Object.getPrototypeOf(modelSource);
         const originalGetAvailable = modelRegistryPrototype?.[TLH_MODEL_VISIBILITY_GET_AVAILABLE_ORIGINAL];
-        return originalGetAvailable ? originalGetAvailable.call(modelSource) : modelSource.getAvailable();
+        return originalGetAvailable
+            ? originalGetAvailable.call(modelSource)
+            : modelSource.getAvailable();
     }
     return [];
 }

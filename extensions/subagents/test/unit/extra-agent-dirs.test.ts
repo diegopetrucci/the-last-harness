@@ -83,7 +83,6 @@ describe("PI_SUBAGENT_EXTRA_AGENT_DIRS discovery", () => {
 		const localPath = writeAgent(path.join(agentDir, "agents"), "shared");
 		writeJson(path.join(agentDir, "settings.json"), {
 			subagents: {
-				disableBuiltins: true,
 				agentDirs: ["configured/agents"],
 			},
 		});
@@ -93,12 +92,20 @@ describe("PI_SUBAGENT_EXTRA_AGENT_DIRS discovery", () => {
 		const matches = scoped.agents.filter((agent) => agent.name === "shared");
 		assert.equal(matches.length, 1, "name collisions must dedupe");
 		assert.equal(matches[0]?.filePath, localPath, "local user agent should win over configured and bundled dirs");
-		assert.equal(scoped.agents.find((agent) => agent.name === "configured-wins")?.filePath, configuredOnly, "configured dirs should win over bundled dirs when no local override exists");
+		assert.equal(
+			scoped.agents.find((agent) => agent.name === "configured-wins")?.filePath,
+			configuredOnly,
+			"configured dirs should win over bundled dirs when no local override exists",
+		);
 
 		const all = discoverAgentsAll(cwd);
 		assert.equal(all.user.find((agent) => agent.name === "shared")?.filePath, localPath);
 		assert.equal(all.user.find((agent) => agent.name === "configured-wins")?.filePath, configuredOnly);
-		assert.equal(all.user.some((agent) => agent.filePath === configuredShared), false, "configured duplicates should be hidden by the higher-precedence local agent");
+		assert.equal(
+			all.user.some((agent) => agent.filePath === configuredShared),
+			false,
+			"configured duplicates should be hidden by the higher-precedence local agent",
+		);
 	});
 
 	it("ignores the env var when unset or empty", () => {

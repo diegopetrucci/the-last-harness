@@ -159,7 +159,10 @@ function writeTlhStartupStateAtomically(statePath: string, content: string): voi
 
 	const stateDir = dirname(statePath);
 	const stateBase = basename(statePath);
-	const tempPath = join(stateDir, `.${stateBase}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`);
+	const tempPath = join(
+		stateDir,
+		`.${stateBase}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`,
+	);
 	let fd: number | undefined;
 	let cleanupError: unknown;
 	try {
@@ -218,8 +221,7 @@ function settingsBackupTimestamp(): string {
 function writeCollisionSafeSettingsBackup(settingsPath: string, current: string): string {
 	const timestamp = settingsBackupTimestamp();
 	for (let suffix = 0; suffix <= SETTINGS_BACKUP_SUFFIX_RETRY_LIMIT; suffix += 1) {
-		const backupPath =
-			suffix === 0 ? `${settingsPath}.bak-${timestamp}` : `${settingsPath}.bak-${timestamp}-${suffix}`;
+		const backupPath = suffix === 0 ? `${settingsPath}.bak-${timestamp}` : `${settingsPath}.bak-${timestamp}-${suffix}`;
 		try {
 			writeFileSync(backupPath, current, { encoding: "utf8", flag: "wx", mode: 0o600 });
 			return backupPath;

@@ -18,17 +18,15 @@ interface CleanupOwnedProcessGroupDeps {
 }
 
 function isMissingProcessError(error: unknown): boolean {
-	return typeof error === "object"
-		&& error !== null
-		&& "code" in error
-		&& (error as NodeJS.ErrnoException).code === "ESRCH";
+	return (
+		typeof error === "object" && error !== null && "code" in error && (error as NodeJS.ErrnoException).code === "ESRCH"
+	);
 }
 
 function isPermissionError(error: unknown): boolean {
-	return typeof error === "object"
-		&& error !== null
-		&& "code" in error
-		&& (error as NodeJS.ErrnoException).code === "EPERM";
+	return (
+		typeof error === "object" && error !== null && "code" in error && (error as NodeJS.ErrnoException).code === "EPERM"
+	);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -54,7 +52,11 @@ function probeProcessGroup(processGroupId: number, kill: KillFn): boolean {
 	}
 }
 
-function signalProcessGroup(processGroupId: number, signal: NodeJS.Signals, kill: KillFn): { sent: boolean; warning?: string } {
+function signalProcessGroup(
+	processGroupId: number,
+	signal: NodeJS.Signals,
+	kill: KillFn,
+): { sent: boolean; warning?: string } {
 	try {
 		return { sent: kill(-processGroupId, signal) };
 	} catch (error) {
@@ -144,7 +146,8 @@ export async function cleanupOwnedProcessGroup(
 				...(warnings.length ? { warnings } : {}),
 			};
 		}
-		if (phase.signal !== "SIGKILL") warnings.push(`Owned child processes remained after ${phase.signal}; escalating cleanup.`);
+		if (phase.signal !== "SIGKILL")
+			warnings.push(`Owned child processes remained after ${phase.signal}; escalating cleanup.`);
 	}
 
 	warnings.push("Owned child process cleanup could not be confirmed after SIGKILL.");
@@ -165,11 +168,16 @@ export async function cleanupOwnedProcessGroup(
 export function formatOwnedProcessGroupCleanup(cleanup: ChildProcessCleanupResult): string {
 	if (cleanup.skippedReason === "soft_pause") return "Process cleanup skipped for soft-paused run.";
 	if (cleanup.skippedReason === "unsupported_platform") return "Owned process cleanup is unavailable on this platform.";
-	if (cleanup.skippedReason === "process_group_unavailable") return "Owned process cleanup is unavailable because no verified child process group was tracked.";
-	if (cleanup.terminated && cleanup.liveProcessesDetected === false) return "The owned child process group had no live processes to clean up.";
-	if (cleanup.terminated && cleanup.escalatedToSigkill) return "Cleaned up the owned child process group after escalating through SIGKILL.";
-	if (cleanup.terminated && cleanup.signals?.includes("SIGTERM")) return "Cleaned up the owned child process group after escalating through SIGTERM.";
+	if (cleanup.skippedReason === "process_group_unavailable")
+		return "Owned process cleanup is unavailable because no verified child process group was tracked.";
+	if (cleanup.terminated && cleanup.liveProcessesDetected === false)
+		return "The owned child process group had no live processes to clean up.";
+	if (cleanup.terminated && cleanup.escalatedToSigkill)
+		return "Cleaned up the owned child process group after escalating through SIGKILL.";
+	if (cleanup.terminated && cleanup.signals?.includes("SIGTERM"))
+		return "Cleaned up the owned child process group after escalating through SIGTERM.";
 	if (cleanup.terminated) return "Cleaned up the owned child process group with SIGINT.";
-	if (cleanup.escalatedToSigkill) return "Cleanup escalated through SIGKILL, but owned child process exit could not be confirmed.";
+	if (cleanup.escalatedToSigkill)
+		return "Cleanup escalated through SIGKILL, but owned child process exit could not be confirmed.";
 	return "Owned child process cleanup could not be confirmed.";
 }

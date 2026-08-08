@@ -50,16 +50,28 @@ function createEvents() {
 	};
 }
 
-function createExecutor(root: string, events = createEvents(), agents = [makeAgent("worker"), makeAgent("producer"), makeAgent("reviewer")]) {
+function createExecutor(
+	root: string,
+	events = createEvents(),
+	agents = [makeAgent("worker"), makeAgent("producer"), makeAgent("reviewer")],
+) {
 	return {
 		events,
 		executor: createSubagentExecutor({
-			pi: { events: events.api, getSessionName() { return "parent"; } } as any,
+			pi: {
+				events: events.api,
+				getSessionName() {
+					return "parent";
+				},
+			} as any,
 			state: createState(),
 			config: { maxSubagentDepth: 2, control: {}, intercomBridge: {} } as any,
 			asyncByDefault: false,
 			tempArtifactsDir: root,
-			getSubagentSessionRoot: (parentSessionFile) => parentSessionFile ? path.join(path.dirname(parentSessionFile), path.basename(parentSessionFile, ".jsonl")) : root,
+			getSubagentSessionRoot: (parentSessionFile) =>
+				parentSessionFile
+					? path.join(path.dirname(parentSessionFile), path.basename(parentSessionFile, ".jsonl"))
+					: root,
 			expandTilde: (value) => value,
 			discoverAgents: () => ({ agents }),
 			kill: () => true,
@@ -91,7 +103,13 @@ describe("reviewed dispatch route preflight", () => {
 		];
 
 		for (const testCase of cases) {
-			const result = await executor.execute(`reviewed-${testCase.label}`, testCase.params, new AbortController().signal, undefined, makeMinimalCtx(root));
+			const result = await executor.execute(
+				`reviewed-${testCase.label}`,
+				testCase.params,
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(root),
+			);
 			assert.equal(result.isError, true, testCase.label);
 			assertReviewedRejection(result.content[0]?.text ?? "");
 		}
@@ -106,7 +124,14 @@ describe("reviewed dispatch route preflight", () => {
 			task: "Implement fix",
 			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: root, currentSessionId: "session" },
-			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
 			shareEnabled: false,
 			maxSubagentDepth: 2,
 			acceptance: { level: "reviewed", review: false },
@@ -132,7 +157,14 @@ describe("reviewed dispatch route preflight", () => {
 				chain: testCase.chain as any,
 				agents: [makeAgent("worker"), makeAgent("producer"), makeAgent("reviewer")],
 				ctx: { pi: { events: { emit() {} } }, cwd: root, currentSessionId: "session" },
-				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				artifactConfig: {
+					enabled: false,
+					includeInput: false,
+					includeOutput: false,
+					includeJsonl: false,
+					includeMetadata: false,
+					cleanupDays: 7,
+				},
 				shareEnabled: false,
 				maxSubagentDepth: 2,
 			});
@@ -153,24 +185,40 @@ describe("reviewed dispatch route preflight", () => {
 		fs.mkdirSync(sourceAsyncDir, { recursive: true });
 		fs.mkdirSync(RESULTS_DIR, { recursive: true });
 		fs.writeFileSync(sourceSession, "", "utf-8");
-		fs.writeFileSync(path.join(sourceAsyncDir, "status.json"), JSON.stringify({
-			runId: sourceRunId,
-			mode: "single",
-			state: "running",
-			pid: process.pid,
-			startedAt: 1,
-			lastUpdate: 1,
-			cwd: root,
-			steps: [{ agent: "worker", status: "running", sessionFile: sourceSession }],
-		}, null, 2), "utf-8");
-		fs.writeFileSync(sourceResultPath, JSON.stringify({
-			id: sourceRunId,
-			agent: "worker",
-			mode: "single",
-			success: true,
-			state: "complete",
-			results: [{ agent: "worker", output: "root output", success: true, sessionFile: sourceSession }],
-		}, null, 2), "utf-8");
+		fs.writeFileSync(
+			path.join(sourceAsyncDir, "status.json"),
+			JSON.stringify(
+				{
+					runId: sourceRunId,
+					mode: "single",
+					state: "running",
+					pid: process.pid,
+					startedAt: 1,
+					lastUpdate: 1,
+					cwd: root,
+					steps: [{ agent: "worker", status: "running", sessionFile: sourceSession }],
+				},
+				null,
+				2,
+			),
+			"utf-8",
+		);
+		fs.writeFileSync(
+			sourceResultPath,
+			JSON.stringify(
+				{
+					id: sourceRunId,
+					agent: "worker",
+					mode: "single",
+					success: true,
+					state: "complete",
+					results: [{ agent: "worker", output: "root output", success: true, sessionFile: sourceSession }],
+				},
+				null,
+				2,
+			),
+			"utf-8",
+		);
 		const { executor, events } = createExecutor(root);
 
 		const result = await executor.execute(
@@ -188,6 +236,9 @@ describe("reviewed dispatch route preflight", () => {
 		assert.equal(result.isError, true);
 		assert.match(result.content[0]?.text ?? "", /Saved chains are deliberately unsupported in The Last Harness/);
 		assert.equal(result.details?.asyncId, undefined);
-		assert.equal(events.emitted.some((entry) => entry.channel === SUBAGENT_ASYNC_STARTED_EVENT), false);
+		assert.equal(
+			events.emitted.some((entry) => entry.channel === SUBAGENT_ASYNC_STARTED_EVENT),
+			false,
+		);
 	});
 });

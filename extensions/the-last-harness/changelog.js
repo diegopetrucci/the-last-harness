@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { DynamicBorder, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder, getMarkdownTheme, } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Text, matchesKey } from "@earendil-works/pi-tui";
 const TLH_CHANGELOG_PATH = new URL("../../CHANGELOG.md", import.meta.url);
 export const TLH_CHANGELOG_COMMAND_DESCRIPTION = "Show TLH release notes from the packaged changelog";

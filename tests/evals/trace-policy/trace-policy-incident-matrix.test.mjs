@@ -84,10 +84,14 @@ test("workflow incident matrix is present and well-formed", () => {
 			continue;
 		}
 
-		assert.equal(Array.isArray(entry.coverage.fixtureIds), false, `planned entry should not declare fixtureIds: ${entry.id}`);
+		assert.equal(
+			Array.isArray(entry.coverage.fixtureIds),
+			false,
+			`planned entry should not declare fixtureIds: ${entry.id}`,
+		);
 		assert.ok(
-			(typeof entry.coverage.ownerTicket === "string" && entry.coverage.ownerTicket.length > 0)
-				|| (typeof entry.coverage.owner === "string" && entry.coverage.owner.length > 0),
+			(typeof entry.coverage.ownerTicket === "string" && entry.coverage.ownerTicket.length > 0) ||
+				(typeof entry.coverage.owner === "string" && entry.coverage.owner.length > 0),
 			`planned entry missing owner or ownerTicket: ${entry.id}`,
 		);
 	}

@@ -2,7 +2,8 @@ export const TRACE_POLICY_INCIDENT_MATRIX = [
 	{
 		id: "gh-205-final-validation-no-edit",
 		incident: "gh-205",
-		invariant: "Validation-only/final-validation developer runs may complete successfully with no source edits when validation passes and the task explicitly says not to edit unless validation fails in scope.",
+		invariant:
+			"Validation-only/final-validation developer runs may complete successfully with no source edits when validation passes and the task explicitly says not to edit unless validation fails in scope.",
 		sourceKind: "synthetic",
 		coverage: {
 			status: "covered",
@@ -13,7 +14,8 @@ export const TRACE_POLICY_INCIDENT_MATRIX = [
 	{
 		id: "gh-217-subagent-agentdirs-preserved",
 		incident: "gh-217",
-		invariant: "TLH install/update/settings merge must preserve or repair bundled subagents.agentDirs without clobbering overrides.",
+		invariant:
+			"TLH install/update/settings merge must preserve or repair bundled subagents.agentDirs without clobbering overrides.",
 		sourceKind: "settings-fixture",
 		coverage: {
 			status: "planned",
@@ -49,7 +51,8 @@ export const TRACE_POLICY_INCIDENT_MATRIX = [
 	{
 		id: "architect-paused-subagent-recovery-boundary",
 		incident: "gh-241",
-		invariant: "A paused or interrupted developer dispatch is recoverable state, not authorization for architect to edit directly; architect must resume, re-dispatch, ask, or stop.",
+		invariant:
+			"A paused or interrupted developer dispatch is recoverable state, not authorization for architect to edit directly; architect must resume, re-dispatch, ask, or stop.",
 		sourceKind: "synthetic",
 		coverage: {
 			status: "covered",
@@ -64,21 +67,20 @@ export const TRACE_POLICY_INCIDENT_MATRIX = [
 	{
 		id: "architect-review-digest-boundary",
 		incident: "gh-241",
-		invariant: "Architect must digest code-reviewer output into its own review summary instead of relaying raw reviewer text.",
+		invariant:
+			"Architect must digest code-reviewer output into its own review summary instead of relaying raw reviewer text.",
 		sourceKind: "synthetic",
 		coverage: {
 			status: "covered",
-			fixtureIds: [
-				"architect-valid-digested-review-summary",
-				"architect-invalid-raw-reviewer-relay",
-			],
+			fixtureIds: ["architect-valid-digested-review-summary", "architect-invalid-raw-reviewer-relay"],
 			ownerTicket: "tlhf-hsdl",
 		},
 	},
 	{
 		id: "architect-deterministic-research-routing",
 		incident: "gh-256",
-		invariant: "Architect research routing follows explicit fixture metadata for unambiguous scenarios instead of natural-language intent classification.",
+		invariant:
+			"Architect research routing follows explicit fixture metadata for unambiguous scenarios instead of natural-language intent classification.",
 		sourceKind: "synthetic",
 		coverage: {
 			status: "covered",
@@ -97,7 +99,8 @@ export const TRACE_POLICY_INCIDENT_MATRIX = [
 	{
 		id: "developer-ticket-source-before-edit",
 		incident: "gh-241",
-		invariant: "Developer must run and obey tk show <id> before editing, and must stop if the assigned ticket cannot be shown.",
+		invariant:
+			"Developer must run and obey tk show <id> before editing, and must stop if the assigned ticket cannot be shown.",
 		sourceKind: "synthetic",
 		coverage: {
 			status: "covered",
@@ -114,7 +117,8 @@ export const TRACE_POLICY_INCIDENT_MATRIX = [
 	{
 		id: "developer-blocking-contact-supervisor-stop-boundary",
 		incident: "gh-256",
-		invariant: "Developer must stop after a blocking contact_supervisor escalation fails or is unavailable; successful blocking escalation may continue, and a blocker report with no further tool work remains allowed.",
+		invariant:
+			"Developer must stop after a blocking contact_supervisor escalation fails or is unavailable; successful blocking escalation may continue, and a blocker report with no further tool work remains allowed.",
 		sourceKind: "synthetic",
 		coverage: {
 			status: "covered",
@@ -130,7 +134,8 @@ export const TRACE_POLICY_INCIDENT_MATRIX = [
 	{
 		id: "developer-pre-existing-changes-preservation-boundary",
 		incident: "gh-331",
-		invariant: "The #331 pre-existing-changes boundary activates only when metadata.hasPreExistingChanges is exactly true. For Developer, risky Git commands that can overwrite or discard pre-existing changes require reviewed scoped authorization set to exact true; safe read-only Git variants and ordinary branch switches remain allowed. Bare '.' and '..' checkout operands are unambiguous paths and are classified destructive; other single bare operands (possible branch names) remain ambiguous and are not flagged. That authorization never bypasses other mutation boundaries, including Architect direct-source-mutation protection.",
+		invariant:
+			"The #331 pre-existing-changes boundary activates only when metadata.hasPreExistingChanges is exactly true. For Developer, risky Git commands that can overwrite or discard pre-existing changes require reviewed scoped authorization set to exact true; safe read-only Git variants and ordinary branch switches remain allowed. Bare '.' and '..' checkout operands are unambiguous paths and are classified destructive; other single bare operands (possible branch names) remain ambiguous and are not flagged. That authorization never bypasses other mutation boundaries, including Architect direct-source-mutation protection.",
 		sourceKind: "synthetic",
 		coverage: {
 			status: "covered",
@@ -164,7 +169,8 @@ export const TRACE_POLICY_INCIDENT_MATRIX = [
 	{
 		id: "web-scout-citation-discipline",
 		incident: "gh-241",
-		invariant: "Web-scout output includes URL, UTC retrieval timestamp, and short verbatim quote/source evidence using deterministic mechanical citation checks only.",
+		invariant:
+			"Web-scout output includes URL, UTC retrieval timestamp, and short verbatim quote/source evidence using deterministic mechanical citation checks only.",
 		sourceKind: "synthetic",
 		coverage: {
 			status: "covered",
@@ -181,7 +187,8 @@ export const TRACE_POLICY_INCIDENT_MATRIX = [
 	{
 		id: "installer-profile-isolation-safety",
 		incident: "gh-241",
-		invariant: "TLH install/update/eval tooling must use isolated temp/profile paths and must not mutate normal ~/.pi/agent.",
+		invariant:
+			"TLH install/update/eval tooling must use isolated temp/profile paths and must not mutate normal ~/.pi/agent.",
 		sourceKind: "live-smoke",
 		coverage: {
 			status: "planned",

@@ -1,10 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { registerNativeSupervisorClient } from "../../intercom/native-supervisor-channel.js";
-import { consumeChildMessageRequestsFromDir, writeChildMessageRequestToDir } from "../background/control-channel.js";
+import { consumeChildMessageRequestsFromDir, writeChildMessageRequestToDir, } from "../background/control-channel.js";
 import { SUBAGENT_STEER_INBOX_ENV } from "./pi-args.js";
-import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.js";
-import { TOOL_BUDGET_ENV, decodeToolBudgetEnv, shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge } from "./tool-budget.js";
+import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue, } from "./structured-output.js";
+import { TOOL_BUDGET_ENV, decodeToolBudgetEnv, shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge, } from "./tool-budget.js";
 const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
 const SUBAGENT_INHERIT_SKILLS_ENV = "PI_SUBAGENT_INHERIT_SKILLS";
 export const SUBAGENT_INTERCOM_SESSION_NAME_ENV = "PI_SUBAGENT_INTERCOM_SESSION_NAME";
@@ -88,9 +88,7 @@ export function rewriteSubagentPrompt(prompt, options) {
 }
 function isParentOnlySubagentMessage(message) {
     const m = message;
-    return m?.role === "custom"
-        && typeof m.customType === "string"
-        && PARENT_ONLY_CUSTOM_MESSAGE_TYPES.has(m.customType);
+    return m?.role === "custom" && typeof m.customType === "string" && PARENT_ONLY_CUSTOM_MESSAGE_TYPES.has(m.customType);
 }
 function isSubagentToolResultMessage(message) {
     const m = message;
@@ -156,7 +154,8 @@ function registerToolBudget(pi, budget) {
         return;
     let toolCount = 0;
     let softNudged = false;
-    const sendUserMessage = pi.sendUserMessage;
+    const sendUserMessage = pi
+        .sendUserMessage;
     const onRuntimeEvent = pi.on;
     onRuntimeEvent("tool_call", (event) => {
         const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
@@ -178,7 +177,8 @@ function registerSteeringInbox(pi) {
     const steerInbox = process.env[SUBAGENT_STEER_INBOX_ENV]?.trim();
     if (!steerInbox)
         return;
-    const sendUserMessage = pi.sendUserMessage;
+    const sendUserMessage = pi
+        .sendUserMessage;
     if (typeof sendUserMessage !== "function")
         return;
     let canSteer = false;
@@ -237,7 +237,14 @@ function registerSteeringInbox(pi) {
     };
     const onRuntimeEvent = pi.on;
     onRuntimeEvent("session_start", () => start());
-    for (const eventName of ["message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_end", "turn_end"]) {
+    for (const eventName of [
+        "message_start",
+        "message_update",
+        "message_end",
+        "tool_execution_start",
+        "tool_execution_end",
+        "turn_end",
+    ]) {
         onRuntimeEvent(eventName, activate);
     }
     onRuntimeEvent("session_shutdown", () => {

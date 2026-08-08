@@ -168,10 +168,12 @@ test("architect before_agent_start preserves medium floor selection but restores
 			cwd: fixture.cwd,
 			sessionManager: { getBranch: () => branch },
 			ui: { notify() {} },
-			modelRegistry: { getAvailable: () => [
-				{ provider: "anthropic", id: "claude-opus-5" },
-				{ provider: "anthropic", id: "claude-opus-4-8" },
-			] },
+			modelRegistry: {
+				getAvailable: () => [
+					{ provider: "anthropic", id: "claude-opus-5" },
+					{ provider: "anthropic", id: "claude-opus-4-8" },
+				],
+			},
 			model: { provider: "anthropic", id: "claude-opus-5" },
 		});
 
@@ -180,7 +182,11 @@ test("architect before_agent_start preserves medium floor selection but restores
 
 		pi.thinkingLevel = "medium";
 		await beforeAgentStart({ systemPrompt: "base prompt" }, makeCtx([]));
-		assert.equal(pi.thinkingLevel, "medium", "before_agent_start preserves a current level that satisfies architect's floor");
+		assert.equal(
+			pi.thinkingLevel,
+			"medium",
+			"before_agent_start preserves a current level that satisfies architect's floor",
+		);
 
 		await beforeAgentStart(
 			{ systemPrompt: "base prompt" },
@@ -245,9 +251,11 @@ test("locked primary (rush) overrides global applyThinking=false and applyModel=
 		// Use a different initial model so applyPrimaryModel actually calls setModel
 		await runtime.applySessionStart({
 			cwd: fixture.cwd,
-			sessionManager: { getBranch: () => [
-				{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
-			]},
+			sessionManager: {
+				getBranch: () => [
+					{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "rush" } },
+				],
+			},
 			ui: { notify() {} },
 			modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-opus-4-8" }] },
 			model: { provider: "anthropic", id: "claude-opus-4-6" },
@@ -330,7 +338,9 @@ test("primary runtime defers missing-tool startup warnings and restores late sup
 			"session_start should not warn about supervisor tools that register later in the lifecycle",
 		);
 
-		pi.allTools = ["read", "grep", "find", "ls", "bash", "subagent", "subagent_supervisor", "intercom"].map((name) => ({ name }));
+		pi.allTools = ["read", "grep", "find", "ls", "bash", "subagent", "subagent_supervisor", "intercom"].map((name) => ({
+			name,
+		}));
 		pi.activeTools = [...pi.activeTools, "subagent_supervisor", "intercom"];
 
 		await beforeAgentStart({ systemPrompt: "base prompt" }, makeCtx());
@@ -383,9 +393,14 @@ test("model override resolution: stored override is applied when the model is in
 	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
 	// Bundled default for rushLikePrimary on Anthropic is anthropic/claude-sonnet-4-6.
 	// Store a different available Anthropic model so override precedence is observable.
-	const initialSettings = JSON.stringify({
-		tlh: { primaryAgent: { modelOverrides: { architect: "anthropic/claude-opus-5" } } },
-	}, null, 2) + "\n";
+	const initialSettings =
+		JSON.stringify(
+			{
+				tlh: { primaryAgent: { modelOverrides: { architect: "anthropic/claude-opus-5" } } },
+			},
+			null,
+			2,
+		) + "\n";
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		writeFileSync(join(fixture.agent, "settings.json"), initialSettings);
@@ -413,9 +428,14 @@ test("model override resolution: stored override is applied when the model is in
 test("model override resolution: falls back to bundled default when override model is unavailable", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
-	const initialSettings = JSON.stringify({
-		tlh: { primaryAgent: { modelOverrides: { architect: "openai-codex/gpt-5.6-luna" } } },
-	}, null, 2) + "\n";
+	const initialSettings =
+		JSON.stringify(
+			{
+				tlh: { primaryAgent: { modelOverrides: { architect: "openai-codex/gpt-5.6-luna" } } },
+			},
+			null,
+			2,
+		) + "\n";
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		writeFileSync(join(fixture.agent, "settings.json"), initialSettings);
@@ -478,9 +498,14 @@ test("model_select listener writes override to settings when user picks a non-de
 test("model_select listener clears override when user reselects the primary's bundled default model", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
-	const initialSettings = JSON.stringify({
-		tlh: { primaryAgent: { modelOverrides: { architect: "openai-codex/gpt-5.6-luna" } } },
-	}, null, 2) + "\n";
+	const initialSettings =
+		JSON.stringify(
+			{
+				tlh: { primaryAgent: { modelOverrides: { architect: "openai-codex/gpt-5.6-luna" } } },
+			},
+			null,
+			2,
+		) + "\n";
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		writeFileSync(join(fixture.agent, "settings.json"), initialSettings);

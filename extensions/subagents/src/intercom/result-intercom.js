@@ -87,23 +87,31 @@ function compactNestedRun(run, depth = 0) {
         ...(run.endedAt !== undefined ? { endedAt: run.endedAt } : {}),
         ...(run.lastUpdate !== undefined ? { lastUpdate: run.lastUpdate } : {}),
         ...(run.error ? { error: run.error } : {}),
-        ...(run.steps?.length ? { steps: run.steps.slice(0, 12).map((step) => ({
-                agent: step.agent,
-                status: step.status,
-                ...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
-                ...(step.activityState ? { activityState: step.activityState } : {}),
-                ...(step.lastActivityAt !== undefined ? { lastActivityAt: step.lastActivityAt } : {}),
-                ...(step.currentTool ? { currentTool: step.currentTool } : {}),
-                ...(step.currentToolStartedAt !== undefined ? { currentToolStartedAt: step.currentToolStartedAt } : {}),
-                ...(step.currentPath ? { currentPath: step.currentPath } : {}),
-                ...(step.turnCount !== undefined ? { turnCount: step.turnCount } : {}),
-                ...(step.toolCount !== undefined ? { toolCount: step.toolCount } : {}),
-                ...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
-                ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
-                ...(step.error ? { error: step.error } : {}),
-                ...(depth < 2 && step.children?.length ? { children: step.children.slice(0, 8).map((child) => compactNestedRun(child, depth + 1)) } : {}),
-            })) } : {}),
-        ...(depth < 2 && run.children?.length ? { children: run.children.slice(0, 8).map((child) => compactNestedRun(child, depth + 1)) } : {}),
+        ...(run.steps?.length
+            ? {
+                steps: run.steps.slice(0, 12).map((step) => ({
+                    agent: step.agent,
+                    status: step.status,
+                    ...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
+                    ...(step.activityState ? { activityState: step.activityState } : {}),
+                    ...(step.lastActivityAt !== undefined ? { lastActivityAt: step.lastActivityAt } : {}),
+                    ...(step.currentTool ? { currentTool: step.currentTool } : {}),
+                    ...(step.currentToolStartedAt !== undefined ? { currentToolStartedAt: step.currentToolStartedAt } : {}),
+                    ...(step.currentPath ? { currentPath: step.currentPath } : {}),
+                    ...(step.turnCount !== undefined ? { turnCount: step.turnCount } : {}),
+                    ...(step.toolCount !== undefined ? { toolCount: step.toolCount } : {}),
+                    ...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
+                    ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
+                    ...(step.error ? { error: step.error } : {}),
+                    ...(depth < 2 && step.children?.length
+                        ? { children: step.children.slice(0, 8).map((child) => compactNestedRun(child, depth + 1)) }
+                        : {}),
+                })),
+            }
+            : {}),
+        ...(depth < 2 && run.children?.length
+            ? { children: run.children.slice(0, 8).map((child) => compactNestedRun(child, depth + 1)) }
+            : {}),
     };
 }
 export function compactNestedResultChildren(children) {
@@ -120,7 +128,9 @@ export function attachNestedChildrenToResultChildren(runId, children, nestedChil
         const alreadyAttachedIds = new Set(child.children?.map((nested) => nested.id) ?? []);
         const attached = compact.filter((nested) => nested.parentRunId === runId && nested.parentStepIndex === childIndex && !alreadyAttachedIds.has(nested.id));
         const fallbackAttached = children.length === 1
-            ? compact.filter((nested) => nested.parentRunId === runId && nested.parentStepIndex === undefined && !alreadyAttachedIds.has(nested.id))
+            ? compact.filter((nested) => nested.parentRunId === runId &&
+                nested.parentStepIndex === undefined &&
+                !alreadyAttachedIds.has(nested.id))
             : [];
         const merged = compactNestedResultChildren([...(child.children ?? []), ...attached, ...fallbackAttached]);
         return merged?.length ? { ...child, children: merged } : { ...child, children: undefined };
@@ -240,14 +250,21 @@ function compactNativeForegroundSuffixText(value, maxChars) {
         return "";
     if (trimmed.length <= maxChars)
         return trimmed;
-    const lines = trimmed.split("\n").map((line) => line.trimEnd()).filter((line) => line.trim().length > 0);
+    const lines = trimmed
+        .split("\n")
+        .map((line) => line.trimEnd())
+        .filter((line) => line.trim().length > 0);
     const heading = boundedNativeForegroundLabel(lines[0] ?? "Additional details:");
     const fullPatchesLine = lines.find((line) => line.startsWith("Full patches:"));
     const boundedPatchesLine = fullPatchesLine
         ? `Full patches: ${boundedNativeForegroundReference(fullPatchesLine.slice("Full patches:".length).trim())}`
         : undefined;
     const marker = "… [suffix truncated; inspect retained details, artifacts, or sessions for full appended output]";
-    const protectedLines = [heading, marker, ...(boundedPatchesLine && boundedPatchesLine !== heading ? [boundedPatchesLine] : [])];
+    const protectedLines = [
+        heading,
+        marker,
+        ...(boundedPatchesLine && boundedPatchesLine !== heading ? [boundedPatchesLine] : []),
+    ];
     const compact = protectedLines.join("\n");
     if (compact.length <= maxChars)
         return compact;

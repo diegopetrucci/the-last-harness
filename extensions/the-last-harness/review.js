@@ -1,11 +1,11 @@
 import { lstat, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { REVIEW_MODES, REVIEW_MODE_DESCRIPTIONS, decideBranchAction, tokenizeArgs, parseReviewArgs } from "./review-args.js";
+import { REVIEW_MODES, REVIEW_MODE_DESCRIPTIONS, decideBranchAction, tokenizeArgs, parseReviewArgs, } from "./review-args.js";
 export { REVIEW_MODES, decideBranchAction, parseReviewArgs } from "./review-args.js";
 import { buildReviewEnvelope, parseNullDelimitedGitPaths, buildSnapshotParts, appendUntrackedSnapshot, } from "./review-envelope.js";
 export { buildReviewEnvelope } from "./review-envelope.js";
 import { isGhGraphqlQuotaFailure, resolveGitHubPrRef, fetchPrMetadataViaRest, fetchPrDiffViaRest, } from "./review-github.js";
-import { DynamicBorder, getAgentDir, getSelectListTheme, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder, getAgentDir, getSelectListTheme, SettingsManager, } from "@earendil-works/pi-coding-agent";
 import { Container, matchesKey, SelectList, Text } from "@earendil-works/pi-tui";
 import { primaryAgentSelectionFromBranch, resolvePrimaryAgentConfig } from "../the-last-harness-primary-agent.mjs";
 const REVIEW_TITLE = "Choose a review mode";
@@ -125,7 +125,10 @@ async function resolveRepoRoot(pi, cwd, context) {
 }
 function rejectFlagLike(value, fieldName) {
     if (value.startsWith("-")) {
-        return { ok: false, message: `${fieldName} cannot start with '-' (got '${value}'). If this is intentional, run the underlying command manually.` };
+        return {
+            ok: false,
+            message: `${fieldName} cannot start with '-' (got '${value}'). If this is intentional, run the underlying command manually.`,
+        };
     }
     return { ok: true };
 }
@@ -150,15 +153,16 @@ async function gatherUncommitted(pi, cmdCtx) {
     if (repoRootResult.ok === false) {
         return { ok: false, message: repoRootResult.message };
     }
-    const untrackedResult = await pi.exec("git", ["ls-files", "-z", "--others", "--exclude-standard", "--", "."], { cwd: repoRootResult.root });
+    const untrackedResult = await pi.exec("git", ["ls-files", "-z", "--others", "--exclude-standard", "--", "."], {
+        cwd: repoRootResult.root,
+    });
     if (untrackedResult.code !== 0) {
         const message = detectNotGitRepo(untrackedResult.stderr)
             ? "Not inside a git repository. Run /review from a directory that contains a .git folder."
             : `git ls-files for untracked files failed: ${untrackedResult.stderr.trim()}`;
         return { ok: false, message };
     }
-    const untrackedFiles = parseNullDelimitedGitPaths(untrackedResult.stdout)
-        .map((filePath) => resolve(repoRootResult.root, filePath));
+    const untrackedFiles = parseNullDelimitedGitPaths(untrackedResult.stdout).map((filePath) => resolve(repoRootResult.root, filePath));
     const untrackedParts = await buildSnapshotParts(repoRootResult.root, untrackedFiles, "untracked file");
     const body = appendUntrackedSnapshot(diffResult.stdout, untrackedParts);
     return {
@@ -296,8 +300,7 @@ async function gatherFolder(pi, cmdCtx, paths) {
         if (pathStat.isDirectory()) {
             const lsResult = await pi.exec("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."], { cwd: absPath });
             if (lsResult.code === 0) {
-                filePaths = parseNullDelimitedGitPaths(lsResult.stdout)
-                    .map((filePath) => join(absPath, filePath));
+                filePaths = parseNullDelimitedGitPaths(lsResult.stdout).map((filePath) => join(absPath, filePath));
             }
             else if (detectNotGitRepo(lsResult.stderr)) {
                 filePaths = await walkDir(absPath);

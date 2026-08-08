@@ -442,7 +442,14 @@ async function getWorkingTreeReviewChanges(pi, repoRoot, repositoryHasHead) {
     return getWorkingTreeSnapshotChanges(pi, repoRoot, repositoryHasHead ? "HEAD" : null);
 }
 async function listReviewableRepositoryPaths(pi, repoRoot) {
-    const output = await runGitAllowFailure(pi, repoRoot, ["ls-files", "--cached", "--others", "--exclude-standard", "-z", "--"]);
+    const output = await runGitAllowFailure(pi, repoRoot, [
+        "ls-files",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "-z",
+        "--",
+    ]);
     const seen = new Set();
     const paths = [];
     for (const path of output.split("\0")) {

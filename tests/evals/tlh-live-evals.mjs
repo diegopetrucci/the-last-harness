@@ -222,15 +222,10 @@ function writeArtifact(ctx, relativePath, content) {
 	return target;
 }
 
-function runCommand(ctx, {
-	scenarioId,
-	label,
-	command,
-	args = [],
-	cwd = repoRoot,
-	env = ctx.baseEnv,
-	timeoutMs = commandTimeoutMs,
-}) {
+function runCommand(
+	ctx,
+	{ scenarioId, label, command, args = [], cwd = repoRoot, env = ctx.baseEnv, timeoutMs = commandTimeoutMs },
+) {
 	const commandText = renderCommand(command, args);
 	const result = spawnSync(command, args, {
 		cwd,
@@ -318,8 +313,12 @@ function listScenarios(selectedScenarios) {
 		console.log(`  prerequisites: ${scenario.prerequisites.join("; ")}`);
 		console.log("");
 	}
-	console.log("Model/TUI scenarios are prepared as manual scaffolds on purpose so TLH avoids brittle model-coupled automation in default CI.");
-	console.log("To run them, use: node tests/evals/tlh-live-evals.mjs --run [--scenario <id>] or TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs");
+	console.log(
+		"Model/TUI scenarios are prepared as manual scaffolds on purpose so TLH avoids brittle model-coupled automation in default CI.",
+	);
+	console.log(
+		"To run them, use: node tests/evals/tlh-live-evals.mjs --run [--scenario <id>] or TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs",
+	);
 }
 
 function bootstrapCheckArtifacts() {
@@ -330,17 +329,18 @@ function createFailureOutcome(details, artifacts = [], checks = []) {
 	return {
 		status: "failed",
 		detail: details,
-		checks: checks.length > 0
-			? checks
-			: [
-				createBinaryScoreCheck({
-					id: "runner-detected-failure",
-					label: "Runner detected a scenario failure",
-					passed: false,
-					details: details || "Review the saved artifacts for the failure details.",
-					artifacts,
-				}),
-			],
+		checks:
+			checks.length > 0
+				? checks
+				: [
+						createBinaryScoreCheck({
+							id: "runner-detected-failure",
+							label: "Runner detected a scenario failure",
+							passed: false,
+							details: details || "Review the saved artifacts for the failure details.",
+							artifacts,
+						}),
+					],
 	};
 }
 
@@ -380,27 +380,33 @@ function ensureInstalled(ctx) {
 	});
 	if (result.status !== 0) {
 		const detail = `bootstrap install failed with status ${result.status ?? "null"}; see ${join(ctx.rootDir, "artifacts", "install-bootstrap", "install.log")}`;
-		throwOutcomeError(detail, createFailureOutcome(detail, bootstrapCheckArtifacts(), [
-			createBinaryScoreCheck({
-				id: "install-bootstrap",
-				label: "Bootstrap isolated install created the tlh wrapper",
-				passed: false,
-				details: detail,
-				artifacts: bootstrapCheckArtifacts(),
-			}),
-		]));
+		throwOutcomeError(
+			detail,
+			createFailureOutcome(detail, bootstrapCheckArtifacts(), [
+				createBinaryScoreCheck({
+					id: "install-bootstrap",
+					label: "Bootstrap isolated install created the tlh wrapper",
+					passed: false,
+					details: detail,
+					artifacts: bootstrapCheckArtifacts(),
+				}),
+			]),
+		);
 	}
 	if (!existsSync(ctx.wrapperPath)) {
 		const detail = `bootstrap install finished without creating wrapper: ${ctx.wrapperPath}`;
-		throwOutcomeError(detail, createFailureOutcome(detail, bootstrapCheckArtifacts(), [
-			createBinaryScoreCheck({
-				id: "install-bootstrap",
-				label: "Bootstrap isolated install created the tlh wrapper",
-				passed: false,
-				details: detail,
-				artifacts: bootstrapCheckArtifacts(),
-			}),
-		]));
+		throwOutcomeError(
+			detail,
+			createFailureOutcome(detail, bootstrapCheckArtifacts(), [
+				createBinaryScoreCheck({
+					id: "install-bootstrap",
+					label: "Bootstrap isolated install created the tlh wrapper",
+					passed: false,
+					details: detail,
+					artifacts: bootstrapCheckArtifacts(),
+				}),
+			]),
+		);
 	}
 	ctx.installed = true;
 	ctx.installBootstrapCheck = createBinaryScoreCheck({
@@ -423,7 +429,13 @@ function gitConfigEnv(ctx) {
 	};
 }
 
-function createFixtureRepo(ctx, scenarioId, name, files, { dirty = false, dirtyFile = "README.md", dirtyAppend = "\nworktree change\n" } = {}) {
+function createFixtureRepo(
+	ctx,
+	scenarioId,
+	name,
+	files,
+	{ dirty = false, dirtyFile = "README.md", dirtyAppend = "\nworktree change\n" } = {},
+) {
 	const repoDir = join(ctx.workspaceDir, name);
 	ensureDir(repoDir);
 	for (const [relativePath, content] of Object.entries(files)) {
@@ -476,16 +488,25 @@ function manualLaunchCommand(ctx) {
 function prepareArchitectScenario(ctx) {
 	ensureInstalled(ctx);
 	const fixture = createFixtureRepo(ctx, "architect-e2e", "architect-e2e-repo", {
-		"README.md": "# Architect live eval fixture\n\nTiny repo for validating the TLH architect -> ticket -> developer flow.\n",
-		"package.json": JSON.stringify({
-			name: "architect-e2e-fixture",
-			private: true,
-			type: "module",
-			scripts: { test: "node --test" },
-		}, null, 2) + "\n",
-		"src/greeter.mjs": "export function formatGreeting(name) {\n\tif (!name) return \"Hello.\";\n\treturn `Hello, ${String(name).trim()}!`;\n}\n",
-		"test/greeter.test.mjs": "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport { formatGreeting } from '../src/greeter.mjs';\n\ntest('formatGreeting trims names', () => {\n\tassert.equal(formatGreeting(' TLH '), 'Hello, TLH!');\n});\n",
-		"EVAL_REQUEST.md": "Add a new formatGreetingList(names) helper in src/greeter.mjs and targeted tests. Use the normal architect ticketed workflow instead of editing directly in the primary session.\n",
+		"README.md":
+			"# Architect live eval fixture\n\nTiny repo for validating the TLH architect -> ticket -> developer flow.\n",
+		"package.json":
+			JSON.stringify(
+				{
+					name: "architect-e2e-fixture",
+					private: true,
+					type: "module",
+					scripts: { test: "node --test" },
+				},
+				null,
+				2,
+			) + "\n",
+		"src/greeter.mjs":
+			'export function formatGreeting(name) {\n\tif (!name) return "Hello.";\n\treturn `Hello, ${String(name).trim()}!`;\n}\n',
+		"test/greeter.test.mjs":
+			"import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport { formatGreeting } from '../src/greeter.mjs';\n\ntest('formatGreeting trims names', () => {\n\tassert.equal(formatGreeting(' TLH '), 'Hello, TLH!');\n});\n",
+		"EVAL_REQUEST.md":
+			"Add a new formatGreetingList(names) helper in src/greeter.mjs and targeted tests. Use the normal architect ticketed workflow instead of editing directly in the primary session.\n",
 	});
 	const instructions = `# architect-e2e\n\nRepo: ${fixture.repoDir}\nLaunch from repo root:\n\n\tcd ${fixture.repoDir}\n\t${manualLaunchCommand(ctx)}\n\nSuggested prompt:\n\n> In this fixture repo, use the normal TLH architect workflow to implement the request in EVAL_REQUEST.md. Keep the work small, create or use the needed tk ticket flow, delegate implementation, and report back with validation.\n\nWhat to verify:\n- architect stays in orchestration mode instead of editing directly\n- ticket/developer flow happens for the small requested change\n- resulting change stays inside this fixture repo\n- cleanup is easy because everything lives under ${ctx.rootDir}\n`;
 	writeArtifact(ctx, join("artifacts", "architect-e2e", "README.md"), instructions);
@@ -498,16 +519,25 @@ function prepareArchitectScenario(ctx) {
 function preparePrimaryBehaviorScenario(ctx) {
 	ensureInstalled(ctx);
 	const fixture = createFixtureRepo(ctx, "rush-product-bug-hunter", "primary-behavior-repo", {
-		"README.md": "# Primary behavior live eval fixture\n\nUse this repo to check Rush, product, and bug-hunter behavior boundaries.\n",
-		"package.json": JSON.stringify({
-			name: "primary-behavior-fixture",
-			private: true,
-			type: "module",
-			scripts: { test: "node --test" },
-		}, null, 2) + "\n",
-		"src/cart.mjs": "export function totalWithTax(subtotalCents, quantity, taxRate = 0.1) {\n\tif (quantity <= 0) return subtotalCents * quantity;\n\tconst subtotal = subtotalCents * quantity;\n\treturn Math.floor(subtotal + subtotal * taxRate);\n}\n",
-		"test/cart.test.mjs": "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport { totalWithTax } from '../src/cart.mjs';\n\ntest('totalWithTax applies tax', () => {\n\tassert.equal(totalWithTax(500, 2, 0.1), 1100);\n});\n",
-		"BUG_REPORT.md": "Users report negative totals when quantity is zero or negative, and totals are rounded down instead of to the nearest cent.\n",
+		"README.md":
+			"# Primary behavior live eval fixture\n\nUse this repo to check Rush, product, and bug-hunter behavior boundaries.\n",
+		"package.json":
+			JSON.stringify(
+				{
+					name: "primary-behavior-fixture",
+					private: true,
+					type: "module",
+					scripts: { test: "node --test" },
+				},
+				null,
+				2,
+			) + "\n",
+		"src/cart.mjs":
+			"export function totalWithTax(subtotalCents, quantity, taxRate = 0.1) {\n\tif (quantity <= 0) return subtotalCents * quantity;\n\tconst subtotal = subtotalCents * quantity;\n\treturn Math.floor(subtotal + subtotal * taxRate);\n}\n",
+		"test/cart.test.mjs":
+			"import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport { totalWithTax } from '../src/cart.mjs';\n\ntest('totalWithTax applies tax', () => {\n\tassert.equal(totalWithTax(500, 2, 0.1), 1100);\n});\n",
+		"BUG_REPORT.md":
+			"Users report negative totals when quantity is zero or negative, and totals are rounded down instead of to the nearest cent.\n",
 		"PRODUCT_BRIEF.md": "Draft a ticket for coupon stacking rules without editing source files.\n",
 	});
 	const instructions = `# rush-product-bug-hunter\n\nRepo: ${fixture.repoDir}\nLaunch from repo root:\n\n\tcd ${fixture.repoDir}\n\t${manualLaunchCommand(ctx)}\n\nSuggested prompts:\n\nRush\n> Switch to Rush and fix the bug described in BUG_REPORT.md. Edit directly, run narrow validation, and do not start ticket ceremony unless the task clearly outgrows Rush.\n\nProduct\n> Switch to product and turn PRODUCT_BRIEF.md into an implementation-ready tk ticket. Do not edit source files or run implementation loops.\n\nBug-hunter\n> Switch to bug-hunter and investigate the issue in BUG_REPORT.md. Explain the root cause and candidate fix, but do not modify files.\n\nWhat to verify:\n- Rush edits directly and validates narrowly\n- product stays non-implementing and hands back a ticket-shaped artifact\n- bug-hunter remains read-only and investigative\n`;
@@ -522,7 +552,11 @@ function prepareWebScoutScenario(ctx) {
 	ensureInstalled(ctx);
 	const briefDir = join(ctx.workspaceDir, "web-scout-brief");
 	ensureDir(briefDir);
-	writeFileSync(join(briefDir, "RESEARCH_BRIEF.md"), "Research the latest upstream Pi release notes and any recent Exa-facing changes relevant to TLH web-scout usage.\n", "utf8");
+	writeFileSync(
+		join(briefDir, "RESEARCH_BRIEF.md"),
+		"Research the latest upstream Pi release notes and any recent Exa-facing changes relevant to TLH web-scout usage.\n",
+		"utf8",
+	);
 	const instructions = `# web-scout-network-research\n\nWorkspace: ${briefDir}\nLaunch from that directory:\n\n\tcd ${briefDir}\n\t${manualLaunchCommand(ctx)}\n\nPrerequisites:\n- working model auth for the upstream runtime\n- network access\n- EXA_API_KEY in the environment or equivalent isolated pi-web-access config\n\nSuggested prompt:\n\n> Use the architect to delegate a web-scout research task based on RESEARCH_BRIEF.md. Return concise findings with citations, and do not write source files.\n\nWhat to verify:\n- web-scout actually performs network research instead of hallucinating\n- returned answer includes citations/sources\n- no secrets appear in saved artifacts under ${ctx.rootDir}\n`;
 	writeArtifact(ctx, join("artifacts", "web-scout-network-research", "README.md"), instructions);
 	return {
@@ -538,7 +572,8 @@ function prepareDirtyRepoScenario(ctx) {
 		"dirty-repo-guard",
 		"dirty-repo-guard-repo",
 		{
-			"README.md": "# Dirty repo guard fixture\n\nThis repo should remain dirty after setup so TLH can warn before session work proceeds.\n",
+			"README.md":
+				"# Dirty repo guard fixture\n\nThis repo should remain dirty after setup so TLH can warn before session work proceeds.\n",
 			"notes.txt": "initial clean content\n",
 		},
 		{ dirty: true, dirtyFile: "notes.txt", dirtyAppend: "uncommitted change\n" },
@@ -564,17 +599,23 @@ function runInstallUpdateSmoke(ctx) {
 		timeoutMs: commandTimeoutMs,
 	});
 	const defaultsPassed = defaultsResult.status === 0;
-	checks.push(createBinaryScoreCheck({
-		id: "defaults-list",
-		label: "Installed wrapper lists bundled default extensions",
-		passed: defaultsPassed,
-		details: defaultsPassed
-			? "tlh defaults list exited 0 in the isolated workspace."
-			: `installed wrapper failed before update; see ${join(ctx.rootDir, "artifacts", "install-update-smoke", "defaults-list.log")}`,
-		artifacts: [defaultsArtifact],
-	}));
+	checks.push(
+		createBinaryScoreCheck({
+			id: "defaults-list",
+			label: "Installed wrapper lists bundled default extensions",
+			passed: defaultsPassed,
+			details: defaultsPassed
+				? "tlh defaults list exited 0 in the isolated workspace."
+				: `installed wrapper failed before update; see ${join(ctx.rootDir, "artifacts", "install-update-smoke", "defaults-list.log")}`,
+			artifacts: [defaultsArtifact],
+		}),
+	);
 	if (!defaultsPassed) {
-		return createFailureOutcome(`installed wrapper failed before update; see ${join(ctx.rootDir, "artifacts", "install-update-smoke", "defaults-list.log")}`, [defaultsArtifact], checks);
+		return createFailureOutcome(
+			`installed wrapper failed before update; see ${join(ctx.rootDir, "artifacts", "install-update-smoke", "defaults-list.log")}`,
+			[defaultsArtifact],
+			checks,
+		);
 	}
 	const updateArtifact = "artifacts/install-update-smoke/update.log";
 	const updateResult = runCommand(ctx, {
@@ -587,17 +628,23 @@ function runInstallUpdateSmoke(ctx) {
 		timeoutMs: installTimeoutMs,
 	});
 	const updatePassed = updateResult.status === 0;
-	checks.push(createBinaryScoreCheck({
-		id: "update",
-		label: "Installed wrapper updates against the current checkout",
-		passed: updatePassed,
-		details: updatePassed
-			? "tlh update exited 0 with the custom file: package source."
-			: `tlh update failed with status ${updateResult.status ?? "null"}; see ${join(ctx.rootDir, "artifacts", "install-update-smoke", "update.log")}`,
-		artifacts: [updateArtifact],
-	}));
+	checks.push(
+		createBinaryScoreCheck({
+			id: "update",
+			label: "Installed wrapper updates against the current checkout",
+			passed: updatePassed,
+			details: updatePassed
+				? "tlh update exited 0 with the custom file: package source."
+				: `tlh update failed with status ${updateResult.status ?? "null"}; see ${join(ctx.rootDir, "artifacts", "install-update-smoke", "update.log")}`,
+			artifacts: [updateArtifact],
+		}),
+	);
 	if (!updatePassed) {
-		return createFailureOutcome(`tlh update failed with status ${updateResult.status ?? "null"}; see ${join(ctx.rootDir, "artifacts", "install-update-smoke", "update.log")}`, [updateArtifact], checks);
+		return createFailureOutcome(
+			`tlh update failed with status ${updateResult.status ?? "null"}; see ${join(ctx.rootDir, "artifacts", "install-update-smoke", "update.log")}`,
+			[updateArtifact],
+			checks,
+		);
 	}
 	const statePath = join(ctx.agentDir, "tlh", "install-state.json");
 	const stateArtifact = "artifacts/install-update-smoke/install-state.json";
@@ -608,7 +655,8 @@ function runInstallUpdateSmoke(ctx) {
 		try {
 			const state = JSON.parse(readFileSync(statePath, "utf8"));
 			writeArtifact(ctx, stateArtifact, `${JSON.stringify(state, null, 2)}\n`);
-			statePassed = state.track === "custom" && state.packageSource === `file:${repoRoot}` && state.wrapperName === "tlh";
+			statePassed =
+				state.track === "custom" && state.packageSource === `file:${repoRoot}` && state.wrapperName === "tlh";
 			stateDetail = statePassed
 				? "install-state.json recorded the custom track, file: package source, and tlh wrapper name."
 				: "install-state.json did not preserve the expected custom track, file: package source, and tlh wrapper name.";
@@ -617,13 +665,15 @@ function runInstallUpdateSmoke(ctx) {
 			stateDetail = `install-state.json was unreadable: ${error instanceof Error ? error.message : String(error)}`;
 		}
 	}
-	checks.push(createBinaryScoreCheck({
-		id: "install-state",
-		label: "Install state reflects the custom update source",
-		passed: statePassed,
-		details: stateDetail,
-		artifacts: stateExists ? [stateArtifact] : [],
-	}));
+	checks.push(
+		createBinaryScoreCheck({
+			id: "install-state",
+			label: "Install state reflects the custom update source",
+			passed: statePassed,
+			details: stateDetail,
+			artifacts: stateExists ? [stateArtifact] : [],
+		}),
+	);
 	if (!statePassed) {
 		return createFailureOutcome(stateDetail, stateExists ? [stateArtifact] : [], checks);
 	}
@@ -642,22 +692,30 @@ export const allScenarios = [
 		id: "architect-e2e",
 		mode: "manual",
 		summary: "Prepare a ticketed fixture repo for a real architect -> developer end-to-end run.",
-		prerequisites: ["interactive terminal", "model auth", ...bootstrapCommandPrerequisites, bootstrapNetworkPrerequisite],
+		prerequisites: [
+			"interactive terminal",
+			"model auth",
+			...bootstrapCommandPrerequisites,
+			bootstrapNetworkPrerequisite,
+		],
 		rubrics: [
 			{
 				id: "architect-orchestration-boundary",
 				label: "Architect stays in orchestration mode",
-				details: "Confirm the primary session scopes the work, manages ticket/developer flow, and does not edit the fixture files directly.",
+				details:
+					"Confirm the primary session scopes the work, manages ticket/developer flow, and does not edit the fixture files directly.",
 			},
 			{
 				id: "ticketed-developer-flow",
 				label: "Approved ticket and developer implementation flow occurs",
-				details: "Verify the run uses the normal ticket/developer workflow instead of bypassing delegation for the requested change.",
+				details:
+					"Verify the run uses the normal ticket/developer workflow instead of bypassing delegation for the requested change.",
 			},
 			{
 				id: "fixture-repo-contained-change",
 				label: "All edits and validation stay inside the fixture repo",
-				details: "Check that any code changes and validation are contained to the prepared fixture repo so cleanup remains trivial.",
+				details:
+					"Check that any code changes and validation are contained to the prepared fixture repo so cleanup remains trivial.",
 			},
 		],
 		run: prepareArchitectScenario,
@@ -666,17 +724,24 @@ export const allScenarios = [
 		id: "rush-product-bug-hunter",
 		mode: "manual",
 		summary: "Prepare one fixture repo with prompts for Rush, product, and bug-hunter behavior checks.",
-		prerequisites: ["interactive terminal", "model auth", ...bootstrapCommandPrerequisites, bootstrapNetworkPrerequisite],
+		prerequisites: [
+			"interactive terminal",
+			"model auth",
+			...bootstrapCommandPrerequisites,
+			bootstrapNetworkPrerequisite,
+		],
 		rubrics: [
 			{
 				id: "rush-direct-edit-boundary",
 				label: "Rush edits directly and validates narrowly",
-				details: "Confirm Rush fixes the bug directly in the fixture repo and reports narrow validation instead of starting ticket ceremony for this bounded task.",
+				details:
+					"Confirm Rush fixes the bug directly in the fixture repo and reports narrow validation instead of starting ticket ceremony for this bounded task.",
 			},
 			{
 				id: "product-non-implementing-boundary",
 				label: "Product stays non-implementing and returns a ticket-shaped artifact",
-				details: "Verify product mode clarifies requirements and hands back a tk-ready artifact without editing source files or running implementation loops.",
+				details:
+					"Verify product mode clarifies requirements and hands back a tk-ready artifact without editing source files or running implementation loops.",
 			},
 			{
 				id: "bug-hunter-read-only-boundary",
@@ -711,7 +776,8 @@ export const allScenarios = [
 			{
 				id: "artifact-secret-hygiene",
 				label: "Saved artifacts stay free of secrets",
-				details: "Review the saved artifacts for accidental secret leakage before sharing them outside the temp workspace.",
+				details:
+					"Review the saved artifacts for accidental secret leakage before sharing them outside the temp workspace.",
 			},
 		],
 		run: prepareWebScoutScenario,
@@ -725,12 +791,14 @@ export const allScenarios = [
 			{
 				id: "dirty-warning-before-work",
 				label: "Dirty worktree warning appears before work begins",
-				details: "Confirm TLH warns or prompts before the session starts working in the intentionally dirty fixture repo.",
+				details:
+					"Confirm TLH warns or prompts before the session starts working in the intentionally dirty fixture repo.",
 			},
 			{
 				id: "dirty-warning-covers-risky-actions",
 				label: "Warning appears before work that could hide the change",
-				details: "Verify the guard triggers before starting, switching, or forking work that could obscure the uncommitted change.",
+				details:
+					"Verify the guard triggers before starting, switching, or forking work that could obscure the uncommitted change.",
 			},
 			{
 				id: "dirty-fixture-cleanup",
@@ -784,12 +852,14 @@ export function createScenarioScoreResult(ctx, scenario, outcome = {}) {
 		const guidance = artifacts.includes(`artifacts/${scenario.id}/README.md`)
 			? `Review artifacts/${scenario.id}/README.md and the prepared workspace before assigning a manual score.`
 			: "Review the prepared workspace artifacts before assigning a manual score.";
-		checks = (scenario.rubrics || []).map((rubric) => createManualRubricCheck({
-			id: rubric.id,
-			label: rubric.label,
-			details: `${rubric.details} ${guidance}`.trim(),
-			artifacts,
-		}));
+		checks = (scenario.rubrics || []).map((rubric) =>
+			createManualRubricCheck({
+				id: rubric.id,
+				label: rubric.label,
+				details: `${rubric.details} ${guidance}`.trim(),
+				artifacts,
+			}),
+		);
 	} else if (checks.length === 0) {
 		checks = [
 			createBinaryScoreCheck({
@@ -844,7 +914,10 @@ function writeTopLevelSummary(ctx, suiteResult) {
 		`Manual rubrics pending: ${suiteResult.summary.checks.manual.pending}/${suiteResult.summary.checks.manual.total}`,
 		"",
 		"## Scenario results",
-		...suiteResult.scenarios.map((result) => `- ${result.id}: ${result.status} (${formatScenarioScore(result)})${result.detail ? ` — ${result.detail}` : ""}`),
+		...suiteResult.scenarios.map(
+			(result) =>
+				`- ${result.id}: ${result.status} (${formatScenarioScore(result)})${result.detail ? ` — ${result.detail}` : ""}`,
+		),
 	];
 	if (suiteResult.artifacts.shared.length > 0) {
 		summary.push("", "## Shared artifacts", ...suiteResult.artifacts.shared.map((artifactPath) => `- ${artifactPath}`));
@@ -862,7 +935,9 @@ function printRunSummary(ctx, suiteResult, externalResultsPath = "") {
 	console.log(`\nLive eval workspace: ${ctx.rootDir}`);
 	for (const result of suiteResult.scenarios) {
 		const prefix = result.status === "passed" ? "PASS" : result.status === "prepared" ? "PREP" : "FAIL";
-		console.log(`- [${prefix}] ${result.id} — ${formatScenarioScore(result)}${result.detail ? ` (${result.detail})` : ""}`);
+		console.log(
+			`- [${prefix}] ${result.id} — ${formatScenarioScore(result)}${result.detail ? ` (${result.detail})` : ""}`,
+		);
 	}
 	console.log(`Artifacts: ${join(ctx.rootDir, "artifacts")}`);
 	if (externalResultsPath) console.log(`External results JSON: ${externalResultsPath}`);
@@ -899,13 +974,18 @@ export function main(argv = process.argv.slice(2)) {
 		} catch (error) {
 			failed = true;
 			const message = error instanceof Error ? error.message : String(error);
-			const outcome = error && typeof error === "object" && "liveEvalOutcome" in error && error.liveEvalOutcome
-				? { ...error.liveEvalOutcome, detail: error.liveEvalOutcome.detail || message }
-				: { status: "failed", detail: message };
+			const outcome =
+				error && typeof error === "object" && "liveEvalOutcome" in error && error.liveEvalOutcome
+					? { ...error.liveEvalOutcome, detail: error.liveEvalOutcome.detail || message }
+					: { status: "failed", detail: message };
 			scenarioResults.push(createScenarioScoreResult(ctx, scenario, outcome));
 		}
 	}
-	const keepWorkspace = failed || args.keepArtifacts || args.artifactsDir || selectedScenarios.some((scenario) => scenario.mode === "manual");
+	const keepWorkspace =
+		failed ||
+		args.keepArtifacts ||
+		args.artifactsDir ||
+		selectedScenarios.some((scenario) => scenario.mode === "manual");
 	const finishedAt = new Date().toISOString();
 	const suiteResult = createSuiteResult({
 		selectedScenarios,
@@ -915,16 +995,19 @@ export function main(argv = process.argv.slice(2)) {
 		keepWorkspace,
 		failed,
 		requestedResultsFile: Boolean(args.resultsFile),
-		sharedArtifacts: sharedArtifactPaths(ctx, selectedScenarios.map((scenario) => scenario.id)),
+		sharedArtifacts: sharedArtifactPaths(
+			ctx,
+			selectedScenarios.map((scenario) => scenario.id),
+		),
 	});
 	writeWorkspaceOutputs(ctx, suiteResult);
 	const externalResultsPath = args.resultsFile
 		? writeResultsFile({
-			results: suiteResult,
-			filePath: args.resultsFile,
-			rootDir: ctx.rootDir,
-			transformText: (text) => redactText(text, ctx),
-		})
+				results: suiteResult,
+				filePath: args.resultsFile,
+				rootDir: ctx.rootDir,
+				transformText: (text) => redactText(text, ctx),
+			})
 		: "";
 	printRunSummary(ctx, suiteResult, externalResultsPath);
 	if (!keepWorkspace) {

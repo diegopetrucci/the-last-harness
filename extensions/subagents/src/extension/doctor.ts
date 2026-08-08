@@ -99,9 +99,7 @@ function formatSkillSourceCounts(skills: Array<{ source: SkillSource }>): string
 		"builtin",
 		"unknown",
 	];
-	const parts = ordered
-		.map((source) => `${source} ${counts.get(source) ?? 0}`)
-		.filter((part) => !part.endsWith(" 0"));
+	const parts = ordered.map((source) => `${source} ${counts.get(source) ?? 0}`).filter((part) => !part.endsWith(" 0"));
 	return parts.length > 0 ? parts.join(", ") : "none";
 }
 
@@ -133,14 +131,16 @@ function formatRuntimeDirCounts(paths: DoctorPaths): string {
 		nestedRunsDir: path.join(paths.tempRootDir, "nested-subagent-runs"),
 		nestedEventsDir: path.join(paths.tempRootDir, "nested-subagent-events"),
 	});
-	return `- runtime dir counts: async ${counts.topLevelAsyncDirs + counts.nestedAsyncDirs} `
-		+ `(top-level ${counts.topLevelAsyncDirs}, nested ${counts.nestedAsyncDirs}, active/live ${counts.activeOrLiveAsyncDirs}, stale ${counts.staleAsyncDirs}); `
-		+ `nested event routes ${counts.nestedEventDirs} (unreferenced ${counts.unreferencedNestedEventDirs})`;
+	return (
+		`- runtime dir counts: async ${counts.topLevelAsyncDirs + counts.nestedAsyncDirs} ` +
+		`(top-level ${counts.topLevelAsyncDirs}, nested ${counts.nestedAsyncDirs}, active/live ${counts.activeOrLiveAsyncDirs}, stale ${counts.staleAsyncDirs}); ` +
+		`nested event routes ${counts.nestedEventDirs} (unreferenced ${counts.unreferencedNestedEventDirs})`
+	);
 }
 
 function formatDiscovery(input: DoctorReportInput, deps: DoctorDeps): string[] {
 	return [
-			lineFromCheck("agents", () => {
+		lineFromCheck("agents", () => {
 			const discovered = deps.discoverAgentsAll(input.cwd);
 			const agentCounts = {
 				builtin: discovered.builtin.length,
@@ -157,7 +157,10 @@ function formatDiscovery(input: DoctorReportInput, deps: DoctorDeps): string[] {
 	];
 }
 
-function formatIntercomDiagnostic(diagnostic: IntercomBridgeDiagnostic, context: "fresh" | "fork" | undefined): string[] {
+function formatIntercomDiagnostic(
+	diagnostic: IntercomBridgeDiagnostic,
+	context: "fresh" | "fork" | undefined,
+): string[] {
 	const lines = [
 		`- bridge: ${diagnostic.active ? "active" : "inactive"}${diagnostic.reason ? ` (${diagnostic.reason})` : ""}`,
 		`- mode: ${diagnostic.mode}; context: ${context ?? "unspecified"}`,
@@ -209,11 +212,16 @@ export function buildDoctorReport(input: DoctorReportInput): string {
 		...formatPermissionSystemSection(),
 		"",
 		"Intercom bridge",
-		...lineFromCheck("intercom bridge", () => formatIntercomDiagnostic(deps.diagnoseIntercomBridge({
-			config: input.config.intercomBridge,
-			context: input.context,
-			orchestratorTarget: input.orchestratorTarget,
-		}), input.context).join("\n")).split("\n"),
+		...lineFromCheck("intercom bridge", () =>
+			formatIntercomDiagnostic(
+				deps.diagnoseIntercomBridge({
+					config: input.config.intercomBridge,
+					context: input.context,
+					orchestratorTarget: input.orchestratorTarget,
+				}),
+				input.context,
+			).join("\n"),
+		).split("\n"),
 	];
 	return lines.join("\n");
 }

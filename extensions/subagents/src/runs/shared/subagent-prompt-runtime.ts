@@ -2,10 +2,26 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerNativeSupervisorClient } from "../../intercom/native-supervisor-channel.ts";
-import { consumeChildMessageRequestsFromDir, writeChildMessageRequestToDir, type ChildMessageRequest, type ResumeRequest, type SteerRequest } from "../background/control-channel.ts";
+import {
+	consumeChildMessageRequestsFromDir,
+	writeChildMessageRequestToDir,
+	type ChildMessageRequest,
+	type ResumeRequest,
+	type SteerRequest,
+} from "../background/control-channel.ts";
 import { SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
-import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.ts";
-import { TOOL_BUDGET_ENV, decodeToolBudgetEnv, shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge } from "./tool-budget.ts";
+import {
+	STRUCTURED_OUTPUT_CAPTURE_ENV,
+	STRUCTURED_OUTPUT_SCHEMA_ENV,
+	validateStructuredOutputValue,
+} from "./structured-output.ts";
+import {
+	TOOL_BUDGET_ENV,
+	decodeToolBudgetEnv,
+	shouldBlockToolForBudget,
+	toolBudgetBlockedMessage,
+	toolBudgetSoftNudge,
+} from "./tool-budget.ts";
 import type { JsonSchemaObject, ResolvedToolBudget } from "../../shared/types.ts";
 
 const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
@@ -74,7 +90,9 @@ export function stripInheritedSkills(prompt: string): string {
 export function stripSubagentOrchestrationSkill(prompt: string): string {
 	return prompt
 		.replace(/\n{0,2}<skill\s+name=["']pi-subagents["'][^>]*>[\s\S]*?<\/skill>\n{0,2}/g, "\n\n")
-		.replace(/[ \t]*<skill>\s*[\s\S]*?<\/skill>\s*/g, (block) => SUBAGENT_ORCHESTRATION_SKILL_NAME_PATTERN.test(block) ? "" : block);
+		.replace(/[ \t]*<skill>\s*[\s\S]*?<\/skill>\s*/g, (block) =>
+			SUBAGENT_ORCHESTRATION_SKILL_NAME_PATTERN.test(block) ? "" : block,
+		);
 }
 
 function stripChildBoundaryInstructions(prompt: string): string {
@@ -102,9 +120,7 @@ export function rewriteSubagentPrompt(
 
 function isParentOnlySubagentMessage(message: unknown): boolean {
 	const m = message as { role?: string; customType?: string };
-	return m?.role === "custom"
-		&& typeof m.customType === "string"
-		&& PARENT_ONLY_CUSTOM_MESSAGE_TYPES.has(m.customType);
+	return m?.role === "custom" && typeof m.customType === "string" && PARENT_ONLY_CUSTOM_MESSAGE_TYPES.has(m.customType);
 }
 
 function isSubagentToolResultMessage(message: unknown): boolean {
@@ -173,8 +189,12 @@ function registerToolBudget(pi: ExtensionAPI, budget: ResolvedToolBudget | undef
 	if (!budget) return;
 	let toolCount = 0;
 	let softNudged = false;
-	const sendUserMessage = (pi as { sendUserMessage?: (content: string, options: { deliverAs: "steer" }) => unknown }).sendUserMessage;
-	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: { toolName?: string }) => unknown) => void;
+	const sendUserMessage = (pi as { sendUserMessage?: (content: string, options: { deliverAs: "steer" }) => unknown })
+		.sendUserMessage;
+	const onRuntimeEvent = pi.on as unknown as (
+		event: string,
+		handler: (event: { toolName?: string }) => unknown,
+	) => void;
 	onRuntimeEvent("tool_call", (event) => {
 		const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
 		toolCount++;
@@ -194,7 +214,8 @@ function registerToolBudget(pi: ExtensionAPI, budget: ResolvedToolBudget | undef
 function registerSteeringInbox(pi: ExtensionAPI): void {
 	const steerInbox = process.env[SUBAGENT_STEER_INBOX_ENV]?.trim();
 	if (!steerInbox) return;
-	const sendUserMessage = (pi as { sendUserMessage?: (content: string, options: { deliverAs: "steer" }) => unknown }).sendUserMessage;
+	const sendUserMessage = (pi as { sendUserMessage?: (content: string, options: { deliverAs: "steer" }) => unknown })
+		.sendUserMessage;
 	if (typeof sendUserMessage !== "function") return;
 
 	let canSteer = false;
@@ -247,14 +268,23 @@ function registerSteeringInbox(pi: ExtensionAPI): void {
 
 	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown) => unknown) => void;
 	onRuntimeEvent("session_start", () => start());
-	for (const eventName of ["message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_end", "turn_end"] as const) {
+	for (const eventName of [
+		"message_start",
+		"message_update",
+		"message_end",
+		"tool_execution_start",
+		"tool_execution_end",
+		"turn_end",
+	] as const) {
 		onRuntimeEvent(eventName, activate);
 	}
 	onRuntimeEvent("session_shutdown", () => {
 		disposed = true;
 		try {
 			watcher?.close();
-		} catch { void 0; }
+		} catch {
+			void 0;
+		}
 		if (interval) clearInterval(interval);
 	});
 }
@@ -316,7 +346,8 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 	}
 
 	onRuntimeEvent("context", (event: unknown) => {
-		if (!event || typeof event !== "object" || !Array.isArray((event as { messages?: unknown }).messages)) return undefined;
+		if (!event || typeof event !== "object" || !Array.isArray((event as { messages?: unknown }).messages))
+			return undefined;
 		const contextEvent = event as { messages: unknown[] };
 		const messages = stripParentOnlySubagentMessages(contextEvent.messages);
 		if (messages === contextEvent.messages) return undefined;
@@ -324,7 +355,8 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 	});
 
 	onRuntimeEvent("before_agent_start", async (event: unknown) => {
-		if (!event || typeof event !== "object" || typeof (event as { systemPrompt?: unknown }).systemPrompt !== "string") return undefined;
+		if (!event || typeof event !== "object" || typeof (event as { systemPrompt?: unknown }).systemPrompt !== "string")
+			return undefined;
 		const startEvent = event as { systemPrompt: string };
 		registerNativeSupervisorFallbackOnce();
 		const intercomSessionName = process.env[SUBAGENT_INTERCOM_SESSION_NAME_ENV]?.trim();

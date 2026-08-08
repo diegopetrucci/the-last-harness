@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { handleSubagentLiveDetailShortcut } from "../../src/extension/live-detail-shortcut.ts";
-import {
-	createSubagentLiveDetailController,
-	liveDetailShortcutDisplay,
-} from "../../src/shared/subagent-shortcuts.ts";
+import { createSubagentLiveDetailController, liveDetailShortcutDisplay } from "../../src/shared/subagent-shortcuts.ts";
 import { renderWidget } from "../../src/tui/render.ts";
 
 const theme = {
@@ -13,7 +10,10 @@ const theme = {
 };
 
 function widgetLines(widget: unknown, width = 180): string[] {
-	return (widget as (_tui: unknown, widgetTheme: typeof theme) => { render(width: number): string[] })(undefined, theme).render(width);
+	return (widget as (_tui: unknown, widgetTheme: typeof theme) => { render(width: number): string[] })(
+		undefined,
+		theme,
+	).render(width);
 }
 
 function runningJob() {
@@ -186,8 +186,18 @@ describe("subagent live-detail controller", () => {
 			},
 		} as never;
 
-		assert.equal(handleSubagentLiveDetailShortcut(controller, ctx, () => { widgetRenders++; }), true);
-		assert.equal(handleSubagentLiveDetailShortcut(controller, ctx, () => { widgetRenders++; }), false);
+		assert.equal(
+			handleSubagentLiveDetailShortcut(controller, ctx, () => {
+				widgetRenders++;
+			}),
+			true,
+		);
+		assert.equal(
+			handleSubagentLiveDetailShortcut(controller, ctx, () => {
+				widgetRenders++;
+			}),
+			false,
+		);
 		assert.equal(widgetRenders, 2);
 		// Pi 0.83 redraws after widget replacement; the extension must not
 		// call the removed direct requestRender helper.

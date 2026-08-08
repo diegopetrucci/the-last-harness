@@ -18,17 +18,18 @@ test("enable validates the requested tk command before writing settings", () => 
 	const fixture = tempFixture();
 	const settings = join(fixture.agent, "settings.json");
 	const invalidTk = join(fixture.external, "tk");
-	writeFileSync(invalidTk, `#!/usr/bin/env bash
+	writeFileSync(
+		invalidTk,
+		`#!/usr/bin/env bash
 exit 42
-`);
+`,
+	);
 	chmodSync(invalidTk, 0o755);
 
-	const result = runTickets([
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
-		"--install-path", invalidTk,
-		"enable",
-	], { env: { HOME: fixture.home } });
+	const result = runTickets(
+		["--settings", settings, "--agent-dir", fixture.agent, "--install-path", invalidTk, "enable"],
+		{ env: { HOME: fixture.home } },
+	);
 
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /did not validate/i);
@@ -43,12 +44,10 @@ test("enable rejects a requested command whose basename is not tk before validat
 	const sentinel = join(fixture.dir, "ticket-called");
 	writeValidTkLikeCommand(ticket, { sentinel });
 
-	const result = runTickets([
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
-		"--install-path", ticket,
-		"enable",
-	], { env: { HOME: fixture.home, PATH: "" } });
+	const result = runTickets(
+		["--settings", settings, "--agent-dir", fixture.agent, "--install-path", ticket, "enable"],
+		{ env: { HOME: fixture.home, PATH: "" } },
+	);
 
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /basename.*"tk"/i);
@@ -64,11 +63,9 @@ test("status does not report an enabled non-tk configured command as active", ()
 	writeValidTkLikeCommand(ticket, { sentinel });
 	writeFileSync(settings, `${JSON.stringify({ tlh: { tickets: { enabled: true, installPath: ticket } } })}\n`);
 
-	const result = runTickets([
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
-		"status",
-	], { env: { HOME: fixture.home, PATH: "" } });
+	const result = runTickets(["--settings", settings, "--agent-dir", fixture.agent, "status"], {
+		env: { HOME: fixture.home, PATH: "" },
+	});
 
 	assert.equal(result.status, 0, result.stderr);
 	assert.match(result.stdout, /active: no/);
@@ -83,11 +80,9 @@ test("status treats unset settings with a valid tk command as active by default"
 	mkdirSync(dirname(managedTk), { recursive: true });
 	writeValidTkLikeCommand(managedTk);
 
-	const result = runTickets([
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
-		"status",
-	], { env: { HOME: fixture.home, PATH: "" } });
+	const result = runTickets(["--settings", settings, "--agent-dir", fixture.agent, "status"], {
+		env: { HOME: fixture.home, PATH: "" },
+	});
 
 	assert.equal(result.status, 0, result.stderr);
 	assert.match(result.stdout, /setting: unset/);
@@ -105,11 +100,9 @@ test("status treats explicit legacy disabled settings as enabled", () => {
 	writeValidTkLikeCommand(managedTk);
 	writeFileSync(settings, `${JSON.stringify({ tlh: { tickets: { enabled: false } } })}\n`);
 
-	const result = runTickets([
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
-		"status",
-	], { env: { HOME: fixture.home, PATH: "" } });
+	const result = runTickets(["--settings", settings, "--agent-dir", fixture.agent, "status"], {
+		env: { HOME: fixture.home, PATH: "" },
+	});
 
 	assert.equal(result.status, 0, result.stderr);
 	assert.match(result.stdout, /setting: enabled/);
@@ -158,37 +151,29 @@ test("legacy ticket commands and options are unavailable", () => {
 	writeValidTkLikeCommand(ticket, { sentinel });
 
 	for (const command of ["state", "validate", "configure-install-style"]) {
-		const result = runTickets([
-			"--settings", settings,
-			"--agent-dir", fixture.agent,
-			command,
-			ticket,
-		], { env: { HOME: fixture.home, PATH: "" } });
+		const result = runTickets(["--settings", settings, "--agent-dir", fixture.agent, command, ticket], {
+			env: { HOME: fixture.home, PATH: "" },
+		});
 		assert.notEqual(result.status, 0, `expected ${command} to fail`);
 		assert.match(result.stderr, new RegExp(`Unknown command: ${command}`));
 	}
 
-	const modeResult = runTickets([
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
-		"--mode", "auto",
-		"configure-install",
-	], { env: { HOME: fixture.home, PATH: "" } });
+	const modeResult = runTickets(
+		["--settings", settings, "--agent-dir", fixture.agent, "--mode", "auto", "configure-install"],
+		{ env: { HOME: fixture.home, PATH: "" } },
+	);
 	assert.notEqual(modeResult.status, 0);
 	assert.match(modeResult.stderr, /Unknown option: --mode/);
 
-	const disableResult = runTickets([
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
-		"disable",
-	], { env: { HOME: fixture.home } });
+	const disableResult = runTickets(["--settings", settings, "--agent-dir", fixture.agent, "disable"], {
+		env: { HOME: fixture.home },
+	});
 	assert.notEqual(disableResult.status, 0);
 	assert.match(disableResult.stderr, /disable is no longer supported/);
 
 	assert.equal(existsSync(settings), false);
 	assert.equal(existsSync(sentinel), false);
 });
-
 
 test("enable refuses to write settings under the normal Pi agent profile", () => {
 	const fixture = tempFixture();

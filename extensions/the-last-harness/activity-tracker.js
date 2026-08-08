@@ -184,11 +184,7 @@ export function createTlhEffectiveActivityTracker(options = {}) {
         primaryReasons: [...primaryReasons.keys()].sort(),
         activeAsyncJobIds: [...activeAsyncJobs.keys()].sort(),
     });
-    const snapshotKey = (snapshot) => [
-        snapshot.inProgress ? "1" : "0",
-        snapshot.primaryReasons.join(","),
-        snapshot.activeAsyncJobIds.join(","),
-    ].join("::");
+    const snapshotKey = (snapshot) => [snapshot.inProgress ? "1" : "0", snapshot.primaryReasons.join(","), snapshot.activeAsyncJobIds.join(",")].join("::");
     const notifyIfChanged = () => {
         const snapshot = buildSnapshot();
         const nextKey = snapshotKey(snapshot);
@@ -335,7 +331,10 @@ export function createTlhEffectiveActivityTracker(options = {}) {
             notifyIfChanged();
         },
         handleAsyncControl(data) {
-            if (!isRecord(data) || !isRecord(data.event) || typeof data.event.runId !== "string" || data.event.runId.length === 0) {
+            if (!isRecord(data) ||
+                !isRecord(data.event) ||
+                typeof data.event.runId !== "string" ||
+                data.event.runId.length === 0) {
                 return;
             }
             if (!isAsyncControlContext(data, data.event)) {

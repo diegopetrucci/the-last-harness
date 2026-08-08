@@ -1,11 +1,28 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { findModelInfo, getSupportedThinkingLevels, splitKnownThinkingSuffix, type ModelInfo } from "../../src/shared/model-info.ts";
+import {
+	findModelInfo,
+	getSupportedThinkingLevels,
+	splitKnownThinkingSuffix,
+	type ModelInfo,
+} from "../../src/shared/model-info.ts";
 
 describe("model info helpers", () => {
 	const ambiguousModels: ModelInfo[] = [
-		{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini", reasoning: true, thinkingLevelMap: { high: "high" } },
-		{ provider: "github-copilot", id: "gpt-5-mini", fullId: "github-copilot/gpt-5-mini", reasoning: true, thinkingLevelMap: { off: null, high: "high", xhigh: "xhigh" } },
+		{
+			provider: "openai",
+			id: "gpt-5-mini",
+			fullId: "openai/gpt-5-mini",
+			reasoning: true,
+			thinkingLevelMap: { high: "high" },
+		},
+		{
+			provider: "github-copilot",
+			id: "gpt-5-mini",
+			fullId: "github-copilot/gpt-5-mini",
+			reasoning: true,
+			thinkingLevelMap: { off: null, high: "high", xhigh: "xhigh" },
+		},
 	];
 
 	it("does not choose arbitrary metadata for ambiguous bare model ids", () => {
@@ -17,7 +34,10 @@ describe("model info helpers", () => {
 	});
 
 	it("matches provider-qualified model metadata before bare ids", () => {
-		assert.equal(findModelInfo("openai/gpt-5-mini:high", ambiguousModels, "github-copilot")?.fullId, "openai/gpt-5-mini");
+		assert.equal(
+			findModelInfo("openai/gpt-5-mini:high", ambiguousModels, "github-copilot")?.fullId,
+			"openai/gpt-5-mini",
+		);
 	});
 
 	it("keeps the legacy thinking list for models without per-level metadata", () => {
@@ -29,10 +49,14 @@ describe("model info helpers", () => {
 	});
 
 	it("keeps the legacy thinking list when older model metadata omits reasoning", () => {
-		assert.deepEqual(
-			getSupportedThinkingLevels({ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5" }),
-			["off", "minimal", "low", "medium", "high", "xhigh"],
-		);
+		assert.deepEqual(getSupportedThinkingLevels({ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5" }), [
+			"off",
+			"minimal",
+			"low",
+			"medium",
+			"high",
+			"xhigh",
+		]);
 	});
 
 	it("filters levels only when per-level metadata is present", () => {
@@ -72,9 +96,9 @@ describe("model info helpers", () => {
 			}),
 			["max"],
 		);
-		assert.deepEqual(
-			splitKnownThinkingSuffix("openai/gpt-5:max"),
-			{ baseModel: "openai/gpt-5", thinkingSuffix: ":max" },
-		);
+		assert.deepEqual(splitKnownThinkingSuffix("openai/gpt-5:max"), {
+			baseModel: "openai/gpt-5",
+			thinkingSuffix: ":max",
+		});
 	});
 });

@@ -104,9 +104,7 @@ function loadContextFiles(cwd, agentDir) {
     return load({ cwd, agentDir });
 }
 function filterVisibleResources(resources, projectTrusted) {
-    return resources.filter((resource) => resource.enabled &&
-        existsSync(resource.path) &&
-        (projectTrusted || resource.metadata.scope !== "project"));
+    return resources.filter((resource) => resource.enabled && existsSync(resource.path) && (projectTrusted || resource.metadata.scope !== "project"));
 }
 export async function collectStartupResources(cwd, options = {}) {
     const agentDir = getAgentDir();

@@ -7,7 +7,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { disabledDefaultExtensionIds, packageIdentity, readDefaultExtensions, } from "./lib/default-extensions.mjs";
 import { captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, missingTlhSubagentPrompts, restoreNeededTlhSubagentPrompts, settingsRequireTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
-import { pathWithinOrEqual, realpathForCompare, } from "./lib/tlh-install-paths.mjs";
+import { pathWithinOrEqual, realpathForCompare } from "./lib/tlh-install-paths.mjs";
 import { assignOptionValue, defaultTlhSettingsPath, expandHomePath, pathIsInNormalPiConfig, readJsonFile, resolveTlhAgentDir, } from "./lib/tlh-install-utils.mjs";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PACKAGE_ROOT = resolve(__dirname, "..");
@@ -198,8 +198,10 @@ function addSettingsDriftCheck(results, packageRoot, settingsPath, env) {
     const result = runCommand(process.execPath, [
         mergeSettingsScript(packageRoot),
         defaultsPath(packageRoot),
-        "--settings", settingsPath,
-        "--default-extensions", defaultExtensionsPath(packageRoot),
+        "--settings",
+        settingsPath,
+        "--default-extensions",
+        defaultExtensionsPath(packageRoot),
         "--dry-run",
     ], { env });
     if (result.status !== 0) {
@@ -305,7 +307,9 @@ function addRuntimeCheck(results, agentDir, expectedPiVersion) {
         recordCheck(results, "FAIL", "private runtime marker/version hints", `private runtime pi did not validate (${commandFailureSummary(piVersionResult)})`);
         return;
     }
-    const runtimeVersion = String(piVersionResult.stdout || "").trim().replace(/^pi\s+/, "");
+    const runtimeVersion = String(piVersionResult.stdout || "")
+        .trim()
+        .replace(/^pi\s+/, "");
     const marker = readRuntimeMarker(markerPath);
     const installHint = readInstallStateHint(agentDir);
     const levels = [marker.level];
@@ -320,9 +324,11 @@ function addRuntimeCheck(results, agentDir, expectedPiVersion) {
     recordCheck(results, highestLevel(levels), "private runtime marker/version hints", `${versionDetail}; ${marker.detail}; ${installHint}`);
 }
 function addGnosisCheck(results, packageRoot, agentDir, env) {
-    const result = runCommand(process.execPath, [gnosisScript(packageRoot), "validate", "--agent-dir", agentDir], { env });
+    const result = runCommand(process.execPath, [gnosisScript(packageRoot), "validate", "--agent-dir", agentDir], {
+        env,
+    });
     if (result.status === 0) {
-        recordCheck(results, "OK", "managed gn validation", `validated ${(String(result.stdout || "").trim() || "gn")}`);
+        recordCheck(results, "OK", "managed gn validation", `validated ${String(result.stdout || "").trim() || "gn"}`);
         return;
     }
     recordCheck(results, "WARN", "managed gn validation", `no valid gn command found (${commandFailureSummary(result)})`);
@@ -547,8 +553,10 @@ function repairSettings(packageRoot, agentDir, settingsPath, env) {
     const result = runCommand(process.execPath, [
         mergeSettingsScript(packageRoot),
         defaultsPath(packageRoot),
-        "--settings", settingsPath,
-        "--default-extensions", defaultExtensionsPath(packageRoot),
+        "--settings",
+        settingsPath,
+        "--default-extensions",
+        defaultExtensionsPath(packageRoot),
     ], { env });
     if (result.status !== 0) {
         return repairAction("FAIL", "settings drift", `could not repair packaged settings drift (${commandFailureSummary(result)})${physicalCleanupDetail}`);

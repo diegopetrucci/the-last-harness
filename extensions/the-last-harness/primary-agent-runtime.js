@@ -1,12 +1,12 @@
 import { join } from "node:path";
-import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_PRIMARY_AGENT, DISABLED_PRIMARY_AGENT, PRIMARY_AGENT_CYCLE, PRIMARY_AGENT_SESSION_STATE_ENTRY, isEnabledPrimaryAgentSelection, nextPrimaryAgentSelection, primaryAgentDefaultLabel, primaryAgentSelectionFromBranch, resolvePrimaryAgentConfig, } from "../the-last-harness-primary-agent.mjs";
 import { createPrimaryToolState, filterAvailableTools } from "../the-last-harness-primary-tools.mjs";
 import { allowedSubagentsForExperimentalConfig, collectSubagentTargets, isEmbeddedSubagentTarget, isExperimentalFeatureEnabled, registerTlhStartupMode, validateSubagentToolInput, } from "../the-last-harness-subagent-safety.mjs";
 import { buildTlhCommitAttributionPrompt, getTlhGitCommitAttributionBlockReason, resolveTlhCommitAttribution, } from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME } from "./constants.js";
-import { EMBEDDED_SUBAGENTS_FEATURE, buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./experimental.js";
+import { EMBEDDED_SUBAGENTS_FEATURE, buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt, } from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import { applyProviderAwareSubagentModels, selectProviderAwareAgentDefaults } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
@@ -96,7 +96,7 @@ function writeTlhPrimaryAgentModelOverride(cwd, primary, modelKey) {
         }
         const existingOverride = modelOverrides[primary];
         if (modelKey === undefined) {
-            if (!Object.prototype.hasOwnProperty.call(modelOverrides, primary)) {
+            if (!Object.hasOwn(modelOverrides, primary)) {
                 return { changed: false };
             }
             delete modelOverrides[primary];
@@ -146,7 +146,7 @@ function writeTlhPrimaryAgentDefault(cwd, selection) {
         let changed = false;
         const setField = (key, value) => {
             if (value === undefined) {
-                if (Object.prototype.hasOwnProperty.call(primaryAgent, key)) {
+                if (Object.hasOwn(primaryAgent, key)) {
                     delete primaryAgent[key];
                     changed = true;
                 }
@@ -341,7 +341,10 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         const settingsLabel = settingsPath ? formatHomePath(settingsPath) : "unavailable outside isolated TLH profile";
         const activePrimary = effective !== DISABLED_PRIMARY_AGENT ? primaryAgents.get(effective) : undefined;
         const rawModelOverrides = primaryConfig?.modelOverrides;
-        const modelOverride = activePrimary && !shouldForceApplyForLock(activePrimary) && isRecord(rawModelOverrides) && typeof rawModelOverrides[effective] === "string"
+        const modelOverride = activePrimary &&
+            !shouldForceApplyForLock(activePrimary) &&
+            isRecord(rawModelOverrides) &&
+            typeof rawModelOverrides[effective] === "string"
             ? rawModelOverrides[effective]
             : "none";
         return [
@@ -415,10 +418,10 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         return model;
     }
     function currentThinkingSatisfiesPrimaryFloor(primary, currentThinking) {
-        return primary.lockThinking !== true
-            && primary.minThinking !== undefined
-            && isThinkingLevel(currentThinking)
-            && thinkingLevelAtLeast(currentThinking, primary.minThinking);
+        return (primary.lockThinking !== true &&
+            primary.minThinking !== undefined &&
+            isThinkingLevel(currentThinking) &&
+            thinkingLevelAtLeast(currentThinking, primary.minThinking));
     }
     function applyPrimaryThinking(primary, thinking) {
         if (!thinking) {
@@ -482,7 +485,9 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
     }
     function parsePrimaryAgentSelection(value) {
         const normalized = value?.trim().toLowerCase();
-        return normalized !== undefined && PRIMARY_AGENT_CYCLE.includes(normalized) ? normalized : undefined;
+        return normalized !== undefined && PRIMARY_AGENT_CYCLE.includes(normalized)
+            ? normalized
+            : undefined;
     }
     function switchPrimaryAgentCommandCompletions(prefix) {
         const options = [
@@ -542,7 +547,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
                     const primary = activePrimaryAgent();
                     const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
                     const rawModelOverrides = primaryConfig?.modelOverrides;
-                    const hasStoredOverride = isRecord(rawModelOverrides) && Object.prototype.hasOwnProperty.call(rawModelOverrides, selection);
+                    const hasStoredOverride = isRecord(rawModelOverrides) && Object.hasOwn(rawModelOverrides, selection);
                     if (primary && shouldForceApplyForLock(primary) && !hasStoredOverride) {
                         ctx.ui.notify(`No model override to clear: ${primaryAgentLabel(selection)} uses fixed model defaults and does not persist overrides.`, "info");
                         return;
@@ -635,7 +640,9 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             }
             const chosenKey = `${event.model.provider}/${event.model.id}`;
             const primaryDefaults = selectProviderAwareAgentDefaults(primary, getUnfilteredAvailableModels(ctx.modelRegistry), event.model.provider);
-            const bundledKey = primaryDefaults.model ? `${primaryDefaults.model.provider}/${primaryDefaults.model.id}` : undefined;
+            const bundledKey = primaryDefaults.model
+                ? `${primaryDefaults.model.provider}/${primaryDefaults.model.id}`
+                : undefined;
             const nextOverride = chosenKey === bundledKey ? undefined : chosenKey;
             try {
                 writeTlhPrimaryAgentModelOverride(ctx.cwd, selection, nextOverride);
@@ -734,7 +741,13 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             return undefined;
         });
     }
-    return { applySessionStart, currentPrimaryAgentLabel, activePrimaryAgentPrompt: activePrimaryAgent, registerCommands, registerLifecycleHooks };
+    return {
+        applySessionStart,
+        currentPrimaryAgentLabel,
+        activePrimaryAgentPrompt: activePrimaryAgent,
+        registerCommands,
+        registerLifecycleHooks,
+    };
 }
 export function registerTlhPrimaryAgentRuntime(pi, options = {}) {
     const env = options.env ?? process.env;

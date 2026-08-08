@@ -88,13 +88,17 @@ function getCachedTlhLatestRelease(state: TlhStartupState): TlhLatestRelease | u
 			return undefined;
 		}
 	}
-	if (updateCheck.latestReleaseUrl !== undefined && (typeof updateCheck.latestReleaseUrl !== "string" || !updateCheck.latestReleaseUrl.trim())) {
+	if (
+		updateCheck.latestReleaseUrl !== undefined &&
+		(typeof updateCheck.latestReleaseUrl !== "string" || !updateCheck.latestReleaseUrl.trim())
+	) {
 		return undefined;
 	}
 	const tagName = typeof updateCheck.latestTagName === "string" ? updateCheck.latestTagName.trim() : `v${version}`;
-	const releaseUrl = typeof updateCheck.latestReleaseUrl === "string"
-		? updateCheck.latestReleaseUrl.trim()
-		: `${TLH_RELEASES_URL}/tag/${tagName}`;
+	const releaseUrl =
+		typeof updateCheck.latestReleaseUrl === "string"
+			? updateCheck.latestReleaseUrl.trim()
+			: `${TLH_RELEASES_URL}/tag/${tagName}`;
 	return { version, tagName, releaseUrl };
 }
 
@@ -106,7 +110,12 @@ function shouldRefreshTlhLatestRelease(state: TlhStartupState): boolean {
 }
 
 function shouldSkipTlhUpdateCheck(cwd: string): boolean {
-	if (!tlhStartupStatePath() || process.env.PI_OFFLINE || process.env.PI_SKIP_VERSION_CHECK || process.env.TLH_SKIP_UPDATE_CHECK) {
+	if (
+		!tlhStartupStatePath() ||
+		process.env.PI_OFFLINE ||
+		process.env.PI_SKIP_VERSION_CHECK ||
+		process.env.TLH_SKIP_UPDATE_CHECK
+	) {
 		return true;
 	}
 	return getTlhUpdateCheckConfig(cwd)?.enabled === false;
@@ -130,7 +139,10 @@ async function fetchLatestTlhRelease(currentVersion: string): Promise<TlhLatestR
 	if (!tagName || !version) {
 		return undefined;
 	}
-	const releaseUrl = typeof data.html_url === "string" && data.html_url.trim() ? data.html_url.trim() : `${TLH_RELEASES_URL}/tag/${tagName}`;
+	const releaseUrl =
+		typeof data.html_url === "string" && data.html_url.trim()
+			? data.html_url.trim()
+			: `${TLH_RELEASES_URL}/tag/${tagName}`;
 	return { version, tagName, releaseUrl };
 }
 
@@ -190,7 +202,11 @@ function maybeNotifyCachedTlhUpdate(
 	}
 	const updateCheck = getTlhUpdateCheckState(state);
 	const notificationKey = notifiedTlhUpdateKey(latestRelease.version);
-	if (updateCheck.lastNotifiedVersion === latestRelease.version || notifiedTlhUpdateVersions.has(notificationKey) || !canNotifyTlhUpdate(options)) {
+	if (
+		updateCheck.lastNotifiedVersion === latestRelease.version ||
+		notifiedTlhUpdateVersions.has(notificationKey) ||
+		!canNotifyTlhUpdate(options)
+	) {
 		return false;
 	}
 	notifyTlhUpdate(ctx, latestRelease);
@@ -261,11 +277,13 @@ export async function maybeNotifyAvailableTlhUpdate(
 	if (shouldSkipTlhUpdateCheck(ctx.cwd)) {
 		return;
 	}
-	const inFlight = maybeNotifyAvailableTlhUpdateInFlight ?? runMaybeNotifyAvailableTlhUpdate().finally(() => {
-		if (maybeNotifyAvailableTlhUpdateInFlight === inFlight) {
-			maybeNotifyAvailableTlhUpdateInFlight = undefined;
-		}
-	});
+	const inFlight =
+		maybeNotifyAvailableTlhUpdateInFlight ??
+		runMaybeNotifyAvailableTlhUpdate().finally(() => {
+			if (maybeNotifyAvailableTlhUpdateInFlight === inFlight) {
+				maybeNotifyAvailableTlhUpdateInFlight = undefined;
+			}
+		});
 	maybeNotifyAvailableTlhUpdateInFlight = inFlight;
 	const result = await inFlight;
 	maybeNotifyCachedTlhUpdate(ctx, result.currentVersion, readTlhStartupState(), options);

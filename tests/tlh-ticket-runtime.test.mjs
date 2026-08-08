@@ -7,7 +7,9 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const { activateTlhTicketRuntime, activateTlhTicketSessionScope } = await jiti.import("../extensions/the-last-harness/tickets.ts");
+const { activateTlhTicketRuntime, activateTlhTicketSessionScope } = await jiti.import(
+	"../extensions/the-last-harness/tickets.ts",
+);
 
 function resetTicketRuntimeTestState() {
 	delete process.env.TICKETS_DIR;
@@ -26,7 +28,9 @@ function tempFixture() {
 }
 
 function writeFakeTk(path, label) {
-	writeFileSync(path, `#!/bin/sh
+	writeFileSync(
+		path,
+		`#!/bin/sh
 case "\${1:-}" in
   help|--help|-h)
     echo "tk - ${label} ticket system"
@@ -39,12 +43,15 @@ case "\${1:-}" in
     exit 0
     ;;
 esac
-`);
+`,
+	);
 	chmodSync(path, 0o755);
 }
 
 function writeFakeGit(path, logPath, repoRoots) {
-	writeFileSync(path, `#!/bin/sh
+	writeFileSync(
+		path,
+		`#!/bin/sh
 printf '%s\n' "$PWD" >> ${JSON.stringify(logPath)}
 if [ "\${1:-}" = "rev-parse" ] && [ "\${2:-}" = "--show-toplevel" ]; then
   case "$PWD" in
@@ -52,7 +59,8 @@ ${repoRoots.map(({ repoRoot, nestedCwd }) => `    ${JSON.stringify(nestedCwd)}|$
   esac
 fi
 exit 1
-`);
+`,
+	);
 	chmodSync(path, 0o755);
 }
 
@@ -97,7 +105,9 @@ function runGit(cwd, ...args) {
 	assert.equal(result.status, 0, result.stderr || result.stdout || String(result.error));
 }
 
-test("ticket session scope resolves nested git worktrees to repo .tickets and ignores ancestor stores", { skip: process.platform === "win32" }, () => {
+test("ticket session scope resolves nested git worktrees to repo .tickets and ignores ancestor stores", {
+	skip: process.platform === "win32",
+}, () => {
 	const fixture = tempFixture();
 	const repoRoot = join(fixture.dir, "repo");
 	const nestedCwd = join(repoRoot, "packages", "app");
@@ -114,7 +124,9 @@ test("ticket session scope resolves nested git worktrees to repo .tickets and ig
 	});
 });
 
-test("ticket session scope falls back to cwd outside git and preserves explicit TICKETS_DIR", { skip: process.platform === "win32" }, () => {
+test("ticket session scope falls back to cwd outside git and preserves explicit TICKETS_DIR", {
+	skip: process.platform === "win32",
+}, () => {
 	const fixture = tempFixture();
 	const outsideGit = join(fixture.dir, "scratch");
 	mkdirSync(outsideGit, { recursive: true });
@@ -130,7 +142,9 @@ test("ticket session scope falls back to cwd outside git and preserves explicit 
 	});
 });
 
-test("ticket session scope reuses the same cwd but updates for a different cwd", { skip: process.platform === "win32" }, () => {
+test("ticket session scope reuses the same cwd but updates for a different cwd", {
+	skip: process.platform === "win32",
+}, () => {
 	const fixture = tempFixture();
 	const firstRepo = join(fixture.dir, "repo-one");
 	const secondRepo = join(fixture.dir, "repo-two");
@@ -159,12 +173,17 @@ test("ticket session scope reuses the same cwd but updates for a different cwd",
 			assert.deepEqual(readFileSync(gitLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [firstRealNestedCwd]);
 
 			assert.equal(activateTlhTicketSessionScope(secondNestedCwd), secondExpected);
-			assert.deepEqual(readFileSync(gitLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [firstRealNestedCwd, secondRealNestedCwd]);
+			assert.deepEqual(readFileSync(gitLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [
+				firstRealNestedCwd,
+				secondRealNestedCwd,
+			]);
 		});
 	});
 });
 
-test("ticket session scope updates prior auto-scoped dirs but preserves explicit TICKETS_DIR", { skip: process.platform === "win32" }, () => {
+test("ticket session scope updates prior auto-scoped dirs but preserves explicit TICKETS_DIR", {
+	skip: process.platform === "win32",
+}, () => {
 	const fixture = tempFixture();
 	const firstRepo = join(fixture.dir, "repo-one");
 	const secondRepo = join(fixture.dir, "repo-two");
@@ -198,7 +217,9 @@ test("ticket session scope updates prior auto-scoped dirs but preserves explicit
 	});
 });
 
-test("ticket runtime prepends an external configured tk path outside PATH", { skip: process.platform === "win32" }, () => {
+test("ticket runtime prepends an external configured tk path outside PATH", {
+	skip: process.platform === "win32",
+}, () => {
 	const fixture = tempFixture();
 	const externalTk = join(fixture.external, "tk");
 	writeFakeTk(externalTk, "external-configured");
@@ -221,7 +242,10 @@ test("ticket runtime treats legacy disabled settings as enabled", { skip: proces
 	writeFakeTk(externalTk, "legacy-disabled-configured");
 
 	withPath("", () => {
-		const command = activateTlhTicketRuntime({ tlh: { tickets: { enabled: false, installPath: externalTk } } }, fixture.agent);
+		const command = activateTlhTicketRuntime(
+			{ tlh: { tickets: { enabled: false, installPath: externalTk } } },
+			fixture.agent,
+		);
 
 		assert.equal(command, externalTk);
 		assert.deepEqual(pathEntries(), [fixture.external]);
@@ -232,7 +256,9 @@ test("ticket runtime treats legacy disabled settings as enabled", { skip: proces
 	});
 });
 
-test("ticket runtime prepends managed agent bin tk when no external path is configured", { skip: process.platform === "win32" }, () => {
+test("ticket runtime prepends managed agent bin tk when no external path is configured", {
+	skip: process.platform === "win32",
+}, () => {
 	const fixture = tempFixture();
 	const managedBin = join(fixture.agent, "bin");
 	mkdirSync(managedBin, { recursive: true });
@@ -258,7 +284,9 @@ test("spawned tk commands inherit the session ticket scope", { skip: process.pla
 	mkdirSync(nestedCwd, { recursive: true });
 	mkdirSync(managedBin, { recursive: true });
 	runGit(repoRoot, "init");
-	writeFileSync(join(managedBin, "tk"), `#!/bin/sh
+	writeFileSync(
+		join(managedBin, "tk"),
+		`#!/bin/sh
 case "\${1:-}" in
   help|--help|-h)
     echo "tk - inherited ticket system"
@@ -271,7 +299,8 @@ case "\${1:-}" in
     exit 0
     ;;
 esac
-`);
+`,
+	);
 	chmodSync(join(managedBin, "tk"), 0o755);
 
 	withTicketsDir(undefined, () => {
@@ -289,16 +318,21 @@ esac
 	});
 });
 
-test("ticket runtime ignores configured commands whose basename is not tk", { skip: process.platform === "win32" }, () => {
+test("ticket runtime ignores configured commands whose basename is not tk", {
+	skip: process.platform === "win32",
+}, () => {
 	const fixture = tempFixture();
 	const externalTicket = join(fixture.external, "ticket");
 	const sentinel = join(fixture.dir, "non-tk-called");
-	writeFileSync(externalTicket, `#!/bin/sh
+	writeFileSync(
+		externalTicket,
+		`#!/bin/sh
 printf called > ${JSON.stringify(sentinel)}
 echo "Usage: tk <command> [args]"
 echo "ticket system"
 exit 0
-`);
+`,
+	);
 	chmodSync(externalTicket, 0o755);
 
 	withPath("", () => {

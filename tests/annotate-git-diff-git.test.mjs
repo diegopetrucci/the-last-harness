@@ -42,7 +42,9 @@ function createExecApi() {
 
 test("parseStatusPorcelainZ tracks reviewable changes and ignores ignored files", () => {
 	assert.deepEqual(
-		parseStatusPorcelainZ(["?? scratch/new-file.txt", "D  tracked.txt", "R  renamed.txt", "old-name.txt", "!! ignored.log", ""].join("\0")),
+		parseStatusPorcelainZ(
+			["?? scratch/new-file.txt", "D  tracked.txt", "R  renamed.txt", "old-name.txt", "!! ignored.log", ""].join("\0"),
+		),
 		{
 			hasChanges: true,
 			hasReviewableChanges: true,
@@ -115,12 +117,7 @@ test("getReviewWindowData includes tracked and untracked minified files in all-f
 	const reviewData = await getReviewWindowData(createExecApi(), repoRoot);
 	const filesByPath = new Map(reviewData.files.map((file) => [file.path, file]));
 
-	for (const path of [
-		"assets/app.min.js",
-		"styles/site.min.css",
-		"scratch/vendor.min.js",
-		"scratch/theme.min.css",
-	]) {
+	for (const path of ["assets/app.min.js", "styles/site.min.css", "scratch/vendor.min.js", "scratch/theme.min.css"]) {
 		assert.ok(filesByPath.has(path), `expected all-files scope to include ${path}`);
 		assert.equal(filesByPath.get(path)?.kind, "text");
 	}
@@ -138,10 +135,16 @@ test("getReviewWindowData surfaces working tree files in repositories without HE
 	assert.equal(reviewData.repositoryHasHead, false);
 	assert.equal(reviewData.branchBaseRef, null);
 	assert.equal(reviewData.branchMergeBaseSha, null);
-	assert.deepEqual(reviewData.files.map((file) => file.path), ["notes.txt"]);
+	assert.deepEqual(
+		reviewData.files.map((file) => file.path),
+		["notes.txt"],
+	);
 	assert.equal(reviewData.files[0]?.kind, "text");
 	assert.equal(reviewData.files[0]?.worktreeStatus, "added");
-	assert.deepEqual(reviewData.commits.map((commit) => commit.kind), ["working-tree"]);
+	assert.deepEqual(
+		reviewData.commits.map((commit) => commit.kind),
+		["working-tree"],
+	);
 });
 
 test("getReviewWindowData returns no files or commits for an empty repository without HEAD", async (t) => {
@@ -285,7 +288,13 @@ test("loadReviewFileContents does not follow untracked working-tree symlinks for
 	const commitFile = commitFiles.find((file) => file.path === "images/leak.png");
 	assert.ok(commitFile, "expected images/leak.png in working tree commit files");
 
-	const commitContents = await loadReviewFileContents(createExecApi(), repoRoot, commitFile, "commits", workingTreeCommitSha);
+	const commitContents = await loadReviewFileContents(
+		createExecApi(),
+		repoRoot,
+		commitFile,
+		"commits",
+		workingTreeCommitSha,
+	);
 	assert.equal(commitContents.originalExists, false);
 	assert.equal(commitContents.modifiedExists, true);
 	assert.equal(commitContents.modifiedPreviewUrl, null);

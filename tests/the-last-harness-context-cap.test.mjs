@@ -240,10 +240,7 @@ test("session_shutdown restores original contextWindow after session_start cappe
 test("/toggle-context-cap enables cap (flips disabled=true to false) and applies live", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-cap-test-", { test: t });
 	const settingsPath = join(fixture.agent, "settings.json");
-	writeFileSync(
-		settingsPath,
-		`${JSON.stringify({ tlh: { contextCap: { disabled: true } } }, null, 2)}\n`,
-	);
+	writeFileSync(settingsPath, `${JSON.stringify({ tlh: { contextCap: { disabled: true } } }, null, 2)}\n`);
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const pi = createPiHarness();
@@ -299,7 +296,11 @@ test("/toggle-context-cap disables cap (flips enabled to disabled=true) and rest
 		assert.equal(written.tlh?.contextCap?.disabled, true, "disabled must be set to true after toggle");
 
 		// Check live restore
-		assert.equal(model.contextWindow, 1_000_000, "model contextWindow must be restored immediately after disabling cap");
+		assert.equal(
+			model.contextWindow,
+			1_000_000,
+			"model contextWindow must be restored immediately after disabling cap",
+		);
 
 		// Check notification
 		assert.equal(ctx.notifications.length, 1);

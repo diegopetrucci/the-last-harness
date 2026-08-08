@@ -4,7 +4,8 @@ import { DynamicBorder, InteractiveMode } from "@earendil-works/pi-coding-agent"
 import { Spacer, Text } from "@earendil-works/pi-tui";
 
 const TLH_PACKAGE_UPDATE_NOTICE_PATCHED = Symbol.for("tlh.packageUpdateNoticePatched");
-const TLH_PACKAGE_UPDATE_INSTRUCTION = "TLH extension updates are available. Run `tlh update --extensions` to update them.";
+const TLH_PACKAGE_UPDATE_INSTRUCTION =
+	"TLH extension updates are available. Run `tlh update --extensions` to update them.";
 
 type TlhPackageUpdateNotificationTarget = {
 	chatContainer: {
@@ -24,9 +25,7 @@ function showTlhPackageUpdateNotification(this: TlhPackageUpdateNotificationTarg
 
 	this.chatContainer.addChild(new Spacer(1));
 	this.chatContainer.addChild(new DynamicBorder((text) => text));
-	this.chatContainer.addChild(
-		new Text(`${TLH_PACKAGE_UPDATE_INSTRUCTION}\n${packageLines}`, 1, 0),
-	);
+	this.chatContainer.addChild(new Text(`${TLH_PACKAGE_UPDATE_INSTRUCTION}\n${packageLines}`, 1, 0));
 	this.chatContainer.addChild(new DynamicBorder((text) => text));
 	this.ui.requestRender();
 }

@@ -22,7 +22,6 @@ function createEmptyResources() {
 	};
 }
 
-
 test("startup tips wrap without truncation and stay last in collapsed and expanded headers", () => {
 	const startupTip = "Use /fork to branch from an earlier user message and explore an alternate path.";
 	const expectedTipBlock = [
@@ -48,10 +47,22 @@ test("startup tips wrap without truncation and stay last in collapsed and expand
 		"collapsed header should contain the standalone Ctrl+Shift+E hint",
 	);
 	assert.equal(expandedLines.at(-expectedTipBlock.length - 1), "");
-	assert.equal(collapsedTipBlock.some((line) => line.includes("...")), false);
-	assert.equal(expandedTipBlock.some((line) => line.includes("...")), false);
-	assert.equal(collapsedTipBlock.every((line) => visibleWidth(line) <= 25), true);
-	assert.equal(expandedTipBlock.every((line) => visibleWidth(line) <= 25), true);
+	assert.equal(
+		collapsedTipBlock.some((line) => line.includes("...")),
+		false,
+	);
+	assert.equal(
+		expandedTipBlock.some((line) => line.includes("...")),
+		false,
+	);
+	assert.equal(
+		collapsedTipBlock.every((line) => visibleWidth(line) <= 25),
+		true,
+	);
+	assert.equal(
+		expandedTipBlock.every((line) => visibleWidth(line) <= 25),
+		true,
+	);
 });
 
 // ---------------------------------------------------------------------------
@@ -68,14 +79,20 @@ test("header shows warning line when installNotice is a ref notice", () => {
 	const notice = { kind: "ref", summary: "non-stable ref", detail: "my-branch" };
 	const header = createTlhHeader(plainTheme, createEmptyResources(), undefined, notice);
 	const lines = header.render(80);
-	assert.ok(lines.some((line) => /Warning.*running TLH from my-branch track/.test(line)), "expected warning line with ref detail");
+	assert.ok(
+		lines.some((line) => /Warning.*running TLH from my-branch track/.test(line)),
+		"expected warning line with ref detail",
+	);
 });
 
 test("header shows warning line when installNotice is a pinned-tag notice", () => {
 	const notice = { kind: "pinned-tag", summary: "pinned tag", detail: "v0.28.0" };
 	const header = createTlhHeader(plainTheme, createEmptyResources(), undefined, notice);
 	const lines = header.render(80);
-	assert.ok(lines.some((line) => /Warning.*running TLH from v0\.28\.0 track/.test(line)), "expected warning line with tag detail");
+	assert.ok(
+		lines.some((line) => /Warning.*running TLH from v0\.28\.0 track/.test(line)),
+		"expected warning line with tag detail",
+	);
 });
 
 test("header shows no warning line when installNotice is absent (no 4th arg)", () => {

@@ -254,10 +254,7 @@ test("annotate-git-diff cancels a pending open on shutdown without blocking a la
 	await interrupted;
 	assert.equal(firstWindow.closeCalls, 1);
 	assert.equal(watcherStarts, 1);
-	assert.equal(
-		context.notifications.filter(({ message }) => message === "Opened native review window.").length,
-		1,
-	);
+	assert.equal(context.notifications.filter(({ message }) => message === "Opened native review window.").length, 1);
 
 	controller.shutdown();
 	assert.equal(secondWindow.closeCalls, 1);
@@ -512,7 +509,13 @@ test("annotate-git-diff binds file authorization to the current scope and exact 
 
 	const invalidRequests = [
 		{
-			payload: { type: "request-file", requestId: "bad-branch-snapshot", fileId: "snapshot:guide.md", scope: "branch", commitSha: null },
+			payload: {
+				type: "request-file",
+				requestId: "bad-branch-snapshot",
+				fileId: "snapshot:guide.md",
+				scope: "branch",
+				commitSha: null,
+			},
 			expected: {
 				type: "file-error",
 				requestId: "bad-branch-snapshot",
@@ -523,7 +526,13 @@ test("annotate-git-diff binds file authorization to the current scope and exact 
 			},
 		},
 		{
-			payload: { type: "request-file", requestId: "bad-commit-branch", fileId: "branch:notes.txt", scope: "commits", commitSha: "abc1234" },
+			payload: {
+				type: "request-file",
+				requestId: "bad-commit-branch",
+				fileId: "branch:notes.txt",
+				scope: "commits",
+				commitSha: "abc1234",
+			},
 			expected: {
 				type: "file-error",
 				requestId: "bad-commit-branch",
@@ -534,7 +543,13 @@ test("annotate-git-diff binds file authorization to the current scope and exact 
 			},
 		},
 		{
-			payload: { type: "request-file", requestId: "bad-branch-commit", fileId: "commit:abc1234:notes.txt", scope: "branch", commitSha: null },
+			payload: {
+				type: "request-file",
+				requestId: "bad-branch-commit",
+				fileId: "commit:abc1234:notes.txt",
+				scope: "branch",
+				commitSha: null,
+			},
 			expected: {
 				type: "file-error",
 				requestId: "bad-branch-commit",
@@ -545,7 +560,13 @@ test("annotate-git-diff binds file authorization to the current scope and exact 
 			},
 		},
 		{
-			payload: { type: "request-file", requestId: "bad-all-commit", fileId: "commit:abc1234:notes.txt", scope: "all", commitSha: null },
+			payload: {
+				type: "request-file",
+				requestId: "bad-all-commit",
+				fileId: "commit:abc1234:notes.txt",
+				scope: "all",
+				commitSha: null,
+			},
 			expected: {
 				type: "file-error",
 				requestId: "bad-all-commit",
@@ -556,7 +577,13 @@ test("annotate-git-diff binds file authorization to the current scope and exact 
 			},
 		},
 		{
-			payload: { type: "request-file", requestId: "bad-sha", fileId: "commit:abc1234:notes.txt", scope: "commits", commitSha: "def5678" },
+			payload: {
+				type: "request-file",
+				requestId: "bad-sha",
+				fileId: "commit:abc1234:notes.txt",
+				scope: "commits",
+				commitSha: "def5678",
+			},
 			expected: {
 				type: "file-error",
 				requestId: "bad-sha",
@@ -572,9 +599,27 @@ test("annotate-git-diff binds file authorization to the current scope and exact 
 	}
 	await flushAsyncWork();
 
-	window.emit("message", { type: "request-file", requestId: "ok-all", fileId: "snapshot:guide.md", scope: "all", commitSha: null });
-	window.emit("message", { type: "request-file", requestId: "ok-branch", fileId: "branch:notes.txt", scope: "branch", commitSha: null });
-	window.emit("message", { type: "request-file", requestId: "ok-commit", fileId: "commit:abc1234:notes.txt", scope: "commits", commitSha: "abc1234" });
+	window.emit("message", {
+		type: "request-file",
+		requestId: "ok-all",
+		fileId: "snapshot:guide.md",
+		scope: "all",
+		commitSha: null,
+	});
+	window.emit("message", {
+		type: "request-file",
+		requestId: "ok-branch",
+		fileId: "branch:notes.txt",
+		scope: "branch",
+		commitSha: null,
+	});
+	window.emit("message", {
+		type: "request-file",
+		requestId: "ok-commit",
+		fileId: "commit:abc1234:notes.txt",
+		scope: "commits",
+		commitSha: "abc1234",
+	});
 	await flushAsyncWork();
 
 	assert.deepEqual(loadCalls, [
@@ -644,7 +689,10 @@ test("annotate-git-diff binds file authorization to the current scope and exact 
 	// Explicit submit (draft: false) sends via sendUserMessage, not paste.
 	assert.deepEqual(context.pasted, []);
 	assert.deepEqual(pi.sent, [{ message: "injected prompt", options: { deliverAs: "followUp" } }]);
-	assert.equal(context.notifications.some(({ message }) => message === "Review feedback sent to the agent."), true);
+	assert.equal(
+		context.notifications.some(({ message }) => message === "Review feedback sent to the agent."),
+		true,
+	);
 });
 
 test("annotate-git-diff retains pending immutable commit state across review-data refreshes", async () => {
@@ -801,7 +849,10 @@ test("annotate-git-diff retains pending immutable commit state across review-dat
 	// Explicit submit (draft: false) sends via sendUserMessage, not paste.
 	assert.deepEqual(context.pasted, []);
 	assert.deepEqual(pi.sent, [{ message: "retained immutable prompt", options: { deliverAs: "followUp" } }]);
-	assert.equal(context.notifications.some(({ message }) => message === "Review feedback sent to the agent."), true);
+	assert.equal(
+		context.notifications.some(({ message }) => message === "Review feedback sent to the agent."),
+		true,
+	);
 });
 
 test("annotate-git-diff suppresses stale commit and file results after review-data refreshes", async () => {
@@ -809,7 +860,10 @@ test("annotate-git-diff suppresses stale commit and file results after review-da
 	const pendingFileContents = createDeferred();
 	let reviewDataLoads = 0;
 	let fileLoads = 0;
-	const refreshedData = createReviewData({ files: [{ ...createReviewData().files[0], inGitDiff: false }], commits: [] });
+	const refreshedData = createReviewData({
+		files: [{ ...createReviewData().files[0], inGitDiff: false }],
+		commits: [],
+	});
 	const { controller, context, window } = createController({
 		getReviewWindowData: async () => {
 			reviewDataLoads += 1;
@@ -866,9 +920,27 @@ test("annotate-git-diff suppresses stale commit and file results after review-da
 	});
 	await flushAsyncWork();
 
-	window.emit("message", { type: "request-file", requestId: "old-commit-file", fileId: "commit:abc1234:notes.txt", scope: "commits", commitSha: "abc1234" });
-	window.emit("message", { type: "request-file", requestId: "old-commit-file-all", fileId: "commit:abc1234:notes.txt", scope: "all", commitSha: null });
-	window.emit("message", { type: "request-file", requestId: "old-branch-file", fileId: "branch:notes.txt", scope: "branch", commitSha: null });
+	window.emit("message", {
+		type: "request-file",
+		requestId: "old-commit-file",
+		fileId: "commit:abc1234:notes.txt",
+		scope: "commits",
+		commitSha: "abc1234",
+	});
+	window.emit("message", {
+		type: "request-file",
+		requestId: "old-commit-file-all",
+		fileId: "commit:abc1234:notes.txt",
+		scope: "all",
+		commitSha: null,
+	});
+	window.emit("message", {
+		type: "request-file",
+		requestId: "old-branch-file",
+		fileId: "branch:notes.txt",
+		scope: "branch",
+		commitSha: null,
+	});
 	await flushAsyncWork();
 
 	assert.equal(fileLoads, 1);
@@ -970,8 +1042,20 @@ test("annotate-git-diff keeps only the newest overlapping review-data refresh", 
 	refreshOne.resolve(staleData);
 	await flushAsyncWork();
 
-	window.emit("message", { type: "request-file", requestId: "newest-file", fileId: "snapshot:newest.md", scope: "all", commitSha: null });
-	window.emit("message", { type: "request-file", requestId: "stale-file", fileId: "snapshot:stale.md", scope: "all", commitSha: null });
+	window.emit("message", {
+		type: "request-file",
+		requestId: "newest-file",
+		fileId: "snapshot:newest.md",
+		scope: "all",
+		commitSha: null,
+	});
+	window.emit("message", {
+		type: "request-file",
+		requestId: "stale-file",
+		fileId: "snapshot:stale.md",
+		scope: "all",
+		commitSha: null,
+	});
 	await flushAsyncWork();
 
 	const sentMessages = parseSentMessages(window);
@@ -1053,8 +1137,14 @@ test("annotate-git-diff suppresses late results after shutdown", async () => {
 	assert.deepEqual(context.pasted, []);
 	assert.deepEqual(parseSentMessages(window), []);
 	assert.deepEqual(pi.sent, []);
-	assert.equal(context.notifications.some(({ message }) => message === "Appended review feedback to the editor."), false);
-	assert.equal(context.notifications.some(({ message }) => message === "Review feedback sent to the agent."), false);
+	assert.equal(
+		context.notifications.some(({ message }) => message === "Appended review feedback to the editor."),
+		false,
+	);
+	assert.equal(
+		context.notifications.some(({ message }) => message === "Review feedback sent to the agent."),
+		false,
+	);
 });
 
 test("annotate-git-diff explicit submit sends via sendUserMessage and does not paste", async () => {
@@ -1066,8 +1156,14 @@ test("annotate-git-diff explicit submit sends via sendUserMessage and does not p
 	await flushAsyncWork();
 	assert.deepEqual(context.pasted, []);
 	assert.deepEqual(pi.sent, [{ message: "explicit prompt", options: { deliverAs: "followUp" } }]);
-	assert.equal(context.notifications.some(({ message }) => message === "Review feedback sent to the agent."), true);
-	assert.equal(context.notifications.some(({ message }) => message === "Appended review feedback to the editor."), false);
+	assert.equal(
+		context.notifications.some(({ message }) => message === "Review feedback sent to the agent."),
+		true,
+	);
+	assert.equal(
+		context.notifications.some(({ message }) => message === "Appended review feedback to the editor."),
+		false,
+	);
 });
 
 test("annotate-git-diff submit payload without draft field defaults to draft (paste) path", async () => {
@@ -1081,8 +1177,14 @@ test("annotate-git-diff submit payload without draft field defaults to draft (pa
 	await flushAsyncWork();
 	assert.deepEqual(context.pasted, ["undiscriminated prompt"]);
 	assert.deepEqual(pi.sent, []);
-	assert.equal(context.notifications.some(({ message }) => message === "Appended review feedback to the editor."), true);
-	assert.equal(context.notifications.some(({ message }) => message === "Review feedback sent to the agent."), false);
+	assert.equal(
+		context.notifications.some(({ message }) => message === "Appended review feedback to the editor."),
+		true,
+	);
+	assert.equal(
+		context.notifications.some(({ message }) => message === "Review feedback sent to the agent."),
+		false,
+	);
 });
 
 test("annotate-git-diff draft-on-close pastes into editor and does not send", async () => {
@@ -1094,6 +1196,12 @@ test("annotate-git-diff draft-on-close pastes into editor and does not send", as
 	await flushAsyncWork();
 	assert.deepEqual(context.pasted, ["draft prompt"]);
 	assert.deepEqual(pi.sent, []);
-	assert.equal(context.notifications.some(({ message }) => message === "Appended review feedback to the editor."), true);
-	assert.equal(context.notifications.some(({ message }) => message === "Review feedback sent to the agent."), false);
+	assert.equal(
+		context.notifications.some(({ message }) => message === "Appended review feedback to the editor."),
+		true,
+	);
+	assert.equal(
+		context.notifications.some(({ message }) => message === "Review feedback sent to the agent."),
+		false,
+	);
 });

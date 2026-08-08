@@ -2,7 +2,13 @@ export const DEFAULT_PRIMARY_AGENT = "architect";
 export const DISABLED_PRIMARY_AGENT = "disabled";
 export const PRIMARY_AGENT_SESSION_STATE_ENTRY = "tlh-primary-agent-state";
 export const SELECTABLE_PRIMARY_AGENTS = Object.freeze(["architect", "rush", "product", "bug-hunter"]);
-export const PRIMARY_AGENT_CYCLE = Object.freeze(["architect", "rush", "product", "bug-hunter", DISABLED_PRIMARY_AGENT]);
+export const PRIMARY_AGENT_CYCLE = Object.freeze([
+	"architect",
+	"rush",
+	"product",
+	"bug-hunter",
+	DISABLED_PRIMARY_AGENT,
+]);
 
 const PRIMARY_AGENT_SELECTIONS = new Set(PRIMARY_AGENT_CYCLE);
 
@@ -11,7 +17,7 @@ function isRecord(value) {
 }
 
 function hasOwn(value, key) {
-	return Object.prototype.hasOwnProperty.call(value, key);
+	return Object.hasOwn(value, key);
 }
 
 function normalizeSelection(value) {

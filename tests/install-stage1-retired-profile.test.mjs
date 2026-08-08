@@ -89,7 +89,9 @@ test("cleanupLegacyManagedProfileArtifacts dry-run logs removal without deleting
 	writeFileSync(legacyManagedRtk, "#!/bin/sh\nexit 0\n", "utf8");
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
-	const stdout = captureConsole("log", () => cleanupLegacyManagedProfileArtifacts({ agentDir, dryRun: true, quiet: false, verbose: false }));
+	const stdout = captureConsole("log", () =>
+		cleanupLegacyManagedProfileArtifacts({ agentDir, dryRun: true, quiet: false, verbose: false }),
+	);
 
 	assert.equal(existsSync(legacyManagedRtk), true);
 	assert.match(stdout, /Would remove retired profile file.*bin[\\/]rtk/);
@@ -236,10 +238,7 @@ test("cleanupRetiredProfileFiles removes extensions/librarian.json when libraria
 // --- RETIRED_PROFILE_DIRECTORIES / cleanupRetiredProfileDirectories tests ---
 
 test("RETIRED_PROFILE_DIRECTORIES includes 'intercom'", () => {
-	assert.ok(
-		RETIRED_PROFILE_DIRECTORIES.includes("intercom"),
-		"RETIRED_PROFILE_DIRECTORIES must include 'intercom'",
-	);
+	assert.ok(RETIRED_PROFILE_DIRECTORIES.includes("intercom"), "RETIRED_PROFILE_DIRECTORIES must include 'intercom'");
 });
 
 test("cleanupRetiredProfileDirectories removes intercom/ directory when present", (t) => {
@@ -261,9 +260,7 @@ test("cleanupRetiredProfileDirectories is idempotent when intercom/ is absent", 
 	mkdirSync(agentDir, { recursive: true });
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
-	assert.doesNotThrow(() =>
-		cleanupRetiredProfileDirectories({ agentDir, dryRun: false, quiet: true, verbose: false }),
-	);
+	assert.doesNotThrow(() => cleanupRetiredProfileDirectories({ agentDir, dryRun: false, quiet: true, verbose: false }));
 });
 
 test("cleanupRetiredProfileDirectories skips symlinked intercom/ target without error", (t) => {

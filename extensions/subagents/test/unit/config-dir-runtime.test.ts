@@ -38,10 +38,14 @@ describe("config directory resolution", () => {
 			fs.mkdirSync(distDir, { recursive: true });
 			const cliPath = path.join(distDir, "cli.js");
 			fs.writeFileSync(cliPath, "", "utf-8");
-			fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({
-				name: "@earendil-works/pi-coding-agent",
-				piConfig: { configDir: ".custom-pi" },
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(packageRoot, "package.json"),
+				JSON.stringify({
+					name: "@earendil-works/pi-coding-agent",
+					piConfig: { configDir: ".custom-pi" },
+				}),
+				"utf-8",
+			);
 
 			assert.equal(resolveConfigDirName(undefined, cliPath), ".custom-pi");
 		} finally {
@@ -54,10 +58,14 @@ describe("config directory resolution", () => {
 		try {
 			const packageRoot = path.join(tempDir, "coding-agent-root");
 			fs.mkdirSync(packageRoot, { recursive: true });
-			fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({
-				name: "@earendil-works/pi-coding-agent",
-				piConfig: { configDir: ".root-pi" },
-			}), "utf-8");
+			fs.writeFileSync(
+				path.join(packageRoot, "package.json"),
+				JSON.stringify({
+					name: "@earendil-works/pi-coding-agent",
+					piConfig: { configDir: ".root-pi" },
+				}),
+				"utf-8",
+			);
 
 			assert.equal(resolveConfigDirName(undefined, undefined, packageRoot), ".root-pi");
 		} finally {

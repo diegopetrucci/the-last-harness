@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	readdirSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -135,7 +145,10 @@ function setupFixture(t) {
 	mkdirSync(join(workspace, "src"), { recursive: true });
 	writeFileSync(join(workspace, "src", "index.mjs"), "export const existing = () => 'existing';\n");
 	mkdirSync(join(workspace, "test"), { recursive: true });
-	writeFileSync(join(workspace, "test", "existing.test.mjs"), `import test from "node:test";\nimport assert from "node:assert/strict";\nimport { existing } from "../src/index.mjs";\n\ntest("existing export works", () => {\n\tassert.equal(existing(), "existing");\n});\n`);
+	writeFileSync(
+		join(workspace, "test", "existing.test.mjs"),
+		`import test from "node:test";\nimport assert from "node:assert/strict";\nimport { existing } from "../src/index.mjs";\n\ntest("existing export works", () => {\n\tassert.equal(existing(), "existing");\n});\n`,
+	);
 	writeFileSync(join(workspace, "package.json"), '{\n  "type": "module"\n}\n');
 	writeFileSync(join(workspace, "README.md"), "# Fixture\n");
 
@@ -148,10 +161,14 @@ function setupFixture(t) {
 	run("git", ["config", "user.email", "tests@example.com"], { cwd: workspace, env: gitEnv });
 	run("git", ["config", "user.name", "TLH Tests"], { cwd: workspace, env: gitEnv });
 	run("git", ["add", "."], { cwd: workspace, env: gitEnv });
-	run("git", ["-c", "commit.gpgsign=false", "-c", `core.hooksPath=${emptyHooksDir}`, "commit", "--no-verify", "-m", "fixture"], {
-		cwd: workspace,
-		env: gitEnv,
-	});
+	run(
+		"git",
+		["-c", "commit.gpgsign=false", "-c", `core.hooksPath=${emptyHooksDir}`, "commit", "--no-verify", "-m", "fixture"],
+		{
+			cwd: workspace,
+			env: gitEnv,
+		},
+	);
 
 	writeFakeTk(join(fakebin, "tk"));
 	const gnProbe = join(root, "fake-gn-probed");
@@ -165,78 +182,81 @@ function setupFixture(t) {
 }
 
 function writeFakeTk(path) {
-	writeFileSync(path, [
-		"#!/usr/bin/env node",
-		'import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";',
-		'import { join } from "node:path";',
-		"",
-		"const cwd = process.cwd();",
-		'const ticketsDir = join(cwd, ".tickets");',
-		"const args = process.argv.slice(2);",
-		"const command = args[0];",
-		"",
-		"function ensureTicketsDir() {",
-		"  mkdirSync(ticketsDir, { recursive: true });",
-		"}",
-		"",
-		"function ticketPath(id) {",
-		"  return join(ticketsDir, id + '.json');",
-		"}",
-		"",
-		"function load(id) {",
-		"  const file = ticketPath(id);",
-		"  if (!existsSync(file)) {",
-		"    process.stderr.write('ticket not found: ' + id + '\\n');",
-		"    process.exit(1);",
-		"  }",
-		"  return JSON.parse(readFileSync(file, 'utf8'));",
-		"}",
-		"",
-		"function save(ticket) {",
-		"  ensureTicketsDir();",
-		"  writeFileSync(ticketPath(ticket.id), JSON.stringify(ticket, null, 2) + '\\n');",
-		"}",
-		"",
-		"if (!command || command === 'help' || command === '--help' || command === '-h') {",
-		"  process.stdout.write('Usage: tk <command> [args]\\n');",
-		"  process.exit(0);",
-		"}",
-		"",
-		"if (command === 'create') {",
-		"  ensureTicketsDir();",
-		"  const title = args[1] ?? 'untitled';",
-		"  const description = args[args.indexOf('-d') + 1] ?? '';",
-		"  const acceptance = args[args.indexOf('--acceptance') + 1] ?? '';",
-		"  const id = 'tlh-test-1';",
-		"  const ticket = { id, title, description, acceptance, status: 'open' };",
-		"  save(ticket);",
-		"  process.stdout.write(id + '\\n');",
-		"  process.exit(0);",
-		"}",
-		"",
-		"if (command === 'show') {",
-		"  const ticket = load(args[1]);",
-		"  process.stdout.write(['---', 'id: ' + ticket.id, 'status: ' + ticket.status, '---', '# ' + ticket.title, ticket.description, '', 'Acceptance:', ticket.acceptance].join('\\n') + '\\n');",
-		"  process.exit(0);",
-		"}",
-		"",
-		"if (command === 'close') {",
-		"  const ticket = load(args[1]);",
-		"  ticket.status = 'closed';",
-		"  save(ticket);",
-		"  process.stdout.write(ticket.id + '\\n');",
-		"  process.exit(0);",
-		"}",
-		"",
-		"if (command === 'delete') {",
-		"  rmSync(ticketPath(args[1]), { force: true });",
-		"  process.stdout.write(args[1] + '\\n');",
-		"  process.exit(0);",
-		"}",
-		"",
-		"process.stderr.write('unsupported tk command: ' + command + '\\n');",
-		"process.exit(1);",
-	].join("\n"));
+	writeFileSync(
+		path,
+		[
+			"#!/usr/bin/env node",
+			'import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";',
+			'import { join } from "node:path";',
+			"",
+			"const cwd = process.cwd();",
+			'const ticketsDir = join(cwd, ".tickets");',
+			"const args = process.argv.slice(2);",
+			"const command = args[0];",
+			"",
+			"function ensureTicketsDir() {",
+			"  mkdirSync(ticketsDir, { recursive: true });",
+			"}",
+			"",
+			"function ticketPath(id) {",
+			"  return join(ticketsDir, id + '.json');",
+			"}",
+			"",
+			"function load(id) {",
+			"  const file = ticketPath(id);",
+			"  if (!existsSync(file)) {",
+			"    process.stderr.write('ticket not found: ' + id + '\\n');",
+			"    process.exit(1);",
+			"  }",
+			"  return JSON.parse(readFileSync(file, 'utf8'));",
+			"}",
+			"",
+			"function save(ticket) {",
+			"  ensureTicketsDir();",
+			"  writeFileSync(ticketPath(ticket.id), JSON.stringify(ticket, null, 2) + '\\n');",
+			"}",
+			"",
+			"if (!command || command === 'help' || command === '--help' || command === '-h') {",
+			"  process.stdout.write('Usage: tk <command> [args]\\n');",
+			"  process.exit(0);",
+			"}",
+			"",
+			"if (command === 'create') {",
+			"  ensureTicketsDir();",
+			"  const title = args[1] ?? 'untitled';",
+			"  const description = args[args.indexOf('-d') + 1] ?? '';",
+			"  const acceptance = args[args.indexOf('--acceptance') + 1] ?? '';",
+			"  const id = 'tlh-test-1';",
+			"  const ticket = { id, title, description, acceptance, status: 'open' };",
+			"  save(ticket);",
+			"  process.stdout.write(id + '\\n');",
+			"  process.exit(0);",
+			"}",
+			"",
+			"if (command === 'show') {",
+			"  const ticket = load(args[1]);",
+			"  process.stdout.write(['---', 'id: ' + ticket.id, 'status: ' + ticket.status, '---', '# ' + ticket.title, ticket.description, '', 'Acceptance:', ticket.acceptance].join('\\n') + '\\n');",
+			"  process.exit(0);",
+			"}",
+			"",
+			"if (command === 'close') {",
+			"  const ticket = load(args[1]);",
+			"  ticket.status = 'closed';",
+			"  save(ticket);",
+			"  process.stdout.write(ticket.id + '\\n');",
+			"  process.exit(0);",
+			"}",
+			"",
+			"if (command === 'delete') {",
+			"  rmSync(ticketPath(args[1]), { force: true });",
+			"  process.stdout.write(args[1] + '\\n');",
+			"  process.exit(0);",
+			"}",
+			"",
+			"process.stderr.write('unsupported tk command: ' + command + '\\n');",
+			"process.exit(1);",
+		].join("\n"),
+	);
 	chmodSync(path, 0o755);
 }
 
@@ -322,7 +342,12 @@ function scriptedStream(model, scriptState) {
 				stream.push({ type: "done", reason: "stop", message: output });
 			} else {
 				output.stopReason = "toolUse";
-				const toolCall = { type: "toolCall", id: `${role}-tool-${step}`, name: response.toolName, arguments: response.args };
+				const toolCall = {
+					type: "toolCall",
+					id: `${role}-tool-${step}`,
+					name: response.toolName,
+					arguments: response.args,
+				};
 				output.content.push(toolCall);
 				stream.push({ type: "toolcall_start", contentIndex: 0, partial: output });
 				stream.push({ type: "toolcall_delta", contentIndex: 0, delta: JSON.stringify(response.args), partial: output });
@@ -344,7 +369,10 @@ function scriptedStream(model, scriptState) {
 function scriptedResponseFor(role, step, ticketId) {
 	if (role === "architect") {
 		if (step === 0) {
-			return { type: "text", text: "Plan:\n1. Create a tk ticket for the approved change.\n2. Delegate implementation to developer.\n3. Run an independent code review.\n4. Close and delete the ticket, then report validation. Reply with exactly approved to continue." };
+			return {
+				type: "text",
+				text: "Plan:\n1. Create a tk ticket for the approved change.\n2. Delegate implementation to developer.\n3. Run an independent code review.\n4. Close and delete the ticket, then report validation. Reply with exactly approved to continue.",
+			};
 		}
 		if (step === 1) {
 			return {
@@ -374,7 +402,7 @@ function scriptedResponseFor(role, step, ticketId) {
 					prompt: `Review ticket ${ticketId} against the current diff. Inspect git status, git diff --no-color, and the relevant files.`,
 				},
 			};
-			}
+		}
 		if (step === 4) {
 			return {
 				type: "tool",
@@ -384,7 +412,10 @@ function scriptedResponseFor(role, step, ticketId) {
 				},
 			};
 		}
-		return { type: "text", text: "Implemented the approved plan via the normal architect workflow: created a tk ticket, delegated implementation to developer, completed an independent code review with no blockers, ran the ticket-scoped test, and cleaned up the closed ticket." };
+		return {
+			type: "text",
+			text: "Implemented the approved plan via the normal architect workflow: created a tk ticket, delegated implementation to developer, completed an independent code review with no blockers, ran the ticket-scoped test, and cleaned up the closed ticket.",
+		};
 	}
 
 	if (role === "developer") {
@@ -424,7 +455,10 @@ function scriptedResponseFor(role, step, ticketId) {
 		if (step === 4) {
 			return { type: "tool", toolName: "bash", args: { command: "node test/greeting.test.mjs" } };
 		}
-		return { type: "text", text: `Summary:\n- Added formatGreeting(name) in src/greeting.mjs.\n- Exported the helper from src/index.mjs.\n- Added test/greeting.test.mjs and ran node test/greeting.test.mjs successfully.` };
+		return {
+			type: "text",
+			text: `Summary:\n- Added formatGreeting(name) in src/greeting.mjs.\n- Exported the helper from src/index.mjs.\n- Added test/greeting.test.mjs and ran node test/greeting.test.mjs successfully.`,
+		};
 	}
 
 	if (step === 0) {
@@ -448,11 +482,17 @@ function scriptedResponseFor(role, step, ticketId) {
 			args: { path: "test/greeting.test.mjs" },
 		};
 	}
-	return { type: "text", text: "No blockers. Reviewed git status, the full unstaged diff, src/greeting.mjs, and test/greeting.test.mjs. Residual risk is low because the change is isolated and covered by a targeted node:test." };
+	return {
+		type: "text",
+		text: "No blockers. Reviewed git status, the full unstaged diff, src/greeting.mjs, and test/greeting.test.mjs. Residual risk is low because the change is isolated and covered by a targeted node:test.",
+	};
 }
 
 function flattenText(message) {
-	return (message?.content ?? []).filter((block) => block.type === "text").map((block) => block.text).join("\n");
+	return (message?.content ?? [])
+		.filter((block) => block.type === "text")
+		.map((block) => block.text)
+		.join("\n");
 }
 
 function createLoggingExtension(logs, prompts, role) {
@@ -477,7 +517,9 @@ const EXPECTED_ACTIVE_TOOLS = {
 	"code-reviewer": ["bash", "find", "grep", "ls", "read"],
 };
 
-test("hermetic core architect workflow runs end-to-end with deterministic subagent boundaries", { skip: process.platform === "win32" }, async (t) => {
+test("hermetic core architect workflow runs end-to-end with deterministic subagent boundaries", {
+	skip: process.platform === "win32",
+}, async (t) => {
 	const poisonedGitRoot = mkdtempSync(join(tmpdir(), "tlh-hermetic-git-poison-"));
 	t.after(() => rmSync(poisonedGitRoot, { recursive: true, force: true }));
 	const poisonedHome = join(poisonedGitRoot, "home");
@@ -486,19 +528,26 @@ test("hermetic core architect workflow runs end-to-end with deterministic subage
 	mkdirSync(poisonedHome, { recursive: true });
 	mkdirSync(poisonedXdg, { recursive: true });
 	mkdirSync(poisonedHooks, { recursive: true });
-	writeFileSync(join(poisonedHome, ".gitconfig"), `[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = false\n[core]\n\thooksPath = ${poisonedHooks}\n`, "utf8");
+	writeFileSync(
+		join(poisonedHome, ".gitconfig"),
+		`[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = false\n[core]\n\thooksPath = ${poisonedHooks}\n`,
+		"utf8",
+	);
 	writeFileSync(join(poisonedHooks, "pre-commit"), "#!/bin/sh\nexit 42\n", { encoding: "utf8", mode: 0o755 });
-	const fixture = await withEnv({
-		HOME: poisonedHome,
-		XDG_CONFIG_HOME: poisonedXdg,
-		GIT_CONFIG_COUNT: "3",
-		GIT_CONFIG_KEY_0: "commit.gpgsign",
-		GIT_CONFIG_VALUE_0: "true",
-		GIT_CONFIG_KEY_1: "gpg.program",
-		GIT_CONFIG_VALUE_1: "false",
-		GIT_CONFIG_KEY_2: "core.hooksPath",
-		GIT_CONFIG_VALUE_2: poisonedHooks,
-	}, async () => setupFixture(t));
+	const fixture = await withEnv(
+		{
+			HOME: poisonedHome,
+			XDG_CONFIG_HOME: poisonedXdg,
+			GIT_CONFIG_COUNT: "3",
+			GIT_CONFIG_KEY_0: "commit.gpgsign",
+			GIT_CONFIG_VALUE_0: "true",
+			GIT_CONFIG_KEY_1: "gpg.program",
+			GIT_CONFIG_VALUE_1: "false",
+			GIT_CONFIG_KEY_2: "core.hooksPath",
+			GIT_CONFIG_VALUE_2: poisonedHooks,
+		},
+		async () => setupFixture(t),
+	);
 	const modelRuntime = await ModelRuntime.create({
 		authPath: join(fixture.agentDir, "auth.json"),
 		allowModelNetwork: false,
@@ -576,12 +625,15 @@ test("hermetic core architect workflow runs end-to-end with deterministic subage
 				});
 			});
 			try {
-				await withEnv({
-					...subagentEnv,
-					NODE_TEST_CONTEXT: undefined,
-				}, async () => {
-					await session.prompt(params.prompt);
-				});
+				await withEnv(
+					{
+						...subagentEnv,
+						NODE_TEST_CONTEXT: undefined,
+					},
+					async () => {
+						await session.prompt(params.prompt);
+					},
+				);
 				const finalAssistant = session.state.messages.filter((message) => message.role === "assistant").at(-1);
 				sessionRoles.push({
 					role,
@@ -615,17 +667,19 @@ test("hermetic core architect workflow runs end-to-end with deterministic subage
 	const architectModel = modelRegistry.find("anthropic", "claude-opus-5");
 	assert.ok(architectModel);
 
-	const { session } = await withEnv(createHermeticRuntimeEnv(fixture), async () => createAgentSession({
-		cwd: fixture.workspace,
-		agentDir: fixture.agentDir,
-		modelRuntime,
-		model: architectModel,
-		resourceLoader,
-		sessionManager: SessionManager.create(fixture.workspace, join(fixture.agentDir, "sessions")),
-		tools: EXPECTED_ACTIVE_TOOLS.architect,
-		customTools: [subagentTool],
-		sessionStartEvent: { reason: "startup", sessionName: "architect" },
-	}));
+	const { session } = await withEnv(createHermeticRuntimeEnv(fixture), async () =>
+		createAgentSession({
+			cwd: fixture.workspace,
+			agentDir: fixture.agentDir,
+			modelRuntime,
+			model: architectModel,
+			resourceLoader,
+			sessionManager: SessionManager.create(fixture.workspace, join(fixture.agentDir, "sessions")),
+			tools: EXPECTED_ACTIVE_TOOLS.architect,
+			customTools: [subagentTool],
+			sessionStartEvent: { reason: "startup", sessionName: "architect" },
+		}),
+	);
 
 	try {
 		sessionRoles.push({
@@ -635,21 +689,41 @@ test("hermetic core architect workflow runs end-to-end with deterministic subage
 			allTools: sortedToolNames(session.getAllTools()),
 		});
 		await withEnv({ ...createHermeticRuntimeEnv(fixture), NODE_TEST_CONTEXT: undefined }, async () => {
-			await session.prompt("Add a reusable formatGreeting(name) helper exported from src/index.mjs, cover it with a targeted node:test, and use the normal TLH architect workflow.");
+			await session.prompt(
+				"Add a reusable formatGreeting(name) helper exported from src/index.mjs, cover it with a targeted node:test, and use the normal TLH architect workflow.",
+			);
 			await session.prompt("approved");
 		});
 
 		const architectMessages = session.state.messages.filter((message) => message.role === "assistant");
 		const finalArchitectText = flattenText(architectMessages.at(-1));
-		const gitStatus = run("git", ["status", "--short", "--untracked-files=all"], { cwd: fixture.workspace, env: fixture.gitEnv });
+		const gitStatus = run("git", ["status", "--short", "--untracked-files=all"], {
+			cwd: fixture.workspace,
+			env: fixture.gitEnv,
+		});
 		const gitDiff = run("git", ["diff", "--no-color"], { cwd: fixture.workspace, env: fixture.gitEnv });
 		const validationResult = spawnSync(process.execPath, ["--test", "test/greeting.test.mjs"], {
 			cwd: fixture.workspace,
 			encoding: "utf8",
 		});
-		assert.equal(validationResult.status, 0, validationResult.stderr || validationResult.stdout || String(validationResult.error));
+		assert.equal(
+			validationResult.status,
+			0,
+			validationResult.stderr || validationResult.stdout || String(validationResult.error),
+		);
 		const ticketsDir = join(fixture.workspace, ".tickets");
-		const diagnostics = JSON.stringify({ toolLogs, providerCalls: scriptState.providerCalls, sessionRoles, promptLogCount: promptLogs.length, gitStatus, gitDiff }, null, 2);
+		const diagnostics = JSON.stringify(
+			{
+				toolLogs,
+				providerCalls: scriptState.providerCalls,
+				sessionRoles,
+				promptLogCount: promptLogs.length,
+				gitStatus,
+				gitDiff,
+			},
+			null,
+			2,
+		);
 
 		assert.match(finalArchitectText, /created a tk ticket/i, diagnostics);
 		assert.match(finalArchitectText, /independent code review/i, diagnostics);
@@ -658,13 +732,34 @@ test("hermetic core architect workflow runs end-to-end with deterministic subage
 		assert.match(gitStatus, /\?\? src\/greeting\.mjs/, diagnostics);
 		assert.match(gitStatus, /\?\? test\/greeting\.test\.mjs/, diagnostics);
 		assert.doesNotMatch(gitStatus, /\.tickets/, diagnostics);
-		assert.equal(readFileSync(join(fixture.workspace, "src", "greeting.mjs"), "utf8"), "export function formatGreeting(name) {\n\treturn `Hello, ${name}!`;\n}\n");
+		assert.equal(
+			readFileSync(join(fixture.workspace, "src", "greeting.mjs"), "utf8"),
+			"export function formatGreeting(name) {\n\treturn `Hello, ${name}!`;\n}\n",
+		);
 		assert.match(readFileSync(join(fixture.workspace, "src", "index.mjs"), "utf8"), /formatGreeting/);
 		assert.match(gitDiff, /\+export \{ formatGreeting \} from '\.\/greeting\.mjs';/, diagnostics);
-		assert.equal(scriptState.providerCalls.some((entry) => entry.role === "architect" && entry.step === 1), true, diagnostics);
-		assert.equal(scriptState.providerCalls.some((entry) => entry.role === "architect" && entry.step === 2), true, diagnostics);
-		assert.equal(scriptState.providerCalls.some((entry) => entry.role === "code-reviewer"), true, diagnostics);
-		assert.equal(scriptState.providerCalls.some((entry) => entry.role === "code-reviewer" && entry.model === "openai-codex/gpt-5.6-sol"), true, diagnostics);
+		assert.equal(
+			scriptState.providerCalls.some((entry) => entry.role === "architect" && entry.step === 1),
+			true,
+			diagnostics,
+		);
+		assert.equal(
+			scriptState.providerCalls.some((entry) => entry.role === "architect" && entry.step === 2),
+			true,
+			diagnostics,
+		);
+		assert.equal(
+			scriptState.providerCalls.some((entry) => entry.role === "code-reviewer"),
+			true,
+			diagnostics,
+		);
+		assert.equal(
+			scriptState.providerCalls.some(
+				(entry) => entry.role === "code-reviewer" && entry.model === "openai-codex/gpt-5.6-sol",
+			),
+			true,
+			diagnostics,
+		);
 		const architectTools = toolLogs.filter((entry) => entry.role === "architect");
 		const developerTools = toolLogs.filter((entry) => entry.role === "developer");
 		const reviewerTools = toolLogs.filter((entry) => entry.role === "code-reviewer");
@@ -680,24 +775,82 @@ test("hermetic core architect workflow runs end-to-end with deterministic subage
 		assert.equal(developerRun?.allTools.includes("edit"), true, diagnostics);
 		assert.equal(reviewerRun?.allTools.includes("write"), false, diagnostics);
 		assert.equal(reviewerRun?.allTools.includes("edit"), false, diagnostics);
-		assert.equal(architectTools.some((entry) => ["write", "edit"].includes(entry.toolName)), false, diagnostics);
-		assert.equal(reviewerTools.some((entry) => ["write", "edit"].includes(entry.toolName)), false, diagnostics);
-		assert.equal(developerTools.some((entry) => entry.toolName === "write" && entry.input.path === "src/greeting.mjs"), true, diagnostics);
-		assert.equal(developerTools.some((entry) => entry.toolName === "write" && entry.input.path === "test/greeting.test.mjs"), true, diagnostics);
-		assert.equal(architectTools.some((entry) => entry.toolName === "subagent" && entry.input.agent === "developer"), true, diagnostics);
-		assert.equal(architectTools.some((entry) => entry.toolName === "subagent" && entry.input.agent === "code-reviewer"), true, diagnostics);
-		assert.equal(reviewerTools.some((entry) => ["write", "edit", "subagent"].includes(entry.toolName)), false, diagnostics);
-		assert.equal(reviewerTools.some((entry) => entry.toolName === "read" && entry.input.path === "src/greeting.mjs"), true, diagnostics);
-		assert.equal(reviewerTools.some((entry) => entry.toolName === "read" && entry.input.path === "test/greeting.test.mjs"), true, diagnostics);
-		assert.equal(developerTools.some((entry) => entry.toolName === "bash" && entry.input.command === "node test/greeting.test.mjs"), true, diagnostics);
+		assert.equal(
+			architectTools.some((entry) => ["write", "edit"].includes(entry.toolName)),
+			false,
+			diagnostics,
+		);
+		assert.equal(
+			reviewerTools.some((entry) => ["write", "edit"].includes(entry.toolName)),
+			false,
+			diagnostics,
+		);
+		assert.equal(
+			developerTools.some((entry) => entry.toolName === "write" && entry.input.path === "src/greeting.mjs"),
+			true,
+			diagnostics,
+		);
+		assert.equal(
+			developerTools.some((entry) => entry.toolName === "write" && entry.input.path === "test/greeting.test.mjs"),
+			true,
+			diagnostics,
+		);
+		assert.equal(
+			architectTools.some((entry) => entry.toolName === "subagent" && entry.input.agent === "developer"),
+			true,
+			diagnostics,
+		);
+		assert.equal(
+			architectTools.some((entry) => entry.toolName === "subagent" && entry.input.agent === "code-reviewer"),
+			true,
+			diagnostics,
+		);
+		assert.equal(
+			reviewerTools.some((entry) => ["write", "edit", "subagent"].includes(entry.toolName)),
+			false,
+			diagnostics,
+		);
+		assert.equal(
+			reviewerTools.some((entry) => entry.toolName === "read" && entry.input.path === "src/greeting.mjs"),
+			true,
+			diagnostics,
+		);
+		assert.equal(
+			reviewerTools.some((entry) => entry.toolName === "read" && entry.input.path === "test/greeting.test.mjs"),
+			true,
+			diagnostics,
+		);
+		assert.equal(
+			developerTools.some(
+				(entry) => entry.toolName === "bash" && entry.input.command === "node test/greeting.test.mjs",
+			),
+			true,
+			diagnostics,
+		);
 		const developerBashResults = developerRun?.toolResults.filter((result) => result.toolName === "bash") ?? [];
 		assert.equal(developerBashResults.length, 2, diagnostics);
-		assert.equal(developerBashResults.every((result) => result.isError === false), true, diagnostics);
-		assert.equal(developerBashResults.some((result) => result.content.some((block) => block.type === "text" && /pass 1/.test(block.text))), true, diagnostics);
+		assert.equal(
+			developerBashResults.every((result) => result.isError === false),
+			true,
+			diagnostics,
+		);
+		assert.equal(
+			developerBashResults.some((result) =>
+				result.content.some((block) => block.type === "text" && /pass 1/.test(block.text)),
+			),
+			true,
+			diagnostics,
+		);
 		const reviewerBashResults = reviewerRun?.toolResults.filter((result) => result.toolName === "bash") ?? [];
 		assert.equal(reviewerBashResults.length, 1, diagnostics);
-		assert.equal(reviewerBashResults.every((result) => result.isError === false), true, diagnostics);
-		const reviewerBashText = reviewerBashResults.flatMap((result) => result.content.filter((block) => block.type === "text").map((block) => block.text)).join("\n");
+		assert.equal(
+			reviewerBashResults.every((result) => result.isError === false),
+			true,
+			diagnostics,
+		);
+		const reviewerBashText = reviewerBashResults
+			.flatMap((result) => result.content.filter((block) => block.type === "text").map((block) => block.text))
+			.join("\n");
 		assert.match(reviewerBashText, /M src\/index\.mjs/, diagnostics);
 		assert.match(reviewerBashText, /\?\? src\/greeting\.mjs/, diagnostics);
 		assert.match(reviewerBashText, /\?\? test\/greeting\.test\.mjs/, diagnostics);
@@ -705,15 +858,61 @@ test("hermetic core architect workflow runs end-to-end with deterministic subage
 		assert.match(reviewerBashText, /\+export \{ formatGreeting \} from '\.\/greeting\.mjs';/, diagnostics);
 		const reviewerReadResults = reviewerRun?.toolResults.filter((result) => result.toolName === "read") ?? [];
 		assert.equal(reviewerReadResults.length, 2, diagnostics);
-		assert.equal(reviewerReadResults.every((result) => result.isError === false), true, diagnostics);
-		const reviewerReadTexts = reviewerReadResults.map((result) => result.content.filter((block) => block.type === "text").map((block) => block.text).join("\n"));
-		assert.equal(reviewerReadTexts.some((text) => /export function formatGreeting\(name\)/.test(text) && /Hello, \$\{name\}!/.test(text)), true, diagnostics);
-		assert.equal(reviewerReadTexts.some((text) => /import \{ formatGreeting \} from "\.\.\/src\/index\.mjs";/.test(text) && /assert\.equal\(formatGreeting\("Ada"\), "Hello, Ada!"\);/.test(text)), true, diagnostics);
-		assert.equal(sessionRoles.some((entry) => entry.role === "developer" && /TLH Child Subagent Defaults/.test(entry.systemPrompt)), true, diagnostics);
-		assert.equal(sessionRoles.some((entry) => entry.role === "code-reviewer" && /TLH Child Subagent Defaults/.test(entry.systemPrompt)), true, diagnostics);
-		assert.equal(promptLogs.some((entry) => /switch-primary-agent/.test(entry.systemPrompt)), false, diagnostics);
-		assert.equal(readFileSync(join(fixture.workspace, "test", "greeting.test.mjs"), "utf8").includes("formatGreeting"), true);
-		assert.deepEqual(readdirSync(ticketsDir, { withFileTypes: true }).map((entry) => entry.name), [], diagnostics);
+		assert.equal(
+			reviewerReadResults.every((result) => result.isError === false),
+			true,
+			diagnostics,
+		);
+		const reviewerReadTexts = reviewerReadResults.map((result) =>
+			result.content
+				.filter((block) => block.type === "text")
+				.map((block) => block.text)
+				.join("\n"),
+		);
+		assert.equal(
+			reviewerReadTexts.some(
+				(text) => /export function formatGreeting\(name\)/.test(text) && /Hello, \$\{name\}!/.test(text),
+			),
+			true,
+			diagnostics,
+		);
+		assert.equal(
+			reviewerReadTexts.some(
+				(text) =>
+					/import \{ formatGreeting \} from "\.\.\/src\/index\.mjs";/.test(text) &&
+					/assert\.equal\(formatGreeting\("Ada"\), "Hello, Ada!"\);/.test(text),
+			),
+			true,
+			diagnostics,
+		);
+		assert.equal(
+			sessionRoles.some(
+				(entry) => entry.role === "developer" && /TLH Child Subagent Defaults/.test(entry.systemPrompt),
+			),
+			true,
+			diagnostics,
+		);
+		assert.equal(
+			sessionRoles.some(
+				(entry) => entry.role === "code-reviewer" && /TLH Child Subagent Defaults/.test(entry.systemPrompt),
+			),
+			true,
+			diagnostics,
+		);
+		assert.equal(
+			promptLogs.some((entry) => /switch-primary-agent/.test(entry.systemPrompt)),
+			false,
+			diagnostics,
+		);
+		assert.equal(
+			readFileSync(join(fixture.workspace, "test", "greeting.test.mjs"), "utf8").includes("formatGreeting"),
+			true,
+		);
+		assert.deepEqual(
+			readdirSync(ticketsDir, { withFileTypes: true }).map((entry) => entry.name),
+			[],
+			diagnostics,
+		);
 	} finally {
 		session.dispose();
 	}

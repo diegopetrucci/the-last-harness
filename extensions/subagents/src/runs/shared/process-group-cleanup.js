@@ -3,16 +3,10 @@ const PROCESS_GROUP_TERM_GRACE_MS = 2000;
 const PROCESS_GROUP_KILL_GRACE_MS = 1000;
 const PROCESS_GROUP_POLL_MS = 100;
 function isMissingProcessError(error) {
-    return typeof error === "object"
-        && error !== null
-        && "code" in error
-        && error.code === "ESRCH";
+    return (typeof error === "object" && error !== null && "code" in error && error.code === "ESRCH");
 }
 function isPermissionError(error) {
-    return typeof error === "object"
-        && error !== null
-        && "code" in error
-        && error.code === "EPERM";
+    return (typeof error === "object" && error !== null && "code" in error && error.code === "EPERM");
 }
 function sleep(ms) {
     return new Promise((resolve) => {

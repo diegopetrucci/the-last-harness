@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 
-import type { TlhSubscriptionUsageProvider, TlhSubscriptionUsageSnapshot, TlhSubscriptionUsageWindow } from "./types.js";
+import type {
+	TlhSubscriptionUsageProvider,
+	TlhSubscriptionUsageSnapshot,
+	TlhSubscriptionUsageWindow,
+} from "./types.js";
 
 export const TLH_SUBSCRIPTION_USAGE_OPENAI_CODEX_URL = "https://chatgpt.com/backend-api/wham/usage";
 export const TLH_SUBSCRIPTION_USAGE_ANTHROPIC_URL = "https://api.anthropic.com/api/oauth/usage";
@@ -52,9 +56,7 @@ type ResolvedProviderContext =
 	| { status: "unsupported"; provider: unknown }
 	| { status: "ineligible"; provider: TlhSubscriptionUsageProvider }
 	| { status: "transient-unavailable"; provider: TlhSubscriptionUsageProvider };
-type CredentialResult =
-	| { status: "ok"; credential: JsonRecord | undefined }
-	| { status: "transient-unavailable" };
+type CredentialResult = { status: "ok"; credential: JsonRecord | undefined } | { status: "transient-unavailable" };
 type CredentialCacheTarget = {
 	provider: TlhSubscriptionUsageProvider;
 	accountId?: string;
@@ -363,8 +365,18 @@ export function normalizeOpenAICodexUsage(
 	const nowMs = options.nowMs ?? Date.now();
 	const root = asObject(data);
 	const rateLimit = asObject(root?.rate_limit);
-	const session = normalizeUsageWindow(rateLimit?.primary_window ?? root?.primary_window, "primary_window", "session", nowMs);
-	const weekly = normalizeUsageWindow(rateLimit?.secondary_window ?? root?.secondary_window, "secondary_window", "weekly", nowMs);
+	const session = normalizeUsageWindow(
+		rateLimit?.primary_window ?? root?.primary_window,
+		"primary_window",
+		"session",
+		nowMs,
+	);
+	const weekly = normalizeUsageWindow(
+		rateLimit?.secondary_window ?? root?.secondary_window,
+		"secondary_window",
+		"weekly",
+		nowMs,
+	);
 	return createSnapshot("openai-codex", session, weekly, nowMs);
 }
 
@@ -380,7 +392,12 @@ export function normalizeAnthropicUsage(
 }
 
 function timeoutSignal(timeoutMs: number): AbortSignal | undefined {
-	if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || typeof AbortSignal === "undefined" || typeof AbortSignal.timeout !== "function") {
+	if (
+		!Number.isFinite(timeoutMs) ||
+		timeoutMs <= 0 ||
+		typeof AbortSignal === "undefined" ||
+		typeof AbortSignal.timeout !== "function"
+	) {
 		return undefined;
 	}
 	return AbortSignal.timeout(timeoutMs);
@@ -531,7 +548,9 @@ export async function fetchTlhSubscriptionUsage(
 	return undefined;
 }
 
-function resolveTlhSubscriptionUsageProviderContext(ctx: TlhSubscriptionUsageContext | undefined): ResolvedProviderContext {
+function resolveTlhSubscriptionUsageProviderContext(
+	ctx: TlhSubscriptionUsageContext | undefined,
+): ResolvedProviderContext {
 	const model = ctx?.model;
 	const provider = model?.provider;
 	const modelRegistry = ctx?.modelRegistry;
@@ -567,7 +586,9 @@ function resolveTlhSubscriptionUsageProviderContext(ctx: TlhSubscriptionUsageCon
 	return { status: "eligible", model, provider, modelRegistry, credential: credentialResult.credential };
 }
 
-function resolveTlhSubscriptionUsageProvider(ctx: TlhSubscriptionUsageContext | undefined): EligibleProviderContext | undefined {
+function resolveTlhSubscriptionUsageProvider(
+	ctx: TlhSubscriptionUsageContext | undefined,
+): EligibleProviderContext | undefined {
 	const resolved = resolveTlhSubscriptionUsageProviderContext(ctx);
 	return resolved.status === "eligible" ? resolved : undefined;
 }
@@ -717,7 +738,10 @@ export class TlhSubscriptionUsageService {
 		this.refreshGenerations = new Map();
 	}
 
-	snapshotForCacheKey(provider: TlhSubscriptionUsageProvider, cacheKey: string): TlhSubscriptionUsageSnapshot | undefined {
+	snapshotForCacheKey(
+		provider: TlhSubscriptionUsageProvider,
+		cacheKey: string,
+	): TlhSubscriptionUsageSnapshot | undefined {
 		return this.activeCacheKeys.get(provider) === cacheKey ? this.snapshots.get(cacheKey) : undefined;
 	}
 

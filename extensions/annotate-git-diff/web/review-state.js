@@ -10,9 +10,7 @@
 	function evictCommitState(state, sha) {
 		const prefix = `commits:${sha}:`;
 		const previousFiles = state.commitFilesBySha[sha] ?? [];
-		state.comments = state.comments.filter(
-			(comment) => !(comment.scope === "commits" && comment.commitSha === sha),
-		);
+		state.comments = state.comments.filter((comment) => !(comment.scope === "commits" && comment.commitSha === sha));
 		for (const file of previousFiles) {
 			delete state.reviewedFiles[file.id];
 		}

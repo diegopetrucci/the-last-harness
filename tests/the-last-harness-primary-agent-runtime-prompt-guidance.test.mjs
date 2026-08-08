@@ -50,7 +50,9 @@ test("disabled primary mode still injects provider-aware subagent models", async
 test("disabled primary mode allows contrarian by default and ignores stale contrarian experimental settings", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 	const subagentMetadata = [contrarianMetadata()];
-	const branchEntries = [{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "disabled" } }];
+	const branchEntries = [
+		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "disabled" } },
+	];
 	const ctx = createToolCallContext(branchEntries, undefined, {
 		cwd: fixture.cwd,
 		modelRegistry: {
@@ -92,7 +94,9 @@ test("disabled primary mode allows contrarian by default and ignores stale contr
 
 test("disabled primary mode allows opaque resume regardless of stale contrarian settings", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-	const branchEntries = [{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "disabled" } }];
+	const branchEntries = [
+		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "disabled" } },
+	];
 	const ctx = createToolCallContext(branchEntries, undefined, { cwd: fixture.cwd });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -142,12 +146,18 @@ test("before_agent_start adds TLH commit attribution guidance only when enabled"
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const { beforeAgentStart } = registerRuntimeHarness();
-		const enabledPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		const enabledPrompt = await beforeAgentStart(
+			{ systemPrompt: "base prompt" },
+			createToolCallContext([], undefined, { cwd: fixture.cwd }),
+		);
 		assert.match(enabledPrompt.systemPrompt, /## TLH Git Commit Attribution/);
 		assert.match(enabledPrompt.systemPrompt, /Co-authored-by: The Last Harness <hi@thelastharness\.com>/);
 		assert.match(enabledPrompt.systemPrompt, /blank line/);
 
-		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`,
+		);
 		const disabledPrompt = await beforeAgentStart(
 			{ systemPrompt: "base prompt" },
 			createToolCallContext([], undefined, { cwd: fixture.cwd }),
@@ -155,7 +165,6 @@ test("before_agent_start adds TLH commit attribution guidance only when enabled"
 		assert.doesNotMatch(disabledPrompt.systemPrompt, /## TLH Git Commit Attribution/);
 	});
 });
-
 
 test("before_agent_start includes permanent architect final-validation guidance and ignores stale tlh.experimental settings", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
@@ -170,12 +179,23 @@ test("before_agent_start includes permanent architect final-validation guidance 
 			assert.doesNotMatch(systemPrompt, /## TLH Experimental Feature:/);
 		};
 
-		const defaultPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		const defaultPrompt = await beforeAgentStart(
+			{ systemPrompt: "base prompt" },
+			createToolCallContext([], undefined, { cwd: fixture.cwd }),
+		);
 		assertValidationWorkflow(defaultPrompt.systemPrompt);
 
-		for (const experimental of [{ enabledFeatures: true }, { enabledFeatures: [123] }, { enabledFeatures: [] }, { enabledFeatures: ["legacy-flag"] }]) {
+		for (const experimental of [
+			{ enabledFeatures: true },
+			{ enabledFeatures: [123] },
+			{ enabledFeatures: [] },
+			{ enabledFeatures: ["legacy-flag"] },
+		]) {
 			writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { experimental } }, null, 2)}\n`);
-			const prompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+			const prompt = await beforeAgentStart(
+				{ systemPrompt: "base prompt" },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			);
 			assertValidationWorkflow(prompt.systemPrompt);
 		}
 	});
@@ -185,10 +205,19 @@ test("before_agent_start gates delta follow-up review guidance behind isolated T
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const { beforeAgentStart } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
-		const defaultPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		const { beforeAgentStart } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
+		const defaultPrompt = await beforeAgentStart(
+			{ systemPrompt: "base prompt" },
+			createToolCallContext([], undefined, { cwd: fixture.cwd }),
+		);
 		assert.doesNotMatch(defaultPrompt.systemPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
-		assert.doesNotMatch(defaultPrompt.systemPrompt, /default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint/i);
+		assert.doesNotMatch(
+			defaultPrompt.systemPrompt,
+			/default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint/i,
+		);
 		assert.doesNotMatch(defaultPrompt.systemPrompt, /prior findings.*git range or checkpoint.*changed-file list/i);
 		assert.doesNotMatch(defaultPrompt.systemPrompt, /targeted wider review or full re-review/i);
 
@@ -202,7 +231,10 @@ test("before_agent_start gates delta follow-up review guidance behind isolated T
 				createToolCallContext([], undefined, { cwd: fixture.cwd }),
 			);
 			assert.doesNotMatch(malformedPrompt.systemPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
-			assert.doesNotMatch(malformedPrompt.systemPrompt, /default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint/i);
+			assert.doesNotMatch(
+				malformedPrompt.systemPrompt,
+				/default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint/i,
+			);
 			assert.doesNotMatch(malformedPrompt.systemPrompt, /targeted wider review or full re-review/i);
 		}
 
@@ -210,9 +242,15 @@ test("before_agent_start gates delta follow-up review guidance behind isolated T
 			join(fixture.agent, "settings.json"),
 			`${JSON.stringify({ tlh: { experimental: { enabledFeatures: [DELTA_FOLLOW_UP_REVIEWS_FEATURE] } } }, null, 2)}\n`,
 		);
-		const enabledPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		const enabledPrompt = await beforeAgentStart(
+			{ systemPrompt: "base prompt" },
+			createToolCallContext([], undefined, { cwd: fixture.cwd }),
+		);
 		assert.match(enabledPrompt.systemPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
-		assert.match(enabledPrompt.systemPrompt, /default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint/i);
+		assert.match(
+			enabledPrompt.systemPrompt,
+			/default the follow-up `code-reviewer` request to the delta since the last reviewed checkpoint/i,
+		);
 		assert.match(enabledPrompt.systemPrompt, /prior findings.*git range or checkpoint.*changed-file list/i);
 		assert.match(enabledPrompt.systemPrompt, /targeted wider review or full re-review/i);
 	});
@@ -222,10 +260,19 @@ test("before_agent_start gates ci failure investigation guidance behind isolated
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const { beforeAgentStart } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
-		const defaultPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		const { beforeAgentStart } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
+		const defaultPrompt = await beforeAgentStart(
+			{ systemPrompt: "base prompt" },
+			createToolCallContext([], undefined, { cwd: fixture.cwd }),
+		);
 		assert.doesNotMatch(defaultPrompt.systemPrompt, /## TLH Experimental Feature: ci-failure-investigation/);
-		assert.doesNotMatch(defaultPrompt.systemPrompt, /read-only investigation before asking the user whether to proceed/i);
+		assert.doesNotMatch(
+			defaultPrompt.systemPrompt,
+			/read-only investigation before asking the user whether to proceed/i,
+		);
 
 		for (const enabledFeatures of [true, [123]]) {
 			writeFileSync(
@@ -237,7 +284,10 @@ test("before_agent_start gates ci failure investigation guidance behind isolated
 				createToolCallContext([], undefined, { cwd: fixture.cwd }),
 			);
 			assert.doesNotMatch(malformedPrompt.systemPrompt, /## TLH Experimental Feature: ci-failure-investigation/);
-			assert.doesNotMatch(malformedPrompt.systemPrompt, /read-only investigation before asking the user whether to proceed/i);
+			assert.doesNotMatch(
+				malformedPrompt.systemPrompt,
+				/read-only investigation before asking the user whether to proceed/i,
+			);
 		}
 
 		writeFileSync(
@@ -253,22 +303,36 @@ test("before_agent_start gates ci failure investigation guidance behind isolated
 		assert.match(architectPrompt.systemPrompt, /overrides the default post-PR monitor-and-ask-only step/i);
 		assert.match(architectPrompt.systemPrompt, /read-only investigation before asking the user whether to proceed/i);
 		assert.match(architectPrompt.systemPrompt, /Do not edit files, commit, push, rerun jobs, change the PR/i);
-		assert.match(architectPrompt.systemPrompt, /edits, commits, pushes, reruns, PR changes, or other follow-up changes/i);
+		assert.match(
+			architectPrompt.systemPrompt,
+			/edits, commits, pushes, reruns, PR changes, or other follow-up changes/i,
+		);
 		assert.match(architectPrompt.systemPrompt, /ask for explicit user approval/i);
 
 		writeFileSync(
 			join(fixture.agent, "settings.json"),
 			`${JSON.stringify(
-				{ tlh: { primaryAgent: { selected: "rush" }, experimental: { enabledFeatures: [CI_FAILURE_INVESTIGATION_FEATURE] } } },
+				{
+					tlh: {
+						primaryAgent: { selected: "rush" },
+						experimental: { enabledFeatures: [CI_FAILURE_INVESTIGATION_FEATURE] },
+					},
+				},
 				null,
 				2,
 			)}\n`,
 		);
-		const rushPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		const rushPrompt = await beforeAgentStart(
+			{ systemPrompt: "base prompt" },
+			createToolCallContext([], undefined, { cwd: fixture.cwd }),
+		);
 		assert.doesNotMatch(rushPrompt.systemPrompt, /## TLH Experimental Feature: ci-failure-investigation/);
 		assert.doesNotMatch(rushPrompt.systemPrompt, /This TLH experiment is enabled for TLH Rush/i);
 		assert.doesNotMatch(rushPrompt.systemPrompt, /read-only investigation before asking the user whether to proceed/i);
-		assert.doesNotMatch(rushPrompt.systemPrompt, /summarize the failure and likely cause, then ask the user whether to proceed/i);
+		assert.doesNotMatch(
+			rushPrompt.systemPrompt,
+			/summarize the failure and likely cause, then ask the user whether to proceed/i,
+		);
 	});
 });
 
@@ -279,7 +343,10 @@ test("before_agent_start ci-failure-investigation guidance stays per-turn: enabl
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const { beforeAgentStart, applySessionStart } = registerRuntimeHarness({ primaryAgents: selectablePrimaryAgents(), subagentMetadata: [] });
+		const { beforeAgentStart, applySessionStart } = registerRuntimeHarness({
+			primaryAgents: selectablePrimaryAgents(),
+			subagentMetadata: [],
+		});
 		const ctx = createToolCallContext([], undefined, { cwd: fixture.cwd });
 
 		// Turn 1: session start + first before_agent_start with the feature OFF (no settings file).
@@ -318,7 +385,10 @@ test("before_agent_start includes contrarian guidance by default and ignores sta
 		);
 		const defaultPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, architectCtx);
 		assert.doesNotMatch(defaultPrompt.systemPrompt, /## TLH Experimental Feature: contrarian/);
-		assert.match(defaultPrompt.systemPrompt, /- contrarian: Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case\./i);
+		assert.match(
+			defaultPrompt.systemPrompt,
+			/- contrarian: Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case\./i,
+		);
 		assert.match(defaultPrompt.systemPrompt, /developer: Implements exactly one approved task at a time\./i);
 
 		writeFileSync(
@@ -327,7 +397,10 @@ test("before_agent_start includes contrarian guidance by default and ignores sta
 		);
 		const malformedPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, architectCtx);
 		assert.doesNotMatch(malformedPrompt.systemPrompt, /## TLH Experimental Feature: contrarian/);
-		assert.match(malformedPrompt.systemPrompt, /- contrarian: Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case\./i);
+		assert.match(
+			malformedPrompt.systemPrompt,
+			/- contrarian: Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case\./i,
+		);
 		assert.match(malformedPrompt.systemPrompt, /developer: Implements exactly one approved task at a time\./i);
 
 		writeFileSync(
@@ -336,10 +409,12 @@ test("before_agent_start includes contrarian guidance by default and ignores sta
 		);
 		const legacyFlagPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, architectCtx);
 		assert.doesNotMatch(legacyFlagPrompt.systemPrompt, /## TLH Experimental Feature: contrarian/);
-		assert.match(legacyFlagPrompt.systemPrompt, /- contrarian: Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case\./i);
+		assert.match(
+			legacyFlagPrompt.systemPrompt,
+			/- contrarian: Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case\./i,
+		);
 	});
 });
-
 
 test("child mode keeps parent-only controls disabled while applying commit attribution prompt and bash guard", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
@@ -376,11 +451,17 @@ test("child mode keeps parent-only controls disabled while applying commit attri
 		assert.match(blockedCommit?.reason ?? "", /TLH attribution footer/);
 
 		const childSubagentCall = { toolName: "subagent", input: { agent: "developer", context: "resume" } };
-		assert.equal(await toolCall(childSubagentCall, createToolCallContext([], undefined, { cwd: fixture.cwd })), undefined);
+		assert.equal(
+			await toolCall(childSubagentCall, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+			undefined,
+		);
 		assert.equal(childSubagentCall.input.agentScope, undefined);
 		assert.equal(childSubagentCall.input.context, "resume");
 
-		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`,
+		);
 		const disabledPrompt = await beforeAgentStart(
 			{ systemPrompt: "base prompt" },
 			createToolCallContext([], undefined, { cwd: fixture.cwd }),
@@ -404,7 +485,9 @@ test("child mode gates delta follow-up review guidance to enabled code-reviewer 
 		registerTlhPrimaryAgentRuntime(codeReviewerPi, {
 			env: { PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_CHILD_AGENT: "code-reviewer" },
 		});
-		const codeReviewerBeforeAgentStart = codeReviewerPi.events.find((event) => event.name === "before_agent_start")?.handler;
+		const codeReviewerBeforeAgentStart = codeReviewerPi.events.find(
+			(event) => event.name === "before_agent_start",
+		)?.handler;
 		assert.equal(typeof codeReviewerBeforeAgentStart, "function");
 
 		const defaultPrompt = await codeReviewerBeforeAgentStart(
@@ -414,7 +497,10 @@ test("child mode gates delta follow-up review guidance to enabled code-reviewer 
 		assert.doesNotMatch(defaultPrompt.systemPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
 		assert.doesNotMatch(defaultPrompt.systemPrompt, /expect prior findings plus an exact delta baseline/i);
 		assert.doesNotMatch(defaultPrompt.systemPrompt, /default to the requested delta and prior findings/i);
-		assert.doesNotMatch(defaultPrompt.systemPrompt, /requested delta cannot be validated safely without wider context/i);
+		assert.doesNotMatch(
+			defaultPrompt.systemPrompt,
+			/requested delta cannot be validated safely without wider context/i,
+		);
 
 		for (const enabledFeatures of [true, [123]]) {
 			writeFileSync(
@@ -428,7 +514,10 @@ test("child mode gates delta follow-up review guidance to enabled code-reviewer 
 			assert.doesNotMatch(malformedPrompt.systemPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
 			assert.doesNotMatch(malformedPrompt.systemPrompt, /expect prior findings plus an exact delta baseline/i);
 			assert.doesNotMatch(malformedPrompt.systemPrompt, /default to the requested delta and prior findings/i);
-			assert.doesNotMatch(malformedPrompt.systemPrompt, /requested delta cannot be validated safely without wider context/i);
+			assert.doesNotMatch(
+				malformedPrompt.systemPrompt,
+				/requested delta cannot be validated safely without wider context/i,
+			);
 		}
 
 		writeFileSync(
@@ -457,6 +546,9 @@ test("child mode gates delta follow-up review guidance to enabled code-reviewer 
 		assert.doesNotMatch(developerPrompt.systemPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
 		assert.doesNotMatch(developerPrompt.systemPrompt, /expect prior findings plus an exact delta baseline/i);
 		assert.doesNotMatch(developerPrompt.systemPrompt, /default to the requested delta and prior findings/i);
-		assert.doesNotMatch(developerPrompt.systemPrompt, /requested delta cannot be validated safely without wider context/i);
+		assert.doesNotMatch(
+			developerPrompt.systemPrompt,
+			/requested delta cannot be validated safely without wider context/i,
+		);
 	});
 });

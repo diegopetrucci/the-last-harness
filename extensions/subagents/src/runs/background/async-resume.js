@@ -14,15 +14,21 @@ function isWellFormedResolvedAcceptance(x) {
     if (typeof x !== "object" || x === null || Array.isArray(x))
         return false;
     const c = x;
-    return typeof c.level === "string"
-        && typeof c.explicit === "boolean"
-        && isStringArray(c.inferredReason)
-        && isStringArray(c.evidence)
-        && isStringArray(c.stopRules)
-        && Array.isArray(c.criteria)
-        && c.criteria.every((el) => typeof el === "object" && el !== null && !Array.isArray(el) && typeof el.id === "string")
-        && Array.isArray(c.verify)
-        && c.verify.every((el) => typeof el === "object" && el !== null && !Array.isArray(el) && typeof el.command === "string");
+    return (typeof c.level === "string" &&
+        typeof c.explicit === "boolean" &&
+        isStringArray(c.inferredReason) &&
+        isStringArray(c.evidence) &&
+        isStringArray(c.stopRules) &&
+        Array.isArray(c.criteria) &&
+        c.criteria.every((el) => typeof el === "object" &&
+            el !== null &&
+            !Array.isArray(el) &&
+            typeof el.id === "string") &&
+        Array.isArray(c.verify) &&
+        c.verify.every((el) => typeof el === "object" &&
+            el !== null &&
+            !Array.isArray(el) &&
+            typeof el.command === "string"));
 }
 function resolvePausedContinuationAcceptance(runId, acceptance) {
     if (typeof acceptance !== "object" || acceptance === null || Array.isArray(acceptance)) {
@@ -52,7 +58,11 @@ export function interruptLiveAsyncResumeTarget(input) {
     if (!input.target.asyncDir) {
         return { ok: false, message: `Async run ${asyncId} is live but does not have an async directory to interrupt.` };
     }
-    const status = reconcileAsyncRun(input.target.asyncDir, { resultsDir: input.resultsDir, kill: input.kill, now: input.now }).status;
+    const status = reconcileAsyncRun(input.target.asyncDir, {
+        resultsDir: input.resultsDir,
+        kill: input.kill,
+        now: input.now,
+    }).status;
     if (!status || status.state !== "running" || typeof status.pid !== "number") {
         return { ok: false, message: `Async run ${asyncId} is live but no interrupt-capable runner pid was found.` };
     }
@@ -113,7 +123,8 @@ function validateResultFile(value, resultPath) {
             if (interrupted !== undefined && typeof interrupted !== "boolean")
                 throw new Error(`Invalid async result file '${resultPath}': results[${index}].interrupted must be a boolean.`);
             const activeRuntimeMs = child.activeRuntimeMs;
-            if (activeRuntimeMs !== undefined && (typeof activeRuntimeMs !== "number" || !Number.isFinite(activeRuntimeMs) || activeRuntimeMs < 0)) {
+            if (activeRuntimeMs !== undefined &&
+                (typeof activeRuntimeMs !== "number" || !Number.isFinite(activeRuntimeMs) || activeRuntimeMs < 0)) {
                 throw new Error(`Invalid async result file '${resultPath}': results[${index}].activeRuntimeMs must be a non-negative finite number.`);
             }
             const acceptance = child.acceptance !== undefined && typeof child.acceptance === "object" && !Array.isArray(child.acceptance)
@@ -188,9 +199,10 @@ function assertInsideRoot(root, target, label) {
 function prefixedRunIds(dir, prefix, suffix = "") {
     if (!fs.existsSync(dir))
         return [];
-    return fs.readdirSync(dir)
+    return fs
+        .readdirSync(dir)
         .filter((entry) => entry.startsWith(prefix) && (!suffix || entry.endsWith(suffix)))
-        .map((entry) => suffix ? entry.slice(0, -suffix.length) : entry)
+        .map((entry) => (suffix ? entry.slice(0, -suffix.length) : entry))
         .sort();
 }
 function exactResultPath(resultsDir, runId) {
@@ -204,10 +216,9 @@ export function findAsyncRunPrefixMatches(prefix, asyncDirRoot, resultsDir) {
         return [];
     const asyncRoot = path.resolve(asyncDirRoot);
     const resultRoot = path.resolve(resultsDir);
-    const matchingIds = [...new Set([
-            ...prefixedRunIds(asyncRoot, requestedId),
-            ...prefixedRunIds(resultRoot, requestedId, ".json"),
-        ])].sort();
+    const matchingIds = [
+        ...new Set([...prefixedRunIds(asyncRoot, requestedId), ...prefixedRunIds(resultRoot, requestedId, ".json")]),
+    ].sort();
     return matchingIds.map((id) => {
         const asyncDir = path.join(asyncRoot, id);
         assertInsideRoot(asyncRoot, asyncDir, "Async run directory");
@@ -255,7 +266,14 @@ export function resolveAsyncRunLocation(params, asyncDirRoot, resultsDir) {
     return matching[0].location;
 }
 function resultState(result) {
-    if (result.state === "complete" || result.state === "failed" || result.state === "paused" || result.state === "cancelled" || result.state === "continued" || result.state === "running" || result.state === "queued" || result.state === "pausing") {
+    if (result.state === "complete" ||
+        result.state === "failed" ||
+        result.state === "paused" ||
+        result.state === "cancelled" ||
+        result.state === "continued" ||
+        result.state === "running" ||
+        result.state === "queued" ||
+        result.state === "pausing") {
         return result.state;
     }
     return result.success ? "complete" : "failed";
@@ -309,7 +327,11 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
     let status = reconciliation?.status ?? null;
     validateStatusForResume(status, location.asyncDir ? path.join(location.asyncDir, "status.json") : "status.json");
     const result = location.resultPath ? readResultFile(location.resultPath) : undefined;
-    const runId = status?.runId ?? result?.runId ?? result?.id ?? location.resolvedId ?? (location.asyncDir ? path.basename(location.asyncDir) : "unknown");
+    const runId = status?.runId ??
+        result?.runId ??
+        result?.id ??
+        location.resolvedId ??
+        (location.asyncDir ? path.basename(location.asyncDir) : "unknown");
     const state = status?.state ?? (result ? resultState(result) : undefined);
     const tkTicket = normalizeTkTicketMetadata(status?.tkTicket);
     if (!state)
@@ -381,7 +403,9 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
         throw new Error(`Async run '${runId}' has ${stepCount} children. Index ${index} is out of range.`);
     let selectedStatusStep = statusSteps[index];
     let selectedContinuation = lifecycleContinuationForIndex(status, index);
-    if (typeof selectedContinuation?.claimToken === "string" && selectedContinuation.claimToken.length > 0 && location.asyncDir) {
+    if (typeof selectedContinuation?.claimToken === "string" &&
+        selectedContinuation.claimToken.length > 0 &&
+        location.asyncDir) {
         const recovered = recoverStaleLifecycleContinuationClaim(location.asyncDir, index, {
             kill: deps.kill,
             now: deps.now,
@@ -411,21 +435,17 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
     const agent = selectedStatusStep?.agent ?? resultSteps[index]?.agent ?? result?.agent;
     if (!agent)
         throw new Error(`Could not determine child agent for async run '${runId}'.`);
-    const sessionFile = statusSteps[index]?.sessionFile
-        ?? resultSteps[index]?.sessionFile
-        ?? (stepCount === 1 ? status?.sessionFile ?? result?.sessionFile : undefined);
-    const selectedChildPaused = statusSteps[index]?.status === "paused"
-        || (statusSteps.length === 0
-            && state === "paused"
-            && resultSteps[index]?.interrupted === true);
+    const sessionFile = statusSteps[index]?.sessionFile ??
+        resultSteps[index]?.sessionFile ??
+        (stepCount === 1 ? (status?.sessionFile ?? result?.sessionFile) : undefined);
+    const selectedChildPaused = statusSteps[index]?.status === "paused" ||
+        (statusSteps.length === 0 && state === "paused" && resultSteps[index]?.interrupted === true);
     if (!sessionFile && requireSessionFile)
         throw new Error(`Async run '${runId}' child ${index} does not have a persisted session file to resume from.`);
     const resolvedSessionFile = sessionFile
         ? validateResumeSessionFile(runId, sessionFile, { allowMissing: selectedChildPaused })
         : undefined;
-    const pausedStepAcceptance = statusSteps.length > 0
-        ? statusSteps[index]?.acceptance
-        : resultSteps[index]?.acceptance;
+    const pausedStepAcceptance = statusSteps.length > 0 ? statusSteps[index]?.acceptance : resultSteps[index]?.acceptance;
     if (selectedChildPaused && pausedStepAcceptance === undefined) {
         throw new Error(`Async run '${runId}' is paused but its skipped acceptance ledger has not been persisted yet. Retry the resume once pause metadata is written.`);
     }
@@ -443,8 +463,14 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
         cwd: status?.cwd ?? result?.cwd,
         ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
         ...(tkTicket ? { tkTicket } : {}),
-        ...(selectedStatusStep?.pause?.kind ? { pauseKind: selectedStatusStep.pause.kind } : status?.pause?.kind ? { pauseKind: status.pause.kind } : {}),
-        ...(typeof selectedContinuation?.claimToken === "string" && selectedContinuation.claimToken.length > 0 ? { claimed: true } : {}),
+        ...(selectedStatusStep?.pause?.kind
+            ? { pauseKind: selectedStatusStep.pause.kind }
+            : status?.pause?.kind
+                ? { pauseKind: status.pause.kind }
+                : {}),
+        ...(typeof selectedContinuation?.claimToken === "string" && selectedContinuation.claimToken.length > 0
+            ? { claimed: true }
+            : {}),
         ...(continuationAcceptance ? { continuationAcceptance } : {}),
         ...(selectedStatusStep?.activeRuntimeMs !== undefined
             ? { activeRuntimeMs: selectedStatusStep.activeRuntimeMs }
@@ -465,5 +491,7 @@ export function buildRevivedAsyncTask(target, message) {
         "",
         "Follow-up:",
         message,
-    ].filter((line) => line !== undefined).join("\n");
+    ]
+        .filter((line) => line !== undefined)
+        .join("\n");
 }

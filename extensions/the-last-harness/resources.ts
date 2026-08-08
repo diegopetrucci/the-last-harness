@@ -142,9 +142,7 @@ function loadContextFiles(cwd: string, agentDir: string): Array<{ path: string; 
 function filterVisibleResources(resources: ResolvedResource[], projectTrusted: boolean): ResolvedResource[] {
 	return resources.filter(
 		(resource) =>
-			resource.enabled &&
-			existsSync(resource.path) &&
-			(projectTrusted || resource.metadata.scope !== "project"),
+			resource.enabled && existsSync(resource.path) && (projectTrusted || resource.metadata.scope !== "project"),
 	);
 }
 

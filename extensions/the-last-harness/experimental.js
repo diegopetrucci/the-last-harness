@@ -1,4 +1,4 @@
-import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { normalizeEnabledExperimentalFeatures, normalizeExperimentalFeatureId, readEnabledExperimentalFeatures, } from "../the-last-harness-subagent-safety.mjs";
 export const DELTA_FOLLOW_UP_REVIEWS_FEATURE = "delta-follow-up-reviews";
 export const CI_FAILURE_INVESTIGATION_FEATURE = "ci-failure-investigation";
@@ -71,7 +71,9 @@ export function hasRegisteredExperimentalFeatures() {
     return TLH_EXPERIMENTAL_FEATURES.length > 0;
 }
 export function availableExperimentalFeatureList() {
-    return hasRegisteredExperimentalFeatures() ? TLH_EXPERIMENTAL_FEATURES.map((feature) => feature.id).join(", ") : "none currently registered";
+    return hasRegisteredExperimentalFeatures()
+        ? TLH_EXPERIMENTAL_FEATURES.map((feature) => feature.id).join(", ")
+        : "none currently registered";
 }
 export function noExperimentalFeaturesMessage() {
     return "TLH experimental features: none currently registered. Future TLH feature flags will appear here when available.";
@@ -93,7 +95,10 @@ function telemetryExperimentalFeatureKey(featureId) {
 }
 export function buildExperimentalFeatureTelemetryPayload(config) {
     const enabledFeatures = new Set(readEnabledFeatures(config));
-    return Object.fromEntries(TLH_EXPERIMENTAL_FEATURES.map((feature) => [telemetryExperimentalFeatureKey(feature.id), enabledFeatures.has(feature.id) ? "on" : "off"]));
+    return Object.fromEntries(TLH_EXPERIMENTAL_FEATURES.map((feature) => [
+        telemetryExperimentalFeatureKey(feature.id),
+        enabledFeatures.has(feature.id) ? "on" : "off",
+    ]));
 }
 export function getExperimentalFeature(featureId) {
     const normalized = normalizeExperimentalFeatureId(featureId);
@@ -178,9 +183,7 @@ export function registerExperimentalCommand(pi, options = {}) {
         description: "List or change TLH experimental features",
         getArgumentCompletions: (prefix) => {
             const normalizedPrefix = prefix.trim().toLowerCase();
-            const completions = EXPERIMENTAL_COMMAND_COMPLETIONS
-                .filter((option) => option.value.startsWith(normalizedPrefix))
-                .map((option) => ({ value: option.value, label: option.value, description: option.description }));
+            const completions = EXPERIMENTAL_COMMAND_COMPLETIONS.filter((option) => option.value.startsWith(normalizedPrefix)).map((option) => ({ value: option.value, label: option.value, description: option.description }));
             return completions.length > 0 ? completions : null;
         },
         handler: async (args, ctx) => {

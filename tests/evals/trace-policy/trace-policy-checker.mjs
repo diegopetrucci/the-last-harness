@@ -11,7 +11,8 @@ function normalizeText(value) {
 const WEB_SCOUT_MAX_QUOTE_WORDS = 25;
 const WEB_SCOUT_URL_PATTERN = /\bhttps?:\/\/[^\s)>\]]+/i;
 const WEB_SCOUT_UTC_TIMESTAMP_PATTERN = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\b/;
-const WEB_SCOUT_QUOTED_TEXT_PATTERN = /"([^"\n]+)"|(?<![A-Za-z0-9_])'([^'\n]+)'(?![A-Za-z0-9_])|“([^”\n]+)”|‘([^’\n]+)’/g;
+const WEB_SCOUT_QUOTED_TEXT_PATTERN =
+	/"([^"\n]+)"|(?<![A-Za-z0-9_])'([^'\n]+)'(?![A-Za-z0-9_])|“([^”\n]+)”|‘([^’\n]+)’/g;
 
 function normalizeRepoPath(value) {
 	const rawPath = normalizeText(value);
@@ -73,9 +74,48 @@ function commandText(step) {
 	return typeof step.command === "string" ? step.command : "";
 }
 
-const MUTATING_SHELL_COMMANDS = new Set(["chmod", "chown", "cp", "install", "ln", "mkdir", "mv", "rm", "rmdir", "touch", "truncate"]);
-const MUTATING_GIT_SUBCOMMANDS = new Set(["add", "apply", "checkout", "clean", "commit", "merge", "mv", "pull", "push", "rebase", "reset", "restore", "revert", "rm", "stash", "switch"]);
-const TK_MUTATING_SUBCOMMANDS = new Set(["assign", "close", "create", "delete", "dep", "edit", "open", "reopen", "update"]);
+const MUTATING_SHELL_COMMANDS = new Set([
+	"chmod",
+	"chown",
+	"cp",
+	"install",
+	"ln",
+	"mkdir",
+	"mv",
+	"rm",
+	"rmdir",
+	"touch",
+	"truncate",
+]);
+const MUTATING_GIT_SUBCOMMANDS = new Set([
+	"add",
+	"apply",
+	"checkout",
+	"clean",
+	"commit",
+	"merge",
+	"mv",
+	"pull",
+	"push",
+	"rebase",
+	"reset",
+	"restore",
+	"revert",
+	"rm",
+	"stash",
+	"switch",
+]);
+const TK_MUTATING_SUBCOMMANDS = new Set([
+	"assign",
+	"close",
+	"create",
+	"delete",
+	"dep",
+	"edit",
+	"open",
+	"reopen",
+	"update",
+]);
 const MUTATING_PACKAGE_SUBCOMMANDS = new Map([
 	["apt", new Set(["install", "purge", "remove"])],
 	["apt-get", new Set(["install", "purge", "remove"])],
@@ -101,10 +141,39 @@ const SHELL_PREFIX_OPTIONS_WITH_VALUES = new Map([
 	["env", new Set(["-C", "-P", "-S", "-u", "--chdir", "--path", "--split-string", "--unset"])],
 	["exec", new Set(["-a"])],
 	["noglob", new Set()],
-	["sudo", new Set(["-C", "-D", "-g", "-h", "-p", "-R", "-T", "-U", "-u", "--chdir", "--close-from", "--group", "--host", "--other-user", "--prompt", "--user"])],
+	[
+		"sudo",
+		new Set([
+			"-C",
+			"-D",
+			"-g",
+			"-h",
+			"-p",
+			"-R",
+			"-T",
+			"-U",
+			"-u",
+			"--chdir",
+			"--close-from",
+			"--group",
+			"--host",
+			"--other-user",
+			"--prompt",
+			"--user",
+		]),
+	],
 	["time", new Set()],
 ]);
-const GIT_GLOBAL_OPTIONS_WITH_VALUES = new Set(["-C", "-c", "--config-env", "--exec-path", "--git-dir", "--namespace", "--super-prefix", "--work-tree"]);
+const GIT_GLOBAL_OPTIONS_WITH_VALUES = new Set([
+	"-C",
+	"-c",
+	"--config-env",
+	"--exec-path",
+	"--git-dir",
+	"--namespace",
+	"--super-prefix",
+	"--work-tree",
+]);
 const PACKAGE_GLOBAL_OPTIONS_WITH_VALUES = new Map([
 	["apt", new Set()],
 	["apt-get", new Set()],
@@ -656,7 +725,9 @@ function firstPositionalArgument(args, optionsWithValues = new Set()) {
 }
 
 function hasSedInPlaceFlag(args) {
-	return args.some((arg) => arg === "-i" || arg.startsWith("-i") || arg === "--in-place" || arg.startsWith("--in-place="));
+	return args.some(
+		(arg) => arg === "-i" || arg.startsWith("-i") || arg === "--in-place" || arg.startsWith("--in-place="),
+	);
 }
 
 function isMutatingGitCommand(args) {
@@ -674,10 +745,12 @@ function isMutatingPackageCommand(commandWord, args) {
 }
 
 function isMutatingShellInvocation(commandWord, args) {
-	return MUTATING_SHELL_COMMANDS.has(commandWord)
-		|| (commandWord === "sed" && hasSedInPlaceFlag(args))
-		|| (commandWord === "git" && isMutatingGitCommand(args))
-		|| isMutatingPackageCommand(commandWord, args);
+	return (
+		MUTATING_SHELL_COMMANDS.has(commandWord) ||
+		(commandWord === "sed" && hasSedInPlaceFlag(args)) ||
+		(commandWord === "git" && isMutatingGitCommand(args)) ||
+		isMutatingPackageCommand(commandWord, args)
+	);
 }
 
 function firstPositionalArgumentIndex(args, optionsWithValues = new Set()) {
@@ -756,7 +829,12 @@ function gitArgsContainLongFlag(args, flagName, shortOptionsWithValues = new Set
 	return false;
 }
 
-function gitArgsContainShortFlag(args, shortFlag, shortOptionsWithValues = new Set(), longOptionsWithValues = new Set()) {
+function gitArgsContainShortFlag(
+	args,
+	shortFlag,
+	shortOptionsWithValues = new Set(),
+	longOptionsWithValues = new Set(),
+) {
 	let skipNext = false;
 
 	for (const arg of args) {
@@ -790,9 +868,17 @@ function gitArgsContainShortFlag(args, shortFlag, shortOptionsWithValues = new S
 	return false;
 }
 
-function gitArgsContainFlag(args, shortFlag, longFlag, shortOptionsWithValues = new Set(), longOptionsWithValues = new Set()) {
-	return gitArgsContainShortFlag(args, shortFlag, shortOptionsWithValues, longOptionsWithValues)
-		|| gitArgsContainLongFlag(args, longFlag, shortOptionsWithValues, longOptionsWithValues);
+function gitArgsContainFlag(
+	args,
+	shortFlag,
+	longFlag,
+	shortOptionsWithValues = new Set(),
+	longOptionsWithValues = new Set(),
+) {
+	return (
+		gitArgsContainShortFlag(args, shortFlag, shortOptionsWithValues, longOptionsWithValues) ||
+		gitArgsContainLongFlag(args, longFlag, shortOptionsWithValues, longOptionsWithValues)
+	);
 }
 
 function firstGitPositionalArgument(args, shortOptionsWithValues = new Set(), longOptionsWithValues = new Set()) {
@@ -871,13 +957,15 @@ function gitCheckoutHasDestructivePathMode(args) {
 	// Generic single bare operands (e.g. 'main', 'my-branch') remain ambiguous
 	// and are NOT classified destructive; only the >= 2-positional rule covers them.
 	const hasDotPath = positionals.some((p) => p === "." || p === "..");
-	return gitCheckoutHasPathspec(args)
-		|| hasDotPath
-		|| positionals.length >= 2
-		|| gitArgsContainFlag(args, "p", "--patch", branchOptionsWithValues)
-		|| ["--ours", "--theirs", "--pathspec-from-file"].some((flag) => (
-			gitArgsContainLongFlag(args, flag, branchOptionsWithValues)
-		));
+	return (
+		gitCheckoutHasPathspec(args) ||
+		hasDotPath ||
+		positionals.length >= 2 ||
+		gitArgsContainFlag(args, "p", "--patch", branchOptionsWithValues) ||
+		["--ours", "--theirs", "--pathspec-from-file"].some((flag) =>
+			gitArgsContainLongFlag(args, flag, branchOptionsWithValues),
+		)
+	);
 }
 
 function isGitExecutableForExistingChangesBoundary(commandWord) {
@@ -909,17 +997,24 @@ function isRiskyExistingChangesGitInvocation(commandWord, args) {
 		case "clean":
 			return !gitArgsContainFlag(subcommandArgs, "n", "--dry-run", new Set(["e"]), new Set(["--exclude"]));
 		case "checkout":
-			return gitArgsContainFlag(subcommandArgs, "f", "--force", new Set(["b", "B"]))
-				|| gitCheckoutHasDestructivePathMode(subcommandArgs);
+			return (
+				gitArgsContainFlag(subcommandArgs, "f", "--force", new Set(["b", "B"])) ||
+				gitCheckoutHasDestructivePathMode(subcommandArgs)
+			);
 		case "switch":
-			return gitArgsContainFlag(subcommandArgs, "f", "--force", new Set(["c", "C"])) || gitArgsContainLongFlag(subcommandArgs, "--discard-changes");
+			return (
+				gitArgsContainFlag(subcommandArgs, "f", "--force", new Set(["c", "C"])) ||
+				gitArgsContainLongFlag(subcommandArgs, "--discard-changes")
+			);
 		default:
 			return false;
 	}
 }
 
 function hasRiskyExistingChangesGitCommand(step) {
-	return toolCommandInvocations(step).some(({ commandWord, args }) => isRiskyExistingChangesGitInvocation(commandWord, args));
+	return toolCommandInvocations(step).some(({ commandWord, args }) =>
+		isRiskyExistingChangesGitInvocation(commandWord, args),
+	);
 }
 
 function hasMutatingShellWords(words) {
@@ -1197,7 +1292,9 @@ function readOnlyBashMutation(step) {
 	if (!command) {
 		return false;
 	}
-	return hasMutatingShellCommand(command) || isTkMutatingCommand(step) || Boolean(extractShellRedirectionTarget(command));
+	return (
+		hasMutatingShellCommand(command) || isTkMutatingCommand(step) || Boolean(extractShellRedirectionTarget(command))
+	);
 }
 
 function stepPath(step) {
@@ -1317,7 +1414,10 @@ function evaluateArchitect(transcript, addViolation) {
 		}
 
 		const name = toolName(step);
-		if ((["write", "edit"].includes(name) || (readOnlyBashMutation(step) && !isPureTkMutatingCommand(step))) && !isAllowedNonSourcePath(stepPath(step))) {
+		if (
+			(["write", "edit"].includes(name) || (readOnlyBashMutation(step) && !isPureTkMutatingCommand(step))) &&
+			!isAllowedNonSourcePath(stepPath(step))
+		) {
 			addViolation(
 				"architect.direct_source_mutation",
 				index,
@@ -1387,11 +1487,7 @@ function evaluateRush(transcript, addViolation) {
 			);
 		}
 		if (subagentTargets(step).includes("developer")) {
-			addViolation(
-				"rush.no_developer_delegation",
-				index,
-				"Rush may not delegate implementation to developer.",
-			);
+			addViolation("rush.no_developer_delegation", index, "Rush may not delegate implementation to developer.");
 		}
 	}
 }
@@ -1530,7 +1626,8 @@ const REQUIRED_CODE_REVIEWER_DIFF_COMMANDS = new Set([
 	"git diff --cached --no-color",
 	"git status --short --untracked-files=all",
 ]);
-const CODE_REVIEWER_FINDING_PATTERN = /\b(?:blocker|nit|bug|risk):|\bno blockers?\s+(?:found|identified|seen)\b|\b(?:the patch|the change|this patch|this change|the implementation|this implementation|the code|this code)\s+(?:is\s+|are\s+)?(?:missing|broken|failing|incorrect|incomplete)\b|\b(?:the patch|the change|this patch|this change|the implementation|this implementation|the code|this code)\s+(?:should|must|needs?|fails?)\b|\b(?:found|identified|observed)\s+(?:an?\s+)?(?:issues?|problems?|risks?)\b|\b(?:issues?|problems?|risks?)\s+(?:found|identified|observed)\b/i;
+const CODE_REVIEWER_FINDING_PATTERN =
+	/\b(?:blocker|nit|bug|risk):|\bno blockers?\s+(?:found|identified|seen)\b|\b(?:the patch|the change|this patch|this change|the implementation|this implementation|the code|this code)\s+(?:is\s+|are\s+)?(?:missing|broken|failing|incorrect|incomplete)\b|\b(?:the patch|the change|this patch|this change|the implementation|this implementation|the code|this code)\s+(?:should|must|needs?|fails?)\b|\b(?:found|identified|observed)\s+(?:an?\s+)?(?:issues?|problems?|risks?)\b|\b(?:issues?|problems?|risks?)\s+(?:found|identified|observed)\b/i;
 
 function isCodeReviewerFindingStep(step) {
 	return step.type === "assistant" && CODE_REVIEWER_FINDING_PATTERN.test(normalizeText(step.text));
@@ -1568,7 +1665,10 @@ function evaluateCodeReviewer(transcript, addViolation) {
 }
 
 function quotedTextMatches(text) {
-	return Array.from(text.matchAll(WEB_SCOUT_QUOTED_TEXT_PATTERN), (match) => match[1] || match[2] || match[3] || match[4] || "");
+	return Array.from(
+		text.matchAll(WEB_SCOUT_QUOTED_TEXT_PATTERN),
+		(match) => match[1] || match[2] || match[3] || match[4] || "",
+	);
 }
 
 function wordCount(text) {
@@ -1663,19 +1763,23 @@ function evaluateWebScout(transcript, addViolation) {
 function evaluateOracle(transcript, addViolation) {
 	for (const [index, step] of transcript.steps.entries()) {
 		const name = toolName(step);
-		if (["write", "edit", "subagent", "intercom", "subagent_supervisor", "web_search", "fetch_content", "get_search_content", "oracle"].includes(name)) {
-			addViolation(
-				"oracle.read_only",
-				index,
-				`Oracle must stay read-only and may not use tool '${name}'.`,
-			);
+		if (
+			[
+				"write",
+				"edit",
+				"subagent",
+				"intercom",
+				"subagent_supervisor",
+				"web_search",
+				"fetch_content",
+				"get_search_content",
+				"oracle",
+			].includes(name)
+		) {
+			addViolation("oracle.read_only", index, `Oracle must stay read-only and may not use tool '${name}'.`);
 		}
 		if (readOnlyBashMutation(step)) {
-			addViolation(
-				"oracle.read_only",
-				index,
-				"Oracle must stay read-only and may not run mutating shell commands.",
-			);
+			addViolation("oracle.read_only", index, "Oracle must stay read-only and may not run mutating shell commands.");
 		}
 	}
 }

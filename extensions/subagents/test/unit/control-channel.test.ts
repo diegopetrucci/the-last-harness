@@ -50,7 +50,9 @@ describe("control channel: request file", () => {
 	it("keeps the request type authoritative even for untyped callers", () => {
 		const asyncDir = tmpAsyncDir("pi-control-write-type-");
 		try {
-			const requestPath = requestAsyncInterrupt(asyncDir, { type: "not-interrupt", source: "test" } as any, { now: () => 999 });
+			const requestPath = requestAsyncInterrupt(asyncDir, { type: "not-interrupt", source: "test" } as any, {
+				now: () => 999,
+			});
 			const data = JSON.parse(fs.readFileSync(requestPath, "utf-8"));
 			assert.equal(data.type, "interrupt");
 			assert.equal(data.source, "test");
@@ -105,7 +107,10 @@ describe("control channel: request file", () => {
 		try {
 			const requestPath = requestAsyncSteer(asyncDir, { message: "safe", id: "../outside\\bad:thing", ts: 1 });
 			assert.equal(path.dirname(requestPath), steerRequestsDir(asyncDir));
-			assert.equal(path.basename(requestPath), `0000000000001-${Buffer.from("../outside\\bad:thing").toString("base64url")}.json`);
+			assert.equal(
+				path.basename(requestPath),
+				`0000000000001-${Buffer.from("../outside\\bad:thing").toString("base64url")}.json`,
+			);
 			assert.deepEqual(consumeSteerRequests(asyncDir), [
 				{ type: "steer", id: "../outside\\bad:thing", ts: 1, message: "safe" },
 			]);
@@ -140,7 +145,12 @@ describe("control channel: request file", () => {
 		const asyncDir = tmpAsyncDir("pi-control-step-steer-");
 		try {
 			enqueueStepSteer(asyncDir, 2, { type: "steer", id: "s1", ts: 300, message: "focus", targetIndex: 0 });
-			const request = JSON.parse(fs.readFileSync(path.join(stepSteerInboxDir(asyncDir, 2), fs.readdirSync(stepSteerInboxDir(asyncDir, 2))[0]!), "utf-8"));
+			const request = JSON.parse(
+				fs.readFileSync(
+					path.join(stepSteerInboxDir(asyncDir, 2), fs.readdirSync(stepSteerInboxDir(asyncDir, 2))[0]!),
+					"utf-8",
+				),
+			);
 			assert.equal(request.targetIndex, 2);
 			assert.equal(request.message, "focus");
 		} finally {
@@ -168,7 +178,9 @@ describe("control channel: request file", () => {
 				{ type: "steer", id: "steer", ts: 2, message: "steer guidance", targetIndex: 0 },
 			]);
 			assert.equal(fs.readdirSync(steerRequestsDir(asyncDir)).length, 1);
-			const preserved = JSON.parse(fs.readFileSync(path.join(steerRequestsDir(asyncDir), fs.readdirSync(steerRequestsDir(asyncDir))[0]!), "utf-8"));
+			const preserved = JSON.parse(
+				fs.readFileSync(path.join(steerRequestsDir(asyncDir), fs.readdirSync(steerRequestsDir(asyncDir))[0]!), "utf-8"),
+			);
 			assert.equal(preserved.type, "resume");
 		} finally {
 			cleanup(asyncDir);
@@ -178,7 +190,14 @@ describe("control channel: request file", () => {
 	it("writes resume requests through the shared child-message inbox", () => {
 		const asyncDir = tmpAsyncDir("pi-control-resume-");
 		try {
-			const requestPath = requestAsyncResume(asyncDir, { message: "Continue with the latest findings.", targetIndex: 2, deliveryDeadlineAt: 75, id: "resume-1", ts: 50, source: "async-resume" });
+			const requestPath = requestAsyncResume(asyncDir, {
+				message: "Continue with the latest findings.",
+				targetIndex: 2,
+				deliveryDeadlineAt: 75,
+				id: "resume-1",
+				ts: 50,
+				source: "async-resume",
+			});
 			const request = JSON.parse(fs.readFileSync(requestPath, "utf-8"));
 			assert.deepEqual(request, {
 				type: "resume",
@@ -199,11 +218,19 @@ describe("control channel: native child-message acceptance", () => {
 	it("atomically writes and consumes an acknowledgement keyed by request id", () => {
 		const asyncDir = tmpAsyncDir("pi-control-ack-");
 		try {
-			writeChildMessageAcceptance(asyncDir, { requestId: "resume/1", type: "resume", status: "accepted", ts: 10, acceptedIndexes: [1] });
+			writeChildMessageAcceptance(asyncDir, {
+				requestId: "resume/1",
+				type: "resume",
+				status: "accepted",
+				ts: 10,
+				acceptedIndexes: [1],
+			});
 			assert.equal(fs.existsSync(childMessageAckPath(asyncDir, "resume/1")), true);
 			assert.deepEqual(consumeChildMessageAcceptance(asyncDir, "resume/1")?.acceptedIndexes, [1]);
 			assert.equal(fs.existsSync(childMessageAckPath(asyncDir, "resume/1")), false);
-		} finally { cleanup(asyncDir); }
+		} finally {
+			cleanup(asyncDir);
+		}
 	});
 
 	it("does not leave acknowledgements for steer delivery while resume delivery does", () => {
@@ -214,10 +241,15 @@ describe("control channel: native child-message acceptance", () => {
 			const resume = { type: "resume" as const, id: "resume-1", ts: 2, message: "continue", targetIndex: 0 };
 			assert.equal(writeChildMessageAcceptanceForRequest(asyncDir, steer, common), undefined);
 			assert.equal(fs.existsSync(childMessageAckPath(asyncDir, steer.id)), false);
-			assert.equal(writeChildMessageAcceptanceForRequest(asyncDir, resume, common), childMessageAckPath(asyncDir, resume.id));
+			assert.equal(
+				writeChildMessageAcceptanceForRequest(asyncDir, resume, common),
+				childMessageAckPath(asyncDir, resume.id),
+			);
 			assert.equal(fs.existsSync(childMessageAckPath(asyncDir, resume.id)), true);
 			assert.equal(consumeChildMessageAcceptance(asyncDir, resume.id)?.status, "accepted");
-		} finally { cleanup(asyncDir); }
+		} finally {
+			cleanup(asyncDir);
+		}
 	});
 
 	it("waits for acceptance and cleans up the acknowledgement artifact", async () => {
@@ -232,12 +264,21 @@ describe("control channel: native child-message acceptance", () => {
 				now: () => now,
 				delay: async (ms) => {
 					now += ms;
-					if (now === 20) writeChildMessageAcceptance(asyncDir, { requestId: "r1", type: "resume", status: "accepted", ts: now, acceptedIndexes: [0] });
+					if (now === 20)
+						writeChildMessageAcceptance(asyncDir, {
+							requestId: "r1",
+							type: "resume",
+							status: "accepted",
+							ts: now,
+							acceptedIndexes: [0],
+						});
 				},
 			});
 			assert.equal(result.outcome, "acknowledged");
 			assert.equal(fs.existsSync(childMessageAckPath(asyncDir, "r1")), false);
-		} finally { cleanup(asyncDir); }
+		} finally {
+			cleanup(asyncDir);
+		}
 	});
 
 	it("rejects an expired nested resume before enqueueing into a leaf inbox", () => {
@@ -267,11 +308,24 @@ describe("control channel: native child-message acceptance", () => {
 	it("rejects runner races before leaf enqueue and reports enqueue failures", () => {
 		const request = { type: "resume" as const, id: "r1", ts: 1, message: "continue", targetIndex: 1 };
 		let enqueueCount = 0;
-		const finished = acceptChildMessageRequest({ request, steps: [{ status: "running" }, { status: "complete" }], enqueue: () => enqueueCount++ });
+		const finished = acceptChildMessageRequest({
+			request,
+			steps: [{ status: "running" }, { status: "complete" }],
+			enqueue: () => enqueueCount++,
+		});
 		assert.deepEqual(finished, { acceptedIndexes: [], rejected: [{ index: 1, reason: "child is complete" }] });
 		assert.equal(enqueueCount, 0);
-		const failed = acceptChildMessageRequest({ request: { ...request, targetIndex: 0 }, steps: [{ status: "running" }], enqueue: () => { throw new Error("disk full"); } });
-		assert.deepEqual(failed, { acceptedIndexes: [], rejected: [{ index: 0, reason: "leaf inbox enqueue failed: disk full" }] });
+		const failed = acceptChildMessageRequest({
+			request: { ...request, targetIndex: 0 },
+			steps: [{ status: "running" }],
+			enqueue: () => {
+				throw new Error("disk full");
+			},
+		});
+		assert.deepEqual(failed, {
+			acceptedIndexes: [],
+			rejected: [{ index: 0, reason: "leaf inbox enqueue failed: disk full" }],
+		});
 	});
 });
 
@@ -342,7 +396,13 @@ describe("control channel: deliverInterruptRequest", () => {
 		const asyncDir = tmpAsyncDir("pi-control-deliver-nopid-");
 		try {
 			let killed = false;
-			deliverInterruptRequest({ asyncDir, kill: () => { killed = true; return true; } });
+			deliverInterruptRequest({
+				asyncDir,
+				kill: () => {
+					killed = true;
+					return true;
+				},
+			});
 			assert.equal(killed, false);
 			assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), true);
 		} finally {
@@ -368,10 +428,15 @@ describe("control channel: watchAsyncControlInbox", () => {
 			rmSync: fs.rmSync,
 			readdirSync: fs.readdirSync,
 			readFileSync: fs.readFileSync,
-			watch: ((_dir: string, cb: () => void) => {
+			watch: (_dir: string, cb: () => void) => {
 				listener = cb;
-				return { close: () => { closed = true; }, on: () => {} };
-			}),
+				return {
+					close: () => {
+						closed = true;
+					},
+					on: () => {},
+				};
+			},
 		} as unknown as WatchHarness["fsImpl"];
 		const timers = {
 			setInterval: (() => ({ unref() {} })) as unknown as typeof setInterval,
@@ -461,7 +526,12 @@ describe("control channel: watchAsyncControlInbox", () => {
 				timers: h.timers,
 			});
 
-			requestAsyncResume(asyncDir, { message: "Continue with the narrowed scope.", targetIndex: 1, id: "resume", ts: 2 });
+			requestAsyncResume(asyncDir, {
+				message: "Continue with the narrowed scope.",
+				targetIndex: 1,
+				id: "resume",
+				ts: 2,
+			});
 			h.trigger();
 
 			assert.equal(interrupted, 0);

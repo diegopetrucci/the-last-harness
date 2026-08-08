@@ -89,7 +89,9 @@ function formatExperimentalStatusMessage(config: TlhExperimentalConfig | undefin
 	}
 	return [
 		"TLH experimental features:",
-		...TLH_EXPERIMENTAL_FEATURES.map((feature) => formatExperimentalFeatureStatus(feature.id, isTlhExperimentalFeatureEnabled(config, feature.id))),
+		...TLH_EXPERIMENTAL_FEATURES.map((feature) =>
+			formatExperimentalFeatureStatus(feature.id, isTlhExperimentalFeatureEnabled(config, feature.id)),
+		),
 	].join("\n");
 }
 
@@ -111,7 +113,9 @@ function notifyExperimentalWriteResult(
 	const changedLabel = result.changed ? "Updated" : "No change to";
 	const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
 	const stateLabel = result.enabled ? "enabled" : "disabled";
-	const undoLabel = result.enabled ? `Undo with /experimental disable ${featureId}.` : `Undo with /experimental enable ${featureId}.`;
+	const undoLabel = result.enabled
+		? `Undo with /experimental disable ${featureId}.`
+		: `Undo with /experimental enable ${featureId}.`;
 	pi.events?.emit?.(TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT, {
 		cwd: ctx.cwd,
 		enabled: result.enabled,
@@ -137,7 +141,9 @@ async function showExperimentalFeaturePicker(pi: ExtensionAPI, ctx: ExtensionCom
 				return [option, feature.id] as const;
 			}),
 		);
-		const selectedOption = await ctx.ui.select("Toggle TLH experimental features (Esc to close)", [...featureIdsByOption.keys()]);
+		const selectedOption = await ctx.ui.select("Toggle TLH experimental features (Esc to close)", [
+			...featureIdsByOption.keys(),
+		]);
 		if (!selectedOption) {
 			return;
 		}
@@ -148,7 +154,12 @@ async function showExperimentalFeaturePicker(pi: ExtensionAPI, ctx: ExtensionCom
 		}
 
 		try {
-			notifyExperimentalWriteResult(pi, ctx, selectedFeatureId, writeExperimentalFeaturePreference(ctx.cwd, selectedFeatureId, "toggle"));
+			notifyExperimentalWriteResult(
+				pi,
+				ctx,
+				selectedFeatureId,
+				writeExperimentalFeaturePreference(ctx.cwd, selectedFeatureId, "toggle"),
+			);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			ctx.ui.notify(`Could not update TLH experimental feature ${selectedFeatureId}: ${message}`, "error");
@@ -171,38 +182,46 @@ function writeExperimentalFeaturePreference(
 	if (!feature) {
 		throw new Error(unknownExperimentalFeatureMessage(featureId));
 	}
-	return withLockedTlhSettingsWrite(cwd, "Refusing to write experimental settings outside the isolated TLH profile.", (current) => {
-		const settings = parseTlhSettingsContent(current);
-		const currentEnabledFeatures = normalizeEnabledFeatures(settings.tlh?.experimental?.enabledFeatures);
-		const currentEnabled = currentEnabledFeatures.includes(feature.id);
-		const enabled = nextEnabledState(currentEnabled, action);
-		if (enabled === currentEnabled) {
-			return { changed: false, enabled };
-		}
+	return withLockedTlhSettingsWrite(
+		cwd,
+		"Refusing to write experimental settings outside the isolated TLH profile.",
+		(current) => {
+			const settings = parseTlhSettingsContent(current);
+			const currentEnabledFeatures = normalizeEnabledFeatures(settings.tlh?.experimental?.enabledFeatures);
+			const currentEnabled = currentEnabledFeatures.includes(feature.id);
+			const enabled = nextEnabledState(currentEnabled, action);
+			if (enabled === currentEnabled) {
+				return { changed: false, enabled };
+			}
 
-		const nextEnabledFeatures = enabled
-			? normalizeEnabledFeatures([...currentEnabledFeatures, feature.id])
-			: currentEnabledFeatures.filter((currentFeatureId) => currentFeatureId !== feature.id);
+			const nextEnabledFeatures = enabled
+				? normalizeEnabledFeatures([...currentEnabledFeatures, feature.id])
+				: currentEnabledFeatures.filter((currentFeatureId) => currentFeatureId !== feature.id);
 
-		ensureMutableExperimentalSettings(settings);
-		settings.tlh.experimental.enabledFeatures = nextEnabledFeatures;
-		return {
-			changed: true,
-			enabled,
-			nextContent: `${JSON.stringify(settings, null, 2)}\n`,
-		};
-	});
+			ensureMutableExperimentalSettings(settings);
+			settings.tlh.experimental.enabledFeatures = nextEnabledFeatures;
+			return {
+				changed: true,
+				enabled,
+				nextContent: `${JSON.stringify(settings, null, 2)}\n`,
+			};
+		},
+	);
 }
 
 export function getExperimentalCommandCompletions(prefix: string) {
 	const normalizedPrefix = prefix.trim().toLowerCase();
-	const completions = EXPERIMENTAL_COMMAND_COMPLETIONS
-		.filter((option) => option.value.startsWith(normalizedPrefix))
-		.map((option) => ({ value: option.value, label: option.value, description: option.description }));
+	const completions = EXPERIMENTAL_COMMAND_COMPLETIONS.filter((option) =>
+		option.value.startsWith(normalizedPrefix),
+	).map((option) => ({ value: option.value, label: option.value, description: option.description }));
 	return completions.length > 0 ? completions : null;
 }
 
-export async function handleExperimentalCommand(pi: ExtensionAPI, args: string, ctx: ExtensionCommandContext): Promise<void> {
+export async function handleExperimentalCommand(
+	pi: ExtensionAPI,
+	args: string,
+	ctx: ExtensionCommandContext,
+): Promise<void> {
 	const command = parseExperimentalSlashAction(args);
 	if (!command) {
 		ctx.ui.notify(`${EXPERIMENTAL_COMMAND_HELP} Available: ${availableExperimentalFeatureList()}.`, "error");
@@ -221,7 +240,12 @@ export async function handleExperimentalCommand(pi: ExtensionAPI, args: string, 
 	}
 
 	try {
-		notifyExperimentalWriteResult(pi, ctx, command.featureId, writeExperimentalFeaturePreference(ctx.cwd, command.featureId, command.type));
+		notifyExperimentalWriteResult(
+			pi,
+			ctx,
+			command.featureId,
+			writeExperimentalFeaturePreference(ctx.cwd, command.featureId, command.type),
+		);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		ctx.ui.notify(`Could not update TLH experimental feature ${command.featureId}: ${message}`, "error");

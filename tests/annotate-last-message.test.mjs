@@ -7,7 +7,9 @@ const jiti = createJiti(import.meta.url);
 const { composeAnnotateLastMessagePrompt, hasAnnotateLastMessageFeedback } = await jiti.import(
 	"../extensions/the-last-harness/annotate-last-message/prompt.ts",
 );
-const { findLastAssistantMessage } = await jiti.import("../extensions/the-last-harness/annotate-last-message/session.ts");
+const { findLastAssistantMessage } = await jiti.import(
+	"../extensions/the-last-harness/annotate-last-message/session.ts",
+);
 const {
 	ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION,
 	buildAnnotateLastMessageCommand,
@@ -110,11 +112,14 @@ test("findLastAssistantMessage reports stable diagnostics for missing, incomplet
 		message: "No assistant messages found on the current session branch.",
 	});
 
-	assert.deepEqual(findLastAssistantMessage([messageEntry("assistant", [{ type: "text", text: "Still running" }], "max_tokens")]), {
-		ok: false,
-		code: "incomplete",
-		message: "Latest assistant message is incomplete (max_tokens). Wait for it to finish, then try again.",
-	});
+	assert.deepEqual(
+		findLastAssistantMessage([messageEntry("assistant", [{ type: "text", text: "Still running" }], "max_tokens")]),
+		{
+			ok: false,
+			code: "incomplete",
+			message: "Latest assistant message is incomplete (max_tokens). Wait for it to finish, then try again.",
+		},
+	);
 
 	assert.deepEqual(findLastAssistantMessage([messageEntry("assistant", [{ type: "image", source: "ignored" }])]), {
 		ok: false,
@@ -350,7 +355,9 @@ test("annotate-last-message blocks concurrent opens until the first annotation w
 	await Promise.resolve();
 	await command.handler("", context.ctx);
 	assert.equal(openCalls, 1);
-	assert.deepEqual(context.notifications, [{ message: "A last-message annotation window is already open.", level: "warning" }]);
+	assert.deepEqual(context.notifications, [
+		{ message: "A last-message annotation window is already open.", level: "warning" },
+	]);
 
 	openDeferred.resolve(window);
 	await first;
@@ -383,10 +390,7 @@ test("annotate-last-message cancels a pending open on shutdown without blocking 
 	firstOpen.resolve(firstWindow);
 	await interrupted;
 	assert.equal(firstWindow.closeCalls, 1);
-	assert.equal(
-		context.notifications.filter(({ message }) => message === "Opened native annotation window.").length,
-		1,
-	);
+	assert.equal(context.notifications.filter(({ message }) => message === "Opened native annotation window.").length, 1);
 
 	command.handleSessionShutdown();
 	assert.equal(secondWindow.closeCalls, 1);

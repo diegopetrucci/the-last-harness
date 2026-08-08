@@ -259,7 +259,10 @@ export function normalizeAnthropicUsage(data, options = {}) {
     return createSnapshot("anthropic", session, weekly, nowMs);
 }
 function timeoutSignal(timeoutMs) {
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || typeof AbortSignal === "undefined" || typeof AbortSignal.timeout !== "function") {
+    if (!Number.isFinite(timeoutMs) ||
+        timeoutMs <= 0 ||
+        typeof AbortSignal === "undefined" ||
+        typeof AbortSignal.timeout !== "function") {
         return undefined;
     }
     return AbortSignal.timeout(timeoutMs);

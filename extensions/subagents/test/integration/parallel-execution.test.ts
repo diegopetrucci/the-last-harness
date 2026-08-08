@@ -120,7 +120,13 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 	function makeExecutor(agents = [makeAgent("echo")]) {
 		return createSubagentExecutor({
 			pi: { events: createEventBus(), getSessionName: () => undefined },
-			state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+			state: {
+				baseCwd: tempDir,
+				currentSessionId: null,
+				asyncJobs: new Map(),
+				foregroundControls: new Map(),
+				lastForegroundControlId: null,
+			},
 			config: {},
 			asyncByDefault: false,
 			tempArtifactsDir: tempDir,
@@ -140,14 +146,16 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 	}
 
 	function readAllCallArgs(): string[][] {
-		return fs.readdirSync(mockPi.dir)
+		return fs
+			.readdirSync(mockPi.dir)
 			.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
 			.sort()
 			.map(readRecordedArgs);
 	}
 
 	function readLastCallArgs(): string[] {
-		const callFile = fs.readdirSync(mockPi.dir)
+		const callFile = fs
+			.readdirSync(mockPi.dir)
 			.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
 			.sort()
 			.at(-1);
@@ -203,19 +211,31 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(ok, 2);
 	});
 
-	it("carries one resolved tk ticket to the matching active foreground parallel child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("carries one resolved tk ticket to the matching active foreground parallel child", {
+		skip: !createSubagentExecutor ? "executor not importable" : undefined,
+	}, async () => {
 		const originalTicketsDir = process.env.TICKETS_DIR;
 		process.env.TICKETS_DIR = path.join(tempDir, ".tickets");
 		try {
 			fs.mkdirSync(path.join(tempDir, ".tickets"), { recursive: true });
-			fs.writeFileSync(path.join(tempDir, ".tickets", "psr-raw4.md"), "---\nid: psr-raw4\n---\n# Show active tk title\n", "utf-8");
-			mockPi.onCall({ steps: [
-				{ jsonl: [events.toolStart("read", { path: "README.md" })], delay: 60 },
-				{ jsonl: [events.assistantMessage("ticketed parallel done")] },
-			] });
+			fs.writeFileSync(
+				path.join(tempDir, ".tickets", "psr-raw4.md"),
+				"---\nid: psr-raw4\n---\n# Show active tk title\n",
+				"utf-8",
+			);
+			mockPi.onCall({
+				steps: [
+					{ jsonl: [events.toolStart("read", { path: "README.md" })], delay: 60 },
+					{ jsonl: [events.assistantMessage("ticketed parallel done")] },
+				],
+			});
 			mockPi.onCall({ output: "plain parallel done" });
 			const executor = makeExecutor([makeAgent("ticketed"), makeAgent("plain")]);
-			const updates: Array<{ details?: { results?: Array<{ agent?: string; tkTicket?: { id: string; title: string }; progress?: { status?: string } }> } }> = [];
+			const updates: Array<{
+				details?: {
+					results?: Array<{ agent?: string; tkTicket?: { id: string; title: string }; progress?: { status?: string } }>;
+				};
+			}> = [];
 			const runPromise = executor.execute(
 				"parallel-ticket",
 				{
@@ -225,17 +245,27 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 					],
 				},
 				new AbortController().signal,
-				(update) => updates.push(update as typeof updates[number]),
+				(update) => updates.push(update as (typeof updates)[number]),
 				makeMinimalCtx(tempDir),
 			);
 
 			const deadline = Date.now() + 5_000;
-			while (Date.now() < deadline && !updates.some((update) => update.details?.results?.some((result) => result.tkTicket && result.progress?.status === "running"))) {
+			while (
+				Date.now() < deadline &&
+				!updates.some((update) =>
+					update.details?.results?.some((result) => result.tkTicket && result.progress?.status === "running"),
+				)
+			) {
 				await new Promise((resolve) => setTimeout(resolve, 10));
 			}
-			const running = updates.find((update) => update.details?.results?.some((result) => result.tkTicket && result.progress?.status === "running"));
+			const running = updates.find((update) =>
+				update.details?.results?.some((result) => result.tkTicket && result.progress?.status === "running"),
+			);
 			const runningResults = running?.details?.results ?? [];
-			assert.deepEqual(runningResults.find((result) => result.tkTicket)?.tkTicket, { id: "psr-raw4", title: "Show active tk title" });
+			assert.deepEqual(runningResults.find((result) => result.tkTicket)?.tkTicket, {
+				id: "psr-raw4",
+				title: "Show active tk title",
+			});
 			assert.equal(runningResults.filter((result) => result.tkTicket).length, 1);
 
 			const result = await runPromise;
@@ -247,7 +277,9 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		}
 	});
 
-	it("top-level parallel inherits the parent session model for unconfigured tasks and keeps explicit overrides authoritative", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("top-level parallel inherits the parent session model for unconfigured tasks and keeps explicit overrides authoritative", {
+		skip: !createSubagentExecutor ? "executor not importable" : undefined,
+	}, async () => {
 		mockPi.onCall({ output: "Inherited model task" });
 		mockPi.onCall({ output: "Explicit model task" });
 		const executor = makeExecutor([makeAgent("inherit"), makeAgent("explicit")]);
@@ -276,18 +308,22 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.deepEqual(recordedModels, ["deepseek/deepseek-v4-flash", "openai/gpt-5-mini"]);
 	});
 
-	it("top-level parallel surfaces fallback notices after a retry", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("top-level parallel surfaces fallback notices after a retry", {
+		skip: !createSubagentExecutor ? "executor not importable" : undefined,
+	}, async () => {
 		mockPi.onCall({
-			jsonl: [{
-				type: "message_end",
-				message: {
-					role: "assistant",
-					content: [{ type: "text", text: "quota hit" }],
-					model: "openai/gpt-5-mini",
-					errorMessage: "429 quota exceeded",
-					usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "quota hit" }],
+						model: "openai/gpt-5-mini",
+						errorMessage: "429 quota exceeded",
+						usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+					},
 				},
-			}],
+			],
 			exitCode: 0,
 		});
 		mockPi.onCall({ output: "Recovered on the dispatch fallback" });
@@ -296,12 +332,14 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		const result = await executor.execute(
 			"parallel-fallback-notice",
 			{
-				tasks: [{
-					agent: "echo",
-					task: "Task",
-					fallbackModels: ["anthropic/claude-sonnet-4"],
-					modelFallbackNotice: "Quota fallback engaged",
-				}],
+				tasks: [
+					{
+						agent: "echo",
+						task: "Task",
+						fallbackModels: ["anthropic/claude-sonnet-4"],
+						modelFallbackNotice: "Quota fallback engaged",
+					},
+				],
 			},
 			new AbortController().signal,
 			undefined,
@@ -309,13 +347,18 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		);
 
 		assert.equal(result.isError, undefined);
-		assert.match(result.content[0]?.text ?? "", /Summary:\nNotice: Quota fallback engaged\n\nRecovered on the dispatch fallback/);
+		assert.match(
+			result.content[0]?.text ?? "",
+			/Summary:\nNotice: Quota fallback engaged\n\nRecovered on the dispatch fallback/,
+		);
 		assert.deepEqual(result.details?.results?.[0]?.attemptedModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
 		assert.equal(result.details?.results?.[0]?.modelFallbackNotice, "Quota fallback engaged");
 		assert.equal(mockPi.callCount(), 2);
 	});
 
-	it("treats parallel action aliases with tasks as top-level parallel execution", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("treats parallel action aliases with tasks as top-level parallel execution", {
+		skip: !createSubagentExecutor ? "executor not importable" : undefined,
+	}, async () => {
 		for (const action of ["parallel", "PARALLEL", "tasks"]) {
 			mockPi.reset();
 			mockPi.onCall({ output: `${action} alias finished` });
@@ -335,11 +378,11 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		}
 	});
 
-	it("applies agent acceptance roles to inferred parallel acceptance", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("applies agent acceptance roles to inferred parallel acceptance", {
+		skip: !createSubagentExecutor ? "executor not importable" : undefined,
+	}, async () => {
 		mockPi.onCall({ output: "exploration complete" });
-		const executor = makeExecutor([
-			makeAgent("worker", { acceptanceRole: "read-only" }),
-		]);
+		const executor = makeExecutor([makeAgent("worker", { acceptanceRole: "read-only" })]);
 
 		const result = await executor.execute(
 			"parallel-agent-acceptance-role",
@@ -352,7 +395,9 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(result.details?.results?.[0]?.acceptance?.effectiveAcceptance.level, "attested");
 	});
 
-	it("top-level parallel output saves use per-task output paths", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("top-level parallel output saves use per-task output paths", {
+		skip: !createSubagentExecutor ? "executor not importable" : undefined,
+	}, async () => {
 		mockPi.onCall({ output: "Saved report" });
 		const executor = makeExecutor();
 		const parentSessionFile = path.join(tempDir, "parent-session", "session.jsonl");
@@ -373,7 +418,14 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 
 		const runId = result.details?.runId;
 		assert.ok(runId, "expected run id in details");
-		const outputPath = path.join(tempDir, "parent-session", "subagent-artifacts", "outputs", runId, "parallel-output.md");
+		const outputPath = path.join(
+			tempDir,
+			"parent-session",
+			"subagent-artifacts",
+			"outputs",
+			runId,
+			"parallel-output.md",
+		);
 		const taskArg = readLastCallArgs().at(-1) ?? "";
 		assert.equal(result.isError, undefined);
 		assert.match(taskArg, new RegExp(`Write your findings to exactly this path: ${escapeRegExp(outputPath)}`));
@@ -383,7 +435,13 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(fs.existsSync(path.join(tempDir, "parallel-output.md")), false);
 	});
 
-	it("top-level parallel preserves completed siblings and marks timed-out children", { skip: !createSubagentExecutor ? "executor not importable" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
+	it("top-level parallel preserves completed siblings and marks timed-out children", {
+		skip: !createSubagentExecutor
+			? "executor not importable"
+			: process.platform === "win32"
+				? "timeout signal delivery intermittent on Windows CI"
+				: undefined,
+	}, async () => {
 		mockPi.onCall({
 			matchArgIncludes: "Slow review",
 			steps: [
@@ -435,7 +493,13 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.match(text, /Summary:\nfast done/);
 	});
 
-	it("enforces mixed foreground agent ceilings independently", { skip: !createSubagentExecutor ? "executor not importable" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
+	it("enforces mixed foreground agent ceilings independently", {
+		skip: !createSubagentExecutor
+			? "executor not importable"
+			: process.platform === "win32"
+				? "timeout signal delivery intermittent on Windows CI"
+				: undefined,
+	}, async () => {
 		mockPi.onCall({ matchArgIncludes: "Short ceiling", delay: 10000 });
 		mockPi.onCall({ matchArgIncludes: "Long ceiling", delay: 10000 });
 		const executor = makeExecutor([
@@ -463,7 +527,9 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(result.details?.results?.[1]?.error, "Subagent timed out after 180ms.");
 	});
 
-	it("top-level parallel file-only output aggregates concise file references", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("top-level parallel file-only output aggregates concise file references", {
+		skip: !createSubagentExecutor ? "executor not importable" : undefined,
+	}, async () => {
 		mockPi.onCall({ output: "Parallel full report\nwith details" });
 		const executor = makeExecutor();
 		const parentSessionFile = path.join(tempDir, "parent-session", "session.jsonl");
@@ -484,7 +550,14 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 
 		const runId = result.details?.runId;
 		assert.ok(runId, "expected run id in details");
-		const outputPath = path.join(tempDir, "parent-session", "subagent-artifacts", "outputs", runId, "parallel-file-only.md");
+		const outputPath = path.join(
+			tempDir,
+			"parent-session",
+			"subagent-artifacts",
+			"outputs",
+			runId,
+			"parallel-file-only.md",
+		);
 		const text = result.content[0]?.text ?? "";
 		const taskArg = readLastCallArgs().at(-1) ?? "";
 		assert.equal(result.isError, undefined);
@@ -498,7 +571,9 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents", "artifacts")), false);
 	});
 
-	it("rejects top-level parallel file-only output without an output path", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("rejects top-level parallel file-only output without an output path", {
+		skip: !createSubagentExecutor ? "executor not importable" : undefined,
+	}, async () => {
 		const executor = makeExecutor();
 
 		const result = await executor.execute(
@@ -514,7 +589,9 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(mockPi.callCount(), 0);
 	});
 
-	it("rejects duplicate top-level parallel output paths", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("rejects duplicate top-level parallel output paths", {
+		skip: !createSubagentExecutor ? "executor not importable" : undefined,
+	}, async () => {
 		const executor = makeExecutor();
 
 		const result = await executor.execute(
@@ -535,7 +612,9 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(mockPi.callCount(), 0);
 	});
 
-	it("treats string false as disabled output in top-level parallel runs", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("treats string false as disabled output in top-level parallel runs", {
+		skip: !createSubagentExecutor ? "executor not importable" : undefined,
+	}, async () => {
 		mockPi.onCall({ output: "Review done" });
 		const executor = makeExecutor();
 
@@ -557,7 +636,9 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(fs.existsSync(path.join(tempDir, "false")), false);
 	});
 
-	it("top-level parallel reads are injected once with chain-style prefix", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("top-level parallel reads are injected once with chain-style prefix", {
+		skip: !createSubagentExecutor ? "executor not importable" : undefined,
+	}, async () => {
 		mockPi.onCall({ output: "Read done" });
 		const executor = makeExecutor();
 
@@ -571,14 +652,18 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 
 		const args = readLastCallArgs();
 		const taskArg = args.at(-1) ?? "";
-		assert.ok(taskArg.startsWith(`Task: [Read from: ${path.join(tempDir, "a.md")}, ${path.join(tempDir, "b.md")}]
+		assert.ok(
+			taskArg.startsWith(`Task: [Read from: ${path.join(tempDir, "a.md")}, ${path.join(tempDir, "b.md")}]
 
 Inspect
 
-## Acceptance Contract`));
+## Acceptance Contract`),
+		);
 	});
 
-	it("top-level parallel defaultProgress uses isolated run storage", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("top-level parallel defaultProgress uses isolated run storage", {
+		skip: !createSubagentExecutor ? "executor not importable" : undefined,
+	}, async () => {
 		mockPi.onCall({ output: "Progress done" });
 		const executor = makeExecutor([makeAgent("echo", { defaultProgress: true })]);
 		const parentSessionFile = path.join(tempDir, "parent-session", "session.jsonl");
@@ -598,7 +683,14 @@ Inspect
 		);
 		const runId = result.details?.runId;
 		assert.ok(runId, "expected run id in details");
-		const expectedProgressPath = path.join(tempDir, "parent-session", "subagent-artifacts", "progress", runId, "progress.md");
+		const expectedProgressPath = path.join(
+			tempDir,
+			"parent-session",
+			"subagent-artifacts",
+			"progress",
+			runId,
+			"progress.md",
+		);
 
 		const args = readLastCallArgs();
 		const taskArg = args.at(-1) ?? "";
@@ -608,7 +700,9 @@ Inspect
 		assert.equal(fs.existsSync(path.join(tempDir, "progress.md")), false);
 	});
 
-	it("top-level parallel suppresses progress when the task is review-only", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("top-level parallel suppresses progress when the task is review-only", {
+		skip: !createSubagentExecutor ? "executor not importable" : undefined,
+	}, async () => {
 		mockPi.onCall({ output: "Review done" });
 		const executor = makeExecutor([makeAgent("reviewer", { defaultProgress: true })]);
 

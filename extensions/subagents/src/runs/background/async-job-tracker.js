@@ -37,7 +37,9 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             ? groups.find((group) => run.currentStep >= group.start && run.currentStep < group.start + group.count)
             : undefined;
         const visibleSteps = activeGroup
-            ? run.steps.slice(activeGroup.start, activeGroup.start + activeGroup.count).map((step, index) => ({ ...step, index: activeGroup.start + index }))
+            ? run.steps
+                .slice(activeGroup.start, activeGroup.start + activeGroup.count)
+                .map((step, index) => ({ ...step, index: activeGroup.start + index }))
             : run.steps.map((step, index) => ({ ...step, index }));
         return {
             asyncId: run.id,
@@ -157,7 +159,10 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                 if (record.channels.includes("event")) {
                     pi.events.emit(SUBAGENT_CONTROL_EVENT, payload);
                 }
-                if (record.event.type !== "active_long_running" && record.channels.includes("intercom") && record.intercom?.to && record.intercom.message) {
+                if (record.event.type !== "active_long_running" &&
+                    record.channels.includes("intercom") &&
+                    record.intercom?.to &&
+                    record.intercom.message) {
                     pi.events.emit(SUBAGENT_CONTROL_INTERCOM_EVENT, {
                         ...payload,
                         to: record.intercom.to,
@@ -304,7 +309,9 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                                 ? groups.find((group) => status.currentStep >= group.start && status.currentStep < group.start + group.count)
                                 : undefined;
                             const visibleSteps = activeGroup
-                                ? status.steps.slice(activeGroup.start, activeGroup.start + activeGroup.count).map((step, index) => ({ ...step, index: activeGroup.start + index }))
+                                ? status.steps
+                                    .slice(activeGroup.start, activeGroup.start + activeGroup.count)
+                                    .map((step, index) => ({ ...step, index: activeGroup.start + index }))
                                 : status.steps.map((step, index) => ({ ...step, index }));
                             job.activeParallelGroup = Boolean(activeGroup);
                             job.agents = visibleSteps.map((step) => step.agent);
@@ -328,7 +335,10 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                         job.sessionFile = status.sessionFile ?? job.sessionFile;
                         if (status.tkTicket !== undefined)
                             job.tkTicket = normalizeTkTicketMetadata(status.tkTicket);
-                        if ((job.status === "complete" || job.status === "failed" || job.status === "paused") && !nestedRefreshFailed && !hasLiveNestedDescendants(job.nestedChildren) && (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))) {
+                        if ((job.status === "complete" || job.status === "failed" || job.status === "paused") &&
+                            !nestedRefreshFailed &&
+                            !hasLiveNestedDescendants(job.nestedChildren) &&
+                            (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))) {
                             scheduleCleanup(job.asyncId);
                         }
                         if (widgetRenderKey(job) !== widgetStateBefore)
@@ -366,13 +376,17 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             return;
         const now = Date.now();
         const asyncDir = info.asyncDir ?? path.join(asyncDirRoot, info.id);
-        const rawAgents = info.agents?.length ? info.agents : info.chain && info.chain.length > 0 ? info.chain : info.agent ? [info.agent] : undefined;
+        const rawAgents = info.agents?.length
+            ? info.agents
+            : info.chain && info.chain.length > 0
+                ? info.chain
+                : info.agent
+                    ? [info.agent]
+                    : undefined;
         const validParallelGroups = normalizeParallelGroups(info.parallelGroups, Number.MAX_SAFE_INTEGER, info.chainStepCount ?? Number.MAX_SAFE_INTEGER);
         const firstGroup = validParallelGroups.find((group) => group.start === 0);
         const firstGroupCount = firstGroup?.count;
-        const agents = firstGroupCount && firstGroupCount > 0
-            ? rawAgents?.slice(0, firstGroupCount)
-            : rawAgents;
+        const agents = firstGroupCount && firstGroupCount > 0 ? rawAgents?.slice(0, firstGroupCount) : rawAgents;
         const normalizedTkTicket = normalizeTkTicketMetadata(info.tkTicket);
         state.asyncJobs.set(info.id, {
             asyncId: info.id,
@@ -451,7 +465,13 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         let runs;
         let issues;
         try {
-            ({ runs, issues } = scanAsyncRunsForRestore(asyncDirRoot, { states: ["queued", "running"], sessionId: state.currentSessionId, resultsDir, kill: options.kill, now: options.now }));
+            ({ runs, issues } = scanAsyncRunsForRestore(asyncDirRoot, {
+                states: ["queued", "running"],
+                sessionId: state.currentSessionId,
+                resultsDir,
+                kill: options.kill,
+                now: options.now,
+            }));
         }
         catch (error) {
             console.error(`Failed to restore active async jobs from '${asyncDirRoot}':`, error);
@@ -469,7 +489,8 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                     quarantined.persistedValidation += 1;
                 continue;
             }
-            if ((result.outcome === "deferred" || result.outcome === "failed") && !restoreWarningDedupe.has(result.dedupeKey)) {
+            if ((result.outcome === "deferred" || result.outcome === "failed") &&
+                !restoreWarningDedupe.has(result.dedupeKey)) {
                 restoreWarningDedupe.add(result.dedupeKey);
                 const bucket = result.outcome === "deferred" ? deferred : failed;
                 if (result.kind === "json_parse")

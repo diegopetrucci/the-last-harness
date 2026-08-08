@@ -34,12 +34,17 @@ function resolveConfigDirNameFromSource(source: unknown): string | undefined {
 		configDir?: unknown;
 		piConfig?: { configDir?: unknown } | null;
 	};
-	return normalizeConfigDirName(direct.CONFIG_DIR_NAME)
-		?? normalizeConfigDirName(direct.configDir)
-		?? normalizeConfigDirName(direct.piConfig?.configDir);
+	return (
+		normalizeConfigDirName(direct.CONFIG_DIR_NAME) ??
+		normalizeConfigDirName(direct.configDir) ??
+		normalizeConfigDirName(direct.piConfig?.configDir)
+	);
 }
 
-function readConfigDirNameFromPackageRoot(packageRoot: string | undefined, deps: RuntimeConfigDirDeps): string | undefined {
+function readConfigDirNameFromPackageRoot(
+	packageRoot: string | undefined,
+	deps: RuntimeConfigDirDeps,
+): string | undefined {
 	if (!packageRoot) return undefined;
 
 	try {
@@ -62,7 +67,11 @@ function safeResolvePackageRoot(resolvePackageRoot: () => string | undefined): s
 	}
 }
 
-function resolveConfigDirNameFromEntryPoint(entryPoint: string | undefined, packageRoot: string | undefined, deps: RuntimeConfigDirDeps): string | undefined {
+function resolveConfigDirNameFromEntryPoint(
+	entryPoint: string | undefined,
+	packageRoot: string | undefined,
+	deps: RuntimeConfigDirDeps,
+): string | undefined {
 	const explicitRootValue = readConfigDirNameFromPackageRoot(packageRoot, deps);
 	if (explicitRootValue !== undefined) return explicitRootValue;
 	if (!entryPoint) return undefined;
@@ -81,12 +90,12 @@ function resolveConfigDirNameFromEntryPoint(entryPoint: string | undefined, pack
 }
 
 export function resolveRuntimeConfigDirName(deps: RuntimeConfigDirDeps = {}): string | undefined {
-	const useCache = deps.useCache ?? (
-		deps.readFileSync === undefined
-		&& deps.resolveRuntimePackageRoot === undefined
-		&& deps.resolveInstalledPackageRoot === undefined
-		&& deps.env === undefined
-	);
+	const useCache =
+		deps.useCache ??
+		(deps.readFileSync === undefined &&
+			deps.resolveRuntimePackageRoot === undefined &&
+			deps.resolveInstalledPackageRoot === undefined &&
+			deps.env === undefined);
 	if (useCache && cachedRuntimeConfigDirName !== undefined) {
 		return cachedRuntimeConfigDirName ?? undefined;
 	}

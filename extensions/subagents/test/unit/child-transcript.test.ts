@@ -10,7 +10,12 @@ function tmpDir(): string {
 }
 
 function readRecords(file: string): Record<string, unknown>[] {
-	return fs.readFileSync(file, "utf-8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);
+	return fs
+		.readFileSync(file, "utf-8")
+		.trim()
+		.split("\n")
+		.filter(Boolean)
+		.map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
 describe("createChildTranscriptWriter", () => {
@@ -57,7 +62,7 @@ describe("createChildTranscriptWriter", () => {
 		});
 		writer.writeInitialUserMessage("review it");
 		const record = readRecords(transcriptPath)[0]!;
-		assert.equal(Object.prototype.hasOwnProperty.call(record, "childIndex"), false);
+		assert.equal(Object.hasOwn(record, "childIndex"), false);
 		assert.equal(record.source, "async");
 	});
 
@@ -124,7 +129,7 @@ describe("createChildTranscriptWriter", () => {
 		assert.equal(typeof records[0]!.argsPreview, "string");
 		assert.ok(String(records[0]!.argsPreview).length > 0);
 		assert.equal(records[1]!.recordType, "tool_start");
-		assert.equal(Object.prototype.hasOwnProperty.call(records[1]!, "argsPreview"), false);
+		assert.equal(Object.hasOwn(records[1]!, "argsPreview"), false);
 		assert.equal(records[2]!.recordType, "tool_end");
 		assert.equal(records[2]!.toolName, "bash");
 	});
@@ -195,7 +200,10 @@ describe("createChildTranscriptWriter", () => {
 
 		assert.equal(writer.getError(), undefined);
 		const records = readRecords(transcriptPath);
-		assert.deepEqual(records.map((record) => record.recordType), ["stdout", "truncated"]);
+		assert.deepEqual(
+			records.map((record) => record.recordType),
+			["stdout", "truncated"],
+		);
 		assert.equal(records[0]!.text, "a");
 		assert.equal(records[1]!.maxBytes, 420);
 		assert.ok(fs.statSync(transcriptPath).size <= 420);
@@ -219,7 +227,10 @@ describe("createChildTranscriptWriter", () => {
 
 		const error = writer.getError();
 		assert.ok(typeof error === "string" && error.length > 0, "an init error should be reported");
-		assert.ok(error.includes(transcriptPath) || error.includes("blocker-file"), "error should reference the transcript path");
+		assert.ok(
+			error.includes(transcriptPath) || error.includes("blocker-file"),
+			"error should reference the transcript path",
+		);
 		assert.equal(fs.existsSync(transcriptPath), false);
 	});
 });

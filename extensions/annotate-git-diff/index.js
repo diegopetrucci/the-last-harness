@@ -23,7 +23,7 @@ function isReviewCommitKind(value) {
     return value == null || value === "commit" || value === "working-tree";
 }
 function hasNullableInteger(value, key) {
-    if (!Object.prototype.hasOwnProperty.call(value, key))
+    if (!Object.hasOwn(value, key))
         return false;
     const field = value[key];
     return field === null || (typeof field === "number" && Number.isInteger(field));
@@ -47,7 +47,9 @@ function parseWindowMessage(data) {
         return null;
     switch (data.type) {
         case "submit":
-            if (!isString(data.overallComment) || !Array.isArray(data.comments) || !data.comments.every(isDiffReviewComment)) {
+            if (!isString(data.overallComment) ||
+                !Array.isArray(data.comments) ||
+                !data.comments.every(isDiffReviewComment)) {
                 return null;
             }
             return {
@@ -59,7 +61,10 @@ function parseWindowMessage(data) {
         case "cancel":
             return { type: "cancel" };
         case "request-file":
-            if (!isString(data.requestId) || !isString(data.fileId) || !isReviewScope(data.scope) || !isNullableString(data.commitSha)) {
+            if (!isString(data.requestId) ||
+                !isString(data.fileId) ||
+                !isReviewScope(data.scope) ||
+                !isNullableString(data.commitSha)) {
                 return null;
             }
             return {
@@ -422,7 +427,8 @@ export function createAnnotateGitDiffController(pi, dependencies = {}) {
                         if (!isImmutableCommitSha(message.sha))
                             return false;
                         return (snapshot.commitFileCache.get(message.sha) === pendingCommitFiles ||
-                            (allowRetainedRejection && retainedImmutablePromiseVersions.get(pendingCommitFiles) === snapshot.version));
+                            (allowRetainedRejection &&
+                                retainedImmutablePromiseVersions.get(pendingCommitFiles) === snapshot.version));
                     };
                     try {
                         const commitFiles = await pendingCommitFiles;

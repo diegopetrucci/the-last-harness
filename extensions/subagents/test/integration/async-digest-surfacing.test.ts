@@ -18,14 +18,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { MockPi } from "../support/helpers.ts";
-import {
-	createMockPi,
-	createTempDir,
-	removeTempDir,
-	makeAgent,
-	events,
-	tryImport,
-} from "../support/helpers.ts";
+import { createMockPi, createTempDir, removeTempDir, makeAgent, events, tryImport } from "../support/helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 interface ArtifactPaths {
@@ -49,7 +42,10 @@ interface AsyncSingleResultPayload {
 
 interface AsyncExecutionModule {
 	isAsyncAvailable(): boolean;
-	executeAsyncSingle(id: string, params: Record<string, unknown>): {
+	executeAsyncSingle(
+		id: string,
+		params: Record<string, unknown>,
+	): {
 		content: Array<{ text?: string }>;
 		isError?: boolean;
 		details: { asyncId?: string };

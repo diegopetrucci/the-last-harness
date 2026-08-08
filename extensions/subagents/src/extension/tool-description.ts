@@ -88,11 +88,17 @@ export interface ToolDescriptionOptions {
 	warn?: (message: string) => void;
 }
 
-export function resolveToolDescriptionMode(config: Pick<ExtensionConfig, "toolDescriptionMode">, options?: ToolDescriptionOptions): ToolDescriptionMode {
+export function resolveToolDescriptionMode(
+	config: Pick<ExtensionConfig, "toolDescriptionMode">,
+	options?: ToolDescriptionOptions,
+): ToolDescriptionMode {
 	const mode = config.toolDescriptionMode;
 	if (mode === undefined) return "full";
 	if (isToolDescriptionMode(mode)) return mode;
-	warn(options, `Ignoring invalid toolDescriptionMode ${JSON.stringify(mode)}; expected "full", "compact", or "custom".`);
+	warn(
+		options,
+		`Ignoring invalid toolDescriptionMode ${JSON.stringify(mode)}; expected "full", "compact", or "custom".`,
+	);
 	return "full";
 }
 
@@ -133,8 +139,17 @@ function loadCustomToolDescription(options?: ToolDescriptionOptions): string | u
 		try {
 			stat = fs.statSync(filePath);
 		} catch (error) {
-			if (typeof error === "object" && error !== null && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") continue;
-			warn(options, `Failed to inspect custom tool description '${filePath}': ${error instanceof Error ? error.message : String(error)}`);
+			if (
+				typeof error === "object" &&
+				error !== null &&
+				"code" in error &&
+				(error as NodeJS.ErrnoException).code === "ENOENT"
+			)
+				continue;
+			warn(
+				options,
+				`Failed to inspect custom tool description '${filePath}': ${error instanceof Error ? error.message : String(error)}`,
+			);
 			continue;
 		}
 		if (!stat.isFile()) {
@@ -142,7 +157,10 @@ function loadCustomToolDescription(options?: ToolDescriptionOptions): string | u
 			continue;
 		}
 		if (stat.size > CUSTOM_TOOL_DESCRIPTION_MAX_BYTES) {
-			warn(options, `Ignoring custom tool description '${filePath}' because it is larger than ${CUSTOM_TOOL_DESCRIPTION_MAX_BYTES} bytes.`);
+			warn(
+				options,
+				`Ignoring custom tool description '${filePath}' because it is larger than ${CUSTOM_TOOL_DESCRIPTION_MAX_BYTES} bytes.`,
+			);
 			continue;
 		}
 		try {
@@ -158,7 +176,10 @@ function loadCustomToolDescription(options?: ToolDescriptionOptions): string | u
 			}
 			return rendered;
 		} catch (error) {
-			warn(options, `Failed to read custom tool description '${filePath}': ${error instanceof Error ? error.message : String(error)}`);
+			warn(
+				options,
+				`Failed to read custom tool description '${filePath}': ${error instanceof Error ? error.message : String(error)}`,
+			);
 		}
 	}
 	return undefined;
@@ -170,18 +191,22 @@ function withMandatorySafetyGuidance(description: string): string {
 		.map((part) => part.trim())
 		.filter(Boolean)
 		.join("\n\n");
-	return customDescription
-		? `${customDescription}\n\n${SUBAGENT_SAFETY_GUIDANCE}`
-		: SUBAGENT_SAFETY_GUIDANCE;
+	return customDescription ? `${customDescription}\n\n${SUBAGENT_SAFETY_GUIDANCE}` : SUBAGENT_SAFETY_GUIDANCE;
 }
 
-export function buildSubagentToolDescription(config: Pick<ExtensionConfig, "toolDescriptionMode"> = {}, options?: ToolDescriptionOptions): string {
+export function buildSubagentToolDescription(
+	config: Pick<ExtensionConfig, "toolDescriptionMode"> = {},
+	options?: ToolDescriptionOptions,
+): string {
 	const mode = resolveToolDescriptionMode(config, options);
 	if (mode === "compact") return COMPACT_SUBAGENT_TOOL_DESCRIPTION;
 	if (mode === "custom") {
 		const custom = loadCustomToolDescription(options);
 		if (custom) return withMandatorySafetyGuidance(custom);
-		warn(options, `${CUSTOM_TOOL_DESCRIPTION_FILE} was not found or valid for toolDescriptionMode "custom"; using full description.`);
+		warn(
+			options,
+			`${CUSTOM_TOOL_DESCRIPTION_FILE} was not found or valid for toolDescriptionMode "custom"; using full description.`,
+		);
 	}
 	return FULL_SUBAGENT_TOOL_DESCRIPTION;
 }

@@ -1,10 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import {
-	type AgentConfig,
-	type AgentScope,
-	discoverAgentsAll,
-	frontmatterNameForConfig,
-} from "./agents.ts";
+import { type AgentConfig, type AgentScope, discoverAgentsAll, frontmatterNameForConfig } from "./agents.ts";
 import type { Details, ExtensionConfig, SubagentToolResult } from "../shared/types.ts";
 
 type ManagementAction = "list" | "get";
@@ -22,7 +17,8 @@ function result(text: string, isError = false): SubagentToolResult<Details> {
 	return { content: [{ type: "text", text }], isError, details: { mode: "management", results: [] } };
 }
 
-const SAVED_CHAIN_UNSUPPORTED = "Saved chains are deliberately unsupported in The Last Harness; existing .chain.md/.chain.json files are left untouched.";
+const SAVED_CHAIN_UNSUPPORTED =
+	"Saved chains are deliberately unsupported in The Last Harness; existing .chain.md/.chain.json files are left untouched.";
 
 function unsupportedSavedChainResult(detail: string): SubagentToolResult<Details> {
 	return result(`${SAVED_CHAIN_UNSUPPORTED} ${detail}`, true);
@@ -35,10 +31,21 @@ function normalizeListScope(scope: unknown): AgentScope | undefined {
 }
 
 function sanitizeName(name: string): string {
-	return name.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+	return name
+		.toLowerCase()
+		.trim()
+		.replace(/\s+/g, "-")
+		.replace(/[^a-z0-9-]/g, "")
+		.replace(/-+/g, "-")
+		.replace(/^-+|-+$/g, "");
 }
 
-function allAgents(d: { builtin: AgentConfig[]; package: AgentConfig[]; user: AgentConfig[]; project: AgentConfig[] }): AgentConfig[] {
+function allAgents(d: {
+	builtin: AgentConfig[];
+	package: AgentConfig[];
+	user: AgentConfig[];
+	project: AgentConfig[];
+}): AgentConfig[] {
 	return [...d.builtin, ...d.package, ...d.user, ...d.project];
 }
 
@@ -57,7 +64,11 @@ function findAgents(name: string, cwd: string, scope: AgentScope = "both"): Agen
 
 function formatAgentDetail(agent: AgentConfig): string {
 	const tools = [...(agent.tools ?? [])];
-	const lines: string[] = [`Agent: ${agent.name} (${agent.source})`, `Path: ${agent.filePath}`, `Description: ${agent.description}`];
+	const lines: string[] = [
+		`Agent: ${agent.name} (${agent.source})`,
+		`Path: ${agent.filePath}`,
+		`Description: ${agent.description}`,
+	];
 	if (agent.packageName) {
 		lines.push(`Local name: ${frontmatterNameForConfig(agent)}`);
 		lines.push(`Package: ${agent.packageName}`);
@@ -72,8 +83,12 @@ function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.defaultContext) lines.push(`Default context: ${agent.defaultContext}`);
 	if (agent.acceptanceRole) lines.push(`Acceptance role: ${agent.acceptanceRole}`);
 	if (agent.source === "builtin") lines.push(`Disabled: ${agent.disabled ? "true" : "false"}`);
-	if (agent.extensions !== undefined) lines.push(`Extensions: ${agent.extensions.length ? agent.extensions.join(", ") : "(none)"}`);
-	if (agent.subagentOnlyExtensions !== undefined) lines.push(`Subagent-only extensions: ${agent.subagentOnlyExtensions.length ? agent.subagentOnlyExtensions.join(", ") : "(none)"}`);
+	if (agent.extensions !== undefined)
+		lines.push(`Extensions: ${agent.extensions.length ? agent.extensions.join(", ") : "(none)"}`);
+	if (agent.subagentOnlyExtensions !== undefined)
+		lines.push(
+			`Subagent-only extensions: ${agent.subagentOnlyExtensions.length ? agent.subagentOnlyExtensions.join(", ") : "(none)"}`,
+		);
 	if (agent.thinking) lines.push(`Thinking: ${agent.thinking}`);
 	if (agent.output) lines.push(`Output: ${agent.output}`);
 	if (agent.defaultReads?.length) lines.push(`Reads: ${agent.defaultReads.join(", ")}`);
@@ -96,7 +111,10 @@ export function handleList(params: ManagementParams, ctx: ManagementContext): Su
 	const lines = [
 		"Executable agents:",
 		...(agents.length
-			? agents.map((a) => `- ${a.name} (${a.source}${a.defaultContext ? `, context: ${a.defaultContext}` : ""}): ${a.description}`)
+			? agents.map(
+					(a) =>
+						`- ${a.name} (${a.source}${a.defaultContext ? `, context: ${a.defaultContext}` : ""}): ${a.description}`,
+				)
 			: ["- (none)"]),
 	];
 	return result(lines.join("\n"));
@@ -107,7 +125,10 @@ function handleGet(params: ManagementParams, ctx: ManagementContext): SubagentTo
 	if (!params.agent) return result("Specify 'agent' for get.", true);
 	const matches = findAgents(params.agent, ctx.cwd, "both");
 	if (!matches.length) {
-		return result(`Agent '${params.agent}' not found. Available: ${availableNames(ctx.cwd).join(", ") || "none"}.`, true);
+		return result(
+			`Agent '${params.agent}' not found. Available: ${availableNames(ctx.cwd).join(", ") || "none"}.`,
+			true,
+		);
 	}
 	return result(matches.map(formatAgentDetail).join("\n\n"));
 }
@@ -116,10 +137,17 @@ function handleGet(params: ManagementParams, ctx: ManagementContext): SubagentTo
 // tool's 'action' schema enum (schemas.ts) admits only list/get/status/interrupt/
 // resume/steer/doctor.
 
-export function handleManagementAction(action: string, params: ManagementParams, ctx: ManagementContext): SubagentToolResult<Details> {
+export function handleManagementAction(
+	action: string,
+	params: ManagementParams,
+	ctx: ManagementContext,
+): SubagentToolResult<Details> {
 	switch (action as ManagementAction) {
-		case "list": return handleList(params, ctx);
-		case "get": return handleGet(params, ctx);
-		default: return result(`Unknown action: ${action}`, true);
+		case "list":
+			return handleList(params, ctx);
+		case "get":
+			return handleGet(params, ctx);
+		default:
+			return result(`Unknown action: ${action}`, true);
 	}
 }

@@ -134,9 +134,10 @@ function readAsyncStatus(asyncDir: string): AsyncStatusReadResult {
 		stat = fs.statSync(statusPath);
 		if (!stat.isFile()) return { status: null, invalid: true };
 	} catch (error) {
-		const code = typeof error === "object" && error !== null && "code" in error
-			? (error as NodeJS.ErrnoException).code
-			: undefined;
+		const code =
+			typeof error === "object" && error !== null && "code" in error
+				? (error as NodeJS.ErrnoException).code
+				: undefined;
 		if (code === "ENOENT") return { status: null, invalid: false };
 		return { status: null, invalid: true };
 	}
@@ -185,13 +186,7 @@ function isActiveOrLive(status: AsyncStatus, kill: KillFn): boolean {
 }
 
 function terminalReferenceMs(status: AsyncStatus, statusMtimeMs: number | undefined, dirMtimeMs: number): number {
-	return Math.max(
-		dirMtimeMs,
-		statusMtimeMs ?? 0,
-		status.endedAt ?? 0,
-		status.lastUpdate ?? 0,
-		status.startedAt ?? 0,
-	);
+	return Math.max(dirMtimeMs, statusMtimeMs ?? 0, status.endedAt ?? 0, status.lastUpdate ?? 0, status.startedAt ?? 0);
 }
 
 function inspectAsyncDir(entry: AsyncRunDirEntry, now: number, kill: KillFn): AsyncDirInspection {
@@ -268,7 +263,12 @@ function resolvePaths(paths?: Partial<RuntimeCleanupPaths>): RuntimeCleanupPaths
 	};
 }
 
-function inspectRuntimeDirsInternal(paths: RuntimeCleanupPaths, now: number, kill: KillFn, strict: boolean): {
+function inspectRuntimeDirsInternal(
+	paths: RuntimeCleanupPaths,
+	now: number,
+	kill: KillFn,
+	strict: boolean,
+): {
 	asyncDirs: AsyncDirInspection[];
 	nestedEventRoutes: NestedEventRouteInspection[];
 } {
@@ -276,9 +276,10 @@ function inspectRuntimeDirsInternal(paths: RuntimeCleanupPaths, now: number, kil
 	const retainedRootRunIds = new Set(asyncDirs.filter((entry) => entry.keep).map((entry) => entry.rootRunId));
 	const nestedEventRoutes = listNestedEventRoutes(paths.nestedEventsDir, strict).map((entry) => ({
 		...entry,
-		keep: !entry.rootRunId
-			|| retainedRootRunIds.has(entry.rootRunId)
-			|| now - entry.referenceMtimeMs < UNREFERENCED_NESTED_EVENT_DIR_MAX_AGE_MS,
+		keep:
+			!entry.rootRunId ||
+			retainedRootRunIds.has(entry.rootRunId) ||
+			now - entry.referenceMtimeMs < UNREFERENCED_NESTED_EVENT_DIR_MAX_AGE_MS,
 	}));
 	return {
 		asyncDirs,
@@ -286,7 +287,10 @@ function inspectRuntimeDirsInternal(paths: RuntimeCleanupPaths, now: number, kil
 	};
 }
 
-export function inspectRuntimeDirs(paths?: Partial<RuntimeCleanupPaths>, deps: RuntimeCleanupDeps = {}): RuntimeDirCounts {
+export function inspectRuntimeDirs(
+	paths?: Partial<RuntimeCleanupPaths>,
+	deps: RuntimeCleanupDeps = {},
+): RuntimeDirCounts {
 	const now = deps.now?.() ?? Date.now();
 	const kill = deps.kill ?? process.kill;
 	const resolvedPaths = resolvePaths(paths);
@@ -302,7 +306,10 @@ export function inspectRuntimeDirs(paths?: Partial<RuntimeCleanupPaths>, deps: R
 	};
 }
 
-export function cleanupRuntimeDirs(paths?: Partial<RuntimeCleanupPaths>, deps: RuntimeCleanupDeps = {}): RuntimeCleanupResult {
+export function cleanupRuntimeDirs(
+	paths?: Partial<RuntimeCleanupPaths>,
+	deps: RuntimeCleanupDeps = {},
+): RuntimeCleanupResult {
 	const now = deps.now?.() ?? Date.now();
 	const kill = deps.kill ?? process.kill;
 	const resolvedPaths = resolvePaths(paths);

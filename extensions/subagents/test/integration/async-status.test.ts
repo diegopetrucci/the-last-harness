@@ -75,7 +75,10 @@ describe("async status helpers", () => {
 			});
 
 			const runs = listAsyncRuns(root);
-			assert.deepEqual(runs.map((run) => run.id), ["run-continued", "run-complete"]);
+			assert.deepEqual(
+				runs.map((run) => run.id),
+				["run-continued", "run-complete"],
+			);
 			assert.match(formatAsyncRunList(runs), /run-continued \| continued/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -250,14 +253,18 @@ describe("async status helpers", () => {
 				state: "paused",
 				startedAt: 100,
 				lastUpdate: 200,
-				steps: [{
-					agent: "worker",
-					status: "paused",
-					acceptance: {
-						status: "rejected",
-						runtimeChecks: [{ id: "attestation", status: "failed", message: "Structured acceptance report missing." }],
+				steps: [
+					{
+						agent: "worker",
+						status: "paused",
+						acceptance: {
+							status: "rejected",
+							runtimeChecks: [
+								{ id: "attestation", status: "failed", message: "Structured acceptance report missing." },
+							],
+						},
 					},
-				}],
+				],
 			});
 
 			const runs = listAsyncRuns(root, { states: ["paused"] });
@@ -275,10 +282,7 @@ describe("async status helpers", () => {
 		fs.mkdirSync(dir, { recursive: true });
 		fs.writeFileSync(path.join(dir, "status.json"), "{not-json", "utf-8");
 		try {
-			assert.throws(
-				() => listAsyncRuns(root),
-				/Failed to parse async status file/,
-			);
+			assert.throws(() => listAsyncRuns(root), /Failed to parse async status file/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -298,10 +302,7 @@ describe("async status helpers", () => {
 
 			assert.deepEqual(listAsyncRuns(root, { states: ["running"] }), []);
 			assert.deepEqual(listAsyncRuns(root, { sessionId: "session-owner" }), []);
-			assert.throws(
-				() => listAsyncRuns(root),
-				/sessionId must be a string/,
-			);
+			assert.throws(() => listAsyncRuns(root), /sessionId must be a string/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -338,10 +339,18 @@ describe("async status helpers", () => {
 			fs.mkdirSync(badJsonDir, { recursive: true });
 			fs.writeFileSync(path.join(badJsonDir, "status.json"), "{bad json", "utf-8");
 
-			const filteredResult = scanAsyncRunsForRestore(root, { states: ["queued", "running"], sessionId: "session-owner" });
-			assert.deepEqual(filteredResult.runs.map((run) => run.id), ["run-owner"]);
+			const filteredResult = scanAsyncRunsForRestore(root, {
+				states: ["queued", "running"],
+				sessionId: "session-owner",
+			});
 			assert.deepEqual(
-				[...filteredResult.issues].map((issue) => [issue.entry, issue.kind]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+				filteredResult.runs.map((run) => run.id),
+				["run-owner"],
+			);
+			assert.deepEqual(
+				[...filteredResult.issues]
+					.map((issue) => [issue.entry, issue.kind])
+					.sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
 				[
 					["bad-json", "json_parse"],
 					["bad-session", "persisted_validation"],
@@ -350,7 +359,9 @@ describe("async status helpers", () => {
 
 			const fullResult = scanAsyncRunsForRestore(root, { states: ["queued", "running"] });
 			assert.deepEqual(
-				[...fullResult.issues].map((issue) => [issue.entry, issue.kind]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+				[...fullResult.issues]
+					.map((issue) => [issue.entry, issue.kind])
+					.sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
 				[
 					["bad-json", "json_parse"],
 					["bad-session", "persisted_validation"],
@@ -358,16 +369,32 @@ describe("async status helpers", () => {
 			);
 			assert.ok(filteredResult.issues.every((issue) => issue.asyncDir.startsWith(root)));
 			assert.ok(filteredResult.issues.every((issue) => issue.statusPath.endsWith("status.json")));
-			assert.ok(filteredResult.issues.every((issue) => issue.fingerprint?.algorithm === "sha256" && typeof issue.fingerprint.value === "string" && issue.fingerprint.value.length > 0));
+			assert.ok(
+				filteredResult.issues.every(
+					(issue) =>
+						issue.fingerprint?.algorithm === "sha256" &&
+						typeof issue.fingerprint.value === "string" &&
+						issue.fingerprint.value.length > 0,
+				),
+			);
 			assert.ok(fullResult.issues.every((issue) => issue.asyncDir.startsWith(root)));
 			assert.ok(fullResult.issues.every((issue) => issue.statusPath.endsWith("status.json")));
-			assert.ok(fullResult.issues.every((issue) => issue.fingerprint?.algorithm === "sha256" && typeof issue.fingerprint.value === "string" && issue.fingerprint.value.length > 0));
+			assert.ok(
+				fullResult.issues.every(
+					(issue) =>
+						issue.fingerprint?.algorithm === "sha256" &&
+						typeof issue.fingerprint.value === "string" &&
+						issue.fingerprint.value.length > 0,
+				),
+			);
 			assert.ok(fullResult.issues.every((issue) => !("snapshot" in issue)));
 			assert.deepEqual(
 				fullResult.issues.map((issue) => issue.fingerprint?.value).sort(),
 				[
 					createHash("sha256").update("{bad json", "utf8").digest("hex"),
-					createHash("sha256").update(fs.readFileSync(path.join(root, "bad-session", "status.json"), "utf-8"), "utf8").digest("hex"),
+					createHash("sha256")
+						.update(fs.readFileSync(path.join(root, "bad-session", "status.json"), "utf-8"), "utf8")
+						.digest("hex"),
 				].sort(),
 			);
 		} finally {
@@ -379,10 +406,7 @@ describe("async status helpers", () => {
 		const rootFile = path.join(os.tmpdir(), `pi-async-root-file-${Date.now()}`);
 		fs.writeFileSync(rootFile, "file", "utf-8");
 		try {
-			assert.throws(
-				() => scanAsyncRunsForRestore(rootFile),
-				/Failed to list async runs/,
-			);
+			assert.throws(() => scanAsyncRunsForRestore(rootFile), /Failed to list async runs/);
 		} finally {
 			fs.rmSync(rootFile, { force: true });
 		}
@@ -391,10 +415,7 @@ describe("async status helpers", () => {
 		try {
 			const runDir = path.join(root, "run-io-failure");
 			fs.mkdirSync(path.join(runDir, "status.json"), { recursive: true });
-			assert.throws(
-				() => scanAsyncRunsForRestore(root),
-				/Failed to read async status file/,
-			);
+			assert.throws(() => scanAsyncRunsForRestore(root), /Failed to read async status file/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -417,7 +438,11 @@ describe("async status helpers", () => {
 			const active = listAsyncRuns(root, {
 				states: ["running"],
 				resultsDir,
-				kill: () => { const error = new Error("missing") as NodeJS.ErrnoException; error.code = "ESRCH"; throw error; },
+				kill: () => {
+					const error = new Error("missing") as NodeJS.ErrnoException;
+					error.code = "ESRCH";
+					throw error;
+				},
 				now: () => 200,
 			});
 			assert.equal(active.length, 0);

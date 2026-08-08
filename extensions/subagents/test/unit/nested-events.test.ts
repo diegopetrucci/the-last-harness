@@ -54,7 +54,12 @@ function trackRoute(rootRunId = "root-run") {
 	return route;
 }
 
-function child(id: string, state: "queued" | "running" | "complete" | "failed" | "paused", ts: number, parentRunId = "root-run") {
+function child(
+	id: string,
+	state: "queued" | "running" | "complete" | "failed" | "paused",
+	ts: number,
+	parentRunId = "root-run",
+) {
 	return {
 		id,
 		parentRunId,
@@ -67,7 +72,7 @@ function child(id: string, state: "queued" | "running" | "complete" | "failed" |
 		agents: ["reviewer"],
 		startedAt: 10,
 		lastUpdate: ts,
-		steps: [{ agent: "leaf", status: state === "running" ? "running" as const : "complete" as const }],
+		steps: [{ agent: "leaf", status: state === "running" ? ("running" as const) : ("complete" as const) }],
 	};
 }
 
@@ -204,7 +209,11 @@ describe("nested event parsing and projection", () => {
 			ts: 100,
 			parentRunId: "root-run",
 			parentStepIndex: 3,
-			child: { ...child("nested-visible", "running", 100), parentStepIndex: 3, path: [{ runId: "root-run", stepIndex: 3 }] },
+			child: {
+				...child("nested-visible", "running", 100),
+				parentStepIndex: 3,
+				path: [{ runId: "root-run", stepIndex: 3 }],
+			},
 		});
 		const job: AsyncJobState = {
 			asyncId: "root-run",
@@ -246,45 +255,65 @@ describe("nested event parsing and projection", () => {
 			parentStepIndex: 1,
 			child: child("nested-terminal", "complete", 300),
 		});
-		fs.writeFileSync(path.join(route.eventSink, "0000000000400-stale.json"), `${JSON.stringify({
-			type: "subagent.nested.updated",
-			ts: 400,
-			rootRunId: route.rootRunId,
-			parentRunId: "root-run",
-			parentStepIndex: 1,
-			capabilityToken: route.capabilityToken,
-			child: child("nested-terminal", "running", 100),
-		})}\n`, "utf-8");
-		fs.writeFileSync(path.join(route.eventSink, "0000000000500-wrong-token.json"), `${JSON.stringify({
-			type: "subagent.nested.started",
-			ts: 500,
-			rootRunId: route.rootRunId,
-			parentRunId: "root-run",
-			parentStepIndex: 1,
-			capabilityToken: "wrong",
-			child: child("wrong-token", "running", 500),
-		})}\n`, "utf-8");
+		fs.writeFileSync(
+			path.join(route.eventSink, "0000000000400-stale.json"),
+			`${JSON.stringify({
+				type: "subagent.nested.updated",
+				ts: 400,
+				rootRunId: route.rootRunId,
+				parentRunId: "root-run",
+				parentStepIndex: 1,
+				capabilityToken: route.capabilityToken,
+				child: child("nested-terminal", "running", 100),
+			})}\n`,
+			"utf-8",
+		);
+		fs.writeFileSync(
+			path.join(route.eventSink, "0000000000500-wrong-token.json"),
+			`${JSON.stringify({
+				type: "subagent.nested.started",
+				ts: 500,
+				rootRunId: route.rootRunId,
+				parentRunId: "root-run",
+				parentStepIndex: 1,
+				capabilityToken: "wrong",
+				child: child("wrong-token", "running", 500),
+			})}\n`,
+			"utf-8",
+		);
 
 		const registry = projectNestedEvents(route);
 		assert.equal(registry.children.find((item) => item.id === "partial-good")?.state, "running");
 		assert.equal(registry.children.find((item) => item.id === "nested-terminal")?.state, "complete");
-		assert.equal(registry.children.some((item) => item.id === "wrong-token"), false);
+		assert.equal(
+			registry.children.some((item) => item.id === "wrong-token"),
+			false,
+		);
 		assert.equal(hasLiveNestedDescendants(registry.children), true);
 	});
 
 	it("detects live descendants attached to terminal step children", () => {
-		assert.equal(hasLiveNestedDescendants([{
-			...child("terminal-parent", "complete", 300),
-			steps: [{
-				agent: "owner-step",
-				status: "complete",
-				children: [{
-					...child("running-step-child", "running", 310, "terminal-parent"),
-					parentStepIndex: 0,
-					path: [{ runId: "terminal-parent", stepIndex: 0 }],
-				}],
-			}],
-		}]), true);
+		assert.equal(
+			hasLiveNestedDescendants([
+				{
+					...child("terminal-parent", "complete", 300),
+					steps: [
+						{
+							agent: "owner-step",
+							status: "complete",
+							children: [
+								{
+									...child("running-step-child", "running", 310, "terminal-parent"),
+									parentStepIndex: 0,
+									path: [{ runId: "terminal-parent", stepIndex: 0 }],
+								},
+							],
+						},
+					],
+				},
+			]),
+			true,
+		);
 	});
 
 	it("accepts only complete numeric token usage at the nested event boundary", () => {
@@ -296,33 +325,47 @@ describe("nested event parsing and projection", () => {
 			parentStepIndex: 1,
 			child: { ...child("nested-valid-tokens", "running", 100), totalTokens: { input: 10, output: 15, total: 25 } },
 		});
-		fs.writeFileSync(path.join(route.eventSink, "0000000000200-invalid-tokens.json"), `${JSON.stringify({
-			type: "subagent.nested.updated",
-			ts: 200,
-			rootRunId: route.rootRunId,
-			parentRunId: "root-run",
-			parentStepIndex: 1,
-			capabilityToken: route.capabilityToken,
-			child: { ...child("nested-invalid-tokens", "running", 200), totalTokens: { input: 1, output: "bad", total: 1 } },
-		})}\n`, "utf-8");
+		fs.writeFileSync(
+			path.join(route.eventSink, "0000000000200-invalid-tokens.json"),
+			`${JSON.stringify({
+				type: "subagent.nested.updated",
+				ts: 200,
+				rootRunId: route.rootRunId,
+				parentRunId: "root-run",
+				parentStepIndex: 1,
+				capabilityToken: route.capabilityToken,
+				child: {
+					...child("nested-invalid-tokens", "running", 200),
+					totalTokens: { input: 1, output: "bad", total: 1 },
+				},
+			})}\n`,
+			"utf-8",
+		);
 
 		const registry = projectNestedEvents(route);
 
-		assert.deepEqual(registry.children.find((item) => item.id === "nested-valid-tokens")?.totalTokens, { input: 10, output: 15, total: 25 });
+		assert.deepEqual(registry.children.find((item) => item.id === "nested-valid-tokens")?.totalTokens, {
+			input: 10,
+			output: 15,
+			total: 25,
+		});
 		assert.equal(registry.children.find((item) => item.id === "nested-invalid-tokens")?.totalTokens, undefined);
 	});
 
 	it("parses only complete jsonl records", () => {
 		const route = trackRoute();
-		const records = parseNestedEventRecords(`${JSON.stringify({
-			type: "subagent.nested.started",
-			ts: 100,
-			rootRunId: route.rootRunId,
-			parentRunId: "root-run",
-			parentStepIndex: 1,
-			capabilityToken: route.capabilityToken,
-			child: child("jsonl-good", "running", 100),
-		})}\n{"type":"subagent.nested.started"`, route);
+		const records = parseNestedEventRecords(
+			`${JSON.stringify({
+				type: "subagent.nested.started",
+				ts: 100,
+				rootRunId: route.rootRunId,
+				parentRunId: "root-run",
+				parentStepIndex: 1,
+				capabilityToken: route.capabilityToken,
+				child: child("jsonl-good", "running", 100),
+			})}\n{"type":"subagent.nested.started"`,
+			route,
+		);
 		assert.equal(records.length, 1);
 		assert.equal(records[0]?.child.id, "jsonl-good");
 	});

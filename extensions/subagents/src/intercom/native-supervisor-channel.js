@@ -26,7 +26,10 @@ const IntercomParamsSchema = Type.Object({
     replyTo: Type.Optional(Type.String()),
 }, { additionalProperties: false });
 function safeSegment(value) {
-    return value.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "unknown";
+    return (value
+        .trim()
+        .replace(/[^A-Za-z0-9._-]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "unknown");
 }
 export function resolveSupervisorChannelDir(runId, agent, childIndex) {
     return path.join(SUPERVISOR_CHANNEL_ROOT, `${safeSegment(runId)}-${safeSegment(agent)}-${childIndex}`);
@@ -131,7 +134,9 @@ async function waitForReply(channelDir, requestId, deadline, signal) {
             throw new Error("Supervisor request cancelled.");
         if (fs.existsSync(file)) {
             const parsed = JSON.parse(fs.readFileSync(file, "utf-8"));
-            if (parsed.type === "subagent.supervisor.reply" && parsed.requestId === requestId && typeof parsed.message === "string") {
+            if (parsed.type === "subagent.supervisor.reply" &&
+                parsed.requestId === requestId &&
+                typeof parsed.message === "string") {
                 return parsed;
             }
         }
@@ -152,7 +157,12 @@ async function sendSupervisorRequest(params, signal) {
     const createdAt = Date.now();
     const replyDeadline = createdAt + askTimeoutMs();
     const expiresAt = expectsReply ? replyDeadline : undefined;
-    const message = formatChildMessage({ ...metadata, reason: params.reason, message: params.message, interview: params.interview });
+    const message = formatChildMessage({
+        ...metadata,
+        reason: params.reason,
+        message: params.message,
+        interview: params.interview,
+    });
     const request = {
         type: "subagent.supervisor.request",
         id: requestId,
@@ -211,7 +221,7 @@ export function registerNativeSupervisorClient(pi, options = {}) {
     if (!readChildMetadata())
         return;
     const includeIntercomFallback = options.includeIntercomFallback !== false;
-    const registerTool = (pi.registerTool).bind(pi);
+    const registerTool = pi.registerTool.bind(pi);
     if (!hasTool(pi, "contact_supervisor")) {
         registerTool({
             name: "contact_supervisor",
@@ -232,9 +242,15 @@ export function registerNativeSupervisorClient(pi, options = {}) {
             async execute(_id, params, signal) {
                 const action = params.action;
                 if (action === "status")
-                    return { content: [{ type: "text", text: "Native supervisor channel is active." }], details: { active: true } };
+                    return {
+                        content: [{ type: "text", text: "Native supervisor channel is active." }],
+                        details: { active: true },
+                    };
                 if (action === "list")
-                    return { content: [{ type: "text", text: "Supervisor session available through contact_supervisor." }], details: { sessions: [] } };
+                    return {
+                        content: [{ type: "text", text: "Supervisor session available through contact_supervisor." }],
+                        details: { sessions: [] },
+                    };
                 if (action === "send")
                     return sendSupervisorRequest({ reason: "progress_update", message: params.message ?? "" }, signal);
                 if (action === "ask")
@@ -251,7 +267,9 @@ function parseRequestFile(file, channelDir) {
             return undefined;
         if (typeof parsed.id !== "string" || !parsed.id)
             return undefined;
-        if (parsed.reason !== "need_decision" && parsed.reason !== "interview_request" && parsed.reason !== "progress_update")
+        if (parsed.reason !== "need_decision" &&
+            parsed.reason !== "interview_request" &&
+            parsed.reason !== "progress_update")
             return undefined;
         if (typeof parsed.message !== "string" || !parsed.message)
             return undefined;
@@ -402,8 +420,8 @@ function requestBlockingPhase(request, state) {
     if (state.foregroundControls.has(request.runId))
         return "pausing";
     const foregroundRun = state.foregroundRuns?.get(request.runId);
-    const foregroundChild = foregroundRun?.children.find((child) => child.index === request.childIndex && child.agent === request.agent)
-        ?? foregroundRun?.children[request.childIndex];
+    const foregroundChild = foregroundRun?.children.find((child) => child.index === request.childIndex && child.agent === request.agent) ??
+        foregroundRun?.children[request.childIndex];
     if (foregroundChild && isAwaitingSupervisorPause(foregroundChild.pause)) {
         return foregroundChild.status === "paused" ? "paused" : "pausing";
     }
@@ -419,8 +437,8 @@ function requestBlockingPhase(request, state) {
 }
 function requestTerminalState(request, state) {
     const foregroundRun = state.foregroundRuns?.get(request.runId);
-    const foregroundChild = foregroundRun?.children.find((child) => child.index === request.childIndex && child.agent === request.agent)
-        ?? foregroundRun?.children[request.childIndex];
+    const foregroundChild = foregroundRun?.children.find((child) => child.index === request.childIndex && child.agent === request.agent) ??
+        foregroundRun?.children[request.childIndex];
     if (foregroundChild?.cancel?.cancelledAt)
         return "cancelled";
     if (foregroundChild?.status === "completed")
@@ -521,9 +539,9 @@ function resolvePendingRequest(pending, params) {
     const requests = [...pending.values()].filter((request) => request.expectsReply);
     if (params.to) {
         const normalizedTo = params.to.toLowerCase();
-        const matches = requests.filter((request) => request.id.toLowerCase().startsWith(normalizedTo)
-            || request.agent.toLowerCase() === normalizedTo
-            || request.childTarget?.toLowerCase() === normalizedTo);
+        const matches = requests.filter((request) => request.id.toLowerCase().startsWith(normalizedTo) ||
+            request.agent.toLowerCase() === normalizedTo ||
+            request.childTarget?.toLowerCase() === normalizedTo);
         if (matches.length === 1)
             return matches[0];
         if (matches.length > 1)
@@ -557,11 +575,19 @@ function buildParentIntercomTool(pending, state, name = "intercom") {
             refreshPendingRequests(pending, state, state.lastUiContext ?? undefined);
             const input = params;
             if (input.action === "status") {
-                return { content: [{ type: "text", text: `Native supervisor channel active. Pending replies: ${pending.size}.` }], details: { active: true, pending: pending.size, root: SUPERVISOR_CHANNEL_ROOT } };
+                return {
+                    content: [{ type: "text", text: `Native supervisor channel active. Pending replies: ${pending.size}.` }],
+                    details: { active: true, pending: pending.size, root: SUPERVISOR_CHANNEL_ROOT },
+                };
             }
             if (input.action === "pending" || input.action === "list") {
-                const lines = [...pending.values()].filter((request) => request.expectsReply).map((request) => formatPendingLine(request, state));
-                return { content: [{ type: "text", text: lines.length ? lines.join("\n") : "No pending supervisor requests." }], details: { pending: publicPendingRequests(pending) } };
+                const lines = [...pending.values()]
+                    .filter((request) => request.expectsReply)
+                    .map((request) => formatPendingLine(request, state));
+                return {
+                    content: [{ type: "text", text: lines.length ? lines.join("\n") : "No pending supervisor requests." }],
+                    details: { pending: publicPendingRequests(pending) },
+                };
             }
             if (input.action === "reply") {
                 const request = resolvePendingRequest(pending, input);
@@ -571,7 +597,10 @@ function buildParentIntercomTool(pending, state, name = "intercom") {
                 }
                 writeReply(request, input.message ?? "");
                 pending.delete(request.id);
-                return { content: [{ type: "text", text: `Replied to supervisor request ${request.id}.` }], details: { replyTo: request.id, runId: request.runId, agent: request.agent } };
+                return {
+                    content: [{ type: "text", text: `Replied to supervisor request ${request.id}.` }],
+                    details: { replyTo: request.id, runId: request.runId, agent: request.agent },
+                };
             }
             if (input.action === "send" || input.action === "ask") {
                 throw new Error("Native pi-subagents intercom currently handles supervisor replies. Child agents initiate asks with contact_supervisor.");
@@ -585,7 +614,7 @@ export function createNativeSupervisorChannel(pi, state) {
     const seenFiles = new Set();
     let poller;
     let lastStaleCleanupAt = 0;
-    const registerTool = (pi.registerTool).bind(pi);
+    const registerTool = pi.registerTool.bind(pi);
     const registerParentTools = () => {
         if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME))
             registerTool(buildParentIntercomTool(pending, state, NATIVE_SUPERVISOR_TOOL_NAME));

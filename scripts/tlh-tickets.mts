@@ -1,5 +1,26 @@
 #!/usr/bin/env node
-import { accessSync, chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
+import {
+	accessSync,
+	chmodSync,
+	closeSync,
+	constants,
+	existsSync,
+	fchmodSync,
+	fstatSync,
+	ftruncateSync,
+	lstatSync,
+	mkdirSync,
+	mkdtempSync,
+	openSync,
+	readFileSync,
+	realpathSync,
+	rmdirSync,
+	rmSync,
+	statSync,
+	unlinkSync,
+	writeFileSync,
+	type Stats,
+} from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
@@ -109,7 +130,6 @@ function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
 	return error !== null && typeof error === "object" && "code" in error;
 }
 
-
 function usage(): string {
 	return `Usage: tlh tickets <command>
 
@@ -183,17 +203,35 @@ function parseArgs(argv: readonly string[]): CliArgs {
 			index = targetIndex;
 			continue;
 		}
-		const sourceUrlIndex = assignCliOptionValue(args, "ticketSourceUrl", argv, index, "--unsafe-test-ticket-source-url");
+		const sourceUrlIndex = assignCliOptionValue(
+			args,
+			"ticketSourceUrl",
+			argv,
+			index,
+			"--unsafe-test-ticket-source-url",
+		);
 		if (sourceUrlIndex !== undefined) {
 			index = sourceUrlIndex;
 			continue;
 		}
-		const sourceShaIndex = assignCliOptionValue(args, "ticketSourceSha256", argv, index, "--unsafe-test-ticket-source-sha256");
+		const sourceShaIndex = assignCliOptionValue(
+			args,
+			"ticketSourceSha256",
+			argv,
+			index,
+			"--unsafe-test-ticket-source-sha256",
+		);
 		if (sourceShaIndex !== undefined) {
 			index = sourceShaIndex;
 			continue;
 		}
-		const archiveEntryIndex = assignCliOptionValue(args, "ticketArchiveEntry", argv, index, "--unsafe-test-ticket-archive-entry");
+		const archiveEntryIndex = assignCliOptionValue(
+			args,
+			"ticketArchiveEntry",
+			argv,
+			index,
+			"--unsafe-test-ticket-archive-entry",
+		);
 		if (archiveEntryIndex !== undefined) {
 			index = archiveEntryIndex;
 			continue;
@@ -232,7 +270,9 @@ function validateSettings(settings: unknown): asserts settings is Settings {
 	}
 }
 
-function ensureMutableSettings(settings: Settings): asserts settings is Settings & { tlh: TlhConfig & { tickets: TicketsConfig } } {
+function ensureMutableSettings(
+	settings: Settings,
+): asserts settings is Settings & { tlh: TlhConfig & { tickets: TicketsConfig } } {
 	validateSettings(settings);
 	settings.tlh ??= {};
 	settings.tlh.tickets ??= {};
@@ -370,7 +410,11 @@ function resolveCommandFromPath(command: string, pathValue: string | undefined =
 function validateTkCommand(command: string, agentDir: string): boolean {
 	const resolvedCommand = resolveCommandFromPath(command);
 	if (!resolvedCommand) return false;
-	const result = spawnSync(resolvedCommand, ["help"], { encoding: "utf8", timeout: VALIDATION_TIMEOUT_MS, env: helperEnv(agentDir) });
+	const result = spawnSync(resolvedCommand, ["help"], {
+		encoding: "utf8",
+		timeout: VALIDATION_TIMEOUT_MS,
+		env: helperEnv(agentDir),
+	});
 	if (result.error || result.status !== 0) return false;
 	const output = `${result.stdout || ""}\n${result.stderr || ""}`;
 	return /Usage:\s+tk\b/.test(output) && /ticket/i.test(output);
@@ -401,7 +445,13 @@ function findValidTkForConfigure(args: CliArgs, settings: Settings, agentDir: st
 	const configured = configuredInstallPath(settings);
 	const managedTargetPath = managedTkTargetPath(args, agentDir);
 	const configuredIsManagedTarget = configured && samePathForCompare(configured, managedTargetPath);
-	if (configured && !configuredIsManagedTarget && hasTkCommandName(configured) && validateTkCommand(configured, agentDir)) return normalizeValidCandidate(configured);
+	if (
+		configured &&
+		!configuredIsManagedTarget &&
+		hasTkCommandName(configured) &&
+		validateTkCommand(configured, agentDir)
+	)
+		return normalizeValidCandidate(configured);
 
 	const managedTarget = validateManagedTkTarget(args, agentDir);
 	for (const candidate of [managedTarget, "tk"]) {
@@ -510,7 +560,9 @@ function intendedPathFromNearestExistingNonSymlinkAncestor(path: string, label: 
 
 		const parent = dirname(current);
 		if (parent === current) {
-			throw new Error(`Refusing to install managed tk because no non-symlink directory ancestor was found for ${label}: ${path}`);
+			throw new Error(
+				`Refusing to install managed tk because no non-symlink directory ancestor was found for ${label}: ${path}`,
+			);
 		}
 		suffixParts.unshift(basename(current));
 		current = parent;
@@ -529,7 +581,10 @@ function captureIntendedManagedAgentDir(agentRoot: string): string {
 	return stableRealpathOfExistingDirectory(agentRoot, stats, "managed agent root");
 }
 
-function assertManagedTkAgentRootSafe({ agentRoot, intendedAgentDir }: Pick<ManagedTkPlan, "agentRoot" | "intendedAgentDir">): void {
+function assertManagedTkAgentRootSafe({
+	agentRoot,
+	intendedAgentDir,
+}: Pick<ManagedTkPlan, "agentRoot" | "intendedAgentDir">): void {
 	const stats = lstatIfExists(agentRoot);
 	let resolvedAgentDir;
 
@@ -546,7 +601,9 @@ function assertManagedTkAgentRootSafe({ agentRoot, intendedAgentDir }: Pick<Mana
 	}
 
 	if (resolvedAgentDir !== intendedAgentDir) {
-		throw new Error(`Refusing to install managed tk outside the intended tlh profile: ${agentRoot} (resolves to ${resolvedAgentDir}; intended profile: ${intendedAgentDir})`);
+		throw new Error(
+			`Refusing to install managed tk outside the intended tlh profile: ${agentRoot} (resolves to ${resolvedAgentDir}; intended profile: ${intendedAgentDir})`,
+		);
 	}
 }
 
@@ -597,7 +654,9 @@ function managedTkTargetPlan(args: CliArgs, agentDir: string): ManagedTkPlan {
 		throw new Error(`Refusing to install managed tk over the configured tlh profile directory: ${target}`);
 	}
 	if (!isPathInsideOrEqual(target, agentRoot)) {
-		throw new Error(`Refusing to install managed tk outside the configured tlh profile path: ${target} (profile: ${agentRoot})`);
+		throw new Error(
+			`Refusing to install managed tk outside the configured tlh profile path: ${target} (profile: ${agentRoot})`,
+		);
 	}
 	if (basename(target) !== "tk") {
 		throw new Error(`Refusing to install managed tk because the target basename must be exactly "tk": ${target}`);
@@ -619,7 +678,9 @@ function managedTkTargetPlan(args: CliArgs, agentDir: string): ManagedTkPlan {
 
 	const resolvedTarget = realpathForCompare(target);
 	if (!isPathInsideOrEqual(resolvedTarget, intendedAgentDir)) {
-		throw new Error(`Refusing to install managed tk outside the isolated tlh profile: ${target} (resolves to ${resolvedTarget}; profile: ${intendedAgentDir})`);
+		throw new Error(
+			`Refusing to install managed tk outside the isolated tlh profile: ${target} (resolves to ${resolvedTarget}; profile: ${intendedAgentDir})`,
+		);
 	}
 
 	const targetParent = dirname(target);
@@ -634,7 +695,11 @@ function validateManagedTkTarget(args: CliArgs, agentDir: string): string {
 	return managedTkTargetPlan(args, agentDir).target;
 }
 
-function assertManagedTkTargetParentSafe({ targetParent, intendedAgentDir, intendedTargetParent }: Pick<ManagedTkPlan, "targetParent" | "intendedAgentDir" | "intendedTargetParent">): void {
+function assertManagedTkTargetParentSafe({
+	targetParent,
+	intendedAgentDir,
+	intendedTargetParent,
+}: Pick<ManagedTkPlan, "targetParent" | "intendedAgentDir" | "intendedTargetParent">): void {
 	const parentStats = lstatIfExists(targetParent);
 	let resolvedTargetParent;
 
@@ -651,10 +716,14 @@ function assertManagedTkTargetParentSafe({ targetParent, intendedAgentDir, inten
 	}
 
 	if (!isPathInsideOrEqual(resolvedTargetParent, intendedAgentDir)) {
-		throw new Error(`Refusing to install managed tk outside the isolated tlh profile: ${targetParent} (resolves to ${resolvedTargetParent}; profile: ${intendedAgentDir})`);
+		throw new Error(
+			`Refusing to install managed tk outside the isolated tlh profile: ${targetParent} (resolves to ${resolvedTargetParent}; profile: ${intendedAgentDir})`,
+		);
 	}
 	if (resolvedTargetParent !== intendedTargetParent) {
-		throw new Error(`Refusing to install managed tk outside the intended target parent: ${targetParent} (resolves to ${resolvedTargetParent}; intended parent: ${intendedTargetParent})`);
+		throw new Error(
+			`Refusing to install managed tk outside the intended target parent: ${targetParent} (resolves to ${resolvedTargetParent}; intended parent: ${intendedTargetParent})`,
+		);
 	}
 }
 
@@ -680,7 +749,12 @@ function stableRealpathOfSafeDirectory(path: string, firstStats: Stats, label: s
 	return resolved;
 }
 
-function validateAnchoredDirectory(path: string, expectedResolvedPath: string, label: string, firstStats?: Stats): string {
+function validateAnchoredDirectory(
+	path: string,
+	expectedResolvedPath: string,
+	label: string,
+	firstStats?: Stats,
+): string {
 	const stats = firstStats || lstatIfExists(path);
 	if (!stats) {
 		throw new Error(`Refusing to create ${label} because a directory component is missing: ${path}`);
@@ -694,7 +768,9 @@ function validateAnchoredDirectory(path: string, expectedResolvedPath: string, l
 
 	const resolved = stableRealpathOfSafeDirectory(path, stats, label);
 	if (resolved !== expectedResolvedPath) {
-		throw new Error(`Refusing to create ${label} outside the intended directory: ${path} (resolves to ${resolved}; intended directory: ${expectedResolvedPath})`);
+		throw new Error(
+			`Refusing to create ${label} outside the intended directory: ${path} (resolves to ${resolved}; intended directory: ${expectedResolvedPath})`,
+		);
 	}
 	return resolved;
 }
@@ -786,7 +862,9 @@ function validateOpenedFileForDirectWrite(fd: number, path: string, intendedRoot
 		pathStats = lstatSync(path);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Refusing to write ${label} because the opened path could not be validated: ${path} (${message})`, { cause: error });
+		throw new Error(`Refusing to write ${label} because the opened path could not be validated: ${path} (${message})`, {
+			cause: error,
+		});
 	}
 
 	if (pathStats.isSymbolicLink()) {
@@ -804,7 +882,9 @@ function validateOpenedFileForDirectWrite(fd: number, path: string, intendedRoot
 
 	const resolvedPath = realpathSync(path);
 	if (!isPathInsideOrEqual(resolvedPath, intendedRoot)) {
-		throw new Error(`Refusing to write ${label} outside the intended directory: ${path} (resolves to ${resolvedPath}; intended directory: ${intendedRoot})`);
+		throw new Error(
+			`Refusing to write ${label} outside the intended directory: ${path} (resolves to ${resolvedPath}; intended directory: ${intendedRoot})`,
+		);
 	}
 }
 
@@ -836,7 +916,11 @@ function cleanupCreatedEmptyFile(fd: number, path: string): boolean {
 	return true;
 }
 
-function writeDirectValidated(path: string, content: FileContent, { mode, intendedRoot, label, exclusive = false, replace = false, validateParent }: DirectWriteOptions): void {
+function writeDirectValidated(
+	path: string,
+	content: FileContent,
+	{ mode, intendedRoot, label, exclusive = false, replace = false, validateParent }: DirectWriteOptions,
+): void {
 	let fd: number | undefined;
 	let createdByUs = false;
 	let validationComplete = false;
@@ -898,9 +982,7 @@ function validateTicketSourceConfig(args: CliArgs): void {
 	}
 	if (!args.ticketSourceUrl.startsWith("https://")) {
 		const schemeEnd = args.ticketSourceUrl.indexOf("://");
-		const prefix = schemeEnd >= 0
-			? args.ticketSourceUrl.slice(0, schemeEnd + 3)
-			: args.ticketSourceUrl.slice(0, 32);
+		const prefix = schemeEnd >= 0 ? args.ticketSourceUrl.slice(0, schemeEnd + 3) : args.ticketSourceUrl.slice(0, 32);
 		throw new Error(`Ticket source URL must use https:// (got: ${prefix})`);
 	}
 	if (!/^[a-f0-9]{64}$/i.test(args.ticketSourceSha256 || "")) {
@@ -947,7 +1029,11 @@ function verifyTicketArchive(args: CliArgs, archivePath: string): void {
 }
 
 function listTarGzipEntries(archivePath: string, agentDir: string): string[] {
-	const result = spawnSync("tar", ["-tzf", archivePath], { encoding: "utf8", maxBuffer: 10 * 1024 * 1024, env: helperEnv(agentDir) });
+	const result = spawnSync("tar", ["-tzf", archivePath], {
+		encoding: "utf8",
+		maxBuffer: 10 * 1024 * 1024,
+		env: helperEnv(agentDir),
+	});
 	if (result.error) throw result.error;
 	if (result.status !== 0) throw new Error("failed to list ticket source archive");
 	return result.stdout.split(/\r?\n/).filter(Boolean);
@@ -975,11 +1061,19 @@ function ticketArchiveEntry(archivePath: string, preferredEntry: string, agentDi
 	throw new Error(`Ticket source archive did not contain ${preferredEntry}`);
 }
 
-function extractTicketScript(archivePath: string, extractDir: string, preferredEntry: string, agentDir: string): string {
+function extractTicketScript(
+	archivePath: string,
+	extractDir: string,
+	preferredEntry: string,
+	agentDir: string,
+): string {
 	const entry = ticketArchiveEntry(archivePath, preferredEntry, agentDir);
 	if (!isSafeArchiveEntry(entry)) throw new Error(`Ticket archive entry is unsafe: ${entry}`);
 
-	const result = spawnSync("tar", ["-xzf", archivePath, "-C", extractDir, "--", entry], { stdio: "ignore", env: helperEnv(agentDir) });
+	const result = spawnSync("tar", ["-xzf", archivePath, "-C", extractDir, "--", entry], {
+		stdio: "ignore",
+		env: helperEnv(agentDir),
+	});
 	if (result.error) throw result.error;
 	if (result.status !== 0) throw new Error("failed to extract ticket script from source archive");
 
@@ -1079,7 +1173,9 @@ function assertSettingsDirSafe({ settingsPath, settingsDir, intendedSettingsDir 
 
 	if (dirStats) {
 		if (dirStats.isSymbolicLink()) {
-			throw new Error(`Refusing to write settings outside the intended directory through a symlinked settings directory: ${settingsDir}`);
+			throw new Error(
+				`Refusing to write settings outside the intended directory through a symlinked settings directory: ${settingsDir}`,
+			);
 		}
 		if (!dirStats.isDirectory()) {
 			throw new Error(`Refusing to write settings because the settings directory is not a directory: ${settingsDir}`);
@@ -1090,7 +1186,9 @@ function assertSettingsDirSafe({ settingsPath, settingsDir, intendedSettingsDir 
 	}
 
 	if (resolvedSettingsDir !== intendedSettingsDir) {
-		throw new Error(`Refusing to write settings outside the intended settings directory: ${settingsDir} (resolves to ${resolvedSettingsDir}; intended directory: ${intendedSettingsDir})`);
+		throw new Error(
+			`Refusing to write settings outside the intended settings directory: ${settingsDir} (resolves to ${resolvedSettingsDir}; intended directory: ${intendedSettingsDir})`,
+		);
 	}
 }
 
@@ -1116,7 +1214,12 @@ function writeSettingsDirect(settingsPath: string, formatted: string, mode: numb
 	});
 }
 
-function writeSettings(settingsPath: string, value: Settings, previousRaw: string, { dryRun }: { dryRun: boolean }): WriteResult {
+function writeSettings(
+	settingsPath: string,
+	value: Settings,
+	previousRaw: string,
+	{ dryRun }: { dryRun: boolean },
+): WriteResult {
 	const formatted = `${JSON.stringify(value, null, 2)}\n`;
 	if (formatted === previousRaw) return "unchanged";
 	if (dryRun) return "dry-run";
@@ -1143,7 +1246,14 @@ function logWriteResult(args: CliArgs, writeResult: WriteResult): void {
 	if (writeResult === "unchanged") detailLog(args, "No settings changes were needed.");
 }
 
-function setTicketsEnabled(args: CliArgs, settingsPath: string, settings: Settings, previousRaw: string, installPath: string | undefined, installedSha256?: string): void {
+function setTicketsEnabled(
+	args: CliArgs,
+	settingsPath: string,
+	settings: Settings,
+	previousRaw: string,
+	installPath: string | undefined,
+	installedSha256?: string,
+): void {
 	assertNotNormalPiSettings(settingsPath);
 	ensureMutableSettings(settings);
 	settings.tlh.tickets.enabled = true;
@@ -1167,7 +1277,9 @@ function validatedRequestedInstallPath(args: CliArgs, agentDir: string, installP
 		validateManagedTkTarget(args, agentDir);
 	}
 	if (!hasTkCommandName(normalized)) {
-		throw new Error(`Refusing to enable tk integration because the command basename must be exactly "tk": ${normalized}`);
+		throw new Error(
+			`Refusing to enable tk integration because the command basename must be exactly "tk": ${normalized}`,
+		);
 	}
 	if (!validateTkCommand(normalized, agentDir)) {
 		throw new Error(`Refusing to enable tk integration because the command did not validate: ${normalized}`);
@@ -1181,7 +1293,13 @@ function validTkForEnable(args: CliArgs, settings: Settings, agentDir: string): 
 	return findValidTkForConfigure(args, settings, agentDir);
 }
 
-async function commandConfigureInstall(args: CliArgs, settingsPath: string, settings: Settings, previousRaw: string, agentDir: string): Promise<void> {
+async function commandConfigureInstall(
+	args: CliArgs,
+	settingsPath: string,
+	settings: Settings,
+	previousRaw: string,
+	agentDir: string,
+): Promise<void> {
 	assertNotNormalPiSettings(settingsPath);
 
 	const currentState = legacyTicketsState(settings);
@@ -1197,9 +1315,7 @@ async function commandConfigureInstall(args: CliArgs, settingsPath: string, sett
 	const configured = configuredInstallPath(settings);
 	const managedPinIsFresh = managedTkPinIsFresh(settings, args.ticketSourceSha256);
 	const pathOfInterestIsManaged = !configured || samePathForCompare(configured, managedTarget);
-	if (pathOfInterestIsManaged
-		&& !managedPinIsFresh
-		&& validateTkCommand(managedTarget, agentDir)) {
+	if (pathOfInterestIsManaged && !managedPinIsFresh && validateTkCommand(managedTarget, agentDir)) {
 		detailLog(args, "Managed tk pin changed; reinstalling.");
 		const reinstalledPath = await installManagedTk(args, agentDir);
 		if (reinstalledPath) {
@@ -1226,7 +1342,9 @@ async function commandConfigureInstall(args: CliArgs, settingsPath: string, sett
 		return;
 	}
 
-	throw new Error(`tk ticket integration is required, but no valid tk command was found and managed tk could not be installed. Install tk manually and run: ${args.wrapperName} tickets enable`);
+	throw new Error(
+		`tk ticket integration is required, but no valid tk command was found and managed tk could not be installed. Install tk manually and run: ${args.wrapperName} tickets enable`,
+	);
 }
 
 function commandStatus(args: CliArgs, settings: Settings, agentDir: string): void {
@@ -1243,7 +1361,13 @@ function commandStatus(args: CliArgs, settings: Settings, agentDir: string): voi
 	}
 }
 
-function commandEnable(args: CliArgs, settingsPath: string, settings: Settings, previousRaw: string, agentDir: string): void {
+function commandEnable(
+	args: CliArgs,
+	settingsPath: string,
+	settings: Settings,
+	previousRaw: string,
+	agentDir: string,
+): void {
 	assertNotNormalPiSettings(settingsPath);
 	const validPath = validTkForEnable(args, settings, agentDir);
 	if (!validPath) {

@@ -8,7 +8,6 @@
   "collapseChangelog": true,
   "lastChangelogVersion": "9999.0.0",
   "subagents": {
-    "disableBuiltins": true,
     "agentDirs": [
       "tlh/agents/subagents"
     ]

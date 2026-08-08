@@ -5,9 +5,8 @@ import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
 export const { TLH_DEFAULT_COMMIT_ATTRIBUTION } = await jiti.import("../extensions/the-last-harness/attribution.ts");
-export const { CI_FAILURE_INVESTIGATION_FEATURE, DELTA_FOLLOW_UP_REVIEWS_FEATURE, EMBEDDED_SUBAGENTS_FEATURE } = await jiti.import(
-	"../extensions/the-last-harness/experimental.ts",
-);
+export const { CI_FAILURE_INVESTIGATION_FEATURE, DELTA_FOLLOW_UP_REVIEWS_FEATURE, EMBEDDED_SUBAGENTS_FEATURE } =
+	await jiti.import("../extensions/the-last-harness/experimental.ts");
 export const { registerTlhPrimaryAgentRuntime } = await jiti.import(
 	"../extensions/the-last-harness/primary-agent-runtime.ts",
 );

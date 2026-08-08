@@ -3,6 +3,10 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 export const PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";
 export const PI_SUBAGENT_PI_BINARY_ENV = "PI_SUBAGENT_PI_BINARY";
+export function buildSubagentSpawnEnv(inheritedEnv, explicitEnv, depthEnv) {
+    const filteredInheritedEnv = Object.fromEntries(Object.entries(inheritedEnv).filter(([key]) => !key.startsWith("HERDR_")));
+    return { ...filteredInheritedEnv, ...(explicitEnv ?? {}), ...depthEnv };
+}
 export function findPiPackageRootFromEntry(entryPoint) {
     let dir = path.dirname(entryPoint);
     while (dir !== path.dirname(dir)) {
@@ -22,9 +26,7 @@ export function resolveInstalledPiPackageRoot() {
 export function resolvePiPackageRoot() {
     try {
         const entry = process.argv[1];
-        return entry
-            ? findPiPackageRootFromEntry(fs.realpathSync(entry))
-            : undefined;
+        return entry ? findPiPackageRootFromEntry(fs.realpathSync(entry)) : undefined;
     }
     catch {
         return undefined;
@@ -82,17 +84,16 @@ function resolvePiCliScriptFromPackageJson(deps, packageRoot) {
     const existsSync = deps.existsSync ?? fs.existsSync;
     const readFileSync = deps.readFileSync ?? ((filePath, encoding) => fs.readFileSync(filePath, encoding));
     try {
-        const resolvePackageJson = deps.resolvePackageJson ?? (() => {
-            if (!packageRoot)
-                throw new Error(`Could not resolve ${PI_CODING_AGENT_PACKAGE} package root`);
-            return path.join(packageRoot.rootPath, "package.json");
-        });
+        const resolvePackageJson = deps.resolvePackageJson ??
+            (() => {
+                if (!packageRoot)
+                    throw new Error(`Could not resolve ${PI_CODING_AGENT_PACKAGE} package root`);
+                return path.join(packageRoot.rootPath, "package.json");
+            });
         const packageJsonPath = resolvePackageJson();
         const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
         const binField = packageJson.bin;
-        const binPath = typeof binField === "string"
-            ? binField
-            : binField?.pi ?? Object.values(binField ?? {})[0];
+        const binPath = typeof binField === "string" ? binField : (binField?.pi ?? Object.values(binField ?? {})[0]);
         if (!binPath) {
             return packageRoot ? { packageRoot, error: `No Pi CLI bin entry found in ${packageJsonPath}` } : {};
         }
@@ -103,9 +104,7 @@ function resolvePiCliScriptFromPackageJson(deps, packageRoot) {
         return packageRoot ? { packageRoot, error: `Resolved Pi CLI script is not runnable: ${candidate}` } : {};
     }
     catch (error) {
-        return packageRoot
-            ? { packageRoot, error: error instanceof Error ? error.message : String(error) }
-            : {};
+        return packageRoot ? { packageRoot, error: error instanceof Error ? error.message : String(error) } : {};
     }
 }
 function resolvePiCliScriptWithStatus(deps = {}) {

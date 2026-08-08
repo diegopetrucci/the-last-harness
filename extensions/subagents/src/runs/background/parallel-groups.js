@@ -2,17 +2,17 @@ function isValidParallelGroup(group, stepCount, chainStepCount) {
     if (typeof group !== "object" || group === null)
         return false;
     const { start, count, stepIndex } = group;
-    return typeof start === "number"
-        && typeof count === "number"
-        && typeof stepIndex === "number"
-        && Number.isInteger(start)
-        && Number.isInteger(count)
-        && Number.isInteger(stepIndex)
-        && start >= 0
-        && count > 0
-        && stepIndex >= 0
-        && stepIndex < chainStepCount
-        && start + count <= stepCount;
+    return (typeof start === "number" &&
+        typeof count === "number" &&
+        typeof stepIndex === "number" &&
+        Number.isInteger(start) &&
+        Number.isInteger(count) &&
+        Number.isInteger(stepIndex) &&
+        start >= 0 &&
+        count > 0 &&
+        stepIndex >= 0 &&
+        stepIndex < chainStepCount &&
+        start + count <= stepCount);
 }
 export function normalizeParallelGroups(groups, stepCount, chainStepCount) {
     if (!Array.isArray(groups))

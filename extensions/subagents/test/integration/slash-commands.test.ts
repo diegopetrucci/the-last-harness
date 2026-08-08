@@ -46,8 +46,8 @@ const SLASH_SUBAGENT_REQUEST_EVENT = "subagent:slash:request";
 const SLASH_SUBAGENT_STARTED_EVENT = "subagent:slash:started";
 const SLASH_SUBAGENT_RESPONSE_EVENT = "subagent:slash:response";
 
-const { registerSlashCommands } = await import("../../src/slash/slash-commands.ts") as RegisterSlashCommandsModule;
-const { clearSlashSnapshots } = await import("../../src/slash/slash-live-state.ts") as SlashLiveStateModule;
+const { registerSlashCommands } = (await import("../../src/slash/slash-commands.ts")) as RegisterSlashCommandsModule;
+const { clearSlashSnapshots } = (await import("../../src/slash/slash-live-state.ts")) as SlashLiveStateModule;
 const available = true;
 
 function createEventBus(): EventBus {
@@ -59,7 +59,10 @@ function createEventBus(): EventBus {
 			handlers.set(event, existing);
 			return () => {
 				const current = handlers.get(event) ?? [];
-				handlers.set(event, current.filter((entry) => entry !== handler));
+				handlers.set(
+					event,
+					current.filter((entry) => entry !== handler),
+				);
 			};
 		},
 		emit(event, data) {
@@ -96,7 +99,10 @@ function createCommandContext(
 		setStatus: (key: string, text: string | undefined) => void;
 		setToolsExpanded: (expanded: boolean) => void;
 		sessionManager: unknown;
-		modelRegistry: { getAvailable: () => Array<{ provider: string; id: string }>; find?: (provider: string, id: string) => unknown };
+		modelRegistry: {
+			getAvailable: () => Array<{ provider: string; id: string }>;
+			find?: (provider: string, id: string) => unknown;
+		};
 	}> = {},
 ) {
 	return {
@@ -180,12 +186,15 @@ async function captureSlashCommandParams(
 				isError: false,
 			});
 		});
-		await commands.get(commandName)!.handler(args, createCommandContext({
-			cwd,
-			notify: (message) => {
-				notifications.push(message);
-			},
-		}));
+		await commands.get(commandName)!.handler(
+			args,
+			createCommandContext({
+				cwd,
+				notify: (message) => {
+					notifications.push(message);
+				},
+			}),
+		);
 		return { params: requestedParams, notifications };
 	});
 }
@@ -198,11 +207,7 @@ describe("slash command registration", { skip: !available ? "slash-commands.ts n
 	it("registers only the approved diagnostic slash commands", async () => {
 		await withIsolatedHome(async () => {
 			const { commands } = registerCommands(process.cwd());
-			assert.deepEqual([...commands.keys()].sort(), [
-				"subagent-cost",
-				"subagents-doctor",
-				"subagents-fleet",
-			]);
+			assert.deepEqual([...commands.keys()].sort(), ["subagent-cost", "subagents-doctor", "subagents-fleet"]);
 		});
 	});
 
@@ -238,7 +243,9 @@ describe("subagent cost slash command", { skip: !available ? "slash-commands.ts 
 				commands.set(name, spec);
 			},
 			registerShortcut() {},
-			sendMessage(message: unknown) { sent.push(message); },
+			sendMessage(message: unknown) {
+				sent.push(message);
+			},
 		};
 		const parentUsage = {
 			input: 100,
@@ -250,38 +257,50 @@ describe("subagent cost slash command", { skip: !available ? "slash-commands.ts 
 		const childUsage = { input: 20, output: 10, cacheRead: 2, cacheWrite: 1, cost: 0.004, turns: 1 };
 		const slashChildUsage = { input: 30, output: 15, cacheRead: 0, cacheWrite: 0, cost: 0.005, turns: 2 };
 		registerSlashCommands!(pi, createState(process.cwd()));
-		await commands.get("subagent-cost")!.handler("", createCommandContext({
-			sessionManager: {
-				getBranch: () => [
-					{ type: "message", message: { role: "assistant", usage: parentUsage } },
-					{
-						type: "message",
-						message: {
-							role: "toolResult",
-							toolName: "subagent",
-							details: {
-								mode: "single",
-								results: [{ agent: "worker", task: "fix", exitCode: 0, messages: [], usage: childUsage, sessionFile: "/tmp/worker.jsonl" }],
-							},
-						},
-					},
-					{
-						type: "custom_message",
-						customType: SLASH_RESULT_TYPE,
-						details: {
-							requestId: "slash-1",
-							result: {
-								content: [{ type: "text", text: "done" }],
+		await commands.get("subagent-cost")!.handler(
+			"",
+			createCommandContext({
+				sessionManager: {
+					getBranch: () => [
+						{ type: "message", message: { role: "assistant", usage: parentUsage } },
+						{
+							type: "message",
+							message: {
+								role: "toolResult",
+								toolName: "subagent",
 								details: {
 									mode: "single",
-									results: [{ agent: "reviewer", task: "review", exitCode: 0, messages: [], usage: slashChildUsage }],
+									results: [
+										{
+											agent: "worker",
+											task: "fix",
+											exitCode: 0,
+											messages: [],
+											usage: childUsage,
+											sessionFile: "/tmp/worker.jsonl",
+										},
+									],
 								},
 							},
 						},
-					},
-				],
-			},
-		}));
+						{
+							type: "custom_message",
+							customType: SLASH_RESULT_TYPE,
+							details: {
+								requestId: "slash-1",
+								result: {
+									content: [{ type: "text", text: "done" }],
+									details: {
+										mode: "single",
+										results: [{ agent: "reviewer", task: "review", exitCode: 0, messages: [], usage: slashChildUsage }],
+									},
+								},
+							},
+						},
+					],
+				},
+			}),
+		);
 
 		const output = String((sent[0] as { content?: unknown }).content ?? "");
 		assert.match(output, /Parent: ↑100 ↓50 \$0\.0030/);
@@ -293,7 +312,9 @@ describe("subagent cost slash command", { skip: !available ? "slash-commands.ts 
 	});
 });
 
-describe("subagents-doctor slash command", { skip: !available ? "slash-commands.ts not importable" : undefined }, () => {
+describe("subagents-doctor slash command", {
+	skip: !available ? "slash-commands.ts not importable" : undefined,
+}, () => {
 	beforeEach(() => {
 		clearSlashSnapshots?.();
 	});
@@ -328,11 +349,16 @@ describe("subagents-doctor slash command", { skip: !available ? "slash-commands.
 					isError: false,
 				});
 			});
-			await commands.get("subagents-doctor")!.handler("", createCommandContext({
-				hasUI: true,
-				setStatus: (_key, text) => statuses.push(text),
-				setToolsExpanded: () => { expansionChanges++; },
-			}));
+			await commands.get("subagents-doctor")!.handler(
+				"",
+				createCommandContext({
+					hasUI: true,
+					setStatus: (_key, text) => statuses.push(text),
+					setToolsExpanded: () => {
+						expansionChanges++;
+					},
+				}),
+			);
 			assert.ok(statuses.includes("2 tools read | Ctrl+Shift+D live detail"));
 			assert.equal(expansionChanges, 0);
 		});
@@ -354,5 +380,4 @@ describe("subagents-doctor slash command", { skip: !available ? "slash-commands.
 			assert.equal(commands.has("subagents-status"), false);
 		});
 	});
-
 });

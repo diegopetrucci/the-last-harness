@@ -22,9 +22,7 @@ import os from "node:os";
 import path from "node:path";
 
 if (!process.env.PI_SUBAGENTS_TEMP_ROOT?.trim()) {
-	const isolatedRoot = fs.mkdtempSync(
-		path.join(os.tmpdir(), "pi-subagents-test-root-"),
-	);
+	const isolatedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-test-root-"));
 	process.env.PI_SUBAGENTS_TEMP_ROOT = isolatedRoot;
 
 	process.on("exit", () => {

@@ -244,7 +244,13 @@ test("normalizers fail closed for unobserved window shapes", () => {
 		),
 		undefined,
 	);
-	assert.equal(normalizeAnthropicUsage({ fiveHour: { used: 1, limit: 10 }, six_day: { used: 2, limit: 10, duration: "6d" } }, { nowMs: NOW_MS }), undefined);
+	assert.equal(
+		normalizeAnthropicUsage(
+			{ fiveHour: { used: 1, limit: 10 }, six_day: { used: 2, limit: 10, duration: "6d" } },
+			{ nowMs: NOW_MS },
+		),
+		undefined,
+	);
 });
 
 test("fetches Anthropic OAuth usage with the beta header and fails soft on auth/decode errors", async () => {
@@ -307,10 +313,16 @@ test("usage fetches fail soft before network calls for unsupported targets", asy
 	};
 
 	assert.equal(
-		await fetchTlhSubscriptionUsage({ provider: "openrouter", accessToken: randomUUID() }, { fetch: fetchImpl, timeoutMs: 0 }),
+		await fetchTlhSubscriptionUsage(
+			{ provider: "openrouter", accessToken: randomUUID() },
+			{ fetch: fetchImpl, timeoutMs: 0 },
+		),
 		undefined,
 	);
-	assert.equal(await fetchTlhSubscriptionUsage({ provider: "openai-codex", accessToken: " " }, { fetch: fetchImpl, timeoutMs: 0 }), undefined);
+	assert.equal(
+		await fetchTlhSubscriptionUsage({ provider: "openai-codex", accessToken: " " }, { fetch: fetchImpl, timeoutMs: 0 }),
+		undefined,
+	);
 	assert.equal(fetchCalls, 0);
 });
 
@@ -910,7 +922,8 @@ test("Pi 0.81: eligible Anthropic OAuth session produces snapshot after refresh(
 		modelRegistry: {
 			// Pi 0.81: no authStorage
 			isUsingOAuth: (model) => model?.provider === "anthropic",
-			getProviderAuthStatus: (provider) => (provider === "anthropic" ? { configured: true, source: "stored" } : { configured: false }),
+			getProviderAuthStatus: (provider) =>
+				provider === "anthropic" ? { configured: true, source: "stored" } : { configured: false },
 			getApiKeyForProvider: async (provider) => (provider === "anthropic" ? accessToken : undefined),
 		},
 	};
@@ -937,7 +950,7 @@ test("Pi 0.81: eligible Anthropic OAuth session produces snapshot after refresh(
 	assertNoCredentialMaterial(snapshot);
 });
 
-test("Pi 0.81: runtime-override (AuthStatus.source === \"runtime\") suppresses usage segment", async () => {
+test('Pi 0.81: runtime-override (AuthStatus.source === "runtime") suppresses usage segment', async () => {
 	const accessToken = randomUUID();
 	let fetchCalls = 0;
 	const service = createTlhSubscriptionUsageService({
@@ -973,7 +986,10 @@ test("Pi 0.81: runtime-override (AuthStatus.source === \"runtime\") suppresses u
 			json: async () => ({ five_hour: { used: 3, limit: 10 } }),
 		}),
 	});
-	const storedCtx = { ...ctx, modelRegistry: { ...ctx.modelRegistry, getProviderAuthStatus: () => ({ configured: true, source: "stored" }) } };
+	const storedCtx = {
+		...ctx,
+		modelRegistry: { ...ctx.modelRegistry, getProviderAuthStatus: () => ({ configured: true, source: "stored" }) },
+	};
 	const storedSnapshot = await noOverrideService.refresh(storedCtx, { force: true });
 	assert.ok(storedSnapshot);
 	assert.equal(noOverrideService.isEligible(storedCtx), true);
@@ -1023,10 +1039,18 @@ test("Pi 0.81: openai-codex JWT account-id decode sets ChatGPT-Account-Id header
 	assert.ok(snapshot);
 	assert.equal(snapshot?.windows.session.used, 30);
 	assert.equal(requests.length, 1);
-	assert.equal(requests[0]?.init.headers["ChatGPT-Account-Id"], accountId, "decoded account ID included in request header");
+	assert.equal(
+		requests[0]?.init.headers["ChatGPT-Account-Id"],
+		accountId,
+		"decoded account ID included in request header",
+	);
 	// Cache key uses account identity, not fingerprint.
 	assert.deepEqual(Array.from(service.snapshots.keys()), [`openai-codex\taccount:${accountId}`]);
-	assert.doesNotMatch(requests[0]?.init.headers.Authorization, new RegExp(accountId), "account ID not present in auth header");
+	assert.doesNotMatch(
+		requests[0]?.init.headers.Authorization,
+		new RegExp(accountId),
+		"account ID not present in auth header",
+	);
 	assertNoCredentialMaterial(snapshot);
 });
 
@@ -1234,7 +1258,11 @@ test("Pi 0.80 hybrid: runtimeOverrides map override is detected even when getPro
 	};
 
 	// isEligible must be false: runtimeOverrides map reveals the override.
-	assert.equal(service.isEligible(ctx), false, "Pi 0.80 runtimeOverrides override must be detected despite stored authStatus");
+	assert.equal(
+		service.isEligible(ctx),
+		false,
+		"Pi 0.80 runtimeOverrides override must be detected despite stored authStatus",
+	);
 
 	// refresh() must clear and return undefined without fetching.
 	const result = await service.refresh(ctx, { force: true });
@@ -1387,7 +1415,7 @@ test("generation guard: older concurrent refresh for different account does not 
 		cacheTtlMs: 0,
 		minFetchIntervalMs: 0,
 		timeoutMs: 0,
-		fetch: async (url, init) => {
+		fetch: async (_url, init) => {
 			fetchCount++;
 			const auth = init?.headers?.Authorization ?? "";
 			// Return different used counts so we can distinguish which account's fetch ran
@@ -1449,7 +1477,11 @@ test("generation guard: older concurrent refresh for different account does not 
 	assert.equal(contextSnapshot?.windows.session.used, 22, "getSnapshotForContext returns the newer account's snapshot");
 
 	// Only one network fetch was issued — the older refresh was bailed before it could fetch
-	assert.equal(fetchCount, 1, "only the newer refresh issued a network fetch; the older was superseded before fetching");
+	assert.equal(
+		fetchCount,
+		1,
+		"only the newer refresh issued a network fetch; the older was superseded before fetching",
+	);
 
 	// TokenA's cache entry was never written
 	const aKey = `anthropic\tfingerprint:${tokenFingerprint(tokenA)}`;
@@ -1535,8 +1567,16 @@ test("generation guard: older eligible refresh superseded by newer ineligible re
 	assert.equal(olderKeyCallResolved, true, "older key lookup did resolve");
 
 	// Generation guard must have bailed: no state mutations, no fetch
-	assert.equal(service.activeCacheKeys.has("anthropic"), false, "activeCacheKeys still has no entry after superseded older refresh");
-	assert.equal(service.getSnapshot("anthropic"), undefined, "getSnapshot returns undefined — credential was not reactivated");
+	assert.equal(
+		service.activeCacheKeys.has("anthropic"),
+		false,
+		"activeCacheKeys still has no entry after superseded older refresh",
+	);
+	assert.equal(
+		service.getSnapshot("anthropic"),
+		undefined,
+		"getSnapshot returns undefined — credential was not reactivated",
+	);
 	assert.equal(fetchCount, 0, "superseded older refresh performed NO fetch");
 
 	// The older refresh returns undefined (no active key after clearProvider)

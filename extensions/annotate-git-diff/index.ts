@@ -66,7 +66,7 @@ function isReviewCommitKind(value: unknown): value is ReviewCommitKind | null | 
 }
 
 function hasNullableInteger(value: Record<string, unknown>, key: string): boolean {
-	if (!Object.prototype.hasOwnProperty.call(value, key)) return false;
+	if (!Object.hasOwn(value, key)) return false;
 	const field = value[key];
 	return field === null || (typeof field === "number" && Number.isInteger(field));
 }
@@ -92,7 +92,11 @@ function parseWindowMessage(data: unknown): ReviewWindowMessage | null {
 
 	switch (data.type) {
 		case "submit":
-			if (!isString(data.overallComment) || !Array.isArray(data.comments) || !data.comments.every(isDiffReviewComment)) {
+			if (
+				!isString(data.overallComment) ||
+				!Array.isArray(data.comments) ||
+				!data.comments.every(isDiffReviewComment)
+			) {
 				return null;
 			}
 			// Fail-safe: treat ONLY an explicit `false` as an intentional submit.
@@ -107,7 +111,12 @@ function parseWindowMessage(data: unknown): ReviewWindowMessage | null {
 		case "cancel":
 			return { type: "cancel" };
 		case "request-file":
-			if (!isString(data.requestId) || !isString(data.fileId) || !isReviewScope(data.scope) || !isNullableString(data.commitSha)) {
+			if (
+				!isString(data.requestId) ||
+				!isString(data.fileId) ||
+				!isReviewScope(data.scope) ||
+				!isNullableString(data.commitSha)
+			) {
 				return null;
 			}
 			return {
@@ -400,261 +409,264 @@ export function createAnnotateGitDiffController(
 				return pending;
 			};
 
-			const terminalMessagePromise = new Promise<ReviewSubmitPayload | ReviewCancelPayload | null>((resolve, reject) => {
-				let settled = false;
-				let closeTimer: ReturnType<typeof setTimeout> | null = null;
+			const terminalMessagePromise = new Promise<ReviewSubmitPayload | ReviewCancelPayload | null>(
+				(resolve, reject) => {
+					let settled = false;
+					let closeTimer: ReturnType<typeof setTimeout> | null = null;
 
-				const cleanup = (): void => {
-					if (closeTimer != null) {
-						clearTimer(closeTimer);
-						closeTimer = null;
-					}
-					window.removeListener("message", onMessage);
-					window.removeListener("closed", onClosed);
-					window.removeListener("error", onError);
-					if (activeWindow === window) {
-						activeWindow = null;
-						stopActiveWatcher();
-					}
-				};
+					const cleanup = (): void => {
+						if (closeTimer != null) {
+							clearTimer(closeTimer);
+							closeTimer = null;
+						}
+						window.removeListener("message", onMessage);
+						window.removeListener("closed", onClosed);
+						window.removeListener("error", onError);
+						if (activeWindow === window) {
+							activeWindow = null;
+							stopActiveWatcher();
+						}
+					};
 
-				const settle = (value: ReviewSubmitPayload | ReviewCancelPayload | null): void => {
-					if (settled) return;
-					settled = true;
-					cleanup();
-					resolve(value);
-				};
+					const settle = (value: ReviewSubmitPayload | ReviewCancelPayload | null): void => {
+						if (settled) return;
+						settled = true;
+						cleanup();
+						resolve(value);
+					};
 
-				const handleRequestFile = async (message: ReviewRequestFilePayload): Promise<void> => {
-					if (message.scope === "commits") {
-						if (message.commitSha == null || !isAllowedCommitSha(message.commitSha)) {
+					const handleRequestFile = async (message: ReviewRequestFilePayload): Promise<void> => {
+						if (message.scope === "commits") {
+							if (message.commitSha == null || !isAllowedCommitSha(message.commitSha)) {
+								sendWindowMessage({
+									type: "file-error",
+									requestId: message.requestId,
+									fileId: message.fileId,
+									scope: message.scope,
+									commitSha: message.commitSha ?? null,
+									message: "Unknown commit requested.",
+								});
+								return;
+							}
+						} else if (message.commitSha != null) {
 							sendWindowMessage({
 								type: "file-error",
 								requestId: message.requestId,
 								fileId: message.fileId,
 								scope: message.scope,
-								commitSha: message.commitSha ?? null,
+								commitSha: message.commitSha,
+								message: "Unexpected commit requested for this scope.",
+							});
+							return;
+						}
+
+						const requestCommitSha = message.commitSha ?? null;
+						const snapshotVersion = snapshot.version;
+						const file = getAuthorizedFile(message.scope, message.fileId, requestCommitSha);
+						if (file == null) {
+							sendWindowMessage({
+								type: "file-error",
+								requestId: message.requestId,
+								fileId: message.fileId,
+								scope: message.scope,
+								commitSha: requestCommitSha,
+								message: "Unknown file requested.",
+							});
+							return;
+						}
+
+						const cacheKey = contentCacheKey(file, message.scope, requestCommitSha);
+						const pendingContents = loadContents(file, message.scope, requestCommitSha);
+						const canFinishRequest = (allowRetainedRejection = false): boolean => {
+							if (getAuthorizedFile(message.scope, message.fileId, requestCommitSha) !== file) return false;
+							if (isCurrentSnapshot(snapshotVersion)) return true;
+							if (message.scope !== "commits" || requestCommitSha == null || !isImmutableCommitSha(requestCommitSha)) {
+								return false;
+							}
+							return (
+								snapshot.contentCache.get(cacheKey) === pendingContents ||
+								(allowRetainedRejection && retainedImmutablePromiseVersions.get(pendingContents) === snapshot.version)
+							);
+						};
+
+						try {
+							const contents = await pendingContents;
+							if (!canFinishRequest()) return;
+							sendWindowMessage({
+								type: "file-data",
+								requestId: message.requestId,
+								fileId: message.fileId,
+								scope: message.scope,
+								commitSha: requestCommitSha,
+								originalContent: contents.originalContent,
+								modifiedContent: contents.modifiedContent,
+								kind: contents.kind,
+								mimeType: contents.mimeType,
+								originalExists: contents.originalExists,
+								modifiedExists: contents.modifiedExists,
+								originalPreviewUrl: contents.originalPreviewUrl,
+								modifiedPreviewUrl: contents.modifiedPreviewUrl,
+							});
+						} catch (error) {
+							if (!canFinishRequest(true)) return;
+							const messageText = error instanceof Error ? error.message : String(error);
+							sendWindowMessage({
+								type: "file-error",
+								requestId: message.requestId,
+								fileId: message.fileId,
+								scope: message.scope,
+								commitSha: requestCommitSha,
+								message: messageText,
+							});
+						}
+					};
+
+					const handleRequestCommit = async (message: ReviewRequestCommitPayload): Promise<void> => {
+						if (!isAllowedCommitSha(message.sha)) {
+							sendWindowMessage({
+								type: "commit-error",
+								requestId: message.requestId,
+								sha: message.sha,
 								message: "Unknown commit requested.",
 							});
 							return;
 						}
-					} else if (message.commitSha != null) {
-						sendWindowMessage({
-							type: "file-error",
-							requestId: message.requestId,
-							fileId: message.fileId,
-							scope: message.scope,
-							commitSha: message.commitSha,
-							message: "Unexpected commit requested for this scope.",
-						});
-						return;
-					}
 
-					const requestCommitSha = message.commitSha ?? null;
-					const snapshotVersion = snapshot.version;
-					const file = getAuthorizedFile(message.scope, message.fileId, requestCommitSha);
-					if (file == null) {
-						sendWindowMessage({
-							type: "file-error",
-							requestId: message.requestId,
-							fileId: message.fileId,
-							scope: message.scope,
-							commitSha: requestCommitSha,
-							message: "Unknown file requested.",
-						});
-						return;
-					}
+						const snapshotVersion = snapshot.version;
+						const pendingCommitFiles = loadCommitFiles(message.sha);
+						const canFinishRequest = (allowRetainedRejection = false): boolean => {
+							if (!isAllowedCommitSha(message.sha)) return false;
+							if (isCurrentSnapshot(snapshotVersion)) return true;
+							if (!isImmutableCommitSha(message.sha)) return false;
+							return (
+								snapshot.commitFileCache.get(message.sha) === pendingCommitFiles ||
+								(allowRetainedRejection &&
+									retainedImmutablePromiseVersions.get(pendingCommitFiles) === snapshot.version)
+							);
+						};
 
-					const cacheKey = contentCacheKey(file, message.scope, requestCommitSha);
-					const pendingContents = loadContents(file, message.scope, requestCommitSha);
-					const canFinishRequest = (allowRetainedRejection = false): boolean => {
-						if (getAuthorizedFile(message.scope, message.fileId, requestCommitSha) !== file) return false;
-						if (isCurrentSnapshot(snapshotVersion)) return true;
-						if (message.scope !== "commits" || requestCommitSha == null || !isImmutableCommitSha(requestCommitSha)) {
-							return false;
+						try {
+							const commitFiles = await pendingCommitFiles;
+							if (!canFinishRequest()) return;
+							snapshot.commitFilesBySha.set(message.sha, new Map(commitFiles.map((file) => [file.id, file])));
+							sendWindowMessage({
+								type: "commit-data",
+								requestId: message.requestId,
+								sha: message.sha,
+								files: commitFiles,
+							});
+						} catch (error) {
+							if (!canFinishRequest(true)) return;
+							const messageText = error instanceof Error ? error.message : String(error);
+							sendWindowMessage({
+								type: "commit-error",
+								requestId: message.requestId,
+								sha: message.sha,
+								message: messageText,
+							});
 						}
-						return (
-							snapshot.contentCache.get(cacheKey) === pendingContents ||
-							(allowRetainedRejection && retainedImmutablePromiseVersions.get(pendingContents) === snapshot.version)
-						);
 					};
 
-					try {
-						const contents = await pendingContents;
-						if (!canFinishRequest()) return;
-						sendWindowMessage({
-							type: "file-data",
-							requestId: message.requestId,
-							fileId: message.fileId,
-							scope: message.scope,
-							commitSha: requestCommitSha,
-							originalContent: contents.originalContent,
-							modifiedContent: contents.modifiedContent,
-							kind: contents.kind,
-							mimeType: contents.mimeType,
-							originalExists: contents.originalExists,
-							modifiedExists: contents.modifiedExists,
-							originalPreviewUrl: contents.originalPreviewUrl,
-							modifiedPreviewUrl: contents.modifiedPreviewUrl,
-						});
-					} catch (error) {
-						if (!canFinishRequest(true)) return;
-						const messageText = error instanceof Error ? error.message : String(error);
-						sendWindowMessage({
-							type: "file-error",
-							requestId: message.requestId,
-							fileId: message.fileId,
-							scope: message.scope,
-							commitSha: requestCommitSha,
-							message: messageText,
-						});
-					}
-				};
-
-				const handleRequestCommit = async (message: ReviewRequestCommitPayload): Promise<void> => {
-					if (!isAllowedCommitSha(message.sha)) {
-						sendWindowMessage({
-							type: "commit-error",
-							requestId: message.requestId,
-							sha: message.sha,
-							message: "Unknown commit requested.",
-						});
-						return;
-					}
-
-					const snapshotVersion = snapshot.version;
-					const pendingCommitFiles = loadCommitFiles(message.sha);
-					const canFinishRequest = (allowRetainedRejection = false): boolean => {
-						if (!isAllowedCommitSha(message.sha)) return false;
-						if (isCurrentSnapshot(snapshotVersion)) return true;
-						if (!isImmutableCommitSha(message.sha)) return false;
-						return (
-							snapshot.commitFileCache.get(message.sha) === pendingCommitFiles ||
-							(allowRetainedRejection && retainedImmutablePromiseVersions.get(pendingCommitFiles) === snapshot.version)
-						);
+					const handleRequestReviewData = async (message: ReviewRequestReviewDataPayload): Promise<void> => {
+						const refreshRequestSequence = ++latestRefreshRequestSequence;
+						try {
+							const nextReviewData = await loadReviewWindowData(pi, repoRoot);
+							if (refreshRequestSequence !== latestRefreshRequestSequence) return;
+							reviewData = nextReviewData;
+							snapshot = buildSnapshotState(nextReviewData, snapshot);
+							sendWindowMessage({
+								type: "review-data",
+								requestId: message.requestId,
+								files: snapshot.reviewData.files,
+								commits: snapshot.reviewData.commits,
+								branchBaseRef: snapshot.reviewData.branchBaseRef,
+								branchMergeBaseSha: snapshot.reviewData.branchMergeBaseSha,
+								repositoryHasHead: snapshot.reviewData.repositoryHasHead,
+							});
+						} catch (error) {
+							if (refreshRequestSequence !== latestRefreshRequestSequence) return;
+							const messageText = error instanceof Error ? error.message : String(error);
+							sendWindowMessage({
+								type: "review-data-error",
+								requestId: message.requestId,
+								message: messageText,
+							});
+						}
 					};
 
-					try {
-						const commitFiles = await pendingCommitFiles;
-						if (!canFinishRequest()) return;
-						snapshot.commitFilesBySha.set(message.sha, new Map(commitFiles.map((file) => [file.id, file])));
-						sendWindowMessage({
-							type: "commit-data",
-							requestId: message.requestId,
-							sha: message.sha,
-							files: commitFiles,
-						});
-					} catch (error) {
-						if (!canFinishRequest(true)) return;
-						const messageText = error instanceof Error ? error.message : String(error);
-						sendWindowMessage({
-							type: "commit-error",
-							requestId: message.requestId,
-							sha: message.sha,
-							message: messageText,
-						});
-					}
-				};
+					const handleClipboardRead = (message: ReviewClipboardReadPayload): void => {
+						try {
+							sendWindowMessage({
+								type: "clipboard-data",
+								requestId: message.requestId,
+								text: readClipboard(),
+							});
+						} catch (error) {
+							const messageText = error instanceof Error ? error.message : String(error);
+							sendWindowMessage({
+								type: "clipboard-data",
+								requestId: message.requestId,
+								text: "",
+								message: messageText,
+							});
+						}
+					};
 
-				const handleRequestReviewData = async (message: ReviewRequestReviewDataPayload): Promise<void> => {
-					const refreshRequestSequence = ++latestRefreshRequestSequence;
-					try {
-						const nextReviewData = await loadReviewWindowData(pi, repoRoot);
-						if (refreshRequestSequence !== latestRefreshRequestSequence) return;
-						reviewData = nextReviewData;
-						snapshot = buildSnapshotState(nextReviewData, snapshot);
-						sendWindowMessage({
-							type: "review-data",
-							requestId: message.requestId,
-							files: snapshot.reviewData.files,
-							commits: snapshot.reviewData.commits,
-							branchBaseRef: snapshot.reviewData.branchBaseRef,
-							branchMergeBaseSha: snapshot.reviewData.branchMergeBaseSha,
-							repositoryHasHead: snapshot.reviewData.repositoryHasHead,
-						});
-					} catch (error) {
-						if (refreshRequestSequence !== latestRefreshRequestSequence) return;
-						const messageText = error instanceof Error ? error.message : String(error);
-						sendWindowMessage({
-							type: "review-data-error",
-							requestId: message.requestId,
-							message: messageText,
-						});
-					}
-				};
+					const handleClipboardWrite = (message: ReviewClipboardWritePayload): void => {
+						try {
+							writeClipboard(message.text);
+						} catch (error) {
+							const messageText = error instanceof Error ? error.message : String(error);
+							ctx.ui.notify(`Failed to copy from review window: ${messageText}`, "warning");
+						}
+					};
 
-				const handleClipboardRead = (message: ReviewClipboardReadPayload): void => {
-					try {
-						sendWindowMessage({
-							type: "clipboard-data",
-							requestId: message.requestId,
-							text: readClipboard(),
-						});
-					} catch (error) {
-						const messageText = error instanceof Error ? error.message : String(error);
-						sendWindowMessage({
-							type: "clipboard-data",
-							requestId: message.requestId,
-							text: "",
-							message: messageText,
-						});
-					}
-				};
+					const onMessage = (data: unknown): void => {
+						const message = parseWindowMessage(data);
+						if (message == null) return;
+						if (message.type === "request-file") {
+							void handleRequestFile(message);
+							return;
+						}
+						if (message.type === "request-commit") {
+							void handleRequestCommit(message);
+							return;
+						}
+						if (message.type === "request-review-data") {
+							void handleRequestReviewData(message);
+							return;
+						}
+						if (message.type === "clipboard-read") {
+							handleClipboardRead(message);
+							return;
+						}
+						if (message.type === "clipboard-write") {
+							handleClipboardWrite(message);
+							return;
+						}
+						settle(message);
+					};
 
-				const handleClipboardWrite = (message: ReviewClipboardWritePayload): void => {
-					try {
-						writeClipboard(message.text);
-					} catch (error) {
-						const messageText = error instanceof Error ? error.message : String(error);
-						ctx.ui.notify(`Failed to copy from review window: ${messageText}`, "warning");
-					}
-				};
+					const onClosed = (): void => {
+						if (settled || closeTimer != null) return;
+						closeTimer = setTimer(() => {
+							closeTimer = null;
+							settle(null);
+						}, 250);
+					};
 
-				const onMessage = (data: unknown): void => {
-					const message = parseWindowMessage(data);
-					if (message == null) return;
-					if (message.type === "request-file") {
-						void handleRequestFile(message);
-						return;
-					}
-					if (message.type === "request-commit") {
-						void handleRequestCommit(message);
-						return;
-					}
-					if (message.type === "request-review-data") {
-						void handleRequestReviewData(message);
-						return;
-					}
-					if (message.type === "clipboard-read") {
-						handleClipboardRead(message);
-						return;
-					}
-					if (message.type === "clipboard-write") {
-						handleClipboardWrite(message);
-						return;
-					}
-					settle(message);
-				};
+					const onError = (error: Error): void => {
+						if (settled) return;
+						settled = true;
+						cleanup();
+						reject(error);
+					};
 
-				const onClosed = (): void => {
-					if (settled || closeTimer != null) return;
-					closeTimer = setTimer(() => {
-						closeTimer = null;
-						settle(null);
-					}, 250);
-				};
-
-				const onError = (error: Error): void => {
-					if (settled) return;
-					settled = true;
-					cleanup();
-					reject(error);
-				};
-
-				window.on("message", onMessage);
-				window.on("closed", onClosed);
-				window.on("error", onError);
-			});
+					window.on("message", onMessage);
+					window.on("closed", onClosed);
+					window.on("error", onError);
+				},
+			);
 
 			void (async () => {
 				try {

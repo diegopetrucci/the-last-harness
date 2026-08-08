@@ -19,7 +19,10 @@ function uniqueGnosisCandidates(candidates: Array<string | undefined>): string[]
 
 function validateGnosisCommand(command: string): boolean {
 	try {
-		for (const args of [["help", "plan"], ["help", "review"]]) {
+		for (const args of [
+			["help", "plan"],
+			["help", "review"],
+		]) {
 			execFileSync(command, args, { stdio: "ignore", timeout: GNOSIS_VALIDATION_TIMEOUT_MS });
 		}
 		return true;
@@ -37,10 +40,7 @@ function prependProcessPath(dir: string): void {
 	process.env.PATH = [dir, ...entries].join(delimiter);
 }
 
-function findValidGnosisCommand(
-	agentDir: string,
-	options: { prependPath?: boolean } = {},
-): string | undefined {
+function findValidGnosisCommand(agentDir: string, options: { prependPath?: boolean } = {}): string | undefined {
 	const candidates = uniqueGnosisCandidates([join(agentDir, "bin", "gn"), "gn"]);
 	for (const candidate of candidates) {
 		if (!validateGnosisCommand(candidate)) continue;

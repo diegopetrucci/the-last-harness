@@ -90,7 +90,10 @@ function normalizedUsageLabel(value: string | undefined): string {
 	return value?.trim().toLowerCase().replaceAll("_", "-").replaceAll(" ", "-") ?? "";
 }
 
-function formatUsageWindowPresentation(window: TlhSubscriptionUsageWindow, windowType: "session" | "weekly"): "session" | "weekly" {
+function formatUsageWindowPresentation(
+	window: TlhSubscriptionUsageWindow,
+	windowType: "session" | "weekly",
+): "session" | "weekly" {
 	return window.durationMs === WEEK_MS ? "weekly" : windowType;
 }
 
@@ -215,7 +218,9 @@ function subscriptionUsageSnapshot(
 	}
 	try {
 		const snapshot =
-			typeof usageProvider.getSnapshotForContext === "function" ? usageProvider.getSnapshotForContext(ctx) : usageProvider.getSnapshot(provider);
+			typeof usageProvider.getSnapshotForContext === "function"
+				? usageProvider.getSnapshotForContext(ctx)
+				: usageProvider.getSnapshot(provider);
 		return snapshot?.provider === provider ? snapshot : undefined;
 	} catch {
 		return undefined;
@@ -263,7 +268,9 @@ export function getTlhSubscriptionUsageFooterState(
 	const provider = model?.provider;
 	const subscriptionEligible = isSubscriptionUsageEligible(ctx, provider, options.subscriptionUsage);
 	const usingOAuth = isModelUsingOAuth(ctx, model);
-	const snapshot = subscriptionEligible ? subscriptionUsageSnapshot(ctx, provider, options.subscriptionUsage) : undefined;
+	const snapshot = subscriptionEligible
+		? subscriptionUsageSnapshot(ctx, provider, options.subscriptionUsage)
+		: undefined;
 	const weeklyVisibilityPreference = getWeeklyVisibilityPreference(options.shouldShowWeekly);
 	const segment = subscriptionEligible
 		? formatTlhSubscriptionUsageFooterSegment(snapshot, {

@@ -63,7 +63,10 @@ export function parseGitHubRemoteUrl(value: string): GitHubRepoRef | undefined {
 	}
 }
 
-export async function resolveGitHubRepoRefFromGhDefault(pi: ExtensionAPI, cwd: string): Promise<GitHubRepoRef | undefined> {
+export async function resolveGitHubRepoRefFromGhDefault(
+	pi: ExtensionAPI,
+	cwd: string,
+): Promise<GitHubRepoRef | undefined> {
 	const defaultRepoResult = await pi.exec("gh", ["repo", "set-default", "--view"], { cwd });
 	if (defaultRepoResult.code !== 0) {
 		return undefined;

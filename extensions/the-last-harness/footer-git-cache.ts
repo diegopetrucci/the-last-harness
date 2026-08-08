@@ -205,18 +205,15 @@ function parsePullRequestJson(stdout: string): PullRequestSnapshot | undefined {
 	return snapshot;
 }
 
-function gitStatusSnapshotsEqual(
-	left: GitStatusSnapshot | undefined,
-	right: GitStatusSnapshot | undefined,
-): boolean {
+function gitStatusSnapshotsEqual(left: GitStatusSnapshot | undefined, right: GitStatusSnapshot | undefined): boolean {
 	return (
-		left?.branch === right?.branch
-		&& left?.staged === right?.staged
-		&& left?.unstaged === right?.unstaged
-		&& left?.untracked === right?.untracked
-		&& left?.conflict === right?.conflict
-		&& left?.ahead === right?.ahead
-		&& left?.behind === right?.behind
+		left?.branch === right?.branch &&
+		left?.staged === right?.staged &&
+		left?.unstaged === right?.unstaged &&
+		left?.untracked === right?.untracked &&
+		left?.conflict === right?.conflict &&
+		left?.ahead === right?.ahead &&
+		left?.behind === right?.behind
 	);
 }
 
@@ -225,11 +222,11 @@ function pullRequestSnapshotsEqual(
 	right: PullRequestSnapshot | undefined,
 ): boolean {
 	return (
-		left?.number === right?.number
-		&& left?.state === right?.state
-		&& left?.isDraft === right?.isDraft
-		&& left?.url === right?.url
-		&& left?.title === right?.title
+		left?.number === right?.number &&
+		left?.state === right?.state &&
+		left?.isDraft === right?.isDraft &&
+		left?.url === right?.url &&
+		left?.title === right?.title
 	);
 }
 
@@ -381,8 +378,8 @@ export class FooterGitCache {
 			return;
 		}
 		if (
-			gitStatusSnapshotsEqual(previousStatusSnapshot, this.statusSnapshot)
-			&& pullRequestSnapshotsEqual(previousPullRequestSnapshot, this.pullRequestSnapshot)
+			gitStatusSnapshotsEqual(previousStatusSnapshot, this.statusSnapshot) &&
+			pullRequestSnapshotsEqual(previousPullRequestSnapshot, this.pullRequestSnapshot)
 		) {
 			return;
 		}
@@ -399,9 +396,7 @@ export class FooterGitCache {
 	// footer to keep showing the previous repo's branch/PR forever after cd'ing
 	// out of a git directory.
 	private async fetchGitStatus(): Promise<
-		| { kind: "ok"; status: GitStatusSnapshot }
-		| { kind: "not-a-repo" }
-		| { kind: "transient" }
+		{ kind: "ok"; status: GitStatusSnapshot } | { kind: "not-a-repo" } | { kind: "transient" }
 	> {
 		const result = await this.runCommandSafely("git", GIT_STATUS_ARGS, this.gitTimeoutMs);
 		if (!result) {

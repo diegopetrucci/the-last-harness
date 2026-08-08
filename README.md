@@ -125,3 +125,7 @@ After adding files, installing a package, or saving project trust, run `/reload`
 - Release notes: [`CHANGELOG.md`](CHANGELOG.md)
 - Maintainer release process: [`docs/releasing.md`](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/releasing.md)
 - Accepted dependency risks: [`docs/dependency-risk.md`](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/dependency-risk.md)
+
+## Third-party attribution
+
+The compact live-progress display shows whimsical thinking phrases while a subagent is reasoning. The phrase pool is adapted from [`mitsuhiko/agent-stuff`](https://github.com/mitsuhiko/agent-stuff) under the Apache-2.0 license. The full license text is at [`licenses/agent-stuff-Apache-2.0.txt`](licenses/agent-stuff-Apache-2.0.txt).

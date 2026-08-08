@@ -69,21 +69,32 @@ interface IntercomParams {
 	replyTo?: string;
 }
 
-const ContactSupervisorParamsSchema = Type.Object({
-	reason: Type.String({ enum: ["need_decision", "interview_request", "progress_update"] }),
-	message: Type.Optional(Type.String()),
-	interview: Type.Optional(Type.Unsafe({ type: "object", additionalProperties: true })),
-}, { additionalProperties: false });
+const ContactSupervisorParamsSchema = Type.Object(
+	{
+		reason: Type.String({ enum: ["need_decision", "interview_request", "progress_update"] }),
+		message: Type.Optional(Type.String()),
+		interview: Type.Optional(Type.Unsafe({ type: "object", additionalProperties: true })),
+	},
+	{ additionalProperties: false },
+);
 
-const IntercomParamsSchema = Type.Object({
-	action: Type.String({ enum: ["list", "send", "ask", "reply", "pending", "status"] }),
-	to: Type.Optional(Type.String()),
-	message: Type.Optional(Type.String()),
-	replyTo: Type.Optional(Type.String()),
-}, { additionalProperties: false });
+const IntercomParamsSchema = Type.Object(
+	{
+		action: Type.String({ enum: ["list", "send", "ask", "reply", "pending", "status"] }),
+		to: Type.Optional(Type.String()),
+		message: Type.Optional(Type.String()),
+		replyTo: Type.Optional(Type.String()),
+	},
+	{ additionalProperties: false },
+);
 
 function safeSegment(value: string): string {
-	return value.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "unknown";
+	return (
+		value
+			.trim()
+			.replace(/[^A-Za-z0-9._-]+/g, "-")
+			.replace(/^-+|-+$/g, "") || "unknown"
+	);
 }
 
 export function resolveSupervisorChannelDir(runId: string, agent: string, childIndex: number): string {
@@ -108,21 +119,24 @@ function readTextEnv(name: string): string | undefined {
 	return value ? value : undefined;
 }
 
-function readChildMetadata(): {
-	channelDir: string;
-	runId: string;
-	agent: string;
-	childIndex: number;
-	orchestratorTarget?: string;
-	orchestratorSessionId?: string;
-	childTarget?: string;
-} | undefined {
+function readChildMetadata():
+	| {
+			channelDir: string;
+			runId: string;
+			agent: string;
+			childIndex: number;
+			orchestratorTarget?: string;
+			orchestratorSessionId?: string;
+			childTarget?: string;
+	  }
+	| undefined {
 	const channelDir = readTextEnv(SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV);
 	const runId = readTextEnv(SUBAGENT_RUN_ID_ENV);
 	const agent = readTextEnv(SUBAGENT_CHILD_AGENT_ENV);
 	const rawIndex = readTextEnv(SUBAGENT_CHILD_INDEX_ENV);
 	const orchestratorSessionId = readTextEnv(SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV);
-	if (!channelDir || !runId || !agent || !orchestratorSessionId || rawIndex === undefined || !/^\d+$/.test(rawIndex)) return undefined;
+	if (!channelDir || !runId || !agent || !orchestratorSessionId || rawIndex === undefined || !/^\d+$/.test(rawIndex))
+		return undefined;
 	return {
 		channelDir,
 		runId,
@@ -205,13 +219,22 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
 	});
 }
 
-async function waitForReply(channelDir: string, requestId: string, deadline: number, signal?: AbortSignal): Promise<SupervisorReply> {
+async function waitForReply(
+	channelDir: string,
+	requestId: string,
+	deadline: number,
+	signal?: AbortSignal,
+): Promise<SupervisorReply> {
 	const file = replyPath(channelDir, requestId);
 	while (Date.now() <= deadline) {
 		if (signal?.aborted) throw new Error("Supervisor request cancelled.");
 		if (fs.existsSync(file)) {
 			const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as Partial<SupervisorReply>;
-			if (parsed.type === "subagent.supervisor.reply" && parsed.requestId === requestId && typeof parsed.message === "string") {
+			if (
+				parsed.type === "subagent.supervisor.reply" &&
+				parsed.requestId === requestId &&
+				typeof parsed.message === "string"
+			) {
 				return parsed as SupervisorReply;
 			}
 		}
@@ -220,7 +243,10 @@ async function waitForReply(channelDir: string, requestId: string, deadline: num
 	throw new Error("Timed out waiting for supervisor reply.");
 }
 
-async function sendSupervisorRequest(params: ContactSupervisorParams, signal?: AbortSignal): Promise<AgentToolResult<Record<string, unknown>>> {
+async function sendSupervisorRequest(
+	params: ContactSupervisorParams,
+	signal?: AbortSignal,
+): Promise<AgentToolResult<Record<string, unknown>>> {
 	const metadata = readChildMetadata();
 	if (!metadata) throw new Error("Native supervisor channel is not available for this subagent.");
 	if (params.reason !== "progress_update" && !params.message?.trim() && params.reason !== "interview_request") {
@@ -232,7 +258,12 @@ async function sendSupervisorRequest(params: ContactSupervisorParams, signal?: A
 	const createdAt = Date.now();
 	const replyDeadline = createdAt + askTimeoutMs();
 	const expiresAt = expectsReply ? replyDeadline : undefined;
-	const message = formatChildMessage({ ...metadata, reason: params.reason, message: params.message, interview: params.interview });
+	const message = formatChildMessage({
+		...metadata,
+		reason: params.reason,
+		message: params.message,
+		interview: params.interview,
+	});
 	const request: SupervisorRequest = {
 		type: "subagent.supervisor.request",
 		id: requestId,
@@ -286,21 +317,27 @@ function hasTool(pi: ExtensionAPI, name: string): boolean {
 	}
 }
 
-export function registerNativeSupervisorClient(pi: ExtensionAPI, options: { includeIntercomFallback?: boolean } = {}): void {
+export function registerNativeSupervisorClient(
+	pi: ExtensionAPI,
+	options: { includeIntercomFallback?: boolean } = {},
+): void {
 	if (!readChildMetadata()) return;
 	const includeIntercomFallback = options.includeIntercomFallback !== false;
-	const registerTool = (((pi as unknown as Record<string, unknown>).registerTool) as (tool: {
-		name: string;
-		label: string;
-		description: string;
-		parameters: TSchema;
-		execute: (id: string, params: unknown, signal: AbortSignal | undefined) => Promise<unknown>;
-	}) => void).bind(pi);
+	const registerTool = (
+		(pi as unknown as Record<string, unknown>).registerTool as (tool: {
+			name: string;
+			label: string;
+			description: string;
+			parameters: TSchema;
+			execute: (id: string, params: unknown, signal: AbortSignal | undefined) => Promise<unknown>;
+		}) => void
+	).bind(pi);
 	if (!hasTool(pi, "contact_supervisor")) {
 		registerTool({
 			name: "contact_supervisor",
 			label: "Contact Supervisor",
-			description: "Contact the parent/supervisor session for a blocking decision, structured interview, or progress update. Blocking decision requests durably pause the child until the parent resumes or cancels it; no child process keeps running while paused.",
+			description:
+				"Contact the parent/supervisor session for a blocking decision, structured interview, or progress update. Blocking decision requests durably pause the child until the parent resumes or cancels it; no child process keeps running while paused.",
 			parameters: ContactSupervisorParamsSchema,
 			execute(_id, params, signal) {
 				return sendSupervisorRequest(params as ContactSupervisorParams, signal);
@@ -311,15 +348,34 @@ export function registerNativeSupervisorClient(pi: ExtensionAPI, options: { incl
 		registerTool({
 			name: "intercom",
 			label: "Intercom",
-			description: "Native supervisor-channel intercom fallback for subagents. Prefer contact_supervisor when available; blocking ask requests durably pause the child until the parent resumes or cancels it, and no child process keeps running while paused.",
+			description:
+				"Native supervisor-channel intercom fallback for subagents. Prefer contact_supervisor when available; blocking ask requests durably pause the child until the parent resumes or cancels it, and no child process keeps running while paused.",
 			parameters: IntercomParamsSchema,
 			async execute(_id, params, signal) {
 				const action = (params as IntercomParams).action;
-				if (action === "status") return { content: [{ type: "text", text: "Native supervisor channel is active." }], details: { active: true } };
-				if (action === "list") return { content: [{ type: "text", text: "Supervisor session available through contact_supervisor." }], details: { sessions: [] } };
-				if (action === "send") return sendSupervisorRequest({ reason: "progress_update", message: (params as IntercomParams).message ?? "" }, signal);
-				if (action === "ask") return sendSupervisorRequest({ reason: "need_decision", message: (params as IntercomParams).message ?? "" }, signal);
-				throw new Error("Native child intercom supports status, list, send, and ask. Use parent intercom reply from the supervisor session.");
+				if (action === "status")
+					return {
+						content: [{ type: "text", text: "Native supervisor channel is active." }],
+						details: { active: true },
+					};
+				if (action === "list")
+					return {
+						content: [{ type: "text", text: "Supervisor session available through contact_supervisor." }],
+						details: { sessions: [] },
+					};
+				if (action === "send")
+					return sendSupervisorRequest(
+						{ reason: "progress_update", message: (params as IntercomParams).message ?? "" },
+						signal,
+					);
+				if (action === "ask")
+					return sendSupervisorRequest(
+						{ reason: "need_decision", message: (params as IntercomParams).message ?? "" },
+						signal,
+					);
+				throw new Error(
+					"Native child intercom supports status, list, send, and ask. Use parent intercom reply from the supervisor session.",
+				);
 			},
 		});
 	}
@@ -330,10 +386,16 @@ function parseRequestFile(file: string, channelDir: string): PendingSupervisorRe
 		const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as Partial<SupervisorRequest>;
 		if (parsed.type !== "subagent.supervisor.request") return undefined;
 		if (typeof parsed.id !== "string" || !parsed.id) return undefined;
-		if (parsed.reason !== "need_decision" && parsed.reason !== "interview_request" && parsed.reason !== "progress_update") return undefined;
+		if (
+			parsed.reason !== "need_decision" &&
+			parsed.reason !== "interview_request" &&
+			parsed.reason !== "progress_update"
+		)
+			return undefined;
 		if (typeof parsed.message !== "string" || !parsed.message) return undefined;
-		if (typeof parsed.runId !== "string" || typeof parsed.agent !== "string" || typeof parsed.childIndex !== "number") return undefined;
-		return { ...parsed as SupervisorRequest, channelDir, requestFile: file };
+		if (typeof parsed.runId !== "string" || typeof parsed.agent !== "string" || typeof parsed.childIndex !== "number")
+			return undefined;
+		return { ...(parsed as SupervisorRequest), channelDir, requestFile: file };
 	} catch {
 		return undefined;
 	}
@@ -359,7 +421,8 @@ function listRequestFiles(): Array<{ channelDir: string; file: string }> {
 			continue;
 		}
 		for (const requestEntry of requestEntries) {
-			if (requestEntry.isFile() && requestEntry.name.endsWith(".json")) files.push({ channelDir, file: path.join(requestsDir, requestEntry.name) });
+			if (requestEntry.isFile() && requestEntry.name.endsWith(".json"))
+				files.push({ channelDir, file: path.join(requestsDir, requestEntry.name) });
 		}
 	}
 	return files;
@@ -436,7 +499,10 @@ function cleanupStaleEmptySupervisorChannels(nowMs = Date.now()): number {
 	return removed;
 }
 
-function currentContextSessionId(state: Pick<SubagentState, "currentSessionId">, ctx: ExtensionContext): string | undefined {
+function currentContextSessionId(
+	state: Pick<SubagentState, "currentSessionId">,
+	ctx: ExtensionContext,
+): string | undefined {
 	try {
 		const sessionId = ctx.sessionManager.getSessionId();
 		if (sessionId) return sessionId;
@@ -446,7 +512,11 @@ function currentContextSessionId(state: Pick<SubagentState, "currentSessionId">,
 	return state.currentSessionId ?? undefined;
 }
 
-function requestMatchesContext(request: SupervisorRequest, state: Pick<SubagentState, "currentSessionId">, ctx: ExtensionContext): boolean {
+function requestMatchesContext(
+	request: SupervisorRequest,
+	state: Pick<SubagentState, "currentSessionId">,
+	ctx: ExtensionContext,
+): boolean {
 	const currentSessionId = currentContextSessionId(state, ctx);
 	return Boolean(currentSessionId && request.orchestratorSessionId === currentSessionId);
 }
@@ -473,11 +543,15 @@ function isAwaitingSupervisorPause(pause: unknown): boolean {
 	return Boolean(pause && typeof pause === "object" && (pause as { kind?: unknown }).kind === "awaiting_supervisor");
 }
 
-function requestBlockingPhase(request: PendingSupervisorRequest, state: SubagentState): BlockingRequestPhase | undefined {
+function requestBlockingPhase(
+	request: PendingSupervisorRequest,
+	state: SubagentState,
+): BlockingRequestPhase | undefined {
 	if (state.foregroundControls.has(request.runId)) return "pausing";
 	const foregroundRun = state.foregroundRuns?.get(request.runId);
-	const foregroundChild = foregroundRun?.children.find((child) => child.index === request.childIndex && child.agent === request.agent)
-		?? foregroundRun?.children[request.childIndex];
+	const foregroundChild =
+		foregroundRun?.children.find((child) => child.index === request.childIndex && child.agent === request.agent) ??
+		foregroundRun?.children[request.childIndex];
 	if (foregroundChild && isAwaitingSupervisorPause(foregroundChild.pause)) {
 		return foregroundChild.status === "paused" ? "paused" : "pausing";
 	}
@@ -493,8 +567,9 @@ function requestBlockingPhase(request: PendingSupervisorRequest, state: Subagent
 
 function requestTerminalState(request: SupervisorRequest, state: SubagentState): RequestTerminalState | undefined {
 	const foregroundRun = state.foregroundRuns?.get(request.runId);
-	const foregroundChild = foregroundRun?.children.find((child) => child.index === request.childIndex && child.agent === request.agent)
-		?? foregroundRun?.children[request.childIndex];
+	const foregroundChild =
+		foregroundRun?.children.find((child) => child.index === request.childIndex && child.agent === request.agent) ??
+		foregroundRun?.children[request.childIndex];
 	if (foregroundChild?.cancel?.cancelledAt) return "cancelled";
 	if (foregroundChild?.status === "completed") return "completed";
 	if (foregroundChild?.status === "failed") return "failed";
@@ -504,11 +579,17 @@ function requestTerminalState(request: SupervisorRequest, state: SubagentState):
 	if (step?.status === "continued" || asyncJob?.status === "continued") return "continued";
 	if (step?.status === "cancelled" || asyncJob?.status === "cancelled") return "cancelled";
 	if (step?.status === "failed" || asyncJob?.status === "failed") return "failed";
-	if (step?.status === "complete" || step?.status === "completed" || asyncJob?.status === "complete") return "completed";
+	if (step?.status === "complete" || step?.status === "completed" || asyncJob?.status === "complete")
+		return "completed";
 	return undefined;
 }
 
-function requestLifecycle(request: PendingSupervisorRequest, state: SubagentState, ctx: ExtensionContext | undefined, now: number): SupervisorRequestLifecycle {
+function requestLifecycle(
+	request: PendingSupervisorRequest,
+	state: SubagentState,
+	ctx: ExtensionContext | undefined,
+	now: number,
+): SupervisorRequestLifecycle {
 	if (ctx && !requestMatchesContext(request, state, ctx)) return "wrong-session";
 	if (!fs.existsSync(request.requestFile)) return "missing";
 	const blockingPhase = requestBlockingPhase(request, state);
@@ -520,10 +601,15 @@ function requestLifecycle(request: PendingSupervisorRequest, state: SubagentStat
 }
 
 function cleanupRequestLifecycle(request: PendingSupervisorRequest, lifecycle: SupervisorRequestLifecycle): void {
-	if (lifecycle === "resolved" || lifecycle === "expired" || lifecycle === "inactive") removeRequestFile(request.requestFile);
+	if (lifecycle === "resolved" || lifecycle === "expired" || lifecycle === "inactive")
+		removeRequestFile(request.requestFile);
 }
 
-function refreshPendingRequests(pending: Map<string, PendingSupervisorRequest>, state: SubagentState, ctx: ExtensionContext | undefined): void {
+function refreshPendingRequests(
+	pending: Map<string, PendingSupervisorRequest>,
+	state: SubagentState,
+	ctx: ExtensionContext | undefined,
+): void {
 	const now = Date.now();
 	for (const request of pending.values()) {
 		const lifecycle = requestLifecycle(request, state, ctx, now);
@@ -548,7 +634,8 @@ function blockingRequestActionLines(request: PendingSupervisorRequest, phase: Bl
 }
 
 function formatPendingLine(request: PendingSupervisorRequest, state: SubagentState): string {
-	if (!request.expectsReply) return `- ${request.id}: ${request.agent} [${request.runId}#${request.childIndex}] ${request.reason}.`;
+	if (!request.expectsReply)
+		return `- ${request.id}: ${request.agent} [${request.runId}#${request.childIndex}] ${request.reason}.`;
 	const phase = requestBlockingPhase(request, state) ?? "pausing";
 	return `- ${request.id}: ${request.agent} [${request.runId}#${request.childIndex}] ${request.reason}. ${blockingRequestActionLines(request, phase).join(" ")}`;
 }
@@ -557,9 +644,13 @@ function requestVisibleText(request: PendingSupervisorRequest, state: SubagentSt
 	const lines = [request.message];
 	if (request.expectsReply) {
 		const phase = requestBlockingPhase(request, state) ?? "pausing";
-		lines.push("", phase === "paused"
-			? `Child ${request.childIndex} is durably paused awaiting supervisor guidance.`
-			: `Child ${request.childIndex} has a blocking request entering durable pause.`, ...blockingRequestActionLines(request, phase));
+		lines.push(
+			"",
+			phase === "paused"
+				? `Child ${request.childIndex} is durably paused awaiting supervisor guidance.`
+				: `Child ${request.childIndex} has a blocking request entering durable pause.`,
+			...blockingRequestActionLines(request, phase),
+		);
 	}
 	return lines.join("\n");
 }
@@ -576,7 +667,10 @@ function writeReply(request: PendingSupervisorRequest, message: string): void {
 	removeRequestFile(request.requestFile);
 }
 
-function resolvePendingRequest(pending: Map<string, PendingSupervisorRequest>, params: IntercomParams): PendingSupervisorRequest {
+function resolvePendingRequest(
+	pending: Map<string, PendingSupervisorRequest>,
+	params: IntercomParams,
+): PendingSupervisorRequest {
 	if (params.replyTo) {
 		const request = pending.get(params.replyTo);
 		if (!request) throw new Error(`No pending supervisor request found for replyTo '${params.replyTo}'.`);
@@ -585,10 +679,11 @@ function resolvePendingRequest(pending: Map<string, PendingSupervisorRequest>, p
 	const requests = [...pending.values()].filter((request) => request.expectsReply);
 	if (params.to) {
 		const normalizedTo = params.to.toLowerCase();
-		const matches = requests.filter((request) =>
-			request.id.toLowerCase().startsWith(normalizedTo)
-			|| request.agent.toLowerCase() === normalizedTo
-			|| request.childTarget?.toLowerCase() === normalizedTo,
+		const matches = requests.filter(
+			(request) =>
+				request.id.toLowerCase().startsWith(normalizedTo) ||
+				request.agent.toLowerCase() === normalizedTo ||
+				request.childTarget?.toLowerCase() === normalizedTo,
 		);
 		if (matches.length === 1) return matches[0]!;
 		if (matches.length > 1) throw new Error(`Multiple pending supervisor requests match '${params.to}'. Use replyTo.`);
@@ -609,51 +704,79 @@ function publicPendingRequests(pending: Map<string, PendingSupervisorRequest>): 
 	}));
 }
 
-function buildParentIntercomTool(pending: Map<string, PendingSupervisorRequest>, state: SubagentState, name = "intercom") {
+function buildParentIntercomTool(
+	pending: Map<string, PendingSupervisorRequest>,
+	state: SubagentState,
+	name = "intercom",
+) {
 	return {
 		name,
 		label: name === "intercom" ? "Intercom" : "Subagent Supervisor",
-		description: name === "intercom"
-			? "Native pi-subagents supervisor channel. Use pending/status to inspect paused child requests, then resume them with subagent resume or cancel them with interrupt; reply remains legacy live-session compatibility only."
-			: "Native pi-subagents supervisor channel. Use pending/status to inspect paused child requests without overriding pi-intercom, then resume them with subagent resume or cancel them with interrupt; reply remains legacy live-session compatibility only.",
+		description:
+			name === "intercom"
+				? "Native pi-subagents supervisor channel. Use pending/status to inspect paused child requests, then resume them with subagent resume or cancel them with interrupt; reply remains legacy live-session compatibility only."
+				: "Native pi-subagents supervisor channel. Use pending/status to inspect paused child requests without overriding pi-intercom, then resume them with subagent resume or cancel them with interrupt; reply remains legacy live-session compatibility only.",
 		parameters: IntercomParamsSchema,
 		async execute(_id: string, params: unknown) {
 			refreshPendingRequests(pending, state, state.lastUiContext ?? undefined);
 			const input = params as IntercomParams;
 			if (input.action === "status") {
-				return { content: [{ type: "text", text: `Native supervisor channel active. Pending replies: ${pending.size}.` }], details: { active: true, pending: pending.size, root: SUPERVISOR_CHANNEL_ROOT } };
+				return {
+					content: [{ type: "text", text: `Native supervisor channel active. Pending replies: ${pending.size}.` }],
+					details: { active: true, pending: pending.size, root: SUPERVISOR_CHANNEL_ROOT },
+				};
 			}
 			if (input.action === "pending" || input.action === "list") {
-				const lines = [...pending.values()].filter((request) => request.expectsReply).map((request) => formatPendingLine(request, state));
-				return { content: [{ type: "text", text: lines.length ? lines.join("\n") : "No pending supervisor requests." }], details: { pending: publicPendingRequests(pending) } };
+				const lines = [...pending.values()]
+					.filter((request) => request.expectsReply)
+					.map((request) => formatPendingLine(request, state));
+				return {
+					content: [{ type: "text", text: lines.length ? lines.join("\n") : "No pending supervisor requests." }],
+					details: { pending: publicPendingRequests(pending) },
+				};
 			}
 			if (input.action === "reply") {
 				const request = resolvePendingRequest(pending, input);
 				const blockingPhase = requestBlockingPhase(request, state);
 				if (blockingPhase) {
-					throw new Error(`Supervisor request '${request.id}' is durably ${blockingPhase}; use subagent resume or interrupt instead. Legacy reply only works for a live waiting child before durable pause persists.`);
+					throw new Error(
+						`Supervisor request '${request.id}' is durably ${blockingPhase}; use subagent resume or interrupt instead. Legacy reply only works for a live waiting child before durable pause persists.`,
+					);
 				}
 				writeReply(request, input.message ?? "");
 				pending.delete(request.id);
-				return { content: [{ type: "text", text: `Replied to supervisor request ${request.id}.` }], details: { replyTo: request.id, runId: request.runId, agent: request.agent } };
+				return {
+					content: [{ type: "text", text: `Replied to supervisor request ${request.id}.` }],
+					details: { replyTo: request.id, runId: request.runId, agent: request.agent },
+				};
 			}
 			if (input.action === "send" || input.action === "ask") {
-				throw new Error("Native pi-subagents intercom currently handles supervisor replies. Child agents initiate asks with contact_supervisor.");
+				throw new Error(
+					"Native pi-subagents intercom currently handles supervisor replies. Child agents initiate asks with contact_supervisor.",
+				);
 			}
 			throw new Error(`Unsupported intercom action: ${input.action}`);
 		},
 	};
 }
 
-export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentState): { start: () => void; dispose: () => void; pending: Map<string, PendingSupervisorRequest> } {
+export function createNativeSupervisorChannel(
+	pi: ExtensionAPI,
+	state: SubagentState,
+): { start: () => void; dispose: () => void; pending: Map<string, PendingSupervisorRequest> } {
 	const pending = new Map<string, PendingSupervisorRequest>();
 	const seenFiles = new Set<string>();
 	let poller: ReturnType<typeof setInterval> | undefined;
 	let lastStaleCleanupAt = 0;
-	const registerTool = (((pi as unknown as Record<string, unknown>).registerTool) as (tool: ReturnType<typeof buildParentIntercomTool>) => void).bind(pi);
+	const registerTool = (
+		(pi as unknown as Record<string, unknown>).registerTool as (
+			tool: ReturnType<typeof buildParentIntercomTool>,
+		) => void
+	).bind(pi);
 
 	const registerParentTools = (): void => {
-		if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) registerTool(buildParentIntercomTool(pending, state, NATIVE_SUPERVISOR_TOOL_NAME));
+		if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME))
+			registerTool(buildParentIntercomTool(pending, state, NATIVE_SUPERVISOR_TOOL_NAME));
 		if (!hasTool(pi, "intercom")) registerTool(buildParentIntercomTool(pending, state));
 	};
 

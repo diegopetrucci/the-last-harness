@@ -391,7 +391,7 @@ function stripControlCharacters(text) {
 		if (codePoint === undefined) {
 			continue;
 		}
-		if (codePoint === 0x09 || codePoint === 0x0A || codePoint === 0x0D || codePoint >= 0x20) {
+		if (codePoint === 0x09 || codePoint === 0x0a || codePoint === 0x0d || codePoint >= 0x20) {
 			result += character;
 		}
 	}
@@ -403,9 +403,11 @@ function stripTerminalNoise(text) {
 }
 
 function hasHeaderMarker(text) {
-	return HEADER_TEXT_MARKERS.some((marker) => text.includes(marker))
-		|| HEADER_LOGO_PATTERN.test(text)
-		|| HEADER_RULE_PATTERN.test(text);
+	return (
+		HEADER_TEXT_MARKERS.some((marker) => text.includes(marker)) ||
+		HEADER_LOGO_PATTERN.test(text) ||
+		HEADER_RULE_PATTERN.test(text)
+	);
 }
 
 function hasFooterMarker(text) {
@@ -598,7 +600,12 @@ function safeKill(pid, signal) {
 		try {
 			process.kill(pid, signal);
 		} catch (fallbackError) {
-			if (fallbackError && typeof fallbackError === "object" && "code" in fallbackError && fallbackError.code === "ESRCH") {
+			if (
+				fallbackError &&
+				typeof fallbackError === "object" &&
+				"code" in fallbackError &&
+				fallbackError.code === "ESRCH"
+			) {
 				return;
 			}
 			throw fallbackError;
@@ -670,13 +677,17 @@ function createTemporaryWrapper(workspace, wrapperPath) {
 	const sourceConfig = readManagedWrapperConfig(wrapperPath);
 	const wrapperName = sourceConfig.wrapperName || basename(wrapperPath);
 	const temporaryWrapperPath = join(workspace.wrapperBinDir, wrapperName);
-	writeFileSync(temporaryWrapperPath, renderWrapper({
-		agentDir: workspace.agentDir,
-		binDir: workspace.wrapperBinDir,
-		wrapperName,
-		packageRoot: sourceConfig.packageRoot,
-		piCmd: sourceConfig.piCmd,
-	}), "utf8");
+	writeFileSync(
+		temporaryWrapperPath,
+		renderWrapper({
+			agentDir: workspace.agentDir,
+			binDir: workspace.wrapperBinDir,
+			wrapperName,
+			packageRoot: sourceConfig.packageRoot,
+			piCmd: sourceConfig.piCmd,
+		}),
+		"utf8",
+	);
 	chmodSync(temporaryWrapperPath, 0o755);
 	return {
 		sourceConfig,
@@ -798,10 +809,7 @@ async function measureRun(options, workspace, launchPlan, runNumber, interruptCl
 				.filter(Boolean)
 				.join(" and ");
 			const preview = excerptOutput(plainText);
-			settle(
-				rejectPromise,
-				new Error(`run ${runNumber} timed out waiting for ${missing}\n${preview}`),
-			);
+			settle(rejectPromise, new Error(`run ${runNumber} timed out waiting for ${missing}\n${preview}`));
 		}, options.timeoutMs);
 	});
 
@@ -884,9 +892,15 @@ async function run() {
 		}
 		console.log(`runs: ${options.runs}`);
 		console.log(`budget: ${formatMs(options.budgetMs)} warm first-header mean`);
-		console.log(`profile source: ${options.profileSource ? resolve(options.profileSource) : "(empty temporary profile)"}`);
+		console.log(
+			`profile source: ${options.profileSource ? resolve(options.profileSource) : "(empty temporary profile)"}`,
+		);
 		console.log(`temporary profile: ${workspace.agentDir}`);
-		console.log(`controlled env: ${Object.entries(CONTROLLED_ENV).map(([key, value]) => `${key}=${value}`).join(" ")}`);
+		console.log(
+			`controlled env: ${Object.entries(CONTROLLED_ENV)
+				.map(([key, value]) => `${key}=${value}`)
+				.join(" ")}`,
+		);
 		console.log("");
 
 		const results = [];

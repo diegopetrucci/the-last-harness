@@ -3,11 +3,7 @@ import { existsSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 
 import { criticalGitSourceSpec } from "./tlh-install-package-source.mjs";
-import {
-	assertProfilePathWithinAgent,
-	isSymlink,
-	realpathForCompare,
-} from "./tlh-install-paths.mjs";
+import { assertProfilePathWithinAgent, isSymlink, realpathForCompare } from "./tlh-install-paths.mjs";
 
 const COMMAND_MAX_BUFFER = 20 * 1024 * 1024;
 
@@ -26,7 +22,11 @@ interface SpawnCaptureOptions {
 }
 
 interface GitIo {
-	runCommand?: (config: GitInstallConfig, commandArgs: string[], options?: { cwd?: string; env?: NodeJS.ProcessEnv }) => void;
+	runCommand?: (
+		config: GitInstallConfig,
+		commandArgs: string[],
+		options?: { cwd?: string; env?: NodeJS.ProcessEnv },
+	) => void;
 	runInDir?: (config: GitInstallConfig, dir: string, commandArgs: string[]) => void;
 	printCommand?: (commandArgs: string[]) => void;
 	log?: (config: GitInstallConfig, message: string) => void;
@@ -172,7 +172,8 @@ export function safeGitCheckoutDirForMutation(
 	if (isSymlink(targetDir)) throw new Error(`refusing to mutate symlinked ${label}: ${targetDir}`);
 	if (!existsSync(targetDir) || !lstatSync(targetDir).isDirectory()) return false;
 	const gitMetadata = join(targetDir, ".git");
-	if (isSymlink(gitMetadata)) throw new Error(`refusing to mutate ${label} with symlinked git metadata: ${gitMetadata}`);
+	if (isSymlink(gitMetadata))
+		throw new Error(`refusing to mutate ${label} with symlinked git metadata: ${gitMetadata}`);
 	if (!existsSync(gitMetadata)) return false;
 	if (!lstatSync(gitMetadata).isDirectory() && !lstatSync(gitMetadata).isFile()) return false;
 	assertProfilePathWithinAgent(config, gitMetadata, `${label} git metadata`);
@@ -206,7 +207,11 @@ export function refreshGitCheckout(
 		printDryRunCommand(["git", "-C", targetDir, "checkout", "--detach", "<resolved-ref>"], io);
 		printDryRunCommand(["git", "-C", targetDir, "reset", "--hard", "<resolved-ref>"], io);
 		printDryRunCommand(["git", "-C", targetDir, "clean", "-fd"], io);
-		logDryRun(config, "Would run npm install --omit=dev --legacy-peer-deps --package-lock=false if package.json is present.", io);
+		logDryRun(
+			config,
+			"Would run npm install --omit=dev --legacy-peer-deps --package-lock=false if package.json is present.",
+			io,
+		);
 		return true;
 	}
 
@@ -269,7 +274,9 @@ export function refreshGitCheckout(
 	let targetRef = ref;
 	if (gitSucceeds(config, targetDir, ["rev-parse", "--verify", "--quiet", `refs/tags/${ref}^{commit}`], io)) {
 		targetRef = `refs/tags/${ref}^{commit}`;
-	} else if (gitSucceeds(config, targetDir, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${ref}^{commit}`], io)) {
+	} else if (
+		gitSucceeds(config, targetDir, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${ref}^{commit}`], io)
+	) {
 		targetRef = `refs/remotes/origin/${ref}`;
 	}
 
@@ -277,7 +284,12 @@ export function refreshGitCheckout(
 	runGitCommand(config, ["git", "-C", targetDir, "reset", "--hard", targetRef], io);
 	runGitCommand(config, ["git", "-C", targetDir, "clean", "-fd"], io);
 	if (existsSync(join(targetDir, "package.json"))) {
-		runGitCommandInDir(config, targetDir, ["npm", "install", "--omit=dev", "--legacy-peer-deps", "--package-lock=false"], io);
+		runGitCommandInDir(
+			config,
+			targetDir,
+			["npm", "install", "--omit=dev", "--legacy-peer-deps", "--package-lock=false"],
+			io,
+		);
 	}
 	return true;
 }

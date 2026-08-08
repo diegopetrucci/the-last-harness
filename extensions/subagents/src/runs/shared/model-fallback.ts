@@ -36,11 +36,7 @@ export interface ParentModel {
  * repeated separators. Pure.
  */
 export function normalizeModelSegment(segment: string): string {
-	return segment
-		.toLowerCase()
-		.replace(/[._]+/g, "-")
-		.replace(/-+/g, "-")
-		.replace(/^-|-$/g, "");
+	return segment.toLowerCase().replace(/[._]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
 }
 
 function isPlausibleDateStamp(year: string, month: string, day: string): boolean {
@@ -258,17 +254,17 @@ export function buildModelCandidates(
 }
 
 function replaceModelNoticeControlCharacters(value: string): string {
-	return [...value].map((character) => {
-		const code = character.codePointAt(0) ?? 0;
-		return code <= 0x1f || code === 0x7f ? " " : character;
-	}).join("");
+	return [...value]
+		.map((character) => {
+			const code = character.codePointAt(0) ?? 0;
+			return code <= 0x1f || code === 0x7f ? " " : character;
+		})
+		.join("");
 }
 
 export function sanitizeModelFallbackNotice(notice: string | undefined): string | undefined {
 	if (typeof notice !== "string") return undefined;
-	const sanitized = replaceModelNoticeControlCharacters(notice)
-		.replace(/\s+/g, " ")
-		.trim();
+	const sanitized = replaceModelNoticeControlCharacters(notice).replace(/\s+/g, " ").trim();
 	return sanitized ? sanitized.slice(0, 240) : undefined;
 }
 
