@@ -1,10 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { controlNotificationKey, formatControlNoticeMessage } from "../runs/shared/subagent-control.ts";
 import type { ControlEvent, SubagentState } from "../shared/types.ts";
+import { CONTROL_NOTICE_NUDGE_TEXT } from "../runs/shared/nudge-texts.ts";
 
 export const SUBAGENT_CONTROL_MESSAGE_TYPE = "subagent_control_notice";
 
-const NUDGE_TEXT = "[tlh] Subagent run needs attention — see notice above.";
+const NUDGE_TEXT = CONTROL_NOTICE_NUDGE_TEXT;
 
 export interface SubagentControlMessageDetails {
 	event: ControlEvent;

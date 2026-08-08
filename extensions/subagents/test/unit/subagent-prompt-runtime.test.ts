@@ -18,6 +18,7 @@ import {
 	STRUCTURED_OUTPUT_SCHEMA_ENV,
 } from "../../src/runs/shared/structured-output.ts";
 import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
+import { BACKGROUND_COMPLETION_NUDGE_TEXT, CONTROL_NOTICE_NUDGE_TEXT } from "../../src/runs/shared/nudge-texts.ts";
 import registerSubagentPromptRuntime, {
 	CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
 	SUBAGENT_INTERCOM_SESSION_NAME_ENV,
@@ -411,6 +412,34 @@ describe("subagent prompt runtime", () => {
 				},
 			],
 		);
+	});
+
+	it("strips wake-up nudge user messages (string content) from forked child context", () => {
+		const normalUser = { role: "user", content: "Hello from the human." };
+		const bgNudge = { role: "user", content: BACKGROUND_COMPLETION_NUDGE_TEXT };
+		const controlNudge = { role: "user", content: CONTROL_NOTICE_NUDGE_TEXT };
+
+		assert.deepEqual(stripParentOnlySubagentMessages([normalUser, bgNudge, controlNudge]), [normalUser]);
+	});
+
+	it("strips wake-up nudge user messages (single text-block content) from forked child context", () => {
+		const normalUser = { role: "user", content: [{ type: "text", text: "Hello from the human." }] };
+		const bgNudge = { role: "user", content: [{ type: "text", text: BACKGROUND_COMPLETION_NUDGE_TEXT }] };
+		const controlNudge = { role: "user", content: [{ type: "text", text: CONTROL_NOTICE_NUDGE_TEXT }] };
+
+		assert.deepEqual(stripParentOnlySubagentMessages([normalUser, bgNudge, controlNudge]), [normalUser]);
+	});
+
+	it("does not strip normal user messages or [tlh]-prefixed messages that are not registered nudges", () => {
+		const normalUser = { role: "user", content: "Do the task." };
+		const tlhPrefixed = { role: "user", content: "[tlh] Some other instruction." };
+		const almostNudge = {
+			role: "user",
+			content: BACKGROUND_COMPLETION_NUDGE_TEXT + " (extra)",
+		};
+
+		const result = stripParentOnlySubagentMessages([normalUser, tlhPrefixed, almostNudge]);
+		assert.deepEqual(result, [normalUser, tlhPrefixed, almostNudge]);
 	});
 
 	it("defers native supervisor registration until runtime events and respects installed pi-intercom tools", async () => {

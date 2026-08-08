@@ -143,6 +143,7 @@ extensions/subagents/src/runs/shared/lifecycle-state.js linguist-generated=true
 extensions/subagents/src/runs/shared/long-running-guard.js linguist-generated=true
 extensions/subagents/src/runs/shared/model-fallback.js linguist-generated=true
 extensions/subagents/src/runs/shared/model-scope.js linguist-generated=true
+extensions/subagents/src/runs/shared/nudge-texts.js linguist-generated=true
 extensions/subagents/src/runs/shared/nested-events.js linguist-generated=true
 extensions/subagents/src/runs/shared/nested-path.js linguist-generated=true
 extensions/subagents/src/runs/shared/nested-render.js linguist-generated=true

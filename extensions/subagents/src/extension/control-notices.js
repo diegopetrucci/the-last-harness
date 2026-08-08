@@ -1,6 +1,7 @@
 import { controlNotificationKey, formatControlNoticeMessage } from "../runs/shared/subagent-control.js";
+import { CONTROL_NOTICE_NUDGE_TEXT } from "../runs/shared/nudge-texts.js";
 export const SUBAGENT_CONTROL_MESSAGE_TYPE = "subagent_control_notice";
-const NUDGE_TEXT = "[tlh] Subagent run needs attention — see notice above.";
+const NUDGE_TEXT = CONTROL_NOTICE_NUDGE_TEXT;
 export function controlNoticeTarget(details) {
     return details.childIntercomTarget;
 }

@@ -20,6 +20,7 @@ import {
 } from "./completion-batcher.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, type SubagentState } from "../../shared/types.ts";
 import { isProtectedPausedLifecycle } from "../shared/lifecycle-privacy.ts";
+import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.ts";
 
 export const MAX_COMPLETION_MESSAGE_CHARS = 8_000;
 const MAX_DISPLAYED_CHILDREN = 8;
@@ -421,7 +422,7 @@ export function formatGroupedCompletion(details: SubagentNotifyDetails[]): strin
 	return blocks.join("\n").trimEnd();
 }
 
-const NUDGE_TEXT = "[tlh] Background subagent completed — see notification above.";
+const NUDGE_TEXT = BACKGROUND_COMPLETION_NUDGE_TEXT;
 
 function sendCompletion(
 	pi: Pick<ExtensionAPI, "sendMessage" | "sendUserMessage">,

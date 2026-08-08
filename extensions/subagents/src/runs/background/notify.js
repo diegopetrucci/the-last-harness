@@ -4,6 +4,7 @@ import { buildCompletionKey, getGlobalSeenMap, markSeenWithTtl } from "./complet
 import { createCompletionBatcher, resolveCompletionBatchConfig, } from "./completion-batcher.js";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../shared/types.js";
 import { isProtectedPausedLifecycle } from "../shared/lifecycle-privacy.js";
+import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.js";
 export const MAX_COMPLETION_MESSAGE_CHARS = 8_000;
 const MAX_DISPLAYED_CHILDREN = 8;
 const MAX_SUMMARY_CHARS = 1_200;
@@ -306,7 +307,7 @@ export function formatGroupedCompletion(details) {
     }
     return blocks.join("\n").trimEnd();
 }
-const NUDGE_TEXT = "[tlh] Background subagent completed — see notification above.";
+const NUDGE_TEXT = BACKGROUND_COMPLETION_NUDGE_TEXT;
 function sendCompletion(pi, details, options = { triggerTurn: true }) {
     if (details.length === 0)
         return;
