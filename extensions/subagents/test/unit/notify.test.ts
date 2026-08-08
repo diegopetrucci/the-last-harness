@@ -14,17 +14,23 @@ import registerSubagentNotify, {
 } from "../../src/runs/background/notify.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../src/shared/types.ts";
 
+const NUDGE_TEXT = "[tlh] Background subagent completed — see notification above.";
+
 function createPi(currentSessionId = "session-1", registerOptions: RegisterSubagentNotifyOptions = {}) {
 	const events = new EventEmitter();
-	const sent: Array<{ message: unknown; options: unknown }> = [];
+	const sentMessages: Array<{ message: unknown; options: unknown }> = [];
+	const sentUserMessages: Array<{ content: unknown; options: unknown }> = [];
 	const lifecycleHandlers = new Map<string, (...args: unknown[]) => void>();
 	const pi = {
 		events,
 		on(event: string, handler: (...args: unknown[]) => void) {
 			lifecycleHandlers.set(event, handler);
 		},
-		sendMessage(message: unknown, options: unknown) {
-			sent.push({ message, options });
+		sendMessage(message: unknown, options?: unknown) {
+			sentMessages.push({ message, options });
+		},
+		sendUserMessage(content: unknown, options?: unknown) {
+			sentUserMessages.push({ content, options });
 		},
 	};
 
@@ -32,12 +38,13 @@ function createPi(currentSessionId = "session-1", registerOptions: RegisterSubag
 	// emit synchronously. Batching behavior is covered by the dedicated suite below.
 	registerSubagentNotify(pi as never, { currentSessionId }, { batchConfig: { enabled: false }, ...registerOptions });
 
-	return { events, sent, lifecycleHandlers };
+	return { events, sentMessages, sentUserMessages, lifecycleHandlers };
 }
 
 function createBatchingPi(clock: ReturnType<typeof createFakeClock>, currentSessionId = "session-a") {
 	const events = new EventEmitter();
-	const sent: Array<{ message: unknown; options: unknown }> = [];
+	const sentMessages: Array<{ message: unknown; options: unknown }> = [];
+	const sentUserMessages: Array<{ content: unknown; options: unknown }> = [];
 	const lifecycleHandlers = new Map<string, (...args: unknown[]) => void>();
 	const state = { currentSessionId };
 	const pi = {
@@ -45,8 +52,11 @@ function createBatchingPi(clock: ReturnType<typeof createFakeClock>, currentSess
 		on(event: string, handler: (...args: unknown[]) => void) {
 			lifecycleHandlers.set(event, handler);
 		},
-		sendMessage(message: unknown, options: unknown) {
-			sent.push({ message, options });
+		sendMessage(message: unknown, options?: unknown) {
+			sentMessages.push({ message, options });
+		},
+		sendUserMessage(content: unknown, options?: unknown) {
+			sentUserMessages.push({ content, options });
 		},
 	};
 	registerSubagentNotify(pi as never, state, {
@@ -61,7 +71,7 @@ function createBatchingPi(clock: ReturnType<typeof createFakeClock>, currentSess
 		timers: clock.api,
 		now: clock.now,
 	});
-	return { events, sent, state, lifecycleHandlers };
+	return { events, sentMessages, sentUserMessages, state, lifecycleHandlers };
 }
 
 interface FakeJob {
@@ -114,7 +124,7 @@ function completionResult(overrides: Record<string, unknown> = {}) {
 
 describe("registerSubagentNotify", () => {
 	it("uses a fallback summary when a background completion is empty", () => {
-		const { events, sent } = createPi();
+		const { events, sentMessages, sentUserMessages } = createPi();
 
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
 			id: "notify-empty-1",
@@ -126,20 +136,26 @@ describe("registerSubagentNotify", () => {
 			sessionId: "session-1",
 		});
 
-		assert.equal(sent.length, 1);
-		assert.deepEqual(sent[0], {
+		// E′ protocol: one sendMessage (no options) + one sendUserMessage nudge (idle path)
+		assert.equal(sentMessages.length, 1);
+		assert.equal(sentUserMessages.length, 1);
+		assert.deepEqual(sentMessages[0], {
 			message: {
 				customType: "subagent-notify",
 				content: "Background task completed: **worker**\n\nAsync id: notify-empty-1\n\n(no output)",
 				display: true,
 				details: { agent: "worker", status: "completed", resultPreview: "", asyncId: "notify-empty-1" },
 			},
-			options: { triggerTurn: true },
+			options: undefined,
+		});
+		assert.deepEqual(sentUserMessages[0], {
+			content: NUDGE_TEXT,
+			options: { deliverAs: "followUp" },
 		});
 	});
 
 	it("preserves non-empty completion summaries", () => {
-		const { events, sent } = createPi();
+		const { events, sentMessages, sentUserMessages } = createPi();
 		const summary = "  Done streaming\nAll clear  ";
 
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
@@ -154,8 +170,9 @@ describe("registerSubagentNotify", () => {
 			sessionId: "session-1",
 		});
 
-		assert.equal(sent.length, 1);
-		assert.deepEqual(sent[0], {
+		assert.equal(sentMessages.length, 1);
+		assert.equal(sentUserMessages.length, 1);
+		assert.deepEqual(sentMessages[0], {
 			message: {
 				customType: "subagent-notify",
 				content: `Background task completed: **worker** (2/3)\n\nAsync id: notify-summary-1\n\n${summary}`,
@@ -168,12 +185,16 @@ describe("registerSubagentNotify", () => {
 					asyncId: "notify-summary-1",
 				},
 			},
-			options: { triggerTurn: true },
+			options: undefined,
+		});
+		assert.deepEqual(sentUserMessages[0], {
+			content: NUDGE_TEXT,
+			options: { deliverAs: "followUp" },
 		});
 	});
 
 	it("shows async id and top-level resume guidance only when the session file exists", () => {
-		const { events, sent } = createPi();
+		const { events, sentMessages, sentUserMessages } = createPi();
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "notify-single-session-"));
 		const sessionFile = path.join(resultsDir, "session.jsonl");
 		fs.writeFileSync(sessionFile, "session\n", "utf-8");
@@ -194,29 +215,33 @@ describe("registerSubagentNotify", () => {
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}
 
-		assert.deepEqual(sent, [
-			{
-				message: {
-					customType: "subagent-notify",
-					content: `Background task completed: **worker**\n\nAsync id: notify-event-1\nRevive: subagent({ action: "resume", id: "notify-event-1", message: "..." })\n\nDone\n\nSession file: ${sessionFile}`,
-					display: true,
-					details: {
-						agent: "worker",
-						status: "completed",
-						resultPreview: "Done",
-						asyncId: "notify-event-1",
-						resumeTarget: { sessionPath: sessionFile },
-						sessionLabel: "Session file",
-						sessionValue: sessionFile,
-					},
+		assert.equal(sentMessages.length, 1);
+		assert.equal(sentUserMessages.length, 1);
+		assert.deepEqual(sentMessages[0], {
+			message: {
+				customType: "subagent-notify",
+				content: `Background task completed: **worker**\n\nAsync id: notify-event-1\nRevive: subagent({ action: "resume", id: "notify-event-1", message: "..." })\n\nDone\n\nSession file: ${sessionFile}`,
+				display: true,
+				details: {
+					agent: "worker",
+					status: "completed",
+					resultPreview: "Done",
+					asyncId: "notify-event-1",
+					resumeTarget: { sessionPath: sessionFile },
+					sessionLabel: "Session file",
+					sessionValue: sessionFile,
 				},
-				options: { triggerTurn: true },
 			},
-		]);
+			options: undefined,
+		});
+		assert.deepEqual(sentUserMessages[0], {
+			content: NUDGE_TEXT,
+			options: { deliverAs: "followUp" },
+		});
 	});
 
 	it("does not advertise resume guidance when the session file is missing", () => {
-		const { events, sent } = createPi();
+		const { events, sentMessages, sentUserMessages } = createPi();
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "notify-missing-session-"));
 		const missingSession = path.join(resultsDir, "missing-session.jsonl");
 
@@ -233,31 +258,35 @@ describe("registerSubagentNotify", () => {
 				sessionId: "session-1",
 			});
 
-			assert.deepEqual(sent, [
-				{
-					message: {
-						customType: "subagent-notify",
-						content: `Background task completed: **worker**\n\nAsync id: notify-run-fallback\n\nDone\n\nSession file: ${missingSession}`,
-						display: true,
-						details: {
-							agent: "worker",
-							status: "completed",
-							resultPreview: "Done",
-							asyncId: "notify-run-fallback",
-							sessionLabel: "Session file",
-							sessionValue: missingSession,
-						},
+			assert.equal(sentMessages.length, 1);
+			assert.equal(sentUserMessages.length, 1);
+			assert.deepEqual(sentMessages[0], {
+				message: {
+					customType: "subagent-notify",
+					content: `Background task completed: **worker**\n\nAsync id: notify-run-fallback\n\nDone\n\nSession file: ${missingSession}`,
+					display: true,
+					details: {
+						agent: "worker",
+						status: "completed",
+						resultPreview: "Done",
+						asyncId: "notify-run-fallback",
+						sessionLabel: "Session file",
+						sessionValue: missingSession,
 					},
-					options: { triggerTurn: true },
 				},
-			]);
+				options: undefined,
+			});
+			assert.deepEqual(sentUserMessages[0], {
+				content: NUDGE_TEXT,
+				options: { deliverAs: "followUp" },
+			});
 		} finally {
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}
 	});
 
 	it("labels paused completions as paused even without an exit code", () => {
-		const { events, sent } = createPi();
+		const { events, sentMessages, sentUserMessages } = createPi();
 
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
 			id: "notify-paused-1",
@@ -269,8 +298,10 @@ describe("registerSubagentNotify", () => {
 			sessionId: "session-1",
 		});
 
-		assert.equal(sent.length, 1);
-		assert.deepEqual(sent[0], {
+		// Paused runs bypass grouping and emit immediately; idle path → nudge
+		assert.equal(sentMessages.length, 1);
+		assert.equal(sentUserMessages.length, 1);
+		assert.deepEqual(sentMessages[0], {
 			message: {
 				customType: "subagent-notify",
 				content:
@@ -283,12 +314,16 @@ describe("registerSubagentNotify", () => {
 					asyncId: "notify-paused-1",
 				},
 			},
-			options: { triggerTurn: true },
+			options: undefined,
+		});
+		assert.deepEqual(sentUserMessages[0], {
+			content: NUDGE_TEXT,
+			options: { deliverAs: "followUp" },
 		});
 	});
 
 	it("formats normalized child results into one native completion notice", () => {
-		const { events, sent } = createPi();
+		const { events, sentMessages, sentUserMessages } = createPi();
 
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
 			id: "notify-grouped-1",
@@ -315,8 +350,9 @@ describe("registerSubagentNotify", () => {
 			],
 		});
 
-		assert.equal(sent.length, 1);
-		const content = (sent[0]!.message as { content: string }).content;
+		assert.equal(sentMessages.length, 1);
+		assert.equal(sentUserMessages.length, 1);
+		const content = (sentMessages[0]!.message as { content: string }).content;
 		assert.match(content, /^Background task failed: \*\*parallel:a\+b\*\*/);
 		assert.match(content, /Children: 1 completed, 1 failed/);
 		assert.match(
@@ -327,11 +363,14 @@ describe("registerSubagentNotify", () => {
 			content,
 			/2\/2\. b — failed\nB failed\n\nOutput:\nResult from b\nNested subagents:\n   ↳ nested-b — failed/,
 		);
-		assert.deepEqual(sent[0]!.options, { triggerTurn: true });
+		// sendMessage has no options (no triggerTurn)
+		assert.equal(sentMessages[0]!.options, undefined);
+		// nudge is sent once (idle path, fails bypass grouping)
+		assert.deepEqual(sentUserMessages[0], { content: NUDGE_TEXT, options: { deliverAs: "followUp" } });
 	});
 
 	it("prioritizes failed and paused children with original numbering and resumable indexes", () => {
-		const { events, sent } = createPi();
+		const { events, sentMessages, sentUserMessages } = createPi();
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "notify-urgent-children-"));
 		const completedSession = path.join(resultsDir, "child-1.jsonl");
 		const failedSession = path.join(resultsDir, "child-9.jsonl");
@@ -363,8 +402,9 @@ describe("registerSubagentNotify", () => {
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}
 
-		assert.equal(sent.length, 1);
-		const content = (sent[0]!.message as { content: string }).content;
+		assert.equal(sentMessages.length, 1);
+		assert.equal(sentUserMessages.length, 1);
+		const content = (sentMessages[0]!.message as { content: string }).content;
 		assert.ok(content.length <= MAX_COMPLETION_MESSAGE_CHARS);
 		assert.match(content, /^Background task failed: \*\*parallel:urgent\*\*/);
 		assert.match(content, /Children: 8 completed, 1 failed, 1 paused/);
@@ -386,10 +426,13 @@ describe("registerSubagentNotify", () => {
 			"urgent child details must survive the final completion cap",
 		);
 		assert.match(content, /… \[completion message truncated\]$/);
+		// sendMessage no options; nudge once (idle, failed — immediate path)
+		assert.equal(sentMessages[0]!.options, undefined);
+		assert.deepEqual(sentUserMessages[0], { content: NUDGE_TEXT, options: { deliverAs: "followUp" } });
 	});
 
 	it("bounds oversized single-notice content and attached preview while retaining status and safe references", () => {
-		const { events, sent } = createPi();
+		const { events, sentMessages, sentUserMessages } = createPi();
 		const deepNested = [
 			{
 				agent: "nested-root",
@@ -429,9 +472,11 @@ describe("registerSubagentNotify", () => {
 			results,
 		});
 
-		assert.equal(sent.length, 1);
-		assert.deepEqual(sent[0]!.options, { triggerTurn: true });
-		const message = sent[0]!.message as { content: string; details?: SubagentNotifyDetails };
+		assert.equal(sentMessages.length, 1);
+		assert.equal(sentUserMessages.length, 1);
+		// No options on sendMessage
+		assert.equal(sentMessages[0]!.options, undefined);
+		const message = sentMessages[0]!.message as { content: string; details?: SubagentNotifyDetails };
 		const content = message.content;
 		assert.ok(content.length <= MAX_COMPLETION_MESSAGE_CHARS);
 		assert.ok(message.details, "single notices must retain structured metadata");
@@ -448,10 +493,12 @@ describe("registerSubagentNotify", () => {
 		assert.match(content, /… \[additional nested entries omitted\]/);
 		assert.match(content, /… \[completion message truncated\]$/);
 		assert.doesNotMatch(content, /stale-target/);
+		// nudge sent once (idle, failed — immediate path)
+		assert.deepEqual(sentUserMessages[0], { content: NUDGE_TEXT, options: { deliverAs: "followUp" } });
 	});
 
 	it("redacts protected paused lifecycle paths from content and structured details", () => {
-		const { events, sent } = createPi();
+		const { events, sentMessages, sentUserMessages } = createPi();
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "notify-paused-private-"));
 		const sessionPath = path.join(resultsDir, "private-session.jsonl");
 		fs.writeFileSync(sessionPath, "session\n", "utf-8");
@@ -489,8 +536,10 @@ describe("registerSubagentNotify", () => {
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}
 
-		assert.equal(sent.length, 1);
-		const message = sent[0]!.message as { content: string; details?: SubagentNotifyDetails };
+		assert.equal(sentMessages.length, 1);
+		assert.equal(sentUserMessages.length, 1);
+		assert.equal(sentMessages[0]!.options, undefined);
+		const message = sentMessages[0]!.message as { content: string; details?: SubagentNotifyDetails };
 		assert.match(message.content, /^Background task paused: \*\*parallel:a\+b\*\*/);
 		assert.match(message.content, /Async id: notify-paused-private/);
 		assert.match(
@@ -513,10 +562,11 @@ describe("registerSubagentNotify", () => {
 			/private-run|private-session|\/private\/|pid 43210|pgid 54321/,
 		);
 		assert.match(message.details?.resultPreview ?? "", /Children: 1 completed, 1 paused/);
+		assert.deepEqual(sentUserMessages[0], { content: NUDGE_TEXT, options: { deliverAs: "followUp" } });
 	});
 
 	it("bounds oversized share errors from a normalized chain in content and attached details", () => {
-		const { events, sent } = createPi();
+		const { events, sentMessages, sentUserMessages } = createPi();
 		const shareError = `share failed: ${"sensitive-detail-".repeat(400)}unbounded-tail`;
 
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
@@ -533,8 +583,10 @@ describe("registerSubagentNotify", () => {
 			sessionId: "session-1",
 		});
 
-		assert.equal(sent.length, 1);
-		const message = sent[0]!.message as { content: string; details?: SubagentNotifyDetails };
+		assert.equal(sentMessages.length, 1);
+		assert.equal(sentUserMessages.length, 1);
+		assert.equal(sentMessages[0]!.options, undefined);
+		const message = sentMessages[0]!.message as { content: string; details?: SubagentNotifyDetails };
 		assert.ok(message.details);
 		assert.equal(message.details.sessionLabel, "Session share error");
 		assert.ok((message.details.sessionValue?.length ?? 0) <= 500);
@@ -542,10 +594,11 @@ describe("registerSubagentNotify", () => {
 		assert.doesNotMatch(message.details.sessionValue ?? "", /unbounded-tail/);
 		assert.match(message.content, /Session share error: .*… \[reference truncated\]$/);
 		assert.doesNotMatch(message.content, /unbounded-tail/);
+		assert.deepEqual(sentUserMessages[0], { content: NUDGE_TEXT, options: { deliverAs: "followUp" } });
 	});
 
 	it("ignores completions for other or missing session ids", () => {
-		const { events, sent } = createPi("session-owner");
+		const { events, sentMessages, sentUserMessages } = createPi("session-owner");
 
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
 			id: "notify-other-session",
@@ -564,12 +617,76 @@ describe("registerSubagentNotify", () => {
 			cwd: "/repo",
 		});
 
-		assert.deepEqual(sent, []);
+		assert.deepEqual(sentMessages, []);
+		assert.deepEqual(sentUserMessages, []);
+	});
+
+	it("reads idleness live at send time and sends no nudge while streaming", () => {
+		const { events, sentMessages, sentUserMessages, lifecycleHandlers } = createPi("session-1");
+
+		// Capture a session context whose isIdle() reads live state, mirroring
+		// how Pi context methods are closures over the runner.
+		let idle = false;
+		lifecycleHandlers.get("session_start")?.({}, { isIdle: () => idle });
+
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+			id: "notify-streaming-1",
+			agent: "worker",
+			success: true,
+			summary: "Done while streaming",
+			exitCode: 0,
+			timestamp: 123,
+			sessionId: "session-1",
+		});
+
+		// Custom message sent, but NO nudge (streaming path)
+		assert.equal(sentMessages.length, 1);
+		assert.equal(sentUserMessages.length, 0, "no nudge must be sent when session is streaming");
+		assert.equal(sentMessages[0]!.options, undefined);
+		const content = (sentMessages[0]!.message as { content: string }).content;
+		assert.match(content, /^Background task completed: \*\*worker\*\*/);
+
+		// The same captured context reports idle again — no re-capture needed;
+		// the next completion must send the nudge.
+		idle = true;
+
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+			id: "notify-after-settle-1",
+			agent: "worker",
+			success: true,
+			summary: "Done after settle",
+			exitCode: 0,
+			timestamp: 124,
+			sessionId: "session-1",
+		});
+
+		assert.equal(sentMessages.length, 2);
+		assert.equal(sentUserMessages.length, 1, "nudge must be sent once the live idleness read reports idle");
+		assert.deepEqual(sentUserMessages[0], { content: NUDGE_TEXT, options: { deliverAs: "followUp" } });
+	});
+
+	it("nudges when no session context has been captured yet (assumed idle)", () => {
+		const { events, sentMessages, sentUserMessages } = createPi("session-1");
+
+		// No session_start fired — sendCompletion must assume idle and nudge.
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+			id: "notify-no-ctx-1",
+			agent: "worker",
+			success: true,
+			summary: "Done",
+			exitCode: 0,
+			timestamp: 123,
+			sessionId: "session-1",
+		});
+
+		assert.equal(sentMessages.length, 1);
+		assert.equal(sentUserMessages.length, 1);
+		assert.deepEqual(sentUserMessages[0], { content: NUDGE_TEXT, options: { deliverAs: "followUp" } });
 	});
 
 	it("emits failed completions immediately even while successes are held", () => {
 		const clock = createFakeClock();
-		const { events, sent } = createBatchingPi(clock);
+		const { events, sentMessages, sentUserMessages } = createBatchingPi(clock);
 
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, completionResult({ id: "ok-1", agent: "ok-1", summary: "ok-1 done" }));
 		events.emit(
@@ -579,18 +696,73 @@ describe("registerSubagentNotify", () => {
 
 		// The failure must arrive immediately, and the held success must be
 		// flushed ahead of it rather than waiting on the debounce timer.
-		assert.equal(sent.length, 2);
-		assert.match((sent[0]!.message as { content: string }).content, /Background task completed: \*\*ok-1\*\*/);
-		assert.match((sent[1]!.message as { content: string }).content, /Background task failed: \*\*fail-1\*\*/);
+		assert.equal(sentMessages.length, 2);
+		assert.match((sentMessages[0]!.message as { content: string }).content, /Background task completed: \*\*ok-1\*\*/);
+		assert.match((sentMessages[1]!.message as { content: string }).content, /Background task failed: \*\*fail-1\*\*/);
+		// Both messages sent without options (no triggerTurn)
+		assert.equal(sentMessages[0]!.options, undefined);
+		assert.equal(sentMessages[1]!.options, undefined);
+		// Exactly one nudge for the whole synchronous burst (flush + failure)
+		assert.equal(sentUserMessages.length, 1);
+		assert.deepEqual(sentUserMessages[0], { content: NUDGE_TEXT, options: { deliverAs: "followUp" } });
 
 		// No deferred emission should arrive later.
 		clock.advance(1000);
-		assert.equal(sent.length, 2);
+		assert.equal(sentMessages.length, 2);
+		assert.equal(sentUserMessages.length, 1);
+	});
+
+	it("sends exactly one nudge when a non-completion signal flushes held successes in one burst", () => {
+		const clock = createFakeClock();
+		const { events, sentMessages, sentUserMessages } = createBatchingPi(clock);
+
+		// Two pending successes are held by the batcher.
+		events.emit(
+			SUBAGENT_ASYNC_COMPLETE_EVENT,
+			completionResult({ id: "held-1", agent: "held-1", summary: "held-1 done" }),
+		);
+		events.emit(
+			SUBAGENT_ASYNC_COMPLETE_EVENT,
+			completionResult({ id: "held-2", agent: "held-2", summary: "held-2 done" }),
+		);
+		assert.equal(sentMessages.length, 0);
+		assert.equal(sentUserMessages.length, 0);
+
+		// A paused signal bypasses grouping: it flushes the held successes and
+		// then emits itself, all in one synchronous burst.
+		events.emit(
+			SUBAGENT_ASYNC_COMPLETE_EVENT,
+			completionResult({
+				id: "paused-signal",
+				agent: "paused-worker",
+				success: false,
+				state: "paused",
+				summary: "Paused after interrupt.",
+			}),
+		);
+
+		// Both messages delivered: the grouped successes and the paused signal.
+		assert.equal(sentMessages.length, 2);
+		assert.match(
+			(sentMessages[0]!.message as { content: string }).content,
+			/^Background tasks completed \(2\): \*\*held-1\*\*, \*\*held-2\*\*/,
+		);
+		assert.match(
+			(sentMessages[1]!.message as { content: string }).content,
+			/^Background task paused: \*\*paused-worker\*\*/,
+		);
+		// Exactly one nudge for the whole burst, carried by the trailing signal.
+		assert.equal(sentUserMessages.length, 1, "a flush+signal burst must produce exactly one nudge");
+		assert.deepEqual(sentUserMessages[0], { content: NUDGE_TEXT, options: { deliverAs: "followUp" } });
+
+		clock.advance(1000);
+		assert.equal(sentMessages.length, 2);
+		assert.equal(sentUserMessages.length, 1);
 	});
 
 	it("treats an outer-success grouped result with a failed child as an immediate failure", () => {
 		const clock = createFakeClock();
-		const { events, sent } = createBatchingPi(clock);
+		const { events, sentMessages, sentUserMessages } = createBatchingPi(clock);
 		const groupedFailure = completionResult({
 			id: "grouped-child-failure-1",
 			agent: "parallel:a+b",
@@ -609,23 +781,27 @@ describe("registerSubagentNotify", () => {
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, groupedFailure);
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, groupedFailure);
 
-		assert.equal(sent.length, 2);
-		assert.match((sent[0]!.message as { content: string }).content, /^Background task completed: \*\*held\*\*/);
-		const failureContent = (sent[1]!.message as { content: string }).content;
+		assert.equal(sentMessages.length, 2);
+		assert.match((sentMessages[0]!.message as { content: string }).content, /^Background task completed: \*\*held\*\*/);
+		const failureContent = (sentMessages[1]!.message as { content: string }).content;
 		assert.match(failureContent, /^Background task failed: \*\*parallel:a\+b\*\*/);
 		assert.match(failureContent, /Children: 1 completed, 1 failed/);
-		assert.deepEqual(
-			sent.map((entry) => entry.options),
-			[{ triggerTurn: true }, { triggerTurn: true }],
-		);
+		// No options on either sendMessage call
+		assert.equal(sentMessages[0]!.options, undefined);
+		assert.equal(sentMessages[1]!.options, undefined);
+		// One nudge for the whole burst: the flush's nudge is suppressed and the
+		// immediate failure carries it.
+		assert.equal(sentUserMessages.length, 1);
+		assert.deepEqual(sentUserMessages[0], { content: NUDGE_TEXT, options: { deliverAs: "followUp" } });
 
 		clock.advance(1000);
-		assert.equal(sent.length, 2, "the grouped failed run must notify exactly once");
+		assert.equal(sentMessages.length, 2, "the grouped failed run must notify exactly once");
+		assert.equal(sentUserMessages.length, 1);
 	});
 
 	it("delivers an outer-failed grouped result immediately instead of success batching", () => {
 		const clock = createFakeClock();
-		const { events, sent } = createBatchingPi(clock);
+		const { events, sentMessages, sentUserMessages } = createBatchingPi(clock);
 
 		events.emit(
 			SUBAGENT_ASYNC_COMPLETE_EVENT,
@@ -642,19 +818,24 @@ describe("registerSubagentNotify", () => {
 			}),
 		);
 
-		assert.equal(sent.length, 1);
-		const content = (sent[0]!.message as { content: string }).content;
+		assert.equal(sentMessages.length, 1);
+		assert.equal(sentMessages[0]!.options, undefined);
+		const content = (sentMessages[0]!.message as { content: string }).content;
 		assert.match(content, /^Background task failed: \*\*parallel:a\+b\*\*/);
 		assert.ok(
 			content.indexOf("runner disappeared after children completed") < content.indexOf("Children: 2 completed"),
 		);
+		// Nudge sent (idle, immediate path)
+		assert.equal(sentUserMessages.length, 1);
+		assert.deepEqual(sentUserMessages[0], { content: NUDGE_TEXT, options: { deliverAs: "followUp" } });
 		clock.advance(1000);
-		assert.equal(sent.length, 1);
+		assert.equal(sentMessages.length, 1);
+		assert.equal(sentUserMessages.length, 1);
 	});
 
 	it("rechecks resumable session existence when a deferred success is delivered", () => {
 		const clock = createFakeClock();
-		const { events, sent } = createBatchingPi(clock);
+		const { events, sentMessages, sentUserMessages } = createBatchingPi(clock);
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "notify-deferred-session-"));
 		const sessionFile = path.join(resultsDir, "session.jsonl");
 		fs.writeFileSync(sessionFile, "session\n", "utf-8");
@@ -667,22 +848,26 @@ describe("registerSubagentNotify", () => {
 					sessionFile,
 				}),
 			);
-			assert.equal(sent.length, 0);
+			assert.equal(sentMessages.length, 0);
 			fs.unlinkSync(sessionFile);
 			clock.advance(150);
 		} finally {
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}
 
-		assert.equal(sent.length, 1);
-		const content = (sent[0]!.message as { content: string }).content;
+		assert.equal(sentMessages.length, 1);
+		assert.equal(sentMessages[0]!.options, undefined);
+		const content = (sentMessages[0]!.message as { content: string }).content;
 		assert.match(content, /Async id: deferred-session-check/);
 		assert.doesNotMatch(content, /subagent\({ action: "resume"/);
+		// Nudge sent (idle path, deferred batch)
+		assert.equal(sentUserMessages.length, 1);
+		assert.deepEqual(sentUserMessages[0], { content: NUDGE_TEXT, options: { deliverAs: "followUp" } });
 	});
 
-	it("groups sibling successes with each normalized run's share line", () => {
+	it("groups sibling successes and emits exactly one nudge per flush", () => {
 		const clock = createFakeClock();
-		const { events, sent } = createBatchingPi(clock);
+		const { events, sentMessages, sentUserMessages } = createBatchingPi(clock);
 
 		events.emit(
 			SUBAGENT_ASYNC_COMPLETE_EVENT,
@@ -710,47 +895,58 @@ describe("registerSubagentNotify", () => {
 			SUBAGENT_ASYNC_COMPLETE_EVENT,
 			completionResult({ id: "g-3", agent: "gamma", summary: "gamma done", sessionId: "session-a" }),
 		);
-		assert.equal(sent.length, 0);
+		assert.equal(sentMessages.length, 0);
+		assert.equal(sentUserMessages.length, 0);
 
 		clock.advance(150);
-		assert.equal(sent.length, 1);
-		const groupedMessage = sent[0]!.message as { content: string; details?: SubagentNotifyDetails };
+		// One sendMessage for the grouped batch, one nudge (idle, one per flush — not per subagent)
+		assert.equal(sentMessages.length, 1);
+		assert.equal(sentUserMessages.length, 1, "exactly one nudge per flush for grouped completions");
+		const groupedMessage = sentMessages[0]!.message as { content: string; details?: SubagentNotifyDetails };
 		const content = groupedMessage.content;
 		assert.equal(groupedMessage.details, undefined, "grouped message shape must remain unchanged");
 		assert.match(content, /^Background tasks completed \(3\): \*\*alpha\*\*, \*\*beta\*\*, \*\*gamma\*\*/);
 		assert.match(content, /1\. alpha\nAsync id: g-1\nalpha done\nSession: https:\/\/share\/alpha/);
 		assert.match(content, /2\. beta\nAsync id: g-2\nbeta done\nSession: https:\/\/share\/beta/);
 		assert.match(content, /3\. gamma\nAsync id: g-3\ngamma done/);
-		assert.deepEqual(sent[0]!.options, { triggerTurn: true });
+		// No options on sendMessage
+		assert.equal(sentMessages[0]!.options, undefined);
+		// Nudge once for the whole grouped flush
+		assert.deepEqual(sentUserMessages[0], { content: NUDGE_TEXT, options: { deliverAs: "followUp" } });
 	});
 
 	it("retains the owner batcher so late siblings use the shorter straggler debounce", () => {
 		const clock = createFakeClock();
-		const { events, sent } = createBatchingPi(clock, "session-a");
+		const { events, sentMessages, sentUserMessages } = createBatchingPi(clock, "session-a");
 
 		events.emit(
 			SUBAGENT_ASYNC_COMPLETE_EVENT,
 			completionResult({ id: "first-group", agent: "alpha", sessionId: "session-a" }),
 		);
 		clock.advance(150);
-		assert.equal(sent.length, 1);
+		assert.equal(sentMessages.length, 1);
+		assert.equal(sentUserMessages.length, 1);
 
 		events.emit(
 			SUBAGENT_ASYNC_COMPLETE_EVENT,
 			completionResult({ id: "late-sibling", agent: "beta", sessionId: "session-a" }),
 		);
 		clock.advance(74);
-		assert.equal(sent.length, 1, "the straggler must remain held before the shorter debounce expires");
+		assert.equal(sentMessages.length, 1, "the straggler must remain held before the shorter debounce expires");
+		assert.equal(sentUserMessages.length, 1);
 		clock.advance(1);
 
-		assert.equal(sent.length, 2);
-		assert.match((sent[1]!.message as { content: string }).content, /^Background task completed: \*\*beta\*\*/);
-		assert.deepEqual(sent[1]!.options, { triggerTurn: true });
+		assert.equal(sentMessages.length, 2);
+		assert.match((sentMessages[1]!.message as { content: string }).content, /^Background task completed: \*\*beta\*\*/);
+		// No options on sendMessage; nudge sent (idle)
+		assert.equal(sentMessages[1]!.options, undefined);
+		assert.equal(sentUserMessages.length, 2);
+		assert.deepEqual(sentUserMessages[1], { content: NUDGE_TEXT, options: { deliverAs: "followUp" } });
 	});
 
 	it("drops a deferred success batch when its owning session is no longer current", () => {
 		const clock = createFakeClock();
-		const { events, sent, state } = createBatchingPi(clock, "session-a");
+		const { events, sentMessages, sentUserMessages, state } = createBatchingPi(clock, "session-a");
 
 		events.emit(
 			SUBAGENT_ASYNC_COMPLETE_EVENT,
@@ -761,17 +957,18 @@ describe("registerSubagentNotify", () => {
 				sessionId: "session-a",
 			}),
 		);
-		assert.equal(sent.length, 0);
+		assert.equal(sentMessages.length, 0);
 
 		state.currentSessionId = "session-b";
 		clock.advance(150);
 
-		assert.equal(sent.length, 0, "a stale owner batch must neither send nor trigger a turn in the new session");
+		assert.equal(sentMessages.length, 0, "a stale owner batch must neither send nor trigger a turn in the new session");
+		assert.equal(sentUserMessages.length, 0);
 	});
 
 	it("flushes a deferred owner success during session shutdown without triggering a new turn or duplicating it later", () => {
 		const clock = createFakeClock();
-		const { events, sent, state, lifecycleHandlers } = createBatchingPi(clock, "session-a");
+		const { events, sentMessages, sentUserMessages, state, lifecycleHandlers } = createBatchingPi(clock, "session-a");
 
 		events.emit(
 			SUBAGENT_ASYNC_COMPLETE_EVENT,
@@ -782,28 +979,31 @@ describe("registerSubagentNotify", () => {
 				sessionId: "session-a",
 			}),
 		);
-		assert.equal(sent.length, 0);
+		assert.equal(sentMessages.length, 0);
 
 		lifecycleHandlers.get("session_shutdown")?.({ reason: "switch" });
-		assert.equal(sent.length, 1);
+		assert.equal(sentMessages.length, 1);
 		assert.match(
-			(sent[0]!.message as { content: string }).content,
+			(sentMessages[0]!.message as { content: string }).content,
 			/^Background task completed: \*\*session-a-worker\*\*/,
 		);
-		assert.deepEqual(sent[0]!.options, { triggerTurn: false });
+		// Shutdown flush: triggerTurn:false → no nudge
+		assert.equal(sentMessages[0]!.options, undefined);
+		assert.equal(sentUserMessages.length, 0, "no nudge must be sent during session shutdown flush");
 
 		state.currentSessionId = "session-b";
 		clock.advance(1000);
 		assert.equal(
-			sent.length,
+			sentMessages.length,
 			1,
 			"the shutdown flush must persist exactly once and never re-deliver into the replacement session",
 		);
+		assert.equal(sentUserMessages.length, 0);
 	});
 
 	it("ignores successes from other sessions instead of grouping them", () => {
 		const clock = createFakeClock();
-		const { events, sent } = createBatchingPi(clock, "session-a");
+		const { events, sentMessages, sentUserMessages } = createBatchingPi(clock, "session-a");
 
 		events.emit(
 			SUBAGENT_ASYNC_COMPLETE_EVENT,
@@ -815,14 +1015,18 @@ describe("registerSubagentNotify", () => {
 		);
 		clock.advance(150);
 
-		assert.equal(sent.length, 1);
-		assert.match((sent[0]!.message as { content: string }).content, /^Background task completed: \*\*alpha\*\*/);
-		assert.doesNotMatch((sent[0]!.message as { content: string }).content, /beta done/);
+		assert.equal(sentMessages.length, 1);
+		assert.match(
+			(sentMessages[0]!.message as { content: string }).content,
+			/^Background task completed: \*\*alpha\*\*/,
+		);
+		assert.doesNotMatch((sentMessages[0]!.message as { content: string }).content, /beta done/);
+		assert.equal(sentUserMessages.length, 1);
 	});
 
 	it("does not let another session failure flush held successes", () => {
 		const clock = createFakeClock();
-		const { events, sent } = createBatchingPi(clock, "session-a");
+		const { events, sentMessages, sentUserMessages } = createBatchingPi(clock, "session-a");
 
 		events.emit(
 			SUBAGENT_ASYNC_COMPLETE_EVENT,
@@ -839,12 +1043,16 @@ describe("registerSubagentNotify", () => {
 				sessionId: "session-b",
 			}),
 		);
-		assert.equal(sent.length, 0);
+		assert.equal(sentMessages.length, 0);
 
 		clock.advance(150);
-		assert.equal(sent.length, 1);
-		assert.match((sent[0]!.message as { content: string }).content, /^Background task completed: \*\*alpha\*\*/);
-		assert.doesNotMatch((sent[0]!.message as { content: string }).content, /boom/);
+		assert.equal(sentMessages.length, 1);
+		assert.match(
+			(sentMessages[0]!.message as { content: string }).content,
+			/^Background task completed: \*\*alpha\*\*/,
+		);
+		assert.doesNotMatch((sentMessages[0]!.message as { content: string }).content, /boom/);
+		assert.equal(sentUserMessages.length, 1);
 	});
 });
 

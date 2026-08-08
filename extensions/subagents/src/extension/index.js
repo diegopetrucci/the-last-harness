@@ -519,12 +519,15 @@ export default function registerSubagentExtension(pi) {
     const existingVisibleControlNotices = globalStore[controlNoticeSeenStoreKey];
     const visibleControlNotices = existingVisibleControlNotices instanceof Set ? existingVisibleControlNotices : new Set();
     globalStore[controlNoticeSeenStoreKey] = visibleControlNotices;
+    let controlNoticeSessionContext = null;
+    const isControlNoticeIdle = () => controlNoticeSessionContext?.isIdle() ?? true;
     const controlEventHandler = (payload) => {
         handleSubagentControlNotice({
             pi,
             state,
             visibleControlNotices,
             details: payload,
+            isIdle: isControlNoticeIdle,
         });
     };
     const eventUnsubscribes = [
@@ -576,6 +579,7 @@ export default function registerSubagentExtension(pi) {
         primeExistingResults();
     };
     pi.on("session_start", (_event, ctx) => {
+        controlNoticeSessionContext = ctx;
         removeLiveDetailTerminalInput();
         resetSessionState(ctx);
         installLiveDetailTerminalInput(ctx);

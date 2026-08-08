@@ -23,6 +23,7 @@ import {
 	toolBudgetSoftNudge,
 } from "./tool-budget.ts";
 import type { JsonSchemaObject, ResolvedToolBudget } from "../../shared/types.ts";
+import { PARENT_ONLY_NUDGE_TEXTS } from "./nudge-texts.ts";
 
 const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
 const SUBAGENT_INHERIT_SKILLS_ENV = "PI_SUBAGENT_INHERIT_SKILLS";
@@ -118,9 +119,32 @@ export function rewriteSubagentPrompt(
 	return `${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}${structured}\n\n${rewritten}`;
 }
 
+/**
+ * Extracts the text content from a user message, handling both a plain string
+ * and the single-block [{type:"text",text}] shape.
+ */
+function userMessageTextContent(message: unknown): string | undefined {
+	const m = message as { role?: string; content?: unknown };
+	if (m?.role !== "user") return undefined;
+	if (typeof m.content === "string") return m.content.trim();
+	if (Array.isArray(m.content) && m.content.length === 1) {
+		const block = m.content[0] as { type?: string; text?: unknown };
+		if (block?.type === "text" && typeof block.text === "string") return block.text.trim();
+	}
+	return undefined;
+}
+
 function isParentOnlySubagentMessage(message: unknown): boolean {
 	const m = message as { role?: string; customType?: string };
-	return m?.role === "custom" && typeof m.customType === "string" && PARENT_ONLY_CUSTOM_MESSAGE_TYPES.has(m.customType);
+	if (m?.role === "custom" && typeof m.customType === "string" && PARENT_ONLY_CUSTOM_MESSAGE_TYPES.has(m.customType))
+		return true;
+	// Strip wake-up nudge user messages sent by the background notification and
+	// control-notice senders. These reference the paired custom message (which is
+	// already stripped above) and must not leak into forked child context.
+	// IMPORTANT: new nudge texts must be registered in nudge-texts.ts.
+	const text = userMessageTextContent(message);
+	if (text !== undefined && PARENT_ONLY_NUDGE_TEXTS.has(text)) return true;
+	return false;
 }
 
 function isSubagentToolResultMessage(message: unknown): boolean {

@@ -10,7 +10,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildCompletionKey, getGlobalSeenMap, markSeenWithTtl } from "./completion-dedupe.ts";
 import {
 	type CompletionBatchConfig,
@@ -20,6 +20,7 @@ import {
 } from "./completion-batcher.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, type SubagentState } from "../../shared/types.ts";
 import { isProtectedPausedLifecycle } from "../shared/lifecycle-privacy.ts";
+import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.ts";
 
 export const MAX_COMPLETION_MESSAGE_CHARS = 8_000;
 const MAX_DISPLAYED_CHILDREN = 8;
@@ -421,10 +422,12 @@ export function formatGroupedCompletion(details: SubagentNotifyDetails[]): strin
 	return blocks.join("\n").trimEnd();
 }
 
+const NUDGE_TEXT = BACKGROUND_COMPLETION_NUDGE_TEXT;
+
 function sendCompletion(
-	pi: Pick<ExtensionAPI, "sendMessage">,
+	pi: Pick<ExtensionAPI, "sendMessage" | "sendUserMessage">,
 	details: SubagentNotifyDetails[],
-	options: { triggerTurn: boolean } = { triggerTurn: true },
+	options: { triggerTurn: boolean; isIdle?: () => boolean } = { triggerTurn: true },
 ): void {
 	if (details.length === 0) return;
 	const formatted = details.length === 1 ? formatSingleCompletion(details[0]!) : formatGroupedCompletion(details);
@@ -447,15 +450,24 @@ function sendCompletion(
 						: {}),
 				}
 			: undefined;
-	pi.sendMessage(
-		{
-			customType: "subagent-notify",
-			content,
-			display: true,
-			...(structuredDetails ? { details: structuredDetails } : {}),
-		},
-		options,
-	);
+	pi.sendMessage({
+		customType: "subagent-notify",
+		content,
+		display: true,
+		...(structuredDetails ? { details: structuredDetails } : {}),
+	});
+	// When the parent is idle and a turn is expected, wake the agent through
+	// prompt() so before_agent_start fires and the TLH system prompt is
+	// restored. deliverAs:'followUp' is safe under a streaming race: it
+	// queues a benign followUp rather than throwing. When streaming, or during
+	// a lifecycle flush (triggerTurn:false), the custom message alone is
+	// sufficient — Pi steers a streaming turn, and the shutdown path sends no
+	// new turn. Idleness is read live at send time; when no session context
+	// has been captured yet, assume idle (the nudge degrades to a benign
+	// followUp if that assumption is wrong).
+	if (options.triggerTurn && (options.isIdle?.() ?? true)) {
+		pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
+	}
 }
 
 function completionBatchKey(result: SubagentResult): string {
@@ -550,6 +562,22 @@ export default function registerSubagentNotify(
 		}
 	}
 
+	// Capture a session context so idleness can be read live at send time.
+	// Context methods are closures over the runner, so a context captured once
+	// keeps returning current state. A hand-rolled streaming flag would stick
+	// if prompt() threw between before_agent_start and the run starting,
+	// silently suppressing every future nudge.
+	let sessionContext: Pick<ExtensionContext, "isIdle"> | null = null;
+	const isIdle = () => sessionContext?.isIdle() ?? true;
+	pi.on("session_start", (_event, ctx) => {
+		sessionContext = ctx;
+	});
+
+	// Ensures at most one nudge per synchronous delivery burst: when a
+	// non-completion signal flushes held successes and then emits itself, only
+	// the trailing (unconditional) sendCompletion carries the nudge.
+	let suppressFlushNudge = false;
+
 	const seen = getGlobalSeenMap("__pi_subagents_notify_seen__");
 	const ttlMs = 10 * 60 * 1000;
 	const nowFn = options.now ?? Date.now;
@@ -583,7 +611,7 @@ export default function registerSubagentNotify(
 						batchers.delete(batchKey);
 						return;
 					}
-					sendCompletion(pi, items, { triggerTurn: !lifecycleFlush });
+					sendCompletion(pi, items, { triggerTurn: !lifecycleFlush && !suppressFlushNudge, isIdle });
 				},
 				...(options.timers ? { timers: options.timers } : {}),
 				now: nowFn,
@@ -595,8 +623,15 @@ export default function registerSubagentNotify(
 			// Failures and paused runs bypass grouping. Flush any held
 			// successes for the same owner first so they are not stranded
 			// behind this signal, then emit the non-completion result immediately.
-			batcherEntry.batcher.flush();
-			sendCompletion(pi, [details]);
+			// The flush's nudge is suppressed so the burst produces exactly one
+			// nudge, carried by the unconditional sendCompletion below.
+			suppressFlushNudge = true;
+			try {
+				batcherEntry.batcher.flush();
+			} finally {
+				suppressFlushNudge = false;
+			}
+			sendCompletion(pi, [details], { triggerTurn: true, isIdle });
 			return;
 		}
 		batcherEntry.batcher.push(details);

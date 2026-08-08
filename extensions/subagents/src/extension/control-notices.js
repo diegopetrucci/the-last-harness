@@ -1,5 +1,7 @@
 import { controlNotificationKey, formatControlNoticeMessage } from "../runs/shared/subagent-control.js";
+import { CONTROL_NOTICE_NUDGE_TEXT } from "../runs/shared/nudge-texts.js";
 export const SUBAGENT_CONTROL_MESSAGE_TYPE = "subagent_control_notice";
+const NUDGE_TEXT = CONTROL_NOTICE_NUDGE_TEXT;
 export function controlNoticeTarget(details) {
     return details.childIntercomTarget;
 }
@@ -35,7 +37,10 @@ function deliverControlNotice(input) {
         content: noticeText,
         display: true,
         details: { ...input.details, childIntercomTarget, noticeText },
-    }, { triggerTurn: input.details.source !== "foreground" });
+    });
+    if (input.details.source !== "foreground" && (input.isIdle?.() ?? true)) {
+        input.pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
+    }
 }
 function isForegroundNoticeStillActionable(state, details) {
     const control = state.foregroundControls.get(details.event.runId);

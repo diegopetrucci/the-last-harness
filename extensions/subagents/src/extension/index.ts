@@ -712,12 +712,19 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const visibleControlNotices =
 		existingVisibleControlNotices instanceof Set ? (existingVisibleControlNotices as Set<string>) : new Set<string>();
 	globalStore[controlNoticeSeenStoreKey] = visibleControlNotices;
+	// Capture a session context so idleness can be read live at send time.
+	// Mirrors the pattern in registerSubagentNotify (notify.ts): a hand-rolled
+	// streaming flag would stick if prompt() threw between before_agent_start
+	// and the run starting, silently suppressing every future nudge.
+	let controlNoticeSessionContext: Pick<ExtensionContext, "isIdle"> | null = null;
+	const isControlNoticeIdle = () => controlNoticeSessionContext?.isIdle() ?? true;
 	const controlEventHandler = (payload: unknown) => {
 		handleSubagentControlNotice({
 			pi,
 			state,
 			visibleControlNotices,
 			details: payload as SubagentControlMessageDetails,
+			isIdle: isControlNoticeIdle,
 		});
 	};
 	const eventUnsubscribes = [
@@ -777,6 +784,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 
 	pi.on("session_start", (_event, ctx) => {
+		controlNoticeSessionContext = ctx;
 		removeLiveDetailTerminalInput();
 		resetSessionState(ctx);
 		installLiveDetailTerminalInput(ctx);

@@ -5,6 +5,7 @@ import { consumeChildMessageRequestsFromDir, writeChildMessageRequestToDir, } fr
 import { SUBAGENT_STEER_INBOX_ENV } from "./pi-args.js";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue, } from "./structured-output.js";
 import { TOOL_BUDGET_ENV, decodeToolBudgetEnv, shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge, } from "./tool-budget.js";
+import { PARENT_ONLY_NUDGE_TEXTS } from "./nudge-texts.js";
 const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
 const SUBAGENT_INHERIT_SKILLS_ENV = "PI_SUBAGENT_INHERIT_SKILLS";
 export const SUBAGENT_INTERCOM_SESSION_NAME_ENV = "PI_SUBAGENT_INTERCOM_SESSION_NAME";
@@ -86,9 +87,27 @@ export function rewriteSubagentPrompt(prompt, options) {
     const structured = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] ? `\n\n${STRUCTURED_OUTPUT_INSTRUCTIONS}` : "";
     return `${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}${structured}\n\n${rewritten}`;
 }
+function userMessageTextContent(message) {
+    const m = message;
+    if (m?.role !== "user")
+        return undefined;
+    if (typeof m.content === "string")
+        return m.content.trim();
+    if (Array.isArray(m.content) && m.content.length === 1) {
+        const block = m.content[0];
+        if (block?.type === "text" && typeof block.text === "string")
+            return block.text.trim();
+    }
+    return undefined;
+}
 function isParentOnlySubagentMessage(message) {
     const m = message;
-    return m?.role === "custom" && typeof m.customType === "string" && PARENT_ONLY_CUSTOM_MESSAGE_TYPES.has(m.customType);
+    if (m?.role === "custom" && typeof m.customType === "string" && PARENT_ONLY_CUSTOM_MESSAGE_TYPES.has(m.customType))
+        return true;
+    const text = userMessageTextContent(message);
+    if (text !== undefined && PARENT_ONLY_NUDGE_TEXTS.has(text))
+        return true;
+    return false;
 }
 function isSubagentToolResultMessage(message) {
     const m = message;
