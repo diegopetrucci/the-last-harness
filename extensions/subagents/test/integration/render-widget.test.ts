@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { KeybindingsManager } from "../../../../node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js";
-import { getKeybindings, setKeybindings } from "@earendil-works/pi-tui";
+import { Container, Text, getKeybindings, setKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import {
 	createSubagentLiveDetailController,
 	type SubagentLiveDetailController,
 } from "../../src/shared/subagent-shortcuts.ts";
+import { WHIMSICAL_THINKING_PHRASES, whimsicalThinkingPhrase } from "../../src/tui/whimsical-phrases.ts";
 
 const { buildWidgetLines, clearLegacyResultAnimationTimer, renderWidget } = (await import(
 	"../../src/tui/render.ts"
@@ -78,6 +79,32 @@ function renderWidgetLines(widget: unknown, width = 180): string[] {
 		undefined,
 		theme,
 	).render(width);
+}
+
+function widgetContent(line: string): string {
+	return line.slice(1).trimEnd();
+}
+
+function assertWidgetContentFits(line: string, width: number): void {
+	assert.ok(
+		visibleWidth(widgetContent(line)) <= Math.max(1, width - 2),
+		`widget content should fit ${Math.max(1, width - 2)} columns: ${JSON.stringify(line)}`,
+	);
+}
+
+function renderWithRealPiTui(lines: string[], width: number): string[] {
+	const container = new Container();
+	for (const line of lines) container.addChild(new Text(line, 1, 0));
+	return container.render(width);
+}
+
+function renderWidgetHarnessLines(widget: unknown): string[] {
+	const component = (widget as (_tui: unknown, widgetTheme: typeof theme) => Container)(undefined, theme);
+	return component.children.map((child) => {
+		const text = (child as unknown as { text?: unknown }).text;
+		assert.equal(typeof text, "string", "widget harness should expose Text children");
+		return text as string;
+	});
 }
 
 function restoreDescriptor(target: object, key: string, descriptor: PropertyDescriptor | undefined): void {
@@ -183,8 +210,10 @@ describe("subagent async widget rendering", () => {
 					agents: ["first"],
 					currentStep: 0,
 					stepsTotal: 1,
+					turnCount: 5,
 					toolCount: 1,
 					totalTokens: { input: 8000, output: 4000, cache: 0, total: 12_000 },
+					lastActivityAt: now,
 					startedAt: now - 2000,
 					updatedAt: now,
 				},
@@ -196,7 +225,9 @@ describe("subagent async widget rendering", () => {
 					agents: ["second"],
 					currentStep: 0,
 					stepsTotal: 1,
+					turnCount: 6,
 					toolCount: 2,
+					lastActivityAt: now - 2_000,
 					startedAt: now - 3000,
 					updatedAt: now,
 				},
@@ -205,9 +236,11 @@ describe("subagent async widget rendering", () => {
 			180,
 		).join("\n");
 
-		assert.match(text, /first · 1 tool use · 12k token · 2\.0s/);
-		assert.match(text, /second · 2 tool uses · 3\.0s/);
-		assert.doesNotMatch(text, /\bsteps?\b|\bchain\b/i);
+		assert.match(text, /first/);
+		assert.match(text, /second/);
+		assert.match(text, new RegExp(`⎿  ${escapeRegExp(whimsicalThinkingPhrase(5))}\\n[^\\n]*active now`));
+		assert.match(text, new RegExp(`⎿  ${escapeRegExp(whimsicalThinkingPhrase(6))}\\n[^\\n]*active 2s ago`));
+		assert.doesNotMatch(text, /5 turns|6 turns|1 tool use|2 tool uses|12k token|3\.0s|\bsteps?\b|\bchain\b/i);
 	});
 
 	it("shows the resolved tk ticket title before the live-detail hint", () => {
@@ -298,7 +331,7 @@ describe("subagent async widget rendering", () => {
 
 		assert.equal(text.match(/working on tk: Show active tk title/g)?.length, 1);
 		assert.doesNotMatch(text, /plain[\s\S]*working on tk:/);
-		assert.ok(text.indexOf("working on tk: Show active tk title") < text.indexOf("⎿  thinking…"));
+		assert.ok(text.indexOf("working on tk: Show active tk title") < text.indexOf("⎿  read"));
 	});
 
 	it("uses parallel running/done wording for async jobs with parallel groups", () => {
@@ -323,7 +356,7 @@ describe("subagent async widget rendering", () => {
 
 		const text = lines.join("\n");
 		assert.match(text, /3 agents running · 0\/3 done/);
-		assert.match(text, /⎿  thinking…/);
+		assert.match(text, new RegExp(`⎿  ${escapeRegExp(whimsicalThinkingPhrase(0))}`));
 		assert.doesNotMatch(text, /parallel · scout, reviewer, worker/);
 		assert.doesNotMatch(text, /step 1\/3/);
 	});
@@ -415,6 +448,383 @@ describe("subagent async widget rendering", () => {
 		assert.doesNotMatch(text, /\/private\/|54321|cleanup failed/);
 	});
 
+	it("suppresses whimsical phrases while surfacing async and parallel health warnings", () => {
+		const now = 20_000;
+		const jobs = [
+			{
+				asyncId: "health-attention",
+				asyncDir: "/tmp/health-attention",
+				status: "running",
+				mode: "single",
+				agents: ["attention"],
+				activityState: "needs_attention",
+				turnCount: 11,
+				lastActivityAt: now - 5_000,
+				updatedAt: now,
+			},
+			{
+				asyncId: "health-long-running",
+				asyncDir: "/tmp/health-long-running",
+				status: "running",
+				mode: "single",
+				agents: ["long-running"],
+				activityState: "active_long_running",
+				turnCount: 12,
+				lastActivityAt: now - 5_000,
+				updatedAt: now,
+			},
+			{
+				asyncId: "health-parallel",
+				asyncDir: "/tmp/health-parallel",
+				status: "running",
+				mode: "parallel",
+				agents: ["parallel-worker"],
+				activeParallelGroup: true,
+				runningSteps: 1,
+				completedSteps: 0,
+				stepsTotal: 1,
+				updatedAt: now,
+				steps: [
+					{
+						index: 0,
+						agent: "parallel-worker",
+						status: "running",
+						activityState: "needs_attention",
+						turnCount: 13,
+						toolCount: 7,
+						tokens: { input: 8_000, output: 5_000, cache: 0, total: 13_000 },
+						durationMs: 9_000,
+						lastActivityAt: now - 5_000,
+					},
+				],
+			},
+		];
+		const text = buildWidgetLines(jobs, theme, 180).join("\n");
+
+		assert.match(text, /no activity for 5s/);
+		assert.match(text, /active but long-running · last activity 5s ago/);
+		for (const turnCount of [11, 12, 13])
+			assert.doesNotMatch(text, new RegExp(escapeRegExp(whimsicalThinkingPhrase(turnCount))));
+
+		const expanded = buildWidgetLines(jobs, theme, 180, true).join("\n");
+		assert.match(
+			expanded,
+			/Agent 1\/1: parallel-worker · running · no activity for 5s · 13 turns · 7 tools · 13k token · 9\.0s/,
+		);
+		assert.doesNotMatch(expanded, new RegExp(escapeRegExp(whimsicalThinkingPhrase(13))));
+	});
+
+	it("suppresses health phrases in the constrained progressive row", () => {
+		resetWidgetLayout();
+		withStdoutSize(22, 120, () => {
+			const now = 20_000;
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [
+				{
+					asyncId: "progressive-health",
+					asyncDir: "/tmp/progressive-health",
+					status: "running",
+					mode: "single",
+					agents: ["attention"],
+					activityState: "needs_attention",
+					turnCount: 21,
+					lastActivityAt: now - 5_000,
+					updatedAt: now,
+				},
+				{
+					asyncId: "progressive-read",
+					asyncDir: "/tmp/progressive-read",
+					status: "running",
+					mode: "single",
+					agents: ["reader"],
+					currentTool: "read",
+				},
+				{
+					asyncId: "progressive-edit",
+					asyncDir: "/tmp/progressive-edit",
+					status: "running",
+					mode: "single",
+					agents: ["editor"],
+					currentTool: "edit",
+				},
+			]);
+			const text = renderWidgetLines(ui.widgets.at(-1)).join("\n");
+			assert.match(text, /attention · running · no activity for 5s/);
+			assert.doesNotMatch(text, new RegExp(escapeRegExp(whimsicalThinkingPhrase(21))));
+		});
+		resetWidgetLayout();
+	});
+
+	it("keeps pausing visible when compact health warnings are present", () => {
+		const now = 20_000;
+		const parallelText = buildWidgetLines(
+			[
+				{
+					asyncId: "pausing-health-parallel",
+					asyncDir: "/tmp/pausing-health-parallel",
+					status: "running",
+					mode: "parallel",
+					agents: ["worker"],
+					activeParallelGroup: true,
+					runningSteps: 1,
+					completedSteps: 0,
+					stepsTotal: 1,
+					updatedAt: now,
+					steps: [
+						{
+							index: 0,
+							agent: "worker",
+							status: "running",
+							interruptRequestedAt: now - 100,
+							activityState: "needs_attention",
+							turnCount: 23,
+							lastActivityAt: now - 5_000,
+						},
+					],
+				},
+				{
+					asyncId: "pausing-health-finished",
+					asyncDir: "/tmp/pausing-health-finished",
+					status: "complete",
+					mode: "single",
+					agents: ["done"],
+				},
+			],
+			theme,
+			180,
+		).join("\n");
+		assert.match(parallelText, /Agent 1\/1: worker · pausing · pausing…/);
+		const parallelStep = parallelText.split("\n").find((line) => line.includes("Agent 1/1")) ?? "";
+		assert.doesNotMatch(parallelStep, /no activity for|active but long-running/);
+		assert.doesNotMatch(parallelText, new RegExp(escapeRegExp(whimsicalThinkingPhrase(23))));
+
+		resetWidgetLayout();
+		withStdoutSize(22, 120, () => {
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [
+				{
+					asyncId: "pausing-health-progressive",
+					asyncDir: "/tmp/pausing-health-progressive",
+					status: "running",
+					mode: "single",
+					agents: ["pausing-worker"],
+					interruptRequestedAt: now - 100,
+					activityState: "needs_attention",
+					turnCount: 24,
+					lastActivityAt: now - 5_000,
+					updatedAt: now,
+				},
+				{
+					asyncId: "pausing-health-read",
+					asyncDir: "/tmp/pausing-health-read",
+					status: "running",
+					mode: "single",
+					agents: ["reader"],
+					currentTool: "read",
+				},
+				{
+					asyncId: "pausing-health-edit",
+					asyncDir: "/tmp/pausing-health-edit",
+					status: "running",
+					mode: "single",
+					agents: ["editor"],
+					currentTool: "edit",
+				},
+			]);
+			const text = renderWidgetLines(ui.widgets.at(-1)).join("\n");
+			const progressiveRow = text.split("\n").find((line) => line.includes("pausing-worker")) ?? "";
+			assert.match(progressiveRow, /pausing-worker · running · pausing…/);
+			assert.doesNotMatch(progressiveRow, /no activity for|active but long-running/);
+			assert.doesNotMatch(progressiveRow, new RegExp(escapeRegExp(whimsicalThinkingPhrase(24))));
+		});
+		resetWidgetLayout();
+	});
+
+	it("keeps step-level pausing over each health warning in real progressive rows", () => {
+		const now = 20_000;
+		const healthCases = [
+			{ state: "needs_attention", turnCount: 25, warning: /no activity for 5s/ },
+			{ state: "active_long_running", turnCount: 26, warning: /active but long-running · last activity 5s ago/ },
+		] as const;
+
+		for (const { state, turnCount, warning } of healthCases) {
+			resetWidgetLayout();
+			withStdoutSize(22, 120, () => {
+				const ui = createUiContext();
+				renderWidget(ui.ctx as never, [
+					{
+						asyncId: `step-pausing-${state}`,
+						asyncDir: `/tmp/step-pausing-${state}`,
+						status: "running",
+						mode: "single",
+						agents: ["step-pausing-worker"],
+						updatedAt: now,
+						steps: [
+							{
+								index: 0,
+								agent: "step-pausing-worker",
+								status: "running",
+								interruptRequestedAt: now - 100,
+								activityState: state,
+								turnCount,
+								lastActivityAt: now - 5_000,
+							},
+						],
+					},
+					{
+						asyncId: `step-pausing-read-${state}`,
+						asyncDir: "/tmp/step-pausing-read",
+						status: "running",
+						mode: "single",
+						agents: ["reader"],
+						currentTool: "read",
+					},
+					{
+						asyncId: `step-pausing-edit-${state}`,
+						asyncDir: "/tmp/step-pausing-edit",
+						status: "running",
+						mode: "single",
+						agents: ["editor"],
+						currentTool: "edit",
+					},
+				]);
+
+				const harnessLines = renderWidgetHarnessLines(ui.widgets.at(-1));
+				const harnessRow = harnessLines.find((line) => line.includes("step-pausing-worker")) ?? "";
+				assert.match(harnessRow, /step-pausing-worker · running · pausing…/);
+				assert.doesNotMatch(harnessRow, warning);
+				assert.doesNotMatch(harnessRow, /needs attention/);
+				assert.doesNotMatch(harnessRow, new RegExp(escapeRegExp(whimsicalThinkingPhrase(turnCount))));
+
+				const realLines = renderWithRealPiTui(harnessLines, 120);
+				const realRow = realLines.find((line) => line.includes("step-pausing-worker")) ?? "";
+				assert.match(realRow, /step-pausing-worker · running · pausing…/);
+				assert.doesNotMatch(realRow, warning);
+				assert.doesNotMatch(realRow, /needs attention/);
+				assert.doesNotMatch(realRow, new RegExp(escapeRegExp(whimsicalThinkingPhrase(turnCount))));
+			});
+		}
+		resetWidgetLayout();
+	});
+
+	it("does not leak pausing child activity into a multi-job aggregate", () => {
+		const now = 20_000;
+		const text = buildWidgetLines(
+			[
+				{
+					asyncId: "pausing-child-aggregate",
+					asyncDir: "/tmp/pausing-child-aggregate",
+					status: "running",
+					mode: "parallel",
+					agents: ["worker"],
+					activeParallelGroup: true,
+					runningSteps: 1,
+					completedSteps: 0,
+					stepsTotal: 1,
+					updatedAt: now,
+					steps: [
+						{
+							index: 0,
+							agent: "worker",
+							status: "running",
+							interruptRequestedAt: now - 100,
+							currentTool: "child-secret-tool",
+							currentToolArgs: "--secret-child-args",
+							currentToolStartedAt: now - 4_000,
+							currentPath: "/private/child/project/secret.ts",
+						},
+					],
+				},
+				{
+					asyncId: "pausing-child-finished",
+					asyncDir: "/tmp/pausing-child-finished",
+					status: "complete",
+					mode: "single",
+					agents: ["done"],
+				},
+			],
+			theme,
+			180,
+		).join("\n");
+
+		assert.match(text, /⎿  pausing…/);
+		assert.match(text, /Agent 1\/1: worker · pausing · pausing…/);
+		assert.doesNotMatch(text, /child-secret-tool|secret-child-args|private\/child|4\.0s/);
+	});
+
+	it("uses only job-level tool data while showing a pausing activity", () => {
+		const now = 20_000;
+		const childOnly = buildWidgetLines(
+			[
+				{
+					asyncId: "pausing-child-only",
+					asyncDir: "/tmp/pausing-child-only",
+					status: "running",
+					mode: "single",
+					agents: ["worker"],
+					interruptRequestedAt: now - 100,
+					updatedAt: now,
+					steps: [
+						{
+							index: 0,
+							agent: "worker",
+							status: "running",
+							currentTool: "child-secret",
+							currentToolStartedAt: now - 4_000,
+						},
+					],
+				},
+				{
+					asyncId: "pausing-finished",
+					asyncDir: "/tmp/pausing-finished",
+					status: "complete",
+					mode: "single",
+					agents: ["done"],
+				},
+			],
+			theme,
+			180,
+		).join("\n");
+		assert.match(childOnly, /pausing…/);
+		assert.doesNotMatch(childOnly, /child-secret/);
+
+		const jobTool = buildWidgetLines(
+			[
+				{
+					asyncId: "pausing-job-tool",
+					asyncDir: "/tmp/pausing-job-tool",
+					status: "running",
+					mode: "single",
+					agents: ["worker"],
+					interruptRequestedAt: now - 100,
+					currentTool: "job-tool",
+					currentToolStartedAt: now - 2_000,
+					updatedAt: now,
+					steps: [
+						{
+							index: 0,
+							agent: "worker",
+							status: "running",
+							currentTool: "child-secret",
+							currentToolStartedAt: now - 4_000,
+						},
+					],
+				},
+				{
+					asyncId: "pausing-finished-2",
+					asyncDir: "/tmp/pausing-finished-2",
+					status: "complete",
+					mode: "single",
+					agents: ["done"],
+				},
+			],
+			theme,
+			180,
+		).join("\n");
+		assert.match(jobTool, /pausing… · job-tool 2\.0s/);
+		assert.doesNotMatch(jobTool, /child-secret/);
+	});
+
 	it("renders a compact component widget for three active parallel agents without core truncation", () => {
 		const now = Date.now();
 		const ui = createUiContext();
@@ -476,15 +886,418 @@ describe("subagent async widget rendering", () => {
 			.map((line) => line.trimEnd());
 		const text = lines.join("\n");
 		assert.match(text, /async subagents \(3\) · background/);
-		assert.match(text, /Agent 1\/3: reviewer · running · active now · 5 turns · 18 tool uses · 44k token/);
-		assert.match(text, /Agent 2\/3: reviewer · running · active 2s ago · 4 turns · 13 tool uses · 22k token/);
-		assert.match(text, /Agent 3\/3: reviewer · running · grep \| 1\.0s · 3 turns · 11 tool uses · 19k token/);
+		assert.match(
+			text,
+			new RegExp(`Agent 1/3: reviewer · running · ${escapeRegExp(whimsicalThinkingPhrase(5))} · active now`),
+		);
+		assert.match(
+			text,
+			new RegExp(`Agent 2/3: reviewer · running · ${escapeRegExp(whimsicalThinkingPhrase(4))} · active 2s ago`),
+		);
+		assert.match(text, /Agent 3\/3: reviewer · running · grep \| 1\.0s/);
+		assert.doesNotMatch(
+			text,
+			/5 turns|18 tool uses|44k token|4 turns|13 tool uses|22k token|3 turns|11 tool uses|19k token/,
+		);
 		assert.match(text, /Press Ctrl\+Shift\+D for live detail/);
 		assert.doesNotMatch(text, /widget truncated/);
 		assert.ok(
 			lines.length <= 10,
 			"collapsed component should stay under Pi's string-widget cap even though it bypasses it",
 		);
+	});
+
+	it("preserves freshness while fitting long phrases into 60-column parallel rows", () => {
+		resetWidgetLayout();
+		withStdoutSize(60, 60, () => {
+			const now = 20_000;
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [
+				{
+					asyncId: "run-narrow-parallel",
+					asyncDir: "/tmp/run-narrow-parallel",
+					status: "running",
+					mode: "parallel",
+					agents: ["reviewer", "reviewer", "reviewer"],
+					activeParallelGroup: true,
+					runningSteps: 3,
+					completedSteps: 0,
+					stepsTotal: 3,
+					updatedAt: now,
+					steps: Array.from({ length: 3 }, (_, index) => ({
+						index,
+						agent: "reviewer",
+						status: "running",
+						turnCount: 19,
+						lastActivityAt: now,
+					})),
+				},
+			]);
+
+			const row = renderWidgetLines(ui.widgets.at(-1), 60).find((line) => line.includes("Agent 1/3")) ?? "";
+			assert.match(row, /Agent 1\/3: reviewer · running/);
+			assert.match(row, /Wining/);
+			assert.match(row.trimEnd(), /active now$/);
+			assertWidgetContentFits(row, 60);
+		});
+		resetWidgetLayout();
+	});
+
+	it("keeps compactSingleWidgetLines health identity in 40/50-column parallel rows", () => {
+		const now = 20_000;
+		const healthCases = [
+			{ state: "needs_attention", turnCount: 27, warning: /no activity for/ },
+			{ state: "active_long_running", turnCount: 28, warning: /active but lon/ },
+		] as const;
+
+		for (const width of [40, 50]) {
+			for (const { state, turnCount, warning } of healthCases) {
+				resetWidgetLayout();
+				withStdoutSize(60, width, () => {
+					const ui = createUiContext();
+					renderWidget(ui.ctx as never, [
+						{
+							asyncId: `narrow-health-${state}`,
+							asyncDir: `/tmp/narrow-health-${state}`,
+							status: "running",
+							mode: "parallel",
+							agents: ["worker", "worker", "worker", "worker"],
+							activeParallelGroup: true,
+							runningSteps: 4,
+							completedSteps: 0,
+							stepsTotal: 4,
+							updatedAt: now,
+							steps: Array.from({ length: 4 }, (_, index) => ({
+								index,
+								agent: "worker",
+								status: "running",
+								activityState: state,
+								turnCount,
+								lastActivityAt: now - 5_000,
+							})),
+						},
+					]);
+
+					const harnessLines = renderWidgetHarnessLines(ui.widgets.at(-1));
+					const harnessRow = harnessLines.find((line) => line.includes("Agent 1/4")) ?? "";
+					assert.match(harnessRow, /Agent 1\/4/);
+					assert.match(harnessRow, warning);
+					assert.doesNotMatch(harnessRow, new RegExp(escapeRegExp(whimsicalThinkingPhrase(turnCount))));
+					for (const line of harnessLines)
+						assert.ok(
+							visibleWidth(line) <= width - 2,
+							`harness row should fit ${width - 2} columns: ${JSON.stringify(line)}`,
+						);
+
+					const realLines = renderWithRealPiTui(harnessLines, width);
+					assert.equal(
+						realLines.length,
+						harnessLines.length,
+						`real pi-tui Text must not add continuation rows at ${width} columns for ${state}`,
+					);
+					const realRow = realLines.find((line) => line.includes("Agent 1/4")) ?? "";
+					assert.match(realRow, /Agent 1\/4/);
+					assert.match(realRow, warning);
+					assert.doesNotMatch(realRow, new RegExp(escapeRegExp(whimsicalThinkingPhrase(turnCount))));
+					for (const line of realLines)
+						assert.equal(
+							visibleWidth(line),
+							width,
+							`real pi-tui should pad each row to ${width} columns: ${JSON.stringify(line)}`,
+						);
+				});
+			}
+		}
+		resetWidgetLayout();
+	});
+
+	it("keeps progressiveJobLine identity with compact health warnings at 40/50 columns", () => {
+		const now = 20_000;
+		for (const width of [40, 50]) {
+			resetWidgetLayout();
+			withStdoutSize(22, width, () => {
+				const ui = createUiContext();
+				renderWidget(ui.ctx as never, [
+					{
+						asyncId: "progressive-health",
+						asyncDir: "/tmp/progressive-health",
+						status: "running",
+						mode: "single",
+						agents: ["health-job"],
+						activityState: "active_long_running",
+						lastActivityAt: now - 5_000,
+						updatedAt: now,
+					},
+					{
+						asyncId: "progressive-read",
+						asyncDir: "/tmp/progressive-read",
+						status: "running",
+						mode: "single",
+						agents: ["reader"],
+						currentTool: "read",
+					},
+					{
+						asyncId: "progressive-edit",
+						asyncDir: "/tmp/progressive-edit",
+						status: "running",
+						mode: "single",
+						agents: ["editor"],
+						currentTool: "edit",
+					},
+				]);
+
+				const harnessLines = renderWidgetHarnessLines(ui.widgets.at(-1));
+				const harnessRow = harnessLines.find((line) => line.includes("health-job")) ?? "";
+				assert.match(harnessRow, /health-job/);
+				assert.match(harnessRow, /active but long/);
+				assertWidgetContentFits(harnessRow, width);
+
+				const realLines = renderWithRealPiTui(harnessLines, width);
+				assert.equal(
+					realLines.length,
+					harnessLines.length,
+					`real pi-tui Text must not add continuation rows at ${width} columns`,
+				);
+				const realRow = realLines.find((line) => line.includes("health-job")) ?? "";
+				assert.match(realRow, /health-job/);
+				assert.match(realRow, /active but long/);
+				for (const line of realLines)
+					assert.equal(
+						visibleWidth(line),
+						width,
+						`real pi-tui should pad each row to ${width} columns: ${JSON.stringify(line)}`,
+					);
+			});
+		}
+		resetWidgetLayout();
+	});
+
+	it("keeps widgetParallelAgentDetails identity with compact health warnings at 40/50 columns", () => {
+		const now = 20_000;
+		const healthCases = [
+			{ state: "needs_attention", warning: /no activity/ },
+			{ state: "active_long_running", warning: /active but lon/ },
+		] as const;
+		for (const width of [40, 50]) {
+			for (const { state, warning } of healthCases) {
+				const lines = buildWidgetLines(
+					[
+						{
+							asyncId: `parallel-detail-health-${state}`,
+							asyncDir: `/tmp/parallel-detail-health-${state}`,
+							status: "running",
+							mode: "parallel",
+							agents: ["worker", "worker", "worker", "worker"],
+							activeParallelGroup: true,
+							runningSteps: 4,
+							completedSteps: 0,
+							stepsTotal: 4,
+							updatedAt: now,
+							steps: Array.from({ length: 4 }, (_, index) => ({
+								index,
+								agent: "worker",
+								status: "running",
+								activityState: state,
+								lastActivityAt: now - 5_000,
+							})),
+						},
+						{
+							asyncId: `parallel-detail-done-${state}`,
+							asyncDir: "/tmp/parallel-detail-done",
+							status: "complete",
+							mode: "single",
+							agents: ["done"],
+						},
+					],
+					theme,
+					width,
+				);
+				const harnessRow = lines.find((line) => line.includes("Agent 1/4")) ?? "";
+				assert.match(harnessRow, /Agent 1\/4/);
+				assert.match(harnessRow, warning);
+				for (const line of lines)
+					assert.ok(
+						visibleWidth(line) <= width - 2,
+						`harness row should fit ${width - 2} columns: ${JSON.stringify(line)}`,
+					);
+
+				const realLines = renderWithRealPiTui(lines, width);
+				assert.equal(
+					realLines.length,
+					lines.length,
+					`real pi-tui Text must not add continuation rows at ${width} columns for ${state}`,
+				);
+				const realRow = realLines.find((line) => line.includes("Agent 1/4")) ?? "";
+				assert.match(realRow, /Agent 1\/4/);
+				assert.match(realRow, warning);
+				for (const line of realLines)
+					assert.equal(
+						visibleWidth(line),
+						width,
+						`real pi-tui should pad each row to ${width} columns: ${JSON.stringify(line)}`,
+					);
+			}
+		}
+	});
+
+	it("budgets multi-job branch and detail rows for real Text padding at 40/50 columns", () => {
+		const now = 20_000;
+		const jobs = [
+			{
+				asyncId: "multi-job-width",
+				asyncDir: "/tmp/multi-job-width",
+				status: "running",
+				mode: "single",
+				agents: ["header-agent-name-that-is-deliberately-long"],
+				turnCount: 41,
+				lastActivityAt: now - 2_000,
+				updatedAt: now,
+			},
+			{
+				asyncId: "multi-job-width-done",
+				asyncDir: "/tmp/multi-job-width-done",
+				status: "complete",
+				mode: "single",
+				agents: ["done"],
+			},
+		];
+
+		for (const width of [40, 50]) {
+			const lines = buildWidgetLines(jobs, theme, width);
+			const contentWidth = Math.max(1, width - 2);
+			assert.ok(
+				lines.some((line) => line.includes(whimsicalThinkingPhrase(41).slice(0, 20))),
+				"long thinking phrase should remain in the harness output",
+			);
+			assert.ok(
+				lines.some((line) => line.includes("header-agent-name")),
+				"long job header should remain in the harness output",
+			);
+			for (const line of lines) {
+				assert.ok(
+					visibleWidth(line) <= contentWidth,
+					`multi-job line should fit ${contentWidth} columns at ${width}: ${JSON.stringify(line)}`,
+				);
+			}
+
+			const realLines = renderWithRealPiTui(lines, width);
+			assert.equal(
+				realLines.length,
+				lines.length,
+				`real pi-tui Text must not add continuation rows at ${width} columns`,
+			);
+			for (const line of realLines)
+				assert.equal(visibleWidth(line), width, `real pi-tui should pad each row to ${width} columns`);
+		}
+	});
+
+	it("keeps crowded progressive and single-line layouts within real 40-column Text rows", () => {
+		const now = 20_000;
+		const jobs = Array.from({ length: 8 }, (_, index) => ({
+			asyncId: `crowded-width-${index}`,
+			asyncDir: `/tmp/crowded-width-${index}`,
+			status: "running",
+			mode: "single",
+			agents: [`crowded-agent-with-a-long-name-${index}`],
+			lastActivityAt: now - index * 1_000,
+			updatedAt: now,
+		}));
+
+		for (const { rows, expectedRows, description } of [
+			{ rows: 22, expectedRows: 3, description: "progressive" },
+			{ rows: 20, expectedRows: 1, description: "single-line" },
+		] as const) {
+			resetWidgetLayout();
+			withStdoutSize(rows, 40, () => {
+				const ui = createUiContext();
+				renderWidget(ui.ctx as never, jobs);
+				const harnessLines = renderWidgetHarnessLines(ui.widgets.at(-1));
+				assert.equal(harnessLines.length, expectedRows, `${description} harness row count`);
+				for (const line of harnessLines)
+					assert.ok(
+						visibleWidth(line) <= 38,
+						`${description} harness line should fit 38 columns: ${JSON.stringify(line)}`,
+					);
+				if (description === "progressive") assert.match(harnessLines.join("\n"), /\+\d+ more/);
+				if (description === "single-line") assert.match(harnessLines[0] ?? "", /subagents/);
+
+				const realLines = renderWithRealPiTui(harnessLines, 40);
+				assert.equal(
+					realLines.length,
+					harnessLines.length,
+					`${description} real pi-tui row count must match the harness`,
+				);
+				for (const line of realLines)
+					assert.equal(visibleWidth(line), 40, `${description} real pi-tui row should be padded to 40 columns`);
+			});
+		}
+		resetWidgetLayout();
+	});
+
+	it("keeps expanded one-job telemetry rows unwrapped at real 40/50-column widths", () => {
+		const now = 20_000;
+		for (const width of [40, 50]) {
+			resetWidgetLayout();
+			withStdoutSize(40, width, () => {
+				const ui = createUiContext();
+				const liveDetailController = createSubagentLiveDetailController(true);
+				renderWidget(
+					ui.ctx as never,
+					[
+						{
+							asyncId: `expanded-width-${width}`,
+							asyncDir: `/tmp/expanded-width-${width}`,
+							status: "running",
+							mode: "single",
+							agents: ["w"],
+							stepsTotal: 1,
+							startedAt: now - 9_000,
+							updatedAt: now,
+							steps: [
+								{
+									index: 0,
+									agent: "w",
+									status: "running",
+									turnCount: 5,
+									toolCount: 7,
+									tokens: { input: 8_000, output: 5_000, cache: 0, total: 13_000 },
+									durationMs: 9_000,
+									currentTool: "read-long-tool-name",
+									currentToolArgs: "src/tui/render.ts --very-long-argument-here",
+									currentToolStartedAt: now - 2_000,
+									recentTools: [{ tool: "grep", args: "long args" }],
+									recentOutput: ["expanded telemetry output"],
+								},
+							],
+						},
+					],
+					liveDetailController,
+				);
+
+				const harnessLines = renderWidgetHarnessLines(ui.widgets.at(-1));
+				const harnessText = harnessLines.join("\n");
+				assert.match(harnessText, /5 turns/);
+				assert.match(harnessText, /7 tool/);
+				assert.match(harnessText, /output:/);
+				for (const line of harnessLines)
+					assert.ok(
+						visibleWidth(line) <= width - 2,
+						`expanded harness line should fit ${width - 2} columns: ${JSON.stringify(line)}`,
+					);
+
+				const realLines = renderWithRealPiTui(harnessLines, width);
+				assert.equal(
+					realLines.length,
+					harnessLines.length,
+					`expanded real pi-tui row count must match at ${width} columns`,
+				);
+				assert.match(realLines.join("\n"), /5 turns/);
+				assert.match(realLines.join("\n"), /7 tool/);
+				for (const line of realLines)
+					assert.equal(visibleWidth(line), width, `expanded real pi-tui row should be padded to ${width} columns`);
+			});
+		}
+		resetWidgetLayout();
 	});
 
 	it("locks crowded collapsed widget height for the current terminal session", () => {
@@ -614,7 +1427,9 @@ describe("subagent async widget rendering", () => {
 			];
 			renderWidget(ui.ctx as never, jobs);
 			const firstText = renderWidgetLines(ui.widgets.at(-1)).join("\n");
-			assert.match(firstText, /first · running · 1 tool use · 2\.0s/);
+			assert.match(firstText, /first · running · read/);
+			assert.doesNotMatch(firstText, new RegExp(escapeRegExp(whimsicalThinkingPhrase(0))));
+			assert.doesNotMatch(firstText, /1 tool use|2\.0s|token|turn/);
 			assert.match(firstText, /\+2 more/);
 			assert.doesNotMatch(firstText, /\bsteps?\b|\bchain\b/i);
 
@@ -625,6 +1440,101 @@ describe("subagent async widget rendering", () => {
 			assert.match(updatedText, /\+2 more/);
 			assert.doesNotMatch(updatedText, /\bsteps?\b|\bchain\b/i);
 		});
+		resetWidgetLayout();
+	});
+
+	it("keeps thinking freshness and hides telemetry in constrained progressive rows", () => {
+		resetWidgetLayout();
+		withStdoutSize(22, 120, () => {
+			const now = Date.now();
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [
+				{
+					asyncId: "run-thinking",
+					asyncDir: "/tmp/run-thinking",
+					status: "running",
+					mode: "single",
+					agents: ["thinker"],
+					turnCount: 5,
+					toolCount: 18,
+					totalTokens: { input: 30_000, output: 10_000, cache: 4_000, total: 44_000 },
+					lastActivityAt: now,
+					startedAt: now - 7_000,
+					updatedAt: now,
+				},
+				{
+					asyncId: "run-read",
+					asyncDir: "/tmp/run-read",
+					status: "running",
+					mode: "single",
+					agents: ["reader"],
+					currentTool: "read",
+				},
+				{
+					asyncId: "run-edit",
+					asyncDir: "/tmp/run-edit",
+					status: "running",
+					mode: "single",
+					agents: ["editor"],
+					currentTool: "edit",
+				},
+			]);
+
+			const text = renderWidgetLines(ui.widgets.at(-1)).join("\n");
+			assert.match(text, new RegExp(`thinker · running · ${escapeRegExp(whimsicalThinkingPhrase(5))} · active now`));
+			assert.doesNotMatch(text, /5 turns|18 tool uses|44k token|7\.0s/);
+			assert.match(text, /\+2 more/);
+		});
+		resetWidgetLayout();
+	});
+
+	it("prioritizes freshness over a long phrase in 40/50/60-column progressive rows", () => {
+		for (const width of [40, 50, 60]) {
+			resetWidgetLayout();
+			withStdoutSize(22, width, () => {
+				const now = 20_000;
+				const ui = createUiContext();
+				renderWidget(ui.ctx as never, [
+					{
+						asyncId: "run-thinking",
+						asyncDir: "/tmp/run-thinking",
+						status: "running",
+						mode: "single",
+						agents: ["thinker"],
+						turnCount: 19,
+						lastActivityAt: now - 2_000,
+						updatedAt: now,
+					},
+					{
+						asyncId: "run-read",
+						asyncDir: "/tmp/run-read",
+						status: "running",
+						mode: "single",
+						agents: ["reader"],
+						currentTool: "read",
+					},
+					{
+						asyncId: "run-edit",
+						asyncDir: "/tmp/run-edit",
+						status: "running",
+						mode: "single",
+						agents: ["editor"],
+						currentTool: "edit",
+					},
+				]);
+
+				const lines = renderWidgetLines(ui.widgets.at(-1), width);
+				const row = lines.find((line) => line.includes("thinker")) ?? "";
+				assert.match(row, /thinker · running/);
+				assert.match(row.trimEnd(), /active 2s ago$/);
+				assertWidgetContentFits(row, width);
+				assert.equal(
+					lines.filter((line) => line.includes("active 2s ago")).length,
+					1,
+					`freshness must stay on the thinker row at ${width} columns`,
+				);
+			});
+		}
 		resetWidgetLayout();
 	});
 
@@ -772,11 +1682,53 @@ describe("subagent async widget rendering", () => {
 		assert.match(text, /async subagents \(3\) · background/);
 		assert.match(text, /2 agents running · 1\/3 done/);
 		assert.doesNotMatch(text, /parallel · 2 agents running/);
-		assert.match(text, /Agent 1\/3: reviewer · running · 2 tool uses/);
-		assert.match(text, /⎿  active now/);
+		assert.match(
+			text,
+			new RegExp(`Agent 1/3: reviewer · running\\n\\s+⎿  ${escapeRegExp(whimsicalThinkingPhrase(0))}\\n\\s+active now`),
+		);
 		assert.match(text, /Agent 2\/3: reviewer · running\n\s+⎿  read \| 2\.0s/);
 		assert.match(text, /Press Ctrl\+Shift\+D for live detail/);
-		assert.match(text, /Agent 3\/3: reviewer · complete · 1\.5k token/);
+		assert.match(text, /Agent 3\/3: reviewer · complete/);
+		assert.doesNotMatch(text, /2 tool uses|1\.5k token/);
+	});
+
+	it("preserves freshness for compact parallel details in narrow multi-job rows", () => {
+		const now = 20_000;
+		const lines = buildWidgetLines(
+			[
+				{
+					asyncId: "parallel-narrow",
+					asyncDir: "/tmp/parallel-narrow",
+					status: "running",
+					mode: "parallel",
+					agents: ["reviewer", "reviewer"],
+					activeParallelGroup: true,
+					runningSteps: 1,
+					completedSteps: 1,
+					stepsTotal: 2,
+					updatedAt: now,
+					steps: [
+						{ index: 0, agent: "reviewer", status: "running", turnCount: 19, lastActivityAt: now - 2_000 },
+						{ index: 1, agent: "reviewer", status: "complete" },
+					],
+				},
+				{
+					asyncId: "other-job",
+					asyncDir: "/tmp/other-job",
+					status: "complete",
+					mode: "single",
+					agents: ["other"],
+					updatedAt: now,
+				},
+			],
+			theme,
+			60,
+		);
+
+		const row = lines.find((line) => line.includes("Agent 1/2")) ?? "";
+		assert.match(row, /Agent 1\/2: reviewer/);
+		assert.match(row.trimEnd(), /active 2s ago$/);
+		assertWidgetContentFits(row, 60);
 	});
 
 	it("shows model and thinking for active async widget rows", () => {
@@ -807,6 +1759,53 @@ describe("subagent async widget rendering", () => {
 		assert.match(text, /Agent 2\/2: scout · running \(claude-haiku-4-5 · thinking low\)/);
 		assert.doesNotMatch(text, /openai-codex\/gpt-5\.5/);
 		assert.doesNotMatch(text, /gpt-5\.5:high/);
+	});
+
+	it("cycles compact async thinking phrases per turn while expanded rows retain telemetry", () => {
+		assert.equal(WHIMSICAL_THINKING_PHRASES.length, 453);
+		const now = Date.now();
+		const job = {
+			asyncId: "run-thinking",
+			asyncDir: "/tmp/thinking",
+			status: "running",
+			mode: "single",
+			agents: ["worker"],
+			stepsTotal: 1,
+			startedAt: now - 7_000,
+			updatedAt: now,
+			steps: [
+				{
+					index: 0,
+					agent: "worker",
+					status: "running",
+					lastActivityAt: now,
+					turnCount: 5,
+					toolCount: 18,
+					tokens: { input: 30_000, output: 10_000, cache: 4_000, total: 44_000 },
+					durationMs: 7_000,
+				},
+			],
+		};
+
+		const collapsed = buildWidgetLines([job], theme, 180).join("\n");
+		assert.match(collapsed, new RegExp(`⎿  ${escapeRegExp(whimsicalThinkingPhrase(5))}\\n\\s+active now`));
+		assert.doesNotMatch(collapsed, /5 turns|18 tool uses|44k token|7\.0s/);
+
+		const next = buildWidgetLines([{ ...job, steps: [{ ...job.steps[0], turnCount: 6 }] }], theme, 180).join("\n");
+		assert.match(next, new RegExp(escapeRegExp(whimsicalThinkingPhrase(6))));
+		assert.doesNotMatch(next, new RegExp(escapeRegExp(whimsicalThinkingPhrase(5))));
+
+		const expanded = buildWidgetLines([job], theme, 180, true).join("\n");
+		assert.match(expanded, /5 turns · 18 tool uses · 44k token · 7\.0s/);
+		assert.match(expanded, /active now/);
+
+		const activeTool = buildWidgetLines(
+			[{ ...job, steps: [{ ...job.steps[0], currentTool: "read", currentToolStartedAt: now - 2_000 }] }],
+			theme,
+			180,
+		).join("\n");
+		assert.match(activeTool, /read \| 2\.0s/);
+		assert.doesNotMatch(activeTool, new RegExp(escapeRegExp(whimsicalThinkingPhrase(5))));
 	});
 
 	it("keeps async row status visible before long model badges on narrow widgets", () => {
@@ -916,7 +1915,7 @@ describe("subagent async widget rendering", () => {
 			collapsedText,
 			new RegExp(`${runningGlyphPattern} developer · running \\(gpt-5\\.5 · thinking high\\)`),
 		);
-		assert.match(collapsedText, /2 turns · 3 tool uses · 12k token · 4\.0s/);
+		assert.doesNotMatch(collapsedText, /2 turns|3 tool uses|12k token|4\.0s/);
 		assert.match(collapsedText, /⎿  read: src\/tui\/render\.ts \| 2\.0s/);
 		assert.match(collapsedText, /Press Ctrl\+Shift\+D for live detail/);
 		assert.doesNotMatch(collapsedText, /(?:Agent|Step) 1\/1/);
@@ -964,8 +1963,27 @@ describe("subagent async widget rendering", () => {
 			180,
 		).join("\n");
 
-		assert.equal(text.match(/\b4\.0s\b/g)?.length, 1);
-		assert.doesNotMatch(text, /\b9\.0s\b/);
+		assert.doesNotMatch(text, /\b4\.0s\b|\b9\.0s\b/);
+		const expanded = buildWidgetLines(
+			[
+				{
+					asyncId: "single-complete",
+					asyncDir: "/tmp/single-complete",
+					status: "complete",
+					mode: "single",
+					agents: ["developer"],
+					stepsTotal: 1,
+					startedAt: now - 9000,
+					updatedAt: now,
+					steps: [{ index: 0, agent: "developer", status: "complete", toolCount: 3, durationMs: 4000 }],
+				},
+			],
+			theme,
+			180,
+			true,
+		).join("\n");
+		assert.equal(expanded.match(/\b4\.0s\b/g)?.length, 1);
+		assert.doesNotMatch(expanded, /\b9\.0s\b/);
 	});
 
 	it("uses terminal job status when a retained single step still reports running", () => {
@@ -1016,11 +2034,12 @@ describe("subagent async widget rendering", () => {
 		] as const) {
 			const collapsedText = buildWidgetLines([{ ...job, status }], theme, 180).join("\n");
 			assert.match(collapsedText, new RegExp(`${glyph} developer · ${status} \\(gpt-5\\.5 · thinking high\\)`));
-			assert.match(collapsedText, /2 turns · 3 tool uses · 12k token · 9\.0s/);
+			assert.doesNotMatch(collapsedText, /2 turns|3 tool uses|12k token|9\.0s/);
 			assert.doesNotMatch(collapsedText, /developer · running/);
 			assert.doesNotMatch(collapsedText, /Press (?:Configured\+Expand\+Key|Ctrl\+O) for live detail/);
 
 			const expandedText = buildWidgetLines([{ ...job, status }], theme, 180, true).join("\n");
+			assert.match(expandedText, /2 turns · 3 tool uses · 12k token/);
 			assert.match(expandedText, /retained-child · complete/);
 			assert.doesNotMatch(expandedText, /output-0\.log|stale detail|stale live output|⎿  read/);
 		}
@@ -1051,7 +2070,8 @@ describe("subagent async widget rendering", () => {
 		).join("\n");
 
 		assert.match(text, /async subagent · background/);
-		assert.match(text, new RegExp(`${runningGlyphPattern} worker · running · 2 tool uses · 5\\.0k token · 3\\.0s`));
+		assert.match(text, new RegExp(`${runningGlyphPattern} worker · running`));
+		assert.doesNotMatch(text, /2 tool uses|5\.0k token|3\.0s/);
 		assert.match(text, /⎿  read 1\.0s/);
 		assert.doesNotMatch(text, /\bsteps?\b|\bchain\b/i);
 		assert.doesNotMatch(text, /Press Configured\+Expand\+Key for live detail/);
@@ -1106,7 +2126,8 @@ describe("subagent async widget rendering", () => {
 		assert.match(text, /async subagent chain \(2\)/);
 		assert.match(text, /chain · step 2\/2/);
 		assert.match(text, /Step 1\/2: parallel group · 3\/3 done/);
-		assert.match(text, /Step 2\/2: writer · running · 1 tool use/);
+		assert.match(text, /Step 2\/2: writer · running/);
+		assert.doesNotMatch(text, /1 tool use|duration|token|turn/);
 		assert.match(text, /Press Ctrl\+Shift\+D for live detail/);
 		assert.doesNotMatch(text, outputPathPattern("/tmp/chain/output-3.log"));
 		assert.doesNotMatch(text, /step 4\/4/);

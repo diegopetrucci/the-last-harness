@@ -30,7 +30,7 @@ npm run test:subagents:integration
 npm run test:subagents:e2e
 ```
 
-On Node 22.19.0, full imported runs must report every discovered test as passed with zero failures, cancellations, skips, or todo tests. The runner also requires at least 87 unit files, 22 integration files, and 1 E2E file, preventing missing globs or zero-test runs from passing. After removing the agent-memory, mcpDirectTools, and wait-tool tests (61 cases across 2 deleted files plus targeted it() removals), the baseline is 979 unit tests, 511 integration tests, and 1 E2E test; observed actual runs are 980 and 512 respectively (TLH raises unit coverage by 1 solely with the Node 22 referenced-cleanup-timer regression).
+On Node 22.19.0, full imported runs must report every discovered test as passed with zero failures, cancellations, skips, or todo tests. The runner also requires at least 87 unit files, 22 integration files, and 1 E2E file, preventing missing globs or zero-test runs from passing. After removing the agent-memory, mcpDirectTools, and wait-tool tests (61 cases across 2 deleted files plus targeted it() removals), the baseline is 979 unit tests, 529 integration tests, and 1 E2E test; observed actual runs are 980 and 530 respectively (TLH raises unit coverage by 1 solely with the Node 22 referenced-cleanup-timer regression).
 
 CI runs the suites on Linux and macOS with Node 22.19.0. Its unit and integration shards must each execute at least one test and retain the same zero-non-pass requirement; together they cover the full counts.
 

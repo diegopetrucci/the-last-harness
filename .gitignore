@@ -41,3 +41,4 @@ PLAN.md
 
 # Local subagent orchestration artifacts (transient, not shipped)
 .pi-subagents/
+.tickets/
