@@ -39,7 +39,7 @@ The runtime distinguishes these controls:
 - `interrupt` is a soft, resumable interruption for active work. Applied to an already durable paused child, it cancels that continuation.
 - A blocking supervisor decision pauses durably. No child process remains alive while paused; persisted lifecycle/session data is used when the parent later chooses unchanged resume, guided resume, or cancellation.
 
-Control signals distinguish `active_long_running` from `needs_attention`. A child inside an in-flight tool call is not marked idle merely because the tool is quiet. Needs-attention and failure/pause events surface immediately; successful async completions may be batched to avoid notification spam.
+Control signals distinguish `active_long_running` from `needs_attention`. A child inside an in-flight tool call is not marked idle merely because the tool is quiet. Needs-attention and failure/pause events surface immediately; successful async completions may be batched to avoid notification spam. When an async notification arrives while the parent session is idle, the runtime wakes the parent by sending a short machine-marked user message prefixed `[tlh]` (e.g. `[tlh] Background subagent completed — see notification above.`). This is an interim workaround for an upstream Pi issue where extension-triggered turns skip system-prompt injection ([#470](https://github.com/diegopetrucci/the-last-harness/issues/470)); it will be removed when upstream is fixed.
 
 Paused/interrupted runs record acceptance as skipped rather than rejected. A continuation inherits the paused ledger's effective acceptance contract and provenance, and a resume-time override may only strengthen it. A later follow-up from a completed or failed run does not inherit the old contract.
 

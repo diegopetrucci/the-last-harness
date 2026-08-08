@@ -44,12 +44,15 @@ function createNotifyHarness(): {
 			emit: (event: string, data: unknown) => void;
 		};
 		on: (_event: string, _handler: (...args: unknown[]) => void) => void;
-		sendMessage: (message: { content?: string }, options: { triggerTurn?: boolean }) => void;
+		sendMessage: (message: { content?: string }) => void;
+		sendUserMessage: (content: string, options?: { deliverAs?: string }) => void;
 	};
 	sent: string[];
+	sentUserMessages: Array<{ content: string; options?: { deliverAs?: string } }>;
 } {
 	const listeners = new Map<string, Set<(payload: unknown) => void>>();
 	const sent: string[] = [];
+	const sentUserMessages: Array<{ content: string; options?: { deliverAs?: string } }> = [];
 	return {
 		pi: {
 			events: {
@@ -67,8 +70,12 @@ function createNotifyHarness(): {
 			sendMessage(message: { content?: string }) {
 				sent.push(message.content ?? "");
 			},
+			sendUserMessage(content: string, options?: { deliverAs?: string }) {
+				sentUserMessages.push({ content, options });
+			},
 		},
 		sent,
+		sentUserMessages,
 	};
 }
 
@@ -79,8 +86,8 @@ describe("result watcher to native notify", () => {
 		const emitted: Array<{ event: string; data: unknown }> = [];
 		const sent: Array<{
 			message: { customType?: string; content?: string; display?: boolean };
-			options: { triggerTurn?: boolean };
 		}> = [];
+		const sentUserMessages: Array<{ content: string; options?: { deliverAs?: string } }> = [];
 		const events = {
 			on(event: string, handler: (payload: unknown) => void) {
 				const handlers = listeners.get(event) ?? new Set();
@@ -96,11 +103,11 @@ describe("result watcher to native notify", () => {
 		const pi = {
 			events,
 			on(_event: string, _handler: (...args: unknown[]) => void) {},
-			sendMessage(
-				message: { customType?: string; content?: string; display?: boolean },
-				options: { triggerTurn?: boolean },
-			) {
-				sent.push({ message, options });
+			sendMessage(message: { customType?: string; content?: string; display?: boolean }) {
+				sent.push({ message });
+			},
+			sendUserMessage(content: string, options?: { deliverAs?: string }) {
+				sentUserMessages.push({ content, options });
 			},
 		};
 		const state = createState("session-owner");
@@ -201,13 +208,20 @@ describe("result watcher to native notify", () => {
 		}
 
 		assert.equal(sent.length, 4);
-		assert.deepEqual(
-			sent.map((entry) => entry.options),
-			[{ triggerTurn: true }, { triggerTurn: true }, { triggerTurn: true }, { triggerTurn: true }],
-		);
+		// E′ protocol: sendMessage is called without options (no triggerTurn); nudge comes via sendUserMessage
 		assert.equal(
 			sent.every((entry) => entry.message.customType === "subagent-notify" && entry.message.display === true),
 			true,
+		);
+		// Four sendUserMessage nudges (one per completion, all on idle path with batching disabled)
+		assert.equal(sentUserMessages.length, 4);
+		assert.ok(
+			sentUserMessages.every(
+				(entry) =>
+					entry.content === "[tlh] Background subagent completed — see notification above." &&
+					entry.options?.deliverAs === "followUp",
+			),
+			"every nudge must use the E\u2032 wake-up text and deliverAs:followUp",
 		);
 		const contents = sent.map((entry) => entry.message.content ?? "");
 		assert.equal(
@@ -290,7 +304,7 @@ describe("result watcher to native notify", () => {
 		fs.mkdirSync(asyncDir, { recursive: true });
 		const listeners = new Map<string, Set<(payload: unknown) => void>>();
 		const emitted: Array<{ event: string; data: unknown }> = [];
-		const sent: Array<{ message: { content?: string }; options: { triggerTurn?: boolean } }> = [];
+		const sent: Array<{ message: { content?: string } }> = [];
 		const pi = {
 			events: {
 				on(event: string, handler: (payload: unknown) => void) {
@@ -305,9 +319,10 @@ describe("result watcher to native notify", () => {
 				},
 			},
 			on(_event: string, _handler: (...args: unknown[]) => void) {},
-			sendMessage(message: { content?: string }, options: { triggerTurn?: boolean }) {
-				sent.push({ message, options });
+			sendMessage(message: { content?: string }) {
+				sent.push({ message });
 			},
+			sendUserMessage(_content: string, _options?: { deliverAs?: string }) {},
 		};
 		const state = createState("session-owner");
 		registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
@@ -955,7 +970,8 @@ describe("result watcher to native notify", () => {
 		);
 
 		const listeners = new Map<string, Set<(payload: unknown) => void>>();
-		const sent: Array<{ message: { content?: string }; options: { triggerTurn?: boolean } }> = [];
+		const sent: Array<{ message: { content?: string } }> = [];
+		const sentUserMessages: Array<{ content: string; options?: { deliverAs?: string } }> = [];
 		const pi = {
 			events: {
 				on(event: string, handler: (payload: unknown) => void) {
@@ -969,8 +985,11 @@ describe("result watcher to native notify", () => {
 				},
 			},
 			on(_event: string, _handler: (...args: unknown[]) => void) {},
-			sendMessage(message: { content?: string }, options: { triggerTurn?: boolean }) {
-				sent.push({ message, options });
+			sendMessage(message: { content?: string }) {
+				sent.push({ message });
+			},
+			sendUserMessage(content: string, options?: { deliverAs?: string }) {
+				sentUserMessages.push({ content, options });
 			},
 		};
 		const state = createState("session-owner");
@@ -1033,10 +1052,13 @@ describe("result watcher to native notify", () => {
 			const failure = sent[1]!.message.content ?? "";
 			assert.match(failure, /^Background task failed: \*\*alpha\*\*/);
 			assert.ok(failure.indexOf(repairedResult.summary) < failure.indexOf("Children: 2 completed"));
-			assert.deepEqual(
-				sent.map((entry) => entry.options),
-				[{ triggerTurn: true }, { triggerTurn: true }],
-			);
+			// E′ protocol: no triggerTurn on sendMessage; the failure flushes the
+			// held success in the same synchronous burst, so exactly one nudge.
+			assert.equal(sentUserMessages.length, 1);
+			assert.deepEqual(sentUserMessages[0], {
+				content: "[tlh] Background subagent completed — see notification above.",
+				options: { deliverAs: "followUp" },
+			});
 		} finally {
 			watcher.stopResultWatcher();
 			fs.rmSync(root, { recursive: true, force: true });

@@ -293,10 +293,14 @@ describe("no-pi-intercom regression guard", () => {
 			const listeners = new Map<string, Set<(payload: unknown) => void>>();
 			const sent: Array<{ message: unknown; options: unknown }> = [];
 
+			const nudges: Array<{ text: string; options: unknown }> = [];
 			const mockPi = {
-				sendMessage(message: unknown, options: unknown) {
+				sendMessage(message: unknown, options?: unknown) {
 					// Delivery goes here — not to the event bus
 					sent.push({ message, options });
+				},
+				sendUserMessage(text: string, options?: unknown) {
+					nudges.push({ text, options });
 				},
 				events: {
 					on(event: string, handler: (payload: unknown) => void) {

@@ -306,6 +306,7 @@ export function formatGroupedCompletion(details) {
     }
     return blocks.join("\n").trimEnd();
 }
+const NUDGE_TEXT = "[tlh] Background subagent completed — see notification above.";
 function sendCompletion(pi, details, options = { triggerTurn: true }) {
     if (details.length === 0)
         return;
@@ -333,7 +334,10 @@ function sendCompletion(pi, details, options = { triggerTurn: true }) {
         content,
         display: true,
         ...(structuredDetails ? { details: structuredDetails } : {}),
-    }, options);
+    });
+    if (options.triggerTurn && (options.isIdle?.() ?? true)) {
+        pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
+    }
 }
 function completionBatchKey(result) {
     const sessionId = typeof result.sessionId === "string" ? result.sessionId.trim() : "";
@@ -415,6 +419,12 @@ export default function registerSubagentNotify(pi, state, options = {}) {
         catch {
         }
     }
+    let sessionContext = null;
+    const isIdle = () => sessionContext?.isIdle() ?? true;
+    pi.on("session_start", (_event, ctx) => {
+        sessionContext = ctx;
+    });
+    let suppressFlushNudge = false;
     const seen = getGlobalSeenMap("__pi_subagents_notify_seen__");
     const ttlMs = 10 * 60 * 1000;
     const nowFn = options.now ?? Date.now;
@@ -449,7 +459,7 @@ export default function registerSubagentNotify(pi, state, options = {}) {
                         batchers.delete(batchKey);
                         return;
                     }
-                    sendCompletion(pi, items, { triggerTurn: !lifecycleFlush });
+                    sendCompletion(pi, items, { triggerTurn: !lifecycleFlush && !suppressFlushNudge, isIdle });
                 },
                 ...(options.timers ? { timers: options.timers } : {}),
                 now: nowFn,
@@ -458,8 +468,14 @@ export default function registerSubagentNotify(pi, state, options = {}) {
             batchers.set(batchKey, batcherEntry);
         }
         if (details.status !== "completed") {
-            batcherEntry.batcher.flush();
-            sendCompletion(pi, [details]);
+            suppressFlushNudge = true;
+            try {
+                batcherEntry.batcher.flush();
+            }
+            finally {
+                suppressFlushNudge = false;
+            }
+            sendCompletion(pi, [details], { triggerTurn: true, isIdle });
             return;
         }
         batcherEntry.batcher.push(details);
