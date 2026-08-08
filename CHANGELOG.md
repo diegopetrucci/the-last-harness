@@ -8,9 +8,9 @@ All notable changes to The Last Harness will be documented in this file.
 
 - While a subagent is reasoning (no active tool), the live-progress display now shows a whimsical phrase from a pool of ~200 entries.
 
-### Changed
+### Fixed
 
-- Repository linting and formatting now use Biome 2.5.7 (replacing ESLint). `npm run lint` runs `biome check` in non-mutating mode; `npm run lint:sh` and ShellCheck are unchanged. Formatter settings: `lineWidth: 120`, `indentStyle: tab`, `quoteStyle: double`. Import sorting is not enforced: enabling it would reorder imports in the 113 tsc-generated `.js` mirrors under `extensions/` and permanently fight `npm run check:runtime`, which rebuilds those mirrors from the `.ts` sources. Nine ESLint rules are no longer enforced: seven have no Biome equivalent (the two most meaningful are `no-invalid-regexp` and `no-useless-assignment`), and two were deliberately left disabled because their Biome counterparts are semantically broader (`no-empty` / `noEmptyBlockStatements` and `no-cond-assign` / `noAssignInExpressions`).
+- I believe Pi has a bug causing some unnecessary cache missed. We can't fix it, but we can work around it with a tiny fake message from subagents to the primary agent.
 
 ## [0.34.0] - 2026-08-07
 
