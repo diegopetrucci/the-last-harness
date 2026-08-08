@@ -15,9 +15,9 @@ function resolveConfigDirNameFromSource(source) {
     if (!source || typeof source !== "object")
         return undefined;
     const direct = source;
-    return normalizeConfigDirName(direct.CONFIG_DIR_NAME)
-        ?? normalizeConfigDirName(direct.configDir)
-        ?? normalizeConfigDirName(direct.piConfig?.configDir);
+    return (normalizeConfigDirName(direct.CONFIG_DIR_NAME) ??
+        normalizeConfigDirName(direct.configDir) ??
+        normalizeConfigDirName(direct.piConfig?.configDir));
 }
 function readConfigDirNameFromPackageRoot(packageRoot, deps) {
     if (!packageRoot)
@@ -60,10 +60,11 @@ function resolveConfigDirNameFromEntryPoint(entryPoint, packageRoot, deps) {
     return undefined;
 }
 export function resolveRuntimeConfigDirName(deps = {}) {
-    const useCache = deps.useCache ?? (deps.readFileSync === undefined
-        && deps.resolveRuntimePackageRoot === undefined
-        && deps.resolveInstalledPackageRoot === undefined
-        && deps.env === undefined);
+    const useCache = deps.useCache ??
+        (deps.readFileSync === undefined &&
+            deps.resolveRuntimePackageRoot === undefined &&
+            deps.resolveInstalledPackageRoot === undefined &&
+            deps.env === undefined);
     if (useCache && cachedRuntimeConfigDirName !== undefined) {
         return cachedRuntimeConfigDirName ?? undefined;
     }

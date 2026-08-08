@@ -21,10 +21,7 @@ import {
 	restoreNeededTlhSubagentPrompts,
 	settingsRequireTlhSubagentPrompts,
 } from "./lib/tlh-install-subagents.mjs";
-import {
-	pathWithinOrEqual,
-	realpathForCompare,
-} from "./lib/tlh-install-paths.mjs";
+import { pathWithinOrEqual, realpathForCompare } from "./lib/tlh-install-paths.mjs";
 import {
 	assignOptionValue,
 	defaultTlhSettingsPath,
@@ -114,7 +111,9 @@ function parseArgs(argv: string[]): CliArgs {
 			index = settingsIndex;
 			continue;
 		}
-		const packageRootIndex = assignOptionValue(args, "packageRoot", argv, index, "--package-root") as number | undefined;
+		const packageRootIndex = assignOptionValue(args, "packageRoot", argv, index, "--package-root") as
+			| number
+			| undefined;
 		if (packageRootIndex !== undefined) {
 			index = packageRootIndex;
 			continue;
@@ -136,7 +135,7 @@ function loadExpectedPiVersion(packageRoot: string): string {
 	try {
 		const packageJson = readJsonFile<JsonObject>(join(packageRoot, "package.json"));
 		const devDependencies = isPlainObject(packageJson.devDependencies)
-			? packageJson.devDependencies as Record<string, unknown>
+			? (packageJson.devDependencies as Record<string, unknown>)
 			: undefined;
 		const configured = devDependencies?.[DEFAULT_PI_PACKAGE_NAME];
 		return typeof configured === "string" && configured.trim() ? configured.trim() : "unknown";
@@ -194,7 +193,11 @@ function categorizeSettingsDriftLine(change: string): { category: string; counts
 	return { category: "other", countsAsPendingChange: true };
 }
 
-function runCommand(command: string, args: string[], options: { env?: NodeJS.ProcessEnv; timeout?: number } = {}): CommandResult {
+function runCommand(
+	command: string,
+	args: string[],
+	options: { env?: NodeJS.ProcessEnv; timeout?: number } = {},
+): CommandResult {
 	return spawnSync(command, args, {
 		encoding: "utf8",
 		timeout: options.timeout ?? COMMAND_TIMEOUT_MS,
@@ -257,7 +260,12 @@ function addProfileChecks(results: CheckResult[], agentDir: string, settingsStat
 }
 
 function addProtectedAgentDirCheck(results: CheckResult[], agentDir: string): void {
-	recordCheck(results, "FAIL", "profile isolation/settings", `agent dir is inside ~/.pi; profile not inspected (${agentDir})`);
+	recordCheck(
+		results,
+		"FAIL",
+		"profile isolation/settings",
+		`agent dir is inside ~/.pi; profile not inspected (${agentDir})`,
+	);
 }
 
 function addUnsafeSettingsPathCheck(results: CheckResult[], agentDir: string, settingsPath: string): void {
@@ -272,16 +280,32 @@ function addUnsafeSettingsPathCheck(results: CheckResult[], agentDir: string, se
 	recordCheck(results, "FAIL", "profile isolation/settings", details.join("; "));
 }
 
-function addSettingsDriftCheck(results: CheckResult[], packageRoot: string, settingsPath: string, env: NodeJS.ProcessEnv): void {
-	const result = runCommand(process.execPath, [
-		mergeSettingsScript(packageRoot),
-		defaultsPath(packageRoot),
-		"--settings", settingsPath,
-		"--default-extensions", defaultExtensionsPath(packageRoot),
-		"--dry-run",
-	], { env });
+function addSettingsDriftCheck(
+	results: CheckResult[],
+	packageRoot: string,
+	settingsPath: string,
+	env: NodeJS.ProcessEnv,
+): void {
+	const result = runCommand(
+		process.execPath,
+		[
+			mergeSettingsScript(packageRoot),
+			defaultsPath(packageRoot),
+			"--settings",
+			settingsPath,
+			"--default-extensions",
+			defaultExtensionsPath(packageRoot),
+			"--dry-run",
+		],
+		{ env },
+	);
 	if (result.status !== 0) {
-		recordCheck(results, "FAIL", "settings drift", `could not evaluate packaged drift (${commandFailureSummary(result)})`);
+		recordCheck(
+			results,
+			"FAIL",
+			"settings drift",
+			`could not evaluate packaged drift (${commandFailureSummary(result)})`,
+		);
 		return;
 	}
 
@@ -299,23 +323,34 @@ function addSettingsDriftCheck(results: CheckResult[], packageRoot: string, sett
 		.map((line) => categorizeSettingsDriftLine(line.replace(/^Would\s+/, "")));
 	const pendingChanges = dryRunActions.filter((action) => action.countsAsPendingChange);
 	const backupPlanned = dryRunActions.some((action) => action.category === "backup");
-	const detail = pendingChanges.length > 0
-		? `${pendingChanges.length} pending packaged change(s) (${summarizeCountsByCategory(pendingChanges.map((action) => action.category))})${backupPlanned ? "; repair would also back up existing settings" : ""}`
-		: "packaged defaults would change the isolated profile";
+	const detail =
+		pendingChanges.length > 0
+			? `${pendingChanges.length} pending packaged change(s) (${summarizeCountsByCategory(pendingChanges.map((action) => action.category))})${backupPlanned ? "; repair would also back up existing settings" : ""}`
+			: "packaged defaults would change the isolated profile";
 	recordCheck(results, "WARN", "settings drift", detail);
 }
 
 function addBundledSubagentCheck(results: CheckResult[], packageRoot: string, agentDir: string): void {
 	const packagedDefaultsPath = defaultsPath(packageRoot);
 	if (!settingsRequireTlhSubagentPrompts(packagedDefaultsPath)) {
-		recordCheck(results, "OK", "bundled subagent resources", "packaged defaults do not require copied subagent prompts");
+		recordCheck(
+			results,
+			"OK",
+			"bundled subagent resources",
+			"packaged defaults do not require copied subagent prompts",
+		);
 		return;
 	}
 
 	const sourceDir = join(packageRoot, "agents", "subagents");
 	const sourceMissing = missingTlhSubagentPrompts(sourceDir);
 	if (sourceMissing.length > 0) {
-		recordCheck(results, "FAIL", "bundled subagent resources", `packaged prompts are incomplete; run \`tlh update\` (${summarizeItems(sourceMissing)})`);
+		recordCheck(
+			results,
+			"FAIL",
+			"bundled subagent resources",
+			`packaged prompts are incomplete; run \`tlh update\` (${summarizeItems(sourceMissing)})`,
+		);
 		return;
 	}
 	const subagentDir = join(agentDir, "tlh", "agents", "subagents");
@@ -324,7 +359,12 @@ function addBundledSubagentCheck(results: CheckResult[], packageRoot: string, ag
 		recordCheck(results, "OK", "bundled subagent resources", `found current prompt bundle at ${subagentDir}`);
 		return;
 	}
-	recordCheck(results, "FAIL", "bundled subagent resources", `restoration needed for ${restoreNeeded.length} prompt(s): ${summarizeItems(restoreNeeded)}`);
+	recordCheck(
+		results,
+		"FAIL",
+		"bundled subagent resources",
+		`restoration needed for ${restoreNeeded.length} prompt(s): ${summarizeItems(restoreNeeded)}`,
+	);
 }
 
 function readRuntimeMarker(markerPath: string): { detail: string; level: CheckLevel } {
@@ -371,39 +411,64 @@ function addRuntimeCheck(results: CheckResult[], agentDir: string, expectedPiVer
 	}
 	try {
 		if (!statSync(piPath).isFile()) {
-			recordCheck(results, "FAIL", "private runtime marker/version hints", `private runtime pi is not a regular file: ${piPath}`);
+			recordCheck(
+				results,
+				"FAIL",
+				"private runtime marker/version hints",
+				`private runtime pi is not a regular file: ${piPath}`,
+			);
 			return;
 		}
 	} catch (error) {
-		recordCheck(results, "FAIL", "private runtime marker/version hints", `could not stat private runtime pi (${String(error)})`);
+		recordCheck(
+			results,
+			"FAIL",
+			"private runtime marker/version hints",
+			`could not stat private runtime pi (${String(error)})`,
+		);
 		return;
 	}
 
 	const piVersionResult = runCommand(piPath, ["--version"]);
 	if (piVersionResult.status !== 0) {
-		recordCheck(results, "FAIL", "private runtime marker/version hints", `private runtime pi did not validate (${commandFailureSummary(piVersionResult)})`);
+		recordCheck(
+			results,
+			"FAIL",
+			"private runtime marker/version hints",
+			`private runtime pi did not validate (${commandFailureSummary(piVersionResult)})`,
+		);
 		return;
 	}
 
-	const runtimeVersion = String(piVersionResult.stdout || "").trim().replace(/^pi\s+/, "");
+	const runtimeVersion = String(piVersionResult.stdout || "")
+		.trim()
+		.replace(/^pi\s+/, "");
 	const marker = readRuntimeMarker(markerPath);
 	const installHint = readInstallStateHint(agentDir);
 	const levels: CheckLevel[] = [marker.level];
 	if (expectedPiVersion !== "unknown" && runtimeVersion !== expectedPiVersion) {
 		levels.push("WARN");
 	}
-	const versionDetail = expectedPiVersion === "unknown"
-		? `pi ${runtimeVersion}`
-		: runtimeVersion === expectedPiVersion
+	const versionDetail =
+		expectedPiVersion === "unknown"
 			? `pi ${runtimeVersion}`
-			: `pi ${runtimeVersion} (expected ${expectedPiVersion})`;
-	recordCheck(results, highestLevel(levels), "private runtime marker/version hints", `${versionDetail}; ${marker.detail}; ${installHint}`);
+			: runtimeVersion === expectedPiVersion
+				? `pi ${runtimeVersion}`
+				: `pi ${runtimeVersion} (expected ${expectedPiVersion})`;
+	recordCheck(
+		results,
+		highestLevel(levels),
+		"private runtime marker/version hints",
+		`${versionDetail}; ${marker.detail}; ${installHint}`,
+	);
 }
 
 function addGnosisCheck(results: CheckResult[], packageRoot: string, agentDir: string, env: NodeJS.ProcessEnv): void {
-	const result = runCommand(process.execPath, [gnosisScript(packageRoot), "validate", "--agent-dir", agentDir], { env });
+	const result = runCommand(process.execPath, [gnosisScript(packageRoot), "validate", "--agent-dir", agentDir], {
+		env,
+	});
 	if (result.status === 0) {
-		recordCheck(results, "OK", "managed gn validation", `validated ${(String(result.stdout || "").trim() || "gn")}`);
+		recordCheck(results, "OK", "managed gn validation", `validated ${String(result.stdout || "").trim() || "gn"}`);
 		return;
 	}
 	recordCheck(results, "WARN", "managed gn validation", `no valid gn command found (${commandFailureSummary(result)})`);
@@ -418,10 +483,25 @@ function parseStatusLine(output: string, label: string): string | undefined {
 	return undefined;
 }
 
-function addTicketsCheck(results: CheckResult[], packageRoot: string, agentDir: string, settingsPath: string, env: NodeJS.ProcessEnv): void {
-	const result = runCommand(process.execPath, [ticketsScript(packageRoot), "status", "--agent-dir", agentDir, "--settings", settingsPath], { env });
+function addTicketsCheck(
+	results: CheckResult[],
+	packageRoot: string,
+	agentDir: string,
+	settingsPath: string,
+	env: NodeJS.ProcessEnv,
+): void {
+	const result = runCommand(
+		process.execPath,
+		[ticketsScript(packageRoot), "status", "--agent-dir", agentDir, "--settings", settingsPath],
+		{ env },
+	);
 	if (result.status !== 0) {
-		recordCheck(results, "WARN", "managed tk validation", `could not inspect ticket integration (${commandFailureSummary(result)})`);
+		recordCheck(
+			results,
+			"WARN",
+			"managed tk validation",
+			`could not inspect ticket integration (${commandFailureSummary(result)})`,
+		);
 		return;
 	}
 	const output = `${result.stdout || ""}\n${result.stderr || ""}`;
@@ -447,7 +527,10 @@ function addGhCheck(results: CheckResult[], env: NodeJS.ProcessEnv): void {
 	recordCheck(results, "WARN", "gh availability/auth", "gh is installed but not authenticated");
 }
 
-function extensionById(defaultExtensions: readonly DefaultExtensionEntry[], id: string): DefaultExtensionEntry | undefined {
+function extensionById(
+	defaultExtensions: readonly DefaultExtensionEntry[],
+	id: string,
+): DefaultExtensionEntry | undefined {
 	return defaultExtensions.find((entry) => entry.id === id);
 }
 
@@ -461,7 +544,11 @@ function settingsPackageIdentities(settings: JsonObject): Set<string> {
 	return identities;
 }
 
-function extensionEnabled(settings: JsonObject, defaultExtensions: readonly DefaultExtensionEntry[], id: string): boolean {
+function extensionEnabled(
+	settings: JsonObject,
+	defaultExtensions: readonly DefaultExtensionEntry[],
+	id: string,
+): boolean {
 	return !disabledDefaultExtensionIds(settings, defaultExtensions).has(id);
 }
 
@@ -512,7 +599,12 @@ function readWebSearchSettings(agentDir: string): { hasStoredKey: boolean; inval
 	}
 }
 
-function addMcpAndWebSearchCheck(results: CheckResult[], packageRoot: string, agentDir: string, settings: JsonObject): void {
+function addMcpAndWebSearchCheck(
+	results: CheckResult[],
+	packageRoot: string,
+	agentDir: string,
+	settings: JsonObject,
+): void {
 	const defaultExtensions = readDefaultExtensions(defaultExtensionsPath(packageRoot), { allowMissing: false });
 	const mcporter = extensionById(defaultExtensions, "mcporter");
 	const webAccess = extensionById(defaultExtensions, "pi-web-access");
@@ -599,14 +691,23 @@ function repairAction(level: RepairLevel, label: string, detail: string): Repair
 	return { level, label, detail };
 }
 
-function repairSettings(packageRoot: string, agentDir: string, settingsPath: string, env: NodeJS.ProcessEnv): RepairAction {
+function repairSettings(
+	packageRoot: string,
+	agentDir: string,
+	settingsPath: string,
+	env: NodeJS.ProcessEnv,
+): RepairAction {
 	const retiredSubagentPackages = captureManagedRetiredSubagentPackages(settingsPath);
 	let npmCommand: string[] | undefined;
 	if (retiredSubagentPackages.length > 0) {
 		try {
 			npmCommand = captureRetiredSubagentNpmCommand(settingsPath);
 		} catch (error) {
-			return repairAction("FAIL", "settings drift", `could not read retired subagent package-manager settings (${error instanceof Error ? error.message : String(error)})`);
+			return repairAction(
+				"FAIL",
+				"settings drift",
+				`could not read retired subagent package-manager settings (${error instanceof Error ? error.message : String(error)})`,
+			);
 		}
 	}
 
@@ -625,35 +726,65 @@ function repairSettings(packageRoot: string, agentDir: string, settingsPath: str
 		}
 		physicalCleanupDetail = details.length > 0 ? `; ${details.join("; ")}` : "";
 	} catch (error) {
-		return repairAction("FAIL", "settings drift", `could not physically remove retired TLH subagent package; settings remain unchanged for retry (${error instanceof Error ? error.message : String(error)})`);
+		return repairAction(
+			"FAIL",
+			"settings drift",
+			`could not physically remove retired TLH subagent package; settings remain unchanged for retry (${error instanceof Error ? error.message : String(error)})`,
+		);
 	}
 
-	const result = runCommand(process.execPath, [
-		mergeSettingsScript(packageRoot),
-		defaultsPath(packageRoot),
-		"--settings", settingsPath,
-		"--default-extensions", defaultExtensionsPath(packageRoot),
-	], { env });
+	const result = runCommand(
+		process.execPath,
+		[
+			mergeSettingsScript(packageRoot),
+			defaultsPath(packageRoot),
+			"--settings",
+			settingsPath,
+			"--default-extensions",
+			defaultExtensionsPath(packageRoot),
+		],
+		{ env },
+	);
 	if (result.status !== 0) {
-		return repairAction("FAIL", "settings drift", `could not repair packaged settings drift (${commandFailureSummary(result)})${physicalCleanupDetail}`);
+		return repairAction(
+			"FAIL",
+			"settings drift",
+			`could not repair packaged settings drift (${commandFailureSummary(result)})${physicalCleanupDetail}`,
+		);
 	}
 
 	const output = summarizeCommandOutput(result);
 	if (output === "No settings changes needed.") {
-		return repairAction("OK", "settings drift", `packaged defaults already match the isolated profile${physicalCleanupDetail}`);
+		return repairAction(
+			"OK",
+			"settings drift",
+			`packaged defaults already match the isolated profile${physicalCleanupDetail}`,
+		);
 	}
-	return repairAction("OK", "settings drift", `${output || "reapplied packaged defaults with existing backup behavior"}${physicalCleanupDetail}`);
+	return repairAction(
+		"OK",
+		"settings drift",
+		`${output || "reapplied packaged defaults with existing backup behavior"}${physicalCleanupDetail}`,
+	);
 }
 
 function repairBundledSubagentPrompts(packageRoot: string, agentDir: string): RepairAction {
 	const packagedDefaultsPath = defaultsPath(packageRoot);
 	if (!settingsRequireTlhSubagentPrompts(packagedDefaultsPath)) {
-		return repairAction("SKIP", "bundled subagent resources", "packaged defaults do not require copied subagent prompts");
+		return repairAction(
+			"SKIP",
+			"bundled subagent resources",
+			"packaged defaults do not require copied subagent prompts",
+		);
 	}
 	const sourceDir = join(packageRoot, "agents", "subagents");
 	const sourceMissing = missingTlhSubagentPrompts(sourceDir);
 	if (sourceMissing.length > 0) {
-		return repairAction("FAIL", "bundled subagent resources", `packaged prompts are incomplete; run \`tlh update\` (${summarizeItems(sourceMissing)})`);
+		return repairAction(
+			"FAIL",
+			"bundled subagent resources",
+			`packaged prompts are incomplete; run \`tlh update\` (${summarizeItems(sourceMissing)})`,
+		);
 	}
 	const subagentDir = join(agentDir, "tlh", "agents", "subagents");
 	const restoreNeeded = restoreNeededTlhSubagentPrompts(sourceDir, subagentDir);
@@ -663,12 +794,25 @@ function repairBundledSubagentPrompts(packageRoot: string, agentDir: string): Re
 	copyTlhSubagentPrompts({ agentDir }, sourceDir);
 	const remainingNeeded = restoreNeededTlhSubagentPrompts(sourceDir, subagentDir);
 	if (remainingNeeded.length > 0) {
-		return repairAction("FAIL", "bundled subagent resources", `prompt restore incomplete (${summarizeItems(remainingNeeded)})`);
+		return repairAction(
+			"FAIL",
+			"bundled subagent resources",
+			`prompt restore incomplete (${summarizeItems(remainingNeeded)})`,
+		);
 	}
-	return repairAction("OK", "bundled subagent resources", `restored ${restoreNeeded.length} prompt(s) from packaged defaults`);
+	return repairAction(
+		"OK",
+		"bundled subagent resources",
+		`restored ${restoreNeeded.length} prompt(s) from packaged defaults`,
+	);
 }
 
-function repairManagedHelper(label: string, scriptPath: string, commandArgs: string[], env: NodeJS.ProcessEnv): RepairAction {
+function repairManagedHelper(
+	label: string,
+	scriptPath: string,
+	commandArgs: string[],
+	env: NodeJS.ProcessEnv,
+): RepairAction {
 	const result = runCommand(process.execPath, [scriptPath, ...commandArgs], { env, timeout: REPAIR_HELPER_TIMEOUT_MS });
 	if (result.status !== 0) {
 		return repairAction("FAIL", label, `${commandArgs[0]} failed (${commandFailureSummary(result)})`);
@@ -676,7 +820,12 @@ function repairManagedHelper(label: string, scriptPath: string, commandArgs: str
 	return repairAction("OK", label, summarizeCommandOutput(result) || `${commandArgs[0]} completed`);
 }
 
-function collectHealthResults(agentDir: string, packageRoot: string, settingsPath: string, env: NodeJS.ProcessEnv): CheckResult[] {
+function collectHealthResults(
+	agentDir: string,
+	packageRoot: string,
+	settingsPath: string,
+	env: NodeJS.ProcessEnv,
+): CheckResult[] {
 	const expectedPiVersion = loadExpectedPiVersion(packageRoot);
 	const results: CheckResult[] = [];
 
@@ -737,9 +886,23 @@ function runRepairMode(agentDir: string, packageRoot: string, settingsPath: stri
 	const actions: RepairAction[] = [
 		repairSettings(packageRoot, agentDir, settingsPath, env),
 		repairBundledSubagentPrompts(packageRoot, agentDir),
-		repairManagedHelper("managed gn install", gnosisScript(packageRoot), ["configure-install", "--agent-dir", agentDir], env),
-		repairManagedHelper("managed tk install", ticketsScript(packageRoot), ["configure-install", "--agent-dir", agentDir, "--settings", settingsPath], env),
-		repairAction("WARN", "private runtime", "runtime replacement stays manual; run `tlh update` if runtime drift remains"),
+		repairManagedHelper(
+			"managed gn install",
+			gnosisScript(packageRoot),
+			["configure-install", "--agent-dir", agentDir],
+			env,
+		),
+		repairManagedHelper(
+			"managed tk install",
+			ticketsScript(packageRoot),
+			["configure-install", "--agent-dir", agentDir, "--settings", settingsPath],
+			env,
+		),
+		repairAction(
+			"WARN",
+			"private runtime",
+			"runtime replacement stays manual; run `tlh update` if runtime drift remains",
+		),
 		repairAction("WARN", "user-owned prerequisites", "gh auth, EXA keys, and MCP config remain manual"),
 	];
 	printRepairActions(actions);
@@ -758,7 +921,9 @@ function main(): number {
 
 	const agentDir = resolve(resolveTlhAgentDir(args.agentDir));
 	const packageRoot = resolve(expandHomePath(args.packageRoot || DEFAULT_PACKAGE_ROOT) || DEFAULT_PACKAGE_ROOT);
-	const settingsPath = resolve(expandHomePath(args.settingsPath || defaultTlhSettingsPath({ agentDir })) || defaultTlhSettingsPath({ agentDir }));
+	const settingsPath = resolve(
+		expandHomePath(args.settingsPath || defaultTlhSettingsPath({ agentDir })) || defaultTlhSettingsPath({ agentDir }),
+	);
 	const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir };
 
 	if (args.repair) {

@@ -6,8 +6,7 @@ function unrefTimeout(handle) {
 }
 export function scheduleDeadline(deadlineAt, onDeadline, options = {}) {
     const now = options.now ?? Date.now;
-    const schedule = options.setTimeout
-        ?? ((handler, delayMs) => setTimeout(handler, delayMs));
+    const schedule = options.setTimeout ?? ((handler, delayMs) => setTimeout(handler, delayMs));
     const clear = options.clearTimeout ?? clearTimeout;
     let handle;
     let cancelled = false;

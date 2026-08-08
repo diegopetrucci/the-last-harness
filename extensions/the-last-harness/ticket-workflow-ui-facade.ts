@@ -24,7 +24,10 @@ function createRetryableLazyImport<TModule>(loader: () => Promise<TModule>): () 
 	};
 }
 
-export function registerLazyTlhTicketWorkflowUi(pi: ExtensionAPI, options: TlhTicketWorkflowUiFacadeOptions = {}): void {
+export function registerLazyTlhTicketWorkflowUi(
+	pi: ExtensionAPI,
+	options: TlhTicketWorkflowUiFacadeOptions = {},
+): void {
 	const loadModule = createRetryableLazyImport(
 		options.loadModule ?? (() => import("./ticket-workflow-ui.js") as Promise<TicketWorkflowUiModule>),
 	);

@@ -54,9 +54,18 @@ describe("turn-budget module", () => {
 		});
 
 		it("pluralizes graceTurns for one versus many or zero", () => {
-			assert.match(appendTurnBudgetSystemPrompt("", budget({ graceTurns: 1 })), /1 additional assistant turn may be allowed/);
-			assert.match(appendTurnBudgetSystemPrompt("", budget({ graceTurns: 0 })), /0 additional assistant turns may be allowed/);
-			assert.match(appendTurnBudgetSystemPrompt("", budget({ graceTurns: 3 })), /3 additional assistant turns may be allowed/);
+			assert.match(
+				appendTurnBudgetSystemPrompt("", budget({ graceTurns: 1 })),
+				/1 additional assistant turn may be allowed/,
+			);
+			assert.match(
+				appendTurnBudgetSystemPrompt("", budget({ graceTurns: 0 })),
+				/0 additional assistant turns may be allowed/,
+			);
+			assert.match(
+				appendTurnBudgetSystemPrompt("", budget({ graceTurns: 3 })),
+				/3 additional assistant turns may be allowed/,
+			);
 		});
 	});
 

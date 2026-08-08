@@ -2,14 +2,36 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.ts";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
-import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type NestedRunSummary, type SubagentRunMode, type TkTicketMetadata, type TokenUsage, type TurnBudgetState } from "../../shared/types.ts";
+import {
+	type ActivityState,
+	type AsyncJobStep,
+	type AsyncParallelGroupStatus,
+	type AsyncStatus,
+	type CostSummary,
+	type NestedRunSummary,
+	type SubagentRunMode,
+	type TkTicketMetadata,
+	type TokenUsage,
+	type TurnBudgetState,
+} from "../../shared/types.ts";
 import { readInterruptRequest } from "./control-channel.ts";
 import { readStatus } from "../../shared/utils.ts";
-import { attachRootChildrenToSteps, buildNestedRouteIndex, type NestedRoute, projectNestedEvents } from "../shared/nested-events.ts";
+import {
+	attachRootChildrenToSteps,
+	buildNestedRouteIndex,
+	type NestedRoute,
+	projectNestedEvents,
+} from "../shared/nested-events.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
-import { createAsyncStatusValidationError, fingerprintAsyncStatusFile, isAsyncStatusCorruptionError, type AsyncStatusCorruptionFingerprint, type AsyncStatusCorruptionKind } from "./async-status-corruption.ts";
+import {
+	createAsyncStatusValidationError,
+	fingerprintAsyncStatusFile,
+	isAsyncStatusCorruptionError,
+	type AsyncStatusCorruptionFingerprint,
+	type AsyncStatusCorruptionKind,
+} from "./async-status-corruption.ts";
 import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/lifecycle-privacy.ts";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.ts";
 
@@ -125,10 +147,9 @@ function getErrorMessage(error: unknown): string {
 }
 
 function isNotFoundError(error: unknown): boolean {
-	return typeof error === "object"
-		&& error !== null
-		&& "code" in error
-		&& (error as NodeJS.ErrnoException).code === "ENOENT";
+	return (
+		typeof error === "object" && error !== null && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT"
+	);
 }
 
 function isAsyncRunDir(root: string, entry: string): boolean {
@@ -155,13 +176,25 @@ function outputFileMtime(outputFile: string | undefined): number | undefined {
 	}
 }
 
-function deriveAsyncActivityState(asyncDir: string, status: AsyncStatus): { activityState?: ActivityState; lastActivityAt?: number } {
+function deriveAsyncActivityState(
+	asyncDir: string,
+	status: AsyncStatus,
+): { activityState?: ActivityState; lastActivityAt?: number } {
 	if (status.state !== "running") return { activityState: status.activityState, lastActivityAt: status.lastActivityAt };
-	const outputPath = status.outputFile ? (path.isAbsolute(status.outputFile) ? status.outputFile : path.join(asyncDir, status.outputFile)) : undefined;
+	const outputPath = status.outputFile
+		? path.isAbsolute(status.outputFile)
+			? status.outputFile
+			: path.join(asyncDir, status.outputFile)
+		: undefined;
 	const currentStep = typeof status.currentStep === "number" ? status.steps?.[status.currentStep] : undefined;
 	return {
 		activityState: status.activityState,
-		lastActivityAt: status.lastActivityAt ?? outputFileMtime(outputPath) ?? currentStep?.lastActivityAt ?? currentStep?.startedAt ?? status.startedAt,
+		lastActivityAt:
+			status.lastActivityAt ??
+			outputFileMtime(outputPath) ??
+			currentStep?.lastActivityAt ??
+			currentStep?.startedAt ??
+			status.startedAt,
 	};
 }
 
@@ -186,7 +219,12 @@ export function validatePersistedAsyncStatus(asyncDir: string, status: AsyncStat
 	}
 }
 
-function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string }, nestedWarnings: string[] = [], nestedRoute?: NestedRoute): AsyncRunSummary {
+function statusToSummary(
+	asyncDir: string,
+	status: AsyncStatus & { cwd?: string },
+	nestedWarnings: string[] = [],
+	nestedRoute?: NestedRoute,
+): AsyncRunSummary {
 	const { activityState, lastActivityAt } = deriveAsyncActivityState(asyncDir, status);
 	const interruptRequestedAt = status.state === "running" ? readInterruptRequest(asyncDir)?.ts : undefined;
 	const steps = status.steps ?? [];
@@ -294,14 +332,22 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 function sortRuns(runs: AsyncRunSummary[]): AsyncRunSummary[] {
 	const rank = (state: AsyncRunSummary["state"]): number => {
 		switch (state) {
-			case "running": return 0;
-			case "pausing": return 0;
-			case "queued": return 1;
-			case "failed": return 2;
-			case "paused": return 2;
-			case "cancelled": return 2;
-			case "continued": return 2;
-			case "complete": return 3;
+			case "running":
+				return 0;
+			case "pausing":
+				return 0;
+			case "queued":
+				return 1;
+			case "failed":
+				return 2;
+			case "paused":
+				return 2;
+			case "cancelled":
+				return 2;
+			case "continued":
+				return 2;
+			case "complete":
+				return 3;
 		}
 	};
 	return [...runs].sort((a, b) => {
@@ -324,7 +370,11 @@ function listAsyncRunEntries(asyncDirRoot: string): string[] {
 	}
 }
 
-function buildRunCollector(asyncDirRoot: string, options: AsyncRunListOptions = {}, validationOrder: "strict" | "restore_scan" = "strict") {
+function buildRunCollector(
+	asyncDirRoot: string,
+	options: AsyncRunListOptions = {},
+	validationOrder: "strict" | "restore_scan" = "strict",
+) {
 	const allowedStates = options.states ? new Set(options.states) : undefined;
 	const runs: AsyncRunSummary[] = [];
 	let nestedRouteIndex: Map<string, NestedRoute> | undefined;
@@ -334,9 +384,10 @@ function buildRunCollector(asyncDirRoot: string, options: AsyncRunListOptions = 
 	};
 	const collectEntry = (entry: string): void => {
 		const asyncDir = path.join(asyncDirRoot, entry);
-		const reconciliation = options.reconcile === false
-			? undefined
-			: reconcileAsyncRun(asyncDir, { resultsDir: options.resultsDir, kill: options.kill, now: options.now });
+		const reconciliation =
+			options.reconcile === false
+				? undefined
+				: reconcileAsyncRun(asyncDir, { resultsDir: options.resultsDir, kill: options.kill, now: options.now });
 		const status = (reconciliation?.status ?? readStatus(asyncDir)) as (AsyncStatus & { cwd?: string }) | null;
 		if (!status) return;
 		if (validationOrder === "restore_scan") validatePersistedAsyncStatus(asyncDir, status);
@@ -347,7 +398,12 @@ function buildRunCollector(asyncDirRoot: string, options: AsyncRunListOptions = 
 		let nestedRoute: NestedRoute | undefined;
 		try {
 			nestedRoute = resolveNestedRoute(status.runId || path.basename(asyncDir));
-			if (nestedRoute) reconcileNestedAsyncDescendants(nestedRoute, { resultsDir: options.resultsDir, kill: options.kill, now: options.now });
+			if (nestedRoute)
+				reconcileNestedAsyncDescendants(nestedRoute, {
+					resultsDir: options.resultsDir,
+					kill: options.kill,
+					now: options.now,
+				});
 		} catch (error) {
 			nestedWarnings.push(`Nested status unavailable: ${getErrorMessage(error)}`);
 		}
@@ -368,7 +424,10 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 	return finalizeRunList(collector.runs, options.limit);
 }
 
-export function scanAsyncRunsForRestore(asyncDirRoot: string, options: AsyncRunListOptions = {}): AsyncRunRestoreScanResult {
+export function scanAsyncRunsForRestore(
+	asyncDirRoot: string,
+	options: AsyncRunListOptions = {},
+): AsyncRunRestoreScanResult {
 	const entries = listAsyncRunEntries(asyncDirRoot);
 	const collector = buildRunCollector(asyncDirRoot, options, "restore_scan");
 	const issues: AsyncRunCorruptEntryIssue[] = [];
@@ -377,32 +436,56 @@ export function scanAsyncRunsForRestore(asyncDirRoot: string, options: AsyncRunL
 			collector.collectEntry(entry);
 		} catch (error) {
 			if (!isAsyncStatusCorruptionError(error)) throw error;
-			issues.push(Object.freeze({
-				entry,
-				asyncDir: error.asyncDir,
-				statusPath: error.statusPath,
-				kind: error.kind,
-				message: error.message,
-				...(error.fingerprint ? { fingerprint: error.fingerprint } : {}),
-			}));
+			issues.push(
+				Object.freeze({
+					entry,
+					asyncDir: error.asyncDir,
+					statusPath: error.statusPath,
+					kind: error.kind,
+					message: error.message,
+					...(error.fingerprint ? { fingerprint: error.fingerprint } : {}),
+				}),
+			);
 		}
 	}
 	return { runs: finalizeRunList(collector.runs, options.limit), issues };
 }
 
-function formatActivityFacts(input: { activityState?: ActivityState; lastActivityAt?: number; currentTool?: string; currentToolStartedAt?: number; currentPath?: string; turnCount?: number; toolCount?: number; interruptRequestedAt?: number; steerCount?: number; lastSteerAt?: number; turnBudget?: TurnBudgetState; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; privacySafe?: boolean }): string | undefined {
+function formatActivityFacts(input: {
+	activityState?: ActivityState;
+	lastActivityAt?: number;
+	currentTool?: string;
+	currentToolStartedAt?: number;
+	currentPath?: string;
+	turnCount?: number;
+	toolCount?: number;
+	interruptRequestedAt?: number;
+	steerCount?: number;
+	lastSteerAt?: number;
+	turnBudget?: TurnBudgetState;
+	turnBudgetExceeded?: boolean;
+	wrapUpRequested?: boolean;
+	privacySafe?: boolean;
+}): string | undefined {
 	if (input.interruptRequestedAt !== undefined) return "pausing…";
 	const facts: string[] = [];
-	if (input.currentTool && input.currentToolStartedAt !== undefined) facts.push(`tool ${input.currentTool} ${formatDuration(Math.max(0, Date.now() - input.currentToolStartedAt))}`);
+	if (input.currentTool && input.currentToolStartedAt !== undefined)
+		facts.push(`tool ${input.currentTool} ${formatDuration(Math.max(0, Date.now() - input.currentToolStartedAt))}`);
 	else if (input.currentTool) facts.push(`tool ${input.currentTool}`);
 	if (!input.privacySafe && input.currentPath) facts.push(shortenPath(input.currentPath));
 	if (input.turnCount !== undefined) facts.push(`${input.turnCount} turns`);
-	if (input.turnBudgetExceeded && input.turnBudget) facts.push(`turn budget exceeded ${input.turnBudget.turnCount}/${input.turnBudget.maxTurns}+${input.turnBudget.graceTurns}`);
-	else if (input.wrapUpRequested && input.turnBudget) facts.push(`wrap-up requested ${input.turnBudget.turnCount}/${input.turnBudget.maxTurns}`);
-	else if (input.turnBudget) facts.push(`turn budget ${input.turnBudget.turnCount}/${input.turnBudget.maxTurns}+${input.turnBudget.graceTurns}`);
+	if (input.turnBudgetExceeded && input.turnBudget)
+		facts.push(
+			`turn budget exceeded ${input.turnBudget.turnCount}/${input.turnBudget.maxTurns}+${input.turnBudget.graceTurns}`,
+		);
+	else if (input.wrapUpRequested && input.turnBudget)
+		facts.push(`wrap-up requested ${input.turnBudget.turnCount}/${input.turnBudget.maxTurns}`);
+	else if (input.turnBudget)
+		facts.push(`turn budget ${input.turnBudget.turnCount}/${input.turnBudget.maxTurns}+${input.turnBudget.graceTurns}`);
 	if (input.toolCount !== undefined) facts.push(`${input.toolCount} tools`);
 	if (input.steerCount !== undefined) facts.push(`${input.steerCount} steers`);
-	if (typeof input.lastSteerAt === "number" && Number.isFinite(input.lastSteerAt)) facts.push(`last steer ${new Date(input.lastSteerAt).toISOString()}`);
+	if (typeof input.lastSteerAt === "number" && Number.isFinite(input.lastSteerAt))
+		facts.push(`last steer ${new Date(input.lastSteerAt).toISOString()}`);
 	const activity = formatActivityLabel(input.lastActivityAt, input.activityState);
 	return activity || facts.length ? [activity, ...facts].filter(Boolean).join(" | ") : undefined;
 }
@@ -410,7 +493,10 @@ function formatActivityFacts(input: { activityState?: ActivityState; lastActivit
 function formatStepLine(step: AsyncRunStepSummary, privacySafe = false): string {
 	const display = step.label ? `${step.label} (${step.agent})` : step.agent;
 	const phase = step.phase ? `[${step.phase}] ` : "";
-	const parts = [`${step.index + 1}. ${phase}${display}`, step.interruptRequestedAt !== undefined && step.status === "running" ? "pausing" : step.status];
+	const parts = [
+		`${step.index + 1}. ${phase}${display}`,
+		step.interruptRequestedAt !== undefined && step.status === "running" ? "pausing" : step.status,
+	];
 	const activity = formatActivityFacts({ ...step, privacySafe });
 	if (activity) parts.push(activity);
 	const modelThinking = formatModelThinking(step.model, step.thinking);
@@ -425,20 +511,28 @@ export function formatAsyncRunOutputPath(run: Pick<AsyncRunSummary, "asyncDir" |
 	return path.isAbsolute(run.outputFile) ? run.outputFile : path.join(run.asyncDir, run.outputFile);
 }
 
-export function formatAsyncRunProgressLabel(run: Pick<AsyncRunSummary, "mode" | "state" | "currentStep" | "chainStepCount" | "parallelGroups" | "steps" | "interruptRequestedAt">): string {
+export function formatAsyncRunProgressLabel(
+	run: Pick<
+		AsyncRunSummary,
+		"mode" | "state" | "currentStep" | "chainStepCount" | "parallelGroups" | "steps" | "interruptRequestedAt"
+	>,
+): string {
 	const stepCount = run.steps.length || 1;
 	const chainStepCount = run.chainStepCount ?? stepCount;
 	const groups = normalizeParallelGroups(run.parallelGroups, run.steps.length, chainStepCount);
-	const activeGroup = run.currentStep !== undefined
-		? groups.find((group) => run.currentStep! >= group.start && run.currentStep! < group.start + group.count)
-		: undefined;
+	const activeGroup =
+		run.currentStep !== undefined
+			? groups.find((group) => run.currentStep! >= group.start && run.currentStep! < group.start + group.count)
+			: undefined;
 	if (activeGroup) {
 		const groupSteps = run.steps.slice(activeGroup.start, activeGroup.start + activeGroup.count);
 		if (run.interruptRequestedAt !== undefined) {
 			const pausing = groupSteps.filter((step) => step.status === "running").length;
 			const done = groupSteps.filter((step) => step.status === "complete" || step.status === "completed").length;
 			const groupLabel = `${pausing === 1 ? "1 agent pausing" : `${pausing} agents pausing`} · ${done}/${activeGroup.count} done`;
-			return run.mode === "parallel" ? groupLabel : `step ${activeGroup.stepIndex + 1}/${chainStepCount} · parallel group: ${groupLabel}`;
+			return run.mode === "parallel"
+				? groupLabel
+				: `step ${activeGroup.stepIndex + 1}/${chainStepCount} · parallel group: ${groupLabel}`;
 		}
 		const groupLabel = formatParallelOutcome(groupSteps, activeGroup.count, { showRunning: run.state === "running" });
 		if (run.mode === "parallel") return groupLabel;
@@ -464,8 +558,13 @@ function formatRunHeader(run: AsyncRunSummary): string {
 	const stepLabel = formatAsyncRunProgressLabel(run);
 	const cwd = run.cwd ? shortenPath(run.cwd) : shortenPath(run.asyncDir);
 	const activity = formatActivityFacts({ ...run, privacySafe });
-	const pending = run.pendingAppends ? ` | ${run.pendingAppends} pending append${run.pendingAppends === 1 ? "" : "s"}` : "";
-	const lifecycleState = run.state === "pausing" || (run.interruptRequestedAt !== undefined && run.state === "running") ? "pausing" : run.state;
+	const pending = run.pendingAppends
+		? ` | ${run.pendingAppends} pending append${run.pendingAppends === 1 ? "" : "s"}`
+		: "";
+	const lifecycleState =
+		run.state === "pausing" || (run.interruptRequestedAt !== undefined && run.state === "running")
+			? "pausing"
+			: run.state;
 	return privacySafe
 		? `${run.id} | ${lifecycleState}${activity ? ` | ${activity}` : ""} | ${run.mode} | ${stepLabel}${pending}`
 		: `${run.id} | ${lifecycleState}${activity ? ` | ${activity}` : ""} | ${run.mode} | ${stepLabel}${pending} | ${cwd}`;
@@ -480,13 +579,22 @@ export function formatAsyncRunList(runs: AsyncRunSummary[], heading = "Active as
 		lines.push(`- ${formatRunHeader(run)}`);
 		for (const step of run.steps) {
 			lines.push(`  ${formatStepLine(step, privacySafe)}`);
-			lines.push(...formatNestedRunStatusLines(step.children, { indent: "    ", maxLines: 12, redactSensitiveDetails: privacySafe }));
+			lines.push(
+				...formatNestedRunStatusLines(step.children, {
+					indent: "    ",
+					maxLines: 12,
+					redactSensitiveDetails: privacySafe,
+				}),
+			);
 		}
 		const attached = new Set(run.steps.flatMap((step) => step.children?.map((child) => child.id) ?? []));
 		const unattached = run.nestedChildren?.filter((child) => !attached.has(child.id)) ?? [];
-		lines.push(...formatNestedRunStatusLines(unattached, { indent: "  ", maxLines: 12, redactSensitiveDetails: privacySafe }));
+		lines.push(
+			...formatNestedRunStatusLines(unattached, { indent: "  ", maxLines: 12, redactSensitiveDetails: privacySafe }),
+		);
 		if (run.error) lines.push(`  Error: ${privacySafe ? protectedLifecycleText("error") : run.error}`);
-		for (const warning of run.nestedWarnings ?? []) lines.push(`  Warning: ${privacySafe ? protectedLifecycleText("nested_warning") : warning}`);
+		for (const warning of run.nestedWarnings ?? [])
+			lines.push(`  Warning: ${privacySafe ? protectedLifecycleText("nested_warning") : warning}`);
 		const outputPath = formatAsyncRunOutputPath(run);
 		if (!privacySafe && outputPath) lines.push(`  output: ${shortenPath(outputPath)}`);
 		if (!privacySafe && run.sessionFile) lines.push(`  session: ${shortenPath(run.sessionFile)}`);

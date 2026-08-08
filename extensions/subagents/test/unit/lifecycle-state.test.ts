@@ -3,7 +3,17 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { boundSupervisorSummary, finalizeLifecycleContinuationLaunch, lifecycleGeneration, recoverStaleLifecycleContinuationClaim, recoverStoppedLifecycleOwnership, transitionLifecycleStatus, withLifecycleContinuation, withLifecycleStatusLock, writeNormalizedLifecycleStatus } from "../../src/runs/shared/lifecycle-state.ts";
+import {
+	boundSupervisorSummary,
+	finalizeLifecycleContinuationLaunch,
+	lifecycleGeneration,
+	recoverStaleLifecycleContinuationClaim,
+	recoverStoppedLifecycleOwnership,
+	transitionLifecycleStatus,
+	withLifecycleContinuation,
+	withLifecycleStatusLock,
+	writeNormalizedLifecycleStatus,
+} from "../../src/runs/shared/lifecycle-state.ts";
 import { readStatus } from "../../src/shared/utils.ts";
 
 function tempRoot(prefix: string): string {
@@ -35,32 +45,40 @@ describe("lifecycle state helpers", () => {
 		try {
 			const asyncDir = path.join(root, "run-legacy");
 			fs.mkdirSync(asyncDir, { recursive: true });
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-legacy",
-				mode: "single",
-				state: "paused",
-				startedAt: 100,
-				steps: [{ agent: "worker", status: "paused" }],
-				pause: {
-					kind: "awaiting_supervisor",
-					summary: "  need\nhelp  ",
-					ownerPid: -1,
-					request: {
-						tool: "contact_supervisor",
-						reason: "need_decision",
-						requestId: " req-1 ",
-						summary: "  private summary  ",
-						interview: { secret: true },
-						args: { token: "SECRET" },
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-legacy",
+						mode: "single",
+						state: "paused",
+						startedAt: 100,
+						steps: [{ agent: "worker", status: "paused" }],
+						pause: {
+							kind: "awaiting_supervisor",
+							summary: "  need\nhelp  ",
+							ownerPid: -1,
+							request: {
+								tool: "contact_supervisor",
+								reason: "need_decision",
+								requestId: " req-1 ",
+								summary: "  private summary  ",
+								interview: { secret: true },
+								args: { token: "SECRET" },
+							},
+						},
+						lifecycle: {
+							continuation: {
+								claimToken: "bad token with spaces and /private/root/secret",
+								continuationRunId: `${"x".repeat(200)}`,
+							},
+						},
 					},
-				},
-				lifecycle: {
-					continuation: {
-						claimToken: "bad token with spaces and /private/root/secret",
-						continuationRunId: `${"x".repeat(200)}`,
-					},
-				},
-			}, null, 2), "utf-8");
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
 			const status = readStatus(asyncDir);
 			assert.equal(status?.state, "paused");
@@ -77,13 +95,21 @@ describe("lifecycle state helpers", () => {
 			assert.equal(status?.lifecycle?.continuation?.claimToken, undefined);
 			assert.equal(status?.lifecycle?.continuation?.continuationRunId, undefined);
 
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-legacy",
-				mode: "single",
-				state: "pausing",
-				startedAt: 100,
-				steps: [{ agent: "worker", status: "pausing" }],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-legacy",
+						mode: "single",
+						state: "pausing",
+						startedAt: 100,
+						steps: [{ agent: "worker", status: "pausing" }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 			const pausingStatus = readStatus(asyncDir);
 			assert.equal(pausingStatus?.state, "pausing");
 			assert.equal(pausingStatus?.steps?.[0]?.status, "pausing");
@@ -204,14 +230,15 @@ describe("lifecycle state helpers", () => {
 				mutate: (status) => {
 					outerMutations += 1;
 					expectNoSecretInError(
-						() => transitionLifecycleStatus({
-							asyncDir,
-							expectedGeneration: 0,
-							mutate: (nestedStatus) => {
-								innerMutations += 1;
-								return nestedStatus;
-							},
-						}),
+						() =>
+							transitionLifecycleStatus({
+								asyncDir,
+								expectedGeneration: 0,
+								mutate: (nestedStatus) => {
+									innerMutations += 1;
+									return nestedStatus;
+								},
+							}),
 						secret,
 						/status lock/,
 					);
@@ -243,9 +270,17 @@ describe("lifecycle state helpers", () => {
 				startedAt: 100,
 				steps: [{ agent: "worker", status: "paused" }],
 			});
-			assert.equal(withLifecycleStatusLock(asyncDir, (status) => status?.state), "paused");
+			assert.equal(
+				withLifecycleStatusLock(asyncDir, (status) => status?.state),
+				"paused",
+			);
 			expectNoSecretInError(
-				() => withLifecycleStatusLock(asyncDir, () => withLifecycleStatusLock(asyncDir, () => undefined, { retryDelaysMs: [] }), { retryDelaysMs: [] }),
+				() =>
+					withLifecycleStatusLock(
+						asyncDir,
+						() => withLifecycleStatusLock(asyncDir, () => undefined, { retryDelaysMs: [] }),
+						{ retryDelaysMs: [] },
+					),
 				secret,
 				/status lock/,
 			);
@@ -294,12 +329,23 @@ describe("lifecycle state helpers", () => {
 			});
 			const lockDir = path.join(asyncDir, ".lifecycle-transition.lock");
 			fs.mkdirSync(lockDir, { recursive: true });
-			fs.writeFileSync(path.join(lockDir, "owner.json"), JSON.stringify({ token: "owner-dead", pid: 4242, acquiredAt: 150 }), "utf-8");
+			fs.writeFileSync(
+				path.join(lockDir, "owner.json"),
+				JSON.stringify({ token: "owner-dead", pid: 4242, acquiredAt: 150 }),
+				"utf-8",
+			);
 
 			const transitioned = transitionLifecycleStatus({
 				asyncDir,
 				expectedGeneration: 0,
-				lockOptions: { kill: () => { const error = new Error("dead") as NodeJS.ErrnoException; error.code = "ESRCH"; throw error; }, retryDelaysMs: [] },
+				lockOptions: {
+					kill: () => {
+						const error = new Error("dead") as NodeJS.ErrnoException;
+						error.code = "ESRCH";
+						throw error;
+					},
+					retryDelaysMs: [],
+				},
 				mutate: (status) => ({ ...status, state: "paused", pause: { kind: "cohort_pause", pausedAt: 200 } }),
 			});
 			assert.equal(transitioned.status.state, "paused");
@@ -323,24 +369,37 @@ describe("lifecycle state helpers", () => {
 			});
 			const lockDir = path.join(asyncDir, ".lifecycle-transition.lock");
 			fs.mkdirSync(lockDir, { recursive: true });
-			fs.writeFileSync(path.join(lockDir, "owner.json"), JSON.stringify({ token: "owner-live", pid: 5555, acquiredAt: 150 }), "utf-8");
+			fs.writeFileSync(
+				path.join(lockDir, "owner.json"),
+				JSON.stringify({ token: "owner-live", pid: 5555, acquiredAt: 150 }),
+				"utf-8",
+			);
 			assert.throws(
-				() => transitionLifecycleStatus({
-					asyncDir,
-					expectedGeneration: 0,
-					lockOptions: { kill: () => true, retryDelaysMs: [] },
-					mutate: (status) => status,
-				}),
+				() =>
+					transitionLifecycleStatus({
+						asyncDir,
+						expectedGeneration: 0,
+						lockOptions: { kill: () => true, retryDelaysMs: [] },
+						mutate: (status) => status,
+					}),
 				/status lock \(pid 5555, acquired 1970-01-01T00:00:00.150Z\)/,
 			);
 			assert.equal(fs.existsSync(lockDir), true);
 			assert.throws(
-				() => transitionLifecycleStatus({
-					asyncDir,
-					expectedGeneration: 0,
-					lockOptions: { kill: () => { const error = new Error("no access") as NodeJS.ErrnoException; error.code = "EPERM"; throw error; }, retryDelaysMs: [] },
-					mutate: (status) => status,
-				}),
+				() =>
+					transitionLifecycleStatus({
+						asyncDir,
+						expectedGeneration: 0,
+						lockOptions: {
+							kill: () => {
+								const error = new Error("no access") as NodeJS.ErrnoException;
+								error.code = "EPERM";
+								throw error;
+							},
+							retryDelaysMs: [],
+						},
+						mutate: (status) => status,
+					}),
 				/status lock \(pid 5555, acquired 1970-01-01T00:00:00.150Z\)/,
 			);
 			assert.equal(fs.existsSync(lockDir), true);
@@ -365,12 +424,13 @@ describe("lifecycle state helpers", () => {
 			fs.writeFileSync(path.join(lockDir, "owner.json"), "{not-json", "utf-8");
 			fs.utimesSync(lockDir, new Date(0), new Date(0));
 			assert.throws(
-				() => transitionLifecycleStatus({
-					asyncDir,
-					expectedGeneration: 0,
-					lockOptions: { now: () => 5_000, ownerlessStaleMs: 10_000, retryDelaysMs: [] },
-					mutate: (status) => status,
-				}),
+				() =>
+					transitionLifecycleStatus({
+						asyncDir,
+						expectedGeneration: 0,
+						lockOptions: { now: () => 5_000, ownerlessStaleMs: 10_000, retryDelaysMs: [] },
+						mutate: (status) => status,
+					}),
 				/status lock/,
 			);
 			assert.equal(fs.existsSync(lockDir), true);
@@ -403,26 +463,34 @@ describe("lifecycle state helpers", () => {
 			fs.writeFileSync(ownerPath, JSON.stringify({ token: "owner-old", pid: 7001, acquiredAt: 150 }), "utf-8");
 			let checks = 0;
 			assert.throws(
-				() => transitionLifecycleStatus({
-					asyncDir,
-					expectedGeneration: 0,
-					lockOptions: {
-						kill: () => {
-							checks += 1;
-							if (checks === 1) {
-								fs.writeFileSync(ownerPath, JSON.stringify({ token: "owner-new", pid: 7002, acquiredAt: 160 }), "utf-8");
-							}
-							const error = new Error("dead") as NodeJS.ErrnoException;
-							error.code = "ESRCH";
-							throw error;
+				() =>
+					transitionLifecycleStatus({
+						asyncDir,
+						expectedGeneration: 0,
+						lockOptions: {
+							kill: () => {
+								checks += 1;
+								if (checks === 1) {
+									fs.writeFileSync(
+										ownerPath,
+										JSON.stringify({ token: "owner-new", pid: 7002, acquiredAt: 160 }),
+										"utf-8",
+									);
+								}
+								const error = new Error("dead") as NodeJS.ErrnoException;
+								error.code = "ESRCH";
+								throw error;
+							},
+							retryDelaysMs: [],
 						},
-						retryDelaysMs: [],
-					},
-					mutate: (status) => status,
-				}),
+						mutate: (status) => status,
+					}),
 				/status lock \(pid 7002, acquired 1970-01-01T00:00:00.160Z\)/,
 			);
-			assert.deepEqual(JSON.parse(fs.readFileSync(ownerPath, "utf-8")) as { token: string; pid: number; acquiredAt: number }, { token: "owner-new", pid: 7002, acquiredAt: 160 });
+			assert.deepEqual(
+				JSON.parse(fs.readFileSync(ownerPath, "utf-8")) as { token: string; pid: number; acquiredAt: number },
+				{ token: "owner-new", pid: 7002, acquiredAt: 160 },
+			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -458,7 +526,11 @@ describe("lifecycle state helpers", () => {
 				lifecycle: { generation: 0, continuation: { claimToken: "claim-dead", claimedAt: 175, ownerPid: 8123 } },
 			});
 			const recovered = recoverStaleLifecycleContinuationClaim(asyncDir, 0, {
-				kill: () => { const error = new Error("dead") as NodeJS.ErrnoException; error.code = "ESRCH"; throw error; },
+				kill: () => {
+					const error = new Error("dead") as NodeJS.ErrnoException;
+					error.code = "ESRCH";
+					throw error;
+				},
 				now: () => 250,
 			});
 			assert.equal(recovered.recovered, true);
@@ -473,10 +545,23 @@ describe("lifecycle state helpers", () => {
 				state: "continued",
 				startedAt: 100,
 				steps: [{ agent: "worker", status: "continued" }],
-				lifecycle: { generation: 1, continuation: { claimToken: "claim-done", claimedAt: 260, ownerPid: 8123, continuedAt: 270, continuationRunId: "resumed-1" } },
+				lifecycle: {
+					generation: 1,
+					continuation: {
+						claimToken: "claim-done",
+						claimedAt: 260,
+						ownerPid: 8123,
+						continuedAt: 270,
+						continuationRunId: "resumed-1",
+					},
+				},
 			});
 			const completed = recoverStaleLifecycleContinuationClaim(asyncDir, 0, {
-				kill: () => { const error = new Error("dead") as NodeJS.ErrnoException; error.code = "ESRCH"; throw error; },
+				kill: () => {
+					const error = new Error("dead") as NodeJS.ErrnoException;
+					error.code = "ESRCH";
+					throw error;
+				},
 			});
 			assert.equal(completed.recovered, false);
 			assert.equal(completed.liveness, "completed");
@@ -496,10 +581,23 @@ describe("lifecycle state helpers", () => {
 				state: "paused",
 				startedAt: 100,
 				steps: [{ agent: "worker", status: "paused" }],
-				lifecycle: { generation: 0, continuation: { phase: "reserved", claimToken: "claim-reserved", claimedAt: 150, ownerPid: 9001, continuationRunId: "revived-1" } },
+				lifecycle: {
+					generation: 0,
+					continuation: {
+						phase: "reserved",
+						claimToken: "claim-reserved",
+						claimedAt: 150,
+						ownerPid: 9001,
+						continuationRunId: "revived-1",
+					},
+				},
 			});
 			const recovered = recoverStaleLifecycleContinuationClaim(asyncDir, 0, {
-				kill: () => { const error = new Error("dead") as NodeJS.ErrnoException; error.code = "ESRCH"; throw error; },
+				kill: () => {
+					const error = new Error("dead") as NodeJS.ErrnoException;
+					error.code = "ESRCH";
+					throw error;
+				},
 				now: () => 200,
 				asyncDirRoot: root,
 			});
@@ -512,11 +610,24 @@ describe("lifecycle state helpers", () => {
 				state: "paused",
 				startedAt: 100,
 				steps: [{ agent: "worker", status: "paused" }],
-				lifecycle: { generation: 0, continuation: { phase: "launched", claimToken: "claim-launched", claimedAt: 150, ownerPid: 9002, continuationRunId: "revived-2" } },
+				lifecycle: {
+					generation: 0,
+					continuation: {
+						phase: "launched",
+						claimToken: "claim-launched",
+						claimedAt: 150,
+						ownerPid: 9002,
+						continuationRunId: "revived-2",
+					},
+				},
 			});
 			fs.mkdirSync(path.join(root, "revived-2"), { recursive: true });
 			const blocked = recoverStaleLifecycleContinuationClaim(asyncDir, 0, {
-				kill: () => { const error = new Error("dead") as NodeJS.ErrnoException; error.code = "ESRCH"; throw error; },
+				kill: () => {
+					const error = new Error("dead") as NodeJS.ErrnoException;
+					error.code = "ESRCH";
+					throw error;
+				},
 				now: () => 220,
 				asyncDirRoot: root,
 			});
@@ -539,9 +650,20 @@ describe("lifecycle state helpers", () => {
 				startedAt: 100,
 				steps: [{ agent: "worker", status: "paused", pause: { kind: "awaiting_supervisor", pausedAt: 140 } }],
 				pause: { kind: "awaiting_supervisor", pausedAt: 140 },
-				lifecycle: { generation: 0, continuation: { phase: "reserved", claimToken: "claim-gate", claimedAt: 150, ownerPid: 9003, continuationRunId: "revived-gate" } },
+				lifecycle: {
+					generation: 0,
+					continuation: {
+						phase: "reserved",
+						claimToken: "claim-gate",
+						claimedAt: 150,
+						ownerPid: 9003,
+						continuationRunId: "revived-gate",
+					},
+				},
 			});
-			const finalized = finalizeLifecycleContinuationLaunch(asyncDir, 0, "claim-gate", "revived-gate", { now: () => 250 });
+			const finalized = finalizeLifecycleContinuationLaunch(asyncDir, 0, "claim-gate", "revived-gate", {
+				now: () => 250,
+			});
 			assert.equal(finalized.finalized, true);
 			assert.equal(finalized.lost, false);
 			const persisted = readStatus(asyncDir);
@@ -564,9 +686,20 @@ describe("lifecycle state helpers", () => {
 				state: "continued",
 				startedAt: 100,
 				steps: [{ agent: "worker", status: "continued" }],
-				lifecycle: { generation: 0, continuation: { phase: "continued", claimToken: "claim-idempotent", claimedAt: 150, continuedAt: 240, continuationRunId: "revived-idempotent" } },
+				lifecycle: {
+					generation: 0,
+					continuation: {
+						phase: "continued",
+						claimToken: "claim-idempotent",
+						claimedAt: 150,
+						continuedAt: 240,
+						continuationRunId: "revived-idempotent",
+					},
+				},
 			});
-			const finalized = finalizeLifecycleContinuationLaunch(asyncDir, 0, "claim-idempotent", "revived-idempotent", { now: () => 260 });
+			const finalized = finalizeLifecycleContinuationLaunch(asyncDir, 0, "claim-idempotent", "revived-idempotent", {
+				now: () => 260,
+			});
 			assert.equal(finalized.finalized, true);
 			assert.equal(finalized.lost, false);
 			assert.equal(readStatus(asyncDir)?.lifecycle?.continuation?.continuedAt, 240);
@@ -585,7 +718,16 @@ describe("lifecycle state helpers", () => {
 				state: "paused",
 				startedAt: 100,
 				steps: [{ agent: "worker", status: "paused" }],
-				lifecycle: { generation: 0, continuation: { phase: "reserved", claimToken: "claim-late", claimedAt: 150, ownerPid: 9003, continuationRunId: "revived-late" } },
+				lifecycle: {
+					generation: 0,
+					continuation: {
+						phase: "reserved",
+						claimToken: "claim-late",
+						claimedAt: 150,
+						ownerPid: 9003,
+						continuationRunId: "revived-late",
+					},
+				},
 			});
 			transitionLifecycleStatus({
 				asyncDir,
@@ -619,7 +761,11 @@ describe("lifecycle state helpers", () => {
 			assert.equal(readStatus(asyncDir)?.lifecycle?.continuation?.claimToken, "claim-live");
 
 			const unknown = recoverStaleLifecycleContinuationClaim(asyncDir, 0, {
-				kill: () => { const error = new Error("unknown") as NodeJS.ErrnoException; error.code = "EPERM"; throw error; },
+				kill: () => {
+					const error = new Error("unknown") as NodeJS.ErrnoException;
+					error.code = "EPERM";
+					throw error;
+				},
 			});
 			assert.equal(unknown.recovered, false);
 			assert.equal(unknown.liveness, "unknown");
@@ -651,19 +797,34 @@ describe("lifecycle state helpers", () => {
 			assert.equal(staleGeneration.recovered, false);
 			assert.equal(readStatus(asyncDir)?.lifecycle?.continuation?.claimToken, "claim-new");
 
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-claim-fail-closed",
-				mode: "single",
-				state: "paused",
-				startedAt: 100,
-				steps: [{ agent: "worker", status: "paused" }],
-				lifecycle: { continuation: { claimToken: "claim-legacy", claimedAt: 150, privateRoot: "/private/root/secret" } },
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-claim-fail-closed",
+						mode: "single",
+						state: "paused",
+						startedAt: 100,
+						steps: [{ agent: "worker", status: "paused" }],
+						lifecycle: {
+							continuation: { claimToken: "claim-legacy", claimedAt: 150, privateRoot: "/private/root/secret" },
+						},
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 			const historical = readStatus(asyncDir);
 			assert.equal(historical?.lifecycle?.continuation?.claimToken, "claim-legacy");
-			assert.equal((historical?.lifecycle?.continuation as Record<string, unknown> | undefined)?.privateRoot, undefined);
+			assert.equal(
+				(historical?.lifecycle?.continuation as Record<string, unknown> | undefined)?.privateRoot,
+				undefined,
+			);
 			const missingOwner = recoverStaleLifecycleContinuationClaim(asyncDir, 0, {
-				kill: () => { throw new Error("should not be called"); },
+				kill: () => {
+					throw new Error("should not be called");
+				},
 			});
 			assert.equal(missingOwner.recovered, false);
 			assert.equal(missingOwner.liveness, "missing-owner");
@@ -673,17 +834,20 @@ describe("lifecycle state helpers", () => {
 	});
 
 	it("drops persisted stopped-state pids without signaling them", () => {
-		const paused = recoverStoppedLifecycleOwnership({
-			runId: "run-paused",
-			mode: "single",
-			state: "paused",
-			pid: 999,
-			startedAt: 100,
-			pause: { kind: "cohort_pause", ownerPid: 999, summary: "wait" },
-			steps: [{ agent: "worker", status: "paused" }],
-		}, {
-			kill: () => true,
-		});
+		const paused = recoverStoppedLifecycleOwnership(
+			{
+				runId: "run-paused",
+				mode: "single",
+				state: "paused",
+				pid: 999,
+				startedAt: 100,
+				pause: { kind: "cohort_pause", ownerPid: 999, summary: "wait" },
+				steps: [{ agent: "worker", status: "paused" }],
+			},
+			{
+				kill: () => true,
+			},
+		);
 		assert.equal(paused.repaired, true);
 		assert.equal(paused.pidLiveness, "alive");
 		assert.equal(paused.status.pid, undefined);

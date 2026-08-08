@@ -36,7 +36,7 @@ test("tool_call blocks obvious unattributed bash git commits only when attributi
 	const optionTerminatedSplitStringWrappedCommit = `env --split-string='--' bash -lc 'git commit -m "ship it"'`;
 	const unattributedUnsupportedEnvWrappedInlineMessage = `env -x bash -lc 'git commit -m "ship it"'`;
 	const attachedSplitStringNoCommit = `env -S'printf ok'`;
-	const optionTerminatedSplitStringNoCommit = 'env -S -- printf ok';
+	const optionTerminatedSplitStringNoCommit = "env -S -- printf ok";
 	const optionTerminatedSplitStringWrappedNoCommit = `env --split-string='--' bash -lc 'printf ok'`;
 	const wrappedNoCommitWithTerminator = `bash -lc -- 'printf ok'`;
 	const splitWrappedNoCommitWithTerminator = `env -S'bash -lc' -- 'printf ok'`;
@@ -88,7 +88,7 @@ printf 'extra'
 		for (const command of [
 			'git commit -m "ship it"',
 			'git -C repo commit -m "ship it"',
-			'git commit -F-',
+			"git commit -F-",
 			'if true; then git commit -m "ship it"; fi',
 			'if false; then :; else git commit -m "ship it"; fi',
 			'for f in x; do git commit -m "ship it"; done',
@@ -147,7 +147,10 @@ printf 'extra'
 			undefined,
 		);
 		assert.equal(
-			await toolCall({ toolName: "bash", input: { command: attributedHereDoc } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+			await toolCall(
+				{ toolName: "bash", input: { command: attributedHereDoc } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			),
 			undefined,
 		);
 		assert.equal(
@@ -325,30 +328,39 @@ printf 'extra'
 		assert.equal(mixedCommits?.block, true);
 		assert.match(mixedCommits?.reason ?? "", /TLH attribution footer/);
 		assert.equal(
-			await toolCall({ toolName: "bash", input: { command: 'git commit -F .git/COMMIT_EDITMSG' } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+			await toolCall(
+				{ toolName: "bash", input: { command: "git commit -F .git/COMMIT_EDITMSG" } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			),
 			undefined,
 		);
 		for (const command of [
-			'env -P /usr/bin printf ok',
+			"env -P /usr/bin printf ok",
 			`env -S 'printf ok'`,
 			attachedSplitStringNoCommit,
 			optionTerminatedSplitStringNoCommit,
 			optionTerminatedSplitStringWrappedNoCommit,
 			wrappedNoCommitWithTerminator,
 			splitWrappedNoCommitWithTerminator,
-			'env -x printf ok',
+			"env -x printf ok",
 			unsupportedEnvWrappedNoCommit,
 			`sh -c -- 'printf ok'`,
 			`bash -o pipefail -lc 'printf ok'`,
 			`bash -o pipefail -lc -- 'printf ok'`,
 		]) {
 			assert.equal(
-				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				await toolCall(
+					{ toolName: "bash", input: { command } },
+					createToolCallContext([], undefined, { cwd: fixture.cwd }),
+				),
 				undefined,
 			);
 		}
 
-		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`,
+		);
 		for (const command of [
 			'if true; then git commit -m "ship it"; fi',
 			'if git commit -m "ship it"; then echo done; fi',
@@ -381,7 +393,10 @@ printf 'extra'
 			`bash -o pipefail -lc -- 'git commit -m "ship it"'`,
 		]) {
 			assert.equal(
-				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				await toolCall(
+					{ toolName: "bash", input: { command } },
+					createToolCallContext([], undefined, { cwd: fixture.cwd }),
+				),
 				undefined,
 			);
 		}
@@ -399,19 +414,33 @@ test("tool_call consumes separated message values before pathspec parsing", asyn
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const { toolCall } = registerRuntimeHarness();
-		for (const command of [separatedShortMessageValue, separatedLongMessageValue, separatedShortMessageValueWithPathspecTerminator, separatedLongMessageValueWithPathspecTerminator]) {
-			const blocked = await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+		for (const command of [
+			separatedShortMessageValue,
+			separatedLongMessageValue,
+			separatedShortMessageValueWithPathspecTerminator,
+			separatedLongMessageValueWithPathspecTerminator,
+		]) {
+			const blocked = await toolCall(
+				{ toolName: "bash", input: { command } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			);
 			assert.equal(blocked?.block, true);
 			assert.match(blocked?.reason ?? "", /TLH attribution footer/);
 		}
 		for (const command of [separatedShortMessageValueWithFooter, separatedLongMessageValueWithFooter]) {
 			assert.equal(
-				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				await toolCall(
+					{ toolName: "bash", input: { command } },
+					createToolCallContext([], undefined, { cwd: fixture.cwd }),
+				),
 				undefined,
 			);
 		}
 
-		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`,
+		);
 		for (const command of [
 			separatedShortMessageValue,
 			separatedLongMessageValue,
@@ -421,7 +450,10 @@ test("tool_call consumes separated message values before pathspec parsing", asyn
 			separatedLongMessageValueWithPathspecTerminator,
 		]) {
 			assert.equal(
-				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				await toolCall(
+					{ toolName: "bash", input: { command } },
+					createToolCallContext([], undefined, { cwd: fixture.cwd }),
+				),
 				undefined,
 			);
 		}
@@ -443,17 +475,31 @@ test("tool_call ignores commit-message/file lookalikes after a pathspec terminat
 		);
 		assert.equal(blocked?.block, true);
 		assert.match(blocked?.reason ?? "", /TLH attribution footer/);
-		for (const command of [attributedPathspecCommit, 'git commit -- README.md', pathspecMessageLookalike, pathspecFileLookalike]) {
+		for (const command of [
+			attributedPathspecCommit,
+			"git commit -- README.md",
+			pathspecMessageLookalike,
+			pathspecFileLookalike,
+		]) {
 			assert.equal(
-				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				await toolCall(
+					{ toolName: "bash", input: { command } },
+					createToolCallContext([], undefined, { cwd: fixture.cwd }),
+				),
 				undefined,
 			);
 		}
 
-		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`,
+		);
 		for (const command of [misattributedPathspecMessage, pathspecMessageLookalike, pathspecFileLookalike]) {
 			assert.equal(
-				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				await toolCall(
+					{ toolName: "bash", input: { command } },
+					createToolCallContext([], undefined, { cwd: fixture.cwd }),
+				),
 				undefined,
 			);
 		}
@@ -483,20 +529,32 @@ EOF`;
 		const { toolCall } = registerRuntimeHarness();
 		for (const command of [attributedWrappedHereDoc, attributedEnvSplitWrappedHereDoc]) {
 			assert.equal(
-				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				await toolCall(
+					{ toolName: "bash", input: { command } },
+					createToolCallContext([], undefined, { cwd: fixture.cwd }),
+				),
 				undefined,
 			);
 		}
 		for (const command of [unattributedWrappedHereDoc, unattributedEnvSplitWrappedHereDoc]) {
-			const blocked = await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+			const blocked = await toolCall(
+				{ toolName: "bash", input: { command } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			);
 			assert.equal(blocked?.block, true);
 			assert.match(blocked?.reason ?? "", /TLH attribution footer/);
 		}
 
-		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`,
+		);
 		for (const command of [unattributedWrappedHereDoc, unattributedEnvSplitWrappedHereDoc]) {
 			assert.equal(
-				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				await toolCall(
+					{ toolName: "bash", input: { command } },
+					createToolCallContext([], undefined, { cwd: fixture.cwd }),
+				),
 				undefined,
 			);
 		}
@@ -516,21 +574,33 @@ test("tool_call treats env unknown-option tails with consumed terminators as att
 			`env -x -- bash -lc 'git commit -m "ship it"'`,
 			misattributedInlineCommand,
 		]) {
-			const blocked = await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+			const blocked = await toolCall(
+				{ toolName: "bash", input: { command } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			);
 			assert.equal(blocked?.block, true);
 			assert.match(blocked?.reason ?? "", /TLH attribution footer/);
 		}
-		for (const command of [attributedInlineCommand, attributedWrappedCommand, 'env -x -- printf ok']) {
+		for (const command of [attributedInlineCommand, attributedWrappedCommand, "env -x -- printf ok"]) {
 			assert.equal(
-				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				await toolCall(
+					{ toolName: "bash", input: { command } },
+					createToolCallContext([], undefined, { cwd: fixture.cwd }),
+				),
 				undefined,
 			);
 		}
 
-		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`,
+		);
 		for (const command of ['env -x -- git commit -m "ship it"', `env -x -- bash -lc 'git commit -m "ship it"'`]) {
 			assert.equal(
-				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				await toolCall(
+					{ toolName: "bash", input: { command } },
+					createToolCallContext([], undefined, { cwd: fixture.cwd }),
+				),
 				undefined,
 			);
 		}
@@ -552,7 +622,10 @@ test("tool_call reapplies env parsing after split-string expansion", async (t) =
 			`env -S '-P /usr/bin bash -lc' 'git commit -m "ship it"'`,
 			`env -S '-P /usr/bin git' commit -m "ship it"`,
 		]) {
-			const blocked = await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+			const blocked = await toolCall(
+				{ toolName: "bash", input: { command } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			);
 			assert.equal(blocked?.block, true);
 			assert.match(blocked?.reason ?? "", /TLH attribution footer/);
 		}
@@ -561,16 +634,22 @@ test("tool_call reapplies env parsing after split-string expansion", async (t) =
 			attributedAttachedSplitStringUnsetCommand,
 			attributedSplitStringWrappedCommand,
 			attributedSplitStringGitCommand,
-			'env --split-string -u FOO printf ok',
+			"env --split-string -u FOO printf ok",
 			`env -S '-P /usr/bin bash -lc' 'printf ok'`,
 		]) {
 			assert.equal(
-				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				await toolCall(
+					{ toolName: "bash", input: { command } },
+					createToolCallContext([], undefined, { cwd: fixture.cwd }),
+				),
 				undefined,
 			);
 		}
 
-		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`,
+		);
 		for (const command of [
 			'env --split-string -u FOO git commit -m "ship it"',
 			`env --split-string='-u FOO git commit' -m "ship it"`,
@@ -578,7 +657,10 @@ test("tool_call reapplies env parsing after split-string expansion", async (t) =
 			`env -S '-P /usr/bin git' commit -m "ship it"`,
 		]) {
 			assert.equal(
-				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				await toolCall(
+					{ toolName: "bash", input: { command } },
+					createToolCallContext([], undefined, { cwd: fixture.cwd }),
+				),
 				undefined,
 			);
 		}
@@ -604,21 +686,33 @@ test("tool_call allows supported env split-string pathspec lookalikes while stil
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const { toolCall } = registerRuntimeHarness();
 		for (const command of blockedInlineCommands) {
-			const blocked = await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+			const blocked = await toolCall(
+				{ toolName: "bash", input: { command } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			);
 			assert.equal(blocked?.block, true);
 			assert.match(blocked?.reason ?? "", /TLH attribution footer/);
 		}
 		for (const command of [...pathspecLookalikes, ...attributedInlineCommands]) {
 			assert.equal(
-				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				await toolCall(
+					{ toolName: "bash", input: { command } },
+					createToolCallContext([], undefined, { cwd: fixture.cwd }),
+				),
 				undefined,
 			);
 		}
 
-		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`,
+		);
 		for (const command of [...blockedInlineCommands, ...pathspecLookalikes, ...attributedInlineCommands]) {
 			assert.equal(
-				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				await toolCall(
+					{ toolName: "bash", input: { command } },
+					createToolCallContext([], undefined, { cwd: fixture.cwd }),
+				),
 				undefined,
 			);
 		}
@@ -654,7 +748,10 @@ test("tool_call parses bash plus options and env short-option clusters before sp
 			'env -uFOO -Sgit commit -m "ship it"',
 			'env -iuFOO -Sgit commit -m "ship it"',
 		]) {
-			const blocked = await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+			const blocked = await toolCall(
+				{ toolName: "bash", input: { command } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			);
 			assert.equal(blocked?.block, true);
 			assert.match(blocked?.reason ?? "", /TLH attribution footer/);
 		}
@@ -668,20 +765,26 @@ test("tool_call parses bash plus options and env short-option clusters before sp
 			attributedEnvAttachedChdirSplitStringCommand,
 			attributedEnvAttachedUnsetSplitStringCommand,
 			attributedEnvShortClusterUnsetSplitStringCommand,
-			'env -iSprintf ok',
-			'env -ivSprintf ok',
+			"env -iSprintf ok",
+			"env -ivSprintf ok",
 			`bash +o pipefail -lc 'printf ok'`,
 			`bash +O extglob -lc 'printf ok'`,
 			`bash +e -lc 'printf ok'`,
 			`bash +x -lc 'printf ok'`,
 		]) {
 			assert.equal(
-				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				await toolCall(
+					{ toolName: "bash", input: { command } },
+					createToolCallContext([], undefined, { cwd: fixture.cwd }),
+				),
 				undefined,
 			);
 		}
 
-		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`,
+		);
 		for (const command of [
 			`bash +o pipefail -lc 'git commit -m "ship it"'`,
 			`bash +O extglob -lc 'git commit -m "ship it"'`,
@@ -694,7 +797,10 @@ test("tool_call parses bash plus options and env short-option clusters before sp
 			'env -iuFOO -Sgit commit -m "ship it"',
 		]) {
 			assert.equal(
-				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				await toolCall(
+					{ toolName: "bash", input: { command } },
+					createToolCallContext([], undefined, { cwd: fixture.cwd }),
+				),
 				undefined,
 			);
 		}
@@ -718,7 +824,10 @@ test("tool_call parses env argv0 value options across separated, attached, and c
 			'env --argv0=name git commit -m "ship it"',
 			'env -iva name -Sgit commit -m "ship it"',
 		]) {
-			const blocked = await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+			const blocked = await toolCall(
+				{ toolName: "bash", input: { command } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			);
 			assert.equal(blocked?.block, true);
 			assert.match(blocked?.reason ?? "", /TLH attribution footer/);
 		}
@@ -728,18 +837,24 @@ test("tool_call parses env argv0 value options across separated, attached, and c
 			attributedEnvLongArgv0SeparatedCommand,
 			attributedEnvLongArgv0AttachedCommand,
 			attributedEnvArgv0ClusteredSplitStringCommand,
-			'env -a name printf ok',
-			'env --argv0 name printf ok',
-			'env --argv0=name printf ok',
-			'env -iva name -Sprintf ok',
+			"env -a name printf ok",
+			"env --argv0 name printf ok",
+			"env --argv0=name printf ok",
+			"env -iva name -Sprintf ok",
 		]) {
 			assert.equal(
-				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				await toolCall(
+					{ toolName: "bash", input: { command } },
+					createToolCallContext([], undefined, { cwd: fixture.cwd }),
+				),
 				undefined,
 			);
 		}
 
-		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`,
+		);
 		for (const command of [
 			'env -a name git commit -m "ship it"',
 			'env -aname git commit -m "ship it"',
@@ -748,7 +863,10 @@ test("tool_call parses env argv0 value options across separated, attached, and c
 			'env -iva name -Sgit commit -m "ship it"',
 		]) {
 			assert.equal(
-				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				await toolCall(
+					{ toolName: "bash", input: { command } },
+					createToolCallContext([], undefined, { cwd: fixture.cwd }),
+				),
 				undefined,
 			);
 		}
@@ -763,27 +881,39 @@ test("tool_call inspects stdin here-docs through env unknown-option and split-st
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const { toolCall } = registerRuntimeHarness();
 		for (const command of [
-			'env -x -- git commit -F - <<EOF\nship it\nEOF',
+			"env -x -- git commit -F - <<EOF\nship it\nEOF",
 			`env -S 'git commit -F -' <<EOF\nship it\nEOF`,
 		]) {
-			const blocked = await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd }));
+			const blocked = await toolCall(
+				{ toolName: "bash", input: { command } },
+				createToolCallContext([], undefined, { cwd: fixture.cwd }),
+			);
 			assert.equal(blocked?.block, true);
 			assert.match(blocked?.reason ?? "", /TLH attribution footer/);
 		}
 		for (const command of [attributedUnsupportedEnvHereDoc, attributedSplitStringHereDoc]) {
 			assert.equal(
-				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				await toolCall(
+					{ toolName: "bash", input: { command } },
+					createToolCallContext([], undefined, { cwd: fixture.cwd }),
+				),
 				undefined,
 			);
 		}
 
-		writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`);
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`,
+		);
 		for (const command of [
-			'env -x -- git commit -F - <<EOF\nship it\nEOF',
+			"env -x -- git commit -F - <<EOF\nship it\nEOF",
 			`env -S 'git commit -F -' <<EOF\nship it\nEOF`,
 		]) {
 			assert.equal(
-				await toolCall({ toolName: "bash", input: { command } }, createToolCallContext([], undefined, { cwd: fixture.cwd })),
+				await toolCall(
+					{ toolName: "bash", input: { command } },
+					createToolCallContext([], undefined, { cwd: fixture.cwd }),
+				),
 				undefined,
 			);
 		}
@@ -812,10 +942,7 @@ test("tool_call blocks non-progress printf process substitutions", async (t) => 
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const { toolCall } = registerRuntimeHarness();
-		for (const command of [
-			"git commit -F <(printf 'subject' extra)",
-			"git commit -F <(printf '%%' extra)",
-		]) {
+		for (const command of ["git commit -F <(printf 'subject' extra)", "git commit -F <(printf '%%' extra)"]) {
 			const blocked = await toolCall(
 				{ toolName: "bash", input: { command } },
 				createToolCallContext([], undefined, { cwd: fixture.cwd }),

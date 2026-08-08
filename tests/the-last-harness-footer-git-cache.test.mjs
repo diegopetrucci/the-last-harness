@@ -100,11 +100,7 @@ test("git timeout aborts and snapshot remains undefined", async () => {
 		}
 		observedSignal = options.signal;
 		return new Promise((_resolve, reject) => {
-			options.signal.addEventListener(
-				"abort",
-				() => reject(new Error("aborted")),
-				{ once: true },
-			);
+			options.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
 		});
 	};
 	const clock = createFakeClock();
@@ -189,11 +185,7 @@ test("dispose() clears the periodic timer and aborts in-flight subprocesses", as
 	const runner = (command, _args, options) => {
 		observedSignals.push(options.signal);
 		return new Promise((resolve, reject) => {
-			options.signal.addEventListener(
-				"abort",
-				() => reject(new Error("aborted")),
-				{ once: true },
-			);
+			options.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
 			if (command === "git") {
 				resolveGit = resolve;
 			}
@@ -372,11 +364,7 @@ test("dispose() retains last-known snapshot and post-dispose refresh() is a no-o
 	assert.equal(afterDispose?.untracked, 1);
 
 	await cache.refresh();
-	assert.equal(
-		calls.length,
-		callsBeforeDispose,
-		"runner must not be invoked again after dispose()",
-	);
+	assert.equal(calls.length, callsBeforeDispose, "runner must not be invoked again after dispose()");
 	assert.strictEqual(
 		cache.getStatusSnapshot(),
 		beforeDispose,
@@ -750,11 +738,7 @@ test("onChange does not fire when dispose() interrupts an in-flight refresh", as
 		}
 		observedSignal = options.signal;
 		return new Promise((_resolve, reject) => {
-			options.signal.addEventListener(
-				"abort",
-				() => reject(new Error("aborted")),
-				{ once: true },
-			);
+			options.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
 		});
 	};
 	const clock = createFakeClock();

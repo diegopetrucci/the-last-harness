@@ -8,7 +8,7 @@ import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { THINKING_LEVELS, TLH_LAUNCH_TELEMETRY_EVENT_TYPE, TLH_NAME, TLH_TELEMETRY_APP_ID, TLH_TELEMETRY_INGEST_BASE_URL, TLH_TELEMETRY_NAMESPACE, TLH_TELEMETRY_STATE_SCHEMA_VERSION, TLH_TELEMETRY_TIMEOUT_MS, } from "./constants.js";
 import { isFalseyEnvFlag, isPlainObject, isTruthyEnvFlag, readText } from "./common.js";
 import { buildExperimentalFeatureTelemetryPayload } from "./experimental.js";
-import { formatProviderModelReference, parseProviderModelReference, selectProviderAwareAgentDefaults } from "./model-defaults.js";
+import { formatProviderModelReference, parseProviderModelReference, selectProviderAwareAgentDefaults, } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { getTlhVersion } from "./package-version.js";
 import { tlhStateDir, tlhTelemetryStatePath } from "./profile-state.js";
@@ -197,7 +197,10 @@ function readTlhLaunchSettings() {
     }
     const experimental = isPlainObject(tlh) && isPlainObject(tlh.experimental) ? tlh.experimental : undefined;
     const subagentOverrides = extractBundledSubagentOverrides(settings);
-    return { ok: true, config: { telemetry: telemetry, experimental, subagentOverrides } };
+    return {
+        ok: true,
+        config: { telemetry: telemetry, experimental, subagentOverrides },
+    };
 }
 export function shouldSkipTlhLaunchTelemetry(launchSettings = readTlhLaunchSettings()) {
     if (!tlhTelemetryStatePath())
@@ -217,7 +220,8 @@ export function shouldSkipTlhLaunchTelemetry(launchSettings = readTlhLaunchSetti
     return launchSettings.config.telemetry?.enabled === false;
 }
 function isUuid(value) {
-    return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+    return (typeof value === "string" &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
 }
 function readTlhTelemetryState() {
     const statePath = tlhTelemetryStatePath();
@@ -252,7 +256,9 @@ function getOrCreateTlhTelemetryInstallId() {
         return existing.installId;
     }
     const installId = randomUUID();
-    return writeTlhTelemetryState({ schemaVersion: TLH_TELEMETRY_STATE_SCHEMA_VERSION, installId }) ? installId : undefined;
+    return writeTlhTelemetryState({ schemaVersion: TLH_TELEMETRY_STATE_SCHEMA_VERSION, installId })
+        ? installId
+        : undefined;
 }
 function hashTlhTelemetryClientUser(installId) {
     return createHash("sha256").update(installId).digest("hex");
@@ -409,19 +415,32 @@ function readSubagentFrontmatterConfig(agentDir, name, providerId, availableMode
     if (!content)
         return {};
     const { frontmatter } = parseFrontmatter(content);
-    const splitList = (val) => (val ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    const splitList = (val) => (val ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
     const agentDefaults = {
         name,
         model: frontmatter.model || undefined,
         tlhOpenaiModels: splitList(frontmatter.tlhOpenaiModels),
         tlhAnthropicModels: splitList(frontmatter.tlhAnthropicModels),
         thinking: frontmatter.thinking && isThinkingLevel(frontmatter.thinking) ? frontmatter.thinking : undefined,
-        tlhOpenaiThinking: frontmatter.tlhOpenaiThinking && isThinkingLevel(frontmatter.tlhOpenaiThinking) ? frontmatter.tlhOpenaiThinking : undefined,
-        tlhAnthropicThinking: frontmatter.tlhAnthropicThinking && isThinkingLevel(frontmatter.tlhAnthropicThinking) ? frontmatter.tlhAnthropicThinking : undefined,
-        preferOppositeProvider: frontmatter.preferOppositeProvider?.trim() === "true" ? true
-            : frontmatter.preferOppositeProvider?.trim() === "false" ? false : undefined,
-        preferCurrentOpenaiModel: frontmatter.preferCurrentOpenaiModel?.trim() === "true" ? true
-            : frontmatter.preferCurrentOpenaiModel?.trim() === "false" ? false : undefined,
+        tlhOpenaiThinking: frontmatter.tlhOpenaiThinking && isThinkingLevel(frontmatter.tlhOpenaiThinking)
+            ? frontmatter.tlhOpenaiThinking
+            : undefined,
+        tlhAnthropicThinking: frontmatter.tlhAnthropicThinking && isThinkingLevel(frontmatter.tlhAnthropicThinking)
+            ? frontmatter.tlhAnthropicThinking
+            : undefined,
+        preferOppositeProvider: frontmatter.preferOppositeProvider?.trim() === "true"
+            ? true
+            : frontmatter.preferOppositeProvider?.trim() === "false"
+                ? false
+                : undefined,
+        preferCurrentOpenaiModel: frontmatter.preferCurrentOpenaiModel?.trim() === "true"
+            ? true
+            : frontmatter.preferCurrentOpenaiModel?.trim() === "false"
+                ? false
+                : undefined,
     };
     const result = selectProviderAwareAgentDefaults(agentDefaults, availableModels, providerId);
     const thinking = result.thinking;
@@ -441,15 +460,14 @@ function buildSubagentTelemetryPayload(effectiveOverrides, agentDir, providerId,
             payload[`Tlh.Subagent.${name}.model`] = "disabled";
             continue;
         }
-        const needFrontmatter = agentDir !== undefined
-            && (override?.thinking === undefined || override?.model === undefined);
+        const needFrontmatter = agentDir !== undefined && (override?.thinking === undefined || override?.model === undefined);
         const fm = needFrontmatter ? readSubagentFrontmatterConfig(agentDir, name, providerId, availableModels) : undefined;
-        payload[`Tlh.Subagent.${name}.thinking`] = override?.thinking === false
-            ? "cleared"
-            : privacySafeTlhTelemetryThinkingLevel(override?.thinking ?? fm?.thinking);
-        payload[`Tlh.Subagent.${name}.model`] = override?.model === false
-            ? "cleared"
-            : privacySafeTlhTelemetryModelId(override?.model ?? fm?.model);
+        payload[`Tlh.Subagent.${name}.thinking`] =
+            override?.thinking === false
+                ? "cleared"
+                : privacySafeTlhTelemetryThinkingLevel(override?.thinking ?? fm?.thinking);
+        payload[`Tlh.Subagent.${name}.model`] =
+            override?.model === false ? "cleared" : privacySafeTlhTelemetryModelId(override?.model ?? fm?.model);
     }
     return payload;
 }

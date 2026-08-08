@@ -54,10 +54,7 @@ function registeredToggleCommand() {
 }
 
 test("commit attribution helper resolves unset and boolean preference values", () => {
-	assert.equal(
-		TLH_DEFAULT_COMMIT_ATTRIBUTION,
-		"Co-authored-by: The Last Harness <hi@thelastharness.com>",
-	);
+	assert.equal(TLH_DEFAULT_COMMIT_ATTRIBUTION, "Co-authored-by: The Last Harness <hi@thelastharness.com>");
 	assert.deepEqual(resolveTlhCommitAttribution(undefined), {
 		enabled: true,
 		footer: TLH_DEFAULT_COMMIT_ATTRIBUTION,
@@ -73,15 +70,15 @@ test("commit attribution helper resolves unset and boolean preference values", (
 
 test("commit attribution prompt helper only renders when enabled", () => {
 	assert.equal(buildTlhCommitAttributionPrompt({ enabled: false }), undefined);
-	assert.match(buildTlhCommitAttributionPrompt(resolveTlhCommitAttribution(undefined)) ?? "", /## TLH Git Commit Attribution/);
+	assert.match(
+		buildTlhCommitAttributionPrompt(resolveTlhCommitAttribution(undefined)) ?? "",
+		/## TLH Git Commit Attribution/,
+	);
 	assert.match(
 		buildTlhCommitAttributionPrompt(resolveTlhCommitAttribution(undefined)) ?? "",
 		/Co-authored-by: The Last Harness <hi@thelastharness\.com>/,
 	);
-	assert.match(
-		buildTlhCommitAttributionPrompt(resolveTlhCommitAttribution(undefined)) ?? "",
-		/blank line/,
-	);
+	assert.match(buildTlhCommitAttributionPrompt(resolveTlhCommitAttribution(undefined)) ?? "", /blank line/);
 });
 
 test("git commit attribution guard blocks only obvious unattributed inline commit commands", () => {
@@ -111,7 +108,7 @@ test("git commit attribution guard blocks only obvious unattributed inline commi
 	const optionTerminatedSplitStringWrappedCommit = `env --split-string='--' bash -lc 'git commit -m "ship it"'`;
 	const unattributedUnsupportedEnvWrappedInlineMessage = `env -x bash -lc 'git commit -m "ship it"'`;
 	const attachedSplitStringNoCommit = `env -S'printf ok'`;
-	const optionTerminatedSplitStringNoCommit = 'env -S -- printf ok';
+	const optionTerminatedSplitStringNoCommit = "env -S -- printf ok";
 	const optionTerminatedSplitStringWrappedNoCommit = `env --split-string='--' bash -lc 'printf ok'`;
 	const wrappedNoCommitWithTerminator = `bash -lc -- 'printf ok'`;
 	const splitWrappedNoCommitWithTerminator = `env -S'bash -lc' -- 'printf ok'`;
@@ -163,10 +160,10 @@ printf 'extra'
 		'cd repo && git commit --message "ship it"',
 		'git commit -am "ship it"',
 		'git -C repo commit -m "ship it"',
-		'git commit -F-',
-		'git commit -F -',
-		'git commit --file=-',
-		'git commit --file -',
+		"git commit -F-",
+		"git commit -F -",
+		"git commit --file=-",
+		"git commit --file -",
 		'if true; then git commit -m "ship it"; fi',
 		'if false; then :; else git commit -m "ship it"; fi',
 		'for f in x; do git commit -m "ship it"; done',
@@ -216,7 +213,10 @@ printf 'extra'
 		unattributedLastFileProcessSubstitution,
 		`git commit -m "subject\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`,
 	]) {
-		assert.match(getTlhGitCommitAttributionBlockReason(command, enabled) ?? "", /missing the required TLH attribution footer/);
+		assert.match(
+			getTlhGitCommitAttributionBlockReason(command, enabled) ?? "",
+			/missing the required TLH attribution footer/,
+		);
 	}
 	assert.equal(
 		getTlhGitCommitAttributionBlockReason(`git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`, enabled),
@@ -235,37 +235,61 @@ printf 'extra'
 	assert.equal(getTlhGitCommitAttributionBlockReason(attributedUnsupportedEnvInlineMessage, enabled), undefined);
 	assert.equal(getTlhGitCommitAttributionBlockReason(attributedUnsupportedEnvWrappedInlineMessage, enabled), undefined);
 	assert.equal(getTlhGitCommitAttributionBlockReason(attributedSplitStringCombinedCommit, enabled), undefined);
-	assert.equal(getTlhGitCommitAttributionBlockReason(attributedLongSeparatedSplitStringCombinedCommit, enabled), undefined);
-	assert.equal(getTlhGitCommitAttributionBlockReason(attributedLongQuotedSplitStringCombinedCommit, enabled), undefined);
-	assert.equal(getTlhGitCommitAttributionBlockReason(attributedShortQuotedSplitStringWrappedCommit, enabled), undefined);
-	assert.equal(getTlhGitCommitAttributionBlockReason(attributedShortQuotedSplitStringWrappedCommitWithTerminator, enabled), undefined);
+	assert.equal(
+		getTlhGitCommitAttributionBlockReason(attributedLongSeparatedSplitStringCombinedCommit, enabled),
+		undefined,
+	);
+	assert.equal(
+		getTlhGitCommitAttributionBlockReason(attributedLongQuotedSplitStringCombinedCommit, enabled),
+		undefined,
+	);
+	assert.equal(
+		getTlhGitCommitAttributionBlockReason(attributedShortQuotedSplitStringWrappedCommit, enabled),
+		undefined,
+	);
+	assert.equal(
+		getTlhGitCommitAttributionBlockReason(attributedShortQuotedSplitStringWrappedCommitWithTerminator, enabled),
+		undefined,
+	);
 	assert.equal(getTlhGitCommitAttributionBlockReason(attributedLongQuotedSplitStringWrappedCommit, enabled), undefined);
 	assert.equal(getTlhGitCommitAttributionBlockReason(attributedOptionTerminatedSplitStringCommit, enabled), undefined);
-	assert.equal(getTlhGitCommitAttributionBlockReason(attributedOptionTerminatedSplitStringWrappedCommit, enabled), undefined);
+	assert.equal(
+		getTlhGitCommitAttributionBlockReason(attributedOptionTerminatedSplitStringWrappedCommit, enabled),
+		undefined,
+	);
 	assert.equal(getTlhGitCommitAttributionBlockReason(attributedShellOptionWrappedInlineMessage, enabled), undefined);
-	assert.equal(getTlhGitCommitAttributionBlockReason(attributedShellOptionWrappedInlineMessageWithTerminator, enabled), undefined);
+	assert.equal(
+		getTlhGitCommitAttributionBlockReason(attributedShellOptionWrappedInlineMessageWithTerminator, enabled),
+		undefined,
+	);
 	assert.equal(getTlhGitCommitAttributionBlockReason(attributedHereDoc, enabled), undefined);
 	assert.equal(
-		getTlhGitCommitAttributionBlockReason(`if true; then git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"; fi`, enabled),
+		getTlhGitCommitAttributionBlockReason(
+			`if true; then git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"; fi`,
+			enabled,
+		),
 		undefined,
 	);
 	assert.equal(getTlhGitCommitAttributionBlockReason(wrappedAttributedHereDoc, enabled), undefined);
 	assert.equal(getTlhGitCommitAttributionBlockReason(attributedProcessSubstitution, enabled), undefined);
-	assert.equal(getTlhGitCommitAttributionBlockReason(attributedPrintfEscapedNewlineProcessSubstitution, enabled), undefined);
+	assert.equal(
+		getTlhGitCommitAttributionBlockReason(attributedPrintfEscapedNewlineProcessSubstitution, enabled),
+		undefined,
+	);
 	assert.equal(getTlhGitCommitAttributionBlockReason(attributedEchoProcessSubstitution, enabled), undefined);
 	assert.equal(getTlhGitCommitAttributionBlockReason(attributedHereDocProcessSubstitution, enabled), undefined);
 	assert.equal(getTlhGitCommitAttributionBlockReason(attributedLastFileProcessSubstitution, enabled), undefined);
-	assert.equal(getTlhGitCommitAttributionBlockReason('git commit -F .git/COMMIT_EDITMSG', enabled), undefined);
-	assert.equal(getTlhGitCommitAttributionBlockReason('git push origin HEAD', enabled), undefined);
+	assert.equal(getTlhGitCommitAttributionBlockReason("git commit -F .git/COMMIT_EDITMSG", enabled), undefined);
+	assert.equal(getTlhGitCommitAttributionBlockReason("git push origin HEAD", enabled), undefined);
 	for (const command of [
-		'env -P /usr/bin printf ok',
+		"env -P /usr/bin printf ok",
 		`env -S 'printf ok'`,
 		attachedSplitStringNoCommit,
 		optionTerminatedSplitStringNoCommit,
 		optionTerminatedSplitStringWrappedNoCommit,
 		wrappedNoCommitWithTerminator,
 		splitWrappedNoCommitWithTerminator,
-		'env -x printf ok',
+		"env -x printf ok",
 		unsupportedEnvWrappedNoCommit,
 		`sh -c -- 'printf ok'`,
 		`bash -o pipefail -lc 'printf ok'`,
@@ -319,7 +343,10 @@ test("git commit attribution guard blocks qualified git commit paths", () => {
 	const attributedEnvWrappedQualifiedGitCommit = `env FOO=bar /usr/bin/git commit -m "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
 
 	for (const command of [unattributedQualifiedGitCommit, unattributedEnvWrappedQualifiedGitCommit]) {
-		assert.match(getTlhGitCommitAttributionBlockReason(command, enabled) ?? "", /missing the required TLH attribution footer/);
+		assert.match(
+			getTlhGitCommitAttributionBlockReason(command, enabled) ?? "",
+			/missing the required TLH attribution footer/,
+		);
 		assert.equal(getTlhGitCommitAttributionBlockReason(command, disabled), undefined);
 	}
 	for (const command of [attributedQualifiedGitCommit, attributedEnvWrappedQualifiedGitCommit]) {
@@ -338,8 +365,16 @@ test("git commit attribution guard consumes separated message values before path
 	const separatedShortMessageValueWithPathspecTerminator = `git commit -m -- -- -m "${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
 	const separatedLongMessageValueWithPathspecTerminator = `git commit --message -- -- -m "${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
 
-	for (const command of [separatedShortMessageValue, separatedLongMessageValue, separatedShortMessageValueWithPathspecTerminator, separatedLongMessageValueWithPathspecTerminator]) {
-		assert.match(getTlhGitCommitAttributionBlockReason(command, enabled) ?? "", /missing the required TLH attribution footer/);
+	for (const command of [
+		separatedShortMessageValue,
+		separatedLongMessageValue,
+		separatedShortMessageValueWithPathspecTerminator,
+		separatedLongMessageValueWithPathspecTerminator,
+	]) {
+		assert.match(
+			getTlhGitCommitAttributionBlockReason(command, enabled) ?? "",
+			/missing the required TLH attribution footer/,
+		);
 	}
 	for (const command of [separatedShortMessageValueWithFooter, separatedLongMessageValueWithFooter]) {
 		assert.equal(getTlhGitCommitAttributionBlockReason(command, enabled), undefined);
@@ -364,8 +399,16 @@ test("git commit attribution guard ignores commit-message/file lookalikes after 
 	const pathspecMessageLookalike = `git commit -- -m "${TLH_DEFAULT_COMMIT_ATTRIBUTION}"`;
 	const pathspecFileLookalike = `git commit -- -F <(printf '%s' "subject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}")`;
 
-	assert.match(getTlhGitCommitAttributionBlockReason(misattributedPathspecMessage, enabled) ?? "", /missing the required TLH attribution footer/);
-	for (const command of [attributedPathspecCommit, 'git commit -- README.md', pathspecMessageLookalike, pathspecFileLookalike]) {
+	assert.match(
+		getTlhGitCommitAttributionBlockReason(misattributedPathspecMessage, enabled) ?? "",
+		/missing the required TLH attribution footer/,
+	);
+	for (const command of [
+		attributedPathspecCommit,
+		"git commit -- README.md",
+		pathspecMessageLookalike,
+		pathspecFileLookalike,
+	]) {
 		assert.equal(getTlhGitCommitAttributionBlockReason(command, enabled), undefined);
 	}
 	for (const command of [misattributedPathspecMessage, pathspecMessageLookalike, pathspecFileLookalike]) {
@@ -394,9 +437,15 @@ subject
 EOF`;
 
 	assert.equal(getTlhGitCommitAttributionBlockReason(attributedWrappedHereDoc, enabled), undefined);
-	assert.match(getTlhGitCommitAttributionBlockReason(unattributedWrappedHereDoc, enabled) ?? "", /missing the required TLH attribution footer/);
+	assert.match(
+		getTlhGitCommitAttributionBlockReason(unattributedWrappedHereDoc, enabled) ?? "",
+		/missing the required TLH attribution footer/,
+	);
 	assert.equal(getTlhGitCommitAttributionBlockReason(attributedEnvSplitWrappedHereDoc, enabled), undefined);
-	assert.match(getTlhGitCommitAttributionBlockReason(unattributedEnvSplitWrappedHereDoc, enabled) ?? "", /missing the required TLH attribution footer/);
+	assert.match(
+		getTlhGitCommitAttributionBlockReason(unattributedEnvSplitWrappedHereDoc, enabled) ?? "",
+		/missing the required TLH attribution footer/,
+	);
 	assert.equal(getTlhGitCommitAttributionBlockReason(unattributedWrappedHereDoc, disabled), undefined);
 	assert.equal(getTlhGitCommitAttributionBlockReason(unattributedEnvSplitWrappedHereDoc, disabled), undefined);
 });
@@ -413,9 +462,12 @@ test("git commit attribution guard treats env unknown-option tails with consumed
 		`env -x -- bash -lc 'git commit -m "ship it"'`,
 		misattributedInlineCommand,
 	]) {
-		assert.match(getTlhGitCommitAttributionBlockReason(command, enabled) ?? "", /missing the required TLH attribution footer/);
+		assert.match(
+			getTlhGitCommitAttributionBlockReason(command, enabled) ?? "",
+			/missing the required TLH attribution footer/,
+		);
 	}
-	for (const command of [attributedInlineCommand, attributedWrappedCommand, 'env -x -- printf ok']) {
+	for (const command of [attributedInlineCommand, attributedWrappedCommand, "env -x -- printf ok"]) {
 		assert.equal(getTlhGitCommitAttributionBlockReason(command, enabled), undefined);
 	}
 	for (const command of ['env -x -- git commit -m "ship it"', `env -x -- bash -lc 'git commit -m "ship it"'`]) {
@@ -437,14 +489,17 @@ test("git commit attribution guard reapplies env parsing after split-string expa
 		`env -S '-P /usr/bin bash -lc' 'git commit -m "ship it"'`,
 		`env -S '-P /usr/bin git' commit -m "ship it"`,
 	]) {
-		assert.match(getTlhGitCommitAttributionBlockReason(command, enabled) ?? "", /missing the required TLH attribution footer/);
+		assert.match(
+			getTlhGitCommitAttributionBlockReason(command, enabled) ?? "",
+			/missing the required TLH attribution footer/,
+		);
 	}
 	for (const command of [
 		attributedSplitStringUnsetCommand,
 		attributedAttachedSplitStringUnsetCommand,
 		attributedSplitStringWrappedCommand,
 		attributedSplitStringGitCommand,
-		'env --split-string -u FOO printf ok',
+		"env --split-string -u FOO printf ok",
 		`env -S '-P /usr/bin bash -lc' 'printf ok'`,
 	]) {
 		assert.equal(getTlhGitCommitAttributionBlockReason(command, enabled), undefined);
@@ -477,7 +532,10 @@ test("git commit attribution guard allows supported env split-string pathspec lo
 	];
 
 	for (const command of blockedInlineCommands) {
-		assert.match(getTlhGitCommitAttributionBlockReason(command, enabled) ?? "", /missing the required TLH attribution footer/);
+		assert.match(
+			getTlhGitCommitAttributionBlockReason(command, enabled) ?? "",
+			/missing the required TLH attribution footer/,
+		);
 	}
 	for (const command of [...pathspecLookalikes, ...attributedInlineCommands]) {
 		assert.equal(getTlhGitCommitAttributionBlockReason(command, enabled), undefined);
@@ -515,7 +573,10 @@ test("git commit attribution guard parses bash plus options and env short-option
 		'env -uFOO -Sgit commit -m "ship it"',
 		'env -iuFOO -Sgit commit -m "ship it"',
 	]) {
-		assert.match(getTlhGitCommitAttributionBlockReason(command, enabled) ?? "", /missing the required TLH attribution footer/);
+		assert.match(
+			getTlhGitCommitAttributionBlockReason(command, enabled) ?? "",
+			/missing the required TLH attribution footer/,
+		);
 	}
 	for (const command of [
 		attributedShellPlusOptionWrappedCommand,
@@ -527,8 +588,8 @@ test("git commit attribution guard parses bash plus options and env short-option
 		attributedEnvAttachedChdirSplitStringCommand,
 		attributedEnvAttachedUnsetSplitStringCommand,
 		attributedEnvShortClusterUnsetSplitStringCommand,
-		'env -iSprintf ok',
-		'env -ivSprintf ok',
+		"env -iSprintf ok",
+		"env -ivSprintf ok",
 		`bash +o pipefail -lc 'printf ok'`,
 		`bash +O extglob -lc 'printf ok'`,
 		`bash +e -lc 'printf ok'`,
@@ -567,7 +628,10 @@ test("git commit attribution guard parses env argv0 value options across separat
 		'env --argv0=name git commit -m "ship it"',
 		'env -iva name -Sgit commit -m "ship it"',
 	]) {
-		assert.match(getTlhGitCommitAttributionBlockReason(command, enabled) ?? "", /missing the required TLH attribution footer/);
+		assert.match(
+			getTlhGitCommitAttributionBlockReason(command, enabled) ?? "",
+			/missing the required TLH attribution footer/,
+		);
 	}
 	for (const command of [
 		attributedEnvArgv0SeparatedCommand,
@@ -575,10 +639,10 @@ test("git commit attribution guard parses env argv0 value options across separat
 		attributedEnvLongArgv0SeparatedCommand,
 		attributedEnvLongArgv0AttachedCommand,
 		attributedEnvArgv0ClusteredSplitStringCommand,
-		'env -a name printf ok',
-		'env --argv0 name printf ok',
-		'env --argv0=name printf ok',
-		'env -iva name -Sprintf ok',
+		"env -a name printf ok",
+		"env --argv0 name printf ok",
+		"env --argv0=name printf ok",
+		"env -iva name -Sprintf ok",
 	]) {
 		assert.equal(getTlhGitCommitAttributionBlockReason(command, enabled), undefined);
 	}
@@ -600,16 +664,19 @@ test("git commit attribution guard inspects stdin here-docs through env unknown-
 	const attributedSplitStringHereDoc = `env -S 'git commit -F -' <<EOF\nsubject\n\n${TLH_DEFAULT_COMMIT_ATTRIBUTION}\nEOF`;
 
 	for (const command of [
-		'env -x -- git commit -F - <<EOF\nship it\nEOF',
+		"env -x -- git commit -F - <<EOF\nship it\nEOF",
 		`env -S 'git commit -F -' <<EOF\nship it\nEOF`,
 	]) {
-		assert.match(getTlhGitCommitAttributionBlockReason(command, enabled) ?? "", /missing the required TLH attribution footer/);
+		assert.match(
+			getTlhGitCommitAttributionBlockReason(command, enabled) ?? "",
+			/missing the required TLH attribution footer/,
+		);
 	}
 	for (const command of [attributedUnsupportedEnvHereDoc, attributedSplitStringHereDoc]) {
 		assert.equal(getTlhGitCommitAttributionBlockReason(command, enabled), undefined);
 	}
 	for (const command of [
-		'env -x -- git commit -F - <<EOF\nship it\nEOF',
+		"env -x -- git commit -F - <<EOF\nship it\nEOF",
 		`env -S 'git commit -F -' <<EOF\nship it\nEOF`,
 	]) {
 		assert.equal(getTlhGitCommitAttributionBlockReason(command, disabled), undefined);
@@ -631,11 +698,11 @@ test("git commit attribution guard blocks process substitutions with top-level c
 test("git commit attribution guard blocks non-progress printf process substitutions", () => {
 	const enabled = resolveTlhCommitAttribution(undefined);
 
-	for (const command of [
-		"git commit -F <(printf 'subject' extra)",
-		"git commit -F <(printf '%%' extra)",
-	]) {
-		assert.match(getTlhGitCommitAttributionBlockReason(command, enabled) ?? "", /missing the required TLH attribution footer/);
+	for (const command of ["git commit -F <(printf 'subject' extra)", "git commit -F <(printf '%%' extra)"]) {
+		assert.match(
+			getTlhGitCommitAttributionBlockReason(command, enabled) ?? "",
+			/missing the required TLH attribution footer/,
+		);
 	}
 });
 
@@ -738,7 +805,8 @@ test("toggle attribution command rejects non-boolean persisted values", async (t
 		await command.handler("", ctx);
 
 		assert.deepEqual(notifications.at(-1), {
-			message: "Could not update TLH commit attribution: settings field 'tlh.attribution.commit' must be a boolean if present",
+			message:
+				"Could not update TLH commit attribution: settings field 'tlh.attribution.commit' must be a boolean if present",
 			type: "error",
 		});
 	});

@@ -181,7 +181,6 @@ export interface CompletionBatchConfig {
 	stragglerWindowMs?: number;
 }
 
-
 export interface ControlEvent {
 	type: ControlEventType;
 	from?: ActivityState;
@@ -193,7 +192,14 @@ export interface ControlEvent {
 	nestedRunId?: string;
 	nestingPath?: NestedRunAddress["path"];
 	message: string;
-	reason?: "idle" | "completion_guard" | "active_long_running" | "tool_failures" | "time_threshold" | "turn_threshold" | "token_threshold";
+	reason?:
+		| "idle"
+		| "completion_guard"
+		| "active_long_running"
+		| "tool_failures"
+		| "time_threshold"
+		| "turn_threshold"
+		| "token_threshold";
 	turns?: number;
 	tokens?: number;
 	toolCount?: number;
@@ -208,7 +214,15 @@ export type SubagentResultStatus = "completed" | "failed" | "paused" | "detached
 export type SubagentRunMode = "single" | "parallel" | "chain";
 export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 1;
 export type SubagentLifecycleArtifactVersion = typeof SUBAGENT_LIFECYCLE_ARTIFACT_VERSION;
-export type AsyncLifecycleState = "queued" | "running" | "pausing" | "complete" | "failed" | "paused" | "cancelled" | "continued";
+export type AsyncLifecycleState =
+	| "queued"
+	| "running"
+	| "pausing"
+	| "complete"
+	| "failed"
+	| "paused"
+	| "cancelled"
+	| "continued";
 export type AsyncPauseState = "awaiting_supervisor" | "cohort_pause";
 
 export interface AsyncPauseMetadata {
@@ -257,7 +271,24 @@ export interface AsyncLifecycleMetadata {
 
 export type PublicNestedStepSummary = Pick<
 	NestedStepSummary,
-	"agent" | "status" | "sessionFile" | "transcriptPath" | "transcriptError" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "toolBudget" | "toolBudgetBlocked" | "startedAt" | "endedAt" | "error" | "timedOut"
+	| "agent"
+	| "status"
+	| "sessionFile"
+	| "transcriptPath"
+	| "transcriptError"
+	| "activityState"
+	| "lastActivityAt"
+	| "currentTool"
+	| "currentToolStartedAt"
+	| "currentPath"
+	| "turnCount"
+	| "toolCount"
+	| "toolBudget"
+	| "toolBudgetBlocked"
+	| "startedAt"
+	| "endedAt"
+	| "error"
+	| "timedOut"
 > & {
 	children?: PublicNestedRunSummary[];
 };
@@ -270,7 +301,47 @@ export type CostSummary = {
 
 export type PublicNestedRunSummary = Pick<
 	NestedRunSummary,
-	"id" | "parentRunId" | "parentStepIndex" | "parentAgent" | "depth" | "path" | "asyncDir" | "sessionId" | "sessionFile" | "intercomTarget" | "ownerIntercomTarget" | "leafIntercomTarget" | "ownerState" | "mode" | "state" | "agent" | "agents" | "currentStep" | "chainStepCount" | "parallelGroups" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "toolBudget" | "toolBudgetBlocked" | "totalTokens" | "totalCost" | "startedAt" | "endedAt" | "lastUpdate" | "error" | "timeoutMs" | "deadlineAt" | "timedOut" | "turnBudget" | "turnBudgetExceeded" | "wrapUpRequested"
+	| "id"
+	| "parentRunId"
+	| "parentStepIndex"
+	| "parentAgent"
+	| "depth"
+	| "path"
+	| "asyncDir"
+	| "sessionId"
+	| "sessionFile"
+	| "intercomTarget"
+	| "ownerIntercomTarget"
+	| "leafIntercomTarget"
+	| "ownerState"
+	| "mode"
+	| "state"
+	| "agent"
+	| "agents"
+	| "currentStep"
+	| "chainStepCount"
+	| "parallelGroups"
+	| "activityState"
+	| "lastActivityAt"
+	| "currentTool"
+	| "currentToolStartedAt"
+	| "currentPath"
+	| "turnCount"
+	| "toolCount"
+	| "toolBudget"
+	| "toolBudgetBlocked"
+	| "totalTokens"
+	| "totalCost"
+	| "startedAt"
+	| "endedAt"
+	| "lastUpdate"
+	| "error"
+	| "timeoutMs"
+	| "deadlineAt"
+	| "timedOut"
+	| "turnBudget"
+	| "turnBudgetExceeded"
+	| "wrapUpRequested"
 > & {
 	steps?: PublicNestedStepSummary[];
 	children?: PublicNestedRunSummary[];
@@ -590,9 +661,9 @@ export interface Details {
 		artifactPath?: string;
 	};
 	// Chain metadata for observability
-	chainAgents?: string[];      // Agent names in order, e.g., ["scout", "planner"]
-	totalSteps?: number;         // Total steps in chain
-	currentStepIndex?: number;   // 0-indexed current step (for running chains)
+	chainAgents?: string[]; // Agent names in order, e.g., ["scout", "planner"]
+	totalSteps?: number; // Total steps in chain
+	currentStepIndex?: number; // 0-indexed current step (for running chains)
 	workflowGraph?: WorkflowGraphSnapshot;
 	outputs?: ChainOutputMap;
 	parallelGroups?: AsyncParallelGroupStatus[];
@@ -789,7 +860,16 @@ export interface AsyncStatus {
 		label?: string;
 		outputName?: string;
 		structured?: boolean;
-		status: "pending" | "running" | "pausing" | "complete" | "completed" | "failed" | "paused" | "continued" | "cancelled";
+		status:
+			| "pending"
+			| "running"
+			| "pausing"
+			| "complete"
+			| "completed"
+			| "failed"
+			| "paused"
+			| "continued"
+			| "cancelled";
 		children?: NestedRunSummary[];
 		sessionFile?: string;
 		transcriptPath?: string;
@@ -973,8 +1053,8 @@ export interface SubagentState {
 // Display
 // ============================================================================
 
-export type DisplayItem = 
-	| { type: "text"; text: string } 
+export type DisplayItem =
+	| { type: "text"; text: string }
 	| { type: "tool"; name: string; args: Record<string, unknown> };
 
 // ============================================================================
@@ -1010,9 +1090,8 @@ export interface RunSyncOptions {
 	/** Session id of the direct parent session for permission-system ask forwarding. */
 	parentSessionId?: string;
 	tkTicket?: TkTicketMetadata;
-	onSupervisorPauseTransition?: (input:
-		| { stage: "pausing"; result: SingleResult; ownerPid?: number }
-		| { stage: "paused"; result: SingleResult }
+	onSupervisorPauseTransition?: (
+		input: { stage: "pausing"; result: SingleResult; ownerPid?: number } | { stage: "paused"; result: SingleResult },
 	) => void;
 	cwd?: string;
 	signal?: AbortSignal;
@@ -1083,7 +1162,7 @@ interface TopLevelParallelConfig {
 	concurrency?: number;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+// biome-ignore lint/suspicious/noEmptyInterface: intentionally empty, reserved for future extension config
 interface ExtensionChainConfig {}
 
 export type ToolDescriptionMode = "full" | "compact" | "custom";
@@ -1144,9 +1223,7 @@ export function resolveTempScopeId(options?: {
 	homedir?: (() => string) | undefined;
 }): string {
 	const env = options?.env ?? process.env;
-	const getuid = options && Object.hasOwn(options, "getuid")
-		? options.getuid
-		: process.getuid?.bind(process);
+	const getuid = options && Object.hasOwn(options, "getuid") ? options.getuid : process.getuid?.bind(process);
 	if (typeof getuid === "function") {
 		return `uid-${getuid()}`;
 	}
@@ -1156,9 +1233,7 @@ export function resolveTempScopeId(options?: {
 		if (value) return `user-${sanitizeTempScopeSegment(value)}`;
 	}
 
-	const userInfo = options && Object.hasOwn(options, "userInfo")
-		? options.userInfo
-		: os.userInfo;
+	const userInfo = options && Object.hasOwn(options, "userInfo") ? options.userInfo : os.userInfo;
 	try {
 		const username = userInfo?.().username;
 		if (username) return `user-${sanitizeTempScopeSegment(username)}`;
@@ -1169,9 +1244,7 @@ export function resolveTempScopeId(options?: {
 	const homedir = env.USERPROFILE ?? env.HOME;
 	if (homedir) return `home-${sanitizeTempScopeSegment(homedir)}`;
 
-	const resolveHomedir = options && Object.hasOwn(options, "homedir")
-		? options.homedir
-		: os.homedir;
+	const resolveHomedir = options && Object.hasOwn(options, "homedir") ? options.homedir : os.homedir;
 	try {
 		const fallbackHomedir = resolveHomedir?.();
 		if (fallbackHomedir) return `home-${sanitizeTempScopeSegment(fallbackHomedir)}`;
@@ -1244,13 +1317,8 @@ export function resolveTopLevelParallelMaxTasks(value: unknown): number {
 	return normalizeTopLevelParallelValue(value) ?? MAX_PARALLEL;
 }
 
-export function resolveTopLevelParallelConcurrency(
-	override: unknown,
-	configValue: unknown,
-): number {
-	return normalizeTopLevelParallelValue(override)
-		?? normalizeTopLevelParallelValue(configValue)
-		?? MAX_CONCURRENCY;
+export function resolveTopLevelParallelConcurrency(override: unknown, configValue: unknown): number {
+	return normalizeTopLevelParallelValue(override) ?? normalizeTopLevelParallelValue(configValue) ?? MAX_CONCURRENCY;
 }
 
 export function getAsyncConfigPath(suffix: string): string {
@@ -1280,9 +1348,11 @@ export function normalizeMaxSubagentDepth(value: unknown): number | undefined {
 }
 
 export function resolveCurrentMaxSubagentDepth(configMaxDepth?: number): number {
-	return normalizeMaxSubagentDepth(process.env.PI_SUBAGENT_MAX_DEPTH)
-		?? normalizeMaxSubagentDepth(configMaxDepth)
-		?? DEFAULT_SUBAGENT_MAX_DEPTH;
+	return (
+		normalizeMaxSubagentDepth(process.env.PI_SUBAGENT_MAX_DEPTH) ??
+		normalizeMaxSubagentDepth(configMaxDepth) ??
+		DEFAULT_SUBAGENT_MAX_DEPTH
+	);
 }
 
 export function resolveChildMaxSubagentDepth(parentMaxDepth: number, agentMaxDepth?: number): number {

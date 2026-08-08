@@ -299,10 +299,14 @@ test("classifies latest-release/pinned-tag/ref installs with missing ref metadat
 		],
 	]) {
 		const notice = classifyTlhInstallState(installState);
-		assert.deepEqual(notice, {
-			kind: "unknown",
-			summary: "TLH install metadata is missing or invalid.",
-		}, label);
+		assert.deepEqual(
+			notice,
+			{
+				kind: "unknown",
+				summary: "TLH install metadata is missing or invalid.",
+			},
+			label,
+		);
 		assertNoticeLabel(notice, "unknown", label);
 	}
 });
@@ -341,10 +345,14 @@ test("classifies latest-release/pinned-tag/ref installs with blank ref metadata 
 		],
 	]) {
 		const notice = classifyTlhInstallState(installState);
-		assert.deepEqual(notice, {
-			kind: "unknown",
-			summary: "TLH install metadata is missing or invalid.",
-		}, label);
+		assert.deepEqual(
+			notice,
+			{
+				kind: "unknown",
+				summary: "TLH install metadata is missing or invalid.",
+			},
+			label,
+		);
 		assertNoticeLabel(notice, "unknown", label);
 	}
 });

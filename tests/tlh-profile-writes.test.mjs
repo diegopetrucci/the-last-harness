@@ -3,10 +3,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileS
 import { join } from "node:path";
 import test from "node:test";
 
-import {
-	createSafeTlhProfileWritePlan,
-	writeSafeTlhProfileFile,
-} from "../scripts/lib/tlh-profile-writes.mjs";
+import { createSafeTlhProfileWritePlan, writeSafeTlhProfileFile } from "../scripts/lib/tlh-profile-writes.mjs";
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
 test("createSafeTlhProfileWritePlan freezes plans and shim writes nested files with safe defaults", (t) => {
@@ -25,8 +22,8 @@ test("createSafeTlhProfileWritePlan freezes plans and shim writes nested files w
 	assert.equal(nestedPlan.agentRoot, fixture.agent);
 	assert.equal(nestedPlan.relativePath, "nested/settings.json");
 
-	writeSafeTlhProfileFile(nestedPlan, "{\n  \"tlh\": true\n}\n");
-	assert.equal(readFileSync(nestedTarget, "utf8"), "{\n  \"tlh\": true\n}\n");
+	writeSafeTlhProfileFile(nestedPlan, '{\n  "tlh": true\n}\n');
+	assert.equal(readFileSync(nestedTarget, "utf8"), '{\n  "tlh": true\n}\n');
 	assert.equal(lstatSync(nestedTarget).mode & 0o777, 0o600);
 
 	const explicitPlan = createSafeTlhProfileWritePlan({
@@ -40,11 +37,14 @@ test("createSafeTlhProfileWritePlan freezes plans and shim writes nested files w
 	assert.equal(lstatSync(explicitTarget).mode & 0o777, 0o640);
 
 	const legacyTarget = join(fixture.agent, "legacy", "state.json");
-	writeSafeTlhProfileFile({
-		agentRoot: fixture.agent,
-		label: "legacy state",
-		targetPath: legacyTarget,
-	}, "legacy\n");
+	writeSafeTlhProfileFile(
+		{
+			agentRoot: fixture.agent,
+			label: "legacy state",
+			targetPath: legacyTarget,
+		},
+		"legacy\n",
+	);
 	assert.equal(readFileSync(legacyTarget, "utf8"), "legacy\n");
 });
 
@@ -52,30 +52,33 @@ test("createSafeTlhProfileWritePlan rejects protected, outside-profile, and prof
 	const fixture = createIsolatedProfileFixture("tlh-profile-writes-", { test: t });
 
 	assert.throws(
-		() => createSafeTlhProfileWritePlan({
-			agentDir: fixture.agent,
-			targetPath: fixture.agent,
-			homeDir: fixture.home,
-			label: "isolated settings",
-		}),
+		() =>
+			createSafeTlhProfileWritePlan({
+				agentDir: fixture.agent,
+				targetPath: fixture.agent,
+				homeDir: fixture.home,
+				label: "isolated settings",
+			}),
 		/refusing to write isolated settings over the configured TLH profile directory/,
 	);
 	assert.throws(
-		() => createSafeTlhProfileWritePlan({
-			agentDir: fixture.agent,
-			targetPath: join(fixture.dir, "outside", "settings.json"),
-			homeDir: fixture.home,
-			label: "isolated settings",
-		}),
+		() =>
+			createSafeTlhProfileWritePlan({
+				agentDir: fixture.agent,
+				targetPath: join(fixture.dir, "outside", "settings.json"),
+				homeDir: fixture.home,
+				label: "isolated settings",
+			}),
 		/refusing to write isolated settings outside the configured TLH profile path/,
 	);
 	assert.throws(
-		() => createSafeTlhProfileWritePlan({
-			agentDir: join(fixture.home, ".pi", "agent"),
-			targetPath: join(fixture.home, ".pi", "agent", "settings.json"),
-			homeDir: fixture.home,
-			label: "isolated settings",
-		}),
+		() =>
+			createSafeTlhProfileWritePlan({
+				agentDir: join(fixture.home, ".pi", "agent"),
+				targetPath: join(fixture.home, ".pi", "agent", "settings.json"),
+				homeDir: fixture.home,
+				label: "isolated settings",
+			}),
 		/refusing to write isolated settings under normal Pi config root/,
 	);
 });
@@ -156,12 +159,16 @@ test("writeSafeTlhProfileFile rejects cloned plans redirected away from their in
 	writeFileSync(sentinel, "unchanged\n");
 
 	assert.throws(
-		() => writeSafeTlhProfileFile({
-			...plan,
-			agentRoot: externalDir,
-			relativePath: "settings.json",
-			targetPath: externalTarget,
-		}, "forged\n"),
+		() =>
+			writeSafeTlhProfileFile(
+				{
+					...plan,
+					agentRoot: externalDir,
+					relativePath: "settings.json",
+					targetPath: externalTarget,
+				},
+				"forged\n",
+			),
 		/mismatched compatibility plan profile roots/,
 	);
 	assert.equal(existsSync(externalTarget), false);
@@ -169,7 +176,9 @@ test("writeSafeTlhProfileFile rejects cloned plans redirected away from their in
 	assert.equal(existsSync(originalTarget), false);
 });
 
-test("writeSafeTlhProfileFile does not trust a forged plan home when guarding normal Pi config", { concurrency: false }, async (t) => {
+test("writeSafeTlhProfileFile does not trust a forged plan home when guarding normal Pi config", {
+	concurrency: false,
+}, async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-profile-writes-", { test: t });
 	const protectedAgentDir = join(fixture.home, ".pi", "agent");
 	const protectedTarget = join(protectedAgentDir, "settings.json");
@@ -201,9 +210,18 @@ test("writeSafeTlhProfileFile rejects invalid modes, unsafe modes, and exclusive
 	});
 
 	assert.throws(() => writeSafeTlhProfileFile(plan, "bad\n", { mode: 0o1000 }), /invalid file mode/);
-	assert.throws(() => writeSafeTlhProfileFile(plan, "bad\n", { mode: 0o666 }), /unsafe group\/world-writable file mode/);
-	assert.throws(() => writeSafeTlhProfileFile(plan, "bad\n", { mode: 0o620 }), /unsafe group\/world-writable file mode/);
-	assert.throws(() => writeSafeTlhProfileFile(plan, "bad\n", { exclusive: true }), /exclusive mode through the stale compatibility shim/);
+	assert.throws(
+		() => writeSafeTlhProfileFile(plan, "bad\n", { mode: 0o666 }),
+		/unsafe group\/world-writable file mode/,
+	);
+	assert.throws(
+		() => writeSafeTlhProfileFile(plan, "bad\n", { mode: 0o620 }),
+		/unsafe group\/world-writable file mode/,
+	);
+	assert.throws(
+		() => writeSafeTlhProfileFile(plan, "bad\n", { exclusive: true }),
+		/exclusive mode through the stale compatibility shim/,
+	);
 	assert.equal(existsSync(join(fixture.agent, "nested", "settings.json")), false);
 });
 

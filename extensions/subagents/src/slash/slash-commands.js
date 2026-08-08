@@ -22,7 +22,12 @@ function addUsage(target, source) {
     target.turns += source.turns;
 }
 function usageHasValue(usage) {
-    return usage.input !== 0 || usage.output !== 0 || usage.cacheRead !== 0 || usage.cacheWrite !== 0 || usage.cost !== 0 || usage.turns !== 0;
+    return (usage.input !== 0 ||
+        usage.output !== 0 ||
+        usage.cacheRead !== 0 ||
+        usage.cacheWrite !== 0 ||
+        usage.cost !== 0 ||
+        usage.turns !== 0);
 }
 function assistantUsageFromMessage(message) {
     if (!message || typeof message !== "object")
@@ -96,11 +101,7 @@ function buildSubagentCostReport(ctx) {
     }
     addUsage(total, parent);
     addUsage(total, childTotal);
-    const lines = [
-        "Subagent cost",
-        "",
-        formatCostUsage("Parent", parent),
-    ];
+    const lines = ["Subagent cost", "", formatCostUsage("Parent", parent)];
     if (children.length === 0) {
         lines.push("No subagent child usage found in this session.");
     }
@@ -199,9 +200,7 @@ function formatExportPathList(paths) {
     return paths.map((file) => `- \`${file}\``).join("\n");
 }
 function collectResultPaths(results, getPath) {
-    return results
-        .map(getPath)
-        .filter((file) => typeof file === "string" && file.length > 0);
+    return results.map(getPath).filter((file) => typeof file === "string" && file.length > 0);
 }
 function buildSlashExportText(response) {
     const output = extractSlashMessageText(response.result.content) || response.errorText || "(no output)";

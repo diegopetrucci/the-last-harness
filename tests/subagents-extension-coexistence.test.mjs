@@ -6,10 +6,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 
-import {
-	RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES,
-	packageIdentity,
-} from "../scripts/lib/default-extensions.mjs";
+import { RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES, packageIdentity } from "../scripts/lib/default-extensions.mjs";
 import {
 	EXTERNAL_SUBAGENT_PACKAGE_SOURCES,
 	externalSubagentPackageIdentity,
@@ -26,9 +23,7 @@ function runPackageLoadScenario(t, { scope, packageEntry, hasUI = true, mode = "
 	mkdirSync(join(projectDir, ".pi"), { recursive: true });
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
-	const settingsPath = scope === "user"
-		? join(agentDir, "settings.json")
-		: join(projectDir, ".pi", "settings.json");
+	const settingsPath = scope === "user" ? join(agentDir, "settings.json") : join(projectDir, ".pi", "settings.json");
 	writeFileSync(settingsPath, JSON.stringify({ packages: [packageEntry] }, null, 2));
 
 	const script = `
@@ -139,11 +134,7 @@ test("bundled coexistence guard identities stay aligned with installer retiremen
 		"git:github.com/nicobailon/pi-subagents@v0.31.0",
 		"https://github.com/diegopetrucci/pi-subagents.git#main",
 	]) {
-		assert.equal(
-			externalSubagentPackageIdentity(source),
-			packageIdentity(source),
-			`identity parity for ${source}`,
-		);
+		assert.equal(externalSubagentPackageIdentity(source), packageIdentity(source), `identity parity for ${source}`);
 	}
 	// Local/path packages do not carry the retired-source ownership evidence this
 	// migration relies on, so they intentionally remain outside the guard allowlist.

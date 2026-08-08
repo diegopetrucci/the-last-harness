@@ -108,20 +108,20 @@ function parsePullRequestJson(stdout) {
     return snapshot;
 }
 function gitStatusSnapshotsEqual(left, right) {
-    return (left?.branch === right?.branch
-        && left?.staged === right?.staged
-        && left?.unstaged === right?.unstaged
-        && left?.untracked === right?.untracked
-        && left?.conflict === right?.conflict
-        && left?.ahead === right?.ahead
-        && left?.behind === right?.behind);
+    return (left?.branch === right?.branch &&
+        left?.staged === right?.staged &&
+        left?.unstaged === right?.unstaged &&
+        left?.untracked === right?.untracked &&
+        left?.conflict === right?.conflict &&
+        left?.ahead === right?.ahead &&
+        left?.behind === right?.behind);
 }
 function pullRequestSnapshotsEqual(left, right) {
-    return (left?.number === right?.number
-        && left?.state === right?.state
-        && left?.isDraft === right?.isDraft
-        && left?.url === right?.url
-        && left?.title === right?.title);
+    return (left?.number === right?.number &&
+        left?.state === right?.state &&
+        left?.isDraft === right?.isDraft &&
+        left?.url === right?.url &&
+        left?.title === right?.title);
 }
 export class FooterGitCache {
     cwd;
@@ -227,8 +227,8 @@ export class FooterGitCache {
         if (this.disposed) {
             return;
         }
-        if (gitStatusSnapshotsEqual(previousStatusSnapshot, this.statusSnapshot)
-            && pullRequestSnapshotsEqual(previousPullRequestSnapshot, this.pullRequestSnapshot)) {
+        if (gitStatusSnapshotsEqual(previousStatusSnapshot, this.statusSnapshot) &&
+            pullRequestSnapshotsEqual(previousPullRequestSnapshot, this.pullRequestSnapshot)) {
             return;
         }
         try {

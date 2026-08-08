@@ -258,7 +258,7 @@ test("cleanupOldSettingsBackups does not delete user files with no parseable tim
 
 	// User-created file that matches the prefix but has no parseable TLH timestamp.
 	const userFile = "settings.json.backup-mynotes";
-	writeFileSync(join(agentDir, userFile), "{\"note\": \"my notes\"}", "utf8");
+	writeFileSync(join(agentDir, userFile), '{"note": "my notes"}', "utf8");
 
 	// Two newer timestamped TLH backups exist — enough to make the user file
 	// eligible by count if the filter were absent.
@@ -291,7 +291,7 @@ test("cleanupOldSettingsBackups does not delete user file with shape-valid but s
 
 	// User-created file: correct shape but impossible calendar values.
 	const invalidTsFile = "settings.json.backup-2026-99-99T99-99-99Z";
-	writeFileSync(join(agentDir, invalidTsFile), "{\"custom\": true}", "utf8");
+	writeFileSync(join(agentDir, invalidTsFile), '{"custom": true}', "utf8");
 
 	// Two newer TLH-owned backups that would push the invalid-ts file
 	// beyond keepNewest=2 under the old (broken) candidacy logic.
@@ -326,7 +326,7 @@ test("cleanupOldSettingsBackups does not delete user file with unknown marker an
 	// (old enough to be eligible by age if the filter were not strict).
 	const tsOld = oldBackupName("settings.json", 40).slice("settings.json.backup-".length);
 	const personalFile = `settings.json.backup-my-personal-copy-${tsOld}`;
-	writeFileSync(join(agentDir, personalFile), "{\"mine\": true}", "utf8");
+	writeFileSync(join(agentDir, personalFile), '{"mine": true}', "utf8");
 
 	// Two newer TLH-owned backups push the personal file beyond keepNewest=2
 	// in the old (broken) candidacy logic.

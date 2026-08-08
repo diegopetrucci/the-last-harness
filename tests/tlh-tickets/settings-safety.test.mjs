@@ -19,7 +19,9 @@ import {
 	writeSwapTargetParentBeforeOpenPreload,
 } from "./test-helpers.mjs";
 
-test("settings writes do not follow the old predictable temp-file symlink", { skip: process.platform === "win32" }, () => {
+test("settings writes do not follow the old predictable temp-file symlink", {
+	skip: process.platform === "win32",
+}, () => {
 	const fixture = tempFixture();
 	const settings = join(fixture.agent, "settings.json");
 	const symlinkTarget = join(fixture.external, "sentinel-settings.json");
@@ -27,14 +29,17 @@ test("settings writes do not follow the old predictable temp-file symlink", { sk
 	writeFileSync(symlinkTarget, "original sentinel");
 
 	const preload = join(fixture.dir, "predictable-temp-symlink.mjs");
-	writeFileSync(preload, `import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+	writeFileSync(
+		preload,
+		`import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 const settings = process.env.TLH_TEST_SETTINGS_PATH;
 const oldTempPath = \`${settings}.tmp-\${process.pid}\`;
 mkdirSync(dirname(settings), { recursive: true });
 symlinkSync(process.env.TLH_TEST_SYMLINK_TARGET, oldTempPath, "file");
 writeFileSync(process.env.TLH_TEST_SYMLINK_PATH_RECORD, oldTempPath);
-`);
+`,
+	);
 
 	const result = runTickets(ticketEnableArgs(fixture, settings), {
 		env: {
@@ -53,7 +58,9 @@ writeFileSync(process.env.TLH_TEST_SYMLINK_PATH_RECORD, oldTempPath);
 	assert.equal(written.tlh.tickets.enabled, true);
 });
 
-test("settings direct write refuses parent swap before open without touching external sentinels", { skip: process.platform === "win32" }, () => {
+test("settings direct write refuses parent swap before open without touching external sentinels", {
+	skip: process.platform === "win32",
+}, () => {
 	const fixture = tempFixture();
 	const settings = join(fixture.agent, "settings.json");
 	const externalSettings = join(fixture.external, "settings.json");
@@ -77,7 +84,9 @@ test("settings direct write refuses parent swap before open without touching ext
 	assert.equal(readFileSync(externalTk, "utf8"), "original tk sentinel");
 });
 
-test("settings direct write removes empty file created by parent swap to normal Pi", { skip: process.platform === "win32" }, () => {
+test("settings direct write removes empty file created by parent swap to normal Pi", {
+	skip: process.platform === "win32",
+}, () => {
 	const fixture = tempFixture();
 	const settings = join(fixture.agent, "settings.json");
 	const normalPiAgent = join(fixture.home, ".pi", "agent");
@@ -103,7 +112,9 @@ test("settings direct write removes empty file created by parent swap to normal 
 	assert.deepEqual(readdirSync(normalPiAgent), ["tk"]);
 });
 
-test("settings backup write refuses parent swap before open without copying settings outside", { skip: process.platform === "win32" }, () => {
+test("settings backup write refuses parent swap before open without copying settings outside", {
+	skip: process.platform === "win32",
+}, () => {
 	const fixture = tempFixture();
 	const settings = join(fixture.agent, "settings.json");
 	const externalSettings = join(fixture.external, "settings.json");
@@ -130,8 +141,9 @@ test("settings backup write refuses parent swap before open without copying sett
 	}
 });
 
-
-test("settings write refuses parent swap before intended directory realpath capture", { skip: process.platform === "win32" }, () => {
+test("settings write refuses parent swap before intended directory realpath capture", {
+	skip: process.platform === "win32",
+}, () => {
 	const fixture = tempFixture();
 	const settingsDir = join(fixture.agent, "settings-parent");
 	const settings = join(settingsDir, "settings.json");
@@ -159,7 +171,9 @@ test("settings write refuses parent swap before intended directory realpath capt
 	assert.deepEqual(readdirSync(normalPiAgent).sort(), ["settings.json", "tk"]);
 });
 
-test("settings directory creation does not clean up a directory when parent revalidation fails", { skip: process.platform === "win32" }, () => {
+test("settings directory creation does not clean up a directory when parent revalidation fails", {
+	skip: process.platform === "win32",
+}, () => {
 	const fixture = tempFixture();
 	const settingsDir = join(fixture.agent, "settings-parent");
 	const settings = join(settingsDir, "settings.json");
@@ -190,7 +204,9 @@ test("settings directory creation does not clean up a directory when parent reva
 	assert.deepEqual(readdirSync(normalPiAgent).sort(), ["settings-parent", "settings.json", "tk"]);
 });
 
-test("settings directory creation does not remove external directory swapped after mkdir", { skip: process.platform === "win32" }, () => {
+test("settings directory creation does not remove external directory swapped after mkdir", {
+	skip: process.platform === "win32",
+}, () => {
 	const fixture = tempFixture();
 	const settingsDir = join(fixture.agent, "settings-parent");
 	const settings = join(settingsDir, "settings.json");

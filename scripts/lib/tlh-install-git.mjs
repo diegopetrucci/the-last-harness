@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { criticalGitSourceSpec } from "./tlh-install-package-source.mjs";
-import { assertProfilePathWithinAgent, isSymlink, realpathForCompare, } from "./tlh-install-paths.mjs";
+import { assertProfilePathWithinAgent, isSymlink, realpathForCompare } from "./tlh-install-paths.mjs";
 const COMMAND_MAX_BUFFER = 20 * 1024 * 1024;
 function commandDisplay(commandArgs) {
     return commandArgs.map(String).join(" ");

@@ -34,7 +34,12 @@ const CONTROL_EVENT_READ_CHUNK_BYTES = 64 * 1024;
 const MAX_CONTROL_EVENT_LINE_BYTES = 1024 * 1024;
 const CONTROL_EVENT_SCAN_WINDOW_BYTES = 2 * 1024 * 1024;
 
-export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: SubagentState, asyncDirRoot: string, options: AsyncJobTrackerOptions = {}): {
+export function createAsyncJobTracker(
+	pi: Pick<ExtensionAPI, "events">,
+	state: SubagentState,
+	asyncDirRoot: string,
+	options: AsyncJobTrackerOptions = {},
+): {
 	ensurePoller: () => void;
 	handleStarted: (data: unknown) => void;
 	handleComplete: (data: unknown) => void;
@@ -57,12 +62,19 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		}
 	};
 	const summaryToJob = (run: AsyncRunSummary): AsyncJobState => {
-		const groups = normalizeParallelGroups(run.parallelGroups, run.steps.length, run.chainStepCount ?? run.steps.length);
-		const activeGroup = run.currentStep !== undefined
-			? groups.find((group) => run.currentStep! >= group.start && run.currentStep! < group.start + group.count)
-			: undefined;
+		const groups = normalizeParallelGroups(
+			run.parallelGroups,
+			run.steps.length,
+			run.chainStepCount ?? run.steps.length,
+		);
+		const activeGroup =
+			run.currentStep !== undefined
+				? groups.find((group) => run.currentStep! >= group.start && run.currentStep! < group.start + group.count)
+				: undefined;
 		const visibleSteps = activeGroup
-			? run.steps.slice(activeGroup.start, activeGroup.start + activeGroup.count).map((step, index) => ({ ...step, index: activeGroup.start + index }))
+			? run.steps
+					.slice(activeGroup.start, activeGroup.start + activeGroup.count)
+					.map((step, index) => ({ ...step, index: activeGroup.start + index }))
 			: run.steps.map((step, index) => ({ ...step, index }));
 		return {
 			asyncId: run.id,
@@ -127,7 +139,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		if (counts.persistedValidation > 0) parts.push(`${counts.persistedValidation} invalid persisted status`);
 		return parts.join(", ");
 	};
-	const formatRestoredActiveJobsCount = (count: number): string => `restored ${count} valid active ${count === 1 ? "job" : "jobs"}`;
+	const formatRestoredActiveJobsCount = (count: number): string =>
+		`restored ${count} valid active ${count === 1 ? "job" : "jobs"}`;
 	const warnRestoreIssues = (message: string): void => {
 		console.warn(message);
 	};
@@ -159,7 +172,13 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					return;
 				}
 				if (!parsed || typeof parsed !== "object" || (parsed as { type?: unknown }).type !== "subagent.control") return;
-				const record = parsed as { event?: ControlEvent; channels?: string[]; childIntercomTarget?: string; noticeText?: string; intercom?: { to?: string; message?: string } };
+				const record = parsed as {
+					event?: ControlEvent;
+					channels?: string[];
+					childIntercomTarget?: string;
+					noticeText?: string;
+					intercom?: { to?: string; message?: string };
+				};
 				if (!record.event || !Array.isArray(record.channels)) return;
 				const payload = {
 					event: record.event,
@@ -171,7 +190,12 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				if (record.channels.includes("event")) {
 					pi.events.emit(SUBAGENT_CONTROL_EVENT, payload);
 				}
-				if (record.event.type !== "active_long_running" && record.channels.includes("intercom") && record.intercom?.to && record.intercom.message) {
+				if (
+					record.event.type !== "active_long_running" &&
+					record.channels.includes("intercom") &&
+					record.intercom?.to &&
+					record.intercom.message
+				) {
 					pi.events.emit(SUBAGENT_CONTROL_INTERCOM_EVENT, {
 						...payload,
 						to: record.intercom.to,
@@ -253,7 +277,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				};
 				const reconcileNestedDescendants = () => {
 					try {
-						if (job.nestedRoute) reconcileNestedAsyncDescendants(job.nestedRoute, { resultsDir, kill: options.kill, now: options.now });
+						if (job.nestedRoute)
+							reconcileNestedAsyncDescendants(job.nestedRoute, { resultsDir, kill: options.kill, now: options.now });
 					} catch (error) {
 						nestedRefreshFailed = true;
 						console.error(`Failed to refresh nested async descendants for '${job.asyncDir}':`, error);
@@ -283,7 +308,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					if (status) {
 						const previousStatus = job.status;
 						job.status = status.state;
-						if (job.status !== "complete" && job.status !== "failed" && job.status !== "paused") cancelCleanup(job.asyncId);
+						if (job.status !== "complete" && job.status !== "failed" && job.status !== "paused")
+							cancelCleanup(job.asyncId);
 						job.sessionId = status.sessionId ?? job.sessionId;
 						job.activityState = status.activityState;
 						job.lastActivityAt = status.lastActivityAt ?? job.lastActivityAt;
@@ -298,14 +324,23 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						job.startedAt = status.startedAt ?? job.startedAt;
 						if (status.lastUpdate !== undefined) job.updatedAt = status.lastUpdate;
 						if (status.steps?.length) {
-							const groups = normalizeParallelGroups(status.parallelGroups, status.steps.length, status.chainStepCount ?? status.steps.length);
+							const groups = normalizeParallelGroups(
+								status.parallelGroups,
+								status.steps.length,
+								status.chainStepCount ?? status.steps.length,
+							);
 							job.parallelGroups = groups.length ? groups : job.parallelGroups;
 							job.hasParallelGroups = groups.length > 0 || job.hasParallelGroups;
-							const activeGroup = status.currentStep !== undefined
-								? groups.find((group) => status.currentStep! >= group.start && status.currentStep! < group.start + group.count)
-								: undefined;
+							const activeGroup =
+								status.currentStep !== undefined
+									? groups.find(
+											(group) => status.currentStep! >= group.start && status.currentStep! < group.start + group.count,
+										)
+									: undefined;
 							const visibleSteps = activeGroup
-								? status.steps.slice(activeGroup.start, activeGroup.start + activeGroup.count).map((step, index) => ({ ...step, index: activeGroup.start + index }))
+								? status.steps
+										.slice(activeGroup.start, activeGroup.start + activeGroup.count)
+										.map((step, index) => ({ ...step, index: activeGroup.start + index }))
 								: status.steps.map((step, index) => ({ ...step, index }));
 							job.activeParallelGroup = Boolean(activeGroup);
 							job.agents = visibleSteps.map((step) => step.agent);
@@ -313,7 +348,9 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 							refreshNestedProjection();
 							job.stepsTotal = visibleSteps.length;
 							job.runningSteps = visibleSteps.filter((step) => step.status === "running").length;
-							job.completedSteps = visibleSteps.filter((step) => step.status === "complete" || step.status === "completed").length;
+							job.completedSteps = visibleSteps.filter(
+								(step) => step.status === "complete" || step.status === "completed",
+							).length;
 							if (status.state === "complete") job.completedSteps = visibleSteps.length;
 						}
 						job.sessionDir = status.sessionDir ?? job.sessionDir;
@@ -327,7 +364,12 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						job.wrapUpRequested = status.wrapUpRequested ?? job.wrapUpRequested;
 						job.sessionFile = status.sessionFile ?? job.sessionFile;
 						if (status.tkTicket !== undefined) job.tkTicket = normalizeTkTicketMetadata(status.tkTicket);
-						if ((job.status === "complete" || job.status === "failed" || job.status === "paused") && !nestedRefreshFailed && !hasLiveNestedDescendants(job.nestedChildren) && (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))) {
+						if (
+							(job.status === "complete" || job.status === "failed" || job.status === "paused") &&
+							!nestedRefreshFailed &&
+							!hasLiveNestedDescendants(job.nestedChildren) &&
+							(previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))
+						) {
 							scheduleCleanup(job.asyncId);
 						}
 						if (widgetRenderKey(job) !== widgetStateBefore) widgetChanged = true;
@@ -361,13 +403,21 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		if (typeof state.currentSessionId === "string" && info.sessionId !== state.currentSessionId) return;
 		const now = Date.now();
 		const asyncDir = info.asyncDir ?? path.join(asyncDirRoot, info.id);
-		const rawAgents = info.agents?.length ? info.agents : info.chain && info.chain.length > 0 ? info.chain : info.agent ? [info.agent] : undefined;
-		const validParallelGroups = normalizeParallelGroups(info.parallelGroups, Number.MAX_SAFE_INTEGER, info.chainStepCount ?? Number.MAX_SAFE_INTEGER);
+		const rawAgents = info.agents?.length
+			? info.agents
+			: info.chain && info.chain.length > 0
+				? info.chain
+				: info.agent
+					? [info.agent]
+					: undefined;
+		const validParallelGroups = normalizeParallelGroups(
+			info.parallelGroups,
+			Number.MAX_SAFE_INTEGER,
+			info.chainStepCount ?? Number.MAX_SAFE_INTEGER,
+		);
 		const firstGroup = validParallelGroups.find((group) => group.start === 0);
 		const firstGroupCount = firstGroup?.count;
-		const agents = firstGroupCount && firstGroupCount > 0
-			? rawAgents?.slice(0, firstGroupCount)
-			: rawAgents;
+		const agents = firstGroupCount && firstGroupCount > 0 ? rawAgents?.slice(0, firstGroupCount) : rawAgents;
 		const normalizedTkTicket = normalizeTkTicketMetadata(info.tkTicket);
 		state.asyncJobs.set(info.id, {
 			asyncId: info.id,
@@ -442,7 +492,13 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		let runs: AsyncRunSummary[];
 		let issues: ReturnType<typeof scanAsyncRunsForRestore>["issues"];
 		try {
-			({ runs, issues } = scanAsyncRunsForRestore(asyncDirRoot, { states: ["queued", "running"], sessionId: state.currentSessionId, resultsDir, kill: options.kill, now: options.now }));
+			({ runs, issues } = scanAsyncRunsForRestore(asyncDirRoot, {
+				states: ["queued", "running"],
+				sessionId: state.currentSessionId,
+				resultsDir,
+				kill: options.kill,
+				now: options.now,
+			}));
 		} catch (error) {
 			console.error(`Failed to restore active async jobs from '${asyncDirRoot}':`, error);
 			return;
@@ -457,7 +513,10 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				else quarantined.persistedValidation += 1;
 				continue;
 			}
-			if ((result.outcome === "deferred" || result.outcome === "failed") && !restoreWarningDedupe.has(result.dedupeKey)) {
+			if (
+				(result.outcome === "deferred" || result.outcome === "failed") &&
+				!restoreWarningDedupe.has(result.dedupeKey)
+			) {
 				restoreWarningDedupe.add(result.dedupeKey);
 				const bucket = result.outcome === "deferred" ? deferred : failed;
 				if (result.kind === "json_parse") bucket.jsonParse += 1;

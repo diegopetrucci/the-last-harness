@@ -37,7 +37,17 @@ async function waitUntil(predicate: () => boolean, timeoutMs = scaleTestTimeout(
 	}
 }
 
-function createNotifyHarness(): { pi: { events: { on: (event: string, handler: (payload: unknown) => void) => () => void; emit: (event: string, data: unknown) => void }; on: (_event: string, _handler: (...args: unknown[]) => void) => void; sendMessage: (message: { content?: string }, options: { triggerTurn?: boolean }) => void }; sent: string[] } {
+function createNotifyHarness(): {
+	pi: {
+		events: {
+			on: (event: string, handler: (payload: unknown) => void) => () => void;
+			emit: (event: string, data: unknown) => void;
+		};
+		on: (_event: string, _handler: (...args: unknown[]) => void) => void;
+		sendMessage: (message: { content?: string }, options: { triggerTurn?: boolean }) => void;
+	};
+	sent: string[];
+} {
 	const listeners = new Map<string, Set<(payload: unknown) => void>>();
 	const sent: string[] = [];
 	return {
@@ -67,7 +77,10 @@ describe("result watcher to native notify", () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-notify-"));
 		const listeners = new Map<string, Set<(payload: unknown) => void>>();
 		const emitted: Array<{ event: string; data: unknown }> = [];
-		const sent: Array<{ message: { customType?: string; content?: string; display?: boolean }; options: { triggerTurn?: boolean } }> = [];
+		const sent: Array<{
+			message: { customType?: string; content?: string; display?: boolean };
+			options: { triggerTurn?: boolean };
+		}> = [];
 		const events = {
 			on(event: string, handler: (payload: unknown) => void) {
 				const handlers = listeners.get(event) ?? new Set();
@@ -83,7 +96,10 @@ describe("result watcher to native notify", () => {
 		const pi = {
 			events,
 			on(_event: string, _handler: (...args: unknown[]) => void) {},
-			sendMessage(message: { customType?: string; content?: string; display?: boolean }, options: { triggerTurn?: boolean }) {
+			sendMessage(
+				message: { customType?: string; content?: string; display?: boolean },
+				options: { triggerTurn?: boolean },
+			) {
 				sent.push({ message, options });
 			},
 		};
@@ -122,8 +138,18 @@ describe("result watcher to native notify", () => {
 				state: "complete",
 				summary: "mixed outer summary",
 				results: [
-					...Array.from({ length: 8 }, (_, index) => ({ agent: `ok-${index}`, output: `ok-${index} done`, success: true })),
-					{ agent: "late-failure", output: "late failure output", error: "late failure", success: false, sessionFile: childSession },
+					...Array.from({ length: 8 }, (_, index) => ({
+						agent: `ok-${index}`,
+						output: `ok-${index} done`,
+						success: true,
+					})),
+					{
+						agent: "late-failure",
+						output: "late failure output",
+						error: "late failure",
+						success: false,
+						sessionFile: childSession,
+					},
 				],
 				sessionId: "session-owner",
 				intercomTarget: "stale-owner-target",
@@ -139,7 +165,14 @@ describe("result watcher to native notify", () => {
 					{ agent: "b", output: "b done", success: true, exitCode: 0 },
 					{ agent: "c", output: "c done", success: true, exitCode: 0 },
 					{ agent: "d", output: "d done", success: true, exitCode: 0 },
-					{ agent: "e", output: "Paused after interrupt.", success: false, exitCode: 0, interrupted: true, sessionFile: pausedChildSession },
+					{
+						agent: "e",
+						output: "Paused after interrupt.",
+						success: false,
+						exitCode: 0,
+						interrupted: true,
+						sessionFile: pausedChildSession,
+					},
 				],
 				sessionId: "session-owner",
 				intercomTarget: "stale-owner-target",
@@ -168,34 +201,83 @@ describe("result watcher to native notify", () => {
 		}
 
 		assert.equal(sent.length, 4);
-		assert.deepEqual(sent.map((entry) => entry.options), [
-			{ triggerTurn: true },
-			{ triggerTurn: true },
-			{ triggerTurn: true },
-			{ triggerTurn: true },
-		]);
-		assert.equal(sent.every((entry) => entry.message.customType === "subagent-notify" && entry.message.display === true), true);
+		assert.deepEqual(
+			sent.map((entry) => entry.options),
+			[{ triggerTurn: true }, { triggerTurn: true }, { triggerTurn: true }, { triggerTurn: true }],
+		);
+		assert.equal(
+			sent.every((entry) => entry.message.customType === "subagent-notify" && entry.message.display === true),
+			true,
+		);
 		const contents = sent.map((entry) => entry.message.content ?? "");
-		assert.equal(contents.some((content) => /^Background task completed: \*\*single-worker\*\*/.test(content)
-			&& /Async id: completed-event/.test(content)
-			&& /Revive: subagent\({ action: "resume", id: "completed-event", message: "\.\.\." }\)/.test(content)
-			&& /Session: https:\/\/share\/completed-run$/.test(content)), true);
-		assert.equal(contents.some((content) => /^Background task failed: \*\*parallel:a\+b\*\*/.test(content) && /Children: 8 completed, 1 failed/.test(content) && /9\/9\. late-failure — failed/.test(content) && /Revive child: subagent\({ action: "resume", id: "mixed-failed-event", index: 8, message: "\.\.\." }\)/.test(content)), true);
-		assert.equal(contents.some((content) => /^Background task paused: \*\*chain:a\+b\*\*/.test(content) && /Async id: paused/.test(content) && /Revive child: subagent\({ action: "resume", id: "paused", index: 4, message: "\.\.\." }\)/.test(content)), true);
-		assert.equal(contents.some((content) => /^Background task completed: \*\*missing-session-worker\*\*/.test(content) && /Async id: missing-session-event/.test(content) && !/subagent\({ action: "resume"/.test(content)), true);
-		assert.equal(contents.some((content) => content.includes("must not deliver")), false);
-		assert.equal(contents.some((content) => content.includes("stale-owner-target")), false);
+		assert.equal(
+			contents.some(
+				(content) =>
+					/^Background task completed: \*\*single-worker\*\*/.test(content) &&
+					/Async id: completed-event/.test(content) &&
+					/Revive: subagent\({ action: "resume", id: "completed-event", message: "\.\.\." }\)/.test(content) &&
+					/Session: https:\/\/share\/completed-run$/.test(content),
+			),
+			true,
+		);
+		assert.equal(
+			contents.some(
+				(content) =>
+					/^Background task failed: \*\*parallel:a\+b\*\*/.test(content) &&
+					/Children: 8 completed, 1 failed/.test(content) &&
+					/9\/9\. late-failure — failed/.test(content) &&
+					/Revive child: subagent\({ action: "resume", id: "mixed-failed-event", index: 8, message: "\.\.\." }\)/.test(
+						content,
+					),
+			),
+			true,
+		);
+		assert.equal(
+			contents.some(
+				(content) =>
+					/^Background task paused: \*\*chain:a\+b\*\*/.test(content) &&
+					/Async id: paused/.test(content) &&
+					/Revive child: subagent\({ action: "resume", id: "paused", index: 4, message: "\.\.\." }\)/.test(content),
+			),
+			true,
+		);
+		assert.equal(
+			contents.some(
+				(content) =>
+					/^Background task completed: \*\*missing-session-worker\*\*/.test(content) &&
+					/Async id: missing-session-event/.test(content) &&
+					!/subagent\({ action: "resume"/.test(content),
+			),
+			true,
+		);
+		assert.equal(
+			contents.some((content) => content.includes("must not deliver")),
+			false,
+		);
+		assert.equal(
+			contents.some((content) => content.includes("stale-owner-target")),
+			false,
+		);
 		assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 4);
-		assert.equal(emitted.some((entry) => entry.event === "subagent:async-complete"
-			&& typeof entry.data === "object"
-			&& entry.data !== null
-			&& "id" in entry.data
-			&& "runId" in entry.data
-			&& (entry.data as { id?: unknown }).id === "completed-event"
-			&& (entry.data as { runId?: unknown }).runId === "completed-run"
-			&& (entry.data as { shareUrl?: unknown }).shareUrl === "https://share/completed-run"), true);
+		assert.equal(
+			emitted.some(
+				(entry) =>
+					entry.event === "subagent:async-complete" &&
+					typeof entry.data === "object" &&
+					entry.data !== null &&
+					"id" in entry.data &&
+					"runId" in entry.data &&
+					(entry.data as { id?: unknown }).id === "completed-event" &&
+					(entry.data as { runId?: unknown }).runId === "completed-run" &&
+					(entry.data as { shareUrl?: unknown }).shareUrl === "https://share/completed-run",
+			),
+			true,
+		);
 		assert.equal(listeners.has("subagent:result-intercom"), false);
-		assert.equal(emitted.some((entry) => entry.event === "subagent:result-intercom"), false);
+		assert.equal(
+			emitted.some((entry) => entry.event === "subagent:result-intercom"),
+			false,
+		);
 		assert.equal(fs.existsSync(path.join(resultsDir, "05-foreign.json")), true);
 		fs.rmSync(resultsDir, { recursive: true, force: true });
 	});
@@ -232,15 +314,30 @@ describe("result watcher to native notify", () => {
 		const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
 		const pausedSession = path.join(resultsDir, "paused-session.jsonl");
 		fs.writeFileSync(pausedSession, "session\n", "utf-8");
-		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-			runId: "paused-awaiting-supervisor",
-			mode: "single",
-			state: "paused",
-			startedAt: 100,
-			sessionId: "session-owner",
-			steps: [{ agent: "worker", status: "paused", sessionFile: pausedSession, pause: { kind: "awaiting_supervisor", pausedAt: 200 } }],
-			pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-		}, null, 2), "utf-8");
+		fs.writeFileSync(
+			path.join(asyncDir, "status.json"),
+			JSON.stringify(
+				{
+					runId: "paused-awaiting-supervisor",
+					mode: "single",
+					state: "paused",
+					startedAt: 100,
+					sessionId: "session-owner",
+					steps: [
+						{
+							agent: "worker",
+							status: "paused",
+							sessionFile: pausedSession,
+							pause: { kind: "awaiting_supervisor", pausedAt: 200 },
+						},
+					],
+					pause: { kind: "awaiting_supervisor", pausedAt: 200 },
+				},
+				null,
+				2,
+			),
+			"utf-8",
+		);
 		const pausedResult = {
 			lifecycleArtifactVersion: 1,
 			id: "paused-awaiting-supervisor",
@@ -250,7 +347,15 @@ describe("result watcher to native notify", () => {
 			state: "paused",
 			summary: "Paused awaiting supervisor.",
 			pause: { kind: "awaiting_supervisor" },
-			results: [{ agent: "worker", success: false, interrupted: true, output: "Paused awaiting supervisor.", sessionFile: pausedSession }],
+			results: [
+				{
+					agent: "worker",
+					success: false,
+					interrupted: true,
+					output: "Paused awaiting supervisor.",
+					sessionFile: pausedSession,
+				},
+			],
 			sessionId: "session-owner",
 			asyncDir,
 		};
@@ -261,11 +366,26 @@ describe("result watcher to native notify", () => {
 			await waitUntil(() => sent.length === 1);
 			assert.match(sent[0]!.message.content ?? "", /^Background task paused:/);
 			assert.match(sent[0]!.message.content ?? "", /No child process is running\./);
-			assert.match(sent[0]!.message.content ?? "", /Resume unchanged: subagent\(\{ action: "resume", id: "paused-awaiting-supervisor" \}\)/);
-			assert.match(sent[0]!.message.content ?? "", /Resume with guidance: subagent\(\{ action: "resume", id: "paused-awaiting-supervisor", message: "Supervisor replied: \.\.\." \}\)/);
-			assert.match(sent[0]!.message.content ?? "", /Cancel: subagent\(\{ action: "interrupt", id: "paused-awaiting-supervisor" \}\)/);
-			assert.doesNotMatch(sent[0]!.message.content ?? "", /detached for intercom coordination|fresh follow-up|fresh-redispatch/i);
-			assert.doesNotMatch(sent[0]!.message.content ?? "", new RegExp(pausedSession.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+			assert.match(
+				sent[0]!.message.content ?? "",
+				/Resume unchanged: subagent\(\{ action: "resume", id: "paused-awaiting-supervisor" \}\)/,
+			);
+			assert.match(
+				sent[0]!.message.content ?? "",
+				/Resume with guidance: subagent\(\{ action: "resume", id: "paused-awaiting-supervisor", message: "Supervisor replied: \.\.\." \}\)/,
+			);
+			assert.match(
+				sent[0]!.message.content ?? "",
+				/Cancel: subagent\(\{ action: "interrupt", id: "paused-awaiting-supervisor" \}\)/,
+			);
+			assert.doesNotMatch(
+				sent[0]!.message.content ?? "",
+				/detached for intercom coordination|fresh follow-up|fresh-redispatch/i,
+			);
+			assert.doesNotMatch(
+				sent[0]!.message.content ?? "",
+				new RegExp(pausedSession.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+			);
 			assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 1);
 
 			fs.writeFileSync(resultPath, JSON.stringify(pausedResult), "utf-8");
@@ -288,40 +408,63 @@ describe("result watcher to native notify", () => {
 		fs.mkdirSync(asyncDir, { recursive: true });
 		const sessionPath = path.join(resultsDir, "resume-first-session.jsonl");
 		fs.writeFileSync(sessionPath, "session\n", "utf-8");
-		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-			runId: "resume-first",
-			mode: "parallel",
-			state: "paused",
-			startedAt: 100,
-			sessionId: "session-owner",
-			steps: [
-				{ agent: "a", status: "continued", sessionFile: sessionPath },
-				{ agent: "b", status: "paused", pause: { kind: "awaiting_supervisor", pausedAt: 200 } },
-			],
-			pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-			lifecycle: { generation: 3, continuationsByIndex: { "0": { phase: "continued", claimToken: "claim-1", continuationRunId: "resume-first-child" } } },
-		}, null, 2), "utf-8");
+		fs.writeFileSync(
+			path.join(asyncDir, "status.json"),
+			JSON.stringify(
+				{
+					runId: "resume-first",
+					mode: "parallel",
+					state: "paused",
+					startedAt: 100,
+					sessionId: "session-owner",
+					steps: [
+						{ agent: "a", status: "continued", sessionFile: sessionPath },
+						{ agent: "b", status: "paused", pause: { kind: "awaiting_supervisor", pausedAt: 200 } },
+					],
+					pause: { kind: "awaiting_supervisor", pausedAt: 200 },
+					lifecycle: {
+						generation: 3,
+						continuationsByIndex: {
+							"0": { phase: "continued", claimToken: "claim-1", continuationRunId: "resume-first-child" },
+						},
+					},
+				},
+				null,
+				2,
+			),
+			"utf-8",
+		);
 		const { pi, sent } = createNotifyHarness();
 		const state = createState("session-owner");
 		registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
 		const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
 		try {
 			const resultPath = path.join(resultsDir, "resume-first.json");
-			fs.writeFileSync(resultPath, JSON.stringify({
-				lifecycleArtifactVersion: 1,
-				id: "resume-first",
-				runId: "resume-first",
-				agent: "parallel:a+b",
-				success: false,
-				state: "paused",
-				summary: "Paused awaiting supervisor.",
-				results: [
-					{ agent: "a", success: false, interrupted: true, output: "Paused awaiting supervisor.", sessionFile: sessionPath },
-					{ agent: "b", success: false, interrupted: true, output: "Still paused." },
-				],
-				sessionId: "session-owner",
-				asyncDir,
-			}), "utf-8");
+			fs.writeFileSync(
+				resultPath,
+				JSON.stringify({
+					lifecycleArtifactVersion: 1,
+					id: "resume-first",
+					runId: "resume-first",
+					agent: "parallel:a+b",
+					success: false,
+					state: "paused",
+					summary: "Paused awaiting supervisor.",
+					results: [
+						{
+							agent: "a",
+							success: false,
+							interrupted: true,
+							output: "Paused awaiting supervisor.",
+							sessionFile: sessionPath,
+						},
+						{ agent: "b", success: false, interrupted: true, output: "Still paused." },
+					],
+					sessionId: "session-owner",
+					asyncDir,
+				}),
+				"utf-8",
+			);
 			watcher.primeExistingResults();
 			await waitUntil(() => !fs.existsSync(resultPath));
 			assert.deepEqual(sent, []);
@@ -339,45 +482,83 @@ describe("result watcher to native notify", () => {
 		fs.mkdirSync(asyncDir, { recursive: true });
 		const sessionPath = path.join(resultsDir, "resume-second-session.jsonl");
 		fs.writeFileSync(sessionPath, "session\n", "utf-8");
-		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-			runId: "resume-second",
-			mode: "single",
-			state: "paused",
-			startedAt: 100,
-			sessionId: "session-owner",
-			steps: [{ agent: "worker", status: "paused", sessionFile: sessionPath, pause: { kind: "awaiting_supervisor", pausedAt: 200 } }],
-			pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-		}, null, 2), "utf-8");
+		fs.writeFileSync(
+			path.join(asyncDir, "status.json"),
+			JSON.stringify(
+				{
+					runId: "resume-second",
+					mode: "single",
+					state: "paused",
+					startedAt: 100,
+					sessionId: "session-owner",
+					steps: [
+						{
+							agent: "worker",
+							status: "paused",
+							sessionFile: sessionPath,
+							pause: { kind: "awaiting_supervisor", pausedAt: 200 },
+						},
+					],
+					pause: { kind: "awaiting_supervisor", pausedAt: 200 },
+				},
+				null,
+				2,
+			),
+			"utf-8",
+		);
 		const { pi, sent } = createNotifyHarness();
 		const state = createState("session-owner");
 		registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
 		const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
 		try {
 			const resultPath = path.join(resultsDir, "resume-second.json");
-			fs.writeFileSync(resultPath, JSON.stringify({
-				lifecycleArtifactVersion: 1,
-				id: "resume-second",
-				runId: "resume-second",
-				agent: "worker",
-				success: false,
-				state: "paused",
-				summary: "Paused awaiting supervisor.",
-				results: [{ agent: "worker", success: false, interrupted: true, output: "Paused awaiting supervisor.", sessionFile: sessionPath }],
-				sessionId: "session-owner",
-				asyncDir,
-			}), "utf-8");
+			fs.writeFileSync(
+				resultPath,
+				JSON.stringify({
+					lifecycleArtifactVersion: 1,
+					id: "resume-second",
+					runId: "resume-second",
+					agent: "worker",
+					success: false,
+					state: "paused",
+					summary: "Paused awaiting supervisor.",
+					results: [
+						{
+							agent: "worker",
+							success: false,
+							interrupted: true,
+							output: "Paused awaiting supervisor.",
+							sessionFile: sessionPath,
+						},
+					],
+					sessionId: "session-owner",
+					asyncDir,
+				}),
+				"utf-8",
+			);
 			watcher.primeExistingResults();
 			await waitUntil(() => sent.length === 1);
 			assert.match(sent[0] ?? "", /^Background task paused:/);
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "resume-second",
-				mode: "single",
-				state: "continued",
-				startedAt: 100,
-				sessionId: "session-owner",
-				steps: [{ agent: "worker", status: "continued", sessionFile: sessionPath }],
-				lifecycle: { generation: 1, continuation: { phase: "continued", claimToken: "claim-2", continuationRunId: "resume-second-child" } },
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "resume-second",
+						mode: "single",
+						state: "continued",
+						startedAt: 100,
+						sessionId: "session-owner",
+						steps: [{ agent: "worker", status: "continued", sessionFile: sessionPath }],
+						lifecycle: {
+							generation: 1,
+							continuation: { phase: "continued", claimToken: "claim-2", continuationRunId: "resume-second-child" },
+						},
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 			watcher.primeExistingResults();
 			await new Promise((resolve) => setTimeout(resolve, 50));
 			assert.equal(sent.length, 1);
@@ -395,40 +576,63 @@ describe("result watcher to native notify", () => {
 		fs.mkdirSync(asyncDir, { recursive: true });
 		const sessionPath = path.join(resultsDir, "cancel-first-session.jsonl");
 		fs.writeFileSync(sessionPath, "session\n", "utf-8");
-		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-			runId: "cancel-first",
-			mode: "parallel",
-			state: "paused",
-			startedAt: 100,
-			sessionId: "session-owner",
-			steps: [
-				{ agent: "a", status: "cancelled", sessionFile: sessionPath, cancel: { summary: "Cancelled", cancelledAt: 250 } },
-				{ agent: "b", status: "paused", pause: { kind: "awaiting_supervisor", pausedAt: 200 } },
-			],
-			pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-			lifecycle: { generation: 2 },
-		}, null, 2), "utf-8");
+		fs.writeFileSync(
+			path.join(asyncDir, "status.json"),
+			JSON.stringify(
+				{
+					runId: "cancel-first",
+					mode: "parallel",
+					state: "paused",
+					startedAt: 100,
+					sessionId: "session-owner",
+					steps: [
+						{
+							agent: "a",
+							status: "cancelled",
+							sessionFile: sessionPath,
+							cancel: { summary: "Cancelled", cancelledAt: 250 },
+						},
+						{ agent: "b", status: "paused", pause: { kind: "awaiting_supervisor", pausedAt: 200 } },
+					],
+					pause: { kind: "awaiting_supervisor", pausedAt: 200 },
+					lifecycle: { generation: 2 },
+				},
+				null,
+				2,
+			),
+			"utf-8",
+		);
 		const { pi, sent } = createNotifyHarness();
 		const state = createState("session-owner");
 		registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
 		const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
 		try {
 			const resultPath = path.join(resultsDir, "cancel-first.json");
-			fs.writeFileSync(resultPath, JSON.stringify({
-				lifecycleArtifactVersion: 1,
-				id: "cancel-first",
-				runId: "cancel-first",
-				agent: "parallel:a+b",
-				success: false,
-				state: "paused",
-				summary: "Paused awaiting supervisor.",
-				results: [
-					{ agent: "a", success: false, interrupted: true, output: "Paused awaiting supervisor.", sessionFile: sessionPath },
-					{ agent: "b", success: false, interrupted: true, output: "Still paused." },
-				],
-				sessionId: "session-owner",
-				asyncDir,
-			}), "utf-8");
+			fs.writeFileSync(
+				resultPath,
+				JSON.stringify({
+					lifecycleArtifactVersion: 1,
+					id: "cancel-first",
+					runId: "cancel-first",
+					agent: "parallel:a+b",
+					success: false,
+					state: "paused",
+					summary: "Paused awaiting supervisor.",
+					results: [
+						{
+							agent: "a",
+							success: false,
+							interrupted: true,
+							output: "Paused awaiting supervisor.",
+							sessionFile: sessionPath,
+						},
+						{ agent: "b", success: false, interrupted: true, output: "Still paused." },
+					],
+					sessionId: "session-owner",
+					asyncDir,
+				}),
+				"utf-8",
+			);
 			watcher.primeExistingResults();
 			await waitUntil(() => !fs.existsSync(resultPath));
 			assert.deepEqual(sent, []);
@@ -446,46 +650,88 @@ describe("result watcher to native notify", () => {
 		fs.mkdirSync(asyncDir, { recursive: true });
 		const sessionPath = path.join(resultsDir, "cancel-second-session.jsonl");
 		fs.writeFileSync(sessionPath, "session\n", "utf-8");
-		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-			runId: "cancel-second",
-			mode: "single",
-			state: "paused",
-			startedAt: 100,
-			sessionId: "session-owner",
-			steps: [{ agent: "worker", status: "paused", sessionFile: sessionPath, pause: { kind: "awaiting_supervisor", pausedAt: 200 } }],
-			pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-		}, null, 2), "utf-8");
+		fs.writeFileSync(
+			path.join(asyncDir, "status.json"),
+			JSON.stringify(
+				{
+					runId: "cancel-second",
+					mode: "single",
+					state: "paused",
+					startedAt: 100,
+					sessionId: "session-owner",
+					steps: [
+						{
+							agent: "worker",
+							status: "paused",
+							sessionFile: sessionPath,
+							pause: { kind: "awaiting_supervisor", pausedAt: 200 },
+						},
+					],
+					pause: { kind: "awaiting_supervisor", pausedAt: 200 },
+				},
+				null,
+				2,
+			),
+			"utf-8",
+		);
 		const { pi, sent } = createNotifyHarness();
 		const state = createState("session-owner");
 		registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
 		const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
 		try {
 			const resultPath = path.join(resultsDir, "cancel-second.json");
-			fs.writeFileSync(resultPath, JSON.stringify({
-				lifecycleArtifactVersion: 1,
-				id: "cancel-second",
-				runId: "cancel-second",
-				agent: "worker",
-				success: false,
-				state: "paused",
-				summary: "Paused awaiting supervisor.",
-				results: [{ agent: "worker", success: false, interrupted: true, output: "Paused awaiting supervisor.", sessionFile: sessionPath }],
-				sessionId: "session-owner",
-				asyncDir,
-			}), "utf-8");
+			fs.writeFileSync(
+				resultPath,
+				JSON.stringify({
+					lifecycleArtifactVersion: 1,
+					id: "cancel-second",
+					runId: "cancel-second",
+					agent: "worker",
+					success: false,
+					state: "paused",
+					summary: "Paused awaiting supervisor.",
+					results: [
+						{
+							agent: "worker",
+							success: false,
+							interrupted: true,
+							output: "Paused awaiting supervisor.",
+							sessionFile: sessionPath,
+						},
+					],
+					sessionId: "session-owner",
+					asyncDir,
+				}),
+				"utf-8",
+			);
 			watcher.primeExistingResults();
 			await waitUntil(() => sent.length === 1);
 			assert.match(sent[0] ?? "", /^Background task paused:/);
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "cancel-second",
-				mode: "single",
-				state: "cancelled",
-				startedAt: 100,
-				sessionId: "session-owner",
-				steps: [{ agent: "worker", status: "cancelled", sessionFile: sessionPath, cancel: { summary: "Cancelled", cancelledAt: 250 } }],
-				cancel: { summary: "Cancelled", cancelledAt: 250 },
-				lifecycle: { generation: 1 },
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "cancel-second",
+						mode: "single",
+						state: "cancelled",
+						startedAt: 100,
+						sessionId: "session-owner",
+						steps: [
+							{
+								agent: "worker",
+								status: "cancelled",
+								sessionFile: sessionPath,
+								cancel: { summary: "Cancelled", cancelledAt: 250 },
+							},
+						],
+						cancel: { summary: "Cancelled", cancelledAt: 250 },
+						lifecycle: { generation: 1 },
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 			watcher.primeExistingResults();
 			await new Promise((resolve) => setTimeout(resolve, 50));
 			assert.equal(sent.length, 1);
@@ -503,15 +749,30 @@ describe("result watcher to native notify", () => {
 		fs.mkdirSync(asyncDir, { recursive: true });
 		const sessionPath = path.join(resultsDir, "pausing-retry-session.jsonl");
 		fs.writeFileSync(sessionPath, "session\n", "utf-8");
-		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-			runId: "pausing-retry",
-			mode: "single",
-			state: "pausing",
-			startedAt: 100,
-			sessionId: "session-owner",
-			steps: [{ agent: "worker", status: "pausing", sessionFile: sessionPath, pause: { kind: "awaiting_supervisor", requestedAt: 150 } }],
-			pause: { kind: "awaiting_supervisor", requestedAt: 150 },
-		}, null, 2), "utf-8");
+		fs.writeFileSync(
+			path.join(asyncDir, "status.json"),
+			JSON.stringify(
+				{
+					runId: "pausing-retry",
+					mode: "single",
+					state: "pausing",
+					startedAt: 100,
+					sessionId: "session-owner",
+					steps: [
+						{
+							agent: "worker",
+							status: "pausing",
+							sessionFile: sessionPath,
+							pause: { kind: "awaiting_supervisor", requestedAt: 150 },
+						},
+					],
+					pause: { kind: "awaiting_supervisor", requestedAt: 150 },
+				},
+				null,
+				2,
+			),
+			"utf-8",
+		);
 		const { pi, sent } = createNotifyHarness();
 		const state = createState("session-owner");
 		registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
@@ -526,7 +787,15 @@ describe("result watcher to native notify", () => {
 				success: false,
 				state: "paused",
 				summary: "Paused awaiting supervisor.",
-				results: [{ agent: "worker", success: false, interrupted: true, output: "Paused awaiting supervisor.", sessionFile: sessionPath }],
+				results: [
+					{
+						agent: "worker",
+						success: false,
+						interrupted: true,
+						output: "Paused awaiting supervisor.",
+						sessionFile: sessionPath,
+					},
+				],
 				sessionId: "session-owner",
 				asyncDir,
 			};
@@ -535,15 +804,30 @@ describe("result watcher to native notify", () => {
 			await new Promise((resolve) => setTimeout(resolve, 50));
 			assert.equal(sent.length, 0);
 			assert.equal(fs.existsSync(resultPath), true);
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "pausing-retry",
-				mode: "single",
-				state: "paused",
-				startedAt: 100,
-				sessionId: "session-owner",
-				steps: [{ agent: "worker", status: "paused", sessionFile: sessionPath, pause: { kind: "awaiting_supervisor", pausedAt: 200 } }],
-				pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "pausing-retry",
+						mode: "single",
+						state: "paused",
+						startedAt: 100,
+						sessionId: "session-owner",
+						steps: [
+							{
+								agent: "worker",
+								status: "paused",
+								sessionFile: sessionPath,
+								pause: { kind: "awaiting_supervisor", pausedAt: 200 },
+							},
+						],
+						pause: { kind: "awaiting_supervisor", pausedAt: 200 },
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 			watcher.primeExistingResults();
 			await waitUntil(() => sent.length === 1);
 		} finally {
@@ -560,15 +844,30 @@ describe("result watcher to native notify", () => {
 		fs.mkdirSync(asyncDir, { recursive: true });
 		const sessionPath = path.join(resultsDir, "unlink-retry-session.jsonl");
 		fs.writeFileSync(sessionPath, "session\n", "utf-8");
-		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-			runId: "unlink-retry",
-			mode: "single",
-			state: "paused",
-			startedAt: 100,
-			sessionId: "session-owner",
-			steps: [{ agent: "worker", status: "paused", sessionFile: sessionPath, pause: { kind: "awaiting_supervisor", pausedAt: 200 } }],
-			pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-		}, null, 2), "utf-8");
+		fs.writeFileSync(
+			path.join(asyncDir, "status.json"),
+			JSON.stringify(
+				{
+					runId: "unlink-retry",
+					mode: "single",
+					state: "paused",
+					startedAt: 100,
+					sessionId: "session-owner",
+					steps: [
+						{
+							agent: "worker",
+							status: "paused",
+							sessionFile: sessionPath,
+							pause: { kind: "awaiting_supervisor", pausedAt: 200 },
+						},
+					],
+					pause: { kind: "awaiting_supervisor", pausedAt: 200 },
+				},
+				null,
+				2,
+			),
+			"utf-8",
+		);
 		let firstUnlinkFailure = true;
 		const fsProxy = {
 			existsSync: fs.existsSync.bind(fs),
@@ -591,18 +890,30 @@ describe("result watcher to native notify", () => {
 		const watcher = createResultWatcher(pi, state, resultsDir, 60_000, { fs: fsProxy });
 		try {
 			const resultPath = path.join(resultsDir, "unlink-retry.json");
-			fs.writeFileSync(resultPath, JSON.stringify({
-				lifecycleArtifactVersion: 1,
-				id: "unlink-retry",
-				runId: "unlink-retry",
-				agent: "worker",
-				success: false,
-				state: "paused",
-				summary: "Paused awaiting supervisor.",
-				results: [{ agent: "worker", success: false, interrupted: true, output: "Paused awaiting supervisor.", sessionFile: sessionPath }],
-				sessionId: "session-owner",
-				asyncDir,
-			}), "utf-8");
+			fs.writeFileSync(
+				resultPath,
+				JSON.stringify({
+					lifecycleArtifactVersion: 1,
+					id: "unlink-retry",
+					runId: "unlink-retry",
+					agent: "worker",
+					success: false,
+					state: "paused",
+					summary: "Paused awaiting supervisor.",
+					results: [
+						{
+							agent: "worker",
+							success: false,
+							interrupted: true,
+							output: "Paused awaiting supervisor.",
+							sessionFile: sessionPath,
+						},
+					],
+					sessionId: "session-owner",
+					asyncDir,
+				}),
+				"utf-8",
+			);
 			watcher.primeExistingResults();
 			await waitUntil(() => sent.length === 1);
 			assert.equal(fs.existsSync(resultPath), true);
@@ -621,19 +932,27 @@ describe("result watcher to native notify", () => {
 		const asyncDir = path.join(root, "async", "stale-completed-children");
 		fs.mkdirSync(resultsDir, { recursive: true });
 		fs.mkdirSync(asyncDir, { recursive: true });
-		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-			runId: "stale-completed-children",
-			sessionId: "session-owner",
-			mode: "parallel",
-			state: "running",
-			pid: 424242,
-			startedAt: 1_000,
-			lastUpdate: 1_500,
-			steps: [
-				{ agent: "alpha", status: "complete", startedAt: 1_000, endedAt: 1_200, exitCode: 0 },
-				{ agent: "beta", status: "complete", startedAt: 1_000, endedAt: 1_300, exitCode: 0 },
-			],
-		}, null, 2), "utf-8");
+		fs.writeFileSync(
+			path.join(asyncDir, "status.json"),
+			JSON.stringify(
+				{
+					runId: "stale-completed-children",
+					sessionId: "session-owner",
+					mode: "parallel",
+					state: "running",
+					pid: 424242,
+					startedAt: 1_000,
+					lastUpdate: 1_500,
+					steps: [
+						{ agent: "alpha", status: "complete", startedAt: 1_000, endedAt: 1_200, exitCode: 0 },
+						{ agent: "beta", status: "complete", startedAt: 1_000, endedAt: 1_300, exitCode: 0 },
+					],
+				},
+				null,
+				2,
+			),
+			"utf-8",
+		);
 
 		const listeners = new Map<string, Set<(payload: unknown) => void>>();
 		const sent: Array<{ message: { content?: string }; options: { triggerTurn?: boolean } }> = [];
@@ -656,20 +975,31 @@ describe("result watcher to native notify", () => {
 		};
 		const state = createState("session-owner");
 		registerSubagentNotify(pi as never, state, {
-			batchConfig: { enabled: true, debounceMs: 1_000, maxWaitMs: 2_000, stragglerDebounceMs: 1_000, stragglerMaxWaitMs: 2_000, stragglerWindowMs: 2_000 },
+			batchConfig: {
+				enabled: true,
+				debounceMs: 1_000,
+				maxWaitMs: 2_000,
+				stragglerDebounceMs: 1_000,
+				stragglerMaxWaitMs: 2_000,
+				stragglerWindowMs: 2_000,
+			},
 		});
 		const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
 
 		try {
 			const successPath = path.join(resultsDir, "01-batched-success.json");
-			fs.writeFileSync(successPath, JSON.stringify({
-				id: "batched-success",
-				agent: "ordinary-worker",
-				success: true,
-				state: "complete",
-				summary: "ordinary success",
-				sessionId: "session-owner",
-			}), "utf-8");
+			fs.writeFileSync(
+				successPath,
+				JSON.stringify({
+					id: "batched-success",
+					agent: "ordinary-worker",
+					success: true,
+					state: "complete",
+					summary: "ordinary success",
+					sessionId: "session-owner",
+				}),
+				"utf-8",
+			);
 			watcher.primeExistingResults();
 			await waitUntil(() => !fs.existsSync(successPath));
 			assert.equal(sent.length, 0, "the successful completion should still be held by batching");
@@ -686,10 +1016,16 @@ describe("result watcher to native notify", () => {
 			assert.equal(repaired.repaired, true);
 			const repairedPath = path.join(resultsDir, "stale-completed-children.json");
 			const repairedResult = JSON.parse(fs.readFileSync(repairedPath, "utf-8"));
-			assert.deepEqual(repairedResult.results.map((child: { success?: boolean }) => child.success), [true, true]);
+			assert.deepEqual(
+				repairedResult.results.map((child: { success?: boolean }) => child.success),
+				[true, true],
+			);
 			assert.equal(repairedResult.success, false);
 			assert.equal(repairedResult.state, "failed");
-			assert.equal(repairedResult.summary, "Async runner process 424242 exited or disappeared before writing a result. Marked run failed by stale-run reconciliation.");
+			assert.equal(
+				repairedResult.summary,
+				"Async runner process 424242 exited or disappeared before writing a result. Marked run failed by stale-run reconciliation.",
+			);
 
 			watcher.primeExistingResults();
 			await waitUntil(() => sent.length === 2);
@@ -697,7 +1033,10 @@ describe("result watcher to native notify", () => {
 			const failure = sent[1]!.message.content ?? "";
 			assert.match(failure, /^Background task failed: \*\*alpha\*\*/);
 			assert.ok(failure.indexOf(repairedResult.summary) < failure.indexOf("Children: 2 completed"));
-			assert.deepEqual(sent.map((entry) => entry.options), [{ triggerTurn: true }, { triggerTurn: true }]);
+			assert.deepEqual(
+				sent.map((entry) => entry.options),
+				[{ triggerTurn: true }, { triggerTurn: true }],
+			);
 		} finally {
 			watcher.stopResultWatcher();
 			fs.rmSync(root, { recursive: true, force: true });

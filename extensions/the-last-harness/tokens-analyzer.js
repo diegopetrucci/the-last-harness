@@ -108,8 +108,14 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
             }
             const rawMsgUsage = isRecord(message.usage) ? message.usage : undefined;
             const cmInput = numberFromUnknown(rawMsgUsage?.input ?? rawMsgUsage?.inputTokens) ?? 0;
-            const cmCacheRead = numberFromUnknown(rawMsgUsage?.cacheRead ?? rawMsgUsage?.cacheReadTokens ?? rawMsgUsage?.cache_read_input_tokens ?? rawMsgUsage?.cacheReadInputTokens) ?? 0;
-            const cmCacheWrite = numberFromUnknown(rawMsgUsage?.cacheWrite ?? rawMsgUsage?.cacheWriteTokens ?? rawMsgUsage?.cache_creation_input_tokens ?? rawMsgUsage?.cacheWriteInputTokens) ?? 0;
+            const cmCacheRead = numberFromUnknown(rawMsgUsage?.cacheRead ??
+                rawMsgUsage?.cacheReadTokens ??
+                rawMsgUsage?.cache_read_input_tokens ??
+                rawMsgUsage?.cacheReadInputTokens) ?? 0;
+            const cmCacheWrite = numberFromUnknown(rawMsgUsage?.cacheWrite ??
+                rawMsgUsage?.cacheWriteTokens ??
+                rawMsgUsage?.cache_creation_input_tokens ??
+                rawMsgUsage?.cacheWriteInputTokens) ?? 0;
             const cmPromptTokens = cmInput + cmCacheRead + cmCacheWrite;
             const rawCost = isRecord(rawMsgUsage?.cost) ? rawMsgUsage.cost : undefined;
             const cmCostInput = numberFromUnknown(rawCost?.input) ?? 0;
@@ -334,9 +340,7 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
         const maxMs = latencies[latencies.length - 1] ?? 0;
         toolEntry.observedLatency = { medianMs, maxMs, pairedCount: latencies.length };
     }
-    const worstMisses = [...cacheMissEvents]
-        .sort((a, b) => b.missedTokens - a.missedTokens)
-        .slice(0, 10);
+    const worstMisses = [...cacheMissEvents].sort((a, b) => b.missedTokens - a.missedTokens).slice(0, 10);
     return {
         cacheMisses: {
             missedTokens: totalMissedTokens,
@@ -373,7 +377,10 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
             mcpCalls: mcpProxyCalls + mcpDirectCalls,
             mcpProxyCalls,
             mcpDirectCalls,
-            byTool: [...toolUsage.values()].sort((left, right) => right.approxTokens - left.approxTokens || right.callCount - left.callCount || right.resultCount - left.resultCount || left.toolName.localeCompare(right.toolName)),
+            byTool: [...toolUsage.values()].sort((left, right) => right.approxTokens - left.approxTokens ||
+                right.callCount - left.callCount ||
+                right.resultCount - left.resultCount ||
+                left.toolName.localeCompare(right.toolName)),
             mcpApproxTokens: [...toolUsage.values()].reduce((sum, tool) => (tool.mcp ? sum + tool.approxTokens : sum), 0),
             totalToolApproxTokens: [...toolUsage.values()].reduce((sum, tool) => sum + tool.approxTokens, 0),
             bySource: [...toolSourceUsage.values()]
@@ -550,11 +557,15 @@ function estimateToolSource(toolName, catalogEntry) {
             estimated: true,
         };
     }
-    const sourceHint = [catalogEntry?.sourceInfo?.source, catalogEntry?.sourceInfo?.path].filter((value) => typeof value === "string").join(" ");
+    const sourceHint = [catalogEntry?.sourceInfo?.source, catalogEntry?.sourceInfo?.path]
+        .filter((value) => typeof value === "string")
+        .join(" ");
     if (sourceHint && /mcp/i.test(sourceHint)) {
         return {
             key: catalogEntry?.sourceInfo?.source ? `mcp-direct:${catalogEntry.sourceInfo.source}` : `mcp-direct:${toolName}`,
-            label: catalogEntry?.sourceInfo?.source ? `MCP direct (${catalogEntry.sourceInfo.source})` : `MCP direct (${toolName})`,
+            label: catalogEntry?.sourceInfo?.source
+                ? `MCP direct (${catalogEntry.sourceInfo.source})`
+                : `MCP direct (${toolName})`,
             kind: "mcp-direct",
             source: catalogEntry?.sourceInfo?.source,
             scope: catalogEntry?.sourceInfo?.scope,
@@ -702,7 +713,8 @@ function collectStructuredDiscoveries(value, context) {
             }
             visit(current[key], [...path, key], skipNestedRuns ||
                 Boolean(run) ||
-                (nestedRuns.length > 0 && PREFERRED_SUBAGENT_CHILD_KEYS.includes(key)));
+                (nestedRuns.length > 0 &&
+                    PREFERRED_SUBAGENT_CHILD_KEYS.includes(key)));
         }
     };
     visit(value, [], false);
@@ -850,7 +862,9 @@ function sanitizePathReference(value, kind) {
     const extensionIndex = basename.lastIndexOf(".");
     const extension = extensionIndex > 0 ? basename.slice(extensionIndex) : undefined;
     const runId = [...segments].reverse().find((segment) => /^run-[A-Za-z0-9_-]+$/.test(segment));
-    const sessionId = kind === "session" && basename.endsWith(".jsonl") && basename !== "session.jsonl" ? basename.slice(0, -6) : undefined;
+    const sessionId = kind === "session" && basename.endsWith(".jsonl") && basename !== "session.jsonl"
+        ? basename.slice(0, -6)
+        : undefined;
     return {
         kind,
         label: buildSafePathLabel(kind, segments, basename),

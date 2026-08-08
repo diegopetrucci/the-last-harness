@@ -46,12 +46,19 @@ describe("model fallback helpers", () => {
 	});
 
 	it("falls back to the unique registry match when the current provider does not offer the model", () => {
-		assert.equal(resolveModelCandidate("claude-sonnet-4", availableModels, "github-copilot"), "anthropic/claude-sonnet-4");
+		assert.equal(
+			resolveModelCandidate("claude-sonnet-4", availableModels, "github-copilot"),
+			"anthropic/claude-sonnet-4",
+		);
 	});
 
 	it("builds a deduplicated ordered candidate list", () => {
 		assert.deepEqual(
-			buildModelCandidates("gpt-5-mini", ["openai/gpt-5-mini", "anthropic/claude-sonnet-4", "gpt-5-mini"], availableModels),
+			buildModelCandidates(
+				"gpt-5-mini",
+				["openai/gpt-5-mini", "anthropic/claude-sonnet-4", "gpt-5-mini"],
+				availableModels,
+			),
 			["openai/gpt-5-mini", "anthropic/claude-sonnet-4"],
 		);
 	});
@@ -91,7 +98,10 @@ describe("model fallback helpers", () => {
 		assert.equal(isRetryableModelFailure("rate limit exceeded for provider"), true);
 		assert.equal(isRetryableModelFailure("model unavailable"), true);
 		assert.equal(isRetryableModelFailure("authentication failed"), true);
-		assert.equal(isRetryableModelFailure("Subagent produced no output (possible model cold-start or empty response)."), true);
+		assert.equal(
+			isRetryableModelFailure("Subagent produced no output (possible model cold-start or empty response)."),
+			true,
+		);
 		assert.equal(isRetryableModelFailure("model load failed"), true);
 	});
 
@@ -113,24 +123,15 @@ describe("resolveSubagentModelOverride (cross-session inherit, issue #266)", () 
 		// The crux of the bug: an undefined model must NOT collapse to `undefined`
 		// (which leaves the child to read the shared global settings.json), but
 		// must pin the parent session's in-memory provider/id.
-		assert.equal(
-			resolveSubagentModelOverride(undefined, parentModel, availableModels),
-			"deepseek/deepseek-v4-flash",
-		);
+		assert.equal(resolveSubagentModelOverride(undefined, parentModel, availableModels), "deepseek/deepseek-v4-flash");
 	});
 
-	it("inherits the parent session model when the model is the \"inherit\" sentinel", () => {
-		assert.equal(
-			resolveSubagentModelOverride("inherit", parentModel, availableModels),
-			"deepseek/deepseek-v4-flash",
-		);
+	it('inherits the parent session model when the model is the "inherit" sentinel', () => {
+		assert.equal(resolveSubagentModelOverride("inherit", parentModel, availableModels), "deepseek/deepseek-v4-flash");
 	});
 
 	it("inherits the parent session model when the agent config sets model: false (delegate)", () => {
-		assert.equal(
-			resolveSubagentModelOverride(false, parentModel, availableModels),
-			"deepseek/deepseek-v4-flash",
-		);
+		assert.equal(resolveSubagentModelOverride(false, parentModel, availableModels), "deepseek/deepseek-v4-flash");
 	});
 
 	it("treats an empty or whitespace-only model as inherit", () => {
@@ -138,8 +139,11 @@ describe("resolveSubagentModelOverride (cross-session inherit, issue #266)", () 
 		assert.equal(resolveSubagentModelOverride("   ", parentModel, availableModels), "deepseek/deepseek-v4-flash");
 	});
 
-	it("trims surrounding whitespace from the \"inherit\" sentinel", () => {
-		assert.equal(resolveSubagentModelOverride("  inherit  ", parentModel, availableModels), "deepseek/deepseek-v4-flash");
+	it('trims surrounding whitespace from the "inherit" sentinel', () => {
+		assert.equal(
+			resolveSubagentModelOverride("  inherit  ", parentModel, availableModels),
+			"deepseek/deepseek-v4-flash",
+		);
 	});
 
 	it("keeps an explicit provider/id model unchanged", () => {
@@ -150,10 +154,7 @@ describe("resolveSubagentModelOverride (cross-session inherit, issue #266)", () 
 	});
 
 	it("resolves an explicit bare id against the registry, not the parent", () => {
-		assert.equal(
-			resolveSubagentModelOverride("gpt-5-mini", parentModel, availableModels),
-			"openai/gpt-5-mini",
-		);
+		assert.equal(resolveSubagentModelOverride("gpt-5-mini", parentModel, availableModels), "openai/gpt-5-mini");
 	});
 
 	it("returns undefined when inheriting but no parent model is known", () => {
@@ -164,7 +165,7 @@ describe("resolveSubagentModelOverride (cross-session inherit, issue #266)", () 
 		assert.equal(resolveSubagentModelOverride(false, undefined, availableModels), undefined);
 	});
 
-	it("never emits the literal \"inherit\" string as a model", () => {
+	it('never emits the literal "inherit" string as a model', () => {
 		// Regression guard: the old resolveModelCandidate returned "inherit" verbatim
 		// (no registry match), which the child rejected and silently fell back to
 		// the global default.
@@ -286,14 +287,21 @@ describe("resolveSubagentModelOverride scope enforcement", () => {
 
 	it("is a no-op when scope is not enforced", () => {
 		assert.equal(
-			resolveSubagentModelOverride("deepseek/deepseek-v4", parentModel, availableModels, undefined, { scope: { enforce: false, allow: ["anthropic/*"] }, source: "explicit" }),
+			resolveSubagentModelOverride("deepseek/deepseek-v4", parentModel, availableModels, undefined, {
+				scope: { enforce: false, allow: ["anthropic/*"] },
+				source: "explicit",
+			}),
 			"deepseek/deepseek-v4",
 		);
 	});
 
 	it("throws for an explicit out-of-scope model", () => {
 		assert.throws(
-			() => resolveSubagentModelOverride("deepseek/deepseek-v4", parentModel, availableModels, undefined, { scope, source: "explicit" }),
+			() =>
+				resolveSubagentModelOverride("deepseek/deepseek-v4", parentModel, availableModels, undefined, {
+					scope,
+					source: "explicit",
+				}),
 			/outside the configured subagent model scope/,
 		);
 	});

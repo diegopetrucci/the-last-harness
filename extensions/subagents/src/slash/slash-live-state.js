@@ -1,4 +1,4 @@
-import { SLASH_RESULT_TYPE } from "../shared/types.js";
+import { SLASH_RESULT_TYPE, } from "../shared/types.js";
 const liveSnapshots = new Map();
 const finalSnapshots = new Map();
 let versionCounter = 1;
@@ -68,7 +68,8 @@ function buildSingleInitialResult(params) {
             mode: "single",
             ...(params.context ? { context: params.context } : {}),
             results: [createPlaceholderResult(agent, task, "running", 0)],
-            progress: [{
+            progress: [
+                {
                     index: 0,
                     agent,
                     status: "running",
@@ -78,23 +79,20 @@ function buildSingleInitialResult(params) {
                     toolCount: 0,
                     tokens: 0,
                     durationMs: 0,
-                }],
+                },
+            ],
         },
     };
 }
 export function buildSlashInitialResult(requestId, params) {
-    const result = (params.tasks?.length ?? 0) > 0
-        ? buildParallelInitialResult(params)
-        : buildSingleInitialResult(params);
+    const result = (params.tasks?.length ?? 0) > 0 ? buildParallelInitialResult(params) : buildSingleInitialResult(params);
     liveSnapshots.set(requestId, { result, version: nextVersion() });
     finalSnapshots.delete(requestId);
     return { requestId, result };
 }
 function cloneResultsWithProgress(results, progress) {
     return results.map((result, index) => {
-        const nextProgress = progress?.find((entry) => entry.index === index)
-            ?? progress?.[index]
-            ?? result.progress;
+        const nextProgress = progress?.find((entry) => entry.index === index) ?? progress?.[index] ?? result.progress;
         return nextProgress ? { ...result, progress: nextProgress } : result;
     });
 }
@@ -165,9 +163,8 @@ export function resolveSlashMessageDetails(value) {
     return isSlashMessageDetails(value) ? value : undefined;
 }
 export function getSlashRenderableSnapshot(details) {
-    return finalSnapshots.get(details.requestId)
-        ?? liveSnapshots.get(details.requestId)
-        ?? { result: details.result, version: 0 };
+    return (finalSnapshots.get(details.requestId) ??
+        liveSnapshots.get(details.requestId) ?? { result: details.result, version: 0 });
 }
 export function restoreSlashFinalSnapshots(entries) {
     liveSnapshots.clear();

@@ -24,20 +24,26 @@ describe("subagent control attention state", () => {
 	});
 
 	it("suppresses idle attention while a tool call is in flight", () => {
-		assert.equal(deriveActivityState({
-			config,
-			startedAt: 0,
-			lastActivityAt: 0,
-			toolCallInFlight: true,
-			now: 400,
-		}), undefined);
-		assert.equal(deriveActivityState({
-			config,
-			startedAt: 0,
-			lastActivityAt: 0,
-			toolCallInFlight: false,
-			now: 400,
-		}), "needs_attention");
+		assert.equal(
+			deriveActivityState({
+				config,
+				startedAt: 0,
+				lastActivityAt: 0,
+				toolCallInFlight: true,
+				now: 400,
+			}),
+			undefined,
+		);
+		assert.equal(
+			deriveActivityState({
+				config,
+				startedAt: 0,
+				lastActivityAt: 0,
+				toolCallInFlight: false,
+				now: 400,
+			}),
+			"needs_attention",
+		);
 	});
 
 	it("builds compact needs-attention control events", () => {
@@ -87,7 +93,12 @@ describe("subagent control attention state", () => {
 
 	it("defaults notifications to active-long-running and needs attention without intercom", () => {
 		const event = buildControlEvent({ to: "needs_attention", runId: "run-1", agent: "worker" });
-		const activeEvent = buildControlEvent({ type: "active_long_running", to: "active_long_running", runId: "run-1", agent: "worker" });
+		const activeEvent = buildControlEvent({
+			type: "active_long_running",
+			to: "active_long_running",
+			runId: "run-1",
+			agent: "worker",
+		});
 		assert.equal(shouldNotifyControlEvent(config, event), true);
 		assert.equal(shouldNotifyControlEvent(config, activeEvent), true);
 		assert.deepEqual(config.notifyOn, ["active_long_running", "needs_attention"]);
@@ -100,36 +111,51 @@ describe("subagent control attention state", () => {
 		assert.equal(defaults.activeNoticeAfterMs, 240_000);
 		assert.equal(defaults.activeNoticeAfterTurns, undefined);
 		assert.equal(defaults.activeNoticeAfterTokens, undefined);
-		assert.equal(nextLongRunningTrigger(defaults, {
-			startedAt: 0,
-			now: 77_000,
-			turns: 50,
-			tokens: 800_000,
-		}), undefined);
-		assert.equal(nextLongRunningTrigger(defaults, {
-			startedAt: 0,
-			now: 240_000,
-			turns: 1,
-			tokens: 1,
-		}), "time_threshold");
+		assert.equal(
+			nextLongRunningTrigger(defaults, {
+				startedAt: 0,
+				now: 77_000,
+				turns: 50,
+				tokens: 800_000,
+			}),
+			undefined,
+		);
+		assert.equal(
+			nextLongRunningTrigger(defaults, {
+				startedAt: 0,
+				now: 240_000,
+				turns: 1,
+				tokens: 1,
+			}),
+			"time_threshold",
+		);
 	});
 
 	it("supports opt-in turn and token long-running thresholds", () => {
-		const tokenBudget = resolveControlConfig(undefined, { activeNoticeAfterMs: 999_999, activeNoticeAfterTokens: 500_000 });
+		const tokenBudget = resolveControlConfig(undefined, {
+			activeNoticeAfterMs: 999_999,
+			activeNoticeAfterTokens: 500_000,
+		});
 		const turnBudget = resolveControlConfig(undefined, { activeNoticeAfterMs: 999_999, activeNoticeAfterTurns: 5 });
 
-		assert.equal(nextLongRunningTrigger(tokenBudget, {
-			startedAt: 0,
-			now: 77_000,
-			turns: 1,
-			tokens: 500_000,
-		}), "token_threshold");
-		assert.equal(nextLongRunningTrigger(turnBudget, {
-			startedAt: 0,
-			now: 77_000,
-			turns: 5,
-			tokens: 1,
-		}), "turn_threshold");
+		assert.equal(
+			nextLongRunningTrigger(tokenBudget, {
+				startedAt: 0,
+				now: 77_000,
+				turns: 1,
+				tokens: 500_000,
+			}),
+			"token_threshold",
+		);
+		assert.equal(
+			nextLongRunningTrigger(turnBudget, {
+				startedAt: 0,
+				now: 77_000,
+				turns: 5,
+				tokens: 1,
+			}),
+			"turn_threshold",
+		);
 	});
 
 	it("resolves custom notification config", () => {
@@ -244,7 +270,10 @@ describe("subagent control attention state", () => {
 		const event = buildControlEvent({ to: "needs_attention", runId: "run-1", agent: "worker", index: 0 });
 		const seen = new Set<string>();
 
-		assert.equal(controlNotificationKey(event, "subagent-worker-run-1-1"), "subagent-worker-run-1-1:needs_attention:idle");
+		assert.equal(
+			controlNotificationKey(event, "subagent-worker-run-1-1"),
+			"subagent-worker-run-1-1:needs_attention:idle",
+		);
 		assert.equal(claimControlNotification(resolveControlConfig(), event, seen, "subagent-worker-run-1-1"), true);
 		assert.equal(claimControlNotification(resolveControlConfig(), event, seen, "subagent-worker-run-1-1"), false);
 
@@ -256,6 +285,9 @@ describe("subagent control attention state", () => {
 			message: "worker completed without making edits for an implementation task",
 			reason: "completion_guard",
 		});
-		assert.equal(claimControlNotification(resolveControlConfig(), terminalEvent, seen, "subagent-worker-run-1-1"), true);
+		assert.equal(
+			claimControlNotification(resolveControlConfig(), terminalEvent, seen, "subagent-worker-run-1-1"),
+			true,
+		);
 	});
 });

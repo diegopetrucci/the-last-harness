@@ -39,10 +39,7 @@ export interface ReviewGatheredContext {
  * T2 populates `ctx.body` / `ctx.bodyKind` for local modes; T3 does the same
  * for PR mode and also fills `ctx.checkout` when it switches branches.
  */
-export function buildReviewEnvelope(
-	parsed: ReviewDispatchArgs,
-	ctx?: ReviewGatheredContext,
-): string {
+export function buildReviewEnvelope(parsed: ReviewDispatchArgs, ctx?: ReviewGatheredContext): string {
 	const { mode, extra } = parsed;
 	const lines: string[] = [];
 
@@ -109,11 +106,11 @@ export function escapeContentDelimiters(content: string): string {
 		.split("\n")
 		.map((line) => {
 			if (
-				line === "--- begin snapshot ---"
-				|| line === "--- end snapshot ---"
-				|| line === REVIEW_UNTRACKED_BEGIN_DELIMITER
-				|| line === REVIEW_UNTRACKED_END_DELIMITER
-				|| /^--- (?:file|untracked file): .* ---$/.test(line)
+				line === "--- begin snapshot ---" ||
+				line === "--- end snapshot ---" ||
+				line === REVIEW_UNTRACKED_BEGIN_DELIMITER ||
+				line === REVIEW_UNTRACKED_END_DELIMITER ||
+				/^--- (?:file|untracked file): .* ---$/.test(line)
 			) {
 				return escapeDelimitedContentLine(line);
 			}
@@ -223,6 +220,8 @@ export function appendUntrackedSnapshot(diffBody: string, untrackedParts: string
 		return diffBody;
 	}
 
-	const untrackedBody = [REVIEW_UNTRACKED_BEGIN_DELIMITER, ...untrackedParts, REVIEW_UNTRACKED_END_DELIMITER].join("\n");
+	const untrackedBody = [REVIEW_UNTRACKED_BEGIN_DELIMITER, ...untrackedParts, REVIEW_UNTRACKED_END_DELIMITER].join(
+		"\n",
+	);
 	return diffBody.trim().length > 0 ? `${diffBody}\n\n${untrackedBody}` : untrackedBody;
 }

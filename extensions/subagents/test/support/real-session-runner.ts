@@ -56,7 +56,9 @@ export function routeParentThroughSubagent(input: {
 	return (context) => {
 		const isParent = (context.tools ?? []).some((tool) => tool.name === "subagent");
 		if (!isParent) return "Unexpected non-parent model call.";
-		const resultText = latestSubagentToolResultText(context.messages as Array<{ role?: string; toolName?: string; content?: unknown }>);
+		const resultText = latestSubagentToolResultText(
+			context.messages as Array<{ role?: string; toolName?: string; content?: unknown }>,
+		);
 		if (resultText !== undefined) {
 			return `Parent relays: ${resultText.includes(input.childMarker) ? input.childMarker : "CHILD_MISSING"}`;
 		}
@@ -74,7 +76,9 @@ export function subagentToolResults(session: AgentSession): string[] {
 	return results;
 }
 
-function latestSubagentToolResultText(messages: Array<{ role?: string; toolName?: string; content?: unknown }>): string | undefined {
+function latestSubagentToolResultText(
+	messages: Array<{ role?: string; toolName?: string; content?: unknown }>,
+): string | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const message = messages[i]!;
 		if (message.role === "toolResult" && message.toolName === "subagent") {
@@ -87,15 +91,18 @@ function latestSubagentToolResultText(messages: Array<{ role?: string; toolName?
 function textFromContent(content: unknown): string {
 	if (!Array.isArray(content)) return "";
 	return content
-		.map((part) => part && typeof part === "object" && (part as { type?: unknown }).type === "text"
-			? String((part as { text?: unknown }).text ?? "")
-			: "")
+		.map((part) =>
+			part && typeof part === "object" && (part as { type?: unknown }).type === "text"
+				? String((part as { text?: unknown }).text ?? "")
+				: "",
+		)
 		.join("");
 }
 
 function toAssistantMessage(reply: FauxReply): AssistantMessage {
 	if (reply && typeof reply === "object" && "role" in reply) return reply as AssistantMessage;
-	const content: FauxContentBlock[] = typeof reply === "string" ? [fauxText(reply)] : Array.isArray(reply) ? reply : [reply];
+	const content: FauxContentBlock[] =
+		typeof reply === "string" ? [fauxText(reply)] : Array.isArray(reply) ? reply : [reply];
 	const hasToolCall = content.some((block) => (block as { type?: string }).type === "toolCall");
 	return fauxAssistantMessage(content, { stopReason: hasToolCall ? "toolUse" : "stop" });
 }
@@ -116,15 +123,10 @@ function installChildPiShim(childText: string): ChildPiShim {
 
 	writeFileSync(path.join(rootDir, ".keep"), "");
 	mkdirSync(binDir, { recursive: true });
-	writeFileSync(
-		path.join(binDir, "pi"),
-		`#!/bin/sh\nexec "${process.execPath}" "${CHILD_CLI_PATH}" "$@"\n`,
-		{ mode: 0o755 },
-	);
-	writeFileSync(
-		path.join(binDir, "pi.cmd"),
-		`@echo off\r\n"${process.execPath}" "${CHILD_CLI_PATH}" %*\r\n`,
-	);
+	writeFileSync(path.join(binDir, "pi"), `#!/bin/sh\nexec "${process.execPath}" "${CHILD_CLI_PATH}" "$@"\n`, {
+		mode: 0o755,
+	});
+	writeFileSync(path.join(binDir, "pi.cmd"), `@echo off\r\n"${process.execPath}" "${CHILD_CLI_PATH}" %*\r\n`);
 
 	process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ""}`;
 	process.env.PI_SUBAGENTS_E2E_CHILD_TEXT = childText;
@@ -235,7 +237,8 @@ export async function runRealSubagentSession(options: RealSessionRunOptions): Pr
 		modelRuntime.registerNativeProvider(faux.provider);
 		const model = faux.getModel();
 		const respond = options.respond;
-		const responseFactory: FauxResponseFactory = async (context, _streamOptions, state) => toAssistantMessage(await respond(context, state));
+		const responseFactory: FauxResponseFactory = async (context, _streamOptions, state) =>
+			toAssistantMessage(await respond(context, state));
 		faux.setResponses(Array.from({ length: 8 }, () => responseFactory));
 
 		const settingsManager = SettingsManager.inMemory({

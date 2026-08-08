@@ -38,7 +38,10 @@ type InteractiveModeLike = {
 	};
 };
 
-type InteractiveModeFindExactModelMatch = (this: InteractiveModeLike, searchTerm: string) => Promise<ProviderModelReference | undefined>;
+type InteractiveModeFindExactModelMatch = (
+	this: InteractiveModeLike,
+	searchTerm: string,
+) => Promise<ProviderModelReference | undefined>;
 
 type InteractiveModePrototype = {
 	findExactModelMatch?: InteractiveModeFindExactModelMatch;
@@ -49,10 +52,16 @@ type InteractiveModePrototype = {
 const TLH_MODEL_VISIBILITY_PATCHED = Symbol.for("tlh.modelVisibilityPatched");
 const TLH_MODEL_VISIBILITY_GET_AVAILABLE_ORIGINAL = Symbol.for("tlh.modelVisibilityGetAvailableOriginal");
 const TLH_MODEL_VISIBILITY_RUNTIME_PATCHED = Symbol.for("tlh.modelVisibilityRuntimePatched");
-const TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_ORIGINAL = Symbol.for("tlh.modelVisibilityRuntimeGetAvailableOriginal");
-const TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_SNAPSHOT_ORIGINAL = Symbol.for("tlh.modelVisibilityRuntimeGetAvailableSnapshotOriginal");
+const TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_ORIGINAL = Symbol.for(
+	"tlh.modelVisibilityRuntimeGetAvailableOriginal",
+);
+const TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_SNAPSHOT_ORIGINAL = Symbol.for(
+	"tlh.modelVisibilityRuntimeGetAvailableSnapshotOriginal",
+);
 const TLH_MODEL_VISIBILITY_EXACT_LOOKUP_PATCHED = Symbol.for("tlh.modelVisibilityExactLookupPatched");
-const TLH_MODEL_VISIBILITY_FIND_EXACT_MODEL_MATCH_ORIGINAL = Symbol.for("tlh.modelVisibilityFindExactModelMatchOriginal");
+const TLH_MODEL_VISIBILITY_FIND_EXACT_MODEL_MATCH_ORIGINAL = Symbol.for(
+	"tlh.modelVisibilityFindExactModelMatchOriginal",
+);
 
 export const TLH_HIDDEN_MODEL_DEFAULTS = Object.freeze([
 	"anthropic/claude-3-5-haiku-20241022",
@@ -102,10 +111,7 @@ export function normalizeTlhModelVisibilityConfig(config: unknown): ResolvedTlhM
 	return {
 		disabled: config.disabled === true,
 		hidden: normalizePatternList(config.hidden),
-		visible: uniqueSorted([
-			...normalizePatternList(config.visible),
-			...normalizePatternList(config.unhide),
-		]),
+		visible: uniqueSorted([...normalizePatternList(config.visible), ...normalizePatternList(config.unhide)]),
 	};
 }
 
@@ -161,13 +167,18 @@ function matchesAnyPattern(model: ProviderModelReference, patterns: readonly str
 	return patterns.some((pattern) => matchesTlhModelVisibilityPattern(model, pattern));
 }
 
-function findExactModelReferenceMatch<T extends ProviderModelReference>(modelReference: string, availableModels: readonly T[]): T | undefined {
+function findExactModelReferenceMatch<T extends ProviderModelReference>(
+	modelReference: string,
+	availableModels: readonly T[],
+): T | undefined {
 	const trimmedReference = modelReference.trim();
 	if (!trimmedReference) {
 		return undefined;
 	}
 	const normalizedReference = trimmedReference.toLowerCase();
-	const canonicalMatches = availableModels.filter((model) => `${model.provider}/${model.id}`.toLowerCase() === normalizedReference);
+	const canonicalMatches = availableModels.filter(
+		(model) => `${model.provider}/${model.id}`.toLowerCase() === normalizedReference,
+	);
 	if (canonicalMatches.length === 1) {
 		return canonicalMatches[0];
 	}
@@ -180,7 +191,8 @@ function findExactModelReferenceMatch<T extends ProviderModelReference>(modelRef
 		const modelId = trimmedReference.substring(slashIndex + 1).trim();
 		if (provider && modelId) {
 			const providerMatches = availableModels.filter(
-				(model) => model.provider.toLowerCase() === provider.toLowerCase() && model.id.toLowerCase() === modelId.toLowerCase(),
+				(model) =>
+					model.provider.toLowerCase() === provider.toLowerCase() && model.id.toLowerCase() === modelId.toLowerCase(),
 			);
 			if (providerMatches.length === 1) {
 				return providerMatches[0];
@@ -200,7 +212,10 @@ function isCanonicalModelReference(modelReference: string): boolean {
 	return slashIndex > 0 && slashIndex < trimmedReference.length - 1;
 }
 
-export function isTlhModelHidden(model: ProviderModelReference, config: ResolvedTlhModelVisibilityConfig = getTlhModelVisibilityConfig()): boolean {
+export function isTlhModelHidden(
+	model: ProviderModelReference,
+	config: ResolvedTlhModelVisibilityConfig = getTlhModelVisibilityConfig(),
+): boolean {
 	if (config.disabled) {
 		return false;
 	}
@@ -245,7 +260,9 @@ export function installTlhModelVisibilityFilter(): void {
 	if (!modelRegistryPrototype[TLH_MODEL_VISIBILITY_PATCHED]) {
 		const originalGetAvailable = modelRegistryPrototype.getAvailable;
 		modelRegistryPrototype[TLH_MODEL_VISIBILITY_GET_AVAILABLE_ORIGINAL] = originalGetAvailable;
-		modelRegistryPrototype.getAvailable = function tlhModelVisibilityGetAvailable(this: ModelRegistry): ReturnType<typeof originalGetAvailable> {
+		modelRegistryPrototype.getAvailable = function tlhModelVisibilityGetAvailable(
+			this: ModelRegistry,
+		): ReturnType<typeof originalGetAvailable> {
 			return filterTlhVisibleModels(originalGetAvailable.call(this));
 		};
 		modelRegistryPrototype[TLH_MODEL_VISIBILITY_PATCHED] = true;
@@ -285,7 +302,8 @@ function getUnfilteredRuntimeAvailableSnapshot(
 	modelRuntime: Pick<ModelRuntime, "getAvailableSnapshot">,
 ): ReturnType<ModelRegistry["getAvailable"]> {
 	const modelRuntimePrototype = Object.getPrototypeOf(modelRuntime) as ModelRuntimePrototype | null;
-	const originalGetAvailableSnapshot = modelRuntimePrototype?.[TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_SNAPSHOT_ORIGINAL];
+	const originalGetAvailableSnapshot =
+		modelRuntimePrototype?.[TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_SNAPSHOT_ORIGINAL];
 	return originalGetAvailableSnapshot
 		? [...originalGetAvailableSnapshot.call(modelRuntime as ModelRuntime)]
 		: [...modelRuntime.getAvailableSnapshot()];
@@ -309,14 +327,17 @@ export function getUnfilteredAvailableModels(
 	if ("modelRegistry" in modelSource && modelSource.modelRegistry) {
 		return getUnfilteredAvailableModels(modelSource.modelRegistry);
 	}
-	const compatibilityRuntime = (modelSource as unknown as { runtime?: Pick<ModelRuntime, "getAvailableSnapshot"> }).runtime;
+	const compatibilityRuntime = (modelSource as unknown as { runtime?: Pick<ModelRuntime, "getAvailableSnapshot"> })
+		.runtime;
 	if (compatibilityRuntime) {
 		return getUnfilteredRuntimeAvailableSnapshot(compatibilityRuntime);
 	}
 	if ("getAvailable" in modelSource && typeof modelSource.getAvailable === "function") {
 		const modelRegistryPrototype = Object.getPrototypeOf(modelSource) as ModelRegistryPrototype | null;
 		const originalGetAvailable = modelRegistryPrototype?.[TLH_MODEL_VISIBILITY_GET_AVAILABLE_ORIGINAL];
-		return originalGetAvailable ? originalGetAvailable.call(modelSource as unknown as ModelRegistry) : modelSource.getAvailable();
+		return originalGetAvailable
+			? originalGetAvailable.call(modelSource as unknown as ModelRegistry)
+			: modelSource.getAvailable();
 	}
 	return [];
 }

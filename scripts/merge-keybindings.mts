@@ -147,13 +147,9 @@ function assertKeybindingsTarget(keybindingsPath: string): void {
 
 function writeExistingProfileBackup(keybindingsPath: string, backupPath: string): void {
 	const { content, mode } = readRegularFileForBackup(keybindingsPath, "Pi keybindings");
-	writeSafeProfileFile(
-		{ agentDir: dirname(keybindingsPath) },
-		basename(backupPath),
-		content,
-		"Pi keybindings backup",
-		{ mode },
-	);
+	writeSafeProfileFile({ agentDir: dirname(keybindingsPath) }, basename(backupPath), content, "Pi keybindings backup", {
+		mode,
+	});
 }
 
 function writeKeybindings(

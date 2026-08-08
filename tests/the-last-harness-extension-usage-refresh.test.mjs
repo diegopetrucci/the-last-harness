@@ -301,7 +301,10 @@ test("subscription usage footer first render stays synchronous before the lazy s
 		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
 		assert.ok(Array.isArray(firstRenderLines), "first footer render should complete synchronously");
 		assert.equal(firstRenderLines[2] ?? "", "", "first footer render should tolerate the empty lazy-load snapshot");
-		await eventually(() => fetchCalls === 1 && renderRequests === 1, "lazy refresh should load usage and request one rerender");
+		await eventually(
+			() => fetchCalls === 1 && renderRequests === 1,
+			"lazy refresh should load usage and request one rerender",
+		);
 	} finally {
 		globalThis.fetch = previousFetch;
 		restoreEnv(previousEnv);
@@ -366,7 +369,10 @@ test("subscription usage refresh requests a footer render when a runtime overrid
 		const ctx = createCtx(ctxOptions);
 
 		await fireAll(pi, "session_start", { reason: "restore" }, ctx);
-		await eventually(() => fetchCalls === 1 && renderRequests === 1, "initial usage fetch should request one footer render");
+		await eventually(
+			() => fetchCalls === 1 && renderRequests === 1,
+			"initial usage fetch should request one footer render",
+		);
 
 		renderRequests = 0;
 		returnedAccessToken = "runtime-api-key";
@@ -538,10 +544,7 @@ test("rapid turn_end burst collapses to a single fetch and no extra renders when
 		// captures the total network call count across the whole lifecycle.
 		renderRequests = 0;
 
-		assert.ok(
-			(pi.handlers.get("turn_end")?.length ?? 0) > 0,
-			"turn_end handler must be registered by the extension",
-		);
+		assert.ok((pi.handlers.get("turn_end")?.length ?? 0) > 0, "turn_end handler must be registered by the extension");
 
 		// Production wiring registers turn_end as a synchronous handler that
 		// fires refreshSubscriptionUsage() without awaiting, so we mirror that

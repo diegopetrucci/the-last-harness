@@ -31,9 +31,7 @@ function sanitizeTempScopeSegment(value) {
 }
 export function resolveTempScopeId(options) {
     const env = options?.env ?? process.env;
-    const getuid = options && Object.hasOwn(options, "getuid")
-        ? options.getuid
-        : process.getuid?.bind(process);
+    const getuid = options && Object.hasOwn(options, "getuid") ? options.getuid : process.getuid?.bind(process);
     if (typeof getuid === "function") {
         return `uid-${getuid()}`;
     }
@@ -42,9 +40,7 @@ export function resolveTempScopeId(options) {
         if (value)
             return `user-${sanitizeTempScopeSegment(value)}`;
     }
-    const userInfo = options && Object.hasOwn(options, "userInfo")
-        ? options.userInfo
-        : os.userInfo;
+    const userInfo = options && Object.hasOwn(options, "userInfo") ? options.userInfo : os.userInfo;
     try {
         const username = userInfo?.().username;
         if (username)
@@ -55,9 +51,7 @@ export function resolveTempScopeId(options) {
     const homedir = env.USERPROFILE ?? env.HOME;
     if (homedir)
         return `home-${sanitizeTempScopeSegment(homedir)}`;
-    const resolveHomedir = options && Object.hasOwn(options, "homedir")
-        ? options.homedir
-        : os.homedir;
+    const resolveHomedir = options && Object.hasOwn(options, "homedir") ? options.homedir : os.homedir;
     try {
         const fallbackHomedir = resolveHomedir?.();
         if (fallbackHomedir)
@@ -108,9 +102,7 @@ export function resolveTopLevelParallelMaxTasks(value) {
     return normalizeTopLevelParallelValue(value) ?? MAX_PARALLEL;
 }
 export function resolveTopLevelParallelConcurrency(override, configValue) {
-    return normalizeTopLevelParallelValue(override)
-        ?? normalizeTopLevelParallelValue(configValue)
-        ?? MAX_CONCURRENCY;
+    return normalizeTopLevelParallelValue(override) ?? normalizeTopLevelParallelValue(configValue) ?? MAX_CONCURRENCY;
 }
 export function getAsyncConfigPath(suffix) {
     return path.join(TEMP_ROOT_DIR, `async-cfg-${suffix}.json`);
@@ -134,9 +126,9 @@ export function normalizeMaxSubagentDepth(value) {
     return normalizeNonNegativeInteger(value);
 }
 export function resolveCurrentMaxSubagentDepth(configMaxDepth) {
-    return normalizeMaxSubagentDepth(process.env.PI_SUBAGENT_MAX_DEPTH)
-        ?? normalizeMaxSubagentDepth(configMaxDepth)
-        ?? DEFAULT_SUBAGENT_MAX_DEPTH;
+    return (normalizeMaxSubagentDepth(process.env.PI_SUBAGENT_MAX_DEPTH) ??
+        normalizeMaxSubagentDepth(configMaxDepth) ??
+        DEFAULT_SUBAGENT_MAX_DEPTH);
 }
 export function resolveChildMaxSubagentDepth(parentMaxDepth, agentMaxDepth) {
     const normalizedParent = normalizeMaxSubagentDepth(parentMaxDepth) ?? DEFAULT_SUBAGENT_MAX_DEPTH;

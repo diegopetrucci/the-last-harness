@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import {} from "../../agents/agents.js";
 import { getArtifactsDir } from "../../shared/artifacts.js";
-import { FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE, formatForegroundPauseMessage, formatForegroundSupervisorPauseMessage, UNCHANGED_SUPERVISOR_RESUME_MESSAGE } from "../../shared/foreground-pause.js";
+import { FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE, formatForegroundPauseMessage, formatForegroundSupervisorPauseMessage, UNCHANGED_SUPERVISOR_RESUME_MESSAGE, } from "../../shared/foreground-pause.js";
 import { toModelInfo } from "../../shared/model-info.js";
 import { resolveExecutionAgentScope } from "../../agents/agent-scope.js";
 import { handleManagementAction } from "../../agents/agent-management.js";
@@ -17,24 +17,24 @@ import { recordRun } from "../shared/run-history.js";
 import { buildChainInstructions, writeInitialProgressFile, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, } from "../../shared/settings.js";
 import { normalizeSkillInput } from "../../agents/skills.js";
 import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.js";
-import { executeAsyncChain, executeAsyncSingle, formatAsyncStartedMessage, isAsyncAvailable } from "../background/async-execution.js";
+import { executeAsyncChain, executeAsyncSingle, formatAsyncStartedMessage, isAsyncAvailable, } from "../background/async-execution.js";
 import { validateAcceptanceInput, validateDispatchAcceptanceInput } from "../shared/acceptance.js";
 import { createForkContextResolver } from "../../shared/fork-context.js";
 import { resolveCurrentSessionId } from "../../shared/session-identity.js";
-import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.js";
-import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.js";
+import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, } from "../../intercom/intercom-bridge.js";
+import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent, } from "../shared/subagent-control.js";
 import { DEFAULT_TURN_BUDGET_GRACE_TURNS } from "../shared/turn-budget.js";
 import { validateToolBudgetConfig } from "../shared/tool-budget.js";
 import { resolveTkTicketMetadata, resolveTkTicketTaskContext } from "../shared/tk-ticket.js";
-import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.js";
-import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.js";
+import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode, } from "../shared/single-output.js";
+import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage, } from "../../shared/utils.js";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.js";
 import { attachNestedChildrenToResultChildren, formatForegroundNativeSubagentResult, resolveSubagentResultStatus, } from "../../intercom/result-intercom.js";
-import { buildRevivedAsyncTask, resolveAsyncResumeTarget, resolveAsyncRunLocation } from "../background/async-resume.js";
-import { lifecycleContinuationForIndex, lifecycleGeneration, markLifecycleContinuationSpawned, recoverStaleLifecycleContinuationClaim, transitionLifecycleStatus, withLifecycleContinuation, writeNormalizedLifecycleStatus } from "../shared/lifecycle-state.js";
-import { childMessageAckPath, deliverInterruptRequest, requestAsyncResume, requestAsyncSteer, waitForChildMessageAcceptance } from "../background/control-channel.js";
+import { buildRevivedAsyncTask, resolveAsyncResumeTarget, resolveAsyncRunLocation, } from "../background/async-resume.js";
+import { lifecycleContinuationForIndex, lifecycleGeneration, markLifecycleContinuationSpawned, recoverStaleLifecycleContinuationClaim, transitionLifecycleStatus, withLifecycleContinuation, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
+import { childMessageAckPath, deliverInterruptRequest, requestAsyncResume, requestAsyncSteer, waitForChildMessageAcceptance, } from "../background/control-channel.js";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.js";
-import { attachRootChildrenToSteps, createNestedRoute, NESTED_CONTROL_DELIVERY_TIMEOUT_MS, NESTED_CONTROL_RESULT_TIMEOUT_MS, readNestedControlResults, resolveInheritedNestedRouteFromEnv, resolveNestedAsyncDir, resolveNestedParentAddressFromEnv, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent } from "../shared/nested-events.js";
+import { attachRootChildrenToSteps, createNestedRoute, NESTED_CONTROL_DELIVERY_TIMEOUT_MS, NESTED_CONTROL_RESULT_TIMEOUT_MS, readNestedControlResults, resolveInheritedNestedRouteFromEnv, resolveNestedAsyncDir, resolveNestedParentAddressFromEnv, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent, } from "../shared/nested-events.js";
 import { resolveSubagentRunId } from "../background/run-id-resolver.js";
 import { formatNestedRunStatusLines } from "../shared/nested-render.js";
 import { inspectSubagentStatus } from "../background/run-status.js";
@@ -51,7 +51,7 @@ function indexedLifecycleContinuation(status, index = 0) {
 }
 function isClaimedPausedLifecycle(status, index = 0) {
     const continuation = indexedLifecycleContinuation(status, index);
-    return status?.state === "paused" && typeof continuation?.claimToken === "string" && continuation.claimToken.length > 0;
+    return (status?.state === "paused" && typeof continuation?.claimToken === "string" && continuation.claimToken.length > 0);
 }
 function pausedForegroundStatusPath(runId) {
     return path.join(ASYNC_DIR, runId);
@@ -90,29 +90,33 @@ function persistPausedForegroundCohortRun(input) {
             ...(derivedPause.request ? { request: derivedPause.request } : {}),
         }
         : undefined;
-    const steps = input.steps ?? input.results?.map((result) => ({
-        agent: result.agent,
-        status: input.stage === "pausing" && result.pause ? "pausing" : pausedForegroundStepStatus(result),
-        sessionFile: result.sessionFile,
-        transcriptPath: result.transcriptPath,
-        transcriptError: result.transcriptError,
-        startedAt: result.progress?.durationMs !== undefined ? Math.max(0, now - result.progress.durationMs) : undefined,
-        endedAt: input.stage === "paused" ? now : undefined,
-        durationMs: result.progress?.durationMs,
-        activeRuntimeMs: result.activeRuntimeMs ?? result.progress?.durationMs,
-        exitCode: result.pause || result.interrupted ? 0 : result.exitCode,
-        ...(result.acceptance ? { acceptance: result.acceptance } : {}),
-        ...(result.pause ? {
-            pause: {
-                kind: result.pause.kind,
-                ...(result.pause.summary ? { summary: result.pause.summary } : {}),
-                ...(result.pause.requestedAt !== undefined ? { requestedAt: result.pause.requestedAt } : {}),
-                ...(input.stage === "paused" ? { pausedAt: result.pause.pausedAt ?? now } : {}),
-                ...(result.pause.request ? { request: result.pause.request } : {}),
-            },
-        } : {}),
-        ...(result.cancel ? { cancel: result.cancel } : {}),
-    })) ?? [];
+    const steps = input.steps ??
+        input.results?.map((result) => ({
+            agent: result.agent,
+            status: input.stage === "pausing" && result.pause ? "pausing" : pausedForegroundStepStatus(result),
+            sessionFile: result.sessionFile,
+            transcriptPath: result.transcriptPath,
+            transcriptError: result.transcriptError,
+            startedAt: result.progress?.durationMs !== undefined ? Math.max(0, now - result.progress.durationMs) : undefined,
+            endedAt: input.stage === "paused" ? now : undefined,
+            durationMs: result.progress?.durationMs,
+            activeRuntimeMs: result.activeRuntimeMs ?? result.progress?.durationMs,
+            exitCode: result.pause || result.interrupted ? 0 : result.exitCode,
+            ...(result.acceptance ? { acceptance: result.acceptance } : {}),
+            ...(result.pause
+                ? {
+                    pause: {
+                        kind: result.pause.kind,
+                        ...(result.pause.summary ? { summary: result.pause.summary } : {}),
+                        ...(result.pause.requestedAt !== undefined ? { requestedAt: result.pause.requestedAt } : {}),
+                        ...(input.stage === "paused" ? { pausedAt: result.pause.pausedAt ?? now } : {}),
+                        ...(result.pause.request ? { request: result.pause.request } : {}),
+                    },
+                }
+                : {}),
+            ...(result.cancel ? { cancel: result.cancel } : {}),
+        })) ??
+        [];
     for (let attempt = 0; attempt < 3; attempt++) {
         const current = readStatus(asyncDir);
         if (!current) {
@@ -179,21 +183,31 @@ function buildPausedStepFromResult(result, now, options = { stage: "paused" }) {
         transcriptPath: result.transcriptPath,
         transcriptError: result.transcriptError,
         startedAt: result.progress?.durationMs !== undefined ? Math.max(0, now - result.progress.durationMs) : undefined,
-        endedAt: options.stage === "paused" || status === "paused" || status === "completed" || status === "failed" || status === "cancelled" ? now : undefined,
+        endedAt: options.stage === "paused" ||
+            status === "paused" ||
+            status === "completed" ||
+            status === "failed" ||
+            status === "cancelled"
+            ? now
+            : undefined,
         durationMs: result.progress?.durationMs,
         activeRuntimeMs: result.activeRuntimeMs ?? result.progress?.durationMs,
         exitCode: result.pause || result.interrupted ? 0 : result.exitCode,
         ...(result.acceptance ? { acceptance: result.acceptance } : {}),
-        ...(result.pause ? {
-            pause: {
-                kind: result.pause.kind,
-                ...(result.pause.summary ? { summary: result.pause.summary } : {}),
-                ...(result.pause.requestedAt !== undefined ? { requestedAt: result.pause.requestedAt } : {}),
-                ...(status === "pausing" && options.ownerPid !== undefined && result.pause.kind === "awaiting_supervisor" ? { ownerPid: options.ownerPid } : {}),
-                ...(status === "paused" ? { pausedAt: result.pause.pausedAt ?? now } : {}),
-                ...(result.pause.request ? { request: result.pause.request } : {}),
-            },
-        } : {}),
+        ...(result.pause
+            ? {
+                pause: {
+                    kind: result.pause.kind,
+                    ...(result.pause.summary ? { summary: result.pause.summary } : {}),
+                    ...(result.pause.requestedAt !== undefined ? { requestedAt: result.pause.requestedAt } : {}),
+                    ...(status === "pausing" && options.ownerPid !== undefined && result.pause.kind === "awaiting_supervisor"
+                        ? { ownerPid: options.ownerPid }
+                        : {}),
+                    ...(status === "paused" ? { pausedAt: result.pause.pausedAt ?? now } : {}),
+                    ...(result.pause.request ? { request: result.pause.request } : {}),
+                },
+            }
+            : {}),
         ...(result.cancel ? { cancel: result.cancel } : {}),
     };
 }
@@ -202,14 +216,16 @@ function buildCohortPauseStep(input) {
         agent: input.agent,
         status: input.status,
         sessionFile: input.sessionFile,
-        ...(input.status === "pausing" || input.status === "paused" ? {
-            pause: {
-                kind: "cohort_pause",
-                summary: "Paused because another child in this cohort is awaiting supervisor.",
-                requestedAt: input.now,
-                ...(input.status === "paused" ? { pausedAt: input.now } : {}),
-            },
-        } : {}),
+        ...(input.status === "pausing" || input.status === "paused"
+            ? {
+                pause: {
+                    kind: "cohort_pause",
+                    summary: "Paused because another child in this cohort is awaiting supervisor.",
+                    requestedAt: input.now,
+                    ...(input.status === "paused" ? { pausedAt: input.now } : {}),
+                },
+            }
+            : {}),
     };
 }
 function persistPausedForegroundSingleRun(input) {
@@ -240,7 +256,8 @@ function persistPausedForegroundSingleRun(input) {
             lastUpdate: now,
             cwd: input.cwd,
             ...(pause ? { pause } : {}),
-            steps: [{
+            steps: [
+                {
                     agent: input.result.agent,
                     status: input.stage,
                     sessionFile: input.result.sessionFile,
@@ -249,7 +266,8 @@ function persistPausedForegroundSingleRun(input) {
                     durationMs: input.result.progress?.durationMs,
                     exitCode: 0,
                     ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
-                }],
+                },
+            ],
             sessionFile: input.result.sessionFile,
             ...(input.stage === "pausing" && input.ownerPid !== undefined ? { pid: input.ownerPid } : {}),
         });
@@ -348,7 +366,9 @@ function foregroundStatusResult(control) {
         `Run: ${control.runId}`,
         "State: running",
         `Mode: ${control.mode}`,
-        control.currentAgent ? `Current: ${control.currentAgent}${control.currentIndex !== undefined ? ` step ${control.currentIndex + 1}` : ""}` : undefined,
+        control.currentAgent
+            ? `Current: ${control.currentAgent}${control.currentIndex !== undefined ? ` step ${control.currentIndex + 1}` : ""}`
+            : undefined,
         activity ? `Activity: ${activity}` : undefined,
     ].filter((line) => Boolean(line));
     lines.push(...formatNestedRunStatusLines(control.nestedChildren, { indent: "", commandHints: true, maxLines: 20 }));
@@ -380,7 +400,11 @@ function rememberForegroundRun(state, input) {
             const child = {
                 agent: result.agent,
                 index,
-                status: resolveSubagentResultStatus({ exitCode: result.exitCode, interrupted: result.interrupted, detached: result.detached }),
+                status: resolveSubagentResultStatus({
+                    exitCode: result.exitCode,
+                    interrupted: result.interrupted,
+                    detached: result.detached,
+                }),
                 updatedAt,
                 ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
                 ...(result.finalOutput ? { finalOutput: result.finalOutput } : {}),
@@ -409,13 +433,21 @@ function updateRememberedForegroundChild(state, input) {
         state.foregroundRuns.set(input.runId, run);
     }
     run.updatedAt = updatedAt;
-    const child = run.children[input.index] ?? { agent: input.result.agent, index: input.index, status: "detached" };
+    const child = run.children[input.index] ?? {
+        agent: input.result.agent,
+        index: input.index,
+        status: "detached",
+    };
     const activeRuntimeMs = input.result.activeRuntimeMs ?? input.result.progress?.durationMs;
     run.children[input.index] = {
         ...child,
         agent: input.result.agent,
         index: input.index,
-        status: resolveSubagentResultStatus({ exitCode: input.result.exitCode, interrupted: input.result.interrupted, detached: false }),
+        status: resolveSubagentResultStatus({
+            exitCode: input.result.exitCode,
+            interrupted: input.result.interrupted,
+            detached: false,
+        }),
         updatedAt,
         ...(input.result.exitCode !== undefined ? { exitCode: input.result.exitCode } : {}),
         ...(input.result.finalOutput ? { finalOutput: input.result.finalOutput } : {}),
@@ -436,7 +468,9 @@ function resolveRememberedForegroundRun(params, state) {
     if (!requested || !state.foregroundRuns?.size)
         return undefined;
     const direct = state.foregroundRuns.get(requested);
-    const matches = direct ? [direct] : [...state.foregroundRuns.values()].filter((run) => run.runId.startsWith(requested));
+    const matches = direct
+        ? [direct]
+        : [...state.foregroundRuns.values()].filter((run) => run.runId.startsWith(requested));
     if (matches.length === 0)
         return undefined;
     if (matches.length > 1)
@@ -480,7 +514,9 @@ function resolveForegroundResumeTarget(params, state) {
         intercomTarget: resolveSubagentIntercomTarget(run.runId, child.agent, index),
         cwd: run.cwd,
         sessionFile,
-        ...(fs.existsSync(pausedForegroundStatusPath(run.runId)) ? { asyncDir: pausedForegroundStatusPath(run.runId) } : {}),
+        ...(fs.existsSync(pausedForegroundStatusPath(run.runId))
+            ? { asyncDir: pausedForegroundStatusPath(run.runId) }
+            : {}),
         ...(child.pause?.kind ? { pauseKind: child.pause.kind } : {}),
         ...(continuationAcceptance ? { continuationAcceptance } : {}),
         ...(child.activeRuntimeMs !== undefined ? { activeRuntimeMs: child.activeRuntimeMs } : {}),
@@ -564,7 +600,10 @@ function resolveResumeTarget(params, state, options = {}) {
         foregroundError = error;
     }
     try {
-        asyncTarget = { source: "async", ...resolveAsyncResumeTarget(params, {}, { requireSessionFile: options.asyncRequireSessionFile }) };
+        asyncTarget = {
+            source: "async",
+            ...resolveAsyncResumeTarget(params, {}, { requireSessionFile: options.asyncRequireSessionFile }),
+        };
     }
     catch (error) {
         asyncError = error;
@@ -619,7 +658,9 @@ function claimPausedAwaitingSupervisorTarget(target, continuationRunId) {
         throw new Error(`Paused run '${target.runId}' child ${target.index} already launched its continuation and cannot be resumed again.`);
     if (isClaimedPausedLifecycle(current, target.index))
         throw new Error(`Paused run '${target.runId}' child ${target.index} was already claimed for continuation and cannot be resumed again.`);
-    if (current.state !== "paused" || !currentStep || (currentStep.status !== "paused" && currentStep.status !== "pausing")) {
+    if (current.state !== "paused" ||
+        !currentStep ||
+        (currentStep.status !== "paused" && currentStep.status !== "pausing")) {
         throw new Error(`Paused run '${target.runId}' child ${target.index} is not paused and cannot be resumed.`);
     }
     const claimToken = `claim-${target.runId}-${target.index}-${Date.now()}`;
@@ -631,7 +672,13 @@ function claimPausedAwaitingSupervisorTarget(target, continuationRunId) {
             ...status,
             lastUpdate: claimedAt,
             pause: status.pause ? { ...status.pause, ownerPid: undefined } : status.pause,
-            lifecycle: withLifecycleContinuation(status, target.index, { phase: "reserved", claimToken, claimedAt, ownerPid: process.pid, continuationRunId }),
+            lifecycle: withLifecycleContinuation(status, target.index, {
+                phase: "reserved",
+                claimToken,
+                claimedAt,
+                ownerPid: process.pid,
+                continuationRunId,
+            }),
         }),
     });
     return {
@@ -642,7 +689,9 @@ function claimPausedAwaitingSupervisorTarget(target, continuationRunId) {
             if (!latest || latest.state !== "paused")
                 return;
             const latestContinuation = indexedLifecycleContinuation(latest, target.index);
-            if (latestContinuation?.claimToken !== claimToken || latestContinuation.continuationRunId !== continuationRunId || latestContinuation.phase !== "reserved")
+            if (latestContinuation?.claimToken !== claimToken ||
+                latestContinuation.continuationRunId !== continuationRunId ||
+                latestContinuation.phase !== "reserved")
                 return;
             transitionLifecycleStatus({
                 asyncDir,
@@ -698,13 +747,15 @@ function enrichPersistedPausedForegroundSingleRun(input) {
                 ...status,
                 lastUpdate: Date.now(),
                 sessionFile: input.result.sessionFile ?? status.sessionFile,
-                steps: status.steps?.map((step, index) => index === 0 ? {
-                    ...step,
-                    sessionFile: input.result.sessionFile ?? step.sessionFile,
-                    transcriptPath: input.result.transcriptPath ?? step.transcriptPath,
-                    transcriptError: input.result.transcriptError ?? step.transcriptError,
-                    ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
-                } : step),
+                steps: status.steps?.map((step, index) => index === 0
+                    ? {
+                        ...step,
+                        sessionFile: input.result.sessionFile ?? step.sessionFile,
+                        transcriptPath: input.result.transcriptPath ?? step.transcriptPath,
+                        transcriptError: input.result.transcriptError ?? step.transcriptError,
+                        ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
+                    }
+                    : step),
             }),
         });
     }
@@ -756,15 +807,37 @@ function cancelPersistedPausedForegroundRun(state, asyncDir, runId, index) {
     try {
         let current = readStatus(asyncDir);
         if (!current) {
-            return { content: [{ type: "text", text: `Paused foreground run '${runId}' was not found.` }], isError: true, details: { mode: "management", results: [] } };
+            return {
+                content: [{ type: "text", text: `Paused foreground run '${runId}' was not found.` }],
+                isError: true,
+                details: { mode: "management", results: [] },
+            };
         }
         const stepCount = current.steps?.length ?? 0;
         const targetIndex = index ?? (stepCount <= 1 ? 0 : undefined);
         if (stepCount > 1 && targetIndex === undefined) {
-            return { content: [{ type: "text", text: `Foreground run '${runId}' has ${stepCount} children. Provide index to cancel one paused child.` }], isError: true, details: { mode: "management", results: [] } };
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Foreground run '${runId}' has ${stepCount} children. Provide index to cancel one paused child.`,
+                    },
+                ],
+                isError: true,
+                details: { mode: "management", results: [] },
+            };
         }
         if (targetIndex === undefined || targetIndex < 0 || targetIndex >= stepCount) {
-            return { content: [{ type: "text", text: `Foreground run '${runId}' has ${stepCount} children. Index ${targetIndex ?? -1} is out of range.` }], isError: true, details: { mode: "management", results: [] } };
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Foreground run '${runId}' has ${stepCount} children. Index ${targetIndex ?? -1} is out of range.`,
+                    },
+                ],
+                isError: true,
+                details: { mode: "management", results: [] },
+            };
         }
         const recovered = recoverStaleLifecycleContinuationClaim(asyncDir, targetIndex);
         if (recovered.recovered && recovered.status)
@@ -772,19 +845,56 @@ function cancelPersistedPausedForegroundRun(state, asyncDir, runId, index) {
         const targetStep = current.steps?.[targetIndex];
         const targetPause = targetStep?.pause ?? (stepCount <= 1 ? current.pause : undefined);
         if (targetStep?.status === "cancelled") {
-            return { content: [{ type: "text", text: `Foreground run '${runId}' child ${targetIndex} is already cancelled.` }], details: { mode: "management", results: [] } };
+            return {
+                content: [{ type: "text", text: `Foreground run '${runId}' child ${targetIndex} is already cancelled.` }],
+                details: { mode: "management", results: [] },
+            };
         }
         if (targetStep?.status === "continued") {
-            return { content: [{ type: "text", text: `Foreground run '${runId}' child ${targetIndex} already continued and cannot be cancelled.` }], isError: true, details: { mode: "management", results: [] } };
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Foreground run '${runId}' child ${targetIndex} already continued and cannot be cancelled.`,
+                    },
+                ],
+                isError: true,
+                details: { mode: "management", results: [] },
+            };
         }
         if (current.state === "continued" && stepCount <= 1) {
-            return { content: [{ type: "text", text: `Foreground run '${runId}' already continued into '${lifecycleContinuationForIndex(current, targetIndex)?.continuationRunId ?? current.lifecycle?.continuation?.continuationRunId ?? "unknown"}' and can no longer be cancelled from the paused supervisor lifecycle.` }], isError: true, details: { mode: "management", results: [] } };
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Foreground run '${runId}' already continued into '${lifecycleContinuationForIndex(current, targetIndex)?.continuationRunId ?? current.lifecycle?.continuation?.continuationRunId ?? "unknown"}' and can no longer be cancelled from the paused supervisor lifecycle.`,
+                    },
+                ],
+                isError: true,
+                details: { mode: "management", results: [] },
+            };
         }
         if (isClaimedPausedLifecycle(current, targetIndex)) {
-            return { content: [{ type: "text", text: `Foreground run '${runId}' child ${targetIndex} is already claimed for continuation and cannot be cancelled through the paused supervisor lifecycle.` }], isError: true, details: { mode: "management", results: [] } };
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Foreground run '${runId}' child ${targetIndex} is already claimed for continuation and cannot be cancelled through the paused supervisor lifecycle.`,
+                    },
+                ],
+                isError: true,
+                details: { mode: "management", results: [] },
+            };
         }
-        if (current.state !== "paused" || !targetStep || (targetStep.status !== "paused" && targetStep.status !== "pausing") || !targetPause) {
-            return { content: [{ type: "text", text: `Foreground run '${runId}' child ${targetIndex} is not a paused child.` }], isError: true, details: { mode: "management", results: [] } };
+        if (current.state !== "paused" ||
+            !targetStep ||
+            (targetStep.status !== "paused" && targetStep.status !== "pausing") ||
+            !targetPause) {
+            return {
+                content: [{ type: "text", text: `Foreground run '${runId}' child ${targetIndex} is not a paused child.` }],
+                isError: true,
+                details: { mode: "management", results: [] },
+            };
         }
         const cancelledAt = Date.now();
         const summary = targetPause.kind === "awaiting_supervisor"
@@ -821,13 +931,23 @@ function cancelPersistedPausedForegroundRun(state, asyncDir, runId, index) {
         });
         updateRememberedForegroundCancellation(state, runId, cancelledAt, summary, targetIndex);
         return {
-            content: [{ type: "text", text: `Cancelled paused foreground run ${runId} child ${targetIndex}. Existing artifacts and transcript were preserved; resume is no longer available for that child.` }],
+            content: [
+                {
+                    type: "text",
+                    text: `Cancelled paused foreground run ${runId} child ${targetIndex}. Existing artifacts and transcript were preserved; resume is no longer available for that child.`,
+                },
+            ],
             details: { mode: "management", results: [] },
         };
     }
     catch {
         return {
-            content: [{ type: "text", text: `Paused foreground run '${runId}' could not be updated safely. ${FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE}` }],
+            content: [
+                {
+                    type: "text",
+                    text: `Paused foreground run '${runId}' could not be updated safely. ${FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE}`,
+                },
+            ],
             isError: true,
             details: { mode: "management", results: [] },
         };
@@ -863,10 +983,7 @@ function requestAsyncInterruptForTarget(state, target, kill) {
     }
 }
 function isNotFoundError(error) {
-    return typeof error === "object"
-        && error !== null
-        && "code" in error
-        && error.code === "ENOENT";
+    return (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT");
 }
 function normalizeComparableCwd(cwd) {
     const resolved = path.resolve(cwd);
@@ -892,7 +1009,12 @@ function discoverDiskOnlyRunningAsyncTargets(state, knownAsyncDirs) {
     }
     catch (error) {
         if (!isNotFoundError(error)) {
-            return { targets, errors: [`Failed to list async runs in '${ASYNC_DIR}': ${error instanceof Error ? error.message : String(error)}`] };
+            return {
+                targets,
+                errors: [
+                    `Failed to list async runs in '${ASYNC_DIR}': ${error instanceof Error ? error.message : String(error)}`,
+                ],
+            };
         }
     }
     try {
@@ -1000,7 +1122,10 @@ function emitControlNotification(input) {
     if (input.controlConfig.notifyChannels.includes("event")) {
         input.pi.events.emit(SUBAGENT_CONTROL_EVENT, payload);
     }
-    if (input.event.type !== "active_long_running" && input.controlConfig.notifyChannels.includes("intercom") && input.intercomBridge.active && input.intercomBridge.orchestratorTarget) {
+    if (input.event.type !== "active_long_running" &&
+        input.controlConfig.notifyChannels.includes("intercom") &&
+        input.intercomBridge.active &&
+        input.intercomBridge.orchestratorTarget) {
         input.pi.events.emit(SUBAGENT_CONTROL_INTERCOM_EVENT, {
             ...payload,
             to: input.intercomBridge.orchestratorTarget,
@@ -1020,21 +1145,23 @@ function interruptAsyncRun(state, runId, kill, location) {
         };
     }
     return {
-        content: [{
+        content: [
+            {
                 type: "text",
                 text: isAsyncInterruptNotRunning(interruptResult)
                     ? `No running async run with an interrupt-capable pid was found for '${runId ?? "current"}'.`
                     : `Failed to interrupt async run ${target.asyncId}: ${interruptResult.error ?? "unknown error"}`,
-            }],
+            },
+        ],
         isError: true,
         details: { mode: "management", results: [] },
     };
 }
 function asyncControlOwnedByCurrentSession(state, status) {
-    return typeof state.currentSessionId === "string"
-        && state.currentSessionId.length > 0
-        && typeof status.sessionId === "string"
-        && status.sessionId === state.currentSessionId;
+    return (typeof state.currentSessionId === "string" &&
+        state.currentSessionId.length > 0 &&
+        typeof status.sessionId === "string" &&
+        status.sessionId === state.currentSessionId);
 }
 function steerAsyncRun(input) {
     if (!input.location.asyncDir) {
@@ -1054,7 +1181,12 @@ function steerAsyncRun(input) {
     }
     if (!asyncControlOwnedByCurrentSession(input.state, status)) {
         return {
-            content: [{ type: "text", text: `Async run '${status.runId}' is owned by another session and cannot be steered from this session.` }],
+            content: [
+                {
+                    type: "text",
+                    text: `Async run '${status.runId}' is owned by another session and cannot be steered from this session.`,
+                },
+            ],
             isError: true,
             details: { mode: "management", results: [] },
         };
@@ -1063,7 +1195,12 @@ function steerAsyncRun(input) {
     if (input.index !== undefined) {
         if (input.index < 0 || input.index >= steps.length) {
             return {
-                content: [{ type: "text", text: `Async run '${status.runId}' has ${steps.length} children. Index ${input.index} is out of range.` }],
+                content: [
+                    {
+                        type: "text",
+                        text: `Async run '${status.runId}' has ${steps.length} children. Index ${input.index} is out of range.`,
+                    },
+                ],
                 isError: true,
                 details: { mode: "management", results: [] },
             };
@@ -1071,7 +1208,12 @@ function steerAsyncRun(input) {
         const targetStep = steps[input.index];
         if (targetStep && targetStep.status !== "running" && targetStep.status !== "pending") {
             return {
-                content: [{ type: "text", text: `Async run '${status.runId}' child ${input.index} is ${targetStep.status} and cannot be steered.` }],
+                content: [
+                    {
+                        type: "text",
+                        text: `Async run '${status.runId}' child ${input.index} is ${targetStep.status} and cannot be steered.`,
+                    },
+                ],
                 isError: true,
                 details: { mode: "management", results: [] },
             };
@@ -1081,19 +1223,33 @@ function steerAsyncRun(input) {
         const running = steps.filter((step) => step.status === "running");
         if (running.length === 0 && steps.length > 1) {
             return {
-                content: [{ type: "text", text: `Async run '${status.runId}' has no running child yet. Provide index to steer a queued child.` }],
+                content: [
+                    {
+                        type: "text",
+                        text: `Async run '${status.runId}' has no running child yet. Provide index to steer a queued child.`,
+                    },
+                ],
                 isError: true,
                 details: { mode: "management", results: [] },
             };
         }
     }
-    requestAsyncSteer(input.location.asyncDir, { message: input.message, targetIndex: input.index, source: "steer-action" });
+    requestAsyncSteer(input.location.asyncDir, {
+        message: input.message,
+        targetIndex: input.index,
+        source: "steer-action",
+    });
     const tracked = input.state.asyncJobs.get(status.runId);
     if (tracked)
         tracked.updatedAt = Date.now();
     const childText = input.index !== undefined ? ` child ${input.index}` : " running child";
     return {
-        content: [{ type: "text", text: `Steering queued for async run ${status.runId}${childText}. Delivery requires a live Pi child session that supports mid-run steering.` }],
+        content: [
+            {
+                type: "text",
+                text: `Steering queued for async run ${status.runId}${childText}. Delivery requires a live Pi child session that supports mid-run steering.`,
+            },
+        ],
         details: { mode: "management", results: [] },
     };
 }
@@ -1123,9 +1279,7 @@ function validateNestedSessionFile(run, trustedSessionRoots) {
     if (!stat.isFile() || stat.isSymbolicLink())
         throw new Error(`Nested run '${run.id}' session file is not a regular file: ${sessionFile}`);
     const realSessionFile = fs.realpathSync(resolved);
-    const trustedRoots = trustedSessionRoots
-        .filter((root) => fs.existsSync(root))
-        .map((root) => fs.realpathSync(root));
+    const trustedRoots = trustedSessionRoots.filter((root) => fs.existsSync(root)).map((root) => fs.realpathSync(root));
     if (!trustedRoots.some((root) => pathWithin(root, realSessionFile))) {
         throw new Error(`Nested run '${run.id}' session file is outside trusted nested session roots: ${sessionFile}`);
     }
@@ -1150,7 +1304,8 @@ function readNestedResumeStatusStep(runId, asyncDir) {
     if (!step || typeof step !== "object" || Array.isArray(step))
         throw new Error(`Nested run '${runId}' persisted status does not have a valid step at index 0.`);
     const activeRuntimeMs = step.activeRuntimeMs;
-    if (activeRuntimeMs !== undefined && (typeof activeRuntimeMs !== "number" || !Number.isFinite(activeRuntimeMs) || activeRuntimeMs < 0)) {
+    if (activeRuntimeMs !== undefined &&
+        (typeof activeRuntimeMs !== "number" || !Number.isFinite(activeRuntimeMs) || activeRuntimeMs < 0)) {
         throw new Error(`Nested run '${runId}' persisted step activeRuntimeMs must be a non-negative finite number.`);
     }
     return step;
@@ -1205,7 +1360,9 @@ async function sendNestedControlRequest(target, action, message, targetIndex) {
         requestId,
         targetRunId: target.match.run.id,
         ownerParentRunId: target.match.run.parentRunId,
-        ...(target.match.run.parentStepIndex !== undefined ? { ownerParentStepIndex: target.match.run.parentStepIndex } : {}),
+        ...(target.match.run.parentStepIndex !== undefined
+            ? { ownerParentStepIndex: target.match.run.parentStepIndex }
+            : {}),
         deliveryDeadlineAt: now + NESTED_CONTROL_DELIVERY_TIMEOUT_MS,
         action,
         ...(targetIndex !== undefined ? { targetIndex } : {}),
@@ -1216,7 +1373,8 @@ async function sendNestedControlRequest(target, action, message, targetIndex) {
         try {
             fs.rmSync(requestPath, { force: true });
         }
-        catch { }
+        catch {
+        }
     }
     return result;
 }
@@ -1225,17 +1383,26 @@ function directNestedAsyncInterrupt(target) {
     const asyncDir = resolveNestedAsyncDir(target.match.rootRunId, run);
     if (!asyncDir)
         return undefined;
-    const status = reconcileAsyncRun(asyncDir, { resultsDir: path.join(RESULTS_DIR, "nested", target.match.rootRunId) }).status;
+    const status = reconcileAsyncRun(asyncDir, {
+        resultsDir: path.join(RESULTS_DIR, "nested", target.match.rootRunId),
+    }).status;
     const pid = typeof status?.pid === "number" && status.pid > 0 ? status.pid : run.pid;
     if (!status || status.state !== "running" || typeof pid !== "number" || pid <= 0)
         return undefined;
     try {
         deliverInterruptRequest({ asyncDir, pid, source: "nested-interrupt" });
-        return { content: [{ type: "text", text: `Interrupt requested for nested async run ${run.id}.` }], details: { mode: "management", results: [] } };
+        return {
+            content: [{ type: "text", text: `Interrupt requested for nested async run ${run.id}.` }],
+            details: { mode: "management", results: [] },
+        };
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return { content: [{ type: "text", text: `Failed to interrupt nested async run ${run.id}: ${message}` }], isError: true, details: { mode: "management", results: [] } };
+        return {
+            content: [{ type: "text", text: `Failed to interrupt nested async run ${run.id}: ${message}` }],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
     }
 }
 export function registerForegroundMessageInbox(control, _runId, index) {
@@ -1253,7 +1420,8 @@ export function clearForegroundMessageInbox(control, index) {
         try {
             fs.rmSync(dir, { recursive: true, force: true });
         }
-        catch { }
+        catch {
+        }
     }
     control.activeMessageInboxes?.delete(index);
     if (control.activeMessageInboxes?.size === 0) {
@@ -1262,7 +1430,8 @@ export function clearForegroundMessageInbox(control, index) {
             try {
                 fs.rmSync(control.messageInboxRoot, { recursive: true, force: true });
             }
-            catch { }
+            catch {
+            }
         }
         control.messageInboxRoot = undefined;
     }
@@ -1272,72 +1441,196 @@ function directNestedAsyncSteer(input) {
     const asyncDir = resolveNestedAsyncDir(input.target.match.rootRunId, run);
     if (!asyncDir)
         return undefined;
-    const status = reconcileAsyncRun(asyncDir, { resultsDir: path.join(RESULTS_DIR, "nested", input.target.match.rootRunId) }).status;
+    const status = reconcileAsyncRun(asyncDir, {
+        resultsDir: path.join(RESULTS_DIR, "nested", input.target.match.rootRunId),
+    }).status;
     if (!status || (status.state !== "running" && status.state !== "queued"))
         return undefined;
     const steps = status.steps ?? [];
     if (input.index !== undefined) {
         if (input.index < 0 || input.index >= steps.length)
-            return { content: [{ type: "text", text: `Nested async run ${run.id} has ${steps.length} children. Index ${input.index} is out of range.` }], isError: true, details: { mode: "management", results: [] } };
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Nested async run ${run.id} has ${steps.length} children. Index ${input.index} is out of range.`,
+                    },
+                ],
+                isError: true,
+                details: { mode: "management", results: [] },
+            };
         const step = steps[input.index];
         if (step && step.status !== "running" && step.status !== "pending")
-            return { content: [{ type: "text", text: `Nested async run ${run.id} child ${input.index} is ${step.status} and cannot be steered.` }], isError: true, details: { mode: "management", results: [] } };
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Nested async run ${run.id} child ${input.index} is ${step.status} and cannot be steered.`,
+                    },
+                ],
+                isError: true,
+                details: { mode: "management", results: [] },
+            };
     }
     requestAsyncSteer(asyncDir, { message: input.message, targetIndex: input.index, source: "nested-steer" });
-    return { content: [{ type: "text", text: `Steering queued for nested async run ${run.id}. Delivery requires a live Pi child session that supports mid-run steering.` }], details: { mode: "management", results: [] } };
+    return {
+        content: [
+            {
+                type: "text",
+                text: `Steering queued for nested async run ${run.id}. Delivery requires a live Pi child session that supports mid-run steering.`,
+            },
+        ],
+        details: { mode: "management", results: [] },
+    };
 }
 async function interruptNestedRun(target) {
     const run = target.match.run;
     if (run.state === "complete")
-        return { content: [{ type: "text", text: `Nested run ${run.id} is already complete and cannot be interrupted.` }], isError: true, details: { mode: "management", results: [] } };
+        return {
+            content: [{ type: "text", text: `Nested run ${run.id} is already complete and cannot be interrupted.` }],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
     if (run.state === "failed")
-        return { content: [{ type: "text", text: `Nested run ${run.id} has failed and cannot be interrupted.` }], isError: true, details: { mode: "management", results: [] } };
+        return {
+            content: [{ type: "text", text: `Nested run ${run.id} has failed and cannot be interrupted.` }],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
     if (run.state === "paused")
-        return { content: [{ type: "text", text: `Nested run ${run.id} is already paused.` }], isError: true, details: { mode: "management", results: [] } };
+        return {
+            content: [{ type: "text", text: `Nested run ${run.id} is already paused.` }],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
     const result = await sendNestedControlRequest(target, "interrupt");
     if (result)
-        return { content: [{ type: "text", text: result.message }], isError: result.ok ? undefined : true, details: { mode: "management", results: [] } };
+        return {
+            content: [{ type: "text", text: result.message }],
+            isError: result.ok ? undefined : true,
+            details: { mode: "management", results: [] },
+        };
     const direct = directNestedAsyncInterrupt(target);
     if (direct)
         return direct;
-    return { content: [{ type: "text", text: `Nested run ${run.id} owner is not reachable and no safe direct async interrupt fallback is available.` }], isError: true, details: { mode: "management", results: [] } };
+    return {
+        content: [
+            {
+                type: "text",
+                text: `Nested run ${run.id} owner is not reachable and no safe direct async interrupt fallback is available.`,
+            },
+        ],
+        isError: true,
+        details: { mode: "management", results: [] },
+    };
 }
 async function resumeLiveNestedRun(input) {
     const run = input.target.match.run;
     const result = await sendNestedControlRequest(input.target, "resume", input.message, input.index);
     if (result)
-        return { content: [{ type: "text", text: result.message }], isError: result.ok ? undefined : true, details: { mode: "management", results: [] } };
-    return { content: [{ type: "text", text: `Nested run ${run.id} appears live but its owner route is not reachable. Wait for completion, then retry action='resume'.` }], isError: true, details: { mode: "management", results: [] } };
+        return {
+            content: [{ type: "text", text: result.message }],
+            isError: result.ok ? undefined : true,
+            details: { mode: "management", results: [] },
+        };
+    return {
+        content: [
+            {
+                type: "text",
+                text: `Nested run ${run.id} appears live but its owner route is not reachable. Wait for completion, then retry action='resume'.`,
+            },
+        ],
+        isError: true,
+        details: { mode: "management", results: [] },
+    };
 }
 function steerNestedRun(input) {
     const run = input.target.match.run;
     if (run.state !== "running" && run.state !== "queued")
-        return { content: [{ type: "text", text: `Nested run ${run.id} is ${run.state} and cannot be steered.` }], isError: true, details: { mode: "management", results: [] } };
+        return {
+            content: [{ type: "text", text: `Nested run ${run.id} is ${run.state} and cannot be steered.` }],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
     const direct = directNestedAsyncSteer(input);
     if (direct)
         return direct;
-    return { content: [{ type: "text", text: `Nested run ${run.id} is not a live async Pi child session with a steering inbox. action='steer' cannot target foreground nested runs.` }], isError: true, details: { mode: "management", results: [] } };
+    return {
+        content: [
+            {
+                type: "text",
+                text: `Nested run ${run.id} is not a live async Pi child session with a steering inbox. action='steer' cannot target foreground nested runs.`,
+            },
+        ],
+        isError: true,
+        details: { mode: "management", results: [] },
+    };
 }
 async function queueLiveAsyncResume(input) {
     if (!input.target.asyncDir) {
-        return { content: [{ type: "text", text: `Async run '${input.target.runId}' has no live run directory to resume.` }], isError: true, details: { mode: "management", results: [] } };
+        return {
+            content: [{ type: "text", text: `Async run '${input.target.runId}' has no live run directory to resume.` }],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
     }
     const status = reconcileAsyncRun(input.target.asyncDir, { kill: input.kill, resultsDir: RESULTS_DIR }).status;
     if (!status || status.state !== "running") {
-        return { content: [{ type: "text", text: `Async run '${input.target.runId}' is not running and cannot accept a live resume follow-up.` }], isError: true, details: { mode: "management", results: [] } };
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: `Async run '${input.target.runId}' is not running and cannot accept a live resume follow-up.`,
+                },
+            ],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
     }
     if (!asyncControlOwnedByCurrentSession(input.state, status)) {
-        return { content: [{ type: "text", text: `Async run '${status.runId}' is owned by another session and cannot be resumed from this session.` }], isError: true, details: { mode: "management", results: [] } };
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: `Async run '${status.runId}' is owned by another session and cannot be resumed from this session.`,
+                },
+            ],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
     }
     const step = status.steps?.[input.target.index];
     if (!step) {
-        return { content: [{ type: "text", text: `Async run '${status.runId}' no longer has child ${input.target.index}. Wait for completion, then retry action='resume' if revival is still needed.` }], isError: true, details: { mode: "management", results: [] } };
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: `Async run '${status.runId}' no longer has child ${input.target.index}. Wait for completion, then retry action='resume' if revival is still needed.`,
+                },
+            ],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
     }
     if (step.status !== "running") {
-        return { content: [{ type: "text", text: `Async run '${status.runId}' child ${input.target.index} is ${step.status} and cannot accept a live resume follow-up.` }], isError: true, details: { mode: "management", results: [] } };
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: `Async run '${status.runId}' child ${input.target.index} is ${step.status} and cannot accept a live resume follow-up.`,
+                },
+            ],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
     }
     const requestId = randomUUID();
-    const requestPath = requestAsyncResume(input.target.asyncDir, { id: requestId, message: input.followUp, targetIndex: input.target.index, source: "async-resume" });
+    const requestPath = requestAsyncResume(input.target.asyncDir, {
+        id: requestId,
+        message: input.followUp,
+        targetIndex: input.target.index,
+        source: "async-resume",
+    });
     const acceptance = await waitForChildMessageAcceptance({
         asyncDir: input.target.asyncDir,
         requestId,
@@ -1353,35 +1646,56 @@ async function queueLiveAsyncResume(input) {
             }
         },
     });
-    if (acceptance.outcome !== "acknowledged" || acceptance.acceptance.status !== "accepted" || !acceptance.acceptance.acceptedIndexes.includes(input.target.index)) {
+    if (acceptance.outcome !== "acknowledged" ||
+        acceptance.acceptance.status !== "accepted" ||
+        !acceptance.acceptance.acceptedIndexes.includes(input.target.index)) {
         try {
             fs.rmSync(requestPath, { force: true });
         }
-        catch { }
+        catch {
+        }
         const lateAckPath = childMessageAckPath(input.target.asyncDir, requestId);
         try {
             fs.rmSync(lateAckPath, { force: true });
         }
-        catch { }
+        catch {
+        }
         const lateAckCleanup = setTimeout(() => {
             try {
                 fs.rmSync(lateAckPath, { force: true });
             }
-            catch { }
+            catch {
+            }
         }, 2_500);
         lateAckCleanup.unref?.();
         const reason = acceptance.outcome === "runner_gone"
             ? "the runner disappeared before accepting it"
             : acceptance.outcome === "timeout"
                 ? "the runner did not acknowledge it before the acceptance timeout"
-                : acceptance.acceptance.reason ?? acceptance.acceptance.rejected?.[0]?.reason ?? "the target child rejected it";
-        return { content: [{ type: "text", text: `Live resume follow-up for async run '${status.runId}' child ${input.target.index} was not accepted: ${reason}.` }], isError: true, details: { mode: "management", results: [] } };
+                : (acceptance.acceptance.reason ??
+                    acceptance.acceptance.rejected?.[0]?.reason ??
+                    "the target child rejected it");
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: `Live resume follow-up for async run '${status.runId}' child ${input.target.index} was not accepted: ${reason}.`,
+                },
+            ],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
     }
     const tracked = input.state.asyncJobs.get(status.runId);
     if (tracked)
         tracked.updatedAt = Date.now();
     return {
-        content: [{ type: "text", text: `Resume follow-up accepted for live async run ${status.runId} child ${input.target.index} and queued in its native inbox.` }],
+        content: [
+            {
+                type: "text",
+                text: `Resume follow-up accepted for live async run ${status.runId} child ${input.target.index} and queued in its native inbox.`,
+            },
+        ],
         details: { mode: "management", results: [] },
     };
 }
@@ -1414,23 +1728,50 @@ async function resumeAsyncRun(input) {
                 return resumeLiveNestedRun({ target: resolved, message: requestedFollowUp, index: input.params.index });
             }
             const trustedSessionRoots = [
-                ...(input.deps.config.defaultSessionDir ? [path.resolve(input.deps.expandTilde(input.deps.config.defaultSessionDir))] : []),
+                ...(input.deps.config.defaultSessionDir
+                    ? [path.resolve(input.deps.expandTilde(input.deps.config.defaultSessionDir))]
+                    : []),
                 ...(parentSessionFile ? [input.deps.getSubagentSessionRoot(parentSessionFile)] : []),
             ];
             target = resolveNestedResumeTarget(resolved, trustedSessionRoots);
         }
         else if (resolved?.kind === "async" || input.params.dir) {
-            const preResolutionDir = resolved?.kind === "async" ? resolved.location.asyncDir : input.params.dir ? path.resolve(input.params.dir) : null;
+            const preResolutionDir = resolved?.kind === "async"
+                ? resolved.location.asyncDir
+                : input.params.dir
+                    ? path.resolve(input.params.dir)
+                    : null;
             const preResolutionStatus = preResolutionDir ? readStatus(preResolutionDir) : undefined;
             const hadLiveResumeIntent = Boolean(requestedFollowUp && preResolutionStatus?.state === "running");
-            const asyncTarget = { source: "async", ...resolveAsyncResumeTarget(input.params, { kill: input.deps.kill, resultsDir: RESULTS_DIR }, { requireSessionFile: true }) };
+            const asyncTarget = {
+                source: "async",
+                ...resolveAsyncResumeTarget(input.params, { kill: input.deps.kill, resultsDir: RESULTS_DIR }, { requireSessionFile: true }),
+            };
             if (hadLiveResumeIntent && asyncTarget.kind !== "live") {
-                return { content: [{ type: "text", text: `Async run '${asyncTarget.runId}' was running when resume began, but its runner or selected child went stale before the live follow-up could be accepted. No durable revival was started.` }], isError: true, details: { mode: "management", results: [] } };
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: `Async run '${asyncTarget.runId}' was running when resume began, but its runner or selected child went stale before the live follow-up could be accepted. No durable revival was started.`,
+                        },
+                    ],
+                    isError: true,
+                    details: { mode: "management", results: [] },
+                };
             }
             if (asyncTarget.kind === "live") {
                 if (!requestedFollowUp)
-                    return { content: [{ type: "text", text: "action='resume' requires message." }], isError: true, details: { mode: "management", results: [] } };
-                return queueLiveAsyncResume({ target: asyncTarget, followUp: requestedFollowUp, state: input.deps.state, kill: input.deps.kill });
+                    return {
+                        content: [{ type: "text", text: "action='resume' requires message." }],
+                        isError: true,
+                        details: { mode: "management", results: [] },
+                    };
+                return queueLiveAsyncResume({
+                    target: asyncTarget,
+                    followUp: requestedFollowUp,
+                    state: input.deps.state,
+                    kill: input.deps.kill,
+                });
             }
             target = asyncTarget;
         }
@@ -1442,9 +1783,10 @@ async function resumeAsyncRun(input) {
         const message = error instanceof Error ? error.message : String(error);
         return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
     }
-    const followUp = requestedFollowUp || (target.kind === "revive" && target.state === "paused" && target.pauseKind === "awaiting_supervisor"
-        ? UNCHANGED_SUPERVISOR_RESUME_MESSAGE
-        : "");
+    const followUp = requestedFollowUp ||
+        (target.kind === "revive" && target.state === "paused" && target.pauseKind === "awaiting_supervisor"
+            ? UNCHANGED_SUPERVISOR_RESUME_MESSAGE
+            : "");
     if (!followUp) {
         return {
             content: [{ type: "text", text: "action='resume' requires message." }],
@@ -1455,7 +1797,12 @@ async function resumeAsyncRun(input) {
     const { blocked, depth, maxDepth } = checkSubagentDepth(input.deps.config.maxSubagentDepth);
     if (blocked) {
         return {
-            content: [{ type: "text", text: `Nested subagent resume blocked (depth=${depth}, max=${maxDepth}). Complete the follow-up directly instead.` }],
+            content: [
+                {
+                    type: "text",
+                    text: `Nested subagent resume blocked (depth=${depth}, max=${maxDepth}). Complete the follow-up directly instead.`,
+                },
+            ],
             isError: true,
             details: { mode: "management", results: [] },
         };
@@ -1485,13 +1832,22 @@ async function resumeAsyncRun(input) {
     }
     const callerTimeout = resolveForegroundTimeout(input.params);
     if (callerTimeout.error) {
-        return { content: [{ type: "text", text: callerTimeout.error }], isError: true, details: { mode: "management", results: [] } };
+        return {
+            content: [{ type: "text", text: callerTimeout.error }],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
     }
     const activeRuntimeMs = Math.max(0, target.activeRuntimeMs ?? 0);
     const remainingAgentTimeMs = remainingExecutionTimeMs(agentConfig.maxExecutionTimeMs, activeRuntimeMs);
     if (remainingAgentTimeMs === 0) {
         return {
-            content: [{ type: "text", text: `Agent '${target.agent}' has exhausted its maxExecutionTimeMs ceiling after ${activeRuntimeMs}ms of active runtime.` }],
+            content: [
+                {
+                    type: "text",
+                    text: `Agent '${target.agent}' has exhausted its maxExecutionTimeMs ceiling after ${activeRuntimeMs}ms of active runtime.`,
+                },
+            ],
             isError: true,
             details: { mode: "management", results: [] },
         };
@@ -1513,7 +1869,16 @@ async function resumeAsyncRun(input) {
     try {
         result = executeAsyncSingle(runId, {
             agent: target.agent,
-            ...(claimedPause ? { continuationSource: { asyncDir: claimedPause.asyncDir, runId: target.runId, index: target.index, claimToken: claimedPause.claimToken } } : {}),
+            ...(claimedPause
+                ? {
+                    continuationSource: {
+                        asyncDir: claimedPause.asyncDir,
+                        runId: target.runId,
+                        index: target.index,
+                        claimToken: claimedPause.claimToken,
+                    },
+                }
+                : {}),
             ...(target.source === "async" && target.tkTicket ? { inheritedTkTicket: target.tkTicket } : {}),
             task: buildRevivedAsyncTask(target, followUp),
             modelOverride: input.params.model,
@@ -1545,7 +1910,9 @@ async function resumeAsyncRun(input) {
             worktreeBaseDir: input.deps.config.worktreeBaseDir,
             controlConfig: resolveControlConfig(input.deps.config.control, input.params.control),
             controlIntercomTarget: intercomBridge.active ? intercomBridge.orchestratorTarget : undefined,
-            childIntercomTarget: intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(runId, agent, index) : undefined,
+            childIntercomTarget: intercomBridge.active
+                ? (agent, index) => resolveSubagentIntercomTarget(runId, agent, index)
+                : undefined,
             availableModels,
             fallbackModels: input.params.fallbackModels,
             modelFallbackNotice: input.params.modelFallbackNotice,
@@ -1606,7 +1973,9 @@ function resultSummaryForNativeForeground(result, displayOutput) {
     const rawOutput = hasSavedOutputReference && result.outputMode === "file-only"
         ? getSingleResultOutput(result)
         : (displayOutput ?? result.truncation?.text) || getSingleResultOutput(result);
-    const singleSaveError = result.outputSaveError ? splitFinalizeSingleOutputSaveErrorBlock(rawOutput, result.outputSaveError) : undefined;
+    const singleSaveError = result.outputSaveError
+        ? splitFinalizeSingleOutputSaveErrorBlock(rawOutput, result.outputSaveError)
+        : undefined;
     const output = singleSaveError?.output ?? rawOutput;
     const lines = [];
     if (result.outputSaveError) {
@@ -1619,7 +1988,9 @@ function resultSummaryForNativeForeground(result, displayOutput) {
         const selected = output.trim();
         const summary = selected === error || selected.startsWith(`${error}\n`)
             ? selected
-            : selected ? `${result.error}\n\nOutput:\n${output}` : result.error;
+            : selected
+                ? `${result.error}\n\nOutput:\n${output}`
+                : result.error;
         lines.push(summary);
     }
     else {
@@ -1673,10 +2044,7 @@ function buildForegroundNativeResult(input) {
             interrupted: result.interrupted,
             detached: result.detached,
         });
-        const retainFullChainSummary = input.mode !== "chain"
-            || index === finalVisibleIndex
-            || status === "failed"
-            || status === "paused";
+        const retainFullChainSummary = input.mode !== "chain" || index === finalVisibleIndex || status === "failed" || status === "paused";
         const nativeForegroundPriority = input.mode === "chain"
             ? index === finalVisibleIndex
                 ? 4
@@ -1827,7 +2195,10 @@ function resolveForegroundTimeout(params) {
     const rawMaxRuntime = params.maxRuntimeMs;
     if (rawTimeout === undefined && rawMaxRuntime === undefined)
         return {};
-    for (const [name, value] of [["timeoutMs", rawTimeout], ["maxRuntimeMs", rawMaxRuntime]]) {
+    for (const [name, value] of [
+        ["timeoutMs", rawTimeout],
+        ["maxRuntimeMs", rawMaxRuntime],
+    ]) {
         if (value === undefined)
             continue;
         if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
@@ -2003,7 +2374,12 @@ function runAsyncPath(data, deps) {
     }
     if (!isAsyncAvailable()) {
         return {
-            content: [{ type: "text", text: "Async mode requires the detached runner module, but it could not be found. Ensure the generated TLH runtime files are installed." }],
+            content: [
+                {
+                    type: "text",
+                    text: "Async mode requires the detached runner module, but it could not be found. Ensure the generated TLH runtime files are installed.",
+                },
+            ],
             isError: true,
             details: { mode: "single", results: [] },
         };
@@ -2022,7 +2398,9 @@ function runAsyncPath(data, deps) {
     const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
     const currentProvider = ctx.model?.provider;
     const controlIntercomTarget = intercomBridge.active ? intercomBridge.orchestratorTarget : undefined;
-    const childIntercomTarget = intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(id, agent, index) : undefined;
+    const childIntercomTarget = intercomBridge.active
+        ? (agent, index) => resolveSubagentIntercomTarget(id, agent, index)
+        : undefined;
     if (hasTasks && params.tasks) {
         const agentConfigs = params.tasks.map((task) => agents.find((agent) => agent.name === task.agent));
         const modelOverrides = params.tasks.map((task, index) => resolveSubagentModelOverride(task.model ?? agentConfigs[index]?.model, ctx.model, availableModels, currentProvider, { scope: data.modelScope, source: task.model ? "explicit" : "inherited" }));
@@ -2035,7 +2413,13 @@ function runAsyncPath(data, deps) {
             ...(task.fallbackModels ? { fallbackModels: task.fallbackModels } : {}),
             ...(task.modelFallbackNotice ? { modelFallbackNotice: task.modelFallbackNotice } : {}),
             ...(skillOverrides[index] !== undefined ? { skill: skillOverrides[index] } : {}),
-            ...(task.output === true ? (agentConfigs[index]?.output ? { output: agentConfigs[index].output } : {}) : task.output !== undefined ? { output: task.output } : {}),
+            ...(task.output === true
+                ? agentConfigs[index]?.output
+                    ? { output: agentConfigs[index].output }
+                    : {}
+                : task.output !== undefined
+                    ? { output: task.output }
+                    : {}),
             ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
             ...(task.reads !== undefined && task.reads !== true ? { reads: task.reads } : {}),
             ...(task.progress !== undefined ? { progress: task.progress } : {}),
@@ -2043,11 +2427,13 @@ function runAsyncPath(data, deps) {
             ...(task.acceptance !== undefined ? { acceptance: task.acceptance } : {}),
         }));
         return executeAsyncChain(id, {
-            chain: [{
+            chain: [
+                {
                     parallel: parallelTasks,
                     concurrency: resolveTopLevelParallelConcurrency(params.concurrency, deps.config.parallel?.concurrency),
                     worktree: params.worktree,
-                }],
+                },
+            ],
             resultMode: "parallel",
             agents,
             ctx: asyncCtx,
@@ -2145,9 +2531,7 @@ function createParallelWorktreeSetup(enabled, cwd, runId, tasks, setupHook, setu
         return {
             setup: createWorktrees(cwd, runId, tasks.length, {
                 agents: tasks.map((task) => task.agent),
-                setupHook: setupHook
-                    ? { hookPath: setupHook, timeoutMs: setupHookTimeoutMs }
-                    : undefined,
+                setupHook: setupHook ? { hookPath: setupHook, timeoutMs: setupHookTimeoutMs } : undefined,
                 baseDir,
             }),
         };
@@ -2217,7 +2601,9 @@ async function runForegroundParallelTasks(input) {
                     ...(options.requesterStatus ? { status: options.requesterStatus } : {}),
                 });
             }
-            if (result && options.rootStage === "paused" && isTerminalForegroundResultSnapshot(result, liveProgress ?? result.progress)) {
+            if (result &&
+                options.rootStage === "paused" &&
+                isTerminalForegroundResultSnapshot(result, liveProgress ?? result.progress)) {
                 return buildPausedStepFromResult(result, now, { stage: "paused" });
             }
             if (liveResult && isTerminalForegroundResultSnapshot(liveResult, liveProgress)) {
@@ -2231,7 +2617,12 @@ async function runForegroundParallelTasks(input) {
                     now,
                 });
             }
-            return buildCohortPauseStep({ agent: task.agent, sessionFile: input.sessionFileForTask(task.agent, index) ?? input.sessionFileForIndex(index), status: "pending", now });
+            return buildCohortPauseStep({
+                agent: task.agent,
+                sessionFile: input.sessionFileForTask(task.agent, index) ?? input.sessionFileForIndex(index),
+                status: "pending",
+                now,
+            });
         });
         persistPausedForegroundCohortRun({
             runId: input.runId,
@@ -2248,7 +2639,10 @@ async function runForegroundParallelTasks(input) {
     const requestCohortPause = (requesterIndex, requester, ownerPid) => {
         if (supervisorPauseIndex !== undefined)
             return;
-        writeParallelPauseCheckpoint(requesterIndex, requester, ownerPid, { rootStage: "pausing", requesterStatus: "pausing" });
+        writeParallelPauseCheckpoint(requesterIndex, requester, ownerPid, {
+            rootStage: "pausing",
+            requesterStatus: "pausing",
+        });
         supervisorPauseIndex = requesterIndex;
         interrupted = true;
         for (const [index, controller] of interruptControllers.entries()) {
@@ -2286,7 +2680,9 @@ async function runForegroundParallelTasks(input) {
         const interruptController = new AbortController();
         interruptControllers.set(index, interruptController);
         startedIndexes.add(index);
-        const steerInboxDir = input.foregroundControl ? registerForegroundMessageInbox(input.foregroundControl, input.runId, index) : undefined;
+        const steerInboxDir = input.foregroundControl
+            ? registerForegroundMessageInbox(input.foregroundControl, input.runId, index)
+            : undefined;
         if (input.foregroundControl) {
             input.foregroundControl.currentAgent = task.agent;
             input.foregroundControl.currentIndex = index;
@@ -2335,7 +2731,13 @@ async function runForegroundParallelTasks(input) {
             maxSubagentDepth: input.maxSubagentDepths[index],
             controlConfig: input.controlConfig,
             onControlEvent: input.onControlEvent,
-            onDetachedExit: (result) => updateRememberedForegroundChild(input.state, { runId: input.runId, mode: "parallel", cwd: taskCwd, index, result }),
+            onDetachedExit: (result) => updateRememberedForegroundChild(input.state, {
+                runId: input.runId,
+                mode: "parallel",
+                cwd: taskCwd,
+                index,
+                result,
+            }),
             intercomSessionName: input.childIntercomTarget?.(task.agent, index),
             orchestratorIntercomTarget: input.orchestratorIntercomTarget,
             steerInboxDir,
@@ -2391,10 +2793,15 @@ async function runForegroundParallelTasks(input) {
                     });
                 }
                 : undefined,
-        }).then((result) => {
+        })
+            .then((result) => {
             input.liveResults[index] = result;
             startedIndexes.delete(index);
-            if (supervisorPauseIndex !== undefined && index !== supervisorPauseIndex && result.interrupted && !result.pause && result.sessionFile) {
+            if (supervisorPauseIndex !== undefined &&
+                index !== supervisorPauseIndex &&
+                result.interrupted &&
+                !result.pause &&
+                result.sessionFile) {
                 result.pause = {
                     kind: "cohort_pause",
                     requestedAt: Date.now(),
@@ -2405,7 +2812,8 @@ async function runForegroundParallelTasks(input) {
                 result.finalOutput = "Paused because another child in this cohort is awaiting supervisor.";
             }
             return result;
-        }).finally(() => {
+        })
+            .finally(() => {
             startedIndexes.delete(index);
             interruptControllers.delete(index);
             if (input.foregroundControl) {
@@ -2452,7 +2860,12 @@ async function runParallelPath(data, deps) {
     const maxSubagentDepths = agentConfigs.map((config) => resolveChildMaxSubagentDepth(currentMaxSubagentDepth, config.maxSubagentDepth));
     const toolBudgets = [];
     for (let index = 0; index < tasks.length; index++) {
-        const resolved = resolveEffectiveToolBudget({ stepBudget: tasks[index]?.toolBudget, runBudget: data.toolBudget, agentBudget: agentConfigs[index]?.toolBudget, configBudget: data.configToolBudget });
+        const resolved = resolveEffectiveToolBudget({
+            stepBudget: tasks[index]?.toolBudget,
+            runBudget: data.toolBudget,
+            agentBudget: agentConfigs[index]?.toolBudget,
+            configBudget: data.configToolBudget,
+        });
         if (resolved.error)
             return buildParallelModeError(resolved.error);
         toolBudgets.push(resolved.toolBudget);
@@ -2467,7 +2880,9 @@ async function runParallelPath(data, deps) {
     const taskTexts = tasks.map((t) => t.task);
     const skillOverrides = tasks.map((t) => normalizeSkillInput(t.skill));
     const behaviorOverrides = tasks.map((task, index) => ({
-        ...(task.output !== undefined ? { output: task.output === true ? agentConfigs[index]?.output ?? false : task.output } : {}),
+        ...(task.output !== undefined
+            ? { output: task.output === true ? (agentConfigs[index]?.output ?? false) : task.output }
+            : {}),
         ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
         ...(task.reads !== undefined && task.reads !== true ? { reads: task.reads } : {}),
         ...(task.progress !== undefined ? { progress: task.progress } : {}),
@@ -2607,8 +3022,12 @@ async function runParallelPath(data, deps) {
                 : formatForegroundPauseMessage({
                     headline: `Foreground parallel run ${runId} paused after interrupt (${interrupted.agent}).`,
                     runId,
-                    resume: { kind: "indexed", index: interruptedIndex >= 0 ? interruptedIndex : 0, ...(pausedChildren > 1 ? { example: true } : {}) },
-                    redispatch: 'subagent({ tasks: [...] })',
+                    resume: {
+                        kind: "indexed",
+                        index: interruptedIndex >= 0 ? interruptedIndex : 0,
+                        ...(pausedChildren > 1 ? { example: true } : {}),
+                    },
+                    redispatch: "subagent({ tasks: [...] })",
                 });
             return {
                 content: [{ type: "text", text }],
@@ -2619,7 +3038,10 @@ async function runParallelPath(data, deps) {
         const detached = detachedIndex >= 0 ? results[detachedIndex] : undefined;
         if (detached) {
             return {
-                content: [{ type: "text", text: detached.pause?.kind === "awaiting_supervisor"
+                content: [
+                    {
+                        type: "text",
+                        text: detached.pause?.kind === "awaiting_supervisor"
                             ? formatForegroundSupervisorPauseMessage({
                                 headline: `Foreground parallel run ${runId} paused awaiting supervisor (${detached.agent}).`,
                                 runId,
@@ -2627,7 +3049,9 @@ async function runParallelPath(data, deps) {
                                 requestSummary: detached.pause.summary,
                                 index: detachedIndex,
                             })
-                            : `Legacy detached parallel child (${detached.agent}). Inspect status/artifacts, then resume or replace work explicitly if needed.` }],
+                            : `Legacy detached parallel child (${detached.agent}). Inspect status/artifacts, then resume or replace work explicitly if needed.`,
+                    },
+                ],
                 details,
             };
         }
@@ -2673,7 +3097,9 @@ async function runParallelPath(data, deps) {
 async function runSinglePath(data, deps) {
     const { params, effectiveCwd, agents, ctx, signal, runId, sessionDirForIndex, sessionFileForTask, thinkingOverrideForTask, shareEnabled, artifactConfig, artifactsDir, onUpdate, controlConfig, contextPolicy, } = data;
     const onControlEvent = createForegroundControlNotifier(data, deps);
-    const childIntercomTarget = data.intercomBridge.active ? resolveSubagentIntercomTarget(runId, params.agent, 0) : undefined;
+    const childIntercomTarget = data.intercomBridge.active
+        ? resolveSubagentIntercomTarget(runId, params.agent, 0)
+        : undefined;
     const allProgress = [];
     const allArtifactPaths = [];
     const agentConfig = agents.find((a) => a.name === params.agent);
@@ -2684,7 +3110,11 @@ async function runSinglePath(data, deps) {
             details: { mode: "single", results: [] },
         };
     }
-    const effectiveToolBudget = resolveEffectiveToolBudget({ runBudget: data.toolBudget, agentBudget: agentConfig.toolBudget, configBudget: data.configToolBudget });
+    const effectiveToolBudget = resolveEffectiveToolBudget({
+        runBudget: data.toolBudget,
+        agentBudget: agentConfig.toolBudget,
+        configBudget: data.configToolBudget,
+    });
     if (effectiveToolBudget.error)
         return toExecutionErrorResult(params, new Error(effectiveToolBudget.error));
     const currentProvider = ctx.model?.provider;
@@ -2708,7 +3138,11 @@ async function runSinglePath(data, deps) {
     const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, effectiveCwd, resolveSingleRunOutputBaseDir(deps, artifactsDir, runId));
     const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Single run (${params.agent})`);
     if (validationError) {
-        return { content: [{ type: "text", text: validationError }], isError: true, details: { mode: "single", results: [] } };
+        return {
+            content: [{ type: "text", text: validationError }],
+            isError: true,
+            details: { mode: "single", results: [] },
+        };
     }
     task = injectSingleOutputInstruction(task, outputPath);
     let effectiveSkills;
@@ -2892,20 +3326,26 @@ async function runSinglePath(data, deps) {
     }
     if (r.detached) {
         return {
-            content: [{ type: "text", text: r.pause?.kind === "awaiting_supervisor"
+            content: [
+                {
+                    type: "text",
+                    text: r.pause?.kind === "awaiting_supervisor"
                         ? formatForegroundSupervisorPauseMessage({
                             headline: `Foreground run ${runId} paused awaiting supervisor (${params.agent}).`,
                             runId,
                             agent: params.agent,
                             requestSummary: r.pause.summary,
                         })
-                        : `Legacy detached result: ${params.agent}. Inspect status/artifacts, then resume or replace work explicitly if needed.` }],
+                        : `Legacy detached result: ${params.agent}. Inspect status/artifacts, then resume or replace work explicitly if needed.`,
+                },
+            ],
             details,
         };
     }
     if (r.pause?.kind === "awaiting_supervisor") {
         return {
-            content: [{
+            content: [
+                {
                     type: "text",
                     text: formatForegroundSupervisorPauseMessage({
                         headline: `Foreground run ${runId} paused awaiting supervisor (${params.agent}).`,
@@ -2913,13 +3353,15 @@ async function runSinglePath(data, deps) {
                         agent: params.agent,
                         requestSummary: r.pause.summary,
                     }),
-                }],
+                },
+            ],
             details,
         };
     }
     if (r.interrupted) {
         return {
-            content: [{
+            content: [
+                {
                     type: "text",
                     text: formatForegroundPauseMessage({
                         headline: `Foreground run ${runId} paused after interrupt (${params.agent}).`,
@@ -2927,14 +3369,17 @@ async function runSinglePath(data, deps) {
                         resume: { kind: "single" },
                         redispatch: `subagent({ agent: "${params.agent}", task: "..." })`,
                     }),
-                }],
+                },
+            ],
             details,
         };
     }
     const noticePrefix = r.modelFallbackNotice ? `Notice: ${r.modelFallbackNotice}\n\n` : "";
     if (r.exitCode !== 0)
         return {
-            content: [{ type: "text", text: `${noticePrefix}${formatFailedSingleRunOutput(r, finalizedOutput.displayOutput)}` }],
+            content: [
+                { type: "text", text: `${noticePrefix}${formatFailedSingleRunOutput(r, finalizedOutput.displayOutput)}` },
+            ],
             details,
             isError: true,
         };
@@ -2952,10 +3397,12 @@ function inferExecutionMode(params) {
 }
 function duplicateSubagentCallResult(params) {
     return {
-        content: [{
+        content: [
+            {
                 type: "text",
                 text: "Rejected: a subagent call is already in progress. Issue exactly ONE subagent call per turn.",
-            }],
+            },
+        ],
         isError: true,
         details: { mode: inferExecutionMode(params), results: [] },
     };
@@ -3008,7 +3455,8 @@ export function createSubagentExecutor(deps) {
                         sessionError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
                 }
                 return {
-                    content: [{
+                    content: [
+                        {
                             type: "text",
                             text: buildDoctorReport({
                                 cwd: requestCwd,
@@ -3022,7 +3470,8 @@ export function createSubagentExecutor(deps) {
                                 sessionError,
                                 expandTilde: deps.expandTilde,
                             }),
-                        }],
+                        },
+                    ],
                     details: { mode: "management", results: [] },
                 };
             }
@@ -3030,7 +3479,10 @@ export function createSubagentExecutor(deps) {
                 const targetRunId = paramsWithResolvedCwd.id ?? paramsWithResolvedCwd.runId;
                 const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
                 if (paramsWithResolvedCwd.view === "fleet") {
-                    return inspectSubagentStatus(buildRunStatusParams(paramsWithResolvedCwd), { state: deps.state, sessionRoots });
+                    return inspectSubagentStatus(buildRunStatusParams(paramsWithResolvedCwd), {
+                        state: deps.state,
+                        sessionRoots,
+                    });
                 }
                 if (targetRunId) {
                     try {
@@ -3040,7 +3492,12 @@ export function createSubagentExecutor(deps) {
                             if (foreground) {
                                 if (paramsWithResolvedCwd.view === "transcript") {
                                     return {
-                                        content: [{ type: "text", text: "Live foreground transcript is already visible in the expanded running subagent result. Persisted session transcript becomes inspectable after the foreground run completes when sessions are enabled." }],
+                                        content: [
+                                            {
+                                                type: "text",
+                                                text: "Live foreground transcript is already visible in the expanded running subagent result. Persisted session transcript becomes inspectable after the foreground run completes when sessions are enabled.",
+                                            },
+                                        ],
                                         details: { mode: "management", results: [] },
                                     };
                                 }
@@ -3050,7 +3507,11 @@ export function createSubagentExecutor(deps) {
                     }
                     catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
-                        return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
+                        return {
+                            content: [{ type: "text", text: message }],
+                            isError: true,
+                            details: { mode: "management", results: [] },
+                        };
                     }
                 }
                 else {
@@ -3059,7 +3520,12 @@ export function createSubagentExecutor(deps) {
                         return foregroundStatusResult(foreground);
                     if (foreground && paramsWithResolvedCwd.view === "transcript") {
                         return {
-                            content: [{ type: "text", text: "Live foreground transcript is already visible in the expanded running subagent result. Pass an async run id to inspect a background transcript." }],
+                            content: [
+                                {
+                                    type: "text",
+                                    text: "Live foreground transcript is already visible in the expanded running subagent result. Pass an async run id to inspect a background transcript.",
+                                },
+                            ],
                             details: { mode: "management", results: [] },
                         };
                     }
@@ -3073,13 +3539,24 @@ export function createSubagentExecutor(deps) {
                 deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
                 const message = (paramsWithResolvedCwd.message ?? paramsWithResolvedCwd.task ?? "").trim();
                 if (!message)
-                    return { content: [{ type: "text", text: "action='steer' requires message." }], isError: true, details: { mode: "management", results: [] } };
+                    return {
+                        content: [{ type: "text", text: "action='steer' requires message." }],
+                        isError: true,
+                        details: { mode: "management", results: [] },
+                    };
                 const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
                 if (paramsWithResolvedCwd.dir) {
                     try {
                         const location = resolveAsyncRunLocation(paramsWithResolvedCwd, ASYNC_DIR, RESULTS_DIR);
                         const runId = location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir);
-                        return steerAsyncRun({ state: deps.state, runId, message, index: paramsWithResolvedCwd.index, kill: deps.kill, location });
+                        return steerAsyncRun({
+                            state: deps.state,
+                            runId,
+                            message,
+                            index: paramsWithResolvedCwd.index,
+                            kill: deps.kill,
+                            location,
+                        });
                     }
                     catch (error) {
                         const text = error instanceof Error ? error.message : String(error);
@@ -3087,7 +3564,11 @@ export function createSubagentExecutor(deps) {
                     }
                 }
                 if (!targetRunId)
-                    return { content: [{ type: "text", text: "action='steer' requires id or dir." }], isError: true, details: { mode: "management", results: [] } };
+                    return {
+                        content: [{ type: "text", text: "action='steer' requires id or dir." }],
+                        isError: true,
+                        details: { mode: "management", results: [] },
+                    };
                 let resolved;
                 try {
                     resolved = resolveSubagentRunId(targetRunId, { state: deps.state });
@@ -3099,15 +3580,37 @@ export function createSubagentExecutor(deps) {
                 if (resolved?.kind === "nested")
                     return steerNestedRun({ target: resolved, message, index: paramsWithResolvedCwd.index });
                 if (resolved?.kind === "foreground")
-                    return { content: [{ type: "text", text: "action='steer' currently supports live async Pi child sessions only; use action='interrupt' or action='resume' for foreground runs." }], isError: true, details: { mode: "management", results: [] } };
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: "action='steer' currently supports live async Pi child sessions only; use action='interrupt' or action='resume' for foreground runs.",
+                            },
+                        ],
+                        isError: true,
+                        details: { mode: "management", results: [] },
+                    };
                 if (resolved?.kind !== "async")
-                    return { content: [{ type: "text", text: `No async run found for '${targetRunId}'.` }], isError: true, details: { mode: "management", results: [] } };
-                return steerAsyncRun({ state: deps.state, runId: resolved.id, message, index: paramsWithResolvedCwd.index, kill: deps.kill, location: resolved.location });
+                    return {
+                        content: [{ type: "text", text: `No async run found for '${targetRunId}'.` }],
+                        isError: true,
+                        details: { mode: "management", results: [] },
+                    };
+                return steerAsyncRun({
+                    state: deps.state,
+                    runId: resolved.id,
+                    message,
+                    index: paramsWithResolvedCwd.index,
+                    kill: deps.kill,
+                    location: resolved.location,
+                });
             }
             if (action === "interrupt") {
                 const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
                 const rememberedPaused = resolveRememberedForegroundRun(paramsWithResolvedCwd, deps.state);
-                if (rememberedPaused?.child.status === "paused" && rememberedPaused.child.pause && !getForegroundControl(deps.state, rememberedPaused.run.runId)) {
+                if (rememberedPaused?.child.status === "paused" &&
+                    rememberedPaused.child.pause &&
+                    !getForegroundControl(deps.state, rememberedPaused.run.runId)) {
                     const pausedAsyncDir = pausedForegroundStatusPath(rememberedPaused.run.runId);
                     if (fs.existsSync(pausedAsyncDir))
                         return cancelPersistedPausedForegroundRun(deps.state, pausedAsyncDir, rememberedPaused.run.runId, rememberedPaused.index);
@@ -3119,7 +3622,11 @@ export function createSubagentExecutor(deps) {
                     }
                     catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
-                        return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
+                        return {
+                            content: [{ type: "text", text: message }],
+                            isError: true,
+                            details: { mode: "management", results: [] },
+                        };
                     }
                 }
                 if (resolved?.kind === "nested")
@@ -3133,7 +3640,9 @@ export function createSubagentExecutor(deps) {
                         };
                     }
                     return {
-                        content: [{ type: "text", text: `Foreground run ${foreground.runId} has no active child step to interrupt.` }],
+                        content: [
+                            { type: "text", text: `Foreground run ${foreground.runId} has no active child step to interrupt.` },
+                        ],
                         isError: true,
                         details: { mode: "management", results: [] },
                     };
@@ -3141,13 +3650,17 @@ export function createSubagentExecutor(deps) {
                 if (resolved?.kind === "foreground") {
                     const pausedAsyncDir = pausedForegroundStatusPath(resolved.id);
                     const persistedStatus = readStatus(pausedAsyncDir);
-                    if (persistedStatus?.state === "paused" || persistedStatus?.state === "continued" || persistedStatus?.state === "cancelled") {
+                    if (persistedStatus?.state === "paused" ||
+                        persistedStatus?.state === "continued" ||
+                        persistedStatus?.state === "cancelled") {
                         return cancelPersistedPausedForegroundRun(deps.state, pausedAsyncDir, resolved.id, paramsWithResolvedCwd.index);
                     }
                 }
                 if (resolved?.kind === "async" && resolved.location.asyncDir) {
                     const persistedStatus = readStatus(resolved.location.asyncDir);
-                    if (persistedStatus?.state === "paused" || persistedStatus?.state === "continued" || persistedStatus?.state === "cancelled") {
+                    if (persistedStatus?.state === "paused" ||
+                        persistedStatus?.state === "continued" ||
+                        persistedStatus?.state === "cancelled") {
                         return cancelPersistedPausedForegroundRun(deps.state, resolved.location.asyncDir, resolved.id, paramsWithResolvedCwd.index);
                     }
                 }
@@ -3339,12 +3852,12 @@ export function createSubagentExecutor(deps) {
                     : details?.results.some((child) => child.interrupted)
                         ? "paused"
                         : "complete";
-            const errorText = result?.isError
-                ? result.content.find((item) => item.type === "text")?.text
-                : undefined;
+            const errorText = result?.isError ? result.content.find((item) => item.type === "text")?.text : undefined;
             const agentsForSummary = hasTasks && effectiveParams.tasks
                 ? effectiveParams.tasks.map((task) => task.agent)
-                : effectiveParams.agent ? [effectiveParams.agent] : [];
+                : effectiveParams.agent
+                    ? [effectiveParams.agent]
+                    : [];
             const leafIntercomTarget = intercomBridge.active && agentsForSummary[0]
                 ? resolveSubagentIntercomTarget(runId, agentsForSummary[0], 0)
                 : undefined;
@@ -3373,12 +3886,16 @@ export function createSubagentExecutor(deps) {
                         lastUpdate: now,
                         ...(details?.totalCost ? { totalCost: details.totalCost } : {}),
                         ...(errorText ? { error: errorText } : {}),
-                        ...(details?.results.length ? { steps: details.results.map((child) => ({
-                                agent: child.agent,
-                                status: child.interrupted ? "paused" : child.exitCode === 0 ? "complete" : "failed",
-                                ...(child.sessionFile ? { sessionFile: child.sessionFile } : {}),
-                                ...(child.error ? { error: child.error } : {}),
-                            })) } : {}),
+                        ...(details?.results.length
+                            ? {
+                                steps: details.results.map((child) => ({
+                                    agent: child.agent,
+                                    status: child.interrupted ? "paused" : child.exitCode === 0 ? "complete" : "failed",
+                                    ...(child.sessionFile ? { sessionFile: child.sessionFile } : {}),
+                                    ...(child.error ? { error: child.error } : {}),
+                                })),
+                            }
+                            : {}),
                     },
                 });
             }

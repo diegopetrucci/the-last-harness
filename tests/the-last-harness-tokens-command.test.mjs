@@ -162,7 +162,15 @@ test("/tokens writes a private local HTML report from sanitized analyzer output 
 					{
 						model: "openai-codex/gpt-5.4",
 						success: true,
-						usage: usage({ input: 50, output: 10, cacheRead: 4, cacheWrite: 1, cost: 0.12, turns: 1, assistantMessages: 1 }),
+						usage: usage({
+							input: 50,
+							output: 10,
+							cacheRead: 4,
+							cacheWrite: 1,
+							cost: 0.12,
+							turns: 1,
+							assistantMessages: 1,
+						}),
 					},
 				],
 				output: "raw scratchpad",
@@ -172,7 +180,9 @@ test("/tokens writes a private local HTML report from sanitized analyzer output 
 		),
 		assistantEntry("a2", "tr2", "2026-06-15T12:00:15Z", {
 			stopReason: "tool_use",
-			content: [{ type: "toolCall", id: "call-mcp-1", name: "mcp", arguments: { server: "exa", prompt: "secret query" } }],
+			content: [
+				{ type: "toolCall", id: "call-mcp-1", name: "mcp", arguments: { server: "exa", prompt: "secret query" } },
+			],
 			usage: usage({ input: 80, output: 15, cost: 0.25 }),
 		}),
 		toolResultEntry("tr3", "a2", "2026-06-15T12:00:18Z", "mcp", { server: "exa" }, false, "MCP RAW RESULT"),
@@ -182,9 +192,18 @@ test("/tokens writes a private local HTML report from sanitized analyzer output 
 		}),
 	];
 	const toolCatalog = [
-		{ name: "bash", sourceInfo: { source: "built-in", path: "core/tools/bash.ts", scope: "user", origin: "top-level" } },
-		{ name: "subagent", sourceInfo: { source: "npm:pi-subagents", path: "extensions/subagent.mjs", scope: "user", origin: "package" } },
-		{ name: "mcp", sourceInfo: { source: "npm:pi-mcp-adapter", path: "extensions/mcp.mjs", scope: "user", origin: "package" } },
+		{
+			name: "bash",
+			sourceInfo: { source: "built-in", path: "core/tools/bash.ts", scope: "user", origin: "top-level" },
+		},
+		{
+			name: "subagent",
+			sourceInfo: { source: "npm:pi-subagents", path: "extensions/subagent.mjs", scope: "user", origin: "package" },
+		},
+		{
+			name: "mcp",
+			sourceInfo: { source: "npm:pi-mcp-adapter", path: "extensions/mcp.mjs", scope: "user", origin: "package" },
+		},
 	];
 	const pi = createPiHarness(toolCatalog);
 	let openedPath;
@@ -217,7 +236,10 @@ test("/tokens writes a private local HTML report from sanitized analyzer output 
 	assert.doesNotMatch(html, /raw scratchpad/);
 	assert.doesNotMatch(html, /secret query/);
 	assert.doesNotMatch(html, /\/Users\/me/);
-	assert.match(html, /This local report omits raw transcript text, raw tool arguments, and raw tool-result payloads by design\./);
+	assert.match(
+		html,
+		/This local report omits raw transcript text, raw tool arguments, and raw tool-result payloads by design\./,
+	);
 	assert.match(notifications.at(-1)?.message ?? "", /Opened local TLH token report/);
 	assert.equal(notifications.at(-1)?.type, "info");
 
@@ -244,14 +266,67 @@ test("buildTokensReportHtml escapes dynamic content while preserving required re
 				assistantTurnsOffActiveBranch: 0,
 			},
 			totals: {
-				primary: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 1, cacheWriteTokens: 0, totalTokens: 16, costUsd: 0.04, turns: 1, assistantMessages: 1 },
-				subagents: { inputTokens: 2, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 1, totalTokens: 4, costUsd: 0.01, turns: 1, assistantMessages: 1 },
-				combined: { inputTokens: 12, outputTokens: 6, cacheReadTokens: 1, cacheWriteTokens: 1, totalTokens: 20, costUsd: 0.05, turns: 2, assistantMessages: 2 },
+				primary: {
+					inputTokens: 10,
+					outputTokens: 5,
+					cacheReadTokens: 1,
+					cacheWriteTokens: 0,
+					totalTokens: 16,
+					costUsd: 0.04,
+					turns: 1,
+					assistantMessages: 1,
+				},
+				subagents: {
+					inputTokens: 2,
+					outputTokens: 1,
+					cacheReadTokens: 0,
+					cacheWriteTokens: 1,
+					totalTokens: 4,
+					costUsd: 0.01,
+					turns: 1,
+					assistantMessages: 1,
+				},
+				combined: {
+					inputTokens: 12,
+					outputTokens: 6,
+					cacheReadTokens: 1,
+					cacheWriteTokens: 1,
+					totalTokens: 20,
+					costUsd: 0.05,
+					turns: 2,
+					assistantMessages: 2,
+				},
 			},
 			primaryAssistant: {
-				usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 1, cacheWriteTokens: 0, totalTokens: 16, costUsd: 0.04, turns: 1, assistantMessages: 1 },
+				usage: {
+					inputTokens: 10,
+					outputTokens: 5,
+					cacheReadTokens: 1,
+					cacheWriteTokens: 0,
+					totalTokens: 16,
+					costUsd: 0.04,
+					turns: 1,
+					assistantMessages: 1,
+				},
 				usageCoverage: { assistantMessages: 1, withUsage: 1, withoutUsage: 0 },
-				models: [{ key: "openai/model<unsafe>", provider: "openai", modelId: "model<unsafe>", source: "primary", usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 1, cacheWriteTokens: 0, totalTokens: 16, costUsd: 0.04, turns: 1, assistantMessages: 1 } }],
+				models: [
+					{
+						key: "openai/model<unsafe>",
+						provider: "openai",
+						modelId: "model<unsafe>",
+						source: "primary",
+						usage: {
+							inputTokens: 10,
+							outputTokens: 5,
+							cacheReadTokens: 1,
+							cacheWriteTokens: 0,
+							totalTokens: 16,
+							costUsd: 0.04,
+							turns: 1,
+							assistantMessages: 1,
+						},
+					},
+				],
 				timeline: [
 					{
 						turnIndex: 1,
@@ -262,7 +337,16 @@ test("buildTokensReportHtml escapes dynamic content while preserving required re
 						modelId: "model<unsafe>",
 						stopReason: "stop",
 						usageReported: true,
-						usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 1, cacheWriteTokens: 0, totalTokens: 16, costUsd: 0.04, turns: 1, assistantMessages: 1 },
+						usage: {
+							inputTokens: 10,
+							outputTokens: 5,
+							cacheReadTokens: 1,
+							cacheWriteTokens: 0,
+							totalTokens: 16,
+							costUsd: 0.04,
+							turns: 1,
+							assistantMessages: 1,
+						},
 						toolCalls: { total: 1, mcp: 0, byTool: [{ toolName: "tool<script>", count: 1 }] },
 						toolResults: { total: 1, errors: 0 },
 						discoveries: { subagentRuns: 1, artifactReferences: 1, sessionReferences: 1, intercomTargets: 1 },
@@ -279,20 +363,132 @@ test("buildTokensReportHtml escapes dynamic content while preserving required re
 				mcpDirectCalls: 0,
 				mcpApproxTokens: 0,
 				totalToolApproxTokens: 100,
-				byTool: [{ toolName: "tool<script>", callCount: 1, resultCount: 1, errorCount: 0, approxTokens: 100, mcp: false, source: { key: "source", label: "Extension <unsafe>", kind: "extension", source: "pkg<unsafe>", estimated: true } }],
-				bySource: [{ source: { key: "source", label: "Extension <unsafe>", kind: "extension", source: "pkg<unsafe>", estimated: true }, callCount: 1, approxTokens: 100, tools: ["tool<script>"] }],
+				byTool: [
+					{
+						toolName: "tool<script>",
+						callCount: 1,
+						resultCount: 1,
+						errorCount: 0,
+						approxTokens: 100,
+						mcp: false,
+						source: {
+							key: "source",
+							label: "Extension <unsafe>",
+							kind: "extension",
+							source: "pkg<unsafe>",
+							estimated: true,
+						},
+					},
+				],
+				bySource: [
+					{
+						source: {
+							key: "source",
+							label: "Extension <unsafe>",
+							kind: "extension",
+							source: "pkg<unsafe>",
+							estimated: true,
+						},
+						callCount: 1,
+						approxTokens: 100,
+						tools: ["tool<script>"],
+					},
+				],
 			},
 			subagents: {
 				precision: "discoverable-only",
 				runCount: 1,
-				usage: { inputTokens: 2, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 1, totalTokens: 4, costUsd: 0.01, turns: 1, assistantMessages: 1 },
+				usage: {
+					inputTokens: 2,
+					outputTokens: 1,
+					cacheReadTokens: 0,
+					cacheWriteTokens: 1,
+					totalTokens: 4,
+					costUsd: 0.01,
+					turns: 1,
+					assistantMessages: 1,
+				},
 				byAgent: [],
-				models: [{ key: "sub/model<unsafe>", provider: "sub", modelId: "model<unsafe>", source: "subagent", usage: { inputTokens: 2, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 1, totalTokens: 4, costUsd: 0.01, turns: 1, assistantMessages: 1 } }],
-				runs: [{ key: "run", sourceEntryId: "tr1", sourceTurnIndex: 1, runId: "run-1", agent: "developer<img>", mode: "single", model: "sub/model<unsafe>", session: { kind: "session", label: "run-1/session<script>.jsonl", basename: "session<script>.jsonl", extension: ".jsonl", runId: "run-1", pathRedacted: true }, artifacts: [{ kind: "artifact", label: "run-1/output<script>.md", basename: "output<script>.md", extension: ".md", runId: "run-1", pathRedacted: true }], usage: { inputTokens: 2, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 1, totalTokens: 4, costUsd: 0.01, turns: 1, assistantMessages: 1 }, success: true }],
+				models: [
+					{
+						key: "sub/model<unsafe>",
+						provider: "sub",
+						modelId: "model<unsafe>",
+						source: "subagent",
+						usage: {
+							inputTokens: 2,
+							outputTokens: 1,
+							cacheReadTokens: 0,
+							cacheWriteTokens: 1,
+							totalTokens: 4,
+							costUsd: 0.01,
+							turns: 1,
+							assistantMessages: 1,
+						},
+					},
+				],
+				runs: [
+					{
+						key: "run",
+						sourceEntryId: "tr1",
+						sourceTurnIndex: 1,
+						runId: "run-1",
+						agent: "developer<img>",
+						mode: "single",
+						model: "sub/model<unsafe>",
+						session: {
+							kind: "session",
+							label: "run-1/session<script>.jsonl",
+							basename: "session<script>.jsonl",
+							extension: ".jsonl",
+							runId: "run-1",
+							pathRedacted: true,
+						},
+						artifacts: [
+							{
+								kind: "artifact",
+								label: "run-1/output<script>.md",
+								basename: "output<script>.md",
+								extension: ".md",
+								runId: "run-1",
+								pathRedacted: true,
+							},
+						],
+						usage: {
+							inputTokens: 2,
+							outputTokens: 1,
+							cacheReadTokens: 0,
+							cacheWriteTokens: 1,
+							totalTokens: 4,
+							costUsd: 0.01,
+							turns: 1,
+							assistantMessages: 1,
+						},
+						success: true,
+					},
+				],
 			},
 			references: {
-				artifacts: [{ kind: "artifact", label: "run-1/output<script>.md", basename: "output<script>.md", extension: ".md", runId: "run-1", pathRedacted: true }],
-				sessions: [{ kind: "session", label: "run-1/session<script>.jsonl", basename: "session<script>.jsonl", extension: ".jsonl", runId: "run-1", pathRedacted: true }],
+				artifacts: [
+					{
+						kind: "artifact",
+						label: "run-1/output<script>.md",
+						basename: "output<script>.md",
+						extension: ".md",
+						runId: "run-1",
+						pathRedacted: true,
+					},
+				],
+				sessions: [
+					{
+						kind: "session",
+						label: "run-1/session<script>.jsonl",
+						basename: "session<script>.jsonl",
+						extension: ".jsonl",
+						runId: "run-1",
+						pathRedacted: true,
+					},
+				],
 				intercomTargets: ["subagent-chat-<unsafe>"],
 			},
 			caveats: ["Estimated <b>only</b>"],
@@ -322,7 +518,12 @@ test("analyzeSessionEntries computes non-zero approxTokens for tool calls and re
 			stopReason: "tool_use",
 			content: [
 				{ type: "toolCall", id: "call-bash-1", name: "bash", arguments: { command: "echo hello world" } },
-				{ type: "toolCall", id: "call-mcp-1", name: "mcp", arguments: { server: "search", query: "example query text" } },
+				{
+					type: "toolCall",
+					id: "call-mcp-1",
+					name: "mcp",
+					arguments: { server: "search", query: "example query text" },
+				},
 			],
 			usage: usage({ input: 100, output: 10, cost: 0.2 }),
 		}),
@@ -335,7 +536,10 @@ test("analyzeSessionEntries computes non-zero approxTokens for tool calls and re
 	];
 	const toolCatalog = [
 		{ name: "bash", sourceInfo: { source: "built-in", path: "core/bash.ts", scope: "user", origin: "top-level" } },
-		{ name: "mcp", sourceInfo: { source: "npm:pi-mcp-adapter", path: "extensions/mcp.mjs", scope: "user", origin: "package" } },
+		{
+			name: "mcp",
+			sourceInfo: { source: "npm:pi-mcp-adapter", path: "extensions/mcp.mjs", scope: "user", origin: "package" },
+		},
 	];
 	const analysis = analyzeSessionEntries(entries, { toolCatalog });
 
@@ -362,7 +566,11 @@ test("analyzeSessionEntries computes non-zero approxTokens for tool calls and re
 
 	// Total should be sum of all tools
 	const expectedTotal = analysis.tools.byTool.reduce((sum, t) => sum + t.approxTokens, 0);
-	assert.equal(analysis.tools.totalToolApproxTokens, expectedTotal, "totalToolApproxTokens is sum of all per-tool approxTokens");
+	assert.equal(
+		analysis.tools.totalToolApproxTokens,
+		expectedTotal,
+		"totalToolApproxTokens is sum of all per-tool approxTokens",
+	);
 });
 
 test("buildTokensReportHtml renders MCP est. tokens card and Est. tokens columns in Tools/MCP section", () => {
@@ -370,9 +578,7 @@ test("buildTokensReportHtml renders MCP est. tokens card and Est. tokens columns
 		userEntry("u1", null, "2026-06-17T10:00:00Z", "user message"),
 		assistantEntry("a1", "u1", "2026-06-17T10:00:05Z", {
 			stopReason: "tool_use",
-			content: [
-				{ type: "toolCall", id: "call-mcp-1", name: "mcp", arguments: { server: "search", query: "example" } },
-			],
+			content: [{ type: "toolCall", id: "call-mcp-1", name: "mcp", arguments: { server: "search", query: "example" } }],
 			usage: usage({ input: 80, output: 10, cost: 0.18 }),
 		}),
 		toolResultEntry("tr1", "a1", "2026-06-17T10:00:06Z", "mcp", {}, false, "result content"),
@@ -382,7 +588,10 @@ test("buildTokensReportHtml renders MCP est. tokens card and Est. tokens columns
 		}),
 	];
 	const toolCatalog = [
-		{ name: "mcp", sourceInfo: { source: "npm:pi-mcp-adapter", path: "extensions/mcp.mjs", scope: "user", origin: "package" } },
+		{
+			name: "mcp",
+			sourceInfo: { source: "npm:pi-mcp-adapter", path: "extensions/mcp.mjs", scope: "user", origin: "package" },
+		},
 	];
 	const analysis = analyzeSessionEntries(entries, { toolCatalog });
 	const html = buildTokensReportHtml(analysis, { generatedAt: "2026-06-17T10:01:00Z" });
@@ -394,7 +603,10 @@ test("buildTokensReportHtml renders MCP est. tokens card and Est. tokens columns
 
 	// Est. tokens column header should appear in both tables (Tools and Tool sources)
 	const estTokensMatches = [...html.matchAll(/Est\. tokens/g)];
-	assert.ok(estTokensMatches.length >= 2, `Expected at least 2 "Est. tokens" column headers, found ${estTokensMatches.length}`);
+	assert.ok(
+		estTokensMatches.length >= 2,
+		`Expected at least 2 "Est. tokens" column headers, found ${estTokensMatches.length}`,
+	);
 
 	// The tool estimates caveat should appear
 	assert.match(html, /~4 chars\/token/);
@@ -433,7 +645,11 @@ test("analyzeSessionEntries counts result-content characters toward a tool's app
 	assert.equal(readTool.resultCount, 1, "resultCount is 1");
 	// RESULT_TEXT is 49 chars → Math.ceil(49/4) = 13 tokens; arg contribution = 0
 	const expectedApproxTokens = Math.ceil(RESULT_TEXT.length / 4);
-	assert.equal(readTool.approxTokens, expectedApproxTokens, `approxTokens (${readTool.approxTokens}) equals result-content estimate (${expectedApproxTokens})`);
+	assert.equal(
+		readTool.approxTokens,
+		expectedApproxTokens,
+		`approxTokens (${readTool.approxTokens}) equals result-content estimate (${expectedApproxTokens})`,
+	);
 	assert.ok(readTool.approxTokens > 0, "result-content text alone contributes non-zero approxTokens");
 });
 
@@ -465,8 +681,14 @@ test("analyzeSessionEntries byTool sorts by approxTokens descending, with callCo
 		}),
 	];
 	const toolCatalog = [
-		{ name: "expensive-tool", sourceInfo: { source: "built-in", path: "core/expensive.ts", scope: "user", origin: "top-level" } },
-		{ name: "cheap-tool", sourceInfo: { source: "built-in", path: "core/cheap.ts", scope: "user", origin: "top-level" } },
+		{
+			name: "expensive-tool",
+			sourceInfo: { source: "built-in", path: "core/expensive.ts", scope: "user", origin: "top-level" },
+		},
+		{
+			name: "cheap-tool",
+			sourceInfo: { source: "built-in", path: "core/cheap.ts", scope: "user", origin: "top-level" },
+		},
 	];
 	const analysis = analyzeSessionEntries(entries, { toolCatalog });
 
@@ -486,8 +708,16 @@ test("analyzeSessionEntries byTool sorts by approxTokens descending, with callCo
 	// byTool should rank by approxTokens desc: expensive-tool first despite fewer calls
 	assert.ok(expensiveTool.approxTokens > cheapTool.approxTokens, "expensive-tool has more approxTokens");
 	assert.ok(cheapTool.callCount > expensiveTool.callCount, "cheap-tool has more calls");
-	assert.equal(analysis.tools.byTool[0].toolName, "expensive-tool", "byTool[0] is expensive-tool (highest approxTokens)");
-	assert.equal(analysis.tools.byTool[1].toolName, "cheap-tool", "byTool[1] is cheap-tool (lower approxTokens despite more calls)");
+	assert.equal(
+		analysis.tools.byTool[0].toolName,
+		"expensive-tool",
+		"byTool[0] is expensive-tool (highest approxTokens)",
+	);
+	assert.equal(
+		analysis.tools.byTool[1].toolName,
+		"cheap-tool",
+		"byTool[1] is cheap-tool (lower approxTokens despite more calls)",
+	);
 });
 
 // ---------------------------------------------------------------------------
@@ -495,7 +725,16 @@ test("analyzeSessionEntries byTool sorts by approxTokens descending, with callCo
 // ---------------------------------------------------------------------------
 
 function makeMinimalAnalysis(overrides = {}) {
-	const zeroTotals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0, costUsd: 0, turns: 0, assistantMessages: 0 };
+	const zeroTotals = {
+		inputTokens: 0,
+		outputTokens: 0,
+		cacheReadTokens: 0,
+		cacheWriteTokens: 0,
+		totalTokens: 0,
+		costUsd: 0,
+		turns: 0,
+		assistantMessages: 0,
+	};
 	return {
 		cacheMisses: { missedTokens: 0, missedCost: 0, missCount: 0, worst: [] },
 		session: {
@@ -509,9 +748,33 @@ function makeMinimalAnalysis(overrides = {}) {
 			assistantTurnsOffActiveBranch: 0,
 		},
 		totals: {
-			primary: { ...zeroTotals, inputTokens: 10, outputTokens: 5, totalTokens: 15, costUsd: 0.02, turns: 1, assistantMessages: 1 },
-			subagents: { ...zeroTotals, inputTokens: 20, outputTokens: 8, totalTokens: 28, costUsd: 0.05, turns: 2, assistantMessages: 2 },
-			combined: { ...zeroTotals, inputTokens: 30, outputTokens: 13, totalTokens: 43, costUsd: 0.07, turns: 3, assistantMessages: 3 },
+			primary: {
+				...zeroTotals,
+				inputTokens: 10,
+				outputTokens: 5,
+				totalTokens: 15,
+				costUsd: 0.02,
+				turns: 1,
+				assistantMessages: 1,
+			},
+			subagents: {
+				...zeroTotals,
+				inputTokens: 20,
+				outputTokens: 8,
+				totalTokens: 28,
+				costUsd: 0.05,
+				turns: 2,
+				assistantMessages: 2,
+			},
+			combined: {
+				...zeroTotals,
+				inputTokens: 30,
+				outputTokens: 13,
+				totalTokens: 43,
+				costUsd: 0.07,
+				turns: 3,
+				assistantMessages: 3,
+			},
 		},
 		primaryAssistant: {
 			usage: { ...zeroTotals },
@@ -564,7 +827,16 @@ test("renderUsageTotalsTable includes Provider column header and preserves Prima
 });
 
 test("renderUsageTotalsTable renders per-subagent sub-rows with plain agent name (no arrow prefix) and provider", () => {
-	const zeroTotals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0, costUsd: 0, turns: 0, assistantMessages: 0 };
+	const zeroTotals = {
+		inputTokens: 0,
+		outputTokens: 0,
+		cacheReadTokens: 0,
+		cacheWriteTokens: 0,
+		totalTokens: 0,
+		costUsd: 0,
+		turns: 0,
+		assistantMessages: 0,
+	};
 	const analysis = makeMinimalAnalysis({
 		subagents: {
 			precision: "discoverable-only",
@@ -572,8 +844,34 @@ test("renderUsageTotalsTable renders per-subagent sub-rows with plain agent name
 			usage: { ...zeroTotals },
 			models: [],
 			byAgent: [
-				{ key: "developer|anthropic", agent: "developer", provider: "anthropic", usage: { ...zeroTotals, inputTokens: 12, outputTokens: 4, totalTokens: 16, costUsd: 0.03, turns: 1, assistantMessages: 1 } },
-				{ key: "reviewer|openai", agent: "reviewer", provider: "openai", usage: { ...zeroTotals, inputTokens: 8, outputTokens: 4, totalTokens: 12, costUsd: 0.02, turns: 1, assistantMessages: 1 } },
+				{
+					key: "developer|anthropic",
+					agent: "developer",
+					provider: "anthropic",
+					usage: {
+						...zeroTotals,
+						inputTokens: 12,
+						outputTokens: 4,
+						totalTokens: 16,
+						costUsd: 0.03,
+						turns: 1,
+						assistantMessages: 1,
+					},
+				},
+				{
+					key: "reviewer|openai",
+					agent: "reviewer",
+					provider: "openai",
+					usage: {
+						...zeroTotals,
+						inputTokens: 8,
+						outputTokens: 4,
+						totalTokens: 12,
+						costUsd: 0.02,
+						turns: 1,
+						assistantMessages: 1,
+					},
+				},
 			],
 			runs: [],
 		},
@@ -599,7 +897,16 @@ test("renderUsageTotalsTable renders per-subagent sub-rows with plain agent name
 });
 
 test("renderUsageTotalsTable renders 'unknown' for missing agent name in sub-row (no arrow prefix)", () => {
-	const zeroTotals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0, costUsd: 0, turns: 0, assistantMessages: 0 };
+	const zeroTotals = {
+		inputTokens: 0,
+		outputTokens: 0,
+		cacheReadTokens: 0,
+		cacheWriteTokens: 0,
+		totalTokens: 0,
+		costUsd: 0,
+		turns: 0,
+		assistantMessages: 0,
+	};
 	const analysis = makeMinimalAnalysis({
 		subagents: {
 			precision: "discoverable-only",
@@ -607,7 +914,12 @@ test("renderUsageTotalsTable renders 'unknown' for missing agent name in sub-row
 			usage: { ...zeroTotals },
 			models: [],
 			byAgent: [
-				{ key: "|anthropic", agent: undefined, provider: "anthropic", usage: { ...zeroTotals, turns: 1, assistantMessages: 1 } },
+				{
+					key: "|anthropic",
+					agent: undefined,
+					provider: "anthropic",
+					usage: { ...zeroTotals, turns: 1, assistantMessages: 1 },
+				},
 			],
 			runs: [],
 		},
@@ -659,10 +971,34 @@ test("buildTokensReportHtml section order is: Overview, Tools/MCP, Cache misses,
 test("buildTokensReportHtml uses a provided primaryAgentLabel in all four primary-bucket sites", () => {
 	const analysis = makeMinimalAnalysis({
 		primaryAssistant: {
-			usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0, costUsd: 0, turns: 0, assistantMessages: 0 },
+			usage: {
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadTokens: 0,
+				cacheWriteTokens: 0,
+				totalTokens: 0,
+				costUsd: 0,
+				turns: 0,
+				assistantMessages: 0,
+			},
 			usageCoverage: { assistantMessages: 1, withUsage: 1, withoutUsage: 0 },
 			models: [
-				{ key: "openai/gpt-5", provider: "openai", modelId: "gpt-5", source: "primary", usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 15, costUsd: 0.02, turns: 1, assistantMessages: 1 } },
+				{
+					key: "openai/gpt-5",
+					provider: "openai",
+					modelId: "gpt-5",
+					source: "primary",
+					usage: {
+						inputTokens: 10,
+						outputTokens: 5,
+						cacheReadTokens: 0,
+						cacheWriteTokens: 0,
+						totalTokens: 15,
+						costUsd: 0.02,
+						turns: 1,
+						assistantMessages: 1,
+					},
+				},
 			],
 			timeline: [],
 		},
@@ -670,7 +1006,11 @@ test("buildTokensReportHtml uses a provided primaryAgentLabel in all four primar
 	const html = buildTokensReportHtml(analysis, { generatedAt: "2026-07-12T00:00:00Z", primaryAgentLabel: "architect" });
 
 	// Site 1: renderUsageTotalsTable primary row Bucket cell
-	assert.match(html, /<td>architect<\/td><td>\u2014<\/td>/, "site 1: usage totals table primary row uses provided label");
+	assert.match(
+		html,
+		/<td>architect<\/td><td>\u2014<\/td>/,
+		"site 1: usage totals table primary row uses provided label",
+	);
 
 	// Site 2: Overview metric card title
 	assert.match(html, /<p class="card-label">architect<\/p>/, "site 2: Overview metric card title uses provided label");
@@ -686,13 +1026,26 @@ test("buildTokensReportHtml uses a provided primaryAgentLabel in all four primar
 	assert.ok(architectInCache !== -1, "site 4: cache totals table primary row uses provided label");
 
 	// Fallback label 'Primary assistant' must NOT appear as primary bucket (subagent and combined rows unaffected)
-	assert.doesNotMatch(html, /<td>Primary assistant<\/td><td>\u2014<\/td>/, "fallback label absent when custom label provided");
+	assert.doesNotMatch(
+		html,
+		/<td>Primary assistant<\/td><td>\u2014<\/td>/,
+		"fallback label absent when custom label provided",
+	);
 });
 
 test("buildTokensReportHtml falls back to 'Primary assistant' when no primaryAgentLabel is given", () => {
 	const analysis = makeMinimalAnalysis({
 		primaryAssistant: {
-			usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0, costUsd: 0, turns: 0, assistantMessages: 0 },
+			usage: {
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadTokens: 0,
+				cacheWriteTokens: 0,
+				totalTokens: 0,
+				costUsd: 0,
+				turns: 0,
+				assistantMessages: 0,
+			},
 			usageCoverage: { assistantMessages: 1, withUsage: 1, withoutUsage: 0 },
 			models: [],
 			timeline: [],
@@ -720,7 +1073,9 @@ test("createTokensCommandHandler passes getPrimaryAgentLabel to the report (inte
 	const pi = createPiHarness();
 	let openedPath;
 	registerTokensCommand(pi, {
-		openReport: async (path) => { openedPath = path; },
+		openReport: async (path) => {
+			openedPath = path;
+		},
 		now: () => new Date("2026-07-12T00:00:00Z"),
 		getPrimaryAgentLabel: () => "architect",
 	});
@@ -858,16 +1213,31 @@ test("buildTokensReportHtml renders Med. obs. wall-clock latency column and sect
 			id: "tr1",
 			parentId: "a1",
 			timestamp: "2026-07-11T08:00:02.000Z",
-			message: { role: "toolResult", toolName: "bash", toolCallId: "tc-bash-x", isError: false, content: [{ type: "text", text: "ok" }] },
+			message: {
+				role: "toolResult",
+				toolName: "bash",
+				toolCallId: "tc-bash-x",
+				isError: false,
+				content: [{ type: "text", text: "ok" }],
+			},
 		},
 		{
 			type: "message",
 			id: "tr2",
 			parentId: "a1",
 			timestamp: "2026-07-11T10:00:00.000Z",
-			message: { role: "toolResult", toolName: "read", toolCallId: "tc-read-x", isError: false, content: [{ type: "text", text: "content" }] },
+			message: {
+				role: "toolResult",
+				toolName: "read",
+				toolCallId: "tc-read-x",
+				isError: false,
+				content: [{ type: "text", text: "content" }],
+			},
 		},
-		assistantEntry("a2", "tr2", "2026-07-11T10:00:05.000Z", { text: "Done.", usage: usage({ input: 50, output: 5, cost: 0.1 }) }),
+		assistantEntry("a2", "tr2", "2026-07-11T10:00:05.000Z", {
+			text: "Done.",
+			usage: usage({ input: 50, output: 5, cost: 0.1 }),
+		}),
 	];
 
 	const analysis = analyzeSessionEntries(entries, { activeLeafId: "a2" });

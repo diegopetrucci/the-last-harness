@@ -119,12 +119,12 @@ export function gitSourceInstallSource(source, options = {}) {
 }
 export function isLocalPackageSource(source) {
     const trimmed = String(source ?? "").trim();
-    return !trimmed.startsWith("npm:")
-        && !trimmed.startsWith("git:")
-        && !trimmed.startsWith("github:")
-        && !trimmed.startsWith("http:")
-        && !trimmed.startsWith("https:")
-        && !trimmed.startsWith("ssh:");
+    return (!trimmed.startsWith("npm:") &&
+        !trimmed.startsWith("git:") &&
+        !trimmed.startsWith("github:") &&
+        !trimmed.startsWith("http:") &&
+        !trimmed.startsWith("https:") &&
+        !trimmed.startsWith("ssh:"));
 }
 function resolveSupportedFilePackageSource(source) {
     if (!source.startsWith("file:"))

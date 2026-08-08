@@ -89,7 +89,10 @@ function parseArgs(argv: readonly string[]): CliArgs {
 			index = settingsIndex;
 			continue;
 		}
-		const defaultsIndex = assignOptionValue(args, "defaultExtensionsPath", argv, index, ["--defaults", "--default-extensions"]) as number | undefined;
+		const defaultsIndex = assignOptionValue(args, "defaultExtensionsPath", argv, index, [
+			"--defaults",
+			"--default-extensions",
+		]) as number | undefined;
 		if (defaultsIndex !== undefined) {
 			index = defaultsIndex;
 			continue;
@@ -169,12 +172,19 @@ function orderedDisabledIds(ids: Set<string>, defaultExtensions: readonly Defaul
 	return [...ordered, ...unknown];
 }
 
-function setDisabledIds(settings: Settings, ids: Set<string>, defaultExtensions: readonly DefaultExtensionEntry[]): void {
+function setDisabledIds(
+	settings: Settings,
+	ids: Set<string>,
+	defaultExtensions: readonly DefaultExtensionEntry[],
+): void {
 	settings.tlh ??= {};
 	settings.tlh.disabledDefaultExtensions = orderedDisabledIds(ids, defaultExtensions);
 }
 
-function findDefaultExtension(defaultExtensions: readonly DefaultExtensionEntry[], id: string): DefaultExtensionEntry | undefined {
+function findDefaultExtension(
+	defaultExtensions: readonly DefaultExtensionEntry[],
+	id: string,
+): DefaultExtensionEntry | undefined {
 	return defaultExtensions.find((extension) => extension.id === id || extension.aliases.includes(id));
 }
 
@@ -213,9 +223,11 @@ function replacedPackageSource(settings: Settings, extension: DefaultExtensionEn
 }
 
 function isDefaultSourceDeferred(settings: Settings, extension: DefaultExtensionEntry): boolean {
-	return extension.migrateReplacements !== true
-		&& findPackageIndex(settings, extension.source) === -1
-		&& Boolean(replacedPackageSource(settings, extension));
+	return (
+		extension.migrateReplacements !== true &&
+		findPackageIndex(settings, extension.source) === -1 &&
+		Boolean(replacedPackageSource(settings, extension))
+	);
 }
 
 function isDefaultDisabled(
@@ -273,16 +285,18 @@ function defaultStatus(
 	const entry = packageIndex === -1 ? undefined : settingsPackages(settings)[packageIndex];
 	const configuredSource = entry ? packageSourceOf(entry) : undefined;
 	if (markerDisabled) return { enabled: false, reason: "disabled" };
-	if (extension.critical !== true && entry && packageEntryDisablesExtensions(entry)) return { enabled: false, reason: "disabled by package filter" };
+	if (extension.critical !== true && entry && packageEntryDisablesExtensions(entry))
+		return { enabled: false, reason: "disabled by package filter" };
 	if (entry && configuredSource && configuredSource !== extension.source) {
 		return { enabled: true, reason: `enabled with configured package (${configuredSource})` };
 	}
 	if (entry) return { enabled: true, reason: "enabled" };
 	const replacementSource = replacedPackageSource(settings, extension);
 	if (replacementSource) {
-		const action = extension.migrateReplacements === true
-			? "installer will switch it to the bundled TLH source"
-			: "installer --force will switch it";
+		const action =
+			extension.migrateReplacements === true
+				? "installer will switch it to the bundled TLH source"
+				: "installer --force will switch it";
 		return { enabled: true, reason: `enabled with replaced package (${replacementSource}); ${action}` };
 	}
 	return { enabled: true, reason: "enabled by default; package will be added by installer" };
@@ -448,7 +462,9 @@ function main(): void {
 		return;
 	}
 
-	const settingsPath = resolve(expandHomePath(args.settingsPath || defaultTlhSettingsPath()) || defaultTlhSettingsPath());
+	const settingsPath = resolve(
+		expandHomePath(args.settingsPath || defaultTlhSettingsPath()) || defaultTlhSettingsPath(),
+	);
 	const defaultExtensionsPath = resolve(
 		expandHomePath(args.defaultExtensionsPath || defaultDefaultExtensionsPath()) || defaultDefaultExtensionsPath(),
 	);

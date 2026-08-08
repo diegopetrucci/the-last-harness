@@ -27,7 +27,10 @@ import { POLL_INTERVAL_MS } from "../../shared/types.ts";
  */
 export const INTERRUPT_SIGNAL: NodeJS.Signals = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
 
-export type ControlChannelFs = Pick<typeof fs, "mkdirSync" | "existsSync" | "rmSync" | "watch" | "readdirSync" | "readFileSync">;
+export type ControlChannelFs = Pick<
+	typeof fs,
+	"mkdirSync" | "existsSync" | "rmSync" | "watch" | "readdirSync" | "readFileSync"
+>;
 export type ControlChannelTimers = { setInterval: typeof setInterval; clearInterval: typeof clearInterval };
 type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => unknown;
 
@@ -54,8 +57,12 @@ interface ChildMessageRequestBase {
 	source?: string;
 }
 
-export interface SteerRequest extends ChildMessageRequestBase { type: "steer" }
-export interface ResumeRequest extends ChildMessageRequestBase { type: "resume" }
+export interface SteerRequest extends ChildMessageRequestBase {
+	type: "steer";
+}
+export interface ResumeRequest extends ChildMessageRequestBase {
+	type: "resume";
+}
 export type ChildMessageRequest = SteerRequest | ResumeRequest;
 
 const STEER_REQUESTS_DIR = "steer-requests";
@@ -154,7 +161,14 @@ export function requestAsyncTimeout(
 function requestAsyncChildMessage(
 	asyncDir: string,
 	type: ChildMessageRequest["type"],
-	payload: { message: string; targetIndex?: number; deliveryDeadlineAt?: number; source?: string; id?: string; ts?: number },
+	payload: {
+		message: string;
+		targetIndex?: number;
+		deliveryDeadlineAt?: number;
+		source?: string;
+		id?: string;
+		ts?: number;
+	},
 	deps: { now?: () => number; randomId?: () => string } = {},
 ): string {
 	const message = payload.message.trim();
@@ -162,7 +176,10 @@ function requestAsyncChildMessage(
 	if (payload.targetIndex !== undefined && (!Number.isInteger(payload.targetIndex) || payload.targetIndex < 0)) {
 		throw new Error(`${type} targetIndex must be a non-negative integer.`);
 	}
-	if (payload.deliveryDeadlineAt !== undefined && (!Number.isFinite(payload.deliveryDeadlineAt) || payload.deliveryDeadlineAt <= 0)) {
+	if (
+		payload.deliveryDeadlineAt !== undefined &&
+		(!Number.isFinite(payload.deliveryDeadlineAt) || payload.deliveryDeadlineAt <= 0)
+	) {
 		throw new Error(`${type} deliveryDeadlineAt must be a positive finite timestamp.`);
 	}
 	const request: ChildMessageRequest = {
@@ -179,7 +196,14 @@ function requestAsyncChildMessage(
 
 export function requestAsyncSteer(
 	asyncDir: string,
-	payload: { message: string; targetIndex?: number; deliveryDeadlineAt?: number; source?: string; id?: string; ts?: number },
+	payload: {
+		message: string;
+		targetIndex?: number;
+		deliveryDeadlineAt?: number;
+		source?: string;
+		id?: string;
+		ts?: number;
+	},
 	deps: { now?: () => number; randomId?: () => string } = {},
 ): string {
 	return requestAsyncChildMessage(asyncDir, "steer", payload, deps);
@@ -187,7 +211,14 @@ export function requestAsyncSteer(
 
 export function requestAsyncResume(
 	asyncDir: string,
-	payload: { message: string; targetIndex?: number; deliveryDeadlineAt?: number; source?: string; id?: string; ts?: number },
+	payload: {
+		message: string;
+		targetIndex?: number;
+		deliveryDeadlineAt?: number;
+		source?: string;
+		id?: string;
+		ts?: number;
+	},
 	deps: { now?: () => number; randomId?: () => string } = {},
 ): string {
 	return requestAsyncChildMessage(asyncDir, "resume", payload, deps);
@@ -215,15 +246,31 @@ export function acceptChildMessageRequest(input: {
 	const targets = input.request.targetIndex !== undefined ? [input.request.targetIndex] : runningIndexes;
 	const acceptedIndexes: number[] = [];
 	const rejected: Array<{ index: number; reason: string }> = [];
-	if (input.request.deliveryDeadlineAt !== undefined && (input.now?.() ?? Date.now()) >= input.request.deliveryDeadlineAt) {
+	if (
+		input.request.deliveryDeadlineAt !== undefined &&
+		(input.now?.() ?? Date.now()) >= input.request.deliveryDeadlineAt
+	) {
 		return { acceptedIndexes, rejected: targets.map((index) => ({ index, reason: "delivery deadline expired" })) };
 	}
 	for (const index of targets) {
 		const step = input.steps[index];
-		if (!step) { rejected.push({ index, reason: "child index out of range" }); continue; }
-		if (step.status !== "running") { rejected.push({ index, reason: `child is ${step.status}` }); continue; }
-		try { input.enqueue(index, input.request); }
-		catch (error) { rejected.push({ index, reason: `leaf inbox enqueue failed: ${error instanceof Error ? error.message : String(error)}` }); continue; }
+		if (!step) {
+			rejected.push({ index, reason: "child index out of range" });
+			continue;
+		}
+		if (step.status !== "running") {
+			rejected.push({ index, reason: `child is ${step.status}` });
+			continue;
+		}
+		try {
+			input.enqueue(index, input.request);
+		} catch (error) {
+			rejected.push({
+				index,
+				reason: `leaf inbox enqueue failed: ${error instanceof Error ? error.message : String(error)}`,
+			});
+			continue;
+		}
 		acceptedIndexes.push(index);
 	}
 	return { acceptedIndexes, rejected };
@@ -253,7 +300,13 @@ function parseChildMessageAcceptance(raw: unknown, requestId: string): ChildMess
 	const input = raw as Partial<ChildMessageAcceptance>;
 	if (input.requestId !== requestId || (input.type !== "steer" && input.type !== "resume")) return undefined;
 	if (input.status !== "accepted" && input.status !== "rejected") return undefined;
-	if (typeof input.ts !== "number" || !Number.isFinite(input.ts) || !Array.isArray(input.acceptedIndexes) || !input.acceptedIndexes.every(Number.isInteger)) return undefined;
+	if (
+		typeof input.ts !== "number" ||
+		!Number.isFinite(input.ts) ||
+		!Array.isArray(input.acceptedIndexes) ||
+		!input.acceptedIndexes.every(Number.isInteger)
+	)
+		return undefined;
 	return input as ChildMessageAcceptance;
 }
 
@@ -265,7 +318,11 @@ export function consumeChildMessageAcceptance(asyncDir: string, requestId: strin
 		return parsed;
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-		try { fs.rmSync(acceptancePath, { force: true }); } catch { /* Best effort malformed ack cleanup. */ }
+		try {
+			fs.rmSync(acceptancePath, { force: true });
+		} catch {
+			/* Best effort malformed ack cleanup. */
+		}
 		return undefined;
 	}
 }
@@ -300,8 +357,15 @@ function parseChildMessageRequest(raw: unknown): ChildMessageRequest | undefined
 	if (typeof input.id !== "string" || !input.id.trim()) return undefined;
 	if (typeof input.ts !== "number" || !Number.isFinite(input.ts)) return undefined;
 	if (typeof input.message !== "string" || !input.message.trim()) return undefined;
-	if (input.targetIndex !== undefined && (!Number.isInteger(input.targetIndex) || input.targetIndex < 0)) return undefined;
-	if (input.deliveryDeadlineAt !== undefined && (typeof input.deliveryDeadlineAt !== "number" || !Number.isFinite(input.deliveryDeadlineAt) || input.deliveryDeadlineAt <= 0)) return undefined;
+	if (input.targetIndex !== undefined && (!Number.isInteger(input.targetIndex) || input.targetIndex < 0))
+		return undefined;
+	if (
+		input.deliveryDeadlineAt !== undefined &&
+		(typeof input.deliveryDeadlineAt !== "number" ||
+			!Number.isFinite(input.deliveryDeadlineAt) ||
+			input.deliveryDeadlineAt <= 0)
+	)
+		return undefined;
 	return {
 		type: input.type,
 		id: input.id.trim(),
@@ -320,7 +384,10 @@ function consumeMatchingChildMessageRequestsFromDir<T extends ChildMessageReques
 ): T[] {
 	if (!fsImpl.existsSync(dir)) return [];
 	const requests: T[] = [];
-	for (const entry of fsImpl.readdirSync(dir).filter((name) => name.endsWith(".json")).sort()) {
+	for (const entry of fsImpl
+		.readdirSync(dir)
+		.filter((name) => name.endsWith(".json"))
+		.sort()) {
 		const requestPath = path.join(dir, entry);
 		let parsed: ChildMessageRequest | undefined;
 		try {
@@ -340,19 +407,39 @@ function consumeMatchingChildMessageRequestsFromDir<T extends ChildMessageReques
 	return requests.sort((left, right) => left.ts - right.ts || left.id.localeCompare(right.id));
 }
 
-export function consumeChildMessageRequestsFromDir(dir: string, fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs): ChildMessageRequest[] {
-	return consumeMatchingChildMessageRequestsFromDir(dir, (request): request is ChildMessageRequest => request.type === "steer" || request.type === "resume", fsImpl);
+export function consumeChildMessageRequestsFromDir(
+	dir: string,
+	fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs,
+): ChildMessageRequest[] {
+	return consumeMatchingChildMessageRequestsFromDir(
+		dir,
+		(request): request is ChildMessageRequest => request.type === "steer" || request.type === "resume",
+		fsImpl,
+	);
 }
 
-export function consumeSteerRequestsFromDir(dir: string, fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs): SteerRequest[] {
-	return consumeMatchingChildMessageRequestsFromDir(dir, (request): request is SteerRequest => request.type === "steer", fsImpl);
+export function consumeSteerRequestsFromDir(
+	dir: string,
+	fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs,
+): SteerRequest[] {
+	return consumeMatchingChildMessageRequestsFromDir(
+		dir,
+		(request): request is SteerRequest => request.type === "steer",
+		fsImpl,
+	);
 }
 
-export function consumeSteerRequests(asyncDir: string, fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs): SteerRequest[] {
+export function consumeSteerRequests(
+	asyncDir: string,
+	fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs,
+): SteerRequest[] {
 	return consumeSteerRequestsFromDir(steerRequestsDir(asyncDir), fsImpl);
 }
 
-export function consumeChildMessageRequests(asyncDir: string, fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs): ChildMessageRequest[] {
+export function consumeChildMessageRequests(
+	asyncDir: string,
+	fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs,
+): ChildMessageRequest[] {
 	return consumeChildMessageRequestsFromDir(steerRequestsDir(asyncDir), fsImpl);
 }
 
@@ -416,7 +503,9 @@ export function deliverInterruptRequest(input: {
 	now?: () => number;
 	source?: string;
 }): void {
-	const requestPath = requestAsyncInterrupt(input.asyncDir, input.source ? { source: input.source } : {}, { now: input.now });
+	const requestPath = requestAsyncInterrupt(input.asyncDir, input.source ? { source: input.source } : {}, {
+		now: input.now,
+	});
 	if (typeof input.pid === "number" && input.pid > 0) {
 		try {
 			(input.kill ?? process.kill)(input.pid, input.signal ?? INTERRUPT_SIGNAL);

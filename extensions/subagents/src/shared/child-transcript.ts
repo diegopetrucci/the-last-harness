@@ -51,13 +51,16 @@ function finiteNumber(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function normalizeUsage(value: unknown): { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number } | undefined {
+function normalizeUsage(
+	value: unknown,
+): { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number } | undefined {
 	if (!value || typeof value !== "object") return undefined;
 	const raw = value as Record<string, unknown>;
 	const rawCost = raw.cost;
-	const cost = rawCost && typeof rawCost === "object"
-		? finiteNumber((rawCost as { total?: unknown }).total) ?? 0
-		: finiteNumber(rawCost) ?? 0;
+	const cost =
+		rawCost && typeof rawCost === "object"
+			? (finiteNumber((rawCost as { total?: unknown }).total) ?? 0)
+			: (finiteNumber(rawCost) ?? 0);
 	return {
 		input: finiteNumber(raw.input) ?? finiteNumber(raw.inputTokens) ?? 0,
 		output: finiteNumber(raw.output) ?? finiteNumber(raw.outputTokens) ?? 0,
@@ -69,7 +72,7 @@ function normalizeUsage(value: unknown): { input: number; output: number; cacheR
 
 function eventArgs(event: ChildTranscriptEvent): Record<string, unknown> {
 	return event.args && typeof event.args === "object" && !Array.isArray(event.args)
-		? event.args as Record<string, unknown>
+		? (event.args as Record<string, unknown>)
 		: {};
 }
 

@@ -1,5 +1,11 @@
 import { isParallelStep, type ChainStep, type SequentialStep } from "../../shared/settings.ts";
-import type { SingleResult, SubagentRunMode, WorkflowGraphNode, WorkflowGraphSnapshot, WorkflowNodeStatus } from "../../shared/types.ts";
+import type {
+	SingleResult,
+	SubagentRunMode,
+	WorkflowGraphNode,
+	WorkflowGraphSnapshot,
+	WorkflowNodeStatus,
+} from "../../shared/types.ts";
 
 export interface WorkflowGraphBuildInput {
 	runId: string;
@@ -31,7 +37,9 @@ function normalizeStatus(status: string | undefined): WorkflowNodeStatus | undef
 	}
 }
 
-function resultStatus(result: Pick<SingleResult, "exitCode" | "detached" | "interrupted"> | undefined): WorkflowNodeStatus | undefined {
+function resultStatus(
+	result: Pick<SingleResult, "exitCode" | "detached" | "interrupted"> | undefined,
+): WorkflowNodeStatus | undefined {
 	if (!result) return undefined;
 	if (result.detached) return "detached";
 	if (result.interrupted) return "paused";
@@ -39,9 +47,11 @@ function resultStatus(result: Pick<SingleResult, "exitCode" | "detached" | "inte
 }
 
 function nodeStatus(input: WorkflowGraphBuildInput, flatIndex: number): WorkflowNodeStatus {
-	return normalizeStatus(input.stepStatuses?.[flatIndex]?.status)
-		?? resultStatus(input.results?.[flatIndex])
-		?? (input.currentFlatIndex === flatIndex ? "running" : "pending");
+	return (
+		normalizeStatus(input.stepStatuses?.[flatIndex]?.status) ??
+		resultStatus(input.results?.[flatIndex]) ??
+		(input.currentFlatIndex === flatIndex ? "running" : "pending")
+	);
 }
 
 function pushPhase(phases: WorkflowGraphSnapshot["phases"], phase: string | undefined, nodeId: string): void {
@@ -135,7 +145,8 @@ export function buildWorkflowGraphSnapshot(input: WorkflowGraphBuildInput): Work
 			error: input.stepStatuses?.[flatIndex]?.error ?? input.results?.[flatIndex]?.error,
 		});
 		pushPhase(phases, seq.phase, id);
-		if (status === "running" || input.currentFlatIndex === flatIndex || input.currentStepIndex === stepIndex) currentNodeId = id;
+		if (status === "running" || input.currentFlatIndex === flatIndex || input.currentStepIndex === stepIndex)
+			currentNodeId = id;
 		flatIndex++;
 	}
 

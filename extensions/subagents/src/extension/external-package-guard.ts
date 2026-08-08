@@ -86,17 +86,16 @@ export function externalSubagentPackageIdentity(entry: unknown): string | undefi
 	const source = packageSourceOf(entry)?.trim();
 	if (!source) return undefined;
 	if (source.startsWith("npm:")) return npmIdentity(source);
-	if (
-		source.startsWith("git:")
-		|| /^(https?|ssh|git):\/\//i.test(source)
-		|| source.startsWith("git@")
-	) {
+	if (source.startsWith("git:") || /^(https?|ssh|git):\/\//i.test(source) || source.startsWith("git@")) {
 		return gitIdentity(source);
 	}
 	return undefined;
 }
 
-function settingsMatches(settingsPath: string, scope: ExternalSubagentPackageMatch["scope"]): ExternalSubagentPackageMatch[] {
+function settingsMatches(
+	settingsPath: string,
+	scope: ExternalSubagentPackageMatch["scope"],
+): ExternalSubagentPackageMatch[] {
 	let settings: unknown;
 	try {
 		settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
@@ -126,10 +125,7 @@ export function findConfiguredExternalSubagentPackages(options: {
 	// Project trust is only available later through an event context. Conservatively
 	// defer for a configured project entry rather than risk duplicate registration.
 	const projectSettingsPath = path.join(options.cwd, options.configDirName, "settings.json");
-	return [
-		...settingsMatches(userSettingsPath, "user"),
-		...settingsMatches(projectSettingsPath, "project"),
-	];
+	return [...settingsMatches(userSettingsPath, "user"), ...settingsMatches(projectSettingsPath, "project")];
 }
 
 export function externalSubagentCoexistenceWarning(matches: readonly ExternalSubagentPackageMatch[]): string {

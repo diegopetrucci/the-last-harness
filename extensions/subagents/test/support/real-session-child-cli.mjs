@@ -3,11 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import {
-	fauxAssistantMessage,
-	fauxText,
-	fauxProvider,
-} from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxText, fauxProvider } from "@earendil-works/pi-ai";
 import {
 	createAgentSession,
 	DefaultResourceLoader,
@@ -53,7 +49,10 @@ function parseArgs(argv) {
 			continue;
 		}
 		if (arg === "--tools") {
-			parsed.tools = (argv[++i] ?? "").split(",").map((tool) => tool.trim()).filter(Boolean);
+			parsed.tools = (argv[++i] ?? "")
+				.split(",")
+				.map((tool) => tool.trim())
+				.filter(Boolean);
 			continue;
 		}
 		if (arg === "--extension") {
@@ -113,9 +112,7 @@ async function main() {
 	const modelRuntime = await ModelRuntime.create({ modelsPath: null, authPath: path.join(agentDir, "auth.json") });
 	modelRuntime.registerNativeProvider(faux.provider);
 	const model = faux.getModel();
-	faux.setResponses([
-		() => fauxAssistantMessage(fauxText(responseText), { stopReason: "stop" }),
-	]);
+	faux.setResponses([() => fauxAssistantMessage(fauxText(responseText), { stopReason: "stop" })]);
 
 	const settingsManager = SettingsManager.inMemory({
 		compaction: { enabled: false },
@@ -139,10 +136,13 @@ async function main() {
 		const extensionEvidencePath = process.env.PI_SUBAGENTS_E2E_EXTENSIONS_FILE;
 		if (extensionEvidencePath) {
 			const loadedExtensions = loader.getExtensions();
-			fs.writeFileSync(extensionEvidencePath, `${JSON.stringify({
-				errors: loadedExtensions.errors,
-				resolvedPaths: loadedExtensions.extensions.map((extension) => extension.resolvedPath),
-			})}\n`);
+			fs.writeFileSync(
+				extensionEvidencePath,
+				`${JSON.stringify({
+					errors: loadedExtensions.errors,
+					resolvedPaths: loadedExtensions.extensions.map((extension) => extension.resolvedPath),
+				})}\n`,
+			);
 		}
 		const { session } = await createAgentSession({
 			cwd,
@@ -157,10 +157,10 @@ async function main() {
 
 		session.subscribe((event) => {
 			if (
-				event.type === "message_end"
-				|| event.type === "tool_execution_start"
-				|| event.type === "tool_execution_end"
-				|| event.type === "tool_result_end"
+				event.type === "message_end" ||
+				event.type === "tool_execution_start" ||
+				event.type === "tool_execution_end" ||
+				event.type === "tool_result_end"
 			) {
 				process.stdout.write(`${JSON.stringify(event)}\n`);
 			}

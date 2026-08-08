@@ -61,18 +61,24 @@ type ToolMutationCapability = { kind: "mutation-capable" } | { kind: "read-only"
 
 function toolMutationCapability(tools: string[] | undefined): ToolMutationCapability {
 	if (tools === undefined || tools.length === 0) return { kind: "mutation-capable" };
-	return tools.every((tool) => READ_ONLY_BUILTIN_TOOLS.has(tool)) ? { kind: "read-only" } : { kind: "mutation-capable" };
+	return tools.every((tool) => READ_ONLY_BUILTIN_TOOLS.has(tool))
+		? { kind: "read-only" }
+		: { kind: "mutation-capable" };
 }
 
 function isConditionalValidationNoSourceChangeTask(task: string): boolean {
-	return VALIDATION_ONLY_TASK_PATTERNS.some((pattern) => pattern.test(task))
-		&& CONDITIONAL_NO_SOURCE_CHANGE_PATTERNS.some((pattern) => pattern.test(task))
-		&& VALIDATION_CONDITIONAL_MUTATION_PATTERNS.some((pattern) => pattern.test(task));
+	return (
+		VALIDATION_ONLY_TASK_PATTERNS.some((pattern) => pattern.test(task)) &&
+		CONDITIONAL_NO_SOURCE_CHANGE_PATTERNS.some((pattern) => pattern.test(task)) &&
+		VALIDATION_CONDITIONAL_MUTATION_PATTERNS.some((pattern) => pattern.test(task))
+	);
 }
 
 function hasExplicitNonSourceEditRequest(task: string): boolean {
-	return NON_SOURCE_EDIT_TARGET_PATTERNS.some((pattern) => pattern.test(task))
-		&& NON_SOURCE_EDIT_REQUEST_PATTERNS.some((pattern) => pattern.test(task));
+	return (
+		NON_SOURCE_EDIT_TARGET_PATTERNS.some((pattern) => pattern.test(task)) &&
+		NON_SOURCE_EDIT_REQUEST_PATTERNS.some((pattern) => pattern.test(task))
+	);
 }
 
 function localAgentName(agent: string): string {
@@ -81,8 +87,7 @@ function localAgentName(agent: string): string {
 }
 
 export function expectsImplementationMutation(agent: string, task: string): boolean {
-	if (isConditionalValidationNoSourceChangeTask(task)
-		&& !hasExplicitNonSourceEditRequest(task)) return false;
+	if (isConditionalValidationNoSourceChangeTask(task) && !hasExplicitNonSourceEditRequest(task)) return false;
 	return sharedExpectsImplementationMutation(localAgentName(agent), task);
 }
 
@@ -93,9 +98,10 @@ export function hasMutationToolCall(messages: Message[]): boolean {
 			if (part.type !== "toolCall") continue;
 			if (part.name === "edit" || part.name === "write") return true;
 			if (part.name !== "bash") continue;
-			const args = typeof part.arguments === "object" && part.arguments !== null && !Array.isArray(part.arguments)
-				? part.arguments as Record<string, unknown>
-				: {};
+			const args =
+				typeof part.arguments === "object" && part.arguments !== null && !Array.isArray(part.arguments)
+					? (part.arguments as Record<string, unknown>)
+					: {};
 			if (typeof args.command === "string" && isMutatingBashCommand(args.command)) return true;
 		}
 	}
@@ -103,9 +109,10 @@ export function hasMutationToolCall(messages: Message[]): boolean {
 }
 
 export function evaluateCompletionMutationGuard(input: CompletionMutationGuardInput): CompletionMutationGuardResult {
-	const expectedMutation = toolMutationCapability(input.tools).kind === "read-only"
-		? false
-		: expectsImplementationMutation(input.agent, input.task);
+	const expectedMutation =
+		toolMutationCapability(input.tools).kind === "read-only"
+			? false
+			: expectsImplementationMutation(input.agent, input.task);
 	const attemptedMutation = hasMutationToolCall(input.messages);
 	return {
 		expectedMutation,

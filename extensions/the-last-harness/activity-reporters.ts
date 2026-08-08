@@ -323,13 +323,16 @@ export function createHerdrActivityReporter(options: HerdrActivityReporterOption
 		await sendRequest({
 			id: `${HERDR_SOURCE}:${now()}:${Math.random().toString(36).slice(2)}`,
 			method: "pane.report_agent",
-			params: withSessionRef({
-				pane_id: paneId,
-				source: HERDR_SOURCE,
-				agent: HERDR_AGENT,
-				state,
-				seq: nextReportSeq(),
-			}, sessionRef),
+			params: withSessionRef(
+				{
+					pane_id: paneId,
+					source: HERDR_SOURCE,
+					agent: HERDR_AGENT,
+					state,
+					seq: nextReportSeq(),
+				},
+				sessionRef,
+			),
 		});
 	};
 
@@ -359,9 +362,11 @@ export function createHerdrActivityReporter(options: HerdrActivityReporterOption
 			});
 			// A heartbeat failure must not break the outbound chain; schedule the
 			// next recovery attempt only after this delivery settles.
-			void heartbeatDelivery.catch(() => undefined).finally(() => {
-				if (!heartbeatStopped && rootSession && !disposed) scheduleHeartbeat();
-			});
+			void heartbeatDelivery
+				.catch(() => undefined)
+				.finally(() => {
+					if (!heartbeatStopped && rootSession && !disposed) scheduleHeartbeat();
+				});
 		}, heartbeatIntervalMs);
 		(heartbeatTimer as { unref?: () => void }).unref?.();
 	};
@@ -382,14 +387,19 @@ export function createHerdrActivityReporter(options: HerdrActivityReporterOption
 		});
 	};
 
-	const queuedReporter = createQueuedStateReporter(sendState, {
-		idleDebounceMs: options.idleDebounceMs ?? parseDurationEnv(env, "HERDR_TLH_IDLE_DEBOUNCE_MS", DEFAULT_IDLE_DEBOUNCE_MS),
-		timers: options.timers,
-	}, (state) => {
-		// This callback runs only when the queued reporter commits a transition,
-		// so idle remains debounced while outbound tasks can read the latest state.
-		desiredState = state;
-	});
+	const queuedReporter = createQueuedStateReporter(
+		sendState,
+		{
+			idleDebounceMs:
+				options.idleDebounceMs ?? parseDurationEnv(env, "HERDR_TLH_IDLE_DEBOUNCE_MS", DEFAULT_IDLE_DEBOUNCE_MS),
+			timers: options.timers,
+		},
+		(state) => {
+			// This callback runs only when the queued reporter commits a transition,
+			// so idle remains debounced while outbound tasks can read the latest state.
+			desiredState = state;
+		},
+	);
 
 	return {
 		handleSessionStart(ctx) {
@@ -404,12 +414,15 @@ export function createHerdrActivityReporter(options: HerdrActivityReporterOption
 			void sendRequest({
 				id: `${HERDR_SOURCE}:session:${now()}:${Math.random().toString(36).slice(2)}`,
 				method: "pane.report_agent_session",
-				params: withSessionRef({
-					pane_id: paneId,
-					source: HERDR_SOURCE,
-					agent: HERDR_AGENT,
-					seq: nextReportSeq(),
-				}, startedSessionRef),
+				params: withSessionRef(
+					{
+						pane_id: paneId,
+						source: HERDR_SOURCE,
+						agent: HERDR_AGENT,
+						seq: nextReportSeq(),
+					},
+					startedSessionRef,
+				),
 			}).catch(() => undefined);
 		},
 		handleSnapshot(snapshot) {
@@ -471,11 +484,9 @@ function sanitizeCmuxStatusKeySegment(value: string): string | undefined {
 	return sanitized.length > 0 ? sanitized : undefined;
 }
 
-function getCmuxStatusKey(
-	env: NodeJS.ProcessEnv,
-	ctx: Pick<ExtensionContext, "sessionManager">,
-): string {
-	const surfaceSegment = typeof env.CMUX_SURFACE_ID === "string" ? sanitizeCmuxStatusKeySegment(env.CMUX_SURFACE_ID) : undefined;
+function getCmuxStatusKey(env: NodeJS.ProcessEnv, ctx: Pick<ExtensionContext, "sessionManager">): string {
+	const surfaceSegment =
+		typeof env.CMUX_SURFACE_ID === "string" ? sanitizeCmuxStatusKeySegment(env.CMUX_SURFACE_ID) : undefined;
 	if (surfaceSegment) {
 		return `${CMUX_STATUS_KEY}-${surfaceSegment}`;
 	}

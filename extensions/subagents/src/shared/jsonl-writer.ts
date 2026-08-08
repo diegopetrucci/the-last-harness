@@ -35,7 +35,8 @@ export function createJsonlWriter(
 		};
 	}
 
-	const createWriteStream = deps.createWriteStream ?? ((targetPath: string) => fs.createWriteStream(targetPath, { flags: "a" }));
+	const createWriteStream =
+		deps.createWriteStream ?? ((targetPath: string) => fs.createWriteStream(targetPath, { flags: "a" }));
 	let stream: JsonlWriteStream | undefined;
 	try {
 		stream = createWriteStream(filePath);
@@ -68,7 +69,9 @@ export function createJsonlWriter(
 						if (!closed) source.resume();
 					});
 				}
-			} catch { void 0; }
+			} catch {
+				void 0;
+			}
 		},
 		async close() {
 			if (!stream || closed) return;

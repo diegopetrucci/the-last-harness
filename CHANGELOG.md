@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Repository linting and formatting now use Biome 2.5.7 (replacing ESLint). `npm run lint` runs `biome check` in non-mutating mode; `npm run lint:sh` and ShellCheck are unchanged. Formatter settings: `lineWidth: 120`, `indentStyle: tab`, `quoteStyle: double`. Import sorting is not enforced: enabling it would reorder imports in the 113 tsc-generated `.js` mirrors under `extensions/` and permanently fight `npm run check:runtime`, which rebuilds those mirrors from the `.ts` sources. Nine ESLint rules are no longer enforced: seven have no Biome equivalent (the two most meaningful are `no-invalid-regexp` and `no-useless-assignment`), and two were deliberately left disabled because their Biome counterparts are semantically broader (`no-empty` / `noEmptyBlockStatements` and `no-cond-assign` / `noAssignInExpressions`).
+
 ## [0.34.0] - 2026-08-07
 
 ### Added

@@ -1,6 +1,15 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdtempSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir as systemTmpDir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -42,7 +51,9 @@ function resolveConfiguredTargets(repoRoot) {
 			return {
 				id: "scripts",
 				label: "scripts/**/*.mts",
-				sourceDir: realpathSync(resolveOverridePath(process.env.TLH_RUNTIME_TYPESCRIPT_SCRIPTS_DIR, join(repoRoot, "scripts"))),
+				sourceDir: realpathSync(
+					resolveOverridePath(process.env.TLH_RUNTIME_TYPESCRIPT_SCRIPTS_DIR, join(repoRoot, "scripts")),
+				),
 				tsconfigPath: realpathSync(
 					resolveOverridePath(
 						process.env.TLH_RUNTIME_TYPESCRIPT_SCRIPTS_TSCONFIG ?? process.env.TLH_RUNTIME_TYPESCRIPT_TSCONFIG,
@@ -58,9 +69,17 @@ function resolveConfiguredTargets(repoRoot) {
 			return {
 				id: "subagents",
 				label: "extensions/subagents/src/**/*.ts",
-				sourceDir: realpathSync(resolveOverridePath(process.env.TLH_RUNTIME_TYPESCRIPT_SUBAGENTS_DIR, join(repoRoot, "extensions/subagents/src"))),
+				sourceDir: realpathSync(
+					resolveOverridePath(
+						process.env.TLH_RUNTIME_TYPESCRIPT_SUBAGENTS_DIR,
+						join(repoRoot, "extensions/subagents/src"),
+					),
+				),
 				tsconfigPath: realpathSync(
-					resolveOverridePath(process.env.TLH_RUNTIME_TYPESCRIPT_SUBAGENTS_TSCONFIG, join(repoRoot, "tsconfig.runtime-subagents.json")),
+					resolveOverridePath(
+						process.env.TLH_RUNTIME_TYPESCRIPT_SUBAGENTS_TSCONFIG,
+						join(repoRoot, "tsconfig.runtime-subagents.json"),
+					),
 				),
 				sourceExtension: ".ts",
 				outputExtension: ".js",
@@ -70,9 +89,14 @@ function resolveConfiguredTargets(repoRoot) {
 		return {
 			id: "extensions",
 			label: "extensions/**/*.ts",
-			sourceDir: realpathSync(resolveOverridePath(process.env.TLH_RUNTIME_TYPESCRIPT_EXTENSIONS_DIR, join(repoRoot, "extensions"))),
+			sourceDir: realpathSync(
+				resolveOverridePath(process.env.TLH_RUNTIME_TYPESCRIPT_EXTENSIONS_DIR, join(repoRoot, "extensions")),
+			),
 			tsconfigPath: realpathSync(
-				resolveOverridePath(process.env.TLH_RUNTIME_TYPESCRIPT_EXTENSIONS_TSCONFIG, join(repoRoot, "tsconfig.runtime-extensions.json")),
+				resolveOverridePath(
+					process.env.TLH_RUNTIME_TYPESCRIPT_EXTENSIONS_TSCONFIG,
+					join(repoRoot, "tsconfig.runtime-extensions.json"),
+				),
 			),
 			sourceExtension: ".ts",
 			outputExtension: ".js",
@@ -190,18 +214,31 @@ function sourcePathForRuntimeOutput(repoRoot, target, relativeOutputPath) {
 function listRegisteredTargetOutputs(config, target) {
 	const targetRootPrefix = `${relativeRepoPath(target.sourceDir, config.repoRoot)}/`;
 	return [...config.generatedOutputRegistry]
-		.filter((relativePath) => relativePath.startsWith(targetRootPrefix) && relativePath.endsWith(target.outputExtension))
-		.filter((relativePath) => !(target.excludedSourceDirs ?? []).some((excludedSourceDir) =>
-			pathWithinOrEqual(excludedSourceDir, join(config.repoRoot, relativePath))))
+		.filter(
+			(relativePath) => relativePath.startsWith(targetRootPrefix) && relativePath.endsWith(target.outputExtension),
+		)
+		.filter(
+			(relativePath) =>
+				!(target.excludedSourceDirs ?? []).some((excludedSourceDir) =>
+					pathWithinOrEqual(excludedSourceDir, join(config.repoRoot, relativePath)),
+				),
+		)
 		.sort();
 }
 
 function inspectGeneratedOutputRegistry(config, target, sources) {
 	const registeredOutputs = listRegisteredTargetOutputs(config, target);
-	const expectedOutputPaths = sources.map((sourcePath) => relativeRepoPath(runtimeOutputPathForSource(sourcePath, target.sourceExtension, target.outputExtension), config.repoRoot));
+	const expectedOutputPaths = sources.map((sourcePath) =>
+		relativeRepoPath(
+			runtimeOutputPathForSource(sourcePath, target.sourceExtension, target.outputExtension),
+			config.repoRoot,
+		),
+	);
 	const registeredOutputSet = new Set(registeredOutputs);
 	const unregisteredOutputs = expectedOutputPaths.filter((outputPath) => !registeredOutputSet.has(outputPath));
-	const orphanOutputPaths = registeredOutputs.filter((outputPath) => !existsSync(sourcePathForRuntimeOutput(config.repoRoot, target, outputPath)));
+	const orphanOutputPaths = registeredOutputs.filter(
+		(outputPath) => !existsSync(sourcePathForRuntimeOutput(config.repoRoot, target, outputPath)),
+	);
 	const shippingOrphanOutputs = orphanOutputPaths.filter((outputPath) => existsSync(join(config.repoRoot, outputPath)));
 
 	return {
@@ -211,7 +248,10 @@ function inspectGeneratedOutputRegistry(config, target, sources) {
 }
 
 function reportRegistryProblems(target, registryProblems, { includeOrphans }) {
-	if (registryProblems.unregisteredOutputs.length === 0 && (!includeOrphans || registryProblems.shippingOrphanOutputs.length === 0)) {
+	if (
+		registryProblems.unregisteredOutputs.length === 0 &&
+		(!includeOrphans || registryProblems.shippingOrphanOutputs.length === 0)
+	) {
 		return false;
 	}
 
@@ -392,7 +432,9 @@ function main() {
 			return status;
 		}
 	}
-	console.log(`Generated runtime outputs are fresh (${totalSourceCount} files across ${targetsWithSources.length} target${targetsWithSources.length === 1 ? "" : "s"}).`);
+	console.log(
+		`Generated runtime outputs are fresh (${totalSourceCount} files across ${targetsWithSources.length} target${targetsWithSources.length === 1 ? "" : "s"}).`,
+	);
 	return 0;
 }
 

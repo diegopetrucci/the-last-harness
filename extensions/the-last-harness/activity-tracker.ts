@@ -144,7 +144,9 @@ function readRunningAsyncJob(asyncDir: string): { runId: string; sessionId?: str
 	};
 }
 
-export function createTlhEffectiveActivityTracker(options: TlhEffectiveActivityTrackerOptions = {}): TlhEffectiveActivityTracker {
+export function createTlhEffectiveActivityTracker(
+	options: TlhEffectiveActivityTrackerOptions = {},
+): TlhEffectiveActivityTracker {
 	const asyncDir = options.asyncDir ?? resolveDefaultAsyncDir();
 	const now = options.now ?? Date.now;
 	const setTimeoutImpl = options.setTimeout ?? setTimeout;
@@ -246,11 +248,10 @@ export function createTlhEffectiveActivityTracker(options: TlhEffectiveActivityT
 		activeAsyncJobIds: [...activeAsyncJobs.keys()].sort(),
 	});
 
-	const snapshotKey = (snapshot: TlhEffectiveActivitySnapshot): string => [
-		snapshot.inProgress ? "1" : "0",
-		snapshot.primaryReasons.join(","),
-		snapshot.activeAsyncJobIds.join(","),
-	].join("::");
+	const snapshotKey = (snapshot: TlhEffectiveActivitySnapshot): string =>
+		[snapshot.inProgress ? "1" : "0", snapshot.primaryReasons.join(","), snapshot.activeAsyncJobIds.join(",")].join(
+			"::",
+		);
 
 	const notifyIfChanged = (): void => {
 		const snapshot = buildSnapshot();
@@ -381,17 +382,23 @@ export function createTlhEffectiveActivityTracker(options: TlhEffectiveActivityT
 		},
 		handleAsyncComplete(data) {
 			if (!isRecord(data)) return;
-			const runId = typeof data.id === "string" && data.id.length > 0
-				? data.id
-				: typeof data.runId === "string" && data.runId.length > 0
-					? data.runId
-					: undefined;
+			const runId =
+				typeof data.id === "string" && data.id.length > 0
+					? data.id
+					: typeof data.runId === "string" && data.runId.length > 0
+						? data.runId
+						: undefined;
 			if (!runId) return;
 			markAsyncJobComplete(runId);
 			notifyIfChanged();
 		},
 		handleAsyncControl(data) {
-			if (!isRecord(data) || !isRecord(data.event) || typeof data.event.runId !== "string" || data.event.runId.length === 0) {
+			if (
+				!isRecord(data) ||
+				!isRecord(data.event) ||
+				typeof data.event.runId !== "string" ||
+				data.event.runId.length === 0
+			) {
 				return;
 			}
 			if (!isAsyncControlContext(data, data.event)) {
@@ -412,10 +419,10 @@ export function registerTlhEffectiveActivityTracker(
 	const tracker = createTlhEffectiveActivityTracker();
 	const unsubscribes = pi.events
 		? [
-			pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, (data) => tracker.handleAsyncStarted(data)),
-			pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (data) => tracker.handleAsyncComplete(data)),
-			pi.events.on(SUBAGENT_CONTROL_EVENT, (data) => tracker.handleAsyncControl(data)),
-		]
+				pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, (data) => tracker.handleAsyncStarted(data)),
+				pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (data) => tracker.handleAsyncComplete(data)),
+				pi.events.on(SUBAGENT_CONTROL_EVENT, (data) => tracker.handleAsyncControl(data)),
+			]
 		: [];
 
 	pi.on("session_start", (_event, ctx) => {

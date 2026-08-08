@@ -237,11 +237,7 @@ function findSessionFiles(dir: string): DiscoveryResult {
 			const sub = findSessionFiles(fullPath);
 			files.push(...sub.files);
 			unreadableDirectories += sub.unreadableDirectories;
-		} else if (
-			entry.isFile() &&
-			entry.name.endsWith(".jsonl") &&
-			entry.name !== RUN_HISTORY_FILENAME
-		) {
+		} else if (entry.isFile() && entry.name.endsWith(".jsonl") && entry.name !== RUN_HISTORY_FILENAME) {
 			files.push(fullPath);
 		}
 	}
@@ -381,9 +377,7 @@ async function buildPerSessionOutput(
 	includePaths: boolean,
 	profileSource: ProfileSource,
 ): Promise<PerSessionOutput> {
-	const sessions = await Promise.all(
-		scanResults.map((r) => buildSessionRecord(r, sessionsDir, includePaths)),
-	);
+	const sessions = await Promise.all(scanResults.map((r) => buildSessionRecord(r, sessionsDir, includePaths)));
 	return {
 		schemaVersion: SCHEMA_VERSION,
 		mode: "per-session",
@@ -495,14 +489,7 @@ async function main(): Promise<void> {
 
 	let output: PerSessionOutput | PerToolOutput;
 	if (args.mode === "per-tool") {
-		output = buildPerToolOutput(
-			scanResults,
-			coverage,
-			sessionsDir,
-			agentDir,
-			args.includePaths,
-			profileSource,
-		);
+		output = buildPerToolOutput(scanResults, coverage, sessionsDir, agentDir, args.includePaths, profileSource);
 	} else {
 		output = await buildPerSessionOutput(
 			scanResults,

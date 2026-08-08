@@ -178,7 +178,7 @@ function cleanupTempDir(tempDir, expectedTempDirIdentity, tempTarget, expectedTe
 }
 export function writeSafeProfileFile(config, relativePath, content, label = "TLH profile file", options = {}) {
     const target = safeProfileWriteTarget(config, relativePath, label, options);
-    const resolvedMode = options.mode ?? (existsSync(target) ? (lstatSync(target).mode & 0o777) : undefined);
+    const resolvedMode = options.mode ?? (existsSync(target) ? lstatSync(target).mode & 0o777 : undefined);
     const parent = dirname(target);
     const parentRelative = dirname(relativePath);
     const cleanupAncestry = captureCleanupAncestry(realpathForCompare(config.agentDir), parentRelative);

@@ -9,8 +9,14 @@ describe("buildCompletionKey", () => {
 	});
 
 	it("builds deterministic fallback key when id is missing", () => {
-		const a = buildCompletionKey({ agent: "reviewer", timestamp: 123, taskIndex: 1, totalTasks: 2, success: true }, "x");
-		const b = buildCompletionKey({ agent: "reviewer", timestamp: 123, taskIndex: 1, totalTasks: 2, success: true }, "x");
+		const a = buildCompletionKey(
+			{ agent: "reviewer", timestamp: 123, taskIndex: 1, totalTasks: 2, success: true },
+			"x",
+		);
+		const b = buildCompletionKey(
+			{ agent: "reviewer", timestamp: 123, taskIndex: 1, totalTasks: 2, success: true },
+			"x",
+		);
 		assert.equal(a, b);
 	});
 });

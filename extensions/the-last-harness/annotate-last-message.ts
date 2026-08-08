@@ -58,7 +58,8 @@ function isCancelPayload(value: unknown): value is AnnotateLastMessageCancelPayl
 	return typeof value === "object" && value != null && "type" in value && value.type === "cancel";
 }
 
-export const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION = "Open a native annotation window for the latest assistant message";
+export const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION =
+	"Open a native annotation window for the latest assistant message";
 
 export type AnnotateLastMessageCommand = {
 	handler: (_args: string, ctx: ExtensionCommandContext) => Promise<void>;

@@ -15,7 +15,9 @@ function sanitizeNestedResultChildren(value, resultPath, label) {
         console.error(`Ignoring invalid nested children in subagent result file '${resultPath}' at ${label}: expected an array.`);
         return undefined;
     }
-    const children = value.map((child) => sanitizeSummary(child)).filter((child) => Boolean(child));
+    const children = value
+        .map((child) => sanitizeSummary(child))
+        .filter((child) => Boolean(child));
     if (children.length !== value.length) {
         console.error(`Ignoring ${value.length - children.length} invalid nested child record(s) in subagent result file '${resultPath}' at ${label}.`);
     }
@@ -43,8 +45,8 @@ function resolveNativeWatchDir(fsApi, resultsDir) {
 }
 function resolveResultFileChildStatus(result, parentState) {
     const hasChildStatusMetadata = typeof result.success === "boolean" || typeof result.exitCode === "number";
-    const interrupted = result.interrupted === true
-        || (result.interrupted === undefined && parentState === "paused" && result.success === false && result.exitCode === 0);
+    const interrupted = result.interrupted === true ||
+        (result.interrupted === undefined && parentState === "paused" && result.success === false && result.exitCode === 0);
     return resolveSubagentResultStatus({
         interrupted,
         success: result.success,
@@ -56,9 +58,9 @@ function resolvePausedArtifactTargetIndex(data) {
     const children = Array.isArray(data.results) ? data.results : [];
     if (children.length <= 1)
         return 0;
-    const pausedChild = children.find((child) => resolveResultFileChildStatus(child, data.state) === "paused"
-        && typeof child.sessionFile === "string"
-        && child.sessionFile.length > 0);
+    const pausedChild = children.find((child) => resolveResultFileChildStatus(child, data.state) === "paused" &&
+        typeof child.sessionFile === "string" &&
+        child.sessionFile.length > 0);
     return pausedChild ? children.indexOf(pausedChild) : undefined;
 }
 function resolvePausedArtifactDecision(data) {
@@ -85,7 +87,9 @@ function resolvePausedArtifactDecision(data) {
             const continuation = lifecycleContinuationForIndex(status, targetIndex);
             if (continuation?.phase === "continued")
                 return "discard";
-            if (continuation?.phase === "claimed" || continuation?.phase === "reserved" || continuation?.phase === "launched")
+            if (continuation?.phase === "claimed" ||
+                continuation?.phase === "reserved" ||
+                continuation?.phase === "launched")
                 return "retry";
             if (!targetStep || targetStep.status === "paused")
                 return "notify";
@@ -130,11 +134,13 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
             const hasResultChildren = Array.isArray(data.results) && data.results.length > 0;
             const resultChildren = hasResultChildren
                 ? data.results
-                : [{
+                : [
+                    {
                         agent: data.agent,
                         output: data.summary,
                         success: data.success,
-                    }];
+                    },
+                ];
             const normalizedChildren = attachNestedChildrenToResultChildren(runId, resultChildren.map((result = {}, arrayIndex) => {
                 const baseOutput = result.output ?? data.summary;
                 const hasRealOutput = typeof baseOutput === "string" && baseOutput.trim().length > 0;
@@ -164,20 +170,22 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
                 ...data,
                 runId,
                 ...(nestedChildren?.length ? { nestedChildren } : {}),
-                ...(Array.isArray(data.results) ? {
-                    results: hasResultChildren
-                        ? normalizedChildren.map((child, index) => ({
-                            ...data.results[index],
-                            agent: child.agent,
-                            status: child.status,
-                            summary: child.summary,
-                            index: child.index,
-                            artifactPath: child.artifactPath,
-                            sessionPath: child.sessionPath,
-                            children: child.children,
-                        }))
-                        : [],
-                } : {}),
+                ...(Array.isArray(data.results)
+                    ? {
+                        results: hasResultChildren
+                            ? normalizedChildren.map((child, index) => ({
+                                ...data.results[index],
+                                agent: child.agent,
+                                status: child.status,
+                                summary: child.summary,
+                                index: child.index,
+                                artifactPath: child.artifactPath,
+                                sessionPath: child.sessionPath,
+                                children: child.children,
+                            }))
+                            : [],
+                    }
+                    : {}),
             });
             fsApi.unlinkSync(resultPath);
         }
@@ -192,7 +200,8 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
     }, 50);
     const primeExistingResults = () => {
         try {
-            fsApi.readdirSync(resultsDir)
+            fsApi
+                .readdirSync(resultsDir)
                 .filter((f) => f.endsWith(".json"))
                 .forEach((file) => state.resultFileCoalescer.schedule(file, 0));
         }

@@ -39,7 +39,10 @@ test("autocomplete hides configured slash commands only in slash-command-name co
 
 	const result = await provider.getSuggestions(["/q"], 0, 2, { signal: AbortSignal.abort() });
 
-	assert.deepEqual(result?.items.map((item) => item.value), ["investigate-revalidate-current", "tlh-changelog", "agent"]);
+	assert.deepEqual(
+		result?.items.map((item) => item.value),
+		["investigate-revalidate-current", "tlh-changelog", "agent"],
+	);
 });
 
 test("autocomplete keeps hidden commands outside slash-command-name context", async () => {
@@ -67,20 +70,22 @@ test("autocomplete keeps hidden commands outside slash-command-name context", as
 });
 
 test("autocomplete returns null when filtering removes every slash-command suggestion", async () => {
-	const provider = createTlhAutocompleteProvider(createProvider({
-		items: [
-			{ value: "changelog", label: "/changelog" },
-			{ value: "clone", label: "/clone" },
-			{ value: "import", label: "/import" },
-			{ value: "scoped-models", label: "/scoped-models" },
-			{ value: "subagent-cost", label: "/subagent-cost" },
-			{ value: "skill:librarian", label: "/skill:librarian" },
-			{ value: "websearch", label: "/websearch" },
-			{ value: "curator", label: "/curator" },
-			{ value: "search", label: "/search" },
-			{ value: "quiet-tools", label: "/quiet-tools" },
-		],
-	}));
+	const provider = createTlhAutocompleteProvider(
+		createProvider({
+			items: [
+				{ value: "changelog", label: "/changelog" },
+				{ value: "clone", label: "/clone" },
+				{ value: "import", label: "/import" },
+				{ value: "scoped-models", label: "/scoped-models" },
+				{ value: "subagent-cost", label: "/subagent-cost" },
+				{ value: "skill:librarian", label: "/skill:librarian" },
+				{ value: "websearch", label: "/websearch" },
+				{ value: "curator", label: "/curator" },
+				{ value: "search", label: "/search" },
+				{ value: "quiet-tools", label: "/quiet-tools" },
+			],
+		}),
+	);
 
 	const result = await provider.getSuggestions(["/quiet-tools"], 0, 13, { signal: AbortSignal.abort() });
 

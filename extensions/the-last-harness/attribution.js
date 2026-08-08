@@ -1,10 +1,18 @@
-import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { isRecord } from "./common.js";
 import { commandBasename, extractHereDocBodies, getEnvLeadingOptionParseResult, getProcessSubstitutionOutput, getWrappedShellCommand, getWrappedShellCommandFromTokens, isSupportedEnvCommand, MAX_WRAPPED_SHELL_GIT_COMMIT_RECURSION_DEPTH, normalizeShellCommandTokens, normalizeShellCommandTokensFromTokens, normalizeTrailingLineEnding, splitShellCommandSegments, stripLeadingOptionTerminator, stripLeadingShellCommandPrefixes, tokenizeShellWords, } from "./shell-parser.js";
 export const TLH_DEFAULT_COMMIT_ATTRIBUTION = `Co-authored-by: The Last Harness <hi@thelastharness.com>`;
 const TLH_GIT_COMMIT_ATTRIBUTION_PROMPT_HEADING = "## TLH Git Commit Attribution";
 const TLH_GIT_COMMIT_BLOCK_REASON = "Blocked TLH bash git commit because the commit message is missing the required TLH attribution footer.";
-const GIT_GLOBAL_OPTIONS_WITH_VALUES = new Set(["-C", "-c", "--config-env", "--git-dir", "--namespace", "--super-prefix", "--work-tree"]);
+const GIT_GLOBAL_OPTIONS_WITH_VALUES = new Set([
+    "-C",
+    "-c",
+    "--config-env",
+    "--git-dir",
+    "--namespace",
+    "--super-prefix",
+    "--work-tree",
+]);
 function normalizeTlhAttributionConfig(config) {
     if (!isRecord(config)) {
         return undefined;
@@ -337,8 +345,8 @@ function getWrappedShellGitCommitAttributionBlockReason(command, footer, depth =
         const commitArguments = getGitCommitArguments(trimmedSegment);
         const isObviousInlineGitCommit = commitArguments !== undefined && hasInlineLikeGitCommitMessageOrFileArgument(commitArguments);
         if (isObviousInlineGitCommit) {
-            if (areInlineGitCommitArgumentsAttributed(commitArguments, footer, trimmedSegment)
-                || areInlineGitCommitArgumentsAttributed(commitArguments, footer, effectiveSourceSegment)) {
+            if (areInlineGitCommitArgumentsAttributed(commitArguments, footer, trimmedSegment) ||
+                areInlineGitCommitArgumentsAttributed(commitArguments, footer, effectiveSourceSegment)) {
                 continue;
             }
             return buildTlhGitCommitAttributionBlockReason(footer);

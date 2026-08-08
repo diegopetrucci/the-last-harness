@@ -32,7 +32,11 @@ function uniqueTicketCandidates(candidates: Array<string | undefined>): string[]
 
 function ticketCommandCandidates(settings: TlhSettings, agentDir: string): string[] {
 	const agentRoot = resolve(expandHomePath(agentDir));
-	return uniqueTicketCandidates([configuredTicketInstallPath(settings.tlh?.tickets), join(agentRoot, "bin", "tk"), "tk"]);
+	return uniqueTicketCandidates([
+		configuredTicketInstallPath(settings.tlh?.tickets),
+		join(agentRoot, "bin", "tk"),
+		"tk",
+	]);
 }
 
 function hasTkCommandName(candidate: string): boolean {
@@ -48,7 +52,10 @@ export function validateTlhTicketCommand(command: string): boolean {
 
 function prependProcessPath(dir: string): void {
 	const currentPath = process.env.PATH || "";
-	const entries = currentPath.split(delimiter).filter(Boolean).filter((entry) => entry !== dir);
+	const entries = currentPath
+		.split(delimiter)
+		.filter(Boolean)
+		.filter((entry) => entry !== dir);
 	process.env.PATH = [dir, ...entries].join(delimiter);
 }
 

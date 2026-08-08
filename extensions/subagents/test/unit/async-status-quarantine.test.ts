@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { quarantineCorruptAsyncRun, QUARANTINED_ASYNC_RUNS_DIRNAME, type AsyncStatusQuarantineFs } from "../../src/runs/background/async-status-quarantine.ts";
+import {
+	quarantineCorruptAsyncRun,
+	QUARANTINED_ASYNC_RUNS_DIRNAME,
+	type AsyncStatusQuarantineFs,
+} from "../../src/runs/background/async-status-quarantine.ts";
 import { fingerprintAsyncStatusContent } from "../../src/runs/background/async-status-corruption.ts";
 import { createTempDir, removeTempDir } from "../support/helpers.ts";
 
@@ -83,7 +87,10 @@ describe("async status quarantine helper", () => {
 			assert.equal(result.outcome, "quarantined");
 			assert.equal(result.kind, "persisted_validation");
 			assert.equal(fs.existsSync(issue.asyncDir), false);
-			assert.equal(fs.existsSync(path.join(baseDir, QUARANTINED_ASYNC_RUNS_DIRNAME, "bad-session.validated", "status.json")), true);
+			assert.equal(
+				fs.existsSync(path.join(baseDir, QUARANTINED_ASYNC_RUNS_DIRNAME, "bad-session.validated", "status.json")),
+				true,
+			);
 		} finally {
 			removeTempDir(baseDir);
 		}
@@ -164,13 +171,17 @@ describe("async status quarantine helper", () => {
 			const issue = createIssue(asyncRoot, "repair-race", invalidContent, "persisted_validation");
 			fs.writeFileSync(issue.statusPath, repairedContent, "utf-8");
 
-			const repaired = quarantineCorruptAsyncRun(asyncRoot, {
-				...issue,
-				fingerprint: fingerprintAsyncStatusContent(repairedContent),
-			}, {
-				fs: createStableStatFs(issue.statusPath),
-				createUniqueSuffix: () => "repair",
-			});
+			const repaired = quarantineCorruptAsyncRun(
+				asyncRoot,
+				{
+					...issue,
+					fingerprint: fingerprintAsyncStatusContent(repairedContent),
+				},
+				{
+					fs: createStableStatFs(issue.statusPath),
+					createUniqueSuffix: () => "repair",
+				},
+			);
 			assert.deepEqual(repaired, {
 				outcome: "skipped",
 				reason: "repaired",
@@ -190,20 +201,24 @@ describe("async status quarantine helper", () => {
 			const asyncRoot = createAsyncRoot(baseDir);
 			const missingFingerprintIssue = createIssue(asyncRoot, "missing-fingerprint", "{bad json", "json_parse");
 			let missingFingerprintCalls = 0;
-			const missingFingerprint = quarantineCorruptAsyncRun(asyncRoot, {
-				...missingFingerprintIssue,
-				fingerprint: undefined,
-			}, {
-				fs: {
-					statSync: () => {
-						missingFingerprintCalls += 1;
-						return fs.statSync(missingFingerprintIssue.statusPath);
-					},
-					readFileSync: fs.readFileSync,
-					mkdirSync: fs.mkdirSync,
-					renameSync: fs.renameSync,
+			const missingFingerprint = quarantineCorruptAsyncRun(
+				asyncRoot,
+				{
+					...missingFingerprintIssue,
+					fingerprint: undefined,
 				},
-			});
+				{
+					fs: {
+						statSync: () => {
+							missingFingerprintCalls += 1;
+							return fs.statSync(missingFingerprintIssue.statusPath);
+						},
+						readFileSync: fs.readFileSync,
+						mkdirSync: fs.mkdirSync,
+						renameSync: fs.renameSync,
+					},
+				},
+			);
 			assert.deepEqual(missingFingerprint, {
 				outcome: "deferred",
 				reason: "missing_fingerprint",
@@ -215,23 +230,27 @@ describe("async status quarantine helper", () => {
 
 			const invalidPathIssue = createIssue(asyncRoot, "invalid-path", "{bad json", "json_parse");
 			let invalidPathMutations = 0;
-			const invalidPath = quarantineCorruptAsyncRun(asyncRoot, {
-				...invalidPathIssue,
-				asyncDir: path.join(baseDir, "escaped-run"),
-			}, {
-				fs: {
-					statSync: fs.statSync,
-					readFileSync: fs.readFileSync,
-					mkdirSync(...args) {
-						invalidPathMutations += 1;
-						return fs.mkdirSync(...args);
-					},
-					renameSync(...args) {
-						invalidPathMutations += 1;
-						return fs.renameSync(...args);
+			const invalidPath = quarantineCorruptAsyncRun(
+				asyncRoot,
+				{
+					...invalidPathIssue,
+					asyncDir: path.join(baseDir, "escaped-run"),
+				},
+				{
+					fs: {
+						statSync: fs.statSync,
+						readFileSync: fs.readFileSync,
+						mkdirSync(...args) {
+							invalidPathMutations += 1;
+							return fs.mkdirSync(...args);
+						},
+						renameSync(...args) {
+							invalidPathMutations += 1;
+							return fs.renameSync(...args);
+						},
 					},
 				},
-			});
+			);
 			assert.deepEqual(invalidPath, {
 				outcome: "failed",
 				reason: "invalid_path",
@@ -260,7 +279,10 @@ describe("async status quarantine helper", () => {
 					throw error;
 				},
 			};
-			const result = quarantineCorruptAsyncRun(asyncRoot, issue, { fs: failingFs, createUniqueSuffix: () => "rename-failure" });
+			const result = quarantineCorruptAsyncRun(asyncRoot, issue, {
+				fs: failingFs,
+				createUniqueSuffix: () => "rename-failure",
+			});
 			assert.deepEqual(result, {
 				outcome: "failed",
 				reason: "rename",

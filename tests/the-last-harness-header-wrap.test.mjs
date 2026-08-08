@@ -49,10 +49,7 @@ test("wrapped lines each start with the two-space indent", () => {
 
 	assert.ok(contentLines.length > 0, "Expected at least one indented content line");
 	for (const line of contentLines) {
-		assert.ok(
-			line.startsWith("  "),
-			`Content line missing leading two-space indent: ${JSON.stringify(line)}`,
-		);
+		assert.ok(line.startsWith("  "), `Content line missing leading two-space indent: ${JSON.stringify(line)}`);
 	}
 });
 
@@ -102,10 +99,7 @@ test("no rendered line exceeds terminal width when first item is near width", ()
 
 	for (const line of lines) {
 		const w = visibleWidth(line);
-		assert.ok(
-			w <= width,
-			`Line exceeded terminal width (${w} > ${width}): ${JSON.stringify(line)}`,
-		);
+		assert.ok(w <= width, `Line exceeded terminal width (${w} > ${width}): ${JSON.stringify(line)}`);
 	}
 });
 

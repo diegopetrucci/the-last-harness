@@ -22,16 +22,16 @@ function isLocalPackageSource(value: string | undefined): boolean {
 
 	const normalized = source.toLowerCase();
 	return (
-		normalized === "."
-		|| normalized === ".."
-		|| normalized === "~"
-		|| source.startsWith("./")
-		|| source.startsWith("../")
-		|| source.startsWith("~/")
-		|| source.startsWith("/")
-		|| source.startsWith("\\\\")
-		|| /^[A-Za-z]:[\\/]/.test(source)
-		|| normalized.startsWith("file:")
+		normalized === "." ||
+		normalized === ".." ||
+		normalized === "~" ||
+		source.startsWith("./") ||
+		source.startsWith("../") ||
+		source.startsWith("~/") ||
+		source.startsWith("/") ||
+		source.startsWith("\\\\") ||
+		/^[A-Za-z]:[\\/]/.test(source) ||
+		normalized.startsWith("file:")
 	);
 }
 

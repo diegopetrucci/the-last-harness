@@ -51,11 +51,7 @@ function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
 	return typeof error === "object" && error !== null && "code" in error;
 }
 
-function ensureSafeProfileRoot(
-	config: InstallerPathConfig,
-	label: string,
-	options: InstallerPathOptions,
-): string {
+function ensureSafeProfileRoot(config: InstallerPathConfig, label: string, options: InstallerPathOptions): string {
 	if (isSymlink(config.agentDir)) {
 		throw new Error(`refusing to write ${label} through symlinked TLH profile path: ${config.agentDir}`);
 	}
@@ -77,9 +73,10 @@ function safeProfileWriteTarget(
 	validateProfileRelativePath(relativePath, label);
 	const base = basename(relativePath);
 	const parentRelative = dirname(relativePath);
-	const parent = parentRelative === "."
-		? ensureSafeProfileRoot(config, `${label} parent directory`, options)
-		: ensureSafeProfileDir(config, parentRelative, `${label} parent directory`, options);
+	const parent =
+		parentRelative === "."
+			? ensureSafeProfileRoot(config, `${label} parent directory`, options)
+			: ensureSafeProfileDir(config, parentRelative, `${label} parent directory`, options);
 	const target = join(parent, base);
 	if (isSymlink(target)) {
 		throw new Error(`refusing to replace symlinked ${label}: ${target}`);
@@ -248,7 +245,7 @@ export function writeSafeProfileFile(
 	options: SafeProfileWriteOptions = {},
 ): string {
 	const target = safeProfileWriteTarget(config, relativePath, label, options);
-	const resolvedMode = options.mode ?? (existsSync(target) ? (lstatSync(target).mode & 0o777) : undefined);
+	const resolvedMode = options.mode ?? (existsSync(target) ? lstatSync(target).mode & 0o777 : undefined);
 	const parent = dirname(target);
 	const parentRelative = dirname(relativePath);
 	const cleanupAncestry = captureCleanupAncestry(realpathForCompare(config.agentDir), parentRelative);
@@ -270,22 +267,19 @@ export function writeSafeProfileFile(
 		if (verifiedTarget !== target) {
 			throw new Error(`refusing to replace moved ${label}: ${target}`);
 		}
-		assertTempArtifactIdentity(
-			tempDir,
-			expectedTempDirIdentity,
-			tempDirIdentity(tempDir, "commit"),
-			"temp directory",
-		);
-		assertTempArtifactIdentity(
-			tempTarget,
-			expectedTempTargetIdentity,
-			tempFileIdentity(tempTarget),
-			"temp file",
-		);
+		assertTempArtifactIdentity(tempDir, expectedTempDirIdentity, tempDirIdentity(tempDir, "commit"), "temp directory");
+		assertTempArtifactIdentity(tempTarget, expectedTempTargetIdentity, tempFileIdentity(tempTarget), "temp file");
 		renameSync(tempTarget, target);
 		committed = true;
 	} finally {
-		cleanupTempDir(tempDir, expectedTempDirIdentity, tempTarget, expectedTempTargetIdentity, committed, cleanupAncestry);
+		cleanupTempDir(
+			tempDir,
+			expectedTempDirIdentity,
+			tempTarget,
+			expectedTempTargetIdentity,
+			committed,
+			cleanupAncestry,
+		);
 	}
 
 	return target;

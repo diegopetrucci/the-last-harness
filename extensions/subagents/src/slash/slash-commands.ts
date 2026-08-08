@@ -46,7 +46,14 @@ function addUsage(target: Usage, source: Usage): void {
 }
 
 function usageHasValue(usage: Usage): boolean {
-	return usage.input !== 0 || usage.output !== 0 || usage.cacheRead !== 0 || usage.cacheWrite !== 0 || usage.cost !== 0 || usage.turns !== 0;
+	return (
+		usage.input !== 0 ||
+		usage.output !== 0 ||
+		usage.cacheRead !== 0 ||
+		usage.cacheWrite !== 0 ||
+		usage.cost !== 0 ||
+		usage.turns !== 0
+	);
 }
 
 function assistantUsageFromMessage(message: unknown): Usage | undefined {
@@ -122,11 +129,7 @@ function buildSubagentCostReport(ctx: ExtensionContext): string {
 	}
 	addUsage(total, parent);
 	addUsage(total, childTotal);
-	const lines = [
-		"Subagent cost",
-		"",
-		formatCostUsage("Parent", parent),
-	];
+	const lines = ["Subagent cost", "", formatCostUsage("Parent", parent)];
 	if (children.length === 0) {
 		lines.push("No subagent child usage found in this session.");
 	} else {
@@ -151,9 +154,9 @@ async function requestSlashRun(
 
 		const startTimeoutMs = 15_000;
 		const startTimeout = setTimeout(() => {
-			finish(() => reject(new Error(
-				"Slash subagent bridge did not start within 15s. Ensure the extension is loaded correctly.",
-			)));
+			finish(() =>
+				reject(new Error("Slash subagent bridge did not start within 15s. Ensure the extension is loaded correctly.")),
+			);
 		}, startTimeoutMs);
 
 		const onStarted = (data: unknown) => {
@@ -185,11 +188,11 @@ async function requestSlashRun(
 
 		const onTerminalInput = ctx.hasUI
 			? ctx.ui.onTerminalInput((input) => {
-				if (!matchesKey(input, Key.escape)) return undefined;
-				pi.events.emit(SLASH_SUBAGENT_CANCEL_EVENT, { requestId });
-				finish(() => reject(new Error("Cancelled")));
-				return { consume: true };
-			})
+					if (!matchesKey(input, Key.escape)) return undefined;
+					pi.events.emit(SLASH_SUBAGENT_CANCEL_EVENT, { requestId });
+					finish(() => reject(new Error("Cancelled")));
+					return { consume: true };
+				})
 			: undefined;
 
 		const unsubStarted = pi.events.on(SLASH_SUBAGENT_STARTED_EVENT, onStarted);
@@ -213,9 +216,9 @@ async function requestSlashRun(
 		// If not started, no bridge received the request.
 		if (!started && done) return;
 		if (!started) {
-			finish(() => reject(new Error(
-				"No slash subagent bridge responded. Ensure the subagent extension is loaded correctly.",
-			)));
+			finish(() =>
+				reject(new Error("No slash subagent bridge responded. Ensure the subagent extension is loaded correctly.")),
+			);
 		}
 	});
 }
@@ -234,9 +237,7 @@ function formatExportPathList(paths: string[]): string {
 }
 
 function collectResultPaths(results: SingleResult[], getPath: (result: SingleResult) => string | undefined): string[] {
-	return results
-		.map(getPath)
-		.filter((file): file is string => typeof file === "string" && file.length > 0);
+	return results.map(getPath).filter((file): file is string => typeof file === "string" && file.length > 0);
 }
 
 function buildSlashExportText(response: SlashSubagentResponse): string {
@@ -269,11 +270,7 @@ function persistSlashSessionSnapshot(ctx: ExtensionContext): void {
 	}
 }
 
-async function runSlashSubagent(
-	pi: ExtensionAPI,
-	ctx: ExtensionContext,
-	params: SubagentParamsLike,
-): Promise<void> {
+async function runSlashSubagent(pi: ExtensionAPI, ctx: ExtensionContext, params: SubagentParamsLike): Promise<void> {
 	const requestId = randomUUID();
 	const initialDetails = buildSlashInitialResult(requestId, params);
 	const initialText = extractSlashMessageText(initialDetails.result.content) || "Running subagent...";
@@ -322,10 +319,7 @@ async function runSlashSubagent(
 	}
 }
 
-export function registerSlashCommands(
-	pi: ExtensionAPI,
-	state: SubagentState,
-): void {
+export function registerSlashCommands(pi: ExtensionAPI, state: SubagentState): void {
 	pi.registerCommand("subagent-cost", {
 		description: "Show parent and subagent child usage cost for this session",
 		handler: async (_args, ctx) => {

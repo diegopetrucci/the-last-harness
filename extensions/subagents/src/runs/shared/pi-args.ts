@@ -4,12 +4,21 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "./structured-output.ts";
 import { TEMP_ROOT_DIR, type JsonSchemaObject, type ResolvedToolBudget } from "../../shared/types.ts";
-import { findModelInfo, getSupportedThinkingLevels, THINKING_LEVELS, type ModelInfo, type ThinkingLevel } from "../../shared/model-info.ts";
+import {
+	findModelInfo,
+	getSupportedThinkingLevels,
+	THINKING_LEVELS,
+	type ModelInfo,
+	type ThinkingLevel,
+} from "../../shared/model-info.ts";
 import { TOOL_BUDGET_ENV, encodeToolBudgetEnv } from "./tool-budget.ts";
 
 const TASK_ARG_LIMIT = 8000;
 const RUNTIME_EXTENSION_SUFFIX = path.extname(fileURLToPath(import.meta.url)) === ".ts" ? ".ts" : ".js";
-const PROMPT_RUNTIME_EXTENSION_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), `subagent-prompt-runtime${RUNTIME_EXTENSION_SUFFIX}`);
+const PROMPT_RUNTIME_EXTENSION_PATH = path.join(
+	path.dirname(fileURLToPath(import.meta.url)),
+	`subagent-prompt-runtime${RUNTIME_EXTENSION_SUFFIX}`,
+);
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 export const SUBAGENT_ORCHESTRATOR_TARGET_ENV = "PI_SUBAGENT_ORCHESTRATOR_TARGET";
 export const SUBAGENT_BLOCKING_SUPERVISOR_REPLY_PATH_ENV = "PI_SUBAGENT_BLOCKING_SUPERVISOR_REPLY_PATH";
@@ -73,11 +82,20 @@ interface BuildPiArgsResult {
 }
 
 function sanitizeSupervisorChannelSegment(value: string): string {
-	return value.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "unknown";
+	return (
+		value
+			.trim()
+			.replace(/[^A-Za-z0-9._-]+/g, "-")
+			.replace(/^-+|-+$/g, "") || "unknown"
+	);
 }
 
 function supervisorChannelDir(runId: string, agent: string, childIndex: number): string {
-	return path.join(TEMP_ROOT_DIR, "supervisor-channels", `${sanitizeSupervisorChannelSegment(runId)}-${sanitizeSupervisorChannelSegment(agent)}-${childIndex}`);
+	return path.join(
+		TEMP_ROOT_DIR,
+		"supervisor-channels",
+		`${sanitizeSupervisorChannelSegment(runId)}-${sanitizeSupervisorChannelSegment(agent)}-${childIndex}`,
+	);
 }
 
 export interface ThinkingSuffixOptions {
@@ -154,15 +172,20 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		args.push("--model", modelArg);
 	}
 
-	const declaredBuiltinToolsBase = input.tools?.filter((tool) => !(tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js"))) ?? [];
-	const declaredBuiltinTools = input.requireReadTool && input.tools?.length && !declaredBuiltinToolsBase.includes("read")
-		? ["read", ...declaredBuiltinToolsBase]
-		: declaredBuiltinToolsBase;
+	const declaredBuiltinToolsBase =
+		input.tools?.filter((tool) => !(tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js"))) ?? [];
+	const declaredBuiltinTools =
+		input.requireReadTool && input.tools?.length && !declaredBuiltinToolsBase.includes("read")
+			? ["read", ...declaredBuiltinToolsBase]
+			: declaredBuiltinToolsBase;
 	const toolExtensionPaths: string[] = [];
 	if (input.tools?.length) {
 		const builtinTools = [...declaredBuiltinTools];
 		for (const tool of input.tools) {
-			if (!declaredBuiltinTools.includes(tool) && (tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js"))) {
+			if (
+				!declaredBuiltinTools.includes(tool) &&
+				(tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js"))
+			) {
 				toolExtensionPaths.push(tool);
 			}
 		}
@@ -174,11 +197,20 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	const runtimeExtensions = [PROMPT_RUNTIME_EXTENSION_PATH];
 	if (input.extensions !== undefined) {
 		args.push("--no-extensions");
-		for (const extPath of [...new Set([...runtimeExtensions, ...toolExtensionPaths, ...input.extensions, ...(input.subagentOnlyExtensions ?? [])])]) {
+		for (const extPath of [
+			...new Set([
+				...runtimeExtensions,
+				...toolExtensionPaths,
+				...input.extensions,
+				...(input.subagentOnlyExtensions ?? []),
+			]),
+		]) {
 			args.push("--extension", extPath);
 		}
 	} else {
-		for (const extPath of [...new Set([...runtimeExtensions, ...toolExtensionPaths, ...(input.subagentOnlyExtensions ?? [])])]) {
+		for (const extPath of [
+			...new Set([...runtimeExtensions, ...toolExtensionPaths, ...(input.subagentOnlyExtensions ?? [])]),
+		]) {
 			args.push("--extension", extPath);
 		}
 	}
@@ -256,8 +288,6 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 
 	return { args, env, tempDir };
 }
-
-
 
 export function cleanupTempDir(tempDir: string | null | undefined): void {
 	if (!tempDir) return;

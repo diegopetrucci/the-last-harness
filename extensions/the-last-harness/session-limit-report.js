@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { formatHomePath } from "./common.js";
-import { aggregateSessionUsage } from "./session-limit-report-aggregator.js";
-import { discoverSessionFiles, parseSessionJsonl, resolveSessionLimitWindow } from "./session-limit-report-scan.js";
+import { aggregateSessionUsage, } from "./session-limit-report-aggregator.js";
+import { discoverSessionFiles, parseSessionJsonl, resolveSessionLimitWindow, } from "./session-limit-report-scan.js";
 import { escapeHtml, openLocalReport, renderMetricCard, renderSection, renderTable, TOKENS_REPORT_CSS, writeLocalTokensReport, } from "./tokens.js";
 export const SESSION_LIMIT_REPORT_COMMAND_NAME = "what-consumed-my-session-limit-and-tokens";
 export const SESSION_LIMIT_REPORT_COMMAND_DESCRIPTION = "Generate and open a local TLH session-limit usage report across all in-window sessions";
@@ -126,23 +126,23 @@ export function buildSessionLimitReportHtml(window, result, snapshot, nowMs, opt
     const allCaveats = [...requiredCaveats, ...result.caveats];
     return [
         "<!doctype html>",
-        "<html lang=\"en\">",
+        '<html lang="en">',
         "<head>",
-        "<meta charset=\"utf-8\">",
-        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
+        '<meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">',
         `<title>${escapeHtml(title)}</title>`,
         `<style>${TOKENS_REPORT_CSS}</style>`,
         "</head>",
         "<body>",
-        "<main class=\"page\">",
-        "<header class=\"hero\">",
+        '<main class="page">',
+        '<header class="hero">',
         `<p class="eyebrow">${escapeHtml("Local/private TLH report")}</p>`,
         `<h1>${escapeHtml(title)}</h1>`,
         `<p class="lede">${escapeHtml("Covers all TLH sessions within the current session-limit window. No raw transcript text or tool payloads are embedded in this HTML.")}</p>`,
         `<p class="meta">Generated ${escapeHtml(generatedAt)}</p>`,
         "</header>",
         renderSection("Window", [
-            "<div class=\"grid cards three\">",
+            '<div class="grid cards three">',
             renderMetricCard("Provider", provider, ""),
             renderMetricCard("Session usage", percentDisplay, "of session limit used"),
             renderMetricCard("Resets in", resetsInDisplay, ""),
@@ -164,11 +164,7 @@ export function buildSessionLimitReportHtml(window, result, snapshot, nowMs, opt
             `<p class="section-note">${escapeHtml("Totals summed across all sessions in the window, broken down by provider.")}</p>`,
             renderProviderTotalsTable(result),
         ].join("")),
-        renderSection("Caveats", [
-            "<ul class=\"caveats\">",
-            ...allCaveats.map((item) => `<li>${escapeHtml(item)}</li>`),
-            "</ul>",
-        ].join("")),
+        renderSection("Caveats", ['<ul class="caveats">', ...allCaveats.map((item) => `<li>${escapeHtml(item)}</li>`), "</ul>"].join("")),
         "</main>",
         "</body>",
         "</html>",
@@ -176,7 +172,7 @@ export function buildSessionLimitReportHtml(window, result, snapshot, nowMs, opt
 }
 function renderKeyValueCard(items) {
     return [
-        "<dl class=\"kv-grid\">",
+        '<dl class="kv-grid">',
         ...items.flatMap(([label, value]) => [`<dt>${escapeHtml(label)}</dt>`, `<dd>${escapeHtml(value)}</dd>`]),
         "</dl>",
     ].join("");
@@ -185,7 +181,21 @@ function renderSessionsTable(rows) {
     if (rows.length === 0) {
         return `<p class="empty">${escapeHtml("No sessions found in the window.")}</p>`;
     }
-    return renderTable(["#", "Project", "Session", "Kind", "Providers", "Input", "Output", "Cache read", "Cache write", "Total", "Cost (USD)", "Turns", "Coverage"], rows.map((row, index) => {
+    return renderTable([
+        "#",
+        "Project",
+        "Session",
+        "Kind",
+        "Providers",
+        "Input",
+        "Output",
+        "Cache read",
+        "Cache write",
+        "Total",
+        "Cost (USD)",
+        "Turns",
+        "Coverage",
+    ], rows.map((row, index) => {
         const sessionLabel = row.sessionName
             ? `${row.sessionName}${row.sessionId ? ` (${row.sessionId.slice(0, 8)})` : ""}`
             : row.sessionId

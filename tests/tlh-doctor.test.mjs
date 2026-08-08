@@ -1,5 +1,15 @@
 import assert from "node:assert/strict";
-import { chmodSync, cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	cpSync,
+	existsSync,
+	mkdtempSync,
+	mkdirSync,
+	readFileSync,
+	readdirSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import process from "node:process";
@@ -47,16 +57,22 @@ function configureHealthyFixture(t) {
 	const settingsPath = join(fixture.agentDir, "settings.json");
 	writeFileSync(settingsPath, "{}\n", "utf8");
 
-	const mergeResult = spawnSync(process.execPath, [
-		mergeSettingsScript,
-		settingsDefaultsPath,
-		"--settings", settingsPath,
-		"--default-extensions", defaultExtensionsPath,
-	], {
-		cwd: repoRoot,
-		encoding: "utf8",
-		env: { ...process.env, HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agentDir },
-	});
+	const mergeResult = spawnSync(
+		process.execPath,
+		[
+			mergeSettingsScript,
+			settingsDefaultsPath,
+			"--settings",
+			settingsPath,
+			"--default-extensions",
+			defaultExtensionsPath,
+		],
+		{
+			cwd: repoRoot,
+			encoding: "utf8",
+			env: { ...process.env, HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agentDir },
+		},
+	);
 	assert.equal(mergeResult.status, 0, `${mergeResult.stdout}\n${mergeResult.stderr}`);
 
 	const subagentsDir = join(fixture.agentDir, "tlh", "agents", "subagents");
@@ -66,28 +82,47 @@ function configureHealthyFixture(t) {
 	const runtimeBin = join(fixture.runtimeDir, "bin");
 	mkdirSync(runtimeBin, { recursive: true });
 	writeExecutable(join(runtimeBin, "pi"), "#!/bin/sh\necho 'pi 0.83.0'\n");
-	writeFileSync(join(fixture.runtimeDir, ".tlh-runtime-owned"), JSON.stringify({
-		schemaVersion: 1,
-		packageName: "@earendil-works/pi-coding-agent",
-		runtimeAbsPath: fixture.runtimeDir,
-		origin: "created",
-	}, null, 2));
+	writeFileSync(
+		join(fixture.runtimeDir, ".tlh-runtime-owned"),
+		JSON.stringify(
+			{
+				schemaVersion: 1,
+				packageName: "@earendil-works/pi-coding-agent",
+				runtimeAbsPath: fixture.runtimeDir,
+				origin: "created",
+			},
+			null,
+			2,
+		),
+	);
 
 	mkdirSync(join(fixture.agentDir, "tlh"), { recursive: true });
-	writeFileSync(join(fixture.agentDir, "tlh", "install-state.json"), JSON.stringify({
-		schemaVersion: 1,
-		repo: "diegopetrucci/the-last-harness",
-		track: "ref",
-		ref: "main",
-	}, null, 2));
+	writeFileSync(
+		join(fixture.agentDir, "tlh", "install-state.json"),
+		JSON.stringify(
+			{
+				schemaVersion: 1,
+				repo: "diegopetrucci/the-last-harness",
+				track: "ref",
+				ref: "main",
+			},
+			null,
+			2,
+		),
+	);
 
-	writeExecutable(join(fixture.fakebin, "gn"), `#!/bin/sh
+	writeExecutable(
+		join(fixture.fakebin, "gn"),
+		`#!/bin/sh
 case "$1 $2" in
   "help plan"|"help review") exit 0 ;;
   *) exit 1 ;;
 esac
-`);
-	writeExecutable(join(fixture.fakebin, "tk"), `#!/bin/sh
+`,
+	);
+	writeExecutable(
+		join(fixture.fakebin, "tk"),
+		`#!/bin/sh
 case "$1" in
   help|--help|-h)
     echo 'Usage: tk <command> [args]'
@@ -98,12 +133,19 @@ case "$1" in
     exit 1
     ;;
 esac
-`);
+`,
+	);
 	writeExecutable(join(fixture.fakebin, "gh"), "#!/bin/sh\nexit 0\n");
 
 	mkdirSync(join(fixture.agentDir, "extensions", "pi-web-access"), { recursive: true });
-	writeFileSync(join(fixture.agentDir, "extensions", "pi-web-access", "settings.json"), JSON.stringify({ exaApiKey: "hidden" }, null, 2));
-	writeFileSync(join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: { demo: { command: "node", args: ["server.js"] } } }, null, 2));
+	writeFileSync(
+		join(fixture.agentDir, "extensions", "pi-web-access", "settings.json"),
+		JSON.stringify({ exaApiKey: "hidden" }, null, 2),
+	);
+	writeFileSync(
+		join(fixture.agentDir, "mcp.json"),
+		JSON.stringify({ mcpServers: { demo: { command: "node", args: ["server.js"] } } }, null, 2),
+	);
 
 	return fixture;
 }
@@ -116,14 +158,19 @@ function createFakeDoctorPackageRoot(root, { gnosisDelayMs = 0 } = {}) {
 	cpSync(defaultExtensionsPath, join(packageRoot, "config", "default-extensions.json"));
 	cpSync(join(repoRoot, "agents", "subagents"), join(packageRoot, "agents", "subagents"), { recursive: true });
 
-	writeExecutable(join(packageRoot, "scripts", "merge-settings.mjs"), `#!/usr/bin/env node
+	writeExecutable(
+		join(packageRoot, "scripts", "merge-settings.mjs"),
+		`#!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 const result = spawnSync(process.execPath, [${JSON.stringify(mergeSettingsScript)}, ...process.argv.slice(2)], { stdio: "inherit", env: process.env });
 process.exit(result.status ?? 1);
-`);
+`,
+	);
 
-	writeExecutable(join(packageRoot, "scripts", "tlh-gnosis.mjs"), `#!/usr/bin/env node
+	writeExecutable(
+		join(packageRoot, "scripts", "tlh-gnosis.mjs"),
+		`#!/usr/bin/env node
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { join } from "node:path";
@@ -140,9 +187,12 @@ if (command === "configure-install") {
 if (command === "validate") {
   process.stdout.write(existsSync(join(agentDir, "bin", "gn")) ? join(agentDir, "bin", "gn") + "\\n" : "gn\\n");
 }
-`);
+`,
+	);
 
-	writeExecutable(join(packageRoot, "scripts", "tlh-tickets.mjs"), `#!/usr/bin/env node
+	writeExecutable(
+		join(packageRoot, "scripts", "tlh-tickets.mjs"),
+		`#!/usr/bin/env node
 import { appendFileSync } from "node:fs";
 const args = process.argv.slice(2);
 const command = args[0];
@@ -151,7 +201,8 @@ appendFileSync(marker, command + "\\n");
 if (command === "status") {
   process.stdout.write("active: yes\\ncommand: tk\\n");
 }
-`);
+`,
+	);
 
 	return packageRoot;
 }
@@ -159,7 +210,9 @@ if (command === "status") {
 function createWrapperDoctorProbePackageRoot(root) {
 	const packageRoot = join(root, "wrapper-doctor-package-root");
 	mkdirSync(join(packageRoot, "scripts"), { recursive: true });
-	writeExecutable(join(packageRoot, "scripts", "tlh-doctor.mjs"), `#!/usr/bin/env node
+	writeExecutable(
+		join(packageRoot, "scripts", "tlh-doctor.mjs"),
+		`#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 const args = process.argv.slice(2);
@@ -185,7 +238,8 @@ writeFileSync(${JSON.stringify(join(root, "wrapper-doctor-call.json"))}, JSON.st
     PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
   },
 }, null, 2));
-`);
+`,
+	);
 	return packageRoot;
 }
 
@@ -193,13 +247,16 @@ function runGeneratedWrapper(root, { agentDir, packageRoot, argv, pathEntries })
 	const binDir = join(root, "wrapper-bin");
 	const wrapperPath = join(binDir, "tlh");
 	mkdirSync(binDir, { recursive: true });
-	writeExecutable(wrapperPath, renderWrapper({
-		agentDir,
-		binDir,
-		wrapperName: "tlh",
-		packageRoot,
-		piCmd: "",
-	}));
+	writeExecutable(
+		wrapperPath,
+		renderWrapper({
+			agentDir,
+			binDir,
+			wrapperName: "tlh",
+			packageRoot,
+			piCmd: "",
+		}),
+	);
 	return spawnSync("/bin/bash", [wrapperPath, ...argv], {
 		cwd: root,
 		encoding: "utf8",
@@ -307,10 +364,13 @@ test("tlh doctor returns success for a healthy isolated profile", (t) => {
 test("tlh doctor ignores RTK executables on PATH", (t) => {
 	const fixture = configureHealthyFixture(t);
 	const rtkMarkerPath = join(fixture.root, "rtk-path-ran");
-	writeExecutable(join(fixture.fakebin, "rtk"), `#!/bin/sh
+	writeExecutable(
+		join(fixture.fakebin, "rtk"),
+		`#!/bin/sh
 printf ran >${JSON.stringify(rtkMarkerPath)}
 exit 97
-`);
+`,
+	);
 
 	const result = runDoctor(["--agent-dir", fixture.agentDir, "--package-root", repoRoot], {
 		env: {
@@ -334,14 +394,20 @@ test("tlh doctor fails when pointed at normal Pi config without running protecte
 	const protectedBinDir = join(protectedAgentDir, "bin");
 	mkdirSync(protectedBinDir, { recursive: true });
 	writeFileSync(join(protectedAgentDir, "settings.json"), "{}\n", "utf8");
-	writeExecutable(join(protectedBinDir, "gn"), `#!/bin/sh
+	writeExecutable(
+		join(protectedBinDir, "gn"),
+		`#!/bin/sh
 printf ran >${JSON.stringify(markerPath)}
 exit 0
-`);
-	writeExecutable(join(protectedBinDir, "gh"), `#!/bin/sh
+`,
+	);
+	writeExecutable(
+		join(protectedBinDir, "gh"),
+		`#!/bin/sh
 printf ran >${JSON.stringify(ghMarkerPath)}
 exit 0
-`);
+`,
+	);
 
 	const result = runDoctor(["--agent-dir", protectedAgentDir, "--package-root", repoRoot], {
 		env: {
@@ -370,20 +436,22 @@ test("tlh doctor refuses normal Pi settings path before parsing", (t) => {
 	mkdirSync(dirname(protectedSettings), { recursive: true });
 	writeFileSync(protectedSettings, "{ not valid json\n", "utf8");
 
-	const result = runDoctor([
-		"--agent-dir", fixture.agentDir,
-		"--settings", protectedSettings,
-		"--package-root", repoRoot,
-	], {
-		env: {
-			HOME: fixture.home,
-			PATH: dirname(process.execPath),
+	const result = runDoctor(
+		["--agent-dir", fixture.agentDir, "--settings", protectedSettings, "--package-root", repoRoot],
+		{
+			env: {
+				HOME: fixture.home,
+				PATH: dirname(process.execPath),
+			},
 		},
-	});
+	);
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	assert.equal(result.status, 1, output);
-	assert.match(output, /FAIL\s+profile isolation\/settings: isolated agent dir; settings path is inside ~\/\.pi; settings not read/);
+	assert.match(
+		output,
+		/FAIL\s+profile isolation\/settings: isolated agent dir; settings path is inside ~\/\.pi; settings not read/,
+	);
 	assert.doesNotMatch(output, /Invalid JSON/i);
 	assert.doesNotMatch(output, /settings drift:/);
 	assert.doesNotMatch(output, /MCP\/web-search prerequisites:/);
@@ -403,7 +471,9 @@ test("tlh doctor reports repairable settings drift without mutating settings or 
 	};
 	writeFileSync(settingsPath, JSON.stringify(driftedSettings, null, 2));
 	const settingsBeforeDoctor = readFileSync(settingsPath, "utf8");
-	const backupsBeforeDoctor = readdirSync(fixture.agentDir).filter((entry) => /^settings\.json\.backup-/.test(entry)).length;
+	const backupsBeforeDoctor = readdirSync(fixture.agentDir).filter((entry) =>
+		/^settings\.json\.backup-/.test(entry),
+	).length;
 
 	const result = runDoctor(["--agent-dir", fixture.agentDir, "--package-root", repoRoot], {
 		env: {
@@ -414,7 +484,9 @@ test("tlh doctor reports repairable settings drift without mutating settings or 
 	});
 	const output = `${result.stdout}\n${result.stderr}`;
 	const settingsAfterDoctor = readFileSync(settingsPath, "utf8");
-	const backupsAfterDoctor = readdirSync(fixture.agentDir).filter((entry) => /^settings\.json\.backup-/.test(entry)).length;
+	const backupsAfterDoctor = readdirSync(fixture.agentDir).filter((entry) =>
+		/^settings\.json\.backup-/.test(entry),
+	).length;
 
 	assert.equal(result.status, 0, output);
 	assert.match(output, /WARN\s+settings drift:/);
@@ -423,7 +495,6 @@ test("tlh doctor reports repairable settings drift without mutating settings or 
 	assert.equal(backupsAfterDoctor, backupsBeforeDoctor, "plain doctor must not create settings backups");
 	assert.doesNotMatch(output, /Repair actions:/);
 });
-
 
 test("tlh doctor drift summary does not disclose credential-like package sources", (t) => {
 	const fixture = configureHealthyFixture(t);
@@ -435,7 +506,9 @@ test("tlh doctor drift summary does not disclose credential-like package sources
 	];
 	writeFileSync(settingsPath, JSON.stringify(driftedSettings, null, 2));
 	const settingsBeforeDoctor = readFileSync(settingsPath, "utf8");
-	const backupsBeforeDoctor = readdirSync(fixture.agentDir).filter((entry) => /^settings\.json\.backup-/.test(entry)).length;
+	const backupsBeforeDoctor = readdirSync(fixture.agentDir).filter((entry) =>
+		/^settings\.json\.backup-/.test(entry),
+	).length;
 
 	const result = runDoctor(["--agent-dir", fixture.agentDir, "--package-root", repoRoot], {
 		env: {
@@ -446,7 +519,9 @@ test("tlh doctor drift summary does not disclose credential-like package sources
 	});
 	const output = `${result.stdout}\n${result.stderr}`;
 	const settingsAfterDoctor = readFileSync(settingsPath, "utf8");
-	const backupsAfterDoctor = readdirSync(fixture.agentDir).filter((entry) => /^settings\.json\.backup-/.test(entry)).length;
+	const backupsAfterDoctor = readdirSync(fixture.agentDir).filter((entry) =>
+		/^settings\.json\.backup-/.test(entry),
+	).length;
 
 	assert.equal(result.status, 0, output);
 	assert.match(output, /WARN\s+settings drift:/);
@@ -475,22 +550,30 @@ test("tlh doctor reports stale bundled subagent prompts as repairable drift", (t
 	assert.equal(readFileSync(stalePromptPath, "utf8"), "stale contrarian prompt\n");
 });
 
-
 test("tlh doctor --repair restores isolated settings drift, preserves user values, and creates a backup", (t) => {
 	const fixture = configureHealthyFixture(t);
 	const packageRoot = createFakeDoctorPackageRoot(fixture.root);
 	const settingsPath = join(fixture.agentDir, "settings.json");
-	writeFileSync(settingsPath, JSON.stringify({
-		subagents: {
-			agentOverrides: {
-				developer: { model: "kept" },
+	writeFileSync(
+		settingsPath,
+		JSON.stringify(
+			{
+				subagents: {
+					agentOverrides: {
+						developer: { model: "kept" },
+					},
+				},
+				packages: ["git:github.com/example/unmanaged-extension"],
 			},
-		},
-		packages: ["git:github.com/example/unmanaged-extension"],
-	}, null, 2));
+			null,
+			2,
+		),
+	);
 	const stalePromptPath = join(fixture.agentDir, "tlh", "agents", "subagents", "contrarian.md");
 	writeFileSync(stalePromptPath, "stale contrarian prompt\n", "utf8");
-	const backupsBeforeRepair = readdirSync(fixture.agentDir).filter((entry) => /^settings\.json\.backup-/.test(entry)).length;
+	const backupsBeforeRepair = readdirSync(fixture.agentDir).filter((entry) =>
+		/^settings\.json\.backup-/.test(entry),
+	).length;
 
 	const result = runDoctor(["--repair", "--agent-dir", fixture.agentDir, "--package-root", packageRoot], {
 		env: {
@@ -501,7 +584,9 @@ test("tlh doctor --repair restores isolated settings drift, preserves user value
 	});
 	const output = `${result.stdout}\n${result.stderr}`;
 	const repairedSettings = JSON.parse(readFileSync(settingsPath, "utf8"));
-	const backupsAfterRepair = readdirSync(fixture.agentDir).filter((entry) => /^settings\.json\.backup-/.test(entry)).length;
+	const backupsAfterRepair = readdirSync(fixture.agentDir).filter((entry) =>
+		/^settings\.json\.backup-/.test(entry),
+	).length;
 
 	assert.equal(result.status, 0, output);
 	assert.deepEqual(repairedSettings.subagents.agentDirs, ["tlh/agents/subagents"]);
@@ -509,13 +594,19 @@ test("tlh doctor --repair restores isolated settings drift, preserves user value
 	assert.ok(repairedSettings.packages.includes("git:github.com/example/unmanaged-extension"));
 	assert.equal(backupsAfterRepair, backupsBeforeRepair + 1, "repair should create one additional settings backup");
 	assert.equal(existsSync(join(fixture.agentDir, "tlh", "agents", "subagents", "developer.md")), true);
-	assert.equal(readFileSync(stalePromptPath, "utf8"), readFileSync(join(packageRoot, "agents", "subagents", "contrarian.md"), "utf8"));
+	assert.equal(
+		readFileSync(stalePromptPath, "utf8"),
+		readFileSync(join(packageRoot, "agents", "subagents", "contrarian.md"), "utf8"),
+	);
 	assert.match(readFileSync(join(fixture.root, "gnosis-helper.log"), "utf8"), /configure-install/);
 	assert.match(readFileSync(join(fixture.root, "tickets-helper.log"), "utf8"), /configure-install/);
 	assert.match(output, /Repair actions:/);
 	assert.match(output, /OK\s+settings drift:/);
 	assert.match(output, /OK\s+bundled subagent resources: restored 1 prompt\(s\) from packaged defaults/);
-	assert.match(output, /WARN\s+private runtime: runtime replacement stays manual; run `tlh update` if runtime drift remains/);
+	assert.match(
+		output,
+		/WARN\s+private runtime: runtime replacement stays manual; run `tlh update` if runtime drift remains/,
+	);
 	assert.match(output, /OK\s+profile isolation\/settings:/);
 	assert.match(output, /OK\s+settings drift:/);
 	assert.match(output, /OK\s+bundled subagent resources:/);
@@ -537,14 +628,26 @@ test("tlh doctor --repair physically uninstalls legacy managed npm subagents and
 
 	mkdirSync(installedPackageDir, { recursive: true });
 	writeFileSync(join(installedPackageDir, "package.json"), JSON.stringify({ name: packageName, version: "0.31.14" }));
-	writeFileSync(join(installRoot, "package.json"), JSON.stringify({ dependencies: { [packageName]: "^0.31.10", keep: "1.0.0" } }, null, 2));
-	writeFileSync(join(installRoot, "package-lock.json"), JSON.stringify({
-		packages: {
-			"": { dependencies: { [packageName]: "^0.31.10", keep: "1.0.0" } },
-			[`node_modules/${packageName}`]: { version: "0.31.14" },
-		},
-	}, null, 2));
-	writeExecutable(join(fixture.fakebin, "corepack"), `#!/usr/bin/env node
+	writeFileSync(
+		join(installRoot, "package.json"),
+		JSON.stringify({ dependencies: { [packageName]: "^0.31.10", keep: "1.0.0" } }, null, 2),
+	);
+	writeFileSync(
+		join(installRoot, "package-lock.json"),
+		JSON.stringify(
+			{
+				packages: {
+					"": { dependencies: { [packageName]: "^0.31.10", keep: "1.0.0" } },
+					[`node_modules/${packageName}`]: { version: "0.31.14" },
+				},
+			},
+			null,
+			2,
+		),
+	);
+	writeExecutable(
+		join(fixture.fakebin, "corepack"),
+		`#!/usr/bin/env node
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 const args = process.argv.slice(2);
@@ -566,7 +669,8 @@ delete lock.packages?.[""]?.dependencies?.[packageName];
 delete lock.packages?.["node_modules/" + packageName];
 writeFileSync(lockPath, JSON.stringify(lock, null, 2));
 rmSync(join(installRoot, "node_modules", packageName), { recursive: true, force: true });
-`);
+`,
+	);
 
 	const result = runDoctor(["--repair", "--agent-dir", fixture.agentDir, "--package-root", packageRoot], {
 		env: {
@@ -579,10 +683,24 @@ rmSync(join(installRoot, "node_modules", packageName), { recursive: true, force:
 	assert.equal(result.status, 0, output);
 	assert.match(output, /OK\s+settings drift:.*uninstalled 1 retired TLH subagent npm package\(s\)/);
 	assert.equal(existsSync(installedPackageDir), false);
-	assert.equal(Object.hasOwn(JSON.parse(readFileSync(join(installRoot, "package.json"), "utf8")).dependencies, packageName), false);
-	assert.equal(Object.hasOwn(JSON.parse(readFileSync(join(installRoot, "package-lock.json"), "utf8")).packages[""].dependencies, packageName), false);
+	assert.equal(
+		Object.hasOwn(JSON.parse(readFileSync(join(installRoot, "package.json"), "utf8")).dependencies, packageName),
+		false,
+	);
+	assert.equal(
+		Object.hasOwn(
+			JSON.parse(readFileSync(join(installRoot, "package-lock.json"), "utf8")).packages[""].dependencies,
+			packageName,
+		),
+		false,
+	);
 	const repairedSettings = JSON.parse(readFileSync(settingsPath, "utf8"));
-	assert.equal(repairedSettings.packages.some((entry) => String(typeof entry === "string" ? entry : entry.source).includes("pi-subagents")), false);
+	assert.equal(
+		repairedSettings.packages.some((entry) =>
+			String(typeof entry === "string" ? entry : entry.source).includes("pi-subagents"),
+		),
+		false,
+	);
 	assert.deepEqual(repairedSettings.npmCommand, ["corepack", "--", "pnpm"]);
 });
 
@@ -612,10 +730,17 @@ test("tlh doctor --repair repairs malformed subagents containers without --force
 	const fixture = configureHealthyFixture(t);
 	const packageRoot = createFakeDoctorPackageRoot(fixture.root);
 	const settingsPath = join(fixture.agentDir, "settings.json");
-	writeFileSync(settingsPath, JSON.stringify({
-		subagents: "broken",
-		packages: ["git:github.com/example/unmanaged-extension"],
-	}, null, 2));
+	writeFileSync(
+		settingsPath,
+		JSON.stringify(
+			{
+				subagents: "broken",
+				packages: ["git:github.com/example/unmanaged-extension"],
+			},
+			null,
+			2,
+		),
+	);
 
 	const result = runDoctor(["--repair", "--agent-dir", fixture.agentDir, "--package-root", packageRoot], {
 		env: {
@@ -661,17 +786,15 @@ test("tlh doctor --repair refuses settings paths outside the isolated profile be
 	const outsideSettings = join(fixture.root, "outside-settings.json");
 	writeFileSync(outsideSettings, "{ not valid json\n", "utf8");
 
-	const result = runDoctor([
-		"--repair",
-		"--agent-dir", fixture.agentDir,
-		"--settings", outsideSettings,
-		"--package-root", packageRoot,
-	], {
-		env: {
-			HOME: fixture.home,
-			PATH: `${fixture.fakebin}:${process.env.PATH}`,
+	const result = runDoctor(
+		["--repair", "--agent-dir", fixture.agentDir, "--settings", outsideSettings, "--package-root", packageRoot],
+		{
+			env: {
+				HOME: fixture.home,
+				PATH: `${fixture.fakebin}:${process.env.PATH}`,
+			},
 		},
-	});
+	);
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	assert.equal(result.status, 1, output);

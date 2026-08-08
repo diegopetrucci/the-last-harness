@@ -1,4 +1,4 @@
-import { discoverAgentsAll, frontmatterNameForConfig, } from "./agents.js";
+import { discoverAgentsAll, frontmatterNameForConfig } from "./agents.js";
 function result(text, isError = false) {
     return { content: [{ type: "text", text }], isError, details: { mode: "management", results: [] } };
 }
@@ -14,7 +14,13 @@ function normalizeListScope(scope) {
     return undefined;
 }
 function sanitizeName(name) {
-    return name.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+    return name
+        .toLowerCase()
+        .trim()
+        .replace(/\s+/g, "-")
+        .replace(/[^a-z0-9-]/g, "")
+        .replace(/-+/g, "-")
+        .replace(/^-+|-+$/g, "");
 }
 function allAgents(d) {
     return [...d.builtin, ...d.package, ...d.user, ...d.project];
@@ -32,7 +38,11 @@ function findAgents(name, cwd, scope = "both") {
 }
 function formatAgentDetail(agent) {
     const tools = [...(agent.tools ?? [])];
-    const lines = [`Agent: ${agent.name} (${agent.source})`, `Path: ${agent.filePath}`, `Description: ${agent.description}`];
+    const lines = [
+        `Agent: ${agent.name} (${agent.source})`,
+        `Path: ${agent.filePath}`,
+        `Description: ${agent.description}`,
+    ];
     if (agent.packageName) {
         lines.push(`Local name: ${frontmatterNameForConfig(agent)}`);
         lines.push(`Package: ${agent.packageName}`);
@@ -106,8 +116,11 @@ function handleGet(params, ctx) {
 }
 export function handleManagementAction(action, params, ctx) {
     switch (action) {
-        case "list": return handleList(params, ctx);
-        case "get": return handleGet(params, ctx);
-        default: return result(`Unknown action: ${action}`, true);
+        case "list":
+            return handleList(params, ctx);
+        case "get":
+            return handleGet(params, ctx);
+        default:
+            return result(`Unknown action: ${action}`, true);
     }
 }

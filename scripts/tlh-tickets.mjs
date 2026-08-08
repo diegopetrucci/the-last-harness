@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { accessSync, chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync, } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
@@ -278,7 +278,11 @@ function validateTkCommand(command, agentDir) {
     const resolvedCommand = resolveCommandFromPath(command);
     if (!resolvedCommand)
         return false;
-    const result = spawnSync(resolvedCommand, ["help"], { encoding: "utf8", timeout: VALIDATION_TIMEOUT_MS, env: helperEnv(agentDir) });
+    const result = spawnSync(resolvedCommand, ["help"], {
+        encoding: "utf8",
+        timeout: VALIDATION_TIMEOUT_MS,
+        env: helperEnv(agentDir),
+    });
     if (result.error || result.status !== 0)
         return false;
     const output = `${result.stdout || ""}\n${result.stderr || ""}`;
@@ -308,7 +312,10 @@ function findValidTkForConfigure(args, settings, agentDir) {
     const configured = configuredInstallPath(settings);
     const managedTargetPath = managedTkTargetPath(args, agentDir);
     const configuredIsManagedTarget = configured && samePathForCompare(configured, managedTargetPath);
-    if (configured && !configuredIsManagedTarget && hasTkCommandName(configured) && validateTkCommand(configured, agentDir))
+    if (configured &&
+        !configuredIsManagedTarget &&
+        hasTkCommandName(configured) &&
+        validateTkCommand(configured, agentDir))
         return normalizeValidCandidate(configured);
     const managedTarget = validateManagedTkTarget(args, agentDir);
     for (const candidate of [managedTarget, "tk"]) {
@@ -429,7 +436,7 @@ function captureIntendedManagedAgentDir(agentRoot) {
     }
     return stableRealpathOfExistingDirectory(agentRoot, stats, "managed agent root");
 }
-function assertManagedTkAgentRootSafe({ agentRoot, intendedAgentDir }) {
+function assertManagedTkAgentRootSafe({ agentRoot, intendedAgentDir, }) {
     const stats = lstatIfExists(agentRoot);
     let resolvedAgentDir;
     if (stats) {
@@ -523,7 +530,7 @@ function managedTkTargetPlan(args, agentDir) {
 function validateManagedTkTarget(args, agentDir) {
     return managedTkTargetPlan(args, agentDir).target;
 }
-function assertManagedTkTargetParentSafe({ targetParent, intendedAgentDir, intendedTargetParent }) {
+function assertManagedTkTargetParentSafe({ targetParent, intendedAgentDir, intendedTargetParent, }) {
     const parentStats = lstatIfExists(targetParent);
     let resolvedTargetParent;
     if (parentStats) {
@@ -667,7 +674,9 @@ function validateOpenedFileForDirectWrite(fd, path, intendedRoot, label) {
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Refusing to write ${label} because the opened path could not be validated: ${path} (${message})`, { cause: error });
+        throw new Error(`Refusing to write ${label} because the opened path could not be validated: ${path} (${message})`, {
+            cause: error,
+        });
     }
     if (pathStats.isSymbolicLink()) {
         throw new Error(`Refusing to write ${label} through a symlinked path: ${path}`);
@@ -785,9 +794,7 @@ function validateTicketSourceConfig(args) {
     }
     if (!args.ticketSourceUrl.startsWith("https://")) {
         const schemeEnd = args.ticketSourceUrl.indexOf("://");
-        const prefix = schemeEnd >= 0
-            ? args.ticketSourceUrl.slice(0, schemeEnd + 3)
-            : args.ticketSourceUrl.slice(0, 32);
+        const prefix = schemeEnd >= 0 ? args.ticketSourceUrl.slice(0, schemeEnd + 3) : args.ticketSourceUrl.slice(0, 32);
         throw new Error(`Ticket source URL must use https:// (got: ${prefix})`);
     }
     if (!/^[a-f0-9]{64}$/i.test(args.ticketSourceSha256 || "")) {
@@ -829,7 +836,11 @@ function verifyTicketArchive(args, archivePath) {
     }
 }
 function listTarGzipEntries(archivePath, agentDir) {
-    const result = spawnSync("tar", ["-tzf", archivePath], { encoding: "utf8", maxBuffer: 10 * 1024 * 1024, env: helperEnv(agentDir) });
+    const result = spawnSync("tar", ["-tzf", archivePath], {
+        encoding: "utf8",
+        maxBuffer: 10 * 1024 * 1024,
+        env: helperEnv(agentDir),
+    });
     if (result.error)
         throw result.error;
     if (result.status !== 0)
@@ -861,7 +872,10 @@ function extractTicketScript(archivePath, extractDir, preferredEntry, agentDir) 
     const entry = ticketArchiveEntry(archivePath, preferredEntry, agentDir);
     if (!isSafeArchiveEntry(entry))
         throw new Error(`Ticket archive entry is unsafe: ${entry}`);
-    const result = spawnSync("tar", ["-xzf", archivePath, "-C", extractDir, "--", entry], { stdio: "ignore", env: helperEnv(agentDir) });
+    const result = spawnSync("tar", ["-xzf", archivePath, "-C", extractDir, "--", entry], {
+        stdio: "ignore",
+        env: helperEnv(agentDir),
+    });
     if (result.error)
         throw result.error;
     if (result.status !== 0)
@@ -1071,9 +1085,7 @@ async function commandConfigureInstall(args, settingsPath, settings, previousRaw
     const configured = configuredInstallPath(settings);
     const managedPinIsFresh = managedTkPinIsFresh(settings, args.ticketSourceSha256);
     const pathOfInterestIsManaged = !configured || samePathForCompare(configured, managedTarget);
-    if (pathOfInterestIsManaged
-        && !managedPinIsFresh
-        && validateTkCommand(managedTarget, agentDir)) {
+    if (pathOfInterestIsManaged && !managedPinIsFresh && validateTkCommand(managedTarget, agentDir)) {
         detailLog(args, "Managed tk pin changed; reinstalling.");
         const reinstalledPath = await installManagedTk(args, agentDir);
         if (reinstalledPath) {

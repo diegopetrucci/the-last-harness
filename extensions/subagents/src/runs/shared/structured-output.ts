@@ -35,26 +35,32 @@ export function createStructuredOutputRuntime(schema: JsonSchemaObject, baseDir?
 	return { schema, schemaPath, outputPath };
 }
 
-export function validateStructuredOutputValue(schema: JsonSchemaObject, value: unknown): { status: "valid" } | { status: "invalid"; message: string } {
+export function validateStructuredOutputValue(
+	schema: JsonSchemaObject,
+	value: unknown,
+): { status: "valid" } | { status: "invalid"; message: string } {
 	let validator: CompiledJsonSchema;
 	try {
 		validator = (Compile as (schema: unknown) => CompiledJsonSchema)(schema);
 	} catch (error) {
-		return { status: "invalid", message: `invalid outputSchema: ${error instanceof Error ? error.message : String(error)}` };
+		return {
+			status: "invalid",
+			message: `invalid outputSchema: ${error instanceof Error ? error.message : String(error)}`,
+		};
 	}
 	if (validator.Check(value)) return { status: "valid" };
-	const errors = [...validator.Errors(value)]
-		.slice(0, 8)
-		.map((error) => {
-			const pathText = error.instancePath ? error.instancePath.replace(/^\//, "").replace(/\//g, ".") : "root";
-			return `${pathText}: ${error.message}`;
-		});
+	const errors = [...validator.Errors(value)].slice(0, 8).map((error) => {
+		const pathText = error.instancePath ? error.instancePath.replace(/^\//, "").replace(/\//g, ".") : "root";
+		return `${pathText}: ${error.message}`;
+	});
 	return { status: "invalid", message: errors.join("; ") || "schema validation failed" };
 }
 
 export function readStructuredOutput(runtime: StructuredOutputRuntime): { value?: unknown; error?: string } {
 	if (!fs.existsSync(runtime.outputPath)) {
-		return { error: "Missing structured_output call; this step has outputSchema and must finish by calling structured_output." };
+		return {
+			error: "Missing structured_output call; this step has outputSchema and must finish by calling structured_output.",
+		};
 	}
 	let value: unknown;
 	try {

@@ -113,9 +113,12 @@ function commonRouteRoot(route: Pick<NestedRoute, "eventSink" | "controlInbox">)
 function validateRouteShape(route: NestedRoute): void {
 	assertSafeId("rootRunId", route.rootRunId);
 	assertSafeId("capabilityToken", route.capabilityToken);
-	if (!containedPath(NESTED_EVENTS_DIR, route.eventSink)) throw new Error("Nested event sink is outside the subagent nested event root.");
-	if (!containedPath(NESTED_EVENTS_DIR, route.controlInbox)) throw new Error("Nested control inbox is outside the subagent nested event root.");
-	if (commonRouteRoot(route) !== path.dirname(path.resolve(route.controlInbox))) throw new Error("Nested event sink and control inbox must share one route root.");
+	if (!containedPath(NESTED_EVENTS_DIR, route.eventSink))
+		throw new Error("Nested event sink is outside the subagent nested event root.");
+	if (!containedPath(NESTED_EVENTS_DIR, route.controlInbox))
+		throw new Error("Nested control inbox is outside the subagent nested event root.");
+	if (commonRouteRoot(route) !== path.dirname(path.resolve(route.controlInbox)))
+		throw new Error("Nested event sink and control inbox must share one route root.");
 }
 
 export function createNestedRoute(rootRunId: string): NestedRoute {
@@ -126,7 +129,11 @@ export function createNestedRoute(rootRunId: string): NestedRoute {
 	const controlInbox = path.join(routeRoot, "controls");
 	fs.mkdirSync(eventSink, { recursive: true, mode: 0o700 });
 	fs.mkdirSync(controlInbox, { recursive: true, mode: 0o700 });
-	fs.writeFileSync(path.join(routeRoot, ROUTE_FILE), `${JSON.stringify({ rootRunId, capabilityToken, createdAt: Date.now() })}\n`, { mode: 0o600 });
+	fs.writeFileSync(
+		path.join(routeRoot, ROUTE_FILE),
+		`${JSON.stringify({ rootRunId, capabilityToken, createdAt: Date.now() })}\n`,
+		{ mode: 0o600 },
+	);
 	return { rootRunId, eventSink, controlInbox, capabilityToken };
 }
 
@@ -139,7 +146,10 @@ export function resolveNestedRouteFromEnv(env: NodeJS.ProcessEnv = process.env):
 	const route = { rootRunId, eventSink, controlInbox, capabilityToken };
 	validateRouteShape(route);
 	const routeFile = path.join(commonRouteRoot(route), ROUTE_FILE);
-	const metadata = JSON.parse(fs.readFileSync(routeFile, "utf-8")) as { rootRunId?: unknown; capabilityToken?: unknown };
+	const metadata = JSON.parse(fs.readFileSync(routeFile, "utf-8")) as {
+		rootRunId?: unknown;
+		capabilityToken?: unknown;
+	};
 	if (metadata.rootRunId !== rootRunId || metadata.capabilityToken !== capabilityToken) {
 		throw new Error("Nested event route metadata does not match the provided root id and capability token.");
 	}
@@ -155,14 +165,18 @@ export function resolveInheritedNestedRouteFromEnv(env: NodeJS.ProcessEnv = proc
 	}
 }
 
-export function resolveNestedParentAddressFromEnv(env: NodeJS.ProcessEnv = process.env): { parentRunId: string; parentStepIndex?: number; depth: number; path: NestedPathEntry[] } | undefined {
+export function resolveNestedParentAddressFromEnv(
+	env: NodeJS.ProcessEnv = process.env,
+): { parentRunId: string; parentStepIndex?: number; depth: number; path: NestedPathEntry[] } | undefined {
 	const parentRunId = env[SUBAGENT_PARENT_RUN_ID_ENV];
 	if (!isSafeNestedId(parentRunId)) return undefined;
 	const rawIndex = env[SUBAGENT_PARENT_CHILD_INDEX_ENV];
 	const parentStepIndex = rawIndex && /^\d+$/.test(rawIndex) ? Number(rawIndex) : undefined;
 	const depth = Math.min(Math.max(1, clampNumber(Number(env[SUBAGENT_PARENT_DEPTH_ENV])) ?? 1), MAX_DEPTH);
 	const parsedPath = parseNestedPathEnv(env[SUBAGENT_PARENT_PATH_ENV]);
-	const nestedPath = parsedPath.length ? parsedPath : [{ runId: parentRunId, ...(parentStepIndex !== undefined ? { stepIndex: parentStepIndex } : {}) }];
+	const nestedPath = parsedPath.length
+		? parsedPath
+		: [{ runId: parentRunId, ...(parentStepIndex !== undefined ? { stepIndex: parentStepIndex } : {}) }];
 	return { parentRunId, ...(parentStepIndex !== undefined ? { parentStepIndex } : {}), depth, path: nestedPath };
 }
 
@@ -188,9 +202,7 @@ function sanitizeTokenUsage(value: unknown): NestedRunSummary["totalTokens"] | u
 	const input = clampNumber(raw.input);
 	const output = clampNumber(raw.output);
 	const total = clampNumber(raw.total);
-	return input !== undefined && output !== undefined && total !== undefined
-		? { input, output, total }
-		: undefined;
+	return input !== undefined && output !== undefined && total !== undefined ? { input, output, total } : undefined;
 }
 
 function sanitizeCost(value: unknown): NestedRunSummary["totalCost"] | undefined {
@@ -210,14 +222,19 @@ function sanitizeTurnBudget(value: unknown): TurnBudgetState | undefined {
 	const maxTurns = clampNumber(raw.maxTurns);
 	const graceTurns = clampNumber(raw.graceTurns);
 	const turnCount = clampNumber(raw.turnCount);
-	const outcome = raw.outcome === "within-budget" || raw.outcome === "wrap-up-requested" || raw.outcome === "exceeded" ? raw.outcome : undefined;
+	const outcome =
+		raw.outcome === "within-budget" || raw.outcome === "wrap-up-requested" || raw.outcome === "exceeded"
+			? raw.outcome
+			: undefined;
 	if (maxTurns === undefined || graceTurns === undefined || turnCount === undefined || !outcome) return undefined;
 	return {
 		maxTurns,
 		graceTurns,
 		turnCount,
 		outcome,
-		...(clampNumber(raw.wrapUpRequestedAtTurn) !== undefined ? { wrapUpRequestedAtTurn: clampNumber(raw.wrapUpRequestedAtTurn) } : {}),
+		...(clampNumber(raw.wrapUpRequestedAtTurn) !== undefined
+			? { wrapUpRequestedAtTurn: clampNumber(raw.wrapUpRequestedAtTurn) }
+			: {}),
 		...(clampNumber(raw.exceededAtTurn) !== undefined ? { exceededAtTurn: clampNumber(raw.exceededAtTurn) } : {}),
 	};
 }
@@ -233,17 +250,27 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
 	const raw = input as Record<string, unknown>;
 	const agent = stringValue(raw.agent, 128);
 	if (!agent) return undefined;
-	const status = raw.status === "pending" || raw.status === "running" || raw.status === "complete" || raw.status === "completed" || raw.status === "failed" || raw.status === "paused"
-		? raw.status
-		: "pending";
+	const status =
+		raw.status === "pending" ||
+		raw.status === "running" ||
+		raw.status === "complete" ||
+		raw.status === "completed" ||
+		raw.status === "failed" ||
+		raw.status === "paused"
+			? raw.status
+			: "pending";
 	return {
 		agent,
 		status,
 		...(stringValue(raw.sessionFile, 2048) ? { sessionFile: stringValue(raw.sessionFile, 2048) } : {}),
-		...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention" ? { activityState: raw.activityState } : {}),
+		...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention"
+			? { activityState: raw.activityState }
+			: {}),
 		...(clampNumber(raw.lastActivityAt) !== undefined ? { lastActivityAt: clampNumber(raw.lastActivityAt) } : {}),
 		...(stringValue(raw.currentTool, 128) ? { currentTool: stringValue(raw.currentTool, 128) } : {}),
-		...(clampNumber(raw.currentToolStartedAt) !== undefined ? { currentToolStartedAt: clampNumber(raw.currentToolStartedAt) } : {}),
+		...(clampNumber(raw.currentToolStartedAt) !== undefined
+			? { currentToolStartedAt: clampNumber(raw.currentToolStartedAt) }
+			: {}),
 		...(stringValue(raw.currentPath, 2048) ? { currentPath: stringValue(raw.currentPath, 2048) } : {}),
 		...(clampNumber(raw.turnCount) !== undefined ? { turnCount: clampNumber(raw.turnCount) } : {}),
 		...(clampNumber(raw.toolCount) !== undefined ? { toolCount: clampNumber(raw.toolCount) } : {}),
@@ -254,7 +281,14 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
 		...(sanitizeTurnBudget(raw.turnBudget) ? { turnBudget: sanitizeTurnBudget(raw.turnBudget) } : {}),
 		...(raw.turnBudgetExceeded === true ? { turnBudgetExceeded: true } : {}),
 		...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
-		...(depth < MAX_DEPTH && Array.isArray(raw.children) ? { children: raw.children.map((child) => sanitizeSummary(child, depth + 1)).filter((child): child is NestedRunSummary => Boolean(child)).slice(0, MAX_CHILDREN) } : {}),
+		...(depth < MAX_DEPTH && Array.isArray(raw.children)
+			? {
+					children: raw.children
+						.map((child) => sanitizeSummary(child, depth + 1))
+						.filter((child): child is NestedRunSummary => Boolean(child))
+						.slice(0, MAX_CHILDREN),
+				}
+			: {}),
 	};
 }
 
@@ -264,7 +298,10 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
 	if (!isSafeNestedId(raw.id) || !isSafeNestedId(raw.parentRunId)) return undefined;
 	const pathParts = sanitizeNestedPath(raw.path);
 	const steps = Array.isArray(raw.steps)
-		? raw.steps.map((step) => sanitizeStep(step, depth + 1)).filter((step): step is NestedStepSummary => Boolean(step)).slice(0, MAX_STEPS)
+		? raw.steps
+				.map((step) => sanitizeStep(step, depth + 1))
+				.filter((step): step is NestedStepSummary => Boolean(step))
+				.slice(0, MAX_STEPS)
 		: undefined;
 	const totalTokens = sanitizeTokenUsage(raw.totalTokens);
 	const totalCost = sanitizeCost(raw.totalCost);
@@ -277,24 +314,43 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
 		path: pathParts,
 		state: sanitizeState(raw.state, "running"),
 		...(stringValue(raw.asyncDir, 2048) ? { asyncDir: stringValue(raw.asyncDir, 2048) } : {}),
-		...(clampNumber(raw.pid) !== undefined && clampNumber(raw.pid)! > 0 && Number.isInteger(clampNumber(raw.pid)) ? { pid: clampNumber(raw.pid) } : {}),
+		...(clampNumber(raw.pid) !== undefined && clampNumber(raw.pid)! > 0 && Number.isInteger(clampNumber(raw.pid))
+			? { pid: clampNumber(raw.pid) }
+			: {}),
 		...(stringValue(raw.sessionId, 256) ? { sessionId: stringValue(raw.sessionId, 256) } : {}),
 		...(stringValue(raw.sessionFile, 2048) ? { sessionFile: stringValue(raw.sessionFile, 2048) } : {}),
 		...(stringValue(raw.intercomTarget, 256) ? { intercomTarget: stringValue(raw.intercomTarget, 256) } : {}),
-		...(stringValue(raw.ownerIntercomTarget, 256) ? { ownerIntercomTarget: stringValue(raw.ownerIntercomTarget, 256) } : {}),
-		...(stringValue(raw.leafIntercomTarget, 256) ? { leafIntercomTarget: stringValue(raw.leafIntercomTarget, 256) } : {}),
-		...(raw.ownerState === "live" || raw.ownerState === "gone" || raw.ownerState === "unknown" ? { ownerState: raw.ownerState } : {}),
+		...(stringValue(raw.ownerIntercomTarget, 256)
+			? { ownerIntercomTarget: stringValue(raw.ownerIntercomTarget, 256) }
+			: {}),
+		...(stringValue(raw.leafIntercomTarget, 256)
+			? { leafIntercomTarget: stringValue(raw.leafIntercomTarget, 256) }
+			: {}),
+		...(raw.ownerState === "live" || raw.ownerState === "gone" || raw.ownerState === "unknown"
+			? { ownerState: raw.ownerState }
+			: {}),
 		...(stringValue(raw.controlInbox, 2048) ? { controlInbox: stringValue(raw.controlInbox, 2048) } : {}),
 		...(stringValue(raw.capabilityToken, 128) ? { capabilityToken: stringValue(raw.capabilityToken, 128) } : {}),
 		...(raw.mode === "single" || raw.mode === "parallel" || raw.mode === "chain" ? { mode: raw.mode } : {}),
 		...(stringValue(raw.agent, 128) ? { agent: stringValue(raw.agent, 128) } : {}),
-		...(Array.isArray(raw.agents) ? { agents: raw.agents.map((agent) => stringValue(agent, 128)).filter((agent): agent is string => Boolean(agent)).slice(0, MAX_STEPS) } : {}),
+		...(Array.isArray(raw.agents)
+			? {
+					agents: raw.agents
+						.map((agent) => stringValue(agent, 128))
+						.filter((agent): agent is string => Boolean(agent))
+						.slice(0, MAX_STEPS),
+				}
+			: {}),
 		...(clampNumber(raw.currentStep) !== undefined ? { currentStep: clampNumber(raw.currentStep) } : {}),
 		...(clampNumber(raw.chainStepCount) !== undefined ? { chainStepCount: clampNumber(raw.chainStepCount) } : {}),
-		...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention" ? { activityState: raw.activityState } : {}),
+		...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention"
+			? { activityState: raw.activityState }
+			: {}),
 		...(clampNumber(raw.lastActivityAt) !== undefined ? { lastActivityAt: clampNumber(raw.lastActivityAt) } : {}),
 		...(stringValue(raw.currentTool, 128) ? { currentTool: stringValue(raw.currentTool, 128) } : {}),
-		...(clampNumber(raw.currentToolStartedAt) !== undefined ? { currentToolStartedAt: clampNumber(raw.currentToolStartedAt) } : {}),
+		...(clampNumber(raw.currentToolStartedAt) !== undefined
+			? { currentToolStartedAt: clampNumber(raw.currentToolStartedAt) }
+			: {}),
 		...(stringValue(raw.currentPath, 2048) ? { currentPath: stringValue(raw.currentPath, 2048) } : {}),
 		...(clampNumber(raw.turnCount) !== undefined ? { turnCount: clampNumber(raw.turnCount) } : {}),
 		...(clampNumber(raw.toolCount) !== undefined ? { toolCount: clampNumber(raw.toolCount) } : {}),
@@ -311,7 +367,14 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
 		...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
 		...(stringValue(raw.error, 1024) ? { error: stringValue(raw.error, 1024) } : {}),
 		...(steps && steps.length > 0 ? { steps } : {}),
-		...(depth < MAX_DEPTH && Array.isArray(raw.children) ? { children: raw.children.map((child) => sanitizeSummary(child, depth + 1)).filter((child): child is NestedRunSummary => Boolean(child)).slice(0, MAX_CHILDREN) } : {}),
+		...(depth < MAX_DEPTH && Array.isArray(raw.children)
+			? {
+					children: raw.children
+						.map((child) => sanitizeSummary(child, depth + 1))
+						.filter((child): child is NestedRunSummary => Boolean(child))
+						.slice(0, MAX_CHILDREN),
+				}
+			: {}),
 	};
 }
 
@@ -325,7 +388,12 @@ function parseRecord(content: string, route: NestedRoute): NestedEventRecord | u
 	}
 	if (!parsed || typeof parsed !== "object") return undefined;
 	const raw = parsed as Record<string, unknown>;
-	if (raw.type !== "subagent.nested.started" && raw.type !== "subagent.nested.updated" && raw.type !== "subagent.nested.completed") return undefined;
+	if (
+		raw.type !== "subagent.nested.started" &&
+		raw.type !== "subagent.nested.updated" &&
+		raw.type !== "subagent.nested.completed"
+	)
+		return undefined;
 	if (raw.rootRunId !== route.rootRunId || raw.capabilityToken !== route.capabilityToken) return undefined;
 	if (!isSafeNestedId(raw.parentRunId)) return undefined;
 	const ts = clampNumber(raw.ts);
@@ -354,9 +422,10 @@ export function parseNestedEventRecords(content: string, route: NestedRoute): Ne
 		const record = parseRecord(content.trim(), route);
 		return record ? [record] : [];
 	}
-	return content.split("\n")
+	return content
+		.split("\n")
 		.slice(0, content.endsWith("\n") ? undefined : -1)
-		.map((line) => line.trim() ? parseRecord(line, route) : undefined)
+		.map((line) => (line.trim() ? parseRecord(line, route) : undefined))
 		.filter((event): event is NestedEventRecord => Boolean(event));
 }
 
@@ -382,7 +451,9 @@ function nestedStateFromAsyncState(state: AsyncStatus["state"]): NestedRunState 
 	}
 }
 
-function nestedStepStatusFromAsyncStepStatus(status: NonNullable<AsyncStatus["steps"]>[number]["status"]): NestedStepSummary["status"] {
+function nestedStepStatusFromAsyncStepStatus(
+	status: NonNullable<AsyncStatus["steps"]>[number]["status"],
+): NestedStepSummary["status"] {
 	switch (status) {
 		case "pending":
 			return "pending";
@@ -403,7 +474,8 @@ function nestedStepStatusFromAsyncStepStatus(status: NonNullable<AsyncStatus["st
 }
 
 function mergeSummary(existing: NestedRunSummary | undefined, event: NestedEventRecord): NestedRunSummary {
-	const incomingState = event.type === "subagent.nested.completed" && event.child.state === "running" ? "complete" : event.child.state;
+	const incomingState =
+		event.type === "subagent.nested.completed" && event.child.state === "running" ? "complete" : event.child.state;
 	const incoming = { ...event.child, state: incomingState, lastUpdate: event.child.lastUpdate ?? event.ts };
 	if (!existing) return incoming;
 	const existingUpdate = existing.lastUpdate ?? 0;
@@ -416,27 +488,33 @@ function mergeSummary(existing: NestedRunSummary | undefined, event: NestedEvent
 
 function attachChild(children: NestedRunSummary[], event: NestedEventRecord): NestedRunSummary[] {
 	let updated = false;
-	const walk = (items: NestedRunSummary[]): NestedRunSummary[] => items.map((item) => {
-		if (item.id === event.parentRunId) {
-			const existingChildren = item.children ?? [];
-			const childIndex = existingChildren.findIndex((child) => child.id === event.child.id);
-			const nextChild = mergeSummary(childIndex >= 0 ? existingChildren[childIndex] : undefined, event);
-			const nextChildren = childIndex >= 0
-				? existingChildren.map((child, index) => index === childIndex ? nextChild : child)
-				: [...existingChildren, nextChild];
-			updated = true;
-			return { ...item, children: nextChildren.slice(0, MAX_CHILDREN), lastUpdate: Math.max(item.lastUpdate ?? 0, event.ts) };
-		}
-		if (!item.children?.length) return item;
-		const nextChildren = walk(item.children);
-		return nextChildren === item.children ? item : { ...item, children: nextChildren };
-	});
+	const walk = (items: NestedRunSummary[]): NestedRunSummary[] =>
+		items.map((item) => {
+			if (item.id === event.parentRunId) {
+				const existingChildren = item.children ?? [];
+				const childIndex = existingChildren.findIndex((child) => child.id === event.child.id);
+				const nextChild = mergeSummary(childIndex >= 0 ? existingChildren[childIndex] : undefined, event);
+				const nextChildren =
+					childIndex >= 0
+						? existingChildren.map((child, index) => (index === childIndex ? nextChild : child))
+						: [...existingChildren, nextChild];
+				updated = true;
+				return {
+					...item,
+					children: nextChildren.slice(0, MAX_CHILDREN),
+					lastUpdate: Math.max(item.lastUpdate ?? 0, event.ts),
+				};
+			}
+			if (!item.children?.length) return item;
+			const nextChildren = walk(item.children);
+			return nextChildren === item.children ? item : { ...item, children: nextChildren };
+		});
 	const next = walk(children);
 	if (updated) return next;
 	const childIndex = next.findIndex((child) => child.id === event.child.id);
 	const nextChild = mergeSummary(childIndex >= 0 ? next[childIndex] : undefined, event);
 	return childIndex >= 0
-		? next.map((child, index) => index === childIndex ? nextChild : child)
+		? next.map((child, index) => (index === childIndex ? nextChild : child))
 		: [...next, nextChild].slice(0, MAX_CHILDREN);
 }
 
@@ -465,7 +543,10 @@ export function findNestedRouteForRootId(rootRunId: string): NestedRoute | undef
 		if (!entry.startsWith(`${rootRunId}-`)) continue;
 		const routeRoot = path.join(NESTED_EVENTS_DIR, entry);
 		try {
-			const metadata = JSON.parse(fs.readFileSync(path.join(routeRoot, ROUTE_FILE), "utf-8")) as { rootRunId?: unknown; capabilityToken?: unknown };
+			const metadata = JSON.parse(fs.readFileSync(path.join(routeRoot, ROUTE_FILE), "utf-8")) as {
+				rootRunId?: unknown;
+				capabilityToken?: unknown;
+			};
 			if (metadata.rootRunId !== rootRunId || typeof metadata.capabilityToken !== "string") continue;
 			const route = {
 				rootRunId,
@@ -500,7 +581,10 @@ export function buildNestedRouteIndex(): Map<string, NestedRoute> {
 	for (const entry of entries) {
 		const routeRoot = path.join(NESTED_EVENTS_DIR, entry);
 		try {
-			const metadata = JSON.parse(fs.readFileSync(path.join(routeRoot, ROUTE_FILE), "utf-8")) as { rootRunId?: unknown; capabilityToken?: unknown };
+			const metadata = JSON.parse(fs.readFileSync(path.join(routeRoot, ROUTE_FILE), "utf-8")) as {
+				rootRunId?: unknown;
+				capabilityToken?: unknown;
+			};
 			if (typeof metadata.rootRunId !== "string" || typeof metadata.capabilityToken !== "string") continue;
 			if (index.has(metadata.rootRunId)) continue;
 			const route: NestedRoute = {
@@ -527,7 +611,12 @@ export function findNestedRun(children: NestedRunSummary[] | undefined, id: stri
 	if (!children?.length) return undefined;
 	for (const child of children) {
 		if (child.id === id) return child;
-		const nested = findNestedRun(child.children, id) ?? findNestedRun(child.steps?.flatMap((step) => step.children ?? []), id);
+		const nested =
+			findNestedRun(child.children, id) ??
+			findNestedRun(
+				child.steps?.flatMap((step) => step.children ?? []),
+				id,
+			);
 		if (nested) return nested;
 	}
 	return undefined;
@@ -544,24 +633,41 @@ export interface NestedRunResolutionScope {
 	descendantOf?: { parentRunId: string; parentStepIndex?: number };
 }
 
-function collectNestedRuns(children: NestedRunSummary[] | undefined, output: NestedRunSummary[] = []): NestedRunSummary[] {
+function collectNestedRuns(
+	children: NestedRunSummary[] | undefined,
+	output: NestedRunSummary[] = [],
+): NestedRunSummary[] {
 	for (const child of children ?? []) {
 		output.push(child);
 		collectNestedRuns(child.children, output);
-		collectNestedRuns(child.steps?.flatMap((step) => step.children ?? []), output);
+		collectNestedRuns(
+			child.steps?.flatMap((step) => step.children ?? []),
+			output,
+		);
 	}
 	return output;
 }
 
-function collectScopedNestedRuns(children: NestedRunSummary[] | undefined, scope: NestedRunResolutionScope["descendantOf"], output: NestedRunSummary[] = []): NestedRunSummary[] {
+function collectScopedNestedRuns(
+	children: NestedRunSummary[] | undefined,
+	scope: NestedRunResolutionScope["descendantOf"],
+	output: NestedRunSummary[] = [],
+): NestedRunSummary[] {
 	if (!scope) return collectNestedRuns(children, output);
 	for (const child of children ?? []) {
-		if (child.parentRunId === scope.parentRunId && (scope.parentStepIndex === undefined || child.parentStepIndex === scope.parentStepIndex)) {
+		if (
+			child.parentRunId === scope.parentRunId &&
+			(scope.parentStepIndex === undefined || child.parentStepIndex === scope.parentStepIndex)
+		) {
 			collectNestedRuns([child], output);
 			continue;
 		}
 		collectScopedNestedRuns(child.children, scope, output);
-		collectScopedNestedRuns(child.steps?.flatMap((step) => step.children ?? []), scope, output);
+		collectScopedNestedRuns(
+			child.steps?.flatMap((step) => step.children ?? []),
+			scope,
+			output,
+		);
 	}
 	return output;
 }
@@ -578,7 +684,10 @@ function listNestedRoutes(): NestedRoute[] {
 	for (const entry of entries) {
 		const routeRoot = path.join(NESTED_EVENTS_DIR, entry);
 		try {
-			const metadata = JSON.parse(fs.readFileSync(path.join(routeRoot, ROUTE_FILE), "utf-8")) as { rootRunId?: unknown; capabilityToken?: unknown };
+			const metadata = JSON.parse(fs.readFileSync(path.join(routeRoot, ROUTE_FILE), "utf-8")) as {
+				rootRunId?: unknown;
+				capabilityToken?: unknown;
+			};
 			if (typeof metadata.rootRunId !== "string" || typeof metadata.capabilityToken !== "string") continue;
 			const route = {
 				rootRunId: metadata.rootRunId,
@@ -595,14 +704,18 @@ function listNestedRoutes(): NestedRoute[] {
 	return routes;
 }
 
-export function findNestedRunMatchesById(id: string, options: { prefix?: boolean; scope?: NestedRunResolutionScope } = {}): NestedRunMatch[] {
+export function findNestedRunMatchesById(
+	id: string,
+	options: { prefix?: boolean; scope?: NestedRunResolutionScope } = {},
+): NestedRunMatch[] {
 	assertSafeId("id", id);
 	const matches: NestedRunMatch[] = [];
 	for (const route of options.scope?.routes ?? listNestedRoutes()) {
 		try {
 			const registry = projectNestedEvents(route);
 			for (const run of collectScopedNestedRuns(registry.children, options.scope?.descendantOf)) {
-				if (options.prefix ? run.id.startsWith(id) : run.id === id) matches.push({ rootRunId: route.rootRunId, route, run });
+				if (options.prefix ? run.id.startsWith(id) : run.id === id)
+					matches.push({ rootRunId: route.rootRunId, route, run });
 			}
 		} catch {
 			continue;
@@ -623,8 +736,14 @@ export function readNestedRegistry(route: NestedRoute): NestedRegistry {
 		return {
 			rootRunId: route.rootRunId,
 			updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : 0,
-			children: Array.isArray(parsed.children) ? parsed.children.map((child) => sanitizeSummary(child)).filter((child): child is NestedRunSummary => Boolean(child)) : [],
-			processedEvents: Array.isArray(parsed.processedEvents) ? parsed.processedEvents.filter((item): item is string => typeof item === "string") : [],
+			children: Array.isArray(parsed.children)
+				? parsed.children
+						.map((child) => sanitizeSummary(child))
+						.filter((child): child is NestedRunSummary => Boolean(child))
+				: [],
+			processedEvents: Array.isArray(parsed.processedEvents)
+				? parsed.processedEvents.filter((item): item is string => typeof item === "string")
+				: [],
 		};
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -639,7 +758,10 @@ export function projectNestedEvents(route: NestedRoute): NestedRegistry {
 	let changed = false;
 	let entries: string[] = [];
 	try {
-		entries = fs.readdirSync(route.eventSink).filter((entry) => entry.endsWith(".json") || entry.endsWith(".jsonl")).sort();
+		entries = fs
+			.readdirSync(route.eventSink)
+			.filter((entry) => entry.endsWith(".json") || entry.endsWith(".jsonl"))
+			.sort();
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 	}
@@ -673,7 +795,8 @@ export function projectNestedEvents(route: NestedRoute): NestedRegistry {
 
 function writeRouteRecord(dir: string, ts: number, payload: object): string {
 	const content = `${JSON.stringify(payload)}\n`;
-	if (Buffer.byteLength(content, "utf-8") > MAX_EVENT_BYTES) throw new Error("Nested route record exceeds the maximum size.");
+	if (Buffer.byteLength(content, "utf-8") > MAX_EVENT_BYTES)
+		throw new Error("Nested route record exceeds the maximum size.");
 	fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 	const name = `${String(ts).padStart(13, "0")}-${randomUUID()}.json`;
 	const tmp = path.join(dir, `.${name}.tmp`);
@@ -683,7 +806,10 @@ function writeRouteRecord(dir: string, ts: number, payload: object): string {
 	return finalPath;
 }
 
-export function writeNestedEvent(route: NestedRoute, event: Omit<NestedEventRecord, "rootRunId" | "capabilityToken">): void {
+export function writeNestedEvent(
+	route: NestedRoute,
+	event: Omit<NestedEventRecord, "rootRunId" | "capabilityToken">,
+): void {
 	validateRouteShape(route);
 	const record: NestedEventRecord = {
 		...event,
@@ -707,11 +833,13 @@ function parseControlRequest(content: string, route: NestedRoute): NestedControl
 	const raw = parsed as Record<string, unknown>;
 	if (raw.type !== "subagent.nested.control-request") return undefined;
 	if (raw.rootRunId !== route.rootRunId || raw.capabilityToken !== route.capabilityToken) return undefined;
-	if (!isSafeNestedId(raw.requestId) || !isSafeNestedId(raw.targetRunId) || !isSafeNestedId(raw.ownerParentRunId)) return undefined;
+	if (!isSafeNestedId(raw.requestId) || !isSafeNestedId(raw.targetRunId) || !isSafeNestedId(raw.ownerParentRunId))
+		return undefined;
 	if (raw.action !== "interrupt" && raw.action !== "resume") return undefined;
 	const ownerParentStepIndex = clampNumber(raw.ownerParentStepIndex);
 	if (raw.ownerParentStepIndex !== undefined) {
-		if (ownerParentStepIndex === undefined || !Number.isInteger(ownerParentStepIndex) || ownerParentStepIndex < 0) return undefined;
+		if (ownerParentStepIndex === undefined || !Number.isInteger(ownerParentStepIndex) || ownerParentStepIndex < 0)
+			return undefined;
 	}
 	const deliveryDeadlineAt = clampNumber(raw.deliveryDeadlineAt);
 	if (deliveryDeadlineAt === undefined || deliveryDeadlineAt <= 0) return undefined;
@@ -764,7 +892,10 @@ function parseControlResult(content: string, route: NestedRoute): NestedControlR
 	};
 }
 
-export function writeNestedControlRequest(route: NestedRoute, request: Omit<NestedControlRequestRecord, "type" | "rootRunId" | "capabilityToken">): string {
+export function writeNestedControlRequest(
+	route: NestedRoute,
+	request: Omit<NestedControlRequestRecord, "type" | "rootRunId" | "capabilityToken">,
+): string {
 	validateRouteShape(route);
 	assertSafeId("requestId", request.requestId);
 	assertSafeId("targetRunId", request.targetRunId);
@@ -779,11 +910,16 @@ export function writeNestedControlRequest(route: NestedRoute, request: Omit<Nest
 	return writeRouteRecord(route.controlInbox, sanitized.ts, sanitized);
 }
 
-export function readNestedControlRequests(route: NestedRoute): Array<NestedControlRequestRecord & { filePath: string }> {
+export function readNestedControlRequests(
+	route: NestedRoute,
+): Array<NestedControlRequestRecord & { filePath: string }> {
 	validateRouteShape(route);
 	let entries: string[] = [];
 	try {
-		entries = fs.readdirSync(route.controlInbox).filter((entry) => entry.endsWith(".json")).sort();
+		entries = fs
+			.readdirSync(route.controlInbox)
+			.filter((entry) => entry.endsWith(".json"))
+			.sort();
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 	}
@@ -830,7 +966,10 @@ export function claimNestedControlRequest(
 	}
 }
 
-export function writeNestedControlResult(route: NestedRoute, result: Omit<NestedControlResultRecord, "type" | "rootRunId" | "capabilityToken">): void {
+export function writeNestedControlResult(
+	route: NestedRoute,
+	result: Omit<NestedControlResultRecord, "type" | "rootRunId" | "capabilityToken">,
+): void {
 	validateRouteShape(route);
 	assertSafeId("requestId", result.requestId);
 	assertSafeId("targetRunId", result.targetRunId);
@@ -849,7 +988,10 @@ export function readNestedControlResults(route: NestedRoute): NestedControlResul
 	validateRouteShape(route);
 	let entries: string[] = [];
 	try {
-		entries = fs.readdirSync(route.eventSink).filter((entry) => entry.endsWith(".json") || entry.endsWith(".jsonl")).sort();
+		entries = fs
+			.readdirSync(route.eventSink)
+			.filter((entry) => entry.endsWith(".json") || entry.endsWith(".jsonl"))
+			.sort();
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 	}
@@ -882,7 +1024,11 @@ export function nestedRouteEnv(route: NestedRoute): Record<string, string> {
 	};
 }
 
-export function attachRootChildrenToSteps<T extends { children?: NestedRunSummary[]; index?: number }>(rootRunId: string, steps: T[] | undefined, children: NestedRunSummary[] | undefined): void {
+export function attachRootChildrenToSteps<T extends { children?: NestedRunSummary[]; index?: number }>(
+	rootRunId: string,
+	steps: T[] | undefined,
+	children: NestedRunSummary[] | undefined,
+): void {
 	if (!steps?.length) return;
 	for (const step of steps) {
 		step.children = undefined;
@@ -904,7 +1050,9 @@ export function updateAsyncJobNestedProjection(job: AsyncJobState): void {
 	attachRootChildrenToSteps(job.asyncId, job.steps, registry.children);
 }
 
-export function updateForegroundNestedProjection(control: SubagentState["foregroundControls"] extends Map<string, infer T> ? T : never): void {
+export function updateForegroundNestedProjection(
+	control: SubagentState["foregroundControls"] extends Map<string, infer T> ? T : never,
+): void {
 	if (!control.nestedRoute) return;
 	const registry = projectNestedEvents(control.nestedRoute);
 	control.nestedChildren = registry.children;
@@ -920,13 +1068,30 @@ export function hasLiveNestedDescendants(children: NestedRunSummary[] | undefine
 	return false;
 }
 
-export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: string, fallback: { id: string; parentRunId: string; parentStepIndex?: number; depth: number; path?: Array<{ runId: string; stepIndex?: number; agent?: string }>; mode?: SubagentRunMode; ts: number }): NestedRunSummary {
+export function nestedSummaryFromAsyncStatus(
+	status: AsyncStatus,
+	asyncDir: string,
+	fallback: {
+		id: string;
+		parentRunId: string;
+		parentStepIndex?: number;
+		depth: number;
+		path?: Array<{ runId: string; stepIndex?: number; agent?: string }>;
+		mode?: SubagentRunMode;
+		ts: number;
+	},
+): NestedRunSummary {
 	return {
 		id: status.runId || fallback.id,
 		parentRunId: fallback.parentRunId,
 		...(fallback.parentStepIndex !== undefined ? { parentStepIndex: fallback.parentStepIndex } : {}),
 		depth: fallback.depth,
-		path: fallback.path ?? [{ runId: fallback.parentRunId, ...(fallback.parentStepIndex !== undefined ? { stepIndex: fallback.parentStepIndex } : {}) }],
+		path: fallback.path ?? [
+			{
+				runId: fallback.parentRunId,
+				...(fallback.parentStepIndex !== undefined ? { stepIndex: fallback.parentStepIndex } : {}),
+			},
+		],
 		asyncDir,
 		...(status.pid ? { pid: status.pid } : {}),
 		...(status.sessionId ? { sessionId: status.sessionId } : {}),
@@ -953,25 +1118,31 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 		...(status.endedAt !== undefined ? { endedAt: status.endedAt } : {}),
 		lastUpdate: status.lastUpdate ?? fallback.ts,
 		...(status.sessionFile ? { sessionFile: status.sessionFile } : {}),
-		...(status.steps?.length ? { steps: status.steps.map((step) => ({
-			agent: step.agent,
-			status: nestedStepStatusFromAsyncStepStatus(step.status),
-			...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
-			...(step.activityState ? { activityState: step.activityState } : {}),
-			...(step.lastActivityAt !== undefined ? { lastActivityAt: step.lastActivityAt } : {}),
-			...(step.currentTool ? { currentTool: step.currentTool } : {}),
-			...(step.currentToolStartedAt !== undefined ? { currentToolStartedAt: step.currentToolStartedAt } : {}),
-			...(step.currentPath ? { currentPath: step.currentPath } : {}),
-			...(step.turnCount !== undefined ? { turnCount: step.turnCount } : {}),
-			...(step.toolCount !== undefined ? { toolCount: step.toolCount } : {}),
-			...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
-			...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
-			...(step.error ? { error: step.error } : {}),
-			...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
-			...(step.turnBudget ? { turnBudget: step.turnBudget } : {}),
-			...(step.turnBudgetExceeded !== undefined ? { turnBudgetExceeded: step.turnBudgetExceeded } : {}),
-			...(step.wrapUpRequested !== undefined ? { wrapUpRequested: step.wrapUpRequested } : {}),
-		})).slice(0, MAX_STEPS) } : {}),
+		...(status.steps?.length
+			? {
+					steps: status.steps
+						.map((step) => ({
+							agent: step.agent,
+							status: nestedStepStatusFromAsyncStepStatus(step.status),
+							...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
+							...(step.activityState ? { activityState: step.activityState } : {}),
+							...(step.lastActivityAt !== undefined ? { lastActivityAt: step.lastActivityAt } : {}),
+							...(step.currentTool ? { currentTool: step.currentTool } : {}),
+							...(step.currentToolStartedAt !== undefined ? { currentToolStartedAt: step.currentToolStartedAt } : {}),
+							...(step.currentPath ? { currentPath: step.currentPath } : {}),
+							...(step.turnCount !== undefined ? { turnCount: step.turnCount } : {}),
+							...(step.toolCount !== undefined ? { toolCount: step.toolCount } : {}),
+							...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
+							...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
+							...(step.error ? { error: step.error } : {}),
+							...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
+							...(step.turnBudget ? { turnBudget: step.turnBudget } : {}),
+							...(step.turnBudgetExceeded !== undefined ? { turnBudgetExceeded: step.turnBudgetExceeded } : {}),
+							...(step.wrapUpRequested !== undefined ? { wrapUpRequested: step.wrapUpRequested } : {}),
+						}))
+						.slice(0, MAX_STEPS),
+				}
+			: {}),
 	};
 }
 
@@ -984,7 +1155,9 @@ export function nestedArtifactEnv(rootRunId: string, parentRunId: string): Recor
 
 export function isTopLevelAsyncDir(asyncDir: string): boolean {
 	const resolved = path.resolve(asyncDir);
-	return containedPath(ASYNC_DIR, resolved) && !containedPath(path.join(TEMP_ROOT_DIR, "nested-subagent-runs"), resolved);
+	return (
+		containedPath(ASYNC_DIR, resolved) && !containedPath(path.join(TEMP_ROOT_DIR, "nested-subagent-runs"), resolved)
+	);
 }
 
 export function nestedResultsPath(rootRunId: string, id: string): string {

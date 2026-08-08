@@ -10,11 +10,7 @@ export function splitThinkingSuffix(model) {
 }
 export const INHERIT_MODEL = "inherit";
 export function normalizeModelSegment(segment) {
-    return segment
-        .toLowerCase()
-        .replace(/[._]+/g, "-")
-        .replace(/-+/g, "-")
-        .replace(/^-|-$/g, "");
+    return segment.toLowerCase().replace(/[._]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
 }
 function isPlausibleDateStamp(year, month, day) {
     const yyyy = Number(year);
@@ -167,17 +163,17 @@ export function buildModelCandidates(primaryModel, fallbackModels, availableMode
     return candidates;
 }
 function replaceModelNoticeControlCharacters(value) {
-    return [...value].map((character) => {
+    return [...value]
+        .map((character) => {
         const code = character.codePointAt(0) ?? 0;
         return code <= 0x1f || code === 0x7f ? " " : character;
-    }).join("");
+    })
+        .join("");
 }
 export function sanitizeModelFallbackNotice(notice) {
     if (typeof notice !== "string")
         return undefined;
-    const sanitized = replaceModelNoticeControlCharacters(notice)
-        .replace(/\s+/g, " ")
-        .trim();
+    const sanitized = replaceModelNoticeControlCharacters(notice).replace(/\s+/g, " ").trim();
     return sanitized ? sanitized.slice(0, 240) : undefined;
 }
 const RETRYABLE_MODEL_FAILURE_PATTERNS = [

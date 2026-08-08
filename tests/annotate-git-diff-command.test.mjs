@@ -27,6 +27,12 @@ test("annotate-git-diff registers only the renamed first-party command", () => {
 		["annotate-git-diff"],
 	);
 	assert.equal(typeof pi.commands[0]?.config?.handler, "function");
-	assert.equal(pi.commands.some(({ name }) => name === "diff-review"), false);
-	assert.deepEqual(pi.events.map(({ name }) => name), ["session_shutdown"]);
+	assert.equal(
+		pi.commands.some(({ name }) => name === "diff-review"),
+		false,
+	);
+	assert.deepEqual(
+		pi.events.map(({ name }) => name),
+		["session_shutdown"],
+	);
 });

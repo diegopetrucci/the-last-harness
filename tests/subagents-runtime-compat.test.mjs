@@ -30,9 +30,18 @@ test("generated child Pi arguments select generated JavaScript runtime extension
 	const paths = extensionArgs(result.args);
 
 	assert.equal(paths.length, 1);
-	assert.equal(paths.some((path) => path.endsWith("subagent-prompt-runtime.js")), true);
-	assert.equal(paths.every((path) => !path.endsWith("fanout-child.js")), true);
-	assert.equal(paths.every((path) => extname(path) === ".js"), true);
+	assert.equal(
+		paths.some((path) => path.endsWith("subagent-prompt-runtime.js")),
+		true,
+	);
+	assert.equal(
+		paths.every((path) => !path.endsWith("fanout-child.js")),
+		true,
+	);
+	assert.equal(
+		paths.every((path) => extname(path) === ".js"),
+		true,
+	);
 });
 
 test("Pi 0.83 tool-result bridge preserves rich failures and patches the matching execution", () => {
@@ -61,13 +70,15 @@ test("run history ignores parsed null entries", (t) => {
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 		rmSync(agentDir, { recursive: true, force: true });
 	});
-	writeFileSync(join(agentDir, "run-history.jsonl"), [
-		"null",
-		JSON.stringify({ agent: "worker", task: "ok", ts: 1, status: "ok", duration: 10 }),
-		"",
-	].join("\n"));
+	writeFileSync(
+		join(agentDir, "run-history.jsonl"),
+		["null", JSON.stringify({ agent: "worker", task: "ok", ts: 1, status: "ok", duration: 10 }), ""].join("\n"),
+	);
 
-	assert.deepEqual(loadRunsForAgent("worker").map((entry) => entry.task), ["ok"]);
+	assert.deepEqual(
+		loadRunsForAgent("worker").map((entry) => entry.task),
+		["ok"],
+	);
 });
 
 test("Pi 0.83 compatibility declaration shim is absent", () => {

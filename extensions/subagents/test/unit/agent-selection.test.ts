@@ -3,7 +3,11 @@ import { describe, it } from "node:test";
 import { mergeAgentsForScope } from "../../src/agents/agent-selection.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 
-function makeAgent(name: string, source: "builtin" | "package" | "user" | "project", systemPrompt: string): AgentConfig {
+function makeAgent(
+	name: string,
+	source: "builtin" | "package" | "user" | "project",
+	systemPrompt: string,
+): AgentConfig {
 	return {
 		name,
 		description: `${name} agent`,

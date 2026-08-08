@@ -61,13 +61,15 @@ function renameWithRetry(
 	}
 }
 
-export function createAtomicJsonWriter(options: AtomicJsonWriterOptions = {}): (filePath: string, payload: object) => void {
+export function createAtomicJsonWriter(
+	options: AtomicJsonWriterOptions = {},
+): (filePath: string, payload: object) => void {
 	const fsImpl = options.fs ?? fs;
 	const now = options.now ?? Date.now;
 	const pid = options.pid ?? process.pid;
 	const random = options.random ?? Math.random;
 	const retryRenameErrors = options.retryRenameErrors ?? process.platform === "win32";
-	const retryDelaysMs = retryRenameErrors ? options.retryDelaysMs ?? DEFAULT_RENAME_RETRY_DELAYS_MS : [];
+	const retryDelaysMs = retryRenameErrors ? (options.retryDelaysMs ?? DEFAULT_RENAME_RETRY_DELAYS_MS) : [];
 	const wait = options.wait ?? waitSync;
 	return (filePath: string, payload: object): void => {
 		fsImpl.mkdirSync(path.dirname(filePath), { recursive: true });

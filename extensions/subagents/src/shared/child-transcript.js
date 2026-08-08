@@ -15,8 +15,8 @@ function normalizeUsage(value) {
     const raw = value;
     const rawCost = raw.cost;
     const cost = rawCost && typeof rawCost === "object"
-        ? finiteNumber(rawCost.total) ?? 0
-        : finiteNumber(rawCost) ?? 0;
+        ? (finiteNumber(rawCost.total) ?? 0)
+        : (finiteNumber(rawCost) ?? 0);
     return {
         input: finiteNumber(raw.input) ?? finiteNumber(raw.inputTokens) ?? 0,
         output: finiteNumber(raw.output) ?? finiteNumber(raw.outputTokens) ?? 0,

@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "./structured-output.js";
 import { TEMP_ROOT_DIR } from "../../shared/types.js";
-import { findModelInfo, getSupportedThinkingLevels, THINKING_LEVELS } from "../../shared/model-info.js";
+import { findModelInfo, getSupportedThinkingLevels, THINKING_LEVELS, } from "../../shared/model-info.js";
 import { TOOL_BUDGET_ENV, encodeToolBudgetEnv } from "./tool-budget.js";
 const TASK_ARG_LIMIT = 8000;
 const RUNTIME_EXTENSION_SUFFIX = path.extname(fileURLToPath(import.meta.url)) === ".ts" ? ".ts" : ".js";
@@ -28,7 +28,10 @@ export const SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV = "PI_SUBAGENT_PARENT_CAPABILI
 export const SUBAGENT_PARENT_SESSION_ENV = "PI_SUBAGENT_PARENT_SESSION";
 export const SUBAGENT_STEER_INBOX_ENV = "PI_SUBAGENT_STEER_INBOX";
 function sanitizeSupervisorChannelSegment(value) {
-    return value.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "unknown";
+    return (value
+        .trim()
+        .replace(/[^A-Za-z0-9._-]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "unknown");
 }
 function supervisorChannelDir(runId, agent, childIndex) {
     return path.join(TEMP_ROOT_DIR, "supervisor-channels", `${sanitizeSupervisorChannelSegment(runId)}-${sanitizeSupervisorChannelSegment(agent)}-${childIndex}`);
@@ -94,7 +97,8 @@ export function buildPiArgs(input) {
     if (input.tools?.length) {
         const builtinTools = [...declaredBuiltinTools];
         for (const tool of input.tools) {
-            if (!declaredBuiltinTools.includes(tool) && (tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js"))) {
+            if (!declaredBuiltinTools.includes(tool) &&
+                (tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js"))) {
                 toolExtensionPaths.push(tool);
             }
         }
@@ -105,12 +109,21 @@ export function buildPiArgs(input) {
     const runtimeExtensions = [PROMPT_RUNTIME_EXTENSION_PATH];
     if (input.extensions !== undefined) {
         args.push("--no-extensions");
-        for (const extPath of [...new Set([...runtimeExtensions, ...toolExtensionPaths, ...input.extensions, ...(input.subagentOnlyExtensions ?? [])])]) {
+        for (const extPath of [
+            ...new Set([
+                ...runtimeExtensions,
+                ...toolExtensionPaths,
+                ...input.extensions,
+                ...(input.subagentOnlyExtensions ?? []),
+            ]),
+        ]) {
             args.push("--extension", extPath);
         }
     }
     else {
-        for (const extPath of [...new Set([...runtimeExtensions, ...toolExtensionPaths, ...(input.subagentOnlyExtensions ?? [])])]) {
+        for (const extPath of [
+            ...new Set([...runtimeExtensions, ...toolExtensionPaths, ...(input.subagentOnlyExtensions ?? [])]),
+        ]) {
             args.push("--extension", extPath);
         }
     }

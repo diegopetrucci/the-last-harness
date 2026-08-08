@@ -1,4 +1,4 @@
-import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { formatHomePath } from "./common.js";
 import { DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";

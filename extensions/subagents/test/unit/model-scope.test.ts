@@ -54,7 +54,10 @@ describe("checkModelScope", () => {
 	const scope: ModelScopeConfig = { enforce: true, allow: ["anthropic/*", "openai/gpt-5-*"] };
 
 	it("returns undefined when enforcement is off", () => {
-		assert.equal(checkModelScope("deepseek/deepseek-v4", { enforce: false, allow: ["anthropic/*"] }, "explicit"), undefined);
+		assert.equal(
+			checkModelScope("deepseek/deepseek-v4", { enforce: false, allow: ["anthropic/*"] }, "explicit"),
+			undefined,
+		);
 		assert.equal(checkModelScope("deepseek/deepseek-v4", undefined, "explicit"), undefined);
 	});
 
@@ -104,10 +107,10 @@ describe("parseModelScopeConfig", () => {
 	});
 
 	it("parses a well-formed config", () => {
-		assert.deepEqual(
-			parseModelScopeConfig({ enforce: true, allow: ["anthropic/*", "openai/gpt-5-*"] }, meta),
-			{ enforce: true, allow: ["anthropic/*", "openai/gpt-5-*"] },
-		);
+		assert.deepEqual(parseModelScopeConfig({ enforce: true, allow: ["anthropic/*", "openai/gpt-5-*"] }, meta), {
+			enforce: true,
+			allow: ["anthropic/*", "openai/gpt-5-*"],
+		});
 	});
 
 	it("parses enforce alone", () => {
@@ -115,10 +118,10 @@ describe("parseModelScopeConfig", () => {
 	});
 
 	it("trims allow patterns and drops empties", () => {
-		assert.deepEqual(
-			parseModelScopeConfig({ enforce: true, allow: ["  anthropic/*  ", "", "  "] }, meta),
-			{ enforce: true, allow: ["anthropic/*"] },
-		);
+		assert.deepEqual(parseModelScopeConfig({ enforce: true, allow: ["  anthropic/*  ", "", "  "] }, meta), {
+			enforce: true,
+			allow: ["anthropic/*"],
+		});
 	});
 
 	it("rejects a non-object value", () => {
@@ -135,7 +138,10 @@ describe("parseModelScopeConfig", () => {
 	});
 
 	it("rejects an allow array with non-string entries", () => {
-		assert.throws(() => parseModelScopeConfig({ enforce: true, allow: ["anthropic/*", 42] }, meta), /invalid 'modelScope.allow'/);
+		assert.throws(
+			() => parseModelScopeConfig({ enforce: true, allow: ["anthropic/*", 42] }, meta),
+			/invalid 'modelScope.allow'/,
+		);
 	});
 
 	it("rejects enforce without a non-empty allow list", () => {

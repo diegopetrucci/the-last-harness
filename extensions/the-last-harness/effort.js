@@ -22,7 +22,9 @@ function getThinkingLevelCompletions(prefix, runtime) {
     const filteredLevels = minThinking !== undefined
         ? THINKING_LEVELS.filter((level) => thinkingLevelAtLeast(level, minThinking))
         : THINKING_LEVELS;
-    const completions = filteredLevels.filter((level) => level.startsWith(normalizedPrefix)).map((level) => ({
+    const completions = filteredLevels
+        .filter((level) => level.startsWith(normalizedPrefix))
+        .map((level) => ({
         value: level,
         label: level,
         description: THINKING_LEVEL_DESCRIPTIONS[level],

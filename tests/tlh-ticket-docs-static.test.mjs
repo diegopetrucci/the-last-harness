@@ -18,9 +18,7 @@ const userFacingDocs = [
 	"docs/releasing.md",
 ];
 
-const historicalRtkDocs = new Set([
-	"docs/pi-startup-investigation-2026-07-15.md",
-]);
+const historicalRtkDocs = new Set(["docs/pi-startup-investigation-2026-07-15.md"]);
 
 function listMarkdownFiles(rootPath, basePath = rootPath) {
 	const results = [];
@@ -64,10 +62,9 @@ test("user-facing docs and installer help do not advertise legacy ticket opt-out
 });
 
 test("current README and active docs contain no RTK references", () => {
-	const currentDocs = [
-		"README.md",
-		...listMarkdownFiles(join(repoRoot, "docs")).map((path) => `docs/${path}`),
-	].filter((path, index, paths) => paths.indexOf(path) === index && !historicalRtkDocs.has(path));
+	const currentDocs = ["README.md", ...listMarkdownFiles(join(repoRoot, "docs")).map((path) => `docs/${path}`)].filter(
+		(path, index, paths) => paths.indexOf(path) === index && !historicalRtkDocs.has(path),
+	);
 
 	for (const path of currentDocs) {
 		assert.doesNotMatch(readRepoFile(path), /rtk/i, `${path} still references RTK`);
@@ -88,8 +85,14 @@ test("upstream-sync inventory documents required provenance caveats and exclusio
 	assert.match(source, /package version `0\.2\.5`/);
 	assert.match(source, /src\/core\/model-resolver\.ts/);
 	assert.match(source, /ordinary dependency pins by themselves/i);
-	assert.match(source, /generated runtime `scripts\/\*\*\/\*\.mjs` outputs.*generated same-layout `extensions\/\*\*\/\*\.js` outputs/i);
-	assert.match(source, /review same-named `scripts\/\*\*\/\*\.mts` and authoritative `extensions\/\*\*\/\*\.ts` sources rather than their generated `scripts\/\*\*\/\*\.mjs` \/ `extensions\/\*\*\/\*\.js` mirrors/i);
+	assert.match(
+		source,
+		/generated runtime `scripts\/\*\*\/\*\.mjs` outputs.*generated same-layout `extensions\/\*\*\/\*\.js` outputs/i,
+	);
+	assert.match(
+		source,
+		/review same-named `scripts\/\*\*\/\*\.mts` and authoritative `extensions\/\*\*\/\*\.ts` sources rather than their generated `scripts\/\*\*\/\*\.mjs` \/ `extensions\/\*\*\/\*\.js` mirrors/i,
+	);
 	assert.match(source, /quarterly and on upstream package\/repo releases/i);
 });
 

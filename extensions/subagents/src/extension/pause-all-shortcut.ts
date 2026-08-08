@@ -24,11 +24,12 @@ export function handlePauseAllShortcut(state: SubagentState, ctx: ExtensionConte
 	if (interruptedTotal === 0) {
 		result = {
 			level: "warning",
-			message: failedTotal > 0
-				? `Failed to request a pause for running subagent work. ${summary.errors[0]}`
-				: skippedTotal > 0
-					? "No running subagent work exposed an interrupt path to pause."
-					: "No running subagent work to pause.",
+			message:
+				failedTotal > 0
+					? `Failed to request a pause for running subagent work. ${summary.errors[0]}`
+					: skippedTotal > 0
+						? "No running subagent work exposed an interrupt path to pause."
+						: "No running subagent work to pause.",
 		};
 	} else {
 		const notes: string[] = [];

@@ -543,7 +543,14 @@ async function getWorkingTreeReviewChanges(
 }
 
 async function listReviewableRepositoryPaths(pi: ExtensionAPI, repoRoot: string): Promise<string[]> {
-	const output = await runGitAllowFailure(pi, repoRoot, ["ls-files", "--cached", "--others", "--exclude-standard", "-z", "--"]);
+	const output = await runGitAllowFailure(pi, repoRoot, [
+		"ls-files",
+		"--cached",
+		"--others",
+		"--exclude-standard",
+		"-z",
+		"--",
+	]);
 	const seen = new Set<string>();
 	const paths: string[] = [];
 	for (const path of output.split("\0")) {

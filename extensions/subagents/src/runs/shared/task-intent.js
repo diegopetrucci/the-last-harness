@@ -79,8 +79,8 @@ function stripPatterns(task, patterns) {
     return stripped;
 }
 function analyzeNoEditProhibitions(taskText) {
-    let present = REVIEW_ONLY_PATTERNS.some((pattern) => pattern.test(taskText))
-        || NO_TOOL_INTENT_PATTERNS.some((pattern) => pattern.test(taskText));
+    let present = REVIEW_ONLY_PATTERNS.some((pattern) => pattern.test(taskText)) ||
+        NO_TOOL_INTENT_PATTERNS.some((pattern) => pattern.test(taskText));
     let blanket = present;
     let strippedText = stripPatterns(taskText, [...REVIEW_ONLY_PATTERNS, ...NO_TOOL_INTENT_PATTERNS]);
     strippedText = strippedText.replace(new RegExp(NO_EDIT_PROHIBITION_PATTERN.source, NO_EDIT_PROHIBITION_PATTERN.flags), (_match, object) => {
@@ -108,7 +108,9 @@ export function classifyTaskMutationIntent(agent, task) {
     if (prohibitions.present) {
         if (prohibitions.blanket)
             return { kind: "read-only" };
-        return hasImplementationIntent(agent, prohibitions.strippedText) ? { kind: "implementation" } : { kind: "read-only" };
+        return hasImplementationIntent(agent, prohibitions.strippedText)
+            ? { kind: "implementation" }
+            : { kind: "read-only" };
     }
     if (RESEARCH_AGENT_PATTERNS.some((pattern) => pattern.test(agent)))
         return { kind: "read-only" };
@@ -127,7 +129,9 @@ function legacyClassifyTaskMutationIntent(agent, task) {
     if (RESEARCH_AGENT_PATTERNS.some((pattern) => pattern.test(agent)))
         return { kind: "read-only" };
     if (/\breviewer\b/i.test(agent)) {
-        return REVIEWER_REQUIRED_EDIT_PATTERNS.some((pattern) => pattern.test(taskText)) ? { kind: "implementation" } : { kind: "read-only" };
+        return REVIEWER_REQUIRED_EDIT_PATTERNS.some((pattern) => pattern.test(taskText))
+            ? { kind: "implementation" }
+            : { kind: "read-only" };
     }
     if (hasImplementationIntent(agent, taskText))
         return { kind: "implementation" };

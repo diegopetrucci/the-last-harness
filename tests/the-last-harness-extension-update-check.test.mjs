@@ -103,9 +103,19 @@ test("update checks honor every documented skip control without fetching or noti
 	for (const skipCase of [
 		{ name: "outside isolated profile", env: { HOME: fixture.home, PI_CODING_AGENT_DIR: undefined } },
 		{ name: "PI_OFFLINE", env: { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, PI_OFFLINE: "1" } },
-		{ name: "PI_SKIP_VERSION_CHECK", env: { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, PI_SKIP_VERSION_CHECK: "1" } },
-		{ name: "TLH_SKIP_UPDATE_CHECK", env: { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TLH_SKIP_UPDATE_CHECK: "1" } },
-		{ name: "settings opt-out", env: { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, settings: { enabled: false } },
+		{
+			name: "PI_SKIP_VERSION_CHECK",
+			env: { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, PI_SKIP_VERSION_CHECK: "1" },
+		},
+		{
+			name: "TLH_SKIP_UPDATE_CHECK",
+			env: { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TLH_SKIP_UPDATE_CHECK: "1" },
+		},
+		{
+			name: "settings opt-out",
+			env: { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent },
+			settings: { enabled: false },
+		},
 	]) {
 		const notifications = [];
 		let fetchCalls = 0;
@@ -245,7 +255,15 @@ test("malformed release responses never notify and never persist a release", asy
 		{ name: "prefix-only tag_name", response: { ok: true, json: async () => ({ tag_name: "v" }) } },
 		{ name: "arbitrary tag_name", response: { ok: true, json: async () => ({ tag_name: "not-a-version" }) } },
 		{ name: "null JSON result", response: { ok: true, json: async () => null } },
-		{ name: "json rejection", response: { ok: true, json: async () => { throw new Error("boom"); } } },
+		{
+			name: "json rejection",
+			response: {
+				ok: true,
+				json: async () => {
+					throw new Error("boom");
+				},
+			},
+		},
 	]) {
 		writeStartupState(fixture.agent, {});
 		const notifications = [];
@@ -258,7 +276,11 @@ test("malformed release responses never notify and never persist a release", asy
 
 		assert.deepEqual(notifications, [], `${responseCase.name} must stay quiet`);
 		const updateCheck = readStartupState(fixture.agent).updateCheck;
-		assert.equal(typeof updateCheck?.checkedAt, "string", `${responseCase.name} must still record the attempt timestamp`);
+		assert.equal(
+			typeof updateCheck?.checkedAt,
+			"string",
+			`${responseCase.name} must still record the attempt timestamp`,
+		);
 		assert.equal(updateCheck?.latestVersion, undefined, `${responseCase.name} must not persist a release`);
 	}
 });
@@ -283,7 +305,10 @@ test("valid older, equal, and latest release responses retain persistence and no
 		installUpdateCheckHooks(t, { now: () => now });
 		globalThis.fetch = async () => ({
 			ok: true,
-			json: async () => ({ tag_name: releaseCase.tagName, html_url: `${LATEST_RELEASE.releaseUrl}-${releaseCase.name}` }),
+			json: async () => ({
+				tag_name: releaseCase.tagName,
+				html_url: `${LATEST_RELEASE.releaseUrl}-${releaseCase.name}`,
+			}),
 		});
 
 		await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {

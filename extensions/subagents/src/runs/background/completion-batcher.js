@@ -19,11 +19,21 @@ export function resolveCompletionBatchConfig(globalConfig, override) {
             : DEFAULT_COMPLETION_BATCH_CONFIG.enabled;
     return {
         enabled,
-        debounceMs: parsePositiveInt(override?.debounceMs) ?? parsePositiveInt(globalConfig?.debounceMs) ?? DEFAULT_COMPLETION_BATCH_CONFIG.debounceMs,
-        maxWaitMs: parsePositiveInt(override?.maxWaitMs) ?? parsePositiveInt(globalConfig?.maxWaitMs) ?? DEFAULT_COMPLETION_BATCH_CONFIG.maxWaitMs,
-        stragglerDebounceMs: parsePositiveInt(override?.stragglerDebounceMs) ?? parsePositiveInt(globalConfig?.stragglerDebounceMs) ?? DEFAULT_COMPLETION_BATCH_CONFIG.stragglerDebounceMs,
-        stragglerMaxWaitMs: parsePositiveInt(override?.stragglerMaxWaitMs) ?? parsePositiveInt(globalConfig?.stragglerMaxWaitMs) ?? DEFAULT_COMPLETION_BATCH_CONFIG.stragglerMaxWaitMs,
-        stragglerWindowMs: parsePositiveInt(override?.stragglerWindowMs) ?? parsePositiveInt(globalConfig?.stragglerWindowMs) ?? DEFAULT_COMPLETION_BATCH_CONFIG.stragglerWindowMs,
+        debounceMs: parsePositiveInt(override?.debounceMs) ??
+            parsePositiveInt(globalConfig?.debounceMs) ??
+            DEFAULT_COMPLETION_BATCH_CONFIG.debounceMs,
+        maxWaitMs: parsePositiveInt(override?.maxWaitMs) ??
+            parsePositiveInt(globalConfig?.maxWaitMs) ??
+            DEFAULT_COMPLETION_BATCH_CONFIG.maxWaitMs,
+        stragglerDebounceMs: parsePositiveInt(override?.stragglerDebounceMs) ??
+            parsePositiveInt(globalConfig?.stragglerDebounceMs) ??
+            DEFAULT_COMPLETION_BATCH_CONFIG.stragglerDebounceMs,
+        stragglerMaxWaitMs: parsePositiveInt(override?.stragglerMaxWaitMs) ??
+            parsePositiveInt(globalConfig?.stragglerMaxWaitMs) ??
+            DEFAULT_COMPLETION_BATCH_CONFIG.stragglerMaxWaitMs,
+        stragglerWindowMs: parsePositiveInt(override?.stragglerWindowMs) ??
+            parsePositiveInt(globalConfig?.stragglerWindowMs) ??
+            DEFAULT_COMPLETION_BATCH_CONFIG.stragglerWindowMs,
     };
 }
 const defaultTimers = {
@@ -31,7 +41,10 @@ const defaultTimers = {
     clearTimeout: (handle) => clearTimeout(handle),
 };
 function unrefHandle(handle) {
-    if (handle && typeof handle === "object" && "unref" in handle && typeof handle.unref === "function") {
+    if (handle &&
+        typeof handle === "object" &&
+        "unref" in handle &&
+        typeof handle.unref === "function") {
         handle.unref();
     }
 }
@@ -75,7 +88,7 @@ export function createCompletionBatcher(options) {
     return {
         push(item) {
             if (pending.length === 0) {
-                straggler = lastEmitAt !== null && (now() - lastEmitAt) < config.stragglerWindowMs;
+                straggler = lastEmitAt !== null && now() - lastEmitAt < config.stragglerWindowMs;
             }
             pending.push(item);
             if (debounceTimer)

@@ -110,7 +110,10 @@ export function parseGitSource(source: unknown): ParsedGitSource | undefined {
 	return { repo, host, path: normalizedPath, ref };
 }
 
-export function criticalGitSourceSpec(source: unknown, { agentDir = "" }: PackageSourceOptions = {}): CriticalGitSourceSpec | undefined {
+export function criticalGitSourceSpec(
+	source: unknown,
+	{ agentDir = "" }: PackageSourceOptions = {},
+): CriticalGitSourceSpec | undefined {
 	const parsed = parseGitSource(source);
 	if (!parsed) return undefined;
 	return {
@@ -134,12 +137,14 @@ export function gitSourceInstallSource(source: unknown, options: PackageSourceOp
 
 export function isLocalPackageSource(source: unknown): boolean {
 	const trimmed = String(source ?? "").trim();
-	return !trimmed.startsWith("npm:")
-		&& !trimmed.startsWith("git:")
-		&& !trimmed.startsWith("github:")
-		&& !trimmed.startsWith("http:")
-		&& !trimmed.startsWith("https:")
-		&& !trimmed.startsWith("ssh:");
+	return (
+		!trimmed.startsWith("npm:") &&
+		!trimmed.startsWith("git:") &&
+		!trimmed.startsWith("github:") &&
+		!trimmed.startsWith("http:") &&
+		!trimmed.startsWith("https:") &&
+		!trimmed.startsWith("ssh:")
+	);
 }
 
 function resolveSupportedFilePackageSource(source: string): string {

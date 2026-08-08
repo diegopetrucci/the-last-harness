@@ -169,12 +169,7 @@ function collectSessionFilesFromProjectDir(
  * Recursively collect .jsonl files from a subdirectory (used for subagent child sessions).
  * Excludes subagent-artifacts at every level.
  */
-function collectSessionFilesRecursive(
-	dir: string,
-	windowStartMs: number,
-	files: string[],
-	caveats: string[],
-): void {
+function collectSessionFilesRecursive(dir: string, windowStartMs: number, files: string[], caveats: string[]): void {
 	let entries: Dirent<string>[];
 	try {
 		entries = readdirSync(dir, { withFileTypes: true, encoding: "utf8" });
@@ -204,12 +199,7 @@ function collectSessionFilesRecursive(
 /**
  * Stat a file and add it to `files` only if its mtime is at or after `windowStartMs`.
  */
-function collectIfFresh(
-	filePath: string,
-	windowStartMs: number,
-	files: string[],
-	caveats: string[],
-): void {
+function collectIfFresh(filePath: string, windowStartMs: number, files: string[], caveats: string[]): void {
 	try {
 		const st = statSync(filePath);
 		if (st.mtimeMs >= windowStartMs) {

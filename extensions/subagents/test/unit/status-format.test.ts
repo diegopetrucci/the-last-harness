@@ -17,7 +17,9 @@ describe("status format helpers", () => {
 	});
 
 	it("aggregates step status and parallel outcomes", () => {
-		const steps = [{ status: "complete" }, { status: "running" }, { status: "failed" }] satisfies Array<Pick<AsyncJobStep, "status">>;
+		const steps = [{ status: "complete" }, { status: "running" }, { status: "failed" }] satisfies Array<
+			Pick<AsyncJobStep, "status">
+		>;
 		assert.equal(aggregateStepStatus(steps), "running");
 		assert.equal(formatParallelOutcome(steps, 3), "1 agent running · 1/3 done · 1 failed");
 		assert.equal(formatParallelOutcome(steps, 3, { showRunning: false }), "1/3 done · 1 failed");

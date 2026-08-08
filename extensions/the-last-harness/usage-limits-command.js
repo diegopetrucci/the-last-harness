@@ -84,9 +84,7 @@ export async function handleUsageCommand(args, ctx) {
         ctx.ui.notify(formatUsageWeeklyStatus(currentShowWeekly), "info");
         return;
     }
-    const currentShowWeekly = command.action === "toggle"
-        ? getPersistedTlhUsageWeeklyVisibility(ctx.cwd)
-        : getCachedTlhUsageWeeklyVisibility();
+    const currentShowWeekly = command.action === "toggle" ? getPersistedTlhUsageWeeklyVisibility(ctx.cwd) : getCachedTlhUsageWeeklyVisibility();
     const nextShowWeekly = nextWeeklyPreference(currentShowWeekly === true, command.action);
     try {
         const result = writeTlhUsageWeeklyPreference(ctx.cwd, nextShowWeekly);

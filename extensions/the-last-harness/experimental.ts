@@ -1,4 +1,9 @@
-import { SettingsManager, getAgentDir, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import {
+	SettingsManager,
+	getAgentDir,
+	type ExtensionAPI,
+	type ExtensionCommandContext,
+} from "@earendil-works/pi-coding-agent";
 
 import {
 	normalizeEnabledExperimentalFeatures,
@@ -82,7 +87,8 @@ export const TLH_EXPERIMENTAL_FEATURES: TlhExperimentalFeature[] = [
 	},
 	{
 		id: CI_FAILURE_INVESTIGATION_FEATURE,
-		description: "Architect-only guidance to perform read-only PR CI/status-check investigation before asking whether to proceed.",
+		description:
+			"Architect-only guidance to perform read-only PR CI/status-check investigation before asking whether to proceed.",
 		primaryAgentPrompts: {
 			architect: CI_FAILURE_INVESTIGATION_ARCHITECT_PROMPT.trim(),
 		},
@@ -100,7 +106,9 @@ export function hasRegisteredExperimentalFeatures(): boolean {
 }
 
 export function availableExperimentalFeatureList(): string {
-	return hasRegisteredExperimentalFeatures() ? TLH_EXPERIMENTAL_FEATURES.map((feature) => feature.id).join(", ") : "none currently registered";
+	return hasRegisteredExperimentalFeatures()
+		? TLH_EXPERIMENTAL_FEATURES.map((feature) => feature.id).join(", ")
+		: "none currently registered";
 }
 
 export function noExperimentalFeaturesMessage(): string {
@@ -129,7 +137,10 @@ function telemetryExperimentalFeatureKey(featureId: TlhExperimentalFeatureId): s
 export function buildExperimentalFeatureTelemetryPayload(config: unknown): Record<string, "on" | "off"> {
 	const enabledFeatures = new Set(readEnabledFeatures(config));
 	return Object.fromEntries(
-		TLH_EXPERIMENTAL_FEATURES.map((feature) => [telemetryExperimentalFeatureKey(feature.id), enabledFeatures.has(feature.id) ? "on" : "off"]),
+		TLH_EXPERIMENTAL_FEATURES.map((feature) => [
+			telemetryExperimentalFeatureKey(feature.id),
+			enabledFeatures.has(feature.id) ? "on" : "off",
+		]),
 	) as Record<string, "on" | "off">;
 }
 
@@ -244,9 +255,9 @@ export function registerExperimentalCommand(pi: ExtensionAPI, options: TlhExperi
 		description: "List or change TLH experimental features",
 		getArgumentCompletions: (prefix) => {
 			const normalizedPrefix = prefix.trim().toLowerCase();
-			const completions = EXPERIMENTAL_COMMAND_COMPLETIONS
-				.filter((option) => option.value.startsWith(normalizedPrefix))
-				.map((option) => ({ value: option.value, label: option.value, description: option.description }));
+			const completions = EXPERIMENTAL_COMMAND_COMPLETIONS.filter((option) =>
+				option.value.startsWith(normalizedPrefix),
+			).map((option) => ({ value: option.value, label: option.value, description: option.description }));
 			return completions.length > 0 ? completions : null;
 		},
 		handler: async (args, ctx) => {

@@ -64,9 +64,7 @@ export function externalSubagentPackageIdentity(entry) {
         return undefined;
     if (source.startsWith("npm:"))
         return npmIdentity(source);
-    if (source.startsWith("git:")
-        || /^(https?|ssh|git):\/\//i.test(source)
-        || source.startsWith("git@")) {
+    if (source.startsWith("git:") || /^(https?|ssh|git):\/\//i.test(source) || source.startsWith("git@")) {
         return gitIdentity(source);
     }
     return undefined;
@@ -96,10 +94,7 @@ function settingsMatches(settingsPath, scope) {
 export function findConfiguredExternalSubagentPackages(options) {
     const userSettingsPath = path.join(options.agentDir, "settings.json");
     const projectSettingsPath = path.join(options.cwd, options.configDirName, "settings.json");
-    return [
-        ...settingsMatches(userSettingsPath, "user"),
-        ...settingsMatches(projectSettingsPath, "project"),
-    ];
+    return [...settingsMatches(userSettingsPath, "user"), ...settingsMatches(projectSettingsPath, "project")];
 }
 export function externalSubagentCoexistenceWarning(matches) {
     const scopes = [...new Set(matches.map((match) => match.scope))].join(" and ");

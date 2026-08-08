@@ -1,7 +1,13 @@
 import { lstat, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import { REVIEW_MODES, REVIEW_MODE_DESCRIPTIONS, decideBranchAction, tokenizeArgs, parseReviewArgs } from "./review-args.js";
+import {
+	REVIEW_MODES,
+	REVIEW_MODE_DESCRIPTIONS,
+	decideBranchAction,
+	tokenizeArgs,
+	parseReviewArgs,
+} from "./review-args.js";
 import type { ReviewMode, ReviewDispatchArgs } from "./review-args.js";
 export { REVIEW_MODES, decideBranchAction, parseReviewArgs } from "./review-args.js";
 export type { ReviewMode, BranchDecisionAction, ParsedReviewArgs, ReviewDispatchArgs } from "./review-args.js";
@@ -22,7 +28,14 @@ import {
 } from "./review-github.js";
 import type { GitHubPrRef } from "./review-github.js";
 
-import { DynamicBorder, getAgentDir, getSelectListTheme, SettingsManager, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import {
+	DynamicBorder,
+	getAgentDir,
+	getSelectListTheme,
+	SettingsManager,
+	type ExtensionAPI,
+	type ExtensionCommandContext,
+} from "@earendil-works/pi-coding-agent";
 import { Container, matchesKey, SelectList, Text } from "@earendil-works/pi-tui";
 
 import { primaryAgentSelectionFromBranch, resolvePrimaryAgentConfig } from "../the-last-harness-primary-agent.mjs";
@@ -32,8 +45,7 @@ import { primaryAgentSelectionFromBranch, resolvePrimaryAgentConfig } from "../t
 const REVIEW_TITLE = "Choose a review mode";
 const REVIEW_PICKER_HINT = "↑/↓ to move  Enter to confirm  Esc to cancel";
 const REVIEW_DEFAULT_BRANCH_BASE = "main";
-const REVIEW_TUI_REQUIRED_MESSAGE =
-	"/review requires the interactive TUI picker. Re-run /review in the TLH UI.";
+const REVIEW_TUI_REQUIRED_MESSAGE = "/review requires the interactive TUI picker. Re-run /review in the TLH UI.";
 
 type ReviewPrimaryAgentSelection = "architect" | "rush" | "product" | "bug-hunter" | "disabled";
 type ReviewSettings = {
@@ -67,15 +79,15 @@ function currentReviewPrimaryAgentSelection(ctx: ExtensionCommandContext): Revie
 		selection: ReviewPrimaryAgentSelection;
 	};
 	const branchEntries = typeof ctx.sessionManager?.getBranch === "function" ? ctx.sessionManager.getBranch() : [];
-	const sessionResolution = primaryAgentSelectionFromBranch(branchEntries) as { selection?: ReviewPrimaryAgentSelection };
+	const sessionResolution = primaryAgentSelectionFromBranch(branchEntries) as {
+		selection?: ReviewPrimaryAgentSelection;
+	};
 	return sessionResolution.selection ?? defaultResolution.selection;
 }
 
 function reviewPrimaryBlockedMessage(activePrimary: ReviewPrimaryAgentSelection): string {
 	return `/review only works while the architect primary agent is active. Current primary agent: ${activePrimary}. Switch to architect with /switch-primary-agent architect (or Shift+Tab), then rerun /review.`;
 }
-
-
 
 // --- Helpers for picker integration ---
 
@@ -84,18 +96,13 @@ function makePickedArgs(mode: "uncommitted"): ReviewDispatchArgs {
 	return { mode, extra: undefined };
 }
 
-async function promptForRequiredReviewInput(
-	ctx: ExtensionCommandContext,
-	title: string,
-): Promise<string | undefined> {
+async function promptForRequiredReviewInput(ctx: ExtensionCommandContext, title: string): Promise<string | undefined> {
 	const response = await ctx.ui.editor(title);
 	const trimmed = response?.trim();
 	return trimmed ? trimmed : undefined;
 }
 
-async function promptForBranchBase(
-	ctx: ExtensionCommandContext,
-): Promise<string | undefined> {
+async function promptForBranchBase(ctx: ExtensionCommandContext): Promise<string | undefined> {
 	const response = await ctx.ui.editor(
 		"Review branch: enter base branch (blank defaults to main)",
 		REVIEW_DEFAULT_BRANCH_BASE,
@@ -228,7 +235,10 @@ async function resolveRepoRoot(
  */
 function rejectFlagLike(value: string, fieldName: string): { ok: true } | { ok: false; message: string } {
 	if (value.startsWith("-")) {
-		return { ok: false, message: `${fieldName} cannot start with '-' (got '${value}'). If this is intentional, run the underlying command manually.` };
+		return {
+			ok: false,
+			message: `${fieldName} cannot start with '-' (got '${value}'). If this is intentional, run the underlying command manually.`,
+		};
 	}
 	return { ok: true };
 }
@@ -265,7 +275,9 @@ async function gatherUncommitted(pi: ExtensionAPI, cmdCtx: ExtensionCommandConte
 	}
 
 	// Include untracked, non-gitignored files so the reviewer can see newly added content.
-	const untrackedResult = await pi.exec("git", ["ls-files", "-z", "--others", "--exclude-standard", "--", "."], { cwd: repoRootResult.root });
+	const untrackedResult = await pi.exec("git", ["ls-files", "-z", "--others", "--exclude-standard", "--", "."], {
+		cwd: repoRootResult.root,
+	});
 	if (untrackedResult.code !== 0) {
 		const message = detectNotGitRepo(untrackedResult.stderr)
 			? "Not inside a git repository. Run /review from a directory that contains a .git folder."
@@ -273,8 +285,9 @@ async function gatherUncommitted(pi: ExtensionAPI, cmdCtx: ExtensionCommandConte
 		return { ok: false, message };
 	}
 
-	const untrackedFiles = parseNullDelimitedGitPaths(untrackedResult.stdout)
-		.map((filePath) => resolve(repoRootResult.root, filePath));
+	const untrackedFiles = parseNullDelimitedGitPaths(untrackedResult.stdout).map((filePath) =>
+		resolve(repoRootResult.root, filePath),
+	);
 	const untrackedParts = await buildSnapshotParts(repoRootResult.root, untrackedFiles, "untracked file");
 	const body = appendUntrackedSnapshot(diffResult.stdout, untrackedParts);
 
@@ -308,8 +321,7 @@ async function gatherBranch(
 		if (detectNotGitRepo(symRefResult.stderr)) {
 			return {
 				ok: false,
-				message:
-					"Not inside a git repository. Run /review from a directory that contains a .git folder.",
+				message: "Not inside a git repository. Run /review from a directory that contains a .git folder.",
 			};
 		}
 		return {
@@ -375,8 +387,7 @@ async function gatherCommit(
 		if (detectNotGitRepo(verifyResult.stderr)) {
 			return {
 				ok: false,
-				message:
-					"Not inside a git repository. Run /review from a directory that contains a .git folder.",
+				message: "Not inside a git repository. Run /review from a directory that contains a .git folder.",
 			};
 		}
 		return {
@@ -434,11 +445,7 @@ async function walkDir(dir: string): Promise<string[]> {
  * Build a snapshot payload from the given paths for the folder mode.
  * Directories are walked; binary files are skipped with an annotation.
  */
-async function gatherFolder(
-	pi: ExtensionAPI,
-	cmdCtx: ExtensionCommandContext,
-	paths: string[],
-): Promise<GatherResult> {
+async function gatherFolder(pi: ExtensionAPI, cmdCtx: ExtensionCommandContext, paths: string[]): Promise<GatherResult> {
 	if (paths.length === 0) {
 		return {
 			ok: false,
@@ -480,10 +487,13 @@ async function gatherFolder(
 			// --others --exclude-standard includes untracked-but-not-gitignored files.
 			// If git reports zero files for this directory, keep that empty result instead of
 			// walking the tree and accidentally snapshotting ignored files.
-			const lsResult = await pi.exec("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."], { cwd: absPath });
+			const lsResult = await pi.exec(
+				"git",
+				["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."],
+				{ cwd: absPath },
+			);
 			if (lsResult.code === 0) {
-				filePaths = parseNullDelimitedGitPaths(lsResult.stdout)
-					.map((filePath) => join(absPath, filePath));
+				filePaths = parseNullDelimitedGitPaths(lsResult.stdout).map((filePath) => join(absPath, filePath));
 			} else if (detectNotGitRepo(lsResult.stderr)) {
 				// Fall back to a plain recursive walk only when outside git entirely.
 				filePaths = await walkDir(absPath);
@@ -588,8 +598,7 @@ async function gatherPr(
 	if (ghCheckResult.code !== 0) {
 		return {
 			ok: false,
-			message:
-				"PR mode requires the GitHub CLI. Install: https://cli.github.com — then run `gh auth login`.",
+			message: "PR mode requires the GitHub CLI. Install: https://cli.github.com — then run `gh auth login`.",
 		};
 	}
 
@@ -654,8 +663,7 @@ async function gatherPr(
 	if (branchResult.code !== 0) {
 		return {
 			ok: false,
-			message:
-				"Not inside a git repository. Run /review from a directory that contains the PR's repo.",
+			message: "Not inside a git repository. Run /review from a directory that contains the PR's repo.",
 		};
 	}
 	const currentBranch = branchResult.stdout.trim();
@@ -682,8 +690,7 @@ async function gatherPr(
 			if (!cmdCtx.hasUI) {
 				return {
 					ok: false,
-					message:
-						`Branch switch confirmation requires the TUI. You're on '${currentBranch}'; PR head is '${headRefName}'. Run \`gh pr checkout ${prNumber}\` manually, then re-run /review and choose PR mode.`,
+					message: `Branch switch confirmation requires the TUI. You're on '${currentBranch}'; PR head is '${headRefName}'. Run \`gh pr checkout ${prNumber}\` manually, then re-run /review and choose PR mode.`,
 				};
 			}
 			userConfirm = await showBranchSwitchConfirm(cmdCtx, currentBranch, headRefName, baseRefName);
@@ -694,8 +701,7 @@ async function gatherPr(
 		if (action === "abort-dirty") {
 			return {
 				ok: false,
-				message:
-					`Working tree has uncommitted changes. Commit or stash them, then re-run /review and choose PR mode.\nCurrent branch: ${currentBranch}\nPR head:        ${headRefName}`,
+				message: `Working tree has uncommitted changes. Commit or stash them, then re-run /review and choose PR mode.\nCurrent branch: ${currentBranch}\nPR head:        ${headRefName}`,
 			};
 		}
 

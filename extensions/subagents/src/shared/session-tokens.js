@@ -2,7 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 function findLatestSessionFile(sessionDir) {
     try {
-        const files = fs.readdirSync(sessionDir)
+        const files = fs
+            .readdirSync(sessionDir)
             .filter((f) => f.endsWith(".jsonl"))
             .map((f) => path.join(sessionDir, f));
         if (files.length === 0)

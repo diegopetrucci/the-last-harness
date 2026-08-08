@@ -131,9 +131,10 @@ function createSectionCard(section) {
 	card.className = "section-card";
 
 	const title = document.createElement("h3");
-	const lineRange = section.startLine === section.endLine
-		? `line ${section.startLine}`
-		: `lines ${section.startLine}-${section.endLine}`;
+	const lineRange =
+		section.startLine === section.endLine
+			? `line ${section.startLine}`
+			: `lines ${section.startLine}-${section.endLine}`;
 	title.textContent = `Section ${section.index}`;
 	card.append(title);
 

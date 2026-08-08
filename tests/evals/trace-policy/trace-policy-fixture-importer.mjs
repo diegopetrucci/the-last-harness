@@ -24,38 +24,44 @@ function titleFromFixtureId(value) {
 }
 
 function isSensitiveKey(key) {
-	return /(?:token|secret|password|passwd|api[_-]?keys?|auth(?:orization)?|bearer|cookie|session)/i.test(normalizeText(key));
+	return /(?:token|secret|password|passwd|api[_-]?keys?|auth(?:orization)?|bearer|cookie|session)/i.test(
+		normalizeText(key),
+	);
 }
 
 const ISO_TIMESTAMP_PATTERN = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g;
 const UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
-const GENERATED_ID_PATTERN = /\b(?:(?:call|msg|req|run|toolu|trace)_(?=[a-z0-9_-]*\d)[a-z0-9_-]{6,}|(?:req|session|trace)-(?=[a-z0-9_-]*\d)[a-z0-9_-]{6,})\b/gi;
+const GENERATED_ID_PATTERN =
+	/\b(?:(?:call|msg|req|run|toolu|trace)_(?=[a-z0-9_-]*\d)[a-z0-9_-]{6,}|(?:req|session|trace)-(?=[a-z0-9_-]*\d)[a-z0-9_-]{6,})\b/gi;
 const LONG_HEX_ID_PATTERN = /\b[0-9a-f]{16,}\b/gi;
 const BEARER_PATTERN = /\bBearer\s+[^\s"']+/gi;
-const SECRET_ASSIGNMENT_PATTERN = /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|KEY|AUTH|BEARER)[A-Z0-9_]*)=([^\s"']+|"[^"]*"|'[^']*')/gi;
+const SECRET_ASSIGNMENT_PATTERN =
+	/\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|KEY|AUTH|BEARER)[A-Z0-9_]*)=([^\s"']+|"[^"]*"|'[^']*')/gi;
 const WINDOWS_HOME_PATTERN = /[A-Za-z]:\\Users\\[^\\/:\s]+(?:\\[^\\\s"')\]]+)*/g;
 const WINDOWS_TEMP_PATTERN = /[A-Za-z]:\\(?:Users\\[^\\/:\s]+\\AppData\\Local\\Temp|Temp)(?:\\[^\\\s"')\]]+)*/g;
 const POSIX_HOME_PATTERN = /\/(?:Users|home)\/[^/:\s"')\]]+(?:\/[^\s"')\]]+)*/g;
 const ROOT_HOME_PATTERN = /\/root(?:\/[^\s"')\]]+)*/g;
-const POSIX_TEMP_PATTERN = /(?<!<HOME>)\/(?:private\/tmp|tmp|var\/folders\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+(?:\/T)?)(?:\/[^\s"')\]]+)*/g;
+const POSIX_TEMP_PATTERN =
+	/(?<!<HOME>)\/(?:private\/tmp|tmp|var\/folders\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+(?:\/T)?)(?:\/[^\s"')\]]+)*/g;
 
 function replacePathRoot(rawPath, rootPattern, replacement) {
 	return rawPath.replace(rootPattern, (match) => {
 		const normalized = match.replaceAll("\\", "/");
 		const segments = normalized.split("/").filter(Boolean);
-		const remainder = replacement === "<HOME>"
-			? segments.slice(normalized.startsWith("/root") ? 1 : normalized.match(/^[A-Za-z]:\//) ? 3 : 2)
-			: normalized.startsWith("/var/folders/")
-				? segments.slice(segments[4] === "T" ? 5 : 4)
-				: normalized.startsWith("/private/tmp/")
-					? segments.slice(2)
-					: normalized.startsWith("/tmp/")
-						? segments.slice(1)
-						: normalized.match(/^[A-Za-z]:\//)
-							? replacement === "<HOME>"
-								? segments.slice(3)
-								: segments.slice(segments[1] === "Users" ? 6 : 1)
-							: [];
+		const remainder =
+			replacement === "<HOME>"
+				? segments.slice(normalized.startsWith("/root") ? 1 : normalized.match(/^[A-Za-z]:\//) ? 3 : 2)
+				: normalized.startsWith("/var/folders/")
+					? segments.slice(segments[4] === "T" ? 5 : 4)
+					: normalized.startsWith("/private/tmp/")
+						? segments.slice(2)
+						: normalized.startsWith("/tmp/")
+							? segments.slice(1)
+							: normalized.match(/^[A-Za-z]:\//)
+								? replacement === "<HOME>"
+									? segments.slice(3)
+									: segments.slice(segments[1] === "Users" ? 6 : 1)
+								: [];
 		return remainder.length > 0 ? `${replacement}/${remainder.join("/")}` : replacement;
 	});
 }
@@ -91,7 +97,9 @@ function normalizeContentText(value) {
 			if (!isRecord(entry)) {
 				return "";
 			}
-			return normalizeString(normalizeText(entry.text || entry.value || entry.content || entry.output_text || entry.outputText));
+			return normalizeString(
+				normalizeText(entry.text || entry.value || entry.content || entry.output_text || entry.outputText),
+			);
 		})
 		.filter(Boolean)
 		.join("\n")
@@ -238,18 +246,12 @@ function normalizeToolResultFailure(step) {
 		: Number.isInteger(details.exitCode)
 			? details.exitCode
 			: undefined;
-	const ok = typeof step.ok === "boolean"
-		? step.ok
-		: typeof details.ok === "boolean"
-			? details.ok
-			: undefined;
-	const rawStatus = typeof step.status === "string"
-		? step.status
-		: typeof details.status === "string"
-			? details.status
-			: undefined;
+	const ok = typeof step.ok === "boolean" ? step.ok : typeof details.ok === "boolean" ? details.ok : undefined;
+	const rawStatus =
+		typeof step.status === "string" ? step.status : typeof details.status === "string" ? details.status : undefined;
 	const status = rawStatus ? normalizeString(rawStatus) : undefined;
-	const failed = step.isError === true || ok === false || status === "failed" || (Number.isInteger(exitCode) && exitCode !== 0);
+	const failed =
+		step.isError === true || ok === false || status === "failed" || (Number.isInteger(exitCode) && exitCode !== 0);
 	if (!failed) {
 		return undefined;
 	}
@@ -450,7 +452,13 @@ function formatFixtureValue(value, indent = 0) {
 	if (entries.length === 0) {
 		return "{}";
 	}
-	return `{` + entries.map(([key, entryValue]) => `\n${childPad}${formatObjectKey(key)}: ${formatFixtureValue(entryValue, indent + 1)}`).join(",") + `\n${pad}}`;
+	return (
+		`{` +
+		entries
+			.map(([key, entryValue]) => `\n${childPad}${formatObjectKey(key)}: ${formatFixtureValue(entryValue, indent + 1)}`)
+			.join(",") +
+		`\n${pad}}`
+	);
 }
 
 export function formatTracePolicyFixtureSkeleton(fixture) {
@@ -498,7 +506,9 @@ function readCliInput(inputPath) {
 		return readFileSync(inputPath, "utf8");
 	}
 	if (process.stdin.isTTY) {
-		throw new Error("usage: node tests/evals/trace-policy/trace-policy-fixture-importer.mjs <trace.json|trace.jsonl> [--agent NAME] [--id ID] [--name TEXT] [--allow|--reject]");
+		throw new Error(
+			"usage: node tests/evals/trace-policy/trace-policy-fixture-importer.mjs <trace.json|trace.jsonl> [--agent NAME] [--id ID] [--name TEXT] [--allow|--reject]",
+		);
 	}
 	return readFileSync(0, "utf8");
 }

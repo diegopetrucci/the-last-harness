@@ -467,10 +467,15 @@ test("normalizeShellCommandTokens passes through plain commands unchanged", () =
 test("normalizeShellCommandTokens strips leading shell control-word prefix", () => {
 	// tokenizeShellWords does not split on semicolons; stripLeadingShellCommandPrefixes
 	// only removes the leading 'if' keyword, leaving the rest of the token list intact.
-	assert.deepEqual(
-		normalizeShellCommandTokens("if git commit -m msg; then :; fi"),
-		["git", "commit", "-m", "msg;", "then", ":;", "fi"],
-	);
+	assert.deepEqual(normalizeShellCommandTokens("if git commit -m msg; then :; fi"), [
+		"git",
+		"commit",
+		"-m",
+		"msg;",
+		"then",
+		":;",
+		"fi",
+	]);
 });
 
 test("normalizeShellCommandTokens strips variable-assignment prefixes", () => {

@@ -70,15 +70,7 @@ export function createManualRubricCheck({ id, label, details = "", artifacts = [
 	});
 }
 
-export function createScenarioResult({
-	scenarioId,
-	mode,
-	summary,
-	status,
-	detail = "",
-	checks = [],
-	artifacts = [],
-}) {
+export function createScenarioResult({ scenarioId, mode, summary, status, detail = "", checks = [], artifacts = [] }) {
 	const normalizedChecks = checks.map((check) => normalizeCheck(check));
 	const counts = summarizeChecks(normalizedChecks);
 	return {
@@ -93,10 +85,7 @@ export function createScenarioResult({
 			manual: counts.manual,
 		},
 		checks: normalizedChecks,
-		artifacts: uniqueStrings([
-			...artifacts,
-			...normalizedChecks.flatMap((check) => check.artifacts),
-		]),
+		artifacts: uniqueStrings([...artifacts, ...normalizedChecks.flatMap((check) => check.artifacts)]),
 	};
 }
 

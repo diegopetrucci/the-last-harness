@@ -59,7 +59,9 @@ function createManagedWrapperFixture() {
 	mkdirSync(packageRoot, { recursive: true });
 	writeFileSync(join(agentDir, "settings.json"), "{}\n", "utf8");
 
-	writeExecutable(piPath, `#!/usr/bin/env bash
+	writeExecutable(
+		piPath,
+		`#!/usr/bin/env bash
 set -euo pipefail
 source_agent_dir=${JSON.stringify(agentDir)}
 if [[ "\${PI_CODING_AGENT_DIR:-}" == "\${source_agent_dir}" ]]; then
@@ -72,9 +74,12 @@ trap 'exit 0' INT TERM
 while true; do
   sleep 1
 done
-`);
+`,
+	);
 
-	writeExecutable(customCommandPath, `#!/usr/bin/env bash
+	writeExecutable(
+		customCommandPath,
+		`#!/usr/bin/env bash
 set -euo pipefail
 if [[ -z "\${PI_CODING_AGENT_DIR:-}" ]]; then
   printf 'missing PI_CODING_AGENT_DIR\n' >&2
@@ -86,15 +91,19 @@ trap 'exit 0' INT TERM
 while true; do
   sleep 1
 done
-`);
+`,
+	);
 
-	writeExecutable(wrapperPath, renderWrapper({
-		agentDir,
-		binDir: wrapperBinDir,
-		wrapperName: "tlh",
-		packageRoot,
-		piCmd: piPath,
-	}));
+	writeExecutable(
+		wrapperPath,
+		renderWrapper({
+			agentDir,
+			binDir: wrapperBinDir,
+			wrapperName: "tlh",
+			packageRoot,
+			piCmd: piPath,
+		}),
+	);
 
 	return {
 		agentDir,
@@ -164,7 +173,9 @@ test("check-startup-performance keeps custom --command launches usable", (t) => 
 test("check-startup-performance requires genuine header output after a delayed rendered footer", (t) => {
 	const fixture = createManagedWrapperFixture();
 	t.after(() => rmSync(fixture.root, { recursive: true, force: true }));
-	writeExecutable(fixture.customCommandPath, `#!/usr/bin/env bash
+	writeExecutable(
+		fixture.customCommandPath,
+		`#!/usr/bin/env bash
 set -euo pipefail
 printf '~/Developer/the-last-harness-minotaur (main)\n'
 sleep 0.15
@@ -173,7 +184,8 @@ trap 'exit 0' INT TERM
 while true; do
   sleep 1
 done
-`);
+`,
+	);
 	const result = runCheckStartupPerformance(fixture, [
 		"--runs",
 		"2",
@@ -198,14 +210,17 @@ done
 test("check-startup-performance does not treat rendered footer cwd output as a header", (t) => {
 	const fixture = createManagedWrapperFixture();
 	t.after(() => rmSync(fixture.root, { recursive: true, force: true }));
-	writeExecutable(fixture.customCommandPath, `#!/usr/bin/env bash
+	writeExecutable(
+		fixture.customCommandPath,
+		`#!/usr/bin/env bash
 set -euo pipefail
 printf '~/Developer/the-last-harness-minotaur (main)\n'
 trap 'exit 0' INT TERM
 while true; do
   sleep 1
 done
-`);
+`,
+	);
 	const result = runCheckStartupPerformance(fixture, [
 		"--runs",
 		"2",
@@ -238,7 +253,9 @@ test("check-startup-performance cleans up the active child process group and tem
 	const helperReadyFile = join(fixture.root, "helper.ready");
 	const helperSignalFile = join(fixture.root, "helper.signal");
 	const helperScriptPath = join(fixture.root, "term-trap-helper.sh");
-	writeExecutable(helperScriptPath, `#!/usr/bin/env bash
+	writeExecutable(
+		helperScriptPath,
+		`#!/usr/bin/env bash
 set -euo pipefail
 trap '' INT
 trap 'printf "signal=%s\\n" "TERM" >"${helperSignalFile}"; exit 0' TERM
@@ -247,8 +264,11 @@ printf 'ready\n' >"${helperReadyFile}"
 while true; do
   sleep 0.05
 done
-`);
-	writeExecutable(fixture.customCommandPath, `#!/usr/bin/env bash
+`,
+	);
+	writeExecutable(
+		fixture.customCommandPath,
+		`#!/usr/bin/env bash
 set -euo pipefail
 "${helperScriptPath}" &
 helper_pid=$!
@@ -263,28 +283,33 @@ printf 'Context: interrupt cleanup\\n'
 while true; do
   sleep 1
 done
-`);
+`,
+	);
 
-	const checker = spawn(process.execPath, [
-		checkStartupPerformanceScript,
-		"--runs",
-		"2",
-		"--budget-ms",
-		"10000",
-		"--timeout-ms",
-		"10000",
-		"--profile-source",
-		fixture.agentDir,
-		"--command",
-		fixture.customCommandPath,
-	], {
-		cwd: repoRoot,
-		env: {
-			...process.env,
-			PATH: `${fixture.wrapperBinDir}:${process.env.PATH || ""}`,
+	const checker = spawn(
+		process.execPath,
+		[
+			checkStartupPerformanceScript,
+			"--runs",
+			"2",
+			"--budget-ms",
+			"10000",
+			"--timeout-ms",
+			"10000",
+			"--profile-source",
+			fixture.agentDir,
+			"--command",
+			fixture.customCommandPath,
+		],
+		{
+			cwd: repoRoot,
+			env: {
+				...process.env,
+				PATH: `${fixture.wrapperBinDir}:${process.env.PATH || ""}`,
+			},
+			stdio: ["ignore", "pipe", "pipe"],
 		},
-		stdio: ["ignore", "pipe", "pipe"],
-	});
+	);
 	t.after(() => {
 		if (checker.exitCode === null && checker.signalCode === null) {
 			checker.kill("SIGKILL");
@@ -316,13 +341,23 @@ done
 		stderr += chunk;
 	});
 
-	const temporaryProfile = await waitForCondition(() => {
-		const match = stdout.match(/temporary profile: (.+)/u);
-		if (!match || !existsSync(childPidFile) || !existsSync(childReadyFile) || !existsSync(helperPidFile) || !existsSync(helperReadyFile)) {
-			return undefined;
-		}
-		return match[1].trim();
-	}, 5000, "startup checker to create a temp profile and launch the child process group");
+	const temporaryProfile = await waitForCondition(
+		() => {
+			const match = stdout.match(/temporary profile: (.+)/u);
+			if (
+				!match ||
+				!existsSync(childPidFile) ||
+				!existsSync(childReadyFile) ||
+				!existsSync(helperPidFile) ||
+				!existsSync(helperReadyFile)
+			) {
+				return undefined;
+			}
+			return match[1].trim();
+		},
+		5000,
+		"startup checker to create a temp profile and launch the child process group",
+	);
 	const workspaceRoot = dirname(temporaryProfile);
 	const childPid = Number.parseInt(readFileSync(childPidFile, "utf8"), 10);
 	assert.ok(Number.isInteger(childPid) && childPid > 0, `expected child pid, got ${childPid}`);
@@ -342,15 +377,22 @@ done
 	await waitForCondition(() => !existsSync(workspaceRoot), 5000, "temp workspace cleanup");
 	await waitForCondition(() => existsSync(childSignalFile), 5000, "child signal trap output");
 	await waitForCondition(() => existsSync(helperSignalFile), 5000, "helper TERM trap output");
-	for (const [pid, description] of [[childPid, "child process shutdown"], [helperPid, "TERM-trap helper shutdown"]]) {
-		await waitForCondition(() => {
-			try {
-				process.kill(pid, 0);
-				return false;
-			} catch (error) {
-				return error && typeof error === "object" && "code" in error && error.code === "ESRCH";
-			}
-		}, 5000, description);
+	for (const [pid, description] of [
+		[childPid, "child process shutdown"],
+		[helperPid, "TERM-trap helper shutdown"],
+	]) {
+		await waitForCondition(
+			() => {
+				try {
+					process.kill(pid, 0);
+					return false;
+				} catch (error) {
+					return error && typeof error === "object" && "code" in error && error.code === "ESRCH";
+				}
+			},
+			5000,
+			description,
+		);
 	}
 	assert.match(readFileSync(childSignalFile, "utf8"), /signal=TERM/);
 	assert.match(readFileSync(helperSignalFile, "utf8"), /signal=TERM/);

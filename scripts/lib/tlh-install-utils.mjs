@@ -60,10 +60,12 @@ export function defaultTlhAgentDir(env = process.env, { homeDir = homedir(), pre
     const configured = preferTlhAgentDir
         ? firstConfiguredValue(env.TLH_AGENT_DIR, env.PI_CODING_AGENT_DIR)
         : firstConfiguredValue(env.PI_CODING_AGENT_DIR, env.TLH_AGENT_DIR);
-    return expandHomePath(configured || join(homeDir, ".the-last-harness", "agent"), { homeDir }) || join(homeDir, ".the-last-harness", "agent");
+    return (expandHomePath(configured || join(homeDir, ".the-last-harness", "agent"), { homeDir }) ||
+        join(homeDir, ".the-last-harness", "agent"));
 }
 export function resolveTlhAgentDir(agentDir, options = {}) {
-    return expandHomePath(agentDir || defaultTlhAgentDir(options.env, options), options) || defaultTlhAgentDir(options.env, options);
+    return (expandHomePath(agentDir || defaultTlhAgentDir(options.env, options), options) ||
+        defaultTlhAgentDir(options.env, options));
 }
 export function defaultTlhSettingsPath({ agentDir, env = process.env, homeDir = homedir(), preferTlhAgentDir = false, } = {}) {
     return join(resolveTlhAgentDir(agentDir, { env, homeDir, preferTlhAgentDir }), "settings.json");
@@ -72,7 +74,7 @@ export function defaultTlhKeybindingsPath({ agentDir, env = process.env, homeDir
     return join(resolveTlhAgentDir(agentDir, { env, homeDir, preferTlhAgentDir }), "keybindings.json");
 }
 export function defaultTlhBinDir(env = process.env, { homeDir = homedir() } = {}) {
-    return expandHomePath(env.TLH_BIN_DIR || join(homeDir, ".local", "bin"), { homeDir }) || join(homeDir, ".local", "bin");
+    return (expandHomePath(env.TLH_BIN_DIR || join(homeDir, ".local", "bin"), { homeDir }) || join(homeDir, ".local", "bin"));
 }
 export function readJsonFile(path, { missingValue, emptyValue = {} } = {}) {
     if (!existsSync(path)) {
@@ -164,7 +166,7 @@ export function backupTimestampSuffix(date = new Date(), { includeMilliseconds =
         return iso.replace(/[:.]/g, "-");
     return iso.replace(/\.\d{3}Z$/, "Z").replace(/:/g, "-");
 }
-export function backupPathWithTimestamp(path, { marker = "", date = new Date(), includeMilliseconds = true } = {}) {
+export function backupPathWithTimestamp(path, { marker = "", date = new Date(), includeMilliseconds = true, } = {}) {
     const markerText = marker ? `-${marker}` : "";
     return `${path}.backup${markerText}-${backupTimestampSuffix(date, { includeMilliseconds })}`;
 }
@@ -188,9 +190,7 @@ export function parseBackupTimestamp(filename) {
     if (!match)
         return undefined;
     const [, datePart, hh, mm, ss, ms] = match;
-    const iso = ms
-        ? `${datePart}T${hh}:${mm}:${ss}.${ms}Z`
-        : `${datePart}T${hh}:${mm}:${ss}Z`;
+    const iso = ms ? `${datePart}T${hh}:${mm}:${ss}.${ms}Z` : `${datePart}T${hh}:${mm}:${ss}Z`;
     const date = new Date(iso);
     if (Number.isNaN(date.getTime()))
         return undefined;

@@ -9,16 +9,9 @@ import {
 	setCachedTlhUsageWeeklyVisibility,
 	USAGE_COMMAND_HELP,
 } from "./usage-limits.js";
-import type {
-	TlhSettings,
-	TlhUsageLimitsConfig,
-	TlhUsageLimitsWriteResult,
-	TlhUsageWeeklyAction,
-} from "./types.js";
+import type { TlhSettings, TlhUsageLimitsConfig, TlhUsageLimitsWriteResult, TlhUsageWeeklyAction } from "./types.js";
 
-type TlhUsageSlashAction =
-	| { type: "status" }
-	| { type: "weekly"; action: TlhUsageWeeklyAction };
+type TlhUsageSlashAction = { type: "status" } | { type: "weekly"; action: TlhUsageWeeklyAction };
 
 function validateTlhUsageLimitsSettings(settings: unknown): asserts settings is TlhSettings {
 	if (!isRecord(settings)) {
@@ -52,20 +45,24 @@ function parseTlhSettingsContent(content: string | undefined): TlhSettings {
 }
 
 function writeTlhUsageWeeklyPreference(cwd: string, showWeekly: boolean): TlhUsageLimitsWriteResult {
-	return withLockedTlhSettingsWrite(cwd, "Refusing to write usage-limit settings outside the isolated TLH profile.", (current) => {
-		const settings = parseTlhSettingsContent(current);
-		ensureMutableUsageLimitsSettings(settings);
+	return withLockedTlhSettingsWrite(
+		cwd,
+		"Refusing to write usage-limit settings outside the isolated TLH profile.",
+		(current) => {
+			const settings = parseTlhSettingsContent(current);
+			ensureMutableUsageLimitsSettings(settings);
 
-		if (settings.tlh.usageLimits.showWeekly === showWeekly) {
-			return { changed: false };
-		}
+			if (settings.tlh.usageLimits.showWeekly === showWeekly) {
+				return { changed: false };
+			}
 
-		settings.tlh.usageLimits.showWeekly = showWeekly;
-		return {
-			changed: true,
-			nextContent: `${JSON.stringify(settings, null, 2)}\n`,
-		};
-	});
+			settings.tlh.usageLimits.showWeekly = showWeekly;
+			return {
+				changed: true,
+				nextContent: `${JSON.stringify(settings, null, 2)}\n`,
+			};
+		},
+	);
 }
 
 function parseUsageSlashAction(args: string): TlhUsageSlashAction | undefined {
@@ -115,9 +112,7 @@ export async function handleUsageCommand(args: string, ctx: ExtensionCommandCont
 	}
 
 	const currentShowWeekly =
-		command.action === "toggle"
-			? getPersistedTlhUsageWeeklyVisibility(ctx.cwd)
-			: getCachedTlhUsageWeeklyVisibility();
+		command.action === "toggle" ? getPersistedTlhUsageWeeklyVisibility(ctx.cwd) : getCachedTlhUsageWeeklyVisibility();
 	const nextShowWeekly = nextWeeklyPreference(currentShowWeekly === true, command.action);
 	try {
 		const result = writeTlhUsageWeeklyPreference(ctx.cwd, nextShowWeekly);

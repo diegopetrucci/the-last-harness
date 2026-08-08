@@ -3,7 +3,12 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { formatHomePath, isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
 import { resolveTlhCommitAttribution } from "./attribution.js";
-import type { TlhAttributionConfig, TlhAttributionWriteResult, TlhCommitAttributionState, TlhSettings } from "./types.js";
+import type {
+	TlhAttributionConfig,
+	TlhAttributionWriteResult,
+	TlhCommitAttributionState,
+	TlhSettings,
+} from "./types.js";
 
 const TOGGLE_TLH_GIT_ATTRIBUTION_COMMAND_HELP = "Usage: /toggle-tlh-git-attribution";
 
@@ -43,26 +48,34 @@ function ensureMutableAttributionSettings(settings: TlhSettings): asserts settin
 }
 
 function toggleTlhCommitAttribution(cwd: string): TlhAttributionWriteResult {
-	return withLockedTlhSettingsWrite(cwd, "Refusing to write attribution settings outside the isolated TLH profile.", (current) => {
-		const settings = parseTlhSettingsContent(current);
-		const currentState = resolveTlhCommitAttribution(settings.tlh?.attribution);
-		const nextEnabled = !currentState.enabled;
+	return withLockedTlhSettingsWrite(
+		cwd,
+		"Refusing to write attribution settings outside the isolated TLH profile.",
+		(current) => {
+			const settings = parseTlhSettingsContent(current);
+			const currentState = resolveTlhCommitAttribution(settings.tlh?.attribution);
+			const nextEnabled = !currentState.enabled;
 
-		ensureMutableAttributionSettings(settings);
-		settings.tlh.attribution = { commit: nextEnabled };
-		return {
-			changed: true,
-			state: resolveTlhCommitAttribution(settings.tlh.attribution),
-			nextContent: `${JSON.stringify(settings, null, 2)}\n`,
-		};
-	});
+			ensureMutableAttributionSettings(settings);
+			settings.tlh.attribution = { commit: nextEnabled };
+			return {
+				changed: true,
+				state: resolveTlhCommitAttribution(settings.tlh.attribution),
+				nextContent: `${JSON.stringify(settings, null, 2)}\n`,
+			};
+		},
+	);
 }
 
 function formatCommitAttributionStatus(state: TlhCommitAttributionState): string {
 	return state.enabled ? "TLH commit attribution is enabled." : "TLH commit attribution is disabled.";
 }
 
-export async function handleToggleTlhGitAttributionCommand(_pi: ExtensionAPI, args: string, ctx: ExtensionCommandContext): Promise<void> {
+export async function handleToggleTlhGitAttributionCommand(
+	_pi: ExtensionAPI,
+	args: string,
+	ctx: ExtensionCommandContext,
+): Promise<void> {
 	if (args.trim()) {
 		ctx.ui.notify(TOGGLE_TLH_GIT_ATTRIBUTION_COMMAND_HELP, "error");
 		return;

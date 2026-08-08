@@ -103,5 +103,4 @@ describe("workflow graph snapshots", () => {
 		assert.equal(failedThenPaused.nodes[0]?.status, "failed");
 		assert.equal(pausedThenFailed.nodes[0]?.status, "failed");
 	});
-
 });

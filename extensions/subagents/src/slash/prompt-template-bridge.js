@@ -90,10 +90,12 @@ function sanitizeRecentTools(tools) {
     const sanitized = tools.flatMap((entry) => {
         if (typeof entry.tool !== "string" || entry.tool.trim().length === 0)
             return [];
-        return [{
+        return [
+            {
                 tool: entry.tool,
                 args: typeof entry.args === "string" ? entry.args : String(entry.args ?? ""),
-            }];
+            },
+        ];
     });
     return sanitized.length > 0 ? sanitized : undefined;
 }
@@ -136,10 +138,7 @@ function buildDelegationMessages(result, fallbackText) {
     const text = typeof result.finalOutput === "string" && result.finalOutput.trim().length > 0
         ? result.finalOutput.trim()
         : fallbackText;
-    const content = [
-        ...toolCallParts,
-        ...(text ? [{ type: "text", text }] : []),
-    ];
+    const content = [...toolCallParts, ...(text ? [{ type: "text", text }] : [])];
     if (content.length === 0)
         return [];
     return [{ role: "assistant", content }];
@@ -148,9 +147,7 @@ function toDelegationUpdate(requestId, update) {
     const progress = update.details?.progress?.[0];
     const taskProgress = update.details?.progress?.map((entry) => {
         const lastOutput = entry.recentOutput?.[entry.recentOutput.length - 1];
-        const safeLastOutput = typeof lastOutput === "string" && lastOutput.trim() && lastOutput !== "(running...)"
-            ? lastOutput
-            : undefined;
+        const safeLastOutput = typeof lastOutput === "string" && lastOutput.trim() && lastOutput !== "(running...)" ? lastOutput : undefined;
         return {
             index: entry.index,
             agent: entry.agent ?? "delegate",
@@ -169,9 +166,7 @@ function toDelegationUpdate(requestId, update) {
     if (!progress && (!taskProgress || taskProgress.length === 0))
         return undefined;
     const lastOutput = progress?.recentOutput?.[progress.recentOutput.length - 1];
-    const safeLastOutput = typeof lastOutput === "string" && lastOutput.trim() && lastOutput !== "(running...)"
-        ? lastOutput
-        : undefined;
+    const safeLastOutput = typeof lastOutput === "string" && lastOutput.trim() && lastOutput !== "(running...)" ? lastOutput : undefined;
     return {
         requestId,
         currentTool: progress?.currentTool,

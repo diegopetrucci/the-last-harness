@@ -36,9 +36,10 @@ const ISOLATED_ENV_KEYS = [
 	"PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT",
 ] as const;
 
-const win32Skip = process.platform === "win32"
-	? "fork argv1 pi-spawn hardening (TLH pi-spawn.ts delta) is incompatible with the upstream Windows harness; TLH targets macOS/Linux"
-	: undefined;
+const win32Skip =
+	process.platform === "win32"
+		? "fork argv1 pi-spawn hardening (TLH pi-spawn.ts delta) is incompatible with the upstream Windows harness; TLH targets macOS/Linux"
+		: undefined;
 describe("real Pi-session subagent E2E", { skip: win32Skip }, () => {
 	let run: RealSessionRun | undefined;
 
@@ -48,7 +49,9 @@ describe("real Pi-session subagent E2E", { skip: win32Skip }, () => {
 	});
 
 	it("boots the extension in a real parent session and delivers a faux child result", async () => {
-		const { routeParentThroughSubagent, runRealSubagentSession, subagentToolResults } = await import("../support/real-session-runner.ts");
+		const { routeParentThroughSubagent, runRealSubagentSession, subagentToolResults } = await import(
+			"../support/real-session-runner.ts"
+		);
 
 		const previousEnv = new Map(ISOLATED_ENV_KEYS.map((key) => [key, process.env[key]]));
 		process.env.PI_SUBAGENT_CHILD = "1";

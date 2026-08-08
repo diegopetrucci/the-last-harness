@@ -85,13 +85,17 @@ describe("pause-all shortcut handler", () => {
 
 		const asyncDir = fs.mkdtempSync(path.join(os.tmpdir(), "pause-all-shortcut-"));
 		cleanupPaths.add(asyncDir);
-		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-			runId: "async-run",
-			mode: "single",
-			state: "running",
-			startedAt: Date.now(),
-			pid: 4242,
-		}), "utf-8");
+		fs.writeFileSync(
+			path.join(asyncDir, "status.json"),
+			JSON.stringify({
+				runId: "async-run",
+				mode: "single",
+				state: "running",
+				startedAt: Date.now(),
+				pid: 4242,
+			}),
+			"utf-8",
+		);
 		state.asyncJobs.set("async-run", {
 			asyncId: "async-run",
 			asyncDir,
@@ -101,7 +105,13 @@ describe("pause-all shortcut handler", () => {
 		});
 
 		const kills = stubPortableInterruptKill();
-		builtinFs.readdirSync = ((target: fs.PathLike, options?: BufferEncoding | { encoding?: BufferEncoding | null; withFileTypes?: boolean; recursive?: boolean } | null) => {
+		builtinFs.readdirSync = ((
+			target: fs.PathLike,
+			options?:
+				| BufferEncoding
+				| { encoding?: BufferEncoding | null; withFileTypes?: boolean; recursive?: boolean }
+				| null,
+		) => {
 			if (target === ASYNC_DIR || target === NESTED_RUNS_DIR) return [];
 			return originalReaddirSync(target, options as never);
 		}) as typeof fs.readdirSync;
@@ -120,21 +130,32 @@ describe("pause-all shortcut handler", () => {
 		fs.mkdirSync(ASYNC_DIR, { recursive: true });
 		const asyncDir = fs.mkdtempSync(path.join(ASYNC_DIR, "pause-all-disk-only-"));
 		cleanupPaths.add(asyncDir);
-		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-			runId: "disk-only-async-run",
-			sessionId: "current-session",
-			mode: "single",
-			state: "running",
-			cwd: path.join(os.tmpdir(), "task-specific-agent-cwd"),
-			startedAt: Date.now(),
-			pid: 5252,
-		}), "utf-8");
+		fs.writeFileSync(
+			path.join(asyncDir, "status.json"),
+			JSON.stringify({
+				runId: "disk-only-async-run",
+				sessionId: "current-session",
+				mode: "single",
+				state: "running",
+				cwd: path.join(os.tmpdir(), "task-specific-agent-cwd"),
+				startedAt: Date.now(),
+				pid: 5252,
+			}),
+			"utf-8",
+		);
 
 		const kills = stubPortableInterruptKill();
-		builtinFs.readdirSync = ((target: fs.PathLike, options?: BufferEncoding | { encoding?: BufferEncoding | null; withFileTypes?: boolean; recursive?: boolean } | null) => {
+		builtinFs.readdirSync = ((
+			target: fs.PathLike,
+			options?:
+				| BufferEncoding
+				| { encoding?: BufferEncoding | null; withFileTypes?: boolean; recursive?: boolean }
+				| null,
+		) => {
 			if (target === NESTED_RUNS_DIR) return [];
 			const entries = originalReaddirSync(target, options as never);
-			if (target === ASYNC_DIR && Array.isArray(entries)) return entries.filter((entry) => entry.name === path.basename(asyncDir));
+			if (target === ASYNC_DIR && Array.isArray(entries))
+				return entries.filter((entry) => entry.name === path.basename(asyncDir));
 			return entries;
 		}) as typeof fs.readdirSync;
 		syncBuiltinESMExports();
@@ -151,25 +172,36 @@ describe("pause-all shortcut handler", () => {
 		fs.mkdirSync(ASYNC_DIR, { recursive: true });
 		const asyncDir = fs.mkdtempSync(path.join(ASYNC_DIR, "pause-all-top-level-with-broken-nested-root-"));
 		cleanupPaths.add(asyncDir);
-		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-			runId: "top-level-async-run",
-			sessionId: "current-session",
-			mode: "single",
-			state: "running",
-			cwd: path.join(os.tmpdir(), "task-specific-agent-cwd"),
-			startedAt: Date.now(),
-			pid: 6262,
-		}), "utf-8");
+		fs.writeFileSync(
+			path.join(asyncDir, "status.json"),
+			JSON.stringify({
+				runId: "top-level-async-run",
+				sessionId: "current-session",
+				mode: "single",
+				state: "running",
+				cwd: path.join(os.tmpdir(), "task-specific-agent-cwd"),
+				startedAt: Date.now(),
+				pid: 6262,
+			}),
+			"utf-8",
+		);
 
 		const kills = stubPortableInterruptKill();
-		builtinFs.readdirSync = ((target: fs.PathLike, options?: BufferEncoding | { encoding?: BufferEncoding | null; withFileTypes?: boolean; recursive?: boolean } | null) => {
+		builtinFs.readdirSync = ((
+			target: fs.PathLike,
+			options?:
+				| BufferEncoding
+				| { encoding?: BufferEncoding | null; withFileTypes?: boolean; recursive?: boolean }
+				| null,
+		) => {
 			if (target === NESTED_RUNS_DIR) {
 				const error = new Error("permission denied") as NodeJS.ErrnoException;
 				error.code = "EACCES";
 				throw error;
 			}
 			const entries = originalReaddirSync(target, options as never);
-			if (target === ASYNC_DIR && Array.isArray(entries)) return entries.filter((entry) => entry.name === path.basename(asyncDir));
+			if (target === ASYNC_DIR && Array.isArray(entries))
+				return entries.filter((entry) => entry.name === path.basename(asyncDir));
 			return entries;
 		}) as typeof fs.readdirSync;
 		syncBuiltinESMExports();
@@ -189,21 +221,32 @@ describe("pause-all shortcut handler", () => {
 		const asyncDir = path.join(rootDir, childRunId);
 		cleanupPaths.add(rootDir);
 		fs.mkdirSync(asyncDir, { recursive: true });
-		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-			runId: childRunId,
-			sessionId: "current-session",
-			mode: "single",
-			state: "running",
-			cwd: path.join(os.tmpdir(), "nested-task-specific-agent-cwd"),
-			startedAt: Date.now(),
-			pid: 7272,
-		}), "utf-8");
+		fs.writeFileSync(
+			path.join(asyncDir, "status.json"),
+			JSON.stringify({
+				runId: childRunId,
+				sessionId: "current-session",
+				mode: "single",
+				state: "running",
+				cwd: path.join(os.tmpdir(), "nested-task-specific-agent-cwd"),
+				startedAt: Date.now(),
+				pid: 7272,
+			}),
+			"utf-8",
+		);
 
 		const kills = stubPortableInterruptKill();
-		builtinFs.readdirSync = ((target: fs.PathLike, options?: BufferEncoding | { encoding?: BufferEncoding | null; withFileTypes?: boolean; recursive?: boolean } | null) => {
+		builtinFs.readdirSync = ((
+			target: fs.PathLike,
+			options?:
+				| BufferEncoding
+				| { encoding?: BufferEncoding | null; withFileTypes?: boolean; recursive?: boolean }
+				| null,
+		) => {
 			if (target === ASYNC_DIR) return [];
 			const entries = originalReaddirSync(target, options as never);
-			if (target === NESTED_RUNS_DIR && Array.isArray(entries)) return entries.filter((entry) => entry.name === rootRunId);
+			if (target === NESTED_RUNS_DIR && Array.isArray(entries))
+				return entries.filter((entry) => entry.name === rootRunId);
 			if (target === rootDir && Array.isArray(entries)) return entries.filter((entry) => entry.name === childRunId);
 			return entries;
 		}) as typeof fs.readdirSync;
@@ -224,25 +267,36 @@ describe("pause-all shortcut handler", () => {
 		const asyncDir = path.join(rootDir, childRunId);
 		cleanupPaths.add(rootDir);
 		fs.mkdirSync(asyncDir, { recursive: true });
-		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-			runId: childRunId,
-			sessionId: "other-session",
-			mode: "single",
-			state: "running",
-			cwd: path.join(os.tmpdir(), "other-project"),
-			startedAt: Date.now(),
-			pid: 7373,
-		}), "utf-8");
+		fs.writeFileSync(
+			path.join(asyncDir, "status.json"),
+			JSON.stringify({
+				runId: childRunId,
+				sessionId: "other-session",
+				mode: "single",
+				state: "running",
+				cwd: path.join(os.tmpdir(), "other-project"),
+				startedAt: Date.now(),
+				pid: 7373,
+			}),
+			"utf-8",
+		);
 
 		const kills: Array<{ pid: number; signal: NodeJS.Signals | number | undefined }> = [];
 		mutableProcess.kill = ((pid: number, signal?: number | NodeJS.Signals) => {
 			kills.push({ pid, signal });
 			return true;
 		}) as typeof process.kill;
-		builtinFs.readdirSync = ((target: fs.PathLike, options?: BufferEncoding | { encoding?: BufferEncoding | null; withFileTypes?: boolean; recursive?: boolean } | null) => {
+		builtinFs.readdirSync = ((
+			target: fs.PathLike,
+			options?:
+				| BufferEncoding
+				| { encoding?: BufferEncoding | null; withFileTypes?: boolean; recursive?: boolean }
+				| null,
+		) => {
 			if (target === ASYNC_DIR) return [];
 			const entries = originalReaddirSync(target, options as never);
-			if (target === NESTED_RUNS_DIR && Array.isArray(entries)) return entries.filter((entry) => entry.name === rootRunId);
+			if (target === NESTED_RUNS_DIR && Array.isArray(entries))
+				return entries.filter((entry) => entry.name === rootRunId);
 			if (target === rootDir && Array.isArray(entries)) return entries.filter((entry) => entry.name === childRunId);
 			return entries;
 		}) as typeof fs.readdirSync;
@@ -261,25 +315,36 @@ describe("pause-all shortcut handler", () => {
 		fs.mkdirSync(ASYNC_DIR, { recursive: true });
 		const asyncDir = fs.mkdtempSync(path.join(ASYNC_DIR, "pause-all-other-session-"));
 		cleanupPaths.add(asyncDir);
-		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-			runId: "other-session-async-run",
-			sessionId: "other-session",
-			mode: "single",
-			state: "running",
-			cwd: path.join(os.tmpdir(), "other-project"),
-			startedAt: Date.now(),
-			pid: 6262,
-		}), "utf-8");
+		fs.writeFileSync(
+			path.join(asyncDir, "status.json"),
+			JSON.stringify({
+				runId: "other-session-async-run",
+				sessionId: "other-session",
+				mode: "single",
+				state: "running",
+				cwd: path.join(os.tmpdir(), "other-project"),
+				startedAt: Date.now(),
+				pid: 6262,
+			}),
+			"utf-8",
+		);
 
 		const kills: Array<{ pid: number; signal: NodeJS.Signals | number | undefined }> = [];
 		mutableProcess.kill = ((pid: number, signal?: number | NodeJS.Signals) => {
 			kills.push({ pid, signal });
 			return true;
 		}) as typeof process.kill;
-		builtinFs.readdirSync = ((target: fs.PathLike, options?: BufferEncoding | { encoding?: BufferEncoding | null; withFileTypes?: boolean; recursive?: boolean } | null) => {
+		builtinFs.readdirSync = ((
+			target: fs.PathLike,
+			options?:
+				| BufferEncoding
+				| { encoding?: BufferEncoding | null; withFileTypes?: boolean; recursive?: boolean }
+				| null,
+		) => {
 			if (target === NESTED_RUNS_DIR) return [];
 			const entries = originalReaddirSync(target, options as never);
-			if (target === ASYNC_DIR && Array.isArray(entries)) return entries.filter((entry) => entry.name === path.basename(asyncDir));
+			if (target === ASYNC_DIR && Array.isArray(entries))
+				return entries.filter((entry) => entry.name === path.basename(asyncDir));
 			return entries;
 		}) as typeof fs.readdirSync;
 		syncBuiltinESMExports();

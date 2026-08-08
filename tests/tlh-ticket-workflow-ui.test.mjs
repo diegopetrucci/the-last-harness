@@ -393,7 +393,10 @@ test("ticket workflow UI shows the sole in-progress footer even with a higher-pr
 		writeFileSync(statePath, "updated\n");
 		await pi.commands.get("tickets").handler("", ctx);
 		assert.equal(uiHarness.notifications.at(-1)?.type, "info");
-		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /tk: 1 ready • 1 blocked • 0 in progress • 1 active • 3 total/);
+		assert.match(
+			uiHarness.notifications.at(-1)?.message ?? "",
+			/tk: 1 ready • 1 blocked • 0 in progress • 1 active • 3 total/,
+		);
 		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /In progress: none\. Footer stays quiet\./);
 		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /Ready:/);
 		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /Blocked:/);
@@ -418,7 +421,10 @@ test("ticket workflow UI falls back to the ticket id when the sole in-progress t
 		assert.equal(uiHarness.statusUpdates.at(-1)?.text, "ticket: tlhf-7rd2 (/tickets)");
 
 		await pi.commands.get("tickets").handler("", ctx);
-		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /tk: 1 ready • 1 blocked • 1 in progress • 2 active • 3 total/);
+		assert.match(
+			uiHarness.notifications.at(-1)?.message ?? "",
+			/tk: 1 ready • 1 blocked • 1 in progress • 2 active • 3 total/,
+		);
 		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /In progress: tlhf-7rd2/);
 		assert.doesNotMatch(uiHarness.notifications.at(-1)?.message ?? "", /start|close .*tlhf-/i);
 	});
@@ -490,7 +496,7 @@ test("ticket workflow UI strips ANSI and control sequences from the sole in-prog
 		assert.equal(statusText, "ticket: Implement scoped ticket footer selection (/tickets)");
 		for (const character of statusText) {
 			const code = character.charCodeAt(0);
-			assert.equal(((code >= 0x00 && code <= 0x1f) && code !== 0x0a) || (code >= 0x7f && code <= 0x9f), false);
+			assert.equal((code >= 0x00 && code <= 0x1f && code !== 0x0a) || (code >= 0x7f && code <= 0x9f), false);
 		}
 	});
 });
@@ -512,8 +518,14 @@ test("ticket workflow UI still shows a sole blocked in-progress ticket in the fo
 		assert.equal(uiHarness.statusUpdates.at(-1)?.text, IN_PROGRESS_TICKET_FOOTER_STATUS);
 
 		await pi.commands.get("tickets").handler("", ctx);
-		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /tk: 1 ready • 1 blocked • 1 in progress • 2 active • 3 total/);
-		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /In progress: tlhf-7rd2 - Implement scoped ticket footer selection/);
+		assert.match(
+			uiHarness.notifications.at(-1)?.message ?? "",
+			/tk: 1 ready • 1 blocked • 1 in progress • 2 active • 3 total/,
+		);
+		assert.match(
+			uiHarness.notifications.at(-1)?.message ?? "",
+			/In progress: tlhf-7rd2 - Implement scoped ticket footer selection/,
+		);
 		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /Blocked:/);
 	});
 });
@@ -640,7 +652,10 @@ test("legacy experimental and ticket settings do not suppress the permanent tick
 		assert.equal(pi.commands.has("tickets"), true);
 		assert.equal(uiHarness.statusUpdates.at(-1)?.text, IN_PROGRESS_TICKET_FOOTER_STATUS);
 		await pi.commands.get("tickets").handler("", ctx);
-		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /In progress: tlhf-7rd2 - Implement scoped ticket footer selection/);
+		assert.match(
+			uiHarness.notifications.at(-1)?.message ?? "",
+			/In progress: tlhf-7rd2 - Implement scoped ticket footer selection/,
+		);
 	});
 });
 
@@ -705,6 +720,9 @@ test("ticket workflow UI stays quiet when .tickets exists and tk is missing whil
 		assert.deepEqual(uiHarness.widgetUpdates, [{ key: "tlh-ticket-workflow", content: undefined, options: undefined }]);
 
 		await pi.commands.get("tickets").handler("", ctx);
-		assert.match(uiHarness.notifications.at(-1)?.message ?? "", /Ticket workflow status unavailable: tk is unavailable/i);
+		assert.match(
+			uiHarness.notifications.at(-1)?.message ?? "",
+			/Ticket workflow status unavailable: tk is unavailable/i,
+		);
 	});
 });

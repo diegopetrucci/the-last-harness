@@ -138,10 +138,7 @@ export function findWorktreeTaskCwdConflict(
 	return undefined;
 }
 
-export function formatWorktreeTaskCwdConflict(
-	conflict: WorktreeTaskCwdConflict,
-	sharedCwd: string,
-): string {
+export function formatWorktreeTaskCwdConflict(conflict: WorktreeTaskCwdConflict, sharedCwd: string): string {
 	return `worktree isolation uses the shared cwd (${sharedCwd}); task ${conflict.index + 1} (${conflict.agent}) sets cwd to ${conflict.cwd}. Remove task-level cwd overrides or disable worktree.`;
 }
 
@@ -181,9 +178,7 @@ function resolveRepoCwdRelative(cwd: string): string {
 		throw new Error("worktree isolation requires a git repository");
 	}
 	const rawPrefix = runGitChecked(cwd, ["rev-parse", "--show-prefix"]).trim();
-	const normalizedPrefix = rawPrefix
-		? path.normalize(rawPrefix.replace(/[\\/]+$/, ""))
-		: "";
+	const normalizedPrefix = rawPrefix ? path.normalize(rawPrefix.replace(/[\\/]+$/, "")) : "";
 	return normalizedPrefix === "." ? "" : normalizedPrefix;
 }
 
@@ -287,10 +282,7 @@ function parseWorktreeSetupHookOutput(rawStdout: string): WorktreeSetupHookOutpu
 	return parsed as WorktreeSetupHookOutput;
 }
 
-function runWorktreeSetupHook(
-	hook: ResolvedWorktreeSetupHook,
-	input: WorktreeSetupHookInput,
-): string[] {
+function runWorktreeSetupHook(hook: ResolvedWorktreeSetupHook, input: WorktreeSetupHookInput): string[] {
 	const result = spawnSync(hook.hookPath, [], {
 		cwd: input.worktreePath,
 		encoding: "utf-8",
@@ -379,10 +371,14 @@ function createSingleWorktree(
 			syntheticPaths,
 		};
 	} catch (error) {
-		try { runGitChecked(toplevel, ["worktree", "remove", "--force", worktreePath]); } catch {
+		try {
+			runGitChecked(toplevel, ["worktree", "remove", "--force", worktreePath]);
+		} catch {
 			// Best-effort rollback; preserve the original setup failure.
 		}
-		try { runGitChecked(toplevel, ["branch", "-D", branch]); } catch {
+		try {
+			runGitChecked(toplevel, ["branch", "-D", branch]);
+		} catch {
 			// Best-effort rollback; preserve the original setup failure.
 		}
 		throw error;
@@ -392,7 +388,13 @@ function createSingleWorktree(
 function removeSyntheticPath(worktree: WorktreeInfo, syntheticPath: string): void {
 	const resolved = path.resolve(worktree.path, syntheticPath);
 	const relative = path.relative(worktree.path, resolved);
-	if (!relative || relative === "." || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+	if (
+		!relative ||
+		relative === "." ||
+		relative === ".." ||
+		relative.startsWith(`..${path.sep}`) ||
+		path.isAbsolute(relative)
+	) {
 		return;
 	}
 
@@ -498,10 +500,14 @@ function writeEmptyPatch(patchPath: string): void {
 }
 
 function cleanupSingleWorktree(repoCwd: string, worktree: WorktreeInfo): void {
-	try { runGitChecked(repoCwd, ["worktree", "remove", "--force", worktree.path]); } catch {
+	try {
+		runGitChecked(repoCwd, ["worktree", "remove", "--force", worktree.path]);
+	} catch {
 		// Cleanup is best-effort to avoid masking caller errors.
 	}
-	try { runGitChecked(repoCwd, ["branch", "-D", worktree.branch]); } catch {
+	try {
+		runGitChecked(repoCwd, ["branch", "-D", worktree.branch]);
+	} catch {
 		// Cleanup is best-effort to avoid masking caller errors.
 	}
 }
@@ -510,7 +516,12 @@ function hasWorktreeChanges(diff: WorktreeDiff): boolean {
 	return diff.filesChanged > 0 || diff.insertions > 0 || diff.deletions > 0 || diff.diffStat.trim().length > 0;
 }
 
-export function createWorktrees(cwd: string, runId: string, count: number, options?: CreateWorktreesOptions): WorktreeSetup {
+export function createWorktrees(
+	cwd: string,
+	runId: string,
+	count: number,
+	options?: CreateWorktreesOptions,
+): WorktreeSetup {
 	const repo = resolveRepoState(cwd);
 	const setupHook = resolveWorktreeSetupHook(repo.toplevel, options?.setupHook);
 	const baseDir = resolveWorktreeBaseDir(options?.baseDir, repo.toplevel);
@@ -518,16 +529,18 @@ export function createWorktrees(cwd: string, runId: string, count: number, optio
 
 	try {
 		for (let index = 0; index < count; index++) {
-			worktrees.push(createSingleWorktree(
-				repo.toplevel,
-				repo.cwdRelative,
-				runId,
-				index,
-				repo.baseCommit,
-				setupHook,
-				options?.agents?.[index],
-				baseDir,
-			));
+			worktrees.push(
+				createSingleWorktree(
+					repo.toplevel,
+					repo.cwdRelative,
+					runId,
+					index,
+					repo.baseCommit,
+					setupHook,
+					options?.agents?.[index],
+					baseDir,
+				),
+			);
 		}
 	} catch (error) {
 		cleanupWorktrees({
@@ -574,7 +587,9 @@ export function cleanupWorktrees(setup: WorktreeSetup): void {
 	for (let index = setup.worktrees.length - 1; index >= 0; index--) {
 		cleanupSingleWorktree(setup.cwd, setup.worktrees[index]!);
 	}
-	try { runGitChecked(setup.cwd, ["worktree", "prune"]); } catch {
+	try {
+		runGitChecked(setup.cwd, ["worktree", "prune"]);
+	} catch {
 		// Pruning is best-effort cleanup.
 	}
 }

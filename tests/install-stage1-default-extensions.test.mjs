@@ -19,7 +19,7 @@ test("stage-1 batches non-critical default extension updates", (t) => {
 	const { config, agentDir, piLog } = makeDefaultExtensionInstallConfig(t, {
 		defaultExtensions: defaults,
 		settings: { packages: defaults.map((entry) => entry.source) },
-		fakePiBody: "printf '%s|%s|%s\n' \"${PI_CODING_AGENT_DIR:-}\" \"$PWD\" \"$*\" >>\"${PI_LOG}\"",
+		fakePiBody: 'printf \'%s|%s|%s\n\' "${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${PI_LOG}"',
 	});
 
 	installDefaultExtensions(config);
@@ -38,26 +38,26 @@ test("stage-1 falls back to old-CLI positional per-source non-critical updates w
 		defaultExtensions: defaults,
 		settings: { packages: defaults.map((entry) => entry.source) },
 		fakePiBody: [
-			"printf '%s|%s|%s\\n' \"${PI_CODING_AGENT_DIR:-}\" \"$PWD\" \"$*\" >>\"${PI_LOG}\"",
-			"if [[ \"$1\" == \"update\" && \"${2:-}\" == \"--extensions\" ]]; then",
+			'printf \'%s|%s|%s\\n\' "${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${PI_LOG}"',
+			'if [[ "$1" == "update" && "${2:-}" == "--extensions" ]]; then',
 			"\tprintf 'batch failed\\n' >&2",
 			"\texit 42",
 			"fi",
-			"if [[ \"$1\" == \"update\" && \"${2:-}\" == \"--extension\" ]]; then",
+			'if [[ "$1" == "update" && "${2:-}" == "--extension" ]]; then',
 			"\tprintf 'old pi does not support --extension\\n' >&2",
 			"\texit 98",
 			"fi",
-			"if [[ \"$1\" == \"update\" && \"${2:-}\" == \"npm:helper-a\" ]]; then",
-			"\ttouch \"${PI_CODING_AGENT_DIR}/fallback-a.done\"",
+			'if [[ "$1" == "update" && "${2:-}" == "npm:helper-a" ]]; then',
+			'\ttouch "${PI_CODING_AGENT_DIR}/fallback-a.done"',
 			"\texit 0",
 			"fi",
-			"if [[ \"$1\" == \"update\" && \"${2:-}\" == \"npm:helper-b\" ]]; then",
-			"\ttouch \"${PI_CODING_AGENT_DIR}/fallback-b.attempted\"",
+			'if [[ "$1" == "update" && "${2:-}" == "npm:helper-b" ]]; then',
+			'\ttouch "${PI_CODING_AGENT_DIR}/fallback-b.attempted"',
 			"\tprintf 'helper-b failed\\n' >&2",
 			"\texit 43",
 			"fi",
-			"if [[ \"$1\" == \"install\" && \"${2:-}\" == \"git:github.com/example/critical\" ]]; then",
-			"\t[[ -f \"${PI_CODING_AGENT_DIR}/fallback-a.done\" && -f \"${PI_CODING_AGENT_DIR}/fallback-b.attempted\" ]] || { printf 'critical install ran before fallback completed\\n' >&2; exit 44; }",
+			'if [[ "$1" == "install" && "${2:-}" == "git:github.com/example/critical" ]]; then',
+			'\t[[ -f "${PI_CODING_AGENT_DIR}/fallback-a.done" && -f "${PI_CODING_AGENT_DIR}/fallback-b.attempted" ]] || { printf \'critical install ran before fallback completed\\n\' >&2; exit 44; }',
 			"\texit 0",
 			"fi",
 		].join("\n"),
@@ -71,7 +71,10 @@ test("stage-1 falls back to old-CLI positional per-source non-critical updates w
 		"update npm:helper-b",
 		"install git:github.com/example/critical",
 	]);
-	assert.match(stderr, /warning: settings-wide extension refresh from merged settings failed; falling back to per-source updates for only 2 non-critical bundled default source\(s\)/);
+	assert.match(
+		stderr,
+		/warning: settings-wide extension refresh from merged settings failed; falling back to per-source updates for only 2 non-critical bundled default source\(s\)/,
+	);
 	assert.match(stderr, /warning: default extension package update failed; continuing: npm:helper-b/);
 	assert.match(stderr, /warning: 1 bundled default extension package\(s\) failed to update/);
 });
@@ -86,7 +89,7 @@ test("stage-1 rejects unsafe critical default checkouts before settings-wide upd
 		defaultExtensions: defaults,
 		settings: { packages: defaults.map((entry) => entry.source) },
 		fakePiBody: [
-			"printf '%s|%s|%s\\n' \"${PI_CODING_AGENT_DIR:-}\" \"$PWD\" \"$*\" >>\"${PI_LOG}\"",
+			'printf \'%s|%s|%s\\n\' "${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${PI_LOG}"',
 			"printf 'pi should not run for unsafe critical checkout\\n' >&2",
 			"exit 45",
 		].join("\n"),
@@ -110,33 +113,33 @@ test("stage-1 preflights critical checkouts before batch and validates critical 
 		defaultExtensions: defaults,
 		settings: { packages: defaults.map((entry) => entry.source) },
 		fakePiBody: [
-			"printf '%s|%s|%s\\n' \"${PI_CODING_AGENT_DIR:-}\" \"$PWD\" \"$*\" >>\"${PI_LOG}\"",
-			"if [[ \"$1\" == \"update\" && \"${2:-}\" == \"--extensions\" ]]; then",
+			'printf \'%s|%s|%s\\n\' "${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${PI_LOG}"',
+			'if [[ "$1" == "update" && "${2:-}" == "--extensions" ]]; then',
 			"\t[[ -f \"${PI_CODING_AGENT_DIR}/preflight-safe.done\" ]] || { printf 'settings-wide update ran before critical preflight\\n' >&2; exit 46; }",
 			"\tprintf 'stage:settings-wide-batch\\n' >>\"${PI_LOG}.order\"",
-			"\ttouch \"${PI_CODING_AGENT_DIR}/settings-wide-update.done\"",
+			'\ttouch "${PI_CODING_AGENT_DIR}/settings-wide-update.done"',
 			"\texit 0",
 			"fi",
-			"if [[ \"$1\" == \"update\" && \"${2:-}\" == \"--extension\" ]]; then",
+			'if [[ "$1" == "update" && "${2:-}" == "--extension" ]]; then',
 			"\tprintf 'unexpected per-source fallback: %s\\n' \"$*\" >&2",
 			"\texit 47",
 			"fi",
-			"if [[ \"$1\" == \"install\" && \"${2:-}\" == \"git:github.com/example/critical@pin\" ]]; then",
+			'if [[ "$1" == "install" && "${2:-}" == "git:github.com/example/critical@pin" ]]; then',
 			"\t[[ -f \"${PI_CODING_AGENT_DIR}/settings-wide-update.done\" ]] || { printf 'critical install ran before settings-wide update\\n' >&2; exit 48; }",
 			"\t[[ -f \"${PI_CODING_AGENT_DIR}/critical-preinstall-validation.done\" ]] || { printf 'critical install ran before post-batch safety validation\\n' >&2; exit 49; }",
 			"\tprintf 'stage:critical-install\\n' >>\"${PI_LOG}.order\"",
-			"\ttouch \"${PI_CODING_AGENT_DIR}/critical-install.done\"",
+			'\ttouch "${PI_CODING_AGENT_DIR}/critical-install.done"',
 			"\texit 0",
 			"fi",
 		].join("\n"),
 		fakeGitBody: [
 			"target=''",
-			"if [[ \"${1:-}\" == \"-C\" ]]; then target=\"$2\"; shift 2; fi",
-			"record_stage() { local stage=\"$1\" marker=\"$2\"; if [[ ! -f \"${AGENT_DIR}/${marker}\" ]]; then printf 'stage:%s\\n' \"$stage\" >>\"${PI_LOG}.order\"; touch \"${AGENT_DIR}/${marker}\"; fi; }",
-			"if [[ \"${1:-}\" == \"rev-parse\" && \"${2:-}\" == \"--show-toplevel\" ]]; then",
-			"\tif [[ ! -f \"${AGENT_DIR}/settings-wide-update.done\" ]]; then",
+			'if [[ "${1:-}" == "-C" ]]; then target="$2"; shift 2; fi',
+			'record_stage() { local stage="$1" marker="$2"; if [[ ! -f "${AGENT_DIR}/${marker}" ]]; then printf \'stage:%s\\n\' "$stage" >>"${PI_LOG}.order"; touch "${AGENT_DIR}/${marker}"; fi; }',
+			'if [[ "${1:-}" == "rev-parse" && "${2:-}" == "--show-toplevel" ]]; then',
+			'\tif [[ ! -f "${AGENT_DIR}/settings-wide-update.done" ]]; then',
 			"\t\trecord_stage preflight-safe preflight-safe.done",
-			"\telif [[ ! -f \"${AGENT_DIR}/critical-install.done\" ]]; then",
+			'\telif [[ ! -f "${AGENT_DIR}/critical-install.done" ]]; then',
 			"\t\t[[ -f \"${AGENT_DIR}/preflight-safe.done\" ]] || { printf 'post-batch validation ran before preflight\\n' >&2; exit 50; }",
 			"\t\trecord_stage critical-preinstall-validation critical-preinstall-validation.done",
 			"\telse",
@@ -146,8 +149,8 @@ test("stage-1 preflights critical checkouts before batch and validates critical 
 			"\tprintf '%s\\n' \"$target\"",
 			"\texit 0",
 			"fi",
-			"if [[ \"${1:-}\" == \"rev-parse\" && \"${2:-}\" == \"--absolute-git-dir\" ]]; then printf '%s/.git\\n' \"$target\"; exit 0; fi",
-			"if [[ \"${1:-}\" == \"rev-parse\" && \"${2:-}\" == \"--git-common-dir\" ]]; then printf '%s/.git\\n' \"$target\"; exit 0; fi",
+			'if [[ "${1:-}" == "rev-parse" && "${2:-}" == "--absolute-git-dir" ]]; then printf \'%s/.git\\n\' "$target"; exit 0; fi',
+			'if [[ "${1:-}" == "rev-parse" && "${2:-}" == "--git-common-dir" ]]; then printf \'%s/.git\\n\' "$target"; exit 0; fi',
 			"exit 0",
 		].join("\n"),
 	});
@@ -155,10 +158,7 @@ test("stage-1 preflights critical checkouts before batch and validates critical 
 
 	installDefaultExtensions(config);
 
-	assertPiCommands(piLog, agentDir, [
-		"update --extensions",
-		"install git:github.com/example/critical@pin",
-	]);
+	assertPiCommands(piLog, agentDir, ["update --extensions", "install git:github.com/example/critical@pin"]);
 	const stages = readFileSync(`${piLog}.order`, "utf8").trim().split(/\r?\n/);
 	assert.deepEqual(stages, [
 		"stage:preflight-safe",
@@ -183,7 +183,10 @@ test("stage-1 keeps critical defaults on per-source install path while dry-run s
 
 	const stdout = captureConsole("log", () => installDefaultExtensions(config));
 
-	assert.match(stdout, /Would preflight 1 critical bundled default git checkout target\(s\) before any settings-wide default extension update/);
+	assert.match(
+		stdout,
+		/Would preflight 1 critical bundled default git checkout target\(s\) before any settings-wide default extension update/,
+	);
 	assert.match(stdout, /pi install git:github\.com\/example\/critical@pin/);
 	assert.match(stdout, /git -C .*\/git\/github\.com\/example\/critical fetch --prune --tags origin/);
 	assert.match(stdout, /Dry run: settings-wide extension refresh will run from merged settings/);

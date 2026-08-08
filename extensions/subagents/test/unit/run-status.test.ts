@@ -28,30 +28,46 @@ describe("async run status inspection", () => {
 			fs.mkdirSync(asyncDir, { recursive: true });
 			const sessionFile = path.join(root, "session.jsonl");
 			fs.writeFileSync(sessionFile, "", "utf-8");
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-stale",
-				mode: "single",
-				state: "running",
-				pid: 12345,
-				startedAt: 100,
-				lastUpdate: 100,
-				currentStep: 0,
-				sessionFile,
-				steps: [{ agent: "scout", status: "running", startedAt: 100, sessionFile }],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-stale",
+						mode: "single",
+						state: "running",
+						pid: 12345,
+						startedAt: 100,
+						lastUpdate: 100,
+						currentStep: 0,
+						sessionFile,
+						steps: [{ agent: "scout", status: "running", startedAt: 100, sessionFile }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
-			const result = inspectSubagentStatus({ id: "run-stale" }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir,
-				kill: () => { throw errno("ESRCH"); },
-				now: () => 200,
-			});
+			const result = inspectSubagentStatus(
+				{ id: "run-stale" },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir,
+					kill: () => {
+						throw errno("ESRCH");
+					},
+					now: () => 200,
+				},
+			);
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
 			assert.match(text, /State: failed/);
 			assert.match(text, /Diagnosis: Async runner process 12345 exited or disappeared/);
-			assert.match(text, new RegExp(`Result: ${path.join(resultsDir, "run-stale.json").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+			assert.match(
+				text,
+				new RegExp(`Result: ${path.join(resultsDir, "run-stale.json").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+			);
 			assert.match(text, /Step 1: scout failed, error: Async runner process 12345 exited or disappeared/);
 			assert.match(text, /Revive: subagent\(\{ action: "resume", id: "run-stale", message: "\.\.\." \}\)/);
 			const resultJson = JSON.parse(fs.readFileSync(path.join(resultsDir, "run-stale.json"), "utf-8"));
@@ -73,31 +89,48 @@ describe("async run status inspection", () => {
 			const secondStepOutputPath = path.join(asyncDir, "output-1.log");
 			fs.writeFileSync(firstStepOutputPath, "reviewer one", "utf-8");
 			fs.writeFileSync(secondStepOutputPath, "reviewer two", "utf-8");
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-parallel",
-				mode: "parallel",
-				state: "running",
-				error: "top-level async status error",
-				pid: 12345,
-				startedAt: 100,
-				lastUpdate: 100,
-				currentStep: 0,
-				outputFile: runOutputPath,
-				chainStepCount: 1,
-				parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
-				steps: [
-					{ agent: "reviewer", status: "running", startedAt: 100, model: "openai-codex/gpt-5.5:high" },
-					{ agent: "reviewer", status: "running", startedAt: 100, model: "anthropic/claude-haiku-4-5", thinking: "low" },
-					{ agent: "reviewer", status: "pending" },
-				],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-parallel",
+						mode: "parallel",
+						state: "running",
+						error: "top-level async status error",
+						pid: 12345,
+						startedAt: 100,
+						lastUpdate: 100,
+						currentStep: 0,
+						outputFile: runOutputPath,
+						chainStepCount: 1,
+						parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
+						steps: [
+							{ agent: "reviewer", status: "running", startedAt: 100, model: "openai-codex/gpt-5.5:high" },
+							{
+								agent: "reviewer",
+								status: "running",
+								startedAt: 100,
+								model: "anthropic/claude-haiku-4-5",
+								thinking: "low",
+							},
+							{ agent: "reviewer", status: "pending" },
+						],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
-			const result = inspectSubagentStatus({ id: "run-parallel" }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir: path.join(root, "results"),
-				kill: () => true,
-				now: () => 200,
-			});
+			const result = inspectSubagentStatus(
+				{ id: "run-parallel" },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir: path.join(root, "results"),
+					kill: () => true,
+					now: () => 200,
+				},
+			);
 
 			const text = textContent(result);
 			assert.match(text, /Mode: parallel/);
@@ -124,28 +157,42 @@ describe("async run status inspection", () => {
 			fs.mkdirSync(asyncDir, { recursive: true });
 			const outputPath = path.join(asyncDir, "output-0.log");
 			fs.writeFileSync(outputPath, ["first line", "second line", "third line"].join("\n"), "utf-8");
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-transcript",
-				mode: "single",
-				state: "running",
-				startedAt: 100,
-				lastUpdate: 200,
-				currentStep: 0,
-				steps: [{ agent: "worker", status: "running", startedAt: 100 }],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-transcript",
+						mode: "single",
+						state: "running",
+						startedAt: 100,
+						lastUpdate: 200,
+						currentStep: 0,
+						steps: [{ agent: "worker", status: "running", startedAt: 100 }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
-			const result = inspectSubagentStatus({ id: "run-transcript", view: "transcript", lines: 2 }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir: path.join(root, "results"),
-				kill: () => true,
-				now: () => 250,
-			});
+			const result = inspectSubagentStatus(
+				{ id: "run-transcript", view: "transcript", lines: 2 },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir: path.join(root, "results"),
+					kill: () => true,
+					now: () => 250,
+				},
+			);
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
 			assert.match(text, /Run: run-transcript/);
 			assert.match(text, /Step: 0 \(worker\) \| running/);
-			assert.match(text, new RegExp(`Transcript tail from ${outputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(tail truncated\\):`));
+			assert.match(
+				text,
+				new RegExp(`Transcript tail from ${outputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(tail truncated\\):`),
+			);
 			assert.doesNotMatch(text, /first line/);
 			assert.match(text, /second line/);
 			assert.match(text, /third line/);
@@ -163,26 +210,37 @@ describe("async run status inspection", () => {
 			fs.mkdirSync(asyncDir, { recursive: true });
 			const wrongOutputPath = path.join(asyncDir, "output-0.log");
 			fs.writeFileSync(wrongOutputPath, "WRONG_CHILD_OUTPUT", "utf-8");
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-indexed-transcript",
-				mode: "parallel",
-				state: "running",
-				startedAt: 100,
-				lastUpdate: 200,
-				currentStep: 0,
-				outputFile: wrongOutputPath,
-				steps: [
-					{ agent: "worker", status: "running", startedAt: 100 },
-					{ agent: "reviewer", status: "pending", recentOutput: ["RIGHT_CHILD_RECENT"] },
-				],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-indexed-transcript",
+						mode: "parallel",
+						state: "running",
+						startedAt: 100,
+						lastUpdate: 200,
+						currentStep: 0,
+						outputFile: wrongOutputPath,
+						steps: [
+							{ agent: "worker", status: "running", startedAt: 100 },
+							{ agent: "reviewer", status: "pending", recentOutput: ["RIGHT_CHILD_RECENT"] },
+						],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
-			const result = inspectSubagentStatus({ id: "run-indexed-transcript", view: "transcript", index: 1 }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir: path.join(root, "results"),
-				kill: () => true,
-				now: () => 250,
-			});
+			const result = inspectSubagentStatus(
+				{ id: "run-indexed-transcript", view: "transcript", index: 1 },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir: path.join(root, "results"),
+					kill: () => true,
+					now: () => 250,
+				},
+			);
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
@@ -190,7 +248,10 @@ describe("async run status inspection", () => {
 			assert.match(text, /Recent output from status\.json:/);
 			assert.match(text, /RIGHT_CHILD_RECENT/);
 			assert.doesNotMatch(text, /WRONG_CHILD_OUTPUT/);
-			assert.doesNotMatch(text, new RegExp(`Transcript tail from ${wrongOutputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+			assert.doesNotMatch(
+				text,
+				new RegExp(`Transcript tail from ${wrongOutputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -204,20 +265,31 @@ describe("async run status inspection", () => {
 			fs.mkdirSync(asyncDir, { recursive: true });
 			const outsideOutput = path.join(root, "outside.log");
 			fs.writeFileSync(outsideOutput, "OUTSIDE_SENTINEL", "utf-8");
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-escape",
-				mode: "single",
-				state: "complete",
-				startedAt: 100,
-				lastUpdate: 200,
-				outputFile: path.relative(asyncDir, outsideOutput),
-				steps: [],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-escape",
+						mode: "single",
+						state: "complete",
+						startedAt: 100,
+						lastUpdate: 200,
+						outputFile: path.relative(asyncDir, outsideOutput),
+						steps: [],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
-			const result = inspectSubagentStatus({ id: "run-escape", view: "transcript" }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir: path.join(root, "results"),
-			});
+			const result = inspectSubagentStatus(
+				{ id: "run-escape", view: "transcript" },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir: path.join(root, "results"),
+				},
+			);
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
@@ -238,22 +310,37 @@ describe("async run status inspection", () => {
 			fs.mkdirSync(sessionRoot, { recursive: true });
 			const outsideSession = path.join(root, "outside-session.jsonl");
 			const linkedSession = path.join(sessionRoot, "session.jsonl");
-			fs.writeFileSync(outsideSession, `${JSON.stringify({ message: { role: "assistant", content: "OUTSIDE_SESSION_SENTINEL" } })}\n`, "utf-8");
+			fs.writeFileSync(
+				outsideSession,
+				`${JSON.stringify({ message: { role: "assistant", content: "OUTSIDE_SESSION_SENTINEL" } })}\n`,
+				"utf-8",
+			);
 			fs.symlinkSync(outsideSession, linkedSession);
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-session-symlink",
-				mode: "single",
-				state: "complete",
-				startedAt: 100,
-				lastUpdate: 200,
-				steps: [{ agent: "worker", status: "complete", sessionFile: linkedSession }],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-session-symlink",
+						mode: "single",
+						state: "complete",
+						startedAt: 100,
+						lastUpdate: 200,
+						steps: [{ agent: "worker", status: "complete", sessionFile: linkedSession }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
-			const result = inspectSubagentStatus({ id: "run-session-symlink", view: "transcript", index: 0 }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir: path.join(root, "results"),
-				sessionRoots: [sessionRoot],
-			});
+			const result = inspectSubagentStatus(
+				{ id: "run-session-symlink", view: "transcript", index: 0 },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir: path.join(root, "results"),
+					sessionRoots: [sessionRoot],
+				},
+			);
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
@@ -272,39 +359,55 @@ describe("async run status inspection", () => {
 			const asyncDir = path.join(asyncRoot, "run-fleet");
 			fs.mkdirSync(asyncDir, { recursive: true });
 			fs.writeFileSync(path.join(asyncDir, "output-0.log"), "worker output", "utf-8");
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-fleet",
-				mode: "parallel",
-				state: "running",
-				startedAt: 100,
-				lastUpdate: 200,
-				currentStep: 0,
-				chainStepCount: 1,
-				parallelGroups: [{ start: 0, count: 2, stepIndex: 0 }],
-				steps: [
-					{ agent: "worker", status: "running", startedAt: 100 },
-					{ agent: "reviewer", status: "pending" },
-				],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-fleet",
+						mode: "parallel",
+						state: "running",
+						startedAt: 100,
+						lastUpdate: 200,
+						currentStep: 0,
+						chainStepCount: 1,
+						parallelGroups: [{ start: 0, count: 2, stepIndex: 0 }],
+						steps: [
+							{ agent: "worker", status: "running", startedAt: 100 },
+							{ agent: "reviewer", status: "pending" },
+						],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 			const state = {
-				foregroundControls: new Map([["fg-run", {
-					runId: "fg-run",
-					mode: "single",
-					startedAt: 100,
-					updatedAt: 250,
-					currentAgent: "scout",
-					currentIndex: 0,
-					lastActivityAt: 240,
-				}]]),
+				foregroundControls: new Map([
+					[
+						"fg-run",
+						{
+							runId: "fg-run",
+							mode: "single",
+							startedAt: 100,
+							updatedAt: 250,
+							currentAgent: "scout",
+							currentIndex: 0,
+							lastActivityAt: 240,
+						},
+					],
+				]),
 			} as unknown as SubagentState;
 
-			const result = inspectSubagentStatus({ view: "fleet" }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir: path.join(root, "results"),
-				state,
-				kill: () => true,
-				now: () => 250,
-			});
+			const result = inspectSubagentStatus(
+				{ view: "fleet" },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir: path.join(root, "results"),
+					state,
+					kill: () => true,
+					now: () => 250,
+				},
+			);
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
@@ -314,7 +417,10 @@ describe("async run status inspection", () => {
 			assert.match(text, /Async runs:/);
 			assert.match(text, /run-fleet \| running .*\| parallel \| 1 agent running · 0\/2 done/);
 			assert.match(text, /transcript: subagent\(\{ action: "status", id: "run-fleet", view: "transcript" \}\)/);
-			assert.match(text, /transcript: subagent\(\{ action: "status", id: "run-fleet", index: 0, view: "transcript" \}\)/);
+			assert.match(
+				text,
+				/transcript: subagent\(\{ action: "status", id: "run-fleet", index: 0, view: "transcript" \}\)/,
+			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -328,37 +434,56 @@ describe("async run status inspection", () => {
 			const otherDir = path.join(asyncRoot, "run-other");
 			fs.mkdirSync(currentDir, { recursive: true });
 			fs.mkdirSync(otherDir, { recursive: true });
-			fs.writeFileSync(path.join(currentDir, "status.json"), JSON.stringify({
-				runId: "run-current",
-				sessionId: "session-current",
-				mode: "single",
-				state: "running",
-				startedAt: 100,
-				lastUpdate: 200,
-				steps: [{ agent: "worker", status: "running", startedAt: 100 }],
-			}, null, 2), "utf-8");
-			fs.writeFileSync(path.join(otherDir, "status.json"), JSON.stringify({
-				runId: "run-other",
-				sessionId: "session-other",
-				mode: "single",
-				state: "running",
-				startedAt: 100,
-				lastUpdate: 200,
-				steps: [{ agent: "reviewer", status: "running", startedAt: 100 }],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(currentDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-current",
+						sessionId: "session-current",
+						mode: "single",
+						state: "running",
+						startedAt: 100,
+						lastUpdate: 200,
+						steps: [{ agent: "worker", status: "running", startedAt: 100 }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
+			fs.writeFileSync(
+				path.join(otherDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-other",
+						sessionId: "session-other",
+						mode: "single",
+						state: "running",
+						startedAt: 100,
+						lastUpdate: 200,
+						steps: [{ agent: "reviewer", status: "running", startedAt: 100 }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 			const state = {
 				currentSessionId: "session-current",
 				asyncJobs: new Map(),
 				foregroundControls: new Map(),
 			} as unknown as SubagentState;
 
-			const result = inspectSubagentStatus({ view: "fleet" }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir: path.join(root, "results"),
-				state,
-				kill: () => true,
-				now: () => 250,
-			});
+			const result = inspectSubagentStatus(
+				{ view: "fleet" },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir: path.join(root, "results"),
+					state,
+					kill: () => true,
+					now: () => 250,
+				},
+			);
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
@@ -376,29 +501,40 @@ describe("async run status inspection", () => {
 			const asyncDir = path.join(asyncRoot, "run-other-session");
 			fs.mkdirSync(asyncDir, { recursive: true });
 			fs.writeFileSync(path.join(asyncDir, "output-0.log"), "OTHER_SESSION_SENTINEL", "utf-8");
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-other-session",
-				sessionId: "session-other",
-				mode: "single",
-				state: "running",
-				startedAt: 100,
-				lastUpdate: 200,
-				currentStep: 0,
-				steps: [{ agent: "worker", status: "running", startedAt: 100 }],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-other-session",
+						sessionId: "session-other",
+						mode: "single",
+						state: "running",
+						startedAt: 100,
+						lastUpdate: 200,
+						currentStep: 0,
+						steps: [{ agent: "worker", status: "running", startedAt: 100 }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 			const state = {
 				currentSessionId: "session-current",
 				asyncJobs: new Map(),
 				foregroundControls: new Map(),
 			} as unknown as SubagentState;
 
-			const result = inspectSubagentStatus({ id: "run-other-session", view: "transcript" }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir: path.join(root, "results"),
-				state,
-				kill: () => true,
-				now: () => 250,
-			});
+			const result = inspectSubagentStatus(
+				{ id: "run-other-session", view: "transcript" },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir: path.join(root, "results"),
+					state,
+					kill: () => true,
+					now: () => 250,
+				},
+			);
 
 			const text = textContent(result);
 			assert.equal(result.isError, true);
@@ -416,20 +552,28 @@ describe("async run status inspection", () => {
 			const resultsDir = path.join(root, "results");
 			fs.mkdirSync(path.join(asyncRoot, "run-result-index-fallback"), { recursive: true });
 			fs.mkdirSync(resultsDir, { recursive: true });
-			fs.writeFileSync(path.join(resultsDir, "run-result-index-fallback.json"), JSON.stringify({
-				id: "run-result-index-fallback",
-				success: true,
-				summary: "AGGREGATE_SENTINEL",
-				results: [
-					{ agent: "worker", output: "first child" },
-					{ agent: "reviewer" },
-				],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(resultsDir, "run-result-index-fallback.json"),
+				JSON.stringify(
+					{
+						id: "run-result-index-fallback",
+						success: true,
+						summary: "AGGREGATE_SENTINEL",
+						results: [{ agent: "worker", output: "first child" }, { agent: "reviewer" }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
-			const result = inspectSubagentStatus({ id: "run-result-index-fallback", view: "transcript", index: 1 }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir,
-			});
+			const result = inspectSubagentStatus(
+				{ id: "run-result-index-fallback", view: "transcript", index: 1 },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir,
+				},
+			);
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
@@ -448,36 +592,50 @@ describe("async run status inspection", () => {
 			const asyncRoot = path.join(root, "runs");
 			const asyncDir = path.join(asyncRoot, "run-steered");
 			fs.mkdirSync(asyncDir, { recursive: true });
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-steered",
-				mode: "single",
-				state: "running",
-				pid: 12345,
-				startedAt: 100,
-				lastUpdate: 200,
-				currentStep: 0,
-				steerCount: 2,
-				lastSteerAt: 150,
-				steps: [{ agent: "worker", status: "running", startedAt: 100, steerCount: 2, lastSteerAt: 150 }],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-steered",
+						mode: "single",
+						state: "running",
+						pid: 12345,
+						startedAt: 100,
+						lastUpdate: 200,
+						currentStep: 0,
+						steerCount: 2,
+						lastSteerAt: 150,
+						steps: [{ agent: "worker", status: "running", startedAt: 100, steerCount: 2, lastSteerAt: 150 }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
-			const exact = inspectSubagentStatus({ id: "run-steered" }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir: path.join(root, "results"),
-				kill: () => true,
-				now: () => 250,
-			});
+			const exact = inspectSubagentStatus(
+				{ id: "run-steered" },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir: path.join(root, "results"),
+					kill: () => true,
+					now: () => 250,
+				},
+			);
 			const exactText = textContent(exact);
 			assert.equal(exact.isError, undefined);
 			assert.match(exactText, /Steering: 2 steers, last 1970-01-01T00:00:00\.150Z/);
 			assert.match(exactText, /Step 1: worker running, steering: 2 steers, last 1970-01-01T00:00:00\.150Z/);
 
-			const list = inspectSubagentStatus({}, {
-				asyncDirRoot: asyncRoot,
-				resultsDir: path.join(root, "results"),
-				kill: () => true,
-				now: () => 250,
-			});
+			const list = inspectSubagentStatus(
+				{},
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir: path.join(root, "results"),
+					kill: () => true,
+					now: () => 250,
+				},
+			);
 			const listText = textContent(list);
 			assert.equal(list.isError, undefined);
 			assert.match(listText, /2 steers \| last steer 1970-01-01T00:00:00\.150Z/);
@@ -493,15 +651,23 @@ describe("async run status inspection", () => {
 			const asyncRoot = path.join(root, "runs");
 			const asyncDir = path.join(asyncRoot, "run-nested-root");
 			fs.mkdirSync(asyncDir, { recursive: true });
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-nested-root",
-				mode: "single",
-				state: "running",
-				pid: 12345,
-				startedAt: 100,
-				lastUpdate: 100,
-				steps: [{ agent: "orchestrator", status: "running", startedAt: 100 }],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-nested-root",
+						mode: "single",
+						state: "running",
+						pid: 12345,
+						startedAt: 100,
+						lastUpdate: 100,
+						steps: [{ agent: "orchestrator", status: "running", startedAt: 100 }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 			writeNestedEvent(route, {
 				type: "subagent.nested.updated",
 				ts: 150,
@@ -520,12 +686,15 @@ describe("async run status inspection", () => {
 				},
 			});
 
-			const result = inspectSubagentStatus({ id: "run-nested-root" }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir: path.join(root, "results"),
-				kill: () => true,
-				now: () => 200,
-			});
+			const result = inspectSubagentStatus(
+				{ id: "run-nested-root" },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir: path.join(root, "results"),
+					kill: () => true,
+					now: () => 200,
+				},
+			);
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
@@ -548,23 +717,39 @@ describe("async run status inspection", () => {
 			const asyncDir = path.join(asyncRoot, "run-stale-nested-root");
 			fs.mkdirSync(asyncDir, { recursive: true });
 			fs.mkdirSync(nestedAsyncDir, { recursive: true });
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-stale-nested-root",
-				mode: "single",
-				state: "complete",
-				startedAt: 100,
-				lastUpdate: 300,
-				steps: [{ agent: "orchestrator", status: "complete", startedAt: 100 }],
-			}, null, 2), "utf-8");
-			fs.writeFileSync(path.join(nestedAsyncDir, "status.json"), JSON.stringify({
-				runId: "nested-stale",
-				mode: "single",
-				state: "running",
-				pid: 54321,
-				startedAt: 150,
-				lastUpdate: 150,
-				steps: [{ agent: "reviewer", status: "running", startedAt: 150 }],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-stale-nested-root",
+						mode: "single",
+						state: "complete",
+						startedAt: 100,
+						lastUpdate: 300,
+						steps: [{ agent: "orchestrator", status: "complete", startedAt: 100 }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
+			fs.writeFileSync(
+				path.join(nestedAsyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "nested-stale",
+						mode: "single",
+						state: "running",
+						pid: 54321,
+						startedAt: 150,
+						lastUpdate: 150,
+						steps: [{ agent: "reviewer", status: "running", startedAt: 150 }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 			writeNestedEvent(route, {
 				type: "subagent.nested.updated",
 				ts: 150,
@@ -584,12 +769,17 @@ describe("async run status inspection", () => {
 				},
 			});
 
-			const result = inspectSubagentStatus({ id: "run-stale-nested-root" }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir,
-				kill: () => { throw errno("ESRCH"); },
-				now: () => 500,
-			});
+			const result = inspectSubagentStatus(
+				{ id: "run-stale-nested-root" },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir,
+					kill: () => {
+						throw errno("ESRCH");
+					},
+					now: () => 500,
+				},
+			);
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
@@ -612,15 +802,23 @@ describe("async run status inspection", () => {
 			const asyncDir = path.join(asyncRoot, "run-nested-warning");
 			fs.mkdirSync(asyncDir, { recursive: true });
 			fs.writeFileSync(path.join(path.dirname(route.eventSink), "registry.json"), "{", "utf-8");
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-nested-warning",
-				mode: "single",
-				state: "running",
-				pid: 12345,
-				startedAt: 100,
-				lastUpdate: 100,
-				steps: [{ agent: "orchestrator", status: "running", startedAt: 100 }],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-nested-warning",
+						mode: "single",
+						state: "running",
+						pid: 12345,
+						startedAt: 100,
+						lastUpdate: 100,
+						steps: [{ agent: "orchestrator", status: "running", startedAt: 100 }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
 			const result = inspectSubagentStatus({ id: "run-nested-warning" }, { asyncDirRoot: asyncRoot, resultsDir });
 
@@ -641,17 +839,28 @@ describe("async run status inspection", () => {
 			const asyncDir = path.join(asyncRoot, "run-nested-list-warning");
 			fs.mkdirSync(asyncDir, { recursive: true });
 			fs.writeFileSync(path.join(path.dirname(route.eventSink), "registry.json"), "{", "utf-8");
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-nested-list-warning",
-				mode: "single",
-				state: "running",
-				pid: 12345,
-				startedAt: 100,
-				lastUpdate: 100,
-				steps: [{ agent: "orchestrator", status: "running", startedAt: 100 }],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-nested-list-warning",
+						mode: "single",
+						state: "running",
+						pid: 12345,
+						startedAt: 100,
+						lastUpdate: 100,
+						steps: [{ agent: "orchestrator", status: "running", startedAt: 100 }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
-			const result = inspectSubagentStatus({}, { asyncDirRoot: asyncRoot, resultsDir, kill: () => true, now: () => 200 });
+			const result = inspectSubagentStatus(
+				{},
+				{ asyncDirRoot: asyncRoot, resultsDir, kill: () => true, now: () => 200 },
+			);
 
 			assert.equal(result.isError, undefined);
 			assert.match(textContent(result), /Warning: Nested status unavailable:/);
@@ -684,10 +893,13 @@ describe("async run status inspection", () => {
 				},
 			});
 
-			const result = inspectSubagentStatus({ id: "nested-exact-child" }, {
-				asyncDirRoot: path.join(root, "runs"),
-				resultsDir: path.join(root, "results"),
-			});
+			const result = inspectSubagentStatus(
+				{ id: "nested-exact-child" },
+				{
+					asyncDirRoot: path.join(root, "runs"),
+					resultsDir: path.join(root, "results"),
+				},
+			);
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
@@ -714,25 +926,39 @@ describe("async run status inspection", () => {
 			fs.mkdirSync(asyncDir, { recursive: true });
 			fs.writeFileSync(firstSession, "", "utf-8");
 			fs.writeFileSync(secondSession, "", "utf-8");
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-multi",
-				mode: "parallel",
-				state: "complete",
-				startedAt: 100,
-				lastUpdate: 200,
-				steps: [
-					{ agent: "a", status: "complete", sessionFile: firstSession },
-					{ agent: "b", status: "complete", sessionFile: secondSession },
-				],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-multi",
+						mode: "parallel",
+						state: "complete",
+						startedAt: 100,
+						lastUpdate: 200,
+						steps: [
+							{ agent: "a", status: "complete", sessionFile: firstSession },
+							{ agent: "b", status: "complete", sessionFile: secondSession },
+						],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
-			const result = inspectSubagentStatus({ id: "run-multi" }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir: path.join(root, "results"),
-			});
+			const result = inspectSubagentStatus(
+				{ id: "run-multi" },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir: path.join(root, "results"),
+				},
+			);
 
 			const text = textContent(result);
-			assert.match(text, /Revive child: subagent\(\{ action: "resume", id: "run-multi", index: 0, message: "\.\.\." \}\)/);
+			assert.match(
+				text,
+				/Revive child: subagent\(\{ action: "resume", id: "run-multi", index: 0, message: "\.\.\." \}\)/,
+			);
 			assert.doesNotMatch(text, /unsupported for multi-child/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -747,20 +973,31 @@ describe("async run status inspection", () => {
 			const sessionFile = path.join(root, "b.jsonl");
 			fs.mkdirSync(resultsDir, { recursive: true });
 			fs.writeFileSync(sessionFile, "", "utf-8");
-			fs.writeFileSync(path.join(resultsDir, "run-result-index.json"), JSON.stringify({
-				id: "run-result-index",
-				success: false,
-				state: "failed",
-				results: [
-					{ output: "missing agent", sessionFile: path.join(root, "a.jsonl") },
-					{ agent: "b", success: false, sessionFile },
-				],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(resultsDir, "run-result-index.json"),
+				JSON.stringify(
+					{
+						id: "run-result-index",
+						success: false,
+						state: "failed",
+						results: [
+							{ output: "missing agent", sessionFile: path.join(root, "a.jsonl") },
+							{ agent: "b", success: false, sessionFile },
+						],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
 			const result = inspectSubagentStatus({ id: "run-result-index" }, { asyncDirRoot: asyncRoot, resultsDir });
 
 			const text = textContent(result);
-			assert.match(text, /Revive child: subagent\(\{ action: "resume", id: "run-result-index", index: 1, message: "\.\.\." \}\)/);
+			assert.match(
+				text,
+				/Revive child: subagent\(\{ action: "resume", id: "run-result-index", index: 1, message: "\.\.\." \}\)/,
+			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -772,30 +1009,41 @@ describe("async run status inspection", () => {
 			const asyncRoot = path.join(root, "runs");
 			const asyncDir = path.join(asyncRoot, "run-chain");
 			fs.mkdirSync(asyncDir, { recursive: true });
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-chain",
-				mode: "chain",
-				state: "running",
-				pid: 12345,
-				startedAt: 100,
-				lastUpdate: 100,
-				currentStep: 1,
-				chainStepCount: 3,
-				parallelGroups: [{ start: 1, count: 2, stepIndex: 1 }],
-				steps: [
-					{ agent: "scout", status: "complete", startedAt: 100 },
-					{ agent: "reviewer", status: "running", startedAt: 100 },
-					{ agent: "auditor", status: "pending" },
-					{ agent: "writer", status: "pending" },
-				],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-chain",
+						mode: "chain",
+						state: "running",
+						pid: 12345,
+						startedAt: 100,
+						lastUpdate: 100,
+						currentStep: 1,
+						chainStepCount: 3,
+						parallelGroups: [{ start: 1, count: 2, stepIndex: 1 }],
+						steps: [
+							{ agent: "scout", status: "complete", startedAt: 100 },
+							{ agent: "reviewer", status: "running", startedAt: 100 },
+							{ agent: "auditor", status: "pending" },
+							{ agent: "writer", status: "pending" },
+						],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
-			const result = inspectSubagentStatus({ id: "run-chain" }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir: path.join(root, "results"),
-				kill: () => true,
-				now: () => 200,
-			});
+			const result = inspectSubagentStatus(
+				{ id: "run-chain" },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir: path.join(root, "results"),
+					kill: () => true,
+					now: () => 200,
+				},
+			);
 
 			const text = textContent(result);
 			assert.match(text, /Step 1\/3: scout complete/);
@@ -813,22 +1061,33 @@ describe("async run status inspection", () => {
 			const asyncRoot = path.join(root, "runs");
 			const asyncDir = path.join(asyncRoot, "run-live");
 			fs.mkdirSync(asyncDir, { recursive: true });
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-live",
-				mode: "single",
-				state: "running",
-				pid: 12345,
-				startedAt: 100,
-				lastUpdate: 100,
-				steps: [{ agent: "scout", status: "running", startedAt: 100 }],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-live",
+						mode: "single",
+						state: "running",
+						pid: 12345,
+						startedAt: 100,
+						lastUpdate: 100,
+						steps: [{ agent: "scout", status: "running", startedAt: 100 }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
-			const result = inspectSubagentStatus({ id: "run-live" }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir: path.join(root, "results"),
-				kill: () => true,
-				now: () => 200,
-			});
+			const result = inspectSubagentStatus(
+				{ id: "run-live" },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir: path.join(root, "results"),
+					kill: () => true,
+					now: () => 200,
+				},
+			);
 
 			const text = textContent(result);
 			assert.match(text, /Step 1: scout running/);
@@ -847,19 +1106,34 @@ describe("async run status inspection", () => {
 			const sessionFile = path.join(root, "secret-session.jsonl");
 			fs.mkdirSync(asyncDir, { recursive: true });
 			fs.writeFileSync(sessionFile, "", "utf-8");
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-continued",
-				mode: "single",
-				state: "continued",
-				startedAt: 100,
-				endedAt: 200,
-				lastUpdate: 200,
-				cwd: root,
-				sessionFile,
-				pause: { kind: "awaiting_supervisor", summary: "Need a decision", pausedAt: 150 },
-				lifecycle: { continuation: { claimToken: "claim-run-continued", claimedAt: 160, continuedAt: 200, continuationRunId: "revived-123" } },
-				steps: [{ agent: "worker", status: "continued", sessionFile }],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-continued",
+						mode: "single",
+						state: "continued",
+						startedAt: 100,
+						endedAt: 200,
+						lastUpdate: 200,
+						cwd: root,
+						sessionFile,
+						pause: { kind: "awaiting_supervisor", summary: "Need a decision", pausedAt: 150 },
+						lifecycle: {
+							continuation: {
+								claimToken: "claim-run-continued",
+								claimedAt: 160,
+								continuedAt: 200,
+								continuationRunId: "revived-123",
+							},
+						},
+						steps: [{ agent: "worker", status: "continued", sessionFile }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
 			const result = inspectSubagentStatus({ id: "run-continued" }, { asyncDirRoot: asyncRoot, resultsDir });
 			const text = textContent(result);
@@ -880,10 +1154,13 @@ describe("async run status inspection", () => {
 			fs.mkdirSync(path.join(asyncRoot, "run-aa"), { recursive: true });
 			fs.mkdirSync(path.join(asyncRoot, "run-ab"), { recursive: true });
 
-			const result = inspectSubagentStatus({ id: "run-a" }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir: path.join(root, "results"),
-			});
+			const result = inspectSubagentStatus(
+				{ id: "run-a" },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir: path.join(root, "results"),
+				},
+			);
 
 			assert.equal(result.isError, true);
 			assert.match(textContent(result), /Ambiguous subagent run id prefix 'run-a' matched: async:run-aa, async:run-ab/);
@@ -895,10 +1172,13 @@ describe("async run status inspection", () => {
 	it("rejects path-like async run ids", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-paths-"));
 		try {
-			const result = inspectSubagentStatus({ id: "../run" }, {
-				asyncDirRoot: path.join(root, "runs"),
-				resultsDir: path.join(root, "results"),
-			});
+			const result = inspectSubagentStatus(
+				{ id: "../run" },
+				{
+					asyncDirRoot: path.join(root, "runs"),
+					resultsDir: path.join(root, "results"),
+				},
+			);
 
 			assert.equal(result.isError, true);
 			assert.match(textContent(result), /id must be a non-empty safe id token/);
@@ -916,18 +1196,29 @@ describe("async run status inspection", () => {
 			fs.mkdirSync(resultsDir, { recursive: true });
 			const sessionFile = path.join(root, "session.jsonl");
 			fs.writeFileSync(sessionFile, "", "utf-8");
-			fs.writeFileSync(path.join(resultsDir, "run-session-only.json"), JSON.stringify({
-				id: "run-session-only",
-				success: false,
-				state: "failed",
-				sessionFile,
-				summary: "missing child metadata",
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(resultsDir, "run-session-only.json"),
+				JSON.stringify(
+					{
+						id: "run-session-only",
+						success: false,
+						state: "failed",
+						sessionFile,
+						summary: "missing child metadata",
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
-			const result = inspectSubagentStatus({ id: "run-session-only" }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir,
-			});
+			const result = inspectSubagentStatus(
+				{ id: "run-session-only" },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir,
+				},
+			);
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
@@ -947,19 +1238,30 @@ describe("async run status inspection", () => {
 			fs.mkdirSync(resultsDir, { recursive: true });
 			const sessionFile = path.join(root, "session.jsonl");
 			fs.writeFileSync(sessionFile, "", "utf-8");
-			fs.writeFileSync(path.join(resultsDir, "run-result-transcript.json"), JSON.stringify({
-				id: "run-result-transcript",
-				agent: "worker",
-				success: false,
-				state: "failed",
-				sessionFile,
-				summary: "legacy result transcript",
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(resultsDir, "run-result-transcript.json"),
+				JSON.stringify(
+					{
+						id: "run-result-transcript",
+						agent: "worker",
+						success: false,
+						state: "failed",
+						sessionFile,
+						summary: "legacy result transcript",
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
-			const result = inspectSubagentStatus({ id: "run-result-transcript", view: "transcript", index: 0 }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir,
-			});
+			const result = inspectSubagentStatus(
+				{ id: "run-result-transcript", view: "transcript", index: 0 },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir,
+				},
+			);
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
@@ -977,17 +1279,28 @@ describe("async run status inspection", () => {
 			const resultsDir = path.join(root, "results");
 			fs.mkdirSync(path.join(asyncRoot, "run-result-index-validation"), { recursive: true });
 			fs.mkdirSync(resultsDir, { recursive: true });
-			fs.writeFileSync(path.join(resultsDir, "run-result-index-validation.json"), JSON.stringify({
-				id: "run-result-index-validation",
-				agent: "worker",
-				success: true,
-				summary: "done",
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(resultsDir, "run-result-index-validation.json"),
+				JSON.stringify(
+					{
+						id: "run-result-index-validation",
+						agent: "worker",
+						success: true,
+						summary: "done",
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
-			const result = inspectSubagentStatus({ id: "run-result-index-validation", view: "transcript", index: 0.5 }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir,
-			});
+			const result = inspectSubagentStatus(
+				{ id: "run-result-index-validation", view: "transcript", index: 0.5 },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir,
+				},
+			);
 
 			assert.equal(result.isError, true);
 			assert.match(textContent(result), /Transcript index must be an integer/);
@@ -1004,18 +1317,28 @@ describe("async run status inspection", () => {
 			fs.mkdirSync(resultsDir, { recursive: true });
 			const sessionFile = path.join(root, "private-session.jsonl");
 			fs.writeFileSync(sessionFile, "", "utf-8");
-			fs.writeFileSync(path.join(resultsDir, "run-paused-result.json"), JSON.stringify({
-				id: "run-paused-result",
-				agent: "worker",
-				success: false,
-				state: "paused",
-				pause: { kind: "awaiting_supervisor" },
-				sessionFile,
-				summary: "Paused at /private/root/project for pid 43210; output /private/results/result.md",
-				results: [{ agent: "worker", sessionFile }],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(resultsDir, "run-paused-result.json"),
+				JSON.stringify(
+					{
+						id: "run-paused-result",
+						agent: "worker",
+						success: false,
+						state: "paused",
+						pause: { kind: "awaiting_supervisor" },
+						sessionFile,
+						summary: "Paused at /private/root/project for pid 43210; output /private/results/result.md",
+						results: [{ agent: "worker", sessionFile }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
-			const text = textContent(inspectSubagentStatus({ id: "run-paused-result" }, { asyncDirRoot: asyncRoot, resultsDir }));
+			const text = textContent(
+				inspectSubagentStatus({ id: "run-paused-result" }, { asyncDirRoot: asyncRoot, resultsDir }),
+			);
 			assert.match(text, /Run: run-paused-result/);
 			assert.match(text, /State: paused/);
 			assert.match(text, /Paused awaiting supervisor\./);
@@ -1034,19 +1357,30 @@ describe("async run status inspection", () => {
 			fs.mkdirSync(resultsDir, { recursive: true });
 			const sessionFile = path.join(root, "session.jsonl");
 			fs.writeFileSync(sessionFile, "", "utf-8");
-			fs.writeFileSync(path.join(resultsDir, "run-result-only.json"), JSON.stringify({
-				id: "run-result-only",
-				agent: "worker",
-				success: false,
-				state: "failed",
-				sessionFile,
-				summary: "result survived missing status",
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(resultsDir, "run-result-only.json"),
+				JSON.stringify(
+					{
+						id: "run-result-only",
+						agent: "worker",
+						success: false,
+						state: "failed",
+						sessionFile,
+						summary: "result survived missing status",
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
-			const result = inspectSubagentStatus({ id: "run-result-only" }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir,
-			});
+			const result = inspectSubagentStatus(
+				{ id: "run-result-only" },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir,
+				},
+			);
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
@@ -1068,33 +1402,61 @@ describe("async run status inspection", () => {
 			const sessionFile = path.join(root, "private-session.jsonl");
 			fs.mkdirSync(asyncDir, { recursive: true });
 			fs.writeFileSync(sessionFile, "", "utf-8");
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-pausing-private",
-				mode: "single",
-				state: "pausing",
-				pid: 12345,
-				cwd: "/private/root/project",
-				sessionFile,
-				startedAt: 100,
-				lastUpdate: 150,
-				pause: { kind: "awaiting_supervisor", summary: "Need approval", requestedAt: 140, ownerPid: 12345 },
-				steps: [{
-					agent: "worker",
-					status: "pausing",
-					sessionFile,
-					pause: { kind: "awaiting_supervisor", summary: "Need approval", requestedAt: 140, ownerPid: 12345 },
-					processCleanup: { supported: true, attempted: true, terminated: false, escalatedToSigkill: true, signals: ["SIGINT", "SIGTERM", "SIGKILL"], warnings: ["left /private/root/worker.log behind for pid 12345"] },
-				}],
-			}, null, 2), "utf-8");
-			fs.writeFileSync(path.join(asyncDir, "runner.stderr.log"), "private stderr path /private/root/runner.log\n", "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-pausing-private",
+						mode: "single",
+						state: "pausing",
+						pid: 12345,
+						cwd: "/private/root/project",
+						sessionFile,
+						startedAt: 100,
+						lastUpdate: 150,
+						pause: { kind: "awaiting_supervisor", summary: "Need approval", requestedAt: 140, ownerPid: 12345 },
+						steps: [
+							{
+								agent: "worker",
+								status: "pausing",
+								sessionFile,
+								pause: { kind: "awaiting_supervisor", summary: "Need approval", requestedAt: 140, ownerPid: 12345 },
+								processCleanup: {
+									supported: true,
+									attempted: true,
+									terminated: false,
+									escalatedToSigkill: true,
+									signals: ["SIGINT", "SIGTERM", "SIGKILL"],
+									warnings: ["left /private/root/worker.log behind for pid 12345"],
+								},
+							},
+						],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
+			fs.writeFileSync(
+				path.join(asyncDir, "runner.stderr.log"),
+				"private stderr path /private/root/runner.log\n",
+				"utf-8",
+			);
 			fs.writeFileSync(path.join(asyncDir, "events.jsonl"), "{}\n", "utf-8");
 
-			const text = textContent(inspectSubagentStatus({ id: "run-pausing-private" }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir,
-				kill: () => { throw errno("ESRCH"); },
-				now: () => 200,
-			}));
+			const text = textContent(
+				inspectSubagentStatus(
+					{ id: "run-pausing-private" },
+					{
+						asyncDirRoot: asyncRoot,
+						resultsDir,
+						kill: () => {
+							throw errno("ESRCH");
+						},
+						now: () => 200,
+					},
+				),
+			);
 			assert.match(text, /State: paused/);
 			assert.match(text, /Diagnosis: Lifecycle state was refreshed for this paused run\./);
 			assert.match(text, /Cleanup: unconfirmed\./);
@@ -1113,25 +1475,43 @@ describe("async run status inspection", () => {
 			fs.mkdirSync(asyncDir, { recursive: true });
 			const sessionFile = path.join(root, "private-session.jsonl");
 			fs.writeFileSync(sessionFile, "", "utf-8");
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-paused",
-				mode: "single",
-				state: "paused",
-				pid: 12345,
-				cwd: "/private/root/project",
-				sessionFile,
-				startedAt: 100,
-				lastUpdate: 200,
-				pause: { kind: "awaiting_supervisor", summary: "Need approval" },
-				steps: [{ agent: "worker", status: "paused", sessionFile, pause: { kind: "awaiting_supervisor", summary: "Need approval" } }],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-paused",
+						mode: "single",
+						state: "paused",
+						pid: 12345,
+						cwd: "/private/root/project",
+						sessionFile,
+						startedAt: 100,
+						lastUpdate: 200,
+						pause: { kind: "awaiting_supervisor", summary: "Need approval" },
+						steps: [
+							{
+								agent: "worker",
+								status: "paused",
+								sessionFile,
+								pause: { kind: "awaiting_supervisor", summary: "Need approval" },
+							},
+						],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
 			const result = inspectSubagentStatus({ id: "run-paused" }, { asyncDirRoot: asyncRoot, resultsDir });
 			const text = textContent(result);
 			assert.match(text, /Pause succeeded; this run is durably paused awaiting supervisor guidance\./);
 			assert.match(text, /No child process is running\./);
 			assert.match(text, /Resume unchanged: subagent\(\{ action: "resume", id: "run-paused" \}\)/);
-			assert.match(text, /Resume with guidance: subagent\(\{ action: "resume", id: "run-paused", message: "Supervisor replied: \.\.\." \}\)/);
+			assert.match(
+				text,
+				/Resume with guidance: subagent\(\{ action: "resume", id: "run-paused", message: "Supervisor replied: \.\.\." \}\)/,
+			);
 			assert.match(text, /Cancel: subagent\(\{ action: "interrupt", id: "run-paused" \}\)/);
 			assert.doesNotMatch(text, /detached for intercom coordination|fresh follow-up|fresh-redispatch/i);
 			assert.doesNotMatch(text, /PID:|Cwd:|Dir:|Session:/);
@@ -1149,18 +1529,35 @@ describe("async run status inspection", () => {
 			fs.mkdirSync(asyncDir, { recursive: true });
 			const sessionFile = path.join(root, "private-session.jsonl");
 			fs.writeFileSync(sessionFile, "", "utf-8");
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-pausing",
-				mode: "single",
-				state: "pausing",
-				pid: 12345,
-				startedAt: 100,
-				lastUpdate: 150,
-				pause: { kind: "awaiting_supervisor", summary: "Need approval", requestedAt: 140, ownerPid: 12345 },
-				steps: [{ agent: "worker", status: "pausing", sessionFile, pause: { kind: "awaiting_supervisor", summary: "Need approval", requestedAt: 140, ownerPid: 12345 } }],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-pausing",
+						mode: "single",
+						state: "pausing",
+						pid: 12345,
+						startedAt: 100,
+						lastUpdate: 150,
+						pause: { kind: "awaiting_supervisor", summary: "Need approval", requestedAt: 140, ownerPid: 12345 },
+						steps: [
+							{
+								agent: "worker",
+								status: "pausing",
+								sessionFile,
+								pause: { kind: "awaiting_supervisor", summary: "Need approval", requestedAt: 140, ownerPid: 12345 },
+							},
+						],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
-			const text = textContent(inspectSubagentStatus({ id: "run-pausing" }, { asyncDirRoot: asyncRoot, resultsDir, kill: () => true }));
+			const text = textContent(
+				inspectSubagentStatus({ id: "run-pausing" }, { asyncDirRoot: asyncRoot, resultsDir, kill: () => true }),
+			);
 			assert.match(text, /Pause: awaiting supervisor \(Need approval\)/);
 			assert.match(text, /Stopping\/reaping child; not resumable yet; check status again\./);
 			assert.doesNotMatch(text, /No child process is running\./);
@@ -1179,20 +1576,34 @@ describe("async run status inspection", () => {
 			const resultsDir = path.join(root, "results");
 			const asyncDir = path.join(asyncRoot, "run-pausing-cohort");
 			fs.mkdirSync(asyncDir, { recursive: true });
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-pausing-cohort",
-				mode: "parallel",
-				state: "pausing",
-				pid: 12345,
-				startedAt: 100,
-				lastUpdate: 150,
-				steps: [
-					{ agent: "worker", status: "pausing", pause: { kind: "awaiting_supervisor", summary: "Need approval", requestedAt: 140, ownerPid: 12345 } },
-					{ agent: "reviewer", status: "paused", pause: { kind: "cohort_pause", requestedAt: 140 } },
-				],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-pausing-cohort",
+						mode: "parallel",
+						state: "pausing",
+						pid: 12345,
+						startedAt: 100,
+						lastUpdate: 150,
+						steps: [
+							{
+								agent: "worker",
+								status: "pausing",
+								pause: { kind: "awaiting_supervisor", summary: "Need approval", requestedAt: 140, ownerPid: 12345 },
+							},
+							{ agent: "reviewer", status: "paused", pause: { kind: "cohort_pause", requestedAt: 140 } },
+						],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
-			const text = textContent(inspectSubagentStatus({ id: "run-pausing-cohort" }, { asyncDirRoot: asyncRoot, resultsDir, kill: () => true }));
+			const text = textContent(
+				inspectSubagentStatus({ id: "run-pausing-cohort" }, { asyncDirRoot: asyncRoot, resultsDir, kill: () => true }),
+			);
 			assert.match(text, /Pause: cohort pause while another child awaited supervisor\./);
 			assert.match(text, /Stopping\/reaping child; not resumable yet; check status again\./);
 			assert.doesNotMatch(text, /No child process is running\./);

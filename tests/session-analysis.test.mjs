@@ -274,9 +274,7 @@ test("extractSubagentCorrelations: resolves parent -> child correlation from sub
 		toolResultLine("2026-01-01T00:00:10.000Z", "tc-sub", "subagent", {
 			details: {
 				runId: "run-abc123",
-				results: [
-					{ agent: "code-agent", sessionFile: childSessionFile },
-				],
+				results: [{ agent: "code-agent", sessionFile: childSessionFile }],
 			},
 		}),
 	]);
@@ -344,10 +342,7 @@ test("extractSubagentCorrelations: emits one correlation per child sessionFile i
 	const scan = await scanSessionFile(filePath);
 	const correlations = await extractSubagentCorrelations(scan);
 	assert.equal(correlations.length, 2);
-	assert.deepEqual(
-		correlations.map((c) => c.childSessionFile).sort(),
-		[childA, childB].sort(),
-	);
+	assert.deepEqual(correlations.map((c) => c.childSessionFile).sort(), [childA, childB].sort());
 });
 
 test("extractSubagentCorrelations: returns empty array when no session header", async (t) => {
@@ -568,9 +563,7 @@ test("readSessionHeader: returns header from first valid session entry", async (
 });
 
 test("readSessionHeader: returns null for file with no session header", async (t) => {
-	const filePath = writeFixture(t, [
-		assistantMessageLine("2026-01-01T00:00:01.000Z", []),
-	]);
+	const filePath = writeFixture(t, [assistantMessageLine("2026-01-01T00:00:01.000Z", [])]);
 
 	const header = await readSessionHeader(filePath);
 	assert.equal(header, null);

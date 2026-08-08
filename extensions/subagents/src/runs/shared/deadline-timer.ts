@@ -28,8 +28,8 @@ export function scheduleDeadline(
 	options: DeadlineTimerOptions = {},
 ): DeadlineTimer {
 	const now = options.now ?? Date.now;
-	const schedule: (handler: () => void, delayMs: number) => TimeoutHandle = options.setTimeout
-		?? ((handler, delayMs) => setTimeout(handler, delayMs));
+	const schedule: (handler: () => void, delayMs: number) => TimeoutHandle =
+		options.setTimeout ?? ((handler, delayMs) => setTimeout(handler, delayMs));
 	const clear: (handle: TimeoutHandle) => void = options.clearTimeout ?? clearTimeout;
 	let handle: TimeoutHandle | undefined;
 	let cancelled = false;
@@ -48,10 +48,13 @@ export function scheduleDeadline(
 			unrefTimeout(handle);
 			return;
 		}
-		handle = schedule(() => {
-			handle = undefined;
-			arm();
-		}, Math.min(remainingMs, MAX_NODE_TIMEOUT_DELAY_MS));
+		handle = schedule(
+			() => {
+				handle = undefined;
+				arm();
+			},
+			Math.min(remainingMs, MAX_NODE_TIMEOUT_DELAY_MS),
+		);
 		unrefTimeout(handle);
 	};
 

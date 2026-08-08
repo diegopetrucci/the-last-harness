@@ -63,7 +63,11 @@ export function parseTapSummary(output) {
 	return summary;
 }
 
-export function validateTapSummary(suite, summary, { sharded = false, minimumTests = suiteConfigs[suite]?.minimumTests } = {}) {
+export function validateTapSummary(
+	suite,
+	summary,
+	{ sharded = false, minimumTests = suiteConfigs[suite]?.minimumTests } = {},
+) {
 	if (!Number.isInteger(summary.tests) || summary.tests <= 0) {
 		throw new Error(`${suite} suite executed zero tests`);
 	}
@@ -167,7 +171,9 @@ export function runSuite(suite, options = []) {
 	}
 	if (result.status !== 0 || result.signal) {
 		relayFailureOutput(result);
-		console.error(`Subagents ${suite} tests exited with ${result.signal ? `signal ${result.signal}` : `status ${result.status}`}.`);
+		console.error(
+			`Subagents ${suite} tests exited with ${result.signal ? `signal ${result.signal}` : `status ${result.status}`}.`,
+		);
 		return result.status ?? 1;
 	}
 
@@ -177,12 +183,16 @@ export function runSuite(suite, options = []) {
 		validateTapSummary(suite, summary, { sharded: isSharded(options), minimumTests: config.minimumTests });
 	} catch (error) {
 		relayFailureOutput(result);
-		console.error(`Subagents ${suite} TAP validation failed: ${error instanceof Error ? error.message : String(error)}`);
+		console.error(
+			`Subagents ${suite} TAP validation failed: ${error instanceof Error ? error.message : String(error)}`,
+		);
 		return 1;
 	}
 
 	const fileLabel = `${files.length} file${files.length === 1 ? "" : "s"}`;
-	console.log(`subagents ${suite}: ${summary.pass}/${summary.tests} passed (${fileLabel}${isSharded(options) ? ", shard" : ""})`);
+	console.log(
+		`subagents ${suite}: ${summary.pass}/${summary.tests} passed (${fileLabel}${isSharded(options) ? ", shard" : ""})`,
+	);
 	return 0;
 }
 

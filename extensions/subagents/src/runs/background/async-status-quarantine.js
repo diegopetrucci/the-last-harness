@@ -5,10 +5,7 @@ import { validatePersistedAsyncStatus } from "./async-status.js";
 import { fingerprintAsyncStatusContent } from "./async-status-corruption.js";
 export const QUARANTINED_ASYNC_RUNS_DIRNAME = "quarantined-async-subagent-runs";
 function isNotFoundError(error) {
-    return typeof error === "object"
-        && error !== null
-        && "code" in error
-        && error.code === "ENOENT";
+    return (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT");
 }
 function snapshotStatus(stat) {
     return {
@@ -20,11 +17,11 @@ function snapshotStatus(stat) {
     };
 }
 function sameSnapshot(left, right) {
-    return left.dev === right.dev
-        && left.ino === right.ino
-        && left.size === right.size
-        && left.mtimeMs === right.mtimeMs
-        && left.ctimeMs === right.ctimeMs;
+    return (left.dev === right.dev &&
+        left.ino === right.ino &&
+        left.size === right.size &&
+        left.mtimeMs === right.mtimeMs &&
+        left.ctimeMs === right.ctimeMs);
 }
 function confirmCorruption(issue, content) {
     if (issue.kind === "json_parse") {
@@ -58,8 +55,7 @@ function buildDedupeKey(issue, reason) {
     return `${issue.entry}\u0000${issue.fingerprint?.value ?? "missing-fingerprint"}\u0000${reason}`;
 }
 function isValidFingerprint(issue) {
-    return issue.fingerprint?.algorithm === "sha256"
-        && /^[a-f0-9]{64}$/u.test(issue.fingerprint.value);
+    return issue.fingerprint?.algorithm === "sha256" && /^[a-f0-9]{64}$/u.test(issue.fingerprint.value);
 }
 function validateIssuePaths(asyncDirRoot, issue) {
     const resolvedRoot = path.resolve(asyncDirRoot);
@@ -70,18 +66,27 @@ function validateIssuePaths(asyncDirRoot, issue) {
     const asyncDirWithinRoot = path.relative(resolvedRoot, expectedAsyncDir);
     if (asyncDirWithinRoot === "" || asyncDirWithinRoot.startsWith("..") || path.isAbsolute(asyncDirWithinRoot))
         return false;
-    return path.resolve(issue.asyncDir) === expectedAsyncDir
-        && path.resolve(issue.statusPath) === expectedStatusPath;
+    return path.resolve(issue.asyncDir) === expectedAsyncDir && path.resolve(issue.statusPath) === expectedStatusPath;
 }
 export function quarantineCorruptAsyncRun(asyncDirRoot, issue, options = {}) {
     const fsApi = options.fs ?? fs;
     const now = options.now ?? Date.now;
     const createUniqueSuffix = options.createUniqueSuffix ?? (() => `${now()}-${Math.random().toString(36).slice(2, 8)}`);
     if (!isValidFingerprint(issue)) {
-        return { outcome: "deferred", reason: "missing_fingerprint", kind: issue.kind, dedupeKey: buildDedupeKey(issue, "missing_fingerprint") };
+        return {
+            outcome: "deferred",
+            reason: "missing_fingerprint",
+            kind: issue.kind,
+            dedupeKey: buildDedupeKey(issue, "missing_fingerprint"),
+        };
     }
     if (!validateIssuePaths(asyncDirRoot, issue)) {
-        return { outcome: "failed", reason: "invalid_path", kind: issue.kind, dedupeKey: buildDedupeKey(issue, "invalid_path") };
+        return {
+            outcome: "failed",
+            reason: "invalid_path",
+            kind: issue.kind,
+            dedupeKey: buildDedupeKey(issue, "invalid_path"),
+        };
     }
     let before;
     try {

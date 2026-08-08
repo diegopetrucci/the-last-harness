@@ -3,7 +3,13 @@ function normalizePackageName(value) {
     const trimmed = value?.trim();
     if (!trimmed)
         return undefined;
-    return trimmed.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9.-]/g, "").replace(/-+/g, "-").replace(/\.+/g, ".").replace(/(?:^[-.]+|[-.]+$)/g, "");
+    return trimmed
+        .toLowerCase()
+        .replace(/\s+/g, "-")
+        .replace(/[^a-z0-9.-]/g, "")
+        .replace(/-+/g, "-")
+        .replace(/\.+/g, ".")
+        .replace(/(?:^[-.]+|[-.]+$)/g, "");
 }
 export function parsePackageName(value, label = "package") {
     if (value === undefined || value === false || value === "")

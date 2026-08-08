@@ -218,9 +218,9 @@ function inspectRuntimeDirsInternal(paths, now, kill, strict) {
     const retainedRootRunIds = new Set(asyncDirs.filter((entry) => entry.keep).map((entry) => entry.rootRunId));
     const nestedEventRoutes = listNestedEventRoutes(paths.nestedEventsDir, strict).map((entry) => ({
         ...entry,
-        keep: !entry.rootRunId
-            || retainedRootRunIds.has(entry.rootRunId)
-            || now - entry.referenceMtimeMs < UNREFERENCED_NESTED_EVENT_DIR_MAX_AGE_MS,
+        keep: !entry.rootRunId ||
+            retainedRootRunIds.has(entry.rootRunId) ||
+            now - entry.referenceMtimeMs < UNREFERENCED_NESTED_EVENT_DIR_MAX_AGE_MS,
     }));
     return {
         asyncDirs,

@@ -19,7 +19,7 @@ function formatSectionLineRange(section) {
         ? `line ${section.startLine}`
         : `lines ${section.startLine}-${section.endLine}`;
 }
-function formatSectionComment(comment, section) {
+function formatSectionComment(_comment, section) {
     if (section == null) {
         return "Unknown section";
     }
@@ -46,7 +46,8 @@ export function composeAnnotateLastMessagePrompt(message, payload) {
         .sort((left, right) => left.line - right.line);
     const sectionComments = payload.sectionComments
         .filter((comment) => comment.body.trim().length > 0)
-        .sort((left, right) => (sectionMap.get(left.sectionId)?.index ?? Number.MAX_SAFE_INTEGER) - (sectionMap.get(right.sectionId)?.index ?? Number.MAX_SAFE_INTEGER));
+        .sort((left, right) => (sectionMap.get(left.sectionId)?.index ?? Number.MAX_SAFE_INTEGER) -
+        (sectionMap.get(right.sectionId)?.index ?? Number.MAX_SAFE_INTEGER));
     const lines = [];
     lines.push("Please revisit your last assistant message using the annotation feedback below.");
     lines.push("");

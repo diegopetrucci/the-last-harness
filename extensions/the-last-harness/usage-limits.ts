@@ -1,8 +1,14 @@
-import { SettingsManager, getAgentDir, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import {
+	SettingsManager,
+	getAgentDir,
+	type ExtensionAPI,
+	type ExtensionCommandContext,
+} from "@earendil-works/pi-coding-agent";
 
 import type { TlhSettings, TlhUsageLimitsConfig } from "./types.js";
 
-export const USAGE_COMMAND_HELP = "Usage: /usage [status|weekly on|weekly off|weekly toggle]. With no argument, /usage shows status.";
+export const USAGE_COMMAND_HELP =
+	"Usage: /usage [status|weekly on|weekly off|weekly toggle]. With no argument, /usage shows status.";
 
 const USAGE_COMMAND_COMPLETIONS = [
 	{ value: "status", description: "Show TLH usage-limit footer preferences" },
@@ -66,14 +72,16 @@ export function setCachedTlhUsageWeeklyVisibility(showWeekly: boolean | undefine
 
 function usageCommandCompletions(prefix: string) {
 	const normalizedPrefix = prefix.trim().toLowerCase();
-	const completions = USAGE_COMMAND_COMPLETIONS
-		.filter((option) => option.value.startsWith(normalizedPrefix))
-		.map((option) => ({ value: option.value, label: option.value, description: option.description }));
+	const completions = USAGE_COMMAND_COMPLETIONS.filter((option) => option.value.startsWith(normalizedPrefix)).map(
+		(option) => ({ value: option.value, label: option.value, description: option.description }),
+	);
 	return completions.length > 0 ? completions : null;
 }
 
 export function registerUsageCommand(pi: ExtensionAPI, options: TlhUsageCommandFacadeOptions = {}): void {
-	const loadModule = createRetryableLazyImport(options.loadModule ?? (() => import("./usage-limits-command.js") as Promise<UsageLimitsCommandModule>));
+	const loadModule = createRetryableLazyImport(
+		options.loadModule ?? (() => import("./usage-limits-command.js") as Promise<UsageLimitsCommandModule>),
+	);
 	pi.registerCommand("usage", {
 		description: "Show or change TLH usage-limit footer preferences",
 		getArgumentCompletions: usageCommandCompletions,

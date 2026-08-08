@@ -17,7 +17,8 @@ const theme = {
 function componentText(component: unknown): string {
 	if (typeof component !== "object" || component === null) return "";
 	if ("text" in component && typeof component.text === "string") return component.text;
-	if ("children" in component && Array.isArray(component.children)) return component.children.map(componentText).filter(Boolean).join("\n");
+	if ("children" in component && Array.isArray(component.children))
+		return component.children.map(componentText).filter(Boolean).join("\n");
 	return "";
 }
 
@@ -50,41 +51,59 @@ test("row keeps styled multiline content within the available width", () => {
 });
 
 test("compact multi-result rendering shows total cost in the header", () => {
-	const text = componentText(renderSubagentResult({
-		content: [{ type: "text", text: "done" }],
-		details: {
-			mode: "parallel",
-			results: [result("scout", "a"), result("reviewer", "b")],
-			totalCost: { inputTokens: 30, outputTokens: 12, costUsd: 0.04 },
-		},
-	}, { expanded: false }, theme as any));
+	const text = componentText(
+		renderSubagentResult(
+			{
+				content: [{ type: "text", text: "done" }],
+				details: {
+					mode: "parallel",
+					results: [result("scout", "a"), result("reviewer", "b")],
+					totalCost: { inputTokens: 30, outputTokens: 12, costUsd: 0.04 },
+				},
+			},
+			{ expanded: false },
+			theme as any,
+		),
+	);
 
 	assert.match(text, /2\/2 done/);
 	assert.match(text, /in:30 out:12 \$0\.0400/);
 });
 
 test("static sequential and static parallel chain rendering keep existing labels", () => {
-	const sequential = componentText(renderSubagentResult({
-		content: [{ type: "text", text: "done" }],
-		details: {
-			mode: "chain",
-			chainAgents: ["scout", "writer"],
-			totalSteps: 2,
-			results: [result("scout", "a"), result("writer", "b")],
-		},
-	}, { expanded: false }, theme as any));
+	const sequential = componentText(
+		renderSubagentResult(
+			{
+				content: [{ type: "text", text: "done" }],
+				details: {
+					mode: "chain",
+					chainAgents: ["scout", "writer"],
+					totalSteps: 2,
+					results: [result("scout", "a"), result("writer", "b")],
+				},
+			},
+			{ expanded: false },
+			theme as any,
+		),
+	);
 	assert.match(sequential, /Step 1: scout/);
 	assert.match(sequential, /Step 2: writer/);
 
-	const parallel = componentText(renderSubagentResult({
-		content: [{ type: "text", text: "done" }],
-		details: {
-			mode: "chain",
-			chainAgents: ["scout", "[reviewer+auditor]", "writer"],
-			totalSteps: 3,
-			results: [result("scout", "a"), result("reviewer", "b"), result("auditor", "c"), result("writer", "d")],
-		},
-	}, { expanded: false }, theme as any));
+	const parallel = componentText(
+		renderSubagentResult(
+			{
+				content: [{ type: "text", text: "done" }],
+				details: {
+					mode: "chain",
+					chainAgents: ["scout", "[reviewer+auditor]", "writer"],
+					totalSteps: 3,
+					results: [result("scout", "a"), result("reviewer", "b"), result("auditor", "c"), result("writer", "d")],
+				},
+			},
+			{ expanded: false },
+			theme as any,
+		),
+	);
 	assert.match(parallel, /Step 1: scout/);
 	assert.match(parallel, /Agent 1\/2: reviewer/);
 	assert.match(parallel, /Agent 2\/2: auditor/);

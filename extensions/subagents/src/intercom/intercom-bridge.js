@@ -31,7 +31,11 @@ export function resolveIntercomSessionTarget(sessionName, sessionId) {
     return `${DEFAULT_INTERCOM_TARGET_PREFIX}-${normalizedSessionId.slice(0, 8)}`;
 }
 function sanitizeIntercomTargetPart(value) {
-    return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "agent";
+    return (value
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "agent");
 }
 export function resolveSubagentIntercomTarget(runId, agent, index) {
     const stepSuffix = index !== undefined ? `-${index + 1}` : "";
@@ -58,9 +62,7 @@ function resolveInstructionTemplate(instructionFile, settingsDir) {
     if (!instructionFile)
         return DEFAULT_INTERCOM_BRIDGE_TEMPLATE;
     const expandedPath = expandTilde(instructionFile);
-    const resolvedPath = path.isAbsolute(expandedPath)
-        ? expandedPath
-        : path.resolve(settingsDir, expandedPath);
+    const resolvedPath = path.isAbsolute(expandedPath) ? expandedPath : path.resolve(settingsDir, expandedPath);
     try {
         return fs.readFileSync(resolvedPath, "utf-8");
     }

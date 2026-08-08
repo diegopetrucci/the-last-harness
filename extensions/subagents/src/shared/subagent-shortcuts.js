@@ -79,9 +79,9 @@ export function createSubagentLiveDetailController(initialExpanded = false) {
             return expanded;
         },
         registerToolRow: (toolCallId, rendererState, invalidate) => {
-            if (activeProbe?.generation === generation
-                && activeProbe.toolCallId === toolCallId
-                && activeProbe.rendererState === rendererState) {
+            if (activeProbe?.generation === generation &&
+                activeProbe.toolCallId === toolCallId &&
+                activeProbe.rendererState === rendererState) {
                 toolRows.set(toolCallId, { rendererState, invalidate });
                 activeProbe.reclaimed = true;
                 return true;
@@ -108,7 +108,7 @@ export function formatShortcutDisplay(key) {
         .split("/")
         .map((binding) => binding
         .split("+")
-        .map((part) => part.length === 1 ? part.toUpperCase() : `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+        .map((part) => (part.length === 1 ? part.toUpperCase() : `${part.charAt(0).toUpperCase()}${part.slice(1)}`))
         .join("+"))
         .join("/");
 }

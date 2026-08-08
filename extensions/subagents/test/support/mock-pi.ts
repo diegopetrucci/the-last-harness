@@ -49,7 +49,8 @@ function writeExecutable(filePath: string, content: string): void {
 
 function listQueueFiles(queueDir: string, prefix: string): string[] {
 	try {
-		return fs.readdirSync(queueDir)
+		return fs
+			.readdirSync(queueDir)
 			.filter((name) => name.startsWith(prefix))
 			.sort();
 	} catch {
@@ -72,10 +73,14 @@ export function createMockPi(): MockPi {
 	writeExecutable(shellScriptPath, `#!/bin/sh\nexec "${process.execPath}" "${SCRIPT_PATH}" "$@"\n`);
 	writeExecutable(cmdScriptPath, `@echo off\r\n"${process.execPath}" "${SCRIPT_PATH}" %*\r\n`);
 	writeExecutable(cliScriptPath, `#!/usr/bin/env node\nimport ${JSON.stringify(pathToFileURL(SCRIPT_PATH).href)};\n`);
-	fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({
-		name: "@earendil-works/pi-coding-agent",
-		bin: { pi: "dist/cli.mjs" },
-	}), "utf-8");
+	fs.writeFileSync(
+		path.join(packageRoot, "package.json"),
+		JSON.stringify({
+			name: "@earendil-works/pi-coding-agent",
+			bin: { pi: "dist/cli.mjs" },
+		}),
+		"utf-8",
+	);
 
 	let installed = false;
 	let nextSequence = 0;

@@ -10,7 +10,8 @@ import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/neste
 const routeRoots: string[] = [];
 
 afterEach(() => {
-	for (const root of routeRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+	for (const root of routeRoots.splice(0))
+		fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 function stateWithForeground(id: string): SubagentState {
@@ -39,19 +40,38 @@ function nested(rootRunId: string, id: string) {
 	return route;
 }
 
-function writeNestedChild(route: ReturnType<typeof createNestedRoute>, parentRunId: string, id: string, parentStepIndex?: number) {
+function writeNestedChild(
+	route: ReturnType<typeof createNestedRoute>,
+	parentRunId: string,
+	id: string,
+	parentStepIndex?: number,
+) {
 	writeNestedEvent(route, {
 		type: "subagent.nested.updated",
 		ts: 100,
 		parentRunId,
 		...(parentStepIndex !== undefined ? { parentStepIndex } : {}),
-		child: { id, parentRunId, ...(parentStepIndex !== undefined ? { parentStepIndex } : {}), depth: 1, path: [{ runId: parentRunId, ...(parentStepIndex !== undefined ? { stepIndex: parentStepIndex } : {}) }], state: "running", agent: "worker" },
+		child: {
+			id,
+			parentRunId,
+			...(parentStepIndex !== undefined ? { parentStepIndex } : {}),
+			depth: 1,
+			path: [{ runId: parentRunId, ...(parentStepIndex !== undefined ? { stepIndex: parentStepIndex } : {}) }],
+			state: "running",
+			agent: "worker",
+		},
 	});
 }
 
 function stateWithNestedRoute(route: ReturnType<typeof createNestedRoute>): SubagentState {
 	const state = stateWithForeground("foreground-only");
-	state.foregroundControls.set(route.rootRunId, { runId: route.rootRunId, mode: "single", startedAt: 1, updatedAt: 1, nestedRoute: route });
+	state.foregroundControls.set(route.rootRunId, {
+		runId: route.rootRunId,
+		mode: "single",
+		startedAt: 1,
+		updatedAt: 1,
+		nestedRoute: route,
+	});
 	return state;
 }
 
@@ -65,7 +85,14 @@ describe("subagent run id resolver", () => {
 			nested("root-shared", "shared-id");
 			nested("root-prefix", "shared-id-child");
 
-			assert.equal(resolveSubagentRunId("shared-id", { state: stateWithForeground("shared-id"), asyncDirRoot: asyncRoot, resultsDir })?.kind, "foreground");
+			assert.equal(
+				resolveSubagentRunId("shared-id", {
+					state: stateWithForeground("shared-id"),
+					asyncDirRoot: asyncRoot,
+					resultsDir,
+				})?.kind,
+				"foreground",
+			);
 			assert.equal(resolveSubagentRunId("shared-id", { asyncDirRoot: asyncRoot, resultsDir })?.kind, "async");
 			fs.rmSync(path.join(asyncRoot, "shared-id"), { recursive: true, force: true });
 			const resolved = resolveSubagentRunId("shared-id", { asyncDirRoot: asyncRoot, resultsDir });
@@ -116,7 +143,9 @@ describe("subagent run id resolver", () => {
 			() => resolveSubagentRunId("same-child", { nested: { routes: [route] } }),
 			/Ambiguous subagent run id prefix 'same-child'/,
 		);
-		const resolved = resolveSubagentRunId("same-child", { nested: { routes: [route], descendantOf: { parentRunId: "root-scoped", parentStepIndex: 0 } } });
+		const resolved = resolveSubagentRunId("same-child", {
+			nested: { routes: [route], descendantOf: { parentRunId: "root-scoped", parentStepIndex: 0 } },
+		});
 		assert.equal(resolved?.kind, "nested");
 		assert.equal(resolved?.id, "same-child-zero");
 		assert.equal(resolved?.kind === "nested" ? resolved.match.run.parentStepIndex : undefined, 0);

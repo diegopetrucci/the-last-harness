@@ -185,13 +185,7 @@ export function supportFileManifest({ noSettings = false }: SupportFileManifestO
 }
 
 function formatSupportFileManifestRow(file: SupportFileDescriptor): string {
-	return [
-		file.variable,
-		file.requirement,
-		file.relativePath,
-		file.tempPath,
-		file.installName || "",
-	].join("|");
+	return [file.variable, file.requirement, file.relativePath, file.tempPath, file.installName || ""].join("|");
 }
 
 export function formatSupportFileManifest(options: SupportFileManifestOptions = {}): string {

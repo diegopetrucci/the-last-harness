@@ -8,15 +8,23 @@ describe("deadline timer", () => {
 		let fired = 0;
 		const scheduled: Array<{ handler: () => void; delayMs: number; handle: ReturnType<typeof setTimeout> }> = [];
 		const cleared: Array<ReturnType<typeof setTimeout>> = [];
-		const timer = scheduleDeadline(now + MAX_NODE_TIMEOUT_DELAY_MS + 25, () => { fired++; }, {
-			now: () => now,
-			setTimeout: (handler, delayMs) => {
-				const handle = { unref() {} } as ReturnType<typeof setTimeout>;
-				scheduled.push({ handler, delayMs, handle });
-				return handle;
+		const timer = scheduleDeadline(
+			now + MAX_NODE_TIMEOUT_DELAY_MS + 25,
+			() => {
+				fired++;
 			},
-			clearTimeout: (handle) => { cleared.push(handle); },
-		});
+			{
+				now: () => now,
+				setTimeout: (handler, delayMs) => {
+					const handle = { unref() {} } as ReturnType<typeof setTimeout>;
+					scheduled.push({ handler, delayMs, handle });
+					return handle;
+				},
+				clearTimeout: (handle) => {
+					cleared.push(handle);
+				},
+			},
+		);
 
 		assert.equal(scheduled[0]?.delayMs, MAX_NODE_TIMEOUT_DELAY_MS);
 		now += MAX_NODE_TIMEOUT_DELAY_MS;
@@ -36,13 +44,19 @@ describe("deadline timer", () => {
 		let now = 0;
 		let fired = 0;
 		const handlers: Array<() => void> = [];
-		scheduleDeadline(MAX_NODE_TIMEOUT_DELAY_MS + 1, () => { fired++; }, {
-			now: () => now,
-			setTimeout: (handler) => {
-				handlers.push(handler);
-				return { unref() {} } as ReturnType<typeof setTimeout>;
+		scheduleDeadline(
+			MAX_NODE_TIMEOUT_DELAY_MS + 1,
+			() => {
+				fired++;
 			},
-		});
+			{
+				now: () => now,
+				setTimeout: (handler) => {
+					handlers.push(handler);
+					return { unref() {} } as ReturnType<typeof setTimeout>;
+				},
+			},
+		);
 
 		now = MAX_NODE_TIMEOUT_DELAY_MS;
 		handlers.shift()!();
